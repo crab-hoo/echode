@@ -6,8 +6,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 
-use echode_model::Project;
-
 use crate::rpc::ApiSession;
 
 /// Why the socket stopped.
@@ -44,7 +42,7 @@ pub fn bind_socket(path: &Path) -> Result<UnixListener, ApiError> {
 }
 
 /// Reads request lines until the client closes the connection.
-pub fn serve_connection(session: &mut ApiSession, stream: UnixStream) -> Result<(), ApiError> {
+pub fn serve_connection(session: &ApiSession, stream: UnixStream) -> Result<(), ApiError> {
     let mut writer = stream
         .try_clone()
         .map_err(|error| ApiError::new(error.to_string()))?;
@@ -65,12 +63,12 @@ pub fn serve_connection(session: &mut ApiSession, stream: UnixStream) -> Result<
 }
 
 /// Accepts connections until the process stops. A new client sees earlier edits.
-pub fn serve(project: Project, socket: &Path) -> Result<(), ApiError> {
+pub fn serve(package: &Path, socket: &Path) -> Result<(), ApiError> {
     let listener = bind_socket(socket)?;
-    let mut session = ApiSession::open(project);
+    let session = ApiSession::open(package).map_err(|error| ApiError::new(error.to_string()))?;
     for incoming in listener.incoming() {
         let stream = incoming.map_err(|error| ApiError::new(error.to_string()))?;
-        serve_connection(&mut session, stream)?;
+        serve_connection(&session, stream)?;
     }
     Ok(())
 }
@@ -78,6 +76,7 @@ pub fn serve(project: Project, socket: &Path) -> Result<(), ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use echode_model::Project;
     use std::io::{BufRead, BufReader, Write};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
@@ -96,8 +95,15 @@ mod tests {
         assert_eq!(mode, 0o600);
         let server = thread::spawn(move || {
             let stream = listener.accept().unwrap().0;
-            let mut session = ApiSession::open(Project::new());
-            serve_connection(&mut session, stream).unwrap();
+            let directory =
+                std::env::temp_dir().join(format!("echode-api-pkg-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&directory);
+            echode_history::write_package(&directory, &Project::new()).unwrap();
+            let session = ApiSession::open(&directory).unwrap();
+            let result = serve_connection(&session, stream);
+            drop(session);
+            let _ = std::fs::remove_dir_all(directory);
+            result.unwrap();
         });
         let mut client = UnixStream::connect(&path).unwrap();
         writeln!(

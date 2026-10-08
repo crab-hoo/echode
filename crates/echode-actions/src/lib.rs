@@ -10,6 +10,6 @@ mod action;
 mod journal;
 mod session;
 
-pub use action::{Action, ActionError, ActionSpec, Command, catalog};
-pub use journal::{JournalEntry, decode, encode};
+pub use action::{Action, ActionError, ActionSpec, Command, catalog, parameter_message};
+pub use journal::{JournalEntry, JournalLine, JournalOp, decode, decode_line, encode, encode_line};
 pub use session::{Session, Transaction, replay};

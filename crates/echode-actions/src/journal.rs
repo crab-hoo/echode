@@ -19,6 +19,23 @@ pub struct JournalEntry {
     pub changes: Option<ChangeSet>,
 }
 
+/// A durable journal line. `undo` stores the changeset it undoes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JournalOp {
+    Edit,
+    Undo,
+    Redo,
+}
+
+/// One appended journal record. The changeset is enough to replay the line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JournalLine {
+    pub seq: u64,
+    pub op: JournalOp,
+    pub actions: Vec<Action>,
+    pub changes: ChangeSet,
+}
+
 /// Writes the journal. An empty journal is an empty string.
 pub fn encode(journal: &[JournalEntry]) -> String {
     let mut out = String::new();
@@ -58,12 +75,55 @@ fn decode_group(line: &str) -> Result<JournalEntry, ActionError> {
     })
 }
 
+/// One journal line, without a trailing newline.
+pub fn encode_line(line: &JournalLine) -> String {
+    let record = LineRecord {
+        seq: line.seq,
+        kind: match line.op {
+            JournalOp::Edit => "edit",
+            JournalOp::Undo => "undo",
+            JournalOp::Redo => "redo",
+        }
+        .to_string(),
+        actions: line.actions.clone(),
+        changes: change_records(&line.changes),
+    };
+    serde_json::to_string(&record).expect("journal lines have no failing fields")
+}
+
+/// Reads one journal line.
+pub fn decode_line(text: &str) -> Result<JournalLine, ActionError> {
+    let record: LineRecord = serde_json::from_str(text).map_err(|_| ActionError::CorruptJournal)?;
+    let op = match record.kind.as_str() {
+        "edit" => JournalOp::Edit,
+        "undo" => JournalOp::Undo,
+        "redo" => JournalOp::Redo,
+        _ => return Err(ActionError::CorruptJournal),
+    };
+    Ok(JournalLine {
+        seq: record.seq,
+        op,
+        actions: record.actions,
+        changes: parse_changes(&record.changes)?,
+    })
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroupRecord {
     actions: Vec<Action>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     changes: Option<Vec<ChangeRecord>>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LineRecord {
+    seq: u64,
+    kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    actions: Vec<Action>,
+    changes: Vec<ChangeRecord>,
 }
 
 fn parse_id(text: &str) -> Result<Id, ActionError> {

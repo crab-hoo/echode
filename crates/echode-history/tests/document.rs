@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use echode_actions::{Action, Command, Session};
+use echode_actions::{Action, Command, JournalLine, JournalOp, Session};
 use echode_history::{
-    AUTOSAVE_REF, Autosave, JournalBase, read_package, recover, write_journal, write_package,
+    AUTOSAVE_REF, Autosave, append_journal, read_package, recover, write_package,
 };
 use echode_model::{
     ClipKind, Content, DEFAULT_FADE_FLICKS, Device, Id, Lane, Meter, MixerIds, Note, NoteDraft,
@@ -123,12 +123,22 @@ fn the_journal_replays_onto_the_package_until_autosave_catches_up() {
             draft: note(8),
         })
         .unwrap();
-    write_journal(&directory, JournalBase::Files, session.journal()).unwrap();
+    let entry = session.journal().last().unwrap();
+    append_journal(
+        &directory,
+        &JournalLine {
+            seq: 1,
+            op: JournalOp::Edit,
+            actions: entry.actions.clone(),
+            changes: entry.changes.clone().unwrap_or_default(),
+        },
+    )
+    .unwrap();
     assert_eq!(recover(&directory).unwrap(), *session.project());
 
     let autosave = Autosave::create(&directory).unwrap();
     let first = autosave
-        .save(Arc::new(session.project().clone()))
+        .save(Arc::new(session.project().clone()), 1)
         .unwrap()
         .wait()
         .unwrap();
@@ -138,12 +148,11 @@ fn the_journal_replays_onto_the_package_until_autosave_catches_up() {
 
     let autosave = Autosave::create(&directory).unwrap();
     let second = autosave
-        .save(Arc::new(saved.clone()))
+        .save(Arc::new(saved.clone()), 1)
         .unwrap()
         .wait()
         .unwrap();
     drop(autosave);
-    write_journal(&directory, JournalBase::Commit(first), session.journal()).unwrap();
     assert_eq!(recover(&directory).unwrap(), saved);
 
     let repo = gix::open(&directory).unwrap();
@@ -156,6 +165,175 @@ fn the_journal_replays_onto_the_package_until_autosave_catches_up() {
     assert_eq!(parents, vec![first]);
     assert!(repo.find_reference(AUTOSAVE_REF).is_ok());
     let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_torn_journal_tail_keeps_the_finished_lines() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let mut session = Session::open(Project::new());
+    session
+        .perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap();
+    append_line(&directory, &session, 1);
+    session
+        .perform(Command::AddTrack {
+            name: "drums".into(),
+        })
+        .unwrap();
+    append_line(&directory, &session, 2);
+    let path = directory.join("journal.jsonl");
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::write(&path, &bytes[..bytes.len() - 6]).unwrap();
+    let project = recover(&directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert_eq!(project.tracks().len(), 1);
+    assert_eq!(project.tracks()[0].name, "piano");
+}
+
+#[test]
+fn an_edit_after_the_commit_is_replayed() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let mut session = Session::open(Project::new());
+    session
+        .perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap();
+    append_line(&directory, &session, 1);
+    let autosave = Autosave::create(&directory).unwrap();
+    autosave
+        .save(Arc::new(session.project().clone()), 1)
+        .unwrap()
+        .wait()
+        .unwrap();
+    drop(autosave);
+    session
+        .perform(Command::AddTrack {
+            name: "drums".into(),
+        })
+        .unwrap();
+    append_line(&directory, &session, 2);
+    let project = recover(&directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert_eq!(
+        project
+            .tracks()
+            .iter()
+            .map(|track| track.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["piano", "drums"]
+    );
+}
+
+#[test]
+fn an_undo_after_compaction_undoes_the_committed_edit() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let mut session = Session::open(Project::new());
+    session
+        .perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap();
+    let changes = session.journal().last().unwrap().changes.clone().unwrap();
+    append_line(&directory, &session, 1);
+    let autosave = Autosave::create(&directory).unwrap();
+    autosave
+        .save(Arc::new(session.project().clone()), 1)
+        .unwrap()
+        .wait()
+        .unwrap();
+    drop(autosave);
+    echode_history::compact_journal(&directory, 1).unwrap();
+    append_journal(
+        &directory,
+        &JournalLine {
+            seq: 2,
+            op: JournalOp::Undo,
+            actions: Vec::new(),
+            changes,
+        },
+    )
+    .unwrap();
+    let project = recover(&directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(project.tracks().is_empty());
+}
+
+#[test]
+fn a_corrupt_tip_returns_the_parent_without_the_gapped_lines() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let mut session = Session::open(Project::new());
+    session
+        .perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap();
+    let autosave = Autosave::create(&directory).unwrap();
+    let parent = autosave
+        .save(Arc::new(session.project().clone()), 1)
+        .unwrap()
+        .wait()
+        .unwrap();
+    session
+        .perform(Command::AddTrack {
+            name: "drums".into(),
+        })
+        .unwrap();
+    let tip = autosave
+        .save(Arc::new(session.project().clone()), 2)
+        .unwrap()
+        .wait()
+        .unwrap();
+    drop(autosave);
+    echode_history::compact_journal(&directory, 2).unwrap();
+    let hex = tip.to_string();
+    let object = directory
+        .join(".git/objects")
+        .join(&hex[..2])
+        .join(&hex[2..]);
+    std::fs::remove_file(&object).unwrap();
+    let project = recover(&directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert_eq!(project.tracks().len(), 1);
+    assert_eq!(project.tracks()[0].name, "piano");
+    assert_ne!(parent, tip);
+}
+
+#[test]
+fn a_pending_save_does_not_replay_onto_the_worktree() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let mut session = Session::open(Project::new());
+    session
+        .perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap();
+    append_line(&directory, &session, 1);
+    echode_history::mark_save_pending(&directory).unwrap();
+    let error = recover(&directory).unwrap_err().to_string();
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(error.contains("unfinished"), "{error}");
+}
+
+fn append_line(directory: &std::path::Path, session: &Session, seq: u64) {
+    let entry = session.journal().last().unwrap();
+    append_journal(
+        directory,
+        &JournalLine {
+            seq,
+            op: JournalOp::Edit,
+            actions: entry.actions.clone(),
+            changes: entry.changes.clone().unwrap(),
+        },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -301,7 +479,7 @@ fn a_reused_track_address_does_not_restore_an_older_commit() {
             })
             .unwrap();
         autosave
-            .save(Arc::new(session.project().clone()))
+            .save(Arc::new(session.project().clone()), 0)
             .unwrap()
             .wait()
             .unwrap();
@@ -320,7 +498,7 @@ fn a_reused_track_address_does_not_restore_an_older_commit() {
             })
             .unwrap();
         let commit = autosave
-            .save(Arc::new(session.project().clone()))
+            .save(Arc::new(session.project().clone()), 0)
             .unwrap()
             .wait()
             .unwrap();
@@ -445,4 +623,45 @@ fn a_schema_other_than_the_current_one_is_rejected() {
         );
         let _ = std::fs::remove_dir_all(directory);
     }
+}
+
+#[test]
+fn a_removed_track_file_is_deleted_on_the_next_save() {
+    let directory = scratch();
+    let (project, kept) = Project::new().add_track("kept");
+    let (project, dropped) = project.add_track("dropped");
+    let autosave = Autosave::create(&directory).unwrap();
+    autosave
+        .save(Arc::new(project.clone()), 0)
+        .unwrap()
+        .wait()
+        .unwrap();
+    let tracks = project
+        .tracks()
+        .iter()
+        .filter(|track| track.id == kept)
+        .map(|track| (**track).clone())
+        .collect();
+    let next = Project::try_assemble(project.meter(), project.tempo().clone(), Vec::new(), tracks)
+        .unwrap();
+    autosave
+        .save(Arc::new(next.clone()), 1)
+        .unwrap()
+        .wait()
+        .unwrap();
+    assert!(
+        directory
+            .join("tracks")
+            .join(format!("{kept}.json"))
+            .is_file()
+    );
+    assert!(
+        !directory
+            .join("tracks")
+            .join(format!("{dropped}.json"))
+            .exists()
+    );
+    drop(autosave);
+    assert_eq!(read_package(&directory).unwrap(), next);
+    let _ = std::fs::remove_dir_all(directory);
 }

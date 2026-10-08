@@ -3,17 +3,14 @@
 //! The same project always produces the same bytes. Each note is one line.
 //! A file older than the current schema is raised one version at a time on a
 //! JSON value, then parsed with unknown fields rejected. Schema 1 is current,
-//! so that list is empty (ADR 0028). The journal's first line names the
-//! snapshot it applies to. Recovery applies each later line's changeset, or
-//! replays its commands when the line has none, and only when that snapshot
-//! is still the latest autosave.
+//! so that list is empty (ADR 0028). The journal is an append-only log.
+//! Recovery replays the lines that continue after the newest readable commit.
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use echode_actions::{JournalEntry, decode, encode, replay};
 use echode_model::{ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track};
 use gix::objs::Tree;
 use gix::objs::tree::{Entry, EntryKind};
@@ -23,15 +20,6 @@ use serde::{Deserialize, Serialize};
 
 /// Autosave commits land here until a project has more than one alternate.
 pub const AUTOSAVE_REF: &str = "refs/echode/autosave/main";
-
-/// Where a journal's actions start from.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum JournalBase {
-    /// The package files, before the first autosave commit.
-    Files,
-    /// An autosave commit.
-    Commit(ObjectId),
-}
 
 /// A package or journal could not be read or written.
 #[derive(Debug)]
@@ -96,53 +84,114 @@ fn read_named_dir(
     Ok(files)
 }
 
-/// Replaces `journal.jsonl`. `groups` are the edits since `base`.
-pub fn write_journal(
+/// Appends one synced journal line. The document thread is the only caller.
+pub fn append_journal(
     directory: &Path,
-    base: JournalBase,
-    groups: &[JournalEntry],
+    line: &echode_actions::JournalLine,
 ) -> Result<(), PackageError> {
-    let token = match &base {
-        JournalBase::Files => "files".to_string(),
-        JournalBase::Commit(id) => id.to_string(),
-    };
-    let mut text = format!("{{\"base\":\"{token}\"}}\n");
-    text.push_str(&encode(groups));
-    let destination = directory.join("journal.jsonl");
-    let temporary = directory.join("journal.jsonl.tmp");
-    fs::write(&temporary, text).map_err(|error| io_error(&temporary, error))?;
-    fs::rename(&temporary, &destination).map_err(|error| io_error(&destination, error))?;
+    let mut text = echode_actions::encode_line(line);
+    text.push('\n');
+    let path = directory.join("journal.jsonl");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| io_error(&path, error))?;
+    std::io::Write::write_all(&mut file, text.as_bytes())
+        .map_err(|error| io_error(&path, error))?;
+    file.sync_all().map_err(|error| io_error(&path, error))?;
     Ok(())
 }
 
-/// Loads the latest durable snapshot, then replays a journal that still names it.
-pub fn recover(directory: &Path) -> Result<Project, PackageError> {
-    let tip = autosave_tip(directory);
-    let Some(journal) = read_journal(directory)? else {
-        return match tip {
-            Some(id) => read_commit_at(directory, id),
-            None => read_package(directory),
-        };
-    };
-    match journal.base {
-        JournalBase::Files => {
-            if let Some(id) = tip {
-                return read_commit_at(directory, id);
-            }
-            replay_on(&read_package(directory)?, &journal.groups)
-        }
-        JournalBase::Commit(id) => {
-            if let Some(tip) = tip
-                && tip != id
-            {
-                return read_commit_at(directory, tip);
-            }
-            replay_on(&read_commit_at(directory, id)?, &journal.groups)
-        }
+/// Drops lines at or below `through`. The kept suffix is synced, then renamed.
+pub fn compact_journal(directory: &Path, through: u64) -> Result<(), PackageError> {
+    let records = read_log(directory)?;
+    let kept: Vec<_> = records
+        .into_iter()
+        .filter(|line| line.seq > through)
+        .collect();
+    let mut text = String::new();
+    for line in &kept {
+        text.push_str(&echode_actions::encode_line(line));
+        text.push('\n');
     }
+    let temporary = directory.join("journal.jsonl.tmp");
+    let mut file =
+        std::fs::File::create(&temporary).map_err(|error| io_error(&temporary, error))?;
+    std::io::Write::write_all(&mut file, text.as_bytes())
+        .map_err(|error| io_error(&temporary, error))?;
+    file.sync_all()
+        .map_err(|error| io_error(&temporary, error))?;
+    let destination = directory.join("journal.jsonl");
+    std::fs::rename(&temporary, &destination).map_err(|error| io_error(&destination, error))?;
+    sync_dir(directory)?;
+    Ok(())
+}
+
+/// Marks a save that has started rewriting the worktree and has not committed.
+pub fn mark_save_pending(directory: &Path) -> Result<(), PackageError> {
+    let path = directory.join("save.pending");
+    let mut file = std::fs::File::create(&path).map_err(|error| io_error(&path, error))?;
+    std::io::Write::write_all(&mut file, b"pending\n").map_err(|error| io_error(&path, error))?;
+    file.sync_all().map_err(|error| io_error(&path, error))?;
+    Ok(())
+}
+
+pub fn clear_save_pending(directory: &Path) -> Result<(), PackageError> {
+    let path = directory.join("save.pending");
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|error| io_error(&path, error))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn save_pending(directory: &Path) -> bool {
+    directory.join("save.pending").exists()
+}
+
+fn sync_dir(directory: &Path) -> Result<(), PackageError> {
+    let dir = std::fs::File::open(directory).map_err(|error| io_error(directory, error))?;
+    dir.sync_all().map_err(|error| io_error(directory, error))?;
+    Ok(())
+}
+
+/// Loads the newest readable commit, then replays the contiguous journal suffix.
+pub fn recover(directory: &Path) -> Result<Project, PackageError> {
+    let records = read_log(directory)?;
+    let pending = save_pending(directory);
+    let tip = autosave_tip(directory);
+    if let Some(id) = tip {
+        let Some((project, seq)) = first_readable_commit(directory, id)? else {
+            return Err(PackageError::new("no readable commit"));
+        };
+        return replay_suffix(project, seq, &records);
+    }
+    if pending {
+        return Err(PackageError::new(
+            "worktree save is unfinished and there is no commit",
+        ));
+    }
+    let project = read_package(directory)?;
+    replay_suffix(project, 0, &records)
 }
 
 pub(crate) fn render(project: &Project) -> PackageText {
+    PackageText {
+        project_json: render_project_only(project),
+        tracks: project
+            .tracks()
+            .iter()
+            .map(|track| (format!("{}.json", track.id), render_track(track)))
+            .collect(),
+        contents: project
+            .contents()
+            .iter()
+            .map(|content| (format!("{}.json", content.id), render_content(content)))
+            .collect(),
+    }
+}
+
+fn render_project_only(project: &Project) -> String {
     let meter = project.meter();
     let mut project_json = String::from("{\n");
     push_field(&mut project_json, "schema", &to_json(&SCHEMA));
@@ -167,70 +216,161 @@ pub(crate) fn render(project: &Project) -> PackageText {
         }),
     );
     project_json.push_str("  ],\n  \"contents\":[\n");
-    let mut contents = Vec::with_capacity(project.contents().len());
-    let mut content_ids = Vec::with_capacity(project.contents().len());
-    for content in project.contents() {
-        let id = content.id.to_string();
-        contents.push((format!("{id}.json"), render_content(content)));
-        content_ids.push(to_json(&id));
-    }
-    push_json_lines(&mut project_json, "    ", content_ids.into_iter());
+    push_json_lines(
+        &mut project_json,
+        "    ",
+        project
+            .contents()
+            .iter()
+            .map(|content| to_json(&content.id.to_string())),
+    );
     project_json.push_str("  ],\n  \"tracks\":[\n");
-    let mut tracks = Vec::with_capacity(project.tracks().len());
-    let mut track_ids = Vec::with_capacity(project.tracks().len());
-    for track in project.tracks() {
-        let id = track.id.to_string();
-        tracks.push((format!("{id}.json"), render_track(track)));
-        track_ids.push(to_json(&id));
-    }
-    push_json_lines(&mut project_json, "    ", track_ids.into_iter());
+    push_json_lines(
+        &mut project_json,
+        "    ",
+        project
+            .tracks()
+            .iter()
+            .map(|track| to_json(&track.id.to_string())),
+    );
     project_json.push_str("  ]\n}\n");
-    PackageText {
-        project_json,
-        tracks,
-        contents,
-    }
+    project_json
 }
 
 pub(crate) fn write_files(directory: &Path, package: &PackageText) -> Result<(), PackageError> {
     fs::create_dir_all(directory.join("tracks")).map_err(|error| io_error(directory, error))?;
     fs::create_dir_all(directory.join("contents")).map_err(|error| io_error(directory, error))?;
-    let project_path = directory.join("project.json");
-    fs::write(&project_path, &package.project_json)
-        .map_err(|error| io_error(&project_path, error))?;
+    write_atomic(&directory.join("project.json"), &package.project_json)?;
     let mut keep = HashSet::with_capacity(package.tracks.len());
     for (filename, json) in &package.tracks {
         let path = directory.join("tracks").join(filename);
-        fs::write(&path, json).map_err(|error| io_error(&path, error))?;
+        write_atomic(&path, json)?;
         keep.insert(filename.clone());
     }
-    let tracks_dir = directory.join("tracks");
-    let entries = fs::read_dir(&tracks_dir).map_err(|error| io_error(&tracks_dir, error))?;
+    delete_unlisted(&directory.join("tracks"), &keep)?;
+    let mut keep_contents = HashSet::with_capacity(package.contents.len());
+    for (filename, json) in &package.contents {
+        let path = directory.join("contents").join(filename);
+        write_atomic(&path, json)?;
+        keep_contents.insert(filename.clone());
+    }
+    delete_unlisted(&directory.join("contents"), &keep_contents)?;
+    Ok(())
+}
+
+/// Writes changed tracks and contents. `project.json` is written when its text
+/// differs from `previous_project_json`.
+///
+/// Each written file is replaced by renaming a temporary file. `sweep` removes
+/// JSON files the project no longer lists. Later saves pass the ids that left
+/// the cache and skip the directory scan.
+pub(crate) fn write_incremental(
+    directory: &Path,
+    project: &Project,
+    plan: &FilePlan<'_>,
+) -> Result<IncrementalText, PackageError> {
+    fs::create_dir_all(directory.join("tracks")).map_err(|error| io_error(directory, error))?;
+    fs::create_dir_all(directory.join("contents")).map_err(|error| io_error(directory, error))?;
+    let project_json = render_project_only(project);
+    if plan.previous_project_json != Some(project_json.as_str()) {
+        write_atomic(&directory.join("project.json"), &project_json)?;
+    }
+    let mut tracks = Vec::new();
+    let mut keep = HashSet::new();
+    for track in project.tracks() {
+        let id = track.id.to_string();
+        let filename = format!("{id}.json");
+        if plan.sweep {
+            keep.insert(filename.clone());
+        }
+        if plan.unchanged_tracks.contains(&id) {
+            continue;
+        }
+        let json = render_track(track);
+        write_atomic(&directory.join("tracks").join(&filename), &json)?;
+        tracks.push((filename, json));
+    }
+    if plan.sweep {
+        delete_unlisted(&directory.join("tracks"), &keep)?;
+    } else {
+        remove_named(directory, "tracks", plan.removed_tracks)?;
+    }
+    let mut contents = Vec::new();
+    let mut keep_contents = HashSet::new();
+    for content in project.contents() {
+        let id = content.id.to_string();
+        let filename = format!("{id}.json");
+        if plan.sweep {
+            keep_contents.insert(filename.clone());
+        }
+        if plan.unchanged_contents.contains(&id) {
+            continue;
+        }
+        let json = render_content(content);
+        write_atomic(&directory.join("contents").join(&filename), &json)?;
+        contents.push((filename, json));
+    }
+    if plan.sweep {
+        delete_unlisted(&directory.join("contents"), &keep_contents)?;
+    } else {
+        remove_named(directory, "contents", plan.removed_contents)?;
+    }
+    Ok(IncrementalText {
+        project_json,
+        tracks,
+        contents,
+    })
+}
+
+pub(crate) struct FilePlan<'a> {
+    pub unchanged_tracks: &'a HashSet<String>,
+    pub unchanged_contents: &'a HashSet<String>,
+    pub previous_project_json: Option<&'a str>,
+    pub removed_tracks: &'a [String],
+    pub removed_contents: &'a [String],
+    pub sweep: bool,
+}
+
+pub(crate) struct IncrementalText {
+    pub project_json: String,
+    pub tracks: Vec<(String, String)>,
+    pub contents: Vec<(String, String)>,
+}
+
+fn remove_named(directory: &Path, folder: &str, ids: &[String]) -> Result<(), PackageError> {
+    for id in ids {
+        let path = directory.join(folder).join(format!("{id}.json"));
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(&path, error)),
+        }
+    }
+    Ok(())
+}
+
+fn write_atomic(path: &Path, bytes: &str) -> Result<(), PackageError> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let temporary = path.with_file_name(format!("{name}.tmp"));
+    fs::write(&temporary, bytes).map_err(|error| io_error(&temporary, error))?;
+    fs::rename(&temporary, path).map_err(|error| io_error(path, error))?;
+    Ok(())
+}
+
+fn delete_unlisted(directory: &Path, keep: &HashSet<String>) -> Result<(), PackageError> {
+    if !directory.exists() {
+        return Ok(());
+    }
+    let entries = fs::read_dir(directory).map_err(|error| io_error(directory, error))?;
     for entry in entries {
-        let entry = entry.map_err(|error| io_error(&tracks_dir, error))?;
+        let entry = entry.map_err(|error| io_error(directory, error))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if name.ends_with(".json") && !keep.contains(name.as_ref()) {
             fs::remove_file(entry.path()).map_err(|error| io_error(&entry.path(), error))?;
-        }
-    }
-    let mut keep_contents = HashSet::with_capacity(package.contents.len());
-    for (filename, json) in &package.contents {
-        let path = directory.join("contents").join(filename);
-        fs::write(&path, json).map_err(|error| io_error(&path, error))?;
-        keep_contents.insert(filename.clone());
-    }
-    let contents_dir = directory.join("contents");
-    if contents_dir.exists() {
-        let entries =
-            fs::read_dir(&contents_dir).map_err(|error| io_error(&contents_dir, error))?;
-        for entry in entries {
-            let entry = entry.map_err(|error| io_error(&contents_dir, error))?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.ends_with(".json") && !keep_contents.contains(name.as_ref()) {
-                fs::remove_file(entry.path()).map_err(|error| io_error(&entry.path(), error))?;
-            }
         }
     }
     Ok(())
@@ -333,6 +473,7 @@ pub(crate) fn commit_tree(
     content_blobs: &[(String, ObjectId)],
     track_blobs: &[(String, ObjectId)],
     parents: &[ObjectId],
+    journal_seq: u64,
 ) -> Result<ObjectId, PackageError> {
     let mut track_entries = Vec::with_capacity(track_blobs.len());
     for (filename, blob) in track_blobs {
@@ -402,12 +543,44 @@ pub(crate) fn commit_tree(
             author.to_ref(&mut committer_time),
             author.to_ref(&mut author_time),
             AUTOSAVE_REF,
-            "autosave",
+            commit_message(journal_seq),
             root,
             parents.iter().copied(),
         )
         .map_err(|error| PackageError::new(error.to_string()))?;
-    Ok(commit.detach())
+    let id = commit.detach();
+    remember_commit(repo, parents.first().copied(), id)?;
+    Ok(id)
+}
+
+fn remember_commit(
+    repo: &Repository,
+    parent: Option<ObjectId>,
+    id: ObjectId,
+) -> Result<(), PackageError> {
+    let path = repo.git_dir().join("echode-commit-chain");
+    let parent = parent
+        .map(|parent| parent.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| io_error(&path, error))?;
+    std::io::Write::write_all(&mut file, format!("{id} {parent}\n").as_bytes())
+        .map_err(|error| io_error(&path, error))?;
+    file.sync_all().map_err(|error| io_error(&path, error))?;
+    Ok(())
+}
+
+pub(crate) fn commit_parent(directory: &Path, id: ObjectId) -> Option<ObjectId> {
+    let path = directory.join(".git").join("echode-commit-chain");
+    let text = std::fs::read_to_string(path).ok()?;
+    let id = id.to_string();
+    text.lines().rev().find_map(|line| {
+        let (commit, parent) = line.split_once(' ')?;
+        (commit == id && parent != "-").then(|| ObjectId::from_hex(parent.as_bytes()).ok())?
+    })
 }
 
 fn render_track(track: &Track) -> String {
@@ -871,53 +1044,122 @@ fn parse_id(text: &str) -> Result<Id, PackageError> {
     Id::parse(text).ok_or_else(|| PackageError::new(format!("invalid id {text}")))
 }
 
-struct StoredJournal {
-    base: JournalBase,
-    groups: Vec<JournalEntry>,
+fn commit_message(journal_seq: u64) -> String {
+    format!("autosave\n\nEchode-Journal: {journal_seq}\n")
 }
 
-fn read_journal(directory: &Path) -> Result<Option<StoredJournal>, PackageError> {
+pub(crate) fn journal_seq_of(message: &str) -> u64 {
+    message
+        .lines()
+        .find_map(|line| line.strip_prefix("Echode-Journal:"))
+        .and_then(|rest| rest.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+pub(crate) fn next_journal_seq(directory: &Path) -> Result<u64, PackageError> {
+    let disk = read_log(directory)?
+        .into_iter()
+        .map(|line| line.seq)
+        .max()
+        .unwrap_or(0);
+    Ok(disk.max(tip_journal_seq(directory)).saturating_add(1))
+}
+
+fn tip_journal_seq(directory: &Path) -> u64 {
+    let Some(id) = autosave_tip(directory) else {
+        return 0;
+    };
+    let Ok(repo) = gix::open(directory) else {
+        return 0;
+    };
+    let Ok(commit) = repo.find_commit(id) else {
+        return 0;
+    };
+    let Ok(message) = commit.message_raw() else {
+        return 0;
+    };
+    journal_seq_of(&String::from_utf8_lossy(message))
+}
+
+fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, PackageError> {
     let path = directory.join("journal.jsonl");
     if !path.exists() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let text = read_to_string(&path)?;
-    if text.is_empty() {
-        return Ok(None);
+    let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+    let mut text =
+        String::from_utf8(bytes).map_err(|error| PackageError::new(error.to_string()))?;
+    if !text.is_empty() && !text.ends_with('\n') {
+        match text.rfind('\n') {
+            Some(index) => text.truncate(index + 1),
+            None => return Ok(Vec::new()),
+        }
     }
-    let mut lines = text.lines();
-    let header = lines
-        .next()
-        .ok_or_else(|| PackageError::new("journal is missing its base"))?;
-    let base_line: BaseLine = serde_json::from_str(header)
-        .map_err(|error| PackageError::new(format!("journal base: {error}")))?;
-    let base = match base_line.base.as_str() {
-        "files" => JournalBase::Files,
-        hex => JournalBase::Commit(
-            ObjectId::from_hex(hex.as_bytes())
-                .map_err(|error| PackageError::new(format!("journal base: {error}")))?,
-        ),
-    };
-    let mut body = String::new();
-    for line in lines {
-        body.push_str(line);
-        body.push('\n');
+    let mut records = Vec::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        records.push(
+            echode_actions::decode_line(line)
+                .map_err(|error| PackageError::new(error.to_string()))?,
+        );
     }
-    let groups = if body.is_empty() {
-        Vec::new()
-    } else {
-        decode(&body).map_err(|error| PackageError::new(error.to_string()))?
-    };
-    Ok(Some(StoredJournal { base, groups }))
+    Ok(records)
 }
 
-fn replay_on(project: &Project, groups: &[JournalEntry]) -> Result<Project, PackageError> {
-    replay(project, groups).map_err(|error| PackageError::new(error.to_string()))
+fn replay_suffix(
+    project: Project,
+    base_seq: u64,
+    records: &[echode_actions::JournalLine],
+) -> Result<Project, PackageError> {
+    let mut suffix: Vec<_> = records.iter().filter(|line| line.seq > base_seq).collect();
+    suffix.sort_by_key(|line| line.seq);
+    let mut expected = base_seq.saturating_add(1);
+    for line in &suffix {
+        if line.seq != expected {
+            return Ok(project);
+        }
+        expected = expected.saturating_add(1);
+    }
+    let mut project = project;
+    for line in suffix {
+        let changes = match line.op {
+            echode_actions::JournalOp::Undo => line.changes.invert(),
+            echode_actions::JournalOp::Edit | echode_actions::JournalOp::Redo => {
+                line.changes.clone()
+            }
+        };
+        project = project
+            .apply_changeset(&changes)
+            .map_err(|error| PackageError::new(error.to_string()))?;
+    }
+    Ok(project)
 }
 
-fn read_commit_at(directory: &Path, revision: ObjectId) -> Result<Project, PackageError> {
+fn first_readable_commit(
+    directory: &Path,
+    tip: ObjectId,
+) -> Result<Option<(Project, u64)>, PackageError> {
     let repo = gix::open(directory).map_err(|error| PackageError::new(error.to_string()))?;
-    read_commit(&repo, revision)
+    let mut cursor = Some(tip);
+    while let Some(id) = cursor {
+        let chained = commit_parent(directory, id);
+        let loaded = repo.find_commit(id).ok().and_then(|commit| {
+            let message = commit
+                .message_raw()
+                .map(|message| String::from_utf8_lossy(message).into_owned())
+                .unwrap_or_default();
+            read_commit(&repo, id)
+                .ok()
+                .map(|project| (project, journal_seq_of(&message)))
+        });
+        if let Some(found) = loaded {
+            return Ok(Some(found));
+        }
+        cursor = chained;
+    }
+    Ok(None)
 }
 
 pub(crate) fn autosave_tip(directory: &Path) -> Option<ObjectId> {
@@ -1130,12 +1372,6 @@ struct ExpressionFile {
 struct ExpressionPointFile {
     at: i64,
     value: i32,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BaseLine {
-    base: String,
 }
 
 #[cfg(test)]

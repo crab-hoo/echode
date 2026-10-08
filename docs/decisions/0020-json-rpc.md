@@ -10,7 +10,7 @@ UI はクライアントの 1 つで、同じ操作を外からも呼べるよ�
 ## 決定
 
 - プロトコルは JSON-RPC 2.0。1 行に 1 件
-- メソッドは `actions.list`、`actions.perform`、`project.summary`
+- メソッドは `actions.list`、`actions.perform`、`actions.transaction`、`edit.undo`、`edit.redo`、`project.summary`、`protocol.version` である。複数の操作、未採番の ID への参照、Undo と Redo、プロトコルの版は [ADR 0034](0034-api-transaction.md)
 - `actions.perform` のパラメータは、登録簿の ID を `type` に使う。ジャーナルの `type` も同じ ID である（[ADR 0030](0030-action-catalog.md)）。作られた ID は結果に入る
 - モデルが拒否した編集は、プロジェクトを変えずにエラー `-32000` で返す
 - `echode serve PACKAGE SOCKET` がソケットを開く。権限は本人の読み書きだけ（`0600`）にする。接続は 1 本ずつ扱い、後の接続は前の編集が見える

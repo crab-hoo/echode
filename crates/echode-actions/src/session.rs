@@ -113,7 +113,7 @@ impl Session {
         }
     }
 
-    pub fn undo(&mut self) -> Result<(), ActionError> {
+    pub fn undo(&mut self) -> Result<ChangeSet, ActionError> {
         let Some(previous) = self.undo.pop() else {
             return Err(ActionError::NothingToUndo);
         };
@@ -121,13 +121,14 @@ impl Session {
             self.undo.push(previous);
             return Err(ActionError::NothingToUndo);
         };
+        let changes = group.changes.clone().unwrap_or_default();
         self.redo
             .push(std::mem::replace(&mut self.current, previous));
         self.journal_redo.push(group);
-        Ok(())
+        Ok(changes)
     }
 
-    pub fn redo(&mut self) -> Result<(), ActionError> {
+    pub fn redo(&mut self) -> Result<ChangeSet, ActionError> {
         let Some(next) = self.redo.pop() else {
             return Err(ActionError::NothingToRedo);
         };
@@ -135,9 +136,10 @@ impl Session {
             self.redo.push(next);
             return Err(ActionError::NothingToRedo);
         };
+        let changes = group.changes.clone().unwrap_or_default();
         self.undo.push(std::mem::replace(&mut self.current, next));
         self.journal.push(group);
-        Ok(())
+        Ok(changes)
     }
 }
 

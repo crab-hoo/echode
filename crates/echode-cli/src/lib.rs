@@ -103,9 +103,8 @@ where
     if args.next().is_some() {
         return Err(usage());
     }
-    let project = read_package(Path::new(package.as_ref()))
-        .map_err(|error| CliError::new(error.to_string()))?;
-    serve(project, Path::new(socket.as_ref())).map_err(|error| CliError::new(error.to_string()))
+    serve(Path::new(package.as_ref()), Path::new(socket.as_ref()))
+        .map_err(|error| CliError::new(error.to_string()))
 }
 
 /// Reads a package and writes a stereo IEEE-float WAV.

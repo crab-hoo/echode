@@ -431,6 +431,7 @@ name = "echode-api"
 version = "0.0.0"
 dependencies = [
  "echode-actions",
+ "echode-history",
  "echode-model",
  "serde",
  "serde_json",

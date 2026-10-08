@@ -36,7 +36,7 @@ fn audit_his2_a_torn_journal_falls_back_to_the_last_commit() {
     {
         let autosave = Autosave::create(&directory).unwrap();
         autosave
-            .save(Arc::new(project.clone()))
+            .save(Arc::new(project.clone()), 0)
             .unwrap()
             .wait()
             .unwrap();
@@ -48,7 +48,6 @@ fn audit_his2_a_torn_journal_falls_back_to_the_last_commit() {
 }
 
 #[test]
-#[ignore = "HIS-3: every autosave rewrites every track file"]
 fn audit_his3_saving_one_edited_track_rewrites_only_its_file() {
     let directory = scratch();
     let mut project = Project::new();
@@ -58,9 +57,11 @@ fn audit_his3_saving_one_edited_track_rewrites_only_its_file() {
         project = next;
         tracks.push(id);
     }
+    let (project, _) = project.insert_note(tracks[0], eighth(0)).unwrap();
+    let kept_content = project.contents()[0].id;
     let autosave = Autosave::create(&directory).unwrap();
     autosave
-        .save(Arc::new(project.clone()))
+        .save(Arc::new(project.clone()), 0)
         .unwrap()
         .wait()
         .unwrap();
@@ -70,18 +71,44 @@ fn audit_his3_saving_one_edited_track_rewrites_only_its_file() {
             .modified()
             .unwrap()
     };
+    let content_time = std::fs::metadata(
+        directory
+            .join("contents")
+            .join(format!("{kept_content}.json")),
+    )
+    .unwrap()
+    .modified()
+    .unwrap();
+    let project_time = std::fs::metadata(directory.join("project.json"))
+        .unwrap()
+        .modified()
+        .unwrap();
     let before: Vec<_> = tracks.iter().map(|id| modified(*id)).collect();
     std::thread::sleep(Duration::from_millis(20));
     let (edited, _) = project.insert_note(tracks[1], eighth(0)).unwrap();
-    autosave.save(Arc::new(edited)).unwrap().wait().unwrap();
+    autosave.save(Arc::new(edited), 0).unwrap().wait().unwrap();
     let rewritten: Vec<bool> = tracks
         .iter()
         .zip(&before)
         .map(|(id, time)| modified(*id) != *time)
         .collect();
+    let content_after = std::fs::metadata(
+        directory
+            .join("contents")
+            .join(format!("{kept_content}.json")),
+    )
+    .unwrap()
+    .modified()
+    .unwrap();
+    let project_after = std::fs::metadata(directory.join("project.json"))
+        .unwrap()
+        .modified()
+        .unwrap();
     drop(autosave);
     let _ = std::fs::remove_dir_all(&directory);
     assert_eq!(rewritten, vec![false, true, false]);
+    assert_eq!(content_after, content_time);
+    assert_ne!(project_after, project_time);
 }
 
 #[test]

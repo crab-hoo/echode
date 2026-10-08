@@ -312,8 +312,8 @@ proptest! {
         for step in &steps {
             let before = session.project().clone();
             let result = match step {
-                Step::Undo => session.undo(),
-                Step::Redo => session.redo(),
+                Step::Undo => session.undo().map(|_| ()),
+                Step::Redo => session.redo().map(|_| ()),
                 other => match command(session.project(), other) {
                     Some(command) => session.perform(command).map(|_| ()),
                     None => Ok(()),

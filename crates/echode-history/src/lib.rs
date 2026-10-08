@@ -8,6 +8,7 @@
 mod autosave;
 mod document;
 mod format;
+mod host;
 mod objects;
 mod project;
 mod store;
@@ -16,6 +17,8 @@ pub mod spike;
 
 pub use autosave::{Autosave, PendingAutosave};
 pub use document::{
-    AUTOSAVE_REF, JournalBase, PackageError, read_package, recover, write_journal, write_package,
+    AUTOSAVE_REF, PackageError, append_journal, compact_journal, mark_save_pending, read_package,
+    recover, write_package,
 };
 pub use gix::ObjectId;
+pub use host::{DocumentHost, HostError};

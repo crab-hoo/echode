@@ -580,3 +580,22 @@ impl std::error::Error for ActionError {
         }
     }
 }
+
+/// The sentence a client sees when a command does not deserialize.
+pub fn parameter_message(error: &serde_json::Error) -> String {
+    let message = error.to_string();
+    for sentence in [
+        "meter does not divide into ticks",
+        "tempo is outside the allowed range",
+    ] {
+        if message.contains(sentence) {
+            return sentence.to_string();
+        }
+    }
+    if let Some(start) = message.find("invalid id ") {
+        let rest = &message[start..];
+        let end = rest.find(" at line").unwrap_or(rest.len());
+        return rest[..end].to_string();
+    }
+    "parameters do not match an action".to_string()
+}
