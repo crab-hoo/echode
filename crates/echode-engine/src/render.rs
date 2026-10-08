@@ -5,7 +5,7 @@
 //! Scheduling and the synth do not allocate. Gathering the track slices for
 //! the mixer does, and this function is not called from the audio thread.
 
-use echode_model::{Id, Project, Tick};
+use echode_model::{Id, Project};
 
 use crate::clock::tick_to_sample;
 use crate::mix::{TrackFader, mix_tracks};
@@ -20,32 +20,51 @@ const BLOCK_FRAMES: u32 = 64;
 /// wavesynth 0.1.0 Sine Pad release, in milliseconds.
 const SINE_PAD_RELEASE_MS: u64 = 400;
 
+fn track_fader(track: &echode_model::Track) -> Result<TrackFader, PlaybackError> {
+    use echode_model::{DeviceKind, ParamKey};
+    let mixer = track
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Mixer)
+        .ok_or(PlaybackError::InvalidFader)?;
+    let value = |key| {
+        mixer
+            .value(key)
+            .filter(|value| key.allows(*value))
+            .ok_or(PlaybackError::InvalidFader)
+    };
+    Ok(TrackFader {
+        gain: value(ParamKey::Gain)?,
+        pan: value(ParamKey::Pan)?,
+        mute: value(ParamKey::Mute)? != 0.0,
+        solo: value(ParamKey::Solo)? != 0.0,
+    })
+}
+
 /// How many frames cover the score plus the Sine Pad release.
 pub fn render_span_frames(project: &Project, sample_rate: u32) -> Result<u32, PlaybackError> {
     if sample_rate == 0 {
         return Err(PlaybackError::InvalidSampleRate);
     }
     let mut end = 0i64;
+    let mut heard = false;
     for track in project.tracks() {
         for clip in &track.clips {
-            for note in &clip.notes {
-                let start = clip.absolute_start(note).ok_or(PlaybackError::Time)?;
-                let end_tick = start
-                    .get()
-                    .checked_add(note.length.get())
-                    .ok_or(PlaybackError::Time)?;
-                let sample = tick_to_sample(Tick::new(end_tick), project.tempo(), sample_rate)
-                    .ok_or(PlaybackError::Time)?;
+            let Some(content) = project.content(clip.content) else {
+                return Err(PlaybackError::Time);
+            };
+            for note in &content.notes {
+                let Some((_, off)) = clip.audible(note).map_err(|_| PlaybackError::Time)? else {
+                    continue;
+                };
+                let sample =
+                    tick_to_sample(off, project.tempo(), sample_rate).ok_or(PlaybackError::Time)?;
+                heard = true;
                 end = end.max(sample);
             }
         }
     }
-    if end == 0
-        && project
-            .tracks()
-            .iter()
-            .all(|track| track.clips.iter().all(|clip| clip.notes.is_empty()))
-    {
+    if !heard {
         return Ok(0);
     }
     let release = u64::from(sample_rate) * SINE_PAD_RELEASE_MS / 1_000;
@@ -118,7 +137,18 @@ pub fn render_offline_blocks<E>(
     let tracks = project.tracks();
     let note_counts: Vec<usize> = tracks
         .iter()
-        .map(|track| track.clips.iter().map(|clip| clip.notes.len()).sum())
+        .map(|track| {
+            track
+                .clips
+                .iter()
+                .map(|clip| {
+                    project
+                        .content(clip.content)
+                        .map(|content| content.notes.len())
+                        .unwrap_or(0)
+                })
+                .sum()
+        })
         .collect();
     let mut voices = Vec::with_capacity(tracks.len());
     for count in &note_counts {
@@ -144,7 +174,11 @@ pub fn render_offline_blocks<E>(
     let mut right = vec![0.0; BLOCK_FRAMES as usize];
     let mut interleaved_block = vec![0.0; BLOCK_FRAMES as usize * 2];
     let mut peaks = vec![0.0; tracks.len()];
-    let faders = vec![TrackFader::unity(); tracks.len()];
+    let faders = tracks
+        .iter()
+        .map(|track| track_fader(track))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(OfflineError::Playback)?;
     let mut spans = [PlayedSpan {
         start_sample: 0,
         frames: 0,
@@ -162,7 +196,7 @@ pub fn render_offline_blocks<E>(
                 .pull(block, &mut spans)
                 .map_err(OfflineError::Playback)?;
             let event_count = schedule(
-                tracks,
+                project,
                 project.tempo(),
                 sample_rate,
                 &spans[..span_count],
@@ -244,6 +278,21 @@ mod tests {
         })
         .unwrap();
         assert_eq!(once, streamed);
+    }
+
+    #[test]
+    fn a_silent_fader_renders_silence() {
+        let project = noted();
+        let gain = project.tracks()[0].devices[0]
+            .parameters
+            .iter()
+            .find(|parameter| parameter.key == echode_model::ParamKey::Gain)
+            .unwrap()
+            .id;
+        let project = project.set_parameter(gain, 0.0).unwrap();
+        let mut samples = vec![0.0; 256];
+        render_offline(&project, 48_000, 128, &mut samples).unwrap();
+        assert!(samples.iter().all(|sample| *sample == 0.0));
     }
 
     #[test]

@@ -8,6 +8,7 @@ publish = false
 description = "Plain-text project files with background git history"
 
 [dependencies]
+blake3 = "=1.8.7"
 echode-actions = { path = "../echode-actions" }
 echode-model = { path = "../echode-model" }
 gix = { workspace = true }
@@ -16,6 +17,7 @@ serde_json = "1"
 
 [dev-dependencies]
 gix = { workspace = true }
+insta = "=1.49.0"
 proptest = "1.11"
 
 [lints]

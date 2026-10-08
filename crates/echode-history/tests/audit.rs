@@ -103,7 +103,6 @@ fn audit_his8_a_track_entry_must_be_an_id_before_it_becomes_a_path() {
 }
 
 #[test]
-#[ignore = "MOD-4: growing an auto clip rewrites the position of every note in it"]
 fn audit_mod4_growing_an_auto_clip_keeps_the_other_note_lines() {
     let directory = scratch();
     let (mut project, track) = Project::new().add_track("piano");
@@ -111,7 +110,8 @@ fn audit_mod4_growing_an_auto_clip_keeps_the_other_note_lines() {
         project = project.insert_note(track, eighth(index)).unwrap().0;
     }
     write_package(&directory, &project).unwrap();
-    let path = directory.join("tracks").join(format!("{track}.json"));
+    let content = project.contents()[0].id;
+    let path = directory.join("contents").join(format!("{content}.json"));
     let before = std::fs::read_to_string(&path).unwrap();
     let project = project.insert_note(track, eighth(7)).unwrap().0;
     write_package(&directory, &project).unwrap();

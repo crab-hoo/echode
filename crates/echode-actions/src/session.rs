@@ -4,17 +4,28 @@
 //! fixed depth: memory is the only limit. Unchanged tracks stay shared through
 //! the `Arc` inside `Project`.
 
-use echode_model::Project;
+use echode_model::{ChangeSet, Project};
 
 use crate::action::{Action, ActionError, Command};
+use crate::journal::JournalEntry;
 
 /// Applies a journal to a saved project. This is the crash-recovery path.
-pub fn replay(base: &Project, journal: &[Vec<Action>]) -> Result<Project, ActionError> {
+///
+/// A line with a changeset is applied as written. A line without one is an
+/// older journal, and its commands run through the model again.
+pub fn replay(base: &Project, journal: &[JournalEntry]) -> Result<Project, ActionError> {
     let mut project = base.clone();
-    for group in journal {
-        for action in group {
-            project = action.apply(&project)?;
-        }
+    for entry in journal {
+        project = match &entry.changes {
+            Some(changes) => project.apply_changeset(changes)?,
+            None => {
+                let mut project = project;
+                for action in &entry.actions {
+                    project = action.apply(&project)?.0;
+                }
+                project
+            }
+        };
     }
     Ok(project)
 }
@@ -26,8 +37,8 @@ pub struct Session {
     current: Project,
     undo: Vec<Project>,
     redo: Vec<Project>,
-    journal: Vec<Vec<Action>>,
-    journal_redo: Vec<Vec<Action>>,
+    journal: Vec<JournalEntry>,
+    journal_redo: Vec<JournalEntry>,
 }
 
 impl Session {
@@ -45,18 +56,21 @@ impl Session {
         &self.current
     }
 
-    /// Actions that rebuild [`Self::project`] from the project passed to [`Self::open`].
-    pub fn journal(&self) -> &[Vec<Action>] {
+    /// Edits that rebuild [`Self::project`] from the project passed to [`Self::open`].
+    pub fn journal(&self) -> &[JournalEntry] {
         &self.journal
     }
 
     pub fn perform(&mut self, command: Command) -> Result<Action, ActionError> {
         let action = Action::from_command(command);
-        let next = action.apply(&self.current)?;
+        let (next, changes) = action.apply(&self.current)?;
         self.undo.push(std::mem::replace(&mut self.current, next));
         self.redo.clear();
         self.journal_redo.clear();
-        self.journal.push(vec![action.clone()]);
+        self.journal.push(JournalEntry {
+            actions: vec![action.clone()],
+            changes: Some(changes),
+        });
         Ok(action)
     }
 
@@ -70,17 +84,22 @@ impl Session {
         let redo = self.redo.clone();
         let journal_redo = self.journal_redo.clone();
         let mut actions = Vec::new();
+        let mut changes = ChangeSet::new();
         let result = {
             let mut transaction = Transaction {
                 session: self,
                 actions: &mut actions,
+                changes: &mut changes,
             };
             body(&mut transaction)
         };
         match result {
             Ok(value) => {
                 if !actions.is_empty() {
-                    self.journal.push(actions);
+                    self.journal.push(JournalEntry {
+                        actions,
+                        changes: Some(changes),
+                    });
                 }
                 Ok(value)
             }
@@ -126,18 +145,20 @@ impl Session {
 pub struct Transaction<'a> {
     session: &'a mut Session,
     actions: &'a mut Vec<Action>,
+    changes: &'a mut ChangeSet,
 }
 
 impl Transaction<'_> {
     pub fn perform(&mut self, command: Command) -> Result<Action, ActionError> {
         let action = Action::from_command(command);
-        let next = action.apply(&self.session.current)?;
+        let (next, changes) = action.apply(&self.session.current)?;
         if self.actions.is_empty() {
             self.session.undo.push(self.session.current.clone());
             self.session.redo.clear();
             self.session.journal_redo.clear();
         }
         self.session.current = next;
+        self.changes.append(changes);
         self.actions.push(action.clone());
         Ok(action)
     }
@@ -182,7 +203,7 @@ mod tests {
                 draft: quarter(0),
             })
             .unwrap();
-        assert_eq!(session.project().tracks()[0].clips[0].notes.len(), 1);
+        assert_eq!(session.project().contents()[0].notes.len(), 1);
 
         session.undo().unwrap();
         assert!(session.project().tracks()[0].clips.is_empty());
@@ -192,7 +213,7 @@ mod tests {
 
         session.redo().unwrap();
         session.redo().unwrap();
-        assert_eq!(session.project().tracks()[0].clips[0].notes.len(), 1);
+        assert_eq!(session.project().contents()[0].notes.len(), 1);
         assert_eq!(
             replay(&base, session.journal()).unwrap(),
             *session.project()
@@ -242,7 +263,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(session.journal().len(), 1);
-        assert_eq!(session.project().tracks()[0].clips[0].notes.len(), 2);
+        assert_eq!(session.project().contents()[0].notes.len(), 2);
 
         session.undo().unwrap();
         assert!(session.project().tracks().is_empty());
@@ -422,6 +443,78 @@ mod tests {
             ActionError::Model(ModelError::Cycle)
         );
         assert_eq!(session.project().parent(kick).unwrap(), Some(folder));
+    }
+
+    #[test]
+    fn recovery_applies_the_changeset_and_leaves_the_command_alone() {
+        let base = Project::new();
+        let mut session = Session::open(base.clone());
+        let Action::AddTrack { id, .. } = session
+            .perform(Command::AddTrack {
+                name: "piano".into(),
+            })
+            .unwrap()
+        else {
+            panic!("add track");
+        };
+        let mut entry = session.journal()[0].clone();
+        let Action::AddTrack {
+            device,
+            gain,
+            pan,
+            mute,
+            solo,
+            ..
+        } = session.journal()[0].actions[0].clone()
+        else {
+            panic!("add track");
+        };
+        entry.actions = vec![Action::AddTrack {
+            id,
+            name: "renamed by a later rule".into(),
+            device,
+            gain,
+            pan,
+            mute,
+            solo,
+        }];
+        let restored = replay(&base, &[entry]).unwrap();
+        assert_eq!(restored.tracks()[0].name, "piano");
+    }
+
+    #[test]
+    fn the_fader_undoes_without_moving_the_other_mixer_values() {
+        let mut session = Session::open(Project::new());
+        let Action::AddTrack {
+            gain,
+            pan,
+            mute,
+            solo,
+            ..
+        } = session
+            .perform(Command::AddTrack {
+                name: "piano".into(),
+            })
+            .unwrap()
+        else {
+            panic!("add track");
+        };
+        let pan_bits = session.project().parameter(pan).unwrap().value.to_bits();
+        session
+            .perform(Command::SetParameter {
+                parameter: gain,
+                value: 0.0,
+            })
+            .unwrap();
+        assert_eq!(session.project().parameter(gain).unwrap().value, 0.0);
+        assert_eq!(
+            session.project().parameter(pan).unwrap().value.to_bits(),
+            pan_bits
+        );
+        assert_eq!(session.project().parameter(mute).unwrap().value, 0.0);
+        assert_eq!(session.project().parameter(solo).unwrap().value, 0.0);
+        session.undo().unwrap();
+        assert_eq!(session.project().parameter(gain).unwrap().value, 1.0);
     }
 
     #[test]

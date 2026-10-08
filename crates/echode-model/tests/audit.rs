@@ -33,7 +33,6 @@ fn assert_children_follow_their_parent(project: &Project) {
 }
 
 #[test]
-#[ignore = "MOD-3: set_parent leaves a child above its new parent"]
 fn audit_mod3_children_follow_their_parent() {
     let (project, a) = Project::new().add_track("A");
     let (project, b) = project.add_track("B");

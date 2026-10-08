@@ -4,9 +4,7 @@
 //! the caller; their lengths are scratch for this block, not a limit on how
 //! many notes a project may contain.
 
-use std::sync::Arc;
-
-use echode_model::{Meter, TICKS_PER_QUARTER, TempoMap, Tick, Track};
+use echode_model::{Meter, Project, TICKS_PER_QUARTER, TempoMap, Tick, Track};
 
 use crate::clock::{sample_to_tick, tick_to_sample};
 use crate::transport::{PlaybackError, PlayedSpan};
@@ -35,7 +33,7 @@ pub enum MidiKind {
 /// sounding when the playhead jumped. The buffer is unspecified if this returns
 /// an error.
 pub fn schedule(
-    tracks: &[Arc<Track>],
+    project: &Project,
     tempo: &TempoMap,
     sample_rate: u32,
     spans: &[PlayedSpan],
@@ -47,20 +45,21 @@ pub fn schedule(
             .start_sample
             .checked_add(i64::from(span.frames))
             .ok_or(PlaybackError::Time)?;
-        for track in tracks {
+        for track in project.tracks() {
             for clip in &track.clips {
-                for note in &clip.notes {
-                    let Some(start_tick) = clip.absolute_start(note) else {
-                        return Err(PlaybackError::Time);
+                let Some(content) = project.content(clip.content) else {
+                    return Err(PlaybackError::Time);
+                };
+                for note in &content.notes {
+                    let Some((on_tick, off_tick)) =
+                        clip.audible(note).map_err(|_| PlaybackError::Time)?
+                    else {
+                        continue;
                     };
-                    let end_tick = start_tick
-                        .get()
-                        .checked_add(note.length.get())
-                        .ok_or(PlaybackError::Time)?;
-                    let on_sample = tick_to_sample(start_tick, tempo, sample_rate)
-                        .ok_or(PlaybackError::Time)?;
-                    let off_sample = tick_to_sample(Tick::new(end_tick), tempo, sample_rate)
-                        .ok_or(PlaybackError::Time)?;
+                    let on_sample =
+                        tick_to_sample(on_tick, tempo, sample_rate).ok_or(PlaybackError::Time)?;
+                    let off_sample =
+                        tick_to_sample(off_tick, tempo, sample_rate).ok_or(PlaybackError::Time)?;
                     if (span.start_sample..end).contains(&on_sample) {
                         push(
                             out,
@@ -124,7 +123,7 @@ fn event(
         note: note.id,
         pitch: note.pitch,
         velocity: if kind == MidiKind::On {
-            note.velocity
+            echode_model::velocity_to_midi7(note.velocity)
         } else {
             0
         },
@@ -215,28 +214,47 @@ fn click_sample(downbeat: bool, sample_in_click: u32, sample_rate: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use echode_model::{Clip, ClipKind, Id, Note, Project, Tempo, Tick};
+    use echode_model::{
+        ClipKind, Content, DEFAULT_FADE_FLICKS, Id, Lane, Note, Placement, Project, Tempo, Tick,
+        Track,
+    };
 
     fn project() -> Project {
         Project::try_assemble(
             Meter::four_four(),
             TempoMap::new(Tempo::quarters_per_minute(120).unwrap()),
+            vec![Content {
+                id: Id::from_raw(4),
+                audio: None,
+                takes: Vec::new(),
+                expressions: Vec::new(),
+                notes: vec![Note {
+                    id: Id::from_raw(3),
+                    start: Tick::new(0),
+                    length: Tick::quarters(1).unwrap(),
+                    pitch: 60,
+                    velocity: echode_model::midi7_to_velocity(100),
+                    release: 0,
+                    articulation: None,
+                }],
+            }],
             vec![Track {
                 id: Id::from_raw(1),
                 name: "piano".into(),
                 parent: None,
-                clips: vec![Clip {
+                order: echode_model::initial_order(),
+                devices: vec![echode_model::test_mixer(1)],
+                clips: vec![Placement {
                     id: Id::from_raw(2),
+                    content: Id::from_raw(4),
+                    lane: Lane::Timeline,
                     start: Tick::new(0),
                     length: Tick::quarters(4).unwrap(),
+                    offset: Tick::new(0),
                     kind: ClipKind::Fixed,
-                    notes: vec![Note {
-                        id: Id::from_raw(3),
-                        start: Tick::new(0),
-                        length: Tick::quarters(1).unwrap(),
-                        pitch: 60,
-                        velocity: 100,
-                    }],
+                    gain: 1.0,
+                    fade_in: DEFAULT_FADE_FLICKS,
+                    fade_out: DEFAULT_FADE_FLICKS,
                 }],
             }],
         )
@@ -264,28 +282,14 @@ mod tests {
             velocity: 0,
             kind: MidiKind::Off,
         }; 4];
-        let count = schedule(
-            project.tracks(),
-            &tempo,
-            48_000,
-            &[span(0, 64)],
-            &mut events,
-        )
-        .unwrap();
+        let count = schedule(&project, &tempo, 48_000, &[span(0, 64)], &mut events).unwrap();
         assert_eq!(count, 1);
         assert_eq!(events[0].kind, MidiKind::On);
         assert_eq!(events[0].sample_offset, 0);
         assert_eq!(events[0].pitch, 60);
         assert_eq!(events[0].velocity, 100);
 
-        let count = schedule(
-            project.tracks(),
-            &tempo,
-            48_000,
-            &[span(24_000, 64)],
-            &mut events,
-        )
-        .unwrap();
+        let count = schedule(&project, &tempo, 48_000, &[span(24_000, 64)], &mut events).unwrap();
         assert_eq!(count, 1);
         assert_eq!(events[0].kind, MidiKind::Off);
         assert_eq!(events[0].sample_offset, 0);
@@ -313,7 +317,7 @@ mod tests {
             velocity: 0,
             kind: MidiKind::Off,
         }; 8];
-        let count = schedule(project.tracks(), &tempo, 48_000, &spans, &mut events).unwrap();
+        let count = schedule(&project, &tempo, 48_000, &spans, &mut events).unwrap();
         assert_eq!(count, 3);
         assert_eq!(events[0].kind, MidiKind::On);
         assert_eq!(events[0].sample_offset, 0);

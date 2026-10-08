@@ -43,6 +43,28 @@ enum Step {
         start: i64,
         length: i64,
     },
+    LinkClip {
+        source_track: usize,
+        source_clip: usize,
+        dest: usize,
+        start: i64,
+    },
+    SetClipGain {
+        track: usize,
+        clip: usize,
+        gain: f32,
+    },
+    SetClipFades {
+        track: usize,
+        clip: usize,
+        fade_in: i64,
+        fade_out: i64,
+    },
+    SetParameter {
+        track: usize,
+        parameter: usize,
+        value: f32,
+    },
     SetTempo {
         at: i64,
         bpm: u32,
@@ -79,6 +101,38 @@ fn step() -> impl Strategy<Value = Step> {
                 length,
             }
         ),
+        1 => (any::<usize>(), any::<usize>(), any::<usize>(), -16i64..96).prop_map(
+            |(source_track, source_clip, dest, start)| Step::LinkClip {
+                source_track,
+                source_clip,
+                dest,
+                start,
+            }
+        ),
+        1 => (any::<usize>(), any::<usize>(), prop_oneof![Just(0.0f32), Just(1.0), Just(0.25), Just(-1.0)])
+            .prop_map(|(track, clip, gain)| Step::SetClipGain { track, clip, gain }),
+        1 => (
+            any::<usize>(),
+            any::<usize>(),
+            prop_oneof![Just(0i64), Just(3_528_000), Just(-1), Just(fade_past_u32())],
+            prop_oneof![Just(0i64), Just(3_528_000), Just(-1), Just(fade_past_u32())],
+        )
+            .prop_map(|(track, clip, fade_in, fade_out)| Step::SetClipFades {
+                track,
+                clip,
+                fade_in,
+                fade_out,
+            }),
+        1 => (
+            any::<usize>(),
+            any::<usize>(),
+            prop_oneof![Just(0.0f32), Just(1.0), Just(4.0), Just(-1.0)],
+        )
+            .prop_map(|(track, parameter, value)| Step::SetParameter {
+                track,
+                parameter,
+                value,
+            }),
         1 => (0i64..32, 40u32..=240).prop_map(|(at, bpm)| Step::SetTempo { at, bpm }),
         1 => (1u32..=7, prop_oneof![Just(2u32), Just(4), Just(8)])
             .prop_map(|(numerator, denominator)| Step::SetMeter { numerator, denominator }),
@@ -134,7 +188,8 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
             let notes: Vec<Id> = owner
                 .clips
                 .iter()
-                .flat_map(|clip| clip.notes.iter().map(|note| note.id))
+                .filter_map(|clip| project.content(clip.content))
+                .flat_map(|content| content.notes.iter().map(|note| note.id))
                 .collect();
             Command::DeleteNote {
                 track: id,
@@ -157,6 +212,69 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 length: Tick::new(length * EIGHTH),
             }
         }
+        Step::LinkClip {
+            source_track,
+            source_clip,
+            dest,
+            start,
+        } => {
+            let source_track = track(*source_track)?;
+            let owner = project
+                .tracks()
+                .iter()
+                .find(|track| track.id == source_track)?;
+            let clips: Vec<Id> = owner.clips.iter().map(|clip| clip.id).collect();
+            Command::LinkClip {
+                source: pick(&clips, *source_clip)?,
+                track: track(*dest)?,
+                start: Tick::new(start * EIGHTH),
+            }
+        }
+        Step::SetClipGain {
+            track: index,
+            clip,
+            gain,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let clips: Vec<Id> = owner.clips.iter().map(|clip| clip.id).collect();
+            Command::SetClipGain {
+                clip: pick(&clips, *clip)?,
+                gain: *gain,
+            }
+        }
+        Step::SetClipFades {
+            track: index,
+            clip,
+            fade_in,
+            fade_out,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let clips: Vec<Id> = owner.clips.iter().map(|clip| clip.id).collect();
+            Command::SetClipFades {
+                clip: pick(&clips, *clip)?,
+                fade_in: *fade_in,
+                fade_out: *fade_out,
+            }
+        }
+        Step::SetParameter {
+            track: index,
+            parameter,
+            value,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let parameters: Vec<Id> = owner
+                .devices
+                .iter()
+                .flat_map(|device| device.parameters.iter().map(|parameter| parameter.id))
+                .collect();
+            Command::SetParameter {
+                parameter: pick(&parameters, *parameter)?,
+                value: *value,
+            }
+        }
         Step::SetTempo { at, bpm } => Command::SetTempo {
             at: Tick::quarters(*at).unwrap(),
             tempo: Tempo::quarters_per_minute(*bpm).unwrap(),
@@ -169,6 +287,13 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
         },
         Step::Undo | Step::Redo => return None,
     })
+}
+
+fn fade_past_u32() -> i64 {
+    let rate = i128::from(768_000);
+    let frames = i128::from(u32::MAX) + 1;
+    let numer = frames * 705_600_000;
+    i64::try_from((numer + rate - 1) / rate).unwrap()
 }
 
 fn scratch() -> PathBuf {
@@ -195,7 +320,15 @@ proptest! {
                 },
             };
             match result {
-                Ok(()) => {}
+                Ok(()) => {
+                    if !matches!(step, Step::Undo | Step::Redo) {
+                        let changes = before.diff(session.project());
+                        let forward = before.apply_changeset(&changes).unwrap();
+                        let backward = session.project().apply_changeset(&changes.invert()).unwrap();
+                        prop_assert_eq!(&forward, session.project(), "changeset for {:?}", step);
+                        prop_assert_eq!(&backward, &before, "inverse changeset for {:?}", step);
+                    }
+                }
                 Err(ActionError::Model(_) | ActionError::NothingToUndo | ActionError::NothingToRedo) => {
                     prop_assert_eq!(session.project(), &before, "a refused {:?} changed the project", step);
                 }

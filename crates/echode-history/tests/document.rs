@@ -6,7 +6,11 @@ use echode_actions::{Action, Command, Session};
 use echode_history::{
     AUTOSAVE_REF, Autosave, JournalBase, read_package, recover, write_journal, write_package,
 };
-use echode_model::{NoteDraft, Project, TICKS_PER_QUARTER, Tick};
+use echode_model::{
+    ClipKind, Content, DEFAULT_FADE_FLICKS, Device, Id, Lane, Meter, MixerIds, Note, NoteDraft,
+    Placement, Project, TICKS_PER_QUARTER, Tempo, TempoMap, Tick, Track, initial_order,
+    midi7_to_velocity,
+};
 
 fn scratch() -> std::path::PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -71,7 +75,37 @@ fn a_package_roundtrips_and_keeps_its_bytes() {
     )
     .unwrap();
     assert_eq!(before, after);
-    assert!(std::str::from_utf8(&before).unwrap().contains("pi\\\"ano"));
+    let track_text = std::str::from_utf8(&before).unwrap();
+    assert!(track_text.contains("pi\\\"ano"));
+    assert!(track_text.contains("\"content\":"));
+    assert!(track_text.contains("\"lane\":\"timeline\""));
+    let content_id = project.contents()[0].id;
+    assert!(
+        directory
+            .join("contents")
+            .join(format!("{content_id}.json"))
+            .is_file()
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_fade_past_the_frame_limit_is_rejected_on_load() {
+    let directory = scratch();
+    let project = with_note("piano");
+    write_package(&directory, &project).unwrap();
+    let path = directory
+        .join("tracks")
+        .join(format!("{}.json", project.tracks()[0].id));
+    let rate = i128::from(768_000);
+    let frames = i128::from(u32::MAX) + 1;
+    let too_wide = i64::try_from((frames * 705_600_000 + rate - 1) / rate).unwrap();
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("\"fade_in\":3528000", &format!("\"fade_in\":{too_wide}"));
+    std::fs::write(&path, text).unwrap();
+    let error = read_package(&directory).unwrap_err();
+    assert!(error.to_string().contains("fade"), "{error}");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -122,6 +156,101 @@ fn the_journal_replays_onto_the_package_until_autosave_catches_up() {
     assert_eq!(parents, vec![first]);
     assert!(repo.find_reference(AUTOSAVE_REF).is_ok());
     let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_fader_at_zero_roundtrips_through_the_package() {
+    let mut session = Session::open(Project::new());
+    let Action::AddTrack { gain, .. } = session
+        .perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap()
+    else {
+        panic!("add track");
+    };
+    session
+        .perform(Command::SetParameter {
+            parameter: gain,
+            value: 0.0,
+        })
+        .unwrap();
+    let directory = scratch();
+    write_package(&directory, session.project()).unwrap();
+    let loaded = read_package(&directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert_eq!(loaded.parameter(gain).unwrap().value, 0.0);
+    assert_eq!(&loaded, session.project());
+}
+
+#[test]
+fn a_note_reserves_release_articulation_and_expressions() {
+    let directory = scratch();
+    let project = with_note("piano");
+    write_package(&directory, &project).unwrap();
+    let path = directory
+        .join("contents")
+        .join(format!("{}.json", project.contents()[0].id));
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"release\":0"));
+    assert!(text.contains("\"articulation\":null"));
+    assert!(text.contains("\"expressions\":[]"));
+    assert!(text.contains("\"velocity\":51603"));
+    let with_expression = text.replace(
+        "\"expressions\":[]",
+        "\"expressions\":[{\"note\":\"00000000-0000-0000-0000-000000000001\",\"kind\":\"pitch\",\"points\":[{\"at\":0,\"value\":0}]}]",
+    );
+    std::fs::write(&path, with_expression).unwrap();
+    let error = read_package(&directory).unwrap_err();
+    assert!(error.to_string().contains("expressions"), "{error}");
+    let with_articulation = text.replace(
+        "\"articulation\":null",
+        "\"articulation\":\"00000000-0000-0000-0000-000000000001\"",
+    );
+    std::fs::write(&path, with_articulation).unwrap();
+    let error = read_package(&directory).unwrap_err();
+    assert!(error.to_string().contains("articulation"), "{error}");
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_device_state_is_null_until_plugins_can_hold_one() {
+    let directory = scratch();
+    let project = with_note("piano");
+    write_package(&directory, &project).unwrap();
+    let path = directory
+        .join("tracks")
+        .join(format!("{}.json", project.tracks()[0].id));
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"state\":null"), "{text}");
+    assert_eq!(read_package(&directory).unwrap(), project);
+    std::fs::write(&path, text.replace("\"state\":null", "\"state\":\"abc\"")).unwrap();
+    let error = read_package(&directory).unwrap_err().to_string();
+    assert!(error.contains("64"), "{error}");
+    let hash = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
+    std::fs::write(
+        &path,
+        text.replace("\"state\":null", &format!("\"state\":\"{hash}\"")),
+    )
+    .unwrap();
+    let error = read_package(&directory).unwrap_err().to_string();
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(
+        error.contains("plugin state is not accepted yet"),
+        "{error}"
+    );
+    assert!(error.contains(hash), "{error}");
+}
+
+#[test]
+fn the_package_repo_ignores_the_object_store() {
+    let directory = scratch();
+    let autosave = Autosave::create(&directory).unwrap();
+    let text = std::fs::read_to_string(directory.join(".gitignore")).unwrap();
+    drop(autosave);
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(text.contains("/media/objects/\n"), "{text}");
+    assert!(text.contains("/cache/\n"), "{text}");
 }
 
 #[test]
@@ -197,6 +326,123 @@ fn a_reused_track_address_does_not_restore_an_older_commit() {
             .unwrap();
         assert_eq!(autosave.load(commit).unwrap(), *session.project());
         drop(autosave);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+}
+
+fn schema_1_project() -> Project {
+    let content_id = Id::from_raw(1);
+    let note_id = Id::from_raw(2);
+    let track_id = Id::from_raw(3);
+    let clip_id = Id::from_raw(4);
+    let tempo = Tempo::quarters_per_minute(120).unwrap();
+    Project::try_assemble(
+        Meter::four_four(),
+        TempoMap::new(tempo),
+        vec![Content {
+            id: content_id,
+            audio: None,
+            takes: Vec::new(),
+            notes: vec![Note {
+                id: note_id,
+                start: Tick::new(0),
+                length: Tick::new(TICKS_PER_QUARTER),
+                pitch: 60,
+                velocity: midi7_to_velocity(100),
+                release: 0,
+                articulation: None,
+            }],
+            expressions: Vec::new(),
+        }],
+        vec![Track {
+            id: track_id,
+            name: "piano".into(),
+            parent: None,
+            order: initial_order(),
+            devices: vec![Device::unity(MixerIds::from_base(0x10))],
+            clips: vec![Placement {
+                id: clip_id,
+                content: content_id,
+                lane: Lane::Timeline,
+                start: Tick::new(0),
+                length: Tick::new(TICKS_PER_QUARTER),
+                offset: Tick::new(0),
+                kind: ClipKind::Fixed,
+                gain: 1.0,
+                fade_in: DEFAULT_FADE_FLICKS,
+                fade_out: DEFAULT_FADE_FLICKS,
+            }],
+        }],
+    )
+    .unwrap()
+}
+
+#[test]
+fn the_schema_1_fixture_loads_as_the_current_model() {
+    let fixture =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schema-1");
+    let loaded = read_package(&fixture).unwrap();
+    assert_eq!(loaded, schema_1_project());
+}
+
+#[test]
+fn the_package_text_matches_the_snapshot() {
+    let directory = scratch();
+    let project = schema_1_project();
+    write_package(&directory, &project).unwrap();
+    let project_json = std::fs::read_to_string(directory.join("project.json")).unwrap();
+    let track_json = std::fs::read_to_string(
+        directory
+            .join("tracks")
+            .join(format!("{}.json", project.tracks()[0].id)),
+    )
+    .unwrap();
+    let content_json = std::fs::read_to_string(
+        directory
+            .join("contents")
+            .join(format!("{}.json", project.contents()[0].id)),
+    )
+    .unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    insta::assert_snapshot!("project_json", project_json);
+    insta::assert_snapshot!("track_json", track_json);
+    insta::assert_snapshot!("content_json", content_json);
+}
+
+#[test]
+fn a_schema_other_than_the_current_one_is_rejected() {
+    let project = schema_1_project();
+    let files = ["project", "track", "content"];
+    for kind in files {
+        let directory = scratch();
+        write_package(&directory, &project).unwrap();
+        let path = match kind {
+            "project" => directory.join("project.json"),
+            "track" => directory
+                .join("tracks")
+                .join(format!("{}.json", project.tracks()[0].id)),
+            "content" => directory
+                .join("contents")
+                .join(format!("{}.json", project.contents()[0].id)),
+            _ => unreachable!(),
+        };
+        let original = std::fs::read_to_string(&path).unwrap();
+        for schema in ["2", "0", "1.0"] {
+            let text = original.replacen("\"schema\":1", &format!("\"schema\":{schema}"), 1);
+            std::fs::write(&path, &text).unwrap();
+            let error = read_package(&directory).unwrap_err().to_string();
+            assert!(
+                error.contains("schema") && error.contains(kind),
+                "{kind} {schema}: {error}"
+            );
+        }
+        let missing = original.replacen("\"schema\":1,", "", 1);
+        std::fs::write(&path, missing).unwrap();
+        let error = read_package(&directory).unwrap_err().to_string();
+        assert!(
+            error.contains("missing") && error.contains(kind),
+            "{kind}: {error}"
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 }

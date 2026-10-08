@@ -8,6 +8,7 @@
 mod autosave;
 mod document;
 mod format;
+mod objects;
 mod project;
 mod store;
 

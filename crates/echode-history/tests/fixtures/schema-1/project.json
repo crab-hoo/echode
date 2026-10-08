@@ -1,0 +1,13 @@
+{
+  "schema":1,
+  "meter":{"numerator":4,"denominator":4},
+  "tempo":[
+    {"at":0,"numerator":120,"denominator":1}
+  ],
+  "contents":[
+    "00000000-0000-0000-0000-000000000001"
+  ],
+  "tracks":[
+    "00000000-0000-0000-0000-000000000003"
+  ]
+}

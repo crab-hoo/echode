@@ -1,22 +1,25 @@
 //! Product package: `project.json`, one file per track, and `journal.jsonl`.
 //!
 //! The same project always produces the same bytes. Each note is one line.
-//! The journal's first line names the snapshot it applies to. Recovery replays
-//! it only when that snapshot is still the latest autosave.
+//! A file older than the current schema is raised one version at a time on a
+//! JSON value, then parsed with unknown fields rejected. Schema 1 is current,
+//! so that list is empty (ADR 0028). The journal's first line names the
+//! snapshot it applies to. Recovery applies each later line's changeset, or
+//! replays its commands when the line has none, and only when that snapshot
+//! is still the latest autosave.
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use echode_actions::{Action, decode, encode, replay};
-use echode_model::{
-    Clip, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track,
-};
+use echode_actions::{JournalEntry, decode, encode, replay};
+use echode_model::{ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track};
 use gix::objs::Tree;
 use gix::objs::tree::{Entry, EntryKind};
 use gix::{ObjectId, Repository};
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 /// Autosave commits land here until a project has more than one alternate.
 pub const AUTOSAVE_REF: &str = "refs/echode/autosave/main";
@@ -55,6 +58,7 @@ impl std::error::Error for PackageError {}
 pub(crate) struct PackageText {
     pub project_json: String,
     pub tracks: Vec<(String, String)>,
+    pub contents: Vec<(String, String)>,
 }
 
 pub fn write_package(directory: &Path, project: &Project) -> Result<(), PackageError> {
@@ -66,27 +70,37 @@ pub fn read_package(directory: &Path) -> Result<Project, PackageError> {
     reject_symlink(&project_path)?;
     let project_json = read_to_string(&project_path)?;
     let header = parse_header(&project_json)?;
-    let tracks_dir = directory.join("tracks");
-    if !header.track_ids.is_empty() {
-        reject_symlink(&tracks_dir)?;
+    let contents = read_named_dir(directory, "contents", &header.content_ids)?;
+    let tracks = read_named_dir(directory, "tracks", &header.track_ids)?;
+    assemble(header, contents, tracks)
+}
+
+fn read_named_dir(
+    directory: &Path,
+    folder: &str,
+    ids: &[String],
+) -> Result<Vec<(String, String)>, PackageError> {
+    let dir = directory.join(folder);
+    if !ids.is_empty() {
+        reject_symlink(&dir)?;
     }
-    let mut tracks = Vec::with_capacity(header.track_ids.len());
-    for id in &header.track_ids {
-        // HIS-8: the id was checked in parse_header, so this name stays inside tracks/.
+    let mut files = Vec::with_capacity(ids.len());
+    for id in ids {
+        // HIS-8: the id was checked before this name is joined.
         let filename = format!("{id}.json");
-        let path = tracks_dir.join(&filename);
+        let path = dir.join(&filename);
         reject_symlink(&path)?;
         let json = read_to_string(&path)?;
-        tracks.push((filename, json));
+        files.push((filename, json));
     }
-    assemble(header, tracks)
+    Ok(files)
 }
 
 /// Replaces `journal.jsonl`. `groups` are the edits since `base`.
 pub fn write_journal(
     directory: &Path,
     base: JournalBase,
-    groups: &[Vec<Action>],
+    groups: &[JournalEntry],
 ) -> Result<(), PackageError> {
     let token = match &base {
         JournalBase::Files => "files".to_string(),
@@ -130,43 +144,57 @@ pub fn recover(directory: &Path) -> Result<Project, PackageError> {
 
 pub(crate) fn render(project: &Project) -> PackageText {
     let meter = project.meter();
-    let mut project_json = format!(
-        "{{\n  \"schema\": 1,\n  \"meter\": {{\"numerator\": {}, \"denominator\": {}}},\n  \"tempo\": [\n",
-        meter.numerator(),
-        meter.denominator()
+    let mut project_json = String::from("{\n");
+    push_field(&mut project_json, "schema", &to_json(&SCHEMA));
+    push_field(
+        &mut project_json,
+        "meter",
+        &to_json(&MeterLine {
+            numerator: meter.numerator(),
+            denominator: meter.denominator(),
+        }),
     );
-    let points = project.tempo().points();
-    for (index, point) in points.iter().enumerate() {
-        let comma = if index + 1 == points.len() { "" } else { "," };
-        let _ = writeln!(
-            project_json,
-            "    {{\"at\": {}, \"numerator\": {}, \"denominator\": {}}}{comma}",
-            point.at.get(),
-            point.tempo.numerator(),
-            point.tempo.denominator()
-        );
+    project_json.push_str("  \"tempo\":[\n");
+    push_json_lines(
+        &mut project_json,
+        "    ",
+        project.tempo().points().iter().map(|point| {
+            to_json(&TempoLine {
+                at: point.at.get(),
+                numerator: point.tempo.numerator(),
+                denominator: point.tempo.denominator(),
+            })
+        }),
+    );
+    project_json.push_str("  ],\n  \"contents\":[\n");
+    let mut contents = Vec::with_capacity(project.contents().len());
+    let mut content_ids = Vec::with_capacity(project.contents().len());
+    for content in project.contents() {
+        let id = content.id.to_string();
+        contents.push((format!("{id}.json"), render_content(content)));
+        content_ids.push(to_json(&id));
     }
-    project_json.push_str("  ],\n  \"tracks\": [\n");
+    push_json_lines(&mut project_json, "    ", content_ids.into_iter());
+    project_json.push_str("  ],\n  \"tracks\":[\n");
     let mut tracks = Vec::with_capacity(project.tracks().len());
-    for (index, track) in project.tracks().iter().enumerate() {
-        let comma = if index + 1 == project.tracks().len() {
-            ""
-        } else {
-            ","
-        };
+    let mut track_ids = Vec::with_capacity(project.tracks().len());
+    for track in project.tracks() {
         let id = track.id.to_string();
-        let _ = writeln!(project_json, "    \"{id}\"{comma}");
         tracks.push((format!("{id}.json"), render_track(track)));
+        track_ids.push(to_json(&id));
     }
+    push_json_lines(&mut project_json, "    ", track_ids.into_iter());
     project_json.push_str("  ]\n}\n");
     PackageText {
         project_json,
         tracks,
+        contents,
     }
 }
 
 pub(crate) fn write_files(directory: &Path, package: &PackageText) -> Result<(), PackageError> {
     fs::create_dir_all(directory.join("tracks")).map_err(|error| io_error(directory, error))?;
+    fs::create_dir_all(directory.join("contents")).map_err(|error| io_error(directory, error))?;
     let project_path = directory.join("project.json");
     fs::write(&project_path, &package.project_json)
         .map_err(|error| io_error(&project_path, error))?;
@@ -186,6 +214,25 @@ pub(crate) fn write_files(directory: &Path, package: &PackageText) -> Result<(),
             fs::remove_file(entry.path()).map_err(|error| io_error(&entry.path(), error))?;
         }
     }
+    let mut keep_contents = HashSet::with_capacity(package.contents.len());
+    for (filename, json) in &package.contents {
+        let path = directory.join("contents").join(filename);
+        fs::write(&path, json).map_err(|error| io_error(&path, error))?;
+        keep_contents.insert(filename.clone());
+    }
+    let contents_dir = directory.join("contents");
+    if contents_dir.exists() {
+        let entries =
+            fs::read_dir(&contents_dir).map_err(|error| io_error(&contents_dir, error))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| io_error(&contents_dir, error))?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".json") && !keep_contents.contains(name.as_ref()) {
+                fs::remove_file(entry.path()).map_err(|error| io_error(&entry.path(), error))?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -198,8 +245,9 @@ pub(crate) fn read_commit(repo: &Repository, revision: ObjectId) -> Result<Proje
         .map_err(|error| PackageError::new(error.to_string()))?;
     let project_json = blob_text(&root, "project.json")?;
     let header = parse_header(&project_json)?;
+    let contents = read_tree_files(&root, "contents", &header.content_ids)?;
     if header.track_ids.is_empty() {
-        return assemble(header, Vec::new());
+        return assemble(header, contents, Vec::new());
     }
     let tracks_entry = root
         .lookup_entry_by_path("tracks")
@@ -232,12 +280,57 @@ pub(crate) fn read_commit(repo: &Repository, revision: ObjectId) -> Result<Proje
             .ok_or_else(|| PackageError::new(format!("tracks/{filename} is missing")))?;
         tracks.push((filename, json));
     }
-    assemble(header, tracks)
+    assemble(header, contents, tracks)
+}
+
+fn read_tree_files(
+    root: &gix::Tree<'_>,
+    folder: &str,
+    ids: &[String],
+) -> Result<Vec<(String, String)>, PackageError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let entry = root
+        .lookup_entry_by_path(folder)
+        .map_err(|error| PackageError::new(error.to_string()))?
+        .ok_or_else(|| {
+            PackageError::new(format!("{folder} directory is missing from the revision"))
+        })?;
+    let tree = entry
+        .object()
+        .map_err(|error| PackageError::new(error.to_string()))?
+        .try_into_tree()
+        .map_err(|error| PackageError::new(format!("{error:?}")))?;
+    let mut by_name = std::collections::HashMap::with_capacity(ids.len());
+    for entry in tree.iter() {
+        let entry = entry.map_err(|error| PackageError::new(error.to_string()))?;
+        let filename = entry.filename().to_string();
+        let blob = entry
+            .object()
+            .map_err(|error| PackageError::new(error.to_string()))?
+            .try_into_blob()
+            .map_err(|error| PackageError::new(format!("{error:?}")))?;
+        let json = std::str::from_utf8(&blob.data)
+            .map_err(|error| PackageError::new(error.to_string()))?
+            .to_string();
+        by_name.insert(filename, json);
+    }
+    let mut files = Vec::with_capacity(ids.len());
+    for id in ids {
+        let filename = format!("{id}.json");
+        let json = by_name
+            .remove(&filename)
+            .ok_or_else(|| PackageError::new(format!("{folder}/{filename} is missing")))?;
+        files.push((filename, json));
+    }
+    Ok(files)
 }
 
 pub(crate) fn commit_tree(
     repo: &Repository,
     project_blob: ObjectId,
+    content_blobs: &[(String, ObjectId)],
     track_blobs: &[(String, ObjectId)],
     parents: &[ObjectId],
 ) -> Result<ObjectId, PackageError> {
@@ -255,6 +348,28 @@ pub(crate) fn commit_tree(
         filename: gix::bstr::BString::from("project.json"),
         oid: project_blob,
     }];
+    if !content_blobs.is_empty() {
+        let mut content_entries = Vec::with_capacity(content_blobs.len());
+        for (filename, blob) in content_blobs {
+            content_entries.push(Entry {
+                mode: EntryKind::Blob.into(),
+                filename: gix::bstr::BString::from(filename.clone()),
+                oid: *blob,
+            });
+        }
+        content_entries.sort();
+        let contents_tree = repo
+            .write_object(Tree {
+                entries: content_entries,
+            })
+            .map_err(|error| PackageError::new(error.to_string()))?
+            .detach();
+        root_entries.push(Entry {
+            mode: EntryKind::Tree.into(),
+            filename: gix::bstr::BString::from("contents"),
+            oid: contents_tree,
+        });
+    }
     if !track_entries.is_empty() {
         let tracks_tree = repo
             .write_object(Tree {
@@ -296,83 +411,245 @@ pub(crate) fn commit_tree(
 }
 
 fn render_track(track: &Track) -> String {
-    let parent = match track.parent {
-        Some(id) => format!("\"{id}\""),
-        None => "null".to_string(),
-    };
-    let mut out = format!(
-        "{{\n  \"schema\": 1,\n  \"id\": \"{}\",\n  \"name\": {},\n  \"parent\": {parent},\n  \"clips\": [\n",
-        track.id,
-        json_string(&track.name)
+    let mut out = String::from("{\n");
+    push_field(&mut out, "schema", &to_json(&SCHEMA));
+    push_field(&mut out, "id", &to_json(&track.id.to_string()));
+    push_field(&mut out, "name", &to_json(&track.name));
+    push_field(
+        &mut out,
+        "parent",
+        &to_json(&track.parent.map(|id| id.to_string())),
     );
-    for (clip_index, clip) in track.clips.iter().enumerate() {
-        let comma = if clip_index + 1 == track.clips.len() {
+    push_field(&mut out, "order", &to_json(&track.order));
+    out.push_str("  \"devices\":[\n");
+    for (index, device) in track.devices.iter().enumerate() {
+        let comma = if index + 1 == track.devices.len() {
             ""
         } else {
             ","
         };
-        let kind = match clip.kind {
-            ClipKind::Auto => "auto",
-            ClipKind::Fixed => "fixed",
-        };
-        let _ = write!(
+        let _ = writeln!(
             out,
-            "    {{\n      \"id\": \"{}\",\n      \"start\": {},\n      \"length\": {},\n      \"kind\": \"{kind}\",\n      \"notes\": [\n",
-            clip.id,
-            clip.start.get(),
-            clip.length.get()
+            "    {{\"id\":{},\"kind\":{},\"state\":{},\"parameters\":[",
+            to_json(&device.id.to_string()),
+            to_json(device.kind.as_str()),
+            to_json(&None::<String>)
         );
-        for (note_index, note) in clip.notes.iter().enumerate() {
-            let note_comma = if note_index + 1 == clip.notes.len() {
-                ""
-            } else {
-                ","
-            };
-            let _ = writeln!(
-                out,
-                "        {{\"id\": \"{}\", \"start\": {}, \"length\": {}, \"pitch\": {}, \"velocity\": {}}}{note_comma}",
-                note.id,
-                note.start.get(),
-                note.length.get(),
-                note.pitch,
-                note.velocity
-            );
-        }
-        let _ = writeln!(out, "      ]\n    }}{comma}");
+        push_json_lines(
+            &mut out,
+            "      ",
+            device.parameters.iter().map(|parameter| {
+                to_json(&ParameterLine {
+                    id: parameter.id.to_string(),
+                    key: parameter.key.as_str(),
+                    min: parameter.min,
+                    max: parameter.max,
+                    default: parameter.default,
+                    value: parameter.value,
+                })
+            }),
+        );
+        let _ = writeln!(out, "    ]}}{comma}");
     }
+    out.push_str("  ],\n  \"clips\":[\n");
+    push_json_lines(
+        &mut out,
+        "    ",
+        track.clips.iter().map(|clip| {
+            let kind = match clip.kind {
+                ClipKind::Auto => "auto",
+                ClipKind::Fixed => "fixed",
+            };
+            to_json(&PlacementLine {
+                id: clip.id.to_string(),
+                content: clip.content.to_string(),
+                lane: "timeline",
+                start: clip.start.get(),
+                length: clip.length.get(),
+                offset: clip.offset.get(),
+                kind,
+                gain: clip.gain,
+                fade_in: clip.fade_in,
+                fade_out: clip.fade_out,
+            })
+        }),
+    );
     out.push_str("  ]\n}\n");
     out
 }
 
-fn json_string(text: &str) -> String {
-    let mut out = String::from("\"");
-    for ch in text.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            other if other.is_control() => {
-                let _ = write!(out, "\\u{:04x}", u32::from(other));
-            }
-            other => out.push(other),
-        }
-    }
-    out.push('"');
+fn render_content(content: &echode_model::Content) -> String {
+    let takes: Vec<String> = content.takes.iter().map(|id| id.to_string()).collect();
+    let mut out = String::from("{\n");
+    push_field(&mut out, "schema", &to_json(&SCHEMA));
+    push_field(&mut out, "id", &to_json(&content.id.to_string()));
+    push_field(
+        &mut out,
+        "audio",
+        &to_json(&content.audio.map(|id| id.to_string())),
+    );
+    push_field(&mut out, "takes", &to_json(&takes));
+    out.push_str("  \"notes\":[\n");
+    push_json_lines(
+        &mut out,
+        "    ",
+        content.notes.iter().map(|note| {
+            to_json(&NoteLine {
+                id: note.id.to_string(),
+                start: note.start.get(),
+                length: note.length.get(),
+                pitch: note.pitch,
+                velocity: note.velocity,
+                release: note.release,
+                articulation: note.articulation.map(|id| id.to_string()),
+            })
+        }),
+    );
+    out.push_str("  ],\n  \"expressions\":");
+    out.push_str(&to_json(&Vec::<serde_json::Value>::new()));
+    out.push_str("\n}\n");
     out
+}
+
+fn format_gain(gain: f32) -> String {
+    if gain == 0.0 {
+        return "0".to_string();
+    }
+    if gain == 1.0 {
+        return "1".to_string();
+    }
+    let mut text = format!("{gain:.9}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    text
+}
+
+/// Current package schema. Older numbers are raised by [`SCHEMA_STEPS`].
+const SCHEMA: u32 = 1;
+
+/// Raises one schema number. Index 0 raises schema 1 to schema 2.
+type SchemaStep = fn(&mut serde_json::Value) -> Result<(), String>;
+
+/// Empty while schema 1 is current. A later schema keeps the schema-1 fixture
+/// and appends one function here.
+const SCHEMA_STEPS: &[SchemaStep] = &[];
+
+fn push_field(out: &mut String, key: &str, value: &str) {
+    out.push_str("  \"");
+    out.push_str(key);
+    out.push_str("\":");
+    out.push_str(value);
+    out.push_str(",\n");
+}
+
+fn push_json_lines(out: &mut String, indent: &str, values: impl Iterator<Item = String>) {
+    let values: Vec<String> = values.collect();
+    for (index, value) in values.iter().enumerate() {
+        out.push_str(indent);
+        out.push_str(value);
+        if index + 1 != values.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+}
+
+fn to_json(value: &(impl Serialize + ?Sized)) -> String {
+    let mut buffer = Vec::new();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut buffer, PackageFormatter);
+    value
+        .serialize(&mut serializer)
+        .expect("package values are finite JSON");
+    String::from_utf8(buffer).expect("package JSON is UTF-8")
+}
+
+/// serde_json writes strings and structure. `f32` keeps the ADR 0022 spelling,
+/// so 0 stays `0` and 1 stays `1`.
+struct PackageFormatter;
+
+impl serde_json::ser::Formatter for PackageFormatter {
+    fn write_f32<W>(&mut self, writer: &mut W, value: f32) -> std::io::Result<()>
+    where
+        W: ?Sized + std::io::Write,
+    {
+        writer.write_all(format_gain(value).as_bytes())
+    }
+}
+
+fn migrate(mut value: serde_json::Value, kind: &str) -> Result<serde_json::Value, PackageError> {
+    let mut schema = schema_number(&value, kind)?;
+    if schema > SCHEMA {
+        return Err(PackageError::new(format!(
+            "unsupported {kind} schema {schema}"
+        )));
+    }
+    while schema < SCHEMA {
+        let index = schema
+            .checked_sub(1)
+            .ok_or_else(|| PackageError::new(format!("unsupported {kind} schema {schema}")))?;
+        let index = usize::try_from(index)
+            .map_err(|_| PackageError::new(format!("unsupported {kind} schema {schema}")))?;
+        let step = SCHEMA_STEPS
+            .get(index)
+            .copied()
+            .ok_or_else(|| PackageError::new(format!("unsupported {kind} schema {schema}")))?;
+        step(&mut value)
+            .map_err(|message| PackageError::new(format!("{kind} schema {schema}: {message}")))?;
+        schema += 1;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| PackageError::new(format!("{kind} json is not an object")))?;
+        object.insert("schema".to_owned(), serde_json::Value::from(schema));
+    }
+    Ok(value)
+}
+
+fn schema_number(value: &serde_json::Value, kind: &str) -> Result<u32, PackageError> {
+    let Some(object) = value.as_object() else {
+        return Err(PackageError::new(format!("{kind} json is not an object")));
+    };
+    let Some(schema) = object.get("schema") else {
+        return Err(PackageError::new(format!("{kind} schema is missing")));
+    };
+    let Some(number) = schema.as_number().filter(|number| number.is_u64()) else {
+        return Err(PackageError::new(format!(
+            "{kind} schema is not an integer"
+        )));
+    };
+    let Some(schema) = number.as_u64() else {
+        return Err(PackageError::new(format!(
+            "{kind} schema is not an integer"
+        )));
+    };
+    u32::try_from(schema)
+        .map_err(|_| PackageError::new(format!("unsupported {kind} schema {schema}")))
+}
+
+fn parse_schema<T: DeserializeOwned>(
+    json: &str,
+    file: &str,
+    kind: &str,
+) -> Result<T, PackageError> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|error| PackageError::new(format!("{file}: {error}")))?;
+    let value = migrate(value, kind)?;
+    serde_json::from_value(value).map_err(|error| PackageError::new(format!("{file}: {error}")))
 }
 
 struct Header {
     meter: Meter,
     tempo: TempoMap,
+    content_ids: Vec<String>,
     track_ids: Vec<String>,
 }
 
 fn parse_header(json: &str) -> Result<Header, PackageError> {
-    let file: ProjectFile = serde_json::from_str(json)
-        .map_err(|error| PackageError::new(format!("project.json: {error}")))?;
-    if file.schema != 1 {
+    let file: ProjectFile = parse_schema(json, "project.json", "project")?;
+    if file.schema != SCHEMA {
         return Err(PackageError::new(format!(
             "unsupported project schema {}",
             file.schema
@@ -394,16 +671,35 @@ fn parse_header(json: &str) -> Result<Header, PackageError> {
     Ok(Header {
         meter,
         tempo,
+        content_ids: canonical_track_ids(file.contents)?,
         track_ids: canonical_track_ids(file.tracks)?,
     })
 }
 
-fn assemble(header: Header, tracks: Vec<(String, String)>) -> Result<Project, PackageError> {
+fn assemble(
+    header: Header,
+    contents: Vec<(String, String)>,
+    tracks: Vec<(String, String)>,
+) -> Result<Project, PackageError> {
     let mut parsed = Vec::with_capacity(tracks.len());
     if tracks.len() != header.track_ids.len() {
         return Err(PackageError::new(
             "track list does not match the track files",
         ));
+    }
+    if contents.len() != header.content_ids.len() {
+        return Err(PackageError::new(
+            "content list does not match the content files",
+        ));
+    }
+    let mut parsed_contents = Vec::with_capacity(contents.len());
+    for (id, (filename, json)) in header.content_ids.iter().zip(contents) {
+        if filename != format!("{id}.json") {
+            return Err(PackageError::new(format!(
+                "contents/{filename} is out of order"
+            )));
+        }
+        parsed_contents.push(parse_content(&json, id)?);
     }
     for (id, (filename, json)) in header.track_ids.iter().zip(tracks) {
         if filename != format!("{id}.json") {
@@ -413,14 +709,13 @@ fn assemble(header: Header, tracks: Vec<(String, String)>) -> Result<Project, Pa
         }
         parsed.push(parse_track(&json, id)?);
     }
-    Project::try_assemble(header.meter, header.tempo, parsed)
+    Project::try_assemble(header.meter, header.tempo, parsed_contents, parsed)
         .map_err(|error| PackageError::new(error.to_string()))
 }
 
 fn parse_track(json: &str, expected_id: &str) -> Result<Track, PackageError> {
-    let file: TrackFile = serde_json::from_str(json)
-        .map_err(|error| PackageError::new(format!("track json: {error}")))?;
-    if file.schema != 1 {
+    let file: TrackFile = parse_schema(json, "track json", "track")?;
+    if file.schema != SCHEMA {
         return Err(PackageError::new(format!(
             "unsupported track schema {}",
             file.schema
@@ -439,6 +734,9 @@ fn parse_track(json: &str, expected_id: &str) -> Result<Track, PackageError> {
     };
     let mut clips = Vec::with_capacity(file.clips.len());
     for clip in file.clips {
+        if clip.lane != "timeline" {
+            return Err(PackageError::new(format!("unknown lane {}", clip.lane)));
+        }
         let kind = match clip.kind.as_str() {
             "auto" => ClipKind::Auto,
             "fixed" => ClipKind::Fixed,
@@ -446,29 +744,126 @@ fn parse_track(json: &str, expected_id: &str) -> Result<Track, PackageError> {
                 return Err(PackageError::new(format!("unknown clip kind {other}")));
             }
         };
-        let mut notes = Vec::with_capacity(clip.notes.len());
-        for note in clip.notes {
-            notes.push(Note {
-                id: parse_id(&note.id)?,
-                start: Tick::new(note.start),
-                length: Tick::new(note.length),
-                pitch: note.pitch,
-                velocity: note.velocity,
-            });
+        let gain = clip.gain;
+        if !gain.is_finite() || gain < 0.0 {
+            return Err(PackageError::new("gain must be finite and at least zero"));
         }
-        clips.push(Clip {
+        clips.push(echode_model::Placement {
             id: parse_id(&clip.id)?,
+            content: parse_id(&clip.content)?,
+            lane: echode_model::Lane::Timeline,
             start: Tick::new(clip.start),
             length: Tick::new(clip.length),
+            offset: Tick::new(clip.offset),
             kind,
-            notes,
+            gain,
+            fade_in: clip.fade_in,
+            fade_out: clip.fade_out,
         });
     }
     Ok(Track {
         id,
         name: file.name,
         parent,
+        order: file.order,
+        devices: file
+            .devices
+            .into_iter()
+            .map(|device| {
+                match device.state.as_deref() {
+                    None => {}
+                    Some(text) if crate::objects::is_content_hash(text) => {
+                        return Err(PackageError::new(format!(
+                            "plugin state is not accepted yet ({text})"
+                        )));
+                    }
+                    Some(_) => {
+                        return Err(PackageError::new(
+                            "state hash must be 64 lowercase hex digits",
+                        ));
+                    }
+                }
+                let kind = echode_model::DeviceKind::parse(&device.kind).ok_or_else(|| {
+                    PackageError::new(format!("unknown device kind {}", device.kind))
+                })?;
+                let mut parameters = Vec::with_capacity(device.parameters.len());
+                for parameter in device.parameters {
+                    let key = echode_model::ParamKey::parse(&parameter.key).ok_or_else(|| {
+                        PackageError::new(format!("unknown parameter {}", parameter.key))
+                    })?;
+                    parameters.push(echode_model::Parameter {
+                        id: parse_id(&parameter.id)?,
+                        key,
+                        min: parameter.min,
+                        max: parameter.max,
+                        default: parameter.default,
+                        value: parameter.value,
+                    });
+                }
+                Ok(echode_model::Device {
+                    id: parse_id(&device.id)?,
+                    kind,
+                    parameters,
+                })
+            })
+            .collect::<Result<Vec<_>, PackageError>>()?,
         clips,
+    })
+}
+
+fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content, PackageError> {
+    let file: ContentFile = parse_schema(json, "content json", "content")?;
+    if file.schema != SCHEMA {
+        return Err(PackageError::new(format!(
+            "unsupported content schema {}",
+            file.schema
+        )));
+    }
+    if file.id != expected_id {
+        return Err(PackageError::new(format!(
+            "content file {} does not contain that id",
+            file.id
+        )));
+    }
+    let mut notes = Vec::with_capacity(file.notes.len());
+    for note in file.notes {
+        if note.articulation.is_some() {
+            return Err(PackageError::new("articulation is not accepted yet"));
+        }
+        notes.push(Note {
+            id: parse_id(&note.id)?,
+            start: Tick::new(note.start),
+            length: Tick::new(note.length),
+            pitch: note.pitch,
+            velocity: note.velocity,
+            release: note.release,
+            articulation: None,
+        });
+    }
+    if let Some(expression) = file.expressions.first() {
+        return Err(PackageError::new(format!(
+            "expressions are not accepted yet ({} {} has {} points, first at {} value {})",
+            expression.note,
+            expression.kind,
+            expression.points.len(),
+            expression.points.first().map(|point| point.at).unwrap_or(0),
+            expression
+                .points
+                .first()
+                .map(|point| point.value)
+                .unwrap_or(0)
+        )));
+    }
+    let mut takes = Vec::with_capacity(file.takes.len());
+    for take in file.takes {
+        takes.push(parse_id(&take)?);
+    }
+    Ok(echode_model::Content {
+        id: parse_id(&file.id)?,
+        audio: file.audio.as_deref().map(parse_id).transpose()?,
+        takes,
+        notes,
+        expressions: Vec::new(),
     })
 }
 
@@ -478,7 +873,7 @@ fn parse_id(text: &str) -> Result<Id, PackageError> {
 
 struct StoredJournal {
     base: JournalBase,
-    groups: Vec<Vec<Action>>,
+    groups: Vec<JournalEntry>,
 }
 
 fn read_journal(directory: &Path) -> Result<Option<StoredJournal>, PackageError> {
@@ -516,7 +911,7 @@ fn read_journal(directory: &Path) -> Result<Option<StoredJournal>, PackageError>
     Ok(Some(StoredJournal { base, groups }))
 }
 
-fn replay_on(project: &Project, groups: &[Vec<Action>]) -> Result<Project, PackageError> {
+fn replay_on(project: &Project, groups: &[JournalEntry]) -> Result<Project, PackageError> {
     replay(project, groups).map_err(|error| PackageError::new(error.to_string()))
 }
 
@@ -577,12 +972,62 @@ fn io_error(path: &Path, error: std::io::Error) -> PackageError {
     PackageError::new(format!("{}: {error}", path.display()))
 }
 
+#[derive(Serialize)]
+struct MeterLine {
+    numerator: u32,
+    denominator: u32,
+}
+
+#[derive(Serialize)]
+struct TempoLine {
+    at: i64,
+    numerator: u32,
+    denominator: u32,
+}
+
+#[derive(Serialize)]
+struct ParameterLine<'a> {
+    id: String,
+    key: &'a str,
+    min: f32,
+    max: f32,
+    default: f32,
+    value: f32,
+}
+
+#[derive(Serialize)]
+struct PlacementLine<'a> {
+    id: String,
+    content: String,
+    lane: &'a str,
+    start: i64,
+    length: i64,
+    offset: i64,
+    kind: &'a str,
+    gain: f32,
+    fade_in: i64,
+    fade_out: i64,
+}
+
+#[derive(Serialize)]
+struct NoteLine {
+    id: String,
+    start: i64,
+    length: i64,
+    pitch: u8,
+    velocity: u16,
+    release: u16,
+    articulation: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectFile {
     schema: u32,
     meter: MeterFile,
     tempo: Vec<TempoFile>,
+    #[serde(default)]
+    contents: Vec<String>,
     tracks: Vec<String>,
 }
 
@@ -609,17 +1054,55 @@ struct TrackFile {
     name: String,
     #[serde(default)]
     parent: Option<String>,
+    order: String,
+    devices: Vec<DeviceFile>,
     clips: Vec<ClipFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeviceFile {
+    id: String,
+    kind: String,
+    state: Option<String>,
+    parameters: Vec<ParameterFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ParameterFile {
+    id: String,
+    key: String,
+    min: f32,
+    max: f32,
+    default: f32,
+    value: f32,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClipFile {
     id: String,
+    content: String,
+    lane: String,
     start: i64,
     length: i64,
+    offset: i64,
     kind: String,
+    gain: f32,
+    fade_in: i64,
+    fade_out: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContentFile {
+    schema: u32,
+    id: String,
+    audio: Option<String>,
+    takes: Vec<String>,
     notes: Vec<NoteFile>,
+    expressions: Vec<ExpressionFile>,
 }
 
 #[derive(Deserialize)]
@@ -629,11 +1112,56 @@ struct NoteFile {
     start: i64,
     length: i64,
     pitch: u8,
-    velocity: u8,
+    velocity: u16,
+    release: u16,
+    articulation: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpressionFile {
+    note: String,
+    kind: String,
+    points: Vec<ExpressionPointFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpressionPointFile {
+    at: i64,
+    value: i32,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BaseLine {
     base: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_gain, to_json};
+    use serde::Serialize;
+
+    #[test]
+    fn gain_keeps_the_short_spelling() {
+        assert_eq!(format_gain(0.0), "0");
+        assert_eq!(format_gain(-0.0), "0");
+        assert_eq!(format_gain(1.0), "1");
+        assert_eq!(format_gain(4.0), "4");
+        assert_eq!(format_gain(-1.0), "-1");
+        assert_eq!(format_gain(0.5), "0.5");
+    }
+
+    #[test]
+    fn a_gain_serializes_as_that_spelling() {
+        #[derive(Serialize)]
+        struct Row {
+            gain: f32,
+        }
+        assert_eq!(to_json(&Row { gain: 1.0 }), "{\"gain\":1}");
+        assert_eq!(to_json(&Row { gain: 0.0 }), "{\"gain\":0}");
+        assert_eq!(to_json(&Row { gain: -1.0 }), "{\"gain\":-1}");
+        assert_eq!(to_json(&"pi\"ano"), "\"pi\\\"ano\"");
+    }
 }

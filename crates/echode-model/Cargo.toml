@@ -8,6 +8,9 @@ publish = false
 description = "Document model: musical time, typeless tracks, and smart clips"
 
 [dependencies]
+fractional_index = "2.0.2"
+schemars = "=1.2.2"
+serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v7"] }
 
 [lints]

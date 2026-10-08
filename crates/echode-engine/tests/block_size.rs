@@ -113,7 +113,7 @@ fn render_synth(
     let mut left = vec![0.0f32; block as usize];
     let mut right = vec![0.0f32; block as usize];
     drive(frames, block, looped, |spans, length, out| {
-        let count = schedule(tracks, project.tempo(), RATE, spans, &mut events).unwrap();
+        let count = schedule(project, project.tempo(), RATE, spans, &mut events).unwrap();
         for (index, track) in tracks.iter().enumerate() {
             let mut kept = 0;
             for event in events[..count]
@@ -170,6 +170,17 @@ fn assert_block_independent(render: impl Fn(u32) -> Vec<f32>) {
     for block in &BLOCKS[1..] {
         assert_same(&reference, &render(*block), *block);
     }
+}
+
+#[test]
+fn a_clipped_note_does_not_depend_on_the_block_size() {
+    let (project, track) = Project::new().add_track("piano");
+    let (project, _) = project.insert_note(track, note(0.0, 4.0, 60)).unwrap();
+    let clip = project.tracks()[0].clips[0].id;
+    let project = project
+        .resize_clip(track, clip, Tick::new(0), quarters(1.0))
+        .unwrap();
+    assert_block_independent(|block| render_synth(&project, 48_000, block, None));
 }
 
 #[test]

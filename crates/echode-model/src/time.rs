@@ -5,7 +5,12 @@
 //! sequencer needs, so a conversion at a rational tempo rounds at most half a
 //! flick for the whole span.
 
+use std::borrow::Cow;
 use std::fmt;
+
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Ticks in one quarter note. `2^6 * 3^2 * 5^2 * 7^2`.
 pub const TICKS_PER_QUARTER: i64 = 705_600;
@@ -349,6 +354,120 @@ fn invert_backward(map: &TempoMap, target: i64) -> Option<i64> {
             let delta = flick_end - target;
             return add_ticks(tick_end, -ticks_for_flicks(delta, tempo)?);
         }
+    }
+}
+
+impl Serialize for Tick {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i64(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Tick {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        i64::deserialize(deserializer).map(Self)
+    }
+}
+
+impl JsonSchema for Tick {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "Tick".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": "integer" })
+    }
+}
+
+impl Serialize for Meter {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Meter", 2)?;
+        state.serialize_field("numerator", &self.numerator)?;
+        state.serialize_field("denominator", &self.denominator)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Meter {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Parts {
+            numerator: u32,
+            denominator: u32,
+        }
+        let parts = Parts::deserialize(deserializer)?;
+        Self::try_new(parts.numerator, parts.denominator)
+            .ok_or_else(|| D::Error::custom("meter does not divide into ticks"))
+    }
+}
+
+impl JsonSchema for Meter {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "Meter".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "numerator": { "type": "integer" },
+                "denominator": { "type": "integer" }
+            },
+            "required": ["numerator", "denominator"]
+        })
+    }
+}
+
+impl Serialize for Tempo {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Tempo", 2)?;
+        state.serialize_field("numerator", &self.numerator)?;
+        state.serialize_field("denominator", &self.denominator)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Tempo {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Parts {
+            numerator: u32,
+            denominator: u32,
+        }
+        let parts = Parts::deserialize(deserializer)?;
+        Self::rational(parts.numerator, parts.denominator)
+            .ok_or_else(|| D::Error::custom("tempo is outside the allowed range"))
+    }
+}
+
+impl JsonSchema for Tempo {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "Tempo".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "numerator": { "type": "integer" },
+                "denominator": { "type": "integer" }
+            },
+            "required": ["numerator", "denominator"]
+        })
     }
 }
 

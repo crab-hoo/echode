@@ -5,17 +5,28 @@
 
 use serde::{Deserialize, Serialize};
 
-use echode_model::{Id, Meter, NoteDraft, Tempo, Tick};
+use echode_model::{
+    Change, ChangeSet, ClipKind, Field, Id, Meter, ObjectKey, ObjectKind, Property, Tempo, Tick,
+    Value,
+};
 
 use crate::action::{Action, ActionError};
 
+/// One undo step. `changes` is absent on journal lines written before changesets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JournalEntry {
+    pub actions: Vec<Action>,
+    pub changes: Option<ChangeSet>,
+}
+
 /// Writes the journal. An empty journal is an empty string.
-pub fn encode(journal: &[Vec<Action>]) -> String {
+pub fn encode(journal: &[JournalEntry]) -> String {
     let mut out = String::new();
     for group in journal {
-        debug_assert!(!group.is_empty());
+        debug_assert!(!group.actions.is_empty());
         let record = GroupRecord {
-            actions: group.iter().map(ActionRecord::from).collect(),
+            actions: group.actions.clone(),
+            changes: group.changes.as_ref().map(change_records),
         };
         let line = serde_json::to_string(&record).expect("action records have no failing fields");
         out.push_str(&line);
@@ -25,205 +36,363 @@ pub fn encode(journal: &[Vec<Action>]) -> String {
 }
 
 /// Reads a journal written by [`encode`].
-pub fn decode(text: &str) -> Result<Vec<Vec<Action>>, ActionError> {
+pub fn decode(text: &str) -> Result<Vec<JournalEntry>, ActionError> {
     if text.is_empty() {
         return Ok(Vec::new());
     }
     text.lines().map(decode_group).collect()
 }
 
-fn decode_group(line: &str) -> Result<Vec<Action>, ActionError> {
+fn decode_group(line: &str) -> Result<JournalEntry, ActionError> {
     let record: GroupRecord =
         serde_json::from_str(line).map_err(|_| ActionError::CorruptJournal)?;
     if record.actions.is_empty() {
         return Err(ActionError::CorruptJournal);
     }
-    record.actions.into_iter().map(Action::try_from).collect()
+    Ok(JournalEntry {
+        actions: record.actions,
+        changes: record
+            .changes
+            .map(|changes| parse_changes(&changes))
+            .transpose()?,
+    })
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroupRecord {
-    actions: Vec<ActionRecord>,
+    actions: Vec<Action>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    changes: Option<Vec<ChangeRecord>>,
+}
+
+fn parse_id(text: &str) -> Result<Id, ActionError> {
+    Id::parse(text).ok_or(ActionError::CorruptJournal)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum ChangeRecord {
+    Create {
+        kind: String,
+        id: String,
+        fields: Vec<FieldRecord>,
+    },
+    Delete {
+        kind: String,
+        id: String,
+        fields: Vec<FieldRecord>,
+    },
+    Update {
+        id: String,
+        property: String,
+        before: ValueRecord,
+        after: ValueRecord,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FieldRecord {
+    property: String,
+    value: ValueRecord,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum ActionRecord {
-    AddTrack {
-        id: String,
-        name: String,
-    },
-    AddChild {
-        id: String,
-        parent: String,
-        name: String,
-    },
-    SetParent {
-        track: String,
-        parent: Option<String>,
-    },
-    SetMeter {
-        numerator: u32,
-        denominator: u32,
-    },
-    SetTempo {
-        at: i64,
-        numerator: u32,
-        denominator: u32,
-    },
-    InsertNote {
-        track: String,
-        note: String,
-        clip: String,
-        pitch: u8,
-        velocity: u8,
-        start: i64,
-        length: i64,
-    },
-    DeleteNote {
-        track: String,
-        note: String,
-    },
-    ResizeClip {
-        track: String,
-        clip: String,
-        start: i64,
-        length: i64,
-    },
+enum ValueRecord {
+    Meter { numerator: u32, denominator: u32 },
+    Tempo { numerator: u32, denominator: u32 },
+    Tick { tick: i64 },
+    Text { text: String },
+    Id { id: String },
+    Ids { ids: Vec<String> },
+    Parent { id: Option<String> },
+    Kind { kind: String },
+    Byte { value: u8 },
+    U16 { value: u16 },
+    Gain { bits: u32 },
+    Bits { bits: u32 },
+    Flicks { value: i64 },
 }
 
-impl From<&Action> for ActionRecord {
-    fn from(action: &Action) -> Self {
-        match action {
-            Action::AddTrack { id, name } => Self::AddTrack {
-                id: id.to_string(),
-                name: name.clone(),
+fn change_records(changes: &ChangeSet) -> Vec<ChangeRecord> {
+    changes.changes().iter().map(ChangeRecord::from).collect()
+}
+
+fn parse_changes(records: &[ChangeRecord]) -> Result<ChangeSet, ActionError> {
+    let mut changes = ChangeSet::new();
+    for record in records {
+        changes.push(record.to_change()?);
+    }
+    Ok(changes)
+}
+
+impl From<&Change> for ChangeRecord {
+    fn from(change: &Change) -> Self {
+        match change {
+            Change::Create { kind, id, fields } => Self::Create {
+                kind: kind_name(*kind).to_string(),
+                id: key_text(id),
+                fields: fields.iter().map(FieldRecord::from).collect(),
             },
-            Action::AddChild { id, parent, name } => Self::AddChild {
-                id: id.to_string(),
-                parent: parent.to_string(),
-                name: name.clone(),
+            Change::Delete { kind, id, fields } => Self::Delete {
+                kind: kind_name(*kind).to_string(),
+                id: key_text(id),
+                fields: fields.iter().map(FieldRecord::from).collect(),
             },
-            Action::SetParent { track, parent } => Self::SetParent {
-                track: track.to_string(),
-                parent: parent.map(|id| id.to_string()),
-            },
-            Action::SetMeter { meter } => Self::SetMeter {
-                numerator: meter.numerator(),
-                denominator: meter.denominator(),
-            },
-            Action::SetTempo { at, tempo } => Self::SetTempo {
-                at: at.get(),
-                numerator: tempo.numerator(),
-                denominator: tempo.denominator(),
-            },
-            Action::InsertNote {
-                track,
-                note,
-                clip,
-                draft,
-            } => Self::InsertNote {
-                track: track.to_string(),
-                note: note.to_string(),
-                clip: clip.to_string(),
-                pitch: draft.pitch,
-                velocity: draft.velocity,
-                start: draft.start.get(),
-                length: draft.length.get(),
-            },
-            Action::DeleteNote { track, note } => Self::DeleteNote {
-                track: track.to_string(),
-                note: note.to_string(),
-            },
-            Action::ResizeClip {
-                track,
-                clip,
-                start,
-                length,
-            } => Self::ResizeClip {
-                track: track.to_string(),
-                clip: clip.to_string(),
-                start: start.get(),
-                length: length.get(),
+            Change::Update {
+                id,
+                property,
+                before,
+                after,
+            } => Self::Update {
+                id: key_text(id),
+                property: property_name(*property).to_string(),
+                before: ValueRecord::from(before),
+                after: ValueRecord::from(after),
             },
         }
     }
 }
 
-impl TryFrom<ActionRecord> for Action {
-    type Error = ActionError;
-
-    fn try_from(record: ActionRecord) -> Result<Self, Self::Error> {
-        Ok(match record {
-            ActionRecord::AddTrack { id, name } => Self::AddTrack {
-                id: parse_id(&id)?,
-                name,
+impl ChangeRecord {
+    fn to_change(&self) -> Result<Change, ActionError> {
+        Ok(match self {
+            Self::Create { kind, id, fields } => Change::Create {
+                kind: parse_kind(kind)?,
+                id: parse_key(id)?,
+                fields: parse_fields(fields)?,
             },
-            ActionRecord::AddChild { id, parent, name } => Self::AddChild {
-                id: parse_id(&id)?,
-                parent: parse_id(&parent)?,
-                name,
+            Self::Delete { kind, id, fields } => Change::Delete {
+                kind: parse_kind(kind)?,
+                id: parse_key(id)?,
+                fields: parse_fields(fields)?,
             },
-            ActionRecord::SetParent { track, parent } => Self::SetParent {
-                track: parse_id(&track)?,
-                parent: parent.as_deref().map(parse_id).transpose()?,
-            },
-            ActionRecord::SetMeter {
-                numerator,
-                denominator,
-            } => Self::SetMeter {
-                meter: Meter::try_new(numerator, denominator).ok_or(ActionError::CorruptJournal)?,
-            },
-            ActionRecord::SetTempo {
-                at,
-                numerator,
-                denominator,
-            } => Self::SetTempo {
-                at: Tick::new(at),
-                tempo: Tempo::rational(numerator, denominator)
-                    .ok_or(ActionError::CorruptJournal)?,
-            },
-            ActionRecord::InsertNote {
-                track,
-                note,
-                clip,
-                pitch,
-                velocity,
-                start,
-                length,
-            } => Self::InsertNote {
-                track: parse_id(&track)?,
-                note: parse_id(&note)?,
-                clip: parse_id(&clip)?,
-                draft: NoteDraft {
-                    pitch,
-                    velocity,
-                    start: Tick::new(start),
-                    length: Tick::new(length),
-                },
-            },
-            ActionRecord::DeleteNote { track, note } => Self::DeleteNote {
-                track: parse_id(&track)?,
-                note: parse_id(&note)?,
-            },
-            ActionRecord::ResizeClip {
-                track,
-                clip,
-                start,
-                length,
-            } => Self::ResizeClip {
-                track: parse_id(&track)?,
-                clip: parse_id(&clip)?,
-                start: Tick::new(start),
-                length: Tick::new(length),
+            Self::Update {
+                id,
+                property,
+                before,
+                after,
+            } => Change::Update {
+                id: parse_key(id)?,
+                property: parse_property(property)?,
+                before: before.to_value()?,
+                after: after.to_value()?,
             },
         })
     }
 }
 
-fn parse_id(text: &str) -> Result<Id, ActionError> {
-    Id::parse(text).ok_or(ActionError::CorruptJournal)
+impl From<&Field> for FieldRecord {
+    fn from(field: &Field) -> Self {
+        Self {
+            property: property_name(field.property).to_string(),
+            value: ValueRecord::from(&field.value),
+        }
+    }
+}
+
+impl From<&Value> for ValueRecord {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Meter(meter) => Self::Meter {
+                numerator: meter.numerator(),
+                denominator: meter.denominator(),
+            },
+            Value::Tempo(tempo) => Self::Tempo {
+                numerator: tempo.numerator(),
+                denominator: tempo.denominator(),
+            },
+            Value::Tick(tick) => Self::Tick { tick: tick.get() },
+            Value::Text(text) => Self::Text { text: text.clone() },
+            Value::Id(id) => Self::Id { id: id.to_string() },
+            Value::Ids(ids) => Self::Ids {
+                ids: ids.iter().map(ToString::to_string).collect(),
+            },
+            Value::Parent(id) => Self::Parent {
+                id: id.map(|id| id.to_string()),
+            },
+            Value::Kind(ClipKind::Auto) => Self::Kind {
+                kind: "auto".to_string(),
+            },
+            Value::Kind(ClipKind::Fixed) => Self::Kind {
+                kind: "fixed".to_string(),
+            },
+            Value::Byte(value) => Self::Byte { value: *value },
+            Value::U16(value) => Self::U16 { value: *value },
+            Value::Gain(bits) => Self::Gain { bits: *bits },
+            Value::Bits(bits) => Self::Bits { bits: *bits },
+            Value::Flicks(value) => Self::Flicks { value: *value },
+        }
+    }
+}
+
+impl ValueRecord {
+    fn to_value(&self) -> Result<Value, ActionError> {
+        Ok(match self {
+            Self::Meter {
+                numerator,
+                denominator,
+            } => Value::Meter(
+                Meter::try_new(*numerator, *denominator).ok_or(ActionError::CorruptJournal)?,
+            ),
+            Self::Tempo {
+                numerator,
+                denominator,
+            } => Value::Tempo(
+                Tempo::rational(*numerator, *denominator).ok_or(ActionError::CorruptJournal)?,
+            ),
+            Self::Tick { tick } => Value::Tick(Tick::new(*tick)),
+            Self::Text { text } => Value::Text(text.clone()),
+            Self::Id { id } => Value::Id(parse_id(id)?),
+            Self::Ids { ids } => Value::Ids(
+                ids.iter()
+                    .map(|id| parse_id(id))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::Parent { id } => Value::Parent(id.as_deref().map(parse_id).transpose()?),
+            Self::Kind { kind } => Value::Kind(match kind.as_str() {
+                "auto" => ClipKind::Auto,
+                "fixed" => ClipKind::Fixed,
+                _ => return Err(ActionError::CorruptJournal),
+            }),
+            Self::Byte { value } => Value::Byte(*value),
+            Self::U16 { value } => Value::U16(*value),
+            Self::Gain { bits } => Value::Gain(*bits),
+            Self::Bits { bits } => Value::Bits(*bits),
+            Self::Flicks { value } => Value::Flicks(*value),
+        })
+    }
+}
+
+fn parse_fields(fields: &[FieldRecord]) -> Result<Vec<Field>, ActionError> {
+    fields
+        .iter()
+        .map(|field| {
+            Ok(Field {
+                property: parse_property(&field.property)?,
+                value: field.value.to_value()?,
+            })
+        })
+        .collect()
+}
+
+fn kind_name(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::Track => "track",
+        ObjectKind::Clip => "clip",
+        ObjectKind::Note => "note",
+        ObjectKind::TempoPoint => "tempo",
+        ObjectKind::Content => "content",
+        ObjectKind::Device => "device",
+        ObjectKind::Parameter => "parameter",
+    }
+}
+
+fn parse_kind(kind: &str) -> Result<ObjectKind, ActionError> {
+    Ok(match kind {
+        "track" => ObjectKind::Track,
+        "clip" => ObjectKind::Clip,
+        "note" => ObjectKind::Note,
+        "tempo" => ObjectKind::TempoPoint,
+        "content" => ObjectKind::Content,
+        "device" => ObjectKind::Device,
+        "parameter" => ObjectKind::Parameter,
+        _ => return Err(ActionError::CorruptJournal),
+    })
+}
+
+fn property_name(property: Property) -> &'static str {
+    match property {
+        Property::Meter => "meter",
+        Property::TrackOrder => "track_order",
+        Property::Name => "name",
+        Property::Parent => "parent",
+        Property::Order => "order",
+        Property::ClipOrder => "clip_order",
+        Property::Start => "start",
+        Property::Length => "length",
+        Property::Kind => "kind",
+        Property::NoteOrder => "note_order",
+        Property::Owner => "owner",
+        Property::Pitch => "pitch",
+        Property::Velocity => "velocity",
+        Property::Release => "release",
+        Property::Articulation => "articulation",
+        Property::Tempo => "tempo",
+        Property::Offset => "offset",
+        Property::Gain => "gain",
+        Property::FadeIn => "fade_in",
+        Property::FadeOut => "fade_out",
+        Property::Lane => "lane",
+        Property::Content => "content",
+        Property::Audio => "audio",
+        Property::Takes => "takes",
+        Property::Key => "key",
+        Property::Minimum => "minimum",
+        Property::Maximum => "maximum",
+        Property::Default => "default",
+        Property::Value => "value",
+        Property::ParamOrder => "param_order",
+        Property::DeviceKind => "device_kind",
+    }
+}
+
+fn parse_property(property: &str) -> Result<Property, ActionError> {
+    Ok(match property {
+        "meter" => Property::Meter,
+        "track_order" => Property::TrackOrder,
+        "name" => Property::Name,
+        "parent" => Property::Parent,
+        "order" => Property::Order,
+        "clip_order" => Property::ClipOrder,
+        "start" => Property::Start,
+        "length" => Property::Length,
+        "kind" => Property::Kind,
+        "note_order" => Property::NoteOrder,
+        "owner" => Property::Owner,
+        "pitch" => Property::Pitch,
+        "velocity" => Property::Velocity,
+        "release" => Property::Release,
+        "articulation" => Property::Articulation,
+        "tempo" => Property::Tempo,
+        "offset" => Property::Offset,
+        "gain" => Property::Gain,
+        "fade_in" => Property::FadeIn,
+        "fade_out" => Property::FadeOut,
+        "lane" => Property::Lane,
+        "content" => Property::Content,
+        "audio" => Property::Audio,
+        "takes" => Property::Takes,
+        "key" => Property::Key,
+        "minimum" => Property::Minimum,
+        "maximum" => Property::Maximum,
+        "default" => Property::Default,
+        "value" => Property::Value,
+        "param_order" => Property::ParamOrder,
+        "device_kind" => Property::DeviceKind,
+        _ => return Err(ActionError::CorruptJournal),
+    })
+}
+
+fn key_text(id: &ObjectKey) -> String {
+    match id {
+        ObjectKey::Project => "project".to_string(),
+        ObjectKey::Tempo(tick) => format!("tempo:{}", tick.get()),
+        ObjectKey::Id(id) => id.to_string(),
+    }
+}
+
+fn parse_key(text: &str) -> Result<ObjectKey, ActionError> {
+    if text == "project" {
+        return Ok(ObjectKey::Project);
+    }
+    if let Some(tick) = text.strip_prefix("tempo:") {
+        let tick = tick.parse().map_err(|_| ActionError::CorruptJournal)?;
+        return Ok(ObjectKey::Tempo(Tick::new(tick)));
+    }
+    Ok(ObjectKey::Id(parse_id(text)?))
 }
 
 #[cfg(test)]
@@ -239,28 +408,45 @@ mod tests {
     #[test]
     fn the_journal_text_is_stable_and_rejects_junk() {
         let groups = vec![
-            vec![Action::AddTrack {
-                id: Id::from_raw(1),
-                name: "piano".into(),
-            }],
-            vec![Action::InsertNote {
-                track: Id::from_raw(1),
-                note: Id::from_raw(2),
-                clip: Id::from_raw(3),
-                draft: NoteDraft {
-                    pitch: 60,
-                    velocity: 100,
-                    start: Tick::new(0),
-                    length: Tick::new(TICKS_PER_QUARTER),
-                },
-            }],
+            JournalEntry {
+                actions: vec![Action::AddTrack {
+                    id: Id::from_raw(1),
+                    name: "piano".into(),
+                    device: Id::from_raw(4),
+                    gain: Id::from_raw(5),
+                    pan: Id::from_raw(6),
+                    mute: Id::from_raw(7),
+                    solo: Id::from_raw(8),
+                }],
+                changes: None,
+            },
+            JournalEntry {
+                actions: vec![Action::InsertNote {
+                    track: Id::from_raw(1),
+                    note: Id::from_raw(2),
+                    clip: Id::from_raw(3),
+                    content: None,
+                    draft: NoteDraft {
+                        pitch: 60,
+                        velocity: 100,
+                        start: Tick::new(0),
+                        length: Tick::new(TICKS_PER_QUARTER),
+                    },
+                }],
+                changes: None,
+            },
         ];
         let text = encode(&groups);
         assert_eq!(
             text,
             format!(
-                "{{\"actions\":[{{\"type\":\"add_track\",\"id\":\"{}\",\"name\":\"piano\"}}]}}\n{{\"actions\":[{{\"type\":\"insert_note\",\"track\":\"{}\",\"note\":\"{}\",\"clip\":\"{}\",\"pitch\":60,\"velocity\":100,\"start\":0,\"length\":705600}}]}}\n",
+                "{{\"actions\":[{{\"type\":\"track.add\",\"id\":\"{}\",\"name\":\"piano\",\"device\":\"{}\",\"gain\":\"{}\",\"pan\":\"{}\",\"mute\":\"{}\",\"solo\":\"{}\"}}]}}\n{{\"actions\":[{{\"type\":\"note.insert\",\"track\":\"{}\",\"note\":\"{}\",\"clip\":\"{}\",\"pitch\":60,\"velocity\":100,\"start\":0,\"length\":705600}}]}}\n",
                 id(1),
+                id(4),
+                id(5),
+                id(6),
+                id(7),
+                id(8),
                 id(1),
                 id(2),
                 id(3),
@@ -270,6 +456,10 @@ mod tests {
         assert_eq!(encode(&decode(&text).unwrap()), text);
         assert!(decode("{\"actions\":[]}\n").is_err());
         assert!(decode("{\"type\":\"nope\"}\n").is_err());
+        assert!(decode(
+            "{\"actions\":[{\"type\":\"add_track\",\"id\":\"00000000-0000-0000-0000-000000000001\",\"name\":\"piano\",\"device\":\"00000000-0000-0000-0000-000000000004\",\"gain\":\"00000000-0000-0000-0000-000000000005\",\"pan\":\"00000000-0000-0000-0000-000000000006\",\"mute\":\"00000000-0000-0000-0000-000000000007\",\"solo\":\"00000000-0000-0000-0000-000000000008\"}]}\n"
+        )
+        .is_err());
         assert!(decode("").unwrap().is_empty());
     }
 }

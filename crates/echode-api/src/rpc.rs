@@ -1,8 +1,7 @@
 //! One JSON-RPC request per line.
 
-use echode_actions::{Action, ActionError, Command, Session, catalog, encode};
-use echode_model::{Id, Meter, NoteDraft, Project, Tempo, Tick};
-use serde::Deserialize;
+use echode_actions::{ActionError, Command, Session, catalog};
+use echode_model::Project;
 use serde_json::{Value, json};
 
 /// A project that actions can change.
@@ -68,6 +67,7 @@ fn action_catalog() -> Value {
                     "name_en": spec.name_en,
                     "description_ja": spec.description_ja,
                     "description_en": spec.description_en,
+                    "schema": spec.schema(),
                 })
             })
             .collect(),
@@ -95,130 +95,30 @@ enum PerformError {
 }
 
 fn perform(session: &mut Session, params: &Value) -> Result<Value, PerformError> {
-    let requested: Requested = serde_json::from_value(params.clone())
-        .map_err(|_| PerformError::Params("parameters do not match an action".into()))?;
-    let command = requested.into_command()?;
+    let command: Command = serde_json::from_value(params.clone()).map_err(parameter_error)?;
     match session.perform(command) {
-        Ok(action) => Ok(committed(&action)),
+        Ok(action) => Ok(serde_json::to_value(action).expect("a committed action is json")),
         Err(ActionError::Model(error)) => Err(PerformError::Rejected(error.to_string())),
         Err(error) => Err(PerformError::Rejected(error.to_string())),
     }
 }
 
-fn committed(action: &Action) -> Value {
-    let text = encode(&[vec![action.clone()]]);
-    let value: Value = serde_json::from_str(text.trim()).expect("a committed action is valid json");
-    value["actions"][0].clone()
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum Requested {
-    AddTrack {
-        name: String,
-    },
-    AddChild {
-        parent: String,
-        name: String,
-    },
-    SetParent {
-        track: String,
-        parent: Option<String>,
-    },
-    SetMeter {
-        numerator: u32,
-        denominator: u32,
-    },
-    SetTempo {
-        at: i64,
-        numerator: u32,
-        denominator: u32,
-    },
-    InsertNote {
-        track: String,
-        pitch: u8,
-        velocity: u8,
-        start: i64,
-        length: i64,
-    },
-    DeleteNote {
-        track: String,
-        note: String,
-    },
-    ResizeClip {
-        track: String,
-        clip: String,
-        start: i64,
-        length: i64,
-    },
-}
-
-impl Requested {
-    fn into_command(self) -> Result<Command, PerformError> {
-        Ok(match self {
-            Self::AddTrack { name } => Command::AddTrack { name },
-            Self::AddChild { parent, name } => Command::AddChild {
-                parent: parse_id(&parent)?,
-                name,
-            },
-            Self::SetParent { track, parent } => Command::SetParent {
-                track: parse_id(&track)?,
-                parent: parent.as_deref().map(parse_id).transpose()?,
-            },
-            Self::SetMeter {
-                numerator,
-                denominator,
-            } => Command::SetMeter {
-                meter: Meter::try_new(numerator, denominator).ok_or_else(|| {
-                    PerformError::Params("meter does not divide into ticks".into())
-                })?,
-            },
-            Self::SetTempo {
-                at,
-                numerator,
-                denominator,
-            } => Command::SetTempo {
-                at: Tick::new(at),
-                tempo: Tempo::rational(numerator, denominator).ok_or_else(|| {
-                    PerformError::Params("tempo is outside the allowed range".into())
-                })?,
-            },
-            Self::InsertNote {
-                track,
-                pitch,
-                velocity,
-                start,
-                length,
-            } => Command::InsertNote {
-                track: parse_id(&track)?,
-                draft: NoteDraft {
-                    pitch,
-                    velocity,
-                    start: Tick::new(start),
-                    length: Tick::new(length),
-                },
-            },
-            Self::DeleteNote { track, note } => Command::DeleteNote {
-                track: parse_id(&track)?,
-                note: parse_id(&note)?,
-            },
-            Self::ResizeClip {
-                track,
-                clip,
-                start,
-                length,
-            } => Command::ResizeClip {
-                track: parse_id(&track)?,
-                clip: parse_id(&clip)?,
-                start: Tick::new(start),
-                length: Tick::new(length),
-            },
-        })
+fn parameter_error(error: serde_json::Error) -> PerformError {
+    let message = error.to_string();
+    for sentence in [
+        "meter does not divide into ticks",
+        "tempo is outside the allowed range",
+    ] {
+        if message.contains(sentence) {
+            return PerformError::Params(sentence.to_string());
+        }
     }
-}
-
-fn parse_id(text: &str) -> Result<Id, PerformError> {
-    Id::parse(text).ok_or_else(|| PerformError::Params(format!("invalid id {text}")))
+    if let Some(start) = message.find("invalid id ") {
+        let rest = &message[start..];
+        let end = rest.find(" at line").unwrap_or(rest.len());
+        return PerformError::Params(rest[..end].to_string());
+    }
+    PerformError::Params("parameters do not match an action".into())
 }
 
 fn ok_response(id: &Value, result: Value) -> String {
@@ -264,7 +164,7 @@ mod tests {
         let mut session = ApiSession::open(Project::new());
         let added = response(
             &mut session,
-            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"add_track","name":"piano"},"id":"a"}"#,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"track.add","name":"piano"},"id":"a"}"#,
         );
         let id = added["result"]["id"].as_str().unwrap();
         let body = response(
@@ -281,20 +181,20 @@ mod tests {
         let mut session = ApiSession::open(Project::new());
         response(
             &mut session,
-            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"add_track","name":"piano"},"id":1}"#,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"track.add","name":"piano"},"id":1}"#,
         );
         let added = response(
             &mut session,
-            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"add_track","name":"piano"},"id":2}"#,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"track.add","name":"piano"},"id":2}"#,
         );
         let track = added["result"]["id"].as_str().unwrap();
         let note = format!(
-            r#"{{"jsonrpc":"2.0","method":"actions.perform","params":{{"type":"insert_note","track":"{track}","pitch":60,"velocity":100,"start":0,"length":705600}},"id":3}}"#
+            r#"{{"jsonrpc":"2.0","method":"actions.perform","params":{{"type":"note.insert","track":"{track}","pitch":60,"velocity":100,"start":0,"length":705600}},"id":3}}"#
         );
         response(&mut session, &note);
         let rejected = response(
             &mut session,
-            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"set_meter","numerator":3,"denominator":4},"id":4}"#,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"project.set_meter","numerator":3,"denominator":4},"id":4}"#,
         );
         assert_eq!(rejected["error"]["code"], -32000);
         let body = response(
@@ -303,6 +203,22 @@ mod tests {
         );
         assert_eq!(body["result"]["meter"]["numerator"], 4);
         assert_eq!(body["result"]["tracks"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_api_can_set_a_fader() {
+        let mut session = ApiSession::open(Project::new());
+        let added = response(
+            &mut session,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"track.add","name":"piano"},"id":1}"#,
+        );
+        let gain = added["result"]["gain"].as_str().unwrap();
+        let line = format!(
+            r#"{{"jsonrpc":"2.0","method":"actions.perform","params":{{"type":"param.set","parameter":"{gain}","value":0}},"id":2}}"#
+        );
+        let set = response(&mut session, &line);
+        assert_eq!(set["result"]["type"], "param.set");
+        assert!(set.get("error").is_none());
     }
 
     #[test]
@@ -318,5 +234,79 @@ mod tests {
                 .reply(r#"{"jsonrpc":"2.0","method":"project.summary"}"#)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_catalog_id_performs_that_action() {
+        let mut session = ApiSession::open(Project::new());
+        let listed = response(
+            &mut session,
+            r#"{"jsonrpc":"2.0","method":"actions.list","id":1}"#,
+        );
+        let add = listed["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == "track.add")
+            .unwrap();
+        let schema = add["schema"].to_string();
+        assert!(schema.contains("\"name\""), "{schema}");
+        assert!(schema.contains("track.add"), "{schema}");
+        let note = listed["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == "note.insert")
+            .unwrap();
+        let note_schema = note["schema"].to_string();
+        assert!(note_schema.contains("\"pitch\""), "{note_schema}");
+        assert!(note_schema.contains("\"start\""), "{note_schema}");
+        let id = add["id"].as_str().unwrap();
+        let line = format!(
+            r#"{{"jsonrpc":"2.0","method":"actions.perform","params":{{"type":"{id}","name":"piano"}},"id":2}}"#
+        );
+        let added = response(&mut session, &line);
+        assert_eq!(added["result"]["type"], id);
+        assert!(added.get("error").is_none(), "{added}");
+    }
+
+    #[test]
+    fn bad_parameters_keep_their_sentence() {
+        let mut session = ApiSession::open(Project::new());
+        let meter = response(
+            &mut session,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"project.set_meter","numerator":1,"denominator":27},"id":1}"#,
+        );
+        assert_eq!(meter["error"]["code"], -32602);
+        assert_eq!(
+            meter["error"]["message"],
+            "meter does not divide into ticks"
+        );
+        let tempo = response(
+            &mut session,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"project.set_tempo","at":0,"numerator":0,"denominator":1},"id":2}"#,
+        );
+        assert_eq!(
+            tempo["error"]["message"],
+            "tempo is outside the allowed range"
+        );
+        let id = response(
+            &mut session,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"note.delete","track":"nope","note":"00000000-0000-0000-0000-000000000001"},"id":3}"#,
+        );
+        assert_eq!(id["error"]["message"], "invalid id nope");
+        let extra = response(
+            &mut session,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"track.add","name":"piano","extra":1},"id":4}"#,
+        );
+        assert_eq!(
+            extra["error"]["message"],
+            "parameters do not match an action"
+        );
+        let old = response(
+            &mut session,
+            r#"{"jsonrpc":"2.0","method":"actions.perform","params":{"type":"add_track","name":"piano"},"id":5}"#,
+        );
+        assert_eq!(old["error"]["message"], "parameters do not match an action");
     }
 }

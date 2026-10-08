@@ -11,7 +11,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use echode_model::{Project, Track};
+use echode_model::{Content, Project, Track};
 use gix::{ObjectId, Repository};
 
 use crate::document::{
@@ -50,12 +50,14 @@ enum Request {
 
 struct Cache {
     tracks: HashMap<String, (Arc<Track>, ObjectId)>,
+    contents: HashMap<String, (Arc<Content>, ObjectId)>,
     project_json: String,
     project_blob: ObjectId,
 }
 
 impl Autosave {
     pub fn create(directory: &Path) -> Result<Self, PackageError> {
+        crate::objects::ensure_store_gitignore(directory)?;
         let directory = directory.to_path_buf();
         let (request, incoming) = mpsc::channel();
         let thread = thread::Builder::new()
@@ -171,6 +173,26 @@ fn save(
             .map_err(|error| PackageError::new(error.to_string()))?
             .detach(),
     };
+    let mut content_blobs = Vec::with_capacity(package.contents.len());
+    let mut stored_contents = HashMap::with_capacity(package.contents.len());
+    for (content, (filename, json)) in project.contents().iter().zip(&package.contents) {
+        let id = content.id.to_string();
+        if let Some((cached, blob)) = cache
+            .as_ref()
+            .and_then(|cache| cache.contents.get(&id))
+            .filter(|(cached, _)| Arc::ptr_eq(cached, content))
+        {
+            content_blobs.push((filename.clone(), *blob));
+            stored_contents.insert(id, (Arc::clone(cached), *blob));
+            continue;
+        }
+        let blob = repo
+            .write_blob(json.as_bytes())
+            .map_err(|error| PackageError::new(error.to_string()))?
+            .detach();
+        content_blobs.push((filename.clone(), blob));
+        stored_contents.insert(id, (Arc::clone(content), blob));
+    }
     let mut track_blobs = Vec::with_capacity(package.tracks.len());
     let mut stored = HashMap::with_capacity(package.tracks.len());
     for (track, (filename, json)) in project.tracks().iter().zip(&package.tracks) {
@@ -193,11 +215,12 @@ fn save(
         track_blobs.push((filename.clone(), blob));
         stored.insert(id, (Arc::clone(track), blob));
     }
-    let id = commit_tree(repo, project_blob, &track_blobs, parents)?;
+    let id = commit_tree(repo, project_blob, &content_blobs, &track_blobs, parents)?;
     *parents = vec![id];
     write_journal(directory, JournalBase::Commit(id), &[])?;
     *cache = Some(Cache {
         tracks: stored,
+        contents: stored_contents,
         project_json: package.project_json,
         project_blob,
     });
