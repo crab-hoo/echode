@@ -1,4 +1,4 @@
-.PHONY: check fmt setup known-bugs advisories spike-isolation spike-draw spike-history spike-input spike-engine
+.PHONY: check fmt setup known-bugs advisories bless spike-isolation spike-draw spike-history spike-input spike-engine
 
 # What every change must pass. It needs no audio hardware and has no timing thresholds,
 # so a failure always means the code is wrong.
@@ -17,6 +17,14 @@ fmt:
 # Tools `make check` needs besides the toolchain in rust-toolchain.toml.
 setup:
 	cargo install --locked cargo-deny@0.20.2
+
+# Rewrites crates/echode-cli/tests/fixtures/sine-pad-a4-128.wav and appends REASON
+# to tests/fixtures/bless.log. Use this when a sound change is intentional.
+bless:
+	@test -n "$(REASON)" || { echo 'usage: make bless REASON="why the reference changed"'; exit 1; }
+	BLESS=1 cargo test -p echode-cli --test render -- --ignored bless_the_reference --exact
+	mkdir -p crates/echode-cli/tests/fixtures
+	printf '%s %s\n' "$$(date +%Y-%m-%d)" "$(REASON)" >> crates/echode-cli/tests/fixtures/bless.log
 
 # Ignored tests named audit_* reproduce open items in docs/reviews/2026-10-08-audit.md.
 # Each one fails until its item is fixed; then remove its #[ignore].

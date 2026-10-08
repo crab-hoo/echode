@@ -133,6 +133,22 @@ fn a_bad_schema_is_rejected() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+#[test]
+fn a_symlinked_track_file_is_not_followed() {
+    let directory = scratch();
+    let project = with_note("piano");
+    write_package(&directory, &project).unwrap();
+    let track = directory
+        .join("tracks")
+        .join(format!("{}.json", project.tracks()[0].id));
+    let outside = directory.join("outside.json");
+    std::fs::rename(&track, &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &track).unwrap();
+    let error = read_package(&directory).unwrap_err().to_string();
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(error.contains("symbolic link"), "{error}");
+}
+
 /// HIS-1: the cache must keep the `Arc`. Address reuse is allocator-dependent,
 /// so this walks the same edit twenty times.
 #[test]

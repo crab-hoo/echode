@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime};
 
-use echode_plugin_host::{FolderWatch, PluginCatalog, ScannedPlugin, list_bundles};
+use echode_plugin_host::{
+    FolderWatch, PluginCatalog, ScannedPlugin, list_bundles, list_bundles_including_clap_path,
+};
 
 fn scratch(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -26,7 +28,6 @@ fn make_bundle(path: &Path, executable: &[u8]) {
 }
 
 #[test]
-#[ignore = "PLG-1: only the top level of a plugin folder is searched"]
 fn audit_plg1_a_bundle_in_a_vendor_subfolder_is_listed() {
     let root = scratch("plg1");
     let bundle = root.join("Vendor").join("Deep.clap");
@@ -40,7 +41,19 @@ fn audit_plg1_a_bundle_in_a_vendor_subfolder_is_listed() {
 }
 
 #[test]
-#[ignore = "PLG-2: an update inside a bundle does not change the bundle folder's mtime"]
+fn audit_plg1_clap_path_is_searched() {
+    let root = scratch("plg1-path");
+    let bundle = root.join("FromPath.clap");
+    std::fs::create_dir_all(&bundle).unwrap();
+    let listed = list_bundles_including_clap_path(&[], Some(root.to_str().unwrap()));
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        listed.iter().any(|found| found.path == bundle),
+        "{listed:?}"
+    );
+}
+
+#[test]
 fn audit_plg2_rewriting_the_executable_inside_a_bundle_triggers_a_rescan() {
     let root = scratch("plg2");
     let bundle = root.join("Synth.clap");
@@ -63,10 +76,9 @@ fn audit_plg2_rewriting_the_executable_inside_a_bundle_triggers_a_rescan() {
 }
 
 #[test]
-#[ignore = "PLG-9: dropping a watch before its run loop is running never returns"]
 fn audit_plg9_a_watch_can_be_dropped_right_after_it_starts() {
     let root = scratch("plg9");
-    for _ in 0..20 {
+    for _ in 0..100 {
         let (done, finished) = mpsc::channel();
         let watched = root.clone();
         std::thread::spawn(move || {

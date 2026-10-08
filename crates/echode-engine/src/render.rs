@@ -56,6 +56,22 @@ pub fn render_span_frames(project: &Project, sample_rate: u32) -> Result<u32, Pl
         .ok_or(PlaybackError::Time)
 }
 
+/// Why a block-wise offline render stopped.
+#[derive(Debug)]
+pub enum OfflineError<E> {
+    Playback(PlaybackError),
+    Write(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for OfflineError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Playback(error) => write!(formatter, "{error}"),
+            Self::Write(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
 /// Renders `frames` of stereo, interleaved left then right.
 ///
 /// Every track is the test synth at unity gain, centered. The buffer length
@@ -71,7 +87,32 @@ pub fn render_offline(
     if interleaved.len() != needed {
         return Err(PlaybackError::BufferTooSmall);
     }
-    let mut transport = Transport::new(sample_rate, project.tempo().clone())?;
+    let mut written = 0usize;
+    render_offline_blocks(project, sample_rate, frames, |block| {
+        let end = written + block.len();
+        interleaved[written..end].copy_from_slice(block);
+        written += block.len();
+        Ok(())
+    })
+    .map_err(|error| match error {
+        OfflineError::Playback(error) => error,
+        OfflineError::Write(error) => error,
+    })
+}
+
+/// Renders `frames` of stereo and calls `on_block` with each interleaved block.
+///
+/// A block is at most 64 frames. That length is scratch for one block, not a
+/// limit on `frames`. `on_block` sees left then right for that block only, so
+/// a long export can write it before the next block is rendered.
+pub fn render_offline_blocks<E>(
+    project: &Project,
+    sample_rate: u32,
+    frames: u32,
+    mut on_block: impl FnMut(&[f32]) -> Result<(), E>,
+) -> Result<(), OfflineError<E>> {
+    let mut transport =
+        Transport::new(sample_rate, project.tempo().clone()).map_err(OfflineError::Playback)?;
     transport.play();
 
     let tracks = project.tracks();
@@ -83,7 +124,7 @@ pub fn render_offline(
     for count in &note_counts {
         let mut track_voices = Vec::with_capacity((*count).max(1));
         for _ in 0..(*count).max(1) {
-            track_voices.push(SynthVoice::new(sample_rate)?);
+            track_voices.push(SynthVoice::new(sample_rate).map_err(OfflineError::Playback)?);
         }
         voices.push(track_voices);
     }
@@ -101,6 +142,7 @@ pub fn render_offline(
     let mut planes = vec![vec![0.0; BLOCK_FRAMES as usize]; tracks.len()];
     let mut left = vec![0.0; BLOCK_FRAMES as usize];
     let mut right = vec![0.0; BLOCK_FRAMES as usize];
+    let mut interleaved_block = vec![0.0; BLOCK_FRAMES as usize * 2];
     let mut peaks = vec![0.0; tracks.len()];
     let faders = vec![TrackFader::unity(); tracks.len()];
     let mut spans = [PlayedSpan {
@@ -116,14 +158,17 @@ pub fn render_offline(
         let block_len = block as usize;
         {
             let _guard = ForbidAlloc::enter();
-            let span_count = transport.pull(block, &mut spans)?;
+            let span_count = transport
+                .pull(block, &mut spans)
+                .map_err(OfflineError::Playback)?;
             let event_count = schedule(
                 tracks,
                 project.tempo(),
                 sample_rate,
                 &spans[..span_count],
                 &mut events,
-            )?;
+            )
+            .map_err(OfflineError::Playback)?;
             for (track_index, track) in tracks.iter().enumerate() {
                 planes[track_index][..block_len].fill(0.0);
                 let mut kept = 0;
@@ -138,7 +183,8 @@ pub fn render_offline(
                     &mut voices[track_index],
                     sample_rate,
                     &mut planes[track_index][..block_len],
-                )?;
+                )
+                .map_err(OfflineError::Playback)?;
             }
         }
         let plane_refs: Vec<&[f32]> = planes.iter().map(|plane| &plane[..block_len]).collect();
@@ -148,12 +194,13 @@ pub fn render_offline(
             &mut left[..block_len],
             &mut right[..block_len],
             &mut peaks,
-        )?;
+        )
+        .map_err(OfflineError::Playback)?;
         for index in 0..block_len {
-            let start = (rendered as usize + index) * 2;
-            interleaved[start] = left[index];
-            interleaved[start + 1] = right[index];
+            interleaved_block[index * 2] = left[index];
+            interleaved_block[index * 2 + 1] = right[index];
         }
+        on_block(&interleaved_block[..block_len * 2]).map_err(OfflineError::Write)?;
         rendered += block;
     }
     Ok(())
@@ -190,6 +237,13 @@ mod tests {
         assert_eq!(once, twice);
         assert_eq!(once[0], 0.0);
         assert!(once.iter().any(|sample| *sample != 0.0));
+        let mut streamed = Vec::new();
+        render_offline_blocks(&project, 48_000, 128, |block| {
+            streamed.extend_from_slice(block);
+            Ok::<(), PlaybackError>(())
+        })
+        .unwrap();
+        assert_eq!(once, streamed);
     }
 
     #[test]

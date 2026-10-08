@@ -10,5 +10,4 @@
 crates/echode-engine/src/device.rs        ENG-15
 crates/echode-engine/src/graph.rs         ENG-15
 crates/echode-engine/src/wait.rs          ENG-15
-crates/echode-plugin-host/src/watch.rs    PLG-9
 crates/echode-sandbox/src/sync.rs         ENG-15

@@ -12,6 +12,9 @@ setup:
 known-bugs:
     make known-bugs
 
+bless reason:
+    make bless REASON="{{reason}}"
+
 advisories:
     make advisories
 

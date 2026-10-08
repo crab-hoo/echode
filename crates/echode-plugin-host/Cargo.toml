@@ -9,7 +9,10 @@ description = "Helper process that runs CLAP plugins outside the DAW"
 
 [dependencies]
 clack-host = { workspace = true }
+dispatch2 = "=0.3.1"
 echode-sandbox = { path = "../echode-sandbox" }
+objc2-core-foundation = "=0.3.2"
+objc2-core-services = { version = "=0.3.2", default-features = false, features = ["std", "FSEvents", "dispatch2"] }
 
 [lints]
 workspace = true

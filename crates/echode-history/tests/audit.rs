@@ -85,7 +85,6 @@ fn audit_his3_saving_one_edited_track_rewrites_only_its_file() {
 }
 
 #[test]
-#[ignore = "HIS-8: track entries in project.json become paths without validation"]
 fn audit_his8_a_track_entry_must_be_an_id_before_it_becomes_a_path() {
     let directory = scratch();
     write_package(&directory, &Project::new()).unwrap();

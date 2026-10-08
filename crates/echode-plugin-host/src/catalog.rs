@@ -11,11 +11,22 @@ use std::time::{Duration, Instant, SystemTime};
 /// How long a bundle must sit unchanged before it is scanned.
 pub const SCAN_QUIET: Duration = Duration::from_secs(2);
 
+/// What `PluginCatalog` compares to decide that a bundle changed.
+///
+/// The bundle directory's own mtime does not move when a file inside it is
+/// replaced. The key is `CFBundleVersion` plus the executable's mtime and size.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BundleRevision {
+    pub version: String,
+    pub executable_modified: SystemTime,
+    pub executable_size: u64,
+}
+
 /// A CLAP or VST3 bundle seen on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BundleFound {
     pub path: PathBuf,
-    pub modified: SystemTime,
+    pub revision: BundleRevision,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +40,7 @@ enum Status {
 #[derive(Clone, Debug)]
 pub struct PluginCatalog {
     quiet: Duration,
-    bundles: BTreeMap<PathBuf, (SystemTime, Status)>,
+    bundles: BTreeMap<PathBuf, (BundleRevision, Status)>,
 }
 
 impl PluginCatalog {
@@ -50,15 +61,15 @@ impl PluginCatalog {
 
     /// Replace the known bundles with `found`. A new or updated bundle waits
     /// out the quiet period again. A failed bundle is retried when its
-    /// modification time changes.
+    /// revision changes.
     pub fn observe(&mut self, now: Instant, found: &[BundleFound]) {
         let mut next = BTreeMap::new();
         for bundle in found {
             let status = match self.bundles.get(&bundle.path) {
-                Some((modified, status)) if *modified == bundle.modified => status.clone(),
+                Some((revision, status)) if *revision == bundle.revision => status.clone(),
                 _ => Status::Pending { since: now },
             };
-            next.insert(bundle.path.clone(), (bundle.modified, status));
+            next.insert(bundle.path.clone(), (bundle.revision.clone(), status));
         }
         self.bundles = next;
     }
@@ -107,30 +118,312 @@ impl PluginCatalog {
     }
 }
 
-/// Direct children of `root` that are CLAP or VST3 bundles.
+/// CLAP and VST3 bundles under `root`, including those in subfolders.
+///
+/// A bundle is not searched inside. There is no depth limit; the walk uses a
+/// heap stack so a deep tree does not overflow the call stack.
 pub fn list_bundles(root: &Path) -> Vec<BundleFound> {
     let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return found;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !is_bundle(&path) {
-            continue;
-        }
-        let Ok(metadata) = entry.metadata() else {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
-        if !metadata.is_dir() {
-            continue;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if is_bundle(&path) {
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                if !metadata.is_dir() {
+                    continue;
+                }
+                let revision = bundle_revision(&path);
+                found.push(BundleFound { path, revision });
+                continue;
+            }
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.is_dir() {
+                pending.push(path);
+            }
         }
-        let Ok(modified) = metadata.modified() else {
-            continue;
-        };
-        found.push(BundleFound { path, modified });
     }
     found.sort_by(|left, right| left.path.cmp(&right.path));
     found
+}
+
+/// Directories listed in `CLAP_PATH`. On macOS the separator is `:`.
+pub fn clap_path_directories(value: Option<&str>) -> Vec<PathBuf> {
+    value
+        .unwrap_or("")
+        .split(':')
+        .filter(|entry| !entry.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// Bundles under `roots`, plus every directory named by `clap_path`.
+pub fn list_bundles_including_clap_path(
+    roots: &[PathBuf],
+    clap_path: Option<&str>,
+) -> Vec<BundleFound> {
+    let mut found = Vec::new();
+    for root in roots.iter().chain(clap_path_directories(clap_path).iter()) {
+        found.extend(list_bundles(root));
+    }
+    found.sort_by(|left, right| left.path.cmp(&right.path));
+    found.dedup_by(|left, right| left.path == right.path);
+    found
+}
+
+/// `CFBundleVersion` and the Mach-O named by `CFBundleExecutable`.
+///
+/// Without `CFBundleExecutable`, every regular file in `Contents/MacOS` counts,
+/// so replacing the only binary still changes the revision.
+fn bundle_revision(bundle: &Path) -> BundleRevision {
+    let plist = std::fs::read(bundle.join("Contents/Info.plist")).unwrap_or_default();
+    let fields = plist_strings(&plist);
+    let version = fields.get("CFBundleVersion").cloned().unwrap_or_default();
+    let named = fields.get("CFBundleExecutable").map(String::as_str);
+    let (executable_modified, executable_size) = executable_stamp(bundle, named);
+    BundleRevision {
+        version,
+        executable_modified,
+        executable_size,
+    }
+}
+
+fn executable_stamp(bundle: &Path, name: Option<&str>) -> (SystemTime, u64) {
+    if let Some(name) = name.filter(|name| !name.is_empty()) {
+        let Some(file_name) = Path::new(name).file_name() else {
+            return (SystemTime::UNIX_EPOCH, 0);
+        };
+        return file_stamp(&bundle.join("Contents/MacOS").join(file_name));
+    }
+    let mut modified = SystemTime::UNIX_EPOCH;
+    let mut size = 0u64;
+    let Ok(entries) = std::fs::read_dir(bundle.join("Contents/MacOS")) else {
+        return (modified, size);
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let (file_modified, file_size) = file_stamp(&path);
+        if file_modified > modified {
+            modified = file_modified;
+        }
+        size = size.saturating_add(file_size);
+    }
+    (modified, size)
+}
+
+fn file_stamp(path: &Path) -> (SystemTime, u64) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return (SystemTime::UNIX_EPOCH, 0);
+    };
+    if !metadata.is_file() {
+        return (SystemTime::UNIX_EPOCH, 0);
+    }
+    (
+        metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        metadata.len(),
+    )
+}
+
+/// String values from an XML or `bplist00` property list.
+///
+/// Missing and unreadable files yield an empty map. Integer values are
+/// decimal strings, which is how `CFBundleVersion` is sometimes stored.
+fn plist_strings(bytes: &[u8]) -> BTreeMap<String, String> {
+    if bytes.starts_with(b"bplist00") {
+        return binary_plist_dict(bytes).unwrap_or_default();
+    }
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let Ok(xml) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    xml_plist_dict(xml)
+}
+
+fn xml_plist_dict(xml: &str) -> BTreeMap<String, String> {
+    let mut fields = BTreeMap::new();
+    let mut rest = xml;
+    while let Some(key_at) = rest.find("<key>") {
+        rest = &rest[key_at + 5..];
+        let Some(key_end) = rest.find("</key>") else {
+            break;
+        };
+        let key = rest[..key_end].to_string();
+        rest = &rest[key_end + 6..];
+        let trimmed = rest.trim_start();
+        if let Some(value) =
+            xml_tagged(trimmed, "string").or_else(|| xml_tagged(trimmed, "integer"))
+        {
+            fields.insert(key, xml_unescape(&value));
+        }
+    }
+    fields
+}
+
+fn xml_tagged(text: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let value = text.strip_prefix(&open)?;
+    let end = value.find(&close)?;
+    Some(value[..end].to_string())
+}
+
+fn xml_unescape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find('&') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let Some(end) = rest.find(';') else {
+            out.push_str(rest);
+            return out;
+        };
+        match &rest[..=end] {
+            "&amp;" => out.push('&'),
+            "&lt;" => out.push('<'),
+            "&gt;" => out.push('>'),
+            "&quot;" => out.push('"'),
+            "&apos;" => out.push('\''),
+            other => out.push_str(other),
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn binary_plist_dict(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
+    if bytes.len() < 40 {
+        return None;
+    }
+    let trailer = bytes.len() - 32;
+    let offset_size = usize::from(bytes[trailer + 6]);
+    let ref_size = usize::from(bytes[trailer + 7]);
+    if offset_size == 0 || offset_size > 8 || ref_size == 0 || ref_size > 8 {
+        return None;
+    }
+    let count = read_be_usize(bytes, trailer + 8, 8)?;
+    let top = read_be_usize(bytes, trailer + 16, 8)?;
+    let table = read_be_usize(bytes, trailer + 24, 8)?;
+    if top >= count {
+        return None;
+    }
+    let table_end = table.checked_add(count.checked_mul(offset_size)?)?;
+    if table_end > bytes.len() {
+        return None;
+    }
+    dict_strings(bytes, table, offset_size, ref_size, top)
+}
+
+fn dict_strings(
+    bytes: &[u8],
+    table: usize,
+    offset_size: usize,
+    ref_size: usize,
+    index: usize,
+) -> Option<BTreeMap<String, String>> {
+    let at = object_offset(bytes, table, offset_size, index)?;
+    let marker = *bytes.get(at)?;
+    if marker >> 4 != 0xD {
+        return None;
+    }
+    let (count, payload) = object_len(bytes, at)?;
+    let mut fields = BTreeMap::new();
+    for slot in 0..count {
+        let key_at = payload.checked_add(slot.checked_mul(ref_size)?)?;
+        let value_at = payload.checked_add(count.checked_add(slot)?.checked_mul(ref_size)?)?;
+        let key_index = read_be_usize(bytes, key_at, ref_size)?;
+        let value_index = read_be_usize(bytes, value_at, ref_size)?;
+        let Some(key) = object_string(bytes, table, offset_size, key_index) else {
+            continue;
+        };
+        let Some(value) = object_string(bytes, table, offset_size, value_index) else {
+            continue;
+        };
+        fields.insert(key, value);
+    }
+    Some(fields)
+}
+
+fn object_string(bytes: &[u8], table: usize, offset_size: usize, index: usize) -> Option<String> {
+    let at = object_offset(bytes, table, offset_size, index)?;
+    let marker = *bytes.get(at)?;
+    match marker >> 4 {
+        0x5 | 0x6 => {
+            let (count, payload) = object_len(bytes, at)?;
+            if marker >> 4 == 0x5 {
+                let raw = bytes.get(payload..payload.checked_add(count)?)?;
+                String::from_utf8(raw.to_vec()).ok()
+            } else {
+                let raw = bytes.get(payload..payload.checked_add(count.checked_mul(2)?)?)?;
+                let units: Vec<u16> = raw
+                    .chunks_exact(2)
+                    .map(|unit| u16::from_be_bytes([unit[0], unit[1]]))
+                    .collect();
+                String::from_utf16(&units).ok()
+            }
+        }
+        0x1 => {
+            let nbytes = 1usize << usize::from(marker & 0x0f);
+            if nbytes > 8 {
+                return None;
+            }
+            Some(read_be_u64(bytes, at + 1, nbytes)?.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn object_offset(bytes: &[u8], table: usize, offset_size: usize, index: usize) -> Option<usize> {
+    read_be_usize(
+        bytes,
+        table.checked_add(index.checked_mul(offset_size)?)?,
+        offset_size,
+    )
+}
+
+/// Character count (or dictionary entry count) and the first payload byte.
+fn object_len(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    let marker = *bytes.get(at)?;
+    let low = marker & 0x0f;
+    if low != 0x0f {
+        return Some((usize::from(low), at + 1));
+    }
+    let size_marker = *bytes.get(at + 1)?;
+    if size_marker >> 4 != 0x1 {
+        return None;
+    }
+    let nbytes = 1usize << usize::from(size_marker & 0x0f);
+    if nbytes > 8 {
+        return None;
+    }
+    let count = read_be_usize(bytes, at + 2, nbytes)?;
+    Some((count, at + 2 + nbytes))
+}
+
+fn read_be_usize(bytes: &[u8], at: usize, len: usize) -> Option<usize> {
+    usize::try_from(read_be_u64(bytes, at, len)?).ok()
+}
+
+fn read_be_u64(bytes: &[u8], at: usize, len: usize) -> Option<u64> {
+    if len == 0 || len > 8 {
+        return None;
+    }
+    let raw = bytes.get(at..at + len)?;
+    let mut value = 0u64;
+    for byte in raw {
+        value = (value << 8) | u64::from(*byte);
+    }
+    Some(value)
 }
 
 fn is_bundle(path: &Path) -> bool {
@@ -148,7 +441,11 @@ mod tests {
     fn bundle(name: &str, secs: u64) -> BundleFound {
         BundleFound {
             path: PathBuf::from(name),
-            modified: SystemTime::UNIX_EPOCH + Duration::from_secs(secs),
+            revision: BundleRevision {
+                version: String::new(),
+                executable_modified: SystemTime::UNIX_EPOCH + Duration::from_secs(secs),
+                executable_size: secs,
+            },
         }
     }
 
@@ -230,5 +527,80 @@ mod tests {
                 .any(|bundle| bundle.path.ends_with("Drum.vst3"))
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_new_bundle_version_changes_the_revision_without_touching_the_executable() {
+        let root = std::env::temp_dir().join(format!(
+            "echode-rev-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let bundle = root.join("Synth.clap");
+        std::fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+        std::fs::write(bundle.join("Contents/MacOS/Plugin"), b"same").unwrap();
+        std::fs::write(
+            bundle.join("Contents/Info.plist"),
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Plugin</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        let first = bundle_revision(&bundle);
+        std::fs::write(
+            bundle.join("Contents/Info.plist"),
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Plugin</string>
+<key>CFBundleVersion</key><string>2</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        let second = bundle_revision(&bundle);
+        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(first.version, "1");
+        assert_eq!(second.version, "2");
+        assert_ne!(first, second);
+        assert_eq!(first.executable_size, second.executable_size);
+    }
+
+    #[test]
+    fn a_binary_plist_version_is_part_of_the_revision() {
+        let root = std::env::temp_dir().join(format!(
+            "echode-bplist-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let bundle = root.join("Synth.clap");
+        let plist = bundle.join("Contents/Info.plist");
+        std::fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+        std::fs::write(bundle.join("Contents/MacOS/Plugin"), b"same").unwrap();
+        std::fs::write(
+            &plist,
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Plugin</string>
+<key>CFBundleVersion</key><string>9</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        let converted = std::process::Command::new("plutil")
+            .args(["-convert", "binary1", plist.to_str().unwrap()])
+            .status()
+            .unwrap();
+        assert!(converted.success());
+        let revision = bundle_revision(&bundle);
+        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(revision.version, "9");
+        assert_eq!(revision.executable_size, 4);
     }
 }

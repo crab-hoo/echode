@@ -261,6 +261,9 @@ mod catalog;
 mod scan;
 mod watch;
 
-pub use catalog::{BundleFound, PluginCatalog, SCAN_QUIET, list_bundles};
+pub use catalog::{
+    BundleFound, BundleRevision, PluginCatalog, SCAN_QUIET, clap_path_directories, list_bundles,
+    list_bundles_including_clap_path,
+};
 pub use scan::{ScannedPlugin, scan_descriptors, scan_report};
 pub use watch::FolderWatch;

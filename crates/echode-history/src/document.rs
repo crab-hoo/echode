@@ -62,12 +62,21 @@ pub fn write_package(directory: &Path, project: &Project) -> Result<(), PackageE
 }
 
 pub fn read_package(directory: &Path) -> Result<Project, PackageError> {
-    let project_json = read_to_string(&directory.join("project.json"))?;
+    let project_path = directory.join("project.json");
+    reject_symlink(&project_path)?;
+    let project_json = read_to_string(&project_path)?;
     let header = parse_header(&project_json)?;
+    let tracks_dir = directory.join("tracks");
+    if !header.track_ids.is_empty() {
+        reject_symlink(&tracks_dir)?;
+    }
     let mut tracks = Vec::with_capacity(header.track_ids.len());
     for id in &header.track_ids {
+        // HIS-8: the id was checked in parse_header, so this name stays inside tracks/.
         let filename = format!("{id}.json");
-        let json = read_to_string(&directory.join("tracks").join(&filename))?;
+        let path = tracks_dir.join(&filename);
+        reject_symlink(&path)?;
+        let json = read_to_string(&path)?;
         tracks.push((filename, json));
     }
     assemble(header, tracks)
@@ -385,7 +394,7 @@ fn parse_header(json: &str) -> Result<Header, PackageError> {
     Ok(Header {
         meter,
         tempo,
-        track_ids: file.tracks,
+        track_ids: canonical_track_ids(file.tracks)?,
     })
 }
 
@@ -538,7 +547,30 @@ fn blob_text(root: &gix::Tree<'_>, path: &str) -> Result<String, PackageError> {
 }
 
 fn read_to_string(path: &Path) -> Result<String, PackageError> {
+    reject_symlink(path)?;
     fs::read_to_string(path).map_err(|error| io_error(path, error))
+}
+
+/// HIS-8: a package entry must be a real file. Following a link could leave the package.
+fn reject_symlink(path: &Path) -> Result<(), PackageError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| io_error(path, error))?;
+    if metadata.file_type().is_symlink() {
+        return Err(PackageError::new(format!(
+            "{} is a symbolic link",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn canonical_track_ids(ids: Vec<String>) -> Result<Vec<String>, PackageError> {
+    ids.into_iter()
+        .map(|id| {
+            Id::parse(&id)
+                .map(|id| id.to_string())
+                .ok_or_else(|| PackageError::new(format!("invalid track id {id}")))
+        })
+        .collect()
 }
 
 fn io_error(path: &Path, error: std::io::Error) -> PackageError {

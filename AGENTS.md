@@ -15,8 +15,8 @@ Phase 0（S1 から S5）は確定済みです。今は Phase 1 のドキュメ�
 - `echode-plugin-host`: ヘルパープロセス。プラグインフォルダの検知もここ。本体はバンドルを読み込まない
 - `echode-test-plugin`: クラッシュとハングを起こせるテスト用 CLAP
 - `echode-draw`: 描画検証用のシーンと可視判定。Swift 側は `spikes/draw`
-- `echode-engine`: オーディオグラフ、再生位置、MIDI とメトロノーム、テスト用シンセ（wavesynth の Sine Pad）とサンプラー（dasp の補間）、サンプルレート変換、キャッシュへ差し替えられるトラック、ループの継ぎ目、フェーダー、出力デバイスの追従。10 分間の計測は `echode-engine-spike`
-- `echode-history`: プレーンテキストのプロジェクトと gix による自動コミット。製品パッケージの保存とジャーナル復旧もここ。計測は `make spike-history`
+- `echode-history`: プレーンテキストのプロジェクトと gix による自動コミット。製品パッケージの保存とジャーナル復旧もここ。1,000 トラックの計測用の型は `spike`。計測は `make spike-history`
+- `echode-engine`: オーディオグラフ、再生位置、MIDI とメトロノーム、テスト用シンセ（wavesynth の Sine Pad）とサンプラー（dasp の補間）、サンプルレート変換、キャッシュへ差し替えられるトラック、ループの継ぎ目、フェーダー、出力デバイスの追従。10 分間の計測の型は `spike`。計測は `echode-engine-spike`
 - 入力の検証は Rust の crate ではなく `spikes/input`。`make spike-input`
 - `echode-model`: ドキュメントモデル。時間、種別のないトラック、スマートクリップ、フォルダ（親 ID。バス処理は Phase 2）
 - `echode-actions`: モデルを変えるアクション、Undo / Redo、再生できるジャーナル

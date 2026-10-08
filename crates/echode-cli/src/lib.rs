@@ -1,14 +1,15 @@
 //! `echode render` writes a project package to a stereo float WAV.
 //!
-//! The samples come from the test synth. Two renders of the same package
-//! write the same bytes.
+//! The samples come from the test synth. Each render block is written as it
+//! is produced, through a buffered file, so a long export is not one syscall
+//! per sample and not one buffer for the whole file.
 
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use echode_api::serve;
-use echode_engine::{render_offline, render_span_frames};
+use echode_engine::{render_offline_blocks, render_span_frames};
 use echode_history::read_package;
 
 /// Why a command stopped.
@@ -120,10 +121,12 @@ pub fn render_to_wav(
         None => render_span_frames(&project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?,
     };
-    let mut interleaved = vec![0.0; usize::try_from(frames).unwrap_or(0).saturating_mul(2)];
-    render_offline(&project, sample_rate, frames, &mut interleaved)
-        .map_err(|error| CliError::new(error.to_string()))?;
-    write_wav(wav, sample_rate, &interleaved)
+    let mut wav = WavFile::create(wav, sample_rate, frames)?;
+    render_offline_blocks(&project, sample_rate, frames, |block| {
+        wav.write_block(block)
+    })
+    .map_err(|error| CliError::new(error.to_string()))?;
+    wav.finish()
 }
 
 fn parse_u32(text: &str) -> Result<u32, CliError> {
@@ -138,36 +141,76 @@ fn usage() -> CliError {
 }
 
 /// Canonical stereo 32-bit float WAV. The data chunk must fit in 4 GiB.
+///
+/// Samples are converted in groups and written through [`BufWriter`].
 pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(), CliError> {
-    let data_bytes = u32::try_from(interleaved.len().saturating_mul(4))
+    if !interleaved.len().is_multiple_of(2) {
+        return Err(CliError::new("wav data must be stereo"));
+    }
+    let frames = u32::try_from(interleaved.len() / 2)
         .map_err(|_| CliError::new("wav data does not fit in a 32-bit chunk"))?;
-    let riff_size = data_bytes
-        .checked_add(36)
-        .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
-    let byte_rate = sample_rate
-        .checked_mul(8)
-        .ok_or_else(|| CliError::new("sample rate does not fit in the wav header"))?;
-    let mut file = File::create(path).map_err(|error| CliError::new(error.to_string()))?;
-    let mut header = Vec::with_capacity(44);
-    header.extend_from_slice(b"RIFF");
-    header.extend_from_slice(&riff_size.to_le_bytes());
-    header.extend_from_slice(b"WAVE");
-    header.extend_from_slice(b"fmt ");
-    header.extend_from_slice(&16u32.to_le_bytes());
-    header.extend_from_slice(&3u16.to_le_bytes());
-    header.extend_from_slice(&2u16.to_le_bytes());
-    header.extend_from_slice(&sample_rate.to_le_bytes());
-    header.extend_from_slice(&byte_rate.to_le_bytes());
-    header.extend_from_slice(&8u16.to_le_bytes());
-    header.extend_from_slice(&32u16.to_le_bytes());
-    header.extend_from_slice(b"data");
-    header.extend_from_slice(&data_bytes.to_le_bytes());
-    file.write_all(&header)
-        .and_then(|_| {
-            for sample in interleaved {
-                file.write_all(&sample.to_le_bytes())?;
-            }
-            Ok(())
+    let mut wav = WavFile::create(path, sample_rate, frames)?;
+    for block in interleaved.chunks(64 * 2) {
+        wav.write_block(block)?;
+    }
+    wav.finish()
+}
+
+struct WavFile {
+    writer: BufWriter<File>,
+    bytes: Vec<u8>,
+}
+
+impl WavFile {
+    fn create(path: &Path, sample_rate: u32, frames: u32) -> Result<Self, CliError> {
+        let data_bytes = frames
+            .checked_mul(8)
+            .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
+        let riff_size = data_bytes
+            .checked_add(36)
+            .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
+        let byte_rate = sample_rate
+            .checked_mul(8)
+            .ok_or_else(|| CliError::new("sample rate does not fit in the wav header"))?;
+        let mut header = [0u8; 44];
+        header[0..4].copy_from_slice(b"RIFF");
+        header[4..8].copy_from_slice(&riff_size.to_le_bytes());
+        header[8..12].copy_from_slice(b"WAVE");
+        header[12..16].copy_from_slice(b"fmt ");
+        header[16..20].copy_from_slice(&16u32.to_le_bytes());
+        header[20..22].copy_from_slice(&3u16.to_le_bytes());
+        header[22..24].copy_from_slice(&2u16.to_le_bytes());
+        header[24..28].copy_from_slice(&sample_rate.to_le_bytes());
+        header[28..32].copy_from_slice(&byte_rate.to_le_bytes());
+        header[32..34].copy_from_slice(&8u16.to_le_bytes());
+        header[34..36].copy_from_slice(&32u16.to_le_bytes());
+        header[36..40].copy_from_slice(b"data");
+        header[40..44].copy_from_slice(&data_bytes.to_le_bytes());
+        let file = File::create(path).map_err(|error| CliError::new(error.to_string()))?;
+        let mut writer = BufWriter::with_capacity(64 * 1024, file);
+        writer
+            .write_all(&header)
+            .map_err(|error| CliError::new(error.to_string()))?;
+        Ok(Self {
+            writer,
+            bytes: Vec::with_capacity(64 * 2 * 4),
         })
-        .map_err(|error| CliError::new(error.to_string()))
+    }
+
+    fn write_block(&mut self, interleaved: &[f32]) -> Result<(), CliError> {
+        self.bytes.clear();
+        self.bytes.reserve(interleaved.len().saturating_mul(4));
+        for sample in interleaved {
+            self.bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+        self.writer
+            .write_all(&self.bytes)
+            .map_err(|error| CliError::new(error.to_string()))
+    }
+
+    fn finish(mut self) -> Result<(), CliError> {
+        self.writer
+            .flush()
+            .map_err(|error| CliError::new(error.to_string()))
+    }
 }

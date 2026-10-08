@@ -2,59 +2,92 @@
 //!
 //! Any change wakes the caller. The caller lists bundles again and hands them
 //! to [`crate::PluginCatalog`], which waits until the writes go quiet.
+//!
+//! The stream is scheduled on a dispatch queue (`FSEventStreamSetDispatchQueue`).
+//! Stopping it does not wait for a run loop to start.
 
-use std::ffi::{c_char, c_void};
-use std::path::{Path, PathBuf};
-use std::ptr;
+use std::ffi::c_void;
+use std::path::Path;
+use std::ptr::NonNull;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-const FILE_EVENTS: u32 = 0x0000_0010;
-const NO_DEFER: u32 = 0x0000_0002;
-const WATCH_ROOT: u32 = 0x0000_0004;
-const SINCE_NOW: u64 = u64::MAX;
+use dispatch2::DispatchQueue;
+use objc2_core_foundation::{CFArray, CFRetained, CFString};
+use objc2_core_services::{
+    ConstFSEventStreamRef, FSEventStreamContext, FSEventStreamCreate, FSEventStreamEventFlags,
+    FSEventStreamEventId, FSEventStreamInvalidate, FSEventStreamRef, FSEventStreamRelease,
+    FSEventStreamSetDispatchQueue, FSEventStreamStart, FSEventStreamStop,
+    kFSEventStreamCreateFlagFileEvents, kFSEventStreamCreateFlagNoDefer,
+    kFSEventStreamCreateFlagWatchRoot, kFSEventStreamEventIdSinceNow,
+};
 
 struct CallbackInfo {
     tx: std::sync::mpsc::Sender<()>,
 }
 
-#[repr(C)]
-struct StreamContext {
-    version: isize,
-    info: *mut c_void,
-    retain: *const c_void,
-    release: Option<unsafe extern "C" fn(*const c_void)>,
-    copy_description: *const c_void,
-}
-
-struct RunLoop(*mut c_void);
-
-// `CFRunLoopStop` is documented to be callable from another thread.
-unsafe impl Send for RunLoop {}
-unsafe impl Sync for RunLoop {}
-
 /// Background watch. Dropping it stops the FSEvents stream.
 pub struct FolderWatch {
-    runloop: Arc<Mutex<Option<RunLoop>>>,
-    thread: Option<JoinHandle<()>>,
+    stream: FSEventStreamRef,
+    /// Kept until after the stream is invalidated. The queue must still be
+    /// scheduled when `FSEventStreamInvalidate` runs.
+    _queue: dispatch2::DispatchRetained<DispatchQueue>,
     rx: Receiver<()>,
 }
 
 impl FolderWatch {
     pub fn start(root: &Path) -> Result<Self, String> {
-        let root = root.to_path_buf();
+        let Some(path) = root.to_str() else {
+            return Err("plugin folder path is not utf-8".to_string());
+        };
+        let cf_path = CFString::from_str(path);
+        let paths = CFArray::from_objects(&[&*cf_path]);
+        // SAFETY: `CFArray<CFString>` is the same object as an untyped `CFArray`.
+        // The stream retains that array and does not use the element type.
+        let paths: CFRetained<CFArray> = unsafe { CFRetained::cast_unchecked(paths) };
         let (tx, rx) = mpsc::channel();
-        let runloop = Arc::new(Mutex::new(None));
-        let published = Arc::clone(&runloop);
-        let thread = thread::Builder::new()
-            .name("echode-plugin-watch".to_string())
-            .spawn(move || watch_thread(root, tx, published))
-            .map_err(|error| error.to_string())?;
+        let info = Box::into_raw(Box::new(CallbackInfo { tx }));
+        let mut context = FSEventStreamContext {
+            version: 0,
+            info: info.cast(),
+            retain: None,
+            release: Some(release_info),
+            copyDescription: None,
+        };
+        let stream = unsafe {
+            FSEventStreamCreate(
+                None,
+                Some(stream_callback),
+                &mut context,
+                &paths,
+                kFSEventStreamEventIdSinceNow,
+                0.1,
+                kFSEventStreamCreateFlagFileEvents
+                    | kFSEventStreamCreateFlagNoDefer
+                    | kFSEventStreamCreateFlagWatchRoot,
+            )
+        };
+        if stream.is_null() {
+            drop(unsafe { Box::from_raw(info) });
+            return Err("FSEventStreamCreate failed".to_string());
+        }
+        let queue = DispatchQueue::new("dev.echode.plugin-watch", None);
+        let started = unsafe {
+            FSEventStreamSetDispatchQueue(stream, Some(&*queue));
+            FSEventStreamStart(stream)
+        };
+        if !started {
+            // The stream was never started, so `FSEventStreamStop` is not
+            // allowed. Invalidate still releases the callback info.
+            unsafe {
+                FSEventStreamInvalidate(stream);
+                FSEventStreamRelease(stream);
+            }
+            return Err("FSEventStreamStart failed".to_string());
+        }
         Ok(Self {
-            runloop,
-            thread: Some(thread),
+            stream,
+            _queue: queue,
             rx,
         })
     }
@@ -74,93 +107,32 @@ impl FolderWatch {
 
 impl Drop for FolderWatch {
     fn drop(&mut self) {
-        if let Some(runloop) = self
-            .runloop
-            .lock()
-            .ok()
-            .and_then(|guard| guard.as_ref().map(|loop_| loop_.0))
-        {
-            unsafe { CFRunLoopStop(runloop) };
-        }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        // `FSEventStreamStop` returns only after the callback will not run again.
+        unsafe {
+            FSEventStreamStop(self.stream);
+            FSEventStreamInvalidate(self.stream);
+            FSEventStreamRelease(self.stream);
         }
     }
 }
 
-fn watch_thread(
-    root: PathBuf,
-    tx: std::sync::mpsc::Sender<()>,
-    runloop: Arc<Mutex<Option<RunLoop>>>,
-) {
-    let mut c_path = root.into_os_string().into_encoded_bytes();
-    c_path.push(0);
-    let cf_path =
-        unsafe { CFStringCreateWithFileSystemRepresentation(ptr::null(), c_path.as_ptr().cast()) };
-    if cf_path.is_null() {
-        return;
-    }
-    let values = [cf_path];
-    let array = unsafe { CFArrayCreate(ptr::null(), values.as_ptr(), 1, &kCFTypeArrayCallBacks) };
-    if array.is_null() {
-        unsafe { CFRelease(cf_path) };
-        return;
-    }
-    let info = Box::into_raw(Box::new(CallbackInfo { tx }));
-    let mut context = StreamContext {
-        version: 0,
-        info: info.cast(),
-        retain: ptr::null(),
-        release: Some(release_info),
-        copy_description: ptr::null(),
-    };
-    let stream = unsafe {
-        FSEventStreamCreate(
-            ptr::null(),
-            stream_callback,
-            &mut context,
-            array,
-            SINCE_NOW,
-            0.1,
-            FILE_EVENTS | NO_DEFER | WATCH_ROOT,
-        )
-    };
-    unsafe { CFRelease(array) };
-    if stream.is_null() {
-        unsafe { drop(Box::from_raw(info)) };
-        return;
-    }
-    unsafe {
-        let loop_ = CFRunLoopGetCurrent();
-        FSEventStreamScheduleWithRunLoop(stream, loop_, kCFRunLoopDefaultMode);
-        if !FSEventStreamStart(stream) {
-            FSEventStreamInvalidate(stream);
-            FSEventStreamRelease(stream);
-            return;
-        }
-        if let Ok(mut slot) = runloop.lock() {
-            *slot = Some(RunLoop(loop_));
-        }
-        CFRunLoopRun();
-        FSEventStreamStop(stream);
-        FSEventStreamInvalidate(stream);
-        FSEventStreamRelease(stream);
-    }
-}
-
-unsafe extern "C" fn release_info(info: *const c_void) {
+/// Frees the info pointer when the stream is deallocated.
+///
+/// `FSEventStreamCreate` does not call `retain` when that callback is null,
+/// and it does call `release` on deallocation (FSEvents.h).
+unsafe extern "C-unwind" fn release_info(info: *const c_void) {
     if !info.is_null() {
         drop(unsafe { Box::from_raw(info as *mut CallbackInfo) });
     }
 }
 
-unsafe extern "C" fn stream_callback(
-    _stream: *mut c_void,
+unsafe extern "C-unwind" fn stream_callback(
+    _stream: ConstFSEventStreamRef,
     info: *mut c_void,
     _num_events: usize,
-    _paths: *mut c_void,
-    _flags: *const u32,
-    _ids: *const u64,
+    _paths: NonNull<c_void>,
+    _flags: NonNull<FSEventStreamEventFlags>,
+    _ids: NonNull<FSEventStreamEventId>,
 ) {
     if info.is_null() {
         return;
@@ -187,7 +159,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let watch = FolderWatch::start(&root).expect("watch");
-        // The stream may already be running. Give it a moment to arm.
+        // The stream is started before `start` returns. Give FSEvents a moment
+        // to arm before the first change.
         std::thread::sleep(Duration::from_millis(200));
 
         let bundle = root.join("Saw.clap");
@@ -211,53 +184,4 @@ mod tests {
         assert!(!catalog.contains(&bundle));
         let _ = std::fs::remove_dir_all(&root);
     }
-}
-
-#[link(name = "CoreFoundation", kind = "framework")]
-unsafe extern "C" {
-    fn CFStringCreateWithFileSystemRepresentation(
-        allocator: *const c_void,
-        path: *const c_char,
-    ) -> *const c_void;
-    fn CFArrayCreate(
-        allocator: *const c_void,
-        values: *const *const c_void,
-        count: isize,
-        callbacks: *const c_void,
-    ) -> *const c_void;
-    fn CFRelease(value: *const c_void);
-    fn CFRunLoopGetCurrent() -> *mut c_void;
-    fn CFRunLoopRun();
-    fn CFRunLoopStop(runloop: *mut c_void);
-    static kCFTypeArrayCallBacks: c_void;
-    static kCFRunLoopDefaultMode: *const c_void;
-}
-
-#[link(name = "CoreServices", kind = "framework")]
-unsafe extern "C" {
-    fn FSEventStreamCreate(
-        allocator: *const c_void,
-        callback: unsafe extern "C" fn(
-            *mut c_void,
-            *mut c_void,
-            usize,
-            *mut c_void,
-            *const u32,
-            *const u64,
-        ),
-        context: *mut StreamContext,
-        paths: *const c_void,
-        since: u64,
-        latency: f64,
-        flags: u32,
-    ) -> *mut c_void;
-    fn FSEventStreamScheduleWithRunLoop(
-        stream: *mut c_void,
-        runloop: *mut c_void,
-        mode: *const c_void,
-    );
-    fn FSEventStreamStart(stream: *mut c_void) -> bool;
-    fn FSEventStreamStop(stream: *mut c_void);
-    fn FSEventStreamInvalidate(stream: *mut c_void);
-    fn FSEventStreamRelease(stream: *mut c_void);
 }
