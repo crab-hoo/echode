@@ -11,7 +11,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use echode_model::Project;
+use echode_model::{Project, Track};
 use gix::{ObjectId, Repository};
 
 use crate::document::{
@@ -49,7 +49,7 @@ enum Request {
 }
 
 struct Cache {
-    tracks: HashMap<String, (usize, ObjectId)>,
+    tracks: HashMap<String, (Arc<Track>, ObjectId)>,
     project_json: String,
     project_blob: ObjectId,
 }
@@ -174,15 +174,16 @@ fn save(
     let mut track_blobs = Vec::with_capacity(package.tracks.len());
     let mut stored = HashMap::with_capacity(package.tracks.len());
     for (track, (filename, json)) in project.tracks().iter().zip(&package.tracks) {
-        let pointer = Arc::as_ptr(track) as usize;
         let id = track.id.to_string();
-        if let Some((_cached_pointer, blob)) = cache
+        // HIS-1: hold the Arc. An address alone can be reused after the
+        // previous snapshot is freed, and then a changed track looks unchanged.
+        if let Some((cached, blob)) = cache
             .as_ref()
             .and_then(|cache| cache.tracks.get(&id))
-            .filter(|(cached_pointer, _)| *cached_pointer == pointer)
+            .filter(|(cached, _)| Arc::ptr_eq(cached, track))
         {
             track_blobs.push((filename.clone(), *blob));
-            stored.insert(id, (pointer, *blob));
+            stored.insert(id, (Arc::clone(cached), *blob));
             continue;
         }
         let blob = repo
@@ -190,7 +191,7 @@ fn save(
             .map_err(|error| PackageError::new(error.to_string()))?
             .detach();
         track_blobs.push((filename.clone(), blob));
-        stored.insert(id, (pointer, blob));
+        stored.insert(id, (Arc::clone(track), blob));
     }
     let id = commit_tree(repo, project_blob, &track_blobs, parents)?;
     *parents = vec![id];

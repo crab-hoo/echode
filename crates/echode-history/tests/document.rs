@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use echode_actions::{Action, Command, Session};
 use echode_history::{
@@ -130,4 +131,56 @@ fn a_bad_schema_is_rejected() {
     std::fs::write(directory.join("project.json"), "{\"schema\": 2}\n").unwrap();
     assert!(read_package(&directory).is_err());
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// HIS-1: the cache must keep the `Arc`. Address reuse is allocator-dependent,
+/// so this walks the same edit twenty times.
+#[test]
+fn a_reused_track_address_does_not_restore_an_older_commit() {
+    for _ in 0..20 {
+        let directory = scratch();
+        let autosave = Autosave::create(&directory).unwrap();
+        let mut session = Session::open(Project::new());
+        let Action::AddTrack { id: track, .. } = session
+            .perform(Command::AddTrack {
+                name: "piano".into(),
+            })
+            .unwrap()
+        else {
+            panic!("add track");
+        };
+        session
+            .perform(Command::InsertNote {
+                track,
+                draft: note(0),
+            })
+            .unwrap();
+        autosave
+            .save(Arc::new(session.project().clone()))
+            .unwrap()
+            .wait()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        session.undo().unwrap();
+        session
+            .perform(Command::InsertNote {
+                track,
+                draft: note(8),
+            })
+            .unwrap();
+        session
+            .perform(Command::InsertNote {
+                track,
+                draft: note(16),
+            })
+            .unwrap();
+        let commit = autosave
+            .save(Arc::new(session.project().clone()))
+            .unwrap()
+            .wait()
+            .unwrap();
+        assert_eq!(autosave.load(commit).unwrap(), *session.project());
+        drop(autosave);
+        let _ = std::fs::remove_dir_all(directory);
+    }
 }
