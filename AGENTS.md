@@ -33,6 +33,21 @@ Phase 0（S1 から S5）は確定済みです。今は Phase 1 のドキュメ�
 - 非公開の Apple API を使わない
 - ユーザーに頼まれていないコミットやプッシュはしない
 
+## 書く時に避けること
+
+2026-10-08 の監査で見つかった誤りの型です（詳細は監査の文書の §5）。多くは `make check` が止めます。
+
+- 同一性をアドレスの値で比べない。`Arc` を持ったまま `Arc::ptr_eq` で比べる（clippy が `Arc::as_ptr` を止める）
+- 音をブロックの切り方に依存させない。プロジェクト上のサンプル位置から決める。音を作る処理を足したら、`crates/echode-engine/tests/block_size.rs` にブロック長を変えて比べるテストを足す
+- オーディオスレッドで、プロジェクト全体の大きさに比例する処理をしない
+- OS の API を新しく手で宣言しない。`libc` か objc2 の crate を使う（`scripts/check-ffi.sh` が止める）
+- モデルを変える操作は `Project::check_invariants` を守る。アクションを足したら、`crates/echode-history/tests/properties.rs` の操作の生成に足す
+- 時間を測るテストと、実機が要るテストは `#[ignore]` にし、`make spike-*` で動かす
+
 ## 確認
 
-変更したら `make check` を実行します。プラグインの隔離に触ったら `make spike-isolation` も実行し、`docs/spikes/S3-plugin-isolation.md` の数値を更新します。
+変更したら `make check` を実行します。フォーマット、clippy、テスト、FFI の手書きの宣言、依存のライセンスを確かめます。Cursor のエージェントがターンを終える時は、stop hook（`.cursor/hooks.json`）が同じ検査を走らせ、失敗したら直すよう続きの指示を出します。新しい環境では、先に `make setup` で cargo-deny を入れます。
+
+監査の未解決の不具合は、`audit_<ID>_...` という名前の無視したテストになっています。`make known-bugs` で、まだ失敗していることを確かめられます。項目を直したら、そのテストの `#[ignore]` を外し、監査の文書の一覧の状態を更新します。
+
+プラグインの隔離に触ったら `make spike-isolation` も実行し、`docs/spikes/S3-plugin-isolation.md` の数値を更新します。

@@ -415,6 +415,16 @@ impl Project {
             tracks,
         }
     }
+
+    /// Builds a snapshot without any checks, so a test can break a rule on purpose.
+    #[cfg(test)]
+    pub(crate) fn unchecked(meter: Meter, tempo: TempoMap, tracks: Vec<Track>) -> Self {
+        Self {
+            meter,
+            tempo,
+            tracks: tracks.into_iter().map(Arc::new).collect(),
+        }
+    }
 }
 
 fn under(tracks: &[Arc<Track>], folder: Id, candidate: Id) -> bool {
@@ -1015,13 +1025,11 @@ mod tests {
     fn edits_keep_the_previous_snapshot_and_share_other_tracks() {
         let (project, edited) = project_with_track();
         let (project, other) = project.add_track("drums");
-        let shared = Arc::as_ptr(
-            project
-                .tracks()
-                .iter()
-                .find(|track| track.id == other)
-                .unwrap(),
-        );
+        let shared = project
+            .tracks()
+            .iter()
+            .find(|track| track.id == other)
+            .unwrap();
         let (next, _) = project.insert_note(edited, at(0, 1)).unwrap();
         assert!(project.tracks()[0].clips.is_empty());
         assert_eq!(
@@ -1033,13 +1041,12 @@ mod tests {
                 .len(),
             1
         );
-        let still = Arc::as_ptr(
-            next.tracks()
-                .iter()
-                .find(|track| track.id == other)
-                .unwrap(),
-        );
-        assert_eq!(shared, still);
+        let still = next
+            .tracks()
+            .iter()
+            .find(|track| track.id == other)
+            .unwrap();
+        assert!(Arc::ptr_eq(shared, still));
         assert!(next.delete_note(edited, Id::generate()).is_err());
     }
 

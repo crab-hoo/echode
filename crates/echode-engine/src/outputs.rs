@@ -188,6 +188,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs a CoreAudio output device; `make spike-engine` runs it"]
     fn the_live_inventory_includes_the_default_output() {
         let inventory = crate::device::output_inventory().expect("output devices");
         assert!(

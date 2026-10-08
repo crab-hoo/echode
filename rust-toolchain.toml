@@ -1,0 +1,6 @@
+# One compiler for people, agents, and CI. Bump it in a change of its own,
+# because a new clippy can add warnings that `make check` turns into errors.
+[toolchain]
+channel = "1.96.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

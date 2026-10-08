@@ -39,6 +39,7 @@ fn an_edit_roundtrips_through_an_older_revision() {
 }
 
 #[test]
+#[ignore = "timing measurement; `make spike-history` runs it in a release build"]
 fn scheduling_a_thousand_track_save_stays_off_the_caller_and_reload_is_under_a_second() {
     let directory = scratch();
     let history = History::create(&directory).expect("create");

@@ -164,12 +164,13 @@ fn clap_gain_doubles_samples_and_stays_within_budget() {
         bmax = us(isolated_128.max),
         local = us(in_process_each),
     );
-    let report_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/spike-s3.txt");
-    std::fs::write(&report_path, &report).expect("write spike report");
     println!("{report}");
 
-    // Debug builds are not the measurement. The budget is for release.
+    // Debug builds are not the measurement. The report and the budget are for release.
     if !cfg!(debug_assertions) {
+        let report_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/spike-s3.txt");
+        std::fs::write(&report_path, &report).expect("write spike report");
         assert!(
             isolated_64.p50 <= BUDGET,
             "median round trip {} µs exceeds {} µs",

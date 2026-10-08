@@ -1,0 +1,5 @@
+# Patterns that caused bugs in the 2026-10-08 audit (docs/reviews/2026-10-08-audit.md).
+disallowed-methods = [
+    { path = "std::sync::Arc::as_ptr", reason = "an address can be reused once the Arc is dropped; keep the Arc and compare with Arc::ptr_eq (audit HIS-1)" },
+    { path = "std::rc::Rc::as_ptr", reason = "an address can be reused once the Rc is dropped; keep the Rc and compare with Rc::ptr_eq (audit HIS-1)" },
+]

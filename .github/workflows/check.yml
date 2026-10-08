@@ -1,0 +1,29 @@
+# Runs the same `make check` that people and agents run locally.
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    # Apple Silicon. Move to a macOS 27 image when one is available.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: make check
+
+  advisories:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: make advisories

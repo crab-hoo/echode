@@ -1,0 +1,14 @@
+# Files that still declare foreign functions by hand.
+#
+# Do not add a file here. Use the declarations in `libc` or the objc2 crates
+# (objc2-core-foundation, objc2-core-services, objc2-core-audio, ...) instead.
+# Only APIs that no crate covers (today: os_workgroup_*) may be declared by hand,
+# in one module, with a test that compares them with the SDK headers.
+# Remove a line when its declarations are replaced; check-ffi.sh fails on stale lines.
+#
+# path                                    audit item
+crates/echode-engine/src/device.rs        ENG-15
+crates/echode-engine/src/graph.rs         ENG-15
+crates/echode-engine/src/wait.rs          ENG-15
+crates/echode-plugin-host/src/watch.rs    PLG-9
+crates/echode-sandbox/src/sync.rs         ENG-15
