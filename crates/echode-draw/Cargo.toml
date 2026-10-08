@@ -1,0 +1,14 @@
+[package]
+name = "echode-draw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Spike scene and visibility for the arrange-view renderer"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[lints]
+workspace = true

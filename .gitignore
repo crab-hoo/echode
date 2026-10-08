@@ -1,0 +1,8 @@
+/target
+.build/
+**/*.rs.bk
+.DS_Store
+*.xcuserstate
+DerivedData/
+.idea/
+*.swp

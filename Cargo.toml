@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/echode-sandbox",
+    "crates/echode-plugin-host",
+    "crates/echode-test-plugin",
+    "crates/echode-draw",
+    "crates/echode-engine",
+    "crates/echode-history",
+    "crates/echode-model",
+    "crates/echode-actions",
+    "crates/echode-cli",
+    "crates/echode-api",
+]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-or-later"
+version = "0.0.0"
+rust-version = "1.87"
+
+[workspace.dependencies]
+clack-host = "0.2"
+clack-plugin = "0.2"
+memmap2 = "0.9"
+gix = "0.78"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

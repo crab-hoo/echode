@@ -1,0 +1,17 @@
+[package]
+name = "echode-test-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "CLAP plugin used to test out-of-process hosting"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clack-plugin = { workspace = true }
+
+[lints]
+workspace = true

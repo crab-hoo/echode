@@ -1,0 +1,21 @@
+[package]
+name = "echode-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Headless Echode commands"
+
+[[bin]]
+name = "echode"
+path = "src/main.rs"
+
+[dependencies]
+echode-api = { path = "../echode-api" }
+echode-engine = { path = "../echode-engine" }
+echode-history = { path = "../echode-history" }
+echode-model = { path = "../echode-model" }
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "echode-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Realtime audio graph, transport, and MIDI playback"
+
+[dependencies]
+dasp_interpolate = { version = "=0.11.0", features = ["floor", "linear", "sinc"] }
+dasp_ring_buffer = "=0.11.0"
+echode-model = { path = "../echode-model" }
+rubato = "=5.0.1"
+wavesynth = "=0.1.0"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "echode-engine-spike"
+path = "src/bin/spike.rs"
+
+[lints]
+workspace = true

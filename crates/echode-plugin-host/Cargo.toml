@@ -1,0 +1,15 @@
+[package]
+name = "echode-plugin-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Helper process that runs CLAP plugins outside the DAW"
+
+[dependencies]
+clack-host = { workspace = true }
+echode-sandbox = { path = "../echode-sandbox" }
+
+[lints]
+workspace = true

@@ -1,0 +1,72 @@
+use echode_engine::{install_stop_handler, run};
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let mut args = env::args().skip(1);
+    let mut seconds = 600u64;
+    let mut workers = 0usize;
+    let mut report_path = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--seconds" => {
+                let Some(value) = args.next().and_then(|text| text.parse().ok()) else {
+                    eprintln!("--seconds needs a number");
+                    return ExitCode::from(2);
+                };
+                seconds = value;
+            }
+            "--workers" => {
+                let Some(value) = args.next().and_then(|text| text.parse().ok()) else {
+                    eprintln!("--workers needs a number");
+                    return ExitCode::from(2);
+                };
+                workers = value;
+            }
+            "--report" => {
+                let Some(path) = args.next() else {
+                    eprintln!("--report needs a path");
+                    return ExitCode::from(2);
+                };
+                report_path = Some(PathBuf::from(path));
+            }
+            "--help" | "-h" => {
+                eprintln!("usage: echode-engine-spike [--seconds N] [--workers N] [--report PATH]");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("unknown argument: {other}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    install_stop_handler();
+    match run(seconds, workers) {
+        Ok(report) => {
+            print!("{report}");
+            if let Some(path) = report_path {
+                if let Some(parent) = path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if let Err(error) = fs::write(&path, report.to_string()) {
+                    eprintln!("could not write {}: {error}", path.display());
+                    return ExitCode::FAILURE;
+                }
+            }
+            if report.passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("echode-engine-spike: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
