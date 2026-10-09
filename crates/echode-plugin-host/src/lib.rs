@@ -55,7 +55,18 @@ pub(crate) fn load_entry(path: &Path) -> Result<PluginEntry, HostError> {
     unsafe { PluginEntry::load(path) }.map_err(|error| HostError::Plugin(error.to_string()))
 }
 
-pub fn serve(shm: &Path, plugin: Option<&Path>) -> Result<(), HostError> {
+pub fn serve(
+    shm: &Path,
+    plugin: Option<&Path>,
+    workgroup: Option<(&str, u32)>,
+) -> Result<(), HostError> {
+    // Join before serving so the thread that processes blocks is in the workgroup.
+    let _membership = match workgroup {
+        Some((name, ticks)) => {
+            Some(echode_sandbox::join_passed_workgroup(name, ticks).map_err(HostError::Plugin)?)
+        }
+        None => None,
+    };
     let region = MappedRegion::open(shm)?;
     match plugin {
         None => {
@@ -258,6 +269,7 @@ pub fn measure_in_process(
 }
 
 mod catalog;
+mod events;
 mod scan;
 mod watch;
 
@@ -265,5 +277,6 @@ pub use catalog::{
     BundleFound, BundleRevision, PluginCatalog, SCAN_QUIET, clap_path_directories, list_bundles,
     list_bundles_including_clap_path,
 };
+pub use events::write_input;
 pub use scan::{ScannedPlugin, scan_descriptors, scan_report};
 pub use watch::FolderWatch;

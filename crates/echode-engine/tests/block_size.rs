@@ -6,11 +6,10 @@
 //! The block lengths and voice slots are this test's choice, not engine limits.
 
 use echode_engine::{
-    AudioClip, MidiEvent, MidiKind, PlayedSpan, SynthVoice, TrackFader, Transport, fade_loop_seam,
-    mix_tracks, render_audio_clips, render_metronome, render_test_synth, schedule,
-    seam_fade_frames,
+    AudioClip, Event, PlayedSpan, SynthVoice, TrackFader, Transport, fade_loop_seam, mix_tracks,
+    render_audio_clips, render_metronome, render_test_synth, schedule, seam_fade_frames,
 };
-use echode_model::{Id, Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, TempoMap, Tick};
+use echode_model::{Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, TempoMap, Tick};
 
 const RATE: u32 = 48_000;
 const BLOCKS: [u32; 4] = [1, 7, 64, 512];
@@ -53,18 +52,13 @@ fn empty_span() -> PlayedSpan {
         frames: 0,
         block_offset: 0,
         release_at: None,
+        loop_end: None,
+        wrap_from: None,
     }
 }
 
-fn silent_event() -> MidiEvent {
-    MidiEvent {
-        sample_offset: 0,
-        track: Id::from_raw(0),
-        note: Id::from_raw(0),
-        pitch: 0,
-        velocity: 0,
-        kind: MidiKind::Off,
-    }
+fn silent_event() -> Event {
+    Event::note_off(0, 0, 0, 0)
 }
 
 /// Pulls `frames` in blocks of `block` and hands each block's spans and length to `render`.
@@ -114,11 +108,11 @@ fn render_synth(
     let mut right = vec![0.0f32; block as usize];
     drive(frames, block, looped, |spans, length, out| {
         let count = schedule(project, project.tempo(), RATE, spans, &mut events).unwrap();
-        for (index, track) in tracks.iter().enumerate() {
+        for (index, _track) in tracks.iter().enumerate() {
             let mut kept = 0;
             for event in events[..count]
                 .iter()
-                .filter(|event| event.track == track.id)
+                .filter(|event| event.track_key() == Some(index as u32))
             {
                 track_events[kept] = *event;
                 kept += 1;
@@ -213,7 +207,6 @@ fn audio_clip_edges_do_not_depend_on_the_block_size() {
 }
 
 #[test]
-#[ignore = "ENG-2: a click is cut off at the end of the block it starts in"]
 fn audit_eng2_the_metronome_does_not_depend_on_the_block_size() {
     assert_block_independent(|block| {
         drive(48_000, block, None, |spans, length, out| {
@@ -225,7 +218,6 @@ fn audit_eng2_the_metronome_does_not_depend_on_the_block_size() {
 }
 
 #[test]
-#[ignore = "ENG-2: the loop seam is faded only when the wrap falls inside one block"]
 fn audit_eng2_the_loop_seam_does_not_depend_on_the_block_size() {
     let samples = vec![0.5f32; 30_000];
     let looped = Some((Tick::new(0), quarters(1.0)));

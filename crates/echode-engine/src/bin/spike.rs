@@ -7,7 +7,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let mut seconds = 600u64;
-    let mut workers = 0usize;
+    let mut workers = None;
     let mut report_path = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -19,11 +19,18 @@ fn main() -> ExitCode {
                 seconds = value;
             }
             "--workers" => {
-                let Some(value) = args.next().and_then(|text| text.parse().ok()) else {
-                    eprintln!("--workers needs a number");
+                let Some(text) = args.next() else {
+                    eprintln!("--workers needs a number or auto");
                     return ExitCode::from(2);
                 };
-                workers = value;
+                if text == "auto" {
+                    workers = None;
+                } else if let Ok(value) = text.parse() {
+                    workers = Some(value);
+                } else {
+                    eprintln!("--workers needs a number or auto");
+                    return ExitCode::from(2);
+                }
             }
             "--report" => {
                 let Some(path) = args.next() else {
@@ -33,7 +40,9 @@ fn main() -> ExitCode {
                 report_path = Some(PathBuf::from(path));
             }
             "--help" | "-h" => {
-                eprintln!("usage: echode-engine-spike [--seconds N] [--workers N] [--report PATH]");
+                eprintln!(
+                    "usage: echode-engine-spike [--seconds N] [--workers N|auto] [--report PATH]"
+                );
                 return ExitCode::SUCCESS;
             }
             other => {

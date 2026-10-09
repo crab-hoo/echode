@@ -15,6 +15,43 @@ const ETIMEDOUT: i32 = 60;
 
 #[link(name = "System")]
 unsafe extern "C" {
+    pub(crate) fn os_workgroup_copy_port(workgroup: *mut std::ffi::c_void, port: *mut u32) -> i32;
+    pub(crate) fn os_workgroup_create_with_port(
+        name: *const std::ffi::c_char,
+        port: u32,
+    ) -> *mut std::ffi::c_void;
+    pub(crate) fn os_workgroup_join(
+        workgroup: *mut std::ffi::c_void,
+        token: *mut super::workgroup::Token,
+    ) -> i32;
+    pub(crate) fn os_workgroup_leave(
+        workgroup: *mut std::ffi::c_void,
+        token: *mut super::workgroup::Token,
+    );
+    pub(crate) fn os_release(object: *mut std::ffi::c_void);
+    pub(crate) fn mach_port_deallocate(task: u32, name: u32) -> i32;
+    pub(crate) fn bootstrap_check_in(
+        bp: u32,
+        service_name: *const std::ffi::c_char,
+        sp: *mut u32,
+    ) -> i32;
+    pub(crate) fn bootstrap_look_up(
+        bp: u32,
+        service_name: *const std::ffi::c_char,
+        sp: *mut u32,
+    ) -> i32;
+    pub(crate) static bootstrap_port: u32;
+    pub(crate) fn mach_msg(
+        msg: *mut std::ffi::c_void,
+        option: u32,
+        send_size: u32,
+        recv_size: u32,
+        recv_name: u32,
+        timeout: u32,
+        notify: u32,
+    ) -> i32;
+    pub(crate) fn pthread_set_qos_class_self_np(class: u32, relative: i32) -> i32;
+
     fn os_sync_wait_on_address(
         addr: *mut std::ffi::c_void,
         value: u64,

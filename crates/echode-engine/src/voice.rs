@@ -67,23 +67,46 @@ pub fn render_audio_clips(
 ) -> Result<(), PlaybackError> {
     let fade = i64::from(seam_fade_frames(sample_rate));
     for span in spans {
-        for local in 0..span.frames {
-            let index = block_index(span, local)?;
-            if index >= output.len() {
-                return Err(PlaybackError::BufferTooSmall);
-            }
-            let project = span
+        let end = span
+            .start_sample
+            .checked_add(i64::from(span.frames))
+            .ok_or(PlaybackError::Time)?;
+        for clip in overlapping(clips, span.start_sample, end) {
+            let clip_end = clip
                 .start_sample
-                .checked_add(i64::from(local))
-                .ok_or(PlaybackError::Time)?;
-            let mut mixed = 0.0;
-            for clip in clips {
-                mixed += clip_sample(clip, project, fade);
+                .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX));
+            let from = span.start_sample.max(clip.start_sample);
+            let to = end.min(clip_end);
+            let mut project = from;
+            while project < to {
+                let local =
+                    u32::try_from(project - span.start_sample).map_err(|_| PlaybackError::Time)?;
+                let index = block_index(span, local)?;
+                if index >= output.len() {
+                    return Err(PlaybackError::BufferTooSmall);
+                }
+                output[index] += clip_sample(clip, project, fade);
+                project += 1;
             }
-            output[index] += mixed;
         }
     }
     Ok(())
+}
+
+fn overlapping<'a>(
+    clips: &'a [AudioClip<'a>],
+    start: i64,
+    end: i64,
+) -> impl Iterator<Item = &'a AudioClip<'a>> {
+    let first = clips.partition_point(|clip| clip_end(clip) <= start);
+    clips[first..]
+        .iter()
+        .take_while(move |clip| clip.start_sample < end)
+}
+
+fn clip_end(clip: &AudioClip<'_>) -> i64 {
+    clip.start_sample
+        .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX))
 }
 
 /// Fades the discontinuity where the playhead jumps back to the loop head.
@@ -98,24 +121,33 @@ pub fn fade_loop_seam(
     if fade_frames == 0 {
         return Ok(());
     }
-    for pair in spans.windows(2) {
-        if pair[1].release_at.is_none() {
-            continue;
+    let denom = (fade_frames.saturating_sub(1).max(1)) as f32;
+    let window = i64::from(fade_frames);
+    for span in spans {
+        for local in 0..span.frames {
+            let index = block_index(span, local)?;
+            if index >= output.len() {
+                return Err(PlaybackError::BufferTooSmall);
+            }
+            let project = span
+                .start_sample
+                .checked_add(i64::from(local))
+                .ok_or(PlaybackError::Time)?;
+            let mut gain = 1.0f32;
+            if let Some(loop_end) = span.loop_end {
+                let before_end = loop_end - 1 - project;
+                if (0..window).contains(&before_end) {
+                    gain *= before_end as f32 / denom;
+                }
+            }
+            if let Some(origin) = span.wrap_from {
+                let age = project - origin;
+                if (0..window).contains(&age) {
+                    gain *= age as f32 / denom;
+                }
+            }
+            output[index] *= gain;
         }
-        fade_edge(
-            output,
-            pair[0].block_offset,
-            pair[0].frames,
-            fade_frames,
-            Edge::Out,
-        )?;
-        fade_edge(
-            output,
-            pair[1].block_offset,
-            pair[1].frames,
-            fade_frames,
-            Edge::In,
-        )?;
     }
     Ok(())
 }
@@ -142,11 +174,6 @@ pub fn loop_head_prefetch(
     } else {
         None
     }
-}
-
-enum Edge {
-    In,
-    Out,
 }
 
 fn copy_block(live: &[f32], spans: &[PlayedSpan], output: &mut [f32]) -> Result<(), PlaybackError> {
@@ -234,33 +261,6 @@ fn edge_gain(pos: i64, length: i64, fade: i64) -> f32 {
     gain
 }
 
-fn fade_edge(
-    output: &mut [f32],
-    block_offset: u32,
-    frames: u32,
-    fade_frames: u32,
-    edge: Edge,
-) -> Result<(), PlaybackError> {
-    if frames == 0 {
-        return Ok(());
-    }
-    let fade = fade_frames.min(frames);
-    let denom = (fade - 1).max(1) as f32;
-    let start = block_offset as usize;
-    for step in 0..fade {
-        let index = match edge {
-            Edge::Out => start + frames as usize - 1 - step as usize,
-            Edge::In => start + step as usize,
-        };
-        if index >= output.len() {
-            return Err(PlaybackError::BufferTooSmall);
-        }
-        let gain = step as f32 / denom;
-        output[index] *= gain;
-    }
-    Ok(())
-}
-
 fn block_index(span: &PlayedSpan, local: u32) -> Result<usize, PlaybackError> {
     span.block_offset
         .checked_add(local)
@@ -278,6 +278,8 @@ mod tests {
             frames,
             block_offset: offset,
             release_at,
+            loop_end: None,
+            wrap_from: None,
         }
     }
 
@@ -352,13 +354,37 @@ mod tests {
         assert_eq!(output[19], 0.0);
 
         let mut seam = [1.0; 20];
-        let spans = [span(0, 10, 0, None), span(0, 10, 10, Some(10))];
-        fade_loop_seam(&spans, 5, &mut seam).unwrap();
+        let mut outgoing = span(0, 10, 0, None);
+        outgoing.loop_end = Some(10);
+        let mut incoming = span(0, 10, 10, Some(10));
+        incoming.wrap_from = Some(0);
+        fade_loop_seam(&[outgoing, incoming], 5, &mut seam).unwrap();
         assert_eq!(seam[4], 1.0);
         assert_eq!(seam[5], 1.0);
         assert_eq!(seam[9], 0.0);
         assert_eq!(seam[10], 0.0);
         assert_eq!(seam[14], 1.0);
         assert_eq!(seam[15], 1.0);
+    }
+
+    #[test]
+    fn a_block_that_crosses_two_clips_plays_both() {
+        let head = [1.0; 4];
+        let tail = [1.0; 4];
+        let clips = [
+            AudioClip {
+                start_sample: 0,
+                samples: &head,
+            },
+            AudioClip {
+                start_sample: 4,
+                samples: &tail,
+            },
+        ];
+        let mut output = [0.0; 8];
+        render_audio_clips(&clips, &[span(0, 8, 0, None)], 1, &mut output).unwrap();
+        assert_eq!(output[1], 1.0);
+        assert_eq!(output[4], 0.0);
+        assert_eq!(output[5], 1.0);
     }
 }

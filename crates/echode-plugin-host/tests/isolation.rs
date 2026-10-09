@@ -1,8 +1,12 @@
 //! Cross-process hosting: audio actually crosses, a dead plugin does not kill us,
 //! and the round trip is measured against the Phase 0 budget.
 
+use echode_engine::IoWorkgroup;
 use echode_plugin_host::measure_in_process;
-use echode_sandbox::{PluginHost, SessionError, SpawnOptions};
+use echode_sandbox::{
+    PluginHost, SessionError, SpawnOptions, WorkgroupHandoff, WorkgroupMembership,
+    copy_workgroup_port, join_workgroup,
+};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -50,12 +54,30 @@ fn plugin_dylib() -> PathBuf {
 }
 
 fn spawn(plugin: Option<&Path>, fault: Option<&str>) -> PluginHost {
+    spawn_with(plugin, fault, None)
+}
+
+fn spawn_with(
+    plugin: Option<&Path>,
+    fault: Option<&str>,
+    workgroup: Option<WorkgroupHandoff>,
+) -> PluginHost {
     PluginHost::spawn(SpawnOptions {
         host_bin: &host_bin(),
         plugin,
         fault,
+        workgroup,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
+}
+
+fn handoff(workgroup: &IoWorkgroup) -> WorkgroupHandoff {
+    WorkgroupHandoff {
+        // SAFETY: `workgroup` retains the object until this test returns.
+        port: unsafe { copy_workgroup_port(workgroup.as_ptr()) }
+            .unwrap_or_else(|error| panic!("copy workgroup port: {error}")),
+        period_ticks: workgroup.period_ticks(),
+    }
 }
 
 fn outs(output: &mut [Vec<f32>; 2]) -> [&mut [f32]; 2] {
@@ -119,8 +141,13 @@ fn copy_roundtrip_preserves_samples() {
 
 #[test]
 fn clap_gain_doubles_samples_and_stays_within_budget() {
+    let workgroup = IoWorkgroup::open().unwrap_or_else(|error| panic!("device workgroup: {error}"));
     let plugin = plugin_dylib();
-    let mut host = spawn(Some(&plugin), None);
+    let mut host = spawn_with(Some(&plugin), None, Some(handoff(&workgroup)));
+    // SAFETY: `workgroup` is dropped after `parent`, so the object outlives the join.
+    let parent: WorkgroupMembership =
+        unsafe { join_workgroup(workgroup.as_ptr(), workgroup.period_ticks()) }
+            .unwrap_or_else(|error| panic!("parent join: {error}"));
     let frames = 64;
     let input = stereo(frames, -0.4);
     let mut output = [vec![0.0; frames], vec![0.0; frames]];
@@ -139,17 +166,22 @@ fn clap_gain_doubles_samples_and_stays_within_budget() {
 
     let isolated_64 = measure(&mut host, frames);
     let isolated_128 = measure(&mut host, 128);
-    let mut copy_host = spawn(None, None);
+    drop(host);
+    let mut copy_host = spawn_with(None, None, Some(handoff(&workgroup)));
     let copy_64 = measure(&mut copy_host, frames);
     let in_process = measure_in_process(&plugin, frames, SAMPLES).expect("in-process clap");
     let in_process_each = in_process / u32::try_from(SAMPLES).unwrap();
     let report = format!(
         "samples: {SAMPLES} after {WARMUP} warmup, budget p50 <= {budget:.0} µs\n\
+         workgroup: device IO {rate:.0} Hz, {frames} frames, period {period:.3} ms, parent and helper joined\n\
          copy 64:       min {cmin:.1}  p50 {cp50:.1}  p99 {cp99:.1}  max {cmax:.1} µs\n\
          CLAP 64:       min {min:.1}  p50 {p50:.1}  p99 {p99:.1}  max {max:.1} µs\n\
          CLAP 128:      min {bmin:.1}  p50 {bp50:.1}  p99 {bp99:.1}  max {bmax:.1} µs\n\
          in-process 64: mean {local:.1} µs\n",
         budget = us(BUDGET),
+        rate = workgroup.sample_rate(),
+        frames = workgroup.frames(),
+        period = workgroup.period_ns() as f64 / 1_000_000.0,
         cmin = us(copy_64.min),
         cp50 = us(copy_64.p50),
         cp99 = us(copy_64.p99),
@@ -178,6 +210,7 @@ fn clap_gain_doubles_samples_and_stays_within_budget() {
             us(BUDGET)
         );
     }
+    drop(parent);
 }
 
 #[test]

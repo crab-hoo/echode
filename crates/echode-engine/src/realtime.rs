@@ -1,8 +1,9 @@
-//! Detects heap allocation on the audio thread in debug builds.
+//! Detects heap allocation while [`ForbidAlloc`] is alive.
 //!
-//! Release builds do not install this allocator, so measurements are unchanged.
-//! The guard aborts instead of panicking, because formatting a panic would
-//! allocate again.
+//! This library does not install the allocator. Debug unit tests do, and a
+//! debug binary may install [`GuardAlloc`]. Release builds skip the check so
+//! measurements stay unchanged. The guard aborts instead of panicking, because
+//! formatting a panic would allocate again.
 
 #[cfg(debug_assertions)]
 use std::cell::Cell;
@@ -36,8 +37,9 @@ impl Drop for ForbidAlloc {
     }
 }
 
+/// Aborting allocator used by debug tests and by debug binaries that opt in.
 #[cfg(debug_assertions)]
-struct GuardAlloc;
+pub struct GuardAlloc;
 
 #[cfg(debug_assertions)]
 unsafe impl std::alloc::GlobalAlloc for GuardAlloc {
@@ -64,6 +66,6 @@ fn refuse() {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(all(test, debug_assertions))]
 #[global_allocator]
 static ALLOCATOR: GuardAlloc = GuardAlloc;

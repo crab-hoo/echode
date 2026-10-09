@@ -1,4 +1,4 @@
-.PHONY: check fmt setup known-bugs advisories bless spike-isolation spike-draw spike-history spike-input spike-engine
+.PHONY: check fmt setup known-bugs advisories bless spike-isolation spike-draw spike-history spike-input spike-engine rtsan
 
 # What every change must pass. It needs no audio hardware and has no timing thresholds,
 # so a failure always means the code is wrong.
@@ -59,4 +59,9 @@ spike-input:
 spike-engine:
 	cargo build --release -p echode-engine
 	cargo test --release -p echode-engine -- --include-ignored --skip audit_ --nocapture
-	cargo run --release -p echode-engine --bin echode-engine-spike -- --seconds 600 --workers 0 --report target/spike-s2.txt
+	cargo run --release -p echode-engine --bin echode-engine-spike -- --seconds 600 --workers auto --report target/spike-s2.txt
+
+# RealtimeSanitizer on the test synth and on plan handoff. The first build
+# downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).
+rtsan:
+	RTSAN_ENABLE=1 cargo test -p echode-engine --features rtsan under_rtsan -- --nocapture

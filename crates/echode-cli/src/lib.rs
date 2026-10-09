@@ -121,7 +121,7 @@ pub fn render_to_wav(
             .map_err(|error| CliError::new(error.to_string()))?,
     };
     let mut wav = WavFile::create(wav, sample_rate, frames)?;
-    render_offline_blocks(&project, sample_rate, frames, |block| {
+    render_offline_blocks(&project, sample_rate, frames, 64, |block| {
         wav.write_block(block)
     })
     .map_err(|error| CliError::new(error.to_string()))?;

@@ -11,12 +11,11 @@ use dasp_interpolate::floor::Floor;
 use dasp_interpolate::linear::Linear;
 use dasp_interpolate::sinc::Sinc;
 use dasp_ring_buffer::Fixed;
-use echode_model::Id;
+use echode_realtime::Event;
 use wavesynth::engine::voice::Voice;
 use wavesynth::instrument::Instrument;
 
 use crate::realtime::ForbidAlloc;
-use crate::sequence::{MidiEvent, MidiKind};
 use crate::transport::PlaybackError;
 
 /// wavesynth crate version used for the test synth.
@@ -36,10 +35,10 @@ pub const TEST_SAMPLER_VERSION: &str = "0.11.0";
 /// returns the stored sample.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SamplerInterpolation {
-    Floor,
+    Floor = 0,
     #[default]
-    Linear,
-    Sinc,
+    Linear = 1,
+    Sinc = 2,
 }
 
 /// Ring length for dasp's sinc. Depth is half of this. The window belongs to
@@ -50,7 +49,7 @@ const SINC_FRAMES: usize = 16;
 pub struct SynthVoice {
     inner: Voice,
     sample_rate: u32,
-    note: Option<Id>,
+    note_id: Option<u32>,
 }
 
 impl SynthVoice {
@@ -62,14 +61,14 @@ impl SynthVoice {
         Ok(Self {
             inner: Voice::new(sample_rate as f32, Instrument::SinePad),
             sample_rate,
-            note: None,
+            note_id: None,
         })
     }
 }
 
 /// One sampler voice. The sinc window is only used for [`SamplerInterpolation::Sinc`].
 pub struct SamplerVoice {
-    note: Option<Id>,
+    note_id: Option<u32>,
     position: u64,
     step: u64,
     gain: f32,
@@ -81,7 +80,7 @@ pub struct SamplerVoice {
 impl SamplerVoice {
     pub fn idle() -> Self {
         Self {
-            note: None,
+            note_id: None,
             position: 0,
             step: 0,
             gain: 0.0,
@@ -89,6 +88,54 @@ impl SamplerVoice {
             fed: 0,
             sinc: fresh_sinc(),
         }
+    }
+}
+
+/// Parameter id for the test sampler's interpolator. 0 is floor, 1 is linear, 2 is sinc.
+pub const SAMPLER_INTERPOLATION: u32 = 0;
+
+const STATE_VERSION: u8 = 1;
+const SINE_PAD_RELEASE_MS: u64 = 400;
+
+/// Test synth. Voices are sized by [`Device::prepare`], not during `process`.
+pub struct TestSynth {
+    voices: Vec<SynthVoice>,
+    sample_rate: u32,
+}
+
+impl TestSynth {
+    pub fn new(sample_rate: u32) -> Result<Self, PlaybackError> {
+        if sample_rate == 0 {
+            return Err(PlaybackError::InvalidSampleRate);
+        }
+        Ok(Self {
+            voices: Vec::new(),
+            sample_rate,
+        })
+    }
+}
+
+/// Test sampler. `pcm` stays with the caller and is not part of the saved state.
+pub struct TestSampler<'a> {
+    pcm: &'a [f32],
+    root: u8,
+    interpolation: SamplerInterpolation,
+    voices: Vec<SamplerVoice>,
+    sample_rate: u32,
+}
+
+impl<'a> TestSampler<'a> {
+    pub fn new(pcm: &'a [f32], root: u8, sample_rate: u32) -> Result<Self, PlaybackError> {
+        if sample_rate == 0 {
+            return Err(PlaybackError::InvalidSampleRate);
+        }
+        Ok(Self {
+            pcm,
+            root,
+            interpolation: SamplerInterpolation::Linear,
+            voices: Vec::new(),
+            sample_rate,
+        })
     }
 }
 
@@ -103,7 +150,7 @@ fn fresh_sinc() -> Sinc<[f32; SINC_FRAMES]> {
 /// sample. Every voice must have been built at `sample_rate`. The buffer is
 /// unspecified when this returns an error.
 pub fn render_test_synth(
-    events: &[MidiEvent],
+    events: &[Event],
     voices: &mut [SynthVoice],
     sample_rate: u32,
     output: &mut [f32],
@@ -120,7 +167,7 @@ pub fn render_test_synth(
 /// `pcm` is already at the device rate. `root` is the pitch that plays it at
 /// its stored speed. Playback stops at the end of `pcm` and on note-off.
 pub fn render_test_sampler(
-    events: &[MidiEvent],
+    events: &[Event],
     pcm: &[f32],
     root: u8,
     interpolation: SamplerInterpolation,
@@ -138,17 +185,17 @@ pub fn render_test_sampler(
 }
 
 fn drive<T: ?Sized>(
-    events: &[MidiEvent],
+    events: &[Event],
     output: &mut [f32],
     state: &mut T,
-    mut handle: impl FnMut(&mut T, &MidiEvent) -> Result<(), PlaybackError>,
+    mut handle: impl FnMut(&mut T, &Event) -> Result<(), PlaybackError>,
     mut mix: impl FnMut(&mut T) -> f32,
 ) -> Result<(), PlaybackError> {
     check_events(events, output.len())?;
     let mut index = 0;
     for (frame, sample) in output.iter_mut().enumerate() {
         let at = u32::try_from(frame).map_err(|_| PlaybackError::Time)?;
-        while index < events.len() && events[index].sample_offset == at {
+        while index < events.len() && events[index].time() == at {
             handle(state, &events[index])?;
             index += 1;
         }
@@ -157,10 +204,10 @@ fn drive<T: ?Sized>(
     Ok(())
 }
 
-fn check_events(events: &[MidiEvent], frames: usize) -> Result<(), PlaybackError> {
+fn check_events(events: &[Event], frames: usize) -> Result<(), PlaybackError> {
     let mut previous = None;
     for event in events {
-        let offset = usize::try_from(event.sample_offset).map_err(|_| PlaybackError::Time)?;
+        let offset = usize::try_from(event.time()).map_err(|_| PlaybackError::Time)?;
         if offset >= frames {
             return Err(PlaybackError::BufferTooSmall);
         }
@@ -174,39 +221,63 @@ fn check_events(events: &[MidiEvent], frames: usize) -> Result<(), PlaybackError
     Ok(())
 }
 
-fn note_on_synth(voices: &mut [SynthVoice], event: &MidiEvent) -> Result<(), PlaybackError> {
-    if event.kind == MidiKind::Off || event.velocity == 0 {
-        release_synth(voices, event.note);
+fn note_on_synth(voices: &mut [SynthVoice], event: &Event) -> Result<(), PlaybackError> {
+    let (Event::NoteOff(note) | Event::NoteOn(note)) = event else {
+        return Ok(());
+    };
+    let Some(note_id) = note.target.note_id else {
+        return Ok(());
+    };
+    let Some(key) = note.target.key else {
+        return Ok(());
+    };
+    if matches!(event, Event::NoteOff(_)) {
+        release_synth(voices, note_id);
         return Ok(());
     }
+    let velocity = midi7(note.velocity);
     if let Some(voice) = voices
         .iter_mut()
-        .find(|voice| voice.inner.is_active() && voice.note == Some(event.note))
+        .find(|voice| voice.inner.is_active() && voice.note_id == Some(note_id))
     {
-        voice.inner.note_on(event.pitch, event.velocity);
+        voice.inner.note_on(key, velocity);
         return Ok(());
     }
     let Some(slot) = voices.iter_mut().find(|voice| !voice.inner.is_active()) else {
         return Err(PlaybackError::BufferTooSmall);
     };
-    slot.note = Some(event.note);
-    slot.inner.note_on(event.pitch, event.velocity);
+    slot.note_id = Some(note_id);
+    slot.inner.note_on(key, velocity);
     Ok(())
+}
+
+fn midi7(velocity: f64) -> u8 {
+    let stored = (velocity.clamp(0.0, 1.0) * 65535.0).round() as u16;
+    echode_model::velocity_to_midi7(stored)
 }
 
 fn note_on_sampler(
     voices: &mut [SamplerVoice],
-    event: &MidiEvent,
+    event: &Event,
     root: u8,
 ) -> Result<(), PlaybackError> {
-    if event.kind == MidiKind::Off || event.velocity == 0 {
-        release_sampler(voices, event.note);
+    let (Event::NoteOff(note) | Event::NoteOn(note)) = event else {
+        return Ok(());
+    };
+    let Some(note_id) = note.target.note_id else {
+        return Ok(());
+    };
+    let Some(key) = note.target.key else {
+        return Ok(());
+    };
+    if matches!(event, Event::NoteOff(_)) {
+        release_sampler(voices, note_id);
         return Ok(());
     }
-    let started = armed_sampler(event.note, event.pitch, event.velocity, root);
+    let started = armed_sampler(note_id, key, midi7(note.velocity), root);
     if let Some(voice) = voices
         .iter_mut()
-        .find(|voice| voice.active && voice.note == Some(event.note))
+        .find(|voice| voice.active && voice.note_id == Some(note_id))
     {
         *voice = started;
         return Ok(());
@@ -218,9 +289,9 @@ fn note_on_sampler(
     Ok(())
 }
 
-fn armed_sampler(note: Id, pitch: u8, velocity: u8, root: u8) -> SamplerVoice {
+fn armed_sampler(note_id: u32, pitch: u8, velocity: u8, root: u8) -> SamplerVoice {
     SamplerVoice {
-        note: Some(note),
+        note_id: Some(note_id),
         position: 0,
         step: sample_step(pitch, root),
         gain: f32::from(velocity) / 127.0,
@@ -230,17 +301,17 @@ fn armed_sampler(note: Id, pitch: u8, velocity: u8, root: u8) -> SamplerVoice {
     }
 }
 
-fn release_synth(voices: &mut [SynthVoice], note: Id) {
+fn release_synth(voices: &mut [SynthVoice], note_id: u32) {
     for voice in voices.iter_mut() {
-        if voice.inner.is_active() && voice.note == Some(note) {
+        if voice.inner.is_active() && voice.note_id == Some(note_id) {
             voice.inner.note_off();
         }
     }
 }
 
-fn release_sampler(voices: &mut [SamplerVoice], note: Id) {
+fn release_sampler(voices: &mut [SamplerVoice], note_id: u32) {
     for voice in voices.iter_mut() {
-        if voice.active && voice.note == Some(note) {
+        if voice.active && voice.note_id == Some(note_id) {
             voice.active = false;
         }
     }
@@ -249,7 +320,9 @@ fn release_sampler(voices: &mut [SamplerVoice], note: Id) {
 fn mix_synth(voices: &mut [SynthVoice]) -> f32 {
     let mut sum = 0.0;
     for voice in voices.iter_mut() {
-        sum += voice.inner.next_sample();
+        if voice.inner.is_active() {
+            sum += voice.inner.next_sample();
+        }
     }
     sum
 }
@@ -294,6 +367,176 @@ fn mix_sampler(
     sum
 }
 
+impl crate::builtin::Device for TestSynth {
+    fn process(
+        &mut self,
+        planes: &mut [&mut [f32]],
+        events: &[Event],
+        sample_rate: u32,
+    ) -> Result<(), PlaybackError> {
+        let _guard = crate::realtime::ForbidAlloc::enter();
+        if sample_rate == 0 || sample_rate != self.sample_rate {
+            return Err(PlaybackError::InvalidSampleRate);
+        }
+        let Some((first, rest)) = planes.split_first_mut() else {
+            return Ok(());
+        };
+        let frames = first.len();
+        if rest.iter().any(|plane| plane.len() != frames) {
+            return Err(PlaybackError::BufferTooSmall);
+        }
+        render_test_synth(events, &mut self.voices, sample_rate, first)?;
+        for plane in rest.iter_mut() {
+            for (sample, source) in plane.iter_mut().zip(first.iter()) {
+                *sample += *source;
+            }
+        }
+        Ok(())
+    }
+
+    fn prepare(&mut self, voices: usize, sample_rate: u32) -> Result<(), PlaybackError> {
+        if sample_rate == 0 {
+            return Err(PlaybackError::InvalidSampleRate);
+        }
+        let count = voices.max(1);
+        self.voices.clear();
+        self.voices.reserve(count);
+        for _ in 0..count {
+            self.voices.push(SynthVoice::new(sample_rate)?);
+        }
+        self.sample_rate = sample_rate;
+        Ok(())
+    }
+
+    fn save(&self, out: &mut Vec<u8>) {
+        out.push(STATE_VERSION);
+        out.extend_from_slice(TEST_SYNTH_INSTRUMENT.as_bytes());
+    }
+
+    fn restore(&mut self, bytes: &[u8]) -> Result<(), PlaybackError> {
+        if bytes.first() == Some(&STATE_VERSION) && &bytes[1..] == TEST_SYNTH_INSTRUMENT.as_bytes()
+        {
+            Ok(())
+        } else {
+            Err(PlaybackError::InvalidDevice)
+        }
+    }
+
+    fn latency_samples(&self) -> u32 {
+        0
+    }
+
+    fn tail_samples(&self, sample_rate: u32) -> u32 {
+        sine_pad_tail(sample_rate).unwrap_or(0)
+    }
+}
+
+impl crate::builtin::Device for TestSampler<'_> {
+    fn process(
+        &mut self,
+        planes: &mut [&mut [f32]],
+        events: &[Event],
+        sample_rate: u32,
+    ) -> Result<(), PlaybackError> {
+        let _guard = crate::realtime::ForbidAlloc::enter();
+        if sample_rate == 0 || sample_rate != self.sample_rate {
+            return Err(PlaybackError::InvalidSampleRate);
+        }
+        let frames = match planes.first() {
+            Some(plane) => plane.len(),
+            None => return Ok(()),
+        };
+        if planes.iter().any(|plane| plane.len() != frames) {
+            return Err(PlaybackError::BufferTooSmall);
+        }
+        check_events(events, frames)?;
+        let mut index = 0;
+        for frame in 0..frames {
+            let at = u32::try_from(frame).map_err(|_| PlaybackError::Time)?;
+            while index < events.len() && events[index].time() == at {
+                self.apply(&events[index])?;
+                index += 1;
+            }
+            let sample = mix_sampler(&mut self.voices, self.pcm, self.interpolation);
+            for plane in planes.iter_mut() {
+                plane[frame] += sample;
+            }
+        }
+        Ok(())
+    }
+
+    fn prepare(&mut self, voices: usize, sample_rate: u32) -> Result<(), PlaybackError> {
+        if sample_rate == 0 {
+            return Err(PlaybackError::InvalidSampleRate);
+        }
+        let count = voices.max(1);
+        self.voices.clear();
+        self.voices.reserve(count);
+        self.voices.resize_with(count, SamplerVoice::idle);
+        self.sample_rate = sample_rate;
+        Ok(())
+    }
+
+    fn save(&self, out: &mut Vec<u8>) {
+        out.push(STATE_VERSION);
+        out.push(self.interpolation as u8);
+    }
+
+    fn restore(&mut self, bytes: &[u8]) -> Result<(), PlaybackError> {
+        let &[STATE_VERSION, code] = bytes else {
+            return Err(PlaybackError::InvalidDevice);
+        };
+        self.interpolation = interpolation_from_code(code)?;
+        Ok(())
+    }
+
+    fn latency_samples(&self) -> u32 {
+        0
+    }
+
+    fn tail_samples(&self, _sample_rate: u32) -> u32 {
+        0
+    }
+}
+
+impl TestSampler<'_> {
+    fn apply(&mut self, event: &Event) -> Result<(), PlaybackError> {
+        if let Event::ParamValue(param) = event
+            && param.param_id == SAMPLER_INTERPOLATION
+        {
+            self.interpolation = interpolation_from_value(param.value)?;
+            return Ok(());
+        }
+        note_on_sampler(&mut self.voices, event, self.root)
+    }
+}
+
+fn sine_pad_tail(sample_rate: u32) -> Result<u32, PlaybackError> {
+    u32::try_from(u64::from(sample_rate) * SINE_PAD_RELEASE_MS / 1_000)
+        .map_err(|_| PlaybackError::Time)
+}
+
+fn interpolation_from_code(code: u8) -> Result<SamplerInterpolation, PlaybackError> {
+    match code {
+        0 => Ok(SamplerInterpolation::Floor),
+        1 => Ok(SamplerInterpolation::Linear),
+        2 => Ok(SamplerInterpolation::Sinc),
+        _ => Err(PlaybackError::InvalidDevice),
+    }
+}
+
+fn interpolation_from_value(value: f64) -> Result<SamplerInterpolation, PlaybackError> {
+    if value == 0.0 {
+        Ok(SamplerInterpolation::Floor)
+    } else if value == 1.0 {
+        Ok(SamplerInterpolation::Linear)
+    } else if value == 2.0 {
+        Ok(SamplerInterpolation::Sinc)
+    } else {
+        Err(PlaybackError::InvalidDevice)
+    }
+}
+
 fn sample_step(pitch: u8, root: u8) -> u64 {
     let semis = f64::from(i16::from(pitch) - i16::from(root));
     let rate = 2f64.powf(semis / 12.0);
@@ -307,25 +550,12 @@ fn sample_step(pitch: u8, root: u8) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sequence::MidiKind;
-
-    fn edge(offset: u32, note: u128, pitch: u8, velocity: u8, kind: MidiKind) -> MidiEvent {
-        MidiEvent {
-            sample_offset: offset,
-            track: Id::from_raw(1),
-            note: Id::from_raw(note),
-            pitch,
-            velocity,
-            kind,
-        }
+    fn on(offset: u32, note: u32, pitch: u8) -> Event {
+        Event::note_on(offset, 0, note, pitch, 1.0)
     }
 
-    fn on(offset: u32, note: u128, pitch: u8) -> MidiEvent {
-        edge(offset, note, pitch, 127, MidiKind::On)
-    }
-
-    fn off(offset: u32, note: u128) -> MidiEvent {
-        edge(offset, note, 60, 0, MidiKind::Off)
+    fn off(offset: u32, note: u32) -> Event {
+        Event::note_off(offset, 0, note, 60)
     }
 
     fn slots<const N: usize>(rate: u32) -> [SynthVoice; N] {
@@ -441,6 +671,20 @@ mod tests {
             render_test_synth(&[on(0, 3, 64)], &mut voices, 48_000, &mut output).unwrap_err(),
             PlaybackError::BufferTooSmall
         );
+    }
+
+    #[test]
+    fn the_test_synth_runs_under_rtsan() {
+        let mut voices = slots::<1>(48_000);
+        let mut output = [0.0; 64];
+        let event = on(0, 1, 69);
+        render_one_block(&mut voices, &mut output, &event);
+        assert!(output.iter().any(|sample| *sample != 0.0));
+    }
+
+    #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
+    fn render_one_block(voices: &mut [SynthVoice], output: &mut [f32], event: &Event) {
+        render_test_synth(std::slice::from_ref(event), voices, 48_000, output).unwrap();
     }
 
     fn sampler_slots<const N: usize>() -> [SamplerVoice; N] {
@@ -580,5 +824,88 @@ mod tests {
         )
         .unwrap();
         assert_ne!(floor, linear);
+    }
+
+    #[test]
+    fn the_synth_device_fills_every_plane_and_remembers_its_instrument() {
+        use crate::Device;
+        let mut device = TestSynth::new(48_000).unwrap();
+        device.prepare(1, 48_000).unwrap();
+        assert_eq!(device.latency_samples(), 0);
+        assert_eq!(device.tail_samples(48_000), 19_200);
+        let mut left = [0.0; 64];
+        let mut right = [0.0; 64];
+        let mut planes: [&mut [f32]; 2] = [&mut left, &mut right];
+        device
+            .process(&mut planes, &[on(0, 1, 69)], 48_000)
+            .unwrap();
+        assert_eq!(left, right);
+        assert!(left.iter().any(|sample| *sample != 0.0));
+        let mut saved = Vec::new();
+        device.save(&mut saved);
+        device.restore(&saved).unwrap();
+        assert!(device.restore(&[]).is_err());
+        let through: &mut dyn Device = &mut device;
+        assert_eq!(through.tail_samples(48_000), 19_200);
+    }
+
+    #[test]
+    fn the_sampler_device_switches_interpolation_and_restores_it() {
+        use crate::Device;
+        use echode_realtime::{ParamEvent, Target};
+        let pcm = [0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0];
+        let mut linear = TestSampler::new(&pcm, 60, 48_000).unwrap();
+        linear.prepare(1, 48_000).unwrap();
+        assert_eq!(linear.latency_samples(), 0);
+        assert_eq!(linear.tail_samples(48_000), 0);
+        let mut saved = Vec::new();
+        linear.save(&mut saved);
+        let mut output = [0.0; 32];
+        let mut planes = [&mut output[..]];
+        linear
+            .process(
+                &mut planes,
+                &[
+                    on(0, 2, 61),
+                    Event::ParamValue(ParamEvent {
+                        time: 0,
+                        track: 0,
+                        param_id: SAMPLER_INTERPOLATION,
+                        target: Target::any(),
+                        value: 0.0,
+                    }),
+                ],
+                48_000,
+            )
+            .unwrap();
+        let mut direct = [0.0; 32];
+        render_test_sampler(
+            &[on(0, 2, 61)],
+            &pcm,
+            60,
+            SamplerInterpolation::Floor,
+            &mut sampler_slots::<1>(),
+            &mut direct,
+        )
+        .unwrap();
+        assert_eq!(output, direct);
+        linear.restore(&saved).unwrap();
+        let mut again = [0.0; 32];
+        let mut planes = [&mut again[..]];
+        linear
+            .process(&mut planes, &[on(0, 2, 61)], 48_000)
+            .unwrap();
+        let mut linear_direct = [0.0; 32];
+        render_test_sampler(
+            &[on(0, 2, 61)],
+            &pcm,
+            60,
+            SamplerInterpolation::Linear,
+            &mut sampler_slots::<1>(),
+            &mut linear_direct,
+        )
+        .unwrap();
+        assert_eq!(again, linear_direct);
+        assert!(linear.restore(&[1, 9]).is_err());
     }
 }

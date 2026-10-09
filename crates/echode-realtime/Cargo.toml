@@ -1,0 +1,13 @@
+[package]
+name = "echode-realtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Playback plan the audio thread can read without the document model"
+
+[dependencies]
+
+[lints]
+workspace = true

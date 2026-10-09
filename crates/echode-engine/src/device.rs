@@ -84,6 +84,8 @@ pub struct Report {
     pub p99_ns: u64,
     pub budget_ns: u64,
     pub workgroup_failures: u64,
+    pub policy_failures: u64,
+    pub workgroup_parallel: i32,
     pub workers: usize,
     pub passed: bool,
 }
@@ -115,6 +117,8 @@ impl std::fmt::Display for Report {
             self.late, self.gaps, self.warmup_late
         )?;
         writeln!(f, "workgroup join failures: {}", self.workgroup_failures)?;
+        writeln!(f, "time-constraint failures: {}", self.policy_failures)?;
+        writeln!(f, "workgroup parallel threads: {}", self.workgroup_parallel)?;
         writeln!(f, "workers: {}", self.workers)?;
         writeln!(f, "result: {}", if self.passed { "pass" } else { "fail" })?;
         Ok(())
@@ -168,7 +172,8 @@ impl Session {
     }
 }
 
-pub fn run(seconds: u64, workers: usize) -> Result<Report, String> {
+/// `workers` of `None` uses `os_workgroup_max_parallel_threads`, minus the IO thread.
+pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
     let device = default_output().map_err(|status| format!("default output device: {status}"))?;
     let sample_rate =
         get_f64(device, SAMPLE_RATE).map_err(|status| format!("sample rate: {status}"))?;
@@ -210,9 +215,22 @@ pub fn run(seconds: u64, workers: usize) -> Result<Report, String> {
         return Err("device did not return an IO workgroup".to_string());
     }
 
-    let worker_count = workers;
+    let workgroup_parallel = crate::graph::workgroup_parallel_threads(workgroup);
+    let worker_count = match workers {
+        Some(count) => count,
+        None => {
+            if workgroup_parallel <= 1 {
+                unsafe { os_release(workgroup) };
+                return Err(format!(
+                    "os_workgroup_max_parallel_threads returned {workgroup_parallel}"
+                ));
+            }
+            (workgroup_parallel as usize) - 1
+        }
+    };
+    let period_ticks = u32::try_from(budget_ticks).unwrap_or(u32::MAX).max(1);
     let engine = Arc::new(Engine::new(worker_count));
-    let workers = engine.spawn_workers(workgroup);
+    let workers = engine.spawn_workers(workgroup, period_ticks);
     let capacity = usize::try_from(seconds).unwrap_or(1) * 800 + 4_000;
     let session = Box::new(Session {
         engine,
@@ -269,6 +287,7 @@ pub fn run(seconds: u64, workers: usize) -> Result<Report, String> {
     unsafe { AudioDeviceStop(device, proc_id) };
     unsafe { AudioDeviceDestroyIOProcID(device, proc_id) };
     let failures = session.engine.workgroup_failures();
+    let policy_failures = session.engine.policy_failures();
     drop(workers);
     unsafe { os_release(workgroup) };
 
@@ -292,6 +311,7 @@ pub fn run(seconds: u64, workers: usize) -> Result<Report, String> {
     let passed = late == 0
         && gaps == 0
         && failures == 0
+        && policy_failures == 0
         && actual_buffer == BLOCK_FRAMES as u32
         && !sorted.is_empty();
     Ok(Report {
@@ -306,6 +326,8 @@ pub fn run(seconds: u64, workers: usize) -> Result<Report, String> {
         p99_ns: percentile(0.99),
         budget_ns: (BLOCK_FRAMES as u64) * 1_000_000_000 / TARGET_RATE as u64,
         workgroup_failures: failures,
+        policy_failures,
+        workgroup_parallel,
         workers: worker_count,
         passed,
     })
@@ -363,6 +385,76 @@ const STREAMS: u32 = u32::from_be_bytes(*b"stm#");
 pub struct OutputInventory {
     pub default_device: u32,
     pub outputs: Vec<u32>,
+}
+
+/// The default output device's IO workgroup, retained until drop.
+pub struct IoWorkgroup {
+    object: *mut c_void,
+    sample_rate: f64,
+    frames: u32,
+    period_ticks: u32,
+    period_ns: u64,
+}
+
+impl IoWorkgroup {
+    pub fn open() -> Result<Self, String> {
+        let device =
+            default_output().map_err(|status| format!("default output device: {status}"))?;
+        let sample_rate =
+            get_f64(device, SAMPLE_RATE).map_err(|status| format!("sample rate: {status}"))?;
+        let frames =
+            get_u32(device, BUFFER_FRAMES).map_err(|status| format!("buffer size: {status}"))?;
+        let object =
+            get_pointer(device, WORKGROUP).map_err(|status| format!("workgroup: {status}"))?;
+        if object.is_null() {
+            return Err("device did not return an IO workgroup".to_string());
+        }
+        let mut timebase = Timebase { numer: 0, denom: 1 };
+        // SAFETY: `timebase` is a valid out-parameter.
+        unsafe { mach_timebase_info(&mut timebase) };
+        let numer = u128::from(timebase.numer.max(1));
+        let denom = u128::from(timebase.denom.max(1));
+        let rate = sample_rate.round().max(1.0) as u128;
+        let ticks = (u128::from(frames) * 1_000_000_000 * denom) / (rate * numer);
+        let period_ticks = u32::try_from(ticks).unwrap_or(u32::MAX).max(1);
+        let period_ns = (u128::from(period_ticks) * numer / denom) as u64;
+        Ok(Self {
+            object,
+            sample_rate,
+            frames,
+            period_ticks,
+            period_ns,
+        })
+    }
+
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.object
+    }
+
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    pub fn frames(&self) -> u32 {
+        self.frames
+    }
+
+    pub fn period_ticks(&self) -> u32 {
+        self.period_ticks
+    }
+
+    pub fn period_ns(&self) -> u64 {
+        self.period_ns
+    }
+}
+
+impl Drop for IoWorkgroup {
+    fn drop(&mut self) {
+        if !self.object.is_null() {
+            // SAFETY: CoreAudio returned this object retained, and nothing else releases it.
+            unsafe { os_release(self.object) };
+        }
+    }
 }
 
 pub fn output_inventory() -> Result<OutputInventory, i32> {

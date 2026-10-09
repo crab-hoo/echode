@@ -3,11 +3,16 @@
 //! 100 independent chains, each 10 filters deep. This is the spike's workload,
 //! not a limit on how many nodes a project may contain. Processing a block does
 //! not allocate.
+//!
+//! A node becomes ready when the previous filter in its chain has finished.
+//! The first filter of each chain is ready at the start of the block. The
+//! audio thread and the workers take ready nodes from one stack, so a slow
+//! chain does not hold the others behind a level barrier.
 
 use crate::wait::{self, wait_until_ge, wait_until_ne};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 const TAPS: usize = 16;
@@ -15,8 +20,9 @@ const CHAINS: usize = 100;
 const DEPTH: usize = 10;
 pub const NODE_COUNT: usize = CHAINS * DEPTH;
 pub const BLOCK_FRAMES: usize = 64;
-const WORKERS: usize = 3;
-pub const AUDIO_WORKERS: usize = WORKERS;
+const EMPTY: u32 = u32::MAX;
+/// Spins before sleeping, so a thread that just missed a push does not park.
+const READY_SPINS: u32 = 128;
 
 #[repr(C, align(64))]
 struct Counter {
@@ -41,13 +47,18 @@ pub struct Engine {
     input: UnsafeCell<[f32; BLOCK_FRAMES]>,
     /// Two planes of `[chain][frame]`. Threads only borrow the one slot they own.
     planes: *mut [f32; BLOCK_FRAMES],
-    claims: [Counter; DEPTH],
-    finished: [Counter; DEPTH],
+    /// Remaining predecessors. Level 0 starts at 0; every later node starts at 1.
+    deps: Box<[AtomicU32]>,
+    /// Intrusive ready stack. The index lives in the low half, a generation in the high half.
+    stack_next: Box<[AtomicU32]>,
+    ready: AtomicU64,
+    completed: Counter,
     block: AtomicU64,
     exited: AtomicU64,
     phase: AtomicU64,
     stop: AtomicBool,
     workgroup_failures: AtomicU64,
+    policy_failures: AtomicU64,
     worker_count: usize,
 }
 
@@ -72,13 +83,16 @@ impl Engine {
             nodes: nodes.into_boxed_slice(),
             input: UnsafeCell::new([0.0; BLOCK_FRAMES]),
             planes: plane_ptr,
-            claims: std::array::from_fn(|_| Counter::new()),
-            finished: std::array::from_fn(|_| Counter::new()),
+            deps: (0..NODE_COUNT).map(|_| AtomicU32::new(0)).collect(),
+            stack_next: (0..NODE_COUNT).map(|_| AtomicU32::new(EMPTY)).collect(),
+            ready: AtomicU64::new(pack(0, EMPTY)),
+            completed: Counter::new(),
             block: AtomicU64::new(0),
             exited: AtomicU64::new(0),
             phase: AtomicU64::new(0),
             stop: AtomicBool::new(false),
             workgroup_failures: AtomicU64::new(0),
+            policy_failures: AtomicU64::new(0),
             worker_count,
         }
     }
@@ -87,7 +101,15 @@ impl Engine {
         self.workgroup_failures.load(Ordering::Relaxed)
     }
 
-    pub fn spawn_workers(self: &Arc<Self>, workgroup: *mut std::ffi::c_void) -> WorkerGuard {
+    pub fn policy_failures(&self) -> u64 {
+        self.policy_failures.load(Ordering::Relaxed)
+    }
+
+    pub fn spawn_workers(
+        self: &Arc<Self>,
+        workgroup: *mut std::ffi::c_void,
+        period_ticks: u32,
+    ) -> WorkerGuard {
         let workgroup = workgroup as usize;
         let mut handles = Vec::with_capacity(self.worker_count);
         for index in 0..self.worker_count {
@@ -95,7 +117,9 @@ impl Engine {
             handles.push(
                 thread::Builder::new()
                     .name(format!("echode-audio-{index}"))
-                    .spawn(move || worker_main(engine, workgroup as *mut std::ffi::c_void))
+                    .spawn(move || {
+                        worker_main(engine, workgroup as *mut std::ffi::c_void, period_ticks)
+                    })
                     .expect("spawn audio worker"),
             );
         }
@@ -108,11 +132,11 @@ impl Engine {
     /// Render one block. Called from the audio thread and from tests.
     pub fn render_block(&self) -> f32 {
         self.fill_input();
-        self.reset_counters();
-        self.block.fetch_add(1, Ordering::Release);
-        wait::wake_all(&self.block);
-        self.run_levels();
+        self.publish();
+        self.finish_block();
         if self.worker_count > 0 {
+            // Every node is done. This waits until the workers have left the
+            // block, so the next publish cannot reset the stack under them.
             wait_until_ge(&self.exited, self.worker_count as u64);
             self.exited.store(0, Ordering::Relaxed);
         }
@@ -129,35 +153,112 @@ impl Engine {
         }
     }
 
-    fn reset_counters(&self) {
-        for counter in &self.claims {
-            counter.value.store(0, Ordering::Relaxed);
+    fn publish(&self) {
+        let (generation, _) = unpack(self.ready.load(Ordering::Relaxed));
+        self.ready
+            .store(pack(generation.wrapping_add(1), EMPTY), Ordering::Relaxed);
+        self.completed.value.store(0, Ordering::Relaxed);
+        for (index, deps) in self.deps.iter().enumerate() {
+            deps.store(u32::from(index >= CHAINS), Ordering::Relaxed);
         }
-        for counter in &self.finished {
-            counter.value.store(0, Ordering::Relaxed);
+        for chain in 0..CHAINS {
+            self.push(chain as u32);
+        }
+        self.block.fetch_add(1, Ordering::Release);
+        wait::wake_all(&self.block);
+    }
+
+    fn finish_block(&self) {
+        let mut spins = 0u32;
+        loop {
+            if let Some(index) = self.pop() {
+                spins = 0;
+                self.run_node(index);
+                continue;
+            }
+            let done = self.completed.value.load(Ordering::Acquire);
+            if done >= NODE_COUNT as u64 {
+                return;
+            }
+            if let Some(index) = self.pop() {
+                spins = 0;
+                self.run_node(index);
+                continue;
+            }
+            spins += 1;
+            if spins < READY_SPINS {
+                std::hint::spin_loop();
+                continue;
+            }
+            let done = self.completed.value.load(Ordering::Acquire);
+            if done >= NODE_COUNT as u64 {
+                return;
+            }
+            wait_until_ne(&self.completed.value, done);
+            spins = 0;
         }
     }
 
-    fn run_levels(&self) {
-        for level in 0..DEPTH {
-            loop {
-                let index = self.claims[level].value.fetch_add(1, Ordering::Relaxed);
-                if index >= CHAINS as u64 {
-                    break;
-                }
-                self.process_node(level, index as usize);
-                let done = self.finished[level].value.fetch_add(1, Ordering::Release) + 1;
-                if done == CHAINS as u64 {
-                    wait::wake_all(&self.finished[level].value);
-                }
+    fn run_node(&self, index: u32) {
+        let index = index as usize;
+        let level = index / CHAINS;
+        let chain = index % CHAINS;
+        self.process_node(level, chain);
+        let done = self.completed.value.fetch_add(1, Ordering::Release) + 1;
+        let mut pushed = false;
+        if level + 1 < DEPTH {
+            let successor = index + CHAINS;
+            // One predecessor. Reaching 0 publishes the next filter in this chain.
+            let left = self.deps[successor].fetch_sub(1, Ordering::AcqRel);
+            if left == 1 {
+                self.push(successor as u32);
+                pushed = true;
             }
-            wait_until_ge(&self.finished[level].value, CHAINS as u64);
+        }
+        if pushed || done == NODE_COUNT as u64 {
+            wait::wake_all(&self.completed.value);
+        }
+    }
+
+    fn push(&self, index: u32) {
+        let slot = &self.stack_next[index as usize];
+        loop {
+            let raw = self.ready.load(Ordering::Acquire);
+            let (generation, head) = unpack(raw);
+            slot.store(head, Ordering::Relaxed);
+            let next = pack(generation.wrapping_add(1), index);
+            if self
+                .ready
+                .compare_exchange_weak(raw, next, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
+                return;
+            }
+        }
+    }
+
+    fn pop(&self) -> Option<u32> {
+        loop {
+            let raw = self.ready.load(Ordering::Acquire);
+            let (generation, head) = unpack(raw);
+            if head == EMPTY {
+                return None;
+            }
+            let next_index = self.stack_next[head as usize].load(Ordering::Relaxed);
+            let next = pack(generation.wrapping_add(1), next_index);
+            if self
+                .ready
+                .compare_exchange_weak(raw, next, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Some(head);
+            }
         }
     }
 
     fn process_node(&self, level: usize, chain: usize) {
-        // SAFETY: `claims` hands this chain to one thread. The previous level
-        // has finished, so its slot is no longer written.
+        // SAFETY: the ready stack hands this node to one thread. The previous
+        // filter in the chain has stored its plane before publishing this node.
         let node = unsafe { &mut *self.nodes[level * CHAINS + chain].get() };
         let input = unsafe { &*self.input.get() };
         let write = unsafe { &mut *self.planes.add((level % 2) * CHAINS + chain) };
@@ -185,7 +286,7 @@ impl Engine {
         let plane = (DEPTH - 1) % 2;
         let mut acc = 0.0f32;
         for chain in 0..CHAINS {
-            // SAFETY: `run_levels` has finished, so the last plane is stable.
+            // SAFETY: every node has finished, so the last plane is stable.
             let slot = unsafe { &*self.planes.add(plane * CHAINS + chain) };
             acc += slot.iter().sum::<f32>();
         }
@@ -195,7 +296,7 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        // SAFETY: the pointer came from `Box::into_raw` in `new`, and every
+        // SAFETY: the pointer came from the forgotten box in `new`, and every
         // worker has been joined before the last `Arc` drops.
         unsafe {
             let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.planes, 2 * CHAINS));
@@ -209,9 +310,26 @@ impl Default for Engine {
     }
 }
 
-fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void) {
+fn pack(generation: u32, index: u32) -> u64 {
+    (u64::from(generation) << 32) | u64::from(index)
+}
+
+fn unpack(raw: u64) -> (u32, u32) {
+    ((raw >> 32) as u32, raw as u32)
+}
+
+/// The device workgroup's recommended thread count, including the IO thread.
+pub fn workgroup_parallel_threads(workgroup: *mut std::ffi::c_void) -> i32 {
+    if workgroup.is_null() {
+        return 0;
+    }
+    unsafe { os_workgroup_max_parallel_threads(workgroup, std::ptr::null_mut()) }
+}
+
+fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void, period_ticks: u32) {
     // Parked workers stay at user-interactive QoS so the first wake is not
-    // scheduled from the default priority.
+    // scheduled from the default priority. libc 0.2.190 does not re-export this
+    // call; the value 0x21 is QOS_CLASS_USER_INTERACTIVE.
     unsafe {
         pthread_set_qos_class_self_np(0x21, 0);
     }
@@ -222,6 +340,13 @@ fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void) {
     let joined = if workgroup.is_null() {
         1
     } else {
+        // Apple's support note: the time-constraint policy has to be set before
+        // the join, or the join returns EINVAL. period is one device buffer.
+        // computation is half of that; the whole graph previously finished in
+        // about a quarter of the buffer.
+        if !apply_time_constraint(period_ticks) {
+            engine.policy_failures.fetch_add(1, Ordering::Relaxed);
+        }
         // SAFETY: the device keeps this workgroup alive until `run` releases it,
         // which happens after these threads have been joined. Joining once, and
         // leaving on the way out, avoids the stalls seen when joining every block.
@@ -237,7 +362,7 @@ fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void) {
             break;
         }
         seen = block;
-        engine.run_levels();
+        engine.finish_block();
         engine.exited.fetch_add(1, Ordering::Release);
         wait::wake_all(&engine.exited);
     }
@@ -245,6 +370,32 @@ fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void) {
         // SAFETY: paired with the successful join above, on this same thread.
         unsafe { os_workgroup_leave(workgroup, &mut token) };
     }
+}
+
+fn apply_time_constraint(period_ticks: u32) -> bool {
+    if period_ticks == 0 {
+        return false;
+    }
+    let computation = (period_ticks / 2).max(1);
+    let period = period_ticks.max(computation);
+    let mut policy = libc::thread_time_constraint_policy {
+        period,
+        computation,
+        constraint: period,
+        preemptible: 1,
+    };
+    // SAFETY: `pthread_mach_thread_np` borrows the current thread's port, so
+    // there is no send right to release. The policy points at a stack value
+    // the call reads before returning.
+    let status = unsafe {
+        libc::thread_policy_set(
+            libc::pthread_mach_thread_np(libc::pthread_self()),
+            libc::THREAD_TIME_CONSTRAINT_POLICY as u32,
+            (&raw mut policy).cast::<libc::integer_t>(),
+            libc::THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+        )
+    };
+    status == libc::KERN_SUCCESS
 }
 
 #[repr(C)]
@@ -256,6 +407,10 @@ struct WorkgroupToken {
 unsafe extern "C" {
     fn os_workgroup_join(workgroup: *mut std::ffi::c_void, token: *mut WorkgroupToken) -> i32;
     fn os_workgroup_leave(workgroup: *mut std::ffi::c_void, token: *mut WorkgroupToken);
+    fn os_workgroup_max_parallel_threads(
+        workgroup: *mut std::ffi::c_void,
+        attr: *mut std::ffi::c_void,
+    ) -> i32;
     fn pthread_set_qos_class_self_np(class: u32, relative: i32) -> i32;
 }
 
@@ -290,10 +445,22 @@ mod tests {
     #[test]
     fn workers_finish_every_block() {
         let engine = Arc::new(Engine::new(2));
-        let _workers = engine.spawn_workers(std::ptr::null_mut());
+        let _workers = engine.spawn_workers(std::ptr::null_mut(), 0);
         for _ in 0..32 {
             let energy = engine.render_block();
             assert!(energy.is_finite() && energy.abs() > 0.0, "{energy}");
+        }
+    }
+
+    #[test]
+    fn workers_match_the_audio_thread() {
+        let alone = Engine::new(0);
+        let shared = Arc::new(Engine::new(3));
+        let _workers = shared.spawn_workers(std::ptr::null_mut(), 0);
+        for _ in 0..8 {
+            let single = alone.render_block();
+            let parallel = shared.render_block();
+            assert_eq!(single, parallel);
         }
     }
 }

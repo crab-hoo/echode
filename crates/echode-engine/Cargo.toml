@@ -11,8 +11,16 @@ description = "Realtime audio graph, transport, and MIDI playback"
 dasp_interpolate = { version = "=0.11.0", features = ["floor", "linear", "sinc"] }
 dasp_ring_buffer = "=0.11.0"
 echode-model = { path = "../echode-model" }
+echode-realtime = { path = "../echode-realtime" }
+libc = "=0.2.190"
+libm = "=0.2.16"
+rtrb = "=0.4.0"
 rubato = "=5.0.1"
+rtsan-standalone = { version = "=0.3.0", optional = true }
 wavesynth = "=0.1.0"
+
+[features]
+rtsan = ["dep:rtsan-standalone"]
 
 [lib]
 path = "src/lib.rs"

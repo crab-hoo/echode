@@ -4,9 +4,10 @@
 //! ranges the block covers. A loop produces at most one extra range, the piece
 //! after the playhead jumps back. The caller supplies the range buffer.
 
-use echode_model::{TempoMap, Tick};
+use echode_model::{Meter, TICKS_PER_QUARTER, TempoMap, Tick};
+use echode_realtime::Event;
 
-use crate::clock::tick_to_sample;
+use crate::clock::{sample_to_tick, tick_to_sample};
 
 /// Why playback could not step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +17,8 @@ pub enum PlaybackError {
     InvalidFader,
     Time,
     BufferTooSmall,
+    IdSpace,
+    InvalidDevice,
 }
 
 impl std::fmt::Display for PlaybackError {
@@ -26,6 +29,8 @@ impl std::fmt::Display for PlaybackError {
             Self::InvalidFader => "pan must be from -1 to 1 and gain must be finite",
             Self::Time => "playback position overflowed",
             Self::BufferTooSmall => "the caller buffer cannot hold this block",
+            Self::IdSpace => "playback note numbers are exhausted",
+            Self::InvalidDevice => "device state or parameter is not valid",
         };
         formatter.write_str(message)
     }
@@ -42,6 +47,10 @@ pub struct PlayedSpan {
     pub block_offset: u32,
     /// Notes still sounding at this sample are released on the span's first frame.
     pub release_at: Option<i64>,
+    /// Loop end in project samples, when a loop is set.
+    pub loop_end: Option<i64>,
+    /// Loop start after the playhead has wrapped. Absent before the first wrap.
+    pub wrap_from: Option<i64>,
 }
 
 /// Transport for one sample rate and tempo map.
@@ -53,6 +62,8 @@ pub struct Transport {
     playing: bool,
     loop_start: Option<Tick>,
     loop_end: Option<Tick>,
+    /// Set once the playhead has jumped back to the loop start.
+    has_wrapped: bool,
 }
 
 impl Transport {
@@ -67,6 +78,7 @@ impl Transport {
             playing: false,
             loop_start: None,
             loop_end: None,
+            has_wrapped: false,
         })
     }
 
@@ -86,6 +98,42 @@ impl Transport {
         &self.tempo
     }
 
+    /// One transport event at `block_offset` for the project sample `sample`.
+    pub fn transport_event(&self, sample: i64, block_offset: u32, meter: Meter) -> Event {
+        let tick = sample_to_tick(sample, &self.tempo, self.sample_rate)
+            .map(|tick| tick.get())
+            .unwrap_or(0);
+        let seconds = if self.sample_rate == 0 {
+            0.0
+        } else {
+            sample as f64 / f64::from(self.sample_rate)
+        };
+        let (loop_start, loop_end) = match (self.loop_start, self.loop_end) {
+            (Some(start), Some(end)) => (start.get(), end.get()),
+            _ => (0, 0),
+        };
+        let bar = meter.bar_ticks().map(|tick| tick.get()).unwrap_or(1).max(1);
+        let bar_index = tick.div_euclid(bar);
+        Event::Transport(echode_realtime::Transport {
+            time: block_offset,
+            playing: self.playing,
+            recording: false,
+            loop_active: self.loop_start.is_some(),
+            tempo_bpm: tempo_bpm(&self.tempo, tick),
+            tempo_inc: 0.0,
+            song_pos_beats: beats(tick),
+            song_pos_seconds: seconds,
+            loop_start_beats: beats(loop_start),
+            loop_end_beats: beats(loop_end),
+            loop_start_seconds: seconds_at(self, loop_start),
+            loop_end_seconds: seconds_at(self, loop_end),
+            bar_start: beats(bar_index.saturating_mul(bar)),
+            bar_number: i32::try_from(bar_index).unwrap_or(i32::MAX),
+            signature_numerator: u16::try_from(meter.numerator()).unwrap_or(u16::MAX),
+            signature_denominator: u16::try_from(meter.denominator()).unwrap_or(u16::MAX),
+        })
+    }
+
     pub fn play(&mut self) {
         self.playing = true;
     }
@@ -96,6 +144,7 @@ impl Transport {
 
     pub fn locate(&mut self, tick: Tick) -> Result<(), PlaybackError> {
         self.position = self.sample_at(tick)?;
+        self.has_wrapped = false;
         Ok(())
     }
 
@@ -117,6 +166,7 @@ impl Transport {
             self.loop_start = None;
             self.loop_end = None;
         }
+        self.has_wrapped = false;
         Ok(())
     }
 
@@ -171,6 +221,7 @@ impl Transport {
         {
             release_at = Some(loop_end);
             self.position = loop_start;
+            self.has_wrapped = true;
         }
         let until_loop = self.frames_until_loop_end()?;
         let frames = (*budget).min(until_loop);
@@ -178,6 +229,12 @@ impl Transport {
             return Err(PlaybackError::InvalidLoop);
         }
         let start = self.position;
+        let (loop_end, wrap_from) = match self.loop_samples()? {
+            Some((loop_start, loop_end)) => {
+                (Some(loop_end), self.has_wrapped.then_some(loop_start))
+            }
+            None => (None, None),
+        };
         self.position = self
             .position
             .checked_add(i64::from(frames))
@@ -188,6 +245,8 @@ impl Transport {
             frames,
             block_offset: 0,
             release_at,
+            loop_end,
+            wrap_from,
         }))
     }
 
@@ -219,10 +278,57 @@ impl Transport {
     }
 }
 
+fn beats(tick: i64) -> f64 {
+    tick as f64 / TICKS_PER_QUARTER as f64
+}
+
+fn tempo_bpm(map: &TempoMap, tick: i64) -> f64 {
+    let mut tempo = map.points()[0].tempo;
+    for point in map.points() {
+        if point.at.get() <= tick {
+            tempo = point.tempo;
+        } else {
+            break;
+        }
+    }
+    f64::from(tempo.numerator()) / f64::from(tempo.denominator())
+}
+
+fn seconds_at(transport: &Transport, tick: i64) -> f64 {
+    let sample =
+        tick_to_sample(Tick::new(tick), transport.tempo(), transport.sample_rate()).unwrap_or(0);
+    if transport.sample_rate() == 0 {
+        0.0
+    } else {
+        sample as f64 / f64::from(transport.sample_rate())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use echode_model::Tempo;
+
+    #[test]
+    fn the_downbeat_transport_is_playing_at_120() {
+        let mut transport = Transport::new(
+            48_000,
+            TempoMap::new(Tempo::quarters_per_minute(120).unwrap()),
+        )
+        .unwrap();
+        transport.play();
+        let event = transport.transport_event(24_000, 0, Meter::four_four());
+        let Event::Transport(event) = event else {
+            panic!("transport");
+        };
+        assert!(event.playing);
+        assert!(!event.loop_active);
+        assert_eq!(event.tempo_bpm, 120.0);
+        assert_eq!(event.song_pos_beats, 1.0);
+        assert_eq!(event.song_pos_seconds, 0.5);
+        assert_eq!(event.bar_number, 0);
+        assert_eq!(event.signature_numerator, 4);
+    }
 
     fn transport() -> Transport {
         Transport::new(
@@ -241,6 +347,8 @@ mod tests {
             frames: 0,
             block_offset: 0,
             release_at: None,
+            loop_end: None,
+            wrap_from: None,
         }; 4];
         assert_eq!(transport.pull(64, &mut spans).unwrap(), 0);
         assert_eq!(transport.position_sample(), 24_000);
@@ -263,6 +371,8 @@ mod tests {
             frames: 0,
             block_offset: 0,
             release_at: None,
+            loop_end: None,
+            wrap_from: None,
         }; 4];
         let count = transport.pull(24_064, &mut spans).unwrap();
         assert_eq!(count, 2);
@@ -303,6 +413,8 @@ mod tests {
             frames: 0,
             block_offset: 0,
             release_at: None,
+            loop_end: None,
+            wrap_from: None,
         }; 1];
         assert_eq!(
             transport.pull(24_064, &mut spans).unwrap_err(),

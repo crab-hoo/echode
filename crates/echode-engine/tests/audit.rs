@@ -1,8 +1,8 @@
 //! Open items from docs/reviews/2026-10-08-audit.md. Each test fails until its item
 //! is fixed; `make known-bugs` runs them. Remove the `#[ignore]` with the fix.
 
-use echode_engine::{MidiEvent, MidiKind, PlayedSpan, schedule};
-use echode_model::{Id, NoteDraft, Project, TICKS_PER_QUARTER, Tick};
+use echode_engine::{Event, PlayedSpan, schedule};
+use echode_model::{NoteDraft, Project, TICKS_PER_QUARTER, Tick};
 
 #[test]
 fn audit_mod5_a_note_outside_a_fixed_clip_is_silent() {
@@ -27,20 +27,15 @@ fn audit_mod5_a_note_outside_a_fixed_clip_is_silent() {
             Tick::quarters(2).unwrap(),
         )
         .unwrap();
-    let silent = MidiEvent {
-        sample_offset: 0,
-        track: Id::from_raw(0),
-        note: Id::from_raw(0),
-        pitch: 0,
-        velocity: 0,
-        kind: MidiKind::Off,
-    };
+    let silent = Event::note_off(0, 0, 0, 0);
     let mut events = [silent; 8];
     let span = PlayedSpan {
         start_sample: 0,
         frames: 128,
         block_offset: 0,
         release_at: None,
+        loop_end: None,
+        wrap_from: None,
     };
     let count = schedule(&project, project.tempo(), 48_000, &[span], &mut events).unwrap();
     assert_eq!(
@@ -71,8 +66,8 @@ fn a_note_that_crosses_the_window_ends_at_the_window() {
     let mut events = [silent(); 8];
     let count = schedule(&project, &tempo, 48_000, &[span_at(0, 64)], &mut events).unwrap();
     assert_eq!(count, 1);
-    assert_eq!(events[0].kind, MidiKind::On);
-    assert_eq!(events[0].sample_offset, 0);
+    assert!(events[0].is_note_on());
+    assert_eq!(events[0].time(), 0);
     let count = schedule(
         &project,
         &tempo,
@@ -82,8 +77,8 @@ fn a_note_that_crosses_the_window_ends_at_the_window() {
     )
     .unwrap();
     assert_eq!(count, 1);
-    assert_eq!(events[0].kind, MidiKind::Off);
-    assert_eq!(events[0].sample_offset, 0);
+    assert!(events[0].is_note_off());
+    assert_eq!(events[0].time(), 0);
     let count = schedule(
         &project,
         &tempo,
@@ -131,8 +126,8 @@ fn a_note_that_starts_before_the_window_opens_at_the_window() {
     )
     .unwrap();
     assert_eq!(count, 1);
-    assert_eq!(events[0].kind, MidiKind::On);
-    assert_eq!(events[0].sample_offset, 0);
+    assert!(events[0].is_note_on());
+    assert_eq!(events[0].time(), 0);
     let count = schedule(
         &project,
         &tempo,
@@ -142,19 +137,12 @@ fn a_note_that_starts_before_the_window_opens_at_the_window() {
     )
     .unwrap();
     assert_eq!(count, 1);
-    assert_eq!(events[0].kind, MidiKind::Off);
-    assert_eq!(events[0].sample_offset, 0);
+    assert!(events[0].is_note_off());
+    assert_eq!(events[0].time(), 0);
 }
 
-fn silent() -> MidiEvent {
-    MidiEvent {
-        sample_offset: 0,
-        track: Id::from_raw(0),
-        note: Id::from_raw(0),
-        pitch: 0,
-        velocity: 0,
-        kind: MidiKind::Off,
-    }
+fn silent() -> Event {
+    Event::note_off(0, 0, 0, 0)
 }
 
 fn span_at(start: i64, frames: u32) -> PlayedSpan {
@@ -163,5 +151,7 @@ fn span_at(start: i64, frames: u32) -> PlayedSpan {
         frames,
         block_offset: 0,
         release_at: None,
+        loop_end: None,
+        wrap_from: None,
     }
 }

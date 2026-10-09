@@ -3,7 +3,10 @@
 use crate::CMD_SHUTDOWN;
 use crate::region::{MappedRegion, RegionError};
 use crate::sync::WaitError;
+use crate::workgroup::spawn_helper;
+use std::ffi::OsString;
 use std::io::Read;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,11 +21,28 @@ pub struct SpawnOptions<'a> {
     pub plugin: Option<&'a Path>,
     /// Passed through as `ECHODE_TEST_FAULT` (`crash` or `hang`).
     pub fault: Option<&'a str>,
+    /// When set, the helper is spawned with this workgroup send right.
+    pub workgroup: Option<WorkgroupHandoff>,
+}
+
+/// A send right from `os_workgroup_copy_port` and the device period, in mach ticks.
+#[derive(Debug)]
+pub struct WorkgroupHandoff {
+    pub port: u32,
+    pub period_ticks: u32,
+}
+
+enum HelperProcess {
+    Command(Child),
+    Pid {
+        pid: i32,
+        status: Option<ExitStatus>,
+    },
 }
 
 pub struct PluginHost {
     region: MappedRegion,
-    child: Child,
+    child: HelperProcess,
     seq: u64,
     shm_path: PathBuf,
     stderr: Arc<Mutex<String>>,
@@ -35,6 +55,7 @@ pub enum SessionError {
     Io(std::io::Error),
     Timeout,
     HostExited { status: ExitStatus, stderr: String },
+    Workgroup(String),
 }
 
 impl std::fmt::Display for SessionError {
@@ -43,6 +64,7 @@ impl std::fmt::Display for SessionError {
             Self::Region(error) => write!(f, "{error}"),
             Self::Io(error) => write!(f, "{error}"),
             Self::Timeout => f.write_str("plugin process did not answer before the deadline"),
+            Self::Workgroup(error) => write!(f, "{error}"),
             Self::HostExited { status, stderr } => {
                 write!(f, "plugin process exited ({status})")?;
                 if !stderr.is_empty() {
@@ -72,7 +94,7 @@ impl From<std::io::Error> for SessionError {
 }
 
 impl PluginHost {
-    pub fn spawn(options: SpawnOptions<'_>) -> Result<Self, SessionError> {
+    pub fn spawn(mut options: SpawnOptions<'_>) -> Result<Self, SessionError> {
         let n = SHM_SEQ.fetch_add(1, Ordering::Relaxed);
         let shm_path = std::env::temp_dir().join(format!("echode-shm-{}-{n}", std::process::id()));
         let region = MappedRegion::create(&shm_path)?;
@@ -90,8 +112,15 @@ impl PluginHost {
         if let Some(fault) = options.fault {
             command.env("ECHODE_TEST_FAULT", fault);
         }
-        let mut child = command.spawn()?;
-        let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+        let handoff = options.workgroup.take();
+        let (child, mut stderr_pipe): (HelperProcess, Box<dyn Read + Send>) = match handoff {
+            Some(handoff) => spawn_joined(&options, handoff, &shm_path)?,
+            None => {
+                let mut child = command.spawn()?;
+                let stderr_pipe = child.stderr.take().expect("stderr was piped");
+                (HelperProcess::Command(child), Box::new(stderr_pipe))
+            }
+        };
         let stderr = Arc::new(Mutex::new(String::new()));
         let stderr_thread = Arc::clone(&stderr);
         std::thread::spawn(move || {
@@ -212,6 +241,127 @@ impl PluginHost {
     fn force_stop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+impl HelperProcess {
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        match self {
+            Self::Command(child) => child.try_wait(),
+            Self::Pid { pid, status } => {
+                if let Some(status) = *status {
+                    return Ok(Some(status));
+                }
+                let mut raw = 0;
+                let rc = unsafe { libc::waitpid(*pid, &mut raw, libc::WNOHANG) };
+                if rc == 0 {
+                    return Ok(None);
+                }
+                if rc < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let exit = ExitStatus::from_raw(raw);
+                *status = Some(exit);
+                Ok(Some(exit))
+            }
+        }
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Command(child) => child.kill(),
+            Self::Pid { pid, status } if status.is_none() => {
+                if unsafe { libc::kill(*pid, libc::SIGKILL) } == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            }
+            Self::Pid { .. } => Ok(()),
+        }
+    }
+
+    fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        match self {
+            Self::Command(child) => child.wait(),
+            Self::Pid { pid, status } => {
+                if let Some(status) = *status {
+                    return Ok(status);
+                }
+                let mut raw = 0;
+                let rc = unsafe { libc::waitpid(*pid, &mut raw, 0) };
+                if rc < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let exit = ExitStatus::from_raw(raw);
+                *status = Some(exit);
+                Ok(exit)
+            }
+        }
+    }
+}
+
+fn spawn_joined(
+    options: &SpawnOptions<'_>,
+    handoff: WorkgroupHandoff,
+    shm_path: &Path,
+) -> Result<(HelperProcess, Box<dyn Read + Send>), SessionError> {
+    if handoff.period_ticks == 0 {
+        crate::workgroup::deallocate_port(handoff.port);
+        return Err(SessionError::Workgroup(
+            "workgroup period is zero".to_string(),
+        ));
+    }
+    let name = crate::workgroup::service_name();
+    let mut args = vec![
+        OsString::from("--shm"),
+        shm_path.as_os_str().to_os_string(),
+        OsString::from("--workgroup-name"),
+        OsString::from(&name),
+        OsString::from("--workgroup-ticks"),
+        OsString::from(handoff.period_ticks.to_string()),
+    ];
+    if let Some(plugin) = options.plugin {
+        args.push(OsString::from("--plugin"));
+        args.push(plugin.as_os_str().to_os_string());
+    }
+    let fault_env;
+    let extra: &[(&str, &str)] = if let Some(fault) = options.fault {
+        fault_env = [("ECHODE_TEST_FAULT", fault)];
+        &fault_env
+    } else {
+        &[]
+    };
+    let spawned = match spawn_helper(options.host_bin, &args, extra) {
+        Ok(spawned) => spawned,
+        Err(error) => {
+            crate::workgroup::deallocate_port(handoff.port);
+            return Err(SessionError::Workgroup(error));
+        }
+    };
+    if let Err(error) = crate::workgroup::send_workgroup_port(&name, handoff.port) {
+        crate::workgroup::deallocate_port(handoff.port);
+        unsafe { libc::kill(spawned.pid, libc::SIGKILL) };
+        let _ = libc_wait(spawned.pid);
+        return Err(SessionError::Workgroup(error));
+    }
+    crate::workgroup::deallocate_port(handoff.port);
+    Ok((
+        HelperProcess::Pid {
+            pid: spawned.pid,
+            status: None,
+        },
+        Box::new(spawned.stderr),
+    ))
+}
+
+fn libc_wait(pid: i32) -> std::io::Result<ExitStatus> {
+    let mut raw = 0;
+    let rc = unsafe { libc::waitpid(pid, &mut raw, 0) };
+    if rc < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(ExitStatus::from_raw(raw))
     }
 }
 

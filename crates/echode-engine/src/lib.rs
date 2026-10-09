@@ -8,11 +8,14 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
 
+mod builtin;
 mod clock;
 mod device;
 mod graph;
+mod handoff;
 mod mix;
 mod outputs;
+mod plan;
 mod realtime;
 mod render;
 mod resample;
@@ -24,19 +27,25 @@ mod transport;
 mod voice;
 mod wait;
 
+pub use builtin::Device;
 pub use clock::{sample_to_tick, tick_to_sample};
-pub use device::{OutputInventory, output_inventory};
-pub use mix::{TrackFader, mix_tracks};
+pub use device::{IoWorkgroup, OutputInventory, output_inventory};
+pub use echode_realtime::Event;
+pub use handoff::{Audio, Control, Cycle, pair};
+pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
+pub use plan::PlaybackIds;
+#[cfg(debug_assertions)]
+pub use realtime::GuardAlloc;
 pub use render::{OfflineError, render_offline, render_offline_blocks, render_span_frames};
 pub use resample::{
     CONVERTER_ID, CONVERTER_VERSION, ConverterMode, default_converter, resample_into, resample_with,
 };
-pub use sequence::{MidiEvent, MidiKind, render_metronome, schedule};
+pub use sequence::{render_metronome, schedule};
 pub use synth::{
-    SamplerInterpolation, SamplerVoice, SynthVoice, TEST_SAMPLER_ID, TEST_SAMPLER_VERSION,
-    TEST_SYNTH_ID, TEST_SYNTH_INSTRUMENT, TEST_SYNTH_VERSION, render_test_sampler,
-    render_test_synth,
+    SAMPLER_INTERPOLATION, SamplerInterpolation, SamplerVoice, SynthVoice, TEST_SAMPLER_ID,
+    TEST_SAMPLER_VERSION, TEST_SYNTH_ID, TEST_SYNTH_INSTRUMENT, TEST_SYNTH_VERSION, TestSampler,
+    TestSynth, render_test_sampler, render_test_synth,
 };
 pub use transport::{PlaybackError, PlayedSpan, Transport};
 pub use voice::{

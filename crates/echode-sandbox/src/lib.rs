@@ -13,10 +13,14 @@ compile_error!("Echode only builds for macOS");
 mod region;
 mod session;
 mod sync;
+mod workgroup;
 
 pub use region::{Header, MappedRegion, Region, RegionError};
-pub use session::{PluginHost, SessionError, SpawnOptions};
+pub use session::{PluginHost, SessionError, SpawnOptions, WorkgroupHandoff};
 pub use sync::{SyncFlags, WaitError};
+pub use workgroup::{
+    WorkgroupMembership, copy_workgroup_port, join_passed_workgroup, join_workgroup,
+};
 
 /// Stereo only, for this spike. Production routing is not capped at two channels.
 pub const MAX_CHANNELS: usize = 2;

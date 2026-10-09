@@ -1,0 +1,8 @@
+# The audio thread only advances cursors. Growing a buffer here would allocate.
+disallowed-methods = [
+    { path = "std::vec::Vec::push", reason = "the audio thread must not grow a buffer (ENG-1)" },
+    { path = "std::vec::Vec::reserve", reason = "the audio thread must not grow a buffer (ENG-1)" },
+    { path = "std::boxed::Box::new", reason = "the audio thread must not allocate (ENG-1)" },
+    { path = "std::sync::Mutex::new", reason = "the audio thread must not lock (ENG-1)" },
+    { path = "std::sync::RwLock::new", reason = "the audio thread must not lock (ENG-1)" },
+]
