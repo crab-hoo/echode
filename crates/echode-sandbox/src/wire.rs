@@ -21,6 +21,9 @@ const OFF_NOTE: usize = 24;
 const OFF_FLAGS: usize = 28;
 const OFF_EXTRA: usize = 32;
 const OFF_SIG: usize = 36;
+/// Which stage in a helper chain should see this record. Engine `Event` has no
+/// such field; the host writes it when several devices share one submission.
+const OFF_DEVICE: usize = 40;
 const OFF_F64: usize = 48;
 
 const TAG_TRANSPORT: u32 = 0;
@@ -78,6 +81,18 @@ pub fn encode_event(event: &Event) -> Option<[u8; RECORD_BYTES]> {
         Event::ParamMod(param) => write_param(&mut record, TAG_MOD, &param)?,
     }
     Some(record)
+}
+
+/// Same record as [`encode_event`], with a stage index in the spare bytes.
+pub fn encode_routed(event: &Event, device: u32) -> Option<[u8; RECORD_BYTES]> {
+    let mut record = encode_event(event)?;
+    write_u32(&mut record, OFF_DEVICE, device);
+    Some(record)
+}
+
+/// Stage index stored beside the event. Short slices are `None`.
+pub fn device_index(src: &[u8]) -> Option<u32> {
+    read_u32(src, OFF_DEVICE)
 }
 
 /// Decode one record. Invalid tags, bools, targets, and short slices are `None`.

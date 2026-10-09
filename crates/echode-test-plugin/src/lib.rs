@@ -16,6 +16,10 @@ impl Plugin for TestGain {
 impl DefaultPluginFactory for TestGain {
     fn get_descriptor() -> PluginDescriptor {
         PluginDescriptor::new("dev.echode.test-gain", "Echode Test Gain")
+            .with_vendor("Echode")
+            .with_version("0.0.0")
+            .with_url("https://echode.invalid")
+            .with_features([c"audio-effect"])
     }
 
     fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {

@@ -4,7 +4,7 @@
 //! attach time, and events are plain records ([`crate::wire`]), never a Rust enum.
 
 use crate::sync::{self, SyncFlags, WaitError};
-use crate::wire::{RECORD_BYTES, decode_event, encode_event};
+use crate::wire::{RECORD_BYTES, decode_event, device_index, encode_event, encode_routed};
 use crate::{CMD_PROCESS, MAGIC};
 use echode_realtime::Event;
 use memmap2::MmapMut;
@@ -194,6 +194,106 @@ pub struct MappedRegion {
     file: File,
     layout: SessionLayout,
     stride: usize,
+    /// Parent-only. A generation stored here is not read if it completes late.
+    abandoned: AtomicU64,
+}
+
+/// One word every helper bumps when it finishes a block, so the audio thread
+/// can wait once and still notice whichever helper finished.
+pub struct FanIn {
+    map: MmapMut,
+    file: File,
+}
+
+impl std::fmt::Debug for FanIn {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("FanIn")
+    }
+}
+
+impl FanIn {
+    pub fn create() -> Result<Self, RegionError> {
+        let file = shm_file(4096)?;
+        Self::from_file(file)
+    }
+
+    pub fn from_fd(fd: OwnedFd) -> Result<Self, RegionError> {
+        Self::from_file(File::from(fd))
+    }
+
+    fn from_file(file: File) -> Result<Self, RegionError> {
+        if file.metadata()?.len() < 8 {
+            file.set_len(4096)?;
+        }
+        // SAFETY: the file is zero-filled and at least one atomic long.
+        let map = unsafe { MmapMut::map_mut(&file)? };
+        let fan = Self { map, file };
+        fan.lock_pages()?;
+        Ok(fan)
+    }
+
+    pub fn duplicate_fd(&self) -> io::Result<OwnedFd> {
+        let fd = unsafe { libc::fcntl(self.file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+        if fd < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            // SAFETY: `fcntl` returned a new descriptor owned by this process.
+            Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        }
+    }
+
+    pub fn load(&self) -> u64 {
+        self.word().load(Ordering::Acquire)
+    }
+
+    pub fn bump(&self) {
+        self.word().fetch_add(1, Ordering::Release);
+        sync::wake_one(self.word(), SyncFlags::PROCESS);
+    }
+
+    /// Wait until the word changes or `deadline`. The remaining time is all
+    /// that is left of the block, not a fresh timeout.
+    pub fn wait_until(&self, seen: u64, deadline: Instant) -> Result<u64, RegionError> {
+        if self.load() != seen {
+            return Ok(self.load());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(RegionError::Wait(WaitError::Timeout));
+        }
+        sync::wait_until_ne_timeout(self.word(), seen, remaining, SyncFlags::PROCESS)
+            .map_err(Into::into)
+    }
+
+    fn word(&self) -> &AtomicU64 {
+        // SAFETY: the mapping is alive, page-aligned, and at least 8 bytes.
+        unsafe { &*self.map.as_ptr().cast::<AtomicU64>() }
+    }
+
+    fn lock_pages(&self) -> Result<(), RegionError> {
+        // SAFETY: `map` is a live mapping.
+        let rc = unsafe { libc::mlock(self.map.as_ptr().cast(), self.map.len()) };
+        if rc != 0 {
+            Err(RegionError::Lock(io::Error::last_os_error()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// One decoded output event and the stage that produced it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Delivered {
+    pub event: Event,
+    pub device: u32,
+}
+
+/// Result of looking at a submitted generation without waiting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Collected {
+    Pending,
+    Ready { events: usize },
+    Abandoned,
 }
 
 impl MappedRegion {
@@ -392,6 +492,213 @@ impl MappedRegion {
         self.slot_head(generation)
             .output_events
             .store(count, Ordering::Release);
+    }
+
+    /// Copy output planes back to input planes so the next stage reads them.
+    pub fn feed_output_to_input(&self, generation: u64) -> Result<(), RegionError> {
+        let frames = self.prepare_block(generation)?;
+        let channels = self.input_channels().min(self.output_channels());
+        for channel in 0..channels {
+            // SAFETY: both planes belong to this generation and `frames` fits.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.output_ptr(generation, channel),
+                    self.plane(generation, false, channel).cast_mut(),
+                    frames,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Keep input records whose stage index is below `stages`. Others are dropped.
+    /// The index is a plain `u32` in the record, not a Rust enum.
+    pub fn echo_routed(&self, generation: u64, stages: u32) {
+        let count = self
+            .slot_head(generation)
+            .input_events
+            .load(Ordering::Acquire)
+            .min(self.layout.input_events);
+        let mut kept = 0u32;
+        for index in 0..count {
+            if kept >= self.layout.output_events {
+                break;
+            }
+            let src = self.event_offset(generation, false, index as usize);
+            let mut record = [0u8; RECORD_BYTES];
+            // SAFETY: the record lies inside this generation's input events.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.map.as_ptr().add(src),
+                    record.as_mut_ptr(),
+                    RECORD_BYTES,
+                );
+            }
+            let device = device_index(&record).unwrap_or(u32::MAX);
+            if device >= stages {
+                continue;
+            }
+            let dst = self.event_offset(generation, true, kept as usize);
+            // SAFETY: the output record lies in the output event region, which
+            // does not overlap the input region.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    record.as_ptr(),
+                    self.map.as_ptr().cast_mut().add(dst),
+                    RECORD_BYTES,
+                );
+            }
+            kept += 1;
+        }
+        self.slot_head(generation)
+            .output_events
+            .store(kept, Ordering::Release);
+    }
+
+    /// Publish a block and return its generation. Does not wait.
+    pub fn submit_block(
+        &self,
+        frames: usize,
+        input: &[&[f32]],
+        events: &[(Event, u32)],
+    ) -> Result<u64, RegionError> {
+        if self.header().dead.load(Ordering::Acquire) != 0 {
+            return Err(RegionError::Dead);
+        }
+        if frames == 0
+            || frames > self.layout.max_frames as usize
+            || input.len() != self.input_channels()
+        {
+            return Err(RegionError::BadShape {
+                frames,
+                channels: input.len(),
+            });
+        }
+        if input.iter().any(|plane| plane.len() != frames) {
+            return Err(RegionError::BadShape {
+                frames,
+                channels: input.len(),
+            });
+        }
+        if events.len() > self.layout.input_events as usize {
+            return Err(RegionError::TooManyEvents {
+                count: events.len(),
+                capacity: self.layout.input_events as usize,
+            });
+        }
+        let header = self.header();
+        let published = header.published.load(Ordering::Acquire);
+        let completed = header.completed.load(Ordering::Acquire);
+        if published.wrapping_sub(completed) >= SLOTS as u64 {
+            return Err(RegionError::Busy);
+        }
+        let generation = published.wrapping_add(1);
+        for (channel, plane) in input.iter().enumerate() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    plane.as_ptr(),
+                    self.plane(generation, false, channel).cast_mut(),
+                    frames,
+                );
+            }
+        }
+        for (index, (event, device)) in events.iter().enumerate() {
+            let record = encode_routed(event, *device).ok_or_else(|| {
+                RegionError::Protocol("event cannot be stored in a plain record".to_string())
+            })?;
+            let offset = self.event_offset(generation, false, index);
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    record.as_ptr(),
+                    self.map.as_ptr().cast_mut().add(offset),
+                    RECORD_BYTES,
+                );
+            }
+        }
+        let head = self.slot_head(generation);
+        head.input_events
+            .store(events.len() as u32, Ordering::Release);
+        head.output_events.store(0, Ordering::Release);
+        head.frames.store(frames as u32, Ordering::Release);
+        head.command.store(crate::CMD_PROCESS, Ordering::Release);
+        header.published.store(generation, Ordering::Release);
+        self.bump_alarm();
+        Ok(generation)
+    }
+
+    pub fn abandon(&self, generation: u64) {
+        self.abandoned.store(generation, Ordering::Release);
+    }
+
+    /// Read a finished generation. Does not wait. A generation passed to
+    /// [`Self::abandon`] is not read, even if the helper has since finished it.
+    pub fn collect_ready(
+        &self,
+        generation: u64,
+        output: &mut [&mut [f32]],
+        delivered: &mut [Delivered],
+    ) -> Result<Collected, RegionError> {
+        if self.abandoned.load(Ordering::Acquire) == generation {
+            return Ok(Collected::Abandoned);
+        }
+        if self.header().dead.load(Ordering::Acquire) != 0 {
+            return Err(RegionError::Dead);
+        }
+        if self.header().completed.load(Ordering::Acquire) < generation {
+            return Ok(Collected::Pending);
+        }
+        let frames = self.prepare_block(generation)?;
+        if output.len() != self.output_channels() {
+            return Err(RegionError::BadShape {
+                frames,
+                channels: output.len(),
+            });
+        }
+        for plane in output.iter() {
+            if plane.len() != frames {
+                return Err(RegionError::BadShape {
+                    frames,
+                    channels: output.len(),
+                });
+            }
+        }
+        for (channel, plane) in output.iter_mut().enumerate() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.output_ptr(generation, channel),
+                    plane.as_mut_ptr(),
+                    frames,
+                );
+            }
+        }
+        let count = (self
+            .slot_head(generation)
+            .output_events
+            .load(Ordering::Acquire) as usize)
+            .min(self.layout.output_events as usize);
+        let mut written = 0;
+        for index in 0..count {
+            if written == delivered.len() {
+                break;
+            }
+            let offset = self.event_offset(generation, true, index);
+            let mut record = [0u8; RECORD_BYTES];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.map.as_ptr().add(offset),
+                    record.as_mut_ptr(),
+                    RECORD_BYTES,
+                );
+            }
+            if let Some(event) = decode_event(&record) {
+                delivered[written] = Delivered {
+                    event,
+                    device: device_index(&record).unwrap_or(0),
+                };
+                written += 1;
+            }
+        }
+        Ok(Collected::Ready { events: written })
     }
 
     pub fn finish(&self, generation: u64) {
@@ -634,6 +941,7 @@ fn map_new(file: File, layout: SessionLayout) -> Result<MappedRegion, RegionErro
         file,
         layout,
         stride,
+        abandoned: AtomicU64::new(0),
     };
     region.init_header();
     region.lock_pages()?;
@@ -667,6 +975,7 @@ fn map_existing(file: File) -> Result<MappedRegion, RegionError> {
         file,
         layout,
         stride,
+        abandoned: AtomicU64::new(0),
     };
     region.lock_pages()?;
     Ok(region)

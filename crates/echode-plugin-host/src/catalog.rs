@@ -182,7 +182,7 @@ pub fn list_bundles_including_clap_path(
 ///
 /// Without `CFBundleExecutable`, every regular file in `Contents/MacOS` counts,
 /// so replacing the only binary still changes the revision.
-fn bundle_revision(bundle: &Path) -> BundleRevision {
+pub(crate) fn bundle_revision(bundle: &Path) -> BundleRevision {
     let plist = std::fs::read(bundle.join("Contents/Info.plist")).unwrap_or_default();
     let fields = plist_strings(&plist);
     let version = fields.get("CFBundleVersion").cloned().unwrap_or_default();
@@ -492,6 +492,10 @@ mod tests {
             vec![crate::ScannedPlugin {
                 id: "dev.echode.test-gain".into(),
                 name: "Echode Test Gain".into(),
+                vendor: "Echode".into(),
+                version: "0.0.0".into(),
+                features: vec!["audio-effect".into()],
+                url: String::new(),
             }],
         );
         assert!(catalog.due(start).is_empty());

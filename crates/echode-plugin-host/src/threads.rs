@@ -7,8 +7,8 @@
 use crate::{HostError, load_entry};
 use clack_host::prelude::*;
 use echode_sandbox::{
-    CMD_PROCESS, CMD_SHUTDOWN, ControlMessage, MAX_CHANNELS, MAX_FRAMES, MappedRegion, RegionError,
-    SPIKE_SAMPLE_RATE, Socket, SyncFlags, wake_one,
+    CMD_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn, MAX_CHANNELS, MAX_FRAMES, MappedRegion,
+    RegionError, SPIKE_SAMPLE_RATE, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
@@ -19,7 +19,7 @@ use std::ffi::c_void;
 use std::os::fd::OwnedFd;
 use std::ptr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::thread::{self, ThreadId};
 
 const OP_RESTART: u8 = 1;
@@ -52,6 +52,8 @@ struct Bridge {
     callback_gen: AtomicU64,
     callback_seen: AtomicU64,
     process_note: AtomicBool,
+    stages: AtomicU32,
+    fan: AtomicPtr<FanIn>,
     // Read after `serve` returns, from the unit test.
     #[allow(dead_code)]
     main_id: std::sync::Mutex<Option<ThreadId>>,
@@ -102,6 +104,14 @@ impl Bridge {
             unsafe { (*region).bump_alarm() };
         }
         self.unlock_map();
+    }
+
+    fn bump_fan(&self) {
+        let fan = self.fan.load(Ordering::Acquire);
+        if !fan.is_null() {
+            // SAFETY: the fan-in mapping outlives both worker threads.
+            unsafe { (*fan).bump() };
+        }
     }
 
     fn bump_control(&self) {
@@ -250,28 +260,35 @@ pub fn serve(
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     let region = MappedRegion::open(shm)?;
-    serve_region(region, None, plugin, workgroup)
+    serve_region(region, None, None, plugin, workgroup)
 }
 
 pub fn serve_fds(
     shm: OwnedFd,
     control: OwnedFd,
+    fan: Option<OwnedFd>,
     plugin: Option<&std::path::Path>,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     let region = MappedRegion::from_fd(shm)?;
     let socket =
         Socket::from_owned(control).map_err(|error| HostError::Plugin(error.to_string()))?;
-    serve_region(region, Some(socket), plugin, workgroup)
+    let fan = match fan {
+        Some(fd) => Some(FanIn::from_fd(fd)?),
+        None => None,
+    };
+    serve_region(region, Some(socket), fan, plugin, workgroup)
 }
 
 fn serve_region(
     region: MappedRegion,
     control: Option<Socket>,
+    fan: Option<FanIn>,
     plugin: Option<&std::path::Path>,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     let region = Box::into_raw(Box::new(region));
+    let fan = fan.map(|fan| Box::into_raw(Box::new(fan)));
     let bridge = Arc::new(Bridge {
         source: AtomicPtr::new(ptr::null_mut()),
         run_loop: AtomicPtr::new(ptr::null_mut()),
@@ -295,6 +312,8 @@ fn serve_region(
         callback_gen: AtomicU64::new(0),
         callback_seen: AtomicU64::new(0),
         process_note: AtomicBool::new(false),
+        stages: AtomicU32::new(1),
+        fan: AtomicPtr::new(fan.unwrap_or(ptr::null_mut())),
         main_id: std::sync::Mutex::new(None),
         audio_id: std::sync::Mutex::new(None),
         callbacks: AtomicU64::new(0),
@@ -380,6 +399,10 @@ fn serve_region(
         });
     }
     release_maps(&bridge);
+    let fan = bridge.fan.swap(ptr::null_mut(), Ordering::AcqRel);
+    if !fan.is_null() {
+        drop(unsafe { Box::from_raw(fan) });
+    }
     audio_result
 }
 
@@ -536,6 +559,7 @@ fn audio_loop(
             let command = region.block_command(generation);
             if command == CMD_SHUTDOWN {
                 region.finish(generation);
+                bridge.bump_fan();
                 return Ok(());
             }
             if command != CMD_PROCESS {
@@ -544,10 +568,16 @@ fn audio_loop(
             let frames = region.prepare_block(generation)?;
             let inputs = region.input_channels();
             let outputs = region.output_channels();
+            let stages = bridge.stages.load(Ordering::Acquire).max(1);
             let stereo = inputs == MAX_CHANNELS && outputs == MAX_CHANNELS && frames <= MAX_FRAMES;
             if bridge.has_plugin.load(Ordering::Acquire) && stereo {
                 if let Some(active) = started.as_mut() {
-                    render_plugin(region, generation, active, frames, buffers)?;
+                    for stage in 0..stages {
+                        if stage > 0 {
+                            region.feed_output_to_input(generation)?;
+                        }
+                        render_plugin(region, generation, active, frames, buffers)?;
+                    }
                 } else {
                     region.silence_outputs(generation)?;
                 }
@@ -556,8 +586,9 @@ fn audio_loop(
             } else {
                 region.copy_inputs_to_outputs(generation)?;
             }
-            region.echo_events(generation);
+            region.echo_routed(generation, stages);
             region.finish(generation);
+            bridge.bump_fan();
             *seen_request = generation;
             continue;
         }
@@ -731,6 +762,18 @@ fn handle_control(
             socket
                 .send(&ControlMessage::Restored)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
+        }
+        ControlMessage::SetChain(stages) => {
+            if stages == 0 {
+                socket
+                    .send(&ControlMessage::ChainRejected)
+                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+            } else {
+                bridge.stages.store(stages, Ordering::Release);
+                socket
+                    .send(&ControlMessage::ChainReady)
+                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+            }
         }
         ControlMessage::Remap { layout, fd } => match MappedRegion::from_fd(fd) {
             Ok(region) if region.layout() == layout => {

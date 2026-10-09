@@ -5,12 +5,12 @@ use echode_engine::IoWorkgroup;
 use echode_plugin_host::measure_in_process;
 use echode_realtime::{Event, NoteEvent, Target};
 use echode_sandbox::{
-    PluginHost, PluginNotice, SessionError, SessionLayout, SpawnOptions, WorkgroupHandoff,
-    WorkgroupMembership, copy_workgroup_port, join_workgroup,
+    BlockProgress, Delivered, FanIn, PluginHost, PluginNotice, SessionError, SessionLayout,
+    SpawnOptions, WorkgroupHandoff, WorkgroupMembership, copy_workgroup_port, join_workgroup,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const BUDGET: Duration = Duration::from_micros(30);
@@ -72,6 +72,7 @@ fn spawn_with(
         fault,
         workgroup,
         layout: SessionLayout::stereo(),
+        fan_in: None,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
 }
@@ -335,6 +336,7 @@ fn spawn_layout(layout: SessionLayout) -> PluginHost {
         fault: None,
         workgroup: None,
         layout,
+        fan_in: None,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
 }
@@ -478,4 +480,248 @@ fn remap_switches_to_a_mono_output() {
     assert_eq!(count, 1);
     assert_eq!(decoded[0], event);
     assert!(output.iter().all(|sample| *sample == 0.0));
+}
+
+fn spawn_fan(plugin: Option<&Path>, fault: Option<&str>, fan: &Arc<FanIn>) -> PluginHost {
+    PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin,
+        fault,
+        workgroup: None,
+        layout: SessionLayout::stereo(),
+        fan_in: Some(Arc::clone(fan)),
+    })
+    .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
+}
+
+fn submit_stereo(host: &mut PluginHost, frames: &[Vec<f32>; 2]) -> u64 {
+    host.submit(frames[0].len(), &[&frames[0], &frames[1]], &[])
+        .unwrap_or_else(|error| panic!("submit: {error}"))
+}
+
+fn poll_stereo(
+    host: &mut PluginHost,
+    generation: u64,
+    frames: usize,
+) -> (BlockProgress, [Vec<f32>; 2]) {
+    let mut left = vec![0.0; frames];
+    let mut right = vec![0.0; frames];
+    let progress = host
+        .poll(generation, &mut [&mut left[..], &mut right[..]], &mut [])
+        .unwrap_or_else(|error| panic!("poll: {error}"));
+    (progress, [left, right])
+}
+
+fn await_ready(
+    fan: &FanIn,
+    host: &mut PluginHost,
+    generation: u64,
+    frames: usize,
+) -> [Vec<f32>; 2] {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = fan.load();
+    loop {
+        let (progress, output) = poll_stereo(host, generation, frames);
+        if matches!(progress, BlockProgress::Ready { .. }) {
+            return output;
+        }
+        seen = fan
+            .wait_until(seen, deadline)
+            .unwrap_or_else(|error| panic!("fan-in: {error}"));
+    }
+}
+
+#[test]
+fn two_helpers_finish_in_about_one_round_trip() {
+    let fan = Arc::new(FanIn::create().expect("fan-in"));
+    let mut first = spawn_fan(None, None, &fan);
+    let mut second = spawn_fan(None, None, &fan);
+    let input = stereo(64, 0.2);
+    for _ in 0..10 {
+        let generation = submit_stereo(&mut first, &input);
+        let _ = await_ready(&fan, &mut first, generation, 64);
+    }
+    let mut single = Vec::new();
+    for _ in 0..15 {
+        let started = Instant::now();
+        let generation = submit_stereo(&mut first, &input);
+        let output = await_ready(&fan, &mut first, generation, 64);
+        assert_eq!(output[0], input[0]);
+        single.push(started.elapsed());
+    }
+    single.sort_unstable();
+    let one = single[single.len() / 2];
+    let mut parallel = Vec::new();
+    for _ in 0..15 {
+        let started = Instant::now();
+        let left = submit_stereo(&mut first, &input);
+        let right = submit_stereo(&mut second, &input);
+        let deadline = started + Duration::from_secs(2);
+        let mut seen = fan.load();
+        let mut left_done = false;
+        let mut right_done = false;
+        loop {
+            if !left_done {
+                let (progress, output) = poll_stereo(&mut first, left, 64);
+                if matches!(progress, BlockProgress::Ready { .. }) {
+                    assert_eq!(output[0], input[0]);
+                    left_done = true;
+                }
+            }
+            if !right_done {
+                let (progress, output) = poll_stereo(&mut second, right, 64);
+                if matches!(progress, BlockProgress::Ready { .. }) {
+                    assert_eq!(output[0], input[0]);
+                    right_done = true;
+                }
+            }
+            if left_done && right_done {
+                break;
+            }
+            seen = fan
+                .wait_until(seen, deadline)
+                .unwrap_or_else(|error| panic!("fan-in: {error}"));
+        }
+        parallel.push(started.elapsed());
+    }
+    parallel.sort_unstable();
+    let both = parallel[parallel.len() / 2];
+    if !cfg!(debug_assertions) {
+        assert!(
+            both < one + one / 2,
+            "two helpers took {both:?}, one took {one:?}"
+        );
+    }
+}
+
+#[test]
+fn a_fast_helper_is_collected_while_the_other_is_still_running() {
+    let fan = Arc::new(FanIn::create().expect("fan-in"));
+    let plugin = plugin_dylib();
+    let mut slow = spawn_fan(Some(&plugin), Some("hang"), &fan);
+    let mut fast = spawn_fan(None, None, &fan);
+    let input = stereo(32, 0.1);
+    let started = Instant::now();
+    let hung = submit_stereo(&mut slow, &input);
+    let copied = submit_stereo(&mut fast, &input);
+    let deadline = started + Duration::from_millis(80);
+    let mut seen = fan.load();
+    let mut unlocked = None;
+    loop {
+        if unlocked.is_none() {
+            let (progress, output) = poll_stereo(&mut fast, copied, 32);
+            if matches!(progress, BlockProgress::Ready { .. }) {
+                assert_eq!(output[0], input[0]);
+                unlocked = Some(started.elapsed());
+            }
+        }
+        if let Some(unlocked) = unlocked {
+            let (progress, _) = poll_stereo(&mut slow, hung, 32);
+            assert!(matches!(progress, BlockProgress::Pending));
+            assert!(
+                unlocked < Duration::from_millis(20),
+                "unlocked after {unlocked:?}"
+            );
+            slow.abandon(hung);
+            break;
+        }
+        assert!(Instant::now() < deadline, "the fast helper did not finish");
+        seen = fan
+            .wait_until(seen, deadline)
+            .unwrap_or_else(|error| panic!("fan-in: {error}"));
+    }
+}
+
+#[test]
+fn every_helper_shares_one_deadline() {
+    let fan = Arc::new(FanIn::create().expect("fan-in"));
+    let plugin = plugin_dylib();
+    let mut first = spawn_fan(Some(&plugin), Some("hang"), &fan);
+    let mut second = spawn_fan(Some(&plugin), Some("hang"), &fan);
+    let input = stereo(16, 0.0);
+    let started = Instant::now();
+    let left = submit_stereo(&mut first, &input);
+    let right = submit_stereo(&mut second, &input);
+    let deadline = started + Duration::from_millis(40);
+    let mut seen = fan.load();
+    loop {
+        let (first_progress, _) = poll_stereo(&mut first, left, 16);
+        let (second_progress, _) = poll_stereo(&mut second, right, 16);
+        if Instant::now() >= deadline {
+            assert!(matches!(first_progress, BlockProgress::Pending));
+            assert!(matches!(second_progress, BlockProgress::Pending));
+            first.abandon(left);
+            second.abandon(right);
+            break;
+        }
+        let _ = fan.wait_until(seen, deadline);
+        seen = fan.load();
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(70),
+        "waits stacked to {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn two_stages_in_one_helper_are_one_round_trip() {
+    let plugin = plugin_dylib();
+    let mut host = spawn(Some(&plugin), None);
+    host.set_chain(2).expect("chain");
+    let input = stereo(32, 0.25);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("chained block");
+    assert!((output[0][0] - input[0][0] * 4.0).abs() < 1.0e-5);
+
+    let fan = Arc::new(FanIn::create().expect("fan-in"));
+    let mut routed = spawn_fan(Some(&plugin), None, &fan);
+    routed.set_chain(2).expect("chain");
+    let kept = note();
+    let dropped = Event::NoteOff(NoteEvent {
+        time: 1,
+        track: 2,
+        target: Target::note(3, 62),
+        velocity: 0.2,
+    });
+    let generation = routed
+        .submit(
+            8,
+            &[&input[0][..8], &input[1][..8]],
+            &[(kept, 0), (dropped, 1), (dropped, 5)],
+        )
+        .expect("submit");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = fan.load();
+    let mut slot = [
+        Delivered {
+            event: kept,
+            device: 0,
+        },
+        Delivered {
+            event: kept,
+            device: 0,
+        },
+        Delivered {
+            event: kept,
+            device: 0,
+        },
+    ];
+    loop {
+        let mut left = [0.0; 8];
+        let mut right = [0.0; 8];
+        let progress = routed
+            .poll(generation, &mut [&mut left[..], &mut right[..]], &mut slot)
+            .expect("poll");
+        if let BlockProgress::Ready { events } = progress {
+            assert_eq!(events, 2);
+            assert_eq!(slot[0].device, 0);
+            assert_eq!(slot[1].device, 1);
+            assert_eq!(slot[0].event, kept);
+            break;
+        }
+        seen = fan.wait_until(seen, deadline).expect("fan-in");
+    }
 }

@@ -65,6 +65,10 @@ fn audit_plg2_rewriting_the_executable_inside_a_bundle_triggers_a_rescan() {
         vec![ScannedPlugin {
             id: "dev.echode.synth".into(),
             name: "Synth".into(),
+            vendor: "Echode".into(),
+            version: String::new(),
+            features: Vec::new(),
+            url: String::new(),
         }],
     );
     std::thread::sleep(Duration::from_millis(50));

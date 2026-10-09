@@ -6,6 +6,7 @@ fn main() -> ExitCode {
     let mut shm = None;
     let mut shm_fd = None;
     let mut control_fd = None;
+    let mut fan_fd = None;
     let mut plugin = None;
     let mut scan = None;
     let mut workgroup_name = None;
@@ -15,6 +16,7 @@ fn main() -> ExitCode {
             "--shm" => shm = args.next(),
             "--shm-fd" => shm_fd = args.next().and_then(|text| text.parse().ok()),
             "--control-fd" => control_fd = args.next().and_then(|text| text.parse().ok()),
+            "--fan-fd" => fan_fd = args.next().and_then(|text| text.parse().ok()),
             "--plugin" => plugin = args.next(),
             "--scan" => scan = args.next(),
             "--workgroup-name" => workgroup_name = args.next(),
@@ -62,7 +64,7 @@ fn main() -> ExitCode {
         .as_ref()
         .map(|(name, ticks)| (name.as_str(), *ticks));
     let served = if let (Some(shm_fd), Some(control_fd)) = (shm_fd, control_fd) {
-        echode_plugin_host::serve_fds(shm_fd, control_fd, plugin, workgroup)
+        echode_plugin_host::serve_fds(shm_fd, control_fd, fan_fd, plugin, workgroup)
     } else if let Some(shm) = shm {
         echode_plugin_host::serve(Path::new(&shm), plugin, workgroup)
     } else {

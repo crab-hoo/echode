@@ -502,6 +502,8 @@ dependencies = [
  "echode-sandbox",
  "objc2-core-foundation",
  "objc2-core-services",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

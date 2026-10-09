@@ -51,14 +51,17 @@ pub fn serve(
 pub fn serve_fds(
     shm_fd: i32,
     control_fd: i32,
+    fan_fd: Option<i32>,
     plugin: Option<&Path>,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
-    // SAFETY: the parent placed the shared mapping on `shm_fd` and the control
-    // socket on `control_fd` before exec. This process owns both.
+    // SAFETY: the parent placed the shared mapping on `shm_fd`, the control
+    // socket on `control_fd`, and the optional fan-in word on `fan_fd`, before
+    // exec. This process owns them.
     let shm = unsafe { std::os::fd::OwnedFd::from_raw_fd(shm_fd) };
     let control = unsafe { std::os::fd::OwnedFd::from_raw_fd(control_fd) };
-    threads::serve_fds(shm, control, plugin, workgroup)
+    let fan = fan_fd.map(|fd| unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) });
+    threads::serve_fds(shm, control, fan, plugin, workgroup)
 }
 
 /// In-process CLAP calls, for comparing against the cross-process round trip.
@@ -159,5 +162,8 @@ pub use catalog::{
     list_bundles_including_clap_path,
 };
 pub use events::write_input;
-pub use scan::{ScannedPlugin, scan_descriptors, scan_report};
+pub use scan::{
+    ScanCacheEntry, ScannedPlugin, cache_entry, cached_plugins, load_scan_cache, scan_descriptors,
+    scan_report, store_scan_cache,
+};
 pub use watch::FolderWatch;

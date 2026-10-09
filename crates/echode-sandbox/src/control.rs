@@ -22,6 +22,9 @@ const PLUGIN_RESTARTED: u32 = 8;
 const REMAP: u32 = 9;
 const REMAPPED: u32 = 10;
 const REMAP_FAILED: u32 = 11;
+const SET_CHAIN: u32 = 12;
+const CHAIN_READY: u32 = 13;
+const CHAIN_REJECTED: u32 = 14;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -32,10 +35,19 @@ pub enum ControlMessage {
     Restored,
     RequestProcess,
     Dirty,
-    PluginRestarted { latency_samples: u32 },
-    Remap { layout: SessionLayout, fd: OwnedFd },
+    PluginRestarted {
+        latency_samples: u32,
+    },
+    Remap {
+        layout: SessionLayout,
+        fd: OwnedFd,
+    },
     Remapped,
     RemapFailed,
+    /// How many stages this helper runs, in order, for one submitted block.
+    SetChain(u32),
+    ChainReady,
+    ChainRejected,
 }
 
 impl ControlMessage {
@@ -229,6 +241,9 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         }
         ControlMessage::Remapped => (REMAPPED, Vec::new()),
         ControlMessage::RemapFailed => (REMAP_FAILED, Vec::new()),
+        ControlMessage::SetChain(stages) => (SET_CHAIN, stages.to_le_bytes().to_vec()),
+        ControlMessage::ChainReady => (CHAIN_READY, Vec::new()),
+        ControlMessage::ChainRejected => (CHAIN_REJECTED, Vec::new()),
     })
 }
 
@@ -267,6 +282,14 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         }
         REMAPPED => ControlMessage::Remapped,
         REMAP_FAILED => ControlMessage::RemapFailed,
+        SET_CHAIN => {
+            let bytes: [u8; 4] = body.try_into().map_err(|_| {
+                io::Error::new(ErrorKind::InvalidData, "chain message is the wrong size")
+            })?;
+            ControlMessage::SetChain(u32::from_le_bytes(bytes))
+        }
+        CHAIN_READY => ControlMessage::ChainReady,
+        CHAIN_REJECTED => ControlMessage::ChainRejected,
         _ => {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,

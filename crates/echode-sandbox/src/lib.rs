@@ -18,8 +18,10 @@ mod wire;
 mod workgroup;
 
 pub use control::{ControlMessage, Socket};
-pub use region::{Header, MappedRegion, RegionError, SessionLayout};
-pub use session::{PluginHost, PluginNotice, SessionError, SpawnOptions, WorkgroupHandoff};
+pub use region::{Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout};
+pub use session::{
+    BlockProgress, PluginHost, PluginNotice, SessionError, SpawnOptions, WorkgroupHandoff,
+};
 pub use sync::{SyncFlags, WaitError, wait_until_ne, wake_one};
 pub use workgroup::{
     WorkgroupMembership, copy_workgroup_port, join_passed_workgroup, join_workgroup,

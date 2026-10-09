@@ -6,7 +6,7 @@
 //! helper exits.
 
 use crate::control::{ControlMessage, Socket};
-use crate::region::{MappedRegion, RegionError, SessionLayout};
+use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
 use crate::workgroup::spawn_helper;
 use crate::{CMD_PROCESS, CMD_SHUTDOWN};
@@ -18,6 +18,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -34,6 +35,9 @@ pub struct SpawnOptions<'a> {
     /// When set, the helper is spawned with this workgroup send right.
     pub workgroup: Option<WorkgroupHandoff>,
     pub layout: SessionLayout,
+    /// Shared with every helper submitted in the same block. `None` keeps the
+    /// single-helper wait on that helper's own notice.
+    pub fan_in: Option<Arc<FanIn>>,
 }
 
 /// A send right from `os_workgroup_copy_port` and the device period, in mach ticks.
@@ -65,6 +69,7 @@ struct Launched {
 struct WatchSlots {
     notice: *const AtomicU64,
     dead: *const AtomicU64,
+    fan: *const FanIn,
 }
 
 // SAFETY: the pointers address atomics in a mapping this process keeps alive
@@ -84,6 +89,15 @@ pub struct PluginHost {
     watch: Option<JoinHandle<()>>,
     watch_slots: Arc<Mutex<WatchSlots>>,
     watch_stop: Arc<AtomicBool>,
+    fan: Option<Arc<FanIn>>,
+}
+
+/// A submitted block, looked at without waiting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockProgress {
+    Ready { events: usize },
+    Pending,
+    Abandoned,
 }
 
 #[derive(Debug)]
@@ -145,12 +159,14 @@ impl PluginHost {
             shm,
             options.workgroup.take(),
             options.fault,
+            options.fan_in.as_deref(),
         )?;
         let stderr = Arc::new(Mutex::new(String::new()));
         spawn_stderr_reader(launched.stderr, Arc::clone(&stderr));
         let watch_slots = Arc::new(Mutex::new(WatchSlots {
             notice: region.notice_ptr(),
             dead: region.dead_ptr(),
+            fan: std::ptr::null(),
         }));
         let watch_stop = Arc::new(AtomicBool::new(false));
         let mut host = Self {
@@ -166,6 +182,7 @@ impl PluginHost {
             watch: None,
             watch_slots,
             watch_stop,
+            fan: options.fan_in.clone(),
         };
         host.start_watch();
         match host.wait_until_ready(Duration::from_secs(5)) {
@@ -188,12 +205,14 @@ impl PluginHost {
         self.point_watch();
         self.inbox.clear();
         self.closed = false;
+        let fan = self.fan.clone();
         let launched = launch(
             &self.host_bin,
             self.plugin.as_deref(),
             self.region.as_raw_fd(),
             None,
             None,
+            fan.as_deref(),
         )?;
         spawn_stderr_reader(launched.stderr, Arc::clone(&self.stderr));
         self.child = launched.child;
@@ -221,6 +240,57 @@ impl PluginHost {
         timeout: Duration,
     ) -> Result<(), SessionError> {
         self.exchange(CMD_PROCESS, input, output, timeout)
+    }
+
+    /// Publish one block and return. Does not wait for the helper.
+    pub fn submit(
+        &mut self,
+        frames: usize,
+        input: &[&[f32]],
+        events: &[(Event, u32)],
+    ) -> Result<u64, SessionError> {
+        self.region
+            .submit_block(frames, input, events)
+            .map_err(|error| self.fail(error))
+    }
+
+    /// Read a submitted generation if it has finished. Does not wait.
+    pub fn poll(
+        &mut self,
+        generation: u64,
+        output: &mut [&mut [f32]],
+        delivered: &mut [Delivered],
+    ) -> Result<BlockProgress, SessionError> {
+        match self.region.collect_ready(generation, output, delivered) {
+            Ok(Collected::Pending) => Ok(BlockProgress::Pending),
+            Ok(Collected::Abandoned) => Ok(BlockProgress::Abandoned),
+            Ok(Collected::Ready { events }) => Ok(BlockProgress::Ready { events }),
+            Err(error) => Err(self.fail(error)),
+        }
+    }
+
+    /// The generation will not be read if the helper finishes it later.
+    pub fn abandon(&mut self, generation: u64) {
+        self.region.abandon(generation);
+    }
+
+    /// Ask the helper to run `stages` process calls, in order, for each block.
+    pub fn set_chain(&mut self, stages: u32) -> Result<(), SessionError> {
+        self.control.send(&ControlMessage::SetChain(stages))?;
+        match self.wait_message(Duration::from_secs(2), |message| {
+            matches!(
+                message,
+                ControlMessage::ChainReady | ControlMessage::ChainRejected
+            )
+        })? {
+            ControlMessage::ChainReady => Ok(()),
+            ControlMessage::ChainRejected => Err(SessionError::Protocol(
+                "helper rejected the chain".to_string(),
+            )),
+            _ => Err(SessionError::Protocol(
+                "helper did not answer the chain".to_string(),
+            )),
+        }
     }
 
     pub fn process_events(
@@ -489,6 +559,13 @@ impl PluginHost {
         let pid = self.child.os_pid();
         let slots = Arc::clone(&self.watch_slots);
         let stop = Arc::clone(&self.watch_stop);
+        if let Ok(mut guard) = self.watch_slots.lock() {
+            guard.fan = self
+                .fan
+                .as_ref()
+                .map(|fan| ptr::from_ref(fan.as_ref()))
+                .unwrap_or(ptr::null());
+        }
         self.watch_stop.store(false, Ordering::Release);
         self.watch = Some(std::thread::spawn(move || watch_exit(pid, slots, stop)));
     }
@@ -620,8 +697,9 @@ fn launch(
     shm: i32,
     workgroup: Option<WorkgroupHandoff>,
     fault: Option<&str>,
+    fan: Option<&FanIn>,
 ) -> Result<Launched, SessionError> {
-    let launched = launch_with(host_bin, plugin, shm, workgroup.as_ref(), fault);
+    let launched = launch_with(host_bin, plugin, shm, workgroup.as_ref(), fault, fan);
     if let Some(handoff) = workgroup {
         crate::workgroup::deallocate_port(handoff.port);
     }
@@ -637,6 +715,7 @@ fn launch_with(
     shm: i32,
     workgroup: Option<&WorkgroupHandoff>,
     fault: Option<&str>,
+    fan: Option<&FanIn>,
 ) -> Result<Launched, SessionError> {
     if workgroup.is_some_and(|handoff| handoff.period_ticks == 0) {
         return Err(SessionError::Workgroup(
@@ -658,6 +737,10 @@ fn launch_with(
         args.push(OsString::from(handoff.period_ticks.to_string()));
         name
     });
+    if fan.is_some() {
+        args.push(OsString::from("--fan-fd"));
+        args.push(OsString::from("5"));
+    }
     if let Some(plugin) = plugin {
         args.push(OsString::from("--plugin"));
         args.push(plugin.as_os_str().to_os_string());
@@ -671,14 +754,14 @@ fn launch_with(
     };
     let shm_dup = inheritable(shm)?;
     let control_dup = inheritable(child_socket.as_raw_fd())?;
-    let spawned = spawn_helper(
-        host_bin,
-        &args,
-        extra,
-        &[(shm_dup.as_raw_fd(), 3), (control_dup.as_raw_fd(), 4)],
-    )
-    .map_err(|error| SessionError::Io(std::io::Error::other(error)))?;
-    drop((shm_dup, control_dup, child_socket));
+    let fan_dup = fan.map(FanIn::duplicate_fd).transpose()?;
+    let mut inherit = vec![(shm_dup.as_raw_fd(), 3), (control_dup.as_raw_fd(), 4)];
+    if let Some(fan_dup) = fan_dup.as_ref() {
+        inherit.push((fan_dup.as_raw_fd(), 5));
+    }
+    let spawned = spawn_helper(host_bin, &args, extra, &inherit)
+        .map_err(|error| SessionError::Io(std::io::Error::other(error)))?;
+    drop((shm_dup, control_dup, fan_dup, child_socket));
     let mut child = HelperProcess {
         pid: spawned.pid,
         status: None,
@@ -783,6 +866,11 @@ fn watch_exit(pid: i32, slots: Arc<Mutex<WatchSlots>>, stop: Arc<AtomicBool>) {
                         (*guard.notice).fetch_add(1, Ordering::Release);
                         wake_one(&*guard.notice, SyncFlags::PROCESS);
                     }
+                }
+                if !guard.fan.is_null() {
+                    // SAFETY: `fan` stays mapped while this watcher is joined, which
+                    // happens before the host drops it.
+                    unsafe { (*guard.fan).bump() };
                 }
             }
             break;
