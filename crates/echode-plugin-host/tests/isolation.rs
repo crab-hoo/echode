@@ -3,9 +3,10 @@
 
 use echode_engine::IoWorkgroup;
 use echode_plugin_host::measure_in_process;
+use echode_realtime::{Event, NoteEvent, Target};
 use echode_sandbox::{
-    PluginHost, SessionError, SpawnOptions, WorkgroupHandoff, WorkgroupMembership,
-    copy_workgroup_port, join_workgroup,
+    PluginHost, PluginNotice, SessionError, SessionLayout, SpawnOptions, WorkgroupHandoff,
+    WorkgroupMembership, copy_workgroup_port, join_workgroup,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,6 +16,9 @@ use std::time::{Duration, Instant};
 const BUDGET: Duration = Duration::from_micros(30);
 const WARMUP: usize = 200;
 const SAMPLES: usize = 2_000;
+/// From `abort` to exit includes the macOS crash report. A debug helper took
+/// 120 to 420 ms run alone and over a second beside the other tests.
+const CRASH_DEADLINE: Duration = Duration::from_secs(20);
 
 fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))
@@ -67,6 +71,7 @@ fn spawn_with(
         plugin,
         fault,
         workgroup,
+        layout: SessionLayout::stereo(),
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
 }
@@ -221,7 +226,7 @@ fn plugin_crash_does_not_kill_the_host() {
     let mut output = [vec![0.0; 32], vec![0.0; 32]];
     let planes: [&[f32]; 2] = [&input[0], &input[1]];
     let error = host
-        .process(&planes, &mut outs(&mut output), Duration::from_millis(500))
+        .process(&planes, &mut outs(&mut output), CRASH_DEADLINE)
         .expect_err("crash should fail the block");
     match error {
         SessionError::HostExited { status, .. } => {
@@ -259,4 +264,218 @@ fn plugin_hang_times_out_and_can_be_replaced() {
     again
         .process(&planes, &mut outs(&mut output), Duration::from_secs(2))
         .expect("hosting continues after a hung plugin is killed");
+}
+
+#[test]
+fn a_restart_while_idle_wakes_the_processing_thread() {
+    let mut host = spawn(None, Some("restart-idle"));
+    let started = Instant::now();
+    while !host.stderr_log().contains("restart-observed") {
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "restart while idle was not observed: {}",
+            host.stderr_log()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let input = stereo(32, 0.2);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("a block after an idle restart");
+    assert_eq!(output[0], input[0]);
+}
+
+#[test]
+fn a_callback_runs_on_the_main_thread_and_a_restart_still_answers() {
+    let plugin = plugin_dylib();
+    let mut host = spawn(Some(&plugin), Some("callback"));
+    let input = stereo(32, 0.3);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("callback block");
+    assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
+    let started = Instant::now();
+    while !host.stderr_log().contains("on-main-thread") {
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "main-thread callback was not delivered: {}",
+            host.stderr_log()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let mut host = spawn(Some(&plugin), Some("restart"));
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the block that requested a restart still returns");
+    assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the next block is answered without waiting out the deadline");
+    let started = Instant::now();
+    loop {
+        if matches!(
+            host.poll_notice().expect("notice"),
+            Some(PluginNotice::PluginRestarted { .. })
+        ) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "restart notice did not arrive"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn spawn_layout(layout: SessionLayout) -> PluginHost {
+    PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: None,
+        fault: None,
+        workgroup: None,
+        layout,
+    })
+    .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
+}
+
+fn note() -> Event {
+    Event::NoteOn(NoteEvent {
+        time: 3,
+        track: 1,
+        target: Target::note(9, 60),
+        velocity: 0.5,
+    })
+}
+
+#[test]
+fn a_synth_session_has_no_input_channels() {
+    let mut host = spawn_layout(SessionLayout {
+        max_frames: 64,
+        input_channels: 0,
+        output_channels: 4,
+        input_events: 4,
+        output_events: 4,
+    });
+    let mut first = vec![1.0f32; 16];
+    let mut second = vec![1.0f32; 16];
+    let mut third = vec![1.0f32; 16];
+    let mut fourth = vec![1.0f32; 16];
+    let mut planes: [&mut [f32]; 4] = [&mut first, &mut second, &mut third, &mut fourth];
+    let event = note();
+    let mut decoded = [event, event, event, event];
+    let count = host
+        .process_events(
+            &[],
+            &mut planes,
+            &[event],
+            &mut decoded,
+            Duration::from_secs(2),
+        )
+        .expect("synth block");
+    assert_eq!(count, 1);
+    assert_eq!(decoded[0], event);
+    assert!(
+        [first, second, third, fourth]
+            .iter()
+            .all(|plane| plane.iter().all(|sample| *sample == 0.0))
+    );
+}
+
+#[test]
+fn a_midi_only_session_round_trips_events() {
+    let mut host = spawn_layout(SessionLayout {
+        max_frames: 32,
+        input_channels: 0,
+        output_channels: 0,
+        input_events: 4,
+        output_events: 4,
+    });
+    let event = note();
+    let mut decoded = [event, event];
+    let count = host
+        .process_block(
+            8,
+            &[],
+            &mut [],
+            &[event],
+            &mut decoded,
+            Duration::from_secs(2),
+        )
+        .expect("midi block");
+    assert_eq!(count, 1);
+    assert_eq!(decoded[0], event);
+}
+
+#[test]
+fn dirty_and_restored_state_cross_the_socket() {
+    let mut host = spawn(None, Some("dirty"));
+    let started = Instant::now();
+    loop {
+        if matches!(
+            host.poll_notice().expect("notice"),
+            Some(PluginNotice::Dirty)
+        ) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "dirty notice did not arrive"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    host.restore_state(b"abc").expect("restore");
+    assert_eq!(host.save_state().expect("save"), b"abc");
+}
+
+#[test]
+fn exit_is_observed_without_waiting_out_the_deadline() {
+    let plugin = plugin_dylib();
+    let mut host = spawn(Some(&plugin), Some("crash"));
+    let input = stereo(32, 0.0);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    let started = Instant::now();
+    let error = host
+        .process(&planes, &mut outs(&mut output), CRASH_DEADLINE)
+        .expect_err("crash");
+    assert!(
+        started.elapsed() < CRASH_DEADLINE / 2,
+        "exit was observed only after {:?}",
+        started.elapsed()
+    );
+    assert!(matches!(error, SessionError::HostExited { .. }));
+    host.restart().expect("reattach");
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("block after restart");
+    assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
+}
+
+#[test]
+fn remap_switches_to_a_mono_output() {
+    let mut host = spawn_layout(SessionLayout::stereo());
+    host.remap(SessionLayout {
+        max_frames: 32,
+        input_channels: 0,
+        output_channels: 1,
+        input_events: 2,
+        output_events: 2,
+    })
+    .expect("remap");
+    let mut output = vec![1.0f32; 8];
+    let mut planes: [&mut [f32]; 1] = [&mut output];
+    let event = note();
+    let mut decoded = [event, event];
+    let count = host
+        .process_events(
+            &[],
+            &mut planes,
+            &[event],
+            &mut decoded,
+            Duration::from_secs(2),
+        )
+        .expect("remapped block");
+    assert_eq!(count, 1);
+    assert_eq!(decoded[0], event);
+    assert!(output.iter().all(|sample| *sample == 0.0));
 }

@@ -8,6 +8,7 @@ publish = false
 description = "Cross-process shared memory for out-of-process audio plugins"
 
 [dependencies]
+echode-realtime = { path = "../echode-realtime" }
 libc = "=0.2.190"
 memmap2 = { workspace = true }
 

@@ -4,27 +4,12 @@
 //! the crossing from the cost of calling into the plugin.
 
 use clack_host::prelude::*;
-use echode_sandbox::{MAX_CHANNELS, MAX_FRAMES, MappedRegion, RegionError, SPIKE_SAMPLE_RATE};
+use echode_sandbox::{MAX_CHANNELS, MAX_FRAMES, RegionError, SPIKE_SAMPLE_RATE};
+use std::os::fd::FromRawFd;
 use std::path::Path;
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
-
-struct HostShared;
-
-impl SharedHandler<'_> for HostShared {
-    fn request_restart(&self) {}
-    fn request_process(&self) {}
-    fn request_callback(&self) {}
-}
-
-struct EchodeHost;
-
-impl HostHandlers for EchodeHost {
-    type Shared<'a> = HostShared;
-    type MainThread<'a> = ();
-    type AudioProcessor<'a> = ();
-}
 
 #[derive(Debug)]
 pub enum HostError {
@@ -60,130 +45,20 @@ pub fn serve(
     plugin: Option<&Path>,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
-    // Join before serving so the thread that processes blocks is in the workgroup.
-    let _membership = match workgroup {
-        Some((name, ticks)) => {
-            Some(echode_sandbox::join_passed_workgroup(name, ticks).map_err(HostError::Plugin)?)
-        }
-        None => None,
-    };
-    let region = MappedRegion::open(shm)?;
-    match plugin {
-        None => {
-            region.serve(copy_block)?;
-            Ok(())
-        }
-        Some(path) => serve_clap(&region, path),
-    }
+    threads::serve(shm, plugin, workgroup)
 }
 
-fn copy_block(region: &MappedRegion, frames: usize, channels: usize) -> Result<(), RegionError> {
-    for channel in 0..channels {
-        // SAFETY: `serve` has already rejected shapes outside the mapping, and
-        // this process is the only writer of the output planes during the call.
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                region.input_ptr(channel),
-                region.output_ptr(channel),
-                frames,
-            );
-        }
-    }
-    Ok(())
-}
-
-fn serve_clap(region: &MappedRegion, path: &Path) -> Result<(), HostError> {
-    let entry = load_entry(path)?;
-    let factory = entry
-        .get_plugin_factory()
-        .ok_or_else(|| HostError::Plugin(format!("{} has no plugin factory", path.display())))?;
-    let descriptor = factory.plugin_descriptors().next().ok_or_else(|| {
-        HostError::Plugin(format!("{} does not contain a plugin", path.display()))
-    })?;
-    let plugin_id = descriptor
-        .id()
-        .ok_or_else(|| HostError::Plugin("plugin descriptor has no id".to_string()))?;
-    let host_info = HostInfo::new("Echode", "Echode", "https://echode.invalid", "0.0.0")
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
-    let mut instance =
-        PluginInstance::<EchodeHost>::new(|_| HostShared, |_| (), &entry, plugin_id, &host_info)
-            .map_err(|error| HostError::Plugin(error.to_string()))?;
-
-    let configuration = PluginAudioConfiguration {
-        sample_rate: SPIKE_SAMPLE_RATE,
-        min_frames_count: 1,
-        max_frames_count: MAX_FRAMES as u32,
-    };
-    let stopped = instance
-        .activate(|_, _| (), configuration)
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
-    let mut started = stopped
-        .start_processing()
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
-
-    let mut input_ports = AudioPorts::with_capacity(MAX_CHANNELS, 1);
-    let mut output_ports = AudioPorts::with_capacity(MAX_CHANNELS, 1);
-    let mut input = [[0.0f32; MAX_FRAMES]; MAX_CHANNELS];
-    let mut output = [[0.0f32; MAX_FRAMES]; MAX_CHANNELS];
-    let mut steady = 0u64;
-
-    let served = region.serve(|region, frames, channels| {
-        if channels != MAX_CHANNELS {
-            return Err(RegionError::BadShape { frames, channels });
-        }
-        for (channel, plane) in input.iter_mut().enumerate() {
-            // SAFETY: the parent published `frames` samples before the request
-            // sequence we just observed.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    region.input_ptr(channel),
-                    plane.as_mut_ptr(),
-                    frames,
-                );
-            }
-        }
-
-        let input_audio = input_ports.with_input_buffers([AudioPortBuffer {
-            latency: 0,
-            channels: AudioPortBufferType::f32_input_only(
-                input
-                    .iter_mut()
-                    .map(|channel| InputChannel::variable(&mut channel[..frames])),
-            ),
-        }]);
-        let mut output_audio = output_ports.with_output_buffers([AudioPortBuffer {
-            latency: 0,
-            channels: AudioPortBufferType::f32_output_only(
-                output.iter_mut().map(|channel| &mut channel[..frames]),
-            ),
-        }]);
-        let input_events = InputEvents::empty();
-        let mut output_events = OutputEvents::void();
-        started
-            .process(
-                &input_audio,
-                &mut output_audio,
-                &input_events,
-                &mut output_events,
-                Some(steady),
-                None,
-            )
-            .map_err(|error| RegionError::ProcessFailed(error.to_string()))?;
-        steady += frames as u64;
-
-        for (channel, plane) in output.iter().enumerate() {
-            // SAFETY: `process` has returned, so the plugin finished writing `output`.
-            unsafe {
-                std::ptr::copy_nonoverlapping(plane.as_ptr(), region.output_ptr(channel), frames);
-            }
-        }
-        Ok(())
-    });
-
-    let stopped = started.stop_processing();
-    instance.deactivate(stopped);
-    served?;
-    Ok(())
+pub fn serve_fds(
+    shm_fd: i32,
+    control_fd: i32,
+    plugin: Option<&Path>,
+    workgroup: Option<(&str, u32)>,
+) -> Result<(), HostError> {
+    // SAFETY: the parent placed the shared mapping on `shm_fd` and the control
+    // socket on `control_fd` before exec. This process owns both.
+    let shm = unsafe { std::os::fd::OwnedFd::from_raw_fd(shm_fd) };
+    let control = unsafe { std::os::fd::OwnedFd::from_raw_fd(control_fd) };
+    threads::serve_fds(shm, control, plugin, workgroup)
 }
 
 /// In-process CLAP calls, for comparing against the cross-process round trip.
@@ -210,9 +85,14 @@ pub fn measure_in_process(
         .ok_or_else(|| HostError::Plugin("plugin descriptor has no id".to_string()))?;
     let host_info = HostInfo::new("Echode", "Echode", "https://echode.invalid", "0.0.0")
         .map_err(|error| HostError::Plugin(error.to_string()))?;
-    let mut instance =
-        PluginInstance::<EchodeHost>::new(|_| HostShared, |_| (), &entry, plugin_id, &host_info)
-            .map_err(|error| HostError::Plugin(error.to_string()))?;
+    let mut instance = PluginInstance::<threads::EchodeHost>::new(
+        |_| threads::HostShared::inert(),
+        |_| (),
+        &entry,
+        plugin_id,
+        &host_info,
+    )
+    .map_err(|error| HostError::Plugin(error.to_string()))?;
     let stopped = instance
         .activate(
             |_, _| (),
@@ -271,6 +151,7 @@ pub fn measure_in_process(
 mod catalog;
 mod events;
 mod scan;
+mod threads;
 mod watch;
 
 pub use catalog::{

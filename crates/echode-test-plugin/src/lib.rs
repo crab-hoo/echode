@@ -8,9 +8,9 @@ use clack_plugin::prelude::*;
 pub struct TestGain;
 
 impl Plugin for TestGain {
-    type AudioProcessor<'a> = TestGainProcessor;
+    type AudioProcessor<'a> = TestGainProcessor<'a>;
     type Shared<'a> = ();
-    type MainThread<'a> = ();
+    type MainThread<'a> = TestMain;
 }
 
 impl DefaultPluginFactory for TestGain {
@@ -26,7 +26,18 @@ impl DefaultPluginFactory for TestGain {
         _host: HostMainThreadHandle<'a>,
         _shared: &'a Self::Shared<'a>,
     ) -> Result<Self::MainThread<'a>, PluginError> {
-        Ok(())
+        Ok(TestMain)
+    }
+}
+
+pub struct TestMain;
+
+impl PluginMainThread<'_, ()> for TestMain {
+    fn on_main_thread(&self) {
+        let mut stderr = std::io::stderr().lock();
+        use std::io::Write;
+        let _ = writeln!(stderr, "on-main-thread");
+        let _ = stderr.flush();
     }
 }
 
@@ -34,25 +45,33 @@ enum Fault {
     None,
     Crash,
     Hang,
+    Callback,
+    Restart,
 }
 
-pub struct TestGainProcessor {
+pub struct TestGainProcessor<'a> {
     fault: Fault,
+    host: HostSharedHandle<'a>,
 }
 
-impl<'a> PluginAudioProcessor<'a, (), ()> for TestGainProcessor {
+impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
     fn activate(
         _host: HostAudioProcessorHandle<'a>,
-        _main_thread: &(),
+        _main_thread: &TestMain,
         _shared: &'a (),
         _audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
         let fault = match std::env::var("ECHODE_TEST_FAULT").as_deref() {
             Ok("crash") => Fault::Crash,
             Ok("hang") => Fault::Hang,
+            Ok("callback") => Fault::Callback,
+            Ok("restart") => Fault::Restart,
             _ => Fault::None,
         };
-        Ok(Self { fault })
+        Ok(Self {
+            fault,
+            host: _host.shared(),
+        })
     }
 
     fn process(
@@ -66,6 +85,8 @@ impl<'a> PluginAudioProcessor<'a, (), ()> for TestGainProcessor {
             Fault::Hang => loop {
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             },
+            Fault::Callback => self.host.request_callback(),
+            Fault::Restart => self.host.request_restart(),
             Fault::None => {}
         }
 

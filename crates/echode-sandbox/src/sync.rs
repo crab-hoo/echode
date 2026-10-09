@@ -120,6 +120,29 @@ pub fn wait_until_ne(addr: &AtomicU64, seen: u64, flags: SyncFlags) -> Result<u6
     }
 }
 
+/// Block until `addr` is no longer `seen`, or `timeout` elapses.
+pub fn wait_until_ne_timeout(
+    addr: &AtomicU64,
+    seen: u64,
+    timeout: Duration,
+    flags: SyncFlags,
+) -> Result<u64, WaitError> {
+    let deadline = Instant::now() + timeout;
+    let mut expected = seen;
+    loop {
+        let current = addr.load(Ordering::Acquire);
+        if current != seen {
+            return Ok(current);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(WaitError::Timeout);
+        }
+        wait_while_eq(addr, expected, flags, Some(remaining))?;
+        expected = addr.load(Ordering::Acquire);
+    }
+}
+
 /// Block until `addr` equals `target`, or `timeout` elapses.
 pub fn wait_until_eq(
     addr: &AtomicU64,

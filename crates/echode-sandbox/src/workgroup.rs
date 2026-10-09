@@ -184,10 +184,12 @@ pub struct SpawnedHelper {
 }
 
 /// Spawn `bin` with stdin and stdout on `/dev/null` and stderr on a pipe.
+/// The child receives only those and the `inherit` pairs; every other descriptor is closed.
 pub fn spawn_helper(
     bin: &Path,
     args: &[OsString],
     extra_env: &[(&str, &str)],
+    inherit: &[(i32, i32)],
 ) -> Result<SpawnedHelper, String> {
     let path = CString::new(bin.as_os_str().as_bytes()).map_err(|_| "host path contains a nul")?;
     let mut argv_owned = Vec::with_capacity(args.len() + 1);
@@ -229,7 +231,7 @@ pub fn spawn_helper(
 
     let mut read_fd = -1;
     let mut write_fd = -1;
-    let spawned = unsafe { spawn_posix(&path, &argv, &envp, &mut read_fd, &mut write_fd) };
+    let spawned = unsafe { spawn_posix(&path, &argv, &envp, inherit, &mut read_fd, &mut write_fd) };
     if write_fd >= 0 {
         unsafe { libc::close(write_fd) };
     }
@@ -257,6 +259,7 @@ unsafe fn spawn_posix(
     path: &CString,
     argv: &[*mut std::ffi::c_char],
     envp: &[*mut std::ffi::c_char],
+    inherit: &[(i32, i32)],
     read_fd: &mut i32,
     write_fd: &mut i32,
 ) -> Result<i32, String> {
@@ -264,8 +267,8 @@ unsafe fn spawn_posix(
     if unsafe { libc::pipe(pipes.as_mut_ptr()) } != 0 {
         return Err(format!("pipe: {}", std::io::Error::last_os_error()));
     }
-    let read = unsafe { libc::fcntl(pipes[0], libc::F_DUPFD, 3) };
-    let write = unsafe { libc::fcntl(pipes[1], libc::F_DUPFD, 3) };
+    let read = unsafe { libc::fcntl(pipes[0], libc::F_DUPFD_CLOEXEC, 3) };
+    let write = unsafe { libc::fcntl(pipes[1], libc::F_DUPFD_CLOEXEC, 3) };
     unsafe {
         libc::close(pipes[0]);
         libc::close(pipes[1]);
@@ -295,7 +298,8 @@ unsafe fn spawn_posix(
         return Err(format!("posix_spawnattr_init: {init_attr}"));
     }
 
-    let result = unsafe { configure_and_spawn(path, argv, envp, pipes, &mut actions, &mut attr) };
+    let result =
+        unsafe { configure_and_spawn(path, argv, envp, pipes, inherit, &mut actions, &mut attr) };
     unsafe {
         libc::posix_spawnattr_destroy(&mut attr);
         libc::posix_spawn_file_actions_destroy(&mut actions);
@@ -308,9 +312,16 @@ unsafe fn configure_and_spawn(
     argv: &[*mut std::ffi::c_char],
     envp: &[*mut std::ffi::c_char],
     pipes: [i32; 2],
+    inherit: &[(i32, i32)],
     actions: &mut libc::posix_spawn_file_actions_t,
     attr: &mut libc::posix_spawnattr_t,
 ) -> Result<i32, String> {
+    let flags = unsafe {
+        libc::posix_spawnattr_setflags(attr, libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short)
+    };
+    if flags != 0 {
+        return Err(format!("close other descriptors: {flags}"));
+    }
     let null = c"/dev/null".as_ptr();
     let open_in =
         unsafe { libc::posix_spawn_file_actions_addopen(actions, 0, null, libc::O_RDONLY, 0) };
@@ -334,6 +345,18 @@ unsafe fn configure_and_spawn(
         let close_write = unsafe { libc::posix_spawn_file_actions_addclose(actions, pipes[1]) };
         if close_write != 0 {
             return Err(format!("close stderr write end: {close_write}"));
+        }
+    }
+    for (src, dst) in inherit {
+        let dup = unsafe { libc::posix_spawn_file_actions_adddup2(actions, *src, *dst) };
+        if dup != 0 {
+            return Err(format!("inherit fd {src} -> {dst}: {dup}"));
+        }
+        if src != dst {
+            let close = unsafe { libc::posix_spawn_file_actions_addclose(actions, *src) };
+            if close != 0 {
+                return Err(format!("close inherited fd {src}: {close}"));
+            }
         }
     }
     let mut pid = 0i32;
