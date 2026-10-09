@@ -5,7 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Spike scene and visibility for the arrange-view renderer"
+description = "Arrange-view visibility for the spike scene and the product snapshot"
+
+[dependencies]
+echode-model = { path = "../echode-model" }
 
 [lib]
 crate-type = ["rlib", "staticlib"]

@@ -1,10 +1,14 @@
-//! Visibility for the arrange-view drawing spike.
+//! Arrange-view visibility.
 //!
-//! The scene is a fixed benchmark (1,000 tracks, 100,000 notes), not a limit
-//! of the DAW. Callers provide the output buffer, so filling a frame does not
-//! allocate.
+//! [`Scene`] is the S1 benchmark (1,000 tracks, 100,000 notes), not a limit of
+//! the DAW. [`ArrangeIndex`] is the product query: identity, role, and a pixel
+//! rect from a project snapshot. Callers provide the output buffer, so filling
+//! a frame does not allocate.
 
 mod ffi;
+mod query;
+
+pub use query::{ArrangeIndex, ArrangeView, Element, ElementId, Role};
 
 use std::ops::Range;
 
