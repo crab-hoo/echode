@@ -27,7 +27,6 @@ fn eighth(index: i64) -> NoteDraft {
 }
 
 #[test]
-#[ignore = "HIS-2: a damaged journal makes recover fail even with a good commit"]
 fn audit_his2_a_torn_journal_falls_back_to_the_last_commit() {
     let directory = scratch();
     let (project, track) = Project::new().add_track("piano");

@@ -232,14 +232,8 @@ impl FanIn {
         Ok(fan)
     }
 
-    pub fn duplicate_fd(&self) -> io::Result<OwnedFd> {
-        let fd = unsafe { libc::fcntl(self.file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
-        if fd < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            // SAFETY: `fcntl` returned a new descriptor owned by this process.
-            Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-        }
+    pub(crate) fn raw_fd(&self) -> i32 {
+        self.file.as_raw_fd()
     }
 
     pub fn load(&self) -> u64 {

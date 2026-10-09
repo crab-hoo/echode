@@ -106,7 +106,13 @@ pub enum SessionError {
     Io(std::io::Error),
     Timeout,
     Missed,
-    HostExited { status: ExitStatus, stderr: String },
+    HostExited {
+        status: ExitStatus,
+        stderr: String,
+    },
+    /// The helper has exited. The audio thread reports this without waiting
+    /// for the process or reading its stderr.
+    HelperDown,
     Workgroup(String),
     Protocol(String),
 }
@@ -127,6 +133,7 @@ impl std::fmt::Display for SessionError {
                 }
                 Ok(())
             }
+            Self::HelperDown => f.write_str("plugin process has exited"),
         }
     }
 }
@@ -251,7 +258,7 @@ impl PluginHost {
     ) -> Result<u64, SessionError> {
         self.region
             .submit_block(frames, input, events)
-            .map_err(|error| self.fail(error))
+            .map_err(|error| self.report_inline(error))
     }
 
     /// Read a submitted generation if it has finished. Does not wait.
@@ -265,7 +272,7 @@ impl PluginHost {
             Ok(Collected::Pending) => Ok(BlockProgress::Pending),
             Ok(Collected::Abandoned) => Ok(BlockProgress::Abandoned),
             Ok(Collected::Ready { events }) => Ok(BlockProgress::Ready { events }),
-            Err(error) => Err(self.fail(error)),
+            Err(error) => Err(self.report_inline(error)),
         }
     }
 
@@ -493,6 +500,16 @@ impl PluginHost {
         ) {
             Ok(count) => Ok(count),
             Err(error) => Err(self.fail(error)),
+        }
+    }
+
+    /// Dead, busy, and timeout, without `waitpid` or the stderr lock.
+    fn report_inline(&self, error: RegionError) -> SessionError {
+        match error {
+            RegionError::Wait(crate::sync::WaitError::Timeout) => SessionError::Timeout,
+            RegionError::Dead => SessionError::HelperDown,
+            RegionError::Busy => SessionError::Missed,
+            other => other.into(),
         }
     }
 
@@ -754,7 +771,7 @@ fn launch_with(
     };
     let shm_dup = inheritable(shm)?;
     let control_dup = inheritable(child_socket.as_raw_fd())?;
-    let fan_dup = fan.map(FanIn::duplicate_fd).transpose()?;
+    let fan_dup = fan.map(|fan| inheritable(fan.raw_fd())).transpose()?;
     let mut inherit = vec![(shm_dup.as_raw_fd(), 3), (control_dup.as_raw_fd(), 4)];
     if let Some(fan_dup) = fan_dup.as_ref() {
         inherit.push((fan_dup.as_raw_fd(), 5));
@@ -780,11 +797,12 @@ fn launch_with(
     })
 }
 
-/// A copy above the target numbers 3 and 4, so `dup2` in the spawn never lands
-/// on a source it still needs. `dup2` clears CLOEXEC on the target in the child;
-/// the copy keeps it here, so a spawn on another thread does not inherit it.
+/// A copy above fds 3, 4, and 5. Those are the child's shared memory, control
+/// socket, and fan-in word. A source in that range is replaced by an earlier
+/// `dup2`, and the following `close` then drops the descriptor the child needs.
+/// `dup2` clears CLOEXEC on the target in the child; the copy keeps it here.
 fn inheritable(fd: i32) -> std::io::Result<OwnedFd> {
-    let dup = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 5) };
+    let dup = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 6) };
     if dup < 0 {
         Err(std::io::Error::last_os_error())
     } else {
@@ -888,7 +906,15 @@ fn watch_exit(pid: i32, slots: Arc<Mutex<WatchSlots>>, stop: Arc<AtomicBool>) {
 
 #[cfg(test)]
 mod tests {
-    use super::push_stderr;
+    use super::{FanIn, inheritable, push_stderr};
+    use std::os::fd::AsRawFd;
+
+    #[test]
+    fn spawn_sources_stay_above_the_child_fds() {
+        let fan = FanIn::create().unwrap();
+        let dup = inheritable(fan.raw_fd()).unwrap();
+        assert!(dup.as_raw_fd() >= 6);
+    }
 
     #[test]
     fn stderr_keeps_the_tail() {
