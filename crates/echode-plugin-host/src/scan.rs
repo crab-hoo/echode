@@ -5,9 +5,11 @@
 
 use std::ffi::CStr;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +41,13 @@ pub struct ScanCacheEntry {
     pub plugins: Vec<ScannedPlugin>,
 }
 
+/// How long one helper scan may run. This is a deadline for a hung bundle, not
+/// a limit on how many plugins can be installed.
+pub const SCAN_BUDGET: Duration = Duration::from_secs(5);
+
 /// Loads the factory and copies the descriptor fields. The plugin is not instantiated.
+///
+/// The DAW process must not call this. [`scan_out_of_process`] runs it in the helper.
 pub fn scan_descriptors(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
     let entry = crate::load_entry(path)?;
     let factory = entry
@@ -138,6 +146,187 @@ pub fn load_scan_cache(path: &Path) -> std::io::Result<Vec<ScanCacheEntry>> {
         entries.push(entry);
     }
     Ok(entries)
+}
+
+/// Resolves a bundle to its binary, then reads descriptors in this process.
+pub fn scan_path(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
+    let binary = crate::bundle_binary(path)
+        .ok_or_else(|| HostError::Plugin(format!("{} has no plugin binary", path.display())))?;
+    scan_descriptors(&binary)
+}
+
+/// Runs `host_bin --scan` so the caller does not load the bundle.
+pub fn scan_out_of_process(host_bin: &Path, bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
+    let mut child = Command::new(host_bin)
+        .arg("--scan")
+        .arg(bundle)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not start plugin host: {error}"))?;
+    let started = Instant::now();
+    let status = loop {
+        match child
+            .try_wait()
+            .map_err(|error| format!("plugin host wait failed: {error}"))?
+        {
+            Some(status) => break status,
+            None if started.elapsed() >= SCAN_BUDGET => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("plugin scan timed out ({})", bundle.display()));
+            }
+            None => thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    let mut stdout = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        pipe.read_to_string(&mut stdout)
+            .map_err(|error| format!("plugin scan output: {error}"))?;
+    }
+    if !status.success() {
+        let mut stderr = String::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            let _ = pipe.read_to_string(&mut stderr);
+        }
+        let detail = stderr.trim();
+        return Err(if detail.is_empty() {
+            format!("plugin scan failed ({})", bundle.display())
+        } else {
+            format!("plugin scan failed ({}): {detail}", bundle.display())
+        });
+    }
+    let mut plugins = Vec::new();
+    for line in stdout.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        plugins.push(
+            serde_json::from_str(line).map_err(|error| format!("plugin scan output: {error}"))?,
+        );
+    }
+    if plugins.is_empty() {
+        return Err(format!("{} does not contain a plugin", bundle.display()));
+    }
+    Ok(plugins)
+}
+
+/// Reads the cache, scans bundles the cache does not already know, and returns
+/// every plugin. A failed bundle is remembered for that revision so the next
+/// refresh does not load it again.
+pub fn refresh_catalog(
+    host_bin: &Path,
+    cache_path: &Path,
+    bundles: &[crate::BundleFound],
+) -> Result<Vec<ScannedPlugin>, String> {
+    if !host_bin.is_file() {
+        return Err(format!("plugin host is missing ({})", host_bin.display()));
+    }
+    let cached = load_scan_cache(cache_path).unwrap_or_default();
+    let mut listed = Vec::new();
+    let mut next = Vec::with_capacity(bundles.len());
+    for bundle in bundles {
+        let plugins = if let Some(plugins) = cached_plugins(&cached, &bundle.path, &bundle.revision)
+        {
+            plugins.to_vec()
+        } else {
+            scan_out_of_process(host_bin, &bundle.path).unwrap_or_default()
+        };
+        listed.extend(plugins.iter().cloned());
+        next.push(entry_from_revision(&bundle.path, &bundle.revision, plugins));
+    }
+    if let Some(parent) = cache_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    store_scan_cache(cache_path, &next).map_err(|error| error.to_string())?;
+    listed.sort_by(|left, right| left.id.cmp(&right.id).then(left.name.cmp(&right.name)));
+    listed.dedup_by(|left, right| left.id == right.id);
+    Ok(listed)
+}
+
+/// CLAP bundles under the usual macOS folders and `CLAP_PATH`.
+/// The helper binary beside this process, or `ECHODE_PLUGIN_HOST` when that file exists.
+pub fn host_binary() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("ECHODE_PLUGIN_HOST") {
+        let path = PathBuf::from(path);
+        return path.is_file().then_some(path);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let sibling = exe.parent()?.join("echode-plugin-host");
+    sibling.is_file().then_some(sibling)
+}
+
+/// Cache shared by the app and playback. Scanning writes it; playback only reads it.
+pub fn shared_cache_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("ECHODE_PLUGIN_CACHE") {
+        return PathBuf::from(path);
+    }
+    let mut path = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    path.push("Library");
+    path.push("Caches");
+    path.push("Echode");
+    path.push("clap-scan.jsonl");
+    path
+}
+
+/// A CLAP id located in the scan cache.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedPlugin {
+    pub clap_id: String,
+    pub path: PathBuf,
+    pub instrument: bool,
+}
+
+/// Looks up `ids` in the shared cache. Missing ids are omitted. This does not scan.
+pub fn resolve_installed(ids: &[impl AsRef<str>]) -> Vec<ResolvedPlugin> {
+    let Ok(entries) = load_scan_cache(&shared_cache_path()) else {
+        return Vec::new();
+    };
+    let mut resolved = Vec::new();
+    for id in ids {
+        let id = id.as_ref();
+        if resolved
+            .iter()
+            .any(|plugin: &ResolvedPlugin| plugin.clap_id == id)
+        {
+            continue;
+        }
+        for entry in &entries {
+            let Some(plugin) = entry.plugins.iter().find(|plugin| plugin.id == id) else {
+                continue;
+            };
+            resolved.push(ResolvedPlugin {
+                clap_id: id.to_string(),
+                path: PathBuf::from(&entry.path),
+                instrument: plugin
+                    .features
+                    .iter()
+                    .any(|feature| feature == "instrument"),
+            });
+            break;
+        }
+    }
+    resolved
+}
+
+pub fn installed_clap_bundles(clap_path: Option<&str>) -> Vec<crate::BundleFound> {
+    let mut roots = vec![PathBuf::from("/Library/Audio/Plug-Ins/CLAP")];
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Audio/Plug-Ins/CLAP"));
+    }
+    crate::list_bundles_including_clap_path(&roots, clap_path)
+        .into_iter()
+        .filter(|bundle| {
+            bundle
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("clap"))
+        })
+        .collect()
 }
 
 pub fn store_scan_cache(path: &Path, entries: &[ScanCacheEntry]) -> std::io::Result<()> {

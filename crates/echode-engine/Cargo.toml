@@ -12,6 +12,7 @@ dasp_interpolate = { version = "=0.11.0", features = ["floor", "linear", "sinc"]
 dasp_ring_buffer = "=0.11.0"
 echode-model = { path = "../echode-model" }
 echode-realtime = { path = "../echode-realtime" }
+echode-sandbox = { path = "../echode-sandbox" }
 libc = "=0.2.190"
 libm = "=0.2.16"
 rtrb = "=0.4.0"

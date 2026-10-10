@@ -435,7 +435,7 @@ fn the_package_repo_ignores_the_object_store() {
 fn a_bad_schema_is_rejected() {
     let directory = scratch();
     write_package(&directory, &with_note("piano")).unwrap();
-    std::fs::write(directory.join("project.json"), "{\"schema\": 2}\n").unwrap();
+    std::fs::write(directory.join("project.json"), "{\"schema\": 3}\n").unwrap();
     assert!(read_package(&directory).is_err());
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -605,8 +605,8 @@ fn a_schema_other_than_the_current_one_is_rejected() {
             _ => unreachable!(),
         };
         let original = std::fs::read_to_string(&path).unwrap();
-        for schema in ["2", "0", "1.0"] {
-            let text = original.replacen("\"schema\":1", &format!("\"schema\":{schema}"), 1);
+        for schema in ["3", "0", "2.0"] {
+            let text = original.replacen("\"schema\":2", &format!("\"schema\":{schema}"), 1);
             std::fs::write(&path, &text).unwrap();
             let error = read_package(&directory).unwrap_err().to_string();
             assert!(
@@ -614,7 +614,7 @@ fn a_schema_other_than_the_current_one_is_rejected() {
                 "{kind} {schema}: {error}"
             );
         }
-        let missing = original.replacen("\"schema\":1,", "", 1);
+        let missing = original.replacen("\"schema\":2,", "", 1);
         std::fs::write(&path, missing).unwrap();
         let error = read_package(&directory).unwrap_err().to_string();
         assert!(

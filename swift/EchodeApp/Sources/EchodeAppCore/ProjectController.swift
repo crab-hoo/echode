@@ -60,6 +60,15 @@ public final class ProjectController {
         if let last = tracks.last { selection = last.id }
     }
 
+    public func insertPlugin(_ plugin: String) async {
+        guard let selection, !plugin.isEmpty else { return }
+        await edit(["type": "device.add", "track": selection.uuidString, "plugin": plugin])
+    }
+
+    public func removeDevice(_ id: UUID) async {
+        await edit(["type": "device.remove", "device": id.uuidString])
+    }
+
     public func insertNote(pitch: Int, beat: Double, length: Double) async {
         guard let selection, pitch >= 0, pitch <= 127,
               beat.isFinite, length.isFinite, beat >= 0, length > 0,

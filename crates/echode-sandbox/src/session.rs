@@ -38,6 +38,10 @@ pub struct SpawnOptions<'a> {
     /// Shared with every helper submitted in the same block. `None` keeps the
     /// single-helper wait on that helper's own notice.
     pub fan_in: Option<Arc<FanIn>>,
+    /// Device rate the helper activates at. Zero keeps the helper's 48 kHz default.
+    pub sample_rate: u32,
+    /// CLAP id inside the bundle. `None` loads the first descriptor.
+    pub plugin_id: Option<&'a str>,
 }
 
 /// A send right from `os_workgroup_copy_port` and the device period, in mach ticks.
@@ -86,6 +90,8 @@ pub struct PluginHost {
     last_state: Vec<u8>,
     host_bin: PathBuf,
     plugin: Option<PathBuf>,
+    plugin_id: Option<String>,
+    sample_rate: u32,
     watch: Option<JoinHandle<()>>,
     watch_slots: Arc<Mutex<WatchSlots>>,
     watch_stop: Arc<AtomicBool>,
@@ -163,6 +169,8 @@ impl PluginHost {
         let launched = launch(
             options.host_bin,
             options.plugin,
+            options.plugin_id,
+            options.sample_rate,
             shm,
             options.workgroup.take(),
             options.fault,
@@ -186,6 +194,8 @@ impl PluginHost {
             last_state: Vec::new(),
             host_bin: options.host_bin.to_path_buf(),
             plugin: options.plugin.map(Path::to_path_buf),
+            plugin_id: options.plugin_id.map(str::to_string),
+            sample_rate: options.sample_rate,
             watch: None,
             watch_slots,
             watch_stop,
@@ -216,6 +226,8 @@ impl PluginHost {
         let launched = launch(
             &self.host_bin,
             self.plugin.as_deref(),
+            self.plugin_id.as_deref(),
+            self.sample_rate,
             self.region.as_raw_fd(),
             None,
             None,
@@ -708,15 +720,27 @@ impl HelperProcess {
 }
 
 /// Consumes the workgroup send right whether or not the launch succeeds.
+#[allow(clippy::too_many_arguments)]
 fn launch(
     host_bin: &Path,
     plugin: Option<&Path>,
+    plugin_id: Option<&str>,
+    sample_rate: u32,
     shm: i32,
     workgroup: Option<WorkgroupHandoff>,
     fault: Option<&str>,
     fan: Option<&FanIn>,
 ) -> Result<Launched, SessionError> {
-    let launched = launch_with(host_bin, plugin, shm, workgroup.as_ref(), fault, fan);
+    let launched = launch_with(
+        host_bin,
+        plugin,
+        plugin_id,
+        sample_rate,
+        shm,
+        workgroup.as_ref(),
+        fault,
+        fan,
+    );
     if let Some(handoff) = workgroup {
         crate::workgroup::deallocate_port(handoff.port);
     }
@@ -726,9 +750,12 @@ fn launch(
 /// The parent is multithreaded, so the helper is started with `posix_spawn`
 /// and never `fork`. A forked child runs libSystem's atfork handlers, and one
 /// that finds an initializer another thread was inside dies with SIGKILL.
+#[allow(clippy::too_many_arguments)]
 fn launch_with(
     host_bin: &Path,
     plugin: Option<&Path>,
+    plugin_id: Option<&str>,
+    sample_rate: u32,
     shm: i32,
     workgroup: Option<&WorkgroupHandoff>,
     fault: Option<&str>,
@@ -761,6 +788,14 @@ fn launch_with(
     if let Some(plugin) = plugin {
         args.push(OsString::from("--plugin"));
         args.push(plugin.as_os_str().to_os_string());
+    }
+    if let Some(plugin_id) = plugin_id {
+        args.push(OsString::from("--plugin-id"));
+        args.push(OsString::from(plugin_id));
+    }
+    if sample_rate > 0 {
+        args.push(OsString::from("--sample-rate"));
+        args.push(OsString::from(sample_rate.to_string()));
     }
     let fault_env;
     let extra: &[(&str, &str)] = if let Some(fault) = fault {

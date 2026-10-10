@@ -60,6 +60,36 @@ public final class Snapshot: @unchecked Sendable {
         }
     }
 
+    public func deviceCount(onTrack index: Int) -> Int {
+        guard index >= 0 else { return 0 }
+        return echode_snapshot_device_count(handle, index)
+    }
+
+    public func deviceID(onTrack track: Int, at device: Int) -> UUID? {
+        guard track >= 0, device >= 0 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 16)
+        let code = bytes.withUnsafeMutableBufferPointer { buffer in
+            echode_snapshot_device_id(handle, track, device, buffer.baseAddress)
+        }
+        guard code == 0 else { return nil }
+        return bytes.withUnsafeBytes { raw in
+            UUID(uuid: (
+                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]
+            ))
+        }
+    }
+
+    /// CLAP id of an inserted device. The mixer returns nil.
+    public func devicePlugin(onTrack track: Int, at device: Int) -> String? {
+        guard track >= 0, device >= 0 else { return nil }
+        return withExtendedLifetime(self) {
+            var count = 0
+            guard let bytes = echode_snapshot_device_plugin(handle, track, device, &count) else { return nil }
+            return String(decoding: UnsafeBufferPointer(start: bytes, count: count), as: UTF8.self)
+        }
+    }
+
     /// Copies the visible arrange elements. The borrowed C buffer does not escape.
     public func visibleElements(
         originTick: Int64,

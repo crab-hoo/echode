@@ -18,6 +18,7 @@ use echode_model::Project;
 use echode_realtime::{Cursor, Event, Plan, Span, TempoIndex, sort_events};
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::plugins::{HostGraph, PluginRoute, TrackChain};
 use crate::realtime::ForbidAlloc;
 use crate::{Device, PlaybackError, PlaybackIds, TestSynth, TrackFader};
 
@@ -194,6 +195,7 @@ impl Prepared {
         sample: i64,
         left: &mut [f32],
         right: &mut [f32],
+        hosts: &mut HostGraph,
     ) -> Result<(), PlaybackError> {
         let mut count = if self.chase {
             self.chase = false;
@@ -259,10 +261,34 @@ impl Prepared {
             track
                 .synth
                 .process(&mut [plane], filtered, self.sample_rate)?;
+            hosts.process(track.key, plane, filtered, self.sample_rate);
             crate::mix::add_prepared_mono(plane, track.fader, left, right);
         }
         Ok(())
     }
+}
+
+fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
+    prepared
+        .plan
+        .tracks
+        .iter()
+        .filter_map(|planned| {
+            let track = project
+                .tracks()
+                .iter()
+                .find(|track| track.id.raw() == planned.track)?;
+            let plugins = track
+                .devices
+                .iter()
+                .filter_map(|device| device.plugin.clone())
+                .collect();
+            Some(TrackChain {
+                key: planned.track_key,
+                plugins,
+            })
+        })
+        .collect()
 }
 
 fn play_error(error: echode_realtime::PlayError) -> PlaybackError {
@@ -277,6 +303,12 @@ pub struct PlaybackControl {
     returns: Consumer<Box<Prepared>>,
     commands: Producer<PlaybackCommand>,
     held: Option<Box<Prepared>>,
+    host_plans: Producer<Box<HostGraph>>,
+    host_returns: Consumer<Box<HostGraph>>,
+    pending_hosts: Option<Box<HostGraph>>,
+    chain: Vec<TrackChain>,
+    routes: Vec<PluginRoute>,
+    host_bin: std::path::PathBuf,
     ids: PlaybackIds,
     rate: u32,
     frames: usize,
@@ -288,6 +320,9 @@ pub struct PlaybackAudio {
     plans: Consumer<Box<Prepared>>,
     returns: Producer<Box<Prepared>>,
     commands: Consumer<PlaybackCommand>,
+    host_plans: Consumer<Box<HostGraph>>,
+    host_returns: Producer<Box<HostGraph>>,
+    hosts: HostGraph,
     current: Box<Prepared>,
     clock: Box<dyn ClockSource>,
     playing: bool,
@@ -303,6 +338,32 @@ pub fn playback_pair(
     playback_with_clock(project, rate, frames, Box::<InternalClock>::default())
 }
 
+/// Same transport as [`playback_pair`], and a helper for each resolved CLAP
+/// device. Devices whose id is not in `routes` stay on the built-in synth.
+pub fn playback_with_plugins(
+    project: &Project,
+    rate: u32,
+    frames: usize,
+    host_bin: &std::path::Path,
+    routes: &[PluginRoute],
+) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
+    let (mut control, mut audio) =
+        playback_with_clock(project, rate, frames, Box::<InternalClock>::default())?;
+    let chain = chain_of(project, &audio.current);
+    audio.hosts = HostGraph::open(
+        host_bin,
+        routes,
+        &chain,
+        frames,
+        audio.current.events.len(),
+        rate,
+    )?;
+    control.chain = chain;
+    control.routes = routes.to_vec();
+    control.host_bin = host_bin.to_path_buf();
+    Ok((control, audio))
+}
+
 pub fn playback_with_clock(
     project: &Project,
     rate: u32,
@@ -313,6 +374,8 @@ pub fn playback_with_clock(
     let (plans, incoming) = RingBuffer::new(2);
     let (returning, returns) = RingBuffer::new(2);
     let (commands, actions) = RingBuffer::new(32);
+    let (host_plans, host_incoming) = RingBuffer::new(2);
+    let (host_returning, host_returns) = RingBuffer::new(2);
     let mut ids = PlaybackIds::new();
     let mut current = Box::new(Prepared::new(project, rate, frames, &mut ids)?);
     current.place(clock.position(), false);
@@ -333,6 +396,12 @@ pub fn playback_with_clock(
         returns,
         commands,
         held: None,
+        host_plans,
+        host_returns,
+        pending_hosts: None,
+        chain: Vec::new(),
+        routes: Vec::new(),
+        host_bin: std::path::PathBuf::new(),
         ids,
         rate,
         frames,
@@ -342,6 +411,9 @@ pub fn playback_with_clock(
         plans: incoming,
         returns: returning,
         commands: actions,
+        host_plans: host_incoming,
+        host_returns: host_returning,
+        hosts: HostGraph::empty(),
         current,
         clock,
         playing: false,
@@ -352,6 +424,11 @@ pub fn playback_with_clock(
 }
 
 impl PlaybackControl {
+    pub fn set_routes(&mut self, host_bin: &std::path::Path, routes: &[PluginRoute]) {
+        self.host_bin = host_bin.to_path_buf();
+        self.routes = routes.to_vec();
+    }
+
     pub fn command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
         self.commands
             .push(command)
@@ -360,16 +437,35 @@ impl PlaybackControl {
     pub fn replace(&mut self, project: &Project) -> Result<(), PlaybackError> {
         self.service();
         let prepared = Prepared::new(project, self.rate, self.frames, &mut self.ids)?;
+        let chain = chain_of(project, &prepared);
+        if chain != self.chain && !self.host_bin.as_os_str().is_empty() {
+            let hosts = HostGraph::open(
+                &self.host_bin,
+                &self.routes,
+                &chain,
+                self.frames,
+                prepared.events.len(),
+                self.rate,
+            )?;
+            self.chain = chain;
+            self.pending_hosts = Some(Box::new(hosts));
+        }
         self.held = Some(Box::new(prepared));
         self.service();
         Ok(())
     }
     pub fn service(&mut self) {
         while self.returns.pop().is_ok() {}
+        while self.host_returns.pop().is_ok() {}
         if let Some(plan) = self.held.take()
             && let Err(rtrb::PushError::Full(plan)) = self.plans.push(plan)
         {
             self.held = Some(plan);
+        }
+        if let Some(hosts) = self.pending_hosts.take()
+            && let Err(rtrb::PushError::Full(hosts)) = self.host_plans.push(hosts)
+        {
+            self.pending_hosts = Some(hosts);
         }
     }
     pub fn status(&self) -> PlaybackStatus {
@@ -434,6 +530,14 @@ impl PlaybackAudio {
                 std::process::abort();
             }
         }
+        if self.host_returns.slots() > 0
+            && let Ok(next) = self.host_plans.pop()
+        {
+            let previous = std::mem::replace(&mut self.hosts, *next);
+            if let Err(rtrb::PushError::Full(_)) = self.host_returns.push(Box::new(previous)) {
+                std::process::abort();
+            }
+        }
         while let Ok(command) = self.commands.pop() {
             match command {
                 PlaybackCommand::Play => {
@@ -459,7 +563,8 @@ impl PlaybackAudio {
         if !self.playing {
             return Ok(());
         }
-        self.current.render(self.clock.position(), left, right)?;
+        self.current
+            .render(self.clock.position(), left, right, &mut self.hosts)?;
         self.clock
             .advance(u32::try_from(left.len()).map_err(|_| PlaybackError::Time)?)
     }

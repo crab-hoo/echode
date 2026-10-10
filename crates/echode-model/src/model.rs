@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use fractional_index::FractionalIndex;
 
-use crate::device::{Device, MixerIds, validate_mixer};
+use crate::device::{Device, DeviceKind, MixerIds, valid_plugin_id};
 
 use crate::id::Id;
 use crate::time::{Meter, Tempo, TempoMap, Tick};
@@ -38,6 +38,7 @@ pub enum ModelError {
     BadOrder,
     MissingParameter,
     InvalidParameter,
+    InvalidDevice,
     /// [`Project::check_invariants`] failed. The string is that function's sentence.
     Invariant(String),
 }
@@ -62,6 +63,7 @@ impl fmt::Display for ModelError {
             Self::BadOrder => "track order key is missing, duplicated, or out of arrange order",
             Self::MissingParameter => "parameter is not in the project",
             Self::InvalidParameter => "parameter value is outside its range",
+            Self::InvalidDevice => "plugin id is unusable or the device cannot be removed",
         };
         formatter.write_str(message)
     }
@@ -399,6 +401,54 @@ impl Project {
             contents: self.contents.clone(),
             tracks: arrange_tracks(&tracks)?,
         })
+    }
+
+    /// Inserts a CLAP device before the mixer. The id is the plugin's CLAP id,
+    /// not a file path. Two devices may name the same plugin.
+    pub fn add_clap_device(
+        &self,
+        track_id: Id,
+        device_id: Id,
+        plugin: impl Into<String>,
+    ) -> Result<Self, ModelError> {
+        let plugin = plugin.into();
+        if !valid_plugin_id(&plugin) {
+            return Err(ModelError::InvalidDevice);
+        }
+        if self.id_in_use(device_id) {
+            return Err(ModelError::DuplicateId);
+        }
+        let index = self.track_index(track_id)?;
+        let mut track = (*self.tracks[index]).clone();
+        let at = track
+            .devices
+            .len()
+            .checked_sub(1)
+            .ok_or(ModelError::InvalidDevice)?;
+        track.devices.insert(at, Device::clap(device_id, plugin));
+        Ok(self.write_track(index, track))
+    }
+
+    /// Removes a CLAP device. The mixer stays.
+    pub fn remove_device(&self, device_id: Id) -> Result<Self, ModelError> {
+        let (index, device_index) = self
+            .tracks
+            .iter()
+            .enumerate()
+            .find_map(|(index, track)| {
+                track
+                    .devices
+                    .iter()
+                    .position(|device| device.id == device_id)
+                    .map(|device_index| (index, device_index))
+            })
+            .ok_or(ModelError::InvalidDevice)?;
+        if self.tracks[index].devices[device_index].kind != DeviceKind::Clap {
+            return Err(ModelError::InvalidDevice);
+        }
+        let mut track = (*self.tracks[index]).clone();
+        track.devices.remove(device_index);
+        Ok(self.write_track(index, track))
     }
 
     pub fn insert_note(&self, track_id: Id, draft: NoteDraft) -> Result<(Self, Id), ModelError> {
@@ -868,12 +918,7 @@ impl Project {
             {
                 return Err(ModelError::Overlap);
             }
-            if track.devices.len() != 1 {
-                return Err(ModelError::InvalidParameter);
-            }
-            for device in &track.devices {
-                validate_mixer(device, &mut seen)?;
-            }
+            crate::device::validate_devices(&track.devices, &mut seen)?;
             assembled.push(Arc::new(track));
         }
         validate_forest(&assembled)?;

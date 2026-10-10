@@ -17,6 +17,7 @@ mod mix;
 mod outputs;
 mod plan;
 mod playback;
+mod plugins;
 mod realtime;
 mod render;
 mod resample;
@@ -38,8 +39,9 @@ pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
 pub use playback::{
     ClockSource, InternalClock, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
-    playback_pair, playback_with_clock,
+    playback_pair, playback_with_clock, playback_with_plugins,
 };
+pub use plugins::PluginRoute;
 pub use realtime::ForbidAlloc;
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;

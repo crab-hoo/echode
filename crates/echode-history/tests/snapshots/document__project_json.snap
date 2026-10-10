@@ -3,7 +3,7 @@ source: crates/echode-history/tests/document.rs
 expression: project_json
 ---
 {
-  "schema":1,
+  "schema":2,
   "meter":{"numerator":4,"denominator":4},
   "tempo":[
     {"at":0,"numerator":120,"denominator":1}

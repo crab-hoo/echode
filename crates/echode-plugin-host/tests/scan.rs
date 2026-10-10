@@ -109,3 +109,56 @@ fn the_scan_cache_round_trips_and_follows_the_bundle_revision() {
     assert!(cached_plugins(&loaded, &bundle, &next).is_none());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
+    let root = std::env::temp_dir().join(format!(
+        "echode-scan-proc-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let bundle = root.join("Gain.clap");
+    let macos = bundle.join("Contents/MacOS");
+    std::fs::create_dir_all(&macos).unwrap();
+    std::fs::copy(plugin_dylib(), macos.join("Plugin")).unwrap();
+    std::fs::write(
+        bundle.join("Contents/Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Plugin</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>"#,
+    )
+    .unwrap();
+    let broken = root.join("Broken.clap");
+    let broken_macos = broken.join("Contents/MacOS");
+    std::fs::create_dir_all(&broken_macos).unwrap();
+    std::fs::write(broken_macos.join("Plugin"), b"not a plugin").unwrap();
+    std::fs::write(
+        broken.join("Contents/Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Plugin</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>"#,
+    )
+    .unwrap();
+    let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"));
+    let scanned = echode_plugin_host::scan_out_of_process(&host, &bundle).unwrap();
+    assert_eq!(scanned[0].id, "dev.echode.test-gain");
+    let found = echode_plugin_host::list_bundles(&root);
+    let cache = root.join("scan.jsonl");
+    let listed = echode_plugin_host::refresh_catalog(&host, &cache, &found).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, "dev.echode.test-gain");
+    std::fs::write(macos.join("Plugin"), b"replaced after the cache").unwrap();
+    let again = echode_plugin_host::refresh_catalog(&host, &cache, &found).unwrap();
+    assert_eq!(again[0].id, "dev.echode.test-gain");
+    let _ = std::fs::remove_dir_all(&root);
+}

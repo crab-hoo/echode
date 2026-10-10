@@ -551,6 +551,53 @@ define_actions! {
                 .map_err(Into::into)
         }
     }
+    AddDevice {
+        id: "device.add",
+        name_ja: "プラグインを挿入",
+        name_en: "Insert a plugin",
+        description_ja: "CLAP の ID でデバイスをミキサーの前に置く",
+        description_en: "Insert a CLAP device, identified by its plugin id, before the mixer",
+        command {
+            track: Id,
+            plugin: String,
+        }
+        action {
+            track: Id,
+            device: Id,
+            plugin: String,
+        }
+        commit {
+            Action::AddDevice {
+                track,
+                device: Id::generate(),
+                plugin,
+            }
+        }
+        edit |project: &Project| {
+            project
+                .add_clap_device(*track, *device, plugin.clone())
+                .map_err(Into::into)
+        }
+    }
+    RemoveDevice {
+        id: "device.remove",
+        name_ja: "プラグインを外す",
+        name_en: "Remove a plugin",
+        description_ja: "挿入した CLAP デバイスを外す。ミキサーは残る",
+        description_en: "Remove an inserted CLAP device. The mixer stays",
+        command {
+            device: Id,
+        }
+        action {
+            device: Id,
+        }
+        commit {
+            Action::RemoveDevice { device }
+        }
+        edit |project: &Project| {
+            project.remove_device(*device).map_err(Into::into)
+        }
+    }
 }
 
 impl Action {

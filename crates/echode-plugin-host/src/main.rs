@@ -11,6 +11,8 @@ fn main() -> ExitCode {
     let mut scan = None;
     let mut workgroup_name = None;
     let mut workgroup_ticks = None;
+    let mut plugin_id = None;
+    let mut sample_rate = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--shm" => shm = args.next(),
@@ -18,6 +20,14 @@ fn main() -> ExitCode {
             "--control-fd" => control_fd = args.next().and_then(|text| text.parse().ok()),
             "--fan-fd" => fan_fd = args.next().and_then(|text| text.parse().ok()),
             "--plugin" => plugin = args.next(),
+            "--plugin-id" => plugin_id = args.next(),
+            "--sample-rate" => {
+                let Some(value) = args.next().and_then(|text| text.parse().ok()) else {
+                    eprintln!("--sample-rate needs a number");
+                    return ExitCode::from(2);
+                };
+                sample_rate = Some(value);
+            }
             "--scan" => scan = args.next(),
             "--workgroup-name" => workgroup_name = args.next(),
             "--workgroup-ticks" => {
@@ -40,7 +50,7 @@ fn main() -> ExitCode {
         }
     }
     if let Some(scan) = scan {
-        return match echode_plugin_host::scan_descriptors(Path::new(&scan)) {
+        return match echode_plugin_host::scan_path(Path::new(&scan)) {
             Ok(plugins) => {
                 print!("{}", echode_plugin_host::scan_report(&plugins));
                 ExitCode::SUCCESS
@@ -60,13 +70,23 @@ fn main() -> ExitCode {
         }
     };
     let plugin = plugin.as_deref().map(Path::new);
+    let plugin_id = plugin_id.as_deref();
+    let sample_rate = sample_rate.unwrap_or(48_000.0);
     let workgroup = workgroup
         .as_ref()
         .map(|(name, ticks)| (name.as_str(), *ticks));
     let served = if let (Some(shm_fd), Some(control_fd)) = (shm_fd, control_fd) {
-        echode_plugin_host::serve_fds(shm_fd, control_fd, fan_fd, plugin, workgroup)
+        echode_plugin_host::serve_fds(
+            shm_fd,
+            control_fd,
+            fan_fd,
+            plugin,
+            plugin_id,
+            sample_rate,
+            workgroup,
+        )
     } else if let Some(shm) = shm {
-        echode_plugin_host::serve(Path::new(&shm), plugin, workgroup)
+        echode_plugin_host::serve(Path::new(&shm), plugin, plugin_id, sample_rate, workgroup)
     } else {
         eprintln!(
             "usage: echode-plugin-host --shm-fd N --control-fd N [--plugin PATH]\n       echode-plugin-host --scan PATH"

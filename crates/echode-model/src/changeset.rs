@@ -97,6 +97,8 @@ pub enum Property {
     Value,
     ParamOrder,
     DeviceKind,
+    DeviceOrder,
+    Plugin,
 }
 
 /// A property value. The variant has to match the [`Property`].
@@ -483,6 +485,16 @@ fn diff_track_fields(before: &Track, after: &Track, updates: &mut Vec<Change>) {
             Value::Ids(after_clips),
         ));
     }
+    let before_devices = ids_of_devices(before);
+    let after_devices = ids_of_devices(after);
+    if before_devices != after_devices {
+        updates.push(update(
+            ObjectKey::Id(after.id),
+            Property::DeviceOrder,
+            Value::Ids(before_devices),
+            Value::Ids(after_devices),
+        ));
+    }
 }
 
 fn diff_devices(
@@ -585,7 +597,7 @@ fn diff_parameter_fields(before: &Parameter, after: &Parameter, updates: &mut Ve
 }
 
 fn device_change(create: bool, track: Id, device: &Device) -> Change {
-    let fields = vec![
+    let mut fields = vec![
         Field {
             property: Property::Owner,
             value: Value::Id(track),
@@ -594,17 +606,23 @@ fn device_change(create: bool, track: Id, device: &Device) -> Change {
             property: Property::DeviceKind,
             value: Value::Text(device.kind.as_str().to_string()),
         },
-        Field {
-            property: Property::ParamOrder,
-            value: Value::Ids(
-                device
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.id)
-                    .collect(),
-            ),
-        },
     ];
+    if let Some(plugin) = &device.plugin {
+        fields.push(Field {
+            property: Property::Plugin,
+            value: Value::Text(plugin.clone()),
+        });
+    }
+    fields.push(Field {
+        property: Property::ParamOrder,
+        value: Value::Ids(
+            device
+                .parameters
+                .iter()
+                .map(|parameter| parameter.id)
+                .collect(),
+        ),
+    });
     let id = ObjectKey::Id(device.id);
     if create {
         Change::Create {
@@ -921,6 +939,10 @@ fn ids_of_clips(track: &Track) -> Vec<Id> {
     track.clips.iter().map(|clip| clip.id).collect()
 }
 
+fn ids_of_devices(track: &Track) -> Vec<Id> {
+    track.devices.iter().map(|device| device.id).collect()
+}
+
 fn track_change(create: bool, track: &Track) -> Change {
     let fields = vec![
         Field {
@@ -938,6 +960,10 @@ fn track_change(create: bool, track: &Track) -> Change {
         Field {
             property: Property::ClipOrder,
             value: Value::Ids(ids_of_clips(track)),
+        },
+        Field {
+            property: Property::DeviceOrder,
+            value: Value::Ids(ids_of_devices(track)),
         },
     ];
     let id = ObjectKey::Id(track.id);
@@ -1067,6 +1093,7 @@ struct TrackState {
     parent: Option<Id>,
     order: String,
     clip_order: Vec<Id>,
+    device_order: Vec<Id>,
 }
 
 struct ContentState {
@@ -1100,6 +1127,7 @@ struct NoteState {
 struct DeviceState {
     track: Id,
     kind: String,
+    plugin: Option<String>,
     parameters: Vec<Id>,
 }
 
@@ -1188,6 +1216,7 @@ impl Draft {
                     parent: track.parent,
                     order: track.order.clone(),
                     clip_order,
+                    device_order: track.devices.iter().map(|device| device.id).collect(),
                 },
             );
             for device in &track.devices {
@@ -1196,6 +1225,7 @@ impl Draft {
                     DeviceState {
                         track: track.id,
                         kind: device.kind.as_str().to_string(),
+                        plugin: device.plugin.clone(),
                         parameters: device
                             .parameters
                             .iter()
@@ -1259,6 +1289,7 @@ impl Draft {
                         parent: field_parent(fields)?,
                         order: field_text(fields, Property::Order)?,
                         clip_order: field_ids(fields, Property::ClipOrder)?,
+                        device_order: field_ids(fields, Property::DeviceOrder)?,
                     },
                 );
                 Ok(())
@@ -1315,6 +1346,7 @@ impl Draft {
                     DeviceState {
                         track: field_id(fields, Property::Owner)?,
                         kind: field_text(fields, Property::DeviceKind)?,
+                        plugin: field_optional_text(fields, Property::Plugin)?,
                         parameters: field_ids(fields, Property::ParamOrder)?,
                     },
                 );
@@ -1454,6 +1486,20 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .clip_order = ids.clone();
+                Ok(())
+            }
+            (ObjectKey::Id(id), Property::DeviceOrder, Value::Ids(ids)) => {
+                self.tracks
+                    .get_mut(&id)
+                    .ok_or(ModelError::InvalidChange)?
+                    .device_order = ids.clone();
+                Ok(())
+            }
+            (ObjectKey::Id(id), Property::Plugin, Value::Text(plugin)) => {
+                self.devices
+                    .get_mut(&id)
+                    .ok_or(ModelError::InvalidChange)?
+                    .plugin = Some(plugin.clone());
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Start, Value::Tick(tick)) => {
@@ -1635,6 +1681,7 @@ impl Draft {
         }
         let mut tracks = Vec::with_capacity(self.tracks.len());
         let mut used_clips = 0;
+        let mut used_devices = 0;
         for (track_id, track) in &self.tracks {
             if seen.insert(*track_id, ()).is_some() {
                 return Err(ModelError::DuplicateId);
@@ -1664,10 +1711,13 @@ impl Draft {
                     fade_out: clip.fade_out,
                 });
             }
-            let mut devices = Vec::new();
-            for (device_id, device) in &self.devices {
+            let mut devices = Vec::with_capacity(track.device_order.len());
+            for device_id in &track.device_order {
+                let Some(device) = self.devices.get(device_id) else {
+                    return Err(ModelError::InvalidChange);
+                };
                 if device.track != *track_id {
-                    continue;
+                    return Err(ModelError::InvalidChange);
                 }
                 let kind = DeviceKind::parse(&device.kind).ok_or(ModelError::InvalidChange)?;
                 let mut parameters = Vec::with_capacity(device.parameters.len());
@@ -1691,9 +1741,19 @@ impl Draft {
                 devices.push(Device {
                     id: *device_id,
                     kind,
+                    plugin: device.plugin.clone(),
                     parameters,
                 });
             }
+            let owned = self
+                .devices
+                .values()
+                .filter(|device| device.track == *track_id)
+                .count();
+            if owned != devices.len() {
+                return Err(ModelError::InvalidChange);
+            }
+            used_devices += devices.len();
             tracks.push(Arc::new(Track {
                 id: *track_id,
                 name: track.name.clone(),
@@ -1703,7 +1763,10 @@ impl Draft {
                 devices,
             }));
         }
-        if used_clips != self.clips.len() || used_notes != self.notes.len() {
+        if used_clips != self.clips.len()
+            || used_notes != self.notes.len()
+            || used_devices != self.devices.len()
+        {
             return Err(ModelError::InvalidChange);
         }
         let tracks = crate::model::arrange_tracks(&tracks)?;
@@ -1735,6 +1798,23 @@ fn field_bits(fields: &[Field], property: Property) -> Result<u32, ModelError> {
             _ => None,
         })
         .ok_or(ModelError::InvalidChange)
+}
+
+fn field_optional_text(fields: &[Field], property: Property) -> Result<Option<String>, ModelError> {
+    let mut found = None;
+    for field in fields {
+        if field.property != property {
+            continue;
+        }
+        if found.is_some() {
+            return Err(ModelError::InvalidChange);
+        }
+        match &field.value {
+            Value::Text(text) => found = Some(text.clone()),
+            _ => return Err(ModelError::InvalidChange),
+        }
+    }
+    Ok(found)
 }
 
 fn field_text(fields: &[Field], property: Property) -> Result<String, ModelError> {

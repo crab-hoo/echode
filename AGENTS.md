@@ -16,7 +16,7 @@ Phase 0（S1 から S5）は確定済みです。今は Phase 1 のアプリの�
 - `echode-test-plugin`: クラッシュとハングを起こせるテスト用 CLAP
 - `echode-draw`: 描画検証用のシーンと可視判定。Swift 側は `spikes/draw`
 - `echode-history`: プレーンテキストのプロジェクトと gix による自動コミット。製品パッケージの保存とジャーナル復旧もここ。1,000 トラックの計測用の型は `spike`。計測は `make spike-history`
-- `echode-engine`: オーディオグラフ、再生位置、MIDI とメトロノーム、テスト用シンセ（wavesynth の Sine Pad）とサンプラー（dasp の補間）、サンプルレート変換、キャッシュへ差し替えられるトラック、ループの継ぎ目、フェーダー、出力デバイスの追従。10 分間の計測の型は `spike`。計測は `echode-engine-spike`
+- `echode-engine`: オーディオグラフ、再生位置、MIDI とメトロノーム、テスト用シンセ（wavesynth の Sine Pad）とサンプラー（dasp の補間）、サンプルレート変換、キャッシュへ差し替えられるトラック、ループの継ぎ目、フェーダー、出力デバイスの追従。挿入した CLAP はデバイスごとにヘルパーへ渡し、内蔵シンセの前で処理する。10 分間の計測の型は `spike`。計測は `echode-engine-spike`
 - `echode-audio-io`: 製品の CoreAudio 出力、機器の一覧と通知、システムの出力への追従。制御スレッドで機器を切り替え、コールバックは準備した再生計画だけを読む。無音の実機検査は `make spike-audio`（画面は開かない）
 - 入力の検証は Rust の crate ではなく `spikes/input`。`make spike-input`
 - `echode-model`: ドキュメントモデル。時間、種別のないトラック、スマートクリップ、フォルダ（親 ID。バス処理は Phase 2）
@@ -24,7 +24,7 @@ Phase 0（S1 から S5）は確定済みです。今は Phase 1 のアプリの�
 - `echode-cli`: `echode render` と `echode serve`。書き出しは float WAV、操作は JSON-RPC
 - `echode-api`: ローカルセッションの JSON-RPC。ソケットは本人だけが読み書きできる
 - `echode-ffi` と `swift/EchodeBridge`: 製品の C ABI、非同期の編集・問い合わせと不変のスナップショット
-- `swift/EchodeApp`: 3 ペインの開発用アプリ。Metal のアレンジとピアノロール（鍵盤・階名、直接編集と数値入力、画面外までのノート移動）、Undo / Redo、再生・停止・位置移動と音声出力、ファイル一覧とコマンドパレット。`make app`、実機の描画検査は `make spike-app`
+- `swift/EchodeApp`: 3 ペインの開発用アプリ。Metal のアレンジとピアノロール（鍵盤・階名、直接編集と数値入力、画面外までのノート移動）、Undo / Redo、再生・停止・位置移動と音声出力、ファイル一覧、CLAP ブラウザ、コマンドパレット。`make app`、実機の描画検査は `make spike-app`
 
 ## 守ること
 

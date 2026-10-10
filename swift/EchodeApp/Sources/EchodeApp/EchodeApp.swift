@@ -67,6 +67,7 @@ struct WorkspaceCommands: Commands {
             Button(text("Toggle Files")) { actions?.browser() }.keyboardShortcut("2", modifiers: [.command, .option])
             Button(text("Toggle Note Editor")) { actions?.editor() }.keyboardShortcut("3", modifiers: [.command, .option])
             Button(text("Command Palette")) { actions?.palette() }.keyboardShortcut("p", modifiers: [.command, .shift])
+            Button(text("Plugins")) { actions?.plugins() }.disabled(actions?.canEdit != true)
         }
     }
 }

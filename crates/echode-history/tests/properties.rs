@@ -81,6 +81,14 @@ enum Step {
         numerator: u32,
         denominator: u32,
     },
+    AddDevice {
+        track: usize,
+        plugin: u8,
+    },
+    RemoveDevice {
+        track: usize,
+        device: usize,
+    },
     Undo,
     Redo,
 }
@@ -146,6 +154,9 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (0i64..32, 40u32..=240).prop_map(|(at, bpm)| Step::SetTempo { at, bpm }),
         1 => (1u32..=7, prop_oneof![Just(2u32), Just(4), Just(8)])
             .prop_map(|(numerator, denominator)| Step::SetMeter { numerator, denominator }),
+        2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
+        1 => (any::<usize>(), any::<usize>())
+            .prop_map(|(track, device)| Step::RemoveDevice { track, device }),
         2 => Just(Step::Undo),
         1 => Just(Step::Redo),
     ]
@@ -317,6 +328,32 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
         } => Command::SetMeter {
             meter: Meter::try_new(*numerator, *denominator)?,
         },
+        Step::AddDevice {
+            track: index,
+            plugin,
+        } => {
+            let plugins = [
+                "dev.echode.test-gain",
+                "org.example.synth",
+                "org.example.synth",
+                "",
+            ];
+            Command::AddDevice {
+                track: track(*index)?,
+                plugin: plugins[usize::from(*plugin)].to_string(),
+            }
+        }
+        Step::RemoveDevice {
+            track: index,
+            device,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let devices: Vec<Id> = owner.devices.iter().map(|device| device.id).collect();
+            Command::RemoveDevice {
+                device: pick(&devices, *device)?,
+            }
+        }
         Step::Undo | Step::Redo => return None,
     })
 }

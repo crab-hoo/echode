@@ -73,6 +73,8 @@ fn spawn_with(
         workgroup,
         layout: SessionLayout::stereo(),
         fan_in: None,
+        sample_rate: 0,
+        plugin_id: None,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
 }
@@ -359,6 +361,8 @@ fn spawn_layout(layout: SessionLayout) -> PluginHost {
         workgroup: None,
         layout,
         fan_in: None,
+        sample_rate: 0,
+        plugin_id: None,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
 }
@@ -512,6 +516,8 @@ fn spawn_fan(plugin: Option<&Path>, fault: Option<&str>, fan: &Arc<FanIn>) -> Pl
         workgroup: None,
         layout: SessionLayout::stereo(),
         fan_in: Some(Arc::clone(fan)),
+        sample_rate: 0,
+        plugin_id: None,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
 }

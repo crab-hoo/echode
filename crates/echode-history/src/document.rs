@@ -603,9 +603,10 @@ fn render_track(track: &Track) -> String {
         };
         let _ = writeln!(
             out,
-            "    {{\"id\":{},\"kind\":{},\"state\":{},\"parameters\":[",
+            "    {{\"id\":{},\"kind\":{},\"plugin\":{},\"state\":{},\"parameters\":[",
             to_json(&device.id.to_string()),
             to_json(device.kind.as_str()),
+            to_json(&device.plugin),
             to_json(&None::<String>)
         );
         push_json_lines(
@@ -702,14 +703,29 @@ fn format_gain(gain: f32) -> String {
 }
 
 /// Current package schema. Older numbers are raised by [`SCHEMA_STEPS`].
-const SCHEMA: u32 = 1;
+const SCHEMA: u32 = 2;
 
 /// Raises one schema number. Index 0 raises schema 1 to schema 2.
 type SchemaStep = fn(&mut serde_json::Value) -> Result<(), String>;
 
-/// Empty while schema 1 is current. A later schema keeps the schema-1 fixture
-/// and appends one function here.
-const SCHEMA_STEPS: &[SchemaStep] = &[];
+/// Schema 1 devices have no plugin id. The mixer stays `null`.
+const SCHEMA_STEPS: &[SchemaStep] = &[add_device_plugin];
+
+fn add_device_plugin(value: &mut serde_json::Value) -> Result<(), String> {
+    let Some(devices) = value.get_mut("devices") else {
+        return Ok(());
+    };
+    let Some(devices) = devices.as_array_mut() else {
+        return Err("devices is not an array".to_string());
+    };
+    for device in devices {
+        let Some(object) = device.as_object_mut() else {
+            return Err("device is not an object".to_string());
+        };
+        object.entry("plugin").or_insert(serde_json::Value::Null);
+    }
+    Ok(())
+}
 
 fn push_field(out: &mut String, key: &str, value: &str) {
     out.push_str("  \"");
@@ -973,9 +989,24 @@ fn parse_track(json: &str, expected_id: &str) -> Result<Track, PackageError> {
                         value: parameter.value,
                     });
                 }
+                let plugin = match (kind, device.plugin) {
+                    (echode_model::DeviceKind::Mixer, None) => None,
+                    (echode_model::DeviceKind::Clap, Some(plugin))
+                        if echode_model::valid_plugin_id(&plugin) && parameters.is_empty() =>
+                    {
+                        Some(plugin)
+                    }
+                    _ => {
+                        return Err(PackageError::new(format!(
+                            "device {} does not match its plugin id",
+                            device.id
+                        )));
+                    }
+                };
                 Ok(echode_model::Device {
                     id: parse_id(&device.id)?,
                     kind,
+                    plugin,
                     parameters,
                 })
             })
@@ -1306,6 +1337,7 @@ struct TrackFile {
 struct DeviceFile {
     id: String,
     kind: String,
+    plugin: Option<String>,
     state: Option<String>,
     parameters: Vec<ParameterFile>,
 }

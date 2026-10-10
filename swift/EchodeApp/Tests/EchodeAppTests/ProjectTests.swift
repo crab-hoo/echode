@@ -26,6 +26,28 @@ struct ProjectTests {
         await controller.close()
         #expect(controller.playback == nil && !feed.position.playing)
     }
+    @Test func insertingAPluginKeepsTheMixerAndSurvivesReopen() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-plugin-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "pad")
+        await controller.insertPlugin("dev.echode.test-gain")
+        let inserted = try #require(controller.snapshot)
+        #expect(inserted.deviceCount(onTrack: 0) == 2)
+        #expect(inserted.devicePlugin(onTrack: 0, at: 0) == "dev.echode.test-gain")
+        #expect(inserted.devicePlugin(onTrack: 0, at: 1) == nil)
+        let device = try #require(inserted.deviceID(onTrack: 0, at: 0))
+        await controller.close()
+        await controller.open(url)
+        #expect(controller.snapshot?.devicePlugin(onTrack: 0, at: 0) == "dev.echode.test-gain")
+        await controller.removeDevice(device)
+        #expect(controller.snapshot?.deviceCount(onTrack: 0) == 1)
+        await controller.undo()
+        #expect(controller.snapshot?.devicePlugin(onTrack: 0, at: 0) == "dev.echode.test-gain")
+        await controller.close()
+    }
+
     @Test func editsUndoRedoAndReopenUseTheSameDurableProject() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-app-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }

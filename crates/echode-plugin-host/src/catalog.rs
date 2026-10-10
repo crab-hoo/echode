@@ -426,6 +426,19 @@ fn read_be_u64(bytes: &[u8], at: usize, len: usize) -> Option<u64> {
     Some(value)
 }
 
+/// The file a helper should load. A bundle uses `CFBundleExecutable`. A plain
+/// file is already that binary.
+pub fn bundle_binary(path: &Path) -> Option<PathBuf> {
+    if path.is_file() {
+        return Some(path.to_path_buf());
+    }
+    let plist = std::fs::read(path.join("Contents/Info.plist")).ok()?;
+    let name = plist_strings(&plist).get("CFBundleExecutable")?.clone();
+    let file_name = Path::new(&name).file_name()?;
+    let binary = path.join("Contents/MacOS").join(file_name);
+    binary.is_file().then_some(binary)
+}
+
 fn is_bundle(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;

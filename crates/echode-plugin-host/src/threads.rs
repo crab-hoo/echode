@@ -4,11 +4,14 @@
 //! on the main thread. A shared alarm wakes the processing thread both for a
 //! parent block and for a restart that arrives while the transport is idle.
 
+use crate::events::write_input;
 use crate::{HostError, load_entry};
+use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::prelude::*;
+use echode_realtime::Event;
 use echode_sandbox::{
-    CMD_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn, MAX_CHANNELS, MAX_FRAMES, MappedRegion,
-    RegionError, SPIKE_SAMPLE_RATE, Socket, SyncFlags, wake_one,
+    CMD_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn, MappedRegion, RegionError, Socket, SyncFlags,
+    wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
@@ -54,6 +57,8 @@ struct Bridge {
     process_note: AtomicBool,
     stages: AtomicU32,
     fan: AtomicPtr<FanIn>,
+    sample_bits: AtomicU64,
+    activation_frames: AtomicU32,
     // Read after `serve` returns, from the unit test.
     #[allow(dead_code)]
     main_id: std::sync::Mutex<Option<ThreadId>>,
@@ -151,7 +156,11 @@ impl Bridge {
             let instance = unsafe { &mut *instance };
             if let Some(stopped) = take_stopped(&self.slot) {
                 instance.deactivate(stopped);
-                match activate(instance) {
+                match activate(
+                    instance,
+                    f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
+                    self.activation_frames.load(Ordering::Acquire),
+                ) {
                     Ok(stopped) => publish_stopped(&self.slot, stopped),
                     Err(error) => {
                         eprintln!("echode-plugin-host: activate after restart failed: {error}");
@@ -174,7 +183,11 @@ impl Bridge {
             }
             let instance = unsafe { &mut *instance };
             if self.slot.load(Ordering::Acquire).is_null() {
-                match activate(instance) {
+                match activate(
+                    instance,
+                    f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
+                    self.activation_frames.load(Ordering::Acquire),
+                ) {
                     Ok(stopped) => publish_stopped(&self.slot, stopped),
                     Err(error) => {
                         eprintln!("echode-plugin-host: activate failed: {error}");
@@ -257,10 +270,20 @@ static LAST_REPORT: std::sync::Mutex<Option<SavedReport>> = std::sync::Mutex::ne
 pub fn serve(
     shm: &std::path::Path,
     plugin: Option<&std::path::Path>,
+    plugin_id: Option<&str>,
+    sample_rate: f64,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     let region = MappedRegion::open(shm)?;
-    serve_region(region, None, None, plugin, workgroup)
+    serve_region(
+        region,
+        None,
+        None,
+        plugin,
+        plugin_id,
+        sample_rate,
+        workgroup,
+    )
 }
 
 pub fn serve_fds(
@@ -268,6 +291,8 @@ pub fn serve_fds(
     control: OwnedFd,
     fan: Option<OwnedFd>,
     plugin: Option<&std::path::Path>,
+    plugin_id: Option<&str>,
+    sample_rate: f64,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     let region = MappedRegion::from_fd(shm)?;
@@ -277,7 +302,15 @@ pub fn serve_fds(
         Some(fd) => Some(FanIn::from_fd(fd)?),
         None => None,
     };
-    serve_region(region, Some(socket), fan, plugin, workgroup)
+    serve_region(
+        region,
+        Some(socket),
+        fan,
+        plugin,
+        plugin_id,
+        sample_rate,
+        workgroup,
+    )
 }
 
 fn serve_region(
@@ -285,8 +318,11 @@ fn serve_region(
     control: Option<Socket>,
     fan: Option<FanIn>,
     plugin: Option<&std::path::Path>,
+    plugin_id: Option<&str>,
+    sample_rate: f64,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
+    let max_frames = region.layout().max_frames;
     let region = Box::into_raw(Box::new(region));
     let fan = fan.map(|fan| Box::into_raw(Box::new(fan)));
     let bridge = Arc::new(Bridge {
@@ -314,6 +350,8 @@ fn serve_region(
         process_note: AtomicBool::new(false),
         stages: AtomicU32::new(1),
         fan: AtomicPtr::new(fan.unwrap_or(ptr::null_mut())),
+        sample_bits: AtomicU64::new(sample_rate.to_bits()),
+        activation_frames: AtomicU32::new(max_frames.max(1)),
         main_id: std::sync::Mutex::new(None),
         audio_id: std::sync::Mutex::new(None),
         callbacks: AtomicU64::new(0),
@@ -350,10 +388,10 @@ fn serve_region(
 
     let mut loaded = match plugin {
         None => None,
-        Some(path) => Some(load_plugin(path, Arc::clone(&bridge))?),
+        Some(path) => Some(load_plugin(path, plugin_id, Arc::clone(&bridge))?),
     };
     if let Some(loaded) = loaded.as_mut() {
-        let stopped = activate(&mut loaded.instance)?;
+        let stopped = activate(&mut loaded.instance, sample_rate, max_frames)?;
         publish_stopped(&bridge.slot, stopped);
         bridge.need_start.store(true, Ordering::Release);
         INSTANCE.with(|cell| cell.set(ptr::from_mut(&mut loaded.instance)));
@@ -426,14 +464,24 @@ struct Loaded {
     instance: PluginInstance<EchodeHost>,
 }
 
-fn load_plugin(path: &std::path::Path, bridge: Arc<Bridge>) -> Result<Loaded, HostError> {
+fn load_plugin(
+    path: &std::path::Path,
+    plugin_id: Option<&str>,
+    bridge: Arc<Bridge>,
+) -> Result<Loaded, HostError> {
     let entry = load_entry(path)?;
     let factory = entry
         .get_plugin_factory()
         .ok_or_else(|| HostError::Plugin(format!("{} has no plugin factory", path.display())))?;
-    let descriptor = factory.plugin_descriptors().next().ok_or_else(|| {
-        HostError::Plugin(format!("{} does not contain a plugin", path.display()))
-    })?;
+    let descriptor = factory
+        .plugin_descriptors()
+        .find(|descriptor| match plugin_id {
+            None => true,
+            Some(wanted) => descriptor.id().and_then(|id| id.to_str().ok()) == Some(wanted),
+        })
+        .ok_or_else(|| {
+            HostError::Plugin(format!("{} does not contain a plugin", path.display()))
+        })?;
     let plugin_id = descriptor
         .id()
         .ok_or_else(|| HostError::Plugin("plugin descriptor has no id".to_string()))?;
@@ -457,14 +505,16 @@ fn load_plugin(path: &std::path::Path, bridge: Arc<Bridge>) -> Result<Loaded, Ho
 
 fn activate(
     instance: &mut PluginInstance<EchodeHost>,
+    sample_rate: f64,
+    max_frames: u32,
 ) -> Result<StoppedPluginAudioProcessor<EchodeHost>, HostError> {
     instance
         .activate(
             |_, _| (),
             PluginAudioConfiguration {
-                sample_rate: SPIKE_SAMPLE_RATE,
+                sample_rate,
                 min_frames_count: 1,
-                max_frames_count: MAX_FRAMES as u32,
+                max_frames_count: max_frames.max(1),
             },
         )
         .map_err(|error| HostError::Plugin(error.to_string()))
@@ -499,7 +549,15 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
     bridge.unlock_map();
     let mut seen_request = 0u64;
     // Allocated once. `process` reuses them and does not allocate per block.
-    let mut buffers = PluginBuffers::new();
+    let (channels, frames, event_cap) = {
+        let region = current_region(bridge);
+        (
+            region.input_channels().max(region.output_channels()).max(1),
+            region.layout().max_frames as usize,
+            region.layout().input_events as usize,
+        )
+    };
+    let mut buffers = PluginBuffers::allocate(channels, frames.max(1), event_cap.max(1));
     let result = audio_loop(
         bridge,
         &mut started,
@@ -521,18 +579,33 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
 struct PluginBuffers {
     input_ports: AudioPorts,
     output_ports: AudioPorts,
-    input: [[f32; MAX_FRAMES]; MAX_CHANNELS],
-    output: [[f32; MAX_FRAMES]; MAX_CHANNELS],
+    input: Vec<Vec<f32>>,
+    output: Vec<Vec<f32>>,
+    events: EventBuffer,
+    decoded: Vec<Event>,
 }
 
 impl PluginBuffers {
-    fn new() -> Self {
+    /// Sized once from the session. Later blocks reuse this storage.
+    fn allocate(channels: usize, frames: usize, events: usize) -> Self {
         Self {
-            input_ports: AudioPorts::with_capacity(MAX_CHANNELS, 1),
-            output_ports: AudioPorts::with_capacity(MAX_CHANNELS, 1),
-            input: [[0.0; MAX_FRAMES]; MAX_CHANNELS],
-            output: [[0.0; MAX_FRAMES]; MAX_CHANNELS],
+            input_ports: AudioPorts::with_capacity(channels, 1),
+            output_ports: AudioPorts::with_capacity(channels, 1),
+            input: vec![vec![0.0; frames]; channels],
+            output: vec![vec![0.0; frames]; channels],
+            events: EventBuffer::new(),
+            decoded: Vec::with_capacity(events),
         }
+    }
+
+    fn fits(&self, inputs: usize, outputs: usize, frames: usize) -> bool {
+        self.input.len() == inputs
+            && self.output.len() == outputs
+            && self.input.first().is_none_or(|plane| frames <= plane.len())
+            && self
+                .output
+                .first()
+                .is_none_or(|plane| frames <= plane.len())
     }
 }
 
@@ -569,8 +642,8 @@ fn audio_loop(
             let inputs = region.input_channels();
             let outputs = region.output_channels();
             let stages = bridge.stages.load(Ordering::Acquire).max(1);
-            let stereo = inputs == MAX_CHANNELS && outputs == MAX_CHANNELS && frames <= MAX_FRAMES;
-            if bridge.has_plugin.load(Ordering::Acquire) && stereo {
+            let fits = buffers.fits(inputs, outputs, frames);
+            if bridge.has_plugin.load(Ordering::Acquire) && fits {
                 if let Some(active) = started.as_mut() {
                     for stage in 0..stages {
                         if stage > 0 {
@@ -862,7 +935,10 @@ fn render_plugin(
                 .map(|channel| &mut channel[..frames]),
         ),
     }]);
-    let input_events = InputEvents::empty();
+    buffers.events.clear();
+    region.copy_input_events(generation, &mut buffers.decoded);
+    write_input(&buffers.decoded, &mut buffers.events);
+    let input_events = InputEvents::from_buffer(&buffers.events);
     let mut output_events = OutputEvents::void();
     started
         .process(
@@ -965,7 +1041,7 @@ mod tests {
                 .request(2, &input, &mut output, CMD_SHUTDOWN, Duration::from_secs(2))
                 .expect("shutdown");
         });
-        serve(&path, None, None).expect("serve");
+        serve(&path, None, None, 48_000.0, None).expect("serve");
         parent.join().expect("parent");
         let (main, audio, callbacks) = last_threads().expect("report");
         assert_eq!(main, thread::current().id());

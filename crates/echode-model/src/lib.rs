@@ -16,9 +16,10 @@
 //!   `u16`. A negative start is allowed.
 //! - Expression curves are empty.
 //! - Notes in a content are sorted by start, then pitch, then id.
-//! - Each track has one mixer. Its parameters are gain, pan, mute, and solo,
-//!   in that order, with that control's minimum, maximum, and default. The
-//!   value lies in the control's range.
+//! - Each track ends with one mixer. CLAP devices, if any, sit before it in
+//!   insertion order and carry a plugin id with no parameters. The mixer's
+//!   parameters are gain, pan, mute, and solo, in that order, with that
+//!   control's minimum, maximum, and default. The value lies in range.
 //! - Placements on a track are stored in start order. Their half-open ranges
 //!   do not overlap. Each has a positive length, a finite gain of at least
 //!   zero, and fades that fit in a frame count. Its content exists, and its
@@ -39,7 +40,9 @@ mod placement;
 mod time;
 
 pub use changeset::{Change, ChangeSet, Field, ObjectKey, ObjectKind, Property, Value};
-pub use device::{Device, DeviceKind, GAIN_MAX, MixerIds, ParamKey, Parameter, test_mixer};
+pub use device::{
+    Device, DeviceKind, GAIN_MAX, MixerIds, ParamKey, Parameter, test_mixer, valid_plugin_id,
+};
 pub use id::Id;
 pub use invariants::InvariantError;
 pub use model::{

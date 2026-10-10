@@ -22,6 +22,7 @@ public struct WorkspaceView: View {
     @State private var files: [URL] = []
     @State private var browserURL: URL?
     @State private var showAudio = false
+    @State private var showPlugins = false
     @State private var seekBeat = 0.0
 
     public init(controller: ProjectController) { self.controller = controller }
@@ -63,6 +64,8 @@ public struct WorkspaceView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { showAudio.toggle() } label: { Label(text("Audio Output"), systemImage: "speaker.wave.2") }
                     .popover(isPresented: $showAudio) { outputSettings }
+                Button { showPlugins = true } label: { Label(text("Plugins"), systemImage: "puzzlepiece.extension") }
+                    .disabled(controller.snapshot == nil || controller.busy)
                 Button { showInspector.toggle() } label: { Label(text("Inspector"), systemImage: "sidebar.left") }
                 Button { showEditor.toggle() } label: { Label(text("Note Editor"), systemImage: "pianokeys") }
                 Button { showBrowser.toggle() } label: { Label(text("Files"), systemImage: "sidebar.right") }
@@ -74,6 +77,7 @@ public struct WorkspaceView: View {
             undo: { Task { await controller.undo() } }, redo: { Task { await controller.redo() } },
             inspector: { showInspector.toggle() }, browser: { showBrowser.toggle() },
             editor: { showEditor.toggle() }, palette: { showPalette = true },
+            plugins: { showPlugins = true },
             canEdit: controller.snapshot != nil && !controller.busy,
             canUndo: controller.undoCount > 0 && !controller.busy,
             canRedo: controller.redoCount > 0 && !controller.busy,
@@ -83,6 +87,9 @@ public struct WorkspaceView: View {
             canPlay: controller.snapshot != nil && !controller.busy && !controller.audioBusy
         ))
         .sheet(isPresented: $showPalette) { palette }
+        .sheet(isPresented: $showPlugins) {
+            PluginBrowser(controller: controller) { showPlugins = false }
+        }
         .alert(text("Could not complete the operation"), isPresented: Binding(
             get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } }
         )) { Button(text("OK")) { controller.errorMessage = nil } } message: { Text(controller.errorMessage ?? "") }
@@ -147,6 +154,20 @@ public struct WorkspaceView: View {
             Text(text("Inspector")).font(.headline)
             if let track = controller.tracks.first(where: { $0.id == controller.selection }) {
                 Label(track.name, systemImage: "waveform")
+                if let index = controller.tracks.firstIndex(where: { $0.id == track.id }),
+                   let snapshot = controller.snapshot {
+                    ForEach(0..<snapshot.deviceCount(onTrack: index), id: \.self) { device in
+                        if let plugin = snapshot.devicePlugin(onTrack: index, at: device),
+                           let id = snapshot.deviceID(onTrack: index, at: device) {
+                            HStack {
+                                Text(plugin).font(.caption).lineLimit(1)
+                                Spacer()
+                                Button(text("Remove")) { Task { await controller.removeDevice(id) } }
+                                    .disabled(controller.busy)
+                            }
+                        }
+                    }
+                }
                 Text(text("Notes are placed on the selected track")).font(.caption).foregroundStyle(.secondary)
                 LabeledContent(text("MIDI pitch"), value: "\(pitch)")
                 LabeledContent(text("Start beat"), value: beat.formatted())
@@ -259,6 +280,7 @@ public struct WorkspaceView: View {
                     case .inspector: showInspector.toggle()
                     case .browser: showBrowser.toggle()
                     case .editor: showEditor.toggle()
+                    case .plugins: showPlugins = true
                     }
                 }.disabled(!enabled(command))
             }
@@ -273,6 +295,7 @@ public struct WorkspaceView: View {
         case .undo: controller.undoCount > 0 && !controller.busy
         case .redo: controller.redoCount > 0 && !controller.busy
         case .playback, .stop: controller.snapshot != nil && !controller.busy && !controller.audioBusy
+        case .plugins: controller.snapshot != nil && !controller.busy
         default: true
         }
     }
@@ -333,7 +356,7 @@ func noteName(_ pitch: Int) -> String {
 enum PaletteCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track"
     case undo = "Undo", redo = "Redo", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor"
-    case playback = "Play / Pause", stop = "Stop"
+    case playback = "Play / Pause", stop = "Stop", plugins = "Plugins"
     var id: Self { self }
 }
 
@@ -347,9 +370,72 @@ public struct WorkspaceActions {
     public let create: () -> Void, open: () -> Void, addTrack: () -> Void
     public let undo: () -> Void, redo: () -> Void
     public let inspector: () -> Void, browser: () -> Void, editor: () -> Void, palette: () -> Void
+    public let plugins: () -> Void
     public let canEdit: Bool, canUndo: Bool, canRedo: Bool, canOpen: Bool
     public let playback: () -> Void, stop: () -> Void
     public let canPlay: Bool
+}
+
+private struct PluginBrowser: View {
+    let controller: ProjectController
+    let close: () -> Void
+    @State private var query = ""
+    @State private var plugins: [PluginListing] = []
+    @State private var message: String?
+    @State private var loading = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(text("Plugin Browser")).font(.headline)
+            TextField(text("Search plugins"), text: $query)
+                .onSubmit {
+                    if let plugin = filtered.first { insert(plugin, closeAfter: false) }
+                }
+            if loading { ProgressView().controlSize(.small) }
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+            List(filtered) { plugin in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plugin.name)
+                    Text([plugin.vendor, plugin.id].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { insert(plugin, closeAfter: true) }
+                .accessibilityAction(named: text("Insert")) { insert(plugin, closeAfter: false) }
+            }
+            HStack {
+                Button(text("Refresh")) { Task { await reload() } }
+                Spacer()
+                Button(text("Close")) { close() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440, height: 520)
+        .task { await reload() }
+    }
+
+    private var filtered: [PluginListing] {
+        plugins.filter { fuzzyMatch(query, in: "\($0.name) \($0.vendor) \($0.id)") }
+    }
+
+    private func insert(_ plugin: PluginListing, closeAfter: Bool) {
+        Task {
+            await controller.insertPlugin(plugin.id)
+            if closeAfter { close() }
+        }
+    }
+
+    private func reload() async {
+        loading = true
+        defer { loading = false }
+        do {
+            plugins = try await Task.detached { try PluginCatalog.listings() }.value
+            message = plugins.isEmpty ? text("No plugins found") : nil
+        } catch {
+            plugins = []
+            message = text("Plugin scan failed")
+        }
+    }
 }
 
 private struct WorkspaceActionsKey: FocusedValueKey { typealias Value = WorkspaceActions }

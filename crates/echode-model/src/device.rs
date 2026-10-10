@@ -1,4 +1,7 @@
-//! Built-in mixer parameters. Plugin devices are not here yet.
+//! Mixer parameters and CLAP devices recorded on a track.
+//!
+//! A track ends with one mixer. CLAP devices sit before it, in insertion order.
+//! Their process and saved state are not stored here.
 
 use crate::id::Id;
 use crate::model::ModelError;
@@ -44,25 +47,33 @@ impl MixerIds {
     }
 }
 
-/// A built-in device. Only the mixer exists in this slice.
+/// What a device on a track is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceKind {
     Mixer,
+    Clap,
 }
 
 impl DeviceKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Mixer => "mixer",
+            Self::Clap => "clap",
         }
     }
 
     pub fn parse(text: &str) -> Option<Self> {
         match text {
             "mixer" => Some(Self::Mixer),
+            "clap" => Some(Self::Clap),
             _ => None,
         }
     }
+}
+
+/// A CLAP id the host can look up. Empty text and control characters are refused.
+pub fn valid_plugin_id(plugin: &str) -> bool {
+    !plugin.is_empty() && plugin.chars().all(|ch| !ch.is_control())
 }
 
 /// Which mixer control a parameter is.
@@ -154,11 +165,14 @@ impl Parameter {
     }
 }
 
-/// A device on a track. Parameters stay in [`ParamKey::ORDER`] for a mixer.
+/// A device on a track. The mixer keeps [`ParamKey::ORDER`]. A CLAP device has
+/// no parameters until the host publishes them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
     pub id: Id,
     pub kind: DeviceKind,
+    /// CLAP plugin id. The mixer leaves this empty.
+    pub plugin: Option<String>,
     pub parameters: Vec<Parameter>,
 }
 
@@ -167,12 +181,22 @@ impl Device {
         Self {
             id: ids.device,
             kind: DeviceKind::Mixer,
+            plugin: None,
             parameters: vec![
                 Parameter::at_default(ids.gain, ParamKey::Gain),
                 Parameter::at_default(ids.pan, ParamKey::Pan),
                 Parameter::at_default(ids.mute, ParamKey::Mute),
                 Parameter::at_default(ids.solo, ParamKey::Solo),
             ],
+        }
+    }
+
+    pub fn clap(id: Id, plugin: String) -> Self {
+        Self {
+            id,
+            kind: DeviceKind::Clap,
+            plugin: Some(plugin),
+            parameters: Vec::new(),
         }
     }
 
@@ -189,6 +213,43 @@ pub fn test_mixer(track: u128) -> Device {
     Device::unity(MixerIds::from_base(
         track.saturating_mul(16).saturating_add(0xA000),
     ))
+}
+
+pub(crate) fn validate_devices(
+    devices: &[Device],
+    seen: &mut std::collections::HashSet<Id>,
+) -> Result<(), ModelError> {
+    let Some(last) = devices.len().checked_sub(1) else {
+        return Err(ModelError::InvalidDevice);
+    };
+    for (index, device) in devices.iter().enumerate() {
+        if index == last {
+            if device.plugin.is_some() {
+                return Err(ModelError::InvalidDevice);
+            }
+            validate_mixer(device, seen)?;
+        } else {
+            validate_clap(device, seen)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_clap(
+    device: &Device,
+    seen: &mut std::collections::HashSet<Id>,
+) -> Result<(), ModelError> {
+    if !seen.insert(device.id) {
+        return Err(ModelError::DuplicateId);
+    }
+    let Some(plugin) = device.plugin.as_deref() else {
+        return Err(ModelError::InvalidDevice);
+    };
+    if device.kind != DeviceKind::Clap || !device.parameters.is_empty() || !valid_plugin_id(plugin)
+    {
+        return Err(ModelError::InvalidDevice);
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_mixer(

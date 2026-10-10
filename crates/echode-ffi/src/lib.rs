@@ -4,6 +4,7 @@
 //! then the completion callback runs once, without a lock held. The spike in
 //! `spikes/bridge` is not used here.
 
+mod catalog;
 mod piano;
 mod queue;
 
@@ -376,6 +377,107 @@ pub unsafe extern "C" fn echode_snapshot_track_name(
     name.as_ptr()
 }
 
+/// How many devices the track has, including its mixer. A missing track is zero.
+///
+/// # Safety
+/// `snapshot` is null or still owned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_device_count(
+    snapshot: *const Snapshot,
+    track: usize,
+) -> usize {
+    snapshot_ref(snapshot)
+        .map(|snapshot| snapshot.device_count(track))
+        .unwrap_or(0)
+}
+
+/// Writes the UUID bytes of a device. Returns 0, or `-1` when it is missing.
+///
+/// # Safety
+/// `out` points at 16 writable bytes. `snapshot` is null or still owned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_device_id(
+    snapshot: *const Snapshot,
+    track: usize,
+    device: usize,
+    out: *mut u8,
+) -> c_int {
+    let Some(out) = out_bytes(out) else {
+        return -1;
+    };
+    let Some(snapshot) = snapshot_ref(snapshot) else {
+        return -1;
+    };
+    if snapshot.write_device_id(track, device, out) {
+        0
+    } else {
+        -1
+    }
+}
+
+/// Borrows the CLAP id of a device. The mixer has none and returns null.
+///
+/// # Safety
+/// `length` is writable. `snapshot` is null or owned for the whole read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_device_plugin(
+    snapshot: *const Snapshot,
+    track: usize,
+    device: usize,
+    length: *mut usize,
+) -> *const u8 {
+    if length.is_null() {
+        return std::ptr::null();
+    }
+    unsafe {
+        *length = 0;
+    }
+    let Some(plugin) =
+        snapshot_ref(snapshot).and_then(|snapshot| snapshot.device_plugin(track, device))
+    else {
+        return std::ptr::null();
+    };
+    unsafe {
+        *length = plugin.len();
+    }
+    plugin.as_ptr()
+}
+
+/// Writes the installed CLAP catalog as UTF-8 JSON.
+///
+/// Returns 0 when `out` holds the document. Returns 1 when `capacity` is too
+/// small and `written` is the required size. Returns `-1` when the helper
+/// cannot be started. The helper process loads each bundle.
+///
+/// # Safety
+/// `written` is writable. `out` is null or has room for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_plugin_catalog(
+    out: *mut u8,
+    capacity: usize,
+    written: *mut usize,
+) -> c_int {
+    if written.is_null() {
+        return -1;
+    }
+    unsafe {
+        *written = 0;
+    }
+    let Ok(json) = catalog::plugins_json() else {
+        return -1;
+    };
+    unsafe {
+        *written = json.len();
+    }
+    if out.is_null() || capacity < json.len() {
+        return 1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
+    }
+    0
+}
+
 /// Writes arrange elements that intersect the half-open view into `out`.
 ///
 /// `written` and `dropped` are required. A null `out` with `capacity` 0 counts
@@ -598,6 +700,57 @@ mod tests {
     }
 
     #[test]
+    fn an_inserted_plugin_is_visible_on_the_snapshot_and_undo_removes_it() {
+        let document = open();
+        let (sender, incoming) = mpsc::channel();
+        let reply = Reply { sender };
+        let added = submit(
+            document,
+            r#"{"type":"track.add","name":"piano"}"#,
+            &reply,
+            &incoming,
+        );
+        assert_eq!(
+            unsafe { echode_snapshot_device_count(added.snapshot, 0) },
+            1
+        );
+        let mut track = [0u8; 16];
+        assert_eq!(
+            unsafe { echode_snapshot_track_id(added.snapshot, 0, track.as_mut_ptr()) },
+            0
+        );
+        let track = uuid::Uuid::from_bytes(track);
+        unsafe { echode_snapshot_free(added.snapshot) };
+        let json =
+            format!(r#"{{"type":"device.add","track":"{track}","plugin":"dev.echode.test-gain"}}"#);
+        let inserted = submit(document, &json, &reply, &incoming);
+        assert_eq!(inserted.status, ECHODE_OK);
+        assert_eq!(
+            unsafe { echode_snapshot_device_count(inserted.snapshot, 0) },
+            2
+        );
+        let mut length = 0usize;
+        let plugin = unsafe { echode_snapshot_device_plugin(inserted.snapshot, 0, 0, &mut length) };
+        assert!(!plugin.is_null());
+        let text = unsafe { std::slice::from_raw_parts(plugin, length) };
+        assert_eq!(text, b"dev.echode.test-gain");
+        let mut mixer_length = 0usize;
+        assert!(
+            unsafe { echode_snapshot_device_plugin(inserted.snapshot, 0, 1, &mut mixer_length) }
+                .is_null()
+        );
+        unsafe { echode_snapshot_free(inserted.snapshot) };
+        let removed = submit(
+            document,
+            r#"{"type":"device.add","track":"not-a-track","plugin":""}"#,
+            &reply,
+            &incoming,
+        );
+        assert_eq!(removed.status, ECHODE_ERR);
+        unsafe { echode_document_close(document) };
+    }
+
+    #[test]
     fn a_note_in_view_is_returned_in_the_caller_buffer() {
         let document = open();
         let (sender, incoming) = mpsc::channel();
@@ -715,6 +868,8 @@ mod tests {
         assert!(header.contains("echode_document_create"));
         assert!(header.contains("echode_snapshot_free"));
         assert!(header.contains("echode_snapshot_visible"));
+        assert!(header.contains("echode_snapshot_device_plugin"));
+        assert!(header.contains("echode_plugin_catalog"));
         assert!(header.contains("echode_document_query"));
         assert!(header.contains("Generated by cbindgen"));
         assert!(header.contains("typedef void (*Complete)"));

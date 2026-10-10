@@ -73,13 +73,32 @@ impl Project {
             if !ids.insert(track.id) {
                 return broken(format!("id {} is used twice", track.id));
             }
-            if track.devices.len() != 1 || track.devices[0].kind != crate::device::DeviceKind::Mixer
-            {
+            let Some(mixer) = track.devices.last() else {
+                return broken(format!("track {} does not have one mixer", track.name));
+            };
+            if mixer.kind != crate::device::DeviceKind::Mixer || mixer.plugin.is_some() {
                 return broken(format!("track {} does not have one mixer", track.name));
             }
-            let mixer = &track.devices[0];
-            if !ids.insert(mixer.id) {
-                return broken(format!("id {} is used twice", mixer.id));
+            if track.devices[..track.devices.len() - 1]
+                .iter()
+                .any(|device| {
+                    device.kind != crate::device::DeviceKind::Clap
+                        || device
+                            .plugin
+                            .as_deref()
+                            .is_none_or(|plugin| !crate::device::valid_plugin_id(plugin))
+                        || !device.parameters.is_empty()
+                })
+            {
+                return broken(format!(
+                    "track {} has a plugin device without a CLAP id",
+                    track.name
+                ));
+            }
+            for device in &track.devices {
+                if !ids.insert(device.id) {
+                    return broken(format!("id {} is used twice", device.id));
+                }
             }
             if mixer.parameters.len() != crate::device::ParamKey::ORDER.len() {
                 return broken(format!(

@@ -695,6 +695,34 @@ impl MappedRegion {
         Ok(Collected::Ready { events: written })
     }
 
+    /// Copies this generation's input events into `out`. `out` is cleared first
+    /// and is not grown, so the caller reserves its capacity before the block.
+    pub fn copy_input_events(&self, generation: u64, out: &mut Vec<Event>) {
+        out.clear();
+        let count = (self
+            .slot_head(generation)
+            .input_events
+            .load(Ordering::Acquire) as usize)
+            .min(self.layout.input_events as usize);
+        for index in 0..count {
+            if out.len() == out.capacity() {
+                break;
+            }
+            let offset = self.event_offset(generation, false, index);
+            let mut record = [0u8; RECORD_BYTES];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.map.as_ptr().add(offset),
+                    record.as_mut_ptr(),
+                    RECORD_BYTES,
+                );
+            }
+            if let Some(event) = decode_event(&record) {
+                out.push(event);
+            }
+        }
+    }
+
     pub fn finish(&self, generation: u64) {
         let header = self.header();
         header.completed.store(generation, Ordering::Release);

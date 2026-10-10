@@ -43,9 +43,11 @@ pub(crate) fn load_entry(path: &Path) -> Result<PluginEntry, HostError> {
 pub fn serve(
     shm: &Path,
     plugin: Option<&Path>,
+    plugin_id: Option<&str>,
+    sample_rate: f64,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
-    threads::serve(shm, plugin, workgroup)
+    threads::serve(shm, plugin, plugin_id, sample_rate, workgroup)
 }
 
 pub fn serve_fds(
@@ -53,6 +55,8 @@ pub fn serve_fds(
     control_fd: i32,
     fan_fd: Option<i32>,
     plugin: Option<&Path>,
+    plugin_id: Option<&str>,
+    sample_rate: f64,
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     // SAFETY: the parent placed the shared mapping on `shm_fd`, the control
@@ -61,7 +65,7 @@ pub fn serve_fds(
     let shm = unsafe { std::os::fd::OwnedFd::from_raw_fd(shm_fd) };
     let control = unsafe { std::os::fd::OwnedFd::from_raw_fd(control_fd) };
     let fan = fan_fd.map(|fd| unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) });
-    threads::serve_fds(shm, control, fan, plugin, workgroup)
+    threads::serve_fds(shm, control, fan, plugin, plugin_id, sample_rate, workgroup)
 }
 
 /// In-process CLAP calls, for comparing against the cross-process round trip.
@@ -158,12 +162,14 @@ mod threads;
 mod watch;
 
 pub use catalog::{
-    BundleFound, BundleRevision, PluginCatalog, SCAN_QUIET, clap_path_directories, list_bundles,
-    list_bundles_including_clap_path,
+    BundleFound, BundleRevision, PluginCatalog, SCAN_QUIET, bundle_binary, clap_path_directories,
+    list_bundles, list_bundles_including_clap_path,
 };
 pub use events::write_input;
 pub use scan::{
-    ScanCacheEntry, ScannedPlugin, cache_entry, cached_plugins, load_scan_cache, scan_descriptors,
-    scan_report, store_scan_cache,
+    ResolvedPlugin, SCAN_BUDGET, ScanCacheEntry, ScannedPlugin, cache_entry, cached_plugins,
+    host_binary, installed_clap_bundles, load_scan_cache, refresh_catalog, resolve_installed,
+    scan_descriptors, scan_out_of_process, scan_path, scan_report, shared_cache_path,
+    store_scan_cache,
 };
 pub use watch::FolderWatch;

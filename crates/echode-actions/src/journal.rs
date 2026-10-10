@@ -396,6 +396,8 @@ fn property_name(property: Property) -> &'static str {
         Property::Value => "value",
         Property::ParamOrder => "param_order",
         Property::DeviceKind => "device_kind",
+        Property::DeviceOrder => "device_order",
+        Property::Plugin => "plugin",
     }
 }
 
@@ -432,6 +434,8 @@ fn parse_property(property: &str) -> Result<Property, ActionError> {
         "value" => Property::Value,
         "param_order" => Property::ParamOrder,
         "device_kind" => Property::DeviceKind,
+        "device_order" => Property::DeviceOrder,
+        "plugin" => Property::Plugin,
         _ => return Err(ActionError::CorruptJournal),
     })
 }

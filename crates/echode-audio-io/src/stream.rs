@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use echode_engine::{
-    ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus, playback_pair,
-    tick_to_sample,
+    ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus, PluginRoute,
+    playback_pair, playback_with_plugins, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -94,8 +94,7 @@ impl OutputStream {
         let sample = tick_to_sample(Tick::new(tick), project.tempo(), device.sample_rate)
             .ok_or("playback time overflow")?;
         let frames = device.buffer_frames as usize;
-        let (mut control, player) = playback_pair(project, device.sample_rate, frames)
-            .map_err(|error| error.to_string())?;
+        let (mut control, player) = open_playback(project, device.sample_rate, frames)?;
         control
             .command(PlaybackCommand::Locate(sample))
             .map_err(|error| error.to_string())?;
@@ -138,6 +137,9 @@ impl OutputStream {
     }
 
     pub fn replace(&mut self, project: &Project) -> Result<(), String> {
+        if let Some(host) = echode_plugin_host::host_binary() {
+            self.control.set_routes(&host, &plugin_routes(project));
+        }
         self.control
             .replace(project)
             .map_err(|error| error.to_string())
@@ -210,6 +212,38 @@ impl Drop for OutputStream {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+fn plugin_routes(project: &Project) -> Vec<PluginRoute> {
+    let mut ids = Vec::new();
+    for track in project.tracks() {
+        for device in &track.devices {
+            if let Some(plugin) = &device.plugin {
+                ids.push(plugin.clone());
+            }
+        }
+    }
+    echode_plugin_host::resolve_installed(&ids)
+        .into_iter()
+        .map(|plugin| PluginRoute {
+            clap_id: plugin.clap_id,
+            path: plugin.path,
+            instrument: plugin.instrument,
+        })
+        .collect()
+}
+
+fn open_playback(
+    project: &Project,
+    sample_rate: u32,
+    frames: usize,
+) -> Result<(PlaybackControl, PlaybackAudio), String> {
+    if let Some(host) = echode_plugin_host::host_binary() {
+        playback_with_plugins(project, sample_rate, frames, &host, &plugin_routes(project))
+    } else {
+        playback_pair(project, sample_rate, frames)
+    }
+    .map_err(|error| error.to_string())
 }
 
 unsafe extern "C-unwind" fn render(

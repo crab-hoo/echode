@@ -225,6 +225,54 @@
         }
       }
     },
+    "Plugins": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Plugins" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プラグイン" } }
+      }
+    },
+    "Plugin Browser": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Plugin Browser" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プラグインブラウザ" } }
+      }
+    },
+    "Search plugins": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Search plugins" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プラグインを検索" } }
+      }
+    },
+    "Insert": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Insert" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "挿入" } }
+      }
+    },
+    "Remove": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Remove" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "外す" } }
+      }
+    },
+    "Refresh": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Refresh" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "再スキャン" } }
+      }
+    },
+    "No plugins found": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "No plugins found" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プラグインは見つかりません" } }
+      }
+    },
+    "Plugin scan failed": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Plugin scan failed" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プラグインのスキャンに失敗しました" } }
+      }
+    },
     "Files": {
       "localizations": {
         "en": {

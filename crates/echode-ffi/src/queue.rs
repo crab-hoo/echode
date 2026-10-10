@@ -188,6 +188,35 @@ impl Snapshot {
         true
     }
 
+    pub(crate) fn device_count(&self, track: usize) -> usize {
+        self.project
+            .tracks()
+            .get(track)
+            .map(|track| track.devices.len())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn write_device_id(&self, track: usize, device: usize, out: &mut [u8; 16]) -> bool {
+        let Some(device) = self
+            .project
+            .tracks()
+            .get(track)
+            .and_then(|track| track.devices.get(device))
+        else {
+            return false;
+        };
+        *out = id_bytes(device.id);
+        true
+    }
+
+    pub(crate) fn device_plugin(&self, track: usize, device: usize) -> Option<&str> {
+        self.project
+            .tracks()
+            .get(track)
+            .and_then(|track| track.devices.get(device))
+            .and_then(|device| device.plugin.as_deref())
+    }
+
     pub(crate) fn write_visible(
         &self,
         view: ArrangeView,

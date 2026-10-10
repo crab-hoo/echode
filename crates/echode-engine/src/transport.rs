@@ -20,6 +20,7 @@ pub enum PlaybackError {
     BufferTooSmall,
     IdSpace,
     InvalidDevice,
+    Plugin,
 }
 
 impl std::fmt::Display for PlaybackError {
@@ -32,6 +33,7 @@ impl std::fmt::Display for PlaybackError {
             Self::BufferTooSmall => "the caller buffer cannot hold this block",
             Self::IdSpace => "playback note numbers are exhausted",
             Self::InvalidDevice => "device state or parameter is not valid",
+            Self::Plugin => "plugin helper did not start",
         };
         formatter.write_str(message)
     }

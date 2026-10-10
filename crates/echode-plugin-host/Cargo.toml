@@ -19,6 +19,7 @@ objc2-core-services = { version = "=0.3.2", default-features = false, features =
 
 [dev-dependencies]
 echode-engine = { path = "../echode-engine" }
+echode-model = { path = "../echode-model" }
 
 [lints]
 workspace = true
