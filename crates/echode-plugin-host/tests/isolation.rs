@@ -146,6 +146,28 @@ fn copy_roundtrip_preserves_samples() {
 }
 
 #[test]
+fn clap_gain_doubles_samples() {
+    let plugin = plugin_dylib();
+    let mut host = spawn_with(Some(&plugin), None, None);
+    let frames = 64;
+    let input = stereo(frames, -0.4);
+    let mut output = [vec![0.0; frames], vec![0.0; frames]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("gain");
+    for channel in 0..2 {
+        for (got, source) in output[channel].iter().zip(&input[channel]) {
+            let expected = source * 2.0;
+            assert!(
+                (got - expected).abs() < 1.0e-6,
+                "channel {channel}: got {got}, expected {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a CoreAudio device and the release timing budget; `make spike-isolation` runs it"]
 fn clap_gain_doubles_samples_and_stays_within_budget() {
     let workgroup = IoWorkgroup::open().unwrap_or_else(|error| panic!("device workgroup: {error}"));
     let plugin = plugin_dylib();

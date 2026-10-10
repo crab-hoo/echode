@@ -54,7 +54,7 @@ advisories:
 # Release measurement of cross-process plugin hosting. See docs/spikes/S3-plugin-isolation.md.
 spike-isolation:
 	cargo build --release --workspace
-	cargo test --release -p echode-plugin-host --test isolation -- --nocapture
+	cargo test --release -p echode-plugin-host --test isolation -- --include-ignored --nocapture
 
 # Metal scroll/zoom measurement. See docs/spikes/S1-drawing.md.
 spike-draw:

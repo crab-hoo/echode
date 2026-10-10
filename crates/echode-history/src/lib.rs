@@ -12,6 +12,7 @@ mod host;
 mod objects;
 mod project;
 mod store;
+mod thin;
 
 pub mod spike;
 
@@ -22,3 +23,7 @@ pub use document::{
 };
 pub use gix::ObjectId;
 pub use host::{DocumentHost, HostError};
+pub use thin::{
+    DAY, HOUR, HOURLY_SPAN, RECENT, SavePoint, StoreSize, git_store_size, kept_indexes,
+    pack_and_thin, seed_autosaves, tip_text, write_bundle,
+};
