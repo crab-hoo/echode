@@ -1,4 +1,4 @@
-# Runs the same `make check` that people and agents run locally.
+# Every automatic check is selected from the same policy that agents use.
 name: check
 
 on:
@@ -6,18 +6,53 @@ on:
   pull_request:
 
 jobs:
-  check:
-    # Apple Silicon. Move to a macOS 27 image when one is available.
+  verification-plan:
     runs-on: macos-15
+    outputs:
+      checks: ${{ steps.plan.outputs.checks }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        run: python3 scripts/verify.py --github-matrix
+
+  verify:
+    needs: verification-plan
+    # Apple Silicon, macOS 27 / Xcode 27 (GitHub's current preview label).
+    runs-on: xcode-27
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        check: ${{ fromJSON(needs.verification-plan.outputs.checks) }}
     steps:
       - uses: actions/checkout@v4
       - name: Install the toolchain in rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: verify-${{ matrix.check }}-nightly-2026-10-09
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny@0.20.2
-      - run: make check
+      - run: cargo fetch --locked
+      - if: contains(fromJSON('["check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"]'), matrix.check)
+        run: make setup-bridge
+      - run: python3 scripts/verify.py --all --only '${{ matrix.check }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-${{ matrix.check }}-logs
+          path: |
+            target/verification/report.*
+            target/verification/*.log
+            target/bridge/address/*.log
+            target/bridge/address/*.txt
+            target/bridge/address/control/*.log
+            target/bridge/thread/*.log
+            target/bridge/thread/*.txt
+            target/bridge/thread/control/*.log
+            target/bridge/miri/*.log
+            target/bridge/miri/*.txt
 
   advisories:
     runs-on: macos-15
@@ -26,4 +61,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny@0.20.2
-      - run: make advisories
+      - run: python3 scripts/verify.py --all --only advisories --run advisories
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-advisories-logs
+          path: |
+            target/verification/report.*
+            target/verification/*.log

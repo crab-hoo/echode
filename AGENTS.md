@@ -47,8 +47,12 @@ Phase 0（S1 から S5）は確定済みです。今は Phase 1 のドキュメ�
 
 ## 確認
 
-変更したら `make check` を実行します。フォーマット、clippy、テスト、FFI の手書きの宣言、依存のライセンスを確かめます。Cursor のエージェントがターンを終える時は、stop hook（`.cursor/hooks.json`）が同じ検査を走らせ、失敗したら直すよう続きの指示を出します。新しい環境では、先に `make setup` で cargo-deny を入れます。
+着手時に `make verify-plan`、変更を終えたら `make verify` を実行します。変更箇所と追加検査の対応は `scripts/verification.json` だけに置きます。通常の `make check`（フォーマット、clippy、Rust / Swift、FFI、ライセンス）に加え、橋渡しの全 feature・ASan・TSan・Miri、音声の RTSan、入力の単体テストを必要な範囲で選びます。依存するモデルの変更も対象です。実行方法と検査範囲は `docs/verification.md` を読んでください。
+
+計測や実機、ネットワークが必要な検査は、`scripts/verify.py --run ID` で実行するか、`--defer ID --reason 理由` で未実行の理由を記録します。自動検査の失敗を見送ってはいけません。未実行を合格と言わず、最終報告に検査名と理由を残します。結果は `target/verification/report.md` にあり、ソースやツールが変われば古い合格と見送りは無効です。
+
+Cursor の stop hook（`.cursor/hooks.json`）も同じ入口を使い、失敗や理由のない未実行があれば続きの指示を返します。フックのない環境でも `make verify` の実行は必要です。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify`、全体の確認は `scripts/verify.py --all` を使います。`--only` は個別検査や CI の分割用で、作業の完了時には使いません。新しい環境では、先に `make setup`、橋渡しの動的検査には `make setup-bridge` を実行します。
 
 監査の未解決の不具合は、`audit_<ID>_...` という名前の無視したテストになっています。`make known-bugs` で、まだ失敗していることを確かめられます。項目を直したら、そのテストの `#[ignore]` を外し、監査の文書の一覧の状態を更新します。
 
-プラグインの隔離に触ったら `make spike-isolation` も実行し、`docs/spikes/S3-plugin-isolation.md` の数値を更新します。
+プラグインの隔離に触ったら、選ばれる `spike-isolation` を実行し、`docs/spikes/S3-plugin-isolation.md` の数値を更新します。新しい検査を追加したら Makefile と `scripts/verification.json` に登録し、選択のテストも更新します。基準音声の再生成（`make bless`）と、失敗が予定されている `make known-bugs` は自動の検査に混ぜません。

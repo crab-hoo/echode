@@ -1,5 +1,6 @@
 /target
 .build/
+__pycache__/
 **/*.rs.bk
 .DS_Store
 *.xcuserstate

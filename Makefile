@@ -1,8 +1,9 @@
-.PHONY: check fmt setup known-bugs advisories bless spike-isolation spike-draw spike-history spike-input spike-engine rtsan
+.PHONY: check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri rtsan
 
 # What every change must pass. It needs no audio hardware and has no timing thresholds,
 # so a failure always means the code is wrong.
 check:
+	$(MAKE) check-verification
 	cargo build --workspace
 	cargo fmt --check
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -10,6 +11,17 @@ check:
 	scripts/check-ffi.sh
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
 	cargo deny check licenses bans sources
+	$(MAKE) check-bridge
+
+# Selection and evidence are shared by agents, the stop hook, and CI.
+verify:
+	python3 scripts/verify.py $(VERIFY_ARGS)
+
+verify-plan:
+	python3 scripts/verify.py --plan $(VERIFY_ARGS)
+
+check-verification:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
 
 fmt:
 	cargo fmt
@@ -17,6 +29,10 @@ fmt:
 # Tools `make check` needs besides the toolchain in rust-toolchain.toml.
 setup:
 	cargo install --locked cargo-deny@0.20.2
+
+# Fixed validation toolchain; never changes the product compiler/default.
+setup-bridge:
+	bash scripts/setup-bridge.sh
 
 # Rewrites crates/echode-cli/tests/fixtures/sine-pad-a4-128.wav and appends REASON
 # to tests/fixtures/bless.log. Use this when a sound change is intentional.
@@ -52,8 +68,37 @@ spike-history:
 
 # Trackpad pinch, haptics, and chord pressure. See docs/spikes/S5-input.md.
 spike-input:
-	cd spikes/input && swift test
+	$(MAKE) check-input
 	cd spikes/input && swift run
+
+check-input:
+	swift test --package-path spikes/input --scratch-path target/input-tests
+
+# Timing belongs in release measurements, not in the normal correctness checks.
+spike-render:
+	cargo test --release -p echode-cli --test render a_minute_of_stereo_silence_is_written_in_bulk -- --ignored --exact --nocapture
+
+# UI-2: regenerate UniFFI and cbindgen bindings; Swift 6 strict concurrency.
+# check-bridge has no timing assertions. spike-bridge also prints measurements.
+check-bridge:
+	bash scripts/spike-bridge.sh
+
+spike-bridge:
+	bash scripts/spike-bridge.sh --bench
+
+check-bridge-features:
+	cargo clippy --locked -p echode-bridge-spike --all-targets --all-features -- -D warnings
+	cargo test --locked -p echode-bridge-spike --lib --all-features
+	cargo deny --all-features check licenses bans sources
+
+check-bridge-asan:
+	bash scripts/check-bridge-sanitizer.sh address
+
+check-bridge-tsan:
+	bash scripts/check-bridge-sanitizer.sh thread
+
+check-bridge-miri:
+	bash scripts/check-bridge-miri.sh
 
 # 1,000-node CoreAudio graph. See docs/spikes/S2-engine.md.
 spike-engine:

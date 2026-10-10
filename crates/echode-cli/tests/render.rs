@@ -59,6 +59,7 @@ fn a_package_renders_to_the_committed_reference() {
 }
 
 #[test]
+#[ignore = "timing measurement; make spike-render runs it in a release build"]
 fn a_minute_of_stereo_silence_is_written_in_bulk() {
     let directory = scratch();
     std::fs::create_dir_all(&directory).unwrap();

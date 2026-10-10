@@ -12,6 +12,7 @@ members = [
     "crates/echode-actions",
     "crates/echode-cli",
     "crates/echode-api",
+    "spikes/bridge",
 ]
 
 [workspace.package]

@@ -3,6 +3,12 @@
 check:
     make check
 
+verify:
+    make verify
+
+verify-plan:
+    make verify-plan
+
 fmt:
     make fmt
 

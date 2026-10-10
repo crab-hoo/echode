@@ -4,7 +4,8 @@
     "stop": [
       {
         "command": ".cursor/hooks/check-on-stop.sh",
-        "timeout": 900,
+        "timeout": 1800,
+        "failClosed": true,
         "loop_limit": 3
       }
     ]

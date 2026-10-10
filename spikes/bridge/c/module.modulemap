@@ -1,0 +1,4 @@
+module CEchodeBridge {
+    header "echode_bridge.h"
+    export *
+}
