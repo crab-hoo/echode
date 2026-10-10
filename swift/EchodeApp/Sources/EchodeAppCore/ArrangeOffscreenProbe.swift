@@ -1,0 +1,158 @@
+import EchodeBridge
+import Foundation
+import ImageIO
+import Metal
+
+private struct OffscreenArrangeReport: Codable {
+    let frames: Int
+    let comparedScanlines: Int
+    let mismatchedScanlines: Int
+    let labelPixels: Int
+    let device: String
+}
+
+/// Explicit GPU probe, with no NSApplication, window, display link or screen
+/// capture. GPU readback/waits belong to this probe, never the audio thread.
+@MainActor
+public func runOffscreenArrangeProbe(reportPath: String) async throws {
+    guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
+        throw CocoaError(.featureUnsupported)
+    }
+    let painter = try ArrangePainter(device: device)
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-offscreen-\(UUID()).echode")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let controller = ProjectController()
+    await controller.open(url, creating: true)
+    // Project size and event count are scoped to this regression only.
+    for index in 0..<20 { await controller.addTrack(name: index == 0 ? "ピアノ 🎹" : "Track \(index)") }
+    guard let snapshot = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
+    var frames = 0, scanlines = 0, mismatches = 0, labelPixels = 0
+    for scale in [1.0, 2.0] {
+        for event in 0..<80 {
+            var palette = ArrangeHeaderPalette()
+            palette.separator = SIMD4(0.09, 0.10, 0.12, 1)
+            let camera = ArrangeCamera(originBeat: Double(event) / 7, originTrack: Double(event % 24) / 16,
+                                       pixelsPerBeat: [24.0, 72.0, 144.0][(event / 3) % 3],
+                                       pixelsPerTrack: [16.0, 64.0, 96.0][event % 3])
+            let selected = snapshot.trackID(at: Int(camera.originTrack) + 1)
+            let input = CanvasInput(snapshot: snapshot, selected: selected, camera: camera,
+                                     width: event % 2 == 0 ? 640 : 720, height: 211, scale: scale,
+                                     header: ArrangeHeaderInput(width: event % 2 == 0 ? 160 : 200, palette: palette))
+            let frame = ArrangeFrame(input: input)
+            let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
+            if scale == 2, event == 1 {
+                try image.writePNG(to: URL(fileURLWithPath: reportPath).deletingPathExtension().appendingPathExtension("png"))
+            }
+            // Pick a timeline column clear of beat lines; x=25 is clear of
+            // both the header icon and its text. Compare every physical row.
+            let timelineX = (3..<Int(frame.timelineWidth - 3)).first { x in
+                let beatX = (camera.originBeat + Double(x) / camera.pixelsPerBeat).truncatingRemainder(dividingBy: 1) * camera.pixelsPerBeat
+                return beatX > 3 && beatX < camera.pixelsPerBeat - 3
+            }!
+            for y in 0..<image.height {
+                let a = image.pixel(x: Int(25 * scale), y: y)
+                let b = image.pixel(x: Int((frame.timelineOrigin + Double(timelineX)) * scale), y: y)
+                scanlines += 1
+                if a != b { mismatches += 1 }
+            }
+            // Text must actually reach the GPU attachment, including Japanese
+            // and fallback glyphs; checking only CPU geometry is insufficient.
+            for y in 0..<image.height {
+                for x in Int(30 * scale)..<Int((input.header!.width - 8) * scale) {
+                    let pixel = image.pixel(x: x, y: y)
+                    if pixel.r > 180 && pixel.g > 180 && pixel.b > 180 { labelPixels += 1 }
+                }
+            }
+            frames += 1
+        }
+    }
+    // A long clip starting before the viewport must never spill into headers.
+    controller.selection = snapshot.trackID(at: 0)
+    await controller.insertNote(pitch: 60, beat: 0, length: 16)
+    guard let notes = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
+    let clipped = ArrangeFrame(input: CanvasInput(snapshot: notes, selected: nil, camera: ArrangeCamera(originBeat: 7),
+                              width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette())))
+    let image = try renderOffscreen(clipped, painter: painter, device: device, queue: queue)
+    let background = image.pixel(x: 50, y: 1)
+    for y in 2..<120 {
+        scanlines += 1
+        if image.pixel(x: 50, y: y) != background { mismatches += 1 }
+    }
+    frames += 1
+    await controller.close()
+    let report = OffscreenArrangeReport(frames: frames, comparedScanlines: scanlines, mismatchedScanlines: mismatches,
+                                        labelPixels: labelPixels, device: device.name)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
+    print("offscreen arrange: \(frames) frames, \(scanlines) compared scanlines, \(mismatches) mismatches, \(labelPixels) text pixels, \(device.name)")
+    guard mismatches == 0, labelPixels > 0 else { throw CocoaError(.coderInvalidValue) }
+}
+
+struct CanvasReadback {
+    let width: Int
+    let height: Int
+    let pixels: [UInt8]
+    struct Pixel: Equatable { let b: UInt8; let g: UInt8; let r: UInt8; let a: UInt8 }
+    func pixel(x: Int, y: Int) -> Pixel {
+        let index = (y * width + x) * 4
+        return Pixel(b: pixels[index], g: pixels[index + 1], r: pixels[index + 2], a: pixels[index + 3])
+    }
+    func writePNG(to url: URL) throws {
+        let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue).union(.byteOrder32Little)
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info, provider: provider,
+                                  decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+              let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+    }
+}
+
+func renderOffscreen(_ frame: ArrangeFrame, painter: ArrangePainter, device: any MTLDevice,
+                     queue: any MTLCommandQueue) throws -> CanvasReadback {
+    try renderOffscreen(input: frame.input, timeline: frame.timelineInstances, headers: frame.headerInstances,
+                        frame: frame, piano: nil, painter: painter, device: device, queue: queue)
+}
+
+func renderOffscreen(_ frame: PianoFrame, painter: ArrangePainter, device: any MTLDevice,
+                     queue: any MTLCommandQueue) throws -> CanvasReadback {
+    try renderOffscreen(input: frame.input, timeline: frame.gridInstances, headers: frame.degreeInstances + frame.keyboardInstances + frame.rulerInstances,
+                        frame: nil, piano: frame, painter: painter, device: device, queue: queue)
+}
+
+private func renderOffscreen(input: CanvasInput, timeline: [Instance], headers: [Instance], frame: ArrangeFrame?, piano: PianoFrame?,
+                             painter: ArrangePainter, device: any MTLDevice, queue: any MTLCommandQueue) throws -> CanvasReadback {
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+        width: max(1, Int(input.width * input.scale)), height: max(1, Int(input.height * input.scale)), mipmapped: false)
+    descriptor.storageMode = .shared
+    descriptor.usage = .renderTarget
+    let instances = timeline + headers
+    guard let texture = device.makeTexture(descriptor: descriptor), let command = queue.makeCommandBuffer(),
+          let buffer = device.makeBuffer(length: max(1, instances.count) * MemoryLayout<Instance>.stride, options: .storageModeShared) else {
+        throw CocoaError(.featureUnsupported)
+    }
+    instances.withUnsafeBytes { data in
+        if let source = data.baseAddress { buffer.contents().copyMemory(from: source, byteCount: data.count) }
+    }
+    let pass = MTLRenderPassDescriptor()
+    pass.colorAttachments[0].texture = texture
+    pass.colorAttachments[0].loadAction = .clear
+    pass.colorAttachments[0].storeAction = .store
+    pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
+    guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw CocoaError(.featureUnsupported) }
+    painter.encode(encoder: encoder, texture: texture, buffer: buffer, timelineCount: timeline.count, headerCount: headers.count, frame: frame, piano: piano)
+    encoder.endEncoding()
+    command.commit()
+    command.waitUntilCompleted()
+    if let error = command.error { throw error }
+    var pixels = [UInt8](repeating: 0, count: texture.width * texture.height * 4)
+    pixels.withUnsafeMutableBytes {
+        texture.getBytes($0.baseAddress!, bytesPerRow: texture.width * 4,
+                         from: MTLRegionMake2D(0, 0, texture.width, texture.height), mipmapLevel: 0)
+    }
+    return CanvasReadback(width: texture.width, height: texture.height, pixels: pixels)
+}

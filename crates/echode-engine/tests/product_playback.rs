@@ -18,7 +18,7 @@ fn score() -> Project {
 }
 
 #[test]
-fn pause_holds_the_position_stop_returns_to_zero_and_seek_chases_a_note() {
+fn pause_and_stop_hold_the_position_and_seek_chases_a_note() {
     let project = score();
     // Scratch lengths belong to this probe, never to a product track cap.
     let (mut control, mut audio) = playback_pair(&project, 48000, 64).unwrap();
@@ -41,9 +41,13 @@ fn pause_holds_the_position_stop_returns_to_zero_and_seek_chases_a_note() {
     assert_eq!(control.status().sample, 24064);
     control.command(PlaybackCommand::Stop).unwrap();
     audio.render(&mut left, &mut right);
-    assert_eq!(control.status().sample, 0);
-    assert_eq!(control.status().tick, 0);
+    assert_eq!(control.status().sample, 24064);
+    assert!(!control.status().playing);
     assert!(left.iter().all(|sample| *sample == 0.0));
+    control.command(PlaybackCommand::Play).unwrap();
+    audio.render(&mut left, &mut right);
+    assert_eq!(control.status().sample, 24128);
+    assert!(left.iter().any(|sample| *sample != 0.0));
 }
 
 #[test]

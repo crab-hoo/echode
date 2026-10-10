@@ -75,11 +75,20 @@ class PolicyTests(unittest.TestCase):
 
     def test_product_drawing_has_a_separate_real_display_probe(self):
         self.assertIn("spike-app", self.selected("swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift"))
-        for file in ("PianoRollView.swift", "PianoGeometry.swift"):
+        for file in ("PianoRollView.swift", "PianoGeometry.swift", "PianoFrame.swift", "PianoOffscreenProbe.swift", "ArrangeGeometry.swift",
+                     "ArrangeHeaderView.swift", "ArrangePaneView.swift", "ArrangeFrame.swift",
+                     "ArrangeLabels.swift", "ArrangePainter.swift", "ArrangeOffscreenProbe.swift", "WorkspaceView.swift",
+                     "WorkspaceState.swift", "WorkspaceDivider.swift", "WorkspaceNoteEditorView.swift", "CanvasRenderer.swift", "FrameFeedbackGate.swift"):
             with self.subTest(file=file):
                 checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + file)
-                self.assertTrue({"spike-app", "spike-draw", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= checks)
+                self.assertTrue({"spike-app", "spike-arrange-frame", "spike-piano-frame", "spike-draw", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= checks)
         self.assertNotIn("spike-app", self.selected("crates/echode-engine/src/voice.rs"))
+
+    def test_hosted_playback_keeps_realtime_deadlines_in_the_manual_probe(self):
+        self.assertIn("spike-isolation", self.selected("crates/echode-plugin-host/tests/hosted_playback.rs"))
+        recipe = (ROOT / "Makefile").read_text().split("spike-isolation:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("--test hosted_playback -- --include-ignored --test-threads=1", recipe)
+        self.assertIn("--test isolation -- --include-ignored --test-threads=1", recipe)
 
     def test_input_has_both_headless_tests_and_an_explicit_hardware_check(self):
         self.assertEqual(self.selected("spikes/input/Sources/EchodeInputCore/Gesture.swift"),

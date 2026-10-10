@@ -53,8 +53,9 @@ public struct PlaybackPosition: Sendable {
 
 /// Retains the document's live position storage while a renderer reads it.
 /// The query is atomic and does not depend on MainActor polling.
-public struct PlaybackFeed: Sendable {
+public struct PlaybackFeed: Sendable, Equatable {
     private let document: Document
     init(_ document: Document) { self.document = document }
     public var position: PlaybackPosition { document.playbackPosition }
+    public static func == (lhs: Self, rhs: Self) -> Bool { lhs.document === rhs.document }
 }

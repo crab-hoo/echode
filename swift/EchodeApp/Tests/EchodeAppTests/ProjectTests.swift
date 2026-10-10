@@ -19,7 +19,7 @@ struct ProjectTests {
         await controller.locate(beat: .infinity)
         #expect(controller.audio.tick == 705_600 * 3)
         await controller.stopPlayback()
-        #expect(controller.audio.tick == 0)
+        #expect(controller.audio.tick == 705_600 * 3)
         #expect(controller.undoCount == 1)
         await controller.undo()
         #expect(controller.tracks.isEmpty)

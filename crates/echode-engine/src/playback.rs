@@ -545,14 +545,10 @@ impl PlaybackAudio {
                     self.failed = false;
                     self.current.place(self.clock.position(), false);
                 }
-                PlaybackCommand::Pause => {
+                PlaybackCommand::Pause | PlaybackCommand::Stop => {
+                    // Both leave the playhead in place. The next play resumes there.
                     self.playing = false;
                     self.current.place(self.clock.position(), true);
-                }
-                PlaybackCommand::Stop => {
-                    self.playing = false;
-                    self.clock.locate(0);
-                    self.current.place(0, true);
                 }
                 PlaybackCommand::Locate(sample) => {
                     self.clock.locate(sample);

@@ -227,50 +227,130 @@
     },
     "Plugins": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Plugins" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "プラグイン" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugins"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグイン"
+          }
+        }
       }
     },
     "Plugin Browser": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Plugin Browser" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "プラグインブラウザ" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin Browser"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグインブラウザ"
+          }
+        }
       }
     },
     "Search plugins": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Search plugins" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "プラグインを検索" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search plugins"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグインを検索"
+          }
+        }
       }
     },
     "Insert": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Insert" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "挿入" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "挿入"
+          }
+        }
       }
     },
     "Remove": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Remove" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "外す" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外す"
+          }
+        }
       }
     },
     "Refresh": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Refresh" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "再スキャン" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再スキャン"
+          }
+        }
       }
     },
     "No plugins found": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "No plugins found" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "プラグインは見つかりません" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No plugins found"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグインは見つかりません"
+          }
+        }
       }
     },
     "Plugin scan failed": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Plugin scan failed" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "プラグインのスキャンに失敗しました" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin scan failed"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグインのスキャンに失敗しました"
+          }
+        }
       }
     },
     "Files": {
@@ -593,22 +673,6 @@
         }
       }
     },
-    "Pitch / Solfege": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pitch / Solfege"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "鍵盤 / 階名"
-          }
-        }
-      }
-    },
     "Display Key": {
       "localizations": {
         "en": {
@@ -630,13 +694,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Changes solfege and scale display. The project key is unchanged."
+            "value": "Changes the scale degrees shown beside the keyboard."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "階名と音階の表示用です。プロジェクトの調は変更しません。"
+            "value": "鍵盤の左に表示するスケールのディグリーを変更します。"
           }
         }
       }
@@ -1165,6 +1229,262 @@
           "stringUnit": {
             "state": "translated",
             "value": "各トラックのノートを内蔵の Sine Pad で再生します。"
+          }
+        }
+      }
+    },
+    "Degree": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Degree"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "度数"
+          }
+        }
+      }
+    },
+    "Keyboard": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keys"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "鍵盤"
+          }
+        }
+      }
+    },
+    "Scale degree": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scale degree"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケールのディグリー"
+          }
+        }
+      }
+    },
+    "Applying Changes": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applying changes…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "変更を保存中…"
+          }
+        }
+      }
+    },
+    "Add a track to start": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a track to start"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "トラックを追加して始めましょう"
+          }
+        }
+      }
+    },
+    "Selected Note": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected Note"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択中のノート"
+          }
+        }
+      }
+    },
+    "Select a note to inspect it": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a note to inspect it"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ノートを選択すると詳細を表示します"
+          }
+        }
+      }
+    },
+    "Note values help": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use a pitch from 0 to 127, a nonnegative start and a positive length."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音程は0〜127、開始位置は0以上、長さは0より大きい値を入力してください。"
+          }
+        }
+      }
+    },
+    "Revert": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revert"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力を戻す"
+          }
+        }
+      }
+    },
+    "New Note": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New Note"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいノート"
+          }
+        }
+      }
+    },
+    "Space": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Space"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スペース"
+          }
+        }
+      }
+    },
+    "Run": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行"
+          }
+        }
+      }
+    },
+    "Open": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開く"
+          }
+        }
+      }
+    },
+    "Search files": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search files"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイルを検索"
+          }
+        }
+      }
+    },
+    "Parent Folder": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parent Folder"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上のフォルダ"
+          }
+        }
+      }
+    },
+    "Choose a folder to browse projects": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a folder to browse projects"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダを選んでプロジェクトを探します"
           }
         }
       }

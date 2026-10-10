@@ -84,9 +84,9 @@ impl Session {
                 self.playing = false;
             }
             AudioCommand::Stop => {
+                // Park keeps the playhead. The next play opens at that tick.
                 self.park();
                 self.playing = false;
-                self.tick = 0;
             }
             AudioCommand::Locate { tick } => {
                 if tick < 0 {
@@ -297,7 +297,7 @@ mod tests {
         session.perform(AudioCommand::Pause).unwrap();
         assert_eq!(session.state().tick, 705600);
         session.perform(AudioCommand::Stop).unwrap();
-        assert_eq!(session.state().tick, 0);
+        assert_eq!(session.state().tick, 705600);
         assert!(session.perform(AudioCommand::Locate { tick: -1 }).is_err());
         assert!(session.notifications.is_none());
         assert!(Arc::ptr_eq(&session.project, &project));
@@ -341,7 +341,8 @@ mod tests {
         pump(&mut session);
         assert!(session.state().running && session.state().tick > 705600);
         assert_eq!(session.state().selected_uid, Some(uid));
+        let before_stop = session.state().tick;
         session.perform(AudioCommand::Stop).unwrap();
-        assert!(!session.state().playing && session.state().tick == 0);
+        assert!(!session.state().playing && session.state().tick >= before_stop);
     }
 }

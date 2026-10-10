@@ -1,0 +1,105 @@
+import AppKit
+import EchodeBridge
+
+/// Transparent input and accessibility region. Every visible header pixel is
+/// drawn by the Metal surface underneath, together with its timeline lane.
+@MainActor
+final class ArrangeHeaderView: NSView {
+    private var snapshot: Snapshot?
+    private var selected: UUID?
+    private var selectedIndex: Int?
+    private(set) var camera = ArrangeCamera()
+    private var accessible: [UUID: AccessibleTrackHeader] = [:]
+    var onSelect: ((UUID) -> Void)?
+    var onScroll: ((Double, Double) -> Void)?
+    var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.list)
+        setAccessibilityLabel(text("Track"))
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    func setSnapshot(_ snapshot: Snapshot, selected: UUID?) {
+        guard self.snapshot !== snapshot || self.selected != selected else { return }
+        self.snapshot = snapshot
+        self.selected = selected
+        selectedIndex = (0..<snapshot.trackCount).first { snapshot.trackID(at: $0) == selected }
+        NSAccessibility.post(element: self, notification: .selectedRowsChanged)
+    }
+
+    func setCamera(_ camera: ArrangeCamera) {
+        guard self.camera != camera else { return }
+        self.camera = camera
+        NSAccessibility.post(element: self, notification: .layoutChanged)
+    }
+
+    private var rows: ArrangeRows {
+        camera.rows(trackCount: snapshot?.trackCount ?? 0, height: Double(bounds.height))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        let point = convert(event.locationInWindow, from: nil)
+        if let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) { onSelect?(id) }
+    }
+    override func scrollWheel(with event: NSEvent) {
+        onScroll?(Double(event.scrollingDeltaX), Double(event.scrollingDeltaY))
+    }
+    override func magnify(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        // Headers have no time coordinate. Time zoom anchors at the grid edge.
+        onZoom?(max(0.1, 1 + Double(event.magnification)), event.modifierFlags, CGPoint(x: 0, y: point.y))
+    }
+    override func keyDown(with event: NSEvent) { interpretKeyEvents([event]) }
+    override func moveUp(_ sender: Any?) { select(index: max(0, (selectedIndex ?? 1) - 1)) }
+    override func moveDown(_ sender: Any?) { select(index: (selectedIndex ?? -1) + 1) }
+    override func moveToBeginningOfDocument(_ sender: Any?) { select(index: 0) }
+    override func moveToEndOfDocument(_ sender: Any?) { select(index: (snapshot?.trackCount ?? 0) - 1) }
+
+    private func select(index: Int) {
+        if let id = snapshot?.trackID(at: index) { onSelect?(id) }
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        guard let snapshot, let window else { accessible = [:]; return [] }
+        var retained: [UUID: AccessibleTrackHeader] = [:]
+        let children: [AccessibleTrackHeader] = rows.visible.compactMap { index in
+            guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }
+            let child = accessible[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
+            child.setAccessibilityElement(true)
+            child.setAccessibilityRole(.row)
+            child.setAccessibilityLabel(name)
+            child.setAccessibilitySelected(id == selected)
+            child.setAccessibilityIdentifier(id.uuidString)
+            child.setAccessibilityParent(self)
+            let rect = rows.rect(at: index, width: Double(bounds.width)).intersection(bounds)
+            child.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil)))
+            child.actions.press = { [weak self] in self?.onSelect?(id) }
+            retained[id] = child
+            return child
+        }
+        accessible = retained
+        return children
+    }
+}
+
+@MainActor
+private final class TrackHeaderActions {
+    var press: (() -> Void)?
+}
+
+@MainActor
+private final class AccessibleTrackHeader: NSAccessibilityElement {
+    nonisolated let actions: TrackHeaderActions
+    init(actions: TrackHeaderActions) { self.actions = actions; super.init() }
+    override func accessibilityPerformPress() -> Bool {
+        Task { @MainActor [actions] in actions.press?() }
+        return true
+    }
+}

@@ -1,3 +1,4 @@
+import AppKit
 import EchodeAppCore
 import SwiftUI
 
@@ -6,6 +7,7 @@ struct EchodeApp: App {
     var body: some Scene {
         Window("Echode", id: "workspace") { ProjectWindow() }
             .defaultSize(width: 1200, height: 740)
+            .windowResizability(.contentMinSize)
             .commands { WorkspaceCommands() }
     }
 }
@@ -46,28 +48,23 @@ struct ProjectWindow: View {
 
 struct WorkspaceCommands: Commands {
     @FocusedValue(\.workspaceActions) private var actions
+    @FocusedValue(\.workspaceTextEntry) private var textEntry
     var body: some Commands {
-        CommandGroup(replacing: .newItem) {
-            Button(text("New Project")) { actions?.create() }.keyboardShortcut("n").disabled(actions?.canOpen != true)
-            Button(text("Open Project")) { actions?.open() }.keyboardShortcut("o").disabled(actions?.canOpen != true)
+        CommandGroup(replacing: .newItem) { item(.newProject); item(.openProject) }
+        CommandGroup(replacing: .undoRedo) { item(.undo); item(.redo) }
+        CommandMenu(text("Track")) { item(.addTrack); item(.plugins) }
+        CommandMenu(text("Playback")) { item(.playback); item(.stop); item(.output) }
+        CommandGroup(after: .sidebar) { item(.inspector); item(.browser); item(.editor); item(.palette) }
+    }
+    private func item(_ command: WorkspaceCommand) -> some View {
+        Button(command.title) {
+            if textEntry == true, command == .undo { NSApp.keyWindow?.firstResponder?.undoManager?.undo() }
+            else if textEntry == true, command == .redo { NSApp.keyWindow?.firstResponder?.undoManager?.redo() }
+            else { actions?.perform(command) }
         }
-        CommandGroup(replacing: .undoRedo) {
-            Button(text("Undo")) { actions?.undo() }.keyboardShortcut("z").disabled(actions?.canUndo != true)
-            Button(text("Redo")) { actions?.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(actions?.canRedo != true)
-        }
-        CommandMenu(text("Track")) {
-            Button(text("Add Track")) { actions?.addTrack() }.keyboardShortcut("t").disabled(actions?.canEdit != true)
-        }
-        CommandMenu(text("Playback")) {
-            Button(text("Play / Pause")) { actions?.playback() }.keyboardShortcut(.space, modifiers: []).disabled(actions?.canPlay != true)
-            Button(text("Stop")) { actions?.stop() }.keyboardShortcut(".", modifiers: .command).disabled(actions?.canPlay != true)
-        }
-        CommandGroup(after: .sidebar) {
-            Button(text("Toggle Inspector")) { actions?.inspector() }.keyboardShortcut("1", modifiers: [.command, .option])
-            Button(text("Toggle Files")) { actions?.browser() }.keyboardShortcut("2", modifiers: [.command, .option])
-            Button(text("Toggle Note Editor")) { actions?.editor() }.keyboardShortcut("3", modifiers: [.command, .option])
-            Button(text("Command Palette")) { actions?.palette() }.keyboardShortcut("p", modifiers: [.command, .shift])
-            Button(text("Plugins")) { actions?.plugins() }.disabled(actions?.canEdit != true)
-        }
+            .keyboardShortcut(command.shortcut)
+            // Text editing owns Space and its local undo stack.
+            .disabled(textEntry == true && (command == .undo || command == .redo) ? false :
+                actions?.enabled.contains(command) != true || (command == .playback && textEntry == true))
     }
 }

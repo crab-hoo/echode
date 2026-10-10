@@ -1,3 +1,4 @@
+import CoreText
 import EchodeBridge
 import Foundation
 import Testing
@@ -5,7 +6,7 @@ import Testing
 
 @MainActor
 struct PianoTests {
-    @Test func pitchRowsSnapAndSolfegeFollowTheDisplayKey() {
+    @Test func pitchRowsSnapAndDegreesFollowTheDisplayKey() {
         let camera = PianoCamera(topPitch: 72)
         #expect(camera.pitch(at: 0) == 72)
         #expect(camera.pitch(at: 19) == 72)
@@ -14,16 +15,88 @@ struct PianoTests {
         #expect(camera.tick(at: 10) == 176_400)
         #expect(PianoCamera.ticks(.infinity) == nil)
         #expect(PianoCamera.ticks(Double(Int64.max)) == nil)
-        #expect(DisplayKey().syllable(60) == "Do")
+        #expect(DisplayKey().degree(60) == 1)
+        #expect(DisplayKey().degreeLabel(60) == "I")
+        #expect(DisplayKey.numeral(1) == "I" && DisplayKey.numeral(4) == "IV" && DisplayKey.numeral(7) == "VII")
+        #expect(DisplayKey.numeral(0) == nil && DisplayKey.numeral(8) == nil)
         let minor = DisplayKey(tonic: 9, minor: true)
-        #expect(minor.syllable(69) == "Do")
-        #expect(minor.syllable(72) == "♭Mi")
-        #expect(minor.inScale(72))
-        #expect(!minor.inScale(73))
+        #expect(minor.degree(69) == 1)
+        #expect(minor.degree(72) == 3)
+        #expect(minor.degreeLabel(72) == "III")
+        #expect(minor.degree(73) == nil)
+        #expect(minor.degreeLabel(73) == nil)
         #expect(PianoGesture.mode(at: 1, start: 0, end: 2) == .move)
         #expect(PianoGesture.mode(at: 0, start: 0, end: 2) == .leftEdge)
         #expect(PianoGesture.mode(at: 2, start: 0, end: 2) == .rightEdge)
         #expect((PianoCamera().topPitch - 60) * PianoCamera().pixelsPerPitch < 96)
+    }
+
+    @Test func degreeNumbersRepeatAcrossOctavesForEveryDisplayKey() {
+        for tonic in 0..<12 {
+            for minor in [false, true] {
+                let key = DisplayKey(tonic: tonic, minor: minor)
+                let intervals = minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]
+                for octave in 0..<10 {
+                    for (index, interval) in intervals.enumerated() {
+                        let pitch = octave * 12 + tonic + interval
+                        if pitch <= 127 { #expect(key.degree(pitch) == index + 1) }
+                    }
+                    let chromatic = minor ? [1, 4, 6, 9, 11] : [1, 3, 6, 8, 10]
+                    for interval in chromatic {
+                        let pitch = octave * 12 + tonic + interval
+                        if pitch <= 127 { #expect(key.degree(pitch) == nil) }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test func degreeColumnShowsRomanNumeralsThatFit() {
+        let track = UUID()
+        let camera = PianoCamera(topPitch: 72)
+        let input = CanvasInput(snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 2)
+        let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+        let column = frame.labels.filter { $0.clip.x == 0 }.map(\.text)
+        let numerals = ["I", "II", "III", "IV", "V", "VI", "VII"]
+        #expect(column.contains("I–VII"))
+        #expect(numerals.allSatisfy(column.contains))
+        #expect(column.allSatisfy { $0 == "I–VII" || numerals.contains($0) })
+        let font = CTFontCreateUIFontForLanguage(.system, 12, nil)!
+        func width(_ name: String) -> Double {
+            let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): font]
+            return CTLineGetTypographicBounds(CTLineCreateWithAttributedString(NSAttributedString(string: name, attributes: attributes)), nil, nil, nil)
+        }
+        #expect(width("I–VII") <= frame.layout.degreeWidth - 4)
+        #expect(numerals.allSatisfy { width($0) <= frame.layout.degreeWidth - 8 })
+    }
+
+    @Test func keyboardAndGridIgnoreTheScaleAndEditingUsesTheGridOrigin() {
+        let track = UUID()
+        for top in [64.25, 72.0, 0.5, 127.0] {
+            for height in [12.0, 20.0, 48.0] {
+                let camera = PianoCamera(originBeat: 1.25, topPitch: top, pixelsPerPitch: height)
+                let input = CanvasInput(snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 211, scale: 2)
+                let first = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+                for key in [DisplayKey(tonic: 2), DisplayKey(tonic: 6, minor: true)] {
+                    let changed = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: key, preview: nil))
+                    #expect(first.gridInstances.map(\.rect) == changed.gridInstances.map(\.rect))
+                    #expect(first.gridInstances.map(\.color) == changed.gridInstances.map(\.color))
+                    #expect(first.keyboardInstances.map(\.rect) == changed.keyboardInstances.map(\.rect))
+                    #expect(first.keyboardInstances.map(\.color) == changed.keyboardInstances.map(\.color))
+                }
+                for row in first.rows {
+                    let point = first.layout.gridPoint(CGPoint(x: 135, y: Double(row.y) + height / 2))
+                    #expect(camera.pitch(at: point.y) == row.pitch)
+                }
+                #expect(first.layout.degreeWidth == 36 && first.layout.keyboardWidth == 44)
+                #expect(first.layout.gridPoint(CGPoint(x: 160, y: 44)) == CGPoint(x: 80, y: 20))
+                #expect(first.layout.paneRect(CGRect(x: 1, y: 2, width: 3, height: 4)) == CGRect(x: 81, y: 26, width: 3, height: 4))
+                #expect(!first.layout.grid.contains(CGPoint(x: 71, y: 100)))
+                #expect(!first.layout.grid.contains(CGPoint(x: 200, y: 23)))
+            }
+        }
+        let narrow = PianoLayout(width: 40, height: 10)
+        #expect(narrow.grid.width == 0 && narrow.grid.height == 0)
     }
 
     @Test func aDragIsOneDurableEditAndPreservesIdentityAndVelocity() async throws {

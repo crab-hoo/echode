@@ -13,12 +13,22 @@ public struct TrackRow: Identifiable, Sendable {
 public final class ProjectController {
     public private(set) var snapshot: Snapshot?
     public private(set) var tracks: [TrackRow] = []
+    public private(set) var documentID: UUID?
     public private(set) var projectURL: URL?
     public private(set) var busy = false
     public private(set) var undoCount = 0
     public private(set) var redoCount = 0
-    public var selection: UUID?
-    public var noteFocus: PianoNote.ID?
+    public var selection: UUID? {
+        didSet {
+            if let selection, !tracks.contains(where: { $0.id == selection }) { self.selection = nil }
+            if selection != oldValue { noteFocus = nil }
+        }
+    }
+    public var noteFocus: PianoNote.ID? {
+        didSet {
+            if let noteFocus, noteFocus.track != selection || snapshot?.pianoNote(noteFocus) == nil { self.noteFocus = nil }
+        }
+    }
     public var errorMessage: String?
     public private(set) var audio = AudioState()
     public private(set) var audioBusy = false
@@ -41,6 +51,7 @@ public final class ProjectController {
             let initialAudio = try initial.audioState()
             let previous = document
             document = opened
+            documentID = UUID()
             playback = opened.playbackFeed
             audio = initialAudio
             reportedAudioError = nil
@@ -56,40 +67,43 @@ public final class ProjectController {
 
     public func addTrack(name: String) async {
         guard !busy, document != nil else { return }
-        await edit(["type": "track.add", "name": name])
+        guard await edit(["type": "track.add", "name": name]) else { return }
         if let last = tracks.last { selection = last.id }
     }
 
-    public func insertPlugin(_ plugin: String) async {
-        guard let selection, !plugin.isEmpty else { return }
-        await edit(["type": "device.add", "track": selection.uuidString, "plugin": plugin])
+    @discardableResult
+    public func insertPlugin(_ plugin: String, on track: UUID? = nil, documentID: UUID? = nil) async -> Bool {
+        guard let target = track ?? selection, tracks.contains(where: { $0.id == target }), !plugin.isEmpty else { return false }
+        return await edit(["type": "device.add", "track": target.uuidString, "plugin": plugin], documentID: documentID)
     }
 
-    public func removeDevice(_ id: UUID) async {
-        await edit(["type": "device.remove", "device": id.uuidString])
+    public func removeDevice(_ id: UUID, documentID: UUID? = nil) async {
+        await edit(["type": "device.remove", "device": id.uuidString], documentID: documentID)
     }
 
-    public func insertNote(pitch: Int, beat: Double, length: Double) async {
-        guard let selection, pitch >= 0, pitch <= 127,
-              beat.isFinite, length.isFinite, beat >= 0, length > 0,
-              beat < Double(Int64.max) / 705_600, length < Double(Int64.max) / 705_600 else { return }
-        await edit([
-            "type": "note.insert", "track": selection.uuidString,
-            "pitch": pitch, "velocity": 100,
-            "start": Int64((beat * 705_600).rounded()),
-            "length": Int64((length * 705_600).rounded()),
-        ])
+    @discardableResult
+    public func insertNote(pitch: Int, beat: Double, length: Double, on track: UUID? = nil, documentID: UUID? = nil) async -> Bool {
+        guard let target = track ?? selection, tracks.contains(where: { $0.id == target }),
+              let start = PianoCamera.ticks(beat), let duration = PianoCamera.ticks(length),
+              NoteGeometry(start: start, length: duration, pitch: pitch).isValid else { return false }
+        return await edit([
+            "type": "note.insert", "track": target.uuidString,
+            "pitch": pitch, "velocity": 100, "start": start, "length": duration,
+        ], documentID: documentID)
     }
 
-    public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry) async {
+    @discardableResult
+    public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry, documentID: UUID? = nil) async -> Bool {
         guard let before = snapshot?.pianoNote(id), geometry.isValid,
-              before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch else { return }
-        await edit(["type": "note.edit", "track": id.track.uuidString, "clip": before.id.placement.uuidString,
-                    "note": id.note.uuidString, "pitch": geometry.pitch, "start": geometry.start, "length": geometry.length])
+              before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch else { return false }
+        return await edit(["type": "note.edit", "track": id.track.uuidString, "clip": before.id.placement.uuidString,
+                          "note": id.note.uuidString, "pitch": geometry.pitch, "start": geometry.start, "length": geometry.length], documentID: documentID)
     }
 
-    public func deleteNote(_ id: PianoNote.ID) async {
-        await edit(["type": "note.delete", "track": id.track.uuidString, "note": id.note.uuidString])
+    @discardableResult
+    public func deleteNote(_ id: PianoNote.ID, documentID: UUID? = nil) async -> Bool {
+        guard snapshot?.pianoNote(id) != nil else { return false }
+        return await edit(["type": "note.delete", "track": id.track.uuidString, "note": id.note.uuidString], documentID: documentID)
     }
 
     public func undo() async {
@@ -113,6 +127,7 @@ public final class ProjectController {
         busy = true
         let previous = document
         document = nil
+        documentID = nil
         playback = nil
         if let previous { await Task.detached { previous.shutdown() }.value }
         snapshot = nil
@@ -149,7 +164,7 @@ public final class ProjectController {
                 do {
                     let state = try await document.audio(.status)
                     if self.document === document {
-                        audio = state
+                        if audio != state { audio = state }
                         if let error = state.error, error != reportedAudioError { errorMessage = error }
                         reportedAudioError = state.error
                     }
@@ -170,8 +185,9 @@ public final class ProjectController {
         } catch { if self.document === document { report(error) } }
     }
 
-    private func edit(_ fields: [String: Any]) async {
-        guard !busy, let document else { return }
+    @discardableResult
+    private func edit(_ fields: [String: Any], documentID: UUID? = nil) async -> Bool {
+        guard !busy, let document, documentID == nil || documentID == self.documentID else { return false }
         busy = true
         defer { busy = false }
         do {
@@ -179,7 +195,8 @@ public final class ProjectController {
             publish(try await document.perform(String(decoding: bytes, as: UTF8.self)))
             undoCount += 1
             redoCount = 0
-        } catch { report(error) }
+            return true
+        } catch { report(error); return false }
     }
 
     private func publish(_ snapshot: Snapshot) {

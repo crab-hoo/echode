@@ -1,4 +1,4 @@
-.PHONY: app spike-app spike-audio check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
+.PHONY: app spike-app spike-arrange-frame spike-piano-frame spike-audio check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
 
 app:
 	bash scripts/build-app.sh
@@ -7,6 +7,15 @@ app:
 spike-app:
 	bash scripts/build-app.sh
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe "$(CURDIR)/target/spike-app.json"
+
+# Actual GPU pixels, without creating windows or controlling the computer UI.
+spike-arrange-frame:
+	cargo build -p echode-ffi
+	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen "$(CURDIR)/target/spike-arrange-frame.json"
+
+spike-piano-frame:
+	cargo build -p echode-ffi
+	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen-piano "$(CURDIR)/target/spike-piano-frame.json"
 
 # What every change must pass. It needs no audio hardware and has no timing thresholds,
 # so a failure always means the code is wrong.
@@ -63,7 +72,8 @@ advisories:
 # Release measurement of cross-process plugin hosting. See docs/spikes/S3-plugin-isolation.md.
 spike-isolation:
 	cargo build --release --workspace
-	cargo test --release -p echode-plugin-host --test isolation -- --include-ignored --nocapture
+	cargo test --release -p echode-plugin-host --test isolation -- --include-ignored --test-threads=1 --nocapture
+	cargo test --release -p echode-plugin-host --test hosted_playback -- --include-ignored --test-threads=1 --nocapture
 
 # Metal scroll/zoom measurement. See docs/spikes/S1-drawing.md.
 spike-draw:
