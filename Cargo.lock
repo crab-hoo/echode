@@ -716,6 +716,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "echode-ffi"
+version = "0.0.0"
+dependencies = [
+ "cbindgen",
+ "echode-actions",
+ "echode-history",
+ "echode-model",
+ "serde_json",
+]
+
+[[package]]
 name = "echode-history"
 version = "0.0.0"
 dependencies = [

@@ -18,11 +18,8 @@ def respond(event, invoke):
     if invoke() == 0:
         return {}
     return {"followup_message": (
-        "変更に必要な検査が完了していません。target/agent-check.log と "
+        "必要な検査が失敗したか、有効な結果を確認できませんでした。target/agent-check.log と "
         "target/verification/report.md を読み、失敗を直してください。"
-        "未実行の計測は scripts/verify.py --run ID で実行するか、"
-        "実機や作業範囲の理由を --defer ID --reason 理由 で記録してください。"
-        "deferred は合格ではないので、最終報告にも未実行の検査と理由を書いてください。"
         "その後 make verify を実行してください。"
     )}
 

@@ -1,0 +1,4 @@
+module CEchodeFfi {
+    header "echode.h"
+    export *
+}

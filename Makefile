@@ -1,4 +1,4 @@
-.PHONY: check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri rtsan
+.PHONY: check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
 
 # What every change must pass. It needs no audio hardware and has no timing thresholds,
 # so a failure always means the code is wrong.
@@ -11,6 +11,7 @@ check:
 	scripts/check-ffi.sh
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
 	cargo deny check licenses bans sources
+	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
 # Selection and evidence are shared by agents, the stop hook, and CI.
@@ -82,6 +83,10 @@ spike-render:
 # check-bridge has no timing assertions. spike-bridge also prints measurements.
 check-bridge:
 	bash scripts/spike-bridge.sh
+
+# Product Swift wrapper over echode-ffi. No timing assertions.
+check-shell:
+	bash scripts/check-shell.sh
 
 spike-bridge:
 	bash scripts/spike-bridge.sh --bench

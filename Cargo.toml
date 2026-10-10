@@ -12,6 +12,7 @@ members = [
     "crates/echode-actions",
     "crates/echode-cli",
     "crates/echode-api",
+    "crates/echode-ffi",
     "spikes/bridge",
 ]
 

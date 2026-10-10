@@ -1,0 +1,23 @@
+[package]
+name = "echode-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "C ABI from the document thread to Swift"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+echode-actions = { path = "../echode-actions" }
+echode-history = { path = "../echode-history" }
+echode-model = { path = "../echode-model" }
+serde_json = "1"
+
+[build-dependencies]
+cbindgen = "=0.29.4"
+
+[lints]
+workspace = true

@@ -1,5 +1,6 @@
 /target
 .build/
+swift/EchodeBridge/CEchodeFfi/include/echode.h
 __pycache__/
 **/*.rs.bk
 .DS_Store

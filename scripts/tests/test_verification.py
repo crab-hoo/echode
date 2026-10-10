@@ -1,4 +1,4 @@
-"""Check selection and evidence must fail closed, including after later edits."""
+"""Required checks fail closed; optional measurements do not block completion."""
 
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
@@ -65,7 +65,15 @@ class PolicyTests(unittest.TestCase):
         checks = self.selected("crates/echode-sandbox/src/lib.rs")
         self.assertTrue({"rtsan", "spike-engine", "spike-isolation"} <= checks)
         self.assertIn("advisories", self.selected("crates/echode-api/Cargo.toml"))
-        self.assertEqual(self.selected("Cargo.lock"), {check["id"] for check in self.policy["checks"]})
+
+    def test_common_settings_do_not_require_unrelated_measurements(self):
+        automatic = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
+        for path in self.policy["global_inputs"]:
+            with self.subTest(path=path):
+                expected = automatic | ({"advisories"} if path in ("Cargo.toml", "Cargo.lock", "deny.toml") else set())
+                self.assertEqual(self.selected(path), expected)
+        self.assertEqual(set(verify.select_checks(self.policy, [], all_checks=True)),
+                         {check["id"] for check in self.policy["checks"]})
 
     def test_infrastructure_runs_all_portable_checks_without_opening_windows(self):
         expected = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
@@ -150,8 +158,36 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual((code, count), (0, 0))
         (self.root / "src/example.rs").write_text("second edit\n")
         code, count = self.run_verify(arguments())
-        self.assertEqual((code, count), (1, 1))
-        self.assertNotIn("measure", self.report()["results"])
+        self.assertEqual((code, count), (0, 1))
+        self.assertEqual(self.report()["results"]["measure"], {"status": "not_run"})
+
+    def test_unrequested_measurements_do_not_trigger_a_stop_followup(self):
+        def invoke():
+            code, count = self.run_verify(arguments())
+            self.assertEqual(count, 1)
+            return code
+        self.assertEqual(hook.respond({"status": "completed"}, invoke), {})
+        self.assertEqual(self.report()["results"]["check"]["status"], "passed")
+        self.assertEqual(self.report()["results"]["measure"]["status"], "not_run")
+        self.assertEqual(self.run_verify(arguments()), (0, 0))
+        self.assertEqual(self.run_verify(arguments(all=True)), (0, 0))
+
+    def test_explicit_measurements_must_pass_and_failures_are_not_hidden_by_the_hook(self):
+        self.assertEqual(self.run_verify(arguments(only=["measure"])), (1, 0))
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
+        self.assertEqual(self.report()["results"]["measure"]["status"], "passed")
+        def fail_measurement(root, check, log):
+            return {"status": "failed" if check["id"] == "measure" else "passed"}
+        self.assertEqual(self.run_verify(arguments(run=["measure"], force=True), fail_measurement), (1, 2))
+        response = hook.respond({"status": "completed"}, lambda: self.run_verify(arguments())[0])
+        self.assertIn("followup_message", response)
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 1))
+
+    def test_required_failures_still_trigger_a_stop_followup(self):
+        response = hook.respond({"status": "completed"}, lambda: self.run_verify(
+            arguments(), lambda *args: {"status": "failed", "exit_code": 7})[0])
+        self.assertIn("followup_message", response)
+        self.assertEqual(self.report()["results"]["check"]["status"], "failed")
 
     def test_automatic_checks_cannot_be_deferred_or_forged_by_an_empty_reason(self):
         with self.assertRaises(ValueError):

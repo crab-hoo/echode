@@ -71,9 +71,9 @@ def select_checks(policy, changed, all_checks=False):
     infrastructure = matches(changed, policy["infrastructure"])
     for check in policy["checks"]:
         hits = sorted(set(path for area in check["areas"] for path in matches(changed, policy["areas"][area])))
-        reasons = global_hits + hits
+        reasons = hits
         if check["mode"] == "automatic":
-            reasons += infrastructure
+            reasons += global_hits + infrastructure
         if all_checks or reasons or (changed and check.get("always")):
             selected[check["id"]] = sorted(set(reasons)) or ["all checks" if all_checks else "every change"]
     return selected
@@ -173,15 +173,16 @@ def save_report(directory, report, policy, selected):
         name = check["id"]
         if name not in selected:
             continue
-        result = report["results"].get(name, {"status": "pending"})
-        lines.append(f"- `{name}`: **{result['status']}** — {check['purpose']}")
+        kind = "自動検査" if check["mode"] == "automatic" else "計測などの候補"
+        result = report["results"][name]
+        lines.append(f"- `{name}` ({kind}): **{result['status']}** — {check['purpose']}")
         if result.get("reason"):
             lines.append(f"  - 未実行の理由: {result['reason']}")
         if result.get("log"):
             lines.append(f"  - ログ: [{name}]({name}.log)")
         lines.append("  - 選択の根拠: " + ", ".join(selected[name]))
     lines += ["", "## 対象の変更", ""] + [f"- `{path}`" for path in report["changed_paths"]]
-    lines += ["", "passed はこの識別値のソースだけに有効。deferred は合格ではなく、理由を記録した未実行。", ""]
+    lines += ["", "passed はこの識別値のソースだけに有効。not_run は候補の未実行で、完了を止めない。deferred は理由を任意に記録した未実行。not_run と deferred は合格ではない。", ""]
     temporary = directory / "report.md.tmp"
     temporary.write_text("\n".join(lines))
     temporary.replace(directory / "report.md")
@@ -235,7 +236,8 @@ def verify(root, args):
         raise ValueError("--run/--defer must be included in --only")
     if args.plan:
         for name, reasons in selected.items():
-            print(f"{name} [{checks[name]['mode']}]: {checks[name]['purpose']}")
+            kind = "自動検査" if checks[name]["mode"] == "automatic" else "計測などの候補"
+            print(f"{name} [{kind}]: {checks[name]['purpose']}")
             print("  " + ", ".join(reasons))
         if not selected:
             print("対象の変更はありません。コミット済みの変更には --base、全検査には --all を指定します。")
@@ -246,6 +248,9 @@ def verify(root, args):
         stamp = fingerprint(root, changed, args.base, tools)
         report = load_report(directory, stamp)
         report.update({"changed_paths": changed, "base": args.base, "selected": selected, "tools": tools})
+        for name in selected:
+            status = "pending" if checks[name]["mode"] == "automatic" else "not_run"
+            report["results"].setdefault(name, {"status": status})
         for name in args.defer:
             report["results"][name] = {"status": "deferred", "reason": args.reason.strip()}
         save_report(directory, report, policy, selected)
@@ -278,12 +283,20 @@ def verify(root, args):
         if changed_paths(root, args.base) != changed or fingerprint(root, changed, args.base, tool_identity(root)) != stamp:
             print("検査の確認中に変更がありました。make verify を再実行してください。", file=sys.stderr)
             return 1
-        pending = [name for name in requested if report["results"].get(name, {}).get("status") not in ("passed", "deferred")]
+        # Unrequested measurements are suggestions, not completion requirements.
+        # A failed/interrupted explicit run must still be addressed on the next run.
+        pending = [name for name in requested
+                   if report["results"][name]["status"] not in ("passed", "deferred")
+                   and (checks[name]["mode"] == "automatic" or name in args.run or name in args.only
+                        or report["results"][name]["status"] != "not_run")]
         print("結果: target/verification/report.md", flush=True)
         if pending:
-            print("未実行: " + ", ".join(sorted(pending)), file=sys.stderr)
-            print("計測は --run ID で実行するか、--defer ID --reason 理由 で未実行の理由を記録してください。", file=sys.stderr)
+            print("完了していない検査: " + ", ".join(sorted(pending)), file=sys.stderr)
+            print("ログを確認して失敗を直してください。明示した計測の実行には --run ID を使います。", file=sys.stderr)
             return 1
+        suggestions = [name for name in requested if report["results"][name]["status"] == "not_run"]
+        if suggestions:
+            print("計測などの候補: " + ", ".join(sorted(suggestions)) + "（必要なら --run ID で実行）", flush=True)
         return 0
 
 

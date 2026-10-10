@@ -79,7 +79,7 @@ Swift のコードは役割ごとに Swift Package に分け、アプリ本体�
 | モジュール | 役割 |
 |---|---|
 | `EchodeApp` | アプリのライフサイクル、ウィンドウ、メニュー（メニュー項目もすべてアクション）、複数プロジェクトの管理 |
-| `EchodeBridge` | Rust の FFI を Swift から自然に使えるように包む層 |
+| `EchodeBridge` | Rust の FFI を Swift から自然に使えるように包む層。実装は `swift/EchodeBridge` で、`echode-ffi` の C ABI を非同期関数と所有するスナップショットへ包む |
 | `EchodeCanvas` | Metal の 2D レンダラーと、それで描く画面（アレンジ画面、ピアノロール、オーディオエディタ、オートメーション、メーター） |
 | `EchodeUI` | インスペクター、ブラウザ、デバイスビュー、ミキサー、設定、履歴の画面 |
 | `EchodeInput` | ジェスチャー、触覚、キーボード MIDI、疑似 MPE、キーマップとマウスコマンドの解決 |
