@@ -15,6 +15,34 @@ const RATE: u32 = 48_000;
 const BLOCKS: [u32; 4] = [1, 7, 64, 512];
 const VOICES_PER_TRACK: usize = 8;
 
+#[test]
+fn product_playback_matches_offline_export_for_every_block_size() {
+    let project = project();
+    let frames = 100000u32;
+    let mut expected = vec![0.0; frames as usize * 2];
+    echode_engine::render_offline(&project, RATE, frames, &mut expected).unwrap();
+    for block in BLOCKS {
+        let (mut control, mut audio) =
+            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::Play)
+            .unwrap();
+        let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+        let mut output = Vec::with_capacity(expected.len());
+        let mut remaining = frames;
+        while remaining > 0 {
+            let count = remaining.min(block) as usize;
+            audio.render(&mut left[..count], &mut right[..count]);
+            for (left, right) in left.iter().zip(&right).take(count) {
+                output.extend([*left, *right]);
+            }
+            remaining -= count as u32;
+        }
+        assert!(!control.status().failed);
+        assert_eq!(output, expected, "product block {block}");
+    }
+}
+
 fn tempo() -> TempoMap {
     TempoMap::new(Tempo::quarters_per_minute(120).unwrap())
 }

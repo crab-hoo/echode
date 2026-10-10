@@ -3,7 +3,12 @@
 //! The interval tree is built when the snapshot changes. A frame only walks
 //! branches that can intersect the view and writes into the caller's buffer.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+#[path = "piano.rs"]
+mod piano;
+pub use piano::{PianoNote, PianoView};
 
 use echode_model::{Content, Id, Note, Placement, Project, Tick, Track};
 
@@ -56,11 +61,20 @@ const NOTE_HEIGHT: f64 = 0.72;
 pub struct ArrangeIndex {
     contents: Vec<Arc<ContentIndex>>,
     placements: Vec<Arc<PlacementIndex>>,
+    tracks: BTreeMap<Id, usize>,
 }
 
 #[derive(Debug)]
 struct ContentIndex {
     content: Arc<Content>,
+    ends: MaxEnd,
+    pitches: Vec<PitchIndex>,
+}
+
+#[derive(Debug)]
+struct PitchIndex {
+    pitch: u8,
+    notes: Vec<usize>,
     ends: MaxEnd,
 }
 
@@ -183,6 +197,12 @@ fn upper_bound(len: usize, start_of: &impl Fn(usize) -> i64, query_end: i64) -> 
 impl ArrangeIndex {
     pub fn build(project: &Project) -> Self {
         Self {
+            tracks: project
+                .tracks()
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (t.id, i))
+                .collect(),
             contents: project
                 .contents()
                 .iter()
@@ -227,6 +247,12 @@ impl ArrangeIndex {
         Self {
             contents,
             placements,
+            tracks: project
+                .tracks()
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (t.id, i))
+                .collect(),
         }
     }
 
@@ -243,6 +269,11 @@ impl ArrangeIndex {
             }
         });
         (written as u32, dropped)
+    }
+
+    /// Every element that intersects `view`, including ones past a short buffer.
+    pub fn visit_visible(&self, project: &Project, view: ArrangeView, emit: impl FnMut(Element)) {
+        self.each_visible(project, view, emit);
     }
 
     /// The front-most element whose rectangle contains the point.
@@ -345,11 +376,7 @@ impl ArrangeIndex {
         for track_index in first..last {
             let track = &project.tracks()[track_index];
             emit(track_element(track.id, track_index, &view));
-            let Some(slot) = self
-                .placements
-                .iter()
-                .position(|index| index.track == track.id)
-            else {
+            let Some(&slot) = self.tracks.get(&track.id) else {
                 continue;
             };
             let track_id = track.id;
@@ -432,9 +459,30 @@ impl ContentIndex {
             .iter()
             .map(|note| range_end(note.start.get(), note.length.get()))
             .collect();
+        let mut by_pitch: BTreeMap<u8, Vec<usize>> = BTreeMap::new();
+        for (index, note) in content.notes.iter().enumerate() {
+            by_pitch.entry(note.pitch).or_default().push(index);
+        }
+        let pitches = by_pitch
+            .into_iter()
+            .map(|(pitch, notes)| {
+                let ends: Vec<_> = notes
+                    .iter()
+                    .map(|&i| {
+                        range_end(content.notes[i].start.get(), content.notes[i].length.get())
+                    })
+                    .collect();
+                PitchIndex {
+                    pitch,
+                    notes,
+                    ends: MaxEnd::build(&ends),
+                }
+            })
+            .collect();
         Self {
             content,
             ends: MaxEnd::build(&ends),
+            pitches,
         }
     }
 

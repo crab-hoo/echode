@@ -14,3 +14,7 @@ mkdir -p "$include"
 cp "$header" "$include/echode.h"
 swift test --package-path swift/EchodeBridge --scratch-path target/echode-bridge-tests \
     -Xswiftc -warnings-as-errors
+swift test --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
+    -Xswiftc -warnings-as-errors
+swift build --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
+    -Xswiftc -warnings-as-errors

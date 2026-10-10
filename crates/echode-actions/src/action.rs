@@ -5,7 +5,9 @@
 
 use std::fmt;
 
-use echode_model::{ChangeSet, Id, Meter, MixerIds, ModelError, NoteDraft, Project, Tempo, Tick};
+use echode_model::{
+    ChangeSet, Id, Meter, MixerIds, ModelError, NoteDraft, NoteGeometry, Project, Tempo, Tick,
+};
 use serde::{Deserialize, Serialize};
 
 /// Names shown in the command palette and handed to the on-device model.
@@ -296,6 +298,21 @@ define_actions! {
             project
                 .insert_note_with_id(*track, *note, *clip, content, *draft)
                 .map_err(Into::into)
+        }
+    }
+    EditNote {
+        id: "note.edit",
+        name_ja: "ノートを編集する",
+        name_en: "Edit a note",
+        description_ja: "ノートの音高、開始、長さを変える。ID と表現は保つ",
+        description_en: "Change pitch, start, and length, preserving identity and expression",
+        command { track: Id, clip: Id, note: Id, pitch: u8, start: Tick, length: Tick }
+        action { track: Id, clip: Id, note: Id, pitch: u8, start: Tick, length: Tick }
+        commit { Action::EditNote { track, clip, note, pitch, start, length } }
+        edit |project: &Project| {
+            project.edit_note(*track, *clip, *note, NoteGeometry {
+                pitch: *pitch, start: *start, length: *length,
+            }).map_err(Into::into)
         }
     }
     DeleteNote {

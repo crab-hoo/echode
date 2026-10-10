@@ -1,4 +1,12 @@
-.PHONY: check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
+.PHONY: app spike-app spike-audio check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
+
+app:
+	bash scripts/build-app.sh
+
+# Product arrange and piano rendering continue while MainActor is deliberately busy.
+spike-app:
+	bash scripts/build-app.sh
+	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe "$(CURDIR)/target/spike-app.json"
 
 # What every change must pass. It needs no audio hardware and has no timing thresholds,
 # so a failure always means the code is wrong.
@@ -61,7 +69,7 @@ spike-isolation:
 spike-draw:
 	cargo build --release -p echode-draw
 	cargo test --release -p echode-draw -- --nocapture
-	cd spikes/draw && swift run -c release -- --bench --report ../../target/spike-s1.txt
+	cd spikes/draw && swift run -c release EchodeDraw --bench --report ../../target/spike-s1.txt
 
 # Plain-text project history. See docs/spikes/S4-history.md.
 spike-history:
@@ -115,3 +123,8 @@ spike-engine:
 # downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).
 rtsan:
 	RTSAN_ENABLE=1 cargo test -p echode-engine --features rtsan under_rtsan -- --nocapture
+	RTSAN_ENABLE=1 cargo test -p echode-audio-io --features rtsan under_rtsan -- --nocapture
+
+# Product HAL callback/lifecycle probe. Writes silence and never opens a window.
+spike-audio:
+	cargo test --release -p echode-audio-io -- --ignored --nocapture

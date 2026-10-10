@@ -12,9 +12,12 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 echode-actions = { path = "../echode-actions" }
+echode-audio-io = { path = "../echode-audio-io" }
+echode-draw = { path = "../echode-draw" }
 echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }
 serde_json = "1"
+uuid = "1"
 
 [build-dependencies]
 cbindgen = "=0.29.4"

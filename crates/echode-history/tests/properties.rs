@@ -37,6 +37,14 @@ enum Step {
         track: usize,
         note: usize,
     },
+    EditNote {
+        track: usize,
+        clip: usize,
+        note: usize,
+        start: i64,
+        length: i64,
+        pitch: u8,
+    },
     ResizeClip {
         track: usize,
         clip: usize,
@@ -93,6 +101,8 @@ fn step() -> impl Strategy<Value = Step> {
             }
         ),
         2 => (any::<usize>(), any::<usize>()).prop_map(|(track, note)| Step::DeleteNote { track, note }),
+        4 => (any::<usize>(), any::<usize>(), any::<usize>(), -16i64..96, 1i64..24, 0u8..=127)
+            .prop_map(|(track, clip, note, start, length, pitch)| Step::EditNote { track, clip, note, start, length, pitch }),
         2 => (any::<usize>(), any::<usize>(), -16i64..96, 1i64..48).prop_map(
             |(track, clip, start, length)| Step::ResizeClip {
                 track,
@@ -194,6 +204,28 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
             Command::DeleteNote {
                 track: id,
                 note: pick(&notes, *note)?,
+            }
+        }
+        Step::EditNote {
+            track: index,
+            clip,
+            note,
+            start,
+            length,
+            pitch,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let placement = owner.clips.get(*clip % owner.clips.len().max(1))?;
+            let content = project.content(placement.content)?;
+            let target = content.notes.get(*note % content.notes.len().max(1))?;
+            Command::EditNote {
+                track: id,
+                clip: placement.id,
+                note: target.id,
+                pitch: *pitch,
+                start: Tick::new(start * EIGHTH),
+                length: Tick::new(length * EIGHTH),
             }
         }
         Step::ResizeClip {

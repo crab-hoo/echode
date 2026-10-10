@@ -57,6 +57,30 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("spike-input", checks)
         self.assertNotIn("rtsan", checks)
 
+    def test_product_bridge_and_app_select_ownership_checks(self):
+        for path in ("crates/echode-ffi/src/queue.rs", "swift/EchodeBridge/Sources/EchodeBridge/Document.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift"):
+            with self.subTest(path=path):
+                self.assertTrue({"check", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
+                self.assertTrue({"rtsan", "spike-engine", "spike-audio"} <= self.selected(path))
+
+    def test_product_audio_selects_realtime_and_an_explicit_silent_hal_probe(self):
+        for path in ("crates/echode-audio-io/src/stream.rs", "crates/echode-engine/src/playback.rs",
+                     "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift"):
+            with self.subTest(path=path):
+                self.assertTrue({"check", "rtsan", "spike-engine", "spike-audio"} <= self.selected(path))
+                self.assertNotIn("spike-input", self.selected(path))
+                if path.startswith("crates/echode-audio-io"):
+                    self.assertIn("check-bridge-asan", self.selected(path))
+
+    def test_product_drawing_has_a_separate_real_display_probe(self):
+        self.assertIn("spike-app", self.selected("swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift"))
+        for file in ("PianoRollView.swift", "PianoGeometry.swift"):
+            with self.subTest(file=file):
+                checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + file)
+                self.assertTrue({"spike-app", "spike-draw", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= checks)
+        self.assertNotIn("spike-app", self.selected("crates/echode-engine/src/voice.rs"))
+
     def test_input_has_both_headless_tests_and_an_explicit_hardware_check(self):
         self.assertEqual(self.selected("spikes/input/Sources/EchodeInputCore/Gesture.swift"),
                          {"check", "check-input", "spike-input"})

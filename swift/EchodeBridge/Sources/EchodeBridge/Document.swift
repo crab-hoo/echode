@@ -1,4 +1,5 @@
 import CEchodeFfi
+import Foundation
 
 /// A command the document thread rejected, or a package that could not be opened.
 public struct BridgeError: Error, Sendable {
@@ -20,8 +21,176 @@ public final class Snapshot: @unchecked Sendable {
         echode_snapshot_free(handle)
     }
 
-    public var trackCount: UInt32 {
+    public var trackCount: Int {
         echode_snapshot_track_count(handle)
+    }
+
+    public func audioState() throws -> AudioState {
+        try withExtendedLifetime(self) {
+            var count = 0
+            guard let bytes = echode_snapshot_audio(handle, &count) else {
+                throw BridgeError(message: "audio state is unavailable")
+            }
+            return try JSONDecoder().decode(AudioState.self, from: Data(bytes: bytes, count: count))
+        }
+    }
+
+    /// UUID of the track at `index` in arrange order.
+    public func trackID(at index: Int) -> UUID? {
+        guard index >= 0 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 16)
+        let code = bytes.withUnsafeMutableBufferPointer { buffer in
+            echode_snapshot_track_id(handle, index, buffer.baseAddress)
+        }
+        guard code == 0 else { return nil }
+        return bytes.withUnsafeBytes { raw in
+            UUID(uuid: (
+                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]
+            ))
+        }
+    }
+
+    public func trackName(at index: Int) -> String? {
+        guard index >= 0 else { return nil }
+        return withExtendedLifetime(self) {
+            var count = 0
+            guard let bytes = echode_snapshot_track_name(handle, index, &count) else { return nil }
+            return String(decoding: UnsafeBufferPointer(start: bytes, count: count), as: UTF8.self)
+        }
+    }
+
+    /// Copies the visible arrange elements. The borrowed C buffer does not escape.
+    public func visibleElements(
+        originTick: Int64,
+        widthTicks: Int64,
+        originTrack: Double,
+        heightTracks: Double,
+        pixelsPerTick: Double,
+        pixelsPerTrack: Double
+    ) -> (elements: [ArrangeElement], dropped: Int) {
+        withExtendedLifetime(self) {
+            var written = 0
+            var dropped = 0
+            _ = echode_snapshot_visible(
+                handle, originTick, widthTicks, originTrack, heightTracks,
+                pixelsPerTick, pixelsPerTrack, nil, 0, &written, &dropped
+            )
+            let count = Int(dropped)
+            guard count > 0 else { return ([], 0) }
+            let buffer = UnsafeMutableBufferPointer<VisibleElement>.allocate(capacity: count)
+            defer { buffer.deallocate() }
+            _ = echode_snapshot_visible(
+                handle, originTick, widthTicks, originTrack, heightTracks,
+                pixelsPerTick, pixelsPerTrack, buffer.baseAddress, count, &written, &dropped
+            )
+            return (buffer.prefix(written).map(ArrangeElement.init), dropped)
+        }
+    }
+
+    public func pianoNotes(track: UUID, originTick: Int64, widthTicks: Int64,
+                           topPitch: Double, heightPitches: Double,
+                           pixelsPerTick: Double, pixelsPerPitch: Double) -> [PianoNote] {
+        withExtendedLifetime(self) {
+            withIDs(track: track, placement: nil, note: nil) { track, _, _ in
+                var written = 0
+                var dropped = 0
+                guard echode_snapshot_piano_visible(handle, track, originTick, widthTicks, topPitch, heightPitches,
+                                                     pixelsPerTick, pixelsPerPitch, nil, 0, &written, &dropped) == 0,
+                      dropped > 0 else { return [] }
+                let buffer = UnsafeMutableBufferPointer<PianoNoteElement>.allocate(capacity: dropped)
+                defer { buffer.deallocate() }
+                guard echode_snapshot_piano_visible(handle, track, originTick, widthTicks, topPitch, heightPitches,
+                                                     pixelsPerTick, pixelsPerPitch, buffer.baseAddress, buffer.count,
+                                                     &written, &dropped) == 0 else { return [] }
+                return buffer.prefix(written).map(PianoNote.init)
+            }
+        }
+    }
+
+    public func pianoNote(_ id: PianoNote.ID) -> PianoNote? {
+        withIDs(track: id.track, placement: id.placement, note: id.note) { track, clip, note in
+            var raw = PianoNoteElement()
+            return echode_snapshot_piano_note(handle, track, clip, note, &raw) == 0 ? PianoNote(raw) : nil
+        }
+    }
+
+    public func pianoNeighbor(track: UUID, current: PianoNote.ID?, backwards: Bool = false) -> PianoNote? {
+        withIDs(track: track, placement: current?.placement, note: current?.note) { track, clip, note in
+            var raw = PianoNoteElement()
+            return echode_snapshot_piano_neighbor(handle, track, clip, note, backwards ? 1 : 0, &raw) == 0 ? PianoNote(raw) : nil
+        }
+    }
+}
+
+public struct PianoNote: Sendable, Identifiable {
+    public struct ID: Sendable, Hashable {
+        public let track: UUID
+        public let placement: UUID
+        public let note: UUID
+    }
+    public let id: ID
+    public let start: Int64
+    public let length: Int64
+    public let windowStart: Int64
+    public let windowEnd: Int64
+    public let pitch: Int
+    public let velocity: UInt32
+    public let x: Float
+    public let y: Float
+    public let width: Float
+    public let height: Float
+
+    fileprivate init(_ raw: PianoNoteElement) {
+        id = ID(track: UUID(uuid: raw.track_id), placement: UUID(uuid: raw.placement_id), note: UUID(uuid: raw.note_id))
+        start = raw.start; length = raw.length; windowStart = raw.window_start; windowEnd = raw.window_end
+        pitch = Int(raw.pitch); velocity = raw.velocity
+        x = raw.x; y = raw.y; width = raw.w; height = raw.h
+    }
+}
+
+private func withIDs<T>(track: UUID, placement: UUID?, note: UUID?,
+                        _ body: (UnsafePointer<UInt8>, UnsafePointer<UInt8>?, UnsafePointer<UInt8>?) -> T) -> T {
+    var trackBytes = track.uuid
+    var clipBytes = (placement ?? track).uuid
+    var noteBytes = (note ?? track).uuid
+    return withUnsafeBytes(of: &trackBytes) { trackRaw in
+        withUnsafeBytes(of: &clipBytes) { clipRaw in
+            withUnsafeBytes(of: &noteBytes) { noteRaw in
+                body(trackRaw.bindMemory(to: UInt8.self).baseAddress!,
+                     placement == nil ? nil : clipRaw.bindMemory(to: UInt8.self).baseAddress!,
+                     note == nil ? nil : noteRaw.bindMemory(to: UInt8.self).baseAddress!)
+            }
+        }
+    }
+}
+
+/// Value objects keep the C layout and raw pointers inside the bridge.
+public struct ArrangeElement: Sendable, Identifiable {
+    public enum Role: UInt32, Sendable { case track = 0, clip = 1, note = 2 }
+    public struct ID: Sendable, Hashable {
+        public let track: UUID
+        public let placement: UUID?
+        public let note: UUID?
+    }
+    public let id: ID
+    public let role: Role
+    public let x: Float
+    public let y: Float
+    public let width: Float
+    public let height: Float
+
+    fileprivate init(_ raw: VisibleElement) {
+        id = ID(
+            track: UUID(uuid: raw.track_id),
+            placement: raw.has_placement == 1 ? UUID(uuid: raw.placement_id) : nil,
+            note: raw.has_note == 1 ? UUID(uuid: raw.note_id) : nil
+        )
+        role = Role(rawValue: raw.role)!
+        x = raw.x
+        y = raw.y
+        width = raw.w
+        height = raw.h
     }
 }
 
@@ -68,6 +237,13 @@ public final class Document: @unchecked Sendable {
         self.handle = handle
     }
 
+    /// Opens an existing package and replays its durable journal.
+    public init(opening path: String) throws {
+        let handle = path.withCString { echode_document_open($0) }
+        guard let handle else { throw BridgeError(message: "could not recover the package") }
+        self.handle = handle
+    }
+
     deinit {
         echode_document_close(handle)
     }
@@ -89,6 +265,46 @@ public final class Document: @unchecked Sendable {
                     completeCommand
                 )
             }
+        }
+    }
+
+    public func snapshot() async throws -> Snapshot {
+        try await query(UInt32(ECHODE_DOCUMENT_SNAPSHOT))
+    }
+
+    public var playbackFeed: PlaybackFeed { PlaybackFeed(self) }
+
+    var playbackPosition: PlaybackPosition {
+        var value = TransportPosition()
+        _ = echode_document_position(handle, &value)
+        return PlaybackPosition(tick: value.tick, playing: value.playing != 0)
+    }
+
+    public func audio(_ command: AudioCommand) async throws -> AudioState {
+        try Task.checkCancellation()
+        let bytes = Array(try JSONEncoder().encode(command))
+        let snapshot: Snapshot = try await withCheckedThrowingContinuation { continuation in
+            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+            bytes.withUnsafeBufferPointer { buffer in
+                _ = echode_document_audio(handle, buffer.baseAddress, buffer.count, context, completeCommand)
+            }
+        }
+        return try snapshot.audioState()
+    }
+
+    public func undo() async throws -> Snapshot {
+        try await query(UInt32(ECHODE_DOCUMENT_UNDO))
+    }
+
+    public func redo() async throws -> Snapshot {
+        try await query(UInt32(ECHODE_DOCUMENT_REDO))
+    }
+
+    private func query(_ operation: UInt32) async throws -> Snapshot {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+            _ = echode_document_query(handle, operation, context, completeCommand)
         }
     }
 

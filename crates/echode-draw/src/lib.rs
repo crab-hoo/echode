@@ -8,7 +8,7 @@
 mod ffi;
 mod query;
 
-pub use query::{ArrangeIndex, ArrangeView, Element, ElementId, Role};
+pub use query::{ArrangeIndex, ArrangeView, Element, ElementId, PianoNote, PianoView, Role};
 
 use std::ops::Range;
 

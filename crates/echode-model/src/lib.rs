@@ -44,8 +44,8 @@ pub use id::Id;
 pub use invariants::InvariantError;
 pub use model::{
     ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind, ExpressionPoint,
-    FADE_RATE_LIMIT, Lane, ModelError, Note, NoteDraft, Placement, Project, Track, fade_allowed,
-    fade_frames, initial_order, midi7_to_velocity, velocity_to_midi7,
+    FADE_RATE_LIMIT, Lane, ModelError, Note, NoteDraft, NoteGeometry, Placement, Project, Track,
+    fade_allowed, fade_frames, initial_order, midi7_to_velocity, velocity_to_midi7,
 };
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,

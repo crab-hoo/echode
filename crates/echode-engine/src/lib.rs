@@ -16,6 +16,7 @@ mod handoff;
 mod mix;
 mod outputs;
 mod plan;
+mod playback;
 mod realtime;
 mod render;
 mod resample;
@@ -35,6 +36,11 @@ pub use handoff::{Audio, Control, Cycle, pair};
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
+pub use playback::{
+    ClockSource, InternalClock, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
+    playback_pair, playback_with_clock,
+};
+pub use realtime::ForbidAlloc;
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;
 pub use render::{OfflineError, render_offline, render_offline_blocks, render_span_frames};

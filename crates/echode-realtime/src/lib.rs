@@ -203,6 +203,7 @@ impl Plan {
                         live_key: vec![0; count],
                         mark: vec![0; count],
                         epoch: 0,
+                        ends: EndIndex::new(&track.notes),
                     }
                 })
                 .collect(),
@@ -244,6 +245,29 @@ struct TrackCursor {
     live_key: Vec<u8>,
     mark: Vec<u32>,
     epoch: u32,
+    ends: EndIndex,
+}
+
+/// Built on the control thread. A seek visits overlapping notes, rather than
+/// every note that has ever started before the playhead.
+#[derive(Clone, Debug)]
+struct EndIndex {
+    leaves: usize,
+    maxima: Vec<i64>,
+}
+
+impl EndIndex {
+    fn new(notes: &[NoteSpan]) -> Self {
+        let leaves = notes.len().max(1).next_power_of_two();
+        let mut maxima = vec![i64::MIN; leaves * 2];
+        for (index, note) in notes.iter().enumerate() {
+            maxima[leaves + index] = note.off;
+        }
+        for index in (1..leaves).rev() {
+            maxima[index] = maxima[index * 2].max(maxima[index * 2 + 1]);
+        }
+        Self { leaves, maxima }
+    }
 }
 
 impl Cursor {
@@ -253,6 +277,30 @@ impl Cursor {
     /// allocated when the control thread built this cursor.
     pub fn catch_up(&mut self, plan: &Plan, sample: i64) {
         self.place(plan, sample, true);
+    }
+
+    /// Note-ons for the chased set, for an instrument starting in mid-note.
+    pub fn chase_events(&self, plan: &Plan, out: &mut [Event]) -> Result<usize, PlayError> {
+        let mut count = 0;
+        for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
+            for index in cursor.sounding.iter().take(cursor.sounding_len) {
+                let Some(note) = track.notes.get(*index as usize) else {
+                    continue;
+                };
+                push_event(
+                    out,
+                    &mut count,
+                    Event::note_on(
+                        0,
+                        track.track_key,
+                        note.note_id,
+                        note.pitch,
+                        unit_velocity(note.velocity),
+                    ),
+                )?;
+            }
+        }
+        Ok(count)
     }
 
     /// Copies note-on keys from `previous` onto notes that are still sounding.
@@ -403,12 +451,22 @@ impl TrackCursor {
         if !chase {
             return;
         }
-        for index in 0..self.on_index {
-            if track.notes[index].off >= sample {
-                let key = track.notes[index].pitch;
-                self.hold(index, key);
-            }
+        self.chase(track, sample, 1, 0, self.ends.leaves);
+    }
+
+    fn chase(&mut self, track: &TrackPlan, sample: i64, node: usize, start: usize, end: usize) {
+        if start >= self.on_index || self.ends.maxima.get(node).is_none_or(|max| *max < sample) {
+            return;
         }
+        if end - start == 1 {
+            if let Some(note) = track.notes.get(start) {
+                self.hold(start, note.pitch);
+            }
+            return;
+        }
+        let middle = start + (end - start) / 2;
+        self.chase(track, sample, node * 2, start, middle);
+        self.chase(track, sample, node * 2 + 1, middle, end);
     }
 
     fn hold(&mut self, index: usize, key: u8) {

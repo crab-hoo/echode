@@ -51,7 +51,6 @@ fn quarter_note(start: i64, length: i64) -> NoteDraft {
 }
 
 #[test]
-#[ignore = "MOD-6: a long note that starts inside an auto clip is refused instead of merged"]
 fn audit_mod6_a_long_note_merges_the_same_way_wherever_it_starts() {
     let clips_after = |start: i64, length: i64| {
         let (project, track) = Project::new().add_track("piano");

@@ -1,0 +1,24 @@
+[package]
+name = "echode-audio-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Product CoreAudio output and device notifications"
+
+[dependencies]
+echode-engine = { path = "../echode-engine" }
+echode-model = { path = "../echode-model" }
+objc2-core-audio = { version = "=0.3.2", default-features = false, features = ["std", "AudioHardware", "objc2-core-audio-types", "block2", "dispatch2", "objc2"] }
+objc2-core-audio-types = { version = "=0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFString"] }
+serde = { version = "1", features = ["derive"] }
+rtsan-standalone = { version = "=0.3.0", optional = true }
+block2 = "=0.6.2"
+
+[features]
+rtsan = ["echode-engine/rtsan", "dep:rtsan-standalone"]
+
+[lints]
+workspace = true

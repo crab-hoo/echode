@@ -78,6 +78,14 @@ pub struct NoteDraft {
     pub length: Tick,
 }
 
+/// Geometry of an existing note, in the timeline of the selected placement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoteGeometry {
+    pub pitch: u8,
+    pub start: Tick,
+    pub length: Tick,
+}
+
 /// A note stored relative to its content.
 ///
 /// `velocity` and `release` are 0..=65535. A MIDI 1.0 value `v` in 0..=127 is
@@ -548,6 +556,45 @@ impl Project {
         let mut tracks = self.tracks.clone();
         let mut track = (*tracks[index]).clone();
         crate::placement::delete(&mut contents, &mut tracks, &mut track, note_id, bar)?;
+        tracks[index] = Arc::new(track);
+        crate::placement::drop_unreferenced(&mut contents, &tracks);
+        Ok(self.with_parts(contents, tracks))
+    }
+
+    /// Edits shared content without replacing the note id or its expression data.
+    /// Auto placements follow the result; fixed windows keep their boundaries.
+    pub fn edit_note(
+        &self,
+        track_id: Id,
+        clip_id: Id,
+        note_id: Id,
+        geometry: NoteGeometry,
+    ) -> Result<Self, ModelError> {
+        validate_note(&NoteDraft {
+            pitch: geometry.pitch,
+            velocity: 0,
+            start: geometry.start,
+            length: geometry.length,
+        })?;
+        let index = self.track_index(track_id)?;
+        let bar = self
+            .meter
+            .bar_ticks()
+            .ok_or(ModelError::InvalidMeter)?
+            .get();
+        let mut contents = self.contents.clone();
+        let mut tracks = self.tracks.clone();
+        let mut track = (*tracks[index]).clone();
+        crate::placement::edit(
+            &mut contents,
+            &mut tracks,
+            &mut track,
+            clip_id,
+            note_id,
+            geometry,
+            bar,
+        )?;
+        sort_clips(&mut track.clips);
         tracks[index] = Arc::new(track);
         crate::placement::drop_unreferenced(&mut contents, &tracks);
         Ok(self.with_parts(contents, tracks))
@@ -1118,7 +1165,7 @@ pub(crate) fn fixed_blocks(
     })
 }
 
-fn sort_clips(clips: &mut [Placement]) {
+pub(crate) fn sort_clips(clips: &mut [Placement]) {
     clips.sort_by(|left, right| left.start.cmp(&right.start).then(left.id.cmp(&right.id)));
 }
 

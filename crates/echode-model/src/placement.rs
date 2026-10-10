@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::id::Id;
 use crate::model::{
-    ClipKind, Content, ModelError, Note, NoteDraft, Placement, Track, bars_touch, fixed_blocks,
-    occupied_bars, overlaps_others, overlaps_span,
+    ClipKind, Content, ModelError, Note, NoteDraft, NoteGeometry, Placement, Track, bars_touch,
+    fixed_blocks, occupied_bars, overlaps_others, overlaps_span,
 };
 use crate::time::Tick;
 
@@ -54,11 +54,18 @@ pub(super) fn insert(
     if hosts.is_empty() {
         return create_auto(contents, track, fresh, draft, note_bars, bar);
     }
-    merge(contents, tracks, track, &hosts, fresh.note, draft, bar)
+    let primary = *hosts
+        .iter()
+        .min_by_key(|&&index| (track.clips[index].start, track.clips[index].id))
+        .unwrap();
+    let owner = track.clips[primary].content;
+    let local = content_local(&track.clips[primary], draft.start.get())?;
+    push_note(contents, owner, fresh.note, local, draft)?;
+    merge(contents, tracks, track, &hosts, bar)
 }
 
 pub(super) fn delete(
-    contents: &mut [Arc<Content>],
+    contents: &mut Vec<Arc<Content>>,
     tracks: &mut [Arc<Track>],
     track: &mut Track,
     note_id: Id,
@@ -86,6 +93,38 @@ pub(super) fn delete(
         remove_auto(tracks, track, owner);
         return Ok(());
     }
+    refit_auto(contents, tracks, track, owner, bar)
+}
+
+pub(super) fn edit(
+    contents: &mut Vec<Arc<Content>>,
+    tracks: &mut [Arc<Track>],
+    track: &mut Track,
+    clip_id: Id,
+    note_id: Id,
+    geometry: NoteGeometry,
+    bar: i64,
+) -> Result<(), ModelError> {
+    let clip = track
+        .clips
+        .iter()
+        .find(|clip| clip.id == clip_id)
+        .ok_or(ModelError::MissingClip)?;
+    let owner = clip.content;
+    let local = content_local(clip, geometry.start.get())?;
+    local
+        .checked_add(geometry.length.get())
+        .ok_or(ModelError::InvalidNote)?;
+    let content = content_mut(contents, owner)?;
+    let note = content
+        .notes
+        .iter_mut()
+        .find(|note| note.id == note_id)
+        .ok_or(ModelError::MissingNote)?;
+    note.pitch = geometry.pitch;
+    note.start = Tick::new(local);
+    note.length = geometry.length;
+    crate::model::sort_notes(&mut content.notes);
     refit_auto(contents, tracks, track, owner, bar)
 }
 
@@ -150,8 +189,6 @@ fn merge(
     tracks: &mut [Arc<Track>],
     track: &mut Track,
     hosts: &[usize],
-    note_id: Id,
-    draft: &NoteDraft,
     bar: i64,
 ) -> Result<(), ModelError> {
     let mut order = hosts.to_vec();
@@ -186,20 +223,6 @@ fn merge(
         }
         retired.push((placement.id, placement.content, from_origin));
     }
-    let local = draft
-        .start
-        .get()
-        .checked_sub(primary_origin)
-        .ok_or(ModelError::InvalidNote)?;
-    absorbed.push(Note {
-        id: note_id,
-        start: Tick::new(local),
-        length: draft.length,
-        pitch: draft.pitch,
-        velocity: crate::model::midi7_to_velocity(draft.velocity),
-        release: 0,
-        articulation: None,
-    });
     {
         let content = content_mut(contents, primary_content)?;
         content.notes.extend(absorbed);
@@ -207,8 +230,11 @@ fn merge(
     }
     let removed: Vec<Id> = retired.iter().map(|(id, _, _)| *id).collect();
     track.clips.retain(|clip| !removed.contains(&clip.id));
-    for (_, content, _origin) in &retired {
-        retarget(tracks, track, *content, primary_content, primary_origin)?;
+    for (_, content, from_origin) in &retired {
+        let delta = from_origin
+            .checked_sub(primary_origin)
+            .ok_or(ModelError::InvalidNote)?;
+        retarget(tracks, track, *content, primary_content, delta)?;
         if !referenced(tracks, track, *content) {
             contents.retain(|item| item.id != *content);
         }
@@ -227,16 +253,16 @@ fn retarget(
     current: &mut Track,
     from: Id,
     to: Id,
-    origin_to: i64,
+    delta: i64,
 ) -> Result<(), ModelError> {
     let edit = |clip: &mut Placement| -> Result<(), ModelError> {
         if clip.content != from {
             return Ok(());
         }
         clip.offset = Tick::new(
-            clip.start
+            clip.offset
                 .get()
-                .checked_sub(origin_to)
+                .checked_add(delta)
                 .ok_or(ModelError::InvalidNote)?,
         );
         clip.content = to;
@@ -265,35 +291,108 @@ fn retarget(
 }
 
 fn refit_auto(
-    contents: &[Arc<Content>],
+    contents: &mut Vec<Arc<Content>>,
     tracks: &mut [Arc<Track>],
     current: &mut Track,
     content: Id,
     bar: i64,
 ) -> Result<(), ModelError> {
-    if let Some(index) = current
+    if current
         .clips
         .iter()
-        .position(|clip| clip.content == content && clip.kind == ClipKind::Auto)
+        .any(|clip| clip.content == content && clip.kind == ClipKind::Auto)
     {
-        return refit_one(contents, &mut current.clips, index, bar);
+        return refit_current(contents, tracks, current, content, bar);
     }
-    for track in tracks.iter_mut() {
-        if track.id == current.id {
+    for slot in 0..tracks.len() {
+        if tracks[slot].id == current.id {
             continue;
         }
-        let mut owned = (**track).clone();
-        if let Some(index) = owned
+        let mut owned = (*tracks[slot]).clone();
+        if owned
             .clips
             .iter()
-            .position(|clip| clip.content == content && clip.kind == ClipKind::Auto)
+            .any(|clip| clip.content == content && clip.kind == ClipKind::Auto)
         {
-            refit_one(contents, &mut owned.clips, index, bar)?;
-            *track = Arc::new(owned);
+            refit_current(contents, tracks, &mut owned, content, bar)?;
+            crate::model::sort_clips(&mut owned.clips);
+            // Merge may have retargeted fixed windows on the edited track too.
+            for clip in &mut current.clips {
+                if let Some(retargeted) = tracks
+                    .iter()
+                    .find(|track| track.id == current.id)
+                    .and_then(|track| track.clips.iter().find(|old| old.id == clip.id))
+                    && clip.content != retargeted.content
+                {
+                    clip.content = retargeted.content;
+                    clip.offset = retargeted.offset;
+                }
+            }
+            tracks[slot] = Arc::new(owned);
             return Ok(());
         }
     }
     Ok(())
+}
+
+fn refit_current(
+    contents: &mut Vec<Arc<Content>>,
+    tracks: &mut [Arc<Track>],
+    current: &mut Track,
+    content: Id,
+    bar: i64,
+) -> Result<(), ModelError> {
+    let index = current
+        .clips
+        .iter()
+        .position(|clip| clip.content == content && clip.kind == ClipKind::Auto)
+        .ok_or(ModelError::MissingClip)?;
+    let mut span = note_bars(contents, &current.clips[index], bar)?;
+    let mut hosts = vec![index];
+    loop {
+        let before = hosts.len();
+        for (slot, clip) in current.clips.iter().enumerate() {
+            if clip.kind != ClipKind::Auto || hosts.contains(&slot) {
+                continue;
+            }
+            let candidate = occupied_bars(clip.start.get(), clip.length.get(), bar)
+                .ok_or(ModelError::InvalidNote)?;
+            if bars_touch(span, candidate) && !fixed_blocks(&current.clips, span, candidate, bar) {
+                hosts.push(slot);
+                span = (span.0.min(candidate.0), span.1.max(candidate.1));
+            }
+        }
+        if before == hosts.len() {
+            break;
+        }
+    }
+    if hosts.len() == 1 {
+        refit_one(contents, &mut current.clips, index, bar)
+    } else {
+        merge(contents, tracks, current, &hosts, bar)
+    }
+}
+
+fn note_bars(
+    contents: &[Arc<Content>],
+    clip: &Placement,
+    bar: i64,
+) -> Result<(i64, i64), ModelError> {
+    let found = notes(contents, clip.content)?;
+    if found.is_empty() {
+        return Err(ModelError::InvalidNote);
+    }
+    let origin = origin(clip)?;
+    let mut span = (i64::MAX, i64::MIN);
+    for note in &found {
+        let absolute = origin
+            .checked_add(note.start.get())
+            .ok_or(ModelError::InvalidNote)?;
+        let occupied =
+            occupied_bars(absolute, note.length.get(), bar).ok_or(ModelError::InvalidNote)?;
+        span = (span.0.min(occupied.0), span.1.max(occupied.1));
+    }
+    Ok(span)
 }
 
 fn refit_one(

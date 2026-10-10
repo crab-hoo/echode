@@ -17,6 +17,12 @@ export RUSTFLAGS='-Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes'
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-bridge-spike --features fault-injection
+python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/product-rust-tests.log" \
+    cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
+    --release --lib -p echode-ffi
+python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/audio-rust-tests.log" \
+    cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
+    --release --lib -p echode-audio-io
 rustc "+$BRIDGE_NIGHTLY" --edition=2024 --crate-type bin \
     --target "$bridge_target" -Zsanitizer=address -Cdebuginfo=2 \
     spikes/bridge/sanitizers/Main.rs -o "$bridge_output/control/rust-probe"
@@ -56,3 +62,4 @@ swiftc "${swift_flags[@]}" -O -D BRIDGE_VALIDATION -Xcc -DECHODE_BRIDGE_FAULT_IN
     spikes/bridge/swift/CBridge.swift spikes/bridge/swift/CProbe.swift spikes/bridge/swift/ContractProbe.swift \
     -o "$bridge_output/c-probe"
 python3 scripts/run-bridge-validation.py --log "$bridge_output/c-probe.log" "$bridge_output/c-probe"
+bash scripts/check-product-bridge.sh address

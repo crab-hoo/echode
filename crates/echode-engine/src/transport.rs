@@ -8,6 +8,7 @@ use echode_model::{Meter, TICKS_PER_QUARTER, TempoMap, Tick};
 use echode_realtime::Event;
 
 use crate::clock::{sample_to_tick, tick_to_sample};
+use crate::{ClockSource, InternalClock};
 
 /// Why playback could not step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,10 +56,10 @@ pub struct PlayedSpan {
 
 /// Transport for one sample rate and tempo map.
 #[derive(Clone, Debug)]
-pub struct Transport {
+pub struct Transport<C: ClockSource = InternalClock> {
     sample_rate: u32,
     tempo: TempoMap,
-    position: i64,
+    clock: C,
     playing: bool,
     loop_start: Option<Tick>,
     loop_end: Option<Tick>,
@@ -66,15 +67,21 @@ pub struct Transport {
     has_wrapped: bool,
 }
 
-impl Transport {
+impl Transport<InternalClock> {
     pub fn new(sample_rate: u32, tempo: TempoMap) -> Result<Self, PlaybackError> {
+        Self::with_clock(sample_rate, tempo, InternalClock::default())
+    }
+}
+
+impl<C: ClockSource> Transport<C> {
+    pub fn with_clock(sample_rate: u32, tempo: TempoMap, clock: C) -> Result<Self, PlaybackError> {
         if sample_rate == 0 {
             return Err(PlaybackError::InvalidSampleRate);
         }
         Ok(Self {
             sample_rate,
             tempo,
-            position: 0,
+            clock,
             playing: false,
             loop_start: None,
             loop_end: None,
@@ -87,7 +94,7 @@ impl Transport {
     }
 
     pub fn position_sample(&self) -> i64 {
-        self.position
+        self.clock.position()
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -143,7 +150,7 @@ impl Transport {
     }
 
     pub fn locate(&mut self, tick: Tick) -> Result<(), PlaybackError> {
-        self.position = self.sample_at(tick)?;
+        self.clock.locate(self.sample_at(tick)?);
         self.has_wrapped = false;
         Ok(())
     }
@@ -178,11 +185,13 @@ impl Transport {
         if !self.playing || frames == 0 {
             return Ok(0);
         }
-        let position = self.position;
+        let position = self.clock.position();
+        let wrapped = self.has_wrapped;
         match self.pull_forward(frames, spans) {
             Ok(count) => Ok(count),
             Err(error) => {
-                self.position = position;
+                self.clock.locate(position);
+                self.has_wrapped = wrapped;
                 Err(error)
             }
         }
@@ -217,10 +226,10 @@ impl Transport {
         }
         let mut release_at = None;
         if let Some((loop_start, loop_end)) = self.loop_samples()?
-            && self.position >= loop_end
+            && self.clock.position() >= loop_end
         {
             release_at = Some(loop_end);
-            self.position = loop_start;
+            self.clock.locate(loop_start);
             self.has_wrapped = true;
         }
         let until_loop = self.frames_until_loop_end()?;
@@ -228,17 +237,14 @@ impl Transport {
         if frames == 0 {
             return Err(PlaybackError::InvalidLoop);
         }
-        let start = self.position;
+        let start = self.clock.position();
         let (loop_end, wrap_from) = match self.loop_samples()? {
             Some((loop_start, loop_end)) => {
                 (Some(loop_end), self.has_wrapped.then_some(loop_start))
             }
             None => (None, None),
         };
-        self.position = self
-            .position
-            .checked_add(i64::from(frames))
-            .ok_or(PlaybackError::Time)?;
+        self.clock.advance(frames)?;
         *budget -= frames;
         Ok(Some(PlayedSpan {
             start_sample: start,
@@ -254,7 +260,7 @@ impl Transport {
         let Some((_, loop_end)) = self.loop_samples()? else {
             return Ok(u32::MAX);
         };
-        let room = loop_end.saturating_sub(self.position);
+        let room = loop_end.saturating_sub(self.clock.position());
         if room <= 0 {
             return Err(PlaybackError::InvalidLoop);
         }
@@ -294,7 +300,7 @@ fn tempo_bpm(map: &TempoMap, tick: i64) -> f64 {
     f64::from(tempo.numerator()) / f64::from(tempo.denominator())
 }
 
-fn seconds_at(transport: &Transport, tick: i64) -> f64 {
+fn seconds_at<C: ClockSource>(transport: &Transport<C>, tick: i64) -> f64 {
     let sample =
         tick_to_sample(Tick::new(tick), transport.tempo(), transport.sample_rate()).unwrap_or(0);
     if transport.sample_rate() == 0 {
@@ -421,5 +427,41 @@ mod tests {
             PlaybackError::BufferTooSmall
         );
         assert_eq!(transport.position_sample(), 0);
+        assert!(!transport.has_wrapped);
+    }
+
+    #[test]
+    fn transport_can_consume_another_clock_provider() {
+        struct Clock(i64);
+        impl ClockSource for Clock {
+            fn position(&self) -> i64 {
+                self.0
+            }
+            fn locate(&mut self, sample: i64) {
+                self.0 = sample;
+            }
+            fn advance(&mut self, frames: u32) -> Result<(), PlaybackError> {
+                self.0 += i64::from(frames);
+                Ok(())
+            }
+        }
+        let mut transport = Transport::with_clock(
+            48000,
+            TempoMap::new(Tempo::quarters_per_minute(120).unwrap()),
+            Clock(123),
+        )
+        .unwrap();
+        transport.play();
+        let mut spans = [PlayedSpan {
+            start_sample: 0,
+            frames: 0,
+            block_offset: 0,
+            release_at: None,
+            loop_end: None,
+            wrap_from: None,
+        }; 1];
+        assert_eq!(transport.pull(64, &mut spans).unwrap(), 1);
+        assert_eq!(spans[0].start_sample, 123);
+        assert_eq!(transport.position_sample(), 187);
     }
 }

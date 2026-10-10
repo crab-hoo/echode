@@ -3,7 +3,7 @@ import Foundation
 import PackageDescription
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let rustLibraryDir = packageDir
+let rustLibraryDir = ProcessInfo.processInfo.environment["ECHODE_RUST_LIBRARY_DIR"] ?? packageDir
     .deletingLastPathComponent()
     .deletingLastPathComponent()
     .appendingPathComponent("target/debug")
@@ -11,7 +11,7 @@ let rustLibraryDir = packageDir
 
 let package = Package(
     name: "EchodeBridge",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("27.0")],
     products: [
         .library(name: "EchodeBridge", targets: ["EchodeBridge"])
     ],
@@ -20,8 +20,9 @@ let package = Package(
             name: "CEchodeFfi",
             path: "CEchodeFfi",
             publicHeadersPath: "include",
-            linkerSettings: [
+                linkerSettings: [
                 .linkedLibrary("echode_ffi"),
+                .linkedFramework("CoreAudio"),
                 .unsafeFlags(["-L", rustLibraryDir]),
             ]
         ),

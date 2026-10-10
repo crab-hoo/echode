@@ -9,7 +9,7 @@ Echode は macOS 専用の DAW です。方針は `docs/PLAN.md`、設計は `do
 
 ## 今あるもの
 
-Phase 0（S1 から S5）は確定済みです。今は Phase 1 のドキュメントモデルに入っています。設計書にある残りの crate は、その機能に着手する時に追加します。空の crate を先に並べないでください。
+Phase 0（S1 から S5）は確定済みです。今は Phase 1 のアプリの骨組みまで進んでいます。設計書にある残りの crate は、その機能に着手する時に追加します。空の crate を先に並べないでください。
 
 - `echode-sandbox`: プラグインプロセスとの共有メモリ
 - `echode-plugin-host`: ヘルパープロセス。プラグインフォルダの検知もここ。本体はバンドルを読み込まない
@@ -17,11 +17,14 @@ Phase 0（S1 から S5）は確定済みです。今は Phase 1 のドキュメ�
 - `echode-draw`: 描画検証用のシーンと可視判定。Swift 側は `spikes/draw`
 - `echode-history`: プレーンテキストのプロジェクトと gix による自動コミット。製品パッケージの保存とジャーナル復旧もここ。1,000 トラックの計測用の型は `spike`。計測は `make spike-history`
 - `echode-engine`: オーディオグラフ、再生位置、MIDI とメトロノーム、テスト用シンセ（wavesynth の Sine Pad）とサンプラー（dasp の補間）、サンプルレート変換、キャッシュへ差し替えられるトラック、ループの継ぎ目、フェーダー、出力デバイスの追従。10 分間の計測の型は `spike`。計測は `echode-engine-spike`
+- `echode-audio-io`: 製品の CoreAudio 出力、機器の一覧と通知、システムの出力への追従。制御スレッドで機器を切り替え、コールバックは準備した再生計画だけを読む。無音の実機検査は `make spike-audio`（画面は開かない）
 - 入力の検証は Rust の crate ではなく `spikes/input`。`make spike-input`
 - `echode-model`: ドキュメントモデル。時間、種別のないトラック、スマートクリップ、フォルダ（親 ID。バス処理は Phase 2）
 - `echode-actions`: モデルを変えるアクション、Undo / Redo、再生できるジャーナル
 - `echode-cli`: `echode render` と `echode serve`。書き出しは float WAV、操作は JSON-RPC
 - `echode-api`: ローカルセッションの JSON-RPC。ソケットは本人だけが読み書きできる
+- `echode-ffi` と `swift/EchodeBridge`: 製品の C ABI、非同期の編集・問い合わせと不変のスナップショット
+- `swift/EchodeApp`: 3 ペインの開発用アプリ。Metal のアレンジとピアノロール（鍵盤・階名、直接編集と数値入力、画面外までのノート移動）、Undo / Redo、再生・停止・位置移動と音声出力、ファイル一覧とコマンドパレット。`make app`、実機の描画検査は `make spike-app`
 
 ## 守ること
 

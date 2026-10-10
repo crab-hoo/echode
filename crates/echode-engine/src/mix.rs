@@ -184,6 +184,23 @@ fn add_mono(
     peak
 }
 
+/// Adds one prepared mono track without collecting a heap of borrowed planes.
+pub(crate) fn add_prepared_mono(
+    plane: &[f32],
+    fader: TrackFader,
+    left: &mut [f32],
+    right: &mut [f32],
+) {
+    if fader.mute {
+        return;
+    }
+    let (l, r) = pan_gains(fader.pan, fader.gain);
+    for ((sample, left), right) in plane.iter().zip(left).zip(right) {
+        *left += sample * l;
+        *right += sample * r;
+    }
+}
+
 fn add_stereo(
     source_left: &[f32],
     source_right: &[f32],

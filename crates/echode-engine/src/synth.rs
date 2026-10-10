@@ -50,6 +50,7 @@ pub struct SynthVoice {
     inner: Voice,
     sample_rate: u32,
     note_id: Option<u32>,
+    releasing: bool,
 }
 
 impl SynthVoice {
@@ -62,6 +63,7 @@ impl SynthVoice {
             inner: Voice::new(sample_rate as f32, Instrument::SinePad),
             sample_rate,
             note_id: None,
+            releasing: false,
         })
     }
 }
@@ -112,6 +114,45 @@ impl TestSynth {
             voices: Vec::new(),
             sample_rate,
         })
+    }
+
+    pub(crate) fn silence(&mut self) {
+        for voice in &mut self.voices {
+            voice.inner = Voice::new(self.sample_rate as f32, Instrument::SinePad);
+            voice.note_id = None;
+            voice.releasing = false;
+        }
+    }
+
+    pub(crate) fn sounding(&self, note_id: u32) -> bool {
+        self.voices
+            .iter()
+            .any(|voice| voice.note_id == Some(note_id) && voice.inner.is_active())
+    }
+
+    /// Slots, including release tails, were reserved on the control thread.
+    pub(crate) fn carry_from(&mut self, old: &mut Self, covers: impl Fn(u32) -> Option<bool>) {
+        for old in old
+            .voices
+            .iter_mut()
+            .filter(|voice| voice.inner.is_active())
+        {
+            let Some(held) = old.note_id.and_then(&covers) else {
+                continue;
+            };
+            let Some(new) = self
+                .voices
+                .iter_mut()
+                .find(|voice| !voice.inner.is_active())
+            else {
+                continue;
+            };
+            std::mem::swap(new, old);
+            if !held && !new.releasing {
+                new.inner.note_off();
+                new.releasing = true;
+            }
+        }
     }
 }
 
@@ -241,12 +282,14 @@ fn note_on_synth(voices: &mut [SynthVoice], event: &Event) -> Result<(), Playbac
         .find(|voice| voice.inner.is_active() && voice.note_id == Some(note_id))
     {
         voice.inner.note_on(key, velocity);
+        voice.releasing = false;
         return Ok(());
     }
     let Some(slot) = voices.iter_mut().find(|voice| !voice.inner.is_active()) else {
         return Err(PlaybackError::BufferTooSmall);
     };
     slot.note_id = Some(note_id);
+    slot.releasing = false;
     slot.inner.note_on(key, velocity);
     Ok(())
 }
@@ -305,6 +348,7 @@ fn release_synth(voices: &mut [SynthVoice], note_id: u32) {
     for voice in voices.iter_mut() {
         if voice.inner.is_active() && voice.note_id == Some(note_id) {
             voice.inner.note_off();
+            voice.releasing = true;
         }
     }
 }

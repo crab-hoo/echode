@@ -1,0 +1,72 @@
+import AppKit
+import Foundation
+
+/// A short real-display measurement, invoked only by make spike-app.
+@MainActor
+public func runArrangeProbe(reportPath: String) {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 900, height: 650),
+                          styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+    window.title = "Echode canvas probe"
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 650))
+    let view = ArrangeView(frame: NSRect(x: 0, y: 330, width: 900, height: 320))
+    let piano = PianoRollView(frame: NSRect(x: 0, y: 0, width: 900, height: 330))
+    content.addSubview(view); content.addSubview(piano)
+    window.contentView = content
+    window.makeKeyAndOrderFront(nil)
+    app.activate()
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-arrange-probe-\(UUID()).echode")
+    Task { @MainActor in
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "Probe")
+        await controller.insertNote(pitch: 60, beat: 0, length: 8)
+        guard let snapshot = controller.snapshot else { exit(1) }
+        view.setSnapshot(snapshot, selected: controller.selection)
+        guard let track = controller.selection else { exit(1) }
+        piano.grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard view.rendererAvailable, piano.grid.rendererAvailable else { print("Metal renderer is unavailable"); exit(1) }
+            view.beginMeasurement()
+            piano.grid.beginMeasurement()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                view.markMainBusy(true)
+                piano.grid.markMainBusy(true)
+                let deadline = Date().addingTimeInterval(0.5)
+                while Date() < deadline { /* Deliberate MainActor load in this explicit probe only. */ }
+                view.markMainBusy(false)
+                piano.grid.markMainBusy(false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    let measured = view.measurement
+                    let children = view.accessibilityChildren() as? [NSAccessibilityElement] ?? []
+                    let again = view.accessibilityChildren() as? [NSAccessibilityElement] ?? []
+                    let accessible = children.count == 3 && again.count == children.count &&
+                        zip(children, again).allSatisfy { $0 === $1 } && children.allSatisfy { $0.isAccessibilityElement() }
+                    let pianoMeasured = piano.grid.measurement
+                    let pianoChildren = piano.grid.accessibilityChildren() as? [NSAccessibilityElement] ?? []
+                    let pianoAgain = piano.grid.accessibilityChildren() as? [NSAccessibilityElement] ?? []
+                    let pianoAccessible = pianoChildren.count == 1 && pianoAgain.count == 1 && pianoChildren[0] === pianoAgain[0] && pianoChildren[0].isAccessibilityElement()
+                    let passed = measured.frames > 10 && measured.framesOffMain == measured.frames && measured.framesWhileMainBusy > 5 && accessible &&
+                        pianoMeasured.frames > 10 && pianoMeasured.framesOffMain == pianoMeasured.frames && pianoMeasured.framesWhileMainBusy > 5 && pianoAccessible
+                    do {
+                        let encoder = JSONEncoder()
+                        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                        try encoder.encode(["arrange": measured, "piano": pianoMeasured]).write(to: URL(fileURLWithPath: reportPath))
+                    } catch { print(error); exit(1) }
+                    print("frames: \(measured.frames), off main: \(measured.framesOffMain), while main busy: \(measured.framesWhileMainBusy), retained accessibility children: \(children.count), accessible: \(accessible), max CPU ms: \(measured.maxCPUSeconds * 1000)")
+                    print("piano frames: \(pianoMeasured.frames), off main: \(pianoMeasured.framesOffMain), while main busy: \(pianoMeasured.framesWhileMainBusy), retained notes: \(pianoChildren.count), accessible: \(pianoAccessible)")
+                    view.stop()
+                    piano.grid.stop()
+                    Task {
+                        await controller.close()
+                        try? FileManager.default.removeItem(at: url)
+                        window.close()
+                        exit(passed ? 0 : 1)
+                    }
+                }
+            }
+        }
+    }
+    app.run()
+}

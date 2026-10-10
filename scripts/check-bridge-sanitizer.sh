@@ -60,3 +60,4 @@ swiftc "${swift_flags[@]}" -O -D BRIDGE_VALIDATION -Xcc -DECHODE_BRIDGE_FAULT_IN
     spikes/bridge/swift/CBridge.swift spikes/bridge/swift/CProbe.swift spikes/bridge/swift/ContractProbe.swift \
     -o "$bridge_output/c-probe"
 python3 scripts/run-bridge-validation.py --log "$bridge_output/c-probe.log" "$bridge_output/c-probe"
+bash scripts/check-product-bridge.sh thread

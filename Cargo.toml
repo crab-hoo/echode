@@ -6,6 +6,7 @@ members = [
     "crates/echode-test-plugin",
     "crates/echode-draw",
     "crates/echode-engine",
+    "crates/echode-audio-io",
     "crates/echode-realtime",
     "crates/echode-history",
     "crates/echode-model",

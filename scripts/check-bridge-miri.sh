@@ -11,4 +11,8 @@ for bridge_seed in 1 17 42; do
         --timeout 600 --log "$CARGO_TARGET_DIR/seed-$bridge_seed.log" \
         cargo "+$BRIDGE_NIGHTLY" miri test --locked --offline \
         -p echode-bridge-spike --lib c_api::tests
+    MIRIFLAGS="-Zmiri-seed=$bridge_seed" python3 scripts/run-bridge-validation.py \
+        --timeout 600 --log "$CARGO_TARGET_DIR/product-seed-$bridge_seed.log" \
+        cargo "+$BRIDGE_NIGHTLY" miri test --locked --offline \
+        -p echode-ffi --lib snapshot_ownership
 done
