@@ -1,7 +1,16 @@
-.PHONY: app spike-app spike-arrange-frame spike-piano-frame spike-audio check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
+.PHONY: app dist xcode sign-setup spike-app spike-arrange-frame spike-piano-frame spike-audio check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
 
 app:
 	bash scripts/build-app.sh
+
+dist:
+	bash scripts/build-dist.sh
+
+xcode:
+	bash scripts/generate-xcode.sh
+
+sign-setup:
+	python3 scripts/distribution.py setup-identity
 
 # Product arrange and piano rendering continue while MainActor is deliberately busy.
 spike-app:

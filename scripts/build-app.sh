@@ -1,5 +1,5 @@
 #!/bin/bash
-# Local development bundle. Distribution signing/XCFrameworks remain separate.
+# Local development bundle. Distribution signing is scripts/build-dist.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --locked --offline -p echode-ffi -p echode-plugin-host
@@ -16,5 +16,5 @@ cp swift/EchodeApp/Info.plist "$app_dir/Contents/Info.plist"
 for app_resources in "$app_bin"/*.bundle; do
     if [[ -d "$app_resources" ]]; then cp -R "$app_resources" "$app_dir/Contents/Resources/"; fi
 done
-codesign --force --sign - "$app_dir"
+python3 scripts/distribution.py sign-dev --app "$app_dir"
 printf 'Built %s/target/Echode.app\n' "$PWD"

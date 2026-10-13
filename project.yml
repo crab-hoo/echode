@@ -1,0 +1,55 @@
+# Generated output is Echode.xcodeproj. Do not edit that project by hand.
+# Do not set a target `info:` path to swift/EchodeApp/Info.plist. XcodeGen rewrites that file.
+name: Echode
+options:
+  bundleIdPrefix: io.echode
+  deploymentTarget:
+    macOS: "27.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Echode Local"
+    CODE_SIGNING_REQUIRED: YES
+    ENABLE_APP_SANDBOX: NO
+    ENABLE_HARDENED_RUNTIME: NO
+    MACOSX_DEPLOYMENT_TARGET: "27.0"
+packages:
+  EchodeApp:
+    path: swift/EchodeApp
+targets:
+  Echode:
+    type: application
+    platform: macOS
+    sources:
+      - path: Packaging/Distribution
+      - path: Packaging/EchodePluginHost
+        buildPhase: none
+      - path: Packaging/Echode.entitlements
+        buildPhase: none
+    dependencies:
+      - package: EchodeApp
+        product: EchodeAppCore
+    entitlements:
+      path: Packaging/Echode.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.echode.app
+        PRODUCT_NAME: Echode
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: swift/EchodeApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Packaging/Echode.entitlements
+    postBuildScripts:
+      - name: Assemble the distribution bundle
+        basedOnDependencyAnalysis: false
+        script: |
+          "${SRCROOT}/scripts/build-dist.sh"
+schemes:
+  Echode Distribution:
+    build:
+      targets:
+        Echode: all
+    run:
+      config: Release

@@ -543,6 +543,34 @@ pub unsafe extern "C" fn echode_plugin_catalog(
     0
 }
 
+/// Starts the background CLAP folder watch. A second call does nothing.
+///
+/// Returns 0 when the watch is running. Returns `-1` when the helper cannot
+/// be started. The helper process loads each bundle.
+///
+/// # Safety
+/// There are no pointer arguments.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_plugin_watch_start() -> c_int {
+    if catalog::start_watch().is_ok() {
+        0
+    } else {
+        -1
+    }
+}
+
+/// Waits until the published catalog revision is not `revision`.
+///
+/// Returns the revision after the wait. When the watch is not running, returns
+/// `revision` without waiting. `timeout_ms` is how long to block.
+///
+/// # Safety
+/// There are no pointer arguments.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_plugin_watch_wait(revision: u64, timeout_ms: u32) -> u64 {
+    catalog::wait_watch(revision, timeout_ms)
+}
+
 /// Writes arrange elements that intersect the half-open view into `out`.
 ///
 /// `written` and `dropped` are required. A null `out` with `capacity` 0 counts

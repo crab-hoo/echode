@@ -1,49 +1,74 @@
 //! Installed CLAP plugins, scanned by the helper process.
+//!
+//! A started watch publishes the list from the background thread. Until then,
+//! one call scans the folders that exist right now.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::Duration;
 
-use echode_plugin_host::{installed_clap_bundles, refresh_catalog};
+use echode_plugin_host::{
+    CatalogWaiter, LiveCatalog, SCAN_QUIET, catalog_bundles, catalog_roots, host_binary,
+    refresh_catalog,
+};
+
+static WATCH: Mutex<Option<LiveCatalog>> = Mutex::new(None);
 
 pub(crate) fn plugins_json() -> Result<Vec<u8>, String> {
-    let host = host_binary()?;
-    let bundles = match std::env::var("ECHODE_CLAP_ROOTS") {
-        Ok(value) => echode_plugin_host::list_bundles_including_clap_path(
-            &echode_plugin_host::clap_path_directories(Some(&value)),
-            None,
-        )
-        .into_iter()
-        .filter(|bundle| {
-            bundle
-                .path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("clap"))
-        })
-        .collect(),
-        Err(_) => installed_clap_bundles(std::env::var("CLAP_PATH").ok().as_deref()),
-    };
-    let plugins = refresh_catalog(&host, &cache_path(), &bundles)?;
-    serde_json::to_vec(&plugins).map_err(|error| error.to_string())
+    if let Some(json) = watch_waiter().map(|watch| watch.json()) {
+        return Ok(json);
+    }
+    let host = require_host()?;
+    let plugins = refresh_catalog(&host, &cache_path(), &catalog_bundles())?;
+    let mut listed = Vec::with_capacity(plugins.len());
+    for plugin in &plugins {
+        let mut value = serde_json::to_value(plugin).map_err(|error| error.to_string())?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("fresh".to_string(), serde_json::Value::Bool(false));
+        }
+        listed.push(value);
+    }
+    serde_json::to_vec(&listed).map_err(|error| error.to_string())
 }
 
-fn host_binary() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("ECHODE_PLUGIN_HOST") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
+pub(crate) fn start_watch() -> Result<(), String> {
+    let mut slot = WATCH.lock().unwrap_or_else(|error| error.into_inner());
+    if slot.is_some() {
+        return Ok(());
+    }
+    let host = require_host()?;
+    *slot = Some(LiveCatalog::start(
+        catalog_roots(),
+        host,
+        cache_path(),
+        SCAN_QUIET,
+    )?);
+    Ok(())
+}
+
+pub(crate) fn wait_watch(revision: u64, timeout_ms: u32) -> u64 {
+    let Some(watch) = watch_waiter() else {
+        return revision;
+    };
+    watch.wait_after(revision, Duration::from_millis(u64::from(timeout_ms)))
+}
+
+fn watch_waiter() -> Option<CatalogWaiter> {
+    WATCH
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+        .map(LiveCatalog::waiter)
+}
+
+fn require_host() -> Result<PathBuf, String> {
+    host_binary().ok_or_else(|| {
+        if let Some(path) = std::env::var_os("ECHODE_PLUGIN_HOST") {
+            format!("plugin host is missing ({})", PathBuf::from(path).display())
+        } else {
+            "plugin host is missing".to_string()
         }
-        return Err(format!("plugin host is missing ({})", path.display()));
-    }
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let sibling = exe
-        .parent()
-        .ok_or_else(|| "plugin host is missing".to_string())?
-        .join("echode-plugin-host");
-    if sibling.is_file() {
-        Ok(sibling)
-    } else {
-        Err(format!("plugin host is missing ({})", sibling.display()))
-    }
+    })
 }
 
 fn cache_path() -> PathBuf {

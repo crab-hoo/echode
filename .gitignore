@@ -5,6 +5,7 @@ __pycache__/
 **/*.rs.bk
 .DS_Store
 *.xcuserstate
+Echode.xcodeproj/
 DerivedData/
 .idea/
 *.swp

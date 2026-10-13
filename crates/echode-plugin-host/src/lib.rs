@@ -157,15 +157,17 @@ pub fn measure_in_process(
 
 mod catalog;
 mod events;
+mod live;
 mod scan;
 mod threads;
 mod watch;
 
 pub use catalog::{
-    BundleFound, BundleRevision, PluginCatalog, SCAN_QUIET, bundle_binary, clap_path_directories,
-    list_bundles, list_bundles_including_clap_path,
+    BundleFound, BundleRevision, PluginCatalog, SCAN_QUIET, bundle_binary, catalog_bundles,
+    catalog_roots, clap_path_directories, list_bundles, list_bundles_including_clap_path,
 };
 pub use events::write_input;
+pub use live::{CatalogWaiter, LiveCatalog};
 pub use scan::{
     ResolvedPlugin, SCAN_BUDGET, ScanCacheEntry, ScannedPlugin, cache_entry, cached_plugins,
     host_binary, installed_clap_bundles, load_scan_cache, refresh_catalog, resolve_installed,

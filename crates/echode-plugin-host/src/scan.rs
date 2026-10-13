@@ -246,15 +246,31 @@ pub fn refresh_catalog(
 }
 
 /// CLAP bundles under the usual macOS folders and `CLAP_PATH`.
-/// The helper binary beside this process, or `ECHODE_PLUGIN_HOST` when that file exists.
+/// The helper named by `ECHODE_PLUGIN_HOST`, the sibling binary, or the packaged helper app.
 pub fn host_binary() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("ECHODE_PLUGIN_HOST") {
         let path = PathBuf::from(path);
         return path.is_file().then_some(path);
     }
     let exe = std::env::current_exe().ok()?;
-    let sibling = exe.parent()?.join("echode-plugin-host");
-    sibling.is_file().then_some(sibling)
+    located_host(&exe)
+}
+
+/// Prefer a helper beside `exe`. Otherwise use `Contents/Helpers/EchodePluginHost.app`.
+fn located_host(exe: &Path) -> Option<PathBuf> {
+    let parent = exe.parent()?;
+    let sibling = parent.join("echode-plugin-host");
+    if sibling.is_file() {
+        return Some(sibling);
+    }
+    let nested = parent
+        .parent()?
+        .join("Helpers")
+        .join("EchodePluginHost.app")
+        .join("Contents")
+        .join("MacOS")
+        .join("echode-plugin-host");
+    nested.is_file().then_some(nested)
 }
 
 /// Cache shared by the app and playback. Scanning writes it; playback only reads it.
@@ -372,5 +388,32 @@ mod tests {
         assert!(!report.contains('\u{0001}'));
         let parsed: ScannedPlugin = serde_json::from_str(report.trim_end()).expect("json");
         assert_eq!(parsed, plugin);
+    }
+
+    #[test]
+    fn the_packaged_helper_is_inside_its_own_app() {
+        let root = std::env::temp_dir().join(format!(
+            "echode-host-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let exe = root.join("Echode.app/Contents/MacOS/Echode");
+        let helper = root.join(
+            "Echode.app/Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host",
+        );
+        // Empty stand-ins. This test only checks which path is chosen.
+        std::fs::create_dir_all(exe.parent().expect("macos")).expect("macos");
+        std::fs::create_dir_all(helper.parent().expect("helper")).expect("helper");
+        std::fs::write(&exe, b"app").expect("exe");
+        std::fs::write(&helper, b"host").expect("host");
+        assert_eq!(located_host(&exe), Some(helper.clone()));
+        let sibling = exe.parent().expect("macos").join("echode-plugin-host");
+        std::fs::write(&sibling, b"sibling").expect("sibling");
+        assert_eq!(located_host(&exe), Some(sibling));
+        std::fs::remove_dir_all(&root).expect("cleanup");
     }
 }

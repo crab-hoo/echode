@@ -38,3 +38,12 @@ spike-input:
 
 spike-engine:
     make spike-engine
+
+dist:
+    make dist
+
+xcode:
+    make xcode
+
+sign-setup:
+    make sign-setup

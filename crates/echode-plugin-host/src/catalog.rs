@@ -116,6 +116,50 @@ impl PluginCatalog {
     pub fn contains(&self, path: &Path) -> bool {
         self.bundles.contains_key(path)
     }
+
+    /// Time until the next pending bundle can be scanned. `Some(0)` means one is due.
+    pub fn quiet_remaining(&self, now: Instant) -> Option<Duration> {
+        self.bundles
+            .values()
+            .filter_map(|(_, status)| match status {
+                Status::Pending { since } => Some(
+                    self.quiet
+                        .saturating_sub(now.saturating_duration_since(*since)),
+                ),
+                _ => None,
+            })
+            .min()
+    }
+
+    /// Plugins whose factory descriptors have been read.
+    pub fn listed(&self) -> Vec<crate::ScannedPlugin> {
+        let mut plugins = Vec::new();
+        for (_, status) in self.bundles.values() {
+            if let Status::Ready(ready) = status {
+                plugins.extend(ready.iter().cloned());
+            }
+        }
+        plugins.sort_by(|left, right| left.id.cmp(&right.id).then(left.name.cmp(&right.name)));
+        plugins.dedup_by(|left, right| left.id == right.id);
+        plugins
+    }
+
+    /// Cache rows for bundles that have been scanned or have failed this revision.
+    ///
+    /// A pending bundle is omitted so a restart does not treat an unread file as known.
+    pub fn cache_entries(&self) -> Vec<crate::ScanCacheEntry> {
+        self.bundles
+            .iter()
+            .filter_map(|(path, (revision, status))| {
+                let plugins = match status {
+                    Status::Ready(plugins) => plugins.clone(),
+                    Status::Failed => Vec::new(),
+                    Status::Pending { .. } => return None,
+                };
+                Some(crate::scan::entry_from_revision(path, revision, plugins))
+            })
+            .collect()
+    }
 }
 
 /// CLAP and VST3 bundles under `root`, including those in subfolders.
@@ -161,6 +205,37 @@ pub fn clap_path_directories(value: Option<&str>) -> Vec<PathBuf> {
         .split(':')
         .filter(|entry| !entry.is_empty())
         .map(PathBuf::from)
+        .collect()
+}
+
+/// Folders the product watches. `ECHODE_CLAP_ROOTS` replaces the standard
+/// locations so a test does not scan the machine's plugin folders.
+pub fn catalog_roots() -> Vec<PathBuf> {
+    if let Ok(value) = std::env::var("ECHODE_CLAP_ROOTS") {
+        return clap_path_directories(Some(&value));
+    }
+    let mut roots = vec![PathBuf::from("/Library/Audio/Plug-Ins/CLAP")];
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Audio/Plug-Ins/CLAP"));
+    }
+    if let Ok(value) = std::env::var("CLAP_PATH") {
+        roots.extend(clap_path_directories(Some(&value)));
+    }
+    roots
+}
+
+/// CLAP bundles under [`catalog_roots`]. VST3 bundles are listed by the walk
+/// and left out until that format is hosted.
+pub fn catalog_bundles() -> Vec<BundleFound> {
+    list_bundles_including_clap_path(&catalog_roots(), None)
+        .into_iter()
+        .filter(|bundle| {
+            bundle
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("clap"))
+        })
         .collect()
 }
 

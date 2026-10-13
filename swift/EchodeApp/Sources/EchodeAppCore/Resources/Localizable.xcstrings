@@ -321,6 +321,22 @@
         }
       }
     },
+    "New plugin": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新着"
+          }
+        }
+      }
+    },
     "No plugins found": {
       "localizations": {
         "en": {

@@ -162,3 +162,97 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
     assert_eq!(again[0].id, "dev.echode.test-gain");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_folder_change_publishes_the_plugin_and_drops_it_when_the_bundle_goes_away() {
+    let root = std::env::temp_dir().join(format!(
+        "echode-live-watch-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"));
+    let cache = root.join("scan.jsonl");
+    let live = echode_plugin_host::LiveCatalog::start(
+        vec![root.clone()],
+        host,
+        cache,
+        std::time::Duration::from_millis(200),
+    )
+    .expect("watch");
+    let revision = live.wait_after(0, std::time::Duration::from_secs(5));
+    assert!(revision >= 1, "the empty folder should publish");
+    assert_eq!(listed(&live.json()), Vec::<(String, bool)>::new());
+    // Let FSEvents arm before the first change, as the stream test does.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let bundle = root.join("Gain.clap");
+    let macos = bundle.join("Contents/MacOS");
+    std::fs::create_dir_all(&macos).unwrap();
+    std::fs::copy(plugin_dylib(), macos.join("Plugin")).unwrap();
+    std::fs::write(
+        bundle.join("Contents/Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Plugin</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>"#,
+    )
+    .unwrap();
+    let appeared = wait_for(&live, revision, |rows| {
+        rows.iter()
+            .any(|row| row.0 == "dev.echode.test-gain" && row.1)
+    });
+    assert!(
+        appeared,
+        "expected a fresh test plugin, got {:?}",
+        listed(&live.json())
+    );
+
+    std::fs::remove_dir_all(&bundle).unwrap();
+    let gone = wait_for(&live, live.revision(), |rows| {
+        rows.iter().all(|row| row.0 != "dev.echode.test-gain")
+    });
+    assert!(
+        gone,
+        "the removed bundle stayed listed: {:?}",
+        listed(&live.json())
+    );
+    drop(live);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn listed(json: &[u8]) -> Vec<(String, bool)> {
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(json).expect("catalog json");
+    rows.into_iter()
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap_or_default().to_string(),
+                row["fresh"].as_bool().unwrap_or(false),
+            )
+        })
+        .collect()
+}
+
+fn wait_for(
+    live: &echode_plugin_host::LiveCatalog,
+    mut revision: u64,
+    mut ready: impl FnMut(&[(String, bool)]) -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let rows = listed(&live.json());
+        if ready(&rows) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        revision = live.wait_after(revision, std::time::Duration::from_millis(250));
+    }
+}

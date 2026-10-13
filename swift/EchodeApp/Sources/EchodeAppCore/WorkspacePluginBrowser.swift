@@ -26,7 +26,10 @@ struct WorkspacePluginBrowser: View {
             List(selection: $selected) {
                 ForEach(filtered) { plugin in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(plugin.name)
+                        HStack(spacing: 6) {
+                            Text(plugin.name)
+                            if plugin.fresh { Text(text("New plugin")).font(.caption).foregroundStyle(.secondary) }
+                        }
                         Text([plugin.vendor, plugin.id].filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.tag(plugin.id).contentShape(Rectangle()).onTapGesture(count: 2) { selected = plugin.id; insert(closeAfter: true) }
@@ -39,7 +42,20 @@ struct WorkspacePluginBrowser: View {
                 Button(text("Close"), action: close).keyboardShortcut(.cancelAction)
                 Button(text("Insert")) { insert(closeAfter: true) }.disabled(!canInsert)
             }
-        }.padding(20).frame(width: 460, height: 520).task { searching = true; await reload() }
+        }.padding(20).frame(width: 460, height: 520).task {
+            searching = true
+            await reload()
+            var seen = await Task.detached { PluginCatalog.wait(after: 0, timeout: 0) }.value
+            while !Task.isCancelled {
+                let current = seen
+                let next = await Task.detached { PluginCatalog.wait(after: current, timeout: 0.5) }.value
+                if Task.isCancelled { break }
+                if next != seen {
+                    seen = next
+                    await reload()
+                }
+            }
+        }
             .onChange(of: query) { _, _ in selected = filtered.first?.id }
     }
     private func move(_ offset: Int) { selected = movedSelection(selected, in: filtered.map(\.id), offset: offset) }
@@ -59,10 +75,21 @@ struct WorkspacePluginBrowser: View {
         guard !loading else { return }
         loading = true
         defer { loading = false }
+        let keep = selected
         do {
-            plugins = try await Task.detached { try PluginCatalog.listings() }.value
-            selected = filtered.first?.id
+            let next = try await Task.detached {
+                try PluginCatalog.startWatch()
+                return try PluginCatalog.listings()
+            }.value
+            plugins = next
+            if let keep, filtered.contains(where: { $0.id == keep }) {
+                selected = keep
+            } else {
+                selected = filtered.first?.id
+            }
             message = plugins.isEmpty ? text("No plugins found") : nil
-        } catch { plugins = []; selected = nil; message = text("Plugin scan failed") }
+        } catch {
+            if plugins.isEmpty { selected = nil; message = text("Plugin scan failed") }
+        }
     }
 }
