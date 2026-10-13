@@ -51,9 +51,9 @@ struct WorkspaceCommands: Commands {
     @FocusedValue(\.workspaceTextEntry) private var textEntry
     var body: some Commands {
         CommandGroup(replacing: .newItem) { item(.newProject); item(.openProject) }
-        CommandGroup(replacing: .undoRedo) { item(.undo); item(.redo) }
+        CommandGroup(replacing: .undoRedo) { item(.undo); item(.redo); item(.history) }
         CommandMenu(text("Track")) { item(.addTrack); item(.plugins) }
-        CommandMenu(text("Playback")) { item(.playback); item(.stop); item(.output) }
+        CommandMenu(text("Playback")) { item(.playback); item(.stop); item(.loop); item(.metronome); item(.output) }
         CommandGroup(after: .sidebar) { item(.inspector); item(.browser); item(.editor); item(.palette) }
     }
     private func item(_ command: WorkspaceCommand) -> some View {

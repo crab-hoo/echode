@@ -26,6 +26,8 @@
 //!   origin does not overflow.
 //! - A content has at most one auto placement, and that placement spans
 //!   exactly the bars of its sounding notes.
+//! - An audio reference names a BLAKE3-256 hash and a mono or stereo file with a
+//!   positive rate and length.
 //! - Every content has at least one placement.
 //! - Parents form a forest: every parent exists, and no track is its own ancestor.
 //! - The track array is the arrange order. Sibling order keys are unique
@@ -46,9 +48,9 @@ pub use device::{
 pub use id::Id;
 pub use invariants::InvariantError;
 pub use model::{
-    ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind, ExpressionPoint,
+    AudioRef, ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind, ExpressionPoint,
     FADE_RATE_LIMIT, Lane, ModelError, Note, NoteDraft, NoteGeometry, Placement, Project, Track,
-    fade_allowed, fade_frames, initial_order, midi7_to_velocity, velocity_to_midi7,
+    fade_allowed, fade_frames, initial_order, is_media_hash, midi7_to_velocity, velocity_to_midi7,
 };
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,

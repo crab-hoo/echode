@@ -9,20 +9,24 @@ mod autosave;
 mod document;
 mod format;
 mod host;
+mod media;
 mod objects;
+mod peaks;
 mod project;
 mod store;
 mod thin;
 
 pub mod spike;
 
-pub use autosave::{Autosave, PendingAutosave};
+pub use autosave::{Autosave, PendingAutosave, SavedRevision};
 pub use document::{
     AUTOSAVE_REF, PackageError, append_journal, compact_journal, mark_save_pending, read_package,
     recover, write_package,
 };
 pub use gix::ObjectId;
 pub use host::{DocumentHost, HostError};
+pub use media::{DecodedPcm, StoredAudio, import_audio, read_pcm};
+pub use peaks::{PeakColumn, Waveforms, cache_peaks};
 pub use thin::{
     DAY, HOUR, HOURLY_SPAN, RECENT, SavePoint, StoreSize, git_store_size, kept_indexes,
     pack_and_thin, seed_autosaves, tip_text, write_bundle,

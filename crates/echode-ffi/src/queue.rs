@@ -12,7 +12,7 @@ use std::time::Duration;
 use echode_actions::Command;
 use echode_audio_io::{AudioCommand, AudioState, Session};
 use echode_draw::{ArrangeIndex, ArrangeView, Element, ElementId, PianoNote, PianoView, Role};
-use echode_history::DocumentHost;
+use echode_history::{DocumentHost, PeakColumn, Waveforms};
 use echode_model::{Id, Project};
 
 use crate::{PianoNoteElement, VisibleElement};
@@ -38,11 +38,14 @@ pub struct Snapshot {
     project: Arc<Project>,
     index: Arc<ArrangeIndex>,
     audio: Arc<Vec<u8>>,
+    history: Arc<Vec<u8>>,
+    waveforms: Arc<Waveforms>,
 }
 
 pub(crate) enum Operation {
     Perform(Vec<u8>),
     Audio(Vec<u8>),
+    History(Vec<u8>),
     Snapshot,
     Undo,
     Redo,
@@ -154,6 +157,8 @@ impl Snapshot {
             project,
             index: Arc::new(index),
             audio: Arc::new(serde_json::to_vec(&AudioState::default()).unwrap_or_default()),
+            history: Arc::new(empty_history()),
+            waveforms: Arc::new(Waveforms::empty()),
         }
     }
 
@@ -162,11 +167,28 @@ impl Snapshot {
             project: Arc::clone(&self.project),
             index: Arc::clone(&self.index),
             audio: Arc::clone(&self.audio),
+            history: Arc::clone(&self.history),
+            waveforms: Arc::clone(&self.waveforms),
         }
+    }
+
+    pub(crate) fn waveform(
+        &self,
+        placement: Id,
+        start_tick: i64,
+        end_tick: i64,
+        columns: &mut [PeakColumn],
+    ) -> usize {
+        self.waveforms
+            .fill(&self.project, placement, start_tick, end_tick, columns)
     }
 
     pub(crate) fn audio(&self) -> &[u8] {
         &self.audio
+    }
+
+    pub(crate) fn history(&self) -> &[u8] {
+        &self.history
     }
 
     pub(crate) fn track_count(&self) -> usize {
@@ -330,7 +352,7 @@ fn id_bytes(id: Id) -> [u8; 16] {
 fn worker(host: DocumentHost, incoming: Receiver<Job>, position: Arc<Position>) {
     let mut accepting = true;
     let mut previous: Option<Snapshot> = None;
-    let mut audio = Session::new(host.snapshot());
+    let mut audio = Session::with_media(host.snapshot(), host.directory());
     loop {
         if accepting && catch_unwind(AssertUnwindSafe(|| audio.service())).is_err() {
             accepting = false;
@@ -350,24 +372,46 @@ fn worker(host: DocumentHost, incoming: Receiver<Job>, position: Arc<Position>) 
             continue;
         }
         let performed = catch_unwind(AssertUnwindSafe(|| {
-            if let Operation::Audio(bytes) = &job.operation {
-                let command: AudioCommand =
-                    serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-                audio.perform(command)?;
-            } else {
-                apply(&host, &job.operation)?;
-                audio.update(host.snapshot());
-            }
+            let history = match &job.operation {
+                Operation::Audio(bytes) => {
+                    let command: AudioCommand =
+                        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+                    audio.perform(command)?;
+                    None
+                }
+                Operation::History(bytes) => {
+                    let report = history_report(&host, bytes)?;
+                    audio.update(host.snapshot());
+                    Some(report)
+                }
+                _ => {
+                    apply(&host, &job.operation)?;
+                    audio.update(host.snapshot());
+                    None
+                }
+            };
             let project = host.snapshot();
             let mut snapshot = if let Some(previous) = &previous
                 && Arc::ptr_eq(&project, &previous.project)
             {
                 previous.retain()
             } else {
-                Snapshot::from_project(project, previous.as_ref().map(|snapshot| &*snapshot.index))
+                let mut snapshot = Snapshot::from_project(
+                    Arc::clone(&project),
+                    previous.as_ref().map(|snapshot| &*snapshot.index),
+                );
+                snapshot.waveforms = Arc::new(Waveforms::load(
+                    host.directory(),
+                    &project,
+                    previous
+                        .as_ref()
+                        .map(|snapshot| snapshot.waveforms.as_ref()),
+                ));
+                snapshot
             };
             snapshot.audio =
                 Arc::new(serde_json::to_vec(&audio.state()).map_err(|error| error.to_string())?);
+            snapshot.history = Arc::new(history.unwrap_or_else(empty_history));
             Ok::<_, String>(snapshot)
         }));
         match performed {
@@ -399,6 +443,7 @@ fn apply(host: &DocumentHost, operation: &Operation) -> Result<(), String> {
         Operation::Redo => host.redo().map_err(|error| error.to_string()),
         Operation::Invalid => Err("unknown document operation".to_string()),
         Operation::Audio(_) => Err("audio command must run on the session".to_string()),
+        Operation::History(_) => Err("history command must run on the session".to_string()),
         Operation::Perform(bytes) => {
             let text = match str::from_utf8(bytes) {
                 Ok(text) if !text.is_empty() => text,
@@ -412,6 +457,45 @@ fn apply(host: &DocumentHost, operation: &Operation) -> Result<(), String> {
                 .map_err(|error| error.to_string())
         }
     }
+}
+
+fn empty_history() -> Vec<u8> {
+    br#"{"revisions":[],"changed":false}"#.to_vec()
+}
+
+fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "history command was not recognized".to_string())?;
+    let kind = object
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "history command was not recognized".to_string())?;
+    let before = host.snapshot();
+    match kind {
+        "history.list" if object.len() == 1 => {}
+        "history.restore" if object.len() == 2 => {
+            let revision = object
+                .get("revision")
+                .and_then(serde_json::Value::as_str)
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| "history command was not recognized".to_string())?;
+            host.perform(Command::Restore {
+                revision: revision.to_string(),
+            })
+            .map_err(|error| error.to_string())?;
+        }
+        _ => return Err("history command was not recognized".to_string()),
+    }
+    let changed = !Arc::ptr_eq(&before, &host.snapshot());
+    let revisions = host.revisions().map_err(|error| error.to_string())?;
+    serde_json::to_vec(&serde_json::json!({
+        "revisions": revisions,
+        "changed": changed,
+    }))
+    .map_err(|error| error.to_string())
 }
 
 fn finish(job: &Job, result: Result<(), String>) {

@@ -38,14 +38,17 @@ pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
 pub use playback::{
-    ClockSource, InternalClock, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
-    playback_pair, playback_with_clock, playback_with_plugins,
+    ClipLoader, ClockSource, InternalClock, LoadedClip, PlaybackAudio, PlaybackCommand,
+    PlaybackControl, PlaybackStatus, playback_pair, playback_with_clock, playback_with_plugins,
 };
 pub use plugins::PluginRoute;
 pub use realtime::ForbidAlloc;
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;
-pub use render::{OfflineError, render_offline, render_offline_blocks, render_span_frames};
+pub use render::{
+    OfflineError, render_offline, render_offline_blocks, render_offline_blocks_with_clips,
+    render_span_frames,
+};
 pub use resample::{
     CONVERTER_ID, CONVERTER_VERSION, ConverterMode, default_converter, resample_into, resample_with,
 };
@@ -57,6 +60,6 @@ pub use synth::{
 };
 pub use transport::{PlaybackError, PlayedSpan, Transport};
 pub use voice::{
-    AudioClip, LoopHead, TrackSource, fade_loop_seam, loop_head_prefetch, render_audio_clips,
-    render_track, seam_fade_frames,
+    AudioClip, FadedClip, LoopHead, TrackSource, fade_loop_seam, loop_head_prefetch,
+    render_audio_clips, render_faded_clips, render_track, seam_fade_frames,
 };

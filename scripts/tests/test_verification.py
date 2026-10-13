@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -30,6 +31,7 @@ def module(name, filename):
 
 verify = module("verify", "verify.py")
 hook = module("check_on_stop", "check_on_stop.py")
+wait_for_verify = module("wait_for_verify", "wait_for_verify.py")
 
 
 def arguments(**overrides):
@@ -316,6 +318,75 @@ class HookTests(unittest.TestCase):
                 self.assertIn("followup_message", response)
             else:
                 self.assertEqual(response, expected)
+
+
+class WaitForVerifyTests(unittest.TestCase):
+    def test_reads_pass_and_a_missing_lock_allows_an_edit(self):
+        self.assertEqual(wait_for_verify.respond({"tool_name": "Read"}), {"permission": "allow"})
+        root = Path(tempfile.mkdtemp())
+        self.assertEqual(wait_for_verify.respond({"tool_name": "Shell"}, root, timeout=1), {"permission": "allow"})
+
+    def test_an_edit_waits_until_the_verification_lock_is_released(self):
+        root = Path(tempfile.mkdtemp())
+        lock_path = root / "target/verification/.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.touch()
+        ready = root / "ready"
+        holder = subprocess.Popen([sys.executable, "-c",
+            "import fcntl, time, sys\n"
+            "from pathlib import Path\n"
+            "handle = open(sys.argv[1], 'a')\n"
+            "fcntl.flock(handle, fcntl.LOCK_EX)\n"
+            "Path(sys.argv[2]).write_text('ready')\n"
+            "time.sleep(0.35)\n",
+            str(lock_path), str(ready)])
+        self.addCleanup(holder.kill)
+        deadline = time.monotonic() + 2
+        while not ready.exists():
+            if time.monotonic() > deadline:
+                self.fail("lock holder did not start")
+            time.sleep(0.01)
+        started = time.monotonic()
+        response = wait_for_verify.respond({"tool_name": "Write"}, root, timeout=2)
+        self.assertEqual(response, {"permission": "allow"})
+        self.assertGreaterEqual(time.monotonic() - started, 0.2)
+        self.assertEqual(holder.wait(timeout=2), 0)
+
+    def test_a_lock_held_past_the_timeout_denies_the_edit(self):
+        root = Path(tempfile.mkdtemp())
+        lock_path = root / "target/verification/.lock"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.touch()
+        ready = root / "ready"
+        holder = subprocess.Popen([sys.executable, "-c",
+            "import fcntl, time, sys\n"
+            "from pathlib import Path\n"
+            "handle = open(sys.argv[1], 'a')\n"
+            "fcntl.flock(handle, fcntl.LOCK_EX)\n"
+            "Path(sys.argv[2]).write_text('ready')\n"
+            "time.sleep(30)\n",
+            str(lock_path), str(ready)])
+        self.addCleanup(holder.kill)
+        deadline = time.monotonic() + 2
+        while not ready.exists():
+            if time.monotonic() > deadline:
+                self.fail("lock holder did not start")
+            time.sleep(0.01)
+        response = wait_for_verify.respond({"tool_name": "Shell"}, root, timeout=0.15)
+        holder.kill()
+        holder.wait(timeout=2)
+        self.assertEqual(response["permission"], "deny")
+        self.assertIn("agent_message", response)
+
+    def test_real_hook_allows_a_read_and_rejects_invalid_input(self):
+        script = ROOT / ".cursor/hooks/wait-for-verify.sh"
+        self.assertTrue(os.access(script, os.X_OK))
+        allowed = subprocess.run([str(script)], cwd=ROOT, input=json.dumps({"tool_name": "Read"}),
+                                 capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(allowed.stdout), {"permission": "allow"})
+        denied = subprocess.run([str(script)], cwd=ROOT, input="{invalid",
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(denied.stdout)["permission"], "deny")
 
 
 if __name__ == "__main__":

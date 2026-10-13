@@ -2,8 +2,8 @@
 //!
 //! The same project always produces the same bytes. Each note is one line.
 //! A file older than the current schema is raised one version at a time on a
-//! JSON value, then parsed with unknown fields rejected. Schema 1 is current,
-//! so that list is empty (ADR 0028). The journal is an append-only log.
+//! JSON value, then parsed with unknown fields rejected. Schema 3 is current.
+//! The journal is an append-only log.
 //! Recovery replays the lines that continue after the newest readable commit.
 
 use std::collections::HashSet;
@@ -11,7 +11,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use echode_model::{ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track};
+use echode_model::{
+    AudioRef, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track,
+};
 use gix::objs::Tree;
 use gix::objs::tree::{Entry, EntryKind};
 use gix::{ObjectId, Repository};
@@ -657,11 +659,7 @@ fn render_content(content: &echode_model::Content) -> String {
     let mut out = String::from("{\n");
     push_field(&mut out, "schema", &to_json(&SCHEMA));
     push_field(&mut out, "id", &to_json(&content.id.to_string()));
-    push_field(
-        &mut out,
-        "audio",
-        &to_json(&content.audio.map(|id| id.to_string())),
-    );
+    push_field(&mut out, "audio", &render_audio(content.audio.as_ref()));
     push_field(&mut out, "takes", &to_json(&takes));
     out.push_str("  \"notes\":[\n");
     push_json_lines(
@@ -703,13 +701,13 @@ fn format_gain(gain: f32) -> String {
 }
 
 /// Current package schema. Older numbers are raised by [`SCHEMA_STEPS`].
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 
 /// Raises one schema number. Index 0 raises schema 1 to schema 2.
 type SchemaStep = fn(&mut serde_json::Value) -> Result<(), String>;
 
-/// Schema 1 devices have no plugin id. The mixer stays `null`.
-const SCHEMA_STEPS: &[SchemaStep] = &[add_device_plugin];
+/// Schema 1 devices have no plugin id. Schema 2 stores audio as null or an id.
+const SCHEMA_STEPS: &[SchemaStep] = &[add_device_plugin, audio_reference];
 
 fn add_device_plugin(value: &mut serde_json::Value) -> Result<(), String> {
     let Some(devices) = value.get_mut("devices") else {
@@ -723,6 +721,18 @@ fn add_device_plugin(value: &mut serde_json::Value) -> Result<(), String> {
             return Err("device is not an object".to_string());
         };
         object.entry("plugin").or_insert(serde_json::Value::Null);
+    }
+    Ok(())
+}
+
+/// Schema 2 named audio with an object id. Those ids were never files, so they
+/// become no audio. A hash object written by schema 3 is left alone.
+fn audio_reference(value: &mut serde_json::Value) -> Result<(), String> {
+    let Some(audio) = value.get_mut("audio") else {
+        return Ok(());
+    };
+    if audio.is_string() {
+        *audio = serde_json::Value::Null;
     }
     Ok(())
 }
@@ -1064,11 +1074,28 @@ fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content,
     }
     Ok(echode_model::Content {
         id: parse_id(&file.id)?,
-        audio: file.audio.as_deref().map(parse_id).transpose()?,
+        audio: file.audio.map(parse_audio).transpose()?,
         takes,
         notes,
         expressions: Vec::new(),
     })
+}
+
+fn render_audio(audio: Option<&AudioRef>) -> String {
+    let Some(audio) = audio else {
+        return "null".to_string();
+    };
+    to_json(&AudioFile {
+        hash: audio.hash.clone(),
+        sample_rate: audio.sample_rate,
+        channels: audio.channels,
+        frames: audio.frames,
+    })
+}
+
+fn parse_audio(file: AudioFile) -> Result<AudioRef, PackageError> {
+    AudioRef::try_new(file.hash, file.sample_rate, file.channels, file.frames)
+        .map_err(|error| PackageError::new(error.to_string()))
 }
 
 fn parse_id(text: &str) -> Result<Id, PackageError> {
@@ -1139,20 +1166,50 @@ fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, Packag
     Ok(records)
 }
 
+/// Last journal sequence included in a project recovered from `directory`.
+///
+/// A missing tip uses 0, the same base [`recover`] replays from when the
+/// worktree is safe to read. A gap stops the count where replay stops.
+pub(crate) fn applied_journal_seq(directory: &Path) -> Result<u64, PackageError> {
+    let records = read_log(directory)?;
+    let base = if let Some(id) = autosave_tip(directory) {
+        first_readable_commit(directory, id)?
+            .map(|(_, seq)| seq)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    Ok(contiguous_suffix(base, &records)
+        .last()
+        .map(|line| line.seq)
+        .unwrap_or(base))
+}
+
+fn contiguous_suffix(
+    base_seq: u64,
+    records: &[echode_actions::JournalLine],
+) -> Vec<&echode_actions::JournalLine> {
+    let mut suffix: Vec<_> = records.iter().filter(|line| line.seq > base_seq).collect();
+    suffix.sort_by_key(|line| line.seq);
+    let mut expected = base_seq.saturating_add(1);
+    let mut count = 0usize;
+    for line in &suffix {
+        if line.seq != expected {
+            break;
+        }
+        expected = expected.saturating_add(1);
+        count += 1;
+    }
+    suffix.truncate(count);
+    suffix
+}
+
 fn replay_suffix(
     project: Project,
     base_seq: u64,
     records: &[echode_actions::JournalLine],
 ) -> Result<Project, PackageError> {
-    let mut suffix: Vec<_> = records.iter().filter(|line| line.seq > base_seq).collect();
-    suffix.sort_by_key(|line| line.seq);
-    let mut expected = base_seq.saturating_add(1);
-    for line in &suffix {
-        if line.seq != expected {
-            return Ok(project);
-        }
-        expected = expected.saturating_add(1);
-    }
+    let suffix = contiguous_suffix(base_seq, records);
     let mut project = project;
     for line in suffix {
         let changes = match line.op {
@@ -1373,10 +1430,19 @@ struct ClipFile {
 struct ContentFile {
     schema: u32,
     id: String,
-    audio: Option<String>,
+    audio: Option<AudioFile>,
     takes: Vec<String>,
     notes: Vec<NoteFile>,
     expressions: Vec<ExpressionFile>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AudioFile {
+    hash: String,
+    sample_rate: u32,
+    channels: u16,
+    frames: u64,
 }
 
 #[derive(Deserialize)]

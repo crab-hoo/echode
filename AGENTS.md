@@ -54,7 +54,7 @@ Phase 0（S1 から S5）は確定済みです。今は Phase 1 のアプリの�
 
 計測や実機、ネットワークが必要な検査は、`scripts/verify.py --run ID` で実行するか、`--defer ID --reason 理由` で未実行の理由を記録します。自動検査の失敗を見送ってはいけません。未実行を合格と言わず、最終報告に検査名と理由を残します。結果は `target/verification/report.md` にあり、ソースやツールが変われば古い合格と見送りは無効です。
 
-Cursor の stop hook（`.cursor/hooks.json`）も同じ入口を使い、失敗や理由のない未実行があれば続きの指示を返します。フックのない環境でも `make verify` の実行は必要です。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify`、全体の確認は `scripts/verify.py --all` を使います。`--only` は個別検査や CI の分割用で、作業の完了時には使いません。新しい環境では、先に `make setup`、橋渡しの動的検査には `make setup-bridge` を実行します。
+Cursor の stop hook（`.cursor/hooks.json`）も同じ入口を使い、失敗や理由のない未実行があれば続きの指示を返します。ファイルを変える操作は、進行中の検査が `target/verification/.lock` を持っている間は、そのロックが外れるまで待ちます。フックのない環境でも `make verify` の実行は必要です。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify`、全体の確認は `scripts/verify.py --all` を使います。`--only` は個別検査や CI の分割用で、作業の完了時には使いません。新しい環境では、先に `make setup`、橋渡しの動的検査には `make setup-bridge` を実行します。
 
 監査の未解決の不具合は、`audit_<ID>_...` という名前の無視したテストになっています。`make known-bugs` で、まだ失敗していることを確かめられます。項目を直したら、そのテストの `#[ignore]` を外し、監査の文書の一覧の状態を更新します。
 

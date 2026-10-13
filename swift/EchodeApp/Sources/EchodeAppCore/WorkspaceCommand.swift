@@ -4,8 +4,8 @@ import UniformTypeIdentifiers
 
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track"
-    case undo = "Undo", redo = "Redo", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor"
-    case playback = "Play / Pause", stop = "Stop", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
+    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor"
+    case playback = "Play / Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
     public var id: Self { self }
     public var title: String { text(rawValue) }
     public var icon: String {
@@ -15,11 +15,14 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .addTrack: "plus"
         case .undo: "arrow.uturn.backward"
         case .redo: "arrow.uturn.forward"
+        case .history: "clock.arrow.circlepath"
         case .inspector: "sidebar.left"
         case .browser: "sidebar.right"
         case .editor: "pianokeys"
         case .playback: "playpause"
         case .stop: "stop.fill"
+        case .loop: "repeat"
+        case .metronome: "metronome"
         case .plugins: "puzzlepiece.extension"
         case .output: "speaker.wave.2"
         case .palette: "command"
@@ -74,9 +77,10 @@ final class WorkspaceSession {
         case .newProject, .openProject: return !controller.busy && !controller.audioBusy
         case .undo: return editable && controller.undoCount > 0
         case .redo: return editable && controller.redoCount > 0
+        case .history: return editable
         case .addTrack: return editable
         case .plugins: return editable && controller.selection != nil
-        case .playback, .stop, .output: return editable && !controller.audioBusy
+        case .playback, .stop, .loop, .metronome, .output: return editable && !controller.audioBusy
         default: return true
         }
     }
@@ -90,8 +94,11 @@ final class WorkspaceSession {
             Task { await controller.addTrack(name: "\(text("Track")) \(controller.tracks.count + 1)") }
         case .undo: Task { await controller.undo() }
         case .redo: Task { await controller.redo() }
+        case .history: state.presentation = .history
         case .playback: Task { await controller.togglePlayback() }
         case .stop: Task { await controller.stopPlayback() }
+        case .loop: Task { await controller.toggleLoop() }
+        case .metronome: Task { await controller.toggleMetronome() }
         case .inspector: state.toggle(.inspector)
         case .browser: state.toggle(.browser)
         case .editor: state.toggle(.editor)

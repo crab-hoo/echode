@@ -128,6 +128,37 @@ impl Session {
         Ok(changes)
     }
 
+    /// Replaces the project with `restored` as one undo step.
+    ///
+    /// An empty difference does not record a step. The caller loaded `restored`
+    /// from history; this method does not read the package.
+    pub fn restore(
+        &mut self,
+        restored: Project,
+        revision: String,
+    ) -> Result<ChangeSet, ActionError> {
+        restored
+            .check_invariants()
+            .map_err(|_| ActionError::NotApplied)?;
+        let changes = self.current.diff(&restored);
+        if changes.is_empty() {
+            return Ok(changes);
+        }
+        debug_assert_eq!(
+            self.current.apply_changeset(&changes).ok().as_ref(),
+            Some(&restored)
+        );
+        self.undo
+            .push(std::mem::replace(&mut self.current, restored));
+        self.redo.clear();
+        self.journal_redo.clear();
+        self.journal.push(JournalEntry {
+            actions: vec![Action::Restore { revision }],
+            changes: Some(changes.clone()),
+        });
+        Ok(changes)
+    }
+
     pub fn redo(&mut self) -> Result<ChangeSet, ActionError> {
         let Some(next) = self.redo.pop() else {
             return Err(ActionError::NothingToRedo);
@@ -517,6 +548,33 @@ mod tests {
         assert_eq!(session.project().parameter(solo).unwrap().value, 0.0);
         session.undo().unwrap();
         assert_eq!(session.project().parameter(gain).unwrap().value, 1.0);
+    }
+
+    #[test]
+    fn restoring_a_snapshot_undoes_and_replays_from_the_changeset() {
+        let base = Project::new();
+        let mut session = Session::open(base.clone());
+        session
+            .perform(Command::AddTrack { name: "one".into() })
+            .unwrap();
+        let earlier = session.project().clone();
+        session
+            .perform(Command::AddTrack { name: "two".into() })
+            .unwrap();
+        let current = session.project().clone();
+        assert!(session.restore(current, "same".into()).unwrap().is_empty());
+        session.restore(earlier.clone(), "abc".into()).unwrap();
+        assert_eq!(session.project(), &earlier);
+        let replayed = replay(&base, &decode(&encode(session.journal())).unwrap()).unwrap();
+        assert_eq!(replayed, earlier);
+        session.undo().unwrap();
+        assert_eq!(session.project().tracks().len(), 2);
+        session
+            .perform(Command::Restore {
+                revision: "abc".into(),
+            })
+            .unwrap_err();
+        assert_eq!(session.project().tracks().len(), 2);
     }
 
     #[test]

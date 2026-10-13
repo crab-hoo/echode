@@ -1,6 +1,8 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use echode_engine::ClipLoader;
 use echode_model::Project;
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +25,14 @@ pub enum AudioCommand {
     Refresh,
     #[serde(rename = "audio.status")]
     Status,
+    /// Both ticks set the loop. Both absent clear it. A tick is a project position.
+    #[serde(rename = "transport.loop")]
+    Loop {
+        start: Option<i64>,
+        end: Option<i64>,
+    },
+    #[serde(rename = "transport.metronome")]
+    Metronome { enabled: bool },
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -34,6 +44,9 @@ pub struct AudioState {
     pub active_device: Option<OutputDevice>,
     pub devices: Vec<OutputDevice>,
     pub error: Option<String>,
+    pub loop_start: Option<i64>,
+    pub loop_end: Option<i64>,
+    pub metronome: bool,
 }
 
 /// One foreground project. No hardware is queried until the app asks for the
@@ -48,6 +61,9 @@ pub struct Session {
     selected_uid: Option<String>,
     tick: i64,
     playing: bool,
+    loop_ticks: Option<(i64, i64)>,
+    metronome: bool,
+    clips: ClipLoader,
     error: Option<String>,
 }
 
@@ -63,8 +79,18 @@ impl Session {
             selected_uid: None,
             tick: 0,
             playing: false,
+            loop_ticks: None,
+            metronome: false,
+            clips: Arc::new(|_project, _rate| Ok(Vec::new())),
             error: None,
         }
+    }
+
+    /// Playback reads audio objects from `package`.
+    pub fn with_media(project: Arc<Project>, package: &Path) -> Self {
+        let mut session = Self::new(project);
+        session.clips = crate::clips::media_loader(package.to_path_buf());
+        session
     }
 
     pub fn perform(&mut self, command: AudioCommand) -> Result<(), String> {
@@ -108,6 +134,32 @@ impl Session {
                 self.reconcile()?;
             }
             AudioCommand::Status => {}
+            AudioCommand::Loop { start, end } => self.set_loop(start, end)?,
+            AudioCommand::Metronome { enabled } => {
+                self.metronome = enabled;
+                if let Some(stream) = &mut self.stream {
+                    stream.set_metronome(enabled)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn set_loop(&mut self, start: Option<i64>, end: Option<i64>) -> Result<(), String> {
+        match (start, end) {
+            (Some(start), Some(end)) if start >= 0 && end > start => {
+                if let Some(stream) = &mut self.stream {
+                    stream.set_loop(&self.project, start, end)?;
+                }
+                self.loop_ticks = Some((start, end));
+            }
+            (None, None) => {
+                if let Some(stream) = &mut self.stream {
+                    stream.clear_loop()?;
+                }
+                self.loop_ticks = None;
+            }
+            _ => return Err("loop end must be after its start".into()),
         }
         Ok(())
     }
@@ -122,20 +174,36 @@ impl Session {
             .map_or(self.tick, |stream| stream.status().tick);
         let changed_tempo = self.project.tempo() != project.tempo();
         self.project = project;
-        if let Some(stream) = &mut self.stream {
-            let result = stream.replace(&self.project).and_then(|_| {
+        let replaced = if let Some(stream) = &mut self.stream {
+            stream.replace(&self.project).and_then(|_| {
                 if changed_tempo {
                     stream.locate(&self.project, tick)
                 } else {
                     Ok(())
                 }
-            });
-            if let Err(error) = result {
-                self.park();
-                self.playing = false;
-                self.error = Some(error);
-            }
+            })
+        } else {
+            Ok(())
+        };
+        if let Err(error) = replaced {
+            self.park();
+            self.playing = false;
+            self.error = Some(error);
+        } else if changed_tempo && let Err(error) = self.resend_loop() {
+            self.park();
+            self.playing = false;
+            self.error = Some(error);
         }
+    }
+
+    fn resend_loop(&mut self) -> Result<(), String> {
+        let Some((start, end)) = self.loop_ticks else {
+            return Ok(());
+        };
+        if let Some(stream) = &mut self.stream {
+            stream.set_loop(&self.project, start, end)?;
+        }
+        Ok(())
     }
 
     pub fn service(&mut self) {
@@ -178,6 +246,9 @@ impl Session {
             active_device: desired(&self.inventory, self.selected_uid.as_deref()).cloned(),
             devices: self.inventory.devices.clone(),
             error: self.error.clone(),
+            loop_start: self.loop_ticks.map(|(start, _)| start),
+            loop_end: self.loop_ticks.map(|(_, end)| end),
+            metronome: self.metronome,
         }
     }
 
@@ -221,6 +292,11 @@ impl Session {
                     device,
                     &self.project,
                     self.tick,
+                    crate::stream::TransportSetup {
+                        loop_ticks: self.loop_ticks,
+                        metronome: self.metronome,
+                        clips: Arc::clone(&self.clips),
+                    },
                     Arc::clone(&self.hardware_epoch),
                     self.observed_epoch,
                 )?);
@@ -299,6 +375,34 @@ mod tests {
         session.perform(AudioCommand::Stop).unwrap();
         assert_eq!(session.state().tick, 705600);
         assert!(session.perform(AudioCommand::Locate { tick: -1 }).is_err());
+        session
+            .perform(AudioCommand::Metronome { enabled: true })
+            .unwrap();
+        session
+            .perform(AudioCommand::Loop {
+                start: Some(0),
+                end: Some(705_600),
+            })
+            .unwrap();
+        assert!(session.state().metronome);
+        assert_eq!(session.state().loop_start, Some(0));
+        assert_eq!(session.state().loop_end, Some(705_600));
+        assert!(
+            session
+                .perform(AudioCommand::Loop {
+                    start: Some(4),
+                    end: Some(4),
+                })
+                .is_err()
+        );
+        assert_eq!(session.state().loop_end, Some(705_600));
+        session
+            .perform(AudioCommand::Loop {
+                start: None,
+                end: None,
+            })
+            .unwrap();
+        assert_eq!(session.state().loop_start, None);
         assert!(session.notifications.is_none());
         assert!(Arc::ptr_eq(&session.project, &project));
     }

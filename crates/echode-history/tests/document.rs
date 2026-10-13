@@ -322,6 +322,26 @@ fn a_pending_save_does_not_replay_onto_the_worktree() {
     assert!(error.contains("unfinished"), "{error}");
 }
 
+#[test]
+fn a_base_commit_keeps_the_journal_when_the_next_save_is_pending() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let host = echode_history::DocumentHost::open(&directory).unwrap();
+    drop(host);
+    echode_history::mark_save_pending(&directory).unwrap();
+    let mut session = Session::open(Project::new());
+    session
+        .perform(Command::AddTrack {
+            name: "kept".into(),
+        })
+        .unwrap();
+    append_line(&directory, &session, 1);
+    let project = recover(&directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert_eq!(project.tracks().len(), 1);
+    assert_eq!(project.tracks()[0].name, "kept");
+}
+
 fn append_line(directory: &std::path::Path, session: &Session, seq: u64) {
     let entry = session.journal().last().unwrap();
     append_journal(
@@ -435,7 +455,7 @@ fn the_package_repo_ignores_the_object_store() {
 fn a_bad_schema_is_rejected() {
     let directory = scratch();
     write_package(&directory, &with_note("piano")).unwrap();
-    std::fs::write(directory.join("project.json"), "{\"schema\": 3}\n").unwrap();
+    std::fs::write(directory.join("project.json"), "{\"schema\": 4}\n").unwrap();
     assert!(read_package(&directory).is_err());
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -605,8 +625,8 @@ fn a_schema_other_than_the_current_one_is_rejected() {
             _ => unreachable!(),
         };
         let original = std::fs::read_to_string(&path).unwrap();
-        for schema in ["3", "0", "2.0"] {
-            let text = original.replacen("\"schema\":2", &format!("\"schema\":{schema}"), 1);
+        for schema in ["4", "0", "2.0"] {
+            let text = original.replacen("\"schema\":3", &format!("\"schema\":{schema}"), 1);
             std::fs::write(&path, &text).unwrap();
             let error = read_package(&directory).unwrap_err().to_string();
             assert!(
@@ -614,7 +634,7 @@ fn a_schema_other_than_the_current_one_is_rejected() {
                 "{kind} {schema}: {error}"
             );
         }
-        let missing = original.replacen("\"schema\":2,", "", 1);
+        let missing = original.replacen("\"schema\":3,", "", 1);
         std::fs::write(&path, missing).unwrap();
         let error = read_package(&directory).unwrap_err().to_string();
         assert!(

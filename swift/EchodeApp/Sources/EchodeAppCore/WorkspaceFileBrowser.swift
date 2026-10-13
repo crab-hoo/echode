@@ -35,16 +35,28 @@ struct WorkspaceFileBrowser: View {
                             .contentShape(Rectangle()).onTapGesture(count: 2) { open(file) }
                     }
                 }.onKeyPress(.return) { openSelected(); return .handled }
-                Button(text("Open"), action: openSelected).disabled(!canOpenSelection)
+                HStack {
+                    Button(text("Open"), action: openSelected).disabled(!canOpenSelection)
+                    Button(text("Import Audio"), action: importSelected).disabled(!canImportSelection)
+                }
             }
         }.padding(12)
     }
     private var selected: BrowserFile? { browser.filtered.first { $0.url == browser.selection } }
     private var canOpenSelection: Bool { selected.map { ($0.directory || $0.project) && !browser.loading && !session.controller.busy } ?? false }
+    private var canImportSelection: Bool {
+        selected.map { $0.audio && !browser.loading && !session.controller.busy && session.controller.selection != nil } ?? false
+    }
     private func openSelected() { if let selected { open(selected) } }
+    private func importSelected() { if let selected { importAudio(selected) } }
     private func open(_ file: BrowserFile) {
         guard !browser.loading, !session.controller.busy else { return }
-        if file.project { Task { await session.controller.open(file.url) } }
+        if file.audio { importAudio(file) }
+        else if file.project { Task { await session.controller.open(file.url) } }
         else if file.directory { Task { await browser.load(file.url) } }
+    }
+    private func importAudio(_ file: BrowserFile) {
+        guard file.audio, !browser.loading, !session.controller.busy else { return }
+        Task { await session.controller.importAudio(file.url) }
     }
 }

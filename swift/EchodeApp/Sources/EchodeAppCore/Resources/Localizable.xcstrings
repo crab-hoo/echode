@@ -577,6 +577,42 @@
         }
       }
     },
+    "History": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "History" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "履歴" } }
+      }
+    },
+    "Saved revisions": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Saved revisions" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "保存した版" } }
+      }
+    },
+    "No saved revision": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "No saved revision" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "保存した版はまだありません" } }
+      }
+    },
+    "Current revision": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Current revision" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "今の版" } }
+      }
+    },
+    "Restore": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Restore" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "戻す" } }
+      }
+    },
+    "Already at this revision": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Already at this revision" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "今の版と同じです" } }
+      }
+    },
     "Close": {
       "localizations": {
         "en": {
@@ -989,6 +1025,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "再生／一時停止"
+          }
+        }
+      }
+    },
+    "Loop": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loop"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ループ"
+          }
+        }
+      }
+    },
+    "Loop start (beats)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loop start (beats)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ループ開始（拍）"
+          }
+        }
+      }
+    },
+    "Loop end (beats)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loop end (beats)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ループ終了（拍）"
+          }
+        }
+      }
+    },
+    "Metronome": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Metronome"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メトロノーム"
           }
         }
       }
@@ -1421,6 +1521,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "実行"
+          }
+        }
+      }
+    },
+    "Import Audio": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Audio"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音声を取り込む"
           }
         }
       }

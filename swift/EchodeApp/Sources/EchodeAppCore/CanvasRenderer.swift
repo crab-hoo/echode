@@ -218,6 +218,44 @@ vertex Vertex arrange_vertex(uint v [[vertex_id]], uint i [[instance_id]],
     return {float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1), instances[i].color};
 }
 fragment float4 arrange_fragment(Vertex input [[stage_in]]) { return input.color; }
+struct Wave {
+    float4 rect;
+    float4 color;
+    uint offset;
+    uint columns;
+    uint pad0;
+    uint pad1;
+};
+struct WaveVertex {
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+    float height;
+    uint offset [[flat]];
+    uint columns [[flat]];
+};
+vertex WaveVertex wave_vertex(uint v [[vertex_id]], uint i [[instance_id]],
+                            constant Wave *waves [[buffer(0)]], constant float2 &size [[buffer(1)]]) {
+    const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(1,0),float2(1,1),float2(0,1)};
+    float2 p = waves[i].rect.xy + corners[v] * waves[i].rect.zw;
+    WaveVertex out;
+    out.position = float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1);
+    out.uv = corners[v];
+    out.color = waves[i].color;
+    out.height = waves[i].rect.w;
+    out.offset = waves[i].offset;
+    out.columns = waves[i].columns;
+    return out;
+}
+fragment float4 wave_fragment(WaveVertex input [[stage_in]], constant float2 *peaks [[buffer(0)]]) {
+    if (input.columns == 0) discard_fragment();
+    uint column = min(uint(input.uv.x * float(input.columns)), input.columns - 1);
+    float2 envelope = peaks[input.offset + column];
+    float amplitude = (0.5 - input.uv.y) * 2.0;
+    float pixel = 1.0 / max(input.height, 1.0);
+    if (amplitude + pixel < envelope.x || amplitude - pixel > envelope.y) discard_fragment();
+    return input.color;
+}
 struct LabelVertex { float4 position [[position]]; float2 uv; float4 color; };
 vertex LabelVertex label_vertex(uint v [[vertex_id]], constant Instance &label [[buffer(0)]],
                                constant float2 &size [[buffer(1)]]) {

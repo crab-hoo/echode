@@ -26,7 +26,7 @@ public struct WorkspaceView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) { command(.newProject); command(.openProject) }
-            ToolbarItemGroup { command(.undo); command(.redo); command(.addTrack) }
+            ToolbarItemGroup { command(.undo); command(.redo); command(.history); command(.addTrack) }
             ToolbarItemGroup(placement: .primaryAction) {
                 command(.output); command(.plugins); command(.inspector); command(.editor); command(.browser); command(.palette)
             }
@@ -38,6 +38,7 @@ public struct WorkspaceView: View {
             case .palette: WorkspacePalette(session: session)
             case .plugins(let track, let document): WorkspacePluginBrowser(controller: controller, track: track, document: document) { if state.presentation == presentation { state.presentation = nil } }
             case .output: WorkspaceOutputView(controller: controller) { if state.presentation == presentation { state.presentation = nil } }
+            case .history: WorkspaceHistoryView(controller: controller) { if state.presentation == presentation { state.presentation = nil } }
             }
         }
         .alert(text("Could not complete the operation"), isPresented: Binding(

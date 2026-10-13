@@ -59,6 +59,43 @@ fn a_package_renders_to_the_committed_reference() {
 }
 
 #[test]
+fn a_placed_file_is_audible_in_the_wav() {
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("tone.wav");
+    let mut tone = vec![0.0f32; 256];
+    for (index, sample) in tone.iter_mut().enumerate() {
+        *sample = if index % 4 < 2 { 0.25 } else { -0.25 };
+    }
+    write_wav(&source, 48_000, &tone).unwrap();
+    let stored = echode_history::import_audio(&directory, &source).unwrap();
+    let (project, track) = Project::new().add_track("file");
+    let audio = echode_model::AudioRef::try_new(
+        stored.hash,
+        stored.sample_rate,
+        stored.channels,
+        stored.frames,
+    )
+    .unwrap();
+    let project = project
+        .place_audio(
+            track,
+            echode_model::Id::generate(),
+            echode_model::Id::generate(),
+            Tick::new(0),
+            audio,
+        )
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let wav = directory.join("out.wav");
+    render_to_wav(&directory, &wav, 48_000, Some(128)).unwrap();
+    let rendered = std::fs::read(&wav).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(rendered.len() > 44);
+    assert!(rendered[44..].iter().any(|byte| *byte != 0));
+}
+
+#[test]
 #[ignore = "timing measurement; make spike-render runs it in a release build"]
 fn a_minute_of_stereo_silence_is_written_in_bulk() {
     let directory = scratch();

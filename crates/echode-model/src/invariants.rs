@@ -202,6 +202,14 @@ impl Project {
             if !referenced {
                 return broken(format!("content {} has no placement", content.id));
             }
+            if let Some(audio) = &content.audio
+                && audio.check().is_err()
+            {
+                return broken(format!(
+                    "content {} has an unusable audio reference",
+                    content.id
+                ));
+            }
         }
         for (&track, &parent) in &parents {
             let mut cursor = parent;

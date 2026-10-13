@@ -9,7 +9,10 @@ use echode_engine::{
     AudioClip, Event, PlayedSpan, SynthVoice, TrackFader, Transport, fade_loop_seam, mix_tracks,
     render_audio_clips, render_metronome, render_test_synth, schedule, seam_fade_frames,
 };
-use echode_model::{Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, TempoMap, Tick};
+use echode_model::{
+    AudioRef, Id, Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, TempoMap, Tick,
+};
+use std::sync::Arc;
 
 const RATE: u32 = 48_000;
 const BLOCKS: [u32; 4] = [1, 7, 64, 512];
@@ -40,6 +43,102 @@ fn product_playback_matches_offline_export_for_every_block_size() {
         }
         assert!(!control.status().failed);
         assert_eq!(output, expected, "product block {block}");
+    }
+}
+
+#[test]
+fn product_loop_and_metronome_match_across_block_sizes() {
+    let project = project();
+    let end =
+        echode_engine::tick_to_sample(Tick::new(TICKS_PER_QUARTER), project.tempo(), RATE).unwrap();
+    let frames = 48_000u32;
+    let mut reference: Option<Vec<f32>> = None;
+    for block in BLOCKS {
+        let (mut control, mut audio) =
+            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::SetLoop { start: 0, end })
+            .unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::SetMetronome(true))
+            .unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::Play)
+            .unwrap();
+        let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+        let mut output = Vec::with_capacity(frames as usize * 2);
+        let mut remaining = frames;
+        while remaining > 0 {
+            let count = remaining.min(block) as usize;
+            audio.render(&mut left[..count], &mut right[..count]);
+            for (left, right) in left.iter().zip(&right).take(count) {
+                output.extend([*left, *right]);
+            }
+            remaining -= count as u32;
+        }
+        assert!(!control.status().failed);
+        assert!(control.status().sample <= end);
+        assert!(output.iter().any(|sample| *sample != 0.0));
+        if let Some(reference) = &reference {
+            assert_eq!(&output, reference, "loop block {block}");
+        } else {
+            reference = Some(output);
+        }
+    }
+}
+
+#[test]
+fn product_audio_clips_match_across_block_sizes() {
+    let (project, track) = Project::new().add_track("audio");
+    let audio = AudioRef::try_new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+        RATE,
+        1,
+        64,
+    )
+    .unwrap();
+    let project = project
+        .place_audio(track, Id::generate(), Id::generate(), Tick::new(0), audio)
+        .unwrap();
+    let samples: Arc<[f32]> = (0..64).map(|index| index as f32 / 64.0).collect();
+    let track_raw = project.tracks()[0].id.raw();
+    let frames = 200u32;
+    let mut reference: Option<Vec<f32>> = None;
+    for block in BLOCKS {
+        let (mut control, mut audio) =
+            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        let samples = Arc::clone(&samples);
+        control.set_clip_loader(Arc::new(move |_project, _rate| {
+            Ok(vec![echode_engine::LoadedClip {
+                track: track_raw,
+                start_sample: 0,
+                samples: Arc::clone(&samples),
+                fade_in: 8,
+                fade_out: 8,
+            }])
+        }));
+        control.replace(&project).unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::Play)
+            .unwrap();
+        let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+        let mut output = Vec::with_capacity(frames as usize * 2);
+        let mut remaining = frames;
+        while remaining > 0 {
+            let count = remaining.min(block) as usize;
+            audio.render(&mut left[..count], &mut right[..count]);
+            for (left, right) in left.iter().zip(&right).take(count) {
+                output.extend([*left, *right]);
+            }
+            remaining -= count as u32;
+        }
+        assert!(!control.status().failed);
+        assert!(output.iter().any(|sample| *sample != 0.0));
+        if let Some(reference) = &reference {
+            assert_eq!(&output, reference, "audio clip block {block}");
+        } else {
+            reference = Some(output);
+        }
     }
 }
 

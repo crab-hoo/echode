@@ -1,15 +1,17 @@
 //! `echode render` writes a project package to a stereo float WAV.
 //!
-//! The samples come from the test synth. Each render block is written as it
-//! is produced, through a buffered file, so a long export is not one syscall
-//! per sample and not one buffer for the whole file.
+//! Notes come from the test synth. Placed audio is loaded the same way as
+//! product playback and mixed after the synth. Each render block is written
+//! as it is produced, through a buffered file, so a long export is not one
+//! syscall per sample and not one buffer for the whole file.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use echode_api::serve;
-use echode_engine::{render_offline_blocks, render_span_frames};
+use echode_audio_io::load_placed_clips;
+use echode_engine::{render_offline_blocks_with_clips, render_span_frames};
 use echode_history::read_package;
 
 /// Why a command stopped.
@@ -120,8 +122,10 @@ pub fn render_to_wav(
         None => render_span_frames(&project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?,
     };
+    let clips = load_placed_clips(package, &project, sample_rate)
+        .map_err(|error| CliError::new(error.to_string()))?;
     let mut wav = WavFile::create(wav, sample_rate, frames)?;
-    render_offline_blocks(&project, sample_rate, frames, 64, |block| {
+    render_offline_blocks_with_clips(&project, sample_rate, frames, 64, &clips, |block| {
         wav.write_block(block)
     })
     .map_err(|error| CliError::new(error.to_string()))?;

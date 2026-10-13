@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use echode_model::{
-    Change, ChangeSet, ClipKind, Field, Id, Meter, ObjectKey, ObjectKind, Property, Tempo, Tick,
-    Value,
+    AudioRef, Change, ChangeSet, ClipKind, Field, Id, Meter, ObjectKey, ObjectKind, Property,
+    Tempo, Tick, Value,
 };
 
 use crate::action::{Action, ActionError};
@@ -161,19 +161,56 @@ struct FieldRecord {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum ValueRecord {
-    Meter { numerator: u32, denominator: u32 },
-    Tempo { numerator: u32, denominator: u32 },
-    Tick { tick: i64 },
-    Text { text: String },
-    Id { id: String },
-    Ids { ids: Vec<String> },
-    Parent { id: Option<String> },
-    Kind { kind: String },
-    Byte { value: u8 },
-    U16 { value: u16 },
-    Gain { bits: u32 },
-    Bits { bits: u32 },
-    Flicks { value: i64 },
+    Meter {
+        numerator: u32,
+        denominator: u32,
+    },
+    Tempo {
+        numerator: u32,
+        denominator: u32,
+    },
+    Tick {
+        tick: i64,
+    },
+    Text {
+        text: String,
+    },
+    Id {
+        id: String,
+    },
+    Ids {
+        ids: Vec<String>,
+    },
+    Parent {
+        id: Option<String>,
+    },
+    Audio {
+        hash: Option<String>,
+        #[serde(default)]
+        sample_rate: u32,
+        #[serde(default)]
+        channels: u16,
+        #[serde(default)]
+        frames: u64,
+    },
+    Kind {
+        kind: String,
+    },
+    Byte {
+        value: u8,
+    },
+    U16 {
+        value: u16,
+    },
+    Gain {
+        bits: u32,
+    },
+    Bits {
+        bits: u32,
+    },
+    Flicks {
+        value: i64,
+    },
 }
 
 fn change_records(changes: &ChangeSet) -> Vec<ChangeRecord> {
@@ -273,6 +310,12 @@ impl From<&Value> for ValueRecord {
             Value::Parent(id) => Self::Parent {
                 id: id.map(|id| id.to_string()),
             },
+            Value::Audio(audio) => Self::Audio {
+                hash: audio.as_ref().map(|audio| audio.hash.clone()),
+                sample_rate: audio.as_ref().map(|audio| audio.sample_rate).unwrap_or(0),
+                channels: audio.as_ref().map(|audio| audio.channels).unwrap_or(0),
+                frames: audio.as_ref().map(|audio| audio.frames).unwrap_or(0),
+            },
             Value::Kind(ClipKind::Auto) => Self::Kind {
                 kind: "auto".to_string(),
             },
@@ -312,6 +355,16 @@ impl ValueRecord {
                     .collect::<Result<_, _>>()?,
             ),
             Self::Parent { id } => Value::Parent(id.as_deref().map(parse_id).transpose()?),
+            Self::Audio { hash: None, .. } => Value::Audio(None),
+            Self::Audio {
+                hash: Some(hash),
+                sample_rate,
+                channels,
+                frames,
+            } => Value::Audio(Some(
+                AudioRef::try_new(hash.clone(), *sample_rate, *channels, *frames)
+                    .map_err(|_| ActionError::CorruptJournal)?,
+            )),
             Self::Kind { kind } => Value::Kind(match kind.as_str() {
                 "auto" => ClipKind::Auto,
                 "fixed" => ClipKind::Fixed,

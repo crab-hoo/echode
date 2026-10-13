@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 echode-api = { path = "../echode-api" }
+echode-audio-io = { path = "../echode-audio-io" }
 echode-engine = { path = "../echode-engine" }
 echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }

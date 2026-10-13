@@ -17,7 +17,7 @@ use fractional_index::FractionalIndex;
 use crate::device::{Device, DeviceKind, MixerIds, valid_plugin_id};
 
 use crate::id::Id;
-use crate::time::{Meter, Tempo, TempoMap, Tick};
+use crate::time::{FLICKS_PER_SECOND, Flick, Meter, Tempo, TempoMap, Tick};
 
 /// Why a model edit was rejected.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +39,7 @@ pub enum ModelError {
     MissingParameter,
     InvalidParameter,
     InvalidDevice,
+    InvalidAudio,
     /// [`Project::check_invariants`] failed. The string is that function's sentence.
     Invariant(String),
 }
@@ -64,6 +65,7 @@ impl fmt::Display for ModelError {
             Self::MissingParameter => "parameter is not in the project",
             Self::InvalidParameter => "parameter value is outside its range",
             Self::InvalidDevice => "plugin id is unusable or the device cannot be removed",
+            Self::InvalidAudio => "audio reference is not a mono or stereo file",
         };
         formatter.write_str(message)
     }
@@ -154,6 +156,53 @@ pub const DEFAULT_FADE_FLICKS: i64 = 3_528_000;
 /// Sample rate used to reject a fade that cannot become a `u32` frame count.
 pub const FADE_RATE_LIMIT: u32 = 768_000;
 
+/// BLAKE3-256 of the decoded samples, plus the facts needed to place them.
+///
+/// The bytes live in the package store. This value is what the project records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioRef {
+    pub hash: String,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub frames: u64,
+}
+
+impl AudioRef {
+    pub fn try_new(
+        hash: String,
+        sample_rate: u32,
+        channels: u16,
+        frames: u64,
+    ) -> Result<Self, ModelError> {
+        let audio = Self {
+            hash,
+            sample_rate,
+            channels,
+            frames,
+        };
+        audio.check()?;
+        Ok(audio)
+    }
+
+    pub fn check(&self) -> Result<(), ModelError> {
+        if !is_media_hash(&self.hash)
+            || self.sample_rate == 0
+            || !matches!(self.channels, 1 | 2)
+            || self.frames == 0
+        {
+            return Err(ModelError::InvalidAudio);
+        }
+        Ok(())
+    }
+}
+
+pub fn is_media_hash(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 /// Notes shared by one or more placements.
 ///
 /// Content time zero is fixed when the content is created. A note before that
@@ -161,7 +210,7 @@ pub const FADE_RATE_LIMIT: u32 = 768_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Content {
     pub id: Id,
-    pub audio: Option<Id>,
+    pub audio: Option<AudioRef>,
     pub takes: Vec<Id>,
     pub notes: Vec<Note>,
     /// Per-note expression curves. Empty until those curves can be edited.
@@ -595,6 +644,55 @@ impl Project {
         Ok(self.with_parts(contents, tracks))
     }
 
+    /// Places a fixed clip whose content is one audio file. Notes are not added.
+    pub fn place_audio(
+        &self,
+        track_id: Id,
+        clip_id: Id,
+        content_id: Id,
+        start: Tick,
+        audio: AudioRef,
+    ) -> Result<Self, ModelError> {
+        audio.check()?;
+        if start.get() < 0 || clip_id == content_id {
+            return Err(ModelError::InvalidClip);
+        }
+        if self.id_in_use(clip_id) || self.id_in_use(content_id) {
+            return Err(ModelError::DuplicateId);
+        }
+        let index = self.track_index(track_id)?;
+        let length = audio_length(self.tempo(), start, audio.frames, audio.sample_rate)?;
+        let mut track = (*self.tracks[index]).clone();
+        if ranges_overlap(&track.clips, start.get(), length.get()) {
+            return Err(ModelError::Overlap);
+        }
+        track.clips.push(Placement {
+            id: clip_id,
+            content: content_id,
+            lane: Lane::Timeline,
+            start,
+            length,
+            offset: Tick::new(0),
+            kind: ClipKind::Fixed,
+            gain: 1.0,
+            fade_in: DEFAULT_FADE_FLICKS,
+            fade_out: DEFAULT_FADE_FLICKS,
+        });
+        sort_clips(&mut track.clips);
+        let mut contents = self.contents.clone();
+        contents.push(Arc::new(Content {
+            id: content_id,
+            audio: Some(audio),
+            takes: Vec::new(),
+            notes: Vec::new(),
+            expressions: Vec::new(),
+        }));
+        contents.sort_by_key(|content| content.id);
+        let mut tracks = self.tracks.clone();
+        tracks[index] = Arc::new(track);
+        Ok(self.with_parts(contents, tracks))
+    }
+
     pub fn delete_note(&self, track_id: Id, note_id: Id) -> Result<Self, ModelError> {
         let index = self.track_index(track_id)?;
         let bar = self
@@ -801,7 +899,6 @@ impl Project {
     fn id_in_use(&self, id: Id) -> bool {
         self.contents.iter().any(|content| {
             content.id == id
-                || content.audio == Some(id)
                 || content.takes.contains(&id)
                 || content.notes.iter().any(|note| note.id == id)
         }) || self.tracks.iter().any(|track| {
@@ -1207,6 +1304,48 @@ pub(crate) fn fixed_blocks(
     clips.iter().any(|clip| {
         clip.kind == ClipKind::Fixed
             && clip_bars(clip, bar).is_some_and(|bars| bars.0 <= high && low <= bars.1)
+    })
+}
+
+fn audio_length(
+    tempo: &TempoMap,
+    start: Tick,
+    frames: u64,
+    sample_rate: u32,
+) -> Result<Tick, ModelError> {
+    let start_flick = tempo.flicks_at(start).ok_or(ModelError::InvalidClip)?;
+    let duration = i128::from(frames)
+        .checked_mul(i128::from(FLICKS_PER_SECOND))
+        .ok_or(ModelError::InvalidAudio)?
+        / i128::from(sample_rate);
+    let duration = i64::try_from(duration).map_err(|_| ModelError::InvalidAudio)?;
+    if duration <= 0 {
+        return Err(ModelError::InvalidAudio);
+    }
+    let end_flick = start_flick
+        .get()
+        .checked_add(duration)
+        .ok_or(ModelError::InvalidAudio)?;
+    let end = tempo
+        .ticks_at(Flick::new(end_flick))
+        .ok_or(ModelError::InvalidClip)?;
+    let length = end
+        .get()
+        .checked_sub(start.get())
+        .ok_or(ModelError::InvalidClip)?;
+    if length <= 0 {
+        return Err(ModelError::InvalidClip);
+    }
+    Ok(Tick::new(length))
+}
+
+fn ranges_overlap(clips: &[Placement], start: i64, length: i64) -> bool {
+    let Some(end) = start.checked_add(length) else {
+        return true;
+    };
+    clips.iter().any(|clip| {
+        let clip_end = clip.start.get().saturating_add(clip.length.get());
+        start < clip_end && clip.start.get() < end
     })
 }
 

@@ -676,6 +676,7 @@ version = "0.0.0"
 dependencies = [
  "block2",
  "echode-engine",
+ "echode-history",
  "echode-model",
  "echode-plugin-host",
  "objc2-core-audio",
@@ -702,6 +703,7 @@ name = "echode-cli"
 version = "0.0.0"
 dependencies = [
  "echode-api",
+ "echode-audio-io",
  "echode-engine",
  "echode-history",
  "echode-model",
@@ -742,6 +744,7 @@ dependencies = [
  "echode-history",
  "echode-model",
  "echode-plugin-host",
+ "libc",
  "serde_json",
  "uuid",
 ]
@@ -757,6 +760,9 @@ dependencies = [
  "gix",
  "gix-pack",
  "insta",
+ "objc2-audio-toolbox",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
  "proptest",
  "serde",
  "serde_json",
@@ -2234,6 +2240,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
 dependencies = [
  "objc2-encode",
+]
+
+[[package]]
+name = "objc2-audio-toolbox"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6948501a91121d6399b79abaa33a8aa4ea7857fe019f341b8c23ad6e81b79b08"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-foundation",
 ]
 
 [[package]]

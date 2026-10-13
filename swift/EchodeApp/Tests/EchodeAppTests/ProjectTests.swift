@@ -3,6 +3,25 @@ import Foundation
 import Testing
 @testable import EchodeAppCore
 
+private func wavMono(rate: UInt32, frames: Int) -> Data {
+    var data = Data()
+    data.append(contentsOf: [0x52, 0x49, 0x46, 0x46])
+    let dataBytes = UInt32(frames * 2)
+    data.append(contentsOf: withUnsafeBytes(of: (36 + dataBytes).littleEndian) { Array($0) })
+    data.append(contentsOf: [0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20])
+    data.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: rate.littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: (rate * 2).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(2).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(16).littleEndian) { Array($0) })
+    data.append(contentsOf: [0x64, 0x61, 0x74, 0x61])
+    data.append(contentsOf: withUnsafeBytes(of: dataBytes.littleEndian) { Array($0) })
+    data.append(Data(count: Int(dataBytes)))
+    return data
+}
+
 @MainActor
 struct ProjectTests {
     @Test func transportCommandsDoNotConsumeUndoAndClosingClearsTheFeed() async throws {
@@ -20,11 +39,51 @@ struct ProjectTests {
         #expect(controller.audio.tick == 705_600 * 3)
         await controller.stopPlayback()
         #expect(controller.audio.tick == 705_600 * 3)
+        await controller.toggleMetronome()
+        #expect(controller.audio.metronome)
+        await controller.toggleLoop()
+        #expect(controller.audio.loopStart == 0 && controller.audio.loopEnd == 705_600 * 4)
+        controller.loopEndBeat = 0
+        await controller.setLoop(enabled: true)
+        #expect(controller.audio.loopStart == 0 && controller.audio.loopEnd == 705_600 * 4)
+        await controller.toggleLoop()
+        #expect(controller.audio.loopStart == nil && controller.audio.loopEnd == nil)
+        await controller.toggleMetronome()
+        #expect(!controller.audio.metronome)
         #expect(controller.undoCount == 1)
         await controller.undo()
         #expect(controller.tracks.isEmpty)
         await controller.close()
         #expect(controller.playback == nil && !feed.position.playing)
+    }
+
+    @Test func importingAudioPlacesAClipAndUndoRemovesIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-import-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let wav = root.appendingPathComponent("tone.wav")
+        try wavMono(rate: 48_000, frames: 4_800).write(to: wav)
+        let url = root.appendingPathComponent("Song.echode")
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "audio")
+        let rejected = await controller.importAudio(root.appendingPathComponent("notes.txt"))
+        #expect(!rejected && controller.undoCount == 1)
+        let imported = await controller.importAudio(wav)
+        #expect(imported && controller.undoCount == 2)
+        let objects = try FileManager.default.contentsOfDirectory(
+            at: url.appendingPathComponent("media/objects"), includingPropertiesForKeys: nil)
+        #expect(objects.count == 1)
+        let index = try String(contentsOf: url.appendingPathComponent("media/index.json"), encoding: .utf8)
+        #expect(index.contains("tone.wav"))
+        let snapshot = try #require(controller.snapshot)
+        let visible = snapshot.visibleElements(
+            originTick: 0, widthTicks: 20_000_000, originTrack: 0, heightTracks: 4,
+            pixelsPerTick: 0.001, pixelsPerTrack: 40)
+        #expect(visible.elements.contains { $0.role == .clip })
+        await controller.undo()
+        #expect(controller.undoCount == 1)
+        await controller.close()
     }
     @Test func insertingAPluginKeepsTheMixerAndSurvivesReopen() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-plugin-\(UUID()).echode")
@@ -109,6 +168,30 @@ struct ProjectTests {
         await controller.addTrack(name: "replacement")
         #expect(controller.redoCount == 0)
         #expect(controller.tracks.map(\.name) == ["first", "replacement"])
+        await controller.close()
+    }
+
+    @Test func restoringAnOlderAutosaveBecomesANewUndoableVersion() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-history-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "one")
+        #expect(await controller.savedRevisions().count == 2)
+        await controller.addTrack(name: "two")
+        let revisions = await controller.savedRevisions()
+        #expect(revisions.count == 3)
+        // Newest first. The last commit is the empty base written at open.
+        let afterFirst = try #require(revisions.dropLast().last)
+        let restored = try #require(await controller.restoreRevision(afterFirst.id))
+        #expect(restored.changed)
+        #expect(controller.tracks.map(\.name) == ["one"])
+        #expect(controller.undoCount == 3 && controller.redoCount == 0)
+        let current = try #require(restored.revisions.first)
+        let same = try #require(await controller.restoreRevision(current.id))
+        #expect(!same.changed && controller.undoCount == 3)
+        await controller.undo()
+        #expect(controller.tracks.map(\.name) == ["one", "two"])
         await controller.close()
     }
 

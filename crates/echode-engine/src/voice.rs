@@ -55,6 +55,114 @@ pub fn render_track(
     }
 }
 
+/// Samples already at the device rate, with the placement's own edge fades.
+///
+/// A fade of zero leaves that edge at full level. Fades of one frame do too:
+/// a ramp needs two frames.
+pub struct FadedClip<'a> {
+    pub start_sample: i64,
+    pub samples: &'a [f32],
+    pub fade_in: u32,
+    pub fade_out: u32,
+}
+
+/// Adds clips into `output` using each clip's fade lengths.
+///
+/// The buffer is not cleared. Clips must be ordered by start sample, which is
+/// the same order as their ends when placements do not overlap.
+pub fn render_faded_clips(
+    clips: &[FadedClip<'_>],
+    spans: &[PlayedSpan],
+    output: &mut [f32],
+) -> Result<(), PlaybackError> {
+    for span in spans {
+        let end = span
+            .start_sample
+            .checked_add(i64::from(span.frames))
+            .ok_or(PlaybackError::Time)?;
+        for clip in faded_overlapping(clips, span.start_sample, end) {
+            let clip_end = clip
+                .start_sample
+                .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX));
+            let from = span.start_sample.max(clip.start_sample);
+            let to = end.min(clip_end);
+            let mut project = from;
+            while project < to {
+                let local =
+                    u32::try_from(project - span.start_sample).map_err(|_| PlaybackError::Time)?;
+                let index = block_index(span, local)?;
+                if index >= output.len() {
+                    return Err(PlaybackError::BufferTooSmall);
+                }
+                output[index] += faded_sample(clip, project);
+                project += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn faded_overlapping<'a>(
+    clips: &'a [FadedClip<'a>],
+    start: i64,
+    end: i64,
+) -> impl Iterator<Item = &'a FadedClip<'a>> {
+    let first = clips.partition_point(|clip| faded_end(clip) <= start);
+    clips[first..]
+        .iter()
+        .take_while(move |clip| clip.start_sample < end)
+}
+
+fn faded_end(clip: &FadedClip<'_>) -> i64 {
+    clip.start_sample
+        .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX))
+}
+
+fn faded_sample(clip: &FadedClip<'_>, project: i64) -> f32 {
+    let Some(pos) = project.checked_sub(clip.start_sample) else {
+        return 0.0;
+    };
+    if pos < 0 {
+        return 0.0;
+    }
+    let Some(index) = usize::try_from(pos).ok() else {
+        return 0.0;
+    };
+    let Some(sample) = clip.samples.get(index).copied() else {
+        return 0.0;
+    };
+    sample
+        * pair_gain(
+            pos,
+            clip.samples.len() as i64,
+            i64::from(clip.fade_in),
+            i64::from(clip.fade_out),
+        )
+}
+
+fn pair_gain(pos: i64, length: i64, fade_in: i64, fade_out: i64) -> f32 {
+    if length <= 0 {
+        return 0.0;
+    }
+    let mut gain: f32 = 1.0;
+    if fade_in > 1 {
+        let fade = fade_in.min(length);
+        let denom = (fade - 1) as f32;
+        if pos < fade {
+            gain = gain.min(pos as f32 / denom);
+        }
+    }
+    if fade_out > 1 {
+        let fade = fade_out.min(length);
+        let denom = (fade - 1) as f32;
+        let tail = length - 1 - pos;
+        if tail < fade {
+            gain = gain.min(tail as f32 / denom);
+        }
+    }
+    gain
+}
+
 /// Adds audio clips into `output`, fading each edge over 5 ms.
 ///
 /// The buffer is not cleared. Overlapping clips sum, so two clips that meet
@@ -352,6 +460,25 @@ mod tests {
         assert_eq!(output[10], 1.0);
         assert_eq!(output[15], 1.0);
         assert_eq!(output[19], 0.0);
+        let faded = FadedClip {
+            start_sample: 0,
+            samples: &ones,
+            fade_in: 5,
+            fade_out: 5,
+        };
+        let mut matched = [0.0; 20];
+        render_faded_clips(&[faded], &[span(0, 20, 0, None)], &mut matched).unwrap();
+        assert_eq!(matched, output);
+        let full = FadedClip {
+            start_sample: 0,
+            samples: &ones,
+            fade_in: 0,
+            fade_out: 0,
+        };
+        let mut open = [0.0; 20];
+        render_faded_clips(&[full], &[span(0, 20, 0, None)], &mut open).unwrap();
+        assert_eq!(open[0], 1.0);
+        assert_eq!(open[19], 1.0);
 
         let mut seam = [1.0; 20];
         let mut outgoing = span(0, 10, 0, None);

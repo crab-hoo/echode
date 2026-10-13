@@ -9,6 +9,7 @@ description = "Product CoreAudio output and device notifications"
 
 [dependencies]
 echode-engine = { path = "../echode-engine" }
+echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }
 echode-plugin-host = { path = "../echode-plugin-host" }
 objc2-core-audio = { version = "=0.3.2", default-features = false, features = ["std", "AudioHardware", "objc2-core-audio-types", "block2", "dispatch2", "objc2"] }

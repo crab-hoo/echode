@@ -6,7 +6,10 @@ struct BrowserFile: Identifiable, Sendable {
     let directory: Bool
     var id: URL { url }
     var project: Bool { url.pathExtension.lowercased() == "echode" }
-    var icon: String { project ? "waveform" : directory ? "folder" : "doc" }
+    var audio: Bool {
+        ["wav", "aiff", "aif", "caf", "mp3", "m4a", "aac", "flac"].contains(url.pathExtension.lowercased())
+    }
+    var icon: String { project || audio ? "waveform" : directory ? "folder" : "doc" }
 }
 
 @MainActor @Observable

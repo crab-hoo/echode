@@ -35,6 +35,16 @@ public final class Snapshot: @unchecked Sendable {
         }
     }
 
+    public func historyReport() throws -> HistoryReport {
+        try withExtendedLifetime(self) {
+            var count = 0
+            guard let bytes = echode_snapshot_history(handle, &count) else {
+                throw BridgeError(message: "history is unavailable")
+            }
+            return try JSONDecoder().decode(HistoryReport.self, from: Data(bytes: bytes, count: count))
+        }
+    }
+
     /// UUID of the track at `index` in arrange order.
     public func trackID(at index: Int) -> UUID? {
         guard index >= 0 else { return nil }
@@ -224,6 +234,30 @@ public struct ArrangeElement: Sendable, Identifiable {
     }
 }
 
+extension Snapshot {
+    /// Min and max for each column of an audio clip. An empty array means the
+    /// placement has no stored waveform.
+    public func waveform(placement: UUID, startTick: Int64, endTick: Int64, columns: Int) -> [SIMD2<Float>] {
+        guard columns > 0 else { return [] }
+        return withExtendedLifetime(self) {
+            var identity = placement.uuid
+            var mins = [Float](repeating: 0, count: columns)
+            var maxs = [Float](repeating: 0, count: columns)
+            let written = withUnsafeBytes(of: &identity) { raw in
+                mins.withUnsafeMutableBufferPointer { minBuffer in
+                    maxs.withUnsafeMutableBufferPointer { maxBuffer in
+                        echode_snapshot_waveform(
+                            handle, raw.bindMemory(to: UInt8.self).baseAddress,
+                            startTick, endTick, minBuffer.baseAddress, maxBuffer.baseAddress, columns)
+                    }
+                }
+            }
+            guard written > 0 else { return [] }
+            return (0..<Int(written)).map { SIMD2(mins[$0], maxs[$0]) }
+        }
+    }
+}
+
 private final class PendingCall: Sendable {
     let continuation: CheckedContinuation<Snapshot, any Error>
 
@@ -320,6 +354,17 @@ public final class Document: @unchecked Sendable {
             }
         }
         return try snapshot.audioState()
+    }
+
+    public func history(_ command: HistoryCommand) async throws -> Snapshot {
+        try Task.checkCancellation()
+        let bytes = Array(try JSONEncoder().encode(command))
+        return try await withCheckedThrowingContinuation { continuation in
+            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+            bytes.withUnsafeBufferPointer { buffer in
+                _ = echode_document_history(handle, buffer.baseAddress, buffer.count, context, completeCommand)
+            }
+        }
     }
 
     public func undo() async throws -> Snapshot {

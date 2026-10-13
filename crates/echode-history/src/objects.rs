@@ -20,11 +20,29 @@ pub(crate) fn is_content_hash(text: &str) -> bool {
 }
 
 /// BLAKE3-256 of `bytes`, as 64 lowercase hex digits.
-///
-/// Plugin hosting will call this when a device can store state.
-#[allow(dead_code)]
 pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
+}
+
+/// Writes `bytes` to `media/objects/<hash>`. An object that already matches is kept.
+pub(crate) fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError> {
+    let hash = hash_bytes(bytes);
+    let directory = package.join("media").join("objects");
+    fs::create_dir_all(&directory).map_err(|error| io_error(&directory, error))?;
+    let path = directory.join(&hash);
+    if path.exists() {
+        let existing = read_object(package, &hash)?;
+        if existing != bytes {
+            return Err(PackageError::new(format!(
+                "object {hash} already holds different bytes"
+            )));
+        }
+        return Ok(hash);
+    }
+    let temporary = directory.join(format!(".{hash}.partial"));
+    fs::write(&temporary, bytes).map_err(|error| io_error(&temporary, error))?;
+    fs::rename(&temporary, &path).map_err(|error| io_error(&path, error))?;
+    Ok(hash)
 }
 
 /// Writes the ignore rules for the object store. Existing rules are kept.
@@ -55,9 +73,6 @@ pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageErro
 }
 
 /// Reads `media/objects/<hash>` after checking the name, the link, and the bytes.
-///
-/// Plugin hosting will call this when a device can store state.
-#[allow(dead_code)]
 pub(crate) fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, PackageError> {
     if !is_content_hash(hash) {
         return Err(PackageError::new(

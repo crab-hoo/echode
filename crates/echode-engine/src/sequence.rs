@@ -1,11 +1,13 @@
 //! Sample-accurate MIDI and metronome clicks for one block.
 //!
-//! Neither function allocates. The event slice and the sample buffer belong to
-//! the caller; their lengths are scratch for this block, not a limit on how
-//! many notes a project may contain.
+//! `schedule` does not allocate. The metronome entry that takes a [`TempoMap`]
+//! builds an index for callers without one; the audio thread uses the index
+//! prepared with the plan. The event slice and the sample buffer belong to the
+//! caller; their lengths are scratch for this block, not a limit on how many
+//! notes a project may contain.
 
 use echode_model::{Meter, Project, TICKS_PER_QUARTER, TempoMap};
-use echode_realtime::Event;
+use echode_realtime::{Event, TempoIndex};
 
 use crate::plan::PlaybackIds;
 use crate::transport::{PlaybackError, PlayedSpan};
@@ -78,7 +80,23 @@ pub fn render_metronome(
     sample_rate: u32,
     output: &mut [f32],
 ) -> Result<(), PlaybackError> {
-    let index = crate::plan::tempo_index(tempo)?;
+    render_metronome_index(
+        spans,
+        &crate::plan::tempo_index(tempo)?,
+        meter,
+        sample_rate,
+        output,
+    )
+}
+
+/// Same clicks as [`render_metronome`], using a tempo index built off the audio thread.
+pub(crate) fn render_metronome_index(
+    spans: &[PlayedSpan],
+    index: &TempoIndex,
+    meter: Meter,
+    sample_rate: u32,
+    output: &mut [f32],
+) -> Result<(), PlaybackError> {
     let bar = meter.bar_ticks().ok_or(PlaybackError::Time)?.get();
     let length = i64::from((sample_rate / 200).max(1));
     for span in spans {
@@ -94,7 +112,7 @@ pub fn render_metronome(
                 .start_sample
                 .checked_add(i64::from(local))
                 .ok_or(PlaybackError::Time)?;
-            let Some((downbeat, age)) = click_at(&index, project, bar, length, sample_rate)? else {
+            let Some((downbeat, age)) = click_at(index, project, bar, length, sample_rate)? else {
                 continue;
             };
             output[(span.block_offset + local) as usize] +=

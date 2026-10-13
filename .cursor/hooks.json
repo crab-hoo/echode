@@ -1,6 +1,14 @@
 {
   "version": 1,
   "hooks": {
+    "preToolUse": [
+      {
+        "command": ".cursor/hooks/wait-for-verify.sh",
+        "matcher": "Shell|Write|StrReplace|Delete|EditNotebook|Task",
+        "timeout": 1800,
+        "failClosed": true
+      }
+    ],
     "stop": [
       {
         "command": ".cursor/hooks/check-on-stop.sh",

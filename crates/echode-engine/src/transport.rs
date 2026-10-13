@@ -21,6 +21,7 @@ pub enum PlaybackError {
     IdSpace,
     InvalidDevice,
     Plugin,
+    Media,
 }
 
 impl std::fmt::Display for PlaybackError {
@@ -34,6 +35,7 @@ impl std::fmt::Display for PlaybackError {
             Self::IdSpace => "playback note numbers are exhausted",
             Self::InvalidDevice => "device state or parameter is not valid",
             Self::Plugin => "plugin helper did not start",
+            Self::Media => "audio file could not be read",
         };
         formatter.write_str(message)
     }

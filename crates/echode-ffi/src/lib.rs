@@ -59,6 +59,47 @@ pub unsafe extern "C" fn echode_document_audio(
     ECHODE_OK
 }
 
+/// Queues a history list or restore on the document thread. The completed
+/// snapshot carries the revision list. Restoring records a new version.
+///
+/// # Safety
+/// `document` is null or open. `json` is null only when `json_len` is zero.
+/// The callback owns `context` until completion.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_document_history(
+    document: *mut Document,
+    json: *const u8,
+    json_len: usize,
+    context: *mut c_void,
+    complete: Complete,
+) -> c_int {
+    let Some(document) = document_ref(document) else {
+        complete(
+            context,
+            ECHODE_ERR,
+            c"document is null".as_ptr(),
+            std::ptr::null_mut(),
+        );
+        return ECHODE_ERR;
+    };
+    if json_len > isize::MAX as usize || (json.is_null() && json_len != 0) {
+        complete(
+            context,
+            ECHODE_ERR,
+            c"history command is null or too long".as_ptr(),
+            std::ptr::null_mut(),
+        );
+        return ECHODE_ERR;
+    }
+    let bytes = if json_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(json, json_len) }
+    };
+    document.enqueue(queue::Operation::History(bytes.to_vec()), context, complete);
+    ECHODE_OK
+}
+
 /// Reads the live playhead without submitting a command or taking a lock.
 ///
 /// # Safety
@@ -94,6 +135,30 @@ pub unsafe extern "C" fn echode_snapshot_audio(
         return std::ptr::null();
     };
     let bytes = snapshot.audio();
+    *len = bytes.len();
+    bytes.as_ptr()
+}
+
+/// UTF-8 JSON `{revisions, changed}` from the snapshot that completed a history
+/// command. Other snapshots carry an empty list. The pointer is valid until
+/// the snapshot is freed.
+///
+/// # Safety
+/// `snapshot` is null or an owned handle that has not been freed. `len` is
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_history(
+    snapshot: *const Snapshot,
+    len: *mut usize,
+) -> *const u8 {
+    let Some(len) = (unsafe { len.as_mut() }) else {
+        return std::ptr::null();
+    };
+    *len = 0;
+    let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+        return std::ptr::null();
+    };
+    let bytes = snapshot.history();
     *len = bytes.len();
     bytes.as_ptr()
 }
@@ -537,6 +602,43 @@ pub unsafe extern "C" fn echode_snapshot_visible(
     0
 }
 
+/// Writes min and max for each visible column of one audio placement.
+///
+/// `placement` is 16 UUID bytes. The tick window is the clip rectangle's
+/// time. A note placement or a missing file writes nothing.
+///
+/// # Safety
+/// `snapshot` is null or still owned. `mins` and `maxs` each hold `capacity`
+/// floats for the whole call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_waveform(
+    snapshot: *const Snapshot,
+    placement: *const u8,
+    start_tick: i64,
+    end_tick: i64,
+    mins: *mut f32,
+    maxs: *mut f32,
+    capacity: usize,
+) -> usize {
+    if placement.is_null() || mins.is_null() || maxs.is_null() || capacity == 0 {
+        return 0;
+    }
+    let Some(snapshot) = snapshot_ref(snapshot) else {
+        return 0;
+    };
+    let bytes = unsafe { *(placement as *const [u8; 16]) };
+    let placement = echode_model::Id::from_raw(u128::from_be_bytes(bytes));
+    let mut columns = vec![echode_history::PeakColumn { min: 0.0, max: 0.0 }; capacity];
+    let written = snapshot.waveform(placement, start_tick, end_tick, &mut columns);
+    let mins = unsafe { std::slice::from_raw_parts_mut(mins, written) };
+    let maxs = unsafe { std::slice::from_raw_parts_mut(maxs, written) };
+    for (index, column) in columns.iter().take(written).enumerate() {
+        mins[index] = column.min;
+        maxs[index] = column.max;
+    }
+    written
+}
+
 fn out_bytes<'a>(out: *mut u8) -> Option<&'a mut [u8; 16]> {
     if out.is_null() {
         None
@@ -920,6 +1022,71 @@ mod tests {
         unsafe { echode_document_shutdown(document) };
         assert_eq!(query(ECHODE_DOCUMENT_SNAPSHOT).status, ECHODE_ERR);
         unsafe { echode_document_close(document) };
+    }
+
+    #[test]
+    fn a_forced_exit_keeps_the_confirmed_edit() {
+        if let Ok(path) = std::env::var("ECHODE_FORCE_QUIT") {
+            force_quit_after_edit(std::path::Path::new(&path));
+        }
+        let path = scratch();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["tests::a_forced_exit_keeps_the_confirmed_edit", "--exact"])
+            .env("ECHODE_FORCE_QUIT", &path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        let document = unsafe { echode_document_open(c_path.as_ptr()) };
+        assert!(
+            !document.is_null(),
+            "{}",
+            echode_history::recover(&path).unwrap_err()
+        );
+        let (sender, incoming) = mpsc::channel();
+        let reply = Reply { sender };
+        unsafe {
+            echode_document_query(
+                document,
+                ECHODE_DOCUMENT_SNAPSHOT,
+                &reply as *const Reply as *mut c_void,
+                on_complete,
+            );
+        }
+        let result = incoming
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(result.status, ECHODE_OK);
+        assert_eq!(unsafe { echode_snapshot_track_count(result.snapshot) }, 1);
+        let mut length = 0usize;
+        let name = unsafe { echode_snapshot_track_name(result.snapshot, 0, &mut length) };
+        let name = unsafe { std::slice::from_raw_parts(name, length) };
+        assert_eq!(name, b"kept");
+        unsafe {
+            echode_snapshot_free(result.snapshot);
+            echode_document_close(document);
+        }
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn force_quit_after_edit(path: &std::path::Path) -> ! {
+        let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        let document = unsafe { echode_document_open(c_path.as_ptr()) };
+        assert!(!document.is_null());
+        let (sender, incoming) = mpsc::channel();
+        let reply = Reply { sender };
+        let outcome = submit(
+            document,
+            r#"{"type":"track.add","name":"kept"}"#,
+            &reply,
+            &incoming,
+        );
+        assert_eq!(outcome.status, ECHODE_OK);
+        unsafe { libc::_exit(0) };
     }
 }
 

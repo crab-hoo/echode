@@ -1,6 +1,6 @@
 //! One thread owns a document. Callers send commands and read a snapshot.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -9,10 +9,14 @@ use echode_actions::{
     Action, ActionError, Command, JournalLine, JournalOp, Session, parameter_message,
 };
 use echode_model::{ChangeSet, Project};
+use gix::ObjectId;
 use serde_json::{Map, Value};
 
-use crate::autosave::{Autosave, PendingAutosave};
-use crate::document::{PackageError, append_journal, compact_journal, next_journal_seq, recover};
+use crate::autosave::{Autosave, PendingAutosave, SavedRevision};
+use crate::document::{
+    PackageError, append_journal, applied_journal_seq, autosave_tip, compact_journal,
+    next_journal_seq, recover,
+};
 
 /// Why the document thread rejected a command.
 #[derive(Debug)]
@@ -54,6 +58,9 @@ enum Request {
     Redo {
         reply: Sender<Result<(), HostError>>,
     },
+    Revisions {
+        reply: Sender<Result<Vec<SavedRevision>, HostError>>,
+    },
     Shutdown,
 }
 
@@ -62,6 +69,7 @@ pub struct DocumentHost {
     request: Sender<Request>,
     thread: Option<JoinHandle<()>>,
     snapshot: Arc<Mutex<Arc<Project>>>,
+    directory: PathBuf,
 }
 
 impl DocumentHost {
@@ -70,18 +78,33 @@ impl DocumentHost {
         let project = recover(directory)?;
         let snapshot = Arc::new(Mutex::new(Arc::new(project.clone())));
         let autosave = Autosave::create(directory)?;
+        // A confirmed edit is journaled before it returns. The first autosave
+        // can still die with `save.pending` and no tip, and then recover
+        // refuses the worktree. Commit the recovered project first, so a later
+        // kill always has a tip to replay onto.
+        if autosave_tip(directory).is_none() {
+            let seq = applied_journal_seq(directory)?;
+            autosave.save(Arc::new(project.clone()), seq)?.wait()?;
+        }
         let (request, incoming) = mpsc::channel();
         let published = Arc::clone(&snapshot);
         let directory = directory.to_path_buf();
+        let owned = directory.clone();
         let thread = thread::Builder::new()
             .name("echode-document".to_string())
-            .spawn(move || worker(directory, project, autosave, published, incoming))
+            .spawn(move || worker(owned, project, autosave, published, incoming))
             .map_err(|error| PackageError::new(error.to_string()))?;
         Ok(Self {
             request,
             thread: Some(thread),
             snapshot,
+            directory,
         })
+    }
+
+    /// Package directory this host recovered.
+    pub fn directory(&self) -> &Path {
+        &self.directory
     }
 
     /// The latest project. The lock is released before the caller uses it.
@@ -127,6 +150,19 @@ impl DocumentHost {
             .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
     }
 
+    /// Autosave commits reachable from the tip, newest first.
+    ///
+    /// Saves still in flight are finished first, so the list includes them.
+    pub fn revisions(&self) -> Result<Vec<SavedRevision>, HostError> {
+        let (reply, incoming) = mpsc::channel();
+        self.request
+            .send(Request::Revisions { reply })
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+        incoming
+            .recv()
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+    }
+
     /// Redoes the newest undone step and appends a `redo` journal line.
     pub fn redo(&self) -> Result<(), HostError> {
         let (reply, incoming) = mpsc::channel();
@@ -163,17 +199,59 @@ fn worker(
         match request {
             Request::Shutdown => break,
             Request::Perform { command, reply } => {
-                let result = match session.perform(command) {
-                    Ok(action) => publish_edit(&mut Publish {
-                        directory: &directory,
-                        snapshot: &snapshot,
-                        autosave: &autosave,
-                        inflight: &mut inflight,
-                        next_seq: &mut next_seq,
-                        session: &session,
-                    })
-                    .map(|()| action),
-                    Err(error) => Err(HostError::Action(error)),
+                let result = match command {
+                    Command::Restore { revision } => {
+                        wait_for_saves(&directory, &mut inflight);
+                        match restore_revision(&mut session, &autosave, &revision) {
+                            Ok(changes) if changes.is_empty() => Ok(Action::Restore { revision }),
+                            Ok(_) => publish_edit(&mut Publish {
+                                directory: &directory,
+                                snapshot: &snapshot,
+                                autosave: &autosave,
+                                inflight: &mut inflight,
+                                next_seq: &mut next_seq,
+                                session: &session,
+                            })
+                            .map(|()| Action::Restore { revision }),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    Command::ImportAudio { track, start, path } => {
+                        match crate::media::import_audio(&directory, Path::new(&path)) {
+                            Ok(stored) => match session.perform(Command::PlaceAudio {
+                                track,
+                                start,
+                                hash: stored.hash,
+                                sample_rate: stored.sample_rate,
+                                channels: stored.channels,
+                                frames: stored.frames,
+                            }) {
+                                Ok(action) => publish_edit(&mut Publish {
+                                    directory: &directory,
+                                    snapshot: &snapshot,
+                                    autosave: &autosave,
+                                    inflight: &mut inflight,
+                                    next_seq: &mut next_seq,
+                                    session: &session,
+                                })
+                                .map(|()| action),
+                                Err(error) => Err(HostError::Action(error)),
+                            },
+                            Err(error) => Err(HostError::Package(error)),
+                        }
+                    }
+                    command => match session.perform(command) {
+                        Ok(action) => publish_edit(&mut Publish {
+                            directory: &directory,
+                            snapshot: &snapshot,
+                            autosave: &autosave,
+                            inflight: &mut inflight,
+                            next_seq: &mut next_seq,
+                            session: &session,
+                        })
+                        .map(|()| action),
+                        Err(error) => Err(HostError::Action(error)),
+                    },
                 };
                 let _ = reply.send(result);
             }
@@ -211,6 +289,10 @@ fn worker(
                     Err(error) => Err(HostError::Action(error)),
                 };
                 let _ = reply.send(result);
+            }
+            Request::Revisions { reply } => {
+                wait_for_saves(&directory, &mut inflight);
+                let _ = reply.send(autosave.revisions().map_err(HostError::Package));
             }
             Request::Redo { reply } => {
                 let result = match session.redo() {
@@ -384,6 +466,27 @@ fn is_reference(map: &Map<String, Value>) -> bool {
     map.len() == 2 && map.contains_key("ref") && map.contains_key("field")
 }
 
+fn wait_for_saves(directory: &Path, inflight: &mut Vec<(u64, PendingAutosave)>) {
+    for (seq, pending) in inflight.drain(..) {
+        if pending.wait().is_ok() {
+            let _ = compact_journal(directory, seq);
+        }
+    }
+}
+
+fn restore_revision(
+    session: &mut Session,
+    autosave: &Autosave,
+    revision: &str,
+) -> Result<echode_model::ChangeSet, HostError> {
+    let id = ObjectId::from_hex(revision.as_bytes())
+        .map_err(|_| HostError::Package(PackageError::new("saved revision was not found")))?;
+    let project = autosave.load(id).map_err(HostError::Package)?;
+    session
+        .restore(project, revision.to_string())
+        .map_err(HostError::Action)
+}
+
 fn finish_saves(directory: &Path, inflight: &mut Vec<(u64, PendingAutosave)>) {
     while let Some((seq, pending)) = inflight.first() {
         match pending.try_wait() {
@@ -429,5 +532,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory);
         assert_eq!(project.tracks().len(), 1);
         assert_eq!(project.tracks()[0].name, "piano");
+    }
+
+    #[test]
+    fn restoring_an_older_autosave_records_a_new_version_and_undoes() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack { name: "one".into() })
+            .unwrap();
+        assert_eq!(host.revisions().unwrap().len(), 2);
+        host.perform(Command::AddTrack { name: "two".into() })
+            .unwrap();
+        let revisions = host.revisions().unwrap();
+        assert_eq!(revisions.len(), 3);
+        // Newest first. The last commit is the empty base; the one before it
+        // is the project after the first track.
+        let after_first = &revisions[revisions.len() - 2];
+        host.perform(Command::Restore {
+            revision: after_first.id.clone(),
+        })
+        .unwrap();
+        assert_eq!(host.snapshot().tracks().len(), 1);
+        assert_eq!(host.snapshot().tracks()[0].name, "one");
+        let kept = after_first.id.clone();
+        host.undo().unwrap();
+        assert_eq!(host.snapshot().tracks().len(), 2);
+        host.redo().unwrap();
+        assert_eq!(host.snapshot().tracks()[0].name, "one");
+        drop(host);
+        let again = DocumentHost::open(&directory).unwrap();
+        let names: Vec<_> = again
+            .snapshot()
+            .tracks()
+            .iter()
+            .map(|track| track.name.clone())
+            .collect();
+        let still = again.revisions().unwrap();
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert_eq!(names, ["one"]);
+        assert!(still.iter().any(|revision| revision.id == kept));
     }
 }

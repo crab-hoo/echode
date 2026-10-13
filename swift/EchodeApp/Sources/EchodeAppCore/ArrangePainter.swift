@@ -3,8 +3,18 @@ import Metal
 
 /// The display renderer and the offscreen GPU probe use the same encoder.
 /// Headers and timeline share a command buffer, attachment and presentation.
+struct WaveInstance {
+    var rect: SIMD4<Float>
+    var color: SIMD4<Float>
+    var offset: UInt32
+    var columns: UInt32
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
 final class ArrangePainter {
     private let pipeline: any MTLRenderPipelineState
+    private let wavePipeline: any MTLRenderPipelineState
     private let labelPipeline: any MTLRenderPipelineState
     private let labels = ArrangeLabelTextures()
     private let device: any MTLDevice
@@ -22,6 +32,9 @@ final class ArrangePainter {
         descriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
         descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.vertexFunction = library.makeFunction(name: "wave_vertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "wave_fragment")
+        wavePipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         descriptor.vertexFunction = library.makeFunction(name: "label_vertex")
         descriptor.fragmentFunction = library.makeFunction(name: "label_fragment")
         labelPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
@@ -37,11 +50,22 @@ final class ArrangePainter {
             if let rect = scissor(x: frame.timelineOrigin * frame.input.scale, y: 0,
                                   width: frame.timelineWidth * frame.input.scale, height: Double(texture.height), texture: texture) {
                 encoder.setScissorRect(rect)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: timelineCount)
+                let split = min(frame.foregroundStart, timelineCount)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: split)
+                encodeWaveforms(frame, encoder: encoder, texture: texture)
+                if timelineCount > split {
+                    encoder.setRenderPipelineState(pipeline)
+                    encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                    encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: timelineCount - split, baseInstance: split)
+                }
             }
             if let rect = scissor(x: 0, y: 0, width: frame.timelineOrigin * frame.input.scale,
                                   height: Double(texture.height), texture: texture) {
                 encoder.setScissorRect(rect)
+                encoder.setRenderPipelineState(pipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: headerCount, baseInstance: timelineCount)
             }
             encodeLabels(frame, encoder: encoder, texture: texture)
@@ -66,6 +90,32 @@ final class ArrangePainter {
             encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: texture.width, height: texture.height))
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: timelineCount)
         }
+    }
+
+    private func encodeWaveforms(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {
+        let draws = frame.waveforms
+        guard !draws.isEmpty else { return }
+        var instances: [WaveInstance] = []
+        var peaks: [SIMD2<Float>] = []
+        instances.reserveCapacity(draws.count)
+        for draw in draws where !draw.columns.isEmpty {
+            instances.append(WaveInstance(rect: draw.rect, color: draw.color, offset: UInt32(peaks.count), columns: UInt32(draw.columns.count)))
+            peaks.append(contentsOf: draw.columns)
+        }
+        guard !instances.isEmpty else { return }
+        let instancesBuffer = instances.withUnsafeBytes { raw in
+            device.makeBuffer(bytes: raw.baseAddress!, length: raw.count, options: .storageModeShared)
+        }
+        let peaksBuffer = peaks.withUnsafeBytes { raw in
+            device.makeBuffer(bytes: raw.baseAddress!, length: raw.count, options: .storageModeShared)
+        }
+        guard let instancesBuffer, let peaksBuffer else { return }
+        var viewport = SIMD2(Float(texture.width), Float(texture.height))
+        encoder.setRenderPipelineState(wavePipeline)
+        encoder.setVertexBuffer(instancesBuffer, offset: 0, index: 0)
+        encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+        encoder.setFragmentBuffer(peaksBuffer, offset: 0, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count)
     }
 
     private func encodeLabels(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {

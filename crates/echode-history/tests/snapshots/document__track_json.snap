@@ -3,7 +3,7 @@ source: crates/echode-history/tests/document.rs
 expression: track_json
 ---
 {
-  "schema":2,
+  "schema":3,
   "id":"00000000-0000-0000-0000-000000000003",
   "name":"piano",
   "parent":null,

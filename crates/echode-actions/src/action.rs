@@ -6,7 +6,8 @@
 use std::fmt;
 
 use echode_model::{
-    ChangeSet, Id, Meter, MixerIds, ModelError, NoteDraft, NoteGeometry, Project, Tempo, Tick,
+    AudioRef, ChangeSet, Id, Meter, MixerIds, ModelError, NoteDraft, NoteGeometry, Project, Tempo,
+    Tick,
 };
 use serde::{Deserialize, Serialize};
 
@@ -598,6 +599,93 @@ define_actions! {
             project.remove_device(*device).map_err(Into::into)
         }
     }
+    Restore {
+        id: "history.restore",
+        name_ja: "履歴から戻す",
+        name_en: "Restore a saved revision",
+        description_ja: "自動保存した版を新しい版として戻す。それまでのコミットは残る",
+        description_en: "Restore an autosaved revision as a new version. Earlier commits stay",
+        command {
+            revision: String,
+        }
+        action {
+            revision: String,
+        }
+        commit {
+            Action::Restore { revision }
+        }
+        edit |_project: &Project| {
+            let _ = revision;
+            Err(ActionError::NotApplied)
+        }
+    }
+    PlaceAudio {
+        id: "audio.place",
+        name_ja: "音声を置く",
+        name_en: "Place audio",
+        description_ja: "保管済みの音声を固定クリップとして置く",
+        description_en: "Place stored audio as a fixed clip",
+        command {
+            track: Id,
+            start: Tick,
+            hash: String,
+            sample_rate: u32,
+            channels: u16,
+            frames: u64,
+        }
+        action {
+            track: Id,
+            clip: Id,
+            content: Id,
+            start: Tick,
+            hash: String,
+            sample_rate: u32,
+            channels: u16,
+            frames: u64,
+        }
+        commit {
+            Action::PlaceAudio {
+                track,
+                clip: Id::generate(),
+                content: Id::generate(),
+                start,
+                hash,
+                sample_rate,
+                channels,
+                frames,
+            }
+        }
+        edit |project: &Project| {
+            let audio = AudioRef::try_new(hash.clone(), *sample_rate, *channels, *frames)?;
+            project
+                .place_audio(*track, *clip, *content, *start, audio)
+                .map_err(Into::into)
+        }
+    }
+    ImportAudio {
+        id: "audio.import",
+        name_ja: "音声を取り込む",
+        name_en: "Import audio",
+        description_ja: "音声ファイルを保管庫に入れて、トラックの固定クリップにする",
+        description_en: "Store an audio file and place it as a fixed clip",
+        command {
+            track: Id,
+            start: Tick,
+            path: String,
+        }
+        action {
+            track: Id,
+            start: Tick,
+            path: String,
+        }
+        commit {
+            Action::ImportAudio { track, start, path }
+        }
+        edit |_project: &Project| {
+            let _ = (track, start, path);
+            Err(ActionError::NotApplied)
+        }
+    }
 }
 
 impl Action {
@@ -623,6 +711,8 @@ pub enum ActionError {
     NothingToUndo,
     NothingToRedo,
     CorruptJournal,
+    /// The document host applies this command after it loads a file or a revision.
+    NotApplied,
 }
 
 impl fmt::Display for ActionError {
@@ -632,6 +722,7 @@ impl fmt::Display for ActionError {
             Self::NothingToUndo => formatter.write_str("nothing to undo"),
             Self::NothingToRedo => formatter.write_str("nothing to redo"),
             Self::CorruptJournal => formatter.write_str("journal entry is not valid"),
+            Self::NotApplied => formatter.write_str("a saved revision is restored by the document"),
         }
     }
 }
@@ -640,7 +731,9 @@ impl std::error::Error for ActionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Model(error) => Some(error),
-            Self::NothingToUndo | Self::NothingToRedo | Self::CorruptJournal => None,
+            Self::NothingToUndo | Self::NothingToRedo | Self::CorruptJournal | Self::NotApplied => {
+                None
+            }
         }
     }
 }

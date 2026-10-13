@@ -41,37 +41,56 @@ fn track_fader(track: &echode_model::Track) -> Result<TrackFader, PlaybackError>
     })
 }
 
-/// How many frames cover the score plus the test synth's tail.
+/// How many frames cover the score.
+///
+/// A note's end includes the test synth's tail. An audio clip ends at the
+/// placement, with no extra tail.
 pub fn render_span_frames(project: &Project, sample_rate: u32) -> Result<u32, PlaybackError> {
     if sample_rate == 0 {
         return Err(PlaybackError::InvalidSampleRate);
     }
-    let mut end = 0i64;
-    let mut heard = false;
+    let mut note_end = 0i64;
+    let mut audio_end = 0i64;
+    let mut heard_notes = false;
     for track in project.tracks() {
         for clip in &track.clips {
             let Some(content) = project.content(clip.content) else {
                 return Err(PlaybackError::Time);
             };
+            if content.audio.is_some() {
+                let end_tick = clip
+                    .start
+                    .get()
+                    .checked_add(clip.length.get())
+                    .ok_or(PlaybackError::Time)?;
+                let sample = tick_to_sample(
+                    echode_model::Tick::new(end_tick),
+                    project.tempo(),
+                    sample_rate,
+                )
+                .ok_or(PlaybackError::Time)?;
+                audio_end = audio_end.max(sample);
+            }
             for note in &content.notes {
                 let Some((_, off)) = clip.audible(note).map_err(|_| PlaybackError::Time)? else {
                     continue;
                 };
                 let sample =
                     tick_to_sample(off, project.tempo(), sample_rate).ok_or(PlaybackError::Time)?;
-                heard = true;
-                end = end.max(sample);
+                heard_notes = true;
+                note_end = note_end.max(sample);
             }
         }
     }
-    if !heard {
+    if !heard_notes && audio_end == 0 {
         return Ok(0);
     }
-    let release = TestSynth::new(sample_rate)?.tail_samples(sample_rate);
-    u32::try_from(end.max(0))
-        .map_err(|_| PlaybackError::Time)?
-        .checked_add(release)
-        .ok_or(PlaybackError::Time)
+    let mut end = audio_end.max(0);
+    if heard_notes {
+        let release = i64::from(TestSynth::new(sample_rate)?.tail_samples(sample_rate));
+        end = end.max(note_end.saturating_add(release));
+    }
+    u32::try_from(end).map_err(|_| PlaybackError::Time)
 }
 
 /// Why a block-wise offline render stopped.
@@ -122,12 +141,26 @@ pub fn render_offline(
 ///
 /// `block_frames` is scratch for one block, not a limit on `frames`. `on_block`
 /// sees left then right for that block only, so a long export can write it
-/// before the next block is rendered.
+/// before the next block is rendered. Placed audio is not included; pass it to
+/// [`render_offline_blocks_with_clips`].
 pub fn render_offline_blocks<E>(
     project: &Project,
     sample_rate: u32,
     frames: u32,
     block_frames: u32,
+    on_block: impl FnMut(&[f32]) -> Result<(), E>,
+) -> Result<(), OfflineError<E>> {
+    render_offline_blocks_with_clips(project, sample_rate, frames, block_frames, &[], on_block)
+}
+
+/// [`render_offline_blocks`] plus device-rate clips mixed after the synth and
+/// before the fader, matching product playback.
+pub fn render_offline_blocks_with_clips<E>(
+    project: &Project,
+    sample_rate: u32,
+    frames: u32,
+    block_frames: u32,
+    clips: &[crate::playback::LoadedClip],
     mut on_block: impl FnMut(&[f32]) -> Result<(), E>,
 ) -> Result<(), OfflineError<E>> {
     if block_frames == 0 {
@@ -187,7 +220,7 @@ pub fn render_offline_blocks<E>(
     while rendered < frames {
         let block = (frames - rendered).min(block_frames);
         let block_len = block as usize;
-        {
+        let span_count = {
             let _guard = ForbidAlloc::enter();
             let span_count = transport
                 .pull(block, &mut spans)
@@ -222,7 +255,10 @@ pub fn render_offline_blocks<E>(
                     .process(&mut channels, &track_events[..kept], sample_rate)
                     .map_err(OfflineError::Playback)?;
             }
-        }
+            span_count
+        };
+        add_offline_clips(tracks, clips, &spans[..span_count], &mut planes, block_len)
+            .map_err(OfflineError::Playback)?;
         let plane_refs: Vec<&[f32]> = planes.iter().map(|plane| &plane[..block_len]).collect();
         mix_tracks(
             &plane_refs,
@@ -238,6 +274,33 @@ pub fn render_offline_blocks<E>(
         }
         on_block(&interleaved_block[..block_len * 2]).map_err(OfflineError::Write)?;
         rendered += block;
+    }
+    Ok(())
+}
+
+fn add_offline_clips(
+    tracks: &[std::sync::Arc<echode_model::Track>],
+    clips: &[crate::playback::LoadedClip],
+    spans: &[PlayedSpan],
+    planes: &mut [Vec<f32>],
+    block_len: usize,
+) -> Result<(), PlaybackError> {
+    if clips.is_empty() || spans.is_empty() {
+        return Ok(());
+    }
+    for clip in clips {
+        let track_index = tracks
+            .iter()
+            .position(|track| track.id.raw() == clip.track)
+            .ok_or(PlaybackError::Time)?;
+        let view = [crate::voice::FadedClip {
+            start_sample: clip.start_sample,
+            samples: clip.samples.as_ref(),
+            fade_in: clip.fade_in,
+            fade_out: clip.fade_out,
+        }];
+        let plane = planes.get_mut(track_index).ok_or(PlaybackError::Time)?;
+        crate::voice::render_faded_clips(&view, spans, &mut plane[..block_len])?;
     }
     Ok(())
 }
@@ -307,6 +370,96 @@ mod tests {
         assert_eq!(render_span_frames(&Project::new(), 48_000).unwrap(), 0);
         let mut silence = [];
         render_offline(&Project::new(), 48_000, 0, &mut silence).unwrap();
+    }
+
+    #[test]
+    fn an_audio_clip_sets_the_length_without_the_synth_tail() {
+        use echode_model::{AudioRef, Id};
+        let (project, track) = Project::new().add_track("file");
+        let audio = AudioRef::try_new(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            48_000,
+            1,
+            48_000,
+        )
+        .unwrap();
+        let project = project
+            .place_audio(track, Id::generate(), Id::generate(), Tick::new(0), audio)
+            .unwrap();
+        let clip = &project.tracks()[0].clips[0];
+        let end = tick_to_sample(
+            Tick::new(clip.start.get() + clip.length.get()),
+            project.tempo(),
+            48_000,
+        )
+        .unwrap();
+        assert!(end > 0);
+        assert_eq!(
+            render_span_frames(&project, 48_000).unwrap(),
+            u32::try_from(end).unwrap()
+        );
+    }
+
+    #[test]
+    fn offline_clips_match_playback() {
+        use echode_model::{AudioRef, Id};
+        use std::sync::Arc;
+        let (project, track) = Project::new().add_track("audio");
+        let audio = AudioRef::try_new(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            48_000,
+            1,
+            64,
+        )
+        .unwrap();
+        let project = project
+            .place_audio(track, Id::generate(), Id::generate(), Tick::new(0), audio)
+            .unwrap();
+        let samples: Arc<[f32]> = (0..64).map(|index| index as f32 / 64.0).collect();
+        let loaded = vec![crate::playback::LoadedClip {
+            track: project.tracks()[0].id.raw(),
+            start_sample: 0,
+            samples: Arc::clone(&samples),
+            fade_in: 8,
+            fade_out: 8,
+        }];
+        let mut offline = Vec::new();
+        render_offline_blocks_with_clips(&project, 48_000, 200, 64, &loaded, |block| {
+            offline.extend_from_slice(block);
+            Ok::<(), PlaybackError>(())
+        })
+        .unwrap();
+        let (mut control, mut playback) =
+            crate::playback::playback_pair(&project, 48_000, 64).unwrap();
+        let samples = Arc::clone(&samples);
+        let track_raw = project.tracks()[0].id.raw();
+        control.set_clip_loader(Arc::new(move |_project, _rate| {
+            Ok(vec![crate::playback::LoadedClip {
+                track: track_raw,
+                start_sample: 0,
+                samples: Arc::clone(&samples),
+                fade_in: 8,
+                fade_out: 8,
+            }])
+        }));
+        control.replace(&project).unwrap();
+        control
+            .command(crate::playback::PlaybackCommand::Play)
+            .unwrap();
+        let (mut left, mut right) = (vec![0.0; 64], vec![0.0; 64]);
+        let mut heard = Vec::with_capacity(400);
+        let mut remaining = 200usize;
+        while remaining > 0 {
+            let count = remaining.min(64);
+            playback.render(&mut left[..count], &mut right[..count]);
+            for (left, right) in left.iter().zip(&right).take(count) {
+                heard.extend([*left, *right]);
+            }
+            remaining -= count;
+        }
+        assert!(!control.status().failed);
+        assert!(offline.iter().any(|sample| *sample != 0.0));
+        assert_eq!(offline, heard);
     }
 
     fn crowded(extra: usize) -> Project {

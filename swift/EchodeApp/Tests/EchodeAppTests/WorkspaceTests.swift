@@ -135,6 +135,7 @@ struct WorkspaceTests {
         #expect(session.enabled(.newProject) && !session.enabled(.undo) && !session.enabled(.plugins))
         await controller.open(url, creating: true)
         #expect(session.enabled(.addTrack) && !session.enabled(.plugins))
+        #expect(session.enabled(.loop) && session.enabled(.metronome))
         await controller.addTrack(name: "first"); let first = try #require(controller.selection)
         #expect(session.enabled(.undo) && session.enabled(.plugins))
         session.perform(.palette)
@@ -151,7 +152,12 @@ struct WorkspaceTests {
         state.presentation = nil; state.choosingFile = true
         #expect(!session.enabled(.openProject) && !session.enabled(.palette))
         state.choosingFile = false
-        state.presentation = .plugins(track: first, document: controller.documentID!)
+        state.presentation = .plugins(track: first, document: UUID())
+        state.synchronize(controller)
+        #expect(state.presentation == nil)
+        state.presentation = .history
+        state.synchronize(controller)
+        #expect(state.presentation == .history)
         await controller.close(); state.synchronize(controller)
         #expect(state.presentation == nil)
     }

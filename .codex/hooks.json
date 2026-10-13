@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Shell|Write|StrReplace|Delete|EditNotebook|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/someone/Echode/.codex/hooks/wait-for-verify.sh'",
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}

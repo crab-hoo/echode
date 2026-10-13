@@ -23,6 +23,7 @@ let package = Package(
                 linkerSettings: [
                 .linkedLibrary("echode_ffi"),
                 .linkedFramework("CoreAudio"),
+                .linkedFramework("AudioToolbox"),
                 .unsafeFlags(["-L", rustLibraryDir]),
             ]
         ),

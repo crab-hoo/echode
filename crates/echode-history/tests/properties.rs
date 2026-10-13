@@ -89,6 +89,10 @@ enum Step {
         track: usize,
         device: usize,
     },
+    PlaceAudio {
+        track: usize,
+        start: i64,
+    },
     Undo,
     Redo,
 }
@@ -157,6 +161,7 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
         1 => (any::<usize>(), any::<usize>())
             .prop_map(|(track, device)| Step::RemoveDevice { track, device }),
+        2 => (any::<usize>(), 0i64..16).prop_map(|(track, start)| Step::PlaceAudio { track, start }),
         2 => Just(Step::Undo),
         1 => Just(Step::Redo),
     ]
@@ -354,6 +359,17 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 device: pick(&devices, *device)?,
             }
         }
+        Step::PlaceAudio {
+            track: index,
+            start,
+        } => Command::PlaceAudio {
+            track: track(*index)?,
+            start: Tick::new(start * EIGHTH),
+            hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            sample_rate: 48_000,
+            channels: 1,
+            frames: 48_000,
+        },
         Step::Undo | Step::Redo => return None,
     })
 }

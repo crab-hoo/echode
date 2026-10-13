@@ -32,6 +32,9 @@ public final class ProjectController {
     public var errorMessage: String?
     public private(set) var audio = AudioState()
     public private(set) var audioBusy = false
+    /// Loop bounds in beats. Transport state, not part of the project.
+    public var loopStartBeat = 0.0
+    public var loopEndBeat = 4.0
     public private(set) var playback: PlaybackFeed?
     @ObservationIgnored private var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
@@ -55,6 +58,8 @@ public final class ProjectController {
             playback = opened.playbackFeed
             audio = initialAudio
             reportedAudioError = nil
+            loopStartBeat = 0
+            loopEndBeat = 4
             projectURL = url
             undoCount = 0
             redoCount = 0
@@ -63,6 +68,18 @@ public final class ProjectController {
             publish(initial)
             if let previous { await Task.detached { previous.shutdown() }.value }
         } catch { report(error) }
+    }
+
+    @discardableResult
+    public func importAudio(_ url: URL, on track: UUID? = nil) async -> Bool {
+        guard let target = track ?? selection, tracks.contains(where: { $0.id == target }) else { return false }
+        guard audio.tick >= 0 else { return false }
+        return await edit([
+            "type": "audio.import",
+            "track": target.uuidString,
+            "start": audio.tick,
+            "path": url.path,
+        ])
     }
 
     public func addTrack(name: String) async {
@@ -122,6 +139,16 @@ public final class ProjectController {
         catch { report(error) }
     }
 
+    /// Newest autosave first. An empty list means there is no commit yet, or the request failed.
+    public func savedRevisions() async -> [SavedRevision] {
+        await history(.list)?.revisions ?? []
+    }
+
+    /// Restores one autosave as a new version. `changed` is false when that revision is already current.
+    public func restoreRevision(_ id: String) async -> HistoryReport? {
+        await history(.restore(revision: id))
+    }
+
     public func close() async {
         guard !busy else { return }
         busy = true
@@ -139,6 +166,8 @@ public final class ProjectController {
         redoCount = 0
         audio = AudioState()
         reportedAudioError = nil
+        loopStartBeat = 0
+        loopEndBeat = 4
         busy = false
     }
 
@@ -151,6 +180,24 @@ public final class ProjectController {
     public func locate(beat: Double) async {
         guard let tick = PianoCamera.ticks(beat), tick >= 0 else { return }
         await audioCommand(.locate(tick: tick))
+    }
+
+    public func toggleLoop() async {
+        await setLoop(enabled: audio.loopStart == nil)
+    }
+
+    public func setLoop(enabled: Bool) async {
+        guard enabled else {
+            await audioCommand(.loop(start: nil, end: nil))
+            return
+        }
+        guard let start = PianoCamera.ticks(loopStartBeat), let end = PianoCamera.ticks(loopEndBeat),
+              start >= 0, end > start else { return }
+        await audioCommand(.loop(start: start, end: end))
+    }
+
+    public func toggleMetronome() async {
+        await audioCommand(.metronome(enabled: !audio.metronome))
     }
 
     public func selectOutput(uid: String?) async { await audioCommand(.output(uid: uid)) }
@@ -197,6 +244,25 @@ public final class ProjectController {
             redoCount = 0
             return true
         } catch { report(error); return false }
+    }
+
+    private func history(_ command: HistoryCommand) async -> HistoryReport? {
+        guard !busy, let document else { return nil }
+        busy = true
+        defer { busy = false }
+        do {
+            let snapshot = try await document.history(command)
+            let report = try snapshot.historyReport()
+            if report.changed {
+                publish(snapshot)
+                undoCount += 1
+                redoCount = 0
+            }
+            return report
+        } catch {
+            report(error)
+            return nil
+        }
     }
 
     private func publish(_ snapshot: Snapshot) {

@@ -21,6 +21,12 @@ struct ArrangeHeaderRow: Sendable {
     let height: Float
 }
 
+struct WaveformDraw: Sendable {
+    var rect: SIMD4<Float>
+    var color: SIMD4<Float>
+    var columns: [SIMD2<Float>]
+}
+
 /// A complete arrange frame. Headers are derived from the exact lane floats
 /// returned by Rust, and submitted with those lanes to one drawable.
 struct ArrangeFrame: Sendable {
@@ -31,6 +37,7 @@ struct ArrangeFrame: Sendable {
     let timelineWidth: Double
     let elements: [ArrangeElement]
     let headers: [ArrangeHeaderRow]
+    let waveforms: [WaveformDraw]
 
     init(input: CanvasInput, camera: ArrangeCamera? = nil, revision: UInt64 = 0) {
         self.revision = revision
@@ -46,6 +53,7 @@ struct ArrangeFrame: Sendable {
             originTrack: camera.originTrack, heightTracks: input.height / camera.pixelsPerTrack,
             pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerTrack: camera.pixelsPerTrack
         ).elements ?? []
+        waveforms = Self.waveforms(elements: elements, input: input, camera: camera, origin: timelineOrigin)
         guard input.header != nil, let snapshot = input.snapshot else { headers = []; return }
         let rows = camera.rows(trackCount: snapshot.trackCount, height: input.height)
         headers = zip(rows.visible, elements.filter { $0.role == .track }).compactMap { index, lane in
@@ -54,9 +62,19 @@ struct ArrangeFrame: Sendable {
         }
     }
 
+    /// Index in `timelineInstances` where notes and the playhead begin.
+    var foregroundStart: Int {
+        let lanes = elements.filter { $0.role == .track }.count
+        let clips = elements.filter { $0.role == .clip }.count
+        let firstBeat = Int(camera.originBeat.rounded(.up))
+        let lastBeat = Int((camera.originBeat + timelineWidth / camera.pixelsPerBeat).rounded(.up))
+        return lanes + (max(firstBeat, lastBeat) - firstBeat + 1) + clips
+    }
+
     var timelineInstances: [Instance] {
         let lanes = elements.filter { $0.role == .track }
-        let objects = elements.filter { $0.role != .track }
+        let clips = elements.filter { $0.role == .clip }
+        let notes = elements.filter { $0.role == .note }
         var instances = lanes.map(instance)
         let firstBeat = Int(camera.originBeat.rounded(.up))
         let lastBeat = Int((camera.originBeat + timelineWidth / camera.pixelsPerBeat).rounded(.up))
@@ -65,7 +83,8 @@ struct ArrangeFrame: Sendable {
             instances.append(Instance(rect: SIMD4(Float(x), 0, Float(input.scale), Float(input.height * input.scale)),
                                       color: beat % 4 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) : SIMD4(0.18, 0.20, 0.23, 1)))
         }
-        instances.append(contentsOf: objects.map(instance))
+        instances.append(contentsOf: clips.map(instance))
+        instances.append(contentsOf: notes.map(instance))
         if let position = input.playback?.position {
             let x = (Double(position.tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
             if x >= 0, x < timelineWidth {
@@ -103,5 +122,23 @@ struct ArrangeFrame: Sendable {
         case .note: color = SIMD4(0.52, 0.83, 0.88, 1)
         }
         return Instance(rect: SIMD4(Float(timelineOrigin) + element.x, element.y, element.width, max(1, element.height - 1)) * Float(input.scale), color: color)
+    }
+
+    private static func waveforms(elements: [ArrangeElement], input: CanvasInput, camera: ArrangeCamera, origin: Double) -> [WaveformDraw] {
+        guard let snapshot = input.snapshot else { return [] }
+        let originTick = Int64((camera.originBeat * 705_600).rounded())
+        let pixelsPerTick = camera.pixelsPerBeat / 705_600
+        guard pixelsPerTick > 0 else { return [] }
+        let color = SIMD4<Float>(0.78, 0.93, 0.96, 1)
+        return elements.compactMap { element in
+            guard element.role == .clip, let placement = element.id.placement else { return nil }
+            let columns = max(1, Int((Double(element.width) * input.scale).rounded(.up)))
+            let start = originTick + Int64((Double(element.x) / pixelsPerTick).rounded())
+            let end = originTick + Int64((Double(element.x + element.width) / pixelsPerTick).rounded())
+            let samples = snapshot.waveform(placement: placement, startTick: start, endTick: max(start + 1, end), columns: columns)
+            guard !samples.isEmpty else { return nil }
+            let rect = SIMD4(Float(origin) + element.x, element.y, element.width, max(1, element.height - 1)) * Float(input.scale)
+            return WaveformDraw(rect: rect, color: color, columns: samples)
+        }
     }
 }

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use echode_engine::{
-    ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus, PluginRoute,
-    playback_pair, playback_with_plugins, tick_to_sample,
+    ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
+    PluginRoute, playback_pair, playback_with_plugins, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -44,6 +44,22 @@ struct Callback {
 // render; the control thread frees it after stopping/destroying the IOProc.
 unsafe impl Sync for Callback {}
 
+pub(crate) struct TransportSetup {
+    pub(crate) loop_ticks: Option<(i64, i64)>,
+    pub(crate) metronome: bool,
+    pub(crate) clips: ClipLoader,
+}
+
+impl TransportSetup {
+    fn idle() -> Self {
+        Self {
+            loop_ticks: None,
+            metronome: false,
+            clips: Arc::new(|_project, _rate| Ok(Vec::new())),
+        }
+    }
+}
+
 pub struct OutputStream {
     pub device: OutputDevice,
     control: PlaybackControl,
@@ -67,6 +83,7 @@ impl OutputStream {
             project,
             tick,
             silent,
+            TransportSetup::idle(),
             Arc::new(AtomicU64::new(0)),
             0,
         )
@@ -76,10 +93,19 @@ impl OutputStream {
         device: OutputDevice,
         project: &Project,
         tick: i64,
+        transport: TransportSetup,
         hardware_epoch: Arc<AtomicU64>,
         observed_epoch: u64,
     ) -> Result<Self, String> {
-        Self::open_with_epoch(device, project, tick, false, hardware_epoch, observed_epoch)
+        Self::open_with_epoch(
+            device,
+            project,
+            tick,
+            false,
+            transport,
+            hardware_epoch,
+            observed_epoch,
+        )
     }
 
     fn open_with_epoch(
@@ -87,6 +113,7 @@ impl OutputStream {
         project: &Project,
         tick: i64,
         silent: bool,
+        transport: TransportSetup,
         hardware_epoch: Arc<AtomicU64>,
         observed_epoch: u64,
     ) -> Result<Self, String> {
@@ -95,8 +122,25 @@ impl OutputStream {
             .ok_or("playback time overflow")?;
         let frames = device.buffer_frames as usize;
         let (mut control, player) = open_playback(project, device.sample_rate, frames)?;
+        control.set_clip_loader(transport.clips);
+        control
+            .replace(project)
+            .map_err(|error| error.to_string())?;
         control
             .command(PlaybackCommand::Locate(sample))
+            .map_err(|error| error.to_string())?;
+        if let Some((start, end)) = transport.loop_ticks {
+            let start = loop_sample(project, device.sample_rate, start)?;
+            let end = loop_sample(project, device.sample_rate, end)?;
+            if end <= start {
+                return Err("loop end must be after its start".into());
+            }
+            control
+                .command(PlaybackCommand::SetLoop { start, end })
+                .map_err(|error| error.to_string())?;
+        }
+        control
+            .command(PlaybackCommand::SetMetronome(transport.metronome))
             .map_err(|error| error.to_string())?;
         control
             .command(PlaybackCommand::Play)
@@ -142,6 +186,32 @@ impl OutputStream {
         }
         self.control
             .replace(project)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn set_loop(&mut self, project: &Project, start: i64, end: i64) -> Result<(), String> {
+        if end <= start {
+            return Err("loop end must be after its start".into());
+        }
+        let start = loop_sample(project, self.device.sample_rate, start)?;
+        let end = loop_sample(project, self.device.sample_rate, end)?;
+        if end <= start {
+            return Err("loop end must be after its start".into());
+        }
+        self.control
+            .command(PlaybackCommand::SetLoop { start, end })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn clear_loop(&mut self) -> Result<(), String> {
+        self.control
+            .command(PlaybackCommand::ClearLoop)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn set_metronome(&mut self, enabled: bool) -> Result<(), String> {
+        self.control
+            .command(PlaybackCommand::SetMetronome(enabled))
             .map_err(|error| error.to_string())
     }
 
@@ -244,6 +314,14 @@ fn open_playback(
         playback_pair(project, sample_rate, frames)
     }
     .map_err(|error| error.to_string())
+}
+
+fn loop_sample(project: &Project, sample_rate: u32, tick: i64) -> Result<i64, String> {
+    if tick < 0 {
+        return Err("loop end must be after its start".into());
+    }
+    tick_to_sample(Tick::new(tick), project.tempo(), sample_rate)
+        .ok_or("playback time overflow".into())
 }
 
 unsafe extern "C-unwind" fn render(

@@ -1,6 +1,7 @@
 import AppKit
 import EchodeBridge
 import Foundation
+import Metal
 import Testing
 @testable import EchodeAppCore
 
@@ -188,4 +189,55 @@ struct ArrangeTests {
             }
         }
     }
+
+    @Test func anAudioClipDrawsItsPeaksInsideTheLane() async throws {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
+            throw CocoaError(.featureUnsupported)
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-wave-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let wav = root.appendingPathComponent("tone.wav")
+        try alternatingWav(rate: 48_000, frames: 4_800).write(to: wav)
+        let url = root.appendingPathComponent("Song.echode")
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "audio")
+        #expect(await controller.importAudio(wav))
+        let snapshot = try #require(controller.snapshot)
+        let camera = ArrangeCamera(pixelsPerBeat: 400, pixelsPerTrack: 80)
+        let frame = ArrangeFrame(input: CanvasInput(snapshot: snapshot, selected: nil, camera: camera, width: 240, height: 160, scale: 1))
+        let clip = try #require(frame.elements.first { $0.role == .clip })
+        #expect(!frame.waveforms.isEmpty)
+        let painter = try ArrangePainter(device: device)
+        let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
+        let top = Int(clip.y) + 4
+        let loud = image.pixel(x: Int(clip.x) + 6, y: top)
+        let quiet = image.pixel(x: Int(clip.x + clip.width) - 6, y: top)
+        #expect(loud.r > 160 && loud.g > 180)
+        #expect(quiet.r < 80 && quiet.b > quiet.r)
+        await controller.close()
+    }
+}
+
+private func alternatingWav(rate: UInt32, frames: Int) -> Data {
+    var data = Data()
+    data.append(contentsOf: [0x52, 0x49, 0x46, 0x46])
+    let dataBytes = UInt32(frames * 2)
+    data.append(contentsOf: withUnsafeBytes(of: (36 + dataBytes).littleEndian) { Array($0) })
+    data.append(contentsOf: [0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20])
+    data.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: rate.littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: (rate * 2).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(2).littleEndian) { Array($0) })
+    data.append(contentsOf: withUnsafeBytes(of: UInt16(16).littleEndian) { Array($0) })
+    data.append(contentsOf: [0x64, 0x61, 0x74, 0x61])
+    data.append(contentsOf: withUnsafeBytes(of: dataBytes.littleEndian) { Array($0) })
+    for index in 0..<frames {
+        let sample: Int16 = index < frames / 2 ? (index.isMultiple(of: 2) ? 32767 : -32767) : 0
+        data.append(contentsOf: withUnsafeBytes(of: sample.littleEndian) { Array($0) })
+    }
+    return data
 }

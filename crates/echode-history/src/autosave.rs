@@ -19,6 +19,13 @@ use crate::document::{
     read_commit, write_incremental,
 };
 
+/// One autosave commit, newest first when listed.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct SavedRevision {
+    pub id: String,
+    pub time: i64,
+}
+
 pub struct Autosave {
     request: Sender<Request>,
     thread: Option<JoinHandle<()>>,
@@ -55,6 +62,9 @@ enum Request {
     Load {
         revision: ObjectId,
         reply: Sender<Result<Project, PackageError>>,
+    },
+    Revisions {
+        reply: Sender<Result<Vec<SavedRevision>, PackageError>>,
     },
     Shutdown,
 }
@@ -104,6 +114,17 @@ impl Autosave {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Load { revision, reply })
+            .map_err(|_| PackageError::new("autosave thread stopped"))?;
+        incoming
+            .recv_timeout(Duration::from_secs(30))
+            .map_err(|_| PackageError::new("autosave thread stopped"))?
+    }
+
+    /// Commits reachable from the autosave tip, newest first.
+    pub fn revisions(&self) -> Result<Vec<SavedRevision>, PackageError> {
+        let (reply, incoming) = mpsc::channel();
+        self.request
+            .send(Request::Revisions { reply })
             .map_err(|_| PackageError::new("autosave thread stopped"))?;
         incoming
             .recv_timeout(Duration::from_secs(30))
@@ -172,6 +193,9 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
                     Some(Request::Load { revision, reply }) => {
                         let _ = reply.send(read_commit(&repo, revision));
                     }
+                    Some(Request::Revisions { reply }) => {
+                        let _ = reply.send(list_revisions(&repo));
+                    }
                     Some(Request::Save { .. }) => {
                         unreachable!("coalesce consumes every queued save")
                     }
@@ -182,8 +206,37 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
                 let result = read_commit(&repo, revision);
                 let _ = reply.send(result);
             }
+            Request::Revisions { reply } => {
+                let _ = reply.send(list_revisions(&repo));
+            }
         }
     }
+}
+
+fn list_revisions(repo: &Repository) -> Result<Vec<SavedRevision>, PackageError> {
+    let Some(mut current) = tip(repo) else {
+        return Ok(Vec::new());
+    };
+    let mut seen = HashSet::new();
+    let mut revisions = Vec::new();
+    while seen.insert(current) {
+        let commit = repo
+            .find_commit(current)
+            .map_err(|error| PackageError::new(error.to_string()))?;
+        let time = commit
+            .time()
+            .map_err(|error| PackageError::new(error.to_string()))?
+            .seconds;
+        revisions.push(SavedRevision {
+            id: current.to_string(),
+            time,
+        });
+        let Some(parent) = commit.parent_ids().next() else {
+            break;
+        };
+        current = parent.into();
+    }
+    Ok(revisions)
 }
 
 fn fail(request: Request, message: String) {
@@ -193,6 +246,9 @@ fn fail(request: Request, message: String) {
             let _ = reply.send(Err(error));
         }
         Request::Load { reply, .. } => {
+            let _ = reply.send(Err(error));
+        }
+        Request::Revisions { reply } => {
             let _ = reply.send(Err(error));
         }
         Request::Shutdown => {}
