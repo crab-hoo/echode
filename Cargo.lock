@@ -666,6 +666,7 @@ dependencies = [
  "echode-actions",
  "echode-history",
  "echode-model",
+ "libc",
  "serde",
  "serde_json",
 ]
@@ -702,11 +703,13 @@ dependencies = [
 name = "echode-cli"
 version = "0.0.0"
 dependencies = [
+ "echode-actions",
  "echode-api",
  "echode-audio-io",
  "echode-engine",
  "echode-history",
  "echode-model",
+ "echode-plugin-host",
 ]
 
 [[package]]
@@ -760,6 +763,7 @@ dependencies = [
  "gix",
  "gix-pack",
  "insta",
+ "libc",
  "objc2-audio-toolbox",
  "objc2-core-audio-types",
  "objc2-core-foundation",

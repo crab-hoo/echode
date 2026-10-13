@@ -11,11 +11,21 @@ fn plugin_dylib() -> PathBuf {
     static BUILD: Mutex<()> = Mutex::new(());
     let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"));
     let sibling = host.parent().unwrap().join("libechode_test_plugin.dylib");
-    if sibling.exists() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src/lib.rs");
+    let current = |path: &Path| {
+        let Ok(built) = path.metadata().and_then(|meta| meta.modified()) else {
+            return false;
+        };
+        let Ok(edited) = source.metadata().and_then(|meta| meta.modified()) else {
+            return false;
+        };
+        built >= edited
+    };
+    if current(&sibling) {
         return sibling;
     }
     let _guard = BUILD.lock().expect("plugin build lock");
-    if sibling.exists() {
+    if current(&sibling) {
         return sibling;
     }
     let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-plugin");
@@ -43,13 +53,15 @@ fn plugin_dylib() -> PathBuf {
 #[test]
 fn scanning_reads_the_factory_descriptor() {
     let plugins = scan_descriptors(&plugin_dylib()).expect("scan");
-    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins.len(), 2);
     assert_eq!(plugins[0].id, "dev.echode.test-gain");
     assert_eq!(plugins[0].name, "Echode Test Gain");
     assert_eq!(plugins[0].vendor, "Echode");
     assert_eq!(plugins[0].version, "0.0.0");
     assert_eq!(plugins[0].features, ["audio-effect"]);
     assert_eq!(plugins[0].url, "https://echode.invalid");
+    assert_eq!(plugins[1].id, "dev.echode.test-instrument");
+    assert_eq!(plugins[1].features, ["instrument"]);
     let parsed: Vec<echode_plugin_host::ScannedPlugin> = scan_report(&plugins)
         .lines()
         .map(|line| serde_json::from_str(line).expect("report line"))
@@ -151,15 +163,32 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
     .unwrap();
     let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"));
     let scanned = echode_plugin_host::scan_out_of_process(&host, &bundle).unwrap();
-    assert_eq!(scanned[0].id, "dev.echode.test-gain");
+    assert_eq!(
+        scanned
+            .iter()
+            .map(|plugin| plugin.id.as_str())
+            .collect::<Vec<_>>(),
+        ["dev.echode.test-gain", "dev.echode.test-instrument"]
+    );
     let found = echode_plugin_host::list_bundles(&root);
     let cache = root.join("scan.jsonl");
     let listed = echode_plugin_host::refresh_catalog(&host, &cache, &found).unwrap();
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].id, "dev.echode.test-gain");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|plugin| plugin.id.as_str())
+            .collect::<Vec<_>>(),
+        ["dev.echode.test-gain", "dev.echode.test-instrument"]
+    );
     std::fs::write(macos.join("Plugin"), b"replaced after the cache").unwrap();
     let again = echode_plugin_host::refresh_catalog(&host, &cache, &found).unwrap();
-    assert_eq!(again[0].id, "dev.echode.test-gain");
+    assert_eq!(
+        again
+            .iter()
+            .map(|plugin| plugin.id.as_str())
+            .collect::<Vec<_>>(),
+        ["dev.echode.test-gain", "dev.echode.test-instrument"]
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

@@ -17,6 +17,10 @@ echode-audio-io = { path = "../echode-audio-io" }
 echode-engine = { path = "../echode-engine" }
 echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }
+echode-plugin-host = { path = "../echode-plugin-host" }
+
+[dev-dependencies]
+echode-actions = { path = "../echode-actions" }
 
 [lints]
 workspace = true

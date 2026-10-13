@@ -1,7 +1,9 @@
 //! Turn stored audio into device-rate clips on the control thread.
 //!
-//! The whole file is decoded and resampled here. The callback only reads the
-//! slice that was stored on the plan. Offline render uses the same clips.
+//! The whole file is decoded and resampled here, then the placement's linear
+//! gain is baked into those samples. Fades still run when the block is mixed.
+//! The callback only reads the slice that was stored on the plan. Offline
+//! render uses the same clips.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,6 +40,10 @@ pub fn load_placed_clips(
             {
                 return Err(PlaybackError::Media);
             }
+            let gain = placement.gain;
+            if !gain.is_finite() || gain < 0.0 {
+                return Err(PlaybackError::Media);
+            }
             let mono = fold_mono(&pcm.samples, pcm.channels);
             let start = tick_to_sample(placement.start, project.tempo(), device_rate)
                 .ok_or(PlaybackError::Time)?;
@@ -66,7 +72,7 @@ pub fn load_placed_clips(
             resample_into(&mono, pcm.sample_rate, &mut device, device_rate)?;
             let mut samples = vec![0.0; window];
             for (index, sample) in samples.iter_mut().enumerate() {
-                *sample = device.get(offset + index).copied().unwrap_or(0.0);
+                *sample = device.get(offset + index).copied().unwrap_or(0.0) * gain;
             }
             loaded.push(LoadedClip {
                 track: track.id.raw(),

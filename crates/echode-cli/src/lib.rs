@@ -1,18 +1,31 @@
 //! `echode render` writes a project package to a stereo float WAV.
 //!
-//! Notes come from the test synth. Placed audio is loaded the same way as
-//! product playback and mixed after the synth. Each render block is written
+//! A project with no CLAP device uses the test synth. Placed audio is loaded
+//! the same way as product playback and mixed after the synth. A project with
+//! a CLAP device uses that same isolated playback chain, and refuses the
+//! export when a plugin or the helper is missing. The project is the document
+//! host's recovered snapshot, so a journaled edit is included and a save that
+//! is still rewriting the worktree is not mixed in. Each render block is written
 //! as it is produced, through a buffered file, so a long export is not one
 //! syscall per sample and not one buffer for the whole file.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use echode_api::serve;
-use echode_audio_io::load_placed_clips;
-use echode_engine::{render_offline_blocks_with_clips, render_span_frames};
-use echode_history::read_package;
+use echode_audio_io::{installed_plugin_routes, load_placed_clips, project_plugin_ids};
+use echode_engine::{
+    PlaybackCommand, PluginRoute, playback_with_plugins, render_offline_blocks_with_clips,
+    render_span_frames,
+};
+use echode_history::DocumentHost;
+use echode_model::Project;
+
+/// One product callback while exporting plugins. Scratch for the helper, not a
+/// limit on the export. 256 frames at 48 kHz is about 5.3 ms.
+const PLUGIN_CALLBACK_FRAMES: usize = 256;
 
 /// Why a command stopped.
 #[derive(Debug)]
@@ -109,26 +122,118 @@ where
         .map_err(|error| CliError::new(error.to_string()))
 }
 
-/// Reads a package and writes a stereo IEEE-float WAV.
+/// Recovers a package and writes a stereo IEEE-float WAV.
+///
+/// The project is the document host's snapshot. On success the autosave
+/// revision that snapshot belongs to is written to stderr as `exported <id>`.
 pub fn render_to_wav(
     package: &Path,
     wav: &Path,
     sample_rate: u32,
     frames: Option<u32>,
 ) -> Result<(), CliError> {
-    let project = read_package(package).map_err(|error| CliError::new(error.to_string()))?;
+    let host = DocumentHost::open(package).map_err(|error| CliError::new(error.to_string()))?;
+    let project = host.snapshot();
+    let revision = host
+        .revisions()
+        .map_err(|error| CliError::new(error.to_string()))?
+        .into_iter()
+        .next()
+        .map(|revision| revision.id);
+    drop(host);
+    if let Some(id) = revision {
+        eprintln!("exported {id}");
+    }
     let frames = match frames {
         Some(frames) => frames,
         None => render_span_frames(&project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?,
     };
-    let clips = load_placed_clips(package, &project, sample_rate)
+    let ids = project_plugin_ids(&project);
+    if ids.is_empty() {
+        let clips = load_placed_clips(package, &project, sample_rate)
+            .map_err(|error| CliError::new(error.to_string()))?;
+        let mut wav = WavFile::create(wav, sample_rate, frames)?;
+        render_offline_blocks_with_clips(&project, sample_rate, frames, 64, &clips, |block| {
+            wav.write_block(block)
+        })
+        .map_err(|error| CliError::new(error.to_string()))?;
+        return wav.finish();
+    }
+    let Some(host) = echode_plugin_host::host_binary() else {
+        return Err(CliError::new("plugin host is missing"));
+    };
+    let routes = installed_plugin_routes(&project);
+    let missing: Vec<&str> = ids
+        .iter()
+        .filter(|id| {
+            !routes
+                .iter()
+                .any(|route| route.clap_id == **id && route.path.is_file())
+        })
+        .map(String::as_str)
+        .collect();
+    if !missing.is_empty() {
+        return Err(CliError::new(format!(
+            "missing plugin: {}",
+            missing.join(", ")
+        )));
+    }
+    render_with_plugins(package, wav, &project, sample_rate, frames, &host, &routes)
+}
+
+fn render_with_plugins(
+    package: &Path,
+    wav: &Path,
+    project: &Project,
+    sample_rate: u32,
+    frames: u32,
+    host: &Path,
+    routes: &[PluginRoute],
+) -> Result<(), CliError> {
+    if frames == 0 {
+        return WavFile::create(wav, sample_rate, 0)?.finish();
+    }
+    let total = usize::try_from(frames).map_err(|_| CliError::new("export length overflowed"))?;
+    let block = total.min(PLUGIN_CALLBACK_FRAMES);
+    let (mut control, mut audio) = playback_with_plugins(project, sample_rate, block, host, routes)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    let package = package.to_path_buf();
+    control.set_clip_loader(Arc::new(move |project, rate| {
+        load_placed_clips(&package, project, rate)
+    }));
+    control
+        .replace(project)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    control
+        .command(PlaybackCommand::Play)
         .map_err(|error| CliError::new(error.to_string()))?;
     let mut wav = WavFile::create(wav, sample_rate, frames)?;
-    render_offline_blocks_with_clips(&project, sample_rate, frames, 64, &clips, |block| {
-        wav.write_block(block)
-    })
-    .map_err(|error| CliError::new(error.to_string()))?;
+    let mut left = vec![0.0; block];
+    let mut right = vec![0.0; block];
+    let mut interleaved = vec![0.0; block.saturating_mul(2)];
+    let mut rendered = 0usize;
+    while rendered < total {
+        let count = (total - rendered).min(block);
+        audio.render(&mut left[..count], &mut right[..count]);
+        if control.status().failed {
+            return Err(CliError::new("plugin playback failed"));
+        }
+        for index in 0..count {
+            let left = left.get(index).copied().unwrap_or(0.0);
+            let right = right.get(index).copied().unwrap_or(0.0);
+            if let Some(slot) = interleaved.get_mut(index * 2) {
+                *slot = left;
+            }
+            if let Some(slot) = interleaved.get_mut(index * 2 + 1) {
+                *slot = right;
+            }
+        }
+        let samples = count.saturating_mul(2);
+        wav.write_block(interleaved.get(..samples).unwrap_or(&[]))?;
+        control.service();
+        rendered += count;
+    }
     wav.finish()
 }
 

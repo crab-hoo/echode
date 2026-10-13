@@ -225,7 +225,9 @@ def sign_development(app):
 
 
 def _codesign(path, identity, keychain, entitlements):
-    command = ["codesign", "--force", "--sign", identity, "--timestamp=none"]
+    # Hardened Runtime makes library validation the default. The helper's
+    # entitlement is what turns that check off for foreign plugins.
+    command = ["codesign", "--force", "--sign", identity, "--timestamp=none", "--options", "runtime"]
     if keychain is not None:
         command.extend(["--keychain", str(keychain)])
     if entitlements is not None:

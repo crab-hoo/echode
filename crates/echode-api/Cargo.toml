@@ -11,6 +11,7 @@ description = "JSON-RPC for a local Echode session"
 echode-actions = { path = "../echode-actions" }
 echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }
+libc = "=0.2.190"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

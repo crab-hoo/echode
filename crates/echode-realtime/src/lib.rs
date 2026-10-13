@@ -338,6 +338,11 @@ impl Cursor {
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
             for slot in 0..cursor.sounding_len {
                 let index = cursor.sounding[slot] as usize;
+                // A note-off already left this cursor. The slot stays until the
+                // next place, and sending the off again restarts the release.
+                if !cursor.sounding(index) {
+                    continue;
+                }
                 let Some(note) = track.notes.get(index) else {
                     continue;
                 };

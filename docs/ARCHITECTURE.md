@@ -589,6 +589,6 @@ Phase 1 の初期実装は `PianoRollView.swift`、`PianoGeometry.swift` と `Pi
 - よく使う作業は `just` にまとめる（`just check`、`just app`、`just render`、`just bench`）
 - **CI**: Rust のコアのテストは GitHub Actions の macOS ランナーで実行する。macOS 27 が必要なアプリのテストは、ランナーが対応するまで手元で実行する
 - **署名と配布**: Apple Developer Program に加入しないので、公証はしない。開発でも配布でも同じ自己署名証明書 `Echode Local` で署名し、アップデートしてもマイクなどの許可が維持されるようにする。証明書がまだ無いときの `make app` だけはアドホック署名のまま動く。GitHub Releases で配布し、初回起動時に許可する手順を案内する。自動アップデートには Sparkle（MIT）を使う予定で、自己署名での動作は Phase 6 で確かめる（[ADR 0061](decisions/0061-distribution-signing.md)）
-- **配布バンドル**: `Echode.app/Contents/MacOS/Echode`、`Contents/Helpers/EchodePluginHost.app`（`LSUIElement`。library validation を外す権限はこのヘルパーだけ）、`Contents/Frameworks/EchodeFFI.xcframework`。Xcode プロジェクトは `project.yml` から生成し、`.xcodeproj` は手で編集しない
+- **配布バンドル**: `Echode.app/Contents/MacOS/Echode`、`Contents/Helpers/EchodePluginHost.app`（`LSUIElement`。library validation を外す権限はこのヘルパーだけ）、`Contents/Frameworks/EchodeFFI.xcframework`。本体は Hardened Runtime で library validation を有効にする。Xcode プロジェクトは `project.yml` から生成し、`.xcodeproj` は手で編集しない
 - **GPL の条件**: リリースごとに、同じ版のソースを GitHub のタグで公開する。同梱したライブラリのライセンス表記は、アプリの「このアプリについて」から読めるようにする
 - App Sandbox は使わない（任意のプラグインを読み込むため）

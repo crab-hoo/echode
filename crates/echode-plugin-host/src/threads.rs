@@ -639,6 +639,15 @@ fn audio_loop(
                 return Err(HostError::Region(RegionError::UnknownCommand(command)));
             }
             let frames = region.prepare_block(generation)?;
+            // The parent grew the mapping on its control thread. Reserve here,
+            // before this block is read, so a longer note list is not truncated.
+            // Later blocks reuse the same allocation.
+            let needed = region.layout().input_events as usize;
+            if buffers.decoded.capacity() < needed {
+                buffers
+                    .decoded
+                    .reserve(needed.saturating_sub(buffers.decoded.capacity()));
+            }
             let inputs = region.input_channels();
             let outputs = region.output_channels();
             let stages = bridge.stages.load(Ordering::Acquire).max(1);

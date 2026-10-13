@@ -9,7 +9,7 @@ mod stream;
 pub use clips::load_placed_clips;
 pub use hardware::{Inventory, OutputDevice, inventory};
 pub use session::{AudioCommand, AudioState, Session};
-pub use stream::OutputStream;
+pub use stream::{OutputStream, installed_plugin_routes, project_plugin_ids};
 
 #[cfg(all(test, debug_assertions))]
 #[global_allocator]

@@ -8,8 +8,13 @@
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use echode_model::{
     AudioRef, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track,
@@ -86,23 +91,159 @@ fn read_named_dir(
     Ok(files)
 }
 
+/// The write reached the file and a later sync or rollback did not finish.
+pub(crate) const JOURNAL_DURABILITY_UNKNOWN: &str = "journal durability is unknown";
+
 /// Appends one synced journal line. The document thread is the only caller.
+///
+/// A torn tail is cut back to the last newline and synced before the new line
+/// is added, so a crash during the previous append cannot glue two records together.
 pub fn append_journal(
     directory: &Path,
     line: &echode_actions::JournalLine,
 ) -> Result<(), PackageError> {
+    repair_journal(directory)?;
     let mut text = echode_actions::encode_line(line);
     text.push('\n');
     let path = directory.join("journal.jsonl");
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
         .open(&path)
         .map_err(|error| io_error(&path, error))?;
-    std::io::Write::write_all(&mut file, text.as_bytes())
+    let end = file
+        .seek(SeekFrom::End(0))
+        .map_err(|error| io_error(&path, error))?;
+    let bytes = text.into_bytes();
+    let fault = take_journal_fault(directory);
+    let wrote = match fault {
+        JournalFault::BeforeWrite => Err(PackageError::new("journal write failed")),
+        JournalFault::Partial => {
+            let torn = if bytes.is_empty() {
+                &bytes[..]
+            } else {
+                &bytes[..1]
+            };
+            file.write_all(torn)
+                .map_err(|error| io_error(&path, error))?;
+            Err(PackageError::new("journal write failed"))
+        }
+        JournalFault::Sync | JournalFault::Uncertain => file
+            .write_all(&bytes)
+            .map_err(|error| io_error(&path, error))
+            .and(Err(PackageError::new(
+                if fault == JournalFault::Uncertain {
+                    JOURNAL_DURABILITY_UNKNOWN
+                } else {
+                    "journal sync failed"
+                },
+            ))),
+        JournalFault::None => file
+            .write_all(&bytes)
+            .map_err(|error| io_error(&path, error)),
+    };
+    if let Err(error) = wrote {
+        if fault == JournalFault::Uncertain {
+            return Err(error);
+        }
+        file.set_len(end).map_err(|error| io_error(&path, error))?;
+        file.sync_all().map_err(|error| io_error(&path, error))?;
+        return Err(error);
+    }
+    if let Err(error) = file.sync_all() {
+        match file.set_len(end).and_then(|()| file.sync_all()) {
+            Ok(()) => return Err(io_error(&path, error)),
+            Err(_) => return Err(PackageError::new(JOURNAL_DURABILITY_UNKNOWN)),
+        }
+    }
+    Ok(())
+}
+
+/// Drops an incomplete trailing record and syncs that shorter file.
+pub(crate) fn repair_journal(directory: &Path) -> Result<(), PackageError> {
+    let path = directory.join("journal.jsonl");
+    if !path.exists() {
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
+    if metadata.file_type().is_symlink() {
+        return Err(PackageError::new(format!(
+            "{} is a symbolic link",
+            path.display()
+        )));
+    }
+    if !metadata.is_file() {
+        return Err(PackageError::new(format!(
+            "{} is not a journal file",
+            path.display()
+        )));
+    }
+    let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+    let committed = committed_journal(&bytes);
+    if committed.len() == bytes.len() {
+        return Ok(());
+    }
+    let file = OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .map_err(|error| io_error(&path, error))?;
+    file.set_len(committed.len() as u64)
         .map_err(|error| io_error(&path, error))?;
     file.sync_all().map_err(|error| io_error(&path, error))?;
     Ok(())
+}
+
+/// Bytes through the last newline. A trailing partial record is not committed.
+fn committed_journal(bytes: &[u8]) -> &[u8] {
+    match bytes.iter().rposition(|byte| *byte == b'\n') {
+        Some(index) => &bytes[..=index],
+        None => &[],
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum JournalFault {
+    None,
+    BeforeWrite,
+    Partial,
+    Sync,
+    /// The bytes stay in the file. The caller must stop editing and recover.
+    Uncertain,
+}
+
+fn take_journal_fault(directory: &Path) -> JournalFault {
+    #[cfg(test)]
+    {
+        let path = directory
+            .canonicalize()
+            .unwrap_or_else(|_| directory.to_path_buf());
+        let mut faults = JOURNAL_FAULTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(index) = faults.iter().position(|(candidate, _)| candidate == &path) {
+            return faults.swap_remove(index).1;
+        }
+    }
+    let _ = directory;
+    JournalFault::None
+}
+
+#[cfg(test)]
+static JOURNAL_FAULTS: Mutex<Vec<(PathBuf, JournalFault)>> = Mutex::new(Vec::new());
+
+/// The next journal append for `directory` fails in the requested way.
+#[cfg(test)]
+pub(crate) fn fail_next_journal(directory: &Path, fault: JournalFault) {
+    let path = directory
+        .canonicalize()
+        .unwrap_or_else(|_| directory.to_path_buf());
+    JOURNAL_FAULTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .push((path, fault));
 }
 
 /// Drops lines at or below `through`. The kept suffix is synced, then renamed.
@@ -1145,14 +1286,8 @@ fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, Packag
         return Ok(Vec::new());
     }
     let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
-    let mut text =
-        String::from_utf8(bytes).map_err(|error| PackageError::new(error.to_string()))?;
-    if !text.is_empty() && !text.ends_with('\n') {
-        match text.rfind('\n') {
-            Some(index) => text.truncate(index + 1),
-            None => return Ok(Vec::new()),
-        }
-    }
+    let text = std::str::from_utf8(committed_journal(&bytes))
+        .map_err(|error| PackageError::new(error.to_string()))?;
     let mut records = Vec::new();
     for line in text.lines() {
         if line.is_empty() {

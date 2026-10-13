@@ -58,6 +58,7 @@ class DistributionSpec(unittest.TestCase):
         text = (ROOT / "project.yml").read_text(encoding="utf-8")
         self.assertNotIn("disable-library-validation", text)
         self.assertNotIn('CODE_SIGN_IDENTITY: "-"', text)
+        self.assertEqual(settings["ENABLE_HARDENED_RUNTIME"], True)
 
     def test_library_validation_is_disabled_only_on_the_helper(self):
         helper = (ROOT / "Packaging/EchodePluginHost/EchodePluginHost.entitlements").read_text(encoding="utf-8")
@@ -91,6 +92,15 @@ class SignedBundle(unittest.TestCase):
                 self.assertIn("Authority=Echode Local", helper)
                 self.assertIn("disable-library-validation", self.entitlements(app / "Contents/Helpers/EchodePluginHost.app"))
                 self.assertNotIn("disable-library-validation", self.entitlements(app))
+                self.assertIn("(runtime)", described)
+                self.assertIn("(runtime)", helper)
+                foreign = self.foreign_library(root)
+                main = app / "Contents/MacOS/Echode"
+                helper_bin = app / "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host"
+                rejected = subprocess.run([str(main), str(foreign)], capture_output=True, text=True)
+                accepted = subprocess.run([str(helper_bin), str(foreign)], capture_output=True, text=True)
+                self.assertNotEqual(rejected.returncode, 0, rejected.stderr)
+                self.assertEqual(accepted.returncode, 0, accepted.stderr)
             finally:
                 subprocess.run(["security", "delete-keychain", str(keychain)], check=False)
 
@@ -108,12 +118,36 @@ class SignedBundle(unittest.TestCase):
         distribution.create_xcframework(library, headers, framework)
         executable = root / "Echode"
         helper = root / "echode-plugin-host"
-        shutil.copy("/usr/bin/true", executable)
-        shutil.copy("/usr/bin/true", helper)
+        self.compile_loader(root / "loader.c", executable)
+        shutil.copy(executable, helper)
         app = root / "Echode.app"
         distribution.assemble_app(app, executable, helper, ROOT / "swift/EchodeApp/Info.plist", framework)
         distribution.sign_app(app, keychain=keychain)
         return app
+
+    def compile_loader(self, source, executable):
+        source.write_text(
+            "#include <dlfcn.h>\nint main(int argc, char **argv) {\n"
+            "    if (argc < 2) return 0;\n"
+            "    return dlopen(argv[1], RTLD_NOW) == 0 ? 1 : 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["clang", "-arch", "arm64", "-o", str(executable), str(source)],
+            check=True,
+        )
+
+    def foreign_library(self, root):
+        source = root / "foreign.c"
+        library = root / "libforeign.dylib"
+        source.write_text("void echode_foreign(void) {}\n", encoding="utf-8")
+        subprocess.run(
+            ["clang", "-arch", "arm64", "-dynamiclib", "-o", str(library), str(source)],
+            check=True,
+        )
+        subprocess.run(["codesign", "--force", "--sign", "-", str(library)], check=True)
+        return library
 
     def codesign_details(self, path):
         completed = subprocess.run(["codesign", "-dvvv", str(path)], capture_output=True, text=True)

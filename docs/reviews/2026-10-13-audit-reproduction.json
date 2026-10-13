@@ -1,0 +1,115 @@
+{
+  "audit_date": "2026-10-13",
+  "commit": "cf43ef2910a4500046ba3e8e2db0f95e40795592",
+  "description": "今回の監査の再現コードと観測結果。検査対象の製品コードは変更していない。通常検査への登録ではない。",
+  "sources": {
+    "Cargo.toml": "[package]\nname = \"echode-audit-20261013\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nechode-model = { path = \"/Users/someone/Echode/crates/echode-model\" }\nechode-actions = { path = \"/Users/someone/Echode/crates/echode-actions\" }\nechode-history = { path = \"/Users/someone/Echode/crates/echode-history\" }\nechode-engine = { path = \"/Users/someone/Echode/crates/echode-engine\" }\nechode-audio-io = { path = \"/Users/someone/Echode/crates/echode-audio-io\" }\nechode-cli = { path = \"/Users/someone/Echode/crates/echode-cli\" }\nechode-realtime = { path = \"/Users/someone/Echode/crates/echode-realtime\" }\nechode-api = { path = \"/Users/someone/Echode/crates/echode-api\" }\n",
+    "src/main.rs": "\nuse std::fs;\nuse std::path::{Path,PathBuf};\nuse std::sync::Arc;\nuse std::time::Instant;\nuse echode_actions::Command;\nuse echode_history::{DocumentHost,write_package,recover,read_package};\nuse echode_model::{Project,NoteDraft,Tick,Id,AudioRef};\nuse echode_engine::{PlaybackCommand,playback_with_plugins,PluginRoute};\n#[cfg(debug_assertions)]\n#[global_allocator]\nstatic ALLOCATOR: echode_engine::GuardAlloc = echode_engine::GuardAlloc;\nfn fresh(name: &str)->PathBuf {\n    let path=std::env::temp_dir().join(format!(\"echode-audit-20261013-{name}-{}\",std::process::id()));\n    fs::create_dir_all(&path).unwrap();\n    write_package(&path,&Project::new()).unwrap();\n    path\n}\nfn names(host:&DocumentHost)->Vec<String>{host.snapshot().tracks().iter().map(|t|t.name.clone()).collect()}\nfn score(n:usize)->(Project,Id) {\n let (mut p,t)=Project::new().add_track(\"pad\");\n for i in 0..n {p=p.insert_note(t,NoteDraft{pitch:60+(i%12) as u8,velocity:100,start:Tick::new(0),length:Tick::quarters(2).unwrap()}).unwrap().0;}\n (p,t)\n}\nfn route(id:&str,path:&str,instrument:bool)->PluginRoute{PluginRoute{clap_id:id.into(),path:path.into(),instrument}}\nfn main(){\n let args:Vec<String>=std::env::args().collect();\n let mode=args[1].as_str();\n match mode {\n  \"journal_error\"=>{\n   let p=fresh(mode); let h=DocumentHost::open(&p).unwrap();\n   let log=p.join(\"journal.jsonl\"); if log.exists(){fs::remove_file(&log).unwrap();}\n   fs::create_dir(&log).unwrap();\n   let failed=h.perform(Command::AddTrack{name:\"rejected\".into()}); println!(\"first_error={:?}; published={:?}\",failed.err().map(|e|e.to_string()),names(&h));\n   fs::remove_dir(&log).unwrap();\n   h.perform(Command::AddTrack{name:\"accepted\".into()}).unwrap();\n   println!(\"after_success={:?}\",names(&h)); h.revisions().unwrap(); drop(h);\n   println!(\"recovered={:?}\",recover(&p).unwrap().tracks().iter().map(|t|t.name.clone()).collect::<Vec<_>>());\n  },\n  \"torn_journal\"=>{\n   let p=fresh(mode); drop(DocumentHost::open(&p).unwrap());\n   fs::write(p.join(\"journal.jsonl\"),b\"{\\\"seq\\\":\").unwrap();\n   let h=DocumentHost::open(&p).unwrap(); println!(\"open_after_torn=true\");\n   h.perform(Command::AddTrack{name:\"confirmed\".into()}).unwrap(); println!(\"edit_confirmed=true\");\n   h.revisions().unwrap(); drop(h);\n   println!(\"log={}\",fs::read_to_string(p.join(\"journal.jsonl\")).unwrap());\n   println!(\"recovery={:?}\",recover(&p).map(|p|p.tracks().len()).map_err(|e|e.to_string()));\n  },\n  \"two_hosts\"=>{\n   let p=fresh(mode); let a=DocumentHost::open(&p).unwrap(); let b=DocumentHost::open(&p).unwrap();\n   a.perform(Command::AddTrack{name:\"A\".into()}).unwrap(); a.revisions().unwrap();\n   b.perform(Command::AddTrack{name:\"B\".into()}).unwrap();\n   println!(\"both_opened=true; confirmed_A={:?}; confirmed_B={:?}\",names(&a),names(&b));\n   b.revisions().unwrap(); drop(b); drop(a);\n   println!(\"recovered={:?}\",recover(&p).unwrap().tracks().iter().map(|t|t.name.clone()).collect::<Vec<_>>());\n  },\n  \"rt_replace\"=>{\n   let (p,_)=score(1);\n   let (mut c,mut a)=playback_with_plugins(&p,48000,64,Path::new(\"/unused\"),&[]).unwrap();\n   c.command(PlaybackCommand::Play).unwrap(); let (mut l,mut r)=([0.0;64],[0.0;64]);a.render(&mut l,&mut r);\n   c.replace(&p.add_track(\"added\").0).unwrap(); a.render(&mut l,&mut r);\n   println!(\"replacement_completed\");\n  },\n  \"rt_sort\"=>{\n   let mut events:Vec<_>=(0..1000).map(|i|echode_realtime::Event::note_on((i*997%1000) as u32,1,i,60,1.0)).collect();\n   {let _guard=echode_engine::ForbidAlloc::enter();echode_realtime::sort_events(&mut events);}\n   println!(\"sort_completed\");\n  },\n  \"clip_gain\"=>{\n   let p=fresh(mode); let wav=p.join(\"source.wav\"); echode_cli::write_wav(&wav,48000,&vec![0.25;4096]).unwrap();\n   let stored=echode_history::import_audio(&p,&wav).unwrap(); let (project,t)=Project::new().add_track(\"audio\");\n   let clip=Id::from_raw(101); let project=project.place_audio(t,clip,Id::from_raw(102),Tick::new(0),AudioRef{hash:stored.hash,sample_rate:stored.sample_rate,channels:stored.channels,frames:stored.frames}).unwrap();\n   for gain in [1.0,0.0,2.0]{let changed=project.set_clip_gain(clip,gain).unwrap();let loaded=echode_audio_io::load_placed_clips(&p,&changed,48000).unwrap();let mut peak=0.0f32; echode_engine::render_offline_blocks_with_clips(&changed,48000,2048,64,&loaded,|block|{for value in block{peak=peak.max(value.abs());} Ok::<(),std::convert::Infallible>(())}).unwrap(); println!(\"gain={gain}; loaded_peak={}; rendered_peak={peak}\",loaded[0].samples.iter().copied().fold(0.0f32,|a,b|a.max(b.abs())));}\n  },\n  \"audio_effect\"=>{\n   let (p,t)=Project::new().add_track(\"audio\");let with=p.add_clap_device(t,Id::from_raw(100),\"dev.echode.test-gain\").unwrap();\n   let loaded=echode_engine::LoadedClip{track:t.raw(),start_sample:0,samples:Arc::from(vec![0.25;4096]),fade_in:0,fade_out:0};\n   for project in [&p,&with]{\n    let (mut c,mut a)=playback_with_plugins(project,48000,2048,Path::new(&args[2]),&[route(\"dev.echode.test-gain\",&args[3],false)]).unwrap();\n    let loaded=loaded.clone(); c.set_clip_loader(Arc::new(move|_,_|Ok(vec![loaded.clone()])));c.replace(project).unwrap();c.command(PlaybackCommand::Play).unwrap();\n    let (mut l,mut r)=(vec![0.0;2048],vec![0.0;2048]); a.render(&mut l,&mut r);\n    println!(\"devices={}; sample={}\",project.tracks()[0].devices.len(),l[1000]);\n   }\n  },\n  \"host_deadlines\"=>{\n   let count:usize=args[4].parse().unwrap();let mut p=Project::new();\n   for i in 0..count{let (next,t)=p.add_track(format!(\"track{i}\"));p=next.add_clap_device(t,Id::from_raw(1000+i as u128),\"dev.echode.test-gain\").unwrap();}\n   let (mut c,mut a)=playback_with_plugins(&p,48000,2048,Path::new(&args[2]),&[route(\"dev.echode.test-gain\",&args[3],false)]).unwrap(); c.command(PlaybackCommand::Play).unwrap();\n   let (mut l,mut r)=(vec![0.0;2048],vec![0.0;2048]);let started=Instant::now();a.render(&mut l,&mut r);println!(\"tracks={count}; block_ms={}; render_ms={}\",2048.0/48.0,started.elapsed().as_secs_f64()*1000.0);\n  },\n  \"event_capacity\"=>{\n   let (empty,t)=score(0);let empty=empty.add_clap_device(t,Id::from_raw(200),\"dev.echode.audit-probe\").unwrap();\n   let mut changed=empty.clone();for pitch in [60,64,67]{changed=changed.insert_note(t,NoteDraft{pitch,velocity:100,start:Tick::new(0),length:Tick::quarters(2).unwrap()}).unwrap().0;}\n   for initial in [&empty,&changed]{\n    let (mut c,mut a)=playback_with_plugins(initial,48000,2048,Path::new(&args[2]),&[route(\"dev.echode.audit-probe\",&args[3],true)]).unwrap();\n    c.replace(&changed).unwrap();c.command(PlaybackCommand::Play).unwrap();let (mut l,mut r)=(vec![0.0;2048],vec![0.0;2048]);a.render(&mut l,&mut r);println!(\"initial_notes={}; sample={}\",if initial==&empty{0}else{3},l[1000]);\n   }\n  },\n  \"plugin_seek\"|\"plugin_delete\"=>{\n   let (p,t)=score(1);let p=p.add_clap_device(t,Id::from_raw(200),\"dev.echode.audit-probe\").unwrap();\n   let (mut c,mut a)=playback_with_plugins(&p,48000,2048,Path::new(&args[2]),&[route(\"dev.echode.audit-probe\",&args[3],true)]).unwrap();\n   c.command(PlaybackCommand::Play).unwrap();let (mut l,mut r)=(vec![0.0;2048],vec![0.0;2048]);a.render(&mut l,&mut r);println!(\"before={}\",l[1000]);\n   if mode==\"plugin_seek\"{c.command(PlaybackCommand::Locate(100000)).unwrap();}\n   else{let note=p.contents()[0].notes[0].id; c.replace(&p.delete_note(t,note).unwrap()).unwrap();}\n   a.render(&mut l,&mut r);println!(\"after={}\",l[1000]);\n  },\n  \"offline_plugin\"=>{\n   let (p,t)=score(1);let p=p.add_clap_device(t,Id::from_raw(200),\"dev.echode.audit-probe\").unwrap();\n   let (mut c,mut a)=playback_with_plugins(&p,48000,2048,Path::new(&args[2]),&[route(\"dev.echode.audit-probe\",&args[3],true)]).unwrap();\n   c.command(PlaybackCommand::Play).unwrap();let (mut l,mut r)=(vec![0.0;2048],vec![0.0;2048]);a.render(&mut l,&mut r);\n   let mut offline=vec![0.0;4096];echode_engine::render_offline(&p,48000,2048,&mut offline).unwrap();println!(\"live_sample={}; offline_sample={}\",l[1000],offline[2000]);\n  },\n  \"stale_export\"=>{\n   let path=fresh(mode); let h=DocumentHost::open(&path).unwrap();\n   fs::create_dir(path.join(\"save.pending\")).unwrap();\n   let action=h.perform(Command::AddTrack{name:\"confirmed\".into()}).unwrap();\n   let echode_actions::Action::AddTrack{id:track,..}=action else{panic!(\"track\")};h.perform(Command::InsertNote{track,draft:NoteDraft{pitch:60,velocity:100,start:Tick::new(0),length:Tick::quarters(2).unwrap()}}).unwrap(); println!(\"published={:?}\",names(&h)); h.revisions().unwrap();\n   println!(\"read_package_tracks={}; recovered_tracks={}\",read_package(&path).unwrap().tracks().len(),recover(&path).unwrap().tracks().len()); let wav=path.join(\"stale.wav\");echode_cli::render_to_wav(&path,&wav,48000,Some(2048)).unwrap();let bytes=fs::read(wav).unwrap();let mut expected=vec![0.0;4096];echode_engine::render_offline(&recover(&path).unwrap(),48000,2048,&mut expected).unwrap();println!(\"wav_all_zero={}; recovered_audio_peak={}\",bytes[44..].iter().all(|b|*b==0),expected.iter().copied().fold(0.0f32,|a,b|a.max(b.abs())));\n  },\n\n  \"torn_utf8\"=>{\n   let p=fresh(mode);drop(DocumentHost::open(&p).unwrap());fs::write(p.join(\"journal.jsonl\"),[b'{',0xff]).unwrap();\n   println!(\"recover={:?}\",recover(&p).map(|p|p.tracks().len()).map_err(|e|e.to_string()));\n  },\n  \"socket_file\"=>{\n   let p=fresh(mode);let path=p.join(\"valuable.json\");fs::write(&path,b\"valuable\").unwrap();\n   let result=echode_api::bind_socket(&path);println!(\"bound={}; original_preserved={}\",result.is_ok(),fs::read(&path).ok()==Some(b\"valuable\".to_vec()));\n  },\n  _=>panic!(\"unknown mode\")\n }\n}\n",
+    "probe/Cargo.toml": "[package]\nname=\"echode-audit-probe\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[lib]\ncrate-type=[\"cdylib\"]\n[dependencies]\nclack-plugin=\"=0.2.0\"\n",
+    "probe/src/lib.rs": "\nuse clack_plugin::prelude::*;\nuse clack_plugin::events::spaces::CoreEventSpace;\npub struct Probe;\nimpl Plugin for Probe {\n type AudioProcessor<'a>=Processor;\n type Shared<'a>=();\n type MainThread<'a>=();\n}\nimpl DefaultPluginFactory for Probe {\n fn get_descriptor()->PluginDescriptor{\n  PluginDescriptor::new(\"dev.echode.audit-probe\",\"Echode Audit Probe\").with_features([c\"instrument\"])\n }\n fn new_shared(_host:HostSharedHandle<'_>)->Result<(),PluginError>{Ok(())}\n fn new_main_thread<'a>(_host:HostMainThreadHandle<'a>,_shared:&'a ())->Result<(),PluginError>{Ok(())}\n}\npub struct Processor{active:i32}\nimpl<'a> PluginAudioProcessor<'a,(),()> for Processor {\n fn activate(_host:HostAudioProcessorHandle<'a>,_main:&(),_shared:&'a (),_config:PluginAudioConfiguration)->Result<Self,PluginError>{Ok(Self{active:0})}\n fn process(&mut self,_process:Process,mut audio:Audio,events:Events)->Result<ProcessStatus,PluginError>{\n  for event in events.input.iter(){\n   match event.as_core_event(){\n    Some(CoreEventSpace::NoteOn(_))=>self.active+=1,\n    Some(CoreEventSpace::NoteOff(_))=>self.active-=1,\n    Some(CoreEventSpace::NoteChoke(_))=>self.active=0,\n    _=>{}\n   }\n  }\n  for mut pair in &mut audio {\n   if let Some(channels)=pair.channels()?.into_f32(){\n    for channel in channels{\n     match channel{\n      ChannelPair::InputOnly(_)=>{},\n      ChannelPair::OutputOnly(out)=>out.fill(self.active as f32),\n      ChannelPair::InputOutput(_,out)=>out.fill(self.active as f32),\n      ChannelPair::InPlace(out)=>out.fill(self.active as f32),\n     }\n    }\n   }\n  }\n  Ok(ProcessStatus::Continue)\n }\n}\nclack_export_entry!(SinglePluginEntry<Probe>);\n"
+  },
+  "observations": {
+    "results-core.json": [
+      {
+        "mode": "two_hosts",
+        "code": 0,
+        "stdout": "both_opened=true; confirmed_A=[\"A\"]; confirmed_B=[\"B\"]\nrecovered=[\"A\"]",
+        "stderr": ""
+      },
+      {
+        "mode": "torn_journal",
+        "code": 0,
+        "stdout": "open_after_torn=true\nedit_confirmed=true\nlog={\"seq\":{\"seq\":1,\"kind\":\"edit\",\"actions\":[{\"type\":\"track.add\",\"id\":\"01a13387-906c-728b-9761-cba829ba5eac\",\"name\":\"confirmed\",\"device\":\"01a13387-906c-728b-9761-cba30f119612\",\"gain\":\"01a13387-906c-728b-9761-cba47b35e986\",\"pan\":\"01a13387-906c-728b-9761-cba5a4bced27\",\"mute\":\"01a13387-906c-728b-9761-cba6de92b3c7\",\"solo\":\"01a13387-906c-728b-9761-cba7146952d4\"}],\"changes\":[{\"op\":\"create\",\"kind\":\"track\",\"id\":\"01a13387-906c-728b-9761-cba829ba5eac\",\"fields\":[{\"property\":\"name\",\"value\":{\"type\":\"text\",\"text\":\"confirmed\"}},{\"property\":\"parent\",\"value\":{\"type\":\"parent\",\"id\":null}},{\"property\":\"order\",\"value\":{\"type\":\"text\",\"text\":\"80\"}},{\"property\":\"clip_order\",\"value\":{\"type\":\"ids\",\"ids\":[]}},{\"property\":\"device_order\",\"value\":{\"type\":\"ids\",\"ids\":[\"01a13387-906c-728b-9761-cba30f119612\"]}}]},{\"op\":\"create\",\"kind\":\"device\",\"id\":\"01a13387-906c-728b-9761-cba30f119612\",\"fields\":[{\"property\":\"owner\",\"value\":{\"type\":\"id\",\"id\":\"01a13387-906c-728b-9761-cba829ba5eac\"}},{\"property\":\"device_kind\",\"value\":{\"type\":\"text\",\"text\":\"mixer\"}},{\"property\":\"param_order\",\"value\":{\"type\":\"ids\",\"ids\":[\"01a13387-906c-728b-9761-cba47b35e986\",\"01a13387-906c-728b-9761-cba5a4bced27\",\"01a13387-906c-728b-9761-cba6de92b3c7\",\"01a13387-906c-728b-9761-cba7146952d4\"]}}]},{\"op\":\"create\",\"kind\":\"parameter\",\"id\":\"01a13387-906c-728b-9761-cba47b35e986\",\"fields\":[{\"property\":\"owner\",\"value\":{\"type\":\"id\",\"id\":\"01a13387-906c-728b-9761-cba30f119612\"}},{\"property\":\"key\",\"value\":{\"type\":\"text\",\"text\":\"gain\"}},{\"property\":\"minimum\",\"value\":{\"type\":\"bits\",\"bits\":0}},{\"property\":\"maximum\",\"value\":{\"type\":\"bits\",\"bits\":1082130432}},{\"property\":\"default\",\"value\":{\"type\":\"bits\",\"bits\":1065353216}},{\"property\":\"value\",\"value\":{\"type\":\"bits\",\"bits\":1065353216}}]},{\"op\":\"create\",\"kind\":\"parameter\",\"id\":\"01a13387-906c-728b-9761-cba5a4bced27\",\"fields\":[{\"property\":\"owner\",\"value\":{\"type\":\"id\",\"id\":\"01a13387-906c-728b-9761-cba30f119612\"}},{\"property\":\"key\",\"value\":{\"type\":\"text\",\"text\":\"pan\"}},{\"property\":\"minimum\",\"value\":{\"type\":\"bits\",\"bits\":3212836864}},{\"property\":\"maximum\",\"value\":{\"type\":\"bits\",\"bits\":1065353216}},{\"property\":\"default\",\"value\":{\"type\":\"bits\",\"bits\":0}},{\"property\":\"value\",\"value\":{\"type\":\"bits\",\"bits\":0}}]},{\"op\":\"create\",\"kind\":\"parameter\",\"id\":\"01a13387-906c-728b-9761-cba6de92b3c7\",\"fields\":[{\"property\":\"owner\",\"value\":{\"type\":\"id\",\"id\":\"01a13387-906c-728b-9761-cba30f119612\"}},{\"property\":\"key\",\"value\":{\"type\":\"text\",\"text\":\"mute\"}},{\"property\":\"minimum\",\"value\":{\"type\":\"bits\",\"bits\":0}},{\"property\":\"maximum\",\"value\":{\"type\":\"bits\",\"bits\":1065353216}},{\"property\":\"default\",\"value\":{\"type\":\"bits\",\"bits\":0}},{\"property\":\"value\",\"value\":{\"type\":\"bits\",\"bits\":0}}]},{\"op\":\"create\",\"kind\":\"parameter\",\"id\":\"01a13387-906c-728b-9761-cba7146952d4\",\"fields\":[{\"property\":\"owner\",\"value\":{\"type\":\"id\",\"id\":\"01a13387-906c-728b-9761-cba30f119612\"}},{\"property\":\"key\",\"value\":{\"type\":\"text\",\"text\":\"solo\"}},{\"property\":\"minimum\",\"value\":{\"type\":\"bits\",\"bits\":0}},{\"property\":\"maximum\",\"value\":{\"type\":\"bits\",\"bits\":1065353216}},{\"property\":\"default\",\"value\":{\"type\":\"bits\",\"bits\":0}},{\"property\":\"value\",\"value\":{\"type\":\"bits\",\"bits\":0}}]}]}\n\nrecovery=Err(\"journal entry is not valid\")",
+        "stderr": ""
+      },
+      {
+        "mode": "torn_utf8",
+        "code": 0,
+        "stdout": "recover=Err(\"invalid utf-8 sequence of 1 bytes from index 1\")",
+        "stderr": ""
+      },
+      {
+        "mode": "journal_error",
+        "code": 0,
+        "stdout": "first_error=Some(\"/var/folders/zq/smykq5295kq6pq4zxsz7x25c0000gn/T/echode-audit-20261013-journal_error-35776/journal.jsonl: Is a directory (os error 21)\"); published=[]\nafter_success=[\"rejected\", \"accepted\"]\nrecovered=[\"rejected\", \"accepted\"]",
+        "stderr": ""
+      },
+      {
+        "mode": "rt_replace",
+        "code": -6,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "mode": "rt_sort",
+        "code": -6,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "mode": "socket_file",
+        "code": 0,
+        "stdout": "bound=false; original_preserved=false",
+        "stderr": ""
+      },
+      {
+        "mode": "clip_gain",
+        "code": 0,
+        "stdout": "gain=1; loaded_peak=0.25; rendered_peak=0.17677669\ngain=0; loaded_peak=0.25; rendered_peak=0.17677669\ngain=2; loaded_peak=0.25; rendered_peak=0.17677669",
+        "stderr": ""
+      },
+      {
+        "mode": "stale_export",
+        "code": 0,
+        "stdout": "published=[\"confirmed\"]\nread_package_tracks=0; recovered_tracks=1\nwav_all_zero=true; recovered_audio_peak=0.45777583",
+        "stderr": ""
+      }
+    ],
+    "results-plugins.json": [
+      {
+        "mode": "event_capacity",
+        "code": 0,
+        "stdout": "initial_notes=0; sample=0.70710677\ninitial_notes=3; sample=2.1213202",
+        "stderr": ""
+      },
+      {
+        "mode": "plugin_seek",
+        "code": 0,
+        "stdout": "before=0.70710677\nafter=0.70710677",
+        "stderr": ""
+      },
+      {
+        "mode": "plugin_delete",
+        "code": 0,
+        "stdout": "before=0.70710677\nafter=0.70710677",
+        "stderr": ""
+      },
+      {
+        "mode": "audio_effect",
+        "code": 0,
+        "stdout": "devices=1; sample=0.17677669\ndevices=2; sample=0.17677669",
+        "stderr": ""
+      },
+      {
+        "mode": "offline_plugin",
+        "code": 0,
+        "stdout": "live_sample=0.70710677; offline_sample=0.07418562",
+        "stderr": ""
+      },
+      {
+        "mode": "host_deadlines",
+        "count": 1,
+        "code": 0,
+        "stdout": "tracks=1; block_ms=42.666666666666664; render_ms=43.918290999999996",
+        "stderr": ""
+      },
+      {
+        "mode": "host_deadlines",
+        "count": 4,
+        "code": 0,
+        "stdout": "tracks=4; block_ms=42.666666666666664; render_ms=175.97379099999998",
+        "stderr": ""
+      }
+    ]
+  }
+}

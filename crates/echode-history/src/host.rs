@@ -1,8 +1,10 @@
 //! One thread owns a document. Callers send commands and read a snapshot.
 
+use std::collections::HashSet;
+use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use echode_actions::{
@@ -14,9 +16,13 @@ use serde_json::{Map, Value};
 
 use crate::autosave::{Autosave, PendingAutosave, SavedRevision};
 use crate::document::{
-    PackageError, append_journal, applied_journal_seq, autosave_tip, compact_journal,
-    next_journal_seq, recover,
+    JOURNAL_DURABILITY_UNKNOWN, PackageError, append_journal, applied_journal_seq, autosave_tip,
+    compact_journal, next_journal_seq, recover, repair_journal,
 };
+
+/// Canonical package paths open in this process. `flock` does not stop a second open here.
+static OPEN_PACKAGES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Why the document thread rejected a command.
 #[derive(Debug)]
@@ -69,26 +75,100 @@ pub struct DocumentHost {
     request: Sender<Request>,
     thread: Option<JoinHandle<()>>,
     snapshot: Arc<Mutex<Arc<Project>>>,
-    directory: PathBuf,
+    lock: PackageLock,
+}
+
+/// Exclusive ownership of one package, in this process and across processes.
+struct PackageLock {
+    file: File,
+    path: PathBuf,
+}
+
+impl PackageLock {
+    fn acquire(directory: &Path) -> Result<Self, PackageError> {
+        let path = directory
+            .canonicalize()
+            .map_err(|error| PackageError::new(error.to_string()))?;
+        {
+            let mut open = OPEN_PACKAGES
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if !open.insert(path.clone()) {
+                return Err(PackageError::new("package is already open"));
+            }
+        }
+        match lock_file(&path) {
+            Ok(file) => Ok(Self { file, path }),
+            Err(error) => {
+                OPEN_PACKAGES
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&path);
+                Err(error)
+            }
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PackageLock {
+    fn drop(&mut self) {
+        OPEN_PACKAGES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.path);
+        let _ = self.file.unlock();
+    }
+}
+
+fn lock_file(directory: &Path) -> Result<File, PackageError> {
+    let path = directory.join("host.lock");
+    if path
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(PackageError::new("package lock is a symbolic link"));
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(TryLockError::WouldBlock) => Err(PackageError::new("package is already open")),
+        Err(TryLockError::Error(error)) => Err(PackageError::new(error.to_string())),
+    }
 }
 
 impl DocumentHost {
     /// Recovers `directory` and starts its document thread.
+    ///
+    /// A second open of the same package, including through a symbolic link,
+    /// fails until this host is dropped. The lock file is held for the process
+    /// lifetime so another process cannot write the package either.
     pub fn open(directory: &Path) -> Result<Self, PackageError> {
-        let project = recover(directory)?;
+        let lock = PackageLock::acquire(directory)?;
+        let directory = lock.path().to_path_buf();
+        repair_journal(&directory)?;
+        let project = recover(&directory)?;
         let snapshot = Arc::new(Mutex::new(Arc::new(project.clone())));
-        let autosave = Autosave::create(directory)?;
+        let autosave = Autosave::create(&directory)?;
         // A confirmed edit is journaled before it returns. The first autosave
         // can still die with `save.pending` and no tip, and then recover
         // refuses the worktree. Commit the recovered project first, so a later
         // kill always has a tip to replay onto.
-        if autosave_tip(directory).is_none() {
-            let seq = applied_journal_seq(directory)?;
+        if autosave_tip(&directory).is_none() {
+            let seq = applied_journal_seq(&directory)?;
             autosave.save(Arc::new(project.clone()), seq)?.wait()?;
         }
         let (request, incoming) = mpsc::channel();
         let published = Arc::clone(&snapshot);
-        let directory = directory.to_path_buf();
         let owned = directory.clone();
         let thread = thread::Builder::new()
             .name("echode-document".to_string())
@@ -98,13 +178,13 @@ impl DocumentHost {
             request,
             thread: Some(thread),
             snapshot,
-            directory,
+            lock,
         })
     }
 
-    /// Package directory this host recovered.
+    /// Package directory this host recovered. The path is canonical.
     pub fn directory(&self) -> &Path {
-        &self.directory
+        self.lock.path()
     }
 
     /// The latest project. The lock is released before the caller uses it.
@@ -194,98 +274,125 @@ fn worker(
     let mut session = Session::open(project);
     let mut next_seq = next_journal_seq(&directory).unwrap_or(1);
     let mut inflight: Vec<(u64, PendingAutosave)> = Vec::new();
+    let mut halted: Option<String> = None;
     while let Ok(request) = incoming.recv() {
         finish_saves(&directory, &mut inflight);
+        if halted.is_some() && !matches!(request, Request::Shutdown | Request::Revisions { .. }) {
+            reply_halted(request, &halted);
+            continue;
+        }
         match request {
             Request::Shutdown => break,
             Request::Perform { command, reply } => {
                 let result = match command {
                     Command::Restore { revision } => {
                         wait_for_saves(&directory, &mut inflight);
+                        let before = session.clone();
                         match restore_revision(&mut session, &autosave, &revision) {
                             Ok(changes) if changes.is_empty() => Ok(Action::Restore { revision }),
-                            Ok(_) => publish_edit(&mut Publish {
-                                directory: &directory,
-                                snapshot: &snapshot,
-                                autosave: &autosave,
-                                inflight: &mut inflight,
-                                next_seq: &mut next_seq,
-                                session: &session,
-                            })
-                            .map(|()| Action::Restore { revision }),
-                            Err(error) => Err(error),
-                        }
-                    }
-                    Command::ImportAudio { track, start, path } => {
-                        match crate::media::import_audio(&directory, Path::new(&path)) {
-                            Ok(stored) => match session.perform(Command::PlaceAudio {
-                                track,
-                                start,
-                                hash: stored.hash,
-                                sample_rate: stored.sample_rate,
-                                channels: stored.channels,
-                                frames: stored.frames,
-                            }) {
-                                Ok(action) => publish_edit(&mut Publish {
+                            Ok(_) => {
+                                let saved = publish_edit(&mut Publish {
                                     directory: &directory,
                                     snapshot: &snapshot,
                                     autosave: &autosave,
                                     inflight: &mut inflight,
                                     next_seq: &mut next_seq,
                                     session: &session,
-                                })
-                                .map(|()| action),
-                                Err(error) => Err(HostError::Action(error)),
-                            },
+                                });
+                                confirm(&mut session, before, &mut halted, saved)
+                                    .map(|()| Action::Restore { revision })
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
+                    Command::ImportAudio { track, start, path } => {
+                        match crate::media::import_audio(&directory, Path::new(&path)) {
+                            Ok(stored) => {
+                                let before = session.clone();
+                                match session.perform(Command::PlaceAudio {
+                                    track,
+                                    start,
+                                    hash: stored.hash,
+                                    sample_rate: stored.sample_rate,
+                                    channels: stored.channels,
+                                    frames: stored.frames,
+                                }) {
+                                    Ok(action) => {
+                                        let saved = publish_edit(&mut Publish {
+                                            directory: &directory,
+                                            snapshot: &snapshot,
+                                            autosave: &autosave,
+                                            inflight: &mut inflight,
+                                            next_seq: &mut next_seq,
+                                            session: &session,
+                                        });
+                                        confirm(&mut session, before, &mut halted, saved)
+                                            .map(|()| action)
+                                    }
+                                    Err(error) => Err(HostError::Action(error)),
+                                }
+                            }
                             Err(error) => Err(HostError::Package(error)),
                         }
                     }
-                    command => match session.perform(command) {
-                        Ok(action) => publish_edit(&mut Publish {
+                    command => {
+                        let before = session.clone();
+                        match session.perform(command) {
+                            Ok(action) => {
+                                let saved = publish_edit(&mut Publish {
+                                    directory: &directory,
+                                    snapshot: &snapshot,
+                                    autosave: &autosave,
+                                    inflight: &mut inflight,
+                                    next_seq: &mut next_seq,
+                                    session: &session,
+                                });
+                                confirm(&mut session, before, &mut halted, saved).map(|()| action)
+                            }
+                            Err(error) => Err(HostError::Action(error)),
+                        }
+                    }
+                };
+                let _ = reply.send(result);
+            }
+            Request::Apply { actions, reply } => {
+                let before = session.clone();
+                let result = match apply_transaction(&mut session, actions) {
+                    Ok(applied) if applied.is_empty() => Ok(applied),
+                    Ok(applied) => {
+                        let saved = publish_edit(&mut Publish {
                             directory: &directory,
                             snapshot: &snapshot,
                             autosave: &autosave,
                             inflight: &mut inflight,
                             next_seq: &mut next_seq,
                             session: &session,
-                        })
-                        .map(|()| action),
-                        Err(error) => Err(HostError::Action(error)),
-                    },
-                };
-                let _ = reply.send(result);
-            }
-            Request::Apply { actions, reply } => {
-                let result = match apply_transaction(&mut session, actions) {
-                    Ok(applied) if applied.is_empty() => Ok(applied),
-                    Ok(applied) => publish_edit(&mut Publish {
-                        directory: &directory,
-                        snapshot: &snapshot,
-                        autosave: &autosave,
-                        inflight: &mut inflight,
-                        next_seq: &mut next_seq,
-                        session: &session,
-                    })
-                    .map(|()| applied),
+                        });
+                        confirm(&mut session, before, &mut halted, saved).map(|()| applied)
+                    }
                     Err(error) => Err(error),
                 };
                 let _ = reply.send(result);
             }
             Request::Undo { reply } => {
+                let before = session.clone();
                 let result = match session.undo() {
-                    Ok(changes) => publish(
-                        &mut Publish {
-                            directory: &directory,
-                            snapshot: &snapshot,
-                            autosave: &autosave,
-                            inflight: &mut inflight,
-                            next_seq: &mut next_seq,
-                            session: &session,
-                        },
-                        JournalOp::Undo,
-                        Vec::new(),
-                        changes,
-                    ),
+                    Ok(changes) => {
+                        let saved = publish(
+                            &mut Publish {
+                                directory: &directory,
+                                snapshot: &snapshot,
+                                autosave: &autosave,
+                                inflight: &mut inflight,
+                                next_seq: &mut next_seq,
+                                session: &session,
+                            },
+                            JournalOp::Undo,
+                            Vec::new(),
+                            changes,
+                        );
+                        confirm(&mut session, before, &mut halted, saved)
+                    }
                     Err(error) => Err(HostError::Action(error)),
                 };
                 let _ = reply.send(result);
@@ -295,20 +402,24 @@ fn worker(
                 let _ = reply.send(autosave.revisions().map_err(HostError::Package));
             }
             Request::Redo { reply } => {
+                let before = session.clone();
                 let result = match session.redo() {
-                    Ok(changes) => publish(
-                        &mut Publish {
-                            directory: &directory,
-                            snapshot: &snapshot,
-                            autosave: &autosave,
-                            inflight: &mut inflight,
-                            next_seq: &mut next_seq,
-                            session: &session,
-                        },
-                        JournalOp::Redo,
-                        Vec::new(),
-                        changes,
-                    ),
+                    Ok(changes) => {
+                        let saved = publish(
+                            &mut Publish {
+                                directory: &directory,
+                                snapshot: &snapshot,
+                                autosave: &autosave,
+                                inflight: &mut inflight,
+                                next_seq: &mut next_seq,
+                                session: &session,
+                            },
+                            JournalOp::Redo,
+                            Vec::new(),
+                            changes,
+                        );
+                        confirm(&mut session, before, &mut halted, saved)
+                    }
                     Err(error) => Err(HostError::Action(error)),
                 };
                 let _ = reply.send(result);
@@ -329,6 +440,46 @@ struct Publish<'a> {
     inflight: &'a mut Vec<(u64, PendingAutosave)>,
     next_seq: &'a mut u64,
     session: &'a Session,
+}
+
+fn confirm(
+    session: &mut Session,
+    before: Session,
+    halted: &mut Option<String>,
+    result: Result<(), HostError>,
+) -> Result<(), HostError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if error.to_string().contains(JOURNAL_DURABILITY_UNKNOWN) {
+                *halted = Some(error.to_string());
+            }
+            *session = before;
+            Err(error)
+        }
+    }
+}
+
+fn reply_halted(request: Request, halted: &Option<String>) {
+    let message = halted
+        .clone()
+        .unwrap_or_else(|| JOURNAL_DURABILITY_UNKNOWN.to_string());
+    let error = HostError::Package(PackageError::new(message));
+    match request {
+        Request::Perform { reply, .. } => {
+            let _ = reply.send(Err(error));
+        }
+        Request::Apply { reply, .. } => {
+            let _ = reply.send(Err(error));
+        }
+        Request::Undo { reply } | Request::Redo { reply } => {
+            let _ = reply.send(Err(error));
+        }
+        Request::Revisions { reply } => {
+            let _ = reply.send(Err(error));
+        }
+        Request::Shutdown => {}
+    }
 }
 
 fn publish_edit(commit: &mut Publish<'_>) -> Result<(), HostError> {
@@ -506,6 +657,7 @@ fn finish_saves(directory: &Path, inflight: &mut Vec<(u64, PendingAutosave)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::JournalFault;
     use crate::document::write_package;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -573,5 +725,260 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory);
         assert_eq!(names, ["one"]);
         assert!(still.iter().any(|revision| revision.id == kept));
+    }
+
+    fn names(host: &DocumentHost) -> Vec<String> {
+        host.snapshot()
+            .tracks()
+            .iter()
+            .map(|track| track.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn audit_aud01_a_second_open_in_this_process_is_rejected() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack { name: "A".into() })
+            .unwrap();
+        let second = DocumentHost::open(&directory);
+        assert!(second.is_err(), "a second writer must be rejected");
+        drop(host);
+        let again = DocumentHost::open(&directory).unwrap();
+        let recovered = names(&again);
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert_eq!(recovered, ["A"]);
+    }
+
+    #[test]
+    fn audit_aud01_a_symlink_is_the_same_package() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let link = scratch();
+        std::os::unix::fs::symlink(&directory, &link).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        let through_link = DocumentHost::open(&link);
+        drop(host);
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(directory);
+        assert!(
+            through_link.is_err(),
+            "a symlink must not open a second writer"
+        );
+    }
+
+    #[test]
+    fn audit_aud01_another_process_cannot_open_and_a_forced_exit_keeps_the_edit() {
+        if let Ok(directory) = std::env::var("ECHODE_AUDIT_HOLD") {
+            let host = DocumentHost::open(std::path::Path::new(&directory)).unwrap();
+            println!("holding");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            let mut byte = [0u8; 1];
+            let _ = std::io::Read::read(&mut std::io::stdin(), &mut byte);
+            host.perform(Command::AddTrack {
+                name: "kept".into(),
+            })
+            .unwrap();
+            // Safety: the journal line was synced before this exit. Drop is not required.
+            unsafe { libc::_exit(0) };
+        }
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .env("ECHODE_AUDIT_HOLD", &directory)
+            .arg("--exact")
+            .arg("host::tests::audit_aud01_another_process_cannot_open_and_a_forced_exit_keeps_the_edit")
+            .arg("--nocapture")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let mut seen = String::new();
+        let mut buffer = [0u8; 64];
+        while !seen.contains("holding") {
+            let read = std::io::Read::read(&mut stdout, &mut buffer).unwrap();
+            assert!(read > 0, "the holder exited before it owned the package");
+            seen.push_str(&String::from_utf8_lossy(&buffer[..read]));
+        }
+        let rejected = DocumentHost::open(&directory);
+        let link = scratch();
+        std::os::unix::fs::symlink(&directory, &link).unwrap();
+        let rejected_link = DocumentHost::open(&link);
+        assert!(
+            rejected.is_err(),
+            "another process must not become a writer"
+        );
+        assert!(rejected_link.is_err(), "a symlink must not become a writer");
+        let _ = std::fs::remove_file(&link);
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), &[1]).unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success());
+        let again = DocumentHost::open(&directory).unwrap();
+        let recovered = names(&again);
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert_eq!(recovered, ["kept"]);
+    }
+
+    #[test]
+    fn audit_aud02_every_torn_offset_can_be_edited_and_reopened() {
+        let source = scratch();
+        write_package(&source, &Project::new()).unwrap();
+        let full = {
+            let host = DocumentHost::open(&source).unwrap();
+            host.perform(Command::AddTrack {
+                name: "ピアノ".into(),
+            })
+            .unwrap();
+            let bytes = std::fs::read(source.join("journal.jsonl")).unwrap();
+            drop(host);
+            bytes
+        };
+        let _ = std::fs::remove_dir_all(source);
+        assert!(full.ends_with(b"\n"));
+        let text = std::str::from_utf8(&full).unwrap();
+        assert!(text.contains("ピアノ"));
+        let line = echode_actions::decode_line(text.lines().next().unwrap()).unwrap();
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        {
+            let host = DocumentHost::open(&directory).unwrap();
+            drop(host);
+        }
+        let log = directory.join("journal.jsonl");
+        // Each offset is repaired, reopened, and given one more synced record.
+        // DocumentHost::open and perform use these same steps.
+        for cut in 0..=full.len() {
+            std::fs::write(&log, &full[..cut]).unwrap();
+            crate::document::repair_journal(&directory).unwrap();
+            let opened = recover(&directory).unwrap();
+            if !opened.tracks().iter().any(|track| track.name == "ピアノ") {
+                crate::document::append_journal(&directory, &line).unwrap();
+            }
+            let again = recover(&directory).unwrap();
+            assert!(
+                again.tracks().iter().any(|track| track.name == "ピアノ"),
+                "cut {cut} of {} dropped the committed edit",
+                full.len()
+            );
+        }
+        let mut torn = full.clone();
+        torn.push(0xE3);
+        std::fs::write(&log, &torn).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack {
+            name: "確定".into(),
+        })
+        .unwrap();
+        drop(host);
+        let again = DocumentHost::open(&directory).unwrap();
+        let recovered = names(&again);
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert!(recovered.iter().any(|name| name == "ピアノ"));
+        assert!(recovered.iter().any(|name| name == "確定"));
+    }
+
+    #[test]
+    fn audit_aud03_a_failed_journal_write_is_not_part_of_the_next_edit() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        let log = directory.join("journal.jsonl");
+        if log.exists() {
+            std::fs::remove_file(&log).unwrap();
+        }
+        std::fs::create_dir(&log).unwrap();
+        let failed = host.perform(Command::AddTrack {
+            name: "rejected".into(),
+        });
+        assert!(failed.is_err());
+        assert!(names(&host).is_empty());
+        std::fs::remove_dir(&log).unwrap();
+        host.perform(Command::AddTrack {
+            name: "accepted".into(),
+        })
+        .unwrap();
+        assert_eq!(names(&host), ["accepted"]);
+        drop(host);
+        let again = DocumentHost::open(&directory).unwrap();
+        let recovered = names(&again);
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert_eq!(recovered, ["accepted"]);
+    }
+
+    #[test]
+    fn audit_aud03_a_partial_write_and_a_sync_failure_roll_back() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack {
+            name: "kept".into(),
+        })
+        .unwrap();
+        for fault in [
+            JournalFault::Partial,
+            JournalFault::Sync,
+            JournalFault::BeforeWrite,
+        ] {
+            crate::document::fail_next_journal(host.directory(), fault);
+            let failed = host.perform(Command::AddTrack {
+                name: "rejected".into(),
+            });
+            assert!(failed.is_err(), "{fault:?}");
+            assert_eq!(names(&host), ["kept"]);
+            host.undo().unwrap();
+            assert!(names(&host).is_empty());
+            host.redo().unwrap();
+            assert_eq!(names(&host), ["kept"]);
+        }
+        host.perform(Command::AddTrack {
+            name: "accepted".into(),
+        })
+        .unwrap();
+        assert_eq!(names(&host), ["kept", "accepted"]);
+        drop(host);
+        let again = DocumentHost::open(&directory).unwrap();
+        let recovered = names(&again);
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert_eq!(recovered, ["kept", "accepted"]);
+    }
+
+    #[test]
+    fn audit_aud03_unknown_durability_stops_later_edits_until_recovery() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        crate::document::fail_next_journal(host.directory(), JournalFault::Uncertain);
+        let failed = host.perform(Command::AddTrack {
+            name: "landed".into(),
+        });
+        assert!(
+            failed
+                .unwrap_err()
+                .to_string()
+                .contains("journal durability is unknown")
+        );
+        assert!(names(&host).is_empty());
+        let next = host.perform(Command::AddTrack {
+            name: "mixed".into(),
+        });
+        assert!(
+            next.unwrap_err()
+                .to_string()
+                .contains("journal durability is unknown")
+        );
+        drop(host);
+        let again = DocumentHost::open(&directory).unwrap();
+        let recovered = names(&again);
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert_eq!(recovered, ["landed"]);
     }
 }

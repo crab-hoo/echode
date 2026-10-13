@@ -4,7 +4,6 @@
 use echode_api::bind_socket;
 
 #[test]
-#[ignore = "API-3: bind_socket deletes whatever is at the path"]
 fn audit_api3_binding_over_a_regular_file_keeps_the_file() {
     let path = std::env::temp_dir().join(format!("echode-audit-api3-{}.json", std::process::id()));
     std::fs::write(&path, b"{}").unwrap();

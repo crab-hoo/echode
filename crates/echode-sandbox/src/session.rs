@@ -245,6 +245,10 @@ impl PluginHost {
         Ok(())
     }
 
+    pub fn layout(&self) -> SessionLayout {
+        self.region.layout()
+    }
+
     pub fn stderr_log(&self) -> String {
         self.stderr
             .lock()

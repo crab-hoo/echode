@@ -285,20 +285,38 @@ impl Drop for OutputStream {
 }
 
 fn plugin_routes(project: &Project) -> Vec<PluginRoute> {
+    installed_plugin_routes(project)
+}
+
+/// CLAP ids in the order devices first name them. A repeated id is listed once.
+pub fn project_plugin_ids(project: &Project) -> Vec<String> {
     let mut ids = Vec::new();
     for track in project.tracks() {
         for device in &track.devices {
-            if let Some(plugin) = &device.plugin {
-                ids.push(plugin.clone());
+            let Some(plugin) = device.plugin.as_ref() else {
+                continue;
+            };
+            if ids.iter().any(|id| id == plugin) {
+                continue;
             }
+            ids.push(plugin.clone());
         }
     }
-    echode_plugin_host::resolve_installed(&ids)
+    ids
+}
+
+/// Installed plugins, in [`project_plugin_ids`] order.
+///
+/// An id missing from the scan cache is omitted. Playback leaves that device
+/// on the built-in synth. Export must refuse the file instead.
+pub fn installed_plugin_routes(project: &Project) -> Vec<PluginRoute> {
+    echode_plugin_host::resolve_installed(&project_plugin_ids(project))
         .into_iter()
         .map(|plugin| PluginRoute {
             clap_id: plugin.clap_id,
             path: plugin.path,
             instrument: plugin.instrument,
+            fault: None,
         })
         .collect()
 }

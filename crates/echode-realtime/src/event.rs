@@ -193,9 +193,21 @@ impl Event {
 /// Same-sample rank is transport, note-off, choke, note-on, expression,
 /// parameter value, modulation. Absent destination fields sort before present
 /// ones. Expression kind and parameter id break the remaining ties. Equal keys
-/// keep the order they were written, because the sort is stable.
+/// keep the order they were written.
+///
+/// The audio thread calls this, so the sort does not allocate. It only moves
+/// an event when the comparison is strictly less, which keeps equal keys in
+/// the order they were written.
 pub fn sort_events(events: &mut [Event]) {
-    events.sort_by(cmp_event);
+    let mut start = 1;
+    while start < events.len() {
+        let mut cursor = start;
+        while cursor > 0 && cmp_event(&events[cursor], &events[cursor - 1]).is_lt() {
+            events.swap(cursor, cursor - 1);
+            cursor -= 1;
+        }
+        start += 1;
+    }
 }
 
 fn cmp_event(left: &Event, right: &Event) -> Ordering {

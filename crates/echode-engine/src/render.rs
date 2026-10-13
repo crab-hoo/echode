@@ -154,7 +154,8 @@ pub fn render_offline_blocks<E>(
 }
 
 /// [`render_offline_blocks`] plus device-rate clips mixed after the synth and
-/// before the fader, matching product playback.
+/// before the fader. This path does not host CLAP devices. `echode render`
+/// uses product playback for a project that has one.
 pub fn render_offline_blocks_with_clips<E>(
     project: &Project,
     sample_rate: u32,
