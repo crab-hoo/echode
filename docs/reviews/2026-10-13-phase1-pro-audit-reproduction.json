@@ -1,0 +1,312 @@
+{
+  "date": "2026-10-13",
+  "target_commit": "134611b09a0ea626f3934da67a0198f17c8d04c1",
+  "scope": "Phase 1 current product and spike boundaries",
+  "product_sources_changed": false,
+  "environment": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0",
+    "macos": "27.0",
+    "architecture": "arm64"
+  },
+  "files": {
+    "plugin_and_cli/Cargo.toml": "[package]\nname=\"echode-pro-audit\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[dependencies]\nechode-plugin-host={path=\"/Users/someone/Echode/crates/echode-plugin-host\"}\nechode-sandbox={path=\"/Users/someone/Echode/crates/echode-sandbox\"}\nechode-realtime={path=\"/Users/someone/Echode/crates/echode-realtime\"}\nclack-host=\"=0.2.0\"\nechode-cli={path=\"/Users/someone/Echode/crates/echode-cli\"}\nechode-model={path=\"/Users/someone/Echode/crates/echode-model\"}\nechode-history={path=\"/Users/someone/Echode/crates/echode-history\"}\n",
+    "plugin_and_cli/src/main.rs": "use std::{path::Path,time::{Duration,Instant},alloc::{GlobalAlloc,Layout,System},sync::atomic::{AtomicBool,AtomicUsize,Ordering}};\nuse echode_sandbox::{PluginHost,SpawnOptions,SessionLayout};\nstatic COUNT:AtomicBool=AtomicBool::new(false);static ALLOCS:AtomicUsize=AtomicUsize::new(0);\nstruct AuditAlloc;\nunsafe impl GlobalAlloc for AuditAlloc{unsafe fn alloc(&self,l:Layout)->*mut u8{if COUNT.load(Ordering::Relaxed){ALLOCS.fetch_add(1,Ordering::Relaxed);}unsafe{System.alloc(l)}} unsafe fn dealloc(&self,p:*mut u8,l:Layout){unsafe{System.dealloc(p,l)}} unsafe fn realloc(&self,p:*mut u8,l:Layout,n:usize)->*mut u8{if COUNT.load(Ordering::Relaxed){ALLOCS.fetch_add(1,Ordering::Relaxed);}unsafe{System.realloc(p,l,n)}}}\n#[global_allocator]static A:AuditAlloc=AuditAlloc;\nfn block(h:&mut PluginHost,inputs:usize,outputs:usize)->Result<f32,String>{let ins=vec![vec![0.0;64];inputs];let mut outs=vec![vec![-99.0;64];outputs];let refs:Vec<_>=ins.iter().map(Vec::as_slice).collect();let mut orefs:Vec<_>=outs.iter_mut().map(Vec::as_mut_slice).collect();h.process_block(64,&refs,&mut orefs,&[],&mut[],Duration::from_secs(2)).map_err(|e|e.to_string())?;Ok(outs[0][0])}\nfn main(){let args:Vec<_>=std::env::args().collect();match args[1].as_str(){\n\"scan\"=>for n in [1,128]{let start=Instant::now();let result=echode_plugin_host::scan_out_of_process(Path::new(&args[2]),Path::new(&n.to_string()));println!(\"records={n} seconds={:.3} result={:?}\",start.elapsed().as_secs_f64(),result.map(|r|r.len()));},\n\"alloc\"=>{let mut b=clack_host::events::io::EventBuffer::new();let events=[echode_realtime::Event::note_on(0,0,1,60,1.0)];COUNT.store(true,Ordering::SeqCst);echode_plugin_host::write_input(&events,&mut b);COUNT.store(false,Ordering::SeqCst);println!(\"cold_event_allocations={}\",ALLOCS.load(Ordering::SeqCst));},\n\"cli\"=>{use echode_model::{Project,Id,NoteDraft,Tick};let base=Path::new(\"/private/tmp/echode-pro-audit-20261013\");let cache=base.join(\"cli-cache.jsonl\");unsafe{std::env::set_var(\"ECHODE_PLUGIN_CACHE\",&cache);std::env::set_var(\"ECHODE_PLUGIN_HOST\",&args[2]);}for id in [\"dev.audit.mono\",\"dev.audit.missing\"]{let p=base.join(if id.ends_with(\"mono\"){\"cli-process-error.echode\"}else{\"cli-init-error.echode\"});let (model,t)=Project::new().add_track(\"track\");let model=model.insert_note(t,NoteDraft{pitch:60,velocity:100,start:Tick::new(0),length:Tick::quarters(2).unwrap()}).unwrap().0.add_clap_device(t,Id::from_raw(999),id).unwrap();echode_history::write_package(&p,&model).unwrap();let plugin=echode_plugin_host::ScannedPlugin{id:id.into(),name:\"Probe\".into(),vendor:\"Audit\".into(),version:\"1\".into(),features:vec![\"instrument\".into()],url:String::new()};let entry=echode_plugin_host::cache_entry(Path::new(&args[3]),vec![plugin]);echode_plugin_host::store_scan_cache(&cache,&[entry]).unwrap();let wav=p.join(\"out.wav\");let result=echode_cli::render_to_wav(&p,&wav,48000,Some(4096));let bytes=std::fs::read(&wav).unwrap_or_default();println!(\"cli id={id} result={result:?} wav_exists={} pcm_all_zero={}\",wav.exists(),bytes.len()>44&&bytes[44..].iter().all(|b|*b==0));}},\n\"plugin\"=>{for (id,ins,outs) in [(\"dev.audit.mono\",0,1),(\"dev.audit.mono\",2,2),(\"dev.audit.state\",2,2)]{let mut h=PluginHost::spawn(SpawnOptions{host_bin:Path::new(&args[2]),plugin:Some(Path::new(&args[3])),fault:None,workgroup:None,layout:SessionLayout{max_frames:64,input_channels:ins,output_channels:outs,input_events:4,output_events:4},fan_in:None,sample_rate:48000,plugin_id:Some(id)}).unwrap();let before=block(&mut h,ins as usize,outs as usize);println!(\"id={id} layout={ins}/{outs} before={before:?}\");if id==\"dev.audit.state\"{println!(\"real_initial_state_expected=[64] actual={:?}\",h.save_state());println!(\"restore={:?}\",h.restore_state(&[128]));println!(\"real_restored_output_expected=0.5 actual={:?} returned_state={:?}\",block(&mut h,2,2),h.save_state());}}},_=>panic!(\"mode\")}}\n",
+    "plugin_and_cli/probe/Cargo.toml": "[package]\nname=\"echode-pro-audit-plugin\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[lib]\ncrate-type=[\"cdylib\"]\n[dependencies]\nclap-sys=\"=0.5.0\"\n",
+    "plugin_and_cli/probe/src/lib.rs": "#![allow(unsafe_op_in_unsafe_fn)]\nuse std::{ffi::{CStr,c_char,c_void},ptr};\nuse clap_sys::{plugin::*,process::*,host::*,entry::*,factory::plugin_factory::*,version::*,ext::{audio_ports::*,state::*},stream::*};\n#[repr(C)]struct Features([*const c_char;2]);unsafe impl Sync for Features{}\nstatic INST:Features=Features([c\"instrument\".as_ptr(),ptr::null()]);static FX:Features=Features([c\"audio-effect\".as_ptr(),ptr::null()]);\nconst fn desc(id:*const c_char,name:*const c_char,features:*const *const c_char)->clap_plugin_descriptor{clap_plugin_descriptor{clap_version:CLAP_VERSION,id,name,vendor:c\"Audit\".as_ptr(),url:c\"\".as_ptr(),manual_url:c\"\".as_ptr(),support_url:c\"\".as_ptr(),version:c\"1\".as_ptr(),description:c\"Audit probe\".as_ptr(),features}}\nstatic MONO:clap_plugin_descriptor=desc(c\"dev.audit.mono\".as_ptr(),c\"Mono\".as_ptr(),INST.0.as_ptr());static STATE:clap_plugin_descriptor=desc(c\"dev.audit.state\".as_ptr(),c\"State\".as_ptr(),FX.0.as_ptr());\nstruct Data{mono:bool,value:u8}\nunsafe fn data<'a>(p:*const clap_plugin)->&'a mut Data{&mut*((*p).plugin_data as *mut Data)}\nunsafe extern \"C\" fn init(_: *const clap_plugin)->bool{true}unsafe extern \"C\" fn destroy(p:*const clap_plugin){drop(Box::from_raw((*p).plugin_data as *mut Data));drop(Box::from_raw(p as *mut clap_plugin));}\nunsafe extern \"C\" fn activate(_: *const clap_plugin,_:f64,_:u32,_:u32)->bool{true}unsafe extern \"C\" fn nop(_: *const clap_plugin){}unsafe extern \"C\" fn start(_: *const clap_plugin)->bool{true}\nunsafe extern \"C\" fn process(p:*const clap_plugin,x:*const clap_process)->clap_process_status{let d=data(p);let x=&*x;let expected_inputs=if d.mono{0}else{1};let channels=if d.mono{1}else{2};if x.audio_inputs_count!=expected_inputs||x.audio_outputs_count!=1||(*x.audio_outputs).channel_count!=channels{return CLAP_PROCESS_ERROR;}for channel in 0..channels as usize{let plane=*(*x.audio_outputs).data32.add(channel);for i in 0..x.frames_count as usize{*plane.add(i)=d.value as f32/256.0;}}CLAP_PROCESS_CONTINUE}\nunsafe extern \"C\" fn port_count(p:*const clap_plugin,input:bool)->u32{if input&&data(p).mono{0}else{1}}\nunsafe extern \"C\" fn port_get(p:*const clap_plugin,index:u32,input:bool,info:*mut clap_audio_port_info)->bool{if index!=0||port_count(p,input)==0{return false;}let mono=data(p).mono;*info=clap_audio_port_info{id:0,name:[0;256],flags:CLAP_AUDIO_PORT_IS_MAIN,channel_count:if mono{1}else{2},port_type:if mono{CLAP_PORT_MONO.as_ptr()}else{CLAP_PORT_STEREO.as_ptr()},in_place_pair:u32::MAX};true}\nunsafe extern \"C\" fn save(p:*const clap_plugin,s:*const clap_ostream)->bool{let value=data(p).value;((*s).write.unwrap())(s,(&value as *const u8).cast(),1)==1}\nunsafe extern \"C\" fn load(p:*const clap_plugin,s:*const clap_istream)->bool{let mut value=0u8;if ((*s).read.unwrap())(s,(&mut value as *mut u8).cast(),1)!=1{return false;}data(p).value=value;true}\nstatic PORTS:clap_plugin_audio_ports=clap_plugin_audio_ports{count:Some(port_count),get:Some(port_get)};static PLUGIN_STATE:clap_plugin_state=clap_plugin_state{save:Some(save),load:Some(load)};\nunsafe extern \"C\" fn ext(_: *const clap_plugin,id:*const c_char)->*const c_void{match CStr::from_ptr(id).to_bytes(){b\"clap.audio-ports\"=>(&PORTS as *const clap_plugin_audio_ports).cast(),b\"clap.state\"=>(&PLUGIN_STATE as *const clap_plugin_state).cast(),_=>ptr::null()}}\nunsafe extern \"C\" fn count(_: *const clap_plugin_factory)->u32{2}unsafe extern \"C\" fn descriptor(_: *const clap_plugin_factory,i:u32)->*const clap_plugin_descriptor{match i{0=>&MONO,1=>&STATE,_=>ptr::null()}}\nunsafe extern \"C\" fn create(_: *const clap_plugin_factory,_: *const clap_host,id:*const c_char)->*const clap_plugin{let mono=match CStr::from_ptr(id).to_bytes(){b\"dev.audit.mono\"=>true,b\"dev.audit.state\"=>false,_=>return ptr::null()};Box::into_raw(Box::new(clap_plugin{desc:if mono{&MONO}else{&STATE},plugin_data:Box::into_raw(Box::new(Data{mono,value:64})).cast(),init:Some(init),destroy:Some(destroy),activate:Some(activate),deactivate:Some(nop),start_processing:Some(start),stop_processing:Some(nop),reset:Some(nop),process:Some(process),get_extension:Some(ext),on_main_thread:Some(nop)}))}\nstatic FACTORY:clap_plugin_factory=clap_plugin_factory{get_plugin_count:Some(count),get_plugin_descriptor:Some(descriptor),create_plugin:Some(create)};\nunsafe extern \"C\" fn entry_init(_: *const c_char)->bool{true}unsafe extern \"C\" fn deinit(){}unsafe extern \"C\" fn get_factory(id:*const c_char)->*const c_void{if CStr::from_ptr(id)==CLAP_PLUGIN_FACTORY_ID{(&FACTORY as *const clap_plugin_factory).cast()}else{ptr::null()}}\n#[unsafe(no_mangle)]pub static clap_entry:clap_plugin_entry=clap_plugin_entry{clap_version:CLAP_VERSION,init:Some(entry_init),deinit:Some(deinit),get_factory:Some(get_factory)};\n",
+    "plugin_and_cli/scanner": "#!/usr/bin/python3\nimport json,sys\nn=int(sys.argv[-1])\nfor i in range(n):\n print(json.dumps(dict(id=\"dev.audit.\"+str(i),name=\"N\"*1024,vendor=\"Audit\",version=\"1\",features=[],url=\"\")),flush=True)\n",
+    "plugin_and_cli/results.json": "[\n  {\n    \"args\": [\n      \"alloc\"\n    ],\n    \"returncode\": 0,\n    \"stdout\": \"cold_event_allocations=2\\n\",\n    \"stderr\": \"\"\n  },\n  {\n    \"args\": [\n      \"scan\",\n      \"/private/tmp/echode-pro-audit-20261013/scanner\"\n    ],\n    \"returncode\": 0,\n    \"stdout\": \"records=1 seconds=0.076 result=Ok(1)\\nrecords=128 seconds=5.025 result=Err(\\\"plugin scan timed out (128)\\\")\\n\",\n    \"stderr\": \"\"\n  },\n  {\n    \"args\": [\n      \"plugin\",\n      \"/Users/someone/Echode/target/debug/echode-plugin-host\",\n      \"/Users/someone/Echode/target/pro-audit-plugin/debug/libechode_pro_audit_plugin.dylib\"\n    ],\n    \"returncode\": 0,\n    \"stdout\": \"id=dev.audit.mono layout=0/1 before=Ok(0.0)\\nid=dev.audit.mono layout=2/2 before=Err(\\\"plugin process exited (exit status: 1): echode-plugin-host: Could not process\\\\n\\\")\\nid=dev.audit.state layout=2/2 before=Ok(0.25)\\nreal_initial_state_expected=[64] actual=Ok([])\\nrestore=Ok(())\\nreal_restored_output_expected=0.5 actual=Ok(0.25) returned_state=Ok([128])\\n\",\n    \"stderr\": \"\"\n  }\n]",
+    "plugin_and_cli/cli-stdout.txt": "cli id=dev.audit.mono result=Ok(()) wav_exists=true pcm_all_zero=true\ncli id=dev.audit.missing result=Ok(()) wav_exists=true pcm_all_zero=false\n",
+    "plugin_and_cli/cli-stderr.txt": "exported f2378fb94387cc116753c2470555c0bece0500c1\nexported dd6d2df2608b8b0b3e14fc44a258dde099f5cb25\n",
+    "audio/probe.rs": "use std::path::Path;\nuse std::sync::Arc;\nuse echode_engine::{PlaybackCommand,PluginRoute,LoadedClip,playback_pair,playback_with_plugins};\nuse echode_model::{Project,Id,Tick,NoteDraft};\nfn notes(mut p: Project, track: Id, count: usize, short: bool)->Project {\n    for i in 0..count { p=p.insert_note(track,NoteDraft {pitch:(60+i%12) as u8, velocity:100, start:Tick::new(0), length: if short {Tick::new(941)} else {Tick::quarters(2).unwrap()}}).unwrap().0; } p\n}\nfn route()->PluginRoute { PluginRoute{clap_id:\"dev.echode.test-gain\".into(),path:\"/Users/someone/Echode/target/debug/libechode_test_plugin.dylib\".into(),instrument:true,fault:Some(\"count\".into())} }\nfn main() {\n let (p,t)=Project::new().add_track(\"short loop\"); let p=notes(p,t,1,false);\n for frames in [64,512] {\n  let(mut c,mut a)=playback_pair(&p,48000,frames).unwrap();\n  c.command(PlaybackCommand::SetLoop{start:0,end:100}).unwrap(); c.command(PlaybackCommand::Play).unwrap();\n  let(mut l,mut r)=(vec![0.0;frames],vec![0.0;frames]);a.render(&mut l,&mut r);\n  println!(\"short_loop frames={frames} failed={} playing={} sample={} peak={}\",c.status().failed,c.status().playing,c.status().sample,l.iter().copied().fold(0.0f32,|p,s|p.max(s.abs())));\n }\n let (p,t)=Project::new().add_track(\"loop seam\");\n let samples:Arc<[f32]>=(0..30000).map(|i| if i<12000 {0.25} else {-0.25}).collect();\n let(mut c,mut a)=playback_pair(&p,48000,64).unwrap();\n c.set_clip_loader(Arc::new(move|_,_|Ok(vec![LoadedClip{track:t.raw(),start_sample:0,samples:Arc::clone(&samples),fade_in:0,fade_out:0}])));c.replace(&p).unwrap();\n c.command(PlaybackCommand::SetLoop{start:0,end:24000}).unwrap();c.command(PlaybackCommand::Play).unwrap();\n let(mut l,mut r)=(vec![0.0;64],vec![0.0;64]);let mut output=Vec::new();\n for _ in 0..380 { a.render(&mut l,&mut r);output.extend_from_slice(&l);c.service(); }\n println!(\"loop_seam end-1={} head={} delta={}\",output[23999],output[24000],output[24000]-output[23999]);\n let (p,t)=Project::new().add_track(\"host cap\");let p=p.add_clap_device(t,Id::from_raw(900),\"dev.echode.test-gain\").unwrap();let p=notes(p,t,3,true);\n let host=Path::new(\"/Users/someone/Echode/target/debug/echode-plugin-host\");\n let(mut c,mut a)=playback_with_plugins(&p,48000,2048,host,&[route()]).unwrap();\n let changed=notes(p.clone(),t,3,true);c.replace(&changed).unwrap();c.command(PlaybackCommand::Play).unwrap();let(mut l,mut r)=(vec![0.0;2048],vec![0.0;2048]);a.render(&mut l,&mut r);\n println!(\"host_cap expected_count=102 actual_count={} failed={}\",l[0]/std::f32::consts::FRAC_1_SQRT_2,c.status().failed);\n let (p,t)=Project::new().add_track(\"host topology\");let p=p.add_clap_device(t,Id::from_raw(901),\"dev.echode.test-gain\").unwrap();let p=notes(p,t,1,false);\n let(mut c,mut a)=playback_with_plugins(&p,48000,2048,host,&[route()]).unwrap();c.command(PlaybackCommand::Play).unwrap();a.render(&mut l,&mut r);\n println!(\"host_topology before_count={}\",l[0]/std::f32::consts::FRAC_1_SQRT_2);\n let changed=p.add_track(\"empty\").0;c.replace(&changed).unwrap();a.render(&mut l,&mut r);\n println!(\"host_topology after_count={} failed={}\",l[0]/std::f32::consts::FRAC_1_SQRT_2,c.status().failed);\n\n for fault in [\"crash\",\"hang\"] {\n  let(mut c,mut a)=playback_with_plugins(&p,48000,2048,host,&[PluginRoute{fault:Some(fault.into()),..route()}]).unwrap();c.command(PlaybackCommand::Play).unwrap();let start=std::time::Instant::now();a.render(&mut l,&mut r);\n  println!(\"host_fault {fault} failed={} playing={} peak={} elapsed_ms={}\",c.status().failed,c.status().playing,l.iter().copied().fold(0.0f32,|p,s|p.max(s.abs())),start.elapsed().as_millis());\n }\n let (bad,t)=Project::new().add_track(\"bad plugin\");let bad=bad.add_clap_device(t,Id::from_raw(902),\"dev.echode.missing-id\").unwrap();let bad=notes(bad,t,1,false);\n let(mut c,mut a)=playback_with_plugins(&bad,48000,2048,host,&[PluginRoute{clap_id:\"dev.echode.missing-id\".into(),fault:None,..route()}]).unwrap();c.command(PlaybackCommand::Play).unwrap();a.render(&mut l,&mut r);\n println!(\"host_activation_failure failed={} peak={}\",c.status().failed,l.iter().copied().fold(0.0f32,|p,s|p.max(s.abs())));\n}\n",
+    "audio/sort.rs": "#[path=\"/Users/someone/Echode/crates/echode-realtime/src/event.rs\"] mod event;\nuse event::{Event,sort_events};\nuse std::time::Instant;\nfn main(){\n for count in [1000usize,2000,4000,8000] {\n  let mut durations=Vec::new();\n  for _ in 0..3 {let mut events:Vec<_>=(0..count).rev().map(|i|Event::note_on(0, i as u32, i as u32,60,1.0)).collect();let start=Instant::now();sort_events(&mut events);std::hint::black_box(&events);durations.push(start.elapsed());}\n  durations.sort();println!(\"sort n={count} median_us={}\",durations[1].as_micros());\n }\n}\n",
+    "audio/run.py": "from pathlib import Path\nimport json, subprocess, runpy\nroot=Path('/Users/someone/Echode')\nbase=Path('/private/tmp/echode-audio-audit-1013')\nw=runpy.run_path(str(root/'scripts/wait_for_verify.py'))\nif not w['wait_for_lock'](w['LOCK'],5): raise SystemExit('Verification is running; retry after it completes.')\nfps=root/'target/debug/.fingerprint'\nengines=[]\nfor meta in fps.glob('echode-engine-*/lib-echode_engine.json'):\n    data=json.loads(meta.read_text())\n    art=root/'target/debug/deps'/('libechode_engine-'+meta.parent.name.removeprefix('echode-engine-')+'.rlib')\n    if data['features']=='[]' and art.exists(): engines.append((art.stat().st_mtime,art,data))\n_,engine,data=max(engines,key=lambda x:x[0])\nmodel_hash=next(dep[3] for dep in data['deps'] if dep[1]=='echode_model')\nmodel=None\nfor meta in fps.glob('echode-model-*/lib-echode_model'):\n    if int.from_bytes(bytes.fromhex(meta.read_text()),'little')==model_hash:\n        model=root/'target/debug/deps'/('libechode_model-'+meta.parent.name.removeprefix('echode-model-')+'.rlib')\n        break\nif model is None: raise SystemExit('Matching model artifact is absent.')\nsubprocess.run(['rustc','--edition=2024',str(base/'probe.rs'),'--extern',f'echode_engine={engine}','--extern',f'echode_model={model}','-L',f'dependency={root}/target/debug/deps','-o',str(base/'probe')],check=True)\nsubprocess.run([str(base/'probe')],check=True)\nsubprocess.run(['rustc','--edition=2024','-C','opt-level=3','-A','dead_code',str(base/'sort.rs'),'-o',str(base/'sort')],check=True)\nsubprocess.run([str(base/'sort')],check=True)\n",
+    "audio/README.md": "# Audio audit probes (2026-10-13)\n\nThese probes do not open an audio device or a window. The hosted cases need shared-memory access outside a restricted sandbox. No repository source is changed.\n\n- `probe.rs`: public product playback API. A 100-sample loop at 64 vs 512 frames; audio seam; CLAP event-capacity growth from 3 to 6 short notes; an empty track added while a CLAP note sounds.\n- `sort.rs`: the exact current `echode-realtime/src/event.rs`, compiled with optimization; three repetitions per size, median reported. The inputs have equal timestamps and descending track numbers.\n- `run.py`: picks the most recent normal debug engine artifact and its exact matching model artifact, compiles and runs both probes. Build normal `echode-engine`, `echode-plugin-host`, and `echode-test-plugin` artifacts first if missing. Run from repository root with `python3 /private/tmp/echode-audio-audit-1013/run.py`.\n\nObserved public-path results:\n\n```\nshort_loop frames=64 failed=false playing=true sample=64 peak=0.012617261\nshort_loop frames=512 failed=true playing=false sample=0 peak=0\nloop_seam end-1=-0.17677669 head=0.17677669 delta=0.35355338\nhost_cap expected_count=102 actual_count=70 failed=false\nhost_topology before_count=1\nhost_topology after_count=0 failed=false\n```\n\nThe CLAP counter encodes received note-ons + 16 * received note-offs. Six short notes should therefore encode 102. The observed 70 is six ons and only four offs.\n\nObserved optimized sort medians: 1000 events 4,152 us; 2000 events 17,174 us; 4000 events 68,741 us; 8000 events 274,805 us. These are this machine's microbenchmarks, not a standard-load playback performance certification.\n\nThe loop seam is an acknowledged Phase 1 omission in ADR 0055, not a newly introduced regression.\n",
+    "audio/stdout.txt": "short_loop frames=64 failed=false playing=true sample=64 peak=0.012617261\nshort_loop frames=512 failed=true playing=false sample=0 peak=0\nloop_seam end-1=-0.17677669 head=0.17677669 delta=0.35355338\nhost_cap expected_count=102 actual_count=70 failed=false\nhost_topology before_count=1\nhost_topology after_count=0 failed=false\nhost_fault crash failed=false playing=true peak=0 elapsed_ms=44\nhost_fault hang failed=false playing=true peak=0 elapsed_ms=43\nhost_activation_failure failed=false peak=0.45777583\nsort n=1000 median_us=9203\nsort n=2000 median_us=20568\nsort n=4000 median_us=65715\nsort n=8000 median_us=270373\n",
+    "audio/stderr.txt": "",
+    "model/Cargo.toml": "[package]\nname = \"echode-model-audit-20261013\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nechode-model = { path = \"/Users/someone/Echode/crates/echode-model\" }\nechode-actions = { path = \"/Users/someone/Echode/crates/echode-actions\" }\n\n",
+    "model/src/main.rs": "use echode_actions::{Command, Session};\nuse echode_model::{Project, NoteDraft, Tick, Content, Note};\nuse std::hint::black_box;\nuse std::time::Instant;\n\nfn fresh() -> (Project, echode_model::Id, echode_model::Id) {\n    let (project, track) = Project::new().add_track(\"audit\");\n    let (project, _) = project.insert_note(track, NoteDraft { start: Tick::new(0), length: Tick::new(1), pitch: 60, velocity: 100 }).unwrap();\n    let clip = project.tracks()[0].clips[0].id;\n    (project, track, clip)\n}\n\nfn boundaries() {\n    let (project, track, clip) = fresh();\n    let resized = project.resize_clip(track, clip, Tick::new(i64::MIN), Tick::new(1)).unwrap();\n    let linked = resized.link_clip(clip, track, Tick::new(0), echode_model::Id::generate()).unwrap();\n    println!(\"linked_origin_overflow={:?}\", linked.check_invariants());\n    let mut session = Session::open(resized);\n    let applied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.perform(Command::LinkClip { source: clip, track, start: Tick::new(0) })));\n    println!(\"session_link_origin_overflow={applied:?}\");\n\n    let (project, track, clip) = fresh();\n    let resized = project.resize_clip(track, clip, Tick::new(i64::MAX - 1), Tick::new(1)).unwrap();\n    let linked = resized.link_clip(clip, track, Tick::new(0), echode_model::Id::generate()).unwrap();\n    println!(\"pre_insert={:?}\", linked.check_invariants());\n    let inserted = linked.insert_note(track, NoteDraft { start: Tick::new(0), length: Tick::new(2), pitch: 61, velocity: 100 }).unwrap().0;\n    println!(\"inserted_content_end_overflow={:?}\", inserted.check_invariants());\n\n    let (project, _, _) = fresh();\n    let mut track = (*project.tracks()[0]).clone();\n    let content_id = track.clips[0].content;\n    track.clips[0].length = Tick::new(1);\n    let content = Content { id: content_id, audio: None, takes: vec![], expressions: vec![], notes: vec![Note {\n        id: echode_model::Id::generate(), start: Tick::new(i64::MIN + 1), length: Tick::new(1), pitch: 60, velocity: 100, release: 0, articulation: None,\n    }] };\n    let assembled = std::panic::catch_unwind(|| Project::try_assemble(project.meter(), project.tempo().clone(), vec![content], vec![track]));\n    println!(\"extreme_assembly={assembled:?}\");\n}\n\nfn clones() {\n    let (project, _) = Project::new().add_track(\"one track\");\n    let parameter = project.tracks()[0].devices[0].parameters[0].id;\n    let mut session = Session::open(project);\n    let mut previous = 0;\n    for target in [100, 1000, 10000, 50000] {\n        for i in previous..target {\n            session.perform(Command::SetParameter { parameter, value: if i % 2 == 0 {0.5} else {1.0} }).unwrap();\n        }\n        let mut timings = Vec::new();\n        for _ in 0..7 {\n            let start = Instant::now();\n            let before = black_box(session.clone());\n            let copied = start.elapsed();\n            drop(before);\n            timings.push(copied.as_secs_f64() * 1000.0);\n        }\n        timings.sort_by(f64::total_cmp);\n        println!(\"session_clone edits={target} median_ms={:.6} journal_entries={}\", timings[3], session.journal().len());\n        previous = target;\n    }\n}\n\nfn full_note_diff() {\n    for count in [1000, 10000, 100000] {\n        let (base, _, _) = fresh();\n        let mut track = (*base.tracks()[0]).clone();\n        track.clips[0].kind = echode_model::ClipKind::Fixed;\n        let mut content = (*base.contents()[0]).clone();\n        content.notes = (0..count).map(|i| Note { id: echode_model::Id::from_raw((i + 1) as u128), start: Tick::new(i), length: Tick::new(1), pitch: 60, velocity: 100, release: 0, articulation: None }).collect();\n        let project = Project::try_assemble(base.meter(), base.tempo().clone(), vec![content], vec![track]).unwrap();\n        let parameter = project.tracks()[0].devices[0].parameters[0].id;\n        let after = project.set_parameter(parameter, 0.5).unwrap();\n        let mut timings = Vec::new();\n        for _ in 0..7 {\n            let start = Instant::now();\n            black_box(project.diff(&after));\n            timings.push(start.elapsed().as_secs_f64() * 1000.0);\n        }\n        timings.sort_by(f64::total_cmp);\n        println!(\"gain_diff notes={count} median_ms={:.6}\", timings[3]);\n    }\n}\n\nfn clone_note_history() {\n    let (project, track) = Project::new().add_track(\"notes\");\n    let mut session = Session::open(project);\n    let mut previous = 0;\n    for count in [500, 1000, 2000, 4000] {\n        for i in previous..count {\n            session.perform(Command::InsertNote { track, draft: NoteDraft { start: Tick::new(i), length: Tick::new(1), pitch: 60, velocity: 100 } }).unwrap();\n        }\n        let mut timings = Vec::new();\n        for _ in 0..5 {\n            let start = Instant::now();\n            let before = black_box(session.clone());\n            let copied = start.elapsed();\n            drop(before);\n            timings.push(copied.as_secs_f64() * 1000.0);\n        }\n        timings.sort_by(f64::total_cmp);\n        println!(\"session_clone_insert_history notes={count} median_ms={:.6}\", timings[2]);\n        previous = count;\n    }\n}\n\nfn main() {\n    boundaries();\n    if std::env::args().any(|arg| arg == \"boundaries\") { return; }\n    clones();\n    full_note_diff();\n    clone_note_history();\n}\n",
+    "model/results-release.txt": "linked_origin_overflow=Err(InvariantError(\"clip 01a13519-7e39-7403-928e-742bebe412a0 has no origin\"))\npre_insert=Ok(())\ninserted_content_end_overflow=Err(InvariantError(\"note 01a13519-7e39-7403-928e-7436d531a1cb ends past the time range\"))\nextreme_assembly=Ok(Err(Invariant(\"auto clip 01a13519-7e39-7403-928e-74403bd38222 spans 0..1, but its notes cover bars -3267918096959..=-3267918096959\")))\nsession_clone edits=100 median_ms=0.006084 journal_entries=100\nsession_clone edits=1000 median_ms=0.060042 journal_entries=1000\nsession_clone edits=10000 median_ms=1.107458 journal_entries=10000\nsession_clone edits=50000 median_ms=4.558042 journal_entries=50000\ngain_diff notes=1000 median_ms=0.085250\ngain_diff notes=10000 median_ms=0.683708\ngain_diff notes=100000 median_ms=6.462208\nsession_clone_insert_history notes=500 median_ms=0.156833\nsession_clone_insert_history notes=1000 median_ms=0.647500\nsession_clone_insert_history notes=2000 median_ms=2.402750\nsession_clone_insert_history notes=4000 median_ms=9.876667\n",
+    "model/results-boundaries-debug.txt": "   Compiling libc v0.2.190\n   Compiling getrandom v0.4.3\n   Compiling uuid v1.26.1\n   Compiling echode-model v0.0.0 (/Users/someone/Echode/crates/echode-model)\n   Compiling echode-actions v0.0.0 (/Users/someone/Echode/crates/echode-actions)\n   Compiling echode-model-audit-20261013 v0.1.0 (/private/tmp/echode-model-audit-20261013)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.45s\n     Running `target/debug/echode-model-audit-20261013 boundaries`\nlinked_origin_overflow=Err(InvariantError(\"clip 01a1351b-f181-74b6-bdef-974dbe947043 has no origin\"))\n\nthread 'main' (10131871) panicked at /Users/someone/Echode/crates/echode-model/src/invariants.rs:241:13:\nclip 01a1351b-f181-74b6-bdef-974e20d04a96 has no origin\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nsession_link_origin_overflow=Err(Any { .. })\npre_insert=Ok(())\ninserted_content_end_overflow=Err(InvariantError(\"note 01a1351b-f182-76fe-8d1b-ca66fce5d00e ends past the time range\"))\n\nthread 'main' (10131871) panicked at /Users/someone/Echode/crates/echode-model/src/invariants.rs:185:33:\nattempt to multiply with overflow\nextreme_assembly=Err(Any { .. })\n",
+    "history/Cargo.toml": "[package]\nname = \"echode-history-audit-20261013\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nechode-model = { path = \"/Users/someone/Echode/crates/echode-model\" }\nechode-actions = { path = \"/Users/someone/Echode/crates/echode-actions\" }\nechode-history = { path = \"/Users/someone/Echode/crates/echode-history\" }\ngix = { version = \"=0.78.0\", default-features = false, features = [\"basic\", \"max-performance-safe\"] }\n\n",
+    "history/src/main.rs": "use echode_history::{write_package, read_package, DocumentHost};\nuse echode_model::Project;\nuse std::path::PathBuf;\n\nfn symlink_sweep() {\n    let root = PathBuf::from(format!(\"/private/tmp/echode-history-audit-20261013/symlink-probe-{}\", std::process::id()));\n    let package = root.join(\"package.echode\");\n    let outside = root.join(\"outside\");\n    std::fs::create_dir_all(&outside).unwrap();\n    let victim = outside.join(\"unrelated-user-file.json\");\n    std::fs::write(&victim, \"{\\\"user\\\":\\\"important\\\"}\").unwrap();\n    write_package(&package, &Project::new()).unwrap();\n    std::fs::remove_dir(package.join(\"tracks\")).unwrap();\n    std::os::unix::fs::symlink(&outside, package.join(\"tracks\")).unwrap();\n    println!(\"symlink_package_read={:?}\", read_package(&package));\n    let opened = DocumentHost::open(&package);\n    println!(\"symlink_host_open={:?}, outside_file_exists={}\", opened.as_ref().map(|_| \"opened\"), victim.exists());\n    drop(opened);\n}\n\nfn main() {\n    symlink_sweep();\n}\n",
+    "history/results-debug.txt": "symlink_package_read=Ok(Project { meter: Meter { numerator: 4, denominator: 4 }, tempo: TempoMap { points: [TempoPoint { at: Tick(0), tempo: Tempo { numerator: 120, denominator: 1 } }] }, contents: [], tracks: [] })\nsymlink_host_open=Ok(\"opened\"), outside_file_exists=false\n",
+    "ui_and_ffi/Cargo.toml": "[package]\nname = \"echode-ui-audit\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nechode-model = { path = \"/Users/someone/Echode/crates/echode-model\" }\nechode-draw = { path = \"/Users/someone/Echode/crates/echode-draw\" }\nfractional_index = \"2.0.2\"\n\n[workspace]\n",
+    "ui_and_ffi/src/main.rs": "use echode_draw::{ArrangeIndex, ArrangeView};\nuse echode_model::{ClipKind, Content, Id, Lane, Meter, Note, Placement, Project, Tempo, TempoMap, Tick, Track, initial_order, test_mixer};\nuse fractional_index::FractionalIndex;\nuse std::hint::black_box;\nuse std::time::Instant;\n\nfn assemble(contents: Vec<Content>, tracks: Vec<Track>) -> Project {\n    Project::try_assemble(Meter::four_four(), TempoMap::new(Tempo::quarters_per_minute(120).unwrap()), contents, tracks).unwrap()\n}\nfn clip(id: u128, content: u128, start: i64, length: i64) -> Placement {\n    Placement { id: Id::from_raw(id), content: Id::from_raw(content), lane: Lane::Timeline,\n        start: Tick::new(start), length: Tick::new(length), offset: Tick::new(0), kind: ClipKind::Fixed,\n        gain: 1., fade_in: 0, fade_out: 0 }\n}\nfn content(id: u128, notes: Vec<Note>) -> Content {\n    Content { id: Id::from_raw(id), audio: None, takes: vec![], notes, expressions: vec![] }\n}\nfn note(id: u128, start: i64) -> Note {\n    Note { id: Id::from_raw(id), start: Tick::new(start), length: Tick::new(1), pitch: 60, velocity: 50_000, release: 0, articulation: None }\n}\nfn measure(mut action: impl FnMut(), runs: usize) -> f64 {\n    for _ in 0..4 { action(); }\n    let mut timings = (0..7).map(|_| { let at=Instant::now(); for _ in 0..runs { action(); } at.elapsed().as_secs_f64() * 1e6 / runs as f64 }).collect::<Vec<_>>();\n    timings.sort_by(f64::total_cmp); timings[3]\n}\nfn main() {\n    println!(\"{{\\\"arrange\\\":[\");\n    for (case,n) in [1, 1000, 10_000, 100_000].into_iter().enumerate() {\n        let contents = (0..n).map(|i|content(1_000_000_000+i as u128, vec![note(2_000_000_000+i as u128,0)])).collect();\n        let clips = (0..n).map(|i|clip(3_000_000_000+i as u128,1_000_000_000+i as u128,i as i64*2,1)).collect();\n        let project = assemble(contents,vec![Track{id:Id::from_raw(1),name:\"visible\".into(),parent:None,order:initial_order(),clips,devices:vec![test_mixer(1)]}]);\n        let index = ArrangeIndex::build(&project);\n        let view = ArrangeView{origin_tick:Tick::new((n as i64-1)*2),width_ticks:1,origin_track:0.,height_tracks:1.,pixels_per_tick:20.,pixels_per_track:64.};\n        let mut hits=0;\n        let us=measure(||{hits=0;index.visit_visible(black_box(&project),black_box(view),|e|{black_box(e);hits+=1;});black_box(hits);},100);\n        println!(\"{}{{\\\"contents\\\":{n},\\\"hits\\\":{hits},\\\"microseconds\\\":{us}}}\",if case==0{\"\"}else{\",\"});\n    }\n    println!(\"],\\\"piano_lookup\\\":[\");\n    for (case,n) in [1,1000,10_000,100_000].into_iter().enumerate() {\n        let notes=(0..n).map(|i|note(1_000_000+i as u128,i as i64*2)).collect();\n        let project=assemble(vec![content(1000,notes)],vec![Track{id:Id::from_raw(1),name:\"notes\".into(),parent:None,order:initial_order(),clips:vec![clip(2000,1000,0,n as i64*2)],devices:vec![test_mixer(1)]}]);\n        let index=ArrangeIndex::build(&project);\n        let us=measure(||{black_box(index.piano_note(black_box(&project),Id::from_raw(1),Some(Id::from_raw(2000)),Id::from_raw(1_000_000)));},100);\n        println!(\"{}{{\\\"notes\\\":{n},\\\"microseconds\\\":{us}}}\",if case==0{\"\"}else{\",\"});\n    }\n    println!(\"],\\\"index_update\\\":[\");\n    for (case,n) in [100,1000,5000,10_000].into_iter().enumerate() {\n        let mut key=FractionalIndex::default();\n        let tracks=(0..n).map(|i| {let order=key.to_string();key=FractionalIndex::new_after(&key);Track{id:Id::from_raw(100+i as u128),name:\"track\".into(),parent:None,order,clips:vec![],devices:vec![test_mixer(100+i as u128)]}}).collect();\n        let project=assemble(vec![],tracks);let index=ArrangeIndex::build(&project);\n        let us=measure(||{black_box(index.update(black_box(&project)));},1);\n        println!(\"{}{{\\\"tracks\\\":{n},\\\"microseconds\\\":{us}}}\",if case==0{\"\"}else{\",\"});\n    }\n    println!(\"]}}\");\n}\n",
+    "ui_and_ffi/reentrant.c": "#include \"echode.h\"\n#include <stdio.h>\n#include <stdlib.h>\n#include <unistd.h>\n\nstatic void callback(void *context, int status, const char *message, struct Snapshot *snapshot) {\n    fprintf(stderr, \"callback status=%d, calling shutdown from the document worker\\n\", status);\n    if (snapshot) echode_snapshot_free(snapshot);\n    echode_document_shutdown((struct Document *)context);\n    fprintf(stderr, \"shutdown returned\\n\");\n    _exit(0);\n}\n\nint main(int argc, char **argv) {\n    if (argc != 2) return 2;\n    struct Document *document = echode_document_create(argv[1]);\n    if (!document) return 3;\n    echode_document_query(document, ECHODE_DOCUMENT_SNAPSHOT, document, callback);\n    for (int i = 0; i < 500; i++) usleep(10000);\n    fprintf(stderr, \"callback did not finish\\n\");\n    return 4;\n}\n",
+    "ui_and_ffi/results.json": "{\n  \"head\": \"134611b09a0ea626f3934da67a0198f17c8d04c1\",\n  \"performance\": {\n    \"exit\": 0,\n    \"data\": {\n      \"arrange\": [\n        {\n          \"contents\": 1,\n          \"hits\": 3,\n          \"microseconds\": 0.025419999999999998\n        },\n        {\n          \"contents\": 1000,\n          \"hits\": 3,\n          \"microseconds\": 1.01083\n        },\n        {\n          \"contents\": 10000,\n          \"hits\": 3,\n          \"microseconds\": 13.054589999999997\n        },\n        {\n          \"contents\": 100000,\n          \"hits\": 3,\n          \"microseconds\": 530.79583\n        }\n      ],\n      \"piano_lookup\": [\n        {\n          \"notes\": 1,\n          \"microseconds\": 0.00792\n        },\n        {\n          \"notes\": 1000,\n          \"microseconds\": 2.02167\n        },\n        {\n          \"notes\": 10000,\n          \"microseconds\": 20.74958\n        },\n        {\n          \"notes\": 100000,\n          \"microseconds\": 248.36291\n        }\n      ],\n      \"index_update\": [\n        {\n          \"tracks\": 100,\n          \"microseconds\": 2.542\n        },\n        {\n          \"tracks\": 1000,\n          \"microseconds\": 150.166\n        },\n        {\n          \"tracks\": 5000,\n          \"microseconds\": 7583.959000000001\n        },\n        {\n          \"tracks\": 10000,\n          \"microseconds\": 33476.084\n        }\n      ]\n    },\n    \"stderr\": \"\"\n  },\n  \"callback_shutdown\": {\n    \"exit\": -6,\n    \"stdout\": \"\",\n    \"stderr\": \"callback status=0, calling shutdown from the document worker\\n\\nthread 'echode-ffi' (10129761) panicked at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/sys/thread/unix.rs:127:9:\\nfailed to join thread: Resource deadlock avoided (os error 11)\\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\\n\\nthread 'echode-ffi' (10129761) panicked at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/panicking.rs:225:5:\\npanic in a function that cannot unwind\\nstack backtrace:\\n   0:        0x104932ab4 - std[93770f9ee7fea9f3]::backtrace_rs::backtrace::libunwind::trace\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9\\n   1:        0x104932ab4 - std[93770f9ee7fea9f3]::backtrace_rs::backtrace::trace_unsynchronized::<std[93770f9ee7fea9f3]::sys::backtrace::_print_fmt::{closure#1}>\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14\\n   2:        0x104932ab4 - std[93770f9ee7fea9f3]::sys::backtrace::_print_fmt\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/sys/backtrace.rs:74:9\\n   3:        0x104932ab4 - <<std[93770f9ee7fea9f3]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[d73c09da13b2be7a]::fmt::Display>::fmt\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/sys/backtrace.rs:44:26\\n   4:        0x10496f41c - <core[d73c09da13b2be7a]::fmt::rt::Argument>::fmt\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/fmt/rt.rs:152:76\\n   5:        0x10496f41c - core[d73c09da13b2be7a]::fmt::write\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/fmt/mod.rs:1687:22\\n   6:        0x1049428d0 - std[93770f9ee7fea9f3]::io::default_write_fmt::<std[93770f9ee7fea9f3]::sys::stdio::unix::Stderr>\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/io/mod.rs:621:11\\n   7:        0x1049428d0 - <std[93770f9ee7fea9f3]::sys::stdio::unix::Stderr as std[93770f9ee7fea9f3]::io::Write>::write_fmt\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/io/mod.rs:1976:13\\n   8:        0x10490b4d8 - <std[93770f9ee7fea9f3]::sys::backtrace::BacktraceLock>::print\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/sys/backtrace.rs:47:25\\n   9:        0x10490b4d8 - std[93770f9ee7fea9f3]::panicking::default_hook::{closure#0}\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:292:27\\n  10:        0x104926d0c - std[93770f9ee7fea9f3]::panicking::default_hook\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:319:9\\n  11:        0x104927034 - std[93770f9ee7fea9f3]::panicking::panic_with_hook\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:825:13\\n  12:        0x10490b5b0 - std[93770f9ee7fea9f3]::panicking::panic_handler::{closure#0}\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:691:13\\n  13:        0x104901eec - std[93770f9ee7fea9f3]::sys::backtrace::__rust_end_short_backtrace::<std[93770f9ee7fea9f3]::panicking::panic_handler::{closure#0}, !>\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/sys/backtrace.rs:182:18\\n  14:        0x10490c868 - __rustc[38dafaa32e25e62e]::rust_begin_unwind\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:689:5\\n  15:        0x1049c99b8 - core[d73c09da13b2be7a]::panicking::panic_nounwind_fmt::runtime\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/panicking.rs:122:22\\n  16:        0x1049c99b8 - core[d73c09da13b2be7a]::panicking::panic_nounwind_fmt\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/intrinsics/mod.rs:2448:9\\n  17:        0x1049c9904 - core[d73c09da13b2be7a]::panicking::panic_nounwind\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/panicking.rs:225:5\\n  18:        0x1049c9a94 - core[d73c09da13b2be7a]::panicking::panic_cannot_unwind\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/panicking.rs:337:5\\n  19:        0x102e7a414 - echode_document_shutdown\\n                               at /Users/someone/Echode/crates/echode-ffi/src/lib.rs:281:1\\n  20:        0x102e64b44 - _callback\\n  21:        0x102e8bef4 - echode_ffi::queue::finish_raw::hf286e31e941d3f3a\\n                               at /Users/someone/Echode/crates/echode-ffi/src/queue.rs:513:5\\n  22:        0x102e8d738 - echode_ffi::queue::worker::h4a63ee68054f236d\\n                               at /Users/someone/Echode/crates/echode-ffi/src/queue.rs:426:17\\n  23:        0x102e88a44 - echode_ffi::queue::Document::open::{{closure}}::hdd07d4672bd1c945\\n                               at /Users/someone/Echode/crates/echode-ffi/src/queue.rs:75:28\\n  24:        0x102e8ee1c - std::sys::backtrace::__rust_begin_short_backtrace::ha9290c0737216c25\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/sys/backtrace.rs:166:18\\n  25:        0x102e7ce34 - std::thread::lifecycle::spawn_unchecked::{{closure}}::{{closure}}::h387f88ba02e51289\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/thread/lifecycle.rs:91:13\\n  26:        0x102e90b18 - <core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once::ha050e33ab7f1b8c1\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/panic/unwind_safe.rs:275:9\\n  27:        0x102e8776c - std::panicking::catch_unwind::do_call::h963f6c66a26a7c93\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:581:40\\n  28:        0x102e7cfe8 - ___rust_try\\n  29:        0x102e7ccb0 - std::panicking::catch_unwind::h56abb18fee257f4a\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:544:19\\n  30:        0x102e7ccb0 - std::panic::catch_unwind::h1b492bd58859a1cc\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panic.rs:359:14\\n  31:        0x102e7ccb0 - std::thread::lifecycle::spawn_unchecked::{{closure}}::h70814a1df5fd44c8\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/thread/lifecycle.rs:89:26\\n  32:        0x102e65080 - core::ops::function::FnOnce::call_once{{vtable.shim}}::h5e09efd628e49faa\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/ops/function.rs:250:5\\n  33:        0x104930330 - <alloc[9e718a9324190137]::boxed::Box<dyn core[d73c09da13b2be7a]::ops::function::FnOnce<(), Output = ()> + core[d73c09da13b2be7a]::marker::Send> as core[d73c09da13b2be7a]::ops::function::FnOnce<()>>::call_once\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/alloc/src/boxed.rs:2249:9\\n  34:        0x104930330 - <std[93770f9ee7fea9f3]::sys::thread::unix::Thread>::new::thread_start\\n                               at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/sys/thread/unix.rs:118:17\\n  35:        0x18ce81d00 - __pthread_exit\\nthread caused non-unwinding panic. aborting.\\n\"\n  }\n}"
+  },
+  "groups": {
+    "plugin_and_cli": {
+      "original_directory": "/private/tmp/echode-pro-audit-20261013",
+      "files": [
+        "Cargo.toml",
+        "src/main.rs",
+        "probe/Cargo.toml",
+        "probe/src/lib.rs",
+        "scanner",
+        "results.json",
+        "cli-stdout.txt",
+        "cli-stderr.txt"
+      ]
+    },
+    "audio": {
+      "original_directory": "/private/tmp/echode-audio-audit-1013",
+      "files": [
+        "probe.rs",
+        "sort.rs",
+        "run.py",
+        "README.md",
+        "stdout.txt",
+        "stderr.txt"
+      ]
+    },
+    "model": {
+      "original_directory": "/private/tmp/echode-model-audit-20261013",
+      "files": [
+        "Cargo.toml",
+        "src/main.rs",
+        "results-release.txt",
+        "results-boundaries-debug.txt"
+      ]
+    },
+    "history": {
+      "original_directory": "/private/tmp/echode-history-audit-20261013",
+      "files": [
+        "Cargo.toml",
+        "src/main.rs",
+        "results-debug.txt"
+      ]
+    },
+    "ui_and_ffi": {
+      "original_directory": "/private/tmp/echode-ui-audit-20261013",
+      "files": [
+        "Cargo.toml",
+        "src/main.rs",
+        "reentrant.c",
+        "results.json"
+      ]
+    }
+  },
+  "run_instructions": [
+    "Restore each group under its original_directory using the files entries. The sources contain absolute paths to /Users/someone/Echode. Adjust those paths together if moving the workspace.",
+    "Build the product helper and normal debug libraries with cargo build --workspace. Run all source-changing commands only while the verification lock is idle.",
+    "Plugin and CLI: cargo build --offline --manifest-path /private/tmp/echode-pro-audit-20261013/Cargo.toml --target-dir /Users/someone/Echode/target ; build probe/Cargo.toml separately, then run target/debug/echode-pro-audit with alloc, scan <scanner>, plugin <helper> <plugin dylib>, or cli <helper> <plugin dylib>.",
+    "Audio: python3 /private/tmp/echode-audio-audit-1013/run.py. It compiles the probes using matching current product artifacts. Shared-memory cases require an allowed environment. They open no audio devices or windows.",
+    "Model: cargo run --release --offline --manifest-path /private/tmp/echode-model-audit-20261013/Cargo.toml. Use debug and the boundaries argument for panic/rejection behavior.",
+    "History: cargo run --offline --manifest-path /private/tmp/echode-history-audit-20261013/Cargo.toml. It creates and removes only its own temporary sentinel file.",
+    "UI: cargo run --release --offline --manifest-path /private/tmp/echode-ui-audit-20261013/Cargo.toml. For callback reentry, compile reentrant.c with the generated echode-ffi header and product static library; expected termination is SIGABRT.",
+    "Zero exit from observation probes is not a correctness pass. Check the recorded expected vs actual values. Microbenchmark medians vary with load; they are not formal spike certifications."
+  ],
+  "verification_baseline": {
+    "version": 1,
+    "fingerprint": "b2d07350302e32fa34407160bf862992565f77e4a914d0481a0886b210d7a95e",
+    "results": {
+      "check": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 88.738,
+        "log": "/Users/someone/Echode/target/verification/check.log"
+      },
+      "rtsan": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 0.619,
+        "log": "/Users/someone/Echode/target/verification/rtsan.log"
+      },
+      "check-input": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 1.328,
+        "log": "/Users/someone/Echode/target/verification/check-input.log"
+      },
+      "check-bridge-features": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 0.793,
+        "log": "/Users/someone/Echode/target/verification/check-bridge-features.log"
+      },
+      "check-bridge-asan": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 15.908,
+        "log": "/Users/someone/Echode/target/verification/check-bridge-asan.log"
+      },
+      "check-bridge-tsan": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 21.258,
+        "log": "/Users/someone/Echode/target/verification/check-bridge-tsan.log"
+      },
+      "check-bridge-miri": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 11.921,
+        "log": "/Users/someone/Echode/target/verification/check-bridge-miri.log"
+      },
+      "spike-isolation": {
+        "status": "not_run"
+      },
+      "spike-draw": {
+        "status": "not_run"
+      },
+      "spike-arrange-frame": {
+        "status": "not_run"
+      },
+      "spike-piano-frame": {
+        "status": "not_run"
+      },
+      "spike-history": {
+        "status": "not_run"
+      },
+      "spike-input": {
+        "status": "not_run"
+      },
+      "spike-engine": {
+        "status": "not_run"
+      },
+      "spike-audio": {
+        "status": "not_run"
+      },
+      "spike-bridge": {
+        "status": "not_run"
+      },
+      "spike-render": {
+        "status": "not_run"
+      },
+      "spike-app": {
+        "status": "not_run"
+      },
+      "advisories": {
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 1.05,
+        "log": "/Users/someone/Echode/target/verification/advisories.log"
+      }
+    },
+    "changed_paths": [],
+    "base": null,
+    "selected": {
+      "check": [
+        "all checks"
+      ],
+      "rtsan": [
+        "all checks"
+      ],
+      "check-input": [
+        "all checks"
+      ],
+      "check-bridge-features": [
+        "all checks"
+      ],
+      "check-bridge-asan": [
+        "all checks"
+      ],
+      "check-bridge-tsan": [
+        "all checks"
+      ],
+      "check-bridge-miri": [
+        "all checks"
+      ],
+      "spike-isolation": [
+        "all checks"
+      ],
+      "spike-draw": [
+        "all checks"
+      ],
+      "spike-arrange-frame": [
+        "all checks"
+      ],
+      "spike-piano-frame": [
+        "all checks"
+      ],
+      "spike-history": [
+        "all checks"
+      ],
+      "spike-input": [
+        "all checks"
+      ],
+      "spike-engine": [
+        "all checks"
+      ],
+      "spike-audio": [
+        "all checks"
+      ],
+      "spike-bridge": [
+        "all checks"
+      ],
+      "spike-render": [
+        "all checks"
+      ],
+      "spike-app": [
+        "all checks"
+      ],
+      "advisories": [
+        "all checks"
+      ]
+    },
+    "tools": {
+      "PATH": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/someone/.local/bin:/Users/someone/.grok/bin:/Users/someone/.antigravity/antigravity/bin:/Users/someone/.local/bin:/Users/someone/.elan/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/someone/.codex/tmp/arg0/codex-arg0C6skwe:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/someone/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/someone/.local/bin:/Users/someone/.grok/bin:/Users/someone/.antigravity/antigravity/bin:/Users/someone/.elan/bin:/opt/homebrew/sbin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/Users/someone/.cargo/bin:/Users/someone/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "RUSTUP_TOOLCHAIN": "",
+      "RUSTFLAGS": "",
+      "CARGO_ENCODED_RUSTFLAGS": "",
+      "MIRIFLAGS": "",
+      "ASAN_OPTIONS": "",
+      "TSAN_OPTIONS": "",
+      "RTSAN_ENABLE": "",
+      "SDKROOT": "",
+      "DEVELOPER_DIR": "",
+      "CARGO_TARGET_DIR": "",
+      "RUSTC": "",
+      "RUSTC_WRAPPER": "",
+      "RUSTC_WORKSPACE_WRAPPER": "",
+      "CARGO_BUILD_TARGET": "",
+      "CC": "",
+      "CFLAGS": "",
+      "MACOSX_DEPLOYMENT_TARGET": "",
+      "MAKEFLAGS": "VERIFY_ARGS=--all\\ --run\\ advisories",
+      "python": "3.14.3 (main, Feb  3 2026, 15:32:20) [Clang 17.0.0 (clang-1700.6.3.2)]:/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "system": [
+        "Darwin",
+        "build-host.local",
+        "27.0.0",
+        "Darwin Kernel Version 27.0.0: Tue Aug 11 21:02:57 PDT 2026; root:xnu-13432.1.9~1/RELEASE_ARM64_T8132",
+        "arm64"
+      ],
+      "rustc -vV": "0:rustc 1.96.1 (31fca3adb 2026-06-26)\nbinary: rustc\ncommit-hash: 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd\ncommit-date: 2026-06-26\nhost: aarch64-apple-darwin\nrelease: 1.96.1\nLLVM version: 22.1.2\n",
+      "cargo --version": "0:cargo 1.96.1 (356927216 2026-06-26)\n",
+      "swift --version": "0:Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0\nswift-driver version: 1.168.6 ",
+      "xcodebuild -version": "0:Xcode 27.0\nBuild version 27A266a\n",
+      "rustc +nightly-2026-10-09 -vV": "0:rustc 1.101.0-nightly (a30aa9064 2026-10-08)\nbinary: rustc\ncommit-hash: a30aa9064df6a504b6a323c6884a2f4cfbfff666\ncommit-date: 2026-10-08\nhost: aarch64-apple-darwin\nrelease: 1.101.0-nightly\nLLVM version: 23.1.3\n"
+    },
+    "updated_at": "2026-10-13T11:56:27Z"
+  },
+  "limits": [
+    "No actual application windows, computer use, audible playback, hardware unplug, VoiceOver, iCloud, or power-loss tests.",
+    "No formal make spike-* runs. The audit uses deterministic public-path probes and separate release microbenchmarks.",
+    "State and port tests use a minimal conforming audit plugin, not a third-party production instrument.",
+    "Renderer idle-to-play and waveform window issues are code-based candidates; no live UI reproduction."
+  ],
+  "remediations": [
+    {
+      "id": "PRO-01",
+      "status": "resolved_in_worktree",
+      "date": "2026-10-13",
+      "decision": "docs/decisions/0074-package-entry-io.md",
+      "regression_tests": [
+        "audit_pro01_package_directory_links_preserve_external_files",
+        "audit_pro01_temporary_and_control_file_links_never_overwrite_external_files",
+        "audit_pro01_incremental_removals_preserve_external_files",
+        "audit_pro01_a_hard_linked_journal_is_not_repaired_or_appended",
+        "audit_pro01_an_open_package_root_replaced_with_a_link_cannot_write_outside",
+        "audit_pro01_a_retained_parent_does_not_follow_its_replaced_path",
+        "audit_pro01_an_old_temporary_hard_link_is_unlinked_without_truncation",
+        "concurrent_atomic_writers_publish_complete_files",
+        "audit_pro01_object_store_directory_links_are_not_followed",
+        "audit_pro01_peak_cache_directory_links_are_not_followed"
+      ],
+      "after_probe": "read_package and DocumentHost::open reject tracks as a symbolic link; outside_file_exists=true",
+      "note": "Original target_commit, sources and observations above describe the pre-fix audit. The current verification report records checks after the fix."
+    }
+  ]
+}

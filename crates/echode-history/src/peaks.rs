@@ -5,6 +5,7 @@
 //! is already gitignored, and a changed builder version ignores an old file.
 
 use std::collections::HashMap;
+#[cfg(test)]
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -356,9 +357,10 @@ fn write_cache(package: &Path, hash: &str, peaks: &Peaks) -> Result<(), PackageE
     let Some(path) = cache_path(package, hash) else {
         return Err(PackageError::new("peak cache name is not a hash"));
     };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| PackageError::new(error.to_string()))?;
-    }
+    let owned = crate::package_io::Directory::create(package)
+        .and_then(|root| root.child("cache"))
+        .and_then(|cache| cache.child("peaks"))
+        .map_err(|error| PackageError::new(error.to_string()))?;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&peaks.bucket.to_le_bytes());
@@ -373,9 +375,9 @@ fn write_cache(package: &Path, hash: &str, peaks: &Peaks) -> Result<(), PackageE
             bytes.extend_from_slice(&column.max.to_le_bytes());
         }
     }
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, &bytes).map_err(|error| PackageError::new(error.to_string()))?;
-    fs::rename(&temporary, &path).map_err(|error| PackageError::new(error.to_string()))?;
+    owned
+        .write_atomic(hash, &bytes, false)
+        .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))?;
     Ok(())
 }
 
@@ -386,8 +388,14 @@ struct CachedPeaks {
 }
 
 fn read_cache(package: &Path, hash: &str) -> Option<CachedPeaks> {
-    let path = cache_path(package, hash)?;
-    let bytes = fs::read(path).ok()?;
+    cache_path(package, hash)?;
+    let owned = crate::package_io::Directory::open(package)
+        .ok()?
+        .optional_child("cache")
+        .ok()??
+        .optional_child("peaks")
+        .ok()??;
+    let bytes = owned.read(hash).ok()?;
     if bytes.len() < 8 + 4 + 8 + 4 || &bytes[..8] != MAGIC {
         return None;
     }
@@ -440,6 +448,33 @@ fn read_f32(bytes: &[u8], cursor: &mut usize) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_pro01_peak_cache_directory_links_are_not_followed() {
+        for folder in ["cache", "peaks"] {
+            let root = std::env::temp_dir()
+                .join(format!("echode-peak-links-{}-{folder}", std::process::id()));
+            let package = root.join("project.echode");
+            let outside = root.join("outside");
+            fs::create_dir_all(&outside).unwrap();
+            fs::create_dir_all(package.join("cache")).unwrap();
+            fs::write(outside.join("sentinel"), b"external").unwrap();
+            let linked = if folder == "cache" {
+                fs::remove_dir(package.join("cache")).unwrap();
+                package.join("cache")
+            } else {
+                package.join("cache/peaks")
+            };
+            std::os::unix::fs::symlink(&outside, linked).unwrap();
+            let hash = crate::objects::hash_bytes(b"audio");
+            let peaks = build_peaks(&[0.25, -0.5], 2);
+            assert!(write_cache(&package, &hash, &peaks).is_err());
+            assert!(read_cache(&package, &hash).is_none());
+            assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"external");
+            assert_eq!(fs::read_dir(outside).unwrap().count(), 1);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn a_constant_and_an_impulse_keep_their_columns() {

@@ -1,7 +1,7 @@
 //! One thread owns a document. Callers send commands and read a snapshot.
 
 use std::collections::HashSet;
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -126,18 +126,8 @@ impl Drop for PackageLock {
 
 fn lock_file(directory: &Path) -> Result<File, PackageError> {
     let path = directory.join("host.lock");
-    if path
-        .symlink_metadata()
-        .is_ok_and(|metadata| metadata.file_type().is_symlink())
-    {
-        return Err(PackageError::new("package lock is a symbolic link"));
-    }
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
+    let file = crate::document::open_package(directory)?
+        .open_file("host.lock", true, true)
         .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))?;
     match file.try_lock() {
         Ok(()) => Ok(file),

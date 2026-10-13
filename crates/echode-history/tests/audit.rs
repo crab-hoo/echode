@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use echode_history::{Autosave, read_package, recover, write_package};
+use echode_history::{Autosave, DocumentHost, read_package, recover, write_package};
 use echode_model::{NoteDraft, Project, TICKS_PER_QUARTER, Tick};
 
 fn scratch() -> PathBuf {
@@ -24,6 +24,181 @@ fn eighth(index: i64) -> NoteDraft {
         start: Tick::new(index * TICKS_PER_QUARTER / 2),
         length: Tick::new(TICKS_PER_QUARTER / 2),
     }
+}
+
+#[test]
+fn audit_pro01_package_directory_links_preserve_external_files() {
+    for folder in ["tracks", "contents"] {
+        for has_tip in [false, true] {
+            for has_note in [false, true] {
+                let root = scratch();
+                let directory = root.join("project.echode");
+                let outside = root.join("outside");
+                std::fs::create_dir_all(&outside).unwrap();
+                let sentinel = outside.join("unrelated-user-file.json");
+                let original = b"{\"user\":\"important\"}";
+                std::fs::write(&sentinel, original).unwrap();
+                let project = if has_note {
+                    let (project, track) = Project::new().add_track("piano");
+                    project.insert_note(track, eighth(0)).unwrap().0
+                } else {
+                    Project::new()
+                };
+                write_package(&directory, &project).unwrap();
+                if has_tip {
+                    let autosave = Autosave::create(&directory).unwrap();
+                    autosave.save(Arc::new(project), 0).unwrap().wait().unwrap();
+                }
+                std::fs::remove_dir_all(directory.join(folder)).unwrap();
+                std::os::unix::fs::symlink(&outside, directory.join(folder)).unwrap();
+                let read = read_package(&directory);
+                let recovered = recover(&directory);
+                let opened = DocumentHost::open(&directory);
+                let rejected = (read.is_err(), recovered.is_err(), opened.is_err());
+                drop(opened);
+                let preserved = std::fs::read(&sentinel).ok();
+                std::fs::remove_dir_all(&root).unwrap();
+                assert_eq!(
+                    preserved.as_deref(),
+                    Some(original.as_slice()),
+                    "{folder}, tip={has_tip}, note={has_note}"
+                );
+                assert_eq!(
+                    rejected,
+                    (true, true, true),
+                    "{folder}, tip={has_tip}, note={has_note}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn audit_pro01_temporary_and_control_file_links_never_overwrite_external_files() {
+    for entry in [
+        "project",
+        "track",
+        "content",
+        "ignore",
+        "ignore.tmp",
+        "journal.tmp",
+        "pending",
+        "pending.tmp",
+    ] {
+        let root = scratch();
+        let directory = root.join("project.echode");
+        let (project, track) = Project::new().add_track("piano");
+        let project = project.insert_note(track, eighth(0)).unwrap().0;
+        write_package(&directory, &project).unwrap();
+        let sentinel = root.join("valuable.json");
+        let original = b"{\"user\":\"important\"}";
+        std::fs::write(&sentinel, original).unwrap();
+        let path = match entry {
+            "project" => directory.join("project.json.tmp"),
+            "track" => directory.join("tracks").join(format!("{track}.json.tmp")),
+            "content" => directory
+                .join("contents")
+                .join(format!("{}.json.tmp", project.contents()[0].id)),
+            "ignore" => directory.join(".gitignore"),
+            "ignore.tmp" => directory.join(".gitignore.tmp"),
+            "journal.tmp" => directory.join("journal.jsonl.tmp"),
+            "pending" => directory.join("save.pending"),
+            "pending.tmp" => directory.join("save.pending.tmp"),
+            _ => unreachable!(),
+        };
+        std::os::unix::fs::symlink(&sentinel, path).unwrap();
+        let rejected = match entry {
+            "ignore" | "ignore.tmp" => Autosave::create(&directory).is_err(),
+            "journal.tmp" => echode_history::compact_journal(&directory, 0).is_err(),
+            "pending" | "pending.tmp" => echode_history::mark_save_pending(&directory).is_err(),
+            _ => write_package(&directory, &project).is_err(),
+        };
+        let preserved = std::fs::read(&sentinel).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(preserved, original, "{entry}");
+        assert!(rejected, "{entry}");
+    }
+}
+
+#[test]
+fn audit_pro01_incremental_removals_preserve_external_files() {
+    for folder in ["tracks", "contents"] {
+        let root = scratch();
+        let directory = root.join("project.echode");
+        let outside = root.join("outside");
+        let (project, track) = Project::new().add_track("piano");
+        let project = project.insert_note(track, eighth(0)).unwrap().0;
+        let filename = format!(
+            "{}.json",
+            if folder == "tracks" {
+                track
+            } else {
+                project.contents()[0].id
+            }
+        );
+        let autosave = Autosave::create(&directory).unwrap();
+        autosave.save(Arc::new(project), 0).unwrap().wait().unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let original = b"external data";
+        std::fs::write(outside.join(&filename), original).unwrap();
+        std::fs::remove_dir_all(directory.join(folder)).unwrap();
+        std::os::unix::fs::symlink(&outside, directory.join(folder)).unwrap();
+        let saved = autosave.save(Arc::new(Project::new()), 1).unwrap().wait();
+        drop(autosave);
+        let preserved = std::fs::read(outside.join(&filename)).ok();
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(preserved.as_deref(), Some(original.as_slice()), "{folder}");
+        assert!(saved.is_err(), "{folder}");
+    }
+}
+
+#[test]
+fn audit_pro01_a_hard_linked_journal_is_not_repaired_or_appended() {
+    let root = scratch();
+    let directory = root.join("project.echode");
+    write_package(&directory, &Project::new()).unwrap();
+    let sentinel = root.join("valuable.json");
+    let original = b"incomplete external JSON";
+    std::fs::write(&sentinel, original).unwrap();
+    std::fs::hard_link(&sentinel, directory.join("journal.jsonl")).unwrap();
+    let result = echode_history::append_journal(
+        &directory,
+        &echode_actions::JournalLine {
+            seq: 1,
+            op: echode_actions::JournalOp::Undo,
+            actions: Vec::new(),
+            changes: Default::default(),
+        },
+    );
+    let preserved = std::fs::read(sentinel).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(preserved, original);
+    assert!(result.is_err());
+}
+
+#[test]
+fn audit_pro01_an_open_package_root_replaced_with_a_link_cannot_write_outside() {
+    let root = scratch();
+    let directory = root.join("project.echode");
+    let outside = root.join("outside");
+    write_package(&directory, &Project::new()).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("sentinel.json"), b"external").unwrap();
+    let host = DocumentHost::open(&directory).unwrap();
+    std::fs::rename(&directory, root.join("original.echode")).unwrap();
+    std::os::unix::fs::symlink(&outside, &directory).unwrap();
+    let edit = host.perform(echode_actions::Command::AddTrack {
+        name: "rejected".into(),
+    });
+    assert!(edit.is_err());
+    assert!(host.snapshot().tracks().is_empty());
+    drop(host);
+    assert_eq!(
+        std::fs::read(outside.join("sentinel.json")).unwrap(),
+        b"external"
+    );
+    assert_eq!(std::fs::read_dir(outside).unwrap().count(), 1);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

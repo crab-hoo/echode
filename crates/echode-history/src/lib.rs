@@ -11,6 +11,7 @@ mod format;
 mod host;
 mod media;
 mod objects;
+mod package_io;
 mod peaks;
 mod project;
 mod store;

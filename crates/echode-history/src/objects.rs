@@ -4,10 +4,12 @@
 //! commits do not include that directory.
 
 use std::collections::HashSet;
+#[cfg(test)]
 use std::fs;
 use std::path::Path;
 
 use crate::document::PackageError;
+use crate::package_io::Directory;
 
 const GITIGNORE: &str = "/media/objects/\n/cache/\n";
 
@@ -28,10 +30,17 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
 pub(crate) fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError> {
     let hash = hash_bytes(bytes);
     let directory = package.join("media").join("objects");
-    fs::create_dir_all(&directory).map_err(|error| io_error(&directory, error))?;
-    let path = directory.join(&hash);
-    if path.exists() {
-        let existing = read_object(package, &hash)?;
+    let owned = Directory::create(package)
+        .and_then(|root| root.child("media"))
+        .and_then(|media| media.child("objects"))
+        .map_err(|error| io_error(&directory, error))?;
+    if owned
+        .has_file(&hash)
+        .map_err(|error| io_error(&directory, error))?
+    {
+        let existing = owned
+            .read(&hash)
+            .map_err(|error| io_error(&directory, error))?;
         if existing != bytes {
             return Err(PackageError::new(format!(
                 "object {hash} already holds different bytes"
@@ -39,18 +48,25 @@ pub(crate) fn write_object(package: &Path, bytes: &[u8]) -> Result<String, Packa
         }
         return Ok(hash);
     }
-    let temporary = directory.join(format!(".{hash}.partial"));
-    fs::write(&temporary, bytes).map_err(|error| io_error(&temporary, error))?;
-    fs::rename(&temporary, &path).map_err(|error| io_error(&path, error))?;
+    owned
+        .write_atomic(&hash, bytes, false)
+        .map_err(|error| io_error(&directory, error))?;
     Ok(hash)
 }
 
 /// Writes the ignore rules for the object store. Existing rules are kept.
 pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageError> {
-    fs::create_dir_all(directory).map_err(|error| io_error(directory, error))?;
+    let root = Directory::create(directory).map_err(|error| io_error(directory, error))?;
+    root.validate_layout()
+        .map_err(|error| io_error(directory, error))?;
     let path = directory.join(".gitignore");
-    if path.exists() {
-        let current = fs::read_to_string(&path).map_err(|error| io_error(&path, error))?;
+    if root
+        .has_file(".gitignore")
+        .map_err(|error| io_error(&path, error))?
+    {
+        let current = root
+            .read_text(".gitignore")
+            .map_err(|error| io_error(&path, error))?;
         if current.contains("/media/objects/") && current.contains("/cache/") {
             return Ok(());
         }
@@ -66,10 +82,12 @@ pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageErro
         if !has_cache {
             next.push_str("/cache/\n");
         }
-        fs::write(&path, next).map_err(|error| io_error(&path, error))?;
+        root.write_atomic(".gitignore", next.as_bytes(), false)
+            .map_err(|error| io_error(&path, error))?;
         return Ok(());
     }
-    fs::write(&path, GITIGNORE).map_err(|error| io_error(&path, error))
+    root.write_atomic(".gitignore", GITIGNORE.as_bytes(), false)
+        .map_err(|error| io_error(&path, error))
 }
 
 /// Reads `media/objects/<hash>` after checking the name, the link, and the bytes.
@@ -80,14 +98,19 @@ pub(crate) fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, Package
         ));
     }
     let path = package.join("media").join("objects").join(hash);
-    let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
-    if metadata.file_type().is_symlink() {
-        return Err(PackageError::new(format!(
-            "{} is a symbolic link",
-            path.display()
-        )));
-    }
-    let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+    let bytes = Directory::open(package)
+        .and_then(|root| {
+            root.optional_child("media")?.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "media is missing")
+            })
+        })
+        .and_then(|media| {
+            media.optional_child("objects")?.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "objects is missing")
+            })
+        })
+        .and_then(|objects| objects.read(hash))
+        .map_err(|error| io_error(&path, error))?;
     if hash_bytes(&bytes) != hash {
         return Err(PackageError::new(format!(
             "object {hash} does not match its BLAKE3"
@@ -118,6 +141,33 @@ mod tests {
 
     /// BLAKE3-256 of empty bytes. The official test vector.
     const EMPTY_HASH: &str = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
+
+    #[test]
+    fn audit_pro01_object_store_directory_links_are_not_followed() {
+        for folder in ["media", "objects"] {
+            let root = std::env::temp_dir().join(format!(
+                "echode-object-links-{}-{folder}",
+                std::process::id()
+            ));
+            let package = root.join("project.echode");
+            let outside = root.join("outside");
+            fs::create_dir_all(&outside).unwrap();
+            fs::create_dir_all(package.join("media")).unwrap();
+            fs::write(outside.join("sentinel"), b"external").unwrap();
+            let linked = if folder == "media" {
+                fs::remove_dir(package.join("media")).unwrap();
+                package.join("media")
+            } else {
+                package.join("media/objects")
+            };
+            std::os::unix::fs::symlink(&outside, linked).unwrap();
+            assert!(write_object(&package, b"new audio").is_err());
+            assert!(read_object(&package, EMPTY_HASH).is_err());
+            assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"external");
+            assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn empty_bytes_match_the_blake3_vector() {

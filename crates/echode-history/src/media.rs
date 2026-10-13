@@ -4,6 +4,7 @@
 //! when the device rate differs. Ogg stays out of this slice: AudioToolbox
 //! covers WAV, AIFF, CAF, MP3, AAC, ALAC, and FLAC.
 
+#[cfg(test)]
 use std::fs;
 use std::path::Path;
 
@@ -318,11 +319,16 @@ fn remember_name(
     audio: &DecodedPcm,
 ) -> Result<(), PackageError> {
     let directory = package.join("media");
-    fs::create_dir_all(&directory)
+    let owned = crate::package_io::Directory::open(package)
+        .and_then(|root| root.child("media"))
         .map_err(|error| PackageError::new(format!("{}: {error}", directory.display())))?;
     let path = directory.join("index.json");
-    let mut index = if path.exists() {
-        let text = fs::read_to_string(&path)
+    let mut index = if owned
+        .has_file("index.json")
+        .map_err(|error| PackageError::new(error.to_string()))?
+    {
+        let text = owned
+            .read_text("index.json")
             .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))?;
         serde_json::from_str::<MediaIndex>(&text)
             .map_err(|error| PackageError::new(format!("media index: {error}")))?
@@ -354,10 +360,8 @@ fn remember_name(
     }
     let text = serde_json::to_string_pretty(&index)
         .map_err(|error| PackageError::new(format!("media index: {error}")))?;
-    let temporary = directory.join(".index.json.partial");
-    fs::write(&temporary, format!("{text}\n"))
-        .map_err(|error| PackageError::new(format!("{}: {error}", temporary.display())))?;
-    fs::rename(&temporary, &path)
+    owned
+        .write_atomic("index.json", format!("{text}\n").as_bytes(), false)
         .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))
 }
 

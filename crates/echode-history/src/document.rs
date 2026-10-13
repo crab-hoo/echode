@@ -8,7 +8,6 @@
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
-use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 #[cfg(test)]
@@ -16,6 +15,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Mutex;
 
+use crate::package_io::Directory;
 use echode_model::{
     AudioRef, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track,
 };
@@ -61,31 +61,42 @@ pub fn write_package(directory: &Path, project: &Project) -> Result<(), PackageE
 }
 
 pub fn read_package(directory: &Path) -> Result<Project, PackageError> {
+    let root = open_package(directory)?;
     let project_path = directory.join("project.json");
-    reject_symlink(&project_path)?;
-    let project_json = read_to_string(&project_path)?;
+    let project_json = root
+        .read_text("project.json")
+        .map_err(|error| io_error(&project_path, error))?;
     let header = parse_header(&project_json)?;
-    let contents = read_named_dir(directory, "contents", &header.content_ids)?;
-    let tracks = read_named_dir(directory, "tracks", &header.track_ids)?;
+    let contents = read_named_dir(&root, directory, "contents", &header.content_ids)?;
+    let tracks = read_named_dir(&root, directory, "tracks", &header.track_ids)?;
     assemble(header, contents, tracks)
 }
 
 fn read_named_dir(
+    root: &Directory,
     directory: &Path,
     folder: &str,
     ids: &[String],
 ) -> Result<Vec<(String, String)>, PackageError> {
     let dir = directory.join(folder);
-    if !ids.is_empty() {
-        reject_symlink(&dir)?;
-    }
+    let Some(owned) = root
+        .optional_child(folder)
+        .map_err(|error| io_error(&dir, error))?
+    else {
+        return if ids.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err(PackageError::new(format!("{} is missing", dir.display())))
+        };
+    };
     let mut files = Vec::with_capacity(ids.len());
     for id in ids {
         // HIS-8: the id was checked before this name is joined.
         let filename = format!("{id}.json");
         let path = dir.join(&filename);
-        reject_symlink(&path)?;
-        let json = read_to_string(&path)?;
+        let json = owned
+            .read_text(&filename)
+            .map_err(|error| io_error(&path, error))?;
         files.push((filename, json));
     }
     Ok(files)
@@ -106,12 +117,8 @@ pub fn append_journal(
     let mut text = echode_actions::encode_line(line);
     text.push('\n');
     let path = directory.join("journal.jsonl");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
+    let mut file = open_package(directory)?
+        .open_file("journal.jsonl", true, true)
         .map_err(|error| io_error(&path, error))?;
     let end = file
         .seek(SeekFrom::End(0))
@@ -163,32 +170,23 @@ pub fn append_journal(
 
 /// Drops an incomplete trailing record and syncs that shorter file.
 pub(crate) fn repair_journal(directory: &Path) -> Result<(), PackageError> {
+    let root = open_package(directory)?;
     let path = directory.join("journal.jsonl");
-    if !path.exists() {
+    if !root
+        .has_file("journal.jsonl")
+        .map_err(|error| io_error(&path, error))?
+    {
         return Ok(());
     }
-    let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
-    if metadata.file_type().is_symlink() {
-        return Err(PackageError::new(format!(
-            "{} is a symbolic link",
-            path.display()
-        )));
-    }
-    if !metadata.is_file() {
-        return Err(PackageError::new(format!(
-            "{} is not a journal file",
-            path.display()
-        )));
-    }
-    let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+    let mut file = root
+        .open_file("journal.jsonl", true, false)
+        .map_err(|error| io_error(&path, error))?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|error| io_error(&path, error))?;
     let committed = committed_journal(&bytes);
     if committed.len() == bytes.len() {
         return Ok(());
     }
-    let file = OpenOptions::new()
-        .write(true)
-        .open(&path)
-        .map_err(|error| io_error(&path, error))?;
     file.set_len(committed.len() as u64)
         .map_err(|error| io_error(&path, error))?;
     file.sync_all().map_err(|error| io_error(&path, error))?;
@@ -258,48 +256,47 @@ pub fn compact_journal(directory: &Path, through: u64) -> Result<(), PackageErro
         text.push_str(&echode_actions::encode_line(line));
         text.push('\n');
     }
-    let temporary = directory.join("journal.jsonl.tmp");
-    let mut file =
-        std::fs::File::create(&temporary).map_err(|error| io_error(&temporary, error))?;
-    std::io::Write::write_all(&mut file, text.as_bytes())
-        .map_err(|error| io_error(&temporary, error))?;
-    file.sync_all()
-        .map_err(|error| io_error(&temporary, error))?;
-    let destination = directory.join("journal.jsonl");
-    std::fs::rename(&temporary, &destination).map_err(|error| io_error(&destination, error))?;
-    sync_dir(directory)?;
+    let root = open_package(directory)?;
+    root.write_atomic("journal.jsonl", text.as_bytes(), true)
+        .map_err(|error| io_error(directory, error))?;
+    root.sync().map_err(|error| io_error(directory, error))?;
     Ok(())
 }
 
 /// Marks a save that has started rewriting the worktree and has not committed.
 pub fn mark_save_pending(directory: &Path) -> Result<(), PackageError> {
     let path = directory.join("save.pending");
-    let mut file = std::fs::File::create(&path).map_err(|error| io_error(&path, error))?;
-    std::io::Write::write_all(&mut file, b"pending\n").map_err(|error| io_error(&path, error))?;
-    file.sync_all().map_err(|error| io_error(&path, error))?;
+    open_package(directory)?
+        .write_atomic("save.pending", b"pending\n", true)
+        .map_err(|error| io_error(&path, error))?;
     Ok(())
 }
 
 pub fn clear_save_pending(directory: &Path) -> Result<(), PackageError> {
     let path = directory.join("save.pending");
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|error| io_error(&path, error))?;
-    }
+    open_package(directory)?
+        .remove("save.pending")
+        .map_err(|error| io_error(&path, error))?;
     Ok(())
 }
 
 pub(crate) fn save_pending(directory: &Path) -> bool {
-    directory.join("save.pending").exists()
+    Directory::open(directory)
+        .and_then(|root| root.has_file("save.pending"))
+        .unwrap_or(true)
 }
 
-fn sync_dir(directory: &Path) -> Result<(), PackageError> {
-    let dir = std::fs::File::open(directory).map_err(|error| io_error(directory, error))?;
-    dir.sync_all().map_err(|error| io_error(directory, error))?;
-    Ok(())
+pub(crate) fn open_package(directory: &Path) -> Result<Directory, PackageError> {
+    let root = Directory::open(directory).map_err(|error| io_error(directory, error))?;
+    root.validate_layout()
+        .map_err(|error| io_error(directory, error))?;
+    Ok(root)
 }
 
 /// Loads the newest readable commit, then replays the contiguous journal suffix.
 pub fn recover(directory: &Path) -> Result<Project, PackageError> {
+    // Validate the worktree even when recovery will read a commit instead of its JSON.
+    open_package(directory)?;
     let records = read_log(directory)?;
     let pending = save_pending(directory);
     let tip = autosave_tip(directory);
@@ -381,23 +378,34 @@ fn render_project_only(project: &Project) -> String {
 }
 
 pub(crate) fn write_files(directory: &Path, package: &PackageText) -> Result<(), PackageError> {
-    fs::create_dir_all(directory.join("tracks")).map_err(|error| io_error(directory, error))?;
-    fs::create_dir_all(directory.join("contents")).map_err(|error| io_error(directory, error))?;
-    write_atomic(&directory.join("project.json"), &package.project_json)?;
+    Directory::create(directory).map_err(|error| io_error(directory, error))?;
+    let root = open_package(directory)?;
+    let tracks = root
+        .child("tracks")
+        .map_err(|error| io_error(directory, error))?;
+    let contents = root
+        .child("contents")
+        .map_err(|error| io_error(directory, error))?;
+    root.write_atomic("project.json", package.project_json.as_bytes(), false)
+        .map_err(|error| io_error(directory, error))?;
     let mut keep = HashSet::with_capacity(package.tracks.len());
     for (filename, json) in &package.tracks {
         let path = directory.join("tracks").join(filename);
-        write_atomic(&path, json)?;
+        tracks
+            .write_atomic(filename, json.as_bytes(), false)
+            .map_err(|error| io_error(&path, error))?;
         keep.insert(filename.clone());
     }
-    delete_unlisted(&directory.join("tracks"), &keep)?;
+    delete_unlisted(&tracks, &directory.join("tracks"), &keep)?;
     let mut keep_contents = HashSet::with_capacity(package.contents.len());
     for (filename, json) in &package.contents {
         let path = directory.join("contents").join(filename);
-        write_atomic(&path, json)?;
+        contents
+            .write_atomic(filename, json.as_bytes(), false)
+            .map_err(|error| io_error(&path, error))?;
         keep_contents.insert(filename.clone());
     }
-    delete_unlisted(&directory.join("contents"), &keep_contents)?;
+    delete_unlisted(&contents, &directory.join("contents"), &keep_contents)?;
     Ok(())
 }
 
@@ -412,11 +420,17 @@ pub(crate) fn write_incremental(
     project: &Project,
     plan: &FilePlan<'_>,
 ) -> Result<IncrementalText, PackageError> {
-    fs::create_dir_all(directory.join("tracks")).map_err(|error| io_error(directory, error))?;
-    fs::create_dir_all(directory.join("contents")).map_err(|error| io_error(directory, error))?;
+    let root = open_package(directory)?;
+    let track_dir = root
+        .child("tracks")
+        .map_err(|error| io_error(directory, error))?;
+    let content_dir = root
+        .child("contents")
+        .map_err(|error| io_error(directory, error))?;
     let project_json = render_project_only(project);
     if plan.previous_project_json != Some(project_json.as_str()) {
-        write_atomic(&directory.join("project.json"), &project_json)?;
+        root.write_atomic("project.json", project_json.as_bytes(), false)
+            .map_err(|error| io_error(directory, error))?;
     }
     let mut tracks = Vec::new();
     let mut keep = HashSet::new();
@@ -430,13 +444,15 @@ pub(crate) fn write_incremental(
             continue;
         }
         let json = render_track(track);
-        write_atomic(&directory.join("tracks").join(&filename), &json)?;
+        track_dir
+            .write_atomic(&filename, json.as_bytes(), false)
+            .map_err(|error| io_error(directory, error))?;
         tracks.push((filename, json));
     }
     if plan.sweep {
-        delete_unlisted(&directory.join("tracks"), &keep)?;
+        delete_unlisted(&track_dir, &directory.join("tracks"), &keep)?;
     } else {
-        remove_named(directory, "tracks", plan.removed_tracks)?;
+        remove_named(&track_dir, directory, "tracks", plan.removed_tracks)?;
     }
     let mut contents = Vec::new();
     let mut keep_contents = HashSet::new();
@@ -450,13 +466,15 @@ pub(crate) fn write_incremental(
             continue;
         }
         let json = render_content(content);
-        write_atomic(&directory.join("contents").join(&filename), &json)?;
+        content_dir
+            .write_atomic(&filename, json.as_bytes(), false)
+            .map_err(|error| io_error(directory, error))?;
         contents.push((filename, json));
     }
     if plan.sweep {
-        delete_unlisted(&directory.join("contents"), &keep_contents)?;
+        delete_unlisted(&content_dir, &directory.join("contents"), &keep_contents)?;
     } else {
-        remove_named(directory, "contents", plan.removed_contents)?;
+        remove_named(&content_dir, directory, "contents", plan.removed_contents)?;
     }
     Ok(IncrementalText {
         project_json,
@@ -480,40 +498,32 @@ pub(crate) struct IncrementalText {
     pub contents: Vec<(String, String)>,
 }
 
-fn remove_named(directory: &Path, folder: &str, ids: &[String]) -> Result<(), PackageError> {
+fn remove_named(
+    owned: &Directory,
+    directory: &Path,
+    folder: &str,
+    ids: &[String],
+) -> Result<(), PackageError> {
     for id in ids {
         let path = directory.join(folder).join(format!("{id}.json"));
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_error(&path, error)),
-        }
+        owned
+            .remove(format!("{id}.json"))
+            .map_err(|error| io_error(&path, error))?;
     }
     Ok(())
 }
 
-fn write_atomic(path: &Path, bytes: &str) -> Result<(), PackageError> {
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "file".to_string());
-    let temporary = path.with_file_name(format!("{name}.tmp"));
-    fs::write(&temporary, bytes).map_err(|error| io_error(&temporary, error))?;
-    fs::rename(&temporary, path).map_err(|error| io_error(path, error))?;
-    Ok(())
-}
-
-fn delete_unlisted(directory: &Path, keep: &HashSet<String>) -> Result<(), PackageError> {
-    if !directory.exists() {
-        return Ok(());
-    }
-    let entries = fs::read_dir(directory).map_err(|error| io_error(directory, error))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| io_error(directory, error))?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
+fn delete_unlisted(
+    owned: &Directory,
+    directory: &Path,
+    keep: &HashSet<String>,
+) -> Result<(), PackageError> {
+    for entry in owned.names().map_err(|error| io_error(directory, error))? {
+        let name = entry.to_string_lossy();
         if name.ends_with(".json") && !keep.contains(name.as_ref()) {
-            fs::remove_file(entry.path()).map_err(|error| io_error(&entry.path(), error))?;
+            owned
+                .remove(&entry)
+                .map_err(|error| io_error(directory, error))?;
         }
     }
     Ok(())
@@ -705,10 +715,10 @@ fn remember_commit(
     let parent = parent
         .map(|parent| parent.to_string())
         .unwrap_or_else(|| "-".to_string());
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
+    let mut file = Directory::open(repo.git_dir())
+        .and_then(|git| git.open_file("echode-commit-chain", true, true))
+        .map_err(|error| io_error(&path, error))?;
+    file.seek(SeekFrom::End(0))
         .map_err(|error| io_error(&path, error))?;
     std::io::Write::write_all(&mut file, format!("{id} {parent}\n").as_bytes())
         .map_err(|error| io_error(&path, error))?;
@@ -717,8 +727,11 @@ fn remember_commit(
 }
 
 pub(crate) fn commit_parent(directory: &Path, id: ObjectId) -> Option<ObjectId> {
-    let path = directory.join(".git").join("echode-commit-chain");
-    let text = std::fs::read_to_string(path).ok()?;
+    let git = Directory::open(directory)
+        .ok()?
+        .optional_child(".git")
+        .ok()??;
+    let text = git.read_text("echode-commit-chain").ok()?;
     let id = id.to_string();
     text.lines().rev().find_map(|line| {
         let (commit, parent) = line.split_once(' ')?;
@@ -1281,11 +1294,17 @@ fn tip_journal_seq(directory: &Path) -> u64 {
 }
 
 fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, PackageError> {
+    let root = open_package(directory)?;
     let path = directory.join("journal.jsonl");
-    if !path.exists() {
+    if !root
+        .has_file("journal.jsonl")
+        .map_err(|error| io_error(&path, error))?
+    {
         return Ok(Vec::new());
     }
-    let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+    let bytes = root
+        .read("journal.jsonl")
+        .map_err(|error| io_error(&path, error))?;
     let text = std::str::from_utf8(committed_journal(&bytes))
         .map_err(|error| PackageError::new(error.to_string()))?;
     let mut records = Vec::new();
@@ -1404,23 +1423,6 @@ fn blob_text(root: &gix::Tree<'_>, path: &str) -> Result<String, PackageError> {
     std::str::from_utf8(&blob.data)
         .map_err(|error| PackageError::new(error.to_string()))
         .map(ToOwned::to_owned)
-}
-
-fn read_to_string(path: &Path) -> Result<String, PackageError> {
-    reject_symlink(path)?;
-    fs::read_to_string(path).map_err(|error| io_error(path, error))
-}
-
-/// HIS-8: a package entry must be a real file. Following a link could leave the package.
-fn reject_symlink(path: &Path) -> Result<(), PackageError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| io_error(path, error))?;
-    if metadata.file_type().is_symlink() {
-        return Err(PackageError::new(format!(
-            "{} is a symbolic link",
-            path.display()
-        )));
-    }
-    Ok(())
 }
 
 fn canonical_track_ids(ids: Vec<String>) -> Result<Vec<String>, PackageError> {
