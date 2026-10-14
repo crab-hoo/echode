@@ -195,6 +195,7 @@ pub fn render_offline_blocks_with_clips<E>(
     let silent = Event::note_off(0, 0, 0, 0);
     let mut events = vec![silent; event_cap];
     let mut track_events = vec![silent; event_cap];
+    let mut sort_order = vec![0usize; event_cap];
     let scratch = block_frames as usize;
     let mut planes = vec![vec![0.0; scratch]; tracks.len()];
     let mut left = vec![0.0; scratch];
@@ -226,9 +227,15 @@ pub fn render_offline_blocks_with_clips<E>(
             let span_count = transport
                 .pull(block, &mut spans)
                 .map_err(OfflineError::Playback)?;
-            let mut event_count =
-                play_prepared(&plan, &mut cursor, &spans[..span_count], &mut events)
-                    .map_err(OfflineError::Playback)?;
+            let mut event_count = play_prepared(
+                &plan,
+                &mut cursor,
+                &spans[..span_count],
+                &mut events,
+                &mut sort_order,
+                &mut track_events,
+            )
+            .map_err(OfflineError::Playback)?;
             for span in &spans[..span_count] {
                 if event_count >= events.len() {
                     return Err(OfflineError::Playback(PlaybackError::BufferTooSmall));
@@ -237,7 +244,13 @@ pub fn render_offline_blocks_with_clips<E>(
                     transport.transport_event(span.start_sample, span.block_offset, meter);
                 event_count += 1;
             }
-            sort_events(&mut events[..event_count]);
+            if !sort_events(
+                &mut events[..event_count],
+                &mut sort_order,
+                &mut track_events,
+            ) {
+                return Err(OfflineError::Playback(PlaybackError::BufferTooSmall));
+            }
             for (track_index, _track) in tracks.iter().enumerate() {
                 planes[track_index][..block_len].fill(0.0);
                 let mut kept = 0;

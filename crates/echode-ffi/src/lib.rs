@@ -829,6 +829,124 @@ mod tests {
         unsafe { echode_document_close(document) };
     }
 
+    struct ShutdownReply {
+        document: *mut Document,
+        sender: mpsc::Sender<i32>,
+    }
+
+    extern "C" fn shutdown_on_complete(
+        context: *mut c_void,
+        status: c_int,
+        _message: *const c_char,
+        snapshot: *mut Snapshot,
+    ) {
+        let reply = unsafe { &*(context as *const ShutdownReply) };
+        unsafe { echode_document_shutdown(reply.document) };
+        if !snapshot.is_null() {
+            unsafe { echode_snapshot_free(snapshot) };
+        }
+        let _ = reply.sender.send(status);
+    }
+
+    #[test]
+    fn audit_pro14_shutdown_from_the_completion_callback_does_not_abort() {
+        let document = open();
+        let (sender, incoming) = mpsc::channel();
+        let reply = ShutdownReply { document, sender };
+        let json = br#"{"type":"track.add","name":"piano"}"#;
+        let code = unsafe {
+            echode_document_submit(
+                document,
+                json.as_ptr(),
+                json.len(),
+                &reply as *const ShutdownReply as *mut c_void,
+                shutdown_on_complete,
+            )
+        };
+        assert_eq!(code, 0);
+        let status = incoming
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("completion");
+        assert_eq!(status, ECHODE_OK);
+        let (sender, incoming) = mpsc::channel();
+        let late = Reply { sender };
+        let outcome = submit(
+            document,
+            r#"{"type":"track.add","name":"late"}"#,
+            &late,
+            &incoming,
+        );
+        assert_eq!(outcome.status, ECHODE_ERR);
+        assert!(outcome.message.unwrap().contains("stopped"));
+        unsafe { echode_document_close(document) };
+    }
+
+    extern "C" fn close_on_complete(
+        context: *mut c_void,
+        status: c_int,
+        _message: *const c_char,
+        snapshot: *mut Snapshot,
+    ) {
+        let reply = unsafe { &*(context as *const ShutdownReply) };
+        if !snapshot.is_null() {
+            unsafe { echode_snapshot_free(snapshot) };
+        }
+        unsafe { echode_document_close(reply.document) };
+        let _ = reply.sender.send(status);
+    }
+
+    #[test]
+    fn audit_pro14_close_from_the_completion_callback_does_not_abort() {
+        let document = open();
+        let (sender, incoming) = mpsc::channel();
+        let reply = ShutdownReply { document, sender };
+        let json = br#"{"type":"track.add","name":"piano"}"#;
+        let code = unsafe {
+            echode_document_submit(
+                document,
+                json.as_ptr(),
+                json.len(),
+                &reply as *const ShutdownReply as *mut c_void,
+                close_on_complete,
+            )
+        };
+        assert_eq!(code, 0);
+        let status = incoming
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("completion");
+        assert_eq!(status, ECHODE_OK);
+    }
+
+    #[test]
+    fn audit_pro14_shutdown_races_an_external_stop() {
+        for _ in 0..32 {
+            let document = open();
+            let address = document as usize;
+            let stopper = std::thread::spawn(move || {
+                unsafe { echode_document_shutdown(address as *mut Document) };
+            });
+            let (sender, incoming) = mpsc::channel();
+            let reply = ShutdownReply { document, sender };
+            let json = br#"{"type":"track.add","name":"piano"}"#;
+            let code = unsafe {
+                echode_document_submit(
+                    document,
+                    json.as_ptr(),
+                    json.len(),
+                    &reply as *const ShutdownReply as *mut c_void,
+                    shutdown_on_complete,
+                )
+            };
+            assert_eq!(code, 0);
+            let status = incoming
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("completion");
+            assert!(status == ECHODE_OK || status == ECHODE_ERR);
+            stopper.join().expect("external stop");
+            unsafe { echode_document_close(document) };
+        }
+    }
+
     #[test]
     fn an_inserted_plugin_is_visible_on_the_snapshot_and_undo_removes_it() {
         let document = open();

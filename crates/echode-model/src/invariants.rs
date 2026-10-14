@@ -169,7 +169,10 @@ impl Project {
                     let Some(absolute) = origin.checked_add(note.start.get()) else {
                         return broken(format!("note {} starts past the time range", note.id));
                     };
-                    let Some(last) = absolute.checked_add(note.length.get() - 1) else {
+                    let Some(span) = note.length.get().checked_sub(1) else {
+                        return broken(format!("note {} ends past the time range", note.id));
+                    };
+                    let Some(last) = absolute.checked_add(span) else {
                         return broken(format!("note {} ends past the time range", note.id));
                     };
                     let (first_bar, last_bar) = (absolute.div_euclid(bar), last.div_euclid(bar));
@@ -182,7 +185,15 @@ impl Project {
                     let Some((low, high)) = bars else {
                         return broken(format!("auto clip {} has no notes", clip.id));
                     };
-                    if start != low * bar || end != (high + 1) * bar {
+                    let Some(covered_start) = low.checked_mul(bar) else {
+                        return broken(format!("auto clip {} starts past the time range", clip.id));
+                    };
+                    let Some(covered_end) =
+                        high.checked_add(1).and_then(|next| next.checked_mul(bar))
+                    else {
+                        return broken(format!("auto clip {} ends past the time range", clip.id));
+                    };
+                    if start != covered_start || end != covered_end {
                         return broken(format!(
                             "auto clip {} spans {start}..{end}, but its notes cover bars {low}..={high}",
                             clip.id

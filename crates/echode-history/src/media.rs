@@ -72,7 +72,7 @@ pub fn read_pcm(package: &Path, hash: &str) -> Result<DecodedPcm, PackageError> 
     decode_pcm(&read_object(package, hash)?)
 }
 
-fn encode_pcm(
+pub(crate) fn encode_pcm(
     sample_rate: u32,
     channels: u16,
     frames: u64,

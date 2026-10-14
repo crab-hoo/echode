@@ -10,14 +10,14 @@ use std::thread::{self, JoinHandle};
 use echode_actions::{
     Action, ActionError, Command, JournalLine, JournalOp, Session, parameter_message,
 };
-use echode_model::{ChangeSet, Project};
+use echode_model::{ChangeSet, Id, Project};
 use gix::ObjectId;
 use serde_json::{Map, Value};
 
 use crate::autosave::{Autosave, PendingAutosave, SavedRevision};
 use crate::document::{
-    JOURNAL_DURABILITY_UNKNOWN, PackageError, append_journal, applied_journal_seq, autosave_tip,
-    compact_journal, next_journal_seq, recover, repair_journal,
+    JOURNAL_DURABILITY_UNKNOWN, PackageError, append_journal, autosave_tip, compact_journal,
+    next_journal_seq, repair_journal,
 };
 
 /// Canonical package paths open in this process. `flock` does not stop a second open here.
@@ -76,6 +76,9 @@ pub struct DocumentHost {
     thread: Option<JoinHandle<()>>,
     snapshot: Arc<Mutex<Arc<Project>>>,
     lock: PackageLock,
+    /// Commit recovery read, and the last journal line included in that project.
+    base_revision: String,
+    applied_seq: u64,
 }
 
 /// Exclusive ownership of one package, in this process and across processes.
@@ -136,6 +139,16 @@ fn lock_file(directory: &Path) -> Result<File, PackageError> {
     }
 }
 
+fn device_state(project: &Project, device: Id) -> Option<Option<String>> {
+    project.tracks().iter().find_map(|track| {
+        track
+            .devices
+            .iter()
+            .find(|item| item.id == device)
+            .map(|item| item.state.clone())
+    })
+}
+
 impl DocumentHost {
     /// Recovers `directory` and starts its document thread.
     ///
@@ -146,16 +159,21 @@ impl DocumentHost {
         let lock = PackageLock::acquire(directory)?;
         let directory = lock.path().to_path_buf();
         repair_journal(&directory)?;
-        let project = recover(&directory)?;
+        let recovered = crate::document::recover_labeled(&directory)?;
+        let mut base_revision = recovered.base_revision;
+        let applied_seq = recovered.applied_seq;
+        let project = recovered.project;
         let snapshot = Arc::new(Mutex::new(Arc::new(project.clone())));
         let autosave = Autosave::create(&directory)?;
         // A confirmed edit is journaled before it returns. The first autosave
         // can still die with `save.pending` and no tip, and then recover
         // refuses the worktree. Commit the recovered project first, so a later
-        // kill always has a tip to replay onto.
+        // kill always has a tip to replay onto. That new commit is the base.
         if autosave_tip(&directory).is_none() {
-            let seq = applied_journal_seq(&directory)?;
-            autosave.save(Arc::new(project.clone()), seq)?.wait()?;
+            let id = autosave
+                .save(Arc::new(project.clone()), applied_seq)?
+                .wait()?;
+            base_revision = id.to_string();
         }
         let (request, incoming) = mpsc::channel();
         let published = Arc::clone(&snapshot);
@@ -169,6 +187,8 @@ impl DocumentHost {
             thread: Some(thread),
             snapshot,
             lock,
+            base_revision,
+            applied_seq,
         })
     }
 
@@ -185,6 +205,30 @@ impl DocumentHost {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         )
+    }
+
+    /// Writes plugin bytes, then records their hash on `device`.
+    ///
+    /// `Ok(true)` means the hash is in the journal, or it was already there.
+    /// `Ok(false)` means the device is gone and the bytes must not be applied.
+    /// `Err` means the object or the journal did not finish; the caller keeps the bytes.
+    pub fn commit_plugin_state(&self, device: Id, bytes: &[u8]) -> Result<bool, HostError> {
+        let hash = crate::write_object(self.directory(), bytes).map_err(HostError::Package)?;
+        let project = self.snapshot();
+        let Some(current) = device_state(&project, device) else {
+            return Ok(false);
+        };
+        if current.as_deref() == Some(hash.as_str()) {
+            return Ok(true);
+        }
+        match self.perform(Command::SetPluginState {
+            device,
+            state: Some(hash),
+        }) {
+            Ok(_) => Ok(true),
+            Err(_) if device_state(&self.snapshot(), device).is_none() => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// Applies `command` on the document thread and returns after the journal is written.
@@ -218,6 +262,14 @@ impl DocumentHost {
         incoming
             .recv()
             .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+    }
+
+    /// Autosave tip and the journal sequence included in the recovered project.
+    ///
+    /// The tip alone is an earlier commit when later journal lines were replayed
+    /// onto it. The pair identifies the snapshot [`Self::snapshot`] returns.
+    pub fn recovered_label(&self) -> Result<(String, u64), HostError> {
+        Ok((self.base_revision.clone(), self.applied_seq))
     }
 
     /// Autosave commits reachable from the tip, newest first.
@@ -277,9 +329,12 @@ fn worker(
                 let result = match command {
                     Command::Restore { revision } => {
                         wait_for_saves(&directory, &mut inflight);
-                        let before = session.clone();
+                        let parked = session.park_redo();
                         match restore_revision(&mut session, &autosave, &revision) {
-                            Ok(changes) if changes.is_empty() => Ok(Action::Restore { revision }),
+                            Ok(changes) if changes.is_empty() => {
+                                session.unpark_redo(parked);
+                                Ok(Action::Restore { revision })
+                            }
                             Ok(_) => {
                                 let saved = publish_edit(&mut Publish {
                                     directory: &directory,
@@ -289,16 +344,19 @@ fn worker(
                                     next_seq: &mut next_seq,
                                     session: &session,
                                 });
-                                confirm(&mut session, before, &mut halted, saved)
+                                settle(&mut session, parked, &mut halted, saved)
                                     .map(|()| Action::Restore { revision })
                             }
-                            Err(error) => Err(error),
+                            Err(error) => {
+                                session.unpark_redo(parked);
+                                Err(error)
+                            }
                         }
                     }
                     Command::ImportAudio { track, start, path } => {
                         match crate::media::import_audio(&directory, Path::new(&path)) {
                             Ok(stored) => {
-                                let before = session.clone();
+                                let parked = session.park_redo();
                                 match session.perform(Command::PlaceAudio {
                                     track,
                                     start,
@@ -316,17 +374,20 @@ fn worker(
                                             next_seq: &mut next_seq,
                                             session: &session,
                                         });
-                                        confirm(&mut session, before, &mut halted, saved)
+                                        settle(&mut session, parked, &mut halted, saved)
                                             .map(|()| action)
                                     }
-                                    Err(error) => Err(HostError::Action(error)),
+                                    Err(error) => {
+                                        session.unpark_redo(parked);
+                                        Err(HostError::Action(error))
+                                    }
                                 }
                             }
                             Err(error) => Err(HostError::Package(error)),
                         }
                     }
                     command => {
-                        let before = session.clone();
+                        let parked = session.park_redo();
                         match session.perform(command) {
                             Ok(action) => {
                                 let saved = publish_edit(&mut Publish {
@@ -337,18 +398,24 @@ fn worker(
                                     next_seq: &mut next_seq,
                                     session: &session,
                                 });
-                                confirm(&mut session, before, &mut halted, saved).map(|()| action)
+                                settle(&mut session, parked, &mut halted, saved).map(|()| action)
                             }
-                            Err(error) => Err(HostError::Action(error)),
+                            Err(error) => {
+                                session.unpark_redo(parked);
+                                Err(HostError::Action(error))
+                            }
                         }
                     }
                 };
                 let _ = reply.send(result);
             }
             Request::Apply { actions, reply } => {
-                let before = session.clone();
+                let parked = session.park_redo();
                 let result = match apply_transaction(&mut session, actions) {
-                    Ok(applied) if applied.is_empty() => Ok(applied),
+                    Ok(applied) if applied.is_empty() => {
+                        session.unpark_redo(parked);
+                        Ok(applied)
+                    }
                     Ok(applied) => {
                         let saved = publish_edit(&mut Publish {
                             directory: &directory,
@@ -358,14 +425,16 @@ fn worker(
                             next_seq: &mut next_seq,
                             session: &session,
                         });
-                        confirm(&mut session, before, &mut halted, saved).map(|()| applied)
+                        settle(&mut session, parked, &mut halted, saved).map(|()| applied)
                     }
-                    Err(error) => Err(error),
+                    Err(error) => {
+                        session.unpark_redo(parked);
+                        Err(error)
+                    }
                 };
                 let _ = reply.send(result);
             }
             Request::Undo { reply } => {
-                let before = session.clone();
                 let result = match session.undo() {
                     Ok(changes) => {
                         let saved = publish(
@@ -381,7 +450,7 @@ fn worker(
                             Vec::new(),
                             changes,
                         );
-                        confirm(&mut session, before, &mut halted, saved)
+                        invert_on_failure(&mut session, &mut halted, saved, true)
                     }
                     Err(error) => Err(HostError::Action(error)),
                 };
@@ -392,7 +461,6 @@ fn worker(
                 let _ = reply.send(autosave.revisions().map_err(HostError::Package));
             }
             Request::Redo { reply } => {
-                let before = session.clone();
                 let result = match session.redo() {
                     Ok(changes) => {
                         let saved = publish(
@@ -408,7 +476,7 @@ fn worker(
                             Vec::new(),
                             changes,
                         );
-                        confirm(&mut session, before, &mut halted, saved)
+                        invert_on_failure(&mut session, &mut halted, saved, false)
                     }
                     Err(error) => Err(HostError::Action(error)),
                 };
@@ -432,19 +500,50 @@ struct Publish<'a> {
     session: &'a Session,
 }
 
-fn confirm(
+fn note_failure(halted: &mut Option<String>, error: &HostError) {
+    if error.to_string().contains(JOURNAL_DURABILITY_UNKNOWN) {
+        *halted = Some(error.to_string());
+    }
+}
+
+/// Keeps a published edit. A failed publish removes that edit and restores the
+/// redo stacks that were parked, without copying the undo history.
+fn settle(
     session: &mut Session,
-    before: Session,
+    parked: echode_actions::ParkedRedo,
     halted: &mut Option<String>,
     result: Result<(), HostError>,
 ) -> Result<(), HostError> {
     match result {
         Ok(()) => Ok(()),
         Err(error) => {
-            if error.to_string().contains(JOURNAL_DURABILITY_UNKNOWN) {
-                *halted = Some(error.to_string());
+            note_failure(halted, &error);
+            let _ = session.revert_commit(parked);
+            Err(error)
+        }
+    }
+}
+
+/// Undo and redo invert each other. `undo` is true when the failed publish
+/// followed `Session::undo`, so `redo` puts that step back.
+fn invert_on_failure(
+    session: &mut Session,
+    halted: &mut Option<String>,
+    result: Result<(), HostError>,
+    undo: bool,
+) -> Result<(), HostError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            note_failure(halted, &error);
+            let restored = if undo {
+                session.redo().map(|_| ())
+            } else {
+                session.undo().map(|_| ())
+            };
+            if restored.is_err() {
+                *halted = Some(JOURNAL_DURABILITY_UNKNOWN.to_string());
             }
-            *session = before;
             Err(error)
         }
     }
@@ -649,6 +748,7 @@ mod tests {
     use super::*;
     use crate::document::JournalFault;
     use crate::document::write_package;
+    use crate::recover;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn scratch() -> std::path::PathBuf {
@@ -970,5 +1070,51 @@ mod tests {
         drop(again);
         let _ = std::fs::remove_dir_all(directory);
         assert_eq!(recovered, ["landed"]);
+    }
+
+    #[test]
+    fn audit_rea09_export_label_uses_readable_parent() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack {
+            name: "piano".into(),
+        })
+        .unwrap();
+        let parent = host.revisions().unwrap().into_iter().next().unwrap().id;
+        host.perform(Command::AddTrack {
+            name: "drums".into(),
+        })
+        .unwrap();
+        let tip = host.revisions().unwrap().into_iter().next().unwrap().id;
+        assert_ne!(parent, tip);
+        drop(host);
+        let repo = gix::open(&directory).unwrap();
+        let commit = repo
+            .find_commit(gix::ObjectId::from_hex(tip.as_bytes()).unwrap())
+            .unwrap();
+        let blob = commit
+            .tree()
+            .unwrap()
+            .lookup_entry_by_path("project.json")
+            .unwrap()
+            .unwrap()
+            .object_id();
+        let hex = blob.to_string();
+        std::fs::remove_file(
+            directory
+                .join(".git/objects")
+                .join(&hex[..2])
+                .join(&hex[2..]),
+        )
+        .unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        let (id, _) = host.recovered_label().unwrap();
+        assert_eq!(host.snapshot().tracks().len(), 1);
+        assert_eq!(host.snapshot().tracks()[0].name, "piano");
+        assert_eq!(id, parent);
+        assert_ne!(id, tip);
+        drop(host);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

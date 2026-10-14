@@ -12,13 +12,28 @@ public struct BridgeError: Error, Sendable {
 /// is `Sendable` because that storage does not change and Rust frees it once.
 public final class Snapshot: @unchecked Sendable {
     private let handle: OpaquePointer
+    /// Reused by `visibleElements` so a frame does not count, then query again.
+    private var visibleBuffer: UnsafeMutablePointer<VisibleElement>?
+    private var visibleCapacity = 0
+    private let visibleLock = NSLock()
 
     fileprivate init(taking handle: OpaquePointer) {
         self.handle = handle
     }
 
     deinit {
+        visibleBuffer?.deallocate()
         echode_snapshot_free(handle)
+    }
+
+    private func visibleStorage(_ count: Int) -> UnsafeMutablePointer<VisibleElement>? {
+        guard count > 0 else { return visibleBuffer }
+        if visibleCapacity < count {
+            visibleBuffer?.deallocate()
+            visibleBuffer = .allocate(capacity: count)
+            visibleCapacity = count
+        }
+        return visibleBuffer
     }
 
     public var trackCount: Int {
@@ -110,21 +125,26 @@ public final class Snapshot: @unchecked Sendable {
         pixelsPerTrack: Double
     ) -> (elements: [ArrangeElement], dropped: Int) {
         withExtendedLifetime(self) {
+            visibleLock.lock()
+            defer { visibleLock.unlock() }
             var written = 0
             var dropped = 0
+            let capacity = max(visibleCapacity, 64)
+            guard let buffer = visibleStorage(capacity) else { return ([], 0) }
             _ = echode_snapshot_visible(
                 handle, originTick, widthTicks, originTrack, heightTracks,
-                pixelsPerTick, pixelsPerTrack, nil, 0, &written, &dropped
+                pixelsPerTick, pixelsPerTrack, buffer, capacity, &written, &dropped
             )
-            let count = Int(dropped)
-            guard count > 0 else { return ([], 0) }
-            let buffer = UnsafeMutableBufferPointer<VisibleElement>.allocate(capacity: count)
-            defer { buffer.deallocate() }
-            _ = echode_snapshot_visible(
-                handle, originTick, widthTicks, originTrack, heightTracks,
-                pixelsPerTick, pixelsPerTrack, buffer.baseAddress, count, &written, &dropped
-            )
-            return (buffer.prefix(written).map(ArrangeElement.init), dropped)
+            if dropped > 0 {
+                let needed = written + dropped
+                guard let buffer = visibleStorage(needed) else { return ([], dropped) }
+                _ = echode_snapshot_visible(
+                    handle, originTick, widthTicks, originTrack, heightTracks,
+                    pixelsPerTick, pixelsPerTrack, buffer, needed, &written, &dropped
+                )
+            }
+            guard written > 0, let buffer = visibleBuffer else { return ([], dropped) }
+            return ((0..<written).map { ArrangeElement(buffer[$0]) }, dropped)
         }
     }
 

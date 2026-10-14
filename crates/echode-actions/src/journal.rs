@@ -211,6 +211,11 @@ enum ValueRecord {
     Flicks {
         value: i64,
     },
+    OrderStep {
+        index: u32,
+        id: String,
+        present: bool,
+    },
 }
 
 fn change_records(changes: &ChangeSet) -> Vec<ChangeRecord> {
@@ -327,6 +332,11 @@ impl From<&Value> for ValueRecord {
             Value::Gain(bits) => Self::Gain { bits: *bits },
             Value::Bits(bits) => Self::Bits { bits: *bits },
             Value::Flicks(value) => Self::Flicks { value: *value },
+            Value::OrderStep { index, id, present } => Self::OrderStep {
+                index: *index,
+                id: id.to_string(),
+                present: *present,
+            },
         }
     }
 }
@@ -375,6 +385,11 @@ impl ValueRecord {
             Self::Gain { bits } => Value::Gain(*bits),
             Self::Bits { bits } => Value::Bits(*bits),
             Self::Flicks { value } => Value::Flicks(*value),
+            Self::OrderStep { index, id, present } => Value::OrderStep {
+                index: *index,
+                id: parse_id(id)?,
+                present: *present,
+            },
         })
     }
 }

@@ -8,7 +8,7 @@ mod event;
 
 pub use event::{
     ChokeEvent, Event, ExpressionEvent, ExpressionKind, NoteEvent, ParamEvent, Target, Transport,
-    sort_events,
+    event_cmp, sort_events,
 };
 
 /// One tempo segment. `start_flick` is the rounded flick at `start_tick`.
@@ -365,11 +365,15 @@ impl Cursor {
     /// A backward jump with `release_at` stops the notes that are sounding,
     /// then repositions without chasing. Any other landing chases notes that
     /// are already in progress so a later note-off still has a set entry.
+    /// `order` and `scratch` sort the written edges and must be at least as
+    /// long as the events this call writes.
     pub fn play(
         &mut self,
         plan: &Plan,
         spans: &[Span],
         out: &mut [Event],
+        order: &mut [usize],
+        scratch: &mut [Event],
     ) -> Result<usize, PlayError> {
         let mut count = 0;
         for span in spans {
@@ -387,7 +391,9 @@ impl Cursor {
             self.emit(plan, span, end, out, &mut count)?;
             self.position = Some(end);
         }
-        sort_events(&mut out[..count]);
+        if !sort_events(&mut out[..count], order, scratch) {
+            return Err(PlayError::BufferTooSmall);
+        }
         Ok(count)
     }
 
@@ -662,7 +668,11 @@ mod key_tests {
             block_offset: 0,
             release_at: None,
         };
-        cursor.play(&first, &[opened], &mut events).unwrap();
+        let mut order = [0usize; 4];
+        let mut scratch = [Event::note_off(0, 0, 0, 0); 4];
+        cursor
+            .play(&first, &[opened], &mut events, &mut order, &mut scratch)
+            .unwrap();
         assert_eq!(events[0].key(), Some(60));
 
         let next = plan(64);
@@ -675,7 +685,9 @@ mod key_tests {
             block_offset: 0,
             release_at: None,
         };
-        let count = swapped.play(&next, &[held], &mut events).unwrap();
+        let count = swapped
+            .play(&next, &[held], &mut events, &mut order, &mut scratch)
+            .unwrap();
         assert_eq!(count, 1);
         assert!(events[0].is_note_off());
         assert_eq!(events[0].key(), Some(60));

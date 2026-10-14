@@ -174,7 +174,7 @@ pub use realtime::GuardAlloc;
 pub use scan::{
     ResolvedPlugin, SCAN_BUDGET, ScanCacheEntry, ScannedPlugin, cache_entry, cached_plugins,
     host_binary, installed_clap_bundles, load_scan_cache, refresh_catalog, resolve_installed,
-    scan_descriptors, scan_out_of_process, scan_path, scan_report, shared_cache_path,
-    store_scan_cache,
+    scan_descriptors, scan_out_of_process, scan_path, scan_report, scan_with_budget,
+    shared_cache_path, store_scan_cache,
 };
 pub use watch::FolderWatch;

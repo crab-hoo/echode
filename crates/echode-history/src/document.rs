@@ -293,18 +293,39 @@ pub(crate) fn open_package(directory: &Path) -> Result<Directory, PackageError> 
     Ok(root)
 }
 
+/// The project recovery chose, the commit it was read from, and the last journal
+/// line included. `base_revision` is empty when there was no commit.
+pub(crate) struct Recovered {
+    pub project: Project,
+    pub base_revision: String,
+    pub applied_seq: u64,
+}
+
 /// Loads the newest readable commit, then replays the contiguous journal suffix.
 pub fn recover(directory: &Path) -> Result<Project, PackageError> {
+    Ok(recover_labeled(directory)?.project)
+}
+
+pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageError> {
     // Validate the worktree even when recovery will read a commit instead of its JSON.
     open_package(directory)?;
     let records = read_log(directory)?;
     let pending = save_pending(directory);
     let tip = autosave_tip(directory);
     if let Some(id) = tip {
-        let Some((project, seq)) = first_readable_commit(directory, id)? else {
+        let Some((commit, project, seq)) = first_readable_commit(directory, id)? else {
             return Err(PackageError::new("no readable commit"));
         };
-        return replay_suffix(project, seq, &records);
+        let project = replay_suffix(project, seq, &records)?;
+        let applied = contiguous_suffix(seq, &records)
+            .last()
+            .map(|line| line.seq)
+            .unwrap_or(seq);
+        return Ok(Recovered {
+            project,
+            base_revision: commit.to_string(),
+            applied_seq: applied,
+        });
     }
     if pending {
         return Err(PackageError::new(
@@ -312,7 +333,16 @@ pub fn recover(directory: &Path) -> Result<Project, PackageError> {
         ));
     }
     let project = read_package(directory)?;
-    replay_suffix(project, 0, &records)
+    let applied = contiguous_suffix(0, &records)
+        .last()
+        .map(|line| line.seq)
+        .unwrap_or(0);
+    let project = replay_suffix(project, 0, &records)?;
+    Ok(Recovered {
+        project,
+        base_revision: String::new(),
+        applied_seq: applied,
+    })
 }
 
 pub(crate) fn render(project: &Project) -> PackageText {
@@ -1329,25 +1359,6 @@ fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, Packag
     Ok(records)
 }
 
-/// Last journal sequence included in a project recovered from `directory`.
-///
-/// A missing tip uses 0, the same base [`recover`] replays from when the
-/// worktree is safe to read. A gap stops the count where replay stops.
-pub(crate) fn applied_journal_seq(directory: &Path) -> Result<u64, PackageError> {
-    let records = read_log(directory)?;
-    let base = if let Some(id) = autosave_tip(directory) {
-        first_readable_commit(directory, id)?
-            .map(|(_, seq)| seq)
-            .unwrap_or(0)
-    } else {
-        0
-    };
-    Ok(contiguous_suffix(base, &records)
-        .last()
-        .map(|line| line.seq)
-        .unwrap_or(base))
-}
-
 fn contiguous_suffix(
     base_seq: u64,
     records: &[echode_actions::JournalLine],
@@ -1391,7 +1402,7 @@ fn replay_suffix(
 fn first_readable_commit(
     directory: &Path,
     tip: ObjectId,
-) -> Result<Option<(Project, u64)>, PackageError> {
+) -> Result<Option<(ObjectId, Project, u64)>, PackageError> {
     let repo = gix::open(directory).map_err(|error| PackageError::new(error.to_string()))?;
     let mut cursor = Some(tip);
     while let Some(id) = cursor {
@@ -1405,8 +1416,8 @@ fn first_readable_commit(
                 .ok()
                 .map(|project| (project, journal_seq_of(&message)))
         });
-        if let Some(found) = loaded {
-            return Ok(Some(found));
+        if let Some((project, seq)) = loaded {
+            return Ok(Some((id, project, seq)));
         }
         cursor = chained;
     }

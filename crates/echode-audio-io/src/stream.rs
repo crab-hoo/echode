@@ -13,6 +13,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use echode_engine::{
     ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
@@ -35,6 +36,8 @@ struct Callback {
     failed: AtomicBool,
     callbacks: AtomicU64,
     channels: u32,
+    /// Prepared output rate. The callback does not ask the device.
+    sample_rate: u32,
     silent: bool,
     hardware_epoch: Arc<AtomicU64>,
     observed_epoch: AtomicU64,
@@ -162,6 +165,7 @@ impl OutputStream {
             failed: AtomicBool::new(false),
             callbacks: AtomicU64::new(0),
             channels: device.channels,
+            sample_rate: device.sample_rate,
             silent,
             hardware_epoch,
             observed_epoch: AtomicU64::new(observed_epoch),
@@ -231,6 +235,10 @@ impl OutputStream {
         self.control
             .command(PlaybackCommand::Locate(sample))
             .map_err(|error| error.to_string())
+    }
+
+    pub fn take_plugin_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
+        self.control.take_plugin_saves()
     }
 
     pub fn service(&mut self) -> Result<(), String> {
@@ -369,6 +377,18 @@ pub fn routes_with_saved_state(
     Ok(routes)
 }
 
+fn block_budget(frames: usize, sample_rate: u32) -> Duration {
+    if sample_rate == 0 || frames == 0 {
+        return Duration::ZERO;
+    }
+    Duration::from_nanos(
+        u64::try_from(frames)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(1_000_000_000)
+            / u64::from(sample_rate),
+    )
+}
+
 fn open_playback(
     project: &Project,
     sample_rate: u32,
@@ -406,6 +426,7 @@ unsafe extern "C-unwind" fn render(
     _: NonNull<AudioTimeStamp>,
     context: *mut c_void,
 ) -> i32 {
+    let entered = Instant::now();
     let Some(callback) = (unsafe { context.cast::<Callback>().as_ref() }) else {
         return 0;
     };
@@ -415,13 +436,13 @@ unsafe extern "C-unwind" fn render(
     let count = unsafe { (*list).mNumberBuffers } as usize;
     let pointer = unsafe { std::ptr::addr_of_mut!((*list).mBuffers).cast::<AudioBuffer>() };
     let buffers = unsafe { std::slice::from_raw_parts_mut(pointer, count) };
-    unsafe { fill(callback, buffers) };
+    unsafe { fill(callback, buffers, entered) };
     0
 }
 
 /// This function also runs with owned test buffers; no HAL calls occur here.
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
-unsafe fn fill(callback: &Callback, buffers: &mut [AudioBuffer]) {
+unsafe fn fill(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instant) {
     let _guard = ForbidAlloc::enter();
     let mut frames = None;
     let mut valid = true;
@@ -470,7 +491,8 @@ unsafe fn fill(callback: &Callback, buffers: &mut [AudioBuffer]) {
         callback.failed.store(true, Ordering::Release);
         return;
     }
-    state.player.render(left, right);
+    let deadline = entered + block_budget(frames, callback.sample_rate);
+    state.player.render_until(left, right, deadline);
     callback.callbacks.fetch_add(1, Ordering::Relaxed);
     if callback.silent {
         return;
@@ -544,6 +566,7 @@ mod tests {
                     failed: AtomicBool::new(false),
                     callbacks: AtomicU64::new(0),
                     channels: 2,
+                    sample_rate: 48_000,
                     silent: false,
                     hardware_epoch: Arc::new(AtomicU64::new(0)),
                     observed_epoch: AtomicU64::new(0),
@@ -560,7 +583,7 @@ mod tests {
             mData: data.as_mut_ptr().cast(),
         };
         unsafe {
-            fill(&a, &mut [buffer(&mut stereo, 2)]);
+            fill(&a, &mut [buffer(&mut stereo, 2)], Instant::now());
         }
         unsafe {
             fill(
@@ -570,6 +593,7 @@ mod tests {
                     buffer(&mut right, 1),
                     buffer(&mut extra, 1),
                 ],
+                Instant::now(),
             );
         }
         for (frame, (left, right)) in stereo.chunks_exact(2).zip(left.iter().zip(&right)) {
@@ -581,21 +605,69 @@ mod tests {
         let held = control_a.status().sample;
         a.hardware_epoch.fetch_add(1, Ordering::Release);
         stereo.fill(1.0);
-        unsafe { fill(&a, &mut [buffer(&mut stereo, 2)]) };
+        unsafe { fill(&a, &mut [buffer(&mut stereo, 2)], Instant::now()) };
         assert!(stereo.iter().all(|sample| *sample == 0.0));
         assert_eq!(control_a.status().sample, held);
         a.observed_epoch.store(1, Ordering::Release);
-        unsafe { fill(&a, &mut [buffer(&mut stereo, 2)]) };
+        unsafe { fill(&a, &mut [buffer(&mut stereo, 2)], Instant::now()) };
         assert_eq!(control_a.status().sample, held + 64);
         assert!(stereo.iter().any(|sample| *sample != 0.0));
         assert!(!a.failed.load(Ordering::Acquire) && !b.failed.load(Ordering::Acquire));
         // A driver enlargement beyond prepared scratch is silent, never a panic.
         let mut large = [1.0f32; 256];
         unsafe {
-            fill(&a, &mut [buffer(&mut large, 2)]);
+            fill(&a, &mut [buffer(&mut large, 2)], Instant::now());
         }
         assert!(large.iter().all(|sample| *sample == 0.0));
         assert!(a.failed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn the_hal_deadline_starts_when_the_callback_is_entered() {
+        let entered = Instant::now();
+        std::thread::sleep(Duration::from_millis(30));
+        let spent = entered + block_budget(64, 48_000);
+        let restarted = Instant::now() + block_budget(64, 48_000);
+        assert!(spent < Instant::now());
+        assert!(restarted > spent + Duration::from_millis(20));
+        let (project, track) = Project::new().add_track("pad");
+        let project = project
+            .insert_note(
+                track,
+                echode_model::NoteDraft {
+                    pitch: 60,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: Tick::quarters(1).unwrap(),
+                },
+            )
+            .unwrap()
+            .0;
+        let (mut control, player) = playback_pair(&project, 48_000, 64).unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let callback = Callback {
+            render: UnsafeCell::new(Render {
+                player,
+                left: vec![0.0; 64],
+                right: vec![0.0; 64],
+            }),
+            failed: AtomicBool::new(false),
+            callbacks: AtomicU64::new(0),
+            channels: 2,
+            sample_rate: 48_000,
+            silent: false,
+            hardware_epoch: Arc::new(AtomicU64::new(0)),
+            observed_epoch: AtomicU64::new(0),
+        };
+        let mut stereo = [0.0f32; 128];
+        let buffer = AudioBuffer {
+            mNumberChannels: 2,
+            mDataByteSize: std::mem::size_of_val(&stereo) as u32,
+            mData: stereo.as_mut_ptr().cast(),
+        };
+        unsafe { fill(&callback, &mut [buffer], entered) };
+        assert!(stereo.iter().any(|sample| *sample != 0.0));
+        assert!(!callback.failed.load(Ordering::Acquire));
     }
 
     #[test]

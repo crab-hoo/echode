@@ -119,6 +119,13 @@ pub enum Value {
     Gain(u32),
     Bits(u32),
     Flicks(i64),
+    /// One id in an ordered list. `present` is whether this side contains it.
+    /// A single insert or removal records this instead of both full lists.
+    OrderStep {
+        index: u32,
+        id: Id,
+        present: bool,
+    },
 }
 
 /// Ordered property changes. Forward application reaches the later snapshot.
@@ -324,12 +331,7 @@ fn diff_content_shells(
             let before_notes: Vec<Id> = previous.notes.iter().map(|note| note.id).collect();
             let after_notes: Vec<Id> = content.notes.iter().map(|note| note.id).collect();
             if before_notes != after_notes {
-                updates.push(update(
-                    ObjectKey::Id(content.id),
-                    Property::NoteOrder,
-                    Value::Ids(before_notes),
-                    Value::Ids(after_notes),
-                ));
+                updates.push(note_order_change(content.id, &before_notes, &after_notes));
             }
             if previous.audio != content.audio {
                 updates.push(update(
@@ -840,8 +842,8 @@ fn diff_notes(
     updates: &mut Vec<Change>,
     deletes: &mut Vec<Change>,
 ) {
-    let before_notes = notes_of(before);
-    let after_notes = notes_of(after);
+    let before_notes = notes_of(before, after);
+    let after_notes = notes_of(after, before);
     let _ = (before_tracks, after_tracks);
     for content in after.contents() {
         if content_same(before, after, content.id) {
@@ -867,14 +869,72 @@ fn diff_notes(
     }
 }
 
-fn notes_of(project: &Project) -> HashMap<Id, (Id, &Note)> {
+fn notes_of<'a>(project: &'a Project, other: &Project) -> HashMap<Id, (Id, &'a Note)> {
     let mut notes = HashMap::new();
     for content in project.contents() {
+        if content_same(project, other, content.id) {
+            continue;
+        }
         for note in &content.notes {
             notes.insert(note.id, (content.id, note));
         }
     }
     notes
+}
+
+/// A one-id insert or removal stays a step. Any other reorder keeps both lists,
+/// which is what older journals already store.
+fn note_order_change(content: Id, before: &[Id], after: &[Id]) -> Change {
+    let (before_value, after_value) = if let Some((index, id)) = one_inserted(before, after) {
+        (
+            Value::OrderStep {
+                index,
+                id,
+                present: false,
+            },
+            Value::OrderStep {
+                index,
+                id,
+                present: true,
+            },
+        )
+    } else if let Some((index, id)) = one_inserted(after, before) {
+        (
+            Value::OrderStep {
+                index,
+                id,
+                present: true,
+            },
+            Value::OrderStep {
+                index,
+                id,
+                present: false,
+            },
+        )
+    } else {
+        (Value::Ids(before.to_vec()), Value::Ids(after.to_vec()))
+    };
+    update(
+        ObjectKey::Id(content),
+        Property::NoteOrder,
+        before_value,
+        after_value,
+    )
+}
+
+fn one_inserted(before: &[Id], after: &[Id]) -> Option<(u32, Id)> {
+    if after.len() != before.len().saturating_add(1) {
+        return None;
+    }
+    let mut index = 0;
+    while index < before.len() && before[index] == after[index] {
+        index += 1;
+    }
+    let id = *after.get(index)?;
+    if after.get(index + 1..)? != before.get(index..)? {
+        return None;
+    }
+    u32::try_from(index).ok().map(|index| (index, id))
 }
 
 fn diff_note_fields(
@@ -1569,6 +1629,33 @@ impl Draft {
                     .note_order = ids.clone();
                 Ok(())
             }
+            (
+                ObjectKey::Id(id),
+                Property::NoteOrder,
+                Value::OrderStep {
+                    index,
+                    id: note,
+                    present,
+                },
+            ) => {
+                let order = &mut self
+                    .contents
+                    .get_mut(&id)
+                    .ok_or(ModelError::InvalidChange)?
+                    .note_order;
+                let index = usize::try_from(*index).map_err(|_| ModelError::InvalidChange)?;
+                if *present {
+                    if index > order.len() {
+                        return Err(ModelError::InvalidChange);
+                    }
+                    order.insert(index, *note);
+                } else if order.get(index) == Some(note) {
+                    order.remove(index);
+                } else {
+                    return Err(ModelError::InvalidChange);
+                }
+                Ok(())
+            }
             (ObjectKey::Id(id), Property::Audio, value) => {
                 let audio = match value {
                     Value::Audio(audio) => audio.clone(),
@@ -2059,5 +2146,139 @@ mod tests {
         assert!(!rewrites_the_first);
         assert_eq!(project.apply_changeset(&changes).unwrap(), next);
         assert_eq!(next.apply_changeset(&changes.invert()).unwrap(), project);
+    }
+
+    #[test]
+    fn a_gain_edit_does_not_diff_unrelated_notes() {
+        let (mut project, track) = Project::new().add_track("piano");
+        for index in 0..32 {
+            project = project
+                .insert_note(
+                    track,
+                    NoteDraft {
+                        pitch: 60,
+                        velocity: 100,
+                        start: Tick::new(index * TICKS_PER_QUARTER),
+                        length: Tick::new(TICKS_PER_QUARTER),
+                    },
+                )
+                .unwrap()
+                .0;
+        }
+        let gain = project.tracks()[0].devices.last().unwrap().parameters[0].id;
+        let next = project.set_parameter(gain, 0.5).unwrap();
+        let changes = project.diff(&next);
+        assert!(changes.changes().iter().all(|change| {
+            !matches!(
+                change,
+                Change::Create {
+                    kind: ObjectKind::Note,
+                    ..
+                } | Change::Delete {
+                    kind: ObjectKind::Note,
+                    ..
+                } | Change::Update {
+                    property: Property::NoteOrder,
+                    ..
+                }
+            )
+        }));
+        assert_eq!(project.apply_changeset(&changes).unwrap(), next);
+    }
+
+    #[test]
+    fn one_added_note_records_an_order_step() {
+        let (project, track) = Project::new().add_track("piano");
+        let (project, _) = project
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch: 60,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: Tick::new(TICKS_PER_QUARTER),
+                },
+            )
+            .unwrap();
+        let (next, _) = project
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch: 64,
+                    velocity: 100,
+                    start: Tick::new(TICKS_PER_QUARTER),
+                    length: Tick::new(TICKS_PER_QUARTER),
+                },
+            )
+            .unwrap();
+        let changes = project.diff(&next);
+        assert!(changes.changes().iter().any(|change| {
+            matches!(
+                change,
+                Change::Update {
+                    property: Property::NoteOrder,
+                    after: Value::OrderStep { present: true, .. },
+                    ..
+                }
+            )
+        }));
+        assert!(changes.changes().iter().all(|change| {
+            !matches!(
+                change,
+                Change::Update {
+                    property: Property::NoteOrder,
+                    after: Value::Ids(_),
+                    ..
+                }
+            )
+        }));
+        assert_eq!(project.apply_changeset(&changes).unwrap(), next);
+        assert_eq!(next.apply_changeset(&changes.invert()).unwrap(), project);
+    }
+
+    #[test]
+    #[ignore = "timing measurement; `make spike-history` runs it in a release build"]
+    fn a_gain_edit_stays_cheap_as_unrelated_notes_grow() {
+        for count in [1_000usize, 10_000, 100_000] {
+            let (mut project, track) = Project::new().add_track("piano");
+            for index in 0..count {
+                project = project
+                    .insert_note(
+                        track,
+                        NoteDraft {
+                            pitch: 60,
+                            velocity: 100,
+                            start: Tick::new(index as i64 * TICKS_PER_QUARTER),
+                            length: Tick::new(1),
+                        },
+                    )
+                    .unwrap()
+                    .0;
+            }
+            let gain = project.tracks()[0].devices.last().unwrap().parameters[0].id;
+            let next = project.set_parameter(gain, 0.5).unwrap();
+            let mut samples = [std::time::Duration::ZERO; 3];
+            for sample in &mut samples {
+                let started = std::time::Instant::now();
+                let changes = project.diff(&next);
+                *sample = started.elapsed();
+                assert!(
+                    changes.changes().len() < 8,
+                    "{count} notes touched the score"
+                );
+            }
+            samples.sort();
+            println!(
+                "gain diff, {count} unrelated notes: {} µs",
+                samples[1].as_micros()
+            );
+            if count == 100_000 {
+                assert!(
+                    samples[1] < std::time::Duration::from_millis(5),
+                    "100k notes took {:?}",
+                    samples[1]
+                );
+            }
+        }
     }
 }

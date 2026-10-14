@@ -54,4 +54,5 @@ pub use model::{
 };
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,
+    tick_to_sample,
 };

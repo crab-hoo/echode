@@ -523,6 +523,29 @@ define_actions! {
                 .map_err(Into::into)
         }
     }
+    SetPluginState {
+        id: "device.set_state",
+        name_ja: "プラグインの状態を記録する",
+        name_en: "Record plugin state",
+        description_ja: "保存したバイトのハッシュをデバイスに付ける。バイト本体はオブジェクトにある",
+        description_en: "Name a device's saved bytes by their object hash",
+        command {
+            device: Id,
+            state: Option<String>,
+        }
+        action {
+            device: Id,
+            state: Option<String>,
+        }
+        commit {
+            Action::SetPluginState { device, state }
+        }
+        edit |project: &Project| {
+            project
+                .set_device_state(*device, state.clone())
+                .map_err(Into::into)
+        }
+    }
     SetClipFades {
         id: "clip.set_fades",
         name_ja: "クリップのフェードを変える",

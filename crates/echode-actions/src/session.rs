@@ -159,6 +159,38 @@ impl Session {
         Ok(changes)
     }
 
+    /// Moves the redo stacks out without copying them.
+    ///
+    /// A failed publish puts them back. Dropping the value discards the redo,
+    /// which is what a new edit does after it is saved.
+    pub fn park_redo(&mut self) -> ParkedRedo {
+        ParkedRedo {
+            redo: std::mem::take(&mut self.redo),
+            journal_redo: std::mem::take(&mut self.journal_redo),
+        }
+    }
+
+    pub fn unpark_redo(&mut self, parked: ParkedRedo) {
+        self.redo = parked.redo;
+        self.journal_redo = parked.journal_redo;
+    }
+
+    /// Removes the edit just committed and restores `parked`.
+    pub fn revert_commit(&mut self, parked: ParkedRedo) -> Result<(), ActionError> {
+        let Some(previous) = self.undo.pop() else {
+            self.unpark_redo(parked);
+            return Err(ActionError::NothingToUndo);
+        };
+        if self.journal.pop().is_none() {
+            self.undo.push(previous);
+            self.unpark_redo(parked);
+            return Err(ActionError::NothingToUndo);
+        }
+        self.current = previous;
+        self.unpark_redo(parked);
+        Ok(())
+    }
+
     pub fn redo(&mut self) -> Result<ChangeSet, ActionError> {
         let Some(next) = self.redo.pop() else {
             return Err(ActionError::NothingToRedo);
@@ -172,6 +204,12 @@ impl Session {
         self.journal.push(group);
         Ok(changes)
     }
+}
+
+/// Redo stacks held aside while an edit is published.
+pub struct ParkedRedo {
+    redo: Vec<Project>,
+    journal_redo: Vec<JournalEntry>,
 }
 
 /// Borrows a session for the duration of [`Session::transaction`].
@@ -551,6 +589,26 @@ mod tests {
     }
 
     #[test]
+    fn a_reverted_commit_restores_the_project_without_copying_history() {
+        let mut session = Session::open(Project::new());
+        session
+            .perform(Command::AddTrack {
+                name: "piano".into(),
+            })
+            .unwrap();
+        let parked = session.park_redo();
+        session
+            .perform(Command::AddTrack {
+                name: "bass".into(),
+            })
+            .unwrap();
+        assert_eq!(session.project().tracks().len(), 2);
+        session.revert_commit(parked).unwrap();
+        assert_eq!(session.project().tracks().len(), 1);
+        assert_eq!(session.journal().len(), 1);
+    }
+
+    #[test]
     fn restoring_a_snapshot_undoes_and_replays_from_the_changeset() {
         let base = Project::new();
         let mut session = Session::open(base.clone());
@@ -596,5 +654,69 @@ mod tests {
             note: Id::from_raw(2),
         };
         assert_eq!(sample.spec().id, "note.delete");
+    }
+
+    #[test]
+    fn audit_rea07_a_refused_shared_edit_leaves_the_journal() {
+        let mut session = Session::open(Project::new());
+        let Action::AddTrack { id: track, .. } = session
+            .perform(Command::AddTrack {
+                name: "piano".into(),
+            })
+            .unwrap()
+        else {
+            panic!("track");
+        };
+        let Action::InsertNote { clip, note, .. } = session
+            .perform(Command::InsertNote {
+                track,
+                draft: NoteDraft {
+                    pitch: 60,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: Tick::new(1),
+                },
+            })
+            .unwrap()
+        else {
+            panic!("note");
+        };
+        session
+            .perform(Command::ResizeClip {
+                track,
+                clip,
+                start: Tick::new(0),
+                length: Tick::new(2),
+            })
+            .unwrap();
+        let Action::AddTrack { id: other, .. } = session
+            .perform(Command::AddTrack {
+                name: "link".into(),
+            })
+            .unwrap()
+        else {
+            panic!("link track");
+        };
+        session
+            .perform(Command::LinkClip {
+                source: clip,
+                track: other,
+                start: Tick::new(i64::MAX - 3),
+            })
+            .unwrap();
+        let before = session.project().clone();
+        let journal = session.journal().len();
+        let error = session.perform(Command::EditNote {
+            track,
+            clip,
+            note,
+            pitch: 60,
+            start: Tick::new(0),
+            length: Tick::new(8),
+        });
+        assert!(error.is_err());
+        assert_eq!(session.project(), &before);
+        assert_eq!(session.journal().len(), journal);
+        assert!(session.project().check_invariants().is_ok());
     }
 }

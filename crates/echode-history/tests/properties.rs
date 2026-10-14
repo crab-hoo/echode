@@ -7,6 +7,7 @@
 //! (audit MOD-3). Sequence lengths and case counts are this test's budget, not limits.
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use echode_actions::{ActionError, Command, Session, decode, encode, replay};
@@ -15,6 +16,18 @@ use echode_model::{Id, Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, Tick
 use proptest::prelude::*;
 
 const EIGHTH: i64 = TICKS_PER_QUARTER / 2;
+const PLUGIN_STATE: &[u8] = b"echode-rea-state";
+
+fn plugin_state_hash() -> &'static str {
+    static HASH: LazyLock<String> = LazyLock::new(|| {
+        let directory =
+            std::env::temp_dir().join(format!("echode-state-hash-{}", std::process::id()));
+        let hash = echode_history::write_object(&directory, PLUGIN_STATE).expect("state object");
+        let _ = std::fs::remove_dir_all(directory);
+        hash
+    });
+    HASH.as_str()
+}
 
 #[derive(Clone, Debug)]
 enum Step {
@@ -89,6 +102,12 @@ enum Step {
         track: usize,
         device: usize,
     },
+    SetPluginState {
+        device: usize,
+        present: bool,
+    },
+    LinkNearEnd,
+    StretchSharedNote,
     PlaceAudio {
         track: usize,
         start: i64,
@@ -161,6 +180,12 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
         1 => (any::<usize>(), any::<usize>())
             .prop_map(|(track, device)| Step::RemoveDevice { track, device }),
+        1 => (any::<usize>(), any::<bool>()).prop_map(|(device, present)| Step::SetPluginState {
+            device,
+            present,
+        }),
+        1 => Just(Step::LinkNearEnd),
+        1 => Just(Step::StretchSharedNote),
         2 => (any::<usize>(), 0i64..16).prop_map(|(track, start)| Step::PlaceAudio { track, start }),
         2 => Just(Step::Undo),
         1 => Just(Step::Redo),
@@ -359,6 +384,43 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 device: pick(&devices, *device)?,
             }
         }
+        Step::SetPluginState { device, present } => {
+            let devices: Vec<Id> = project
+                .tracks()
+                .iter()
+                .flat_map(|track| track.devices.iter())
+                .filter(|device| device.plugin.is_some())
+                .map(|device| device.id)
+                .collect();
+            Command::SetPluginState {
+                device: pick(&devices, *device)?,
+                state: present.then(|| plugin_state_hash().to_string()),
+            }
+        }
+        Step::LinkNearEnd => {
+            let source = project
+                .tracks()
+                .iter()
+                .find_map(|track| track.clips.first().map(|clip| (clip.id, track.id)))?;
+            Command::LinkClip {
+                source: source.0,
+                track: source.1,
+                start: Tick::new(i64::MAX - 3),
+            }
+        }
+        Step::StretchSharedNote => {
+            let track_id = project.tracks().first()?.id;
+            let clip = project.tracks()[0].clips.first()?;
+            let note = project.content(clip.content)?.notes.first()?;
+            Command::EditNote {
+                track: track_id,
+                clip: clip.id,
+                note: note.id,
+                pitch: note.pitch,
+                start: Tick::new(clip.start.get()),
+                length: Tick::new(8),
+            }
+        }
         Step::PlaceAudio {
             track: index,
             start,
@@ -431,6 +493,7 @@ proptest! {
 
         let directory = scratch();
         write_package(&directory, &last).unwrap();
+        let _ = echode_history::write_object(&directory, PLUGIN_STATE);
         let loaded = read_package(&directory);
         let _ = std::fs::remove_dir_all(&directory);
         prop_assert_eq!(&loaded.unwrap(), &last);

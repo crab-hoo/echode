@@ -6,15 +6,7 @@
 use echode_model::{FLICKS_PER_SECOND, Flick, TempoMap, Tick};
 
 pub fn tick_to_sample(tick: Tick, tempo: &TempoMap, sample_rate: u32) -> Option<i64> {
-    if sample_rate == 0 {
-        return None;
-    }
-    let flicks = tempo.flicks_at(tick)?;
-    let samples = div_round(
-        i128::from(flicks.get()) * i128::from(sample_rate),
-        i128::from(FLICKS_PER_SECOND),
-    )?;
-    i64::try_from(samples).ok()
+    echode_model::tick_to_sample(tick, tempo, sample_rate)
 }
 
 pub fn sample_to_tick(sample: i64, tempo: &TempoMap, sample_rate: u32) -> Option<Tick> {

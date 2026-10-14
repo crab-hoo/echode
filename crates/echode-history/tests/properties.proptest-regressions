@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ef05dfcd37fbd07069ce54112ba5f7a6b9b83333b6050b1e80b0cbc3831a3b1e # shrinks to steps = [AddTrack, Undo]
+cc d9eead5218cdcd60084481416771700deac80281eea5ac1c59216de6570e390e # shrinks to steps = [AddTrack, AddDevice { track: 0, plugin: 0 }, SetPluginState { device: 0, present: true }]

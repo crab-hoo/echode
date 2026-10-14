@@ -423,6 +423,34 @@ impl PluginHost {
         )
     }
 
+    /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
+    pub fn request_save(&mut self) -> Result<(), SessionError> {
+        self.control.send(&ControlMessage::SaveRequest)?;
+        Ok(())
+    }
+
+    /// A save reply already queued, or `None` when the helper has not answered.
+    pub fn poll_saved(&mut self) -> Result<Option<Result<Vec<u8>, String>>, SessionError> {
+        self.drain()?;
+        let index = self.inbox.iter().position(|message| {
+            matches!(
+                message,
+                ControlMessage::State(_) | ControlMessage::StateRejected(_)
+            )
+        });
+        let Some(index) = index else {
+            return Ok(None);
+        };
+        match self.inbox.remove(index) {
+            Some(ControlMessage::State(bytes)) => {
+                self.last_state.clone_from(&bytes);
+                Ok(Some(Ok(bytes)))
+            }
+            Some(ControlMessage::StateRejected(reason)) => Ok(Some(Err(reason))),
+            _ => Ok(None),
+        }
+    }
+
     pub fn save_state(&mut self) -> Result<Vec<u8>, SessionError> {
         self.control.send(&ControlMessage::SaveRequest)?;
         match self.wait_message(Duration::from_secs(2), |message| {

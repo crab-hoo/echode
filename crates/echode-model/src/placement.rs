@@ -33,7 +33,13 @@ pub(super) fn insert(
         let owner = track.clips[index].content;
         let local = content_local(&track.clips[index], draft.start.get())?;
         push_note(contents, owner, fresh.note, local, draft)?;
-        return refit_auto(contents, tracks, track, owner, bar);
+        refit_auto(contents, tracks, track, owner, bar)?;
+        return check_shared_notes(
+            contents,
+            tracks,
+            track,
+            content_of_note(contents, fresh.note).unwrap_or(owner),
+        );
     }
     let note_bars =
         occupied_bars(draft.start.get(), draft.length.get(), bar).ok_or(ModelError::InvalidNote)?;
@@ -61,7 +67,13 @@ pub(super) fn insert(
     let owner = track.clips[primary].content;
     let local = content_local(&track.clips[primary], draft.start.get())?;
     push_note(contents, owner, fresh.note, local, draft)?;
-    merge(contents, tracks, track, &hosts, bar)
+    merge(contents, tracks, track, &hosts, bar)?;
+    check_shared_notes(
+        contents,
+        tracks,
+        track,
+        content_of_note(contents, fresh.note).unwrap_or(owner),
+    )
 }
 
 pub(super) fn delete(
@@ -125,7 +137,68 @@ pub(super) fn edit(
     note.start = Tick::new(local);
     note.length = geometry.length;
     crate::model::sort_notes(&mut content.notes);
-    refit_auto(contents, tracks, track, owner, bar)
+    refit_auto(contents, tracks, track, owner, bar)?;
+    check_shared_notes(
+        contents,
+        tracks,
+        track,
+        content_of_note(contents, note_id).unwrap_or(owner),
+    )
+}
+
+fn content_of_note(contents: &[Arc<Content>], note: Id) -> Option<Id> {
+    contents.iter().find_map(|content| {
+        content
+            .notes
+            .iter()
+            .any(|item| item.id == note)
+            .then_some(content.id)
+    })
+}
+
+/// Every placement of `content`, including fixed links on other tracks, must
+/// still land inside the time range after this content's notes change.
+fn check_shared_notes(
+    contents: &[Arc<Content>],
+    tracks: &[Arc<Track>],
+    current: &Track,
+    content: Id,
+) -> Result<(), ModelError> {
+    let found = notes(contents, content)?;
+    let visit = |clip: &Placement| -> Result<(), ModelError> {
+        if clip.content != content {
+            return Ok(());
+        }
+        let origin = origin(clip)?;
+        for note in &found {
+            let absolute = origin
+                .checked_add(note.start.get())
+                .ok_or(ModelError::InvalidNote)?;
+            let span = note
+                .length
+                .get()
+                .checked_sub(1)
+                .ok_or(ModelError::InvalidNote)?;
+            absolute.checked_add(span).ok_or(ModelError::InvalidNote)?;
+            note.start
+                .get()
+                .checked_add(note.length.get())
+                .ok_or(ModelError::InvalidNote)?;
+        }
+        Ok(())
+    };
+    for clip in &current.clips {
+        visit(clip)?;
+    }
+    for track in tracks {
+        if track.id == current.id {
+            continue;
+        }
+        for clip in &track.clips {
+            visit(clip)?;
+        }
+    }
+    Ok(())
 }
 
 fn create_auto(
@@ -465,6 +538,13 @@ fn push_note(
     local: i64,
     draft: &NoteDraft,
 ) -> Result<(), ModelError> {
+    if local
+        .checked_add(draft.length.get())
+        .filter(|_| draft.length.get() > 0)
+        .is_none()
+    {
+        return Err(ModelError::InvalidNote);
+    }
     let notes = &mut content_mut(contents, content)?.notes;
     notes.push(Note {
         id: note_id,

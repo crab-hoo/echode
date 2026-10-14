@@ -195,19 +195,36 @@ impl Event {
 /// ones. Expression kind and parameter id break the remaining ties. Equal keys
 /// keep the order they were written.
 ///
-/// The audio thread calls this, so the sort does not allocate. It only moves
-/// an event when the comparison is strictly less, which keeps equal keys in
-/// the order they were written.
-pub fn sort_events(events: &mut [Event]) {
-    let mut start = 1;
-    while start < events.len() {
-        let mut cursor = start;
-        while cursor > 0 && cmp_event(&events[cursor], &events[cursor - 1]).is_lt() {
-            events.swap(cursor, cursor - 1);
-            cursor -= 1;
-        }
-        start += 1;
+/// `order` and `scratch` are workspace the caller allocated before the audio
+/// thread. Both must be at least as long as `events`. The sort is the standard
+/// library's in-place ordering, with the original index as the last key, so
+/// equal musical keys stay in the order they were written and this function
+/// does not allocate. Returns false without moving `events` when the workspace
+/// is short.
+#[must_use]
+pub fn sort_events(events: &mut [Event], order: &mut [usize], scratch: &mut [Event]) -> bool {
+    let count = events.len();
+    if order.len() < count || scratch.len() < count {
+        return false;
     }
+    let order = &mut order[..count];
+    for (index, slot) in order.iter_mut().enumerate() {
+        *slot = index;
+    }
+    order.sort_unstable_by(|&left, &right| {
+        cmp_event(&events[left], &events[right]).then(left.cmp(&right))
+    });
+    let scratch = &mut scratch[..count];
+    for (slot, source) in scratch.iter_mut().zip(order.iter().copied()) {
+        *slot = events[source];
+    }
+    events.copy_from_slice(scratch);
+    true
+}
+
+/// Musical order used by [`sort_events`]. Equal keys stay in write order.
+pub fn event_cmp(left: &Event, right: &Event) -> Ordering {
+    cmp_event(left, right)
 }
 
 fn cmp_event(left: &Event, right: &Event) -> Ordering {
@@ -268,6 +285,12 @@ fn cmp_option<T: Ord>(left: Option<T>, right: Option<T>) -> Ordering {
 mod tests {
     use super::{Event, ExpressionEvent, ExpressionKind, ParamEvent, Target, sort_events};
 
+    fn sort_slice(events: &mut [Event]) -> bool {
+        let mut order = vec![0; events.len()];
+        let mut scratch = vec![Event::note_off(0, 0, 0, 0); events.len()];
+        sort_events(events, &mut order, &mut scratch)
+    }
+
     fn param(param_id: u32, value: f64) -> Event {
         Event::ParamValue(ParamEvent {
             time: 0,
@@ -300,7 +323,7 @@ mod tests {
             param(2, 0.9),
             Event::note_on(0, 1, 4, 60, 1.0),
         ];
-        sort_events(&mut events);
+        assert!(sort_slice(&mut events));
         assert!(events[0].is_note_on());
         assert!(matches!(
             events[1],
@@ -342,8 +365,50 @@ mod tests {
             }),
             param(1, 0.0),
         ];
-        sort_events(&mut events);
+        assert!(sort_slice(&mut events));
         assert_eq!(events[0].note_id(), None);
         assert_eq!(events[1].note_id(), Some(3));
+    }
+
+    #[test]
+    fn a_short_workspace_leaves_the_events_unmoved() {
+        let mut events = [
+            Event::note_on(1, 0, 1, 60, 1.0),
+            Event::note_on(0, 0, 2, 60, 1.0),
+        ];
+        let before = events;
+        assert!(!sort_events(&mut events, &mut [], &mut []));
+        assert_eq!(events, before);
+    }
+
+    #[test]
+    fn reverse_tracks_at_one_time_keep_track_order_and_ties() {
+        let mut events: Vec<_> = (0..32u32)
+            .rev()
+            .flat_map(|track| {
+                [
+                    Event::note_on(0, track, track, 60, 0.2),
+                    Event::note_off(0, track, track, 60),
+                    Event::note_on(0, track, track, 60, 0.8),
+                ]
+            })
+            .collect();
+        assert!(sort_slice(&mut events));
+        let (offs, ons) = events.split_at(32);
+        for (index, event) in offs.iter().enumerate() {
+            let track = index as u32;
+            assert!(event.is_note_off(), "track {track}");
+            assert_eq!(event.track_key(), Some(track));
+            assert_eq!(event.time(), 0);
+        }
+        for (index, pair) in ons.chunks(2).enumerate() {
+            let track = index as u32;
+            assert!(pair[0].is_note_on());
+            assert_eq!(pair[0].velocity(), 0.2);
+            assert!(pair[1].is_note_on());
+            assert_eq!(pair[1].velocity(), 0.8);
+            assert!(pair.iter().all(|event| event.track_key() == Some(track)));
+            assert!(pair.iter().all(|event| event.time() == 0));
+        }
     }
 }

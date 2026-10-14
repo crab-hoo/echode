@@ -209,6 +209,14 @@ impl Session {
         Ok(())
     }
 
+    /// Plugin bytes the document thread still has to journal.
+    pub fn take_plugin_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
+        self.stream
+            .as_mut()
+            .map(OutputStream::take_plugin_saves)
+            .unwrap_or_default()
+    }
+
     pub fn service(&mut self) {
         if self.notifications.is_some()
             && self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch

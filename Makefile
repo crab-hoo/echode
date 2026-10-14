@@ -93,6 +93,7 @@ spike-draw:
 # Plain-text project history. See docs/spikes/S4-history.md.
 spike-history:
 	cargo test --release -p echode-history --test roundtrip -- --include-ignored --test-threads=1 --nocapture
+	cargo test --release -p echode-model --lib a_gain_edit_stays_cheap_as_unrelated_notes_grow -- --ignored --nocapture
 
 # Trackpad pinch, haptics, and chord pressure. See docs/spikes/S5-input.md.
 spike-input:
@@ -132,7 +133,7 @@ check-bridge-tsan:
 check-bridge-miri:
 	bash scripts/check-bridge-miri.sh
 
-# 1,000-node CoreAudio graph. See docs/spikes/S2-engine.md.
+# 1,000-node CoreAudio graph and the release event-sort measurement. See docs/spikes/S2-engine.md.
 spike-engine:
 	cargo build --release -p echode-engine
 	cargo test --release -p echode-engine -- --include-ignored --skip audit_ --nocapture

@@ -1,10 +1,12 @@
 //! Sample-accurate MIDI and metronome clicks for one block.
 //!
-//! `schedule` does not allocate. The metronome entry that takes a [`TempoMap`]
-//! builds an index for callers without one; the audio thread uses the index
-//! prepared with the plan. The event slice and the sample buffer belong to the
-//! caller; their lengths are scratch for this block, not a limit on how many
-//! notes a project may contain.
+//! `schedule` builds a plan and a sort workspace for callers that are not the
+//! audio thread. The audio thread uses `play_prepared` with buffers the control
+//! thread already owns. The metronome entry that takes a [`TempoMap`] builds
+//! an index for callers without one; the audio thread uses the index prepared
+//! with the plan. The event slice and the sample buffer belong to the caller;
+//! their lengths are scratch for this block, not a limit on how many notes a
+//! project may contain.
 
 use echode_model::{Meter, Project, TICKS_PER_QUARTER, TempoMap};
 use echode_realtime::{Event, TempoIndex};
@@ -27,7 +29,10 @@ pub fn schedule(
     let mut ids = PlaybackIds::new();
     let plan = crate::plan::build_plan(project, tempo, sample_rate, &mut ids)?;
     let mut cursor = plan.cursor();
-    play_prepared(&plan, &mut cursor, spans, out)
+    let silent = Event::note_off(0, 0, 0, 0);
+    let mut order = vec![0usize; out.len()];
+    let mut scratch = vec![silent; out.len()];
+    play_prepared(&plan, &mut cursor, spans, out, &mut order, &mut scratch)
 }
 
 pub(crate) fn play_prepared(
@@ -35,6 +40,8 @@ pub(crate) fn play_prepared(
     cursor: &mut echode_realtime::Cursor,
     spans: &[PlayedSpan],
     out: &mut [Event],
+    order: &mut [usize],
+    scratch: &mut [Event],
 ) -> Result<usize, PlaybackError> {
     let mut converted = [echode_realtime::Span {
         start: 0,
@@ -49,7 +56,7 @@ pub(crate) fn play_prepared(
         converted[index] = to_span(*span);
     }
     cursor
-        .play(plan, &converted[..spans.len()], out)
+        .play(plan, &converted[..spans.len()], out, order, scratch)
         .map_err(play_error)
 }
 
@@ -476,8 +483,18 @@ mod tests {
         let plan = crate::plan::build_plan(&project, &tempo, 48_000, &mut ids).unwrap();
         let mut cursor = plan.cursor();
         let mut events = vec![quiet(); 8];
+        let mut order = vec![0usize; events.len()];
+        let mut scratch = vec![quiet(); events.len()];
         let started = std::time::Instant::now();
-        let count = super::play_prepared(&plan, &mut cursor, &[span(0, 128)], &mut events).unwrap();
+        let count = super::play_prepared(
+            &plan,
+            &mut cursor,
+            &[span(0, 128)],
+            &mut events,
+            &mut order,
+            &mut scratch,
+        )
+        .unwrap();
         let elapsed = started.elapsed();
         assert!(
             count < 8,
@@ -491,5 +508,173 @@ mod tests {
             elapsed < std::time::Duration::from_micros(267),
             "block took {elapsed:?}"
         );
+    }
+
+    fn same_start_tracks(count: usize) -> Project {
+        let mut skeleton = Project::new();
+        for index in 0..count {
+            skeleton = skeleton.add_track(format!("t{index}")).0;
+        }
+        let orders: Vec<_> = skeleton
+            .tracks()
+            .iter()
+            .map(|track| track.order.clone())
+            .collect();
+        let quarter = Tick::quarters(1).unwrap();
+        let contents = (0..count)
+            .map(|index| Content {
+                id: Id::from_raw(1_000 + index as u128),
+                audio: None,
+                takes: Vec::new(),
+                expressions: Vec::new(),
+                notes: vec![Note {
+                    id: Id::from_raw(2_000 + index as u128),
+                    start: Tick::new(0),
+                    length: quarter,
+                    pitch: 60,
+                    velocity: echode_model::midi7_to_velocity(100),
+                    release: 0,
+                    articulation: None,
+                }],
+            })
+            .collect();
+        let tracks = (0..count)
+            .map(|index| Track {
+                id: Id::from_raw(3_000 + index as u128),
+                name: format!("t{index}"),
+                parent: None,
+                order: orders[index].clone(),
+                devices: vec![echode_model::test_mixer(3_000 + index as u128)],
+                clips: vec![Placement {
+                    id: Id::from_raw(4_000 + index as u128),
+                    content: Id::from_raw(1_000 + index as u128),
+                    lane: Lane::Timeline,
+                    start: Tick::new(0),
+                    length: Tick::quarters(4).unwrap(),
+                    offset: Tick::new(0),
+                    kind: ClipKind::Fixed,
+                    gain: 1.0,
+                    fade_in: DEFAULT_FADE_FLICKS,
+                    fade_out: DEFAULT_FADE_FLICKS,
+                }],
+            })
+            .collect();
+        Project::try_assemble(
+            Meter::four_four(),
+            TempoMap::new(Tempo::quarters_per_minute(120).unwrap()),
+            contents,
+            tracks,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn same_time_notes_on_many_tracks_stay_in_track_order() {
+        let project = same_start_tracks(8);
+        let tempo = project.tempo().clone();
+        let mut events = vec![quiet(); 16];
+        let count = schedule(&project, &tempo, 48_000, &[span(0, 64)], &mut events).unwrap();
+        assert_eq!(count, 8);
+        let scheduled = events[..count].to_vec();
+        for (index, event) in scheduled.iter().enumerate() {
+            assert!(event.is_note_on());
+            assert_eq!(event.time(), 0);
+            assert_eq!(event.track_key(), Some(index as u32));
+        }
+        let mut reversed = scheduled.clone();
+        reversed.reverse();
+        let mut order = vec![0usize; reversed.len()];
+        let mut scratch = vec![quiet(); reversed.len()];
+        assert!(echode_realtime::sort_events(
+            &mut reversed,
+            &mut order,
+            &mut scratch
+        ));
+        assert_eq!(reversed, scheduled);
+    }
+
+    #[test]
+    #[ignore = "timing measurement; `make spike-engine` runs it in a release build"]
+    fn reverse_same_time_events_sort_under_one_block() {
+        // 128 frames at 48 kHz is 2.667 ms. Insertion sort took 270 ms at 8,000 events.
+        for size in [1_000usize, 2_000, 4_000, 8_000] {
+            let median = median_reverse_sort(size);
+            println!(
+                "reverse same-time sort of {size}: {} µs",
+                median.as_micros()
+            );
+            if size == 8_000 {
+                assert!(
+                    median < std::time::Duration::from_micros(2_667),
+                    "8,000 events took {median:?}"
+                );
+            }
+        }
+        let project = same_start_tracks(64);
+        let tempo = project.tempo().clone();
+        let mut ids = crate::plan::PlaybackIds::new();
+        let plan = crate::plan::build_plan(&project, &tempo, 48_000, &mut ids).unwrap();
+        let mut cursor = plan.cursor();
+        let mut events = vec![quiet(); 128];
+        let mut order = vec![0usize; events.len()];
+        let mut scratch = vec![quiet(); events.len()];
+        let started = std::time::Instant::now();
+        let count = super::play_prepared(
+            &plan,
+            &mut cursor,
+            &[span(0, 128)],
+            &mut events,
+            &mut order,
+            &mut scratch,
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+        println!(
+            "64 same-time tracks, one 128-frame block: {} µs, {count} events",
+            elapsed.as_micros()
+        );
+        assert_eq!(count, 64);
+        assert!(
+            events[..count].windows(2).all(|pair| {
+                pair[0].track_key().unwrap_or(0) <= pair[1].track_key().unwrap_or(0)
+            })
+        );
+    }
+
+    fn median_reverse_sort(count: usize) -> std::time::Duration {
+        let mut events: Vec<_> = (0..count)
+            .rev()
+            .map(|index| Event::note_on(0, index as u32, index as u32, 60, 0.5))
+            .collect();
+        let mut order = vec![0usize; count];
+        let mut scratch = vec![quiet(); count];
+        assert!(echode_realtime::sort_events(
+            &mut events,
+            &mut order,
+            &mut scratch
+        ));
+        assert_eq!(events.first().map(|event| event.track_key()), Some(Some(0)));
+        assert_eq!(
+            events.last().map(|event| event.track_key()),
+            Some(Some((count - 1) as u32))
+        );
+        let mut samples = [std::time::Duration::ZERO; 3];
+        for sample in &mut samples {
+            events.reverse();
+            let started = std::time::Instant::now();
+            assert!(echode_realtime::sort_events(
+                &mut events,
+                &mut order,
+                &mut scratch
+            ));
+            *sample = started.elapsed();
+        }
+        samples.sort();
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[0].track_key() <= pair[1].track_key())
+        );
+        samples[1]
     }
 }

@@ -256,6 +256,15 @@ fn audit_aud07_one_deadline_collects_a_healthy_track_beside_hangs() {
         );
     }
     assert!(!control.status().failed);
+
+    let started = std::time::Instant::now();
+    audio.render_until(&mut left, &mut right, std::time::Instant::now());
+    let spent = started.elapsed();
+    assert!(
+        spent < Duration::from_millis(30),
+        "front-end work extended the hang deadline: {spent:?}"
+    );
+    assert!(!control.status().failed);
 }
 
 fn count_route(path: &Path) -> PluginRoute {
@@ -1062,4 +1071,280 @@ fn audit_pro02_declared_ports_are_what_process_sees() {
         panic!("playback accepted a plugin without audio ports");
     };
     assert!(error.to_string().contains("audio port"), "{error}");
+}
+
+fn order_route() -> PluginRoute {
+    PluginRoute {
+        clap_id: "dev.echode.test-order".into(),
+        path: plugin_dylib(),
+        instrument: true,
+        fault: None,
+        state: None,
+    }
+}
+
+fn peak(samples: &[f32]) -> f32 {
+    samples.iter().copied().fold(0.0, f32::max)
+}
+
+#[test]
+fn audit_rea02_chased_notes_merge_before_future_events() {
+    let (project, track) = Project::new().add_track("held");
+    let project = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::quarters(2).unwrap(),
+            },
+        )
+        .unwrap()
+        .0;
+    let future = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 64,
+                velocity: 100,
+                start: Tick::new(8_820),
+                length: Tick::new(100),
+            },
+        )
+        .unwrap()
+        .0;
+    let sample = tick_to_sample(Tick::new(8_820), future.tempo(), 48_000).unwrap();
+    assert_eq!(sample, 300);
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, 256, &host_bin(), &[order_route()]).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; 256];
+    let mut right = vec![0.0; 256];
+    audio.render(&mut left, &mut right);
+    let with_plugin = future
+        .add_clap_device(track, Id::from_raw(999), "dev.echode.test-order")
+        .unwrap();
+    control.replace(&with_plugin).unwrap();
+    audio.render(&mut left, &mut right);
+    assert!(
+        control.plugin_failure().is_none(),
+        "{:?}",
+        control.plugin_failure()
+    );
+    assert!(peak(&left) > 0.5, "chase missing: {}", peak(&left));
+}
+
+#[test]
+fn audit_rea03_two_replacements_before_callback_keep_chase() {
+    let (project, track) = Project::new().add_track("held");
+    let project = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::quarters(2).unwrap(),
+            },
+        )
+        .unwrap()
+        .0;
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, 256, &host_bin(), &[order_route()]).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; 256];
+    let mut right = vec![0.0; 256];
+    audio.render(&mut left, &mut right);
+    let with_plugin = project
+        .add_clap_device(track, Id::from_raw(999), "dev.echode.test-order")
+        .unwrap();
+    control.replace(&with_plugin).unwrap();
+    let with_empty = with_plugin.add_track("empty").0;
+    control.replace(&with_empty).unwrap();
+    audio.render(&mut left, &mut right);
+    assert!(
+        control.plugin_failure().is_none(),
+        "{:?}",
+        control.plugin_failure()
+    );
+    assert!(peak(&left) > 0.5, "chase dropped: {}", peak(&left));
+    assert!(control.plugin_event_caps().iter().all(|cap| *cap < 64));
+}
+
+fn state_route(path: &Path, bytes: Option<Vec<u8>>) -> PluginRoute {
+    PluginRoute {
+        clap_id: "dev.echode.test-state".into(),
+        path: path.to_path_buf(),
+        instrument: false,
+        fault: None,
+        state: bytes,
+    }
+}
+
+fn state_project() -> Project {
+    let (project, track) = Project::new().add_track("state");
+    project
+        .add_clap_device(track, Id::from_raw(91), "dev.echode.test-state")
+        .unwrap()
+}
+
+fn hear_state(
+    control: &mut echode_engine::PlaybackControl,
+    audio: &mut echode_engine::PlaybackAudio,
+) -> f32 {
+    let mut left = vec![0.0; 64];
+    let mut right = vec![0.0; 64];
+    audio.render(&mut left, &mut right);
+    let _ = control;
+    left[32]
+}
+
+#[test]
+fn audit_rea04_same_device_state_change_updates_sound() {
+    let path = plugin_dylib();
+    let project = state_project();
+    let host = host_bin();
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        64,
+        &host,
+        &[state_route(&path, Some(vec![64]))],
+    )
+    .unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let quiet = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    let loud = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    let heard = hear_state(&mut control, &mut audio);
+    assert!((heard - quiet).abs() < 1.0e-3, "start {heard}");
+    control.set_routes(&host, &[state_route(&path, Some(vec![128]))]);
+    control.replace(&project).unwrap();
+    let heard = hear_state(&mut control, &mut audio);
+    assert!((heard - loud).abs() < 1.0e-3, "128 {heard}");
+    control.set_routes(&host, &[state_route(&path, Some(vec![64]))]);
+    control.replace(&project).unwrap();
+    let heard = hear_state(&mut control, &mut audio);
+    assert!((heard - quiet).abs() < 1.0e-3, "back {heard}");
+    control.set_routes(&host, &[state_route(&path, None)]);
+    control.replace(&project).unwrap();
+    let heard = hear_state(&mut control, &mut audio);
+    assert!((heard - quiet).abs() < 1.0e-3, "cleared {heard}");
+}
+
+#[test]
+fn audit_rea04_two_devices_keep_their_own_state() {
+    let path = plugin_dylib();
+    let (project, track) = Project::new().add_track("state");
+    let project = project
+        .add_clap_device(track, Id::from_raw(91), "dev.echode.test-state")
+        .unwrap()
+        .add_clap_device(track, Id::from_raw(92), "dev.echode.test-state")
+        .unwrap();
+    let host = host_bin();
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        64,
+        &host,
+        &[
+            state_route(&path, Some(vec![64])),
+            state_route(&path, Some(vec![128])),
+        ],
+    )
+    .unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let quiet = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    let loud = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    let heard = hear_state(&mut control, &mut audio);
+    assert!(
+        (heard - loud).abs() < 1.0e-3,
+        "the later device kept its own bytes: {heard}"
+    );
+    control.set_routes(
+        &host,
+        &[
+            state_route(&path, Some(vec![128])),
+            state_route(&path, Some(vec![64])),
+        ],
+    );
+    control.replace(&project).unwrap();
+    let heard = hear_state(&mut control, &mut audio);
+    assert!(
+        (heard - quiet).abs() < 1.0e-3,
+        "swapped bytes stayed with each device: {heard}"
+    );
+}
+
+#[test]
+fn audit_rea05_dirty_reaches_durable_product_state() {
+    use echode_actions::{Action, Command};
+    let directory = std::env::temp_dir().join(format!(
+        "echode-rea05-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    echode_history::write_package(&directory, &Project::new()).unwrap();
+    let host = echode_history::DocumentHost::open(&directory).unwrap();
+    let Action::AddTrack { id: track, .. } = host
+        .perform(Command::AddTrack {
+            name: "state".into(),
+        })
+        .unwrap()
+    else {
+        panic!("add track");
+    };
+    let Action::AddDevice { device, .. } = host
+        .perform(Command::AddDevice {
+            track,
+            plugin: "dev.echode.test-state".into(),
+        })
+        .unwrap()
+    else {
+        panic!("add device");
+    };
+    let project = host.snapshot();
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        64,
+        &host_bin(),
+        &[state_route(&plugin_dylib(), Some(vec![128]))],
+    )
+    .unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; 64];
+    let mut right = vec![0.0; 64];
+    audio.render(&mut left, &mut right);
+    let started = Instant::now();
+    let bytes = loop {
+        control.service();
+        if let Some((_, bytes)) = control.take_plugin_saves().into_iter().next() {
+            break bytes;
+        }
+        assert!(started.elapsed() < Duration::from_secs(2), "dirty save");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(bytes, vec![128]);
+    assert!(host.commit_plugin_state(device, &bytes).unwrap());
+    drop(control);
+    drop(audio);
+    drop(host);
+    let loaded = echode_history::read_package(&directory).unwrap();
+    let saved = loaded
+        .tracks()
+        .iter()
+        .flat_map(|track| track.devices.iter())
+        .find(|item| item.id == device)
+        .and_then(|item| item.state.clone())
+        .expect("durable hash");
+    assert_eq!(
+        echode_history::read_object(&directory, &saved).unwrap(),
+        vec![128]
+    );
+    let _ = std::fs::remove_dir_all(&directory);
 }

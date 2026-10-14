@@ -5,10 +5,11 @@
 
 use std::ffi::CStr;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -155,48 +156,229 @@ pub fn scan_path(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
     scan_descriptors(&binary)
 }
 
+const STDERR_CAP: usize = 64 * 1024;
+
+fn stderr_text(bytes: &[u8], overflow: bool) -> String {
+    let mut text = String::from_utf8_lossy(bytes).into_owned();
+    if overflow {
+        text.push_str("\n…");
+    }
+    text
+}
+
+fn set_nonblocking(fd: i32) -> Result<(), String> {
+    // SAFETY: `fd` is a pipe this process owns.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(format!(
+            "plugin scan output: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: the new flags only change this owned pipe.
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(format!(
+            "plugin scan output: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// `Ok(true)` is end of file. Bytes past `cap` are read and discarded.
+fn take_bytes(
+    fd: i32,
+    into: &mut Vec<u8>,
+    cap: Option<usize>,
+    overflow: &mut bool,
+) -> Result<bool, String> {
+    let mut buf = [0u8; 8192];
+    loop {
+        // SAFETY: `buf` is a local buffer and `fd` is still open.
+        let read = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if read == 0 {
+            return Ok(true);
+        }
+        if read < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Ok(false);
+            }
+            return Err(format!("plugin scan output: {error}"));
+        }
+        let chunk = &buf[..read as usize];
+        match cap {
+            Some(limit) if into.len() >= limit => *overflow = true,
+            Some(limit) => {
+                let room = limit - into.len();
+                if chunk.len() > room {
+                    *overflow = true;
+                }
+                into.extend_from_slice(&chunk[..room.min(chunk.len())]);
+            }
+            None => into.extend_from_slice(chunk),
+        }
+    }
+}
+
+fn wait_child(child: &mut Child, deadline: Instant) -> Result<std::process::ExitStatus, String> {
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("plugin host wait failed: {error}"))?
+        {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            return Err("plugin scan timed out".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn stop_scan(child: &mut Child) {
+    let Ok(pid) = i32::try_from(child.id()) else {
+        return;
+    };
+    // SAFETY: the negative pid is the process group created for this child.
+    // It is not this process's group.
+    unsafe { libc::kill(-pid, libc::SIGKILL) };
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Runs `host_bin --scan` so the caller does not load the bundle.
+///
+/// The deadline starts here and covers the child and both pipes. Stderr is
+/// kept only up to [`STDERR_CAP`]; further bytes are discarded so a long
+/// report cannot fill the pipe.
 pub fn scan_out_of_process(host_bin: &Path, bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
-    let mut child = Command::new(host_bin)
+    scan_with_budget(host_bin, bundle, SCAN_BUDGET)
+}
+
+/// Same as [`scan_out_of_process`] with a caller-chosen deadline.
+pub fn scan_with_budget(
+    host_bin: &Path,
+    bundle: &Path,
+    budget: Duration,
+) -> Result<Vec<ScannedPlugin>, String> {
+    let mut command = Command::new(host_bin);
+    command
         .arg("--scan")
         .arg(bundle)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0);
+    let mut child = command
         .spawn()
         .map_err(|error| format!("could not start plugin host: {error}"))?;
-    let started = Instant::now();
-    let status = loop {
-        match child
-            .try_wait()
-            .map_err(|error| format!("plugin host wait failed: {error}"))?
-        {
-            Some(status) => break status,
-            None if started.elapsed() >= SCAN_BUDGET => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("plugin scan timed out ({})", bundle.display()));
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| "plugin scan output: missing stdout".to_string())?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| "plugin scan output: missing stderr".to_string())?;
+    set_nonblocking(stdout_pipe.as_raw_fd())?;
+    set_nonblocking(stderr_pipe.as_raw_fd())?;
+    let deadline = Instant::now() + budget;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+    let mut stderr_overflow = false;
+    while stdout_open || stderr_open {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            drop(stdout_pipe);
+            drop(stderr_pipe);
+            stop_scan(&mut child);
+            return Err(format!("plugin scan timed out ({})", bundle.display()));
+        }
+        let mut polls = [libc::pollfd {
+            fd: -1,
+            events: libc::POLLIN,
+            revents: 0,
+        }; 2];
+        let mut count = 0;
+        if stdout_open {
+            polls[count].fd = stdout_pipe.as_raw_fd();
+            count += 1;
+        }
+        if stderr_open {
+            polls[count].fd = stderr_pipe.as_raw_fd();
+            count += 1;
+        }
+        let millis = i32::try_from(remaining.as_millis())
+            .unwrap_or(i32::MAX)
+            .max(1);
+        // SAFETY: `polls` refers to pipes this function owns.
+        let ready = unsafe { libc::poll(polls.as_mut_ptr(), count as libc::nfds_t, millis) };
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
             }
-            None => thread::sleep(Duration::from_millis(20)),
+            drop(stdout_pipe);
+            drop(stderr_pipe);
+            stop_scan(&mut child);
+            return Err(format!("plugin scan output: {error}"));
+        }
+        let mut slot = 0;
+        if stdout_open {
+            let mut unused = false;
+            match take_bytes(polls[slot].fd, &mut stdout, None, &mut unused) {
+                Ok(true) => stdout_open = false,
+                Ok(false) => {}
+                Err(error) => {
+                    drop(stdout_pipe);
+                    drop(stderr_pipe);
+                    stop_scan(&mut child);
+                    return Err(error);
+                }
+            }
+            slot += 1;
+        }
+        if stderr_open {
+            match take_bytes(
+                polls[slot].fd,
+                &mut stderr,
+                Some(STDERR_CAP),
+                &mut stderr_overflow,
+            ) {
+                Ok(true) => stderr_open = false,
+                Ok(false) => {}
+                Err(error) => {
+                    drop(stdout_pipe);
+                    drop(stderr_pipe);
+                    stop_scan(&mut child);
+                    return Err(error);
+                }
+            }
+        }
+    }
+    drop(stdout_pipe);
+    drop(stderr_pipe);
+    let status = match wait_child(&mut child, deadline) {
+        Ok(status) => status,
+        Err(error) => {
+            stop_scan(&mut child);
+            return Err(format!("{error} ({})", bundle.display()));
         }
     };
-    let mut stdout = String::new();
-    if let Some(mut pipe) = child.stdout.take() {
-        pipe.read_to_string(&mut stdout)
-            .map_err(|error| format!("plugin scan output: {error}"))?;
-    }
     if !status.success() {
-        let mut stderr = String::new();
-        if let Some(mut pipe) = child.stderr.take() {
-            let _ = pipe.read_to_string(&mut stderr);
-        }
-        let detail = stderr.trim();
+        let detail = stderr_text(&stderr, stderr_overflow);
+        let detail = detail.trim();
         return Err(if detail.is_empty() {
             format!("plugin scan failed ({})", bundle.display())
         } else {
             format!("plugin scan failed ({}): {detail}", bundle.display())
         });
     }
+    let stdout =
+        String::from_utf8(stdout).map_err(|_| "plugin scan output: invalid UTF-8".to_string())?;
     let mut plugins = Vec::new();
     for line in stdout.lines() {
         if line.is_empty() {
@@ -414,6 +596,38 @@ mod tests {
         let sibling = exe.parent().expect("macos").join("echode-plugin-host");
         std::fs::write(&sibling, b"sibling").expect("sibling");
         assert_eq!(located_host(&exe), Some(sibling));
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn a_long_scan_report_is_read_while_the_child_runs() {
+        let root = std::env::temp_dir().join(format!(
+            "echode-scan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("dir");
+        let script = root.join("scan.sh");
+        let mut body = String::from("#!/bin/sh\n");
+        body.push_str("dd if=/dev/zero bs=1024 count=256 2>/dev/null | tr '\\0' x >&2\n");
+        for index in 0..128 {
+            body.push_str(&format!(
+                "printf '%s\\n' '{{\"id\":\"p{index}\",\"name\":\"n\",\"vendor\":\"v\",\"version\":\"1\",\"features\":[],\"url\":\"\"}}'\n"
+            ));
+        }
+        std::fs::write(&script, body).expect("script");
+        let mut permissions = std::fs::metadata(&script).expect("meta").permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).expect("mode");
+        let plugins =
+            super::scan_out_of_process(&script, std::path::Path::new("bundle")).expect("scan");
+        assert_eq!(plugins.len(), 128);
+        assert_eq!(plugins[0].id, "p0");
+        assert_eq!(plugins[127].id, "p127");
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
 }

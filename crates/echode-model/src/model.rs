@@ -845,8 +845,28 @@ impl Project {
             .find(|clip| clip.id == source)
             .cloned()
             .ok_or(ModelError::MissingClip)?;
+        let origin = start
+            .get()
+            .checked_sub(source.offset.get())
+            .ok_or(ModelError::InvalidClip)?;
         if start.get().checked_add(source.length.get()).is_none() || source.length.get() <= 0 {
             return Err(ModelError::InvalidClip);
+        }
+        if let Some(content) = self.content(source.content) {
+            for note in &content.notes {
+                let absolute = origin
+                    .checked_add(note.start.get())
+                    .ok_or(ModelError::InvalidClip)?;
+                if note
+                    .length
+                    .get()
+                    .checked_sub(1)
+                    .and_then(|span| absolute.checked_add(span))
+                    .is_none()
+                {
+                    return Err(ModelError::InvalidClip);
+                }
+            }
         }
         let index = self.track_index(track_id)?;
         let mut track = (*self.tracks[index]).clone();
@@ -1323,7 +1343,9 @@ pub(crate) fn occupied_bars(start: i64, length: i64, bar: i64) -> Option<(i64, i
     if length <= 0 || bar <= 0 {
         return None;
     }
-    let last = start.checked_add(length - 1)?;
+    let last = length
+        .checked_sub(1)
+        .and_then(|span| start.checked_add(span))?;
     Some((start.div_euclid(bar), last.div_euclid(bar)))
 }
 
@@ -2381,5 +2403,96 @@ mod tests {
         );
         assert_eq!(fixed_window(5, 1, 5).audible(&note).unwrap(), None);
         assert!(fixed_window(0, 1, 0).audible(&note).unwrap().is_some());
+    }
+
+    #[test]
+    fn audit_pro13_a_link_at_the_time_edge_is_refused_and_the_project_stays() {
+        let (project, track) = Project::new().add_track("piano");
+        let (project, _) = project.insert_note(track, at(0, 1)).unwrap();
+        let clip = project.tracks()[0].clips[0].id;
+        let resized = project
+            .resize_clip(track, clip, Tick::new(i64::MIN), Tick::new(1))
+            .unwrap();
+        let linked = resized.link_clip(clip, track, Tick::new(0), Id::from_raw(900));
+        assert!(linked.is_err());
+        assert_eq!(resized.tracks()[0].clips.len(), 1);
+
+        let (project, track) = Project::new().add_track("piano");
+        let (project, _) = project.insert_note(track, at(0, 1)).unwrap();
+        let clip = project.tracks()[0].clips[0].id;
+        let resized = project
+            .resize_clip(track, clip, Tick::new(0), Tick::new(1))
+            .unwrap();
+        let linked = resized.link_clip(clip, track, Tick::new(i64::MAX - 1), Id::from_raw(901));
+        assert!(linked.is_err());
+        assert_eq!(resized.tracks()[0].clips.len(), 1);
+        assert!(resized.check_invariants().is_ok());
+    }
+
+    fn shared_window_at_the_edge() -> (Project, Id, Id, Id) {
+        let (project, track) = Project::new().add_track("piano");
+        let (project, note) = project
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch: 60,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: Tick::new(1),
+                },
+            )
+            .unwrap();
+        let clip = project.tracks()[0].clips[0].id;
+        let project = project
+            .resize_clip(track, clip, Tick::new(0), Tick::new(2))
+            .unwrap();
+        let (project, other) = project.add_track("link");
+        let project = project
+            .link_clip(clip, other, Tick::new(i64::MAX - 3), Id::from_raw(77))
+            .unwrap();
+        project.check_invariants().unwrap();
+        (project, track, clip, note)
+    }
+
+    #[test]
+    fn audit_rea07_edit_of_shared_content_checks_all_origins() {
+        let (project, track, clip, note) = shared_window_at_the_edge();
+        let edited = project.edit_note(
+            track,
+            clip,
+            note,
+            NoteGeometry {
+                pitch: 60,
+                start: Tick::new(0),
+                length: Tick::new(8),
+            },
+        );
+        assert!(edited.is_err());
+        assert_eq!(project.tracks()[0].clips.len(), 1);
+        assert!(project.check_invariants().is_ok());
+    }
+
+    #[test]
+    fn audit_rea07_insert_into_shared_content_checks_all_origins() {
+        let (project, track, _, _) = shared_window_at_the_edge();
+        let inserted = project.insert_note(
+            track,
+            NoteDraft {
+                pitch: 62,
+                velocity: 100,
+                start: Tick::new(1),
+                length: Tick::new(8),
+            },
+        );
+        assert!(inserted.is_err());
+        assert_eq!(
+            project
+                .content(project.tracks()[0].clips[0].content)
+                .unwrap()
+                .notes
+                .len(),
+            1
+        );
+        assert!(project.check_invariants().is_ok());
     }
 }

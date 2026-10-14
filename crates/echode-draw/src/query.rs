@@ -3,7 +3,7 @@
 //! The interval tree is built when the snapshot changes. A frame only walks
 //! branches that can intersect the view and writes into the caller's buffer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 #[path = "piano.rs"]
@@ -62,6 +62,8 @@ pub struct ArrangeIndex {
     contents: Vec<Arc<ContentIndex>>,
     placements: Vec<Arc<PlacementIndex>>,
     tracks: BTreeMap<Id, usize>,
+    /// Note id to content id. Shared across updates that reuse every content.
+    note_content: Arc<BTreeMap<Id, Id>>,
 }
 
 #[derive(Debug)]
@@ -69,6 +71,7 @@ struct ContentIndex {
     content: Arc<Content>,
     ends: MaxEnd,
     pitches: Vec<PitchIndex>,
+    by_id: BTreeMap<Id, usize>,
 }
 
 #[derive(Debug)]
@@ -196,6 +199,11 @@ fn upper_bound(len: usize, start_of: &impl Fn(usize) -> i64, query_end: i64) -> 
 
 impl ArrangeIndex {
     pub fn build(project: &Project) -> Self {
+        let contents: Vec<_> = project
+            .contents()
+            .iter()
+            .map(|content| Arc::new(ContentIndex::build(Arc::clone(content))))
+            .collect();
         Self {
             tracks: project
                 .tracks()
@@ -203,11 +211,8 @@ impl ArrangeIndex {
                 .enumerate()
                 .map(|(i, t)| (t.id, i))
                 .collect(),
-            contents: project
-                .contents()
-                .iter()
-                .map(|content| Arc::new(ContentIndex::build(Arc::clone(content))))
-                .collect(),
+            note_content: Arc::new(note_content_of(&contents)),
+            contents,
             placements: project
                 .tracks()
                 .iter()
@@ -220,6 +225,7 @@ impl ArrangeIndex {
     pub fn update(&self, project: &Project) -> Self {
         let mut contents = Vec::with_capacity(project.contents().len());
         let mut previous = 0;
+        let mut reused_contents = true;
         for content in project.contents() {
             while previous < self.contents.len() && self.contents[previous].id() < content.id {
                 previous += 1;
@@ -230,20 +236,31 @@ impl ArrangeIndex {
             {
                 contents.push(Arc::clone(&self.contents[previous]));
             } else {
+                reused_contents = false;
                 contents.push(Arc::new(ContentIndex::build(Arc::clone(content))));
             }
         }
+        if contents.len() != self.contents.len() {
+            reused_contents = false;
+        }
+        let previous_placements: HashMap<Id, Arc<PlacementIndex>> = self
+            .placements
+            .iter()
+            .map(|index| (index.track, Arc::clone(index)))
+            .collect();
         let placements = project
             .tracks()
             .iter()
-            .map(|track| {
-                self.placements
-                    .iter()
-                    .find(|index| index.same_track(track))
-                    .map(Arc::clone)
-                    .unwrap_or_else(|| Arc::new(PlacementIndex::build(track)))
+            .map(|track| match previous_placements.get(&track.id) {
+                Some(index) if index.same_track(track) => Arc::clone(index),
+                _ => Arc::new(PlacementIndex::build(track)),
             })
             .collect();
+        let note_content = if reused_contents {
+            Arc::clone(&self.note_content)
+        } else {
+            Arc::new(note_content_of(&contents))
+        };
         Self {
             contents,
             placements,
@@ -253,6 +270,7 @@ impl ArrangeIndex {
                 .enumerate()
                 .map(|(i, t)| (t.id, i))
                 .collect(),
+            note_content,
         }
     }
 
@@ -479,10 +497,15 @@ impl ContentIndex {
                 }
             })
             .collect();
+        let mut by_id = BTreeMap::new();
+        for (index, note) in content.notes.iter().enumerate() {
+            by_id.insert(note.id, index);
+        }
         Self {
             content,
             ends: MaxEnd::build(&ends),
             pitches,
+            by_id,
         }
     }
 
@@ -542,23 +565,40 @@ struct NoteQuery<'a> {
     view: &'a ArrangeView,
 }
 
+fn note_content_of(contents: &[Arc<ContentIndex>]) -> BTreeMap<Id, Id> {
+    let mut notes = BTreeMap::new();
+    for content in contents {
+        for note in &content.content.notes {
+            notes.insert(note.id, content.id());
+        }
+    }
+    notes
+}
+
 impl NoteQuery<'_> {
     fn emit(&self, emit: &mut impl FnMut(Element)) {
-        let Some(current) = self
+        let Ok(slot) = self
+            .contents
+            .binary_search_by_key(&self.clip.content, |index| index.id())
+        else {
+            return;
+        };
+        let Some(index) = self.contents.get(slot) else {
+            return;
+        };
+        let Ok(current) = self
             .project
             .contents()
-            .iter()
-            .find(|content| content.id == self.clip.content)
+            .binary_search_by_key(&self.clip.content, |content| content.id)
         else {
             return;
         };
-        let Some(index) = self
-            .contents
-            .iter()
-            .find(|index| Arc::ptr_eq(&index.content, current))
-        else {
+        let Some(current) = self.project.contents().get(current) else {
             return;
         };
+        if !Arc::ptr_eq(&index.content, current) {
+            return;
+        }
         let Some((query_start, query_end)) = content_window(self.clip, self.origin, self.view_end)
         else {
             return;

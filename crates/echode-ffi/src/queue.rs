@@ -106,12 +106,23 @@ impl Document {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             queue.take();
         }
-        let mut thread = self
-            .thread
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(thread) = thread.take() {
-            let _ = thread.join();
+        // A completion callback runs on this worker. Joining it here is a
+        // self-join and aborts. The owner joins after the callback returns.
+        let handle = {
+            let mut thread = self
+                .thread
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let on_worker = thread
+                .as_ref()
+                .is_some_and(|thread| thread.thread().id() == thread::current().id());
+            if on_worker {
+                return;
+            }
+            thread.take()
+        };
+        if let Some(handle) = handle {
+            let _ = handle.join();
         }
     }
 
@@ -353,9 +364,17 @@ fn worker(host: DocumentHost, incoming: Receiver<Job>, position: Arc<Position>) 
     let mut accepting = true;
     let mut previous: Option<Snapshot> = None;
     let mut audio = Session::with_media(host.snapshot(), host.directory());
+    let mut pending_saves: Vec<(u128, Vec<u8>)> = Vec::new();
     loop {
         if accepting && catch_unwind(AssertUnwindSafe(|| audio.service())).is_err() {
             accepting = false;
+        }
+        if accepting {
+            pending_saves.extend(audio.take_plugin_saves());
+            pending_saves.retain(|(device, bytes)| {
+                host.commit_plugin_state(Id::from_raw(*device), bytes)
+                    .is_err()
+            });
         }
         let (tick, playing) = audio.position();
         position.generation.fetch_add(1, Ordering::SeqCst);

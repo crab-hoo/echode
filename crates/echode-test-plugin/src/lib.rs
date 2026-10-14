@@ -13,6 +13,9 @@ use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
     clap_audio_port_info, clap_plugin_audio_ports,
 };
+use clap_sys::ext::note_ports::{
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, clap_note_port_info, clap_plugin_note_ports,
+};
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
@@ -27,6 +30,8 @@ enum Role {
     Flip,
     /// One saved byte: 64 plays 0.25, 128 plays 0.5.
     State,
+    /// Refuses a block whose input events go backwards in time.
+    Order,
 }
 
 /// `declare_extensions` can run on another thread than `create_plugin`.
@@ -44,6 +49,7 @@ fn role_bits(role: Role) -> u8 {
         Role::NoPorts => 4,
         Role::Flip => 5,
         Role::State => 6,
+        Role::Order => 7,
     }
 }
 
@@ -55,6 +61,7 @@ fn role_from_bits(bits: u8) -> Role {
         4 => Role::NoPorts,
         5 => Role::Flip,
         6 => Role::State,
+        7 => Role::Order,
         _ => Role::Gain,
     }
 }
@@ -93,6 +100,9 @@ impl Plugin for TestGain {
         }
         if current_role() == Role::State {
             builder.register::<PluginStateExt>();
+        }
+        if current_role() == Role::Order {
+            builder.register::<PluginNotePorts>();
         }
     }
 }
@@ -142,6 +152,7 @@ impl TestMain {
             Role::Ports => (&[2], &[2, 1]),
             Role::NoPorts => (&[], &[]),
             Role::State => (&[2], &[2]),
+            Role::Order => (&[], &[2]),
         }
     }
 
@@ -352,6 +363,27 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             fill_outputs(&mut audio, state_level());
             return Ok(ProcessStatus::Continue);
         }
+        if self.role == Role::Order {
+            let mut last = 0u32;
+            let mut ons = 0u32;
+            for index in 0..events.input.len() as usize {
+                let header = events.input[index].header();
+                if header.time() < last {
+                    return Err(PluginError::Message("events are out of order"));
+                }
+                last = header.time();
+                if let Some(core) = events.input[index].as_core_event()
+                    && matches!(
+                        core,
+                        clack_plugin::events::spaces::CoreEventSpace::NoteOn(_)
+                    )
+                {
+                    ons = ons.saturating_add(1);
+                }
+            }
+            fill_outputs(&mut audio, ons as f32);
+            return Ok(ProcessStatus::Continue);
+        }
         if self.role == Role::Mono || (self.role == Role::Flip && port_flip_active()) {
             fill_outputs(&mut audio, 0.25);
             return Ok(ProcessStatus::Continue);
@@ -488,6 +520,7 @@ impl TestFactory {
                     c"audio-effect",
                 ),
                 described("dev.echode.test-zflip", "Echode Test Flip", c"audio-effect"),
+                described("dev.echode.test-order", "Echode Test Order", c"instrument"),
             ],
         }
     }
@@ -510,6 +543,7 @@ fn role_of(id: &CStr) -> Option<Role> {
         b"dev.echode.test-ports" => Some(Role::Ports),
         b"dev.echode.test-state" => Some(Role::State),
         b"dev.echode.test-zflip" => Some(Role::Flip),
+        b"dev.echode.test-order" => Some(Role::Order),
         _ => None,
     }
 }
@@ -697,6 +731,50 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
             wrapper.main_thread().mark_dirty();
             Ok(())
         });
+    }
+    true
+}
+
+#[derive(Copy, Clone)]
+struct PluginNotePorts;
+
+unsafe impl Extension for PluginNotePorts {
+    const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_NOTE_PORTS];
+    type ExtensionSide = PluginExtensionSide;
+
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+unsafe impl ExtensionImplementation<TestGain> for PluginNotePorts {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_plugin_note_ports {
+            count: Some(note_port_count),
+            get: Some(note_port_get),
+        });
+}
+
+unsafe extern "C" fn note_port_count(_plugin: *const clap_plugin, is_input: bool) -> u32 {
+    u32::from(is_input)
+}
+
+unsafe extern "C" fn note_port_get(
+    _plugin: *const clap_plugin,
+    index: u32,
+    is_input: bool,
+    info: *mut clap_note_port_info,
+) -> bool {
+    if info.is_null() || index != 0 || !is_input {
+        return false;
+    }
+    unsafe {
+        *info = clap_note_port_info {
+            id: 0,
+            supported_dialects: CLAP_NOTE_DIALECT_CLAP,
+            preferred_dialect: CLAP_NOTE_DIALECT_CLAP,
+            name: [0; 256],
+        };
     }
     true
 }

@@ -1,8 +1,11 @@
 //! Min/max peaks for an imported file, cached beside the object store.
 //!
-//! The pyramid is built on the document thread from the canonical PCM. The
-//! arrange shader draws only the columns that cover the visible clip. `cache/`
-//! is already gitignored, and a changed builder version ignores an old file.
+//! The pyramid is built on the document thread from the canonical PCM, before
+//! clip gain and fades. Those are applied when the block is mixed. The arrange
+//! shader draws only the columns that cover the visible clip. A column uses the
+//! same source frames playback reads: the placement offset and length, converted
+//! at the file's sample rate. Samples past the file are silence. `cache/` is
+//! already gitignored, and a changed builder version ignores an old file.
 
 use std::collections::HashMap;
 #[cfg(test)]
@@ -10,7 +13,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use echode_model::{Id, Project};
+use echode_model::{Id, Project, Tick, tick_to_sample};
 
 use crate::document::PackageError;
 use crate::media::read_pcm;
@@ -69,10 +72,10 @@ impl Waveforms {
         Self { entries }
     }
 
-    /// Writes `columns` covering the audio frames between two ticks.
+    /// Writes `columns` covering the source frames playback would read.
     ///
-    /// The clip's tick span maps linearly onto its frame count, which is how
-    /// the arrange rectangle is drawn. Returns how many columns were written.
+    /// Returns how many columns were written. A view past the end of the file
+    /// is silence, the same value playback uses when the offset runs out.
     pub fn fill(
         &self,
         project: &Project,
@@ -81,7 +84,8 @@ impl Waveforms {
         end_tick: i64,
         columns: &mut [PeakColumn],
     ) -> usize {
-        let Some((clip_start, clip_length, hash, frames)) = placement_audio(project, placement)
+        let Some((clip_start, clip_length, offset, rate, hash, frames)) =
+            placement_audio(project, placement)
         else {
             return 0;
         };
@@ -91,11 +95,25 @@ impl Waveforms {
         if peaks.frames != frames {
             return 0;
         }
-        let Some((first, last)) = frame_span(clip_start, clip_length, frames, start_tick, end_tick)
-        else {
+        let Some((first, last)) = source_span(
+            project.tempo(),
+            SourceSpan {
+                start: clip_start,
+                length: clip_length,
+                offset,
+                rate,
+                frames,
+            },
+            start_tick,
+            end_tick,
+        ) else {
             return 0;
         };
-        fill_columns(peaks, first, last, columns)
+        if first >= frames {
+            columns.fill(PeakColumn { min: 0.0, max: 0.0 });
+            return columns.len();
+        }
+        fill_columns(peaks, first, last.min(frames), columns)
     }
 }
 
@@ -130,7 +148,7 @@ fn load_hash(package: &Path, hash: &str, frames: u64) -> Option<Peaks> {
     Some(peaks)
 }
 
-fn placement_audio(project: &Project, placement: Id) -> Option<(i64, i64, String, u64)> {
+fn placement_audio(project: &Project, placement: Id) -> Option<(i64, i64, i64, u32, String, u64)> {
     for track in project.tracks() {
         for clip in &track.clips {
             if clip.id != placement {
@@ -141,45 +159,58 @@ fn placement_audio(project: &Project, placement: Id) -> Option<(i64, i64, String
             if length <= 0 {
                 return None;
             }
-            return Some((clip.start.get(), length, audio.hash.clone(), audio.frames));
+            return Some((
+                clip.start.get(),
+                length,
+                clip.offset.get(),
+                audio.sample_rate,
+                audio.hash.clone(),
+                audio.frames,
+            ));
         }
     }
     None
 }
 
-/// Maps a tick window onto frames of a clip that starts at `clip_start`.
-fn frame_span(
-    clip_start: i64,
-    clip_length: i64,
+#[derive(Clone, Copy)]
+struct SourceSpan {
+    start: i64,
+    length: i64,
+    offset: i64,
+    rate: u32,
     frames: u64,
+}
+
+/// File frames playback reads for the visible part of a placement.
+fn source_span(
+    tempo: &echode_model::TempoMap,
+    source: SourceSpan,
     start_tick: i64,
     end_tick: i64,
 ) -> Option<(u64, u64)> {
-    if clip_length <= 0 || frames == 0 || end_tick <= start_tick {
+    if source.length <= 0 || source.frames == 0 || end_tick <= start_tick || source.rate == 0 {
         return None;
     }
-    let clip_end = clip_start.checked_add(clip_length)?;
-    let left = start_tick.max(clip_start);
+    let clip_end = source.start.checked_add(source.length)?;
+    let left = start_tick.max(source.start);
     let right = end_tick.min(clip_end);
     if right <= left {
         return None;
     }
-    let map = |tick: i64| -> u64 {
-        if tick <= clip_start {
-            0
-        } else if tick >= clip_end {
-            frames
-        } else {
-            let delta = u128::from((tick - clip_start) as u64);
-            u64::try_from(delta * u128::from(frames) / u128::from(clip_length as u64))
-                .unwrap_or(frames)
-        }
+    let origin = tick_to_sample(Tick::new(source.start), tempo, source.rate)?;
+    let skip = tick_to_sample(
+        Tick::new(source.start.checked_add(source.offset)?),
+        tempo,
+        source.rate,
+    )?
+    .checked_sub(origin)?;
+    let at = |tick: i64| -> Option<u64> {
+        let delta = tick_to_sample(Tick::new(tick), tempo, source.rate)?.checked_sub(origin)?;
+        let frame = skip.checked_add(delta)?;
+        u64::try_from(frame.max(0)).ok()
     };
-    let first = map(left);
-    let mut last = map(right);
-    if last <= first {
-        last = first.saturating_add(1).min(frames);
-    }
+    let first = at(left)?;
+    let last = at(right)?;
     (last > first).then_some((first, last))
 }
 
@@ -233,20 +264,34 @@ fn reduce(peaks: &Peaks, start: u64, end: u64) -> PeakColumn {
     if columns.is_empty() || size == 0 {
         return scan(&peaks.mono, start, end);
     }
-    let first = usize::try_from(start / size).unwrap_or(0);
-    let last = usize::try_from((end - 1) / size).unwrap_or(0);
-    let last = last.min(columns.len() - 1);
-    let first = first.min(last);
     let mut min = f32::INFINITY;
     let mut max = f32::NEG_INFINITY;
-    for column in &columns[first..=last] {
-        min = min.min(column.min);
-        max = max.max(column.max);
+    let aligned = start / size * size;
+    if aligned < start {
+        let edge = scan(&peaks.mono, start, (aligned + size).min(end));
+        min = min.min(edge.min);
+        max = max.max(edge.max);
+    }
+    let first = usize::try_from(start.div_ceil(size)).unwrap_or(0);
+    let last_bucket = usize::try_from(end / size).unwrap_or(0);
+    if first < last_bucket {
+        let last_bucket = last_bucket.min(columns.len());
+        let first = first.min(last_bucket);
+        for column in &columns[first..last_bucket] {
+            min = min.min(column.min);
+            max = max.max(column.max);
+        }
+    }
+    let covered = u64::try_from(last_bucket).unwrap_or(0).saturating_mul(size);
+    if covered < end && covered > start {
+        let edge = scan(&peaks.mono, covered, end);
+        min = min.min(edge.min);
+        max = max.max(edge.max);
     }
     if min.is_finite() && max.is_finite() {
         PeakColumn { min, max }
     } else {
-        PeakColumn { min: 0.0, max: 0.0 }
+        scan(&peaks.mono, start, end)
     }
 }
 
@@ -532,11 +577,64 @@ mod tests {
 
     #[test]
     fn a_tick_window_maps_onto_frames() {
-        let (first, last) = frame_span(0, 100, 50, 0, 100).unwrap();
-        assert_eq!((first, last), (0, 50));
-        let (first, last) = frame_span(0, 100, 50, 50, 100).unwrap();
-        assert_eq!((first, last), (25, 50));
-        assert!(frame_span(0, 100, 50, 100, 120).is_none());
+        use echode_model::{TICKS_PER_QUARTER, Tempo, TempoMap};
+        let tempo = TempoMap::new(Tempo::quarters_per_minute(120).unwrap());
+        let quarter = TICKS_PER_QUARTER;
+        let span = SourceSpan {
+            start: 0,
+            length: quarter,
+            offset: 0,
+            rate: 48_000,
+            frames: 48_000,
+        };
+        let (first, last) = source_span(&tempo, span, 0, quarter).unwrap();
+        assert_eq!((first, last), (0, 24_000));
+        let (first, last) = source_span(&tempo, span, quarter / 2, quarter).unwrap();
+        assert_eq!((first, last), (12_000, 24_000));
+        assert!(source_span(&tempo, span, quarter, quarter + 1).is_none());
+    }
+
+    #[test]
+    fn audit_rea10_trimmed_waveform_uses_source_offset() {
+        use echode_model::{AudioRef, Id, Project, TICKS_PER_QUARTER, Tick};
+        let directory = std::env::temp_dir().join(format!(
+            "echode-rea10-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        crate::write_package(&directory, &Project::new()).unwrap();
+        let frames = 96_000u64;
+        let mut samples = vec![0.25f32; frames as usize];
+        for sample in samples.iter_mut().skip(48_000) {
+            *sample = 0.75;
+        }
+        let bytes = crate::media::encode_pcm(48_000, 1, frames, &samples).unwrap();
+        let hash = crate::write_object(&directory, &bytes).unwrap();
+        let (project, track) = Project::new().add_track("audio");
+        let clip = Id::from_raw(4);
+        let project = project
+            .place_audio(
+                track,
+                clip,
+                Id::from_raw(5),
+                Tick::new(0),
+                AudioRef::try_new(hash, 48_000, 1, frames).unwrap(),
+            )
+            .unwrap();
+        let second = Tick::new(TICKS_PER_QUARTER * 2);
+        let project = project.resize_clip(track, clip, second, second).unwrap();
+        let waves = Waveforms::load(&directory, &project, None);
+        let mut columns = vec![PeakColumn { min: 0.0, max: 0.0 }; 8];
+        let wrote = waves.fill(&project, clip, second.get(), second.get() * 2, &mut columns);
+        let _ = fs::remove_dir_all(&directory);
+        assert_eq!(wrote, 8);
+        for column in columns {
+            assert!((column.min - 0.75).abs() < 1.0e-4, "{column:?}");
+            assert!((column.max - 0.75).abs() < 1.0e-4, "{column:?}");
+        }
     }
 
     #[test]

@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use echode_realtime::Event;
-use echode_sandbox::{BlockProgress, FanIn, PluginHost, SessionLayout, SpawnOptions};
+use echode_realtime::{Event, event_cmp, sort_events};
+use echode_sandbox::{BlockProgress, FanIn, PluginHost, PluginNotice, SessionLayout, SpawnOptions};
 
 use crate::PlaybackError;
 
@@ -42,6 +42,10 @@ pub(crate) struct ChainDevice {
 pub(crate) struct TrackChain {
     pub key: u32,
     pub devices: Vec<ChainDevice>,
+    /// Timeline events this track can emit in one block.
+    pub events: usize,
+    /// Chased note-ons for notes already sounding on this track.
+    pub chase: usize,
 }
 
 pub(crate) struct HostGraph {
@@ -80,6 +84,8 @@ struct TrackHost {
     source_events: Vec<Event>,
     /// Note-ons the built-in synth already holds. Only a new helper receives them.
     chased_ons: Vec<Event>,
+    chase_order: Vec<usize>,
+    chase_scratch: Vec<Event>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -95,6 +101,20 @@ struct Stage {
     clap_id: String,
     /// This process has not yet been told about notes the synth is already playing.
     awaiting_notes: bool,
+    /// The buffer just built includes chased note-ons. Promoted when submit succeeds.
+    chase_in_buffer: bool,
+    /// The in-flight block included those note-ons. Cleared only after it is heard.
+    chase_pending: bool,
+    /// A chase was submitted and the block did not finish. Do not send it again.
+    needs_restart: bool,
+    /// This block's note-ons all fit, including a chase when one was still due.
+    block_complete: bool,
+    /// Bytes last restored into this process. `None` is the plugin's initial state.
+    applied_state: Option<Vec<u8>>,
+    /// A dirty notice arrived and its save has not been requested yet.
+    dirty_again: bool,
+    /// `SaveRequest` is in flight. The control thread does not wait for it.
+    save_requested: bool,
     host: PluginHost,
     instrument: bool,
     input: Vec<Vec<f32>>,
@@ -119,6 +139,43 @@ impl HostGraph {
 
     pub(crate) fn dropped_events(&self) -> bool {
         self.dropped_events
+    }
+
+    /// Asks dirty helpers for their bytes without waiting. A reply is one save;
+    /// a newer dirty notice stays unacked until the next reply.
+    pub(crate) fn collect_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
+        let mut saved = Vec::new();
+        for track in &mut self.tracks {
+            for stage in &mut track.stages {
+                if matches!(stage.host.poll_notice(), Ok(Some(PluginNotice::Dirty))) {
+                    stage.dirty_again = true;
+                }
+                if stage.dirty_again && !stage.save_requested && stage.host.request_save().is_ok() {
+                    stage.save_requested = true;
+                    stage.dirty_again = false;
+                }
+                if !stage.save_requested {
+                    continue;
+                }
+                match stage.host.poll_saved() {
+                    Ok(Some(Ok(bytes))) => {
+                        stage.save_requested = false;
+                        stage.applied_state = Some(bytes.clone());
+                        saved.push((stage.device, bytes));
+                        if stage.dirty_again && stage.host.request_save().is_ok() {
+                            stage.save_requested = true;
+                            stage.dirty_again = false;
+                        }
+                    }
+                    Ok(Some(Err(_))) | Err(_) => {
+                        stage.save_requested = false;
+                        stage.dirty_again = false;
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+        saved
     }
 
     pub(crate) fn begin_block(&mut self) {
@@ -190,11 +247,10 @@ impl HostGraph {
         routes: &[PluginRoute],
         chains: &[TrackChain],
         frames: usize,
-        event_cap: usize,
         sample_rate: u32,
     ) -> Result<Self, PlaybackError> {
         let mut graph = Self::empty();
-        graph.reconcile(host_bin, routes, chains, frames, event_cap, sample_rate)?;
+        graph.reconcile(host_bin, routes, chains, frames, sample_rate)?;
         Ok(graph)
     }
 
@@ -208,7 +264,6 @@ impl HostGraph {
         routes: &[PluginRoute],
         chains: &[TrackChain],
         frames: usize,
-        event_cap: usize,
         sample_rate: u32,
     ) -> Result<(), PlaybackError> {
         if frames == 0 || frames > u32::MAX as usize {
@@ -224,16 +279,27 @@ impl HostGraph {
         let mut used = vec![false; routes.len()];
         for chain in chains {
             let mut stages = Vec::new();
+            let delivery = chain
+                .events
+                .checked_add(chain.chase)
+                .ok_or(PlaybackError::Time)?
+                .max(1);
             for device in &chain.devices {
                 if let Some(index) = kept
                     .iter()
                     .position(|stage| stage.device == device.id && stage.clap_id == device.clap_id)
                 {
-                    let _ = take_route(routes, &mut used, &device.clap_id);
-                    let mut stage = kept.swap_remove(index);
-                    stage.awaiting_notes = false;
-                    stages.push(stage);
-                    continue;
+                    let incoming = unused_route(routes, &used, &device.clap_id)
+                        .and_then(|route| route.state.clone());
+                    if kept[index].applied_state != incoming {
+                        // State changed. Leave the old process in `kept` so it is
+                        // dropped, and spawn a helper that restores the new bytes.
+                    } else {
+                        let _ = take_route(routes, &mut used, &device.clap_id);
+                        let stage = kept.swap_remove(index);
+                        stages.push(stage);
+                        continue;
+                    }
                 }
                 match spawn_stage(
                     host_bin,
@@ -243,7 +309,7 @@ impl HostGraph {
                     device,
                     StageSize {
                         frames,
-                        event_cap,
+                        event_cap: delivery,
                         sample_rate,
                     },
                 ) {
@@ -256,8 +322,17 @@ impl HostGraph {
                     }
                 }
             }
+            for stage in &mut stages {
+                fit_stage(stage, delivery)?;
+            }
             if !stages.is_empty() {
-                tracks.push(track_host(chain.key, stages, frames, event_cap));
+                tracks.push(track_host(
+                    chain.key,
+                    stages,
+                    frames,
+                    chain.events.max(1),
+                    chain.chase.max(1),
+                ));
             }
         }
         self.tracks = tracks;
@@ -325,6 +400,12 @@ impl HostGraph {
                     Poll::Ready => self.advance(index),
                     Poll::Failed(reason) => {
                         let stage_index = self.tracks[index].stage;
+                        if let Some(stage) = self.tracks[index].stages.get_mut(stage_index)
+                            && stage.chase_pending
+                        {
+                            stage.chase_pending = false;
+                            stage.needs_restart = true;
+                        }
                         self.note_miss(index, stage_index, reason);
                         self.tracks[index].run = Run::Missed;
                     }
@@ -349,41 +430,46 @@ impl HostGraph {
         }
     }
 
-    /// Smallest event buffer among the live helpers. An empty graph reports
-    /// no limit, because there is nothing to grow.
-    pub(crate) fn event_capacity(&self) -> usize {
+    /// Event slots reserved for each live track, in track order.
+    pub(crate) fn track_event_caps(&self) -> Vec<usize> {
         self.tracks
             .iter()
-            .flat_map(|track| &track.stages)
-            .map(|stage| {
-                stage
-                    .routed
-                    .capacity()
-                    .min(stage.host.layout().input_events as usize)
-            })
-            .min()
-            .unwrap_or(usize::MAX)
+            .map(|track| track.source_events.capacity())
+            .collect()
     }
 
-    /// Grows helper mappings and the routed lists. The plugin process stays up,
-    /// so its audio state survives. Called on the control thread, between callbacks.
-    pub(crate) fn ensure_events(&mut self, cap: usize) -> Result<(), PlaybackError> {
-        let cap = cap.max(1);
+    /// Drops helpers whose chased notes were submitted but not heard. The next
+    /// reconcile starts a new process that still needs those notes.
+    pub(crate) fn take_restarts(&mut self) -> bool {
+        let mut restart = false;
         for track in &mut self.tracks {
-            reserve_to(&mut track.source_events, cap);
-            reserve_to(&mut track.chased_ons, cap);
-            for stage in &mut track.stages {
-                // `reserve` grows past the length. Passing the gap under the
-                // current capacity does not reach `cap` when the vec is empty.
-                reserve_to(&mut stage.routed, cap);
-                let layout = stage.host.layout();
-                if (layout.input_events as usize) >= cap {
-                    continue;
-                }
-                let mut grown = layout;
-                grown.input_events = u32::try_from(cap).unwrap_or(u32::MAX);
-                stage.host.remap(grown).map_err(|_| PlaybackError::Plugin)?;
-            }
+            let before = track.stages.len();
+            track.stages.retain(|stage| !stage.needs_restart);
+            restart |= track.stages.len() != before;
+        }
+        self.tracks.retain(|track| !track.stages.is_empty());
+        restart
+    }
+
+    /// Sizes one track's event buffers to its own demand, including a shrink.
+    pub(crate) fn fit_track(
+        &mut self,
+        key: u32,
+        events: usize,
+        chase: usize,
+    ) -> Result<(), PlaybackError> {
+        let Some(track) = self.tracks.iter_mut().find(|track| track.key == key) else {
+            return Ok(());
+        };
+        let events = events.max(1);
+        let chase = chase.max(1);
+        let delivery = events.checked_add(chase).ok_or(PlaybackError::Time)?;
+        fit_vec(&mut track.source_events, events);
+        fit_vec(&mut track.chased_ons, chase);
+        fit_vec(&mut track.chase_order, chase);
+        fit_vec(&mut track.chase_scratch, chase);
+        for stage in &mut track.stages {
+            fit_stage(stage, delivery)?;
         }
         Ok(())
     }
@@ -422,6 +508,16 @@ impl HostGraph {
         dropped |= copy_events(&mut host.chased_ons, chased_ons, |event| {
             event.track_key() == Some(key)
         });
+        let chase_len = host.chased_ons.len();
+        if chase_len > 0
+            && !sort_events(
+                &mut host.chased_ons[..chase_len],
+                &mut host.chase_order,
+                &mut host.chase_scratch,
+            )
+        {
+            dropped = true;
+        }
         if dropped {
             self.dropped_events = true;
         }
@@ -468,28 +564,45 @@ impl HostGraph {
             let Some(stage) = stages.get_mut(stage_index) else {
                 return;
             };
-            let awaiting = stage.awaiting_notes;
+            let include_chase =
+                stage.awaiting_notes && !stage.needs_restart && !stage.chase_pending;
             stage.routed.clear();
-            let mut dropped = false;
-            let incoming = if awaiting { chased_ons.len() } else { 0 };
-            if source_events.len() + incoming > stage.routed.capacity() {
-                dropped = true;
-            }
-            for event in source_events.iter() {
+            let incoming = if include_chase { chased_ons.len() } else { 0 };
+            let mut dropped = source_events.len() + incoming > stage.routed.capacity();
+            let chase = if include_chase {
+                chased_ons.as_slice()
+            } else {
+                &[]
+            };
+            let mut source_at = 0usize;
+            let mut chase_at = 0usize;
+            while source_at < source_events.len() || chase_at < chase.len() {
                 if stage.routed.len() == stage.routed.capacity() {
+                    dropped = true;
                     break;
                 }
-                stage.routed.push((*event, 0));
-            }
-            if awaiting {
-                for event in chased_ons.iter() {
-                    if stage.routed.len() == stage.routed.capacity() {
-                        break;
+                let take_chase = match (source_events.get(source_at), chase.get(chase_at)) {
+                    (None, Some(_)) => true,
+                    (Some(_), None) => false,
+                    (Some(source), Some(chased)) => {
+                        event_cmp(chased, source) != std::cmp::Ordering::Greater
                     }
-                    stage.routed.push((*event, 0));
-                }
+                    (None, None) => break,
+                };
+                let event = if take_chase {
+                    chase_at += 1;
+                    chase[chase_at - 1]
+                } else {
+                    source_at += 1;
+                    source_events[source_at - 1]
+                };
+                stage.routed.push((event, 0));
             }
-            stage.awaiting_notes = false;
+            stage.chase_in_buffer = include_chase && !dropped && !chase.is_empty();
+            // A note-on that starts in this block is ordinary source, not chase.
+            // Once that block is heard, the helper already has the voice, so a
+            // later chase must not play it again.
+            stage.block_complete = !dropped && (include_chase || !stage.awaiting_notes);
             dropped
         };
         if dropped {
@@ -508,15 +621,23 @@ impl HostGraph {
                 .host
                 .submit_planes(frames, &stage.input, &stage.routed)
         };
+        let stage = &mut self.tracks[track].stages[stage_index];
         match generation {
             Ok(generation) => {
+                if stage.chase_in_buffer {
+                    stage.chase_pending = true;
+                }
+                stage.chase_in_buffer = false;
                 self.tracks[track].generation = generation;
                 self.tracks[track].frames = frames;
                 self.tracks[track].stage = stage_index;
                 self.tracks[track].run = Run::Pending;
                 true
             }
-            Err(_) => false,
+            Err(_) => {
+                stage.chase_in_buffer = false;
+                false
+            }
         }
     }
 
@@ -540,6 +661,13 @@ impl HostGraph {
         let frames = self.tracks[index].frames;
         let stage_index = self.tracks[index].stage;
         self.mix_injected(index, stage_index, frames);
+        if let Some(stage) = self.tracks[index].stages.get_mut(stage_index) {
+            if stage.block_complete {
+                stage.awaiting_notes = false;
+            }
+            stage.chase_pending = false;
+            stage.block_complete = false;
+        }
         let next = stage_index + 1;
         self.tracks[index].heard = true;
         if next >= self.tracks[index].stages.len() {
@@ -620,19 +748,39 @@ impl HostGraph {
     }
 }
 
-/// One absolute deadline for every helper in the callback.
-pub(crate) fn block_deadline(frames: usize, sample_rate: u32) -> Instant {
-    if sample_rate == 0 {
-        return Instant::now();
+/// How long one block of `frames` lasts at `sample_rate`.
+pub(crate) fn block_duration(frames: usize, sample_rate: u32) -> Duration {
+    if sample_rate == 0 || frames == 0 {
+        return Duration::ZERO;
     }
     let nanos = u64::try_from(frames)
         .unwrap_or(u64::MAX)
         .saturating_mul(1_000_000_000)
         / u64::from(sample_rate);
-    Instant::now() + Duration::from_nanos(nanos)
+    Duration::from_nanos(nanos)
 }
 
-fn track_host(key: u32, stages: Vec<Stage>, frames: usize, event_cap: usize) -> TrackHost {
+/// Absolute end of a callback that starts now. The origin is the callback
+/// entry, so work already done is not added on again.
+pub(crate) fn callback_deadline(frames: usize, sample_rate: u32) -> Instant {
+    Instant::now() + block_duration(frames, sample_rate)
+}
+
+/// When helpers must be finished so the fader, mix, and metronome still fit
+/// before `callback`. One eighth of this block is that tail. It is a share of
+/// the block, not a limit on how many tracks the mix may contain.
+pub(crate) fn collect_deadline(callback: Instant, frames: usize, sample_rate: u32) -> Instant {
+    let reserve = block_duration(frames, sample_rate) / 8;
+    callback.checked_sub(reserve).unwrap_or(callback)
+}
+
+fn track_host(
+    key: u32,
+    stages: Vec<Stage>,
+    frames: usize,
+    events: usize,
+    chase: usize,
+) -> TrackHost {
     TrackHost {
         key,
         stages,
@@ -643,8 +791,10 @@ fn track_host(key: u32, stages: Vec<Stage>, frames: usize, event_cap: usize) -> 
         heard: false,
         inject: vec![0.0; frames],
         inject_live: false,
-        source_events: Vec::with_capacity(event_cap.max(1)),
-        chased_ons: Vec::with_capacity(event_cap.max(1)),
+        source_events: Vec::with_capacity(events.max(1)),
+        chased_ons: Vec::with_capacity(chase.max(1)),
+        chase_order: vec![0; chase.max(1)],
+        chase_scratch: vec![Event::note_off(0, 0, 0, 0); chase.max(1)],
     }
 }
 
@@ -657,7 +807,28 @@ fn rehome(stages: Vec<Stage>) -> Vec<TrackHost> {
         .and_then(|stage| stage.input.first())
         .map(Vec::len)
         .unwrap_or(1);
-    vec![track_host(0, stages, frames.max(1), 1)]
+    vec![track_host(0, stages, frames.max(1), 1, 1)]
+}
+
+fn fit_vec<T>(buf: &mut Vec<T>, cap: usize) {
+    if buf.capacity() < cap {
+        reserve_to(buf, cap);
+    } else if buf.capacity() > cap {
+        buf.shrink_to(cap.max(buf.len()));
+    }
+}
+
+fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
+    let delivery = u32::try_from(delivery).map_err(|_| PlaybackError::BufferTooSmall)?;
+    fit_vec(&mut stage.routed, delivery as usize);
+    let layout = stage.host.layout();
+    if layout.input_events == delivery {
+        return Ok(());
+    }
+    let mut next = layout;
+    next.input_events = delivery;
+    stage.host.remap(next).map_err(|_| PlaybackError::Plugin)?;
+    Ok(())
 }
 
 /// Spawns one device. `Ok(None)` is an unknown id or a path that is not a file.
@@ -741,6 +912,13 @@ fn spawn_stage(
         device: device.id,
         clap_id: device.clap_id.clone(),
         awaiting_notes: true,
+        block_complete: false,
+        chase_in_buffer: false,
+        chase_pending: false,
+        needs_restart: false,
+        applied_state: route.state.clone(),
+        dirty_again: false,
+        save_requested: false,
         host,
         instrument: route.instrument,
         input: (0..inputs).map(|_| vec![0.0; frames]).collect(),
@@ -752,6 +930,16 @@ fn spawn_stage(
 
 /// A later route with the same id is a separate helper. The last matching
 /// route is reused when a project has more devices than routes.
+fn unused_route<'a>(
+    routes: &'a [PluginRoute],
+    used: &[bool],
+    plugin: &str,
+) -> Option<&'a PluginRoute> {
+    routes.iter().enumerate().find_map(|(index, route)| {
+        (used.get(index).copied() == Some(false) && route.clap_id == plugin).then_some(route)
+    })
+}
+
 fn take_route<'a>(
     routes: &'a [PluginRoute],
     used: &mut [bool],

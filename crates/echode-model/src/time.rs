@@ -471,6 +471,19 @@ impl JsonSchema for Tempo {
     }
 }
 
+/// Sample index of `tick` at `sample_rate`, rounded once from the flick position.
+pub fn tick_to_sample(tick: Tick, tempo: &TempoMap, sample_rate: u32) -> Option<i64> {
+    if sample_rate == 0 {
+        return None;
+    }
+    let flicks = tempo.flicks_at(tick)?;
+    let samples = div_round(
+        i128::from(flicks.get()) * i128::from(sample_rate),
+        i128::from(FLICKS_PER_SECOND),
+    )?;
+    i64::try_from(samples).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

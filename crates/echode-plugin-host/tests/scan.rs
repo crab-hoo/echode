@@ -53,7 +53,7 @@ fn plugin_dylib() -> PathBuf {
 #[test]
 fn scanning_reads_the_factory_descriptor() {
     let plugins = scan_descriptors(&plugin_dylib()).expect("scan");
-    assert_eq!(plugins.len(), 7);
+    assert_eq!(plugins.len(), 8);
     assert_eq!(plugins[0].id, "dev.echode.test-gain");
     assert_eq!(plugins[0].name, "Echode Test Gain");
     assert_eq!(plugins[0].vendor, "Echode");
@@ -173,6 +173,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-instrument",
             "dev.echode.test-mono",
             "dev.echode.test-noports",
+            "dev.echode.test-order",
             "dev.echode.test-ports",
             "dev.echode.test-state",
             "dev.echode.test-zflip",
@@ -191,6 +192,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-instrument",
             "dev.echode.test-mono",
             "dev.echode.test-noports",
+            "dev.echode.test-order",
             "dev.echode.test-ports",
             "dev.echode.test-state",
             "dev.echode.test-zflip",
@@ -208,6 +210,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-instrument",
             "dev.echode.test-mono",
             "dev.echode.test-noports",
+            "dev.echode.test-order",
             "dev.echode.test-ports",
             "dev.echode.test-state",
             "dev.echode.test-zflip",
@@ -308,4 +311,103 @@ fn wait_for(
         }
         revision = live.wait_after(revision, std::time::Duration::from_millis(250));
     }
+}
+
+fn script(body: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "echode-scan-{}-{}.sh",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    std::fs::write(&path, body).unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    path
+}
+
+const PLUGIN_LINE: &str = "{\"id\":\"dev.audit.scan\",\"name\":\"Scan\",\"vendor\":\"Echode\",\"version\":\"1\",\"features\":[],\"url\":\"\"}\n";
+
+#[test]
+fn audit_rea08_descendant_pipe_does_not_extend_deadline() {
+    let json = script(&format!("#!/bin/sh\nprintf '%s' '{}'", PLUGIN_LINE));
+    let started = std::time::Instant::now();
+    let plugins = echode_plugin_host::scan_with_budget(
+        &json,
+        std::path::Path::new("bundle.clap"),
+        std::time::Duration::from_secs(2),
+    )
+    .expect("json");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert_eq!(plugins[0].id, "dev.audit.scan");
+    let _ = std::fs::remove_file(json);
+
+    let noisy = script(&format!(
+        "#!/bin/sh\nprintf '%s' '{}'\ndd if=/dev/zero bs=1024 count=80 2>/dev/null | tr '\\0' x >&2\n",
+        PLUGIN_LINE
+    ));
+    echode_plugin_host::scan_with_budget(
+        &noisy,
+        std::path::Path::new("bundle.clap"),
+        std::time::Duration::from_secs(2),
+    )
+    .expect("stderr drained");
+    let _ = std::fs::remove_file(noisy);
+
+    let held = script(&format!(
+        "#!/bin/sh\nprintf '%s' '{}'\n(sleep 30) &\nexit 0\n",
+        PLUGIN_LINE
+    ));
+    let started = std::time::Instant::now();
+    let error = echode_plugin_host::scan_with_budget(
+        &held,
+        std::path::Path::new("bundle.clap"),
+        std::time::Duration::from_millis(200),
+    )
+    .expect_err("grandchild holds the pipe");
+    let elapsed = started.elapsed();
+    let _ = std::fs::remove_file(held);
+    assert!(error.contains("timed out"), "{error}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "waited {elapsed:?}"
+    );
+
+    let hang = script("#!/bin/sh\nsleep 30\n");
+    let started = std::time::Instant::now();
+    let error = echode_plugin_host::scan_with_budget(
+        &hang,
+        std::path::Path::new("bundle.clap"),
+        std::time::Duration::from_millis(200),
+    )
+    .expect_err("hang");
+    let elapsed = started.elapsed();
+    let _ = std::fs::remove_file(hang);
+    assert!(error.contains("timed out"), "{error}");
+    assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+
+    let bad = script("#!/bin/sh\nprintf '\\377'\n");
+    let error = echode_plugin_host::scan_with_budget(
+        &bad,
+        std::path::Path::new("bundle.clap"),
+        std::time::Duration::from_secs(2),
+    )
+    .expect_err("utf-8");
+    let _ = std::fs::remove_file(bad);
+    assert!(error.contains("UTF-8"), "{error}");
+
+    let failed = script("#!/bin/sh\necho boom >&2\nexit 1\n");
+    let error = echode_plugin_host::scan_with_budget(
+        &failed,
+        std::path::Path::new("bundle.clap"),
+        std::time::Duration::from_secs(2),
+    )
+    .expect_err("exit");
+    let _ = std::fs::remove_file(failed);
+    assert!(error.contains("failed"), "{error}");
+    assert!(error.contains("boom"), "{error}");
 }

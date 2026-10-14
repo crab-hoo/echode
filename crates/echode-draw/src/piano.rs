@@ -117,13 +117,26 @@ impl ArrangeIndex {
         placement: Option<Id>,
         note: Id,
     ) -> Option<PianoNote> {
+        let content_id = *self.note_content.get(&note)?;
+        let content = self.piano_content(project, content_id)?;
+        let note_index = *content.by_id.get(&note)?;
+        let note = content.content.notes.get(note_index)?;
+        let &slot = self.tracks.get(&track)?;
         let mut fallback = None;
-        self.each_piano(project, track, |item| {
-            if item.id.note == Some(note) && (fallback.is_none() || item.id.placement == placement)
-            {
+        for clip in project.tracks().get(slot)?.clips.iter() {
+            if clip.content != content_id {
+                continue;
+            }
+            let Some(item) = piano_note(track, clip, note) else {
+                continue;
+            };
+            if item.id.placement == placement {
+                return Some(item);
+            }
+            if fallback.is_none() {
                 fallback = Some(item);
             }
-        });
+        }
         fallback
     }
 
