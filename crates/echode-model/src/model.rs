@@ -478,6 +478,44 @@ impl Project {
         Ok(self.write_track(index, track))
     }
 
+    /// Records the BLAKE3 of a CLAP device's saved bytes. `None` clears it.
+    ///
+    /// The bytes themselves live in the package object store. This only stores
+    /// the name the journal can restore.
+    pub fn set_device_state(
+        &self,
+        device_id: Id,
+        state: Option<String>,
+    ) -> Result<Self, ModelError> {
+        if state
+            .as_deref()
+            .is_some_and(|hash| !crate::device::valid_state_hash(hash))
+        {
+            return Err(ModelError::InvalidDevice);
+        }
+        let (index, device_index) = self
+            .tracks
+            .iter()
+            .enumerate()
+            .find_map(|(index, track)| {
+                track
+                    .devices
+                    .iter()
+                    .position(|device| device.id == device_id)
+                    .map(|device_index| (index, device_index))
+            })
+            .ok_or(ModelError::InvalidDevice)?;
+        if self.tracks[index].devices[device_index].kind != DeviceKind::Clap {
+            return Err(ModelError::InvalidDevice);
+        }
+        if self.tracks[index].devices[device_index].state == state {
+            return Ok(self.clone());
+        }
+        let mut track = (*self.tracks[index]).clone();
+        track.devices[device_index].state = state;
+        Ok(self.write_track(index, track))
+    }
+
     /// Removes a CLAP device. The mixer stays.
     pub fn remove_device(&self, device_id: Id) -> Result<Self, ModelError> {
         let (index, device_index) = self

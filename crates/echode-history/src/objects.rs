@@ -27,7 +27,7 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
 }
 
 /// Writes `bytes` to `media/objects/<hash>`. An object that already matches is kept.
-pub(crate) fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError> {
+pub fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError> {
     let hash = hash_bytes(bytes);
     let directory = package.join("media").join("objects");
     let owned = Directory::create(package)
@@ -91,7 +91,7 @@ pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageErro
 }
 
 /// Reads `media/objects/<hash>` after checking the name, the link, and the bytes.
-pub(crate) fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, PackageError> {
+pub fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, PackageError> {
     if !is_content_hash(hash) {
         return Err(PackageError::new(
             "state hash must be 64 lowercase hex digits",

@@ -76,6 +76,14 @@ pub fn valid_plugin_id(plugin: &str) -> bool {
     !plugin.is_empty() && plugin.chars().all(|ch| !ch.is_control())
 }
 
+/// BLAKE3-256 as 64 lowercase hex digits, the only plugin-state spelling.
+pub fn valid_state_hash(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 /// Which mixer control a parameter is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParamKey {
@@ -173,6 +181,8 @@ pub struct Device {
     pub kind: DeviceKind,
     /// CLAP plugin id. The mixer leaves this empty.
     pub plugin: Option<String>,
+    /// BLAKE3 of the plugin's saved bytes in `media/objects`. The mixer is `None`.
+    pub state: Option<String>,
     pub parameters: Vec<Parameter>,
 }
 
@@ -182,6 +192,7 @@ impl Device {
             id: ids.device,
             kind: DeviceKind::Mixer,
             plugin: None,
+            state: None,
             parameters: vec![
                 Parameter::at_default(ids.gain, ParamKey::Gain),
                 Parameter::at_default(ids.pan, ParamKey::Pan),
@@ -196,6 +207,7 @@ impl Device {
             id,
             kind: DeviceKind::Clap,
             plugin: Some(plugin),
+            state: None,
             parameters: Vec::new(),
         }
     }
@@ -249,6 +261,13 @@ fn validate_clap(
     {
         return Err(ModelError::InvalidDevice);
     }
+    if device
+        .state
+        .as_deref()
+        .is_some_and(|hash| !valid_state_hash(hash))
+    {
+        return Err(ModelError::InvalidDevice);
+    }
     Ok(())
 }
 
@@ -259,7 +278,10 @@ pub(crate) fn validate_mixer(
     if !seen.insert(device.id) {
         return Err(ModelError::DuplicateId);
     }
-    if device.kind != DeviceKind::Mixer || device.parameters.len() != ParamKey::ORDER.len() {
+    if device.kind != DeviceKind::Mixer
+        || device.state.is_some()
+        || device.parameters.len() != ParamKey::ORDER.len()
+    {
         return Err(ModelError::InvalidParameter);
     }
     for (parameter, key) in device.parameters.iter().zip(ParamKey::ORDER) {

@@ -138,11 +138,12 @@ spike-engine:
 	cargo test --release -p echode-engine -- --include-ignored --skip audit_ --nocapture
 	cargo run --release -p echode-engine --bin echode-engine-spike -- --seconds 600 --workers auto --report target/spike-s2.txt
 
-# RealtimeSanitizer on the test synth and on plan handoff. The first build
-# downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).
+# RealtimeSanitizer on the test synth, plan handoff, and the plugin helper.
+# The first build downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).
 rtsan:
 	RTSAN_ENABLE=1 cargo test -p echode-engine --features rtsan under_rtsan -- --nocapture
 	RTSAN_ENABLE=1 cargo test -p echode-audio-io --features rtsan under_rtsan -- --nocapture
+	RTSAN_ENABLE=1 cargo test -p echode-plugin-host --features rtsan under_rtsan -- --nocapture
 
 # Product HAL callback/lifecycle probe. Writes silence and never opens a window.
 spike-audio:

@@ -2,9 +2,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use echode_sandbox::{PluginHost, SessionLayout, SpawnOptions};
+use echode_sandbox::{PluginHost, PluginNotice, SessionLayout, SpawnOptions};
 
 use echode_engine::{
     LoadedClip, PlaybackCommand, PluginRoute, playback_pair, playback_with_plugins, tick_to_sample,
@@ -97,6 +97,7 @@ fn a_gain_plugin_doubles_the_builtin_synth_and_an_instrument_replaces_it() {
         path: path.clone(),
         instrument: false,
         fault: None,
+        state: None,
     };
     let dry = render(&project, None, 64, 4);
     let wet = render(&with_gain, Some(effect), 64, 4);
@@ -110,6 +111,7 @@ fn a_gain_plugin_doubles_the_builtin_synth_and_an_instrument_replaces_it() {
         path,
         instrument: true,
         fault: None,
+        state: None,
     };
     let replaced = render(&with_gain, Some(instrument), 64, 2);
     assert!(replaced.iter().all(|sample| *sample == 0.0));
@@ -127,6 +129,7 @@ fn plugin_playback_does_not_depend_on_the_block_size() {
         path: plugin_dylib(),
         instrument: false,
         fault: None,
+        state: None,
     };
     // This is a timing-sensitive product integration check. Ordinary correctness
     // tests below use a hang guard instead of the realtime block deadline.
@@ -214,6 +217,7 @@ fn audit_aud07_one_deadline_collects_a_healthy_track_beside_hangs() {
         path: path.clone(),
         instrument: false,
         fault: None,
+        state: None,
     }];
     for _ in 0..3 {
         routes.push(PluginRoute {
@@ -221,6 +225,7 @@ fn audit_aud07_one_deadline_collects_a_healthy_track_beside_hangs() {
             path: path.clone(),
             instrument: false,
             fault: Some("hang".into()),
+            state: None,
         });
     }
     let (dry_project, dry_track) = Project::new().add_track("live");
@@ -259,6 +264,7 @@ fn count_route(path: &Path) -> PluginRoute {
         path: path.to_path_buf(),
         instrument: true,
         fault: Some("count".into()),
+        state: None,
     }
 }
 
@@ -365,12 +371,146 @@ fn audit_aud05_notes_added_after_the_plugin_all_reach_it_and_its_state_stays() {
     assert!(!control.status().failed);
 }
 
+#[test]
+fn audit_pro04_growing_a_short_chord_keeps_every_note_off() {
+    let path = plugin_dylib();
+    let route = count_route(&path);
+    let frames = 256usize;
+    let (project, track) = Project::new().add_track("pad");
+    let project = project
+        .add_clap_device(track, Id::from_raw(93), "dev.echode.test-gain")
+        .unwrap();
+    let short = Tick::new(941);
+    let mut chord = project.clone();
+    for pitch in [60u8, 64, 67] {
+        chord = chord
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: short,
+                },
+            )
+            .unwrap()
+            .0;
+    }
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, frames, &host_bin(), &[route]).unwrap();
+    control.replace(&chord).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; frames];
+    let mut right = vec![0.0; frames];
+    audio.render(&mut left, &mut right);
+    assert_level(left[0], 3.0 + 3.0 * 16.0);
+    for pitch in [72u8, 76, 79] {
+        chord = chord
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: short,
+                },
+            )
+            .unwrap()
+            .0;
+    }
+    control.command(PlaybackCommand::Locate(0)).unwrap();
+    control.replace(&chord).unwrap();
+    audio.render(&mut left, &mut right);
+    // Back at the start, all six notes start and end in this block. The counter
+    // already holds the first three pairs, so the total is nine ons and nine offs
+    // when none are dropped. Dropping offs leaves a smaller multiple of 16.
+    assert_level(left[0], 9.0 + 9.0 * 16.0);
+    assert!(!control.status().failed);
+}
+
+#[test]
+fn audit_pro05_an_empty_track_keeps_the_held_note() {
+    let path = plugin_dylib();
+    let route = count_route(&path);
+    let frames = 256usize;
+    let (project, track) = Project::new().add_track("pad");
+    let project = project
+        .add_clap_device(track, Id::from_raw(94), "dev.echode.test-gain")
+        .unwrap();
+    let long = Tick::quarters(2).unwrap();
+    let project = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: long,
+            },
+        )
+        .unwrap()
+        .0;
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        frames,
+        &host_bin(),
+        std::slice::from_ref(&route),
+    )
+    .unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; frames];
+    let mut right = vec![0.0; frames];
+    audio.render(&mut left, &mut right);
+    assert_level(left[0], 1.0);
+    let (project, _) = project.add_track("empty");
+    control.replace(&project).unwrap();
+    audio.render(&mut left, &mut right);
+    assert_level(left[0], 1.0);
+    assert!(!control.status().failed);
+}
+
+#[test]
+fn audit_pro05_a_new_plugin_receives_the_held_note() {
+    let path = plugin_dylib();
+    let route = count_route(&path);
+    let frames = 256usize;
+    let (project, track) = Project::new().add_track("pad");
+    let long = Tick::quarters(2).unwrap();
+    let project = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: long,
+            },
+        )
+        .unwrap()
+        .0;
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, frames, &host_bin(), &[route]).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; frames];
+    let mut right = vec![0.0; frames];
+    audio.render(&mut left, &mut right);
+    let project = project
+        .add_clap_device(track, Id::from_raw(95), "dev.echode.test-gain")
+        .unwrap();
+    control.replace(&project).unwrap();
+    audio.render(&mut left, &mut right);
+    assert_level(left[0], 1.0);
+    assert!(!control.status().failed);
+}
+
 fn key_route(path: &Path) -> PluginRoute {
     PluginRoute {
         clap_id: "dev.echode.test-gain".into(),
         path: path.to_path_buf(),
         instrument: true,
         fault: Some("key".into()),
+        state: None,
     }
 }
 
@@ -560,6 +700,7 @@ fn effect_route(path: &Path) -> PluginRoute {
         path: path.to_path_buf(),
         instrument: false,
         fault: None,
+        state: None,
     }
 }
 
@@ -678,6 +819,7 @@ fn audit_aud08_clips_and_notes_reach_the_track_effect_before_the_fader() {
         path: path.clone(),
         instrument: true,
         fault: None,
+        state: None,
     };
     let replaced = play_left(&project, Some(instrument), track.raw(), Some(0.25), frames);
     // The instrument hears silence, not the clip. The clip is added to its output.
@@ -712,4 +854,212 @@ fn audit_aud08_clips_and_notes_reach_the_track_effect_before_the_fader() {
         "{} != {expected}",
         left[body]
     );
+}
+
+fn spawn_declared(id: &str) -> Result<PluginHost, echode_sandbox::SessionError> {
+    PluginHost::spawn(echode_sandbox::SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(plugin_dylib().as_path()),
+        fault: None,
+        workgroup: None,
+        layout: SessionLayout {
+            max_frames: 64,
+            input_channels: 2,
+            output_channels: 2,
+            input_events: 4,
+            output_events: 1,
+        },
+        fan_in: None,
+        sample_rate: 48_000,
+        plugin_id: Some(id),
+    })
+}
+
+#[test]
+fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
+    let mut host = spawn_declared("dev.echode.test-state").expect("state");
+    let input = vec![0.0; 64];
+    let mut left = vec![0.0; 64];
+    let mut right = vec![0.0; 64];
+    host.process(
+        &[&input, &input],
+        &mut [&mut left, &mut right],
+        Duration::from_secs(2),
+    )
+    .expect("initial");
+    assert!((left[0] - 0.25).abs() < 1.0e-4);
+    assert_eq!(host.save_state().expect("save"), vec![64]);
+    host.restore_state(&[128]).expect("restore");
+    let started = Instant::now();
+    loop {
+        if matches!(
+            host.poll_notice().expect("notice"),
+            Some(PluginNotice::Dirty)
+        ) {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(2), "dirty notice");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    host.process(
+        &[&input, &input],
+        &mut [&mut left, &mut right],
+        Duration::from_secs(2),
+    )
+    .expect("restored");
+    assert!((left[0] - 0.5).abs() < 1.0e-4, "{}", left[0]);
+    assert_eq!(host.save_state().expect("save again"), vec![128]);
+    host.restart().expect("restart");
+    host.process(
+        &[&input, &input],
+        &mut [&mut left, &mut right],
+        Duration::from_secs(2),
+    )
+    .expect("after restart");
+    assert!((left[0] - 0.5).abs() < 1.0e-4, "{}", left[0]);
+
+    let mut gain = spawn_declared("dev.echode.test-gain").expect("gain");
+    let error = gain.save_state().expect_err("gain has no state");
+    assert!(error.to_string().contains("state"), "{error}");
+
+    let (project, track) = Project::new().add_track("state");
+    let project = project
+        .add_clap_device(track, Id::from_raw(91), "dev.echode.test-state")
+        .unwrap();
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        64,
+        &host_bin(),
+        &[PluginRoute {
+            clap_id: "dev.echode.test-state".into(),
+            path: plugin_dylib(),
+            instrument: false,
+            fault: None,
+            state: Some(vec![128]),
+        }],
+    )
+    .expect("playback");
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut heard = vec![0.0; 64];
+    let mut silent = vec![0.0; 64];
+    audio.render(&mut heard, &mut silent);
+    let expected = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        (heard[32] - expected).abs() < 1.0e-3,
+        "{} != {expected}",
+        heard[32]
+    );
+    assert!(!control.status().failed);
+}
+
+#[test]
+fn audit_pro02_declared_ports_are_what_process_sees() {
+    let path = plugin_dylib();
+    let mut mono = spawn_declared("dev.echode.test-mono").expect("mono");
+    assert_eq!(mono.layout().input_channels, 0);
+    assert_eq!(mono.layout().output_channels, 1);
+    assert_eq!(mono.input_ports(), &[] as &[u32]);
+    assert_eq!(mono.output_ports(), &[1]);
+    let mut mono_out = vec![-1.0; 64];
+    mono.process(&[], &mut [&mut mono_out], Duration::from_secs(2))
+        .expect("mono process");
+    assert!((mono_out[0] - 0.25).abs() < 1.0e-4);
+
+    let mut ports = spawn_declared("dev.echode.test-ports").expect("ports");
+    assert_eq!(ports.input_ports(), &[2]);
+    assert_eq!(ports.output_ports(), &[2, 1]);
+    let input = vec![0.25; 64];
+    let mut left = vec![0.0; 64];
+    let mut right = vec![0.0; 64];
+    let mut extra = vec![0.0; 64];
+    ports
+        .process(
+            &[&input, &input],
+            &mut [&mut left, &mut right, &mut extra],
+            Duration::from_secs(2),
+        )
+        .expect("ports process");
+    assert!((left[0] - 0.5).abs() < 1.0e-4);
+    assert!((right[0] - 0.5).abs() < 1.0e-4);
+    assert!((extra[0] - 0.125).abs() < 1.0e-4);
+
+    let Err(rejected) = spawn_declared("dev.echode.test-noports") else {
+        panic!("a plugin without audio ports was accepted");
+    };
+    assert!(rejected.to_string().contains("audio port"), "{rejected}");
+
+    let mut flip = spawn_declared("dev.echode.test-zflip").expect("flip");
+    assert_eq!(flip.layout().input_channels, 2);
+    assert_eq!(flip.layout().output_channels, 2);
+    let mut flip_left = vec![0.0; 64];
+    let mut flip_right = vec![0.0; 64];
+    flip.process(
+        &[&input, &input],
+        &mut [&mut flip_left, &mut flip_right],
+        Duration::from_secs(2),
+    )
+    .expect("stereo flip");
+    assert!((flip_left[0] - 0.5).abs() < 1.0e-4);
+    let flag = std::env::temp_dir().join("echode-pro02-port-flip");
+    std::fs::write(&flag, b"mono").expect("flag");
+    flip.restart().expect("restart");
+    assert_eq!(flip.layout().input_channels, 0);
+    assert_eq!(flip.layout().output_channels, 1);
+    let mut flipped = vec![0.0; 64];
+    flip.process(&[], &mut [&mut flipped], Duration::from_secs(2))
+        .expect("mono flip");
+    assert!((flipped[0] - 0.25).abs() < 1.0e-4);
+    let _ = std::fs::remove_file(&flag);
+
+    let (project, track) = Project::new().add_track("mono");
+    let project = project
+        .add_clap_device(track, Id::from_raw(70), "dev.echode.test-mono")
+        .unwrap();
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        64,
+        &host_bin(),
+        &[PluginRoute {
+            clap_id: "dev.echode.test-mono".into(),
+            path,
+            instrument: true,
+            fault: None,
+            state: None,
+        }],
+    )
+    .unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut heard = vec![0.0; 64];
+    let mut right = vec![0.0; 64];
+    audio.render(&mut heard, &mut right);
+    let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        (heard[32] - expected).abs() < 1.0e-3,
+        "{} != {expected}",
+        heard[32]
+    );
+    assert!(!control.status().failed);
+
+    let (project, track) = Project::new().add_track("rejected");
+    let project = project
+        .add_clap_device(track, Id::from_raw(71), "dev.echode.test-noports")
+        .unwrap();
+    let Err(error) = playback_with_plugins(
+        &project,
+        48_000,
+        64,
+        &host_bin(),
+        &[PluginRoute {
+            clap_id: "dev.echode.test-noports".into(),
+            path: plugin_dylib(),
+            instrument: false,
+            fault: None,
+            state: None,
+        }],
+    ) else {
+        panic!("playback accepted a plugin without audio ports");
+    };
+    assert!(error.to_string().contains("audio port"), "{error}");
 }

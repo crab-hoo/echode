@@ -48,6 +48,7 @@ pub(crate) struct TransportSetup {
     pub(crate) loop_ticks: Option<(i64, i64)>,
     pub(crate) metronome: bool,
     pub(crate) clips: ClipLoader,
+    pub(crate) package: Option<std::path::PathBuf>,
 }
 
 impl TransportSetup {
@@ -56,6 +57,7 @@ impl TransportSetup {
             loop_ticks: None,
             metronome: false,
             clips: Arc::new(|_project, _rate| Ok(Vec::new())),
+            package: None,
         }
     }
 }
@@ -65,6 +67,7 @@ pub struct OutputStream {
     control: PlaybackControl,
     callback: Option<Box<Callback>>,
     proc: AudioDeviceIOProcID,
+    package: Option<std::path::PathBuf>,
 }
 
 impl OutputStream {
@@ -121,7 +124,12 @@ impl OutputStream {
         let sample = tick_to_sample(Tick::new(tick), project.tempo(), device.sample_rate)
             .ok_or("playback time overflow")?;
         let frames = device.buffer_frames as usize;
-        let (mut control, player) = open_playback(project, device.sample_rate, frames)?;
+        let (mut control, player) = open_playback(
+            project,
+            device.sample_rate,
+            frames,
+            transport.package.as_deref(),
+        )?;
         control.set_clip_loader(transport.clips);
         control
             .replace(project)
@@ -172,6 +180,7 @@ impl OutputStream {
             control,
             callback: Some(callback),
             proc,
+            package: transport.package.clone(),
         };
         let status = unsafe { AudioDeviceStart(value.device.id, value.proc) };
         if status != 0 {
@@ -182,7 +191,8 @@ impl OutputStream {
 
     pub fn replace(&mut self, project: &Project) -> Result<(), String> {
         if let Some(host) = echode_plugin_host::host_binary() {
-            self.control.set_routes(&host, &plugin_routes(project));
+            self.control
+                .set_routes(&host, &plugin_routes(project, self.package.as_deref())?);
         }
         self.control
             .replace(project)
@@ -284,8 +294,14 @@ impl Drop for OutputStream {
     }
 }
 
-fn plugin_routes(project: &Project) -> Vec<PluginRoute> {
-    installed_plugin_routes(project)
+fn plugin_routes(
+    project: &Project,
+    package: Option<&std::path::Path>,
+) -> Result<Vec<PluginRoute>, String> {
+    match package {
+        Some(package) => routes_with_saved_state(project, package),
+        None => Ok(installed_plugin_routes(project)),
+    }
 }
 
 /// CLAP ids in the order devices first name them. A repeated id is listed once.
@@ -317,17 +333,56 @@ pub fn installed_plugin_routes(project: &Project) -> Vec<PluginRoute> {
             path: plugin.path,
             instrument: plugin.instrument,
             fault: None,
+            state: None,
         })
         .collect()
+}
+
+/// One route per CLAP device, in project order, with saved bytes when the device names them.
+///
+/// A hash whose object is missing or does not match is an error. Devices that share a
+/// plugin id keep separate bytes so a later device does not reuse the first one's state.
+pub fn routes_with_saved_state(
+    project: &Project,
+    package: &std::path::Path,
+) -> Result<Vec<PluginRoute>, String> {
+    let installed = installed_plugin_routes(project);
+    let mut routes = Vec::new();
+    for track in project.tracks() {
+        for device in &track.devices {
+            let Some(id) = device.plugin.as_deref() else {
+                continue;
+            };
+            let Some(found) = installed.iter().find(|route| route.clap_id == id) else {
+                continue;
+            };
+            let mut route = found.clone();
+            if let Some(hash) = &device.state {
+                route.state = Some(
+                    echode_history::read_object(package, hash)
+                        .map_err(|error| error.to_string())?,
+                );
+            }
+            routes.push(route);
+        }
+    }
+    Ok(routes)
 }
 
 fn open_playback(
     project: &Project,
     sample_rate: u32,
     frames: usize,
+    package: Option<&std::path::Path>,
 ) -> Result<(PlaybackControl, PlaybackAudio), String> {
     if let Some(host) = echode_plugin_host::host_binary() {
-        playback_with_plugins(project, sample_rate, frames, &host, &plugin_routes(project))
+        playback_with_plugins(
+            project,
+            sample_rate,
+            frames,
+            &host,
+            &plugin_routes(project, package)?,
+        )
     } else {
         playback_pair(project, sample_rate, frames)
     }

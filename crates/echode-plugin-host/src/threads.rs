@@ -7,7 +7,18 @@
 use crate::events::write_input;
 use crate::{HostError, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
+use clack_host::extensions::prelude::{
+    Extension, ExtensionImplementation, HostExtensionSide, HostWrapper, RawExtension,
+    RawExtensionImplementation,
+};
 use clack_host::prelude::*;
+use clap_sys::ext::audio_ports::{
+    CLAP_EXT_AUDIO_PORTS, clap_audio_port_info, clap_plugin_audio_ports,
+};
+use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
+use clap_sys::host::clap_host;
+use clap_sys::plugin::clap_plugin;
+use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
     CMD_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn, MappedRegion, RegionError, Socket, SyncFlags,
@@ -17,8 +28,9 @@ use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
     kCFRunLoopDefaultMode,
 };
-use std::cell::Cell;
-use std::ffi::c_void;
+use std::cell::{Cell, UnsafeCell};
+use std::ffi::{CStr, c_void};
+use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
 use std::ptr;
 use std::sync::Arc;
@@ -27,9 +39,95 @@ use std::thread::{self, ThreadId};
 
 const OP_RESTART: u8 = 1;
 const OP_ARM: u8 = 2;
+const STATE_SAVE: u8 = 1;
+const STATE_LOAD: u8 = 2;
+
+const HANDOFF_EMPTY: u8 = 0;
+const HANDOFF_FULL: u8 = 1;
+const HANDOFF_BUSY: u8 = 2;
 
 thread_local! {
     static INSTANCE: Cell<*mut PluginInstance<EchodeHost>> = const { Cell::new(ptr::null_mut()) };
+    /// Set for the whole processing thread, including restarts between blocks.
+    static ON_AUDIO: Cell<bool> = const { Cell::new(false) };
+}
+
+struct AudioFlag;
+
+impl AudioFlag {
+    fn enter() -> Self {
+        ON_AUDIO.with(|flag| flag.set(true));
+        Self
+    }
+}
+
+impl Drop for AudioFlag {
+    fn drop(&mut self) {
+        ON_AUDIO.with(|flag| flag.set(false));
+    }
+}
+
+/// One stopped processor, handed between the main thread and the audio thread
+/// without allocating. `state` is empty, full, or busy.
+struct ProcessorHandoff {
+    state: AtomicU8,
+    slot: UnsafeCell<MaybeUninit<StoppedPluginAudioProcessor<EchodeHost>>>,
+}
+
+impl ProcessorHandoff {
+    fn empty() -> Self {
+        Self {
+            state: AtomicU8::new(HANDOFF_EMPTY),
+            slot: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.state.load(Ordering::Acquire) == HANDOFF_EMPTY
+    }
+
+    /// Stores `stopped` when the slot is empty.
+    /// On failure the caller still owns `stopped`.
+    fn try_store(
+        &self,
+        stopped: StoppedPluginAudioProcessor<EchodeHost>,
+    ) -> Result<(), StoppedPluginAudioProcessor<EchodeHost>> {
+        if self
+            .state
+            .compare_exchange(
+                HANDOFF_EMPTY,
+                HANDOFF_BUSY,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return Err(stopped);
+        }
+        // SAFETY: BUSY means this thread owns the slot until it publishes FULL.
+        unsafe { (*self.slot.get()).write(stopped) };
+        self.state.store(HANDOFF_FULL, Ordering::Release);
+        Ok(())
+    }
+
+    fn try_take(&self) -> Option<StoppedPluginAudioProcessor<EchodeHost>> {
+        if self
+            .state
+            .compare_exchange(
+                HANDOFF_FULL,
+                HANDOFF_BUSY,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return None;
+        }
+        // SAFETY: BUSY means this thread owns the initialized slot until EMPTY.
+        let stopped = unsafe { (*self.slot.get()).assume_init_read() };
+        self.state.store(HANDOFF_EMPTY, Ordering::Release);
+        Some(stopped)
+    }
 }
 
 struct Bridge {
@@ -38,6 +136,10 @@ struct Bridge {
     current: AtomicPtr<MappedRegion>,
     pending: AtomicPtr<MappedRegion>,
     retired: AtomicPtr<MappedRegion>,
+    pending_buffers: AtomicPtr<PluginBuffers>,
+    retired_buffers: AtomicPtr<PluginBuffers>,
+    /// The processing thread has allocated its first buffers and can adopt replacements.
+    buffers_live: AtomicBool,
     switched: AtomicU64,
     map_lock: AtomicBool,
     restart_request: AtomicU64,
@@ -51,7 +153,7 @@ struct Bridge {
     main_done: AtomicU64,
     restart_for_main: AtomicU64,
     op: AtomicU8,
-    slot: AtomicPtr<StoppedPluginAudioProcessor<EchodeHost>>,
+    processor: ProcessorHandoff,
     callback_gen: AtomicU64,
     callback_seen: AtomicU64,
     process_note: AtomicBool,
@@ -59,6 +161,16 @@ struct Bridge {
     fan: AtomicPtr<FanIn>,
     sample_bits: AtomicU64,
     activation_frames: AtomicU32,
+    /// Port channel counts, published before the worker threads start.
+    ports: AtomicPtr<PortShape>,
+    /// 0 idle, [`STATE_SAVE`], or [`STATE_LOAD`]. The main thread clears it.
+    state_kind: AtomicU8,
+    state_gen: AtomicU64,
+    state_done: AtomicU64,
+    /// Bytes to load, or the bytes save produced. Not touched by the audio thread.
+    state_bytes: std::sync::Mutex<Vec<u8>>,
+    state_error: std::sync::Mutex<Option<String>>,
+    plugin_dirty: AtomicBool,
     // Read after `serve` returns, from the unit test.
     #[allow(dead_code)]
     main_id: std::sync::Mutex<Option<ThreadId>>,
@@ -70,7 +182,8 @@ struct Bridge {
 
 // SAFETY: the CoreFoundation pointers stay valid until both worker threads have
 // been joined. Mapping pointers are swapped under `map_lock`, and the previous
-// mapping is freed only after the processing thread has left it.
+// mapping is freed only after the processing thread has left it. The stopped
+// processor slot is published through `processor.state`, not by aliasing.
 unsafe impl Send for Bridge {}
 unsafe impl Sync for Bridge {}
 
@@ -97,11 +210,29 @@ impl Bridge {
         }
     }
 
+    /// One attempt. The processing thread must not wait out a holder.
+    fn try_lock_map(&self) -> bool {
+        self.map_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
     fn unlock_map(&self) {
         self.map_lock.store(false, Ordering::Release);
     }
 
     fn bump_audio(&self) {
+        // The processing thread is not waiting on this alarm. Waking would be
+        // a syscall inside the realtime section, and the next loop reads it.
+        if ON_AUDIO.with(|flag| flag.get()) {
+            let region = self.current.load(Ordering::Acquire);
+            if !region.is_null() {
+                // SAFETY: this thread is the only one that retires `current`.
+                // It does not retire the mapping it is processing.
+                unsafe { (*region).raise_alarm() };
+            }
+            return;
+        }
         self.lock_map();
         let region = self.current.load(Ordering::Acquire);
         if !region.is_null() {
@@ -139,6 +270,7 @@ impl Bridge {
                 }
             });
         }
+        self.service_state();
         match self.op.swap(0, Ordering::AcqRel) {
             OP_RESTART => self.restart_on_main(),
             OP_ARM => self.arm_on_main(),
@@ -154,14 +286,14 @@ impl Bridge {
                 return;
             }
             let instance = unsafe { &mut *instance };
-            if let Some(stopped) = take_stopped(&self.slot) {
+            if let Some(stopped) = self.processor.try_take() {
                 instance.deactivate(stopped);
                 match activate(
                     instance,
                     f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
                     self.activation_frames.load(Ordering::Acquire),
                 ) {
-                    Ok(stopped) => publish_stopped(&self.slot, stopped),
+                    Ok(stopped) => publish_stopped(&self.processor, stopped, false),
                     Err(error) => {
                         eprintln!("echode-plugin-host: activate after restart failed: {error}");
                         self.stop.store(true, Ordering::Release);
@@ -182,13 +314,13 @@ impl Bridge {
                 return;
             }
             let instance = unsafe { &mut *instance };
-            if self.slot.load(Ordering::Acquire).is_null() {
+            if self.processor.is_empty() {
                 match activate(
                     instance,
                     f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
                     self.activation_frames.load(Ordering::Acquire),
                 ) {
-                    Ok(stopped) => publish_stopped(&self.slot, stopped),
+                    Ok(stopped) => publish_stopped(&self.processor, stopped, false),
                     Err(error) => {
                         eprintln!("echode-plugin-host: activate failed: {error}");
                         self.stop.store(true, Ordering::Release);
@@ -199,6 +331,35 @@ impl Bridge {
         self.need_start.store(true, Ordering::Release);
         self.bump_audio();
         self.bump_control();
+    }
+
+    /// Runs a queued CLAP state save or load. The audio thread never calls this.
+    fn service_state(&self) {
+        let kind = self.state_kind.swap(0, Ordering::AcqRel);
+        if kind == 0 {
+            return;
+        }
+        let generation = self.state_gen.load(Ordering::Acquire);
+        let result = perform_plugin_state(self, kind);
+        match result {
+            Ok(bytes) => {
+                *self
+                    .state_bytes
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = bytes;
+                *self
+                    .state_error
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = None;
+            }
+            Err(error) => {
+                *self
+                    .state_error
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner()) = Some(error);
+            }
+        }
+        self.state_done.store(generation, Ordering::Release);
     }
 }
 
@@ -242,10 +403,76 @@ impl SharedHandler<'_> for HostShared {
 
 pub(crate) struct EchodeHost;
 
+pub(crate) struct HostMain<'a> {
+    bridge: Option<Arc<Bridge>>,
+    _lifetime: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> MainThreadHandler<'a> for HostMain<'a> {}
+
+pub(crate) fn host_main(shared: &HostShared) -> HostMain<'_> {
+    HostMain {
+        bridge: shared.bridge.clone(),
+        _lifetime: std::marker::PhantomData,
+    }
+}
+
+trait MarkDirty {
+    fn mark_dirty(&self);
+}
+
+impl MarkDirty for HostMain<'_> {
+    fn mark_dirty(&self) {
+        let Some(bridge) = &self.bridge else {
+            return;
+        };
+        bridge.plugin_dirty.store(true, Ordering::Release);
+        bridge.bump_control();
+    }
+}
+
+#[derive(Copy, Clone)]
+struct HostState;
+
+unsafe impl Extension for HostState {
+    const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_STATE];
+    type ExtensionSide = HostExtensionSide;
+
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+unsafe impl<H> ExtensionImplementation<H> for HostState
+where
+    H: for<'a> HostHandlers<MainThread<'a>: MarkDirty>,
+{
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_host_state {
+            mark_dirty: Some(host_mark_dirty::<H>),
+        });
+}
+
+unsafe extern "C" fn host_mark_dirty<H>(host: *const clap_host)
+where
+    H: for<'a> HostHandlers<MainThread<'a>: MarkDirty>,
+{
+    unsafe {
+        HostWrapper::<H>::handle_main_thread(host, |host| {
+            host.mark_dirty();
+            Ok(())
+        });
+    }
+}
+
 impl HostHandlers for EchodeHost {
     type Shared<'a> = HostShared;
-    type MainThread<'a> = ();
+    type MainThread<'a> = HostMain<'a>;
     type AudioProcessor<'a> = ();
+
+    fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
+        builder.register::<HostState>();
+    }
 }
 
 #[cfg(test)]
@@ -315,7 +542,7 @@ pub fn serve_fds(
 
 fn serve_region(
     region: MappedRegion,
-    control: Option<Socket>,
+    mut control: Option<Socket>,
     fan: Option<FanIn>,
     plugin: Option<&std::path::Path>,
     plugin_id: Option<&str>,
@@ -331,6 +558,9 @@ fn serve_region(
         current: AtomicPtr::new(region),
         pending: AtomicPtr::new(ptr::null_mut()),
         retired: AtomicPtr::new(ptr::null_mut()),
+        pending_buffers: AtomicPtr::new(ptr::null_mut()),
+        retired_buffers: AtomicPtr::new(ptr::null_mut()),
+        buffers_live: AtomicBool::new(false),
         switched: AtomicU64::new(0),
         map_lock: AtomicBool::new(false),
         restart_request: AtomicU64::new(0),
@@ -344,7 +574,7 @@ fn serve_region(
         main_done: AtomicU64::new(0),
         restart_for_main: AtomicU64::new(0),
         op: AtomicU8::new(0),
-        slot: AtomicPtr::new(ptr::null_mut()),
+        processor: ProcessorHandoff::empty(),
         callback_gen: AtomicU64::new(0),
         callback_seen: AtomicU64::new(0),
         process_note: AtomicBool::new(false),
@@ -352,6 +582,13 @@ fn serve_region(
         fan: AtomicPtr::new(fan.unwrap_or(ptr::null_mut())),
         sample_bits: AtomicU64::new(sample_rate.to_bits()),
         activation_frames: AtomicU32::new(max_frames.max(1)),
+        ports: AtomicPtr::new(ptr::null_mut()),
+        state_kind: AtomicU8::new(0),
+        state_gen: AtomicU64::new(0),
+        state_done: AtomicU64::new(0),
+        state_bytes: std::sync::Mutex::new(Vec::new()),
+        state_error: std::sync::Mutex::new(None),
+        plugin_dirty: AtomicBool::new(false),
         main_id: std::sync::Mutex::new(None),
         audio_id: std::sync::Mutex::new(None),
         callbacks: AtomicU64::new(0),
@@ -388,13 +625,48 @@ fn serve_region(
 
     let mut loaded = match plugin {
         None => None,
-        Some(path) => Some(load_plugin(path, plugin_id, Arc::clone(&bridge))?),
+        Some(path) => match load_plugin(path, plugin_id, Arc::clone(&bridge)) {
+            Ok(plugin) => Some(plugin),
+            Err(error) => {
+                reject_launch(control.as_mut(), &error.to_string());
+                return Err(error);
+            }
+        },
     };
     if let Some(loaded) = loaded.as_mut() {
-        let stopped = activate(&mut loaded.instance, sample_rate, max_frames)?;
-        publish_stopped(&bridge.slot, stopped);
-        bridge.need_start.store(true, Ordering::Release);
-        INSTANCE.with(|cell| cell.set(ptr::from_mut(&mut loaded.instance)));
+        // The plugin is still inactive. Audio ports are only valid to read here,
+        // on the main thread, before activate.
+        let shape = match query_audio_ports(&loaded.instance) {
+            Ok(shape) => shape,
+            Err(error) => PortShape {
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                error: Some(error),
+            },
+        };
+        let rejected = shape.error.clone();
+        bridge
+            .ports
+            .store(Box::into_raw(Box::new(shape)), Ordering::Release);
+        if let Some(error) = rejected {
+            // Tell the parent before any worker starts. A worker that exits
+            // first can close the socket and drop this reason.
+            if let Some(socket) = control.as_mut() {
+                let _ = socket.send(&ControlMessage::PortsRejected(error));
+            }
+            bridge.stop.store(true, Ordering::Release);
+        } else {
+            let stopped = match activate(&mut loaded.instance, sample_rate, max_frames) {
+                Ok(stopped) => stopped,
+                Err(error) => {
+                    reject_launch(control.as_mut(), &error.to_string());
+                    return Err(error);
+                }
+            };
+            publish_stopped(&bridge.processor, stopped, false);
+            bridge.need_start.store(true, Ordering::Release);
+            INSTANCE.with(|cell| cell.set(ptr::from_mut(&mut loaded.instance)));
+        }
     }
 
     let workgroup = workgroup.map(|(name, ticks)| (name.to_string(), ticks));
@@ -405,6 +677,7 @@ fn serve_region(
             if let Ok(mut slot) = bridge_audio.audio_id.lock() {
                 *slot = Some(thread::current().id());
             }
+            let _audio = AudioFlag::enter();
             audio_thread(&bridge_audio, workgroup.as_ref())
         });
         let control_handle = scope.spawn(|| control_thread(&bridge_control, control));
@@ -421,7 +694,7 @@ fn serve_region(
 
     INSTANCE.with(|cell| cell.set(ptr::null_mut()));
     if let Some(loaded) = loaded.as_mut()
-        && let Some(stopped) = take_stopped(&bridge.slot)
+        && let Some(stopped) = bridge.processor.try_take()
     {
         loaded.instance.deactivate(stopped);
     }
@@ -437,6 +710,10 @@ fn serve_region(
         });
     }
     release_maps(&bridge);
+    let ports = bridge.ports.swap(ptr::null_mut(), Ordering::AcqRel);
+    if !ports.is_null() {
+        drop(unsafe { Box::from_raw(ports) });
+    }
     let fan = bridge.fan.swap(ptr::null_mut(), Ordering::AcqRel);
     if !fan.is_null() {
         drop(unsafe { Box::from_raw(fan) });
@@ -451,9 +728,26 @@ fn release_maps(bridge: &Bridge) {
         bridge.pending.swap(ptr::null_mut(), Ordering::AcqRel),
         bridge.retired.swap(ptr::null_mut(), Ordering::AcqRel),
     ];
+    let buffers = [
+        bridge
+            .pending_buffers
+            .swap(ptr::null_mut(), Ordering::AcqRel),
+        bridge
+            .retired_buffers
+            .swap(ptr::null_mut(), Ordering::AcqRel),
+    ];
     bridge.unlock_map();
     for pointer in maps {
         if !pointer.is_null() {
+            // SAFETY: both worker threads have been joined, so these mappings
+            // are no longer read.
+            drop(unsafe { Box::from_raw(pointer) });
+        }
+    }
+    for pointer in buffers {
+        if !pointer.is_null() {
+            // SAFETY: the processing thread has exited, so it no longer uses
+            // a buffer set stored here.
             drop(unsafe { Box::from_raw(pointer) });
         }
     }
@@ -491,7 +785,7 @@ fn load_plugin(
         move |_| HostShared {
             bridge: Some(Arc::clone(&bridge)),
         },
-        |_| (),
+        host_main,
         &entry,
         plugin_id,
         &host_info,
@@ -521,6 +815,9 @@ fn activate(
 }
 
 fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<(), HostError> {
+    if bridge.stop.load(Ordering::Acquire) {
+        return Ok(());
+    }
     let _membership = match workgroup {
         Some((name, ticks)) => {
             Some(echode_sandbox::join_passed_workgroup(name, *ticks).map_err(HostError::Plugin)?)
@@ -532,15 +829,16 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
         bridge.stop.store(true, Ordering::Release);
         bridge.bump_control();
         stop_loop(bridge);
+        return Err(explain(error));
+    }
+    if let Err(error) = wait_for_layout(bridge) {
+        bridge.stop.store(true, Ordering::Release);
+        bridge.bump_control();
+        stop_loop(bridge);
         return Err(error);
     }
     bridge.lock_map();
     let initial = bridge.current.load(Ordering::Acquire);
-    if !initial.is_null() {
-        // SAFETY: the initial mapping is installed before this thread starts and
-        // is not replaced until `adopt` runs, which has not yet.
-        unsafe { (*initial).mark_ready() };
-    }
     let mut seen_alarm = if initial.is_null() {
         0
     } else {
@@ -548,16 +846,27 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
     };
     bridge.unlock_map();
     let mut seen_request = 0u64;
-    // Allocated once. `process` reuses them and does not allocate per block.
-    let (channels, frames, event_cap) = {
+    // Allocated once, after the mapping matches the declared ports.
+    // Later blocks reuse this storage and do not allocate.
+    let shape = published_ports(bridge);
+    let (input_counts, output_counts, frames, event_cap) = {
         let region = current_region(bridge);
         (
-            region.input_channels().max(region.output_channels()).max(1),
+            shape.map(|shape| shape.inputs.clone()).unwrap_or_default(),
+            shape.map(|shape| shape.outputs.clone()).unwrap_or_default(),
             region.layout().max_frames as usize,
             region.layout().input_events as usize,
         )
     };
-    let mut buffers = PluginBuffers::allocate(channels, frames.max(1), event_cap.max(1));
+    let mut buffers = Box::new(PluginBuffers::allocate(
+        &input_counts,
+        &output_counts,
+        frames.max(1),
+        event_cap.max(1),
+    ));
+    bridge.buffers_live.store(true, Ordering::Release);
+    // `sigaction` is a syscall. Install it before the realtime section.
+    echode_sandbox::arm_abort_notice(current_region(bridge));
     let result = audio_loop(
         bridge,
         &mut started,
@@ -568,7 +877,7 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
     if let Some(active) = started.take() {
         let stopped = active.stop_processing();
         bridge.holds_started.store(false, Ordering::Release);
-        publish_stopped(&bridge.slot, stopped);
+        publish_stopped(&bridge.processor, stopped, false);
     }
     bridge.stop.store(true, Ordering::Release);
     bridge.bump_control();
@@ -581,19 +890,33 @@ struct PluginBuffers {
     output_ports: AudioPorts,
     input: Vec<Vec<f32>>,
     output: Vec<Vec<f32>>,
+    input_counts: Vec<u32>,
+    output_counts: Vec<u32>,
+    input_offsets: Vec<usize>,
+    output_offsets: Vec<usize>,
+    input_ptrs: Vec<*mut f32>,
+    output_ptrs: Vec<*mut f32>,
     events: EventBuffer,
     decoded: Vec<Event>,
 }
 
 impl PluginBuffers {
-    /// Sized once from the session. Later blocks reuse this storage.
-    fn allocate(channels: usize, frames: usize, events: usize) -> Self {
+    /// Sized once from the declared ports. Later blocks reuse this storage.
+    fn allocate(inputs: &[u32], outputs: &[u32], frames: usize, events: usize) -> Self {
+        let input_channels = inputs.iter().map(|count| *count as usize).sum();
+        let output_channels = outputs.iter().map(|count| *count as usize).sum();
         Self {
-            input_ports: AudioPorts::with_capacity(channels, 1),
-            output_ports: AudioPorts::with_capacity(channels, 1),
-            input: vec![vec![0.0; frames]; channels],
-            output: vec![vec![0.0; frames]; channels],
-            events: EventBuffer::new(),
+            input_ports: AudioPorts::with_capacity(input_channels, inputs.len().max(1)),
+            output_ports: AudioPorts::with_capacity(output_channels, outputs.len().max(1)),
+            input: vec![vec![0.0; frames]; input_channels],
+            output: vec![vec![0.0; frames]; output_channels],
+            input_counts: inputs.to_vec(),
+            output_counts: outputs.to_vec(),
+            input_offsets: channel_offsets(inputs),
+            output_offsets: channel_offsets(outputs),
+            input_ptrs: vec![ptr::null_mut(); input_channels],
+            output_ptrs: vec![ptr::null_mut(); output_channels],
+            events: EventBuffer::with_capacity(events),
             decoded: Vec::with_capacity(events),
         }
     }
@@ -609,78 +932,127 @@ impl PluginBuffers {
     }
 }
 
+enum Step {
+    Again,
+    Wait,
+    Stop,
+}
+
+enum RtFail {
+    Region(RegionError),
+    Process,
+    Start,
+    Command(u32),
+}
+
+impl From<RegionError> for RtFail {
+    fn from(error: RegionError) -> Self {
+        Self::Region(error)
+    }
+}
+
+fn explain(error: RtFail) -> HostError {
+    match error {
+        RtFail::Region(error) => HostError::Region(error),
+        RtFail::Process => HostError::Plugin("process refused".to_string()),
+        RtFail::Start => HostError::Plugin("plugin refused to start processing".to_string()),
+        RtFail::Command(command) => HostError::Region(RegionError::UnknownCommand(command)),
+    }
+}
+
 fn audio_loop(
+    bridge: &Bridge,
+    started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>,
+    buffers: &mut Box<PluginBuffers>,
+    seen_request: &mut u64,
+    seen_alarm: &mut u64,
+) -> Result<(), HostError> {
+    loop {
+        if adopt(bridge, Some(buffers)) {
+            *seen_request = 0;
+            *seen_alarm = current_region(bridge).alarm();
+        } else if handoff_pending(bridge) {
+            // The control thread holds the map lock only to swap pointers.
+            // Yielding lets it finish. Waiting here would miss the swap.
+            std::thread::yield_now();
+            continue;
+        }
+        echode_sandbox::point_abort_notice(current_region(bridge));
+        if bridge.stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        match service_block(bridge, started, buffers, seen_request, seen_alarm) {
+            Ok(Step::Again) => continue,
+            Ok(Step::Stop) => return Ok(()),
+            Ok(Step::Wait) => {
+                *seen_alarm = current_region(bridge).wait_alarm(*seen_alarm)?;
+            }
+            Err(error) => return Err(explain(error)),
+        }
+    }
+}
+
+/// One realtime step: restart handoff, then at most one block.
+/// Allocation and `wait_alarm` stay outside this function.
+#[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
+fn service_block(
     bridge: &Bridge,
     started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>,
     buffers: &mut PluginBuffers,
     seen_request: &mut u64,
     seen_alarm: &mut u64,
-) -> Result<(), HostError> {
-    loop {
-        if adopt(bridge) {
-            *seen_request = 0;
-            *seen_alarm = current_region(bridge).alarm();
-        }
-        if bridge.stop.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        pump(bridge, started)?;
-        let region = current_region(bridge);
-        let published = region.published();
-        if published > *seen_request {
-            let generation = *seen_request + 1;
-            let command = region.block_command(generation);
-            if command == CMD_SHUTDOWN {
-                region.finish(generation);
-                bridge.bump_fan();
-                return Ok(());
-            }
-            if command != CMD_PROCESS {
-                return Err(HostError::Region(RegionError::UnknownCommand(command)));
-            }
-            let frames = region.prepare_block(generation)?;
-            // The parent grew the mapping on its control thread. Reserve here,
-            // before this block is read, so a longer note list is not truncated.
-            // Later blocks reuse the same allocation.
-            let needed = region.layout().input_events as usize;
-            if buffers.decoded.capacity() < needed {
-                buffers
-                    .decoded
-                    .reserve(needed.saturating_sub(buffers.decoded.capacity()));
-            }
-            let inputs = region.input_channels();
-            let outputs = region.output_channels();
-            let stages = bridge.stages.load(Ordering::Acquire).max(1);
-            let fits = buffers.fits(inputs, outputs, frames);
-            if bridge.has_plugin.load(Ordering::Acquire) && fits {
-                if let Some(active) = started.as_mut() {
-                    for stage in 0..stages {
-                        if stage > 0 {
-                            region.feed_output_to_input(generation)?;
-                        }
-                        render_plugin(region, generation, active, frames, buffers)?;
-                    }
-                } else {
-                    region.silence_outputs(generation)?;
-                }
-            } else if bridge.has_plugin.load(Ordering::Acquire) {
-                region.silence_outputs(generation)?;
-            } else {
-                region.copy_inputs_to_outputs(generation)?;
-            }
-            region.echo_routed(generation, stages);
+) -> Result<Step, RtFail> {
+    let _guard = crate::realtime::ForbidAlloc::enter();
+    pump(bridge, started)?;
+    let region = current_region(bridge);
+    let published = region.published();
+    if published > *seen_request {
+        let generation = *seen_request + 1;
+        let command = region.block_command(generation);
+        if command == CMD_SHUTDOWN {
             region.finish(generation);
             bridge.bump_fan();
-            *seen_request = generation;
-            continue;
+            return Ok(Step::Stop);
         }
-        let alarm = region.alarm();
-        if alarm != *seen_alarm {
-            *seen_alarm = alarm;
-            continue;
+        if command != CMD_PROCESS {
+            return Err(RtFail::Command(command));
         }
-        *seen_alarm = region.wait_alarm(*seen_alarm)?;
+        let frames = region.prepare_block(generation)?;
+        let inputs = region.input_channels();
+        let outputs = region.output_channels();
+        let stages = bridge.stages.load(Ordering::Acquire).max(1);
+        let fits = buffers.fits(inputs, outputs, frames);
+        if bridge.has_plugin.load(Ordering::Acquire) && fits {
+            if let Some(active) = started.as_mut() {
+                for stage in 0..stages {
+                    if stage > 0 {
+                        region.feed_output_to_input(generation)?;
+                    }
+                    if render_plugin(region, generation, active, frames, buffers).is_err() {
+                        region.mark_process_refused();
+                        return Err(RtFail::Process);
+                    }
+                }
+            } else {
+                region.silence_outputs(generation)?;
+            }
+        } else if bridge.has_plugin.load(Ordering::Acquire) {
+            region.silence_outputs(generation)?;
+        } else {
+            region.copy_inputs_to_outputs(generation)?;
+        }
+        region.echo_routed(generation, stages);
+        region.finish(generation);
+        bridge.bump_fan();
+        *seen_request = generation;
+        return Ok(Step::Again);
     }
+    let alarm = region.alarm();
+    if alarm != *seen_alarm {
+        *seen_alarm = alarm;
+        return Ok(Step::Again);
+    }
+    Ok(Step::Wait)
 }
 
 fn current_region(bridge: &Bridge) -> &MappedRegion {
@@ -690,40 +1062,79 @@ fn current_region(bridge: &Bridge) -> &MappedRegion {
     unsafe { &*pointer }
 }
 
-fn adopt(bridge: &Bridge) -> bool {
-    bridge.lock_map();
+fn handoff_pending(bridge: &Bridge) -> bool {
+    !bridge.pending.load(Ordering::Acquire).is_null()
+        || !bridge.pending_buffers.load(Ordering::Acquire).is_null()
+}
+
+fn adopt(bridge: &Bridge, buffers: Option<&mut Box<PluginBuffers>>) -> bool {
+    if !handoff_pending(bridge) {
+        return false;
+    }
+    if !bridge.try_lock_map() {
+        return false;
+    }
     let pending = bridge.pending.swap(ptr::null_mut(), Ordering::AcqRel);
-    if pending.is_null() {
+    let pending_buffers = bridge
+        .pending_buffers
+        .swap(ptr::null_mut(), Ordering::AcqRel);
+    if pending.is_null() && pending_buffers.is_null() {
         bridge.unlock_map();
         return false;
     }
-    let old = bridge.current.swap(pending, Ordering::AcqRel);
-    let leftover = bridge.retired.swap(old, Ordering::AcqRel);
+    let retired_busy = !bridge.retired.load(Ordering::Acquire).is_null()
+        || !bridge.retired_buffers.load(Ordering::Acquire).is_null();
+    if retired_busy || (!pending_buffers.is_null() && buffers.is_none()) {
+        // The control thread still owns the previous set, or this thread has
+        // not allocated buffers yet. Put the new set back. Do not free it here.
+        if !pending.is_null() {
+            bridge.pending.store(pending, Ordering::Release);
+        }
+        if !pending_buffers.is_null() {
+            bridge
+                .pending_buffers
+                .store(pending_buffers, Ordering::Release);
+        }
+        bridge.unlock_map();
+        return false;
+    }
+    if !pending.is_null() {
+        let old = bridge.current.swap(pending, Ordering::AcqRel);
+        bridge.retired.store(old, Ordering::Release);
+        // SAFETY: `pending` is the mapping just published by the control thread.
+        echode_sandbox::point_abort_notice(unsafe { &*pending });
+    }
+    if let (Some(buffers), false) = (buffers, pending_buffers.is_null()) {
+        // SAFETY: the control thread allocated this set and will not read it
+        // again. The previous set is retired for that thread to free.
+        let replacement = unsafe { Box::from_raw(pending_buffers) };
+        let previous = std::mem::replace(buffers, replacement);
+        bridge
+            .retired_buffers
+            .store(Box::into_raw(previous), Ordering::Release);
+    }
     bridge.switched.fetch_add(1, Ordering::Release);
     bridge.unlock_map();
     bridge.bump_control();
-    if !leftover.is_null() {
-        drop(unsafe { Box::from_raw(leftover) });
-    }
     true
 }
 
 fn pump(
     bridge: &Bridge,
     started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>,
-) -> Result<(), HostError> {
+) -> Result<(), RtFail> {
     let want = bridge.restart_request.load(Ordering::Acquire);
     let acked = bridge.restart_ack.load(Ordering::Acquire);
     if want != acked {
         if let Some(active) = started.take() {
             let stopped = active.stop_processing();
-            publish_stopped(&bridge.slot, stopped);
+            publish_stopped(&bridge.processor, stopped, true);
             bridge.holds_started.store(false, Ordering::Release);
         }
         bridge.restart_ack.store(want, Ordering::Release);
         bridge.bump_control();
     } else if bridge.need_start.swap(false, Ordering::AcqRel)
-        && let Some(stopped) = take_stopped(&bridge.slot)
+        && let Some(stopped) = bridge.processor.try_take()
     {
         match stopped.start_processing() {
             Ok(active) => {
@@ -731,16 +1142,14 @@ fn pump(
                 bridge.holds_started.store(true, Ordering::Release);
             }
             Err(error) => {
-                publish_stopped(&bridge.slot, error.into_stopped_processor());
+                publish_stopped(&bridge.processor, error.into_stopped_processor(), true);
                 bridge.stop.store(true, Ordering::Release);
-                return Err(HostError::Plugin(
-                    "plugin refused to start processing".to_string(),
-                ));
+                return Err(RtFail::Start);
             }
         }
     }
     if bridge.want_process.swap(false, Ordering::AcqRel) && started.is_none() {
-        if bridge.slot.load(Ordering::Acquire).is_null() {
+        if bridge.processor.is_empty() {
             bridge.op.store(OP_ARM, Ordering::Release);
             bridge.signal();
         } else {
@@ -751,6 +1160,34 @@ fn pump(
 }
 
 fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), HostError> {
+    if bridge.stop.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    if let Some(socket) = socket.as_mut()
+        && bridge.has_plugin.load(Ordering::Acquire)
+        && let Some(shape) = published_ports(bridge)
+    {
+        let message = if let Some(error) = &shape.error {
+            ControlMessage::PortsRejected(error.clone())
+        } else {
+            ControlMessage::Ports {
+                inputs: shape.inputs.clone(),
+                outputs: shape.outputs.clone(),
+            }
+        };
+        if socket.send(&message).is_err() {
+            bridge.stop.store(true, Ordering::Release);
+            bridge.bump_audio();
+            stop_loop(bridge);
+            return Ok(());
+        }
+        if shape.error.is_some() {
+            bridge.stop.store(true, Ordering::Release);
+            bridge.bump_audio();
+            stop_loop(bridge);
+            return Ok(());
+        }
+    }
     if std::env::var("ECHODE_TEST_FAULT").as_deref() == Ok("restart-idle") {
         thread::sleep(std::time::Duration::from_millis(30));
         bridge.restart_request.fetch_add(1, Ordering::Release);
@@ -761,7 +1198,6 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
     {
         let _ = socket.send(&ControlMessage::Dirty);
     }
-    let mut saved = Vec::new();
     let mut seen = 0u64;
     let mut restarted = 0u64;
     loop {
@@ -797,6 +1233,11 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             restarted = want;
             continue;
         }
+        if bridge.plugin_dirty.swap(false, Ordering::AcqRel)
+            && let Some(socket) = &mut socket
+        {
+            let _ = socket.send(&ControlMessage::Dirty);
+        }
         if bridge.process_note.swap(false, Ordering::AcqRel)
             && let Some(socket) = &mut socket
         {
@@ -805,7 +1246,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
         if let Some(socket) = &mut socket {
             match socket.try_recv() {
                 Ok(Some(message)) => {
-                    if handle_control(bridge, socket, &mut saved, message).is_err() {
+                    if handle_control(bridge, socket, message).is_err() {
                         bridge.stop.store(true, Ordering::Release);
                         bridge.bump_audio();
                         stop_loop(bridge);
@@ -830,19 +1271,25 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
 fn handle_control(
     bridge: &Bridge,
     socket: &mut Socket,
-    saved: &mut Vec<u8>,
     message: ControlMessage,
 ) -> Result<(), HostError> {
     match message {
         ControlMessage::SaveRequest => {
+            let reply = match call_plugin_state(bridge, None) {
+                Ok(bytes) => ControlMessage::State(bytes),
+                Err(error) => ControlMessage::StateRejected(error),
+            };
             socket
-                .send(&ControlMessage::State(saved.clone()))
+                .send(&reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::Restore(bytes) => {
-            *saved = bytes;
+            let reply = match call_plugin_state(bridge, Some(bytes)) {
+                Ok(_) => ControlMessage::Restored,
+                Err(error) => ControlMessage::StateRejected(error),
+            };
             socket
-                .send(&ControlMessage::Restored)
+                .send(&reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::SetChain(stages) => {
@@ -859,8 +1306,14 @@ fn handle_control(
         }
         ControlMessage::Remap { layout, fd } => match MappedRegion::from_fd(fd) {
             Ok(region) if region.layout() == layout => {
+                let buffers = if bridge.buffers_live.load(Ordering::Acquire) {
+                    Box::into_raw(Box::new(buffers_for(bridge, &region)))
+                } else {
+                    ptr::null_mut()
+                };
                 let pointer = Box::into_raw(Box::new(region));
                 let target = bridge.switched.load(Ordering::Acquire) + 1;
+                bridge.pending_buffers.store(buffers, Ordering::Release);
                 bridge.pending.store(pointer, Ordering::Release);
                 bridge.bump_audio();
                 while bridge.switched.load(Ordering::Acquire) < target {
@@ -871,9 +1324,18 @@ fn handle_control(
                 }
                 bridge.lock_map();
                 let old = bridge.retired.swap(ptr::null_mut(), Ordering::AcqRel);
+                let old_buffers = bridge
+                    .retired_buffers
+                    .swap(ptr::null_mut(), Ordering::AcqRel);
                 bridge.unlock_map();
                 if !old.is_null() {
+                    // SAFETY: the processing thread stored this after leaving it.
                     drop(unsafe { Box::from_raw(old) });
+                }
+                if !old_buffers.is_null() {
+                    // SAFETY: the processing thread stored this after swapping
+                    // in the replacement buffers.
+                    drop(unsafe { Box::from_raw(old_buffers) });
                 }
                 socket
                     .send(&ControlMessage::Remapped)
@@ -896,6 +1358,12 @@ fn handle_control(
     Ok(())
 }
 
+fn reject_launch(socket: Option<&mut Socket>, reason: &str) {
+    if let Some(socket) = socket {
+        let _ = socket.send(&ControlMessage::PortsRejected(reason.to_string()));
+    }
+}
+
 fn pause(bridge: &Bridge, socket: Option<&Socket>, seen: u64) -> u64 {
     if let Some(socket) = socket {
         let _ = socket.wait_readable(std::time::Duration::from_millis(20));
@@ -916,7 +1384,7 @@ fn render_plugin(
     started: &mut StartedPluginAudioProcessor<EchodeHost>,
     frames: usize,
     buffers: &mut PluginBuffers,
-) -> Result<(), HostError> {
+) -> Result<(), ()> {
     for (channel, plane) in buffers.input.iter_mut().enumerate() {
         unsafe {
             ptr::copy_nonoverlapping(
@@ -926,29 +1394,29 @@ fn render_plugin(
             );
         }
     }
-    let input_audio = buffers.input_ports.with_input_buffers([AudioPortBuffer {
-        latency: 0,
-        channels: AudioPortBufferType::f32_input_only(
-            buffers
-                .input
-                .iter_mut()
-                .map(|channel| InputChannel::variable(&mut channel[..frames])),
-        ),
-    }]);
-    let mut output_audio = buffers.output_ports.with_output_buffers([AudioPortBuffer {
-        latency: 0,
-        channels: AudioPortBufferType::f32_output_only(
-            buffers
-                .output
-                .iter_mut()
-                .map(|channel| &mut channel[..frames]),
-        ),
-    }]);
+    refresh_ptrs(&mut buffers.input, &mut buffers.input_ptrs);
+    refresh_ptrs(&mut buffers.output, &mut buffers.output_ptrs);
+    let input_ptr = buffers.input_ptrs.as_ptr();
+    let output_ptr = buffers.output_ptrs.as_ptr();
+    // Standard iterators, so this builds no port or channel vector per block.
+    let input_ports = buffers
+        .input_counts
+        .iter()
+        .zip(buffers.input_offsets.iter())
+        .map(move |(&count, &start)| port_inputs(input_ptr, start, count as usize, frames));
+    let output_ports = buffers
+        .output_counts
+        .iter()
+        .zip(buffers.output_offsets.iter())
+        .map(move |(&count, &start)| port_outputs(output_ptr, start, count as usize, frames));
+    let input_audio = buffers.input_ports.with_input_buffers(input_ports);
+    let mut output_audio = buffers.output_ports.with_output_buffers(output_ports);
     buffers.events.clear();
     region.copy_input_events(generation, &mut buffers.decoded);
     write_input(&buffers.decoded, &mut buffers.events);
     let input_events = InputEvents::from_buffer(&buffers.events);
     let mut output_events = OutputEvents::void();
+    // The error string would allocate. The parent reads the refusal flag.
     started
         .process(
             &input_audio,
@@ -958,7 +1426,7 @@ fn render_plugin(
             None,
             None,
         )
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
+        .map_err(|_| ())?;
     for (channel, plane) in buffers.output.iter().enumerate() {
         unsafe {
             ptr::copy_nonoverlapping(
@@ -971,24 +1439,399 @@ fn render_plugin(
     Ok(())
 }
 
-fn publish_stopped(
-    slot: &AtomicPtr<StoppedPluginAudioProcessor<EchodeHost>>,
-    stopped: StoppedPluginAudioProcessor<EchodeHost>,
-) {
-    let previous = slot.swap(Box::into_raw(Box::new(stopped)), Ordering::AcqRel);
-    if !previous.is_null() {
-        drop(unsafe { Box::from_raw(previous) });
+fn channel_offsets(counts: &[u32]) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(counts.len());
+    let mut total = 0usize;
+    for count in counts {
+        offsets.push(total);
+        total = total.saturating_add(*count as usize);
+    }
+    offsets
+}
+
+fn port_inputs<'a>(
+    ptrs: *const *mut f32,
+    start: usize,
+    count: usize,
+    frames: usize,
+) -> AudioPortBuffer<
+    impl ExactSizeIterator<Item = InputChannel<'a, f32>>,
+    std::array::IntoIter<InputChannel<'static, f64>, 0>,
+> {
+    let channels = (0..count).map(move |index| {
+        // SAFETY: `ptrs` addresses the buffer set for this block, and `start + index`
+        // is one of its channels. The slice lives only while clack copies the pointer.
+        let pointer = unsafe { *ptrs.add(start + index) };
+        InputChannel::variable(unsafe { std::slice::from_raw_parts_mut(pointer, frames) })
+    });
+    AudioPortBuffer {
+        latency: 0,
+        channels: AudioPortBufferType::f32_input_only(channels),
     }
 }
 
-fn take_stopped(
-    slot: &AtomicPtr<StoppedPluginAudioProcessor<EchodeHost>>,
-) -> Option<StoppedPluginAudioProcessor<EchodeHost>> {
-    let pointer = slot.swap(ptr::null_mut(), Ordering::AcqRel);
+fn port_outputs<'a>(
+    ptrs: *const *mut f32,
+    start: usize,
+    count: usize,
+    frames: usize,
+) -> AudioPortBuffer<
+    impl ExactSizeIterator<Item = &'a mut [f32]>,
+    std::array::IntoIter<&'static mut [f64], 0>,
+> {
+    let channels = (0..count).map(move |index| {
+        // SAFETY: same region as `port_inputs`. Clack copies the pointer before returning.
+        let pointer = unsafe { *ptrs.add(start + index) };
+        unsafe { std::slice::from_raw_parts_mut(pointer, frames) }
+    });
+    AudioPortBuffer {
+        latency: 0,
+        channels: AudioPortBufferType::f32_output_only(channels),
+    }
+}
+
+fn buffers_for(bridge: &Bridge, region: &MappedRegion) -> PluginBuffers {
+    let shape = published_ports(bridge);
+    let inputs = shape.map(|shape| shape.inputs.clone()).unwrap_or_default();
+    let outputs = shape.map(|shape| shape.outputs.clone()).unwrap_or_default();
+    let layout = region.layout();
+    PluginBuffers::allocate(
+        &inputs,
+        &outputs,
+        layout.max_frames.max(1) as usize,
+        layout.input_events.max(1) as usize,
+    )
+}
+
+fn refresh_ptrs(planes: &mut [Vec<f32>], ptrs: &mut [*mut f32]) {
+    for (plane, slot) in planes.iter_mut().zip(ptrs.iter_mut()) {
+        *slot = plane.as_mut_ptr();
+    }
+}
+
+struct PortShape {
+    inputs: Vec<u32>,
+    outputs: Vec<u32>,
+    error: Option<String>,
+}
+
+fn published_ports(bridge: &Bridge) -> Option<&PortShape> {
+    let pointer = bridge.ports.load(Ordering::Acquire);
     if pointer.is_null() {
         None
     } else {
-        Some(*unsafe { Box::from_raw(pointer) })
+        Some(unsafe { &*pointer })
+    }
+}
+
+fn wait_for_layout(bridge: &Bridge) -> Result<(), HostError> {
+    loop {
+        if bridge.stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if !adopt(bridge, None) && handoff_pending(bridge) {
+            std::thread::yield_now();
+            continue;
+        }
+        if !bridge.has_plugin.load(Ordering::Acquire) {
+            let region = current_region(bridge);
+            region.mark_ready();
+            return Ok(());
+        }
+        let Some(shape) = published_ports(bridge) else {
+            return Err(HostError::Plugin(
+                "plugin ports were not published".to_string(),
+            ));
+        };
+        if shape.error.is_some() {
+            let region = current_region(bridge);
+            let alarm = region.alarm();
+            let _ = region.wait_alarm(alarm);
+            continue;
+        }
+        let region = current_region(bridge);
+        let inputs = sum_ports(&shape.inputs);
+        let outputs = sum_ports(&shape.outputs);
+        if region.input_channels() == inputs && region.output_channels() == outputs {
+            region.mark_ready();
+            return Ok(());
+        }
+        let alarm = region.alarm();
+        let _ = region.wait_alarm(alarm);
+    }
+}
+
+fn sum_ports(counts: &[u32]) -> usize {
+    counts
+        .iter()
+        .fold(0usize, |total, count| total.saturating_add(*count as usize))
+}
+
+/// Asks the main thread to save, or to load `bytes`. `None` saves.
+///
+/// The audio thread does not call this. A missing extension or a refused
+/// stream is an error, not an empty success.
+fn call_plugin_state(bridge: &Bridge, load: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+    if !bridge.has_plugin.load(Ordering::Acquire) {
+        return Err("no plugin".to_string());
+    }
+    let kind = if load.is_some() {
+        STATE_LOAD
+    } else {
+        STATE_SAVE
+    };
+    {
+        let mut bytes = bridge
+            .state_bytes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *bytes = load.unwrap_or_default();
+    }
+    *bridge
+        .state_error
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = None;
+    let generation = bridge.state_gen.fetch_add(1, Ordering::AcqRel) + 1;
+    bridge.state_kind.store(kind, Ordering::Release);
+    bridge.signal();
+    let started = std::time::Instant::now();
+    while bridge.state_done.load(Ordering::Acquire) < generation {
+        if bridge.stop.load(Ordering::Acquire) {
+            return Err("plugin stopped before state finished".to_string());
+        }
+        if started.elapsed() > std::time::Duration::from_secs(2) {
+            return Err("plugin state timed out".to_string());
+        }
+        thread::sleep(std::time::Duration::from_millis(1));
+    }
+    if let Some(error) = bridge
+        .state_error
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+    {
+        return Err(error);
+    }
+    Ok(bridge
+        .state_bytes
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone())
+}
+
+fn perform_plugin_state(bridge: &Bridge, kind: u8) -> Result<Vec<u8>, String> {
+    INSTANCE.with(|cell| {
+        let instance = cell.get();
+        if instance.is_null() {
+            return Err("plugin is not loaded".to_string());
+        }
+        let instance = unsafe { &*instance };
+        if kind == STATE_SAVE {
+            save_plugin_state(instance)
+        } else {
+            let bytes = bridge
+                .state_bytes
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone();
+            load_plugin_state(instance, &bytes)?;
+            Ok(bytes)
+        }
+    })
+}
+
+fn state_extension<'a>(plugin: *const clap_plugin) -> Result<&'a clap_plugin_state, String> {
+    if plugin.is_null() {
+        return Err("plugin is not loaded".to_string());
+    }
+    let get_extension = unsafe { (*plugin).get_extension }
+        .ok_or_else(|| "plugin does not declare state".to_string())?;
+    let extension = unsafe { get_extension(plugin, CLAP_EXT_STATE.as_ptr()) };
+    if extension.is_null() {
+        return Err("plugin does not declare state".to_string());
+    }
+    Ok(unsafe { &*(extension as *const clap_plugin_state) })
+}
+
+fn save_plugin_state(instance: &PluginInstance<EchodeHost>) -> Result<Vec<u8>, String> {
+    let plugin = instance.raw_instance();
+    let save = state_extension(plugin)?
+        .save
+        .ok_or_else(|| "plugin state has no save".to_string())?;
+    let mut bytes = Vec::new();
+    let stream = clap_ostream {
+        ctx: (&mut bytes as *mut Vec<u8>).cast::<c_void>(),
+        write: Some(state_write),
+    };
+    let saved = unsafe { save(plugin, &stream) };
+    if !saved {
+        return Err("plugin refused to save state".to_string());
+    }
+    Ok(bytes)
+}
+
+fn load_plugin_state(instance: &PluginInstance<EchodeHost>, bytes: &[u8]) -> Result<(), String> {
+    let plugin = instance.raw_instance();
+    let load = state_extension(plugin)?
+        .load
+        .ok_or_else(|| "plugin state has no load".to_string())?;
+    let mut cursor = ReadCursor {
+        bytes: bytes.as_ptr(),
+        len: bytes.len(),
+        pos: 0,
+    };
+    let stream = clap_istream {
+        ctx: (&mut cursor as *mut ReadCursor).cast::<c_void>(),
+        read: Some(state_read),
+    };
+    let loaded = unsafe { load(plugin, &stream) };
+    if !loaded {
+        return Err("plugin refused to load state".to_string());
+    }
+    Ok(())
+}
+
+struct ReadCursor {
+    bytes: *const u8,
+    len: usize,
+    pos: usize,
+}
+
+unsafe extern "C" fn state_write(
+    stream: *const clap_ostream,
+    buffer: *const c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || (buffer.is_null() && size != 0) {
+        return -1;
+    }
+    let Ok(count) = usize::try_from(size) else {
+        return -1;
+    };
+    let ctx = unsafe { &mut *(*stream).ctx.cast::<Vec<u8>>() };
+    if count > 0 {
+        let slice = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), count) };
+        ctx.extend_from_slice(slice);
+    }
+    size as i64
+}
+
+unsafe extern "C" fn state_read(
+    stream: *const clap_istream,
+    buffer: *mut c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || (buffer.is_null() && size != 0) {
+        return -1;
+    }
+    let Ok(count) = usize::try_from(size) else {
+        return -1;
+    };
+    let ctx = unsafe { &mut *(*stream).ctx.cast::<ReadCursor>() };
+    let available = ctx.len.saturating_sub(ctx.pos);
+    let take = count.min(available);
+    if take > 0 {
+        unsafe {
+            ptr::copy_nonoverlapping(ctx.bytes.add(ctx.pos), buffer.cast::<u8>(), take);
+        }
+        ctx.pos += take;
+    }
+    take as i64
+}
+
+/// Reads `clap.audio-ports` while the plugin is inactive.
+fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape, String> {
+    let plugin = instance.raw_instance();
+    let get_extension = plugin
+        .get_extension
+        .ok_or_else(|| "plugin does not declare audio ports".to_string())?;
+    // SAFETY: `get_extension` is the plugin's own function. The id is a static
+    // C string. The plugin is inactive and this runs on the main thread.
+    let extension = unsafe { get_extension(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr()) };
+    if extension.is_null() {
+        return Err("plugin does not declare audio ports".to_string());
+    }
+    let ports = unsafe { &*(extension as *const clap_plugin_audio_ports) };
+    let count = ports
+        .count
+        .ok_or_else(|| "plugin audio ports have no count".to_string())?;
+    let get = ports
+        .get
+        .ok_or_else(|| "plugin audio ports have no description".to_string())?;
+    let inputs = read_port_list(plugin, count, get, true)?;
+    let outputs = read_port_list(plugin, count, get, false)?;
+    if inputs.is_empty() && outputs.is_empty() {
+        return Err("plugin declares no audio ports".to_string());
+    }
+    Ok(PortShape {
+        inputs,
+        outputs,
+        error: None,
+    })
+}
+
+fn read_port_list(
+    plugin: &clap_sys::plugin::clap_plugin,
+    count: unsafe extern "C" fn(
+        plugin: *const clap_sys::plugin::clap_plugin,
+        is_input: bool,
+    ) -> u32,
+    get: unsafe extern "C" fn(
+        plugin: *const clap_sys::plugin::clap_plugin,
+        index: u32,
+        is_input: bool,
+        info: *mut clap_audio_port_info,
+    ) -> bool,
+    is_input: bool,
+) -> Result<Vec<u32>, String> {
+    let port_count = unsafe { count(plugin, is_input) };
+    let mut counts = Vec::with_capacity(port_count as usize);
+    for index in 0..port_count {
+        let mut info = clap_audio_port_info {
+            id: 0,
+            name: [0; clap_sys::string_sizes::CLAP_NAME_SIZE],
+            flags: 0,
+            channel_count: 0,
+            port_type: ptr::null(),
+            in_place_pair: u32::MAX,
+        };
+        let ok = unsafe { get(plugin, index, is_input, &mut info) };
+        if !ok {
+            return Err(format!(
+                "plugin did not describe {} port {index}",
+                if is_input { "input" } else { "output" }
+            ));
+        }
+        if info.channel_count == 0 {
+            return Err(format!(
+                "{} port {index} has no channels",
+                if is_input { "input" } else { "output" }
+            ));
+        }
+        counts.push(info.channel_count);
+    }
+    Ok(counts)
+}
+
+fn publish_stopped(
+    handoff: &ProcessorHandoff,
+    stopped: StoppedPluginAudioProcessor<EchodeHost>,
+    realtime: bool,
+) {
+    let Err(stopped) = handoff.try_store(stopped) else {
+        return;
+    };
+    if realtime {
+        // The slot already owns a processor. Freeing this one would run on
+        // the audio thread. The control thread reclaims the occupant.
+        std::mem::forget(stopped);
+        return;
+    }
+    if let Some(previous) = handoff.try_take() {
+        drop(previous);
+    }
+    if let Err(stopped) = handoff.try_store(stopped) {
+        drop(stopped);
     }
 }
 

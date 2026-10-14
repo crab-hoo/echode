@@ -99,6 +99,7 @@ pub enum Property {
     DeviceKind,
     DeviceOrder,
     Plugin,
+    PluginState,
 }
 
 /// A property value. The variant has to match the [`Property`].
@@ -537,6 +538,14 @@ fn diff_devices(
 }
 
 fn diff_device_fields(before: &Device, after: &Device, updates: &mut Vec<Change>) {
+    if before.state != after.state {
+        updates.push(update(
+            ObjectKey::Id(after.id),
+            Property::PluginState,
+            Value::Text(before.state.clone().unwrap_or_default()),
+            Value::Text(after.state.clone().unwrap_or_default()),
+        ));
+    }
     if before
         .parameters
         .iter()
@@ -612,6 +621,12 @@ fn device_change(create: bool, track: Id, device: &Device) -> Change {
         fields.push(Field {
             property: Property::Plugin,
             value: Value::Text(plugin.clone()),
+        });
+    }
+    if let Some(state) = &device.state {
+        fields.push(Field {
+            property: Property::PluginState,
+            value: Value::Text(state.clone()),
         });
     }
     fields.push(Field {
@@ -1129,6 +1144,7 @@ struct DeviceState {
     track: Id,
     kind: String,
     plugin: Option<String>,
+    state: Option<String>,
     parameters: Vec<Id>,
 }
 
@@ -1227,6 +1243,7 @@ impl Draft {
                         track: track.id,
                         kind: device.kind.as_str().to_string(),
                         plugin: device.plugin.clone(),
+                        state: device.state.clone(),
                         parameters: device
                             .parameters
                             .iter()
@@ -1333,12 +1350,20 @@ impl Draft {
                 if self.devices.contains_key(&id) {
                     return Err(ModelError::InvalidChange);
                 }
+                let state = field_optional_text(fields, Property::PluginState)?;
+                if state
+                    .as_deref()
+                    .is_some_and(|hash| !crate::device::valid_state_hash(hash))
+                {
+                    return Err(ModelError::InvalidChange);
+                }
                 self.devices.insert(
                     id,
                     DeviceState {
                         track: field_id(fields, Property::Owner)?,
                         kind: field_text(fields, Property::DeviceKind)?,
                         plugin: field_optional_text(fields, Property::Plugin)?,
+                        state,
                         parameters: field_ids(fields, Property::ParamOrder)?,
                     },
                 );
@@ -1492,6 +1517,20 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .plugin = Some(plugin.clone());
+                Ok(())
+            }
+            (ObjectKey::Id(id), Property::PluginState, Value::Text(text)) => {
+                let state = if text.is_empty() {
+                    None
+                } else if crate::device::valid_state_hash(text) {
+                    Some(text.clone())
+                } else {
+                    return Err(ModelError::InvalidChange);
+                };
+                self.devices
+                    .get_mut(&id)
+                    .ok_or(ModelError::InvalidChange)?
+                    .state = state;
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Start, Value::Tick(tick)) => {
@@ -1740,6 +1779,7 @@ impl Draft {
                     id: *device_id,
                     kind,
                     plugin: device.plugin.clone(),
+                    state: device.state.clone(),
                     parameters,
                 });
             }

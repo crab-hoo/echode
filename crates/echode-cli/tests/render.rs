@@ -417,6 +417,90 @@ fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     assert!(error.to_string().contains("plugin host"), "{error}");
 }
 
+#[test]
+fn audit_pro07_a_failed_plugin_does_not_leave_a_finished_wav() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let _env = PluginEnv::set(&directory.join("clap-scan.jsonl"));
+    let plugin = plugin_dylib();
+    write_plugin_cache(&directory.join("clap-scan.jsonl"), &plugin);
+    let (project, track) = Project::new().add_track("pad");
+    let project = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::quarters(1).unwrap(),
+            },
+        )
+        .unwrap()
+        .0
+        .add_clap_device(track, Id::from_raw(41), "dev.echode.test-gain")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    for (fault, needle) in [
+        ("generate", "not found"),
+        ("activate", "activate"),
+        ("process", "process refused"),
+        ("crash", "plugin process has exited"),
+        ("hang", "did not finish before the deadline"),
+    ] {
+        let _fault = FaultFile::set("dev.echode.test-gain", fault);
+        let wav = directory.join(format!("{fault}.wav"));
+        let error =
+            render_to_wav(&directory, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("41"), "{fault}: {text}");
+        assert!(text.contains(needle), "{fault}: {text}");
+        assert!(!wav.exists(), "{fault} left a wav");
+    }
+
+    // The first export commits the one-device project. A second write into that
+    // package is hidden by the autosave tip, so the later device gets its own package.
+    let later = project
+        .add_clap_device(track, Id::from_raw(42), "dev.echode.test-instrument")
+        .unwrap();
+    let later_dir = scratch();
+    std::fs::create_dir_all(&later_dir).unwrap();
+    write_package(&later_dir, &later).unwrap();
+    let _fault = FaultFile::set("dev.echode.test-instrument", "process");
+    let wav = later_dir.join("later.wav");
+    let error = render_to_wav(&later_dir, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap_err();
+    let text = error.to_string();
+    assert!(text.contains("42"), "{text}");
+    assert!(text.contains("dev.echode.test-instrument"), "{text}");
+    // A quiet machine sees the process error. A busy one can reach the block
+    // deadline first. Either way the later device is the one that failed.
+    assert!(
+        text.contains("process refused") || text.contains("did not finish before the deadline"),
+        "{text}"
+    );
+    assert!(!text.contains("device 41"), "{text}");
+    assert!(!wav.exists());
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_dir_all(&later_dir);
+    drop(_env);
+}
+
+struct FaultFile(PathBuf);
+
+impl FaultFile {
+    fn set(clap_id: &str, fault: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("echode-pro07-{clap_id}"));
+        std::fs::write(&path, fault).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for FaultFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn play_plugins(package: &Path, project: &Project) -> Vec<f32> {
     let host = echode_plugin_host::host_binary().unwrap();
     let routes = echode_audio_io::installed_plugin_routes(project);
@@ -476,16 +560,34 @@ fn host_bin() -> PathBuf {
                 .map(|dir| dir.join("echode-plugin-host"))
         })
         .unwrap();
-    if path.is_file() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sources = [
+        manifest.join("../echode-plugin-host/src/lib.rs"),
+        manifest.join("../echode-plugin-host/src/threads.rs"),
+        manifest.join("../echode-sandbox/src/region.rs"),
+        manifest.join("../echode-sandbox/src/session.rs"),
+    ];
+    let fresh = path.is_file() && sources.iter().all(|source| newer_than(&path, source));
+    if fresh {
         return path;
     }
     let status = std::process::Command::new(env!("CARGO"))
-        .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .current_dir(manifest.join("../.."))
         .args(["build", "-p", "echode-plugin-host"])
         .status()
         .unwrap();
     assert!(status.success());
     path
+}
+
+fn newer_than(built: &Path, source: &Path) -> bool {
+    let Ok(built) = built.metadata().and_then(|meta| meta.modified()) else {
+        return false;
+    };
+    let Ok(edited) = source.metadata().and_then(|meta| meta.modified()) else {
+        return true;
+    };
+    built >= edited
 }
 
 fn plugin_dylib() -> PathBuf {

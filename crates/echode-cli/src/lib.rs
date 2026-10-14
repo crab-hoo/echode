@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use echode_api::serve;
-use echode_audio_io::{installed_plugin_routes, load_placed_clips, project_plugin_ids};
+use echode_audio_io::{load_placed_clips, project_plugin_ids, routes_with_saved_state};
 use echode_engine::{
     PlaybackCommand, PluginRoute, playback_with_plugins, render_offline_blocks_with_clips,
     render_span_frames,
@@ -163,7 +163,8 @@ pub fn render_to_wav(
     let Some(host) = echode_plugin_host::host_binary() else {
         return Err(CliError::new("plugin host is missing"));
     };
-    let routes = installed_plugin_routes(&project);
+    let routes = routes_with_saved_state(&project, package)
+        .map_err(|error| CliError::new(error.to_string()))?;
     let missing: Vec<&str> = ids
         .iter()
         .filter(|id| {
@@ -208,6 +209,7 @@ fn render_with_plugins(
     control
         .command(PlaybackCommand::Play)
         .map_err(|error| CliError::new(error.to_string()))?;
+    let wav_path = wav.to_path_buf();
     let mut wav = WavFile::create(wav, sample_rate, frames)?;
     let mut left = vec![0.0; block];
     let mut right = vec![0.0; block];
@@ -216,7 +218,14 @@ fn render_with_plugins(
     while rendered < total {
         let count = (total - rendered).min(block);
         audio.render(&mut left[..count], &mut right[..count]);
+        if let Some(reason) = control.plugin_failure() {
+            drop(wav);
+            let _ = std::fs::remove_file(wav_path);
+            return Err(CliError::new(reason));
+        }
         if control.status().failed {
+            drop(wav);
+            let _ = std::fs::remove_file(wav_path);
             return Err(CliError::new("plugin playback failed"));
         }
         for index in 0..count {

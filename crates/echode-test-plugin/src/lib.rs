@@ -3,10 +3,79 @@
 //! `ECHODE_TEST_FAULT=crash` aborts inside `process`. `ECHODE_TEST_FAULT=hang`
 //! never returns from `process`. Both take down only this plugin's process.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, c_void};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use clack_plugin::entry::prelude::*;
+use clack_plugin::extensions::prelude::*;
 use clack_plugin::prelude::*;
+use clap_sys::ext::audio_ports::{
+    CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
+    clap_audio_port_info, clap_plugin_audio_ports,
+};
+use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
+use clap_sys::plugin::clap_plugin;
+use clap_sys::stream::{clap_istream, clap_ostream};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Gain,
+    Instrument,
+    Mono,
+    Ports,
+    NoPorts,
+    Flip,
+    /// One saved byte: 64 plays 0.25, 128 plays 0.5.
+    State,
+}
+
+/// `declare_extensions` can run on another thread than `create_plugin`.
+/// The helper hosts one plugin, so the role is process-wide.
+static ROLE_BITS: AtomicU8 = AtomicU8::new(0);
+/// Fault selected in `create_plugin`, before audio starts. 0 is no fault.
+static FAULT_BITS: AtomicU8 = AtomicU8::new(0);
+
+fn role_bits(role: Role) -> u8 {
+    match role {
+        Role::Gain => 0,
+        Role::Instrument => 1,
+        Role::Mono => 2,
+        Role::Ports => 3,
+        Role::NoPorts => 4,
+        Role::Flip => 5,
+        Role::State => 6,
+    }
+}
+
+fn role_from_bits(bits: u8) -> Role {
+    match bits {
+        1 => Role::Instrument,
+        2 => Role::Mono,
+        3 => Role::Ports,
+        4 => Role::NoPorts,
+        5 => Role::Flip,
+        6 => Role::State,
+        _ => Role::Gain,
+    }
+}
+
+fn set_role(role: Role) {
+    ROLE_BITS.store(role_bits(role), Ordering::SeqCst);
+}
+
+fn current_role() -> Role {
+    role_from_bits(ROLE_BITS.load(Ordering::SeqCst))
+}
+
+/// The helper process hosts one plugin, so the saved byte is process-wide.
+/// The audio thread reads it and the main thread writes it.
+static STATE_BYTE: AtomicU8 = AtomicU8::new(64);
+
+fn port_flip_active() -> bool {
+    std::env::temp_dir()
+        .join("echode-pro02-port-flip")
+        .is_file()
+}
 
 pub struct TestGain;
 
@@ -14,6 +83,18 @@ impl Plugin for TestGain {
     type AudioProcessor<'a> = TestGainProcessor<'a>;
     type Shared<'a> = ();
     type MainThread<'a> = TestMain;
+
+    fn declare_extensions(
+        builder: &mut PluginExtensions<Self>,
+        _shared: Option<&Self::Shared<'_>>,
+    ) {
+        if current_role() != Role::NoPorts {
+            builder.register::<PluginAudioPorts>();
+        }
+        if current_role() == Role::State {
+            builder.register::<PluginStateExt>();
+        }
+    }
 }
 
 impl DefaultPluginFactory for TestGain {
@@ -26,18 +107,51 @@ impl DefaultPluginFactory for TestGain {
     }
 
     fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
+        if fault_now() == Fault::Generate {
+            return Err(PluginError::Message("generate refused"));
+        }
         Ok(())
     }
 
     fn new_main_thread<'a>(
-        _host: HostMainThreadHandle<'a>,
+        host: HostMainThreadHandle<'a>,
         _shared: &'a Self::Shared<'a>,
     ) -> Result<Self::MainThread<'a>, PluginError> {
-        Ok(TestMain)
+        Ok(TestMain {
+            role: current_role(),
+            // Load runs on this same main thread, while the host is still alive.
+            host: unsafe { host.with_arbitrary_lifetime() },
+        })
     }
 }
 
-pub struct TestMain;
+pub struct TestMain {
+    role: Role,
+    host: HostMainThreadHandle<'static>,
+}
+
+impl TestMain {
+    fn ports(&self) -> (&'static [u32], &'static [u32]) {
+        if self.role == Role::Flip && port_flip_active() {
+            return (&[], &[1]);
+        }
+        match self.role {
+            Role::Gain | Role::Flip => (&[2], &[2]),
+            Role::Instrument => (&[], &[2]),
+            Role::Mono => (&[], &[1]),
+            Role::Ports => (&[2], &[2, 1]),
+            Role::NoPorts => (&[], &[]),
+            Role::State => (&[2], &[2]),
+        }
+    }
+
+    fn mark_dirty(&self) {
+        let Some(extension) = self.host.get_extension::<SeenHostState>() else {
+            return;
+        };
+        extension.mark_dirty();
+    }
+}
 
 impl PluginMainThread<'_, ()> for TestMain {
     fn on_main_thread(&self) {
@@ -48,6 +162,7 @@ impl PluginMainThread<'_, ()> for TestMain {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
     Crash,
@@ -58,10 +173,59 @@ enum Fault {
     Count,
     /// Writes the key of the latest note-off, or 0 when none has arrived.
     Key,
+    Activate,
+    Process,
+    Generate,
+}
+
+fn fault_code(text: &str) -> u8 {
+    match text {
+        "crash" => 1,
+        "hang" => 2,
+        "callback" => 3,
+        "restart" => 4,
+        "count" => 5,
+        "key" => 6,
+        "activate" => 7,
+        "process" => 8,
+        "generate" => 9,
+        _ => 0,
+    }
+}
+
+fn fault_from_code(code: u8) -> Fault {
+    match code {
+        1 => Fault::Crash,
+        2 => Fault::Hang,
+        3 => Fault::Callback,
+        4 => Fault::Restart,
+        5 => Fault::Count,
+        6 => Fault::Key,
+        7 => Fault::Activate,
+        8 => Fault::Process,
+        9 => Fault::Generate,
+        _ => Fault::None,
+    }
+}
+
+fn fault_now() -> Fault {
+    fault_from_code(FAULT_BITS.load(Ordering::Relaxed))
+}
+
+/// `ECHODE_TEST_FAULT` wins. A file `echode-pro07-<clap id>` in the temp
+/// directory selects the fault for one plugin when the product route has none.
+fn note_fault(plugin_id: &CStr) {
+    let from_env = std::env::var("ECHODE_TEST_FAULT").ok();
+    let from_file = plugin_id.to_str().ok().and_then(|id| {
+        std::fs::read_to_string(std::env::temp_dir().join(format!("echode-pro07-{id}"))).ok()
+    });
+    let text = from_env.or(from_file).unwrap_or_default();
+    FAULT_BITS.store(fault_code(text.trim()), Ordering::Relaxed);
 }
 
 pub struct TestGainProcessor<'a> {
     fault: Fault,
+    role: Role,
     host: HostSharedHandle<'a>,
     seen_ons: u32,
     seen_offs: u32,
@@ -74,21 +238,17 @@ pub struct TestGainProcessor<'a> {
 impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
     fn activate(
         _host: HostAudioProcessorHandle<'a>,
-        _main_thread: &TestMain,
+        main_thread: &TestMain,
         _shared: &'a (),
         _audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
-        let fault = match std::env::var("ECHODE_TEST_FAULT").as_deref() {
-            Ok("crash") => Fault::Crash,
-            Ok("hang") => Fault::Hang,
-            Ok("callback") => Fault::Callback,
-            Ok("restart") => Fault::Restart,
-            Ok("count") => Fault::Count,
-            Ok("key") => Fault::Key,
-            _ => Fault::None,
-        };
+        let fault = fault_now();
+        if fault == Fault::Activate {
+            return Err(PluginError::Message("activate refused"));
+        }
         Ok(Self {
             fault,
+            role: main_thread.role,
             host: _host.shared(),
             seen_ons: 0,
             seen_offs: 0,
@@ -104,6 +264,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
         match self.fault {
+            Fault::Process => return Err(PluginError::Message("process refused")),
             Fault::Crash => std::process::abort(),
             Fault::Hang => loop {
                 std::thread::sleep(std::time::Duration::from_secs(3600));
@@ -184,7 +345,43 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 }
                 return Ok(ProcessStatus::Continue);
             }
-            Fault::None => {}
+            Fault::None | Fault::Activate | Fault::Generate => {}
+        }
+
+        if self.role == Role::State {
+            fill_outputs(&mut audio, state_level());
+            return Ok(ProcessStatus::Continue);
+        }
+        if self.role == Role::Mono || (self.role == Role::Flip && port_flip_active()) {
+            fill_outputs(&mut audio, 0.25);
+            return Ok(ProcessStatus::Continue);
+        }
+        if self.role == Role::Ports {
+            for (port_index, mut port_pair) in (&mut audio).into_iter().enumerate() {
+                let Some(channel_pairs) = port_pair.channels()?.into_f32() else {
+                    continue;
+                };
+                let constant = if port_index == 0 { None } else { Some(0.125) };
+                for channel_pair in channel_pairs {
+                    match channel_pair {
+                        ChannelPair::InputOnly(_) => {}
+                        ChannelPair::OutputOnly(buffer) => {
+                            buffer.fill(constant.unwrap_or(0.25));
+                        }
+                        ChannelPair::InputOutput(input, output) => {
+                            for (input, output) in input.iter().zip(output) {
+                                *output = constant.unwrap_or(input * 2.0);
+                            }
+                        }
+                        ChannelPair::InPlace(buffer) => {
+                            for sample in buffer {
+                                *sample = constant.unwrap_or(*sample * 2.0);
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(ProcessStatus::Continue);
         }
 
         for mut port_pair in &mut audio {
@@ -233,38 +430,97 @@ impl Entry for TestEntry {
     }
 }
 
+fn state_level() -> f32 {
+    match STATE_BYTE.load(Ordering::Acquire) {
+        64 => 0.25,
+        128 => 0.5,
+        _ => 0.0,
+    }
+}
+
+fn fill_outputs(audio: &mut Audio<'_>, value: f32) {
+    for mut port_pair in audio {
+        let Ok(channels) = port_pair.channels() else {
+            continue;
+        };
+        let Some(channel_pairs) = channels.into_f32() else {
+            continue;
+        };
+        for channel_pair in channel_pairs {
+            match channel_pair {
+                ChannelPair::InputOnly(_) => {}
+                ChannelPair::OutputOnly(buffer) => buffer.fill(value),
+                ChannelPair::InputOutput(_, output) => output.fill(value),
+                ChannelPair::InPlace(buffer) => buffer.fill(value),
+            }
+        }
+    }
+}
+
 struct TestFactory {
-    gain: PluginDescriptor,
-    instrument: PluginDescriptor,
+    descriptors: Vec<PluginDescriptor>,
 }
 
 impl TestFactory {
     fn new() -> Self {
         Self {
-            gain: TestGain::get_descriptor(),
-            instrument: PluginDescriptor::new(
-                "dev.echode.test-instrument",
-                "Echode Test Instrument",
-            )
-            .with_vendor("Echode")
-            .with_version("0.0.0")
-            .with_url("https://echode.invalid")
-            .with_features([c"instrument"]),
+            descriptors: vec![
+                TestGain::get_descriptor(),
+                described(
+                    "dev.echode.test-instrument",
+                    "Echode Test Instrument",
+                    c"instrument",
+                ),
+                described("dev.echode.test-mono", "Echode Test Mono", c"instrument"),
+                described(
+                    "dev.echode.test-noports",
+                    "Echode Test No Ports",
+                    c"audio-effect",
+                ),
+                described(
+                    "dev.echode.test-ports",
+                    "Echode Test Ports",
+                    c"audio-effect",
+                ),
+                described(
+                    "dev.echode.test-state",
+                    "Echode Test State",
+                    c"audio-effect",
+                ),
+                described("dev.echode.test-zflip", "Echode Test Flip", c"audio-effect"),
+            ],
         }
+    }
+}
+
+fn described(id: &str, name: &str, feature: &'static CStr) -> PluginDescriptor {
+    PluginDescriptor::new(id, name)
+        .with_vendor("Echode")
+        .with_version("0.0.0")
+        .with_url("https://echode.invalid")
+        .with_features([feature])
+}
+
+fn role_of(id: &CStr) -> Option<Role> {
+    match id.to_bytes() {
+        b"dev.echode.test-gain" => Some(Role::Gain),
+        b"dev.echode.test-instrument" => Some(Role::Instrument),
+        b"dev.echode.test-mono" => Some(Role::Mono),
+        b"dev.echode.test-noports" => Some(Role::NoPorts),
+        b"dev.echode.test-ports" => Some(Role::Ports),
+        b"dev.echode.test-state" => Some(Role::State),
+        b"dev.echode.test-zflip" => Some(Role::Flip),
+        _ => None,
     }
 }
 
 impl PluginFactoryImpl for TestFactory {
     fn plugin_count(&self) -> u32 {
-        2
+        self.descriptors.len() as u32
     }
 
     fn plugin_descriptor(&self, index: u32) -> Option<&PluginDescriptor> {
-        match index {
-            0 => Some(&self.gain),
-            1 => Some(&self.instrument),
-            _ => None,
-        }
+        self.descriptors.get(index as usize)
     }
 
     fn create_plugin<'a>(
@@ -272,13 +528,16 @@ impl PluginFactoryImpl for TestFactory {
         host_info: HostInfo<'a>,
         plugin_id: &CStr,
     ) -> Option<PluginInstance<'a>> {
-        let descriptor = if self.gain.id() == Some(plugin_id) {
-            &self.gain
-        } else if self.instrument.id() == Some(plugin_id) {
-            &self.instrument
-        } else {
+        let role = role_of(plugin_id)?;
+        let descriptor = self
+            .descriptors
+            .iter()
+            .find(|descriptor| descriptor.id() == Some(plugin_id))?;
+        set_role(role);
+        note_fault(plugin_id);
+        if fault_now() == Fault::Generate {
             return None;
-        };
+        }
         Some(PluginInstance::new::<TestGain>(
             host_info,
             descriptor,
@@ -286,6 +545,160 @@ impl PluginFactoryImpl for TestFactory {
             TestGain::new_main_thread,
         ))
     }
+}
+
+#[derive(Copy, Clone)]
+struct PluginAudioPorts;
+
+unsafe impl Extension for PluginAudioPorts {
+    const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_AUDIO_PORTS];
+    type ExtensionSide = PluginExtensionSide;
+
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+unsafe impl ExtensionImplementation<TestGain> for PluginAudioPorts {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_plugin_audio_ports {
+            count: Some(port_count),
+            get: Some(port_get),
+        });
+}
+
+unsafe extern "C" fn port_count(plugin: *const clap_plugin, is_input: bool) -> u32 {
+    unsafe {
+        PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
+            let (inputs, outputs) = wrapper.main_thread().ports();
+            let count = if is_input {
+                inputs.len()
+            } else {
+                outputs.len()
+            };
+            Ok(u32::try_from(count).unwrap_or(u32::MAX))
+        })
+    }
+    .unwrap_or(0)
+}
+
+unsafe extern "C" fn port_get(
+    plugin: *const clap_plugin,
+    index: u32,
+    is_input: bool,
+    info: *mut clap_audio_port_info,
+) -> bool {
+    unsafe {
+        PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
+            let (inputs, outputs) = wrapper.main_thread().ports();
+            let counts = if is_input { inputs } else { outputs };
+            let Some(channels) = counts.get(index as usize).copied() else {
+                return Ok(false);
+            };
+            *info = clap_audio_port_info {
+                id: index,
+                name: [0; clap_sys::string_sizes::CLAP_NAME_SIZE],
+                flags: if index == 0 {
+                    CLAP_AUDIO_PORT_IS_MAIN
+                } else {
+                    0
+                },
+                channel_count: channels,
+                port_type: if channels == 1 {
+                    CLAP_PORT_MONO.as_ptr()
+                } else {
+                    CLAP_PORT_STEREO.as_ptr()
+                },
+                in_place_pair: u32::MAX,
+            };
+            Ok(true)
+        })
+    }
+    .unwrap_or(false)
+}
+
+#[derive(Copy, Clone)]
+struct SeenHostState(RawExtension<HostExtensionSide, clap_host_state>);
+
+unsafe impl Extension for SeenHostState {
+    const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_STATE];
+    type ExtensionSide = HostExtensionSide;
+
+    unsafe fn from_raw(raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self(unsafe { raw.cast() })
+    }
+}
+
+impl SeenHostState {
+    fn mark_dirty(self) {
+        let host = self.0.host_ptr();
+        let mark = unsafe { self.0.as_ptr().as_ref().mark_dirty };
+        if let Some(mark) = mark {
+            unsafe { mark(host.as_ptr()) };
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct PluginStateExt;
+
+unsafe impl Extension for PluginStateExt {
+    const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_STATE];
+    type ExtensionSide = PluginExtensionSide;
+
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+unsafe impl ExtensionImplementation<TestGain> for PluginStateExt {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_plugin_state {
+            save: Some(state_save),
+            load: Some(state_load),
+        });
+}
+
+unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_ostream) -> bool {
+    let _ = plugin;
+    if stream.is_null() {
+        return false;
+    }
+    let byte = STATE_BYTE.load(Ordering::Acquire);
+    unsafe {
+        let Some(write) = (*stream).write else {
+            return false;
+        };
+        write(stream, std::ptr::from_ref(&byte).cast::<c_void>(), 1) == 1
+    }
+}
+
+unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_istream) -> bool {
+    if stream.is_null() {
+        return false;
+    }
+    let mut byte = 0u8;
+    let mut extra = 0u8;
+    let accepted = unsafe {
+        let Some(read) = (*stream).read else {
+            return false;
+        };
+        if read(stream, std::ptr::from_mut(&mut byte).cast::<c_void>(), 1) != 1 {
+            return false;
+        }
+        read(stream, std::ptr::from_mut(&mut extra).cast::<c_void>(), 1) == 0
+    };
+    if !accepted {
+        return false;
+    }
+    STATE_BYTE.store(byte, Ordering::Release);
+    unsafe {
+        PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
+            wrapper.main_thread().mark_dirty();
+            Ok(())
+        });
+    }
+    true
 }
 
 clack_export_entry!(TestEntry);

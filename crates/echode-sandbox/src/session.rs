@@ -96,6 +96,10 @@ pub struct PluginHost {
     watch_slots: Arc<Mutex<WatchSlots>>,
     watch_stop: Arc<AtomicBool>,
     fan: Option<Arc<FanIn>>,
+    /// Channel count of each declared input port. Empty when no plugin is loaded.
+    input_ports: Vec<u32>,
+    /// Channel count of each declared output port.
+    output_ports: Vec<u32>,
 }
 
 /// A submitted block, looked at without waiting.
@@ -119,6 +123,8 @@ pub enum SessionError {
     /// The helper has exited. The audio thread reports this without waiting
     /// for the process or reading its stderr.
     HelperDown,
+    /// The plugin returned an error from `process`. Not a deadline miss.
+    ProcessRefused,
     Workgroup(String),
     Protocol(String),
 }
@@ -140,6 +146,7 @@ impl std::fmt::Display for SessionError {
                 Ok(())
             }
             Self::HelperDown => f.write_str("plugin process has exited"),
+            Self::ProcessRefused => f.write_str("process refused"),
         }
     }
 }
@@ -200,15 +207,15 @@ impl PluginHost {
             watch_slots,
             watch_stop,
             fan: options.fan_in.clone(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
         };
         host.start_watch();
-        match host.wait_until_ready(Duration::from_secs(5)) {
-            Ok(()) => Ok(host),
-            Err(error) => {
-                host.force_stop();
-                Err(error)
-            }
+        if let Err(error) = host.finish_launch() {
+            host.force_stop();
+            return Err(host.launch_error(error));
         }
+        Ok(host)
     }
 
     /// Attach a new helper to the same mapping after resetting its header.
@@ -237,7 +244,7 @@ impl PluginHost {
         self.child = launched.child;
         self.control = launched.control;
         self.start_watch();
-        self.wait_until_ready(Duration::from_secs(5))?;
+        self.finish_launch()?;
         if !self.last_state.is_empty() {
             let state = self.last_state.clone();
             self.restore_state(&state)?;
@@ -247,6 +254,16 @@ impl PluginHost {
 
     pub fn layout(&self) -> SessionLayout {
         self.region.layout()
+    }
+
+    /// Channel counts of the plugin's input ports, in declaration order.
+    pub fn input_ports(&self) -> &[u32] {
+        &self.input_ports
+    }
+
+    /// Channel counts of the plugin's output ports, in declaration order.
+    pub fn output_ports(&self) -> &[u32] {
+        &self.output_ports
     }
 
     pub fn stderr_log(&self) -> String {
@@ -277,6 +294,20 @@ impl PluginHost {
             .map_err(|error| self.report_inline(error))
     }
 
+    /// Like [`Self::submit`], taking each channel as its own buffer.
+    ///
+    /// The callback uses this so it does not allocate a slice of slices.
+    pub fn submit_planes(
+        &mut self,
+        frames: usize,
+        input: &[Vec<f32>],
+        events: &[(Event, u32)],
+    ) -> Result<u64, SessionError> {
+        self.region
+            .submit_planes(frames, input, events)
+            .map_err(|error| self.report_inline(error))
+    }
+
     /// Read a submitted generation if it has finished. Does not wait.
     pub fn poll(
         &mut self,
@@ -292,9 +323,34 @@ impl PluginHost {
         }
     }
 
+    /// Like [`Self::poll`], writing each channel into its own buffer.
+    pub fn poll_planes(
+        &mut self,
+        generation: u64,
+        output: &mut [Vec<f32>],
+        frames: usize,
+        delivered: &mut [Delivered],
+    ) -> Result<BlockProgress, SessionError> {
+        match self
+            .region
+            .collect_planes(generation, output, frames, delivered)
+        {
+            Ok(Collected::Pending) => Ok(BlockProgress::Pending),
+            Ok(Collected::Abandoned) => Ok(BlockProgress::Abandoned),
+            Ok(Collected::Ready { events }) => Ok(BlockProgress::Ready { events }),
+            Err(error) => Err(self.report_inline(error)),
+        }
+    }
+
     /// The generation will not be read if the helper finishes it later.
     pub fn abandon(&mut self, generation: u64) {
         self.region.abandon(generation);
+    }
+
+    /// The helper process has exited. Reaps it. Control thread only: this calls
+    /// `waitpid`, which the audio callback must not do.
+    pub fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
     }
 
     /// Ask the helper to run `stages` process calls, in order, for each block.
@@ -370,12 +426,16 @@ impl PluginHost {
     pub fn save_state(&mut self) -> Result<Vec<u8>, SessionError> {
         self.control.send(&ControlMessage::SaveRequest)?;
         match self.wait_message(Duration::from_secs(2), |message| {
-            matches!(message, ControlMessage::State(_))
+            matches!(
+                message,
+                ControlMessage::State(_) | ControlMessage::StateRejected(_)
+            )
         })? {
             ControlMessage::State(bytes) => {
                 self.last_state.clone_from(&bytes);
                 Ok(bytes)
             }
+            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
             _ => Err(SessionError::Protocol(
                 "helper did not return state".to_string(),
             )),
@@ -386,12 +446,16 @@ impl PluginHost {
         self.control
             .send(&ControlMessage::Restore(bytes.to_vec()))?;
         match self.wait_message(Duration::from_secs(2), |message| {
-            matches!(message, ControlMessage::Restored)
+            matches!(
+                message,
+                ControlMessage::Restored | ControlMessage::StateRejected(_)
+            )
         })? {
             ControlMessage::Restored => {
                 self.last_state = bytes.to_vec();
                 Ok(())
             }
+            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
             _ => Err(SessionError::Protocol(
                 "helper did not acknowledge restore".to_string(),
             )),
@@ -523,7 +587,13 @@ impl PluginHost {
     fn report_inline(&self, error: RegionError) -> SessionError {
         match error {
             RegionError::Wait(crate::sync::WaitError::Timeout) => SessionError::Timeout,
-            RegionError::Dead => SessionError::HelperDown,
+            RegionError::Dead => {
+                if self.region.process_refused() {
+                    SessionError::ProcessRefused
+                } else {
+                    SessionError::HelperDown
+                }
+            }
             RegionError::Busy => SessionError::Missed,
             other => other.into(),
         }
@@ -536,6 +606,44 @@ impl PluginHost {
             RegionError::Busy => SessionError::Missed,
             other => other.into(),
         }
+    }
+
+    /// Reads the plugin's declared ports, resizes the mapping, then waits until
+    /// the helper is ready to process that layout.
+    fn finish_launch(&mut self) -> Result<(), SessionError> {
+        if self.plugin.is_some() {
+            self.align_declared_ports()?;
+        }
+        self.wait_until_ready(Duration::from_secs(5))
+    }
+
+    fn align_declared_ports(&mut self) -> Result<(), SessionError> {
+        let (inputs, outputs) = match self.wait_message(Duration::from_secs(5), |message| {
+            matches!(
+                message,
+                ControlMessage::Ports { .. } | ControlMessage::PortsRejected(_)
+            )
+        })? {
+            ControlMessage::Ports { inputs, outputs } => (inputs, outputs),
+            ControlMessage::PortsRejected(reason) => return Err(SessionError::Protocol(reason)),
+            _ => {
+                return Err(SessionError::Protocol(
+                    "helper did not describe audio ports".to_string(),
+                ));
+            }
+        };
+        let input_channels = sum_channels(&inputs)?;
+        let output_channels = sum_channels(&outputs)?;
+        self.input_ports = inputs;
+        self.output_ports = outputs;
+        let layout = self.region.layout();
+        if layout.input_channels == input_channels && layout.output_channels == output_channels {
+            return Ok(());
+        }
+        let mut next = layout;
+        next.input_channels = input_channels;
+        next.output_channels = output_channels;
+        self.remap(next)
     }
 
     fn wait_until_ready(&mut self, timeout: Duration) -> Result<(), SessionError> {
@@ -554,6 +662,20 @@ impl PluginHost {
                 Err(RegionError::Wait(crate::sync::WaitError::Timeout)) => continue,
                 Err(error) => return Err(error.into()),
             }
+        }
+    }
+
+    fn launch_error(&self, error: SessionError) -> SessionError {
+        let mut stderr = self.stderr_log();
+        if stderr.trim().is_empty() {
+            std::thread::sleep(Duration::from_millis(30));
+            stderr = self.stderr_log();
+        }
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            error
+        } else {
+            SessionError::Protocol(format!("{error}: {stderr}"))
         }
     }
 
@@ -627,9 +749,13 @@ impl PluginHost {
 
     fn drain(&mut self) -> Result<(), SessionError> {
         loop {
-            match self.control.try_recv()? {
-                Some(message) => self.inbox.push_back(message),
-                None => return Ok(()),
+            match self.control.try_recv() {
+                Ok(Some(message)) => self.inbox.push_back(message),
+                Ok(None) => return Ok(()),
+                // The helper can close after a complete message. That EOF must
+                // not discard a reason already sitting in the inbox.
+                Err(_) if !self.inbox.is_empty() => return Ok(()),
+                Err(error) => return Err(error.into()),
             }
         }
     }
@@ -848,6 +974,16 @@ fn inheritable(fd: i32) -> std::io::Result<OwnedFd> {
         // SAFETY: `fcntl` returned a new descriptor that nothing else owns.
         Ok(unsafe { OwnedFd::from_raw_fd(dup) })
     }
+}
+
+fn sum_channels(counts: &[u32]) -> Result<u32, SessionError> {
+    let mut total = 0u32;
+    for channels in counts {
+        total = total.checked_add(*channels).ok_or_else(|| {
+            SessionError::Protocol("audio port channel count overflowed".to_string())
+        })?;
+    }
+    Ok(total)
 }
 
 fn spawn_stderr_reader(mut pipe: Box<dyn Read + Send>, slot: Arc<Mutex<String>>) {

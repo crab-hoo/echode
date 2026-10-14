@@ -25,6 +25,9 @@ const REMAP_FAILED: u32 = 11;
 const SET_CHAIN: u32 = 12;
 const CHAIN_READY: u32 = 13;
 const CHAIN_REJECTED: u32 = 14;
+const PORTS: u32 = 15;
+const PORTS_REJECTED: u32 = 16;
+const STATE_REJECTED: u32 = 17;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -48,6 +51,18 @@ pub enum ControlMessage {
     SetChain(u32),
     ChainReady,
     ChainRejected,
+    /// Channel counts of each input port, then each output port.
+    ///
+    /// The helper sends this after reading the plugin's audio-ports extension
+    /// on the main thread, before the plugin is active.
+    Ports {
+        inputs: Vec<u32>,
+        outputs: Vec<u32>,
+    },
+    /// The plugin has no usable audio-port description. The bytes are the reason.
+    PortsRejected(String),
+    /// Save or load did not call the plugin, or the plugin refused. The bytes are the reason.
+    StateRejected(String),
 }
 
 impl ControlMessage {
@@ -244,6 +259,9 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         ControlMessage::SetChain(stages) => (SET_CHAIN, stages.to_le_bytes().to_vec()),
         ControlMessage::ChainReady => (CHAIN_READY, Vec::new()),
         ControlMessage::ChainRejected => (CHAIN_REJECTED, Vec::new()),
+        ControlMessage::Ports { inputs, outputs } => (PORTS, port_bytes(inputs, outputs)),
+        ControlMessage::PortsRejected(reason) => (PORTS_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::StateRejected(reason) => (STATE_REJECTED, reason.as_bytes().to_vec()),
     })
 }
 
@@ -290,6 +308,18 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         }
         CHAIN_READY => ControlMessage::ChainReady,
         CHAIN_REJECTED => ControlMessage::ChainRejected,
+        PORTS => {
+            let (inputs, outputs) = read_ports(body)?;
+            ControlMessage::Ports { inputs, outputs }
+        }
+        PORTS_REJECTED => ControlMessage::PortsRejected(
+            String::from_utf8(body.to_vec())
+                .map_err(|_| io::Error::new(ErrorKind::InvalidData, "port refusal is not text"))?,
+        ),
+        STATE_REJECTED => ControlMessage::StateRejected(
+            String::from_utf8(body.to_vec())
+                .map_err(|_| io::Error::new(ErrorKind::InvalidData, "state refusal is not text"))?,
+        ),
         _ => {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
@@ -298,6 +328,61 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         }
     };
     Ok(Some(message))
+}
+
+fn port_bytes(inputs: &[u32], outputs: &[u32]) -> Vec<u8> {
+    let mut body = Vec::with_capacity((2 + inputs.len() + outputs.len()) * 4);
+    write_counts(&mut body, inputs);
+    write_counts(&mut body, outputs);
+    body
+}
+
+fn write_counts(body: &mut Vec<u8>, counts: &[u32]) {
+    let count = u32::try_from(counts.len()).unwrap_or(u32::MAX);
+    body.extend_from_slice(&count.to_le_bytes());
+    for channels in counts.iter().take(count as usize) {
+        body.extend_from_slice(&channels.to_le_bytes());
+    }
+}
+
+fn read_ports(body: &[u8]) -> io::Result<(Vec<u32>, Vec<u32>)> {
+    let (inputs, rest) = read_counts(body)?;
+    let (outputs, rest) = read_counts(rest)?;
+    if !rest.is_empty() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "port description has trailing bytes",
+        ));
+    }
+    Ok((inputs, outputs))
+}
+
+fn read_counts(body: &[u8]) -> io::Result<(Vec<u32>, &[u8])> {
+    if body.len() < 4 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "port description is truncated",
+        ));
+    }
+    let count = u32::from_le_bytes(body[..4].try_into().expect("4 bytes")) as usize;
+    let bytes = count
+        .checked_mul(4)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "port description is too large"))?;
+    let rest = body
+        .get(4..)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "port description is truncated"))?;
+    if rest.len() < bytes {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "port description is truncated",
+        ));
+    }
+    let mut counts = Vec::with_capacity(count);
+    for chunk in rest[..bytes].chunks_exact(4) {
+        let channels = u32::from_le_bytes(chunk.try_into().expect("4 bytes"));
+        counts.push(channels);
+    }
+    Ok((counts, &rest[bytes..]))
 }
 
 fn layout_bytes(layout: SessionLayout) -> [u8; 20] {

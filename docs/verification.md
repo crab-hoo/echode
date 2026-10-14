@@ -13,7 +13,7 @@
 ## 自動で動かす検査
 
 - `check`: Rust の単体テスト、ランダムな編集の不変条件・Undo / Redo・保存の往復、音声の基準との比較、保存形式のスナップショット、ブロック長による比較、プラグインのクラッシュとハング、Swift の橋渡し、lint、FFI、ライセンス。`check-verification` で検査の選択と記録の仕組みも確かめる
-- `rtsan`: 検出を有効にしたテスト用シンセ、計画の受け渡し、製品の再生・トランスポート操作・出力バッファ。HAL 自体や未実装の音源まで無条件に網羅した検査ではない
+- `rtsan`: 検出を有効にしたテスト用シンセ、計画の受け渡し、製品の再生・トランスポート操作・出力バッファ、プラグインヘルパーの処理区間。HAL 自体や未実装の音源まで無条件に網羅した検査ではない
 - `check-input`: Swift の入力の単体テスト。確認ウィンドウは開かない
 - `check-bridge-features`: 橋渡しの全 feature の Rust テスト、clippy、生成器を含む依存のライセンス
 - `check-bridge-asan`、`check-bridge-tsan`、`check-bridge-miri`: 橋渡しの寿命、完了、停止と競合の検査。[ADR 0044](decisions/0044-swift-bridge.md) の範囲に限定する。Miri は橋渡しの Rust 側を検査し、Rust 全体や Swift の実行を網羅しない。ASan は両言語を別プロセスで、TSan は同じプロセスで検査する

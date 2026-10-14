@@ -28,11 +28,21 @@ fn plugin_dylib() -> PathBuf {
     static BUILD: Mutex<()> = Mutex::new(());
     let host = host_bin();
     let sibling = host.parent().unwrap().join("libechode_test_plugin.dylib");
-    if sibling.exists() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src/lib.rs");
+    let current = |path: &Path| {
+        let Ok(built) = path.metadata().and_then(|meta| meta.modified()) else {
+            return false;
+        };
+        let Ok(edited) = source.metadata().and_then(|meta| meta.modified()) else {
+            return false;
+        };
+        built >= edited
+    };
+    if current(&sibling) {
         return sibling;
     }
     let _guard = BUILD.lock().expect("plugin build lock");
-    if sibling.exists() {
+    if current(&sibling) {
         return sibling;
     }
     let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/test-plugin");
@@ -353,6 +363,20 @@ fn a_callback_runs_on_the_main_thread_and_a_restart_still_answers() {
     }
 }
 
+fn spawn_plugin(fault: Option<&str>, layout: SessionLayout) -> PluginHost {
+    PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(&plugin_dylib()),
+        fault,
+        workgroup: None,
+        layout,
+        fan_in: None,
+        sample_rate: 48_000,
+        plugin_id: Some("dev.echode.test-gain"),
+    })
+    .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
+}
+
 fn spawn_layout(layout: SessionLayout) -> PluginHost {
     PluginHost::spawn(SpawnOptions {
         host_bin: &host_bin(),
@@ -365,6 +389,89 @@ fn spawn_layout(layout: SessionLayout) -> PluginHost {
         plugin_id: None,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
+}
+
+#[test]
+fn audit_pro08_cold_process_under_rtsan() {
+    let mut host = spawn_plugin(None, SessionLayout::stereo());
+    let input = stereo(32, 0.25);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the first block allocates nothing");
+    assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
+}
+
+#[test]
+fn audit_pro08_event_growth_under_rtsan() {
+    let mut host = spawn_plugin(
+        Some("count"),
+        SessionLayout {
+            max_frames: 64,
+            input_channels: 2,
+            output_channels: 2,
+            input_events: 1,
+            output_events: 1,
+        },
+    );
+    let input = stereo(16, 0.0);
+    let mut output = [vec![0.0; 16], vec![0.0; 16]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    let event = note();
+    host.process_events(
+        &planes,
+        &mut outs(&mut output),
+        &[event],
+        &mut [],
+        Duration::from_secs(2),
+    )
+    .expect("one note fits the initial buffer");
+    assert_eq!(output[0][0], 1.0);
+    host.remap(SessionLayout {
+        max_frames: 64,
+        input_channels: 2,
+        output_channels: 2,
+        input_events: 8,
+        output_events: 8,
+    })
+    .expect("the control thread grows the buffers");
+    host.process_events(
+        &planes,
+        &mut outs(&mut output),
+        &[event, event, event, event],
+        &mut [],
+        Duration::from_secs(2),
+    )
+    .expect("a larger note list allocates nothing on the audio thread");
+    assert_eq!(output[0][0], 5.0, "all four note-ons reach the plugin");
+}
+
+#[test]
+fn audit_pro08_restart_under_rtsan() {
+    let mut host = spawn_plugin(Some("restart"), SessionLayout::stereo());
+    let input = stereo(32, 0.2);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the block that requests a restart");
+    assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
+    let started = Instant::now();
+    loop {
+        if matches!(
+            host.poll_notice().expect("notice"),
+            Some(PluginNotice::PluginRestarted { .. })
+        ) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "restart did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("restart hands the processor over without allocating");
+    assert!((output[0][0] - input[0][0] * 2.0).abs() < 1.0e-6);
 }
 
 fn note() -> Event {
@@ -452,8 +559,10 @@ fn dirty_and_restored_state_cross_the_socket() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    host.restore_state(b"abc").expect("restore");
-    assert_eq!(host.save_state().expect("save"), b"abc");
+    let error = host
+        .restore_state(b"abc")
+        .expect_err("restore without a plugin");
+    assert!(error.to_string().contains("no plugin"), "{error}");
 }
 
 #[test]

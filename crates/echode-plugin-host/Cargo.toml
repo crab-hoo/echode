@@ -9,6 +9,7 @@ description = "Helper process that runs CLAP plugins outside the DAW"
 
 [dependencies]
 clack-host = { workspace = true }
+clap-sys = "=0.5.0"
 dispatch2 = "=0.3.1"
 echode-realtime = { path = "../echode-realtime" }
 echode-sandbox = { path = "../echode-sandbox" }
@@ -16,6 +17,10 @@ objc2-core-foundation = "=0.3.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 objc2-core-services = { version = "=0.3.2", default-features = false, features = ["std", "FSEvents", "dispatch2"] }
+rtsan-standalone = { version = "=0.3.0", optional = true }
+
+[features]
+rtsan = ["dep:rtsan-standalone"]
 
 [dev-dependencies]
 echode-engine = { path = "../echode-engine" }

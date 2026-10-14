@@ -69,7 +69,7 @@ pub fn read_package(directory: &Path) -> Result<Project, PackageError> {
     let header = parse_header(&project_json)?;
     let contents = read_named_dir(&root, directory, "contents", &header.content_ids)?;
     let tracks = read_named_dir(&root, directory, "tracks", &header.track_ids)?;
-    assemble(header, contents, tracks)
+    assemble(header, contents, tracks, directory)
 }
 
 fn read_named_dir(
@@ -539,8 +539,11 @@ pub(crate) fn read_commit(repo: &Repository, revision: ObjectId) -> Result<Proje
     let project_json = blob_text(&root, "project.json")?;
     let header = parse_header(&project_json)?;
     let contents = read_tree_files(&root, "contents", &header.content_ids)?;
+    let package = repo
+        .workdir()
+        .ok_or_else(|| PackageError::new("package has no working directory for plugin state"))?;
     if header.track_ids.is_empty() {
-        return assemble(header, contents, Vec::new());
+        return assemble(header, contents, Vec::new(), package);
     }
     let tracks_entry = root
         .lookup_entry_by_path("tracks")
@@ -573,7 +576,7 @@ pub(crate) fn read_commit(repo: &Repository, revision: ObjectId) -> Result<Proje
             .ok_or_else(|| PackageError::new(format!("tracks/{filename} is missing")))?;
         tracks.push((filename, json));
     }
-    assemble(header, contents, tracks)
+    assemble(header, contents, tracks, package)
 }
 
 fn read_tree_files(
@@ -763,7 +766,7 @@ fn render_track(track: &Track) -> String {
             to_json(&device.id.to_string()),
             to_json(device.kind.as_str()),
             to_json(&device.plugin),
-            to_json(&None::<String>)
+            to_json(&device.state)
         );
         push_json_lines(
             &mut out,
@@ -1033,6 +1036,7 @@ fn assemble(
     header: Header,
     contents: Vec<(String, String)>,
     tracks: Vec<(String, String)>,
+    package: &Path,
 ) -> Result<Project, PackageError> {
     let mut parsed = Vec::with_capacity(tracks.len());
     if tracks.len() != header.track_ids.len() {
@@ -1060,13 +1064,13 @@ fn assemble(
                 "tracks/{filename} is out of order"
             )));
         }
-        parsed.push(parse_track(&json, id)?);
+        parsed.push(parse_track(&json, id, package)?);
     }
     Project::try_assemble(header.meter, header.tempo, parsed_contents, parsed)
         .map_err(|error| PackageError::new(error.to_string()))
 }
 
-fn parse_track(json: &str, expected_id: &str) -> Result<Track, PackageError> {
+fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, PackageError> {
     let file: TrackFile = parse_schema(json, "track json", "track")?;
     if file.schema != SCHEMA {
         return Err(PackageError::new(format!(
@@ -1123,22 +1127,26 @@ fn parse_track(json: &str, expected_id: &str) -> Result<Track, PackageError> {
             .devices
             .into_iter()
             .map(|device| {
-                match device.state.as_deref() {
-                    None => {}
-                    Some(text) if crate::objects::is_content_hash(text) => {
-                        return Err(PackageError::new(format!(
-                            "plugin state is not accepted yet ({text})"
-                        )));
+                let kind = echode_model::DeviceKind::parse(&device.kind).ok_or_else(|| {
+                    PackageError::new(format!("unknown device kind {}", device.kind))
+                })?;
+                let state = match (kind, device.state.as_deref()) {
+                    (_, None) => None,
+                    (echode_model::DeviceKind::Mixer, Some(_)) => {
+                        return Err(PackageError::new("mixer state must be null"));
                     }
-                    Some(_) => {
+                    (echode_model::DeviceKind::Clap, Some(text))
+                        if !crate::objects::is_content_hash(text) =>
+                    {
                         return Err(PackageError::new(
                             "state hash must be 64 lowercase hex digits",
                         ));
                     }
-                }
-                let kind = echode_model::DeviceKind::parse(&device.kind).ok_or_else(|| {
-                    PackageError::new(format!("unknown device kind {}", device.kind))
-                })?;
+                    (echode_model::DeviceKind::Clap, Some(text)) => {
+                        crate::objects::read_object(package, text)?;
+                        Some(text.to_string())
+                    }
+                };
                 let mut parameters = Vec::with_capacity(device.parameters.len());
                 for parameter in device.parameters {
                     let key = echode_model::ParamKey::parse(&parameter.key).ok_or_else(|| {
@@ -1171,6 +1179,7 @@ fn parse_track(json: &str, expected_id: &str) -> Result<Track, PackageError> {
                     id: parse_id(&device.id)?,
                     kind,
                     plugin,
+                    state,
                     parameters,
                 })
             })

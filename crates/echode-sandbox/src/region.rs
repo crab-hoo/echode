@@ -13,7 +13,8 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const HEADER_BYTES: usize = 128;
@@ -21,6 +22,41 @@ const SLOT_HEAD: usize = 64;
 const SLOTS: usize = 2;
 
 static SHM_SEQ: AtomicU64 = AtomicU64::new(0);
+static ABORT_REGION: AtomicPtr<MappedRegion> = AtomicPtr::new(ptr::null_mut());
+static ABORT_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// Point the process-wide `SIGABRT` handler at this mapping.
+/// The handler only stores two atomics, then re-raises the signal.
+/// Later calls replace the mapping and do not call `sigaction` again.
+pub fn arm_abort_notice(region: &MappedRegion) {
+    point_abort_notice(region);
+    if ABORT_ARMED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = abort_notice as *const () as libc::sighandler_t;
+        libc::sigemptyset(ptr::from_mut(&mut action.sa_mask));
+        let _ = libc::sigaction(libc::SIGABRT, &action, ptr::null_mut());
+    }
+}
+
+/// Replace the mapping the handler writes into. Does not call `sigaction`.
+/// The processing thread uses this after the handler is already installed.
+pub fn point_abort_notice(region: &MappedRegion) {
+    ABORT_REGION.store(ptr::from_ref(region).cast_mut(), Ordering::Release);
+}
+
+extern "C" fn abort_notice(_signal: i32) {
+    let region = ABORT_REGION.load(Ordering::Relaxed);
+    if !region.is_null() {
+        unsafe { (*region).mark_aborted() };
+    }
+    unsafe {
+        libc::signal(libc::SIGABRT, libc::SIG_DFL);
+        libc::raise(libc::SIGABRT);
+    }
+}
 
 /// Chosen when the session is created. Zero audio channels are legal.
 /// A session with no audio and no events is not.
@@ -119,7 +155,9 @@ pub struct Header {
     pub output_channels: AtomicU32,
     pub input_events: AtomicU32,
     pub output_events: AtomicU32,
-    pub _pad: AtomicU32,
+    /// Why `dead` was set by the helper. 1: `process` returned an error.
+    /// 2: the plugin raised `SIGABRT`. 0: the process exited without that notice.
+    pub fail_len: AtomicU32,
 }
 
 const _: () = assert!(std::mem::size_of::<Header>() <= HEADER_BYTES);
@@ -364,8 +402,15 @@ impl MappedRegion {
         self.header().published.load(Ordering::Acquire)
     }
 
-    pub fn bump_alarm(&self) {
+    /// Increment the alarm without waking a waiter.
+    /// The processing thread uses this when it is already running: waking
+    /// itself is a syscall, and the next loop sees the new value.
+    pub fn raise_alarm(&self) {
         self.header().alarm.fetch_add(1, Ordering::Release);
+    }
+
+    pub fn bump_alarm(&self) {
+        self.raise_alarm();
         sync::wake_one(&self.header().alarm, SyncFlags::PROCESS);
     }
 
@@ -375,6 +420,24 @@ impl MappedRegion {
 
     pub fn wait_alarm(&self, seen: u64) -> Result<u64, RegionError> {
         sync::wait_until_ne(&self.header().alarm, seen, SyncFlags::PROCESS).map_err(Into::into)
+    }
+
+    /// The plugin returned an error from `process`. The parent sees this on the
+    /// next poll, without waiting for the block deadline.
+    pub fn mark_process_refused(&self) {
+        self.header().fail_len.store(1, Ordering::Release);
+        self.header().dead.store(1, Ordering::Release);
+    }
+
+    /// The plugin called `abort`. Written from a `SIGABRT` handler so the
+    /// parent can tell a crash from a hang before the crash reporter exits.
+    pub fn mark_aborted(&self) {
+        self.header().fail_len.store(2, Ordering::Release);
+        self.header().dead.store(1, Ordering::Release);
+    }
+
+    pub fn process_refused(&self) -> bool {
+        self.header().fail_len.load(Ordering::Acquire) == 1
     }
 
     pub fn mark_ready(&self) {
@@ -393,6 +456,7 @@ impl MappedRegion {
         let header = self.header();
         header.ready.store(0, Ordering::Release);
         header.dead.store(0, Ordering::Release);
+        header.fail_len.store(0, Ordering::Release);
         header.published.store(0, Ordering::Release);
         header.completed.store(0, Ordering::Release);
         for index in 0..SLOTS {
@@ -620,6 +684,73 @@ impl MappedRegion {
         Ok(generation)
     }
 
+    /// Publish a block from one buffer per channel. A buffer may be longer than
+    /// `frames`; only the first `frames` samples are copied.
+    pub fn submit_planes(
+        &self,
+        frames: usize,
+        input: &[Vec<f32>],
+        events: &[(Event, u32)],
+    ) -> Result<u64, RegionError> {
+        if self.header().dead.load(Ordering::Acquire) != 0 {
+            return Err(RegionError::Dead);
+        }
+        if frames == 0
+            || frames > self.layout.max_frames as usize
+            || input.len() != self.input_channels()
+            || input.iter().any(|plane| plane.len() < frames)
+        {
+            return Err(RegionError::BadShape {
+                frames,
+                channels: input.len(),
+            });
+        }
+        if events.len() > self.layout.input_events as usize {
+            return Err(RegionError::TooManyEvents {
+                count: events.len(),
+                capacity: self.layout.input_events as usize,
+            });
+        }
+        let header = self.header();
+        let published = header.published.load(Ordering::Acquire);
+        let completed = header.completed.load(Ordering::Acquire);
+        if published.wrapping_sub(completed) >= SLOTS as u64 {
+            return Err(RegionError::Busy);
+        }
+        let generation = published.wrapping_add(1);
+        for (channel, plane) in input.iter().enumerate() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    plane.as_ptr(),
+                    self.plane(generation, false, channel).cast_mut(),
+                    frames,
+                );
+            }
+        }
+        for (index, (event, device)) in events.iter().enumerate() {
+            let record = encode_routed(event, *device).ok_or_else(|| {
+                RegionError::Protocol("event cannot be stored in a plain record".to_string())
+            })?;
+            let offset = self.event_offset(generation, false, index);
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    record.as_ptr(),
+                    self.map.as_ptr().cast_mut().add(offset),
+                    RECORD_BYTES,
+                );
+            }
+        }
+        let head = self.slot_head(generation);
+        head.input_events
+            .store(events.len() as u32, Ordering::Release);
+        head.output_events.store(0, Ordering::Release);
+        head.frames.store(frames as u32, Ordering::Release);
+        head.command.store(crate::CMD_PROCESS, Ordering::Release);
+        header.published.store(generation, Ordering::Release);
+        self.bump_alarm();
+        Ok(generation)
+    }
+
     pub fn abandon(&self, generation: u64) {
         self.abandoned.store(generation, Ordering::Release);
     }
@@ -655,6 +786,72 @@ impl MappedRegion {
                     channels: output.len(),
                 });
             }
+        }
+        for (channel, plane) in output.iter_mut().enumerate() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.output_ptr(generation, channel),
+                    plane.as_mut_ptr(),
+                    frames,
+                );
+            }
+        }
+        let count = (self
+            .slot_head(generation)
+            .output_events
+            .load(Ordering::Acquire) as usize)
+            .min(self.layout.output_events as usize);
+        let mut written = 0;
+        for index in 0..count {
+            if written == delivered.len() {
+                break;
+            }
+            let offset = self.event_offset(generation, true, index);
+            let mut record = [0u8; RECORD_BYTES];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.map.as_ptr().add(offset),
+                    record.as_mut_ptr(),
+                    RECORD_BYTES,
+                );
+            }
+            if let Some(event) = decode_event(&record) {
+                delivered[written] = Delivered {
+                    event,
+                    device: device_index(&record).unwrap_or(0),
+                };
+                written += 1;
+            }
+        }
+        Ok(Collected::Ready { events: written })
+    }
+
+    /// Like [`Self::collect_ready`], writing `frames` samples into each buffer.
+    pub fn collect_planes(
+        &self,
+        generation: u64,
+        output: &mut [Vec<f32>],
+        frames: usize,
+        delivered: &mut [Delivered],
+    ) -> Result<Collected, RegionError> {
+        if self.abandoned.load(Ordering::Acquire) == generation {
+            return Ok(Collected::Abandoned);
+        }
+        if self.header().dead.load(Ordering::Acquire) != 0 {
+            return Err(RegionError::Dead);
+        }
+        if self.header().completed.load(Ordering::Acquire) < generation {
+            return Ok(Collected::Pending);
+        }
+        let stored = self.prepare_block(generation)?;
+        if stored != frames
+            || output.len() != self.output_channels()
+            || output.iter().any(|plane| plane.len() < frames)
+        {
+            return Err(RegionError::BadShape {
+                frames,
+                channels: output.len(),
+            });
         }
         for (channel, plane) in output.iter_mut().enumerate() {
             unsafe {

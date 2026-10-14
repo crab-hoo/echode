@@ -787,6 +787,7 @@ name = "echode-plugin-host"
 version = "0.0.0"
 dependencies = [
  "clack-host",
+ "clap-sys",
  "dispatch2",
  "echode-engine",
  "echode-model",
@@ -794,6 +795,7 @@ dependencies = [
  "echode-sandbox",
  "objc2-core-foundation",
  "objc2-core-services",
+ "rtsan-standalone",
  "serde",
  "serde_json",
 ]
@@ -816,6 +818,7 @@ name = "echode-test-plugin"
 version = "0.0.0"
 dependencies = [
  "clack-plugin",
+ "clap-sys",
 ]
 
 [[package]]

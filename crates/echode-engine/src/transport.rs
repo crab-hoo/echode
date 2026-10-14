@@ -11,7 +11,7 @@ use crate::clock::{sample_to_tick, tick_to_sample};
 use crate::{ClockSource, InternalClock};
 
 /// Why playback could not step.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlaybackError {
     InvalidSampleRate,
     InvalidLoop,
@@ -21,6 +21,8 @@ pub enum PlaybackError {
     IdSpace,
     InvalidDevice,
     Plugin,
+    /// The plugin loaded, but its audio ports are not a layout this host can run.
+    Unsupported(String),
     Media,
 }
 
@@ -35,6 +37,7 @@ impl std::fmt::Display for PlaybackError {
             Self::IdSpace => "playback note numbers are exhausted",
             Self::InvalidDevice => "device state or parameter is not valid",
             Self::Plugin => "plugin helper did not start",
+            Self::Unsupported(reason) => reason.as_str(),
             Self::Media => "audio file could not be read",
         };
         formatter.write_str(message)

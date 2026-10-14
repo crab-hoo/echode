@@ -424,7 +424,7 @@ fn a_device_state_is_null_until_plugins_can_hold_one() {
     assert_eq!(read_package(&directory).unwrap(), project);
     std::fs::write(&path, text.replace("\"state\":null", "\"state\":\"abc\"")).unwrap();
     let error = read_package(&directory).unwrap_err().to_string();
-    assert!(error.contains("64"), "{error}");
+    assert!(error.contains("mixer state must be null"), "{error}");
     let hash = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
     std::fs::write(
         &path,
@@ -432,12 +432,31 @@ fn a_device_state_is_null_until_plugins_can_hold_one() {
     )
     .unwrap();
     let error = read_package(&directory).unwrap_err().to_string();
+    assert!(error.contains("mixer state must be null"), "{error}");
+    let device = Id::from_raw(90);
+    let project = project
+        .add_clap_device(project.tracks()[0].id, device, "dev.echode.test-state")
+        .unwrap()
+        .set_device_state(device, Some(hash.to_string()))
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let clap_path = directory
+        .join("tracks")
+        .join(format!("{}.json", project.tracks()[0].id));
+    let body = std::fs::read_to_string(&clap_path).unwrap();
+    std::fs::write(
+        &clap_path,
+        body.replacen(&format!("\"state\":\"{hash}\""), "\"state\":\"abc\"", 1),
+    )
+    .unwrap();
+    let bad = read_package(&directory).unwrap_err().to_string();
+    assert!(bad.contains("64"), "{bad}");
+    write_package(&directory, &project).unwrap();
+    let missing = read_package(&directory).unwrap_err().to_string();
+    assert!(missing.contains(hash), "{missing}");
+    assert_eq!(echode_history::write_object(&directory, &[]).unwrap(), hash);
+    assert_eq!(read_package(&directory).unwrap(), project);
     let _ = std::fs::remove_dir_all(directory);
-    assert!(
-        error.contains("plugin state is not accepted yet"),
-        "{error}"
-    );
-    assert!(error.contains(hash), "{error}");
 }
 
 #[test]

@@ -53,7 +53,7 @@ fn plugin_dylib() -> PathBuf {
 #[test]
 fn scanning_reads_the_factory_descriptor() {
     let plugins = scan_descriptors(&plugin_dylib()).expect("scan");
-    assert_eq!(plugins.len(), 2);
+    assert_eq!(plugins.len(), 7);
     assert_eq!(plugins[0].id, "dev.echode.test-gain");
     assert_eq!(plugins[0].name, "Echode Test Gain");
     assert_eq!(plugins[0].vendor, "Echode");
@@ -168,7 +168,15 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             .iter()
             .map(|plugin| plugin.id.as_str())
             .collect::<Vec<_>>(),
-        ["dev.echode.test-gain", "dev.echode.test-instrument"]
+        [
+            "dev.echode.test-gain",
+            "dev.echode.test-instrument",
+            "dev.echode.test-mono",
+            "dev.echode.test-noports",
+            "dev.echode.test-ports",
+            "dev.echode.test-state",
+            "dev.echode.test-zflip",
+        ]
     );
     let found = echode_plugin_host::list_bundles(&root);
     let cache = root.join("scan.jsonl");
@@ -178,7 +186,15 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             .iter()
             .map(|plugin| plugin.id.as_str())
             .collect::<Vec<_>>(),
-        ["dev.echode.test-gain", "dev.echode.test-instrument"]
+        [
+            "dev.echode.test-gain",
+            "dev.echode.test-instrument",
+            "dev.echode.test-mono",
+            "dev.echode.test-noports",
+            "dev.echode.test-ports",
+            "dev.echode.test-state",
+            "dev.echode.test-zflip",
+        ]
     );
     std::fs::write(macos.join("Plugin"), b"replaced after the cache").unwrap();
     let again = echode_plugin_host::refresh_catalog(&host, &cache, &found).unwrap();
@@ -187,7 +203,15 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             .iter()
             .map(|plugin| plugin.id.as_str())
             .collect::<Vec<_>>(),
-        ["dev.echode.test-gain", "dev.echode.test-instrument"]
+        [
+            "dev.echode.test-gain",
+            "dev.echode.test-instrument",
+            "dev.echode.test-mono",
+            "dev.echode.test-noports",
+            "dev.echode.test-ports",
+            "dev.echode.test-state",
+            "dev.echode.test-zflip",
+        ]
     );
     let _ = std::fs::remove_dir_all(&root);
 }

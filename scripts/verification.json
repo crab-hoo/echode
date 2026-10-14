@@ -16,7 +16,7 @@
   },
   "checks": [
     {"id": "check", "mode": "automatic", "always": true, "areas": [], "timeout": 1200, "purpose": "通常の Rust / Swift、所有権の操作列、基準音声、保存形式、lint、FFI、ライセンス"},
-    {"id": "rtsan", "mode": "automatic", "areas": ["audio"], "timeout": 600, "purpose": "テスト用シンセ、計画の受け渡し、製品の再生と出力バッファでリアルタイム処理の禁止操作を検出"},
+    {"id": "rtsan", "mode": "automatic", "areas": ["audio"], "timeout": 600, "purpose": "テスト用シンセ、計画の受け渡し、製品の再生と出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作を検出"},
     {"id": "check-input", "mode": "automatic", "areas": ["input"], "timeout": 600, "purpose": "入力の Swift 単体テスト。確認ウィンドウは開かない"},
     {"id": "check-bridge-features", "mode": "automatic", "areas": ["bridge"], "timeout": 900, "purpose": "橋渡しの全 feature の Rust テストと lint、生成器を含むライセンス"},
     {"id": "check-bridge-asan", "mode": "automatic", "areas": ["bridge"], "timeout": 1200, "purpose": "Rust の C ABI と Swift の往復を別プロセスでメモリ検査"},

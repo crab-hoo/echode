@@ -19,7 +19,7 @@ use echode_model::{Meter, Project};
 use echode_realtime::{Cursor, Event, Plan, Span, TempoIndex, sort_events};
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::plugins::{HostGraph, PluginRoute, TrackChain, block_deadline};
+use crate::plugins::{ChainDevice, HostGraph, PluginRoute, TrackChain, block_deadline};
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index;
 use crate::{Device, PlaybackError, PlaybackIds, PlayedSpan, TestSynth, TrackFader};
@@ -137,6 +137,9 @@ struct Prepared {
     chase: bool,
     /// The plugin has been told about the cursor's sounding notes.
     plugin_holds: bool,
+    /// Note-ons chased from the previous plan. The synth already has these voices.
+    /// A plugin that was just spawned still needs them. Timeline note-ons stay in `events`.
+    chased_ons: Vec<Event>,
 }
 
 impl Prepared {
@@ -195,6 +198,10 @@ impl Prepared {
             });
             event_count = event_count.saturating_add(track.notes.len().saturating_mul(3));
         }
+        // A loop can retrigger every note on every sample of this block.
+        // The buffer is sized here, on the control thread, so the callback
+        // does not grow it. This is the block's worst case, not a project limit.
+        event_count = event_count.saturating_mul(frames.max(1));
         event_count = event_count.max(min_events).max(1);
         let mut track_indices: Vec<_> = tracks
             .iter()
@@ -215,6 +222,7 @@ impl Prepared {
             meter: project.meter(),
             chase: true,
             plugin_holds: false,
+            chased_ons: Vec::with_capacity(event_count),
         })
     }
 
@@ -305,12 +313,13 @@ impl Prepared {
         Ok(())
     }
 
-    /// Drops chased note-ons whose voice was carried from the previous plan.
+    /// Moves chased note-ons whose voice was carried into `chased_ons`.
     ///
-    /// Those events rebuild the cursor. Playing them again would restart the
-    /// envelope. Note-ons from the timeline stay, including one that lands on
-    /// the first frame of a block while its release tail is still sounding.
-    fn drop_carried_note_ons(&mut self, count: usize) -> Result<usize, PlaybackError> {
+    /// Playing them again would restart the built-in envelope. They stay available
+    /// for a plugin that has not heard them yet. Note-ons `play` adds afterwards,
+    /// including a loop restart, remain in `events`.
+    fn take_carried_note_ons(&mut self, count: usize) -> Result<usize, PlaybackError> {
+        self.chased_ons.clear();
         let mut kept = 0usize;
         for index in 0..count {
             let event = *self
@@ -318,6 +327,10 @@ impl Prepared {
                 .get(index)
                 .ok_or(PlaybackError::BufferTooSmall)?;
             if event.is_note_on() && self.voice_is_sounding(event) {
+                if self.chased_ons.len() == self.chased_ons.capacity() {
+                    return Err(PlaybackError::BufferTooSmall);
+                }
+                self.chased_ons.push(event);
                 continue;
             }
             *self
@@ -351,6 +364,7 @@ impl Prepared {
         right: &mut [f32],
         hosts: &mut HostGraph,
     ) -> Result<(), PlaybackError> {
+        hosts.begin_block();
         let mut count = self.released;
         self.released = 0;
         if self.chase {
@@ -364,7 +378,7 @@ impl Prepared {
                 .chase_events(&self.plan, rest)
                 .map_err(play_error)?;
         }
-        count = self.drop_carried_note_ons(count)?;
+        count = self.take_carried_note_ons(count)?;
         let rest = self
             .events
             .get_mut(count..)
@@ -373,11 +387,17 @@ impl Prepared {
             .cursor
             .play(&self.plan, spans, rest)
             .map_err(play_error)?;
+        {
+            let events = self
+                .events
+                .get_mut(..count)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            sort_events(events);
+        }
         let events = self
             .events
-            .get_mut(..count)
+            .get(..count)
             .ok_or(PlaybackError::BufferTooSmall)?;
-        sort_events(events);
         for track in &mut self.tracks {
             let frames = left.len();
             let Track {
@@ -417,7 +437,10 @@ impl Prepared {
             for (sample, clip) in plane.iter_mut().zip(clip_plane.iter()) {
                 *sample += *clip;
             }
-            hosts.submit(*key, plane, clip_plane, filtered);
+            hosts.submit(*key, plane, clip_plane, filtered, &self.chased_ons);
+        }
+        if hosts.dropped_events() {
+            return Err(PlaybackError::BufferTooSmall);
         }
         let deadline = block_deadline(left.len(), self.sample_rate);
         hosts.collect(deadline);
@@ -439,6 +462,7 @@ impl Prepared {
         if self.released == 0 {
             return Ok(());
         }
+        hosts.begin_block();
         let count = self.released;
         self.released = 0;
         let frames = self
@@ -472,7 +496,7 @@ impl Prepared {
                 .filtered
                 .get(..kept)
                 .ok_or(PlaybackError::BufferTooSmall)?;
-            hosts.submit(track.key, plane, &[], filtered);
+            hosts.submit(track.key, plane, &[], filtered, &[]);
         }
         hosts.collect(block_deadline(frames, self.sample_rate));
         Ok(())
@@ -532,14 +556,19 @@ fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
                 .tracks()
                 .iter()
                 .find(|track| track.id.raw() == planned.track)?;
-            let plugins = track
+            let devices = track
                 .devices
                 .iter()
-                .filter_map(|device| device.plugin.clone())
+                .filter_map(|device| {
+                    Some(ChainDevice {
+                        id: device.id.raw(),
+                        clap_id: device.plugin.clone()?,
+                    })
+                })
                 .collect();
             Some(TrackChain {
                 key: planned.track_key,
-                plugins,
+                devices,
             })
         })
         .collect()
@@ -838,19 +867,19 @@ impl PlaybackControl {
         )?;
         self.event_room = self.event_room.max(prepared.events.len());
         let chain = chain_of(project, &prepared);
-        if chain != self.chain && !self.host_bin.as_os_str().is_empty() {
-            let hosts = HostGraph::open(
-                &self.host_bin,
-                &self.routes,
-                &chain,
-                self.frames,
-                prepared.events.len(),
-                self.rate,
-            )?;
-            self.chain = chain;
-            self.pending_hosts = Some(Box::new(hosts));
-        } else if !self.host_bin.as_os_str().is_empty() {
+        if !self.host_bin.as_os_str().is_empty() {
             let mut hosts = self.host_slot.enter_control();
+            if chain != self.chain {
+                hosts.graph().reconcile(
+                    &self.host_bin,
+                    &self.routes,
+                    &chain,
+                    self.frames,
+                    prepared.events.len(),
+                    self.rate,
+                )?;
+                self.chain = chain;
+            }
             let needed = prepared.events.len();
             if hosts.graph().event_capacity() < needed {
                 hosts.graph().ensure_events(needed)?;
@@ -874,6 +903,14 @@ impl PlaybackControl {
             self.pending_hosts = Some(hosts);
         }
     }
+    /// Device id and reason when a plugin missed the block that just rendered.
+    /// Live playback still silences that block and leaves [`PlaybackStatus::failed`]
+    /// clear. Export uses this so a deadline miss is not a finished file.
+    pub fn plugin_failure(&self) -> Option<String> {
+        let mut hosts = self.host_slot.enter_control();
+        hosts.graph().export_failure()
+    }
+
     pub fn status(&self) -> PlaybackStatus {
         loop {
             let before = self.status.generation.load(Ordering::SeqCst);
@@ -1222,6 +1259,41 @@ mod tests {
                 .unwrap();
             audio.render(&mut left, &mut right);
             assert!(!control.status().failed);
+        }
+    }
+
+    #[test]
+    fn audit_pro06_a_hundred_sample_loop_keeps_playing_in_a_large_block() {
+        use echode_model::{NoteDraft, Tick};
+        let (project, track) = Project::new().add_track("pad");
+        let project = project
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch: 60,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: Tick::quarters(4).unwrap(),
+                },
+            )
+            .unwrap()
+            .0;
+        for frames in [64usize, 512] {
+            let (mut control, mut audio) = playback_pair(&project, 48_000, frames).unwrap();
+            control
+                .command(PlaybackCommand::SetLoop { start: 0, end: 100 })
+                .unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut left = vec![0.0; frames];
+            let mut right = vec![0.0; frames];
+            audio.render(&mut left, &mut right);
+            let peak = left
+                .iter()
+                .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+            assert!(peak > 0.0, "{frames} frames were silent");
+            let status = control.status();
+            assert!(!status.failed, "{frames} frames failed");
+            assert!(status.playing, "{frames} frames stopped");
         }
     }
 

@@ -1,6 +1,10 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+#[cfg(debug_assertions)]
+#[global_allocator]
+static ALLOCATOR: echode_plugin_host::GuardAlloc = echode_plugin_host::GuardAlloc;
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut shm = None;

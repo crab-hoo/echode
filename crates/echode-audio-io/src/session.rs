@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -64,6 +64,7 @@ pub struct Session {
     loop_ticks: Option<(i64, i64)>,
     metronome: bool,
     clips: ClipLoader,
+    package: Option<PathBuf>,
     error: Option<String>,
 }
 
@@ -82,6 +83,7 @@ impl Session {
             loop_ticks: None,
             metronome: false,
             clips: Arc::new(|_project, _rate| Ok(Vec::new())),
+            package: None,
             error: None,
         }
     }
@@ -90,6 +92,7 @@ impl Session {
     pub fn with_media(project: Arc<Project>, package: &Path) -> Self {
         let mut session = Self::new(project);
         session.clips = crate::clips::media_loader(package.to_path_buf());
+        session.package = Some(package.to_path_buf());
         session
     }
 
@@ -296,6 +299,7 @@ impl Session {
                         loop_ticks: self.loop_ticks,
                         metronome: self.metronome,
                         clips: Arc::clone(&self.clips),
+                        package: self.package.clone(),
                     },
                     Arc::clone(&self.hardware_epoch),
                     self.observed_epoch,

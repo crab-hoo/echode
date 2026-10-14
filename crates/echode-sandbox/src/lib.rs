@@ -18,7 +18,10 @@ mod wire;
 mod workgroup;
 
 pub use control::{ControlMessage, Socket};
-pub use region::{Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout};
+pub use region::{
+    Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout,
+    arm_abort_notice, point_abort_notice,
+};
 pub use session::{
     BlockProgress, PluginHost, PluginNotice, SessionError, SpawnOptions, WorkgroupHandoff,
 };

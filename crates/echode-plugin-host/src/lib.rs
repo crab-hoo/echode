@@ -94,7 +94,7 @@ pub fn measure_in_process(
         .map_err(|error| HostError::Plugin(error.to_string()))?;
     let mut instance = PluginInstance::<threads::EchodeHost>::new(
         |_| threads::HostShared::inert(),
-        |_| (),
+        threads::host_main,
         &entry,
         plugin_id,
         &host_info,
@@ -158,6 +158,7 @@ pub fn measure_in_process(
 mod catalog;
 mod events;
 mod live;
+mod realtime;
 mod scan;
 mod threads;
 mod watch;
@@ -168,6 +169,8 @@ pub use catalog::{
 };
 pub use events::write_input;
 pub use live::{CatalogWaiter, LiveCatalog};
+#[cfg(debug_assertions)]
+pub use realtime::GuardAlloc;
 pub use scan::{
     ResolvedPlugin, SCAN_BUDGET, ScanCacheEntry, ScannedPlugin, cache_entry, cached_plugins,
     host_binary, installed_clap_bundles, load_scan_cache, refresh_catalog, resolve_installed,

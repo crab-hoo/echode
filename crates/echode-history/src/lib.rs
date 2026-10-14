@@ -27,6 +27,7 @@ pub use document::{
 pub use gix::ObjectId;
 pub use host::{DocumentHost, HostError};
 pub use media::{DecodedPcm, StoredAudio, import_audio, read_pcm};
+pub use objects::{read_object, write_object};
 pub use peaks::{PeakColumn, Waveforms, cache_peaks};
 pub use thin::{
     DAY, HOUR, HOURLY_SPAN, RECENT, SavePoint, StoreSize, git_store_size, kept_indexes,
