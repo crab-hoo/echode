@@ -3,6 +3,7 @@
 import fcntl
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -21,6 +22,11 @@ with patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
 
 class DiagnosticTests(unittest.TestCase):
     def setUp(self):
+        # A parent's base ref belongs to its repository, not these Git fixtures.
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("VERIFY_BASE", None)
         self.temp = tempfile.TemporaryDirectory(prefix="echode-diagnosis-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -75,6 +81,16 @@ class DiagnosticTests(unittest.TestCase):
         data = diagnose.collect(self.root)
         self.assertEqual(data["environment"]["missing_tools"], [])
         self.assertIn("rustc +nightly-fixture -vV", data["environment"]["tool_errors"])
+
+    def test_explicit_base_is_resolved_in_the_repository_being_diagnosed(self):
+        reference = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
+        with patch.dict(os.environ, {"VERIFY_BASE": reference}):
+            data = diagnose.collect(self.root)
+        self.assertEqual(data["base"], reference)
+        self.assertEqual(data["changed_paths"], ["source.txt"])
+        with patch.dict(os.environ, {"VERIFY_BASE": "missing-fixture-ref"}):
+            with self.assertRaises(subprocess.CalledProcessError):
+                diagnose.collect(self.root)
 
     def test_persistent_lock_file_is_idle_until_it_is_actually_locked(self):
         self.save_report()
