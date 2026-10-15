@@ -489,7 +489,7 @@ Phase 1 のワークスペースは、文書・選択・確定した編集を `P
 
 現在のアレンジのトラック名は、Core Text で名前ごとの被覆テクスチャを作り、描画スレッドで可視の名前だけを保持する。幅や表示倍率が変わると作り直す。ヘッダの背景と名前は同じフレームへ含める。将来、可視の文字や操作部品が増える時にグリフのアトラスへまとめる。
 
-最初の製品レンダラーは `swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift` の `CanvasRenderer`。アレンジとピアノロールで共用する。表示リンクを専用の run loop に登録し、停止中からの再開もその run loop 上で行う。メインスレッドはビューの大きさと不変のスナップショットを渡す。レイヤーの大きさの更新とエンコードは描画スレッドへ閉じ込める。3 つのフレーム枠は GPU の完了で返し、空きがなければ待たずにその更新を見送る。バッファの容量は可視要素に合わせて増やし、トラック数の上限にはしない。描画・ヒットテスト・アクセシビリティの可視の子は同じ可視列を使う。ピアノロールは同じ中身のインデックスに音高ごとの区間を持ち、見えている時間・音高のノートだけを列挙する。論理移動は画面外の発音するノートも対象にし、選択を表示範囲へ移す。アクセシビリティの仮想ノートは ID で保持し、選択、音高、移動、長さ、削除の操作を公開する。今回の実機確認は未実施。
+最初の製品レンダラーは `swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift` の `CanvasRenderer`。アレンジとピアノロールで共用する。表示リンクは描画スレッドで作り、専用の run loop に登録する。停止中からの再開もその run loop 上で行う。再生、一時停止、停止、位置移動は feed の差し替えとは別に世代を増やし、その版のフレームを一枚描いてから、止まっていればリンクを休止する（[ADR 0091](decisions/0091-playhead-wake.md)）。実ウインドウでの回帰は `make spike-playhead` で、通常の `make check` には入れない（[ADR 0092](decisions/0092-playhead-spike.md)）。メインスレッドはビューの大きさと不変のスナップショットを渡す。レイヤーの大きさの更新とエンコードは描画スレッドへ閉じ込める。3 つのフレーム枠は GPU の完了で返し、空きがなければ待たずにその更新を見送る。バッファの容量は可視要素に合わせて増やし、トラック数の上限にはしない。描画・ヒットテスト・アクセシビリティの可視の子は同じ可視列を使う。ピアノロールは同じ中身のインデックスに音高ごとの区間を持ち、見えている時間・音高のノートだけを列挙する。論理移動は画面外の発音するノートも対象にし、選択を表示範囲へ移す。アクセシビリティの仮想ノートは ID で保持し、選択、音高、移動、長さ、削除の操作を公開する。今回の実機確認は未実施。
 
 インスペクター、ブラウザ、設定などのフォームやリストは SwiftUI と AppKit で作り、macOS の標準の見た目と操作感に合わせます。UI の文字列は最初から String Catalog で管理し、日本語と英語に対応できるようにしておきます。
 
@@ -566,6 +566,8 @@ Phase 1 の初期実装は `PianoRollView.swift`、`PianoGeometry.swift` と `Pi
 
 ## 16. 品質保証
 
+以下は品質保証の設計上の範囲であり、全項目の実装済み宣言ではない。現在の接続範囲は [status.md](status.md)、実行と証拠の扱いは [検査手順](verification.md) と [デバッグ手順](debugging.md)。
+
 | 種類 | 内容 |
 |---|---|
 | 単体テスト | モデルの操作、テンポマップ、時間の変換、スマートクリップの規則、グラフの組み立て、PDC の計算 |
@@ -587,7 +589,7 @@ Phase 1 の初期実装は `PianoRollView.swift`、`PianoGeometry.swift` と `Pi
 - **ツールチェーン**: Xcode 27（Swift 6.4、macOS 27 SDK）と Rust の stable。ターゲットは `aarch64-apple-darwin` だけ
 - Rust は静的ライブラリとしてビルドして XCFramework にまとめ、Swift Package から参照する
 - Xcode プロジェクトは YAML などの定義ファイルから生成し、`.xcodeproj` は手で編集しない（XcodeGen を第一候補にする）。差分が読みやすくなり、AI エージェントも扱いやすい
-- よく使う作業は `just` にまとめる（`just check`、`just app`、`just render`、`just bench`）
+- 実行の定義は Makefile に置き、`just` の同名レシピはその入口を呼ぶ。エージェントの完了時は `make verify` を使う
 - **CI**: Rust のコアのテストは GitHub Actions の macOS ランナーで実行する。macOS 27 が必要なアプリのテストは、ランナーが対応するまで手元で実行する
 - **署名と配布**: Apple Developer Program に加入しないので、公証はしない。開発でも配布でも同じ自己署名証明書 `Echode Local` で署名し、アップデートしてもマイクなどの許可が維持されるようにする。証明書がまだ無いときの `make app` だけはアドホック署名のまま動く。GitHub Releases で配布し、初回起動時に許可する手順を案内する。自動アップデートには Sparkle（MIT）を使う予定で、自己署名での動作は Phase 6 で確かめる（[ADR 0061](decisions/0061-distribution-signing.md)）
 - **配布バンドル**: `Echode.app/Contents/MacOS/Echode`、`Contents/Helpers/EchodePluginHost.app`（`LSUIElement`。library validation を外す権限はこのヘルパーだけ）、`Contents/Frameworks/EchodeFFI.xcframework`。本体は Hardened Runtime で library validation を有効にする。Xcode プロジェクトは `project.yml` から生成し、`.xcodeproj` は手で編集しない

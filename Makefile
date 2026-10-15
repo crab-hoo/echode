@@ -1,4 +1,4 @@
-.PHONY: app dist xcode sign-setup spike-app spike-arrange-frame spike-piano-frame spike-audio check verify verify-plan check-verification fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
+.PHONY: app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
 
 app:
 	bash scripts/build-app.sh
@@ -17,6 +17,22 @@ spike-app:
 	bash scripts/build-app.sh
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe "$(CURDIR)/target/spike-app.json"
 
+# Real-window checks run under AppKit; the normal suite never invokes them.
+spike-playhead:
+	cargo build --locked --offline -p echode-ffi
+	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
+	test -n "$$header"; \
+	mkdir -p swift/EchodeBridge/CEchodeFfi/include "$(CURDIR)/target"; \
+	cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h; \
+	frameworks="$$(xcrun --show-sdk-platform-path)/Developer/Library/Frameworks"; \
+	test -d "$$frameworks/Testing.framework"; \
+	swift build --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
+		-Xswiftc -warnings-as-errors --product EchodePlayheadProbe; \
+	bin="$$(swift build --package-path swift/EchodeApp --scratch-path target/echode-app-tests --show-bin-path)"; \
+	DYLD_FRAMEWORK_PATH="$$frameworks" \
+	ECHODE_SPIKE_PLAYHEAD_REPORT="$(CURDIR)/target/spike-playhead.json" \
+	"$$bin/EchodePlayheadProbe"
+
 # Actual GPU pixels, without creating windows or controlling the computer UI.
 spike-arrange-frame:
 	cargo build -p echode-ffi
@@ -26,9 +42,13 @@ spike-piano-frame:
 	cargo build -p echode-ffi
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen-piano "$(CURDIR)/target/spike-piano-frame.json"
 
-# What every change must pass. It needs no audio hardware and has no timing thresholds,
-# so a failure always means the code is wrong.
+# Portable checks include required product regressions, once each.
 check:
+	$(MAKE) check-base
+	$(MAKE) check-product-contracts
+
+# The verifier records this part and product contracts as separate checks.
+check-base:
 	$(MAKE) check-verification
 	cargo build --workspace
 	cargo fmt --check
@@ -40,6 +60,15 @@ check:
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
+# Named behavioral tests must actually run; ignored/deleted tests cannot pass.
+check-product-contracts:
+	cargo build --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin
+	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
+	test -n "$$header"; \
+	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
+	cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py
+
 # Selection and evidence are shared by agents, the stop hook, and CI.
 verify:
 	python3 scripts/verify.py $(VERIFY_ARGS)
@@ -49,6 +78,12 @@ verify-plan:
 
 check-verification:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
+
+doctor:
+	@python3 -B scripts/diagnose.py
+
+debug-report:
+	@python3 -B scripts/diagnose.py --bundle
 
 fmt:
 	cargo fmt

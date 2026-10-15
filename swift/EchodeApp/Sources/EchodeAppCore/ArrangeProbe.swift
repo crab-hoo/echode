@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Foundation
 
 /// A short real-display measurement, invoked only by make spike-app.
@@ -58,12 +59,19 @@ public func runArrangeProbe(reportPath: String) {
                         pane.headers.bounds.height == view.bounds.height && measured.headerFrames == measured.frames && measured.maxHeaderLaneError == 0
                     let passed = aligned && headersAccessible && measured.frames > 10 && measured.framesOffMain == measured.frames && measured.framesWhileMainBusy > 5 && accessible &&
                         pianoMeasured.frames > 10 && pianoMeasured.framesOffMain == pianoMeasured.frames && pianoMeasured.framesWhileMainBusy > 5 && pianoAccessible
+                    let display = DisplayFacts(window: window)
+                    let classification = spikeClassification(passed: passed, display: display, arrange: measured, piano: pianoMeasured)
+                    let report = SpikeAppReport(arrange: measured, piano: pianoMeasured, display: display, classification: classification)
                     do {
                         let encoder = JSONEncoder()
                         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                        try encoder.encode(["arrange": measured, "piano": pianoMeasured]).write(to: URL(fileURLWithPath: reportPath))
+                        try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
                     } catch { print(error); exit(1) }
+                    print("classification: \(classification)")
+                    print("display screens: \(display.screens), asleep: \(display.mainAsleep), visible: \(display.windowVisible), active space: \(display.windowOnActiveSpace), occluded: \(display.windowOccluded)")
+                    print("arrange callbacks: \(measured.callbacks), wakes: \(measured.wakeCount), resumes: \(measured.resumeCount), paused: \(measured.displayLinkPaused), continuous: \(measured.continuous), revision: \(measured.revision), drawn: \(String(describing: measured.drawnRevision))")
                     print("frames: \(measured.frames), off main: \(measured.framesOffMain), while main busy: \(measured.framesWhileMainBusy), retained accessibility children: \(children.count), accessible: \(accessible), max CPU ms: \(measured.maxCPUSeconds * 1000)")
+                    print("piano callbacks: \(pianoMeasured.callbacks), wakes: \(pianoMeasured.wakeCount), resumes: \(pianoMeasured.resumeCount), paused: \(pianoMeasured.displayLinkPaused), continuous: \(pianoMeasured.continuous), revision: \(pianoMeasured.revision), drawn: \(String(describing: pianoMeasured.drawnRevision))")
                     print("piano frames: \(pianoMeasured.frames), off main: \(pianoMeasured.framesOffMain), while main busy: \(pianoMeasured.framesWhileMainBusy), retained notes: \(pianoChildren.count), accessible: \(pianoAccessible)")
                     print("track headers share the timeline frame: \(aligned), retained accessible headers: \(headerChildren.count), accessible: \(headersAccessible)")
                     view.stop()
@@ -79,4 +87,38 @@ public func runArrangeProbe(reportPath: String) {
         }
     }
     app.run()
+}
+
+private struct SpikeAppReport: Codable {
+    var arrange: ArrangeMeasurement
+    var piano: ArrangeMeasurement
+    var display: DisplayFacts
+    var classification: String
+}
+
+private struct DisplayFacts: Codable {
+    var screens: Int
+    var mainAsleep: Bool
+    var windowVisible: Bool
+    var windowOnActiveSpace: Bool
+    var windowOccluded: Bool
+    var miniaturized: Bool
+
+    @MainActor
+    init(window: NSWindow) {
+        screens = NSScreen.screens.count
+        mainAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        windowVisible = window.isVisible
+        windowOnActiveSpace = window.isOnActiveSpace
+        windowOccluded = !window.occlusionState.contains(.visible)
+        miniaturized = window.isMiniaturized
+    }
+}
+
+/// The frame threshold stays. A dark or hidden window is recorded, not treated as a pass.
+private func spikeClassification(passed: Bool, display: DisplayFacts, arrange: ArrangeMeasurement, piano: ArrangeMeasurement) -> String {
+    if passed { return "normal" }
+    let hidden = display.screens == 0 || display.mainAsleep || !display.windowVisible || display.windowOccluded || display.miniaturized
+    let quiet = arrange.callbacks < 10 || piano.callbacks < 10 || arrange.resumeCount == 0 || piano.resumeCount == 0
+    return hidden && quiet ? "insufficient-environment" : "failure"
 }

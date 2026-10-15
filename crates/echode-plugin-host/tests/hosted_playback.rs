@@ -49,6 +49,96 @@ fn plugin_dylib() -> PathBuf {
     target.join("debug").join("libechode_test_plugin.dylib")
 }
 
+#[test]
+fn contract_macos_bundle_scan_to_playback_and_load_errors() {
+    use echode_plugin_host::{cache_entry, resolve_cached, scan_out_of_process, store_scan_cache};
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(
+        std::env::temp_dir().join(format!("echode-bundle-contract-{}", Id::generate().raw())),
+    );
+    let bundle = fixture.0.join("Test.clap");
+    std::fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+    std::fs::copy(plugin_dylib(), bundle.join("Contents/MacOS/TestPlugin")).unwrap();
+    std::fs::write(
+        bundle.join("Contents/Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>TestPlugin</string>
+<key>CFBundleIdentifier</key><string>dev.echode.contract</string>
+<key>CFBundlePackageType</key><string>BNDL</string></dict></plist>"#,
+    )
+    .unwrap();
+    let scanned = scan_out_of_process(&host_bin(), &bundle).unwrap();
+    let cache = fixture.0.join("scan.jsonl");
+    store_scan_cache(&cache, &[cache_entry(&bundle, scanned)]).unwrap();
+    assert!(bundle.is_dir() && !bundle.is_file());
+    let (dry_project, track) = score();
+    // Buffer lengths belong to this regression. The generous deadline is only
+    // a hung-helper guard; realtime performance is measured by spike-isolation.
+    let frames = 512;
+    let (mut dry_control, mut dry) = playback_pair(&dry_project, 48000, frames).unwrap();
+    dry_control.command(PlaybackCommand::Play).unwrap();
+    let (mut expected, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+    dry.render(&mut expected, &mut right);
+    assert!(expected.iter().any(|sample| *sample != 0.0));
+    for id in ["dev.echode.test-gain", "dev.echode.test-instrument"] {
+        let resolved = resolve_cached(&cache, &[id]);
+        assert_eq!(resolved.len(), 1);
+        let found = &resolved[0];
+        assert_eq!(found.path, bundle);
+        let route = PluginRoute {
+            clap_id: found.clap_id.clone(),
+            path: found.path.clone(),
+            instrument: found.instrument,
+            fault: None,
+            state: None,
+        };
+        let project = dry_project
+            .add_clap_device(track, Id::generate(), id)
+            .unwrap();
+        let (mut control, mut player) =
+            playback_with_plugins(&project, 48000, frames, &host_bin(), &[route]).unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+        player.render_until(
+            &mut left,
+            &mut right,
+            Instant::now() + Duration::from_secs(10),
+        );
+        assert!(!control.status().failed);
+        assert!(control.plugin_failure().is_none());
+        if found.instrument {
+            assert!(
+                left.iter().all(|sample| *sample == 0.0),
+                "bundle instrument silently fell back to the built-in synth"
+            );
+        } else {
+            let doubled: Vec<_> = expected.iter().map(|sample| sample * 2.0).collect();
+            assert_close(&left, &doubled);
+        }
+    }
+    let broken = fixture.0.join("Broken.clap");
+    std::fs::create_dir_all(&broken).unwrap();
+    let project = dry_project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let route = PluginRoute {
+        clap_id: "dev.echode.test-gain".into(),
+        path: broken,
+        instrument: false,
+        fault: None,
+        state: None,
+    };
+    assert!(
+        playback_with_plugins(&project, 48000, frames, &host_bin(), &[route]).is_err(),
+        "a broken installed bundle must not become a successful dry track"
+    );
+}
+
 fn score() -> (Project, Id) {
     let (project, track) = Project::new().add_track("pad");
     let project = project

@@ -831,8 +831,8 @@ fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
     Ok(())
 }
 
-/// Spawns one device. `Ok(None)` is an unknown id or a path that is not a file.
-/// A file that cannot be hosted is an error, so playback does not pretend the
+/// Spawns one device. `Ok(None)` is an unknown id or a missing path.
+/// An installed bundle/file that cannot be hosted is an error, so playback does not pretend the
 /// built-in synth is that plugin.
 struct StageSize {
     frames: usize,
@@ -856,7 +856,7 @@ fn spawn_stage(
     let Some(route) = take_route(routes, used, &device.clap_id) else {
         return Ok(None);
     };
-    if !route.path.is_file() {
+    if !route.path.exists() {
         return Ok(None);
     }
     let shared = if let Some(fan) = fan {
@@ -892,7 +892,7 @@ fn spawn_stage(
         }
         Err(error) => {
             let text = error.to_string();
-            if route.path.is_file() {
+            if route.path.exists() {
                 return Err(PlaybackError::Unsupported(format!(
                     "device {} ({}): {text}",
                     device.id, device.clap_id

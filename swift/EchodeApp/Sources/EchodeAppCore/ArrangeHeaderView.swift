@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import EchodeBridge
 
 /// Transparent input and accessibility region. Every visible header pixel is
@@ -56,7 +57,13 @@ final class ArrangeHeaderView: NSView {
         // Headers have no time coordinate. Time zoom anchors at the grid edge.
         onZoom?(max(0.1, 1 + Double(event.magnification)), event.modifierFlags, CGPoint(x: 0, y: point.y))
     }
-    override func keyDown(with event: NSEvent) { interpretKeyEvents([event]) }
+    override func keyDown(with event: NSEvent) {
+        guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
+        switch Int(event.keyCode) {
+        case kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End: interpretKeyEvents([event])
+        default: super.keyDown(with: event)
+        }
+    }
     override func moveUp(_ sender: Any?) { select(index: max(0, (selectedIndex ?? 1) - 1)) }
     override func moveDown(_ sender: Any?) { select(index: (selectedIndex ?? -1) + 1) }
     override func moveToBeginningOfDocument(_ sender: Any?) { select(index: 0) }

@@ -14,6 +14,7 @@ struct PianoCanvas: NSViewRepresentable {
     let edit: (PianoNote.ID, NoteGeometry) -> Void
     let delete: (PianoNote.ID) -> Void
     var playback: PlaybackFeed? = nil
+    var transportGeneration: UInt64 = 0
     var navigation: CanvasNavigationState? = nil
     var documentID: UUID? = nil
 
@@ -26,6 +27,7 @@ struct PianoCanvas: NSViewRepresentable {
         view.grid.onDelete = delete
         view.grid.setSnapshot(snapshot, track: track, focus: focus, key: key, busy: busy)
         view.grid.setPlayback(playback)
+        view.grid.noteTransport(transportGeneration)
     }
     static func dismantleNSView(_ view: PianoRollView, coordinator: ()) { view.grid.stop() }
 }
@@ -57,6 +59,7 @@ final class PianoGridView: NSView {
     private var navigationDocument: UUID?
     private var snapshot: Snapshot?
     private var playback: PlaybackFeed?
+    private var transportGeneration: UInt64 = 0
     private var track: UUID?
     private var focus: PianoNote.ID?
     private var announcedFocus: PianoNote.ID?
@@ -260,7 +263,15 @@ final class PianoGridView: NSView {
         if value.isValid { onEdit?(note.id, value) }
     }
     private func cancelGesture() { gesture = nil; preview = nil; refresh() }
+    /// Replaces the live feed. Equality is the document, not the playhead.
     func setPlayback(_ playback: PlaybackFeed?) { guard self.playback != playback else { return }; self.playback = playback; refresh() }
+
+    /// One frame after play, pause, stop, or a stopped locate. Does not rebuild on position polls.
+    func noteTransport(_ generation: UInt64) {
+        guard transportGeneration != generation else { return }
+        transportGeneration = generation
+        refresh()
+    }
     private func rememberViewport() {
         guard let track, bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument, track: track) == true else { return }
         navigation?.pianos[track] = PianoViewportMemory(camera: camera, focus: focus,

@@ -45,6 +45,8 @@ jobs:
           path: |
             target/verification/report.*
             target/verification/*.log
+            target/verification/product-contracts.json
+            target/verification/product-contracts/**
             target/bridge/address/*.log
             target/bridge/address/*.txt
             target/bridge/address/control/*.log

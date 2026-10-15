@@ -62,6 +62,16 @@ struct ArrangeFrame: Sendable {
         }
     }
 
+    var playheadTick: Int64? { input.playback?.position.tick }
+    var playheadPlaying: Bool? { input.playback?.position.playing }
+    /// Timeline x in points, including the header gutter. Nil when no playhead is drawn.
+    var playheadX: Double? {
+        guard let position = input.playback?.position else { return nil }
+        let x = (Double(position.tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+        guard x >= 0, x < timelineWidth else { return nil }
+        return timelineOrigin + x
+    }
+
     /// Index in `timelineInstances` where notes and the playhead begin.
     var foregroundStart: Int {
         let lanes = elements.filter { $0.role == .track }.count

@@ -35,6 +35,19 @@ public struct ArrangeMeasurement: Sendable, Codable {
     public var maxCPUSeconds = 0.0
     public var headerFrames = 0
     public var maxHeaderLaneError = 0.0
+    /// Times the render thread was asked to reconsider the display link.
+    public var wakeCount = 0
+    /// Times the link went from paused to running on that thread.
+    public var resumeCount = 0
+    public var continuous = false
+    /// Last pause decision on the render thread. Starts paused until a frame is due.
+    public var displayLinkPaused = true
+    public var revision: UInt64 = 0
+    public var drawnRevision: UInt64?
+    public var drawnTick: Int64?
+    public var drawnPlaying: Bool?
+    /// Playhead x in points. Nil when this frame did not draw one.
+    public var playheadX: Double?
 }
 
 struct Instance {
@@ -52,10 +65,13 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private let painter: ArrangePainter
     private let state = Mutex(RenderState())
     private let slots = FrameSlots()
+    private let stopped = DispatchSemaphore(value: 0)
     private let onElements: @MainActor @Sendable ([ArrangeElement]) -> Void
     private let onPiano: (@MainActor @Sendable (PianoFrame) -> Void)?
     private let onArrange: (@MainActor @Sendable (ArrangeFrame) -> Void)?
-    private let link: CAMetalDisplayLink
+    // Created on the render thread. The display link delivers callbacks to the
+    // thread that created it and is running its run loop.
+    private var link: CAMetalDisplayLink?
     // Only the render thread reads or changes these fields.
     private var buffers: [(any MTLBuffer)?] = [nil, nil, nil]
     private var drawnRevision: UInt64?
@@ -79,7 +95,6 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         layer.maximumDrawableCount = 3
         layer.contentsScale = scale
         layer.drawableSize = CGSize(width: max(1, size.width * scale), height: max(1, size.height * scale))
-        self.link = CAMetalDisplayLink(metalLayer: layer)
         super.init()
         let thread = Thread { [self] in run() }
         thread.name = "echode-metal"
@@ -94,44 +109,81 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         }
     }
 
-    func stop() { state.withLock { $0.stopping = true; wake($0.loop) } }
+    func stop() {
+        state.withLock { $0.stopping = true; wake($0.loop) }
+        stopped.wait()
+    }
 
     func beginMeasurement() { state.withLock { $0.continuous = true; $0.measurement = ArrangeMeasurement(); wake($0.loop) } }
     func markMainBusy(_ busy: Bool) { state.withLock { $0.mainBusy = busy } }
-    var measurement: ArrangeMeasurement { state.withLock { $0.measurement } }
+    var measurement: ArrangeMeasurement {
+        state.withLock { value in
+            var result = value.measurement
+            // Readers must see a newly requested revision before its wake runs.
+            result.revision = value.revision
+            return result
+        }
+    }
 
     private func wake(_ loop: CFRunLoop?) {
         guard let loop else { return }
         CFRunLoopPerformBlock(loop, CFRunLoopMode.defaultMode.rawValue) { [self] in
-            let (stopping, paused, input) = state.withLock {
-                ($0.stopping, !$0.continuous && $0.input?.playback?.position.playing != true && drawnRevision == $0.revision, $0.input)
-            }
-            if let input {
+            state.withLock { $0.measurement.wakeCount += 1 }
+            if let input = state.withLock({ $0.input }) {
                 // Apply between display-link callbacks, after any preceding
                 // frame was submitted, so layer sizing is confined too.
                 layer.contentsScale = input.scale
                 layer.drawableSize = CGSize(width: max(1, input.width * input.scale), height: max(1, input.height * input.scale))
             }
-            link.isPaused = paused
-            if stopping { CFRunLoopStop(CFRunLoopGetCurrent()) }
+            if let link { applyLinkPause(link) }
+            if state.withLock({ $0.stopping }) { CFRunLoopStop(CFRunLoopGetCurrent()) }
         }
         CFRunLoopWakeUp(loop)
     }
 
+    /// Writes pause only when it changes. Assigning the same value from the
+    /// callback or the run-loop turn drops the next vsync.
+    private func applyLinkPause(_ link: CAMetalDisplayLink) {
+        let paused = publishLinkState()
+        if link.isPaused != paused { link.isPaused = paused }
+    }
+
+    /// Pause decision for the render thread. A stopped frame that already
+    /// matches the requested revision lets the link sleep; play and a new
+    /// revision wake it without drawing every idle vsync.
+    private func publishLinkState() -> Bool {
+        state.withLock { value in
+            let ready = value.input.map { $0.width > 0 && $0.height > 0 } ?? false
+            let paused = !ready || (!value.continuous && value.input?.playback?.position.playing != true && drawnRevision == value.revision)
+            let wasPaused = value.measurement.displayLinkPaused
+            value.measurement.displayLinkPaused = paused
+            value.measurement.continuous = value.continuous
+            value.measurement.revision = value.revision
+            value.measurement.drawnRevision = drawnRevision
+            if !paused && wasPaused { value.measurement.resumeCount += 1 }
+            return paused
+        }
+    }
+
     private func run() {
-        state.withLock { $0.loop = CFRunLoopGetCurrent() }
-        let keepAlive = Port()
-        RunLoop.current.add(keepAlive, forMode: .default)
+        let link = CAMetalDisplayLink(metalLayer: layer)
+        self.link = link
         link.delegate = self
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
         link.add(to: .current, forMode: .common)
+        let keepAlive = Port()
+        RunLoop.current.add(keepAlive, forMode: .default)
+        // Publish the loop only after the link can accept a wake.
+        state.withLock { $0.loop = CFRunLoopGetCurrent() }
         while !state.withLock({ $0.stopping }) {
-            link.isPaused = state.withLock { !$0.continuous && $0.input?.playback?.position.playing != true && drawnRevision == $0.revision }
+            applyLinkPause(link)
             autoreleasepool { _ = RunLoop.current.run(mode: .default, before: .distantFuture) }
         }
         link.invalidate()
+        self.link = nil
         keepAlive.invalidate()
         state.withLock { $0.loop = nil }
+        stopped.signal()
     }
 
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
@@ -139,9 +191,19 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         let (input, revision, stopping, continuous, frame) = state.withLock {
             ($0.input, $0.revision, $0.stopping, $0.continuous, $0.measurement.frames)
         }
-        guard !stopping, let input, input.width > 0, input.height > 0,
-              continuous || input.playback?.position.playing == true || revision != drawnRevision else { return }
-        guard let slot = slots.acquire() else { state.withLock { $0.measurement.unavailableSlots += 1 }; return }
+        // Every callback owns a drawable. Leaving it unpresented stops later
+        // callbacks, including the next play or locate. A repeat of the current
+        // picture is still presented; pause afterwards when nothing is moving.
+        guard !stopping, let input, input.width > 0, input.height > 0 else {
+            present(update.drawable)
+            applyLinkPause(link)
+            return
+        }
+        guard let slot = slots.acquire() else {
+            state.withLock { $0.measurement.unavailableSlots += 1 }
+            present(update.drawable)
+            return
+        }
         let started = CACurrentMediaTime()
         var committed = false
         defer { if !committed { slots.release(slot) } }
@@ -161,7 +223,10 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         instances.append(contentsOf: headerInstances)
         let length = max(1, instances.count) * MemoryLayout<Instance>.stride
         if (buffers[slot]?.length ?? 0) < length { buffers[slot] = device.makeBuffer(length: length, options: .storageModeShared) }
-        guard let buffer = buffers[slot], let command = queue.makeCommandBuffer() else { return }
+        guard let buffer = buffers[slot], let command = queue.makeCommandBuffer() else {
+            present(update.drawable)
+            return
+        }
         instances.withUnsafeBytes { bytes in
             if let source = bytes.baseAddress { buffer.contents().copyMemory(from: source, byteCount: bytes.count) }
         }
@@ -170,7 +235,10 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
-        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
+            present(update.drawable)
+            return
+        }
         painter.encode(encoder: encoder, texture: update.drawable.texture, buffer: buffer,
                        timelineCount: timelineCount, headerCount: headerInstances.count, frame: arranged, piano: piano)
         encoder.endEncoding()
@@ -186,6 +254,9 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
             if !Thread.isMainThread { value.measurement.framesOffMain += 1 }
             if value.mainBusy { value.measurement.framesWhileMainBusy += 1 }
             value.measurement.maxCPUSeconds = max(value.measurement.maxCPUSeconds, CACurrentMediaTime() - started)
+            value.measurement.drawnTick = arranged?.playheadTick ?? piano?.playheadTick
+            value.measurement.drawnPlaying = arranged?.playheadPlaying ?? piano?.playheadPlaying
+            value.measurement.playheadX = arranged?.playheadX ?? piano?.playheadX
             if let arranged, input.header != nil {
                 value.measurement.headerFrames += 1
                 let lanes = arranged.elements.filter { $0.role == .track }
@@ -194,6 +265,9 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 }
             }
         }
+        // A stopped frame has consumed this revision. Pause on this run loop
+        // so the next play or locate is what wakes the link, not a poll.
+        applyLinkPause(link)
         // A moving playhead does not change hit regions or accessibility.
         // Publish geometry only when inputs change (or the explicit probe moves it).
         guard feedbackChanged else { return }
@@ -203,6 +277,13 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 if let onArrange { onArrange(arranged) } else { onElements(arranged.elements) }
             }
         }
+    }
+
+    /// Returns the callback's drawable to the layer. The command draws nothing.
+    private func present(_ drawable: any CAMetalDrawable) {
+        guard let command = queue.makeCommandBuffer() else { return }
+        command.present(drawable)
+        command.commit()
     }
 }
 

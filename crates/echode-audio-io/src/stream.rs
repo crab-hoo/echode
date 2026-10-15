@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use echode_engine::{
     ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
-    PluginRoute, playback_pair, playback_with_plugins, tick_to_sample,
+    PluginRoute, playback_pair_at, playback_with_plugins_at, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -124,38 +124,9 @@ impl OutputStream {
         observed_epoch: u64,
     ) -> Result<Self, String> {
         hardware::validate_streams(&device)?;
-        let sample = tick_to_sample(Tick::new(tick), project.tempo(), device.sample_rate)
-            .ok_or("playback time overflow")?;
         let frames = device.buffer_frames as usize;
-        let (mut control, player) = open_playback(
-            project,
-            device.sample_rate,
-            frames,
-            transport.package.as_deref(),
-        )?;
-        control.set_clip_loader(transport.clips);
-        control
-            .replace(project)
-            .map_err(|error| error.to_string())?;
-        control
-            .command(PlaybackCommand::Locate(sample))
-            .map_err(|error| error.to_string())?;
-        if let Some((start, end)) = transport.loop_ticks {
-            let start = loop_sample(project, device.sample_rate, start)?;
-            let end = loop_sample(project, device.sample_rate, end)?;
-            if end <= start {
-                return Err("loop end must be after its start".into());
-            }
-            control
-                .command(PlaybackCommand::SetLoop { start, end })
-                .map_err(|error| error.to_string())?;
-        }
-        control
-            .command(PlaybackCommand::SetMetronome(transport.metronome))
-            .map_err(|error| error.to_string())?;
-        control
-            .command(PlaybackCommand::Play)
-            .map_err(|error| error.to_string())?;
+        let (control, player) =
+            prepare_playback(project, device.sample_rate, frames, tick, &transport)?;
         let mut callback = Box::new(Callback {
             render: UnsafeCell::new(Render {
                 player,
@@ -389,22 +360,68 @@ fn block_budget(frames: usize, sample_rate: u32) -> Duration {
     )
 }
 
+/// The exact preparation used before HAL registers its callback. Keeping it
+/// separate lets tests hold the first callback without an audio device.
+fn prepare_playback(
+    project: &Project,
+    sample_rate: u32,
+    frames: usize,
+    tick: i64,
+    transport: &TransportSetup,
+) -> Result<(PlaybackControl, PlaybackAudio), String> {
+    let sample = tick_to_sample(Tick::new(tick), project.tempo(), sample_rate)
+        .ok_or("playback time overflow")?;
+    let (mut control, player) = open_playback(
+        project,
+        sample_rate,
+        frames,
+        transport.package.as_deref(),
+        sample,
+    )?;
+    control.set_clip_loader(Arc::clone(&transport.clips));
+    control
+        .replace(project)
+        .map_err(|error| error.to_string())?;
+    control
+        .command(PlaybackCommand::Locate(sample))
+        .map_err(|error| error.to_string())?;
+    if let Some((start, end)) = transport.loop_ticks {
+        let start = loop_sample(project, sample_rate, start)?;
+        let end = loop_sample(project, sample_rate, end)?;
+        if end <= start {
+            return Err("loop end must be after its start".into());
+        }
+        control
+            .command(PlaybackCommand::SetLoop { start, end })
+            .map_err(|error| error.to_string())?;
+    }
+    control
+        .command(PlaybackCommand::SetMetronome(transport.metronome))
+        .map_err(|error| error.to_string())?;
+    control
+        .command(PlaybackCommand::Play)
+        .map_err(|error| error.to_string())?;
+    Ok((control, player))
+}
+
 fn open_playback(
     project: &Project,
     sample_rate: u32,
     frames: usize,
     package: Option<&std::path::Path>,
+    sample: i64,
 ) -> Result<(PlaybackControl, PlaybackAudio), String> {
     if let Some(host) = echode_plugin_host::host_binary() {
-        playback_with_plugins(
+        playback_with_plugins_at(
             project,
             sample_rate,
             frames,
             &host,
             &plugin_routes(project, package)?,
+            sample,
         )
     } else {
-        playback_pair(project, sample_rate, frames)
+        playback_pair_at(project, sample_rate, frames, sample)
     }
     .map_err(|error| error.to_string())
 }
@@ -535,7 +552,35 @@ unsafe fn fill(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instan
 #[cfg(test)]
 mod tests {
     use super::*;
+    use echode_engine::playback_pair;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn contract_startup_position_is_published_before_the_first_callback() {
+        let project = Project::new();
+        // Rates and scratch lengths are this regression's cases, not product limits.
+        for rate in [48_000, 96_000] {
+            for frames in [1, 64, 512] {
+                for beat in [2, 7] {
+                    let tick = beat * echode_model::TICKS_PER_QUARTER;
+                    let sample = tick_to_sample(Tick::new(tick), project.tempo(), rate).unwrap();
+                    let (control, mut player) =
+                        prepare_playback(&project, rate, frames, tick, &TransportSetup::idle())
+                            .unwrap();
+                    assert_eq!(
+                        control.status().tick,
+                        tick,
+                        "a newly opened stream published zero before its first callback"
+                    );
+                    assert_eq!(control.status().sample, sample);
+                    let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+                    player.render(&mut left, &mut right);
+                    assert_eq!(control.status().sample, sample + frames as i64);
+                    assert!(!control.status().failed);
+                }
+            }
+        }
+    }
 
     #[test]
     fn interleaved_and_planar_hal_buffers_match_under_rtsan() {

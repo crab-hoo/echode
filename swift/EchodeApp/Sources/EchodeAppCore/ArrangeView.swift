@@ -7,13 +7,15 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public let snapshot: Snapshot
     @Binding public var selection: UUID?
     public var playback: PlaybackFeed?
+    public var transportGeneration: UInt64 = 0
     public var navigation: CanvasNavigationState?
     public var documentID: UUID?
 
-    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil) {
+    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
+        self.transportGeneration = transportGeneration
         self.navigation = navigation
         self.documentID = documentID
     }
@@ -27,6 +29,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.onSelect = { selection = $0 }
         view.setSnapshot(snapshot, selected: selection)
         view.setPlayback(playback)
+        view.noteTransport(transportGeneration)
     }
 
     public static func dismantleNSView(_ view: ArrangePaneView, coordinator: ()) { view.stop() }
@@ -46,6 +49,7 @@ public final class ArrangeView: NSView {
     private var header: ArrangeHeaderInput?
     private var presentedTimelineOrigin = 0.0
     private var playback: PlaybackFeed?
+    private var transportGeneration: UInt64 = 0
     var onSelect: ((UUID) -> Void)?
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
@@ -95,7 +99,15 @@ public final class ArrangeView: NSView {
         refresh()
     }
 
+    /// Replaces the live feed. Equality is the document, not the playhead.
     public func setPlayback(_ playback: PlaybackFeed?) { guard self.playback != playback else { return }; self.playback = playback; refresh() }
+
+    /// One frame after play, pause, stop, or a stopped locate. Does not rebuild on position polls.
+    public func noteTransport(_ generation: UInt64) {
+        guard transportGeneration != generation else { return }
+        transportGeneration = generation
+        refresh()
+    }
 
     func setViewport(_ camera: ArrangeCamera, header: ArrangeHeaderInput?) {
         guard self.camera != camera || self.header != header else { return }

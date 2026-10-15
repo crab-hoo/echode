@@ -480,7 +480,13 @@ pub struct ResolvedPlugin {
 
 /// Looks up `ids` in the shared cache. Missing ids are omitted. This does not scan.
 pub fn resolve_installed(ids: &[impl AsRef<str>]) -> Vec<ResolvedPlugin> {
-    let Ok(entries) = load_scan_cache(&shared_cache_path()) else {
+    resolve_cached(&shared_cache_path(), ids)
+}
+
+/// Resolve the same cache format from an explicit location. Callers can test
+/// scan-to-playback without replacing the process-wide user cache/environment.
+pub fn resolve_cached(cache: &Path, ids: &[impl AsRef<str>]) -> Vec<ResolvedPlugin> {
+    let Ok(entries) = load_scan_cache(cache) else {
         return Vec::new();
     };
     let mut resolved = Vec::new();

@@ -83,7 +83,8 @@ public struct WorkspaceView: View {
             Divider()
             if let snapshot = controller.snapshot, !controller.tracks.isEmpty {
                 ArrangeCanvas(snapshot: snapshot, selection: $controller.selection,
-                              playback: controller.playback, navigation: state.navigation, documentID: controller.documentID).id(controller.documentID)
+                              playback: controller.playback, transportGeneration: controller.transportGeneration,
+                              navigation: state.navigation, documentID: controller.documentID).id(controller.documentID)
             } else {
                 VStack(spacing: 12) {
                     Text(text("Add a track to start"))

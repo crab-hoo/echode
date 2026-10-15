@@ -66,14 +66,21 @@ struct PianoFrame: Sendable {
                              Float(Double(g.length) / 705_600 * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))
             instances.append(instance(rect, color: SIMD4(0.96, 0.87, 0.54, 1)))
         }
-        if let position = input.playback?.position {
-            let x = (Double(position.tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
-            if x >= 0, x < layout.grid.width {
-                instances.append(instance(SIMD4(Float(origin.x + x), Float(origin.y), 2, Float(layout.grid.height)),
-                                          color: SIMD4(1, 0.60, 0.28, 1)))
-            }
+        if let x = playheadX {
+            instances.append(instance(SIMD4(Float(x), Float(origin.y), 2, Float(layout.grid.height)),
+                                      color: SIMD4(1, 0.60, 0.28, 1)))
         }
         return instances
+    }
+
+    var playheadTick: Int64? { input.playback?.position.tick }
+    var playheadPlaying: Bool? { input.playback?.position.playing }
+    /// Playhead x in points. Nil when it falls outside the grid.
+    var playheadX: Double? {
+        guard let position = input.playback?.position else { return nil }
+        let x = (Double(position.tick) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        guard x >= 0, x < layout.grid.width else { return nil }
+        return layout.gridOrigin.x + x
     }
 
     var degreeInstances: [Instance] {

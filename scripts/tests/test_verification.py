@@ -1,4 +1,4 @@
-"""Required checks fail closed; optional measurements do not block completion."""
+"""Selected checks require execution evidence or an explicit manual deferral."""
 
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
@@ -83,8 +83,24 @@ class PolicyTests(unittest.TestCase):
                      "WorkspaceState.swift", "WorkspaceDivider.swift", "WorkspaceNoteEditorView.swift", "CanvasRenderer.swift", "FrameFeedbackGate.swift"):
             with self.subTest(file=file):
                 checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + file)
-                self.assertTrue({"spike-app", "spike-arrange-frame", "spike-piano-frame", "spike-draw", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= checks)
+                self.assertTrue({"spike-app", "spike-playhead", "spike-arrange-frame", "spike-piano-frame", "spike-draw", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= checks)
         self.assertNotIn("spike-app", self.selected("crates/echode-engine/src/voice.rs"))
+        self.assertNotIn("spike-playhead", self.selected("crates/echode-engine/src/voice.rs"))
+
+    def test_playhead_window_regression_is_an_explicit_spike(self):
+        self.assertIn("spike-playhead", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PlayheadTests.swift"))
+        self.assertIn("spike-playhead", self.selected("swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift"))
+        self.assertNotIn("spike-playhead", self.selected("crates/echode-engine/src/voice.rs"))
+        recipe = (ROOT / "Makefile").read_text().split("spike-playhead:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("EchodePlayheadProbe", recipe)
+        self.assertIn("DYLD_FRAMEWORK_PATH", recipe)
+        self.assertNotIn("swift test", recipe)
+        probe = (ROOT / "swift/EchodeApp/Sources/EchodePlayheadProbe/Main.swift").read_text()
+        self.assertIn("app.run()", probe)
+        self.assertIn("applicationDidFinishLaunching", probe)
+        normal = (ROOT / "swift/EchodeApp/Tests/EchodeAppTests/PlayheadTests.swift").read_text()
+        self.assertNotIn("ShownProject", normal)
+        self.assertNotIn("beginMeasurement", recipe)
 
     def test_hosted_playback_keeps_realtime_deadlines_in_the_manual_probe(self):
         self.assertIn("spike-isolation", self.selected("crates/echode-plugin-host/tests/hosted_playback.rs"))
@@ -94,7 +110,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_input_has_both_headless_tests_and_an_explicit_hardware_check(self):
         self.assertEqual(self.selected("spikes/input/Sources/EchodeInputCore/Gesture.swift"),
-                         {"check", "check-input", "spike-input"})
+                         {"check", "check-product-contracts", "check-input", "spike-input"})
 
     def test_isolation_and_dependency_changes_select_their_extra_checks(self):
         checks = self.selected("crates/echode-sandbox/src/lib.rs")
@@ -112,14 +128,31 @@ class PolicyTests(unittest.TestCase):
 
     def test_infrastructure_runs_all_portable_checks_without_opening_windows(self):
         expected = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
-        for path in ("scripts/verify.py", ".cursor/hooks.json", ".github/workflows/check.yml", "Makefile"):
+        for path in ("scripts/verify.py", ".cursor/hooks.json", ".codex/hooks.json", ".github/workflows/check.yml", "Makefile"):
             self.assertEqual(self.selected(path), expected)
-        self.assertEqual(self.selected("docs/PLAN.md"), {"check"})
+        self.assertEqual(self.selected("docs/PLAN.md"), {"check", "check-product-contracts"})
+
+    def test_required_behavioral_contracts_are_automatic_for_every_change(self):
+        check = next(c for c in self.policy["checks"] if c["id"] == "check-product-contracts")
+        self.assertEqual(check["mode"], "automatic")
+        self.assertTrue(check["always"])
+        for path in ("crates/echode-engine/src/plugins.rs", "docs/PLAN.md",
+                     "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift"):
+            self.assertIn("check-product-contracts", self.selected(path))
+        contracts = self.policy["product_contracts"]
+        self.assertEqual({c["id"] for c in contracts},
+                         {"startup-position", "macos-plugin-bundle", "header-key-routing"})
+        for contract in contracts:
+            self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
+        recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("check_product_contracts.py", recipe)
+        self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", recipe)
 
     def test_policy_references_real_targets_and_never_rewrites_sound_references(self):
         targets = set(re.findall(r"^([a-z][a-z0-9-]*):", (ROOT / "Makefile").read_text(), re.MULTILINE))
         ids = {check["id"] for check in self.policy["checks"]}
         self.assertTrue(ids <= targets)
+        self.assertTrue({check.get("make_target", check["id"]) for check in self.policy["checks"]} <= targets)
         self.assertNotIn("bless", ids)
         self.assertNotIn("known-bugs", ids)
 
@@ -132,6 +165,28 @@ class PolicyTests(unittest.TestCase):
             expected = [check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"]
             self.assertEqual(json.loads(result.stdout), expected)
             self.assertEqual(json.loads(output.read_text().removeprefix("checks=")), expected)
+
+    def test_aggregate_check_contains_the_contract_gate_once_and_base_does_not(self):
+        for target, count in (("check", 1), ("check-base", 0)):
+            with self.subTest(target=target):
+                result = subprocess.run(["make", "-n", target], cwd=ROOT, capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout.count("python3 scripts/check_product_contracts.py"), count)
+        check = next(check for check in self.policy["checks"] if check["id"] == "check")
+        self.assertEqual(check["make_target"], "check-base")
+
+    def test_selection_arguments_do_not_invalidate_evidence_but_build_flags_do(self):
+        result = subprocess.CompletedProcess([], 0, stdout=b"fixture-v1", stderr=b"")
+        with patch.object(verify.subprocess, "run", return_value=result) as query:
+            with patch.dict(os.environ, {"MAKEFLAGS": ""}):
+                plain = verify.tool_identity(ROOT)
+            with patch.dict(os.environ, {"MAKEFLAGS": '-- VERIFY_ARGS=--defer\\ measure\\ --reason\\ "A\'s\\ display"'}):
+                selected = verify.tool_identity(ROOT)
+            with patch.dict(os.environ, {"MAKEFLAGS": "-j4 -- VERIFY_ARGS=--run\\ measure"}):
+                parallel = verify.tool_identity(ROOT)
+        self.assertEqual(plain, selected)
+        self.assertNotEqual(plain, parallel)
+        self.assertEqual(parallel["MAKEFLAGS"], ["-j4"])
+        self.assertTrue(all(call.kwargs["env"]["RUSTUP_AUTO_INSTALL"] == "0" for call in query.call_args_list))
 
 
 class EvidenceTests(unittest.TestCase):
@@ -193,19 +248,20 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual((code, count), (0, 0))
         (self.root / "src/example.rs").write_text("second edit\n")
         code, count = self.run_verify(arguments())
-        self.assertEqual((code, count), (0, 1))
+        self.assertEqual((code, count), (1, 1))
         self.assertEqual(self.report()["results"]["measure"], {"status": "not_run"})
 
-    def test_unrequested_measurements_do_not_trigger_a_stop_followup(self):
+    def test_selected_measurements_require_a_reason_without_opening_hardware(self):
         def invoke():
             code, count = self.run_verify(arguments())
             self.assertEqual(count, 1)
             return code
-        self.assertEqual(hook.respond({"status": "completed"}, invoke), {})
+        self.assertIn("followup_message", hook.respond({"status": "completed"}, invoke))
         self.assertEqual(self.report()["results"]["check"]["status"], "passed")
         self.assertEqual(self.report()["results"]["measure"]["status"], "not_run")
-        self.assertEqual(self.run_verify(arguments()), (0, 0))
-        self.assertEqual(self.run_verify(arguments(all=True)), (0, 0))
+        self.assertEqual(self.run_verify(arguments()), (1, 0))
+        self.assertEqual(self.run_verify(arguments(all=True)), (1, 0))
+        self.assertEqual(self.run_verify(arguments(defer=["measure"], reason="device unavailable")), (0, 0))
 
     def test_explicit_measurements_must_pass_and_failures_are_not_hidden_by_the_hook(self):
         self.assertEqual(self.run_verify(arguments(only=["measure"])), (1, 0))
@@ -259,6 +315,14 @@ class EvidenceTests(unittest.TestCase):
         result = verify.run_check(self.root, {"id": "check", "timeout": 10}, log)
         self.assertEqual(result["status"], "failed")
         self.assertIn("deliberate failure", log.read_text())
+
+    def test_policy_can_split_an_aggregate_without_running_product_contracts_twice(self):
+        (self.root / "Makefile").write_text("check:\n\t@exit 7\n\ncheck-base:\n\t@echo base only\n")
+        log = self.root / "base.log"
+        result = verify.run_check(self.root, {"id": "check", "make_target": "check-base", "timeout": 10}, log)
+        self.assertEqual(result["status"], "passed")
+        self.assertIn("Command: make check-base", log.read_text())
+        self.assertIn("base only", log.read_text())
 
     def test_timeout_stops_the_child_process_group(self):
         # This checks watchdog behavior, not a product performance threshold.

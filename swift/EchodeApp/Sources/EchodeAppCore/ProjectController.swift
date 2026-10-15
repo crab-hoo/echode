@@ -36,6 +36,8 @@ public final class ProjectController {
     public var loopStartBeat = 0.0
     public var loopEndBeat = 4.0
     public private(set) var playback: PlaybackFeed?
+    /// Bumps on play, pause, stop, and locate. Position polling does not.
+    public private(set) var transportGeneration: UInt64 = 0
     @ObservationIgnored private var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
 
@@ -56,6 +58,7 @@ public final class ProjectController {
             document = opened
             documentID = UUID()
             playback = opened.playbackFeed
+            transportGeneration = 0
             audio = initialAudio
             reportedAudioError = nil
             loopStartBeat = 0
@@ -156,6 +159,7 @@ public final class ProjectController {
         document = nil
         documentID = nil
         playback = nil
+        transportGeneration = 0
         if let previous { await Task.detached { previous.shutdown() }.value }
         snapshot = nil
         tracks = []
@@ -228,7 +232,10 @@ public final class ProjectController {
         defer { audioBusy = false }
         do {
             let state = try await document.audio(command)
-            if self.document === document { audio = state }
+            if self.document === document {
+                audio = state
+                if command.requestsPlayheadFrame { transportGeneration &+= 1 }
+            }
         } catch { if self.document === document { report(error) } }
     }
 
@@ -277,5 +284,15 @@ public final class ProjectController {
 
     private func report(_ error: any Error) {
         errorMessage = (error as? BridgeError)?.message ?? error.localizedDescription
+    }
+}
+
+extension AudioCommand {
+    /// Playhead frames are requested from the control side. Status polling is not.
+    var requestsPlayheadFrame: Bool {
+        switch self {
+        case .play, .pause, .stop, .locate: true
+        case .output, .refresh, .status, .loop, .metronome: false
+        }
     }
 }

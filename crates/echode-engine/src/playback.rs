@@ -810,6 +810,24 @@ pub fn playback_pair(
     playback_with_clock(project, rate, frames, Box::<InternalClock>::default())
 }
 
+/// Prepare both the clock and published position before a device can call back.
+pub fn playback_pair_at(
+    project: &Project,
+    rate: u32,
+    frames: usize,
+    sample: i64,
+) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
+    if sample < 0 {
+        return Err(PlaybackError::Time);
+    }
+    playback_with_clock(
+        project,
+        rate,
+        frames,
+        Box::new(InternalClock { position: sample }),
+    )
+}
+
 /// Same transport as [`playback_pair`], and a helper for each resolved CLAP
 /// device. Devices whose id is not in `routes` stay on the built-in synth.
 pub fn playback_with_plugins(
@@ -819,8 +837,19 @@ pub fn playback_with_plugins(
     host_bin: &std::path::Path,
     routes: &[PluginRoute],
 ) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
-    let (mut control, audio) =
-        playback_with_clock(project, rate, frames, Box::<InternalClock>::default())?;
+    playback_with_plugins_at(project, rate, frames, host_bin, routes, 0)
+}
+
+/// Hosted playback with an initial position already visible to status readers.
+pub fn playback_with_plugins_at(
+    project: &Project,
+    rate: u32,
+    frames: usize,
+    host_bin: &std::path::Path,
+    routes: &[PluginRoute],
+    sample: i64,
+) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
+    let (mut control, audio) = playback_pair_at(project, rate, frames, sample)?;
     let chain = chain_of(project, &audio.current);
     // The callback has not started, so the control flag is free.
     {

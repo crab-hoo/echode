@@ -19,6 +19,50 @@ const BLOCKS: [u32; 4] = [1, 7, 64, 512];
 const VOICES_PER_TRACK: usize = 8;
 
 #[test]
+fn an_initial_position_matches_a_queued_locate_for_every_block_size() {
+    let project = project();
+    let sample = 24_000;
+    let frames = 2_048;
+    let render = |block: usize, initial: bool| {
+        let (mut control, mut audio) = if initial {
+            echode_engine::playback_pair_at(&project, RATE, block, sample).unwrap()
+        } else {
+            let (mut control, audio) = echode_engine::playback_pair(&project, RATE, block).unwrap();
+            control
+                .command(echode_engine::PlaybackCommand::Locate(sample))
+                .unwrap();
+            (control, audio)
+        };
+        control
+            .command(echode_engine::PlaybackCommand::Play)
+            .unwrap();
+        let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+        let mut output = Vec::new();
+        let mut remaining = frames;
+        while remaining > 0 {
+            let count = remaining.min(block);
+            audio.render(&mut left[..count], &mut right[..count]);
+            for (left, right) in left.iter().zip(&right).take(count) {
+                output.extend([*left, *right]);
+            }
+            remaining -= count;
+        }
+        assert_eq!(control.status().sample, sample + frames as i64);
+        assert!(!control.status().failed);
+        output
+    };
+    let reference = render(512, false);
+    assert!(reference.iter().any(|sample| *sample != 0.0));
+    for block in BLOCKS {
+        assert_eq!(
+            render(block as usize, true),
+            reference,
+            "initial block {block}"
+        );
+    }
+}
+
+#[test]
 fn product_playback_matches_offline_export_for_every_block_size() {
     let project = project();
     let frames = 100000u32;

@@ -19,8 +19,10 @@ def respond(event, invoke):
         return {}
     return {"followup_message": (
         "必要な検査が失敗したか、有効な結果を確認できませんでした。target/agent-check.log と "
-        "target/verification/report.md を読み、失敗を直してください。"
+        "target/verification/report.md と target/verification/product-contracts.json を読み、失敗を直してください。"
+        "必須の回帰テストを削除・無視したり、0件実行を合格にして終えてはいけません。"
         "その後 make verify を実行してください。"
+        "実機・計測を実行しない場合は scripts/verify.py --defer ID --reason 理由で記録してください。"
     )}
 
 

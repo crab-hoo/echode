@@ -9,6 +9,15 @@ verify:
 verify-plan:
     make verify-plan
 
+app:
+    make app
+
+doctor:
+    make doctor
+
+debug-report:
+    make debug-report
+
 fmt:
     make fmt
 

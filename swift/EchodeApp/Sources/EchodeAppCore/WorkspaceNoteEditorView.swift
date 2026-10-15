@@ -28,7 +28,9 @@ struct WorkspaceNoteEditorView: View {
                         Task { await controller.insertNote(pitch: pitch, beat: beat, length: length, on: track, documentID: document) }
                     },
                     edit: { id, geometry in Task { await controller.editNote(id, geometry: geometry, documentID: document) } },
-                    delete: { id in Task { await controller.deleteNote(id, documentID: document) } }, playback: controller.playback, navigation: state.navigation, documentID: document)
+                    delete: { id in Task { await controller.deleteNote(id, documentID: document) } },
+                    playback: controller.playback, transportGeneration: controller.transportGeneration,
+                    navigation: state.navigation, documentID: document)
                     .id(controller.documentID)
                 Divider()
                 fields

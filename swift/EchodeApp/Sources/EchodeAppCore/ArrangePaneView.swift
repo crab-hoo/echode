@@ -74,6 +74,7 @@ public final class ArrangePaneView: NSView {
         updateViewport()
     }
     public func setPlayback(_ playback: PlaybackFeed?) { timeline.setPlayback(playback) }
+    public func noteTransport(_ generation: UInt64) { timeline.noteTransport(generation) }
     public func stop() { timeline.stop() }
 
     private func select(_ id: UUID) {

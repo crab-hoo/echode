@@ -56,6 +56,8 @@ def load_policy(root):
         seen.add(name)
         if check["mode"] not in ("automatic", "manual") or check["timeout"] <= 0:
             raise ValueError("invalid mode/timeout")
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", check.get("make_target", name)):
+            raise ValueError("invalid make target")
         if not set(check["areas"]).issubset(policy["areas"]):
             raise ValueError("unknown verification area")
     return policy
@@ -79,6 +81,14 @@ def select_checks(policy, changed, all_checks=False):
     return selected
 
 
+def make_flags_identity(value):
+    # GNU make escapes whitespace with backslashes; quotes are literal here.
+    # Selection/deferral arguments cannot affect a build and must not invalidate
+    # evidence when the next invocation is plain `make verify` or `make doctor`.
+    tokens = [re.sub(r"\\(.)", r"\1", token) for token in re.findall(r"(?:\\.|[^\s\\])+", value)]
+    return [token for token in tokens if token != "--" and not token.startswith("VERIFY_ARGS=")]
+
+
 def tool_identity(root):
     # Validation results must not silently survive a compiler/PATH change. Failed
     # version queries are also recorded; a selected missing tool will fail the check.
@@ -88,6 +98,7 @@ def tool_identity(root):
         "CARGO_TARGET_DIR", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_TARGET",
         "CC", "CFLAGS", "MACOSX_DEPLOYMENT_TARGET", "MAKEFLAGS",
     )}
+    identity["MAKEFLAGS"] = make_flags_identity(identity["MAKEFLAGS"])
     identity["python"] = sys.version + ":" + sys.executable
     identity["system"] = list(os.uname())
     cargo_config = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")))
@@ -104,7 +115,8 @@ def tool_identity(root):
             commands.append(["rustc", "+" + nightly[1], "-vV"])
     for command in commands:
         try:
-            result = subprocess.run(command, cwd=root, capture_output=True, timeout=15)
+            result = subprocess.run(command, cwd=root, capture_output=True, timeout=15,
+                                    env={**os.environ, "RUSTUP_AUTO_INSTALL": "0"})
             identity[" ".join(command)] = str(result.returncode) + ":" + os.fsdecode(result.stdout + result.stderr)
         except (OSError, subprocess.TimeoutExpired) as error:
             identity[" ".join(command)] = str(error)
@@ -182,7 +194,7 @@ def save_report(directory, report, policy, selected):
             lines.append(f"  - ログ: [{name}]({name}.log)")
         lines.append("  - 選択の根拠: " + ", ".join(selected[name]))
     lines += ["", "## 対象の変更", ""] + [f"- `{path}`" for path in report["changed_paths"]]
-    lines += ["", "passed はこの識別値のソースだけに有効。not_run は候補の未実行で、完了を止めない。deferred は理由を任意に記録した未実行。not_run と deferred は合格ではない。", ""]
+    lines += ["", "passed はこの識別値のソースだけに有効。not_run は実行か理由の記録が必要。deferred は理由を記録した未実行であり、合格ではない。", ""]
     temporary = directory / "report.md.tmp"
     temporary.write_text("\n".join(lines))
     temporary.replace(directory / "report.md")
@@ -191,11 +203,12 @@ def save_report(directory, report, policy, selected):
 def run_check(root, check, log):
     started = time.monotonic()
     with log.open("w") as output:
-        output.write(f"Command: make {check['id']}\nTimeout: {check['timeout']} s\n\n")
+        target = check.get("make_target", check["id"])
+        output.write(f"Command: make {target}\nTimeout: {check['timeout']} s\n\n")
         output.flush()
         try:
             process = subprocess.Popen(
-                ["make", check["id"]], cwd=root, stdout=output, stderr=subprocess.STDOUT,
+                ["make", target], cwd=root, stdout=output, stderr=subprocess.STDOUT,
                 start_new_session=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "ECHODE_VERIFY_GROUP": "1"},
             )
         except OSError as error:
@@ -283,20 +296,15 @@ def verify(root, args):
         if changed_paths(root, args.base) != changed or fingerprint(root, changed, args.base, tool_identity(root)) != stamp:
             print("検査の確認中に変更がありました。make verify を再実行してください。", file=sys.stderr)
             return 1
-        # Unrequested measurements are suggestions, not completion requirements.
-        # A failed/interrupted explicit run must still be addressed on the next run.
+        # Never open hardware automatically. Every selected manual check needs
+        # either explicit execution or an explanation attached to this source.
         pending = [name for name in requested
-                   if report["results"][name]["status"] not in ("passed", "deferred")
-                   and (checks[name]["mode"] == "automatic" or name in args.run or name in args.only
-                        or report["results"][name]["status"] != "not_run")]
+                   if report["results"][name]["status"] not in ("passed", "deferred")]
         print("結果: target/verification/report.md", flush=True)
         if pending:
             print("完了していない検査: " + ", ".join(sorted(pending)), file=sys.stderr)
-            print("ログを確認して失敗を直してください。明示した計測の実行には --run ID を使います。", file=sys.stderr)
+            print("失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID --reason 理由を使います。", file=sys.stderr)
             return 1
-        suggestions = [name for name in requested if report["results"][name]["status"] == "not_run"]
-        if suggestions:
-            print("計測などの候補: " + ", ".join(sorted(suggestions)) + "（必要なら --run ID で実行）", flush=True)
         return 0
 
 
