@@ -50,6 +50,14 @@ impl OutputDeclick {
         if left.is_empty() || left.len() != right.len() {
             return;
         }
+        silence_non_finite(left);
+        silence_non_finite(right);
+        if !self.last[0].is_finite() {
+            self.last[0] = 0.0;
+        }
+        if !self.last[1].is_finite() {
+            self.last[1] = 0.0;
+        }
         if changed {
             self.offset = [self.last[0] - left[0], self.last[1] - right[0]];
             self.remaining = self.frames;
@@ -61,7 +69,42 @@ impl OutputDeclick {
                 *right += self.offset[1] * gain;
                 self.remaining -= 1;
             }
+            if !left.is_finite() {
+                *left = 0.0;
+            }
+            if !right.is_finite() {
+                *right = 0.0;
+            }
             self.last = [*left, *right];
         }
+    }
+}
+
+fn silence_non_finite(samples: &mut [f32]) {
+    for sample in samples {
+        if !sample.is_finite() {
+            *sample = 0.0;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OutputDeclick;
+
+    #[test]
+    fn infinite_input_does_not_poison_later_blocks() {
+        let mut declick = OutputDeclick::new(48_000);
+        let mut left = [f32::MAX, 0.5];
+        let mut right = [f32::MAX, -0.5];
+        declick.process(&mut left, &mut right, true);
+        let mut left = [f32::INFINITY, 0.25];
+        let mut right = [f32::INFINITY, -0.25];
+        declick.process(&mut left, &mut right, true);
+        assert!(left.iter().chain(&right).all(|sample| sample.is_finite()));
+        let mut left = [0.0, 0.0];
+        let mut right = [0.0, 0.0];
+        declick.process(&mut left, &mut right, false);
+        assert!(left.iter().chain(&right).all(|sample| sample.is_finite()));
     }
 }

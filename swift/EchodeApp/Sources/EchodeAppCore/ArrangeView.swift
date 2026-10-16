@@ -211,7 +211,7 @@ public final class ArrangeView: NSView {
             let movement = Double(point.y - draft.down.y)
             let initial = draft.original.gain > 0 ? MixScale.decibels(draft.original.gain) : -60
             let db = initial - movement * 0.25
-            draft.gain = db <= min(-60, initial) ? 0 : min(Float.greatestFiniteMagnitude,
+            draft.gain = db <= min(-60, initial) ? 0 : min(MixScale.clipGainMax,
                 Float(pow(10, min(max(24, initial), db) / 20)))
         case .fadeIn, .fadeOut:
             let fraction = min(1, max(0, (point.x - draft.layout.rect.minX) / max(1, draft.layout.rect.width)))
@@ -276,7 +276,8 @@ public final class ArrangeView: NSView {
         let scale = window?.backingScaleFactor ?? 1
         return CanvasInput(snapshot: snapshot, selected: selected, camera: camera,
                             width: Double(bounds.width), height: Double(bounds.height), scale: Double(scale), playback: playback, header: header,
-                            selectedClip: selectedClip, faderPreview: faderPreview, clipDraft: clipDraft)
+                            selectedClip: selectedClip, faderPreview: faderPreview, clipDraft: clipDraft,
+                            displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60))
     }
     private func refresh() { renderer?.update(renderInput) }
 }

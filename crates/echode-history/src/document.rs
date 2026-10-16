@@ -17,7 +17,8 @@ use std::sync::Mutex;
 
 use crate::package_io::Directory;
 use echode_model::{
-    AudioRef, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick, Track,
+    AudioRef, CLIP_GAIN_MAX, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick,
+    Track, clip_gain_allowed,
 };
 use gix::objs::Tree;
 use gix::objs::tree::{Entry, EntryKind};
@@ -1132,8 +1133,10 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
             }
         };
         let gain = clip.gain;
-        if !gain.is_finite() || gain < 0.0 {
-            return Err(PackageError::new("gain must be finite and at least zero"));
+        if !clip_gain_allowed(gain) {
+            return Err(PackageError::new(format!(
+                "gain must be finite, at least zero, and at most {CLIP_GAIN_MAX}"
+            )));
         }
         clips.push(echode_model::Placement {
             id: parse_id(&clip.id)?,

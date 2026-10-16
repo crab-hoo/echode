@@ -22,7 +22,8 @@ use objc2_core_foundation::{CFIndex, CFURL};
 use crate::document::PackageError;
 use crate::objects::{ensure_store_gitignore, read_object, write_object};
 
-const MAGIC: &[u8; 8] = b"ECHDPCM1";
+pub(crate) const PCM_MAGIC: &[u8; 8] = b"ECHDPCM1";
+const MAGIC: &[u8; 8] = PCM_MAGIC;
 const HEADER: usize = 24;
 
 /// What an import stored. The project records these facts on the clip.

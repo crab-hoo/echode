@@ -18,6 +18,9 @@ final class ArrangePainter {
     private let labelPipeline: any MTLRenderPipelineState
     private let labels = ArrangeLabelTextures()
     private let device: any MTLDevice
+    /// One pair per in-flight drawable. The probe uses slot 0 and waits.
+    private var waveInstances: [MTLBuffer?] = [nil, nil, nil]
+    private var wavePeaks: [MTLBuffer?] = [nil, nil, nil]
 
     init(device: any MTLDevice) throws {
         self.device = device
@@ -41,7 +44,7 @@ final class ArrangePainter {
     }
 
     func encode(encoder: any MTLRenderCommandEncoder, texture: any MTLTexture, buffer: any MTLBuffer,
-                timelineCount: Int, headerCount: Int, frame: ArrangeFrame?, piano: PianoFrame? = nil) {
+                timelineCount: Int, headerCount: Int, frame: ArrangeFrame?, piano: PianoFrame? = nil, slot: Int = 0) {
         var viewport = SIMD2(Float(texture.width), Float(texture.height))
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBuffer(buffer, offset: 0, index: 0)
@@ -52,7 +55,7 @@ final class ArrangePainter {
                 encoder.setScissorRect(rect)
                 let split = min(frame.foregroundStart, timelineCount)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: split)
-                encodeWaveforms(frame, encoder: encoder, texture: texture)
+                encodeWaveforms(frame, encoder: encoder, texture: texture, slot: slot)
                 if timelineCount > split {
                     encoder.setRenderPipelineState(pipeline)
                     encoder.setVertexBuffer(buffer, offset: 0, index: 0)
@@ -92,7 +95,7 @@ final class ArrangePainter {
         }
     }
 
-    private func encodeWaveforms(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {
+    private func encodeWaveforms(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture, slot: Int) {
         let draws = frame.waveforms
         guard !draws.isEmpty else { return }
         var instances: [WaveInstance] = []
@@ -103,19 +106,29 @@ final class ArrangePainter {
             peaks.append(contentsOf: draw.columns)
         }
         guard !instances.isEmpty else { return }
-        let instancesBuffer = instances.withUnsafeBytes { raw in
-            device.makeBuffer(bytes: raw.baseAddress!, length: raw.count, options: .storageModeShared)
-        }
-        let peaksBuffer = peaks.withUnsafeBytes { raw in
-            device.makeBuffer(bytes: raw.baseAddress!, length: raw.count, options: .storageModeShared)
-        }
-        guard let instancesBuffer, let peaksBuffer else { return }
+        let slot = min(max(0, slot), waveInstances.count - 1)
+        guard let instancesBuffer = reusedBuffer(&waveInstances[slot], bytes: instances),
+              let peaksBuffer = reusedBuffer(&wavePeaks[slot], bytes: peaks) else { return }
         var viewport = SIMD2(Float(texture.width), Float(texture.height))
         encoder.setRenderPipelineState(wavePipeline)
         encoder.setVertexBuffer(instancesBuffer, offset: 0, index: 0)
         encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
         encoder.setFragmentBuffer(peaksBuffer, offset: 0, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: instances.count)
+    }
+
+    /// Grows a shared buffer and copies into it. The slot stays alive until that
+    /// frame's command buffer completes, so the next frame uses another slot.
+    private func reusedBuffer<T>(_ slot: inout (any MTLBuffer)?, bytes: [T]) -> (any MTLBuffer)? {
+        let length = max(1, bytes.count * MemoryLayout<T>.stride)
+        if (slot?.length ?? 0) < length {
+            slot = device.makeBuffer(length: length, options: .storageModeShared)
+        }
+        guard let buffer = slot else { return nil }
+        bytes.withUnsafeBytes { raw in
+            if let source = raw.baseAddress { buffer.contents().copyMemory(from: source, byteCount: raw.count) }
+        }
+        return buffer
     }
 
     private func encodeLabels(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {

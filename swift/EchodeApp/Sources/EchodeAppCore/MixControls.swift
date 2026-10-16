@@ -40,6 +40,8 @@ struct TrackControlLayout: Sendable {
 }
 
 enum MixScale {
+    /// Matches `CLIP_GAIN_MAX` in the document model (`2^20`).
+    static let clipGainMax: Float = 1_048_576
     static func decibels(_ gain: Float) -> Double { gain > 0 ? 20 * log10(Double(gain)) : -.infinity }
     static func gain(_ position: Double) -> Float { position <= 0 ? 0 : Float(pow(10, (-60 + min(1, position) * (60 + 20 * log10(4.0))) / 20)) }
     static func position(_ gain: Float) -> Double { gain > 0 ? min(1, max(0, (decibels(gain) + 60) / (60 + 20 * log10(4.0)))) : 0 }

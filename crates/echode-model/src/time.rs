@@ -484,6 +484,31 @@ pub fn tick_to_sample(tick: Tick, tempo: &TempoMap, sample_rate: u32) -> Option<
     i64::try_from(samples).ok()
 }
 
+/// Sample offset of timeline `tick` from content position 0 at `origin`.
+///
+/// Negative means `tick` is before the media file. The tempo integral is
+/// `[origin, tick]`, which is not the same length as a later interval of the
+/// same tick width when the tempo changes.
+pub fn media_sample_at(origin: i64, tick: i64, tempo: &TempoMap, sample_rate: u32) -> Option<i64> {
+    let at = tick_to_sample(Tick::new(tick), tempo, sample_rate)?;
+    let origin_at = tick_to_sample(Tick::new(origin), tempo, sample_rate)?;
+    at.checked_sub(origin_at)
+}
+
+/// Samples from media position 0 to the placement start.
+///
+/// Content position 0 is anchored at `start - offset`. A positive lead skips
+/// that many samples into the file. A negative lead is silence before the file.
+pub fn placement_media_lead(
+    start: i64,
+    offset: i64,
+    tempo: &TempoMap,
+    sample_rate: u32,
+) -> Option<i64> {
+    let origin = start.checked_sub(offset)?;
+    media_sample_at(origin, start, tempo, sample_rate)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,6 +542,38 @@ mod tests {
         let before = Tick::new(Tick::quarters(4).unwrap().get() - 1);
         let early = map.flicks_at(before).unwrap();
         assert_eq!(early.get(), FLICKS_PER_SECOND * 2 - 500);
+    }
+
+    #[test]
+    fn placement_lead_uses_the_interval_before_the_window() {
+        let map = TempoMap::new(bpm(120)).with_tempo(Tick::quarters(2).unwrap(), bpm(60));
+        let start = Tick::quarters(2).unwrap().get();
+        let lead = placement_media_lead(start, start, &map, 48_000).unwrap();
+        let later = tick_to_sample(Tick::new(start + start), &map, 48_000).unwrap()
+            - tick_to_sample(Tick::new(start), &map, 48_000).unwrap();
+        // Two quarters at 120 BPM are one second. The same width after the
+        // tempo change is two seconds. Trimming the left keeps the first.
+        assert_eq!(lead, 48_000);
+        assert_eq!(later, 96_000);
+        let before_file =
+            placement_media_lead(0, -Tick::quarters(1).unwrap().get(), &map, 48_000).unwrap();
+        assert_eq!(before_file, -24_000);
+
+        let steady = TempoMap::new(bpm(125));
+        let mut differed = false;
+        for start in 1..4_000 {
+            let origin_lead = placement_media_lead(start, start, &steady, 44_100).unwrap();
+            let forward = tick_to_sample(Tick::new(start + start), &steady, 44_100).unwrap()
+                - tick_to_sample(Tick::new(start), &steady, 44_100).unwrap();
+            if origin_lead != forward {
+                differed = true;
+                break;
+            }
+        }
+        assert!(
+            differed,
+            "constant tempo still rounds the two intervals differently"
+        );
     }
 
     #[test]

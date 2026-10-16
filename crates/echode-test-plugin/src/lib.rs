@@ -1,6 +1,7 @@
 //! Gain of 2.0, plus fault injection for the hosting spike.
 //!
-//! `ECHODE_TEST_FAULT=crash` aborts inside `process`. `ECHODE_TEST_FAULT=hang`
+//! `ECHODE_TEST_FAULT=crash` aborts inside `process`. `ECHODE_TEST_FAULT=segfault`
+//! stores through a null pointer there. `ECHODE_TEST_FAULT=hang`
 //! never returns from `process`. Both take down only this plugin's process.
 
 use std::ffi::{CStr, c_void};
@@ -178,6 +179,8 @@ impl PluginMainThread<'_, ()> for TestMain {
 enum Fault {
     None,
     Crash,
+    /// Null store inside `process`, so the helper sees `SIGSEGV`.
+    Segfault,
     Hang,
     Callback,
     Restart,
@@ -200,6 +203,7 @@ fn fault_code(text: &str) -> u8 {
     match text {
         "crash" => 1,
         "hang" => 2,
+        "segfault" => 13,
         "callback" => 3,
         "restart" => 4,
         "count" => 5,
@@ -218,6 +222,7 @@ fn fault_from_code(code: u8) -> Fault {
     match code {
         1 => Fault::Crash,
         2 => Fault::Hang,
+        13 => Fault::Segfault,
         3 => Fault::Callback,
         4 => Fault::Restart,
         5 => Fault::Count,
@@ -373,6 +378,11 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         match self.fault {
             Fault::Process => return Err(PluginError::Message("process refused")),
             Fault::Crash => std::process::abort(),
+            Fault::Segfault => loop {
+                // A real fault, not `raise`. The handler must run if the kernel
+                // turns this into `SIGSEGV`. Do not fall through to `abort`.
+                unsafe { std::ptr::write_volatile(std::ptr::null_mut::<u8>(), 1) };
+            },
             Fault::Hang => loop {
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             },

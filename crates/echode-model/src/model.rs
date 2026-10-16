@@ -15,9 +15,17 @@ use serde::{Deserialize, Serialize};
 use fractional_index::FractionalIndex;
 
 use crate::device::{Device, DeviceKind, MixerIds, valid_plugin_id};
-
 use crate::id::Id;
 use crate::time::{FLICKS_PER_SECOND, Flick, Meter, Tempo, TempoMap, Tick};
+
+/// Largest linear clip gain. `2^20` is exact in `f32` and stays finite when a
+/// full-scale sample also passes a track fader at `GAIN_MAX`.
+pub const CLIP_GAIN_MAX: f32 = 1_048_576.0;
+
+/// Finite clip gain in `0.0..=CLIP_GAIN_MAX`.
+pub fn clip_gain_allowed(gain: f32) -> bool {
+    gain.is_finite() && (0.0..=CLIP_GAIN_MAX).contains(&gain)
+}
 
 /// Why a model edit was rejected.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,7 +66,7 @@ impl fmt::Display for ModelError {
             Self::Overlap => "clip would overlap another clip",
             Self::Cycle => "a track cannot contain itself",
             Self::InvalidChange => "changeset does not apply",
-            Self::InvalidGain => "gain must be finite and at least zero",
+            Self::InvalidGain => "gain must be finite, at least zero, and at most 1048576",
             Self::InvalidFade => "fade is negative or does not fit in a frame count",
             Self::Unsorted => "notes are not in start, pitch, id order",
             Self::BadOrder => "track order key is missing, duplicated, or out of arrange order",
@@ -895,7 +903,7 @@ impl Project {
     }
 
     pub fn set_clip_gain(&self, clip_id: Id, gain: f32) -> Result<Self, ModelError> {
-        if !gain.is_finite() || gain < 0.0 {
+        if !clip_gain_allowed(gain) {
             return Err(ModelError::InvalidGain);
         }
         self.edit_clip(clip_id, |clip| clip.gain = gain)
@@ -1058,7 +1066,7 @@ impl Project {
                 if !fade_allowed(clip.fade_in) || !fade_allowed(clip.fade_out) {
                     return Err(ModelError::InvalidFade);
                 }
-                if !clip.gain.is_finite() || clip.gain < 0.0 {
+                if !clip_gain_allowed(clip.gain) {
                     return Err(ModelError::InvalidGain);
                 }
                 if !stored.iter().any(|content| content.id == clip.content) {
@@ -1440,6 +1448,20 @@ mod tests {
 
     fn project_with_track() -> (Project, Id) {
         Project::new().add_track("piano")
+    }
+
+    #[test]
+    fn clip_gain_stops_at_the_finite_mix_ceiling() {
+        let (project, track) = project_with_track();
+        let (project, _) = project.insert_note(track, at(0, 1)).unwrap();
+        let clip = only_clip(&project).id;
+        assert!(project.set_clip_gain(clip, CLIP_GAIN_MAX).is_ok());
+        assert_eq!(
+            project.set_clip_gain(clip, f32::MAX),
+            Err(ModelError::InvalidGain)
+        );
+        assert!(project.set_clip_gain(clip, f32::NAN).is_err());
+        assert!(clip_gain_allowed(1_000.0));
     }
 
     fn only_clip(project: &Project) -> &Placement {

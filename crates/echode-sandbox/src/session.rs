@@ -478,6 +478,12 @@ impl PluginHost {
             .unwrap_or_default()
     }
 
+    /// The helper's fatal-signal handler has stored its mark.
+    /// Exit without that handler leaves this false.
+    pub fn fatal_notice(&self) -> bool {
+        self.root.fatal_notice() || self.region.fatal_notice()
+    }
+
     pub fn process(
         &mut self,
         input: &[&[f32]],

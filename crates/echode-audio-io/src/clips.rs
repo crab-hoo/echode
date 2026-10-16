@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex};
 
 use echode_engine::{ClipLoader, LoadedClip, PlaybackError, resample_into, tick_to_sample};
 use echode_history::read_pcm;
-use echode_model::{AudioRef, Id, Placement, Project, TempoMap, Tick, fade_frames};
+use echode_model::{
+    AudioRef, Id, Placement, Project, TempoMap, Tick, clip_gain_allowed, fade_frames,
+    placement_media_lead,
+};
 
 #[derive(PartialEq, Eq)]
 struct MediaKey {
@@ -94,7 +97,7 @@ pub fn load_placed_clips(
                 return Err(PlaybackError::Media);
             }
             let gain = placement.gain;
-            if !gain.is_finite() || gain < 0.0 {
+            if !clip_gain_allowed(gain) {
                 return Err(PlaybackError::Media);
             }
             if !matches!(pcm.channels, 1 | 2) {
@@ -116,15 +119,15 @@ pub fn load_placed_clips(
             if window == 0 {
                 continue;
             }
-            let offset_tick = placement
-                .start
-                .get()
-                .checked_add(placement.offset.get())
-                .ok_or(PlaybackError::Time)?;
-            let offset_at = tick_to_sample(Tick::new(offset_tick), project.tempo(), device_rate)
-                .ok_or(PlaybackError::Time)?;
-            let offset = usize::try_from(offset_at.checked_sub(start).ok_or(PlaybackError::Time)?)
-                .map_err(|_| PlaybackError::Time)?;
+            // Content position 0 is anchored at start - offset. The skipped
+            // media is that interval's duration, not the interval after start.
+            let lead = placement_media_lead(
+                placement.start.get(),
+                placement.offset.get(),
+                project.tempo(),
+                device_rate,
+            )
+            .ok_or(PlaybackError::Time)?;
             let mut planes = Vec::with_capacity(usize::from(pcm.channels));
             for channel in 0..usize::from(pcm.channels) {
                 let source: Vec<_> = pcm
@@ -135,10 +138,15 @@ pub fn load_placed_clips(
                 let mut device =
                     vec![0.0; device_frames(source.len(), pcm.sample_rate, device_rate)?];
                 resample_into(&source, pcm.sample_rate, &mut device, device_rate)?;
-                let samples: Arc<[f32]> = (0..window)
-                    .map(|index| device.get(offset + index).copied().unwrap_or(0.0) * gain)
-                    .collect();
-                planes.push(samples);
+                let mut samples = Vec::with_capacity(window);
+                for index in 0..window {
+                    let sample = placed_sample(&device, lead, index)? * gain;
+                    if !sample.is_finite() {
+                        return Err(PlaybackError::Media);
+                    }
+                    samples.push(sample);
+                }
+                planes.push(Arc::from(samples));
             }
             let right = if pcm.channels == 2 {
                 planes.pop()
@@ -157,6 +165,15 @@ pub fn load_placed_clips(
         }
     }
     Ok(loaded)
+}
+
+fn placed_sample(device: &[f32], lead: i64, index: usize) -> Result<f32, PlaybackError> {
+    let index = i64::try_from(index).map_err(|_| PlaybackError::Time)?;
+    let at = lead.checked_add(index).ok_or(PlaybackError::Time)?;
+    Ok(usize::try_from(at)
+        .ok()
+        .and_then(|at| device.get(at).copied())
+        .unwrap_or(0.0))
 }
 
 fn device_frames(
@@ -418,5 +435,117 @@ mod tests {
                 assert!((heard[at + 1] + 0.25).abs() < 1.0e-4);
             }
         }
+    }
+
+    fn mono_wav(rate: u32, samples: &[i16]) -> Vec<u8> {
+        let frames = samples.len() as u32;
+        let size = frames * 2;
+        let mut wav = b"RIFF".to_vec();
+        wav.extend((36 + size).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend(16u32.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(rate.to_le_bytes());
+        wav.extend((rate * 2).to_le_bytes());
+        wav.extend(2u16.to_le_bytes());
+        wav.extend(16u16.to_le_bytes());
+        wav.extend(b"data");
+        wav.extend(size.to_le_bytes());
+        for sample in samples {
+            wav.extend(sample.to_le_bytes());
+        }
+        wav
+    }
+
+    #[test]
+    fn trimmed_audio_keeps_the_media_that_was_playing_at_the_new_start() {
+        let rate = 48_000u32;
+        let mut pcm = vec![8_192i16; 160_000];
+        pcm[48_000] = 24_576;
+        pcm[96_000] = 6_553;
+        let fixture =
+            Fixture(std::env::temp_dir().join(format!("echode-origin-{}", Id::generate().raw())));
+        std::fs::create_dir_all(&fixture.0).unwrap();
+        let source = fixture.0.join("mark.wav");
+        std::fs::write(&source, mono_wav(rate, &pcm)).unwrap();
+        let stored = echode_history::import_audio(&fixture.0, &source).unwrap();
+        let (project, track) = Project::new().add_track("trim");
+        let clip = Id::generate();
+        let project = project
+            .place_audio(
+                track,
+                clip,
+                Id::generate(),
+                echode_model::Tick::new(0),
+                AudioRef::try_new(
+                    stored.hash,
+                    stored.sample_rate,
+                    stored.channels,
+                    stored.frames,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let two = echode_model::Tick::quarters(2).unwrap();
+        let project = project
+            .resize_clip(track, clip, two, two)
+            .unwrap()
+            .set_clip_fades(clip, 0, 0)
+            .unwrap()
+            .with_tempo(two, echode_model::Tempo::quarters_per_minute(60).unwrap());
+        let loaded = load_placed_clips(&fixture.0, &project, rate).unwrap();
+        assert_eq!(loaded.len(), 1);
+        // 24576 / 32768 = 0.75. The following interval at 60 BPM is not the
+        // media that was sounding when the left edge moved.
+        assert!(
+            (loaded[0].samples[0] - 0.75).abs() < 1.0e-3,
+            "lead sample {}",
+            loaded[0].samples[0]
+        );
+        assert!((loaded[0].samples[0] - (6_553.0 / 32_768.0)).abs() > 0.2);
+    }
+
+    #[test]
+    fn a_negative_offset_is_silence_until_the_media_origin() {
+        let rate = 48_000u32;
+        let pcm = vec![16_384i16; 48_000];
+        let fixture =
+            Fixture(std::env::temp_dir().join(format!("echode-negative-{}", Id::generate().raw())));
+        std::fs::create_dir_all(&fixture.0).unwrap();
+        let source = fixture.0.join("tone.wav");
+        std::fs::write(&source, mono_wav(rate, &pcm)).unwrap();
+        let stored = echode_history::import_audio(&fixture.0, &source).unwrap();
+        let (project, track) = Project::new().add_track("extend");
+        let clip = Id::generate();
+        let two = echode_model::Tick::quarters(2).unwrap();
+        let project = project
+            .place_audio(
+                track,
+                clip,
+                Id::generate(),
+                two,
+                AudioRef::try_new(
+                    stored.hash,
+                    stored.sample_rate,
+                    stored.channels,
+                    stored.frames,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .resize_clip(
+                track,
+                clip,
+                echode_model::Tick::new(0),
+                echode_model::Tick::quarters(4).unwrap(),
+            )
+            .unwrap()
+            .set_clip_fades(clip, 0, 0)
+            .unwrap();
+        assert!(project.tracks()[0].clips[0].offset.get() < 0);
+        let loaded = load_placed_clips(&fixture.0, &project, rate).unwrap();
+        assert_eq!(loaded[0].samples[0], 0.0);
+        assert!((loaded[0].samples[48_000] - 0.5).abs() < 1.0e-3);
     }
 }

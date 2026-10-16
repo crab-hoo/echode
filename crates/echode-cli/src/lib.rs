@@ -201,6 +201,7 @@ pub fn render_to_wav(
     sample_rate: u32,
     frames: Option<u32>,
 ) -> Result<(), CliError> {
+    let _activity = echode_audio_io::UserActivity::begin("Echode is writing audio");
     let host = DocumentHost::open(package).map_err(|error| CliError::new(error.to_string()))?;
     let project = host.snapshot();
     let (revision, seq) = host

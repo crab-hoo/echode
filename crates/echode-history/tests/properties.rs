@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use echode_actions::{ActionError, Command, Session, decode, encode, replay};
 use echode_history::{read_package, write_package};
-use echode_model::{Id, Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, Tick};
+use echode_model::{CLIP_GAIN_MAX, Id, Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, Tick};
 use proptest::prelude::*;
 
 const EIGHTH: i64 = TICKS_PER_QUARTER / 2;
@@ -150,7 +150,7 @@ fn step() -> impl Strategy<Value = Step> {
                 start,
             }
         ),
-        1 => (any::<usize>(), any::<usize>(), prop_oneof![Just(0.0f32), Just(1.0), Just(0.25), Just(-1.0)])
+        1 => (any::<usize>(), any::<usize>(), prop_oneof![Just(0.0f32), Just(1.0), Just(0.25), Just(-1.0), Just(CLIP_GAIN_MAX), Just(f32::MAX)])
             .prop_map(|(track, clip, gain)| Step::SetClipGain { track, clip, gain }),
         1 => (
             any::<usize>(),

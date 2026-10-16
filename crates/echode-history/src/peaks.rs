@@ -10,10 +10,10 @@
 use std::collections::HashMap;
 #[cfg(test)]
 use std::fs;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
-use echode_model::{Id, Project, Tick, tick_to_sample};
+use echode_model::{Id, Project, media_sample_at};
 
 use crate::document::PackageError;
 use crate::media::read_pcm;
@@ -30,12 +30,36 @@ pub struct PeakColumn {
     pub max: f32,
 }
 
-#[derive(Clone, Debug)]
+/// Pyramid plus a way to read fewer than `bucket` samples.
+///
+/// A cache hit does not read the canonical PCM. Coarse columns use the
+/// pyramid. A partial bucket reads that range from a read-only map of the
+/// object, which stays sparse until those pages are touched.
 struct Peaks {
     frames: u64,
     bucket: u32,
-    mono: Arc<[f32]>,
     levels: Vec<Vec<PeakColumn>>,
+    /// Samples already decoded. Used when the object could not be mapped.
+    mono: Option<Arc<[f32]>>,
+    object: Option<MappedPcm>,
+}
+
+impl std::fmt::Debug for Peaks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Peaks")
+            .field("frames", &self.frames)
+            .field("bucket", &self.bucket)
+            .field("levels", &self.levels.len())
+            .field("mapped", &self.object.is_some())
+            .finish()
+    }
+}
+
+struct MappedPcm {
+    package: PathBuf,
+    hash: String,
+    channels: u16,
+    mapped: OnceLock<Option<memmap2::Mmap>>,
 }
 
 /// Peaks for the audio hashes a project currently references.
@@ -65,7 +89,7 @@ impl Waveforms {
                 entries.insert(audio.hash.clone(), Arc::clone(kept));
                 continue;
             }
-            if let Some(peaks) = load_hash(package, &audio.hash, audio.frames) {
+            if let Some(peaks) = load_hash(package, &audio.hash, audio.channels, audio.frames) {
                 entries.insert(audio.hash.clone(), Arc::new(peaks));
             }
         }
@@ -95,6 +119,24 @@ impl Waveforms {
         if peaks.frames != frames {
             return 0;
         }
+        let clip_end = match clip_start.checked_add(clip_length) {
+            Some(end) => end,
+            None => return 0,
+        };
+        let left = start_tick.max(clip_start);
+        let right = end_tick.min(clip_end);
+        if right <= left || columns.is_empty() {
+            return 0;
+        }
+        let Some(origin) = clip_start.checked_sub(offset) else {
+            return 0;
+        };
+        columns.fill(PeakColumn { min: 0.0, max: 0.0 });
+        let sound_left = left.max(origin);
+        if right <= sound_left {
+            // The visible window is inside the clip and before the file.
+            return columns.len();
+        }
         let Some((first, last)) = source_span(
             project.tempo(),
             SourceSpan {
@@ -104,16 +146,29 @@ impl Waveforms {
                 rate,
                 frames,
             },
-            start_tick,
-            end_tick,
+            sound_left,
+            right,
         ) else {
-            return 0;
+            return columns.len();
         };
         if first >= frames {
-            columns.fill(PeakColumn { min: 0.0, max: 0.0 });
             return columns.len();
         }
-        fill_columns(peaks, first, last.min(frames), columns)
+        let span = end_tick.saturating_sub(start_tick);
+        if span <= 0 {
+            return columns.len();
+        }
+        let from = column_at(sound_left, start_tick, span, columns.len());
+        let mut to = column_at(right, start_tick, span, columns.len());
+        if to <= from {
+            to = (from + 1).min(columns.len());
+        }
+        let to = to.min(columns.len());
+        if from >= to {
+            return columns.len();
+        }
+        fill_columns(peaks, first, last.min(frames), &mut columns[from..to]);
+        columns.len()
     }
 }
 
@@ -126,25 +181,30 @@ pub fn cache_peaks(package: &Path, hash: &str) -> Result<(), PackageError> {
     write_cache(package, hash, &peaks)
 }
 
-fn load_hash(package: &Path, hash: &str, frames: u64) -> Option<Peaks> {
-    let pcm = read_pcm(package, hash).ok()?;
-    if pcm.frames != frames {
-        return None;
-    }
-    let mono = fold_mono(&pcm.samples, pcm.channels);
+fn load_hash(package: &Path, hash: &str, channels: u16, frames: u64) -> Option<Peaks> {
     if let Some(cached) = read_cache(package, hash)
-        && cached.frames == pcm.frames
+        && cached.frames == frames
         && cached.bucket == BUCKET
     {
         return Some(Peaks {
             frames: cached.frames,
             bucket: cached.bucket,
-            mono: Arc::from(mono),
             levels: cached.levels,
+            mono: None,
+            object: MappedPcm::open(package, hash, channels),
         });
     }
-    let peaks = build_peaks(&mono, pcm.frames);
+    let pcm = read_pcm(package, hash).ok()?;
+    if pcm.frames != frames || pcm.channels != channels {
+        return None;
+    }
+    let mono = fold_mono(&pcm.samples, pcm.channels);
+    let mut peaks = build_peaks(&mono, pcm.frames);
     let _ = write_cache(package, hash, &peaks);
+    peaks.object = MappedPcm::open(package, hash, channels);
+    if peaks.object.is_none() {
+        peaks.mono = Some(Arc::from(mono));
+    }
     Some(peaks)
 }
 
@@ -197,21 +257,31 @@ fn source_span(
     if right <= left {
         return None;
     }
-    let origin = tick_to_sample(Tick::new(source.start), tempo, source.rate)?;
-    let skip = tick_to_sample(
-        Tick::new(source.start.checked_add(source.offset)?),
-        tempo,
-        source.rate,
-    )?
-    .checked_sub(origin)?;
-    let at = |tick: i64| -> Option<u64> {
-        let delta = tick_to_sample(Tick::new(tick), tempo, source.rate)?.checked_sub(origin)?;
-        let frame = skip.checked_add(delta)?;
-        u64::try_from(frame.max(0)).ok()
-    };
-    let first = at(left)?;
-    let last = at(right)?;
+    let origin_tick = source.start.checked_sub(source.offset)?;
+    let sound_left = left.max(origin_tick);
+    if right <= sound_left {
+        return None;
+    }
+    let first = media_sample_at(origin_tick, sound_left, tempo, source.rate)?;
+    let last = media_sample_at(origin_tick, right, tempo, source.rate)?;
+    if last <= first || first < 0 {
+        return None;
+    }
+    let first = u64::try_from(first).ok()?;
+    let last = u64::try_from(last).ok()?;
     (last > first).then_some((first, last))
+}
+
+fn column_at(tick: i64, start: i64, span: i64, columns: usize) -> usize {
+    if columns == 0 || tick <= start || span <= 0 {
+        return 0;
+    }
+    if tick >= start.saturating_add(span) {
+        return columns;
+    }
+    let index = i128::from(tick - start) * i128::from(u64::try_from(columns).unwrap_or(u64::MAX))
+        / i128::from(span);
+    usize::try_from(index).unwrap_or(columns).min(columns)
 }
 
 fn fill_columns(peaks: &Peaks, start: u64, end: u64, columns: &mut [PeakColumn]) -> usize {
@@ -250,48 +320,59 @@ fn reduce(peaks: &Peaks, start: u64, end: u64) -> PeakColumn {
     if end <= start {
         return PeakColumn { min: 0.0, max: 0.0 };
     }
-    let span = end - start;
-    if span < u64::from(peaks.bucket) {
-        return scan(&peaks.mono, start, end);
+    let bucket = u64::from(peaks.bucket).max(1);
+    if peaks.levels.is_empty() {
+        return peaks.read_samples(start, end);
     }
-    let mut level = 0usize;
-    let mut size = u64::from(peaks.bucket);
-    while level + 1 < peaks.levels.len() && size.saturating_mul(2) <= span {
-        level += 1;
-        size = size.saturating_mul(2);
-    }
-    let columns = &peaks.levels[level];
-    if columns.is_empty() || size == 0 {
-        return scan(&peaks.mono, start, end);
-    }
+    // Whole pyramid cells stay inside the requested range. Only a remainder
+    // shorter than one bucket reads the object, so a cache hit does not load
+    // the file until the view is finer than 64 samples at an unaligned edge.
     let mut min = f32::INFINITY;
     let mut max = f32::NEG_INFINITY;
-    let aligned = start / size * size;
-    if aligned < start {
-        let edge = scan(&peaks.mono, start, (aligned + size).min(end));
-        min = min.min(edge.min);
-        max = max.max(edge.max);
-    }
-    let first = usize::try_from(start.div_ceil(size)).unwrap_or(0);
-    let last_bucket = usize::try_from(end / size).unwrap_or(0);
-    if first < last_bucket {
-        let last_bucket = last_bucket.min(columns.len());
-        let first = first.min(last_bucket);
-        for column in &columns[first..last_bucket] {
-            min = min.min(column.min);
-            max = max.max(column.max);
+    let mut cursor = start;
+    while cursor < end {
+        let remain = end - cursor;
+        if !cursor.is_multiple_of(bucket) || remain < bucket {
+            let edge_end = if cursor.is_multiple_of(bucket) {
+                end
+            } else {
+                (cursor + (bucket - cursor % bucket)).min(end)
+            };
+            let edge = peaks.read_samples(cursor, edge_end);
+            min = min.min(edge.min);
+            max = max.max(edge.max);
+            cursor = edge_end;
+            continue;
         }
-    }
-    let covered = u64::try_from(last_bucket).unwrap_or(0).saturating_mul(size);
-    if covered < end && covered > start {
-        let edge = scan(&peaks.mono, covered, end);
-        min = min.min(edge.min);
-        max = max.max(edge.max);
+        let mut size = bucket;
+        let mut level = 0usize;
+        while level + 1 < peaks.levels.len() {
+            let next = size.saturating_mul(2);
+            if next < size || !cursor.is_multiple_of(next) || remain < next {
+                break;
+            }
+            size = next;
+            level += 1;
+        }
+        let index = usize::try_from(cursor / size).unwrap_or(usize::MAX);
+        let Some(column) = peaks
+            .levels
+            .get(level)
+            .and_then(|columns| columns.get(index))
+        else {
+            let edge = peaks.read_samples(cursor, end);
+            min = min.min(edge.min);
+            max = max.max(edge.max);
+            break;
+        };
+        min = min.min(column.min);
+        max = max.max(column.max);
+        cursor = cursor.saturating_add(size);
     }
     if min.is_finite() && max.is_finite() {
         PeakColumn { min, max }
     } else {
-        scan(&peaks.mono, start, end)
+        PeakColumn { min: 0.0, max: 0.0 }
     }
 }
 
@@ -324,8 +405,9 @@ fn build_peaks(mono: &[f32], frames: u64) -> Peaks {
         return Peaks {
             frames,
             bucket: BUCKET,
-            mono: Arc::from(mono),
             levels: Vec::new(),
+            mono: Some(Arc::from(mono)),
+            object: None,
         };
     }
     let usable = mono
@@ -358,8 +440,113 @@ fn build_peaks(mono: &[f32], frames: u64) -> Peaks {
     Peaks {
         frames,
         bucket: BUCKET,
-        mono: Arc::from(mono),
         levels,
+        mono: None,
+        object: None,
+    }
+}
+
+impl Peaks {
+    fn read_samples(&self, start: u64, end: u64) -> PeakColumn {
+        if let Some(mono) = &self.mono {
+            return scan(mono, start, end);
+        }
+        self.object
+            .as_ref()
+            .map(|object| object.scan(start, end))
+            .unwrap_or(PeakColumn { min: 0.0, max: 0.0 })
+    }
+}
+
+impl MappedPcm {
+    fn open(package: &Path, hash: &str, channels: u16) -> Option<Self> {
+        if !is_content_hash(hash) || !matches!(channels, 1 | 2) {
+            return None;
+        }
+        Some(Self {
+            package: package.to_path_buf(),
+            hash: hash.to_string(),
+            channels,
+            mapped: OnceLock::new(),
+        })
+    }
+
+    fn scan(&self, start: u64, end: u64) -> PeakColumn {
+        let Some(map) = self.mapped.get_or_init(|| self.map_object()).as_ref() else {
+            return PeakColumn { min: 0.0, max: 0.0 };
+        };
+        let width = usize::from(self.channels) * 4;
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for frame in start..end {
+            let offset = 24usize.saturating_add(
+                usize::try_from(frame)
+                    .unwrap_or(usize::MAX)
+                    .saturating_mul(width),
+            );
+            let Some(bytes) = map.get(offset..offset.saturating_add(width)) else {
+                break;
+            };
+            let mut sum = 0.0f32;
+            let mut finite = true;
+            for channel in 0..usize::from(self.channels) {
+                let sample = f32::from_le_bytes(
+                    bytes[channel * 4..channel * 4 + 4]
+                        .try_into()
+                        .unwrap_or([0; 4]),
+                );
+                if !sample.is_finite() {
+                    finite = false;
+                    break;
+                }
+                sum += sample;
+            }
+            if !finite {
+                continue;
+            }
+            let sample = sum / f32::from(self.channels);
+            min = min.min(sample);
+            max = max.max(sample);
+        }
+        if min.is_finite() && max.is_finite() {
+            PeakColumn { min, max }
+        } else {
+            PeakColumn { min: 0.0, max: 0.0 }
+        }
+    }
+
+    fn map_object(&self) -> Option<memmap2::Mmap> {
+        let file = crate::package_io::Directory::open(&self.package)
+            .ok()?
+            .optional_child("media")
+            .ok()??
+            .optional_child("objects")
+            .ok()??
+            .open_file(&self.hash, false, false)
+            .ok()?;
+        let mut header = [0u8; 24];
+        std::os::unix::fs::FileExt::read_exact_at(&file, &mut header, 0).ok()?;
+        if &header[..8] != crate::media::PCM_MAGIC {
+            return None;
+        }
+        let channels = u16::from_le_bytes(header[12..14].try_into().ok()?);
+        let frames = u64::from_le_bytes(header[16..24].try_into().ok()?);
+        if channels != self.channels || frames == 0 {
+            return None;
+        }
+        let payload = frames.checked_mul(u64::from(channels))?.checked_mul(4)?;
+        let bytes = 24u64.checked_add(payload)?;
+        if file.metadata().ok()?.len() < bytes {
+            return None;
+        }
+        // SAFETY: the directory opener rejects links and non-files. The map is
+        // read-only. Canonical objects are immutable; a later truncate can
+        // fault, and the header length check is the guard we have at map time.
+        let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
+        if u64::try_from(map.len()).ok()? < bytes {
+            return None;
+        }
+        Some(map)
     }
 }
 
@@ -634,6 +821,82 @@ mod tests {
         for column in columns {
             assert!((column.min - 0.75).abs() < 1.0e-4, "{column:?}");
             assert!((column.max - 0.75).abs() < 1.0e-4, "{column:?}");
+        }
+    }
+
+    #[test]
+    fn a_peak_cache_answers_coarse_columns_without_the_object() {
+        let directory = std::env::temp_dir().join(format!(
+            "echode-peak-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        crate::write_package(&directory, &Project::new()).unwrap();
+        let frames = 256u64;
+        let mut samples = vec![0.0f32; frames as usize];
+        samples[1] = 1.0;
+        samples[64] = 0.25;
+        let bytes = crate::media::encode_pcm(48_000, 1, frames, &samples).unwrap();
+        let hash = crate::write_object(&directory, &bytes).unwrap();
+        cache_peaks(&directory, &hash).unwrap();
+        let exact = load_hash(&directory, &hash, 1, frames).unwrap();
+        assert_eq!(reduce(&exact, 0, 1).max, 0.0);
+        assert!((reduce(&exact, 1, 2).max - 1.0).abs() < 1.0e-6);
+        // Sample 1 is outside [2, 65). An unaligned prefix must not take the
+        // pyramid cell that starts at 0, and the sample at frame 64 is inside.
+        assert!((reduce(&exact, 2, 65).max - 0.25).abs() < 1.0e-6);
+        let cached = load_hash(&directory, &hash, 1, frames).unwrap();
+        fs::remove_file(directory.join("media").join("objects").join(&hash)).unwrap();
+        assert!((reduce(&cached, 0, 128).max - 1.0).abs() < 1.0e-6);
+        assert!((reduce(&cached, 64, 128).max - 0.25).abs() < 1.0e-6);
+        assert_eq!(reduce(&cached, 1, 2).max, 0.0);
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn negative_offset_draws_silence_before_the_file() {
+        use echode_model::{AudioRef, Id, Project, TICKS_PER_QUARTER, Tick};
+        let directory = std::env::temp_dir().join(format!(
+            "echode-neg-peaks-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        crate::write_package(&directory, &Project::new()).unwrap();
+        let frames = 48_000u64;
+        let samples = vec![0.5f32; frames as usize];
+        let bytes = crate::media::encode_pcm(48_000, 1, frames, &samples).unwrap();
+        let hash = crate::write_object(&directory, &bytes).unwrap();
+        let (project, track) = Project::new().add_track("audio");
+        let clip = Id::from_raw(4);
+        let two = Tick::new(TICKS_PER_QUARTER * 2);
+        let project = project
+            .place_audio(
+                track,
+                clip,
+                Id::from_raw(5),
+                two,
+                AudioRef::try_new(hash, 48_000, 1, frames).unwrap(),
+            )
+            .unwrap()
+            .resize_clip(track, clip, Tick::new(0), Tick::new(TICKS_PER_QUARTER * 4))
+            .unwrap();
+        let waves = Waveforms::load(&directory, &project, None);
+        let mut columns = vec![PeakColumn { min: 1.0, max: 1.0 }; 8];
+        let wrote = waves.fill(&project, clip, 0, TICKS_PER_QUARTER * 4, &mut columns);
+        let _ = fs::remove_dir_all(&directory);
+        assert_eq!(wrote, 8);
+        for column in &columns[..4] {
+            assert_eq!(column.min, 0.0, "{column:?}");
+            assert_eq!(column.max, 0.0, "{column:?}");
+        }
+        for column in &columns[4..] {
+            assert!((column.max - 0.5).abs() < 1.0e-3, "{column:?}");
         }
     }
 

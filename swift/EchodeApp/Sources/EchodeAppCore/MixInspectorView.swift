@@ -43,8 +43,8 @@ struct ClipMixInspector: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(text("Audio Clip")).font(.subheadline)
             ControlNumberField(title: text("Clip Gain"), value: MixScale.decibels(clip.gain), unit: "dB", minimum: -120,
-                maximum: 20 * log10(Double(Float.greatestFiniteMagnitude)) - 0.001, silence: true) { db in
-                let gain: Float = db == -.infinity ? 0 : Float(pow(10, db / 20))
+                maximum: 20 * log10(Double(MixScale.clipGainMax)), silence: true) { db in
+                let gain: Float = db == -.infinity ? 0 : min(MixScale.clipGainMax, Float(pow(10, db / 20)))
                 let document = controller.documentID
                 Task { await controller.setClipGain(clip.id, gain: gain, documentID: document) }
             }

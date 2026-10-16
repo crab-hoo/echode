@@ -25,9 +25,13 @@ static SHM_SEQ: AtomicU64 = AtomicU64::new(0);
 static ABORT_REGION: AtomicPtr<MappedRegion> = AtomicPtr::new(ptr::null_mut());
 static ABORT_ARMED: AtomicBool = AtomicBool::new(false);
 
-/// Point the process-wide `SIGABRT` handler at this mapping.
-/// The handler only stores two atomics, then re-raises the signal.
-/// Later calls replace the mapping and do not call `sigaction` again.
+/// Point the process-wide fatal-signal handler at this mapping.
+///
+/// `SIGABRT`, `SIGSEGV`, `SIGBUS`, and `SIGILL` share it. The handler only
+/// stores two atomics, then re-raises the same signal. It does not take a
+/// Mach exception port, so a fault that never becomes one of these signals
+/// is still noticed when the process exits. Later calls replace the mapping
+/// and do not call `sigaction` again.
 pub fn arm_abort_notice(region: &MappedRegion) {
     point_abort_notice(region);
     if ABORT_ARMED.swap(true, Ordering::AcqRel) {
@@ -37,7 +41,9 @@ pub fn arm_abort_notice(region: &MappedRegion) {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = abort_notice as *const () as libc::sighandler_t;
         libc::sigemptyset(ptr::from_mut(&mut action.sa_mask));
-        let _ = libc::sigaction(libc::SIGABRT, &action, ptr::null_mut());
+        for signal in [libc::SIGABRT, libc::SIGSEGV, libc::SIGBUS, libc::SIGILL] {
+            let _ = libc::sigaction(signal, &action, ptr::null_mut());
+        }
     }
 }
 
@@ -47,14 +53,14 @@ pub fn point_abort_notice(region: &MappedRegion) {
     ABORT_REGION.store(ptr::from_ref(region).cast_mut(), Ordering::Release);
 }
 
-extern "C" fn abort_notice(_signal: i32) {
+extern "C" fn abort_notice(signal: i32) {
     let region = ABORT_REGION.load(Ordering::Relaxed);
     if !region.is_null() {
         unsafe { (*region).mark_aborted() };
     }
     unsafe {
-        libc::signal(libc::SIGABRT, libc::SIG_DFL);
-        libc::raise(libc::SIGABRT);
+        libc::signal(signal, libc::SIG_DFL);
+        libc::raise(signal);
     }
 }
 
@@ -156,7 +162,8 @@ pub struct Header {
     pub input_events: AtomicU32,
     pub output_events: AtomicU32,
     /// Why `dead` was set by the helper. 1: `process` returned an error.
-    /// 2: the plugin raised `SIGABRT`. 0: the process exited without that notice.
+    /// 2: a fatal signal (`SIGABRT`, `SIGSEGV`, `SIGBUS`, or `SIGILL`) ran the
+    /// notice handler. 0: the process exited without that notice.
     pub fail_len: AtomicU32,
 }
 
@@ -434,8 +441,9 @@ impl MappedRegion {
         self.header().dead.store(1, Ordering::Release);
     }
 
-    /// The plugin called `abort`. Written from a `SIGABRT` handler so the
+    /// A fatal signal ran in the helper. Written from that handler so the
     /// parent can tell a crash from a hang before the crash reporter exits.
+    /// The store does not wake a thread already blocked in `os_sync_wait`.
     pub fn mark_aborted(&self) {
         self.header().fail_len.store(2, Ordering::Release);
         self.header().dead.store(1, Ordering::Release);
@@ -443,6 +451,11 @@ impl MappedRegion {
 
     pub fn process_refused(&self) -> bool {
         self.header().fail_len.load(Ordering::Acquire) == 1
+    }
+
+    /// The fatal-signal handler stored its mark. Process exit alone does not.
+    pub fn fatal_notice(&self) -> bool {
+        self.header().fail_len.load(Ordering::Acquire) == 2
     }
 
     /// Keep the helper's wait address stable across prepared mapping changes.

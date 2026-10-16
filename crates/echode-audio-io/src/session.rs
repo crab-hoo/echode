@@ -81,6 +81,7 @@ pub struct Session {
     package: Option<PathBuf>,
     error: Option<String>,
     fader_preview: Option<(u128, f32, f32)>,
+    activity: Option<crate::activity::UserActivity>,
 }
 
 impl Session {
@@ -103,6 +104,7 @@ impl Session {
             package: None,
             error: None,
             fader_preview: None,
+            activity: None,
         }
     }
 
@@ -173,6 +175,7 @@ impl Session {
                 self.playing = true;
                 if let Err(error) = self.reconcile() {
                     self.playing = false;
+                    self.sync_activity();
                     self.error = Some(error.clone());
                     return Err(error);
                 }
@@ -184,6 +187,7 @@ impl Session {
                 {
                     self.cancellation.request(&AudioCommand::Stop);
                     self.playing = false;
+                    self.sync_activity();
                     self.error = Some(error.clone());
                     return Err(error);
                 }
@@ -225,7 +229,18 @@ impl Session {
                 }
             }
         }
+        self.sync_activity();
         Ok(())
+    }
+
+    fn sync_activity(&mut self) {
+        if self.playing {
+            if self.activity.is_none() {
+                self.activity = Some(crate::activity::UserActivity::begin("Echode is playing"));
+            }
+        } else {
+            self.activity = None;
+        }
     }
 
     fn set_loop(&mut self, start: Option<i64>, end: Option<i64>) -> Result<(), String> {
@@ -249,6 +264,13 @@ impl Session {
 
     pub fn update(&mut self, project: Arc<Project>) {
         if Arc::ptr_eq(&self.project, &project) {
+            return;
+        }
+        let diff = self.project.diff(&project);
+        if diff.is_empty() || Self::plugin_state_only(&diff) {
+            // A saved plugin hash is already sounding. Rebuilding the graph
+            // here would drop a fader preview and restart every helper.
+            self.project = project;
             return;
         }
         let tick = self
@@ -277,10 +299,12 @@ impl Session {
         if let Err(error) = replaced {
             self.park();
             self.playing = false;
+            self.sync_activity();
             self.error = Some(error);
         } else if changed_tempo && let Err(error) = self.resend_loop() {
             self.park();
             self.playing = false;
+            self.sync_activity();
             self.error = Some(error);
         }
     }
@@ -301,6 +325,19 @@ impl Session {
         Ok(())
     }
 
+    fn plugin_state_only(diff: &echode_model::ChangeSet) -> bool {
+        !diff.is_empty()
+            && diff.changes().iter().all(|change| {
+                matches!(
+                    change,
+                    echode_model::Change::Update {
+                        property: echode_model::Property::PluginState,
+                        ..
+                    }
+                )
+            })
+    }
+
     /// Plugin bytes the document thread still has to journal.
     pub fn take_plugin_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
         self.stream
@@ -316,6 +353,7 @@ impl Session {
         {
             self.park();
             self.playing = false;
+            self.sync_activity();
             self.error = Some(error);
         }
         if let Some(stream) = &mut self.stream
@@ -333,6 +371,7 @@ impl Session {
                 _ => {
                     self.park();
                     self.playing = false;
+                    self.sync_activity();
                     self.error = Some(error);
                 }
             }
@@ -616,4 +655,32 @@ mod tests {
         session.perform(AudioCommand::Stop).unwrap();
         assert!(!session.state().playing && session.state().tick >= before_stop);
     }
+}
+
+#[test]
+fn a_plugin_hash_keeps_the_fader_preview_without_a_stream() {
+    let (project, track) = Project::new().add_track("preview");
+    let device = echode_model::Id::generate();
+    let project = project
+        .add_clap_device(track, device, "dev.echode.capture")
+        .unwrap();
+    let mut session = Session::new(Arc::new(project.clone()));
+    session
+        .perform(AudioCommand::PreviewFader {
+            track,
+            gain: 0.5,
+            pan: 0.0,
+        })
+        .unwrap();
+    assert!(session.fader_preview.is_some());
+    let next = Arc::new(
+        project
+            .set_device_state(device, Some("ab".repeat(32)))
+            .unwrap(),
+    );
+    session.update(Arc::clone(&next));
+    assert!(session.fader_preview.is_some());
+    assert!(Arc::ptr_eq(&session.project, &next));
+    assert!(session.stream.is_none());
+    assert!(session.error.is_none());
 }

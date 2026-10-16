@@ -21,9 +21,10 @@
 //!   parameters are gain, pan, mute, and solo, in that order, with that
 //!   control's minimum, maximum, and default. The value lies in range.
 //! - Placements on a track are stored in start order. Their half-open ranges
-//!   do not overlap. Each has a positive length, a finite gain of at least
-//!   zero, and fades that fit in a frame count. Its content exists, and its
-//!   origin does not overflow.
+//!   do not overlap. Each has a positive length, a finite gain from zero
+//!   through [`CLIP_GAIN_MAX`], and fades that fit in a frame count. Its
+//!   content exists, and its origin (`start - offset`) does not overflow.
+//!   A negative offset is silence before the media, not an invalid clip.
 //! - A content has at most one auto placement, and that placement spans
 //!   exactly the bars of its sounding notes.
 //! - An audio reference names a BLAKE3-256 hash and a mono or stereo file with a
@@ -48,11 +49,12 @@ pub use device::{
 pub use id::Id;
 pub use invariants::InvariantError;
 pub use model::{
-    AudioRef, ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind, ExpressionPoint,
-    FADE_RATE_LIMIT, Lane, ModelError, Note, NoteDraft, NoteGeometry, Placement, Project, Track,
-    fade_allowed, fade_frames, initial_order, is_media_hash, midi7_to_velocity, velocity_to_midi7,
+    AudioRef, CLIP_GAIN_MAX, ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind,
+    ExpressionPoint, FADE_RATE_LIMIT, Lane, ModelError, Note, NoteDraft, NoteGeometry, Placement,
+    Project, Track, clip_gain_allowed, fade_allowed, fade_frames, initial_order, is_media_hash,
+    midi7_to_velocity, velocity_to_midi7,
 };
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,
-    tick_to_sample,
+    media_sample_at, placement_media_lead, tick_to_sample,
 };

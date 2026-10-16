@@ -1384,3 +1384,118 @@ fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
         }
     }
 }
+
+#[test]
+fn cached_stop_does_not_start_a_later_region_or_pass_the_loop_end() {
+    use echode_engine::{CachedTrack, PlaybackCommand, playback_pair};
+    for rate in [48_000u32, 96_000] {
+        for block in BLOCKS {
+            let (project, track) = Project::new().add_track("late cache");
+            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let late = CachedTrack {
+                track: track.raw(),
+                sample_rate: rate,
+                start_sample: 1_000,
+                samples: vec![0.5; 2_000].into(),
+                right: Some(vec![0.5; 2_000].into()),
+            };
+            control
+                .set_cached_tracks(std::slice::from_ref(&late))
+                .unwrap();
+            control.replace(&project).unwrap();
+            let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+            for _ in 0..4 {
+                audio.render(&mut left, &mut right);
+                control.service();
+            }
+            control.command(PlaybackCommand::Play).unwrap();
+            let stop = 80usize;
+            let mut heard = 0usize;
+            while heard < stop {
+                let n = (stop - heard).min(block as usize);
+                audio.render_live_gated_until(
+                    &mut left[..n],
+                    &mut right[..n],
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                    true,
+                );
+                heard += n;
+            }
+            control.command(PlaybackCommand::Stop).unwrap();
+            let fade = (rate / 200) as usize;
+            for offset in (0..fade).step_by(block as usize) {
+                let n = (fade - offset).min(block as usize);
+                audio.render_live_gated_until(
+                    &mut left[..n],
+                    &mut right[..n],
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                    true,
+                );
+                assert!(
+                    left[..n]
+                        .iter()
+                        .chain(&right[..n])
+                        .all(|sample| *sample == 0.0),
+                    "unstarted cache sounded during the stop tail"
+                );
+            }
+
+            let (project, track) = Project::new().add_track("loop cache");
+            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let mut inside = vec![0.4f32; 800];
+            inside[200..].fill(0.9);
+            let cache = CachedTrack {
+                track: track.raw(),
+                sample_rate: rate,
+                start_sample: 0,
+                samples: inside.clone().into(),
+                right: Some(inside.into()),
+            };
+            control
+                .set_cached_tracks(std::slice::from_ref(&cache))
+                .unwrap();
+            control.replace(&project).unwrap();
+            control
+                .command(PlaybackCommand::SetLoop { start: 0, end: 200 })
+                .unwrap();
+            let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+            for _ in 0..4 {
+                audio.render(&mut left, &mut right);
+                control.service();
+            }
+            control.command(PlaybackCommand::Play).unwrap();
+            let stop = 190usize;
+            let mut heard = 0usize;
+            while heard < stop {
+                let n = (stop - heard).min(block as usize);
+                audio.render_live_gated_until(
+                    &mut left[..n],
+                    &mut right[..n],
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                    true,
+                );
+                heard += n;
+            }
+            control.command(PlaybackCommand::Stop).unwrap();
+            let mut tail = Vec::new();
+            for offset in (0..fade).step_by(block as usize) {
+                let n = (fade - offset).min(block as usize);
+                audio.render_live_gated_until(
+                    &mut left[..n],
+                    &mut right[..n],
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                    true,
+                );
+                tail.extend_from_slice(&left[..n]);
+            }
+            assert!(
+                tail.iter()
+                    .take(10)
+                    .all(|sample| (*sample - 0.4).abs() < 1.0e-5),
+                "tail start {tail:?}"
+            );
+            assert!(tail.iter().skip(10).all(|sample| *sample == 0.0));
+            assert!(tail.iter().all(|sample| (*sample - 0.9).abs() > 0.2));
+        }
+    }
+}

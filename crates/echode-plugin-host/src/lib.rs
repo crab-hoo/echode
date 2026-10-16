@@ -11,6 +11,9 @@ use std::path::Path;
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
 
+mod awake;
+pub use awake::HelperActivity;
+
 #[derive(Debug)]
 pub enum HostError {
     Region(RegionError),

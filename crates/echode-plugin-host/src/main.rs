@@ -73,6 +73,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let _activity = echode_plugin_host::HelperActivity::begin();
     let plugin = plugin.as_deref().map(Path::new);
     let plugin_id = plugin_id.as_deref();
     let sample_rate = sample_rate.unwrap_or(48_000.0);

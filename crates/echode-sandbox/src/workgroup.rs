@@ -388,6 +388,9 @@ fn lookup_send_right(name: &CString) -> Result<u32, String> {
             return Ok(port);
         }
         last = status;
+        // `bootstrap_look_up` does not block. This control thread, at helper
+        // start, polls for up to five seconds. The audio thread does not wait
+        // here. Special ports did not deliver the send right (S3).
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     Err(format!("bootstrap_look_up returned {last}"))

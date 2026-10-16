@@ -119,7 +119,11 @@ fn fader_ramp_frames(rate: u32) -> u32 {
 }
 
 fn scaled(sample: f32, gain: f32) -> f32 {
-    if gain == 0.0 { 0.0 } else { sample * gain }
+    if gain == 0.0 || !sample.is_finite() {
+        return 0.0;
+    }
+    let scaled = sample * gain;
+    if scaled.is_finite() { scaled } else { 0.0 }
 }
 
 fn fader_gains(fader: TrackFader) -> [f32; 4] {

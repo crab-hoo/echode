@@ -284,7 +284,8 @@ final class PianoGridView: NSView {
         guard let track else { return }
         renderer?.update(CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
             width: bounds.width, height: bounds.height, scale: Double(window?.backingScaleFactor ?? 1),
-            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview), playback: playback))
+            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview), playback: playback,
+            displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
     }
 
     override func accessibilityChildren() -> [Any]? {

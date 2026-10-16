@@ -249,9 +249,10 @@ fn stop_scan(child: &mut Child) {
 
 /// Runs `host_bin --scan` so the caller does not load the bundle.
 ///
-/// The deadline starts here and covers the child and both pipes. Stderr is
-/// kept only up to [`STDERR_CAP`]; further bytes are discarded so a long
-/// report cannot fill the pipe.
+/// The child is not Seatbelt-sandboxed. A playback helper cannot be, and
+/// `sandbox_init` is not a public `libc` symbol. The deadline starts here and
+/// covers the child and both pipes. Stderr is kept only up to [`STDERR_CAP`];
+/// further bytes are discarded so a long report cannot fill the pipe.
 pub fn scan_out_of_process(host_bin: &Path, bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
     scan_with_budget(host_bin, bundle, SCAN_BUDGET)
 }

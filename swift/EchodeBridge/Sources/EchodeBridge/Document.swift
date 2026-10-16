@@ -15,6 +15,8 @@ public final class Snapshot: @unchecked Sendable {
     /// Reused by `visibleElements` so a frame does not count, then query again.
     private var visibleBuffer: UnsafeMutablePointer<VisibleElement>?
     private var visibleCapacity = 0
+    private var pianoBuffer: UnsafeMutablePointer<PianoNoteElement>?
+    private var pianoCapacity = 0
     private let visibleLock = NSLock()
 
     fileprivate init(taking handle: OpaquePointer) {
@@ -23,6 +25,7 @@ public final class Snapshot: @unchecked Sendable {
 
     deinit {
         visibleBuffer?.deallocate()
+        pianoBuffer?.deallocate()
         echode_snapshot_free(handle)
     }
 
@@ -34,6 +37,16 @@ public final class Snapshot: @unchecked Sendable {
             visibleCapacity = count
         }
         return visibleBuffer
+    }
+
+    private func pianoStorage(_ count: Int) -> UnsafeMutablePointer<PianoNoteElement>? {
+        guard count > 0 else { return pianoBuffer }
+        if pianoCapacity < count {
+            pianoBuffer?.deallocate()
+            pianoBuffer = .allocate(capacity: count)
+            pianoCapacity = count
+        }
+        return pianoBuffer
     }
 
     public var trackCount: Int {
@@ -155,15 +168,17 @@ public final class Snapshot: @unchecked Sendable {
             withIDs(track: track, placement: nil, note: nil) { track, _, _ in
                 var written = 0
                 var dropped = 0
+                visibleLock.lock()
+                defer { visibleLock.unlock() }
                 guard echode_snapshot_piano_visible(handle, track, originTick, widthTicks, topPitch, heightPitches,
                                                      pixelsPerTick, pixelsPerPitch, nil, 0, &written, &dropped) == 0,
                       dropped > 0 else { return [] }
-                let buffer = UnsafeMutableBufferPointer<PianoNoteElement>.allocate(capacity: dropped)
-                defer { buffer.deallocate() }
+                let capacity = dropped
+                guard let storage = pianoStorage(capacity) else { return [] }
                 guard echode_snapshot_piano_visible(handle, track, originTick, widthTicks, topPitch, heightPitches,
-                                                     pixelsPerTick, pixelsPerPitch, buffer.baseAddress, buffer.count,
+                                                     pixelsPerTick, pixelsPerPitch, storage, capacity,
                                                      &written, &dropped) == 0 else { return [] }
-                return buffer.prefix(written).map(PianoNote.init)
+                return UnsafeBufferPointer(start: storage, count: min(written, capacity)).map(PianoNote.init)
             }
         }
     }

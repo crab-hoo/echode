@@ -285,6 +285,24 @@ fn plugin_crash_does_not_kill_the_host() {
 }
 
 #[test]
+fn plugin_segfault_marks_the_mapping_before_exit() {
+    let plugin = plugin_dylib();
+    let mut host = spawn(Some(&plugin), Some("segfault"));
+    let input = stereo(32, 0.0);
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.submit(32, &planes, &[])
+        .expect("publish the block that faults");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && !host.fatal_notice() {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        host.fatal_notice(),
+        "SIGSEGV should store fail_len 2 before the process is reaped"
+    );
+}
+
+#[test]
 fn plugin_hang_times_out_and_can_be_replaced() {
     let plugin = plugin_dylib();
     let mut host = spawn(Some(&plugin), Some("hang"));

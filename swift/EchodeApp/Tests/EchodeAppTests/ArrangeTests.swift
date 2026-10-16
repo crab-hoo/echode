@@ -7,6 +7,15 @@ import Testing
 
 @MainActor
 struct ArrangeTests {
+    @Test func displayLinkFollowsTheScreenInsteadOfAFixedSixty() {
+        let sixty = displayFrameRateRange(maximumFramesPerSecond: 60)
+        #expect(sixty.minimum == 60 && sixty.maximum == 60 && sixty.preferred == 60)
+        let promotion = displayFrameRateRange(maximumFramesPerSecond: 120)
+        #expect(promotion.minimum == 60 && promotion.maximum == 120 && promotion.preferred == 120)
+        let slow = displayFrameRateRange(maximumFramesPerSecond: 40)
+        #expect(slow.minimum == 40 && slow.maximum == 40 && slow.preferred == 40)
+    }
+
     @Test func fractionalRowsHaveNoIndependentInsetAndHitHalfOpenBoundaries() {
         let camera = ArrangeCamera(originTrack: 2.25)
         let rows = camera.rows(trackCount: 20, height: 128)

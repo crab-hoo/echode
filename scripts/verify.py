@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -93,6 +94,14 @@ def select_checks(policy, changed, all_checks=False):
     return selected
 
 
+def toolchain_paths():
+    # The stop hook prepends Cursor's ripgrep directory, and a login shell can
+    # repeat entries. Neither changes the compiler. Record the binaries that
+    # are actually resolved so an unrelated PATH prefix does not expire evidence.
+    names = ("rustc", "cargo", "swift", "xcodebuild", "python3", "make", "cc", "clang")
+    return {name: shutil.which(name) or "" for name in names}
+
+
 def make_flags_identity(value):
     # GNU make escapes whitespace with backslashes; quotes are literal here.
     # Selection/deferral arguments cannot affect a build and must not invalidate
@@ -105,12 +114,13 @@ def tool_identity(root):
     # Validation results must not silently survive a compiler/PATH change. Failed
     # version queries are also recorded; a selected missing tool will fail the check.
     identity = {key: os.environ.get(key, "") for key in (
-        "PATH", "RUSTUP_TOOLCHAIN", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS",
+        "RUSTUP_TOOLCHAIN", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS",
         "MIRIFLAGS", "ASAN_OPTIONS", "TSAN_OPTIONS", "RTSAN_ENABLE", "SDKROOT", "DEVELOPER_DIR",
         "CARGO_TARGET_DIR", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_TARGET",
         "CC", "CFLAGS", "MACOSX_DEPLOYMENT_TARGET", "MAKEFLAGS",
     )}
     identity["MAKEFLAGS"] = make_flags_identity(identity["MAKEFLAGS"])
+    identity["toolchain"] = toolchain_paths()
     identity["python"] = sys.version + ":" + sys.executable
     identity["system"] = list(os.uname())
     cargo_config = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")))

@@ -1,6 +1,7 @@
 //! Product output. HAL calls and ownership changes happen on the document
 //! control thread. Notifications only set an atomic flag.
 
+mod activity;
 mod clips;
 mod hardware;
 mod session;
@@ -8,6 +9,7 @@ mod stream;
 mod trace;
 mod transport;
 
+pub use activity::UserActivity;
 pub use clips::load_placed_clips;
 pub use echode_engine::TrackMeter;
 pub use hardware::{Inventory, OutputDevice, inventory};

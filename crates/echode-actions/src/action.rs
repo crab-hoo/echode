@@ -475,8 +475,8 @@ define_actions! {
         id: "clip.set_gain",
         name_ja: "クリップのゲインを変える",
         name_en: "Set clip gain",
-        description_ja: "配置の線形ゲインを変える。0 は無音",
-        description_en: "Set a placement's linear gain. Zero is silence",
+        description_ja: "配置の線形ゲインを変える。0 は無音。上限は 1048576",
+        description_en: "Set a placement's linear gain. Zero is silence. The maximum is 1048576",
         command {
             clip: Id,
             gain: f32,

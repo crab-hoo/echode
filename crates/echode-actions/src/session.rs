@@ -191,6 +191,29 @@ impl Session {
         Ok(())
     }
 
+    /// Stores a plugin hash on the current project without an undo step.
+    ///
+    /// Background capture is not a user edit: redo stays, and the undo depth
+    /// does not grow. The returned changeset is what crash recovery replays.
+    pub fn absorb_plugin_state(
+        &mut self,
+        device: echode_model::Id,
+        state: Option<String>,
+    ) -> Result<Option<ChangeSet>, ActionError> {
+        let next = self.current.set_device_state(device, state)?;
+        if next == self.current {
+            return Ok(None);
+        }
+        let changes = self.current.diff(&next);
+        self.current = next;
+        Ok(Some(changes))
+    }
+
+    /// Puts `project` back when publishing an absorbed state did not finish.
+    pub fn reinstall_current(&mut self, project: Project) {
+        self.current = project;
+    }
+
     pub fn redo(&mut self) -> Result<ChangeSet, ActionError> {
         let Some(next) = self.redo.pop() else {
             return Err(ActionError::NothingToRedo);

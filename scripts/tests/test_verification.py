@@ -289,6 +289,31 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(parallel["MAKEFLAGS"], ["-j4"])
         self.assertTrue(all(call.kwargs["env"]["RUSTUP_AUTO_INSTALL"] == "0" for call in query.call_args_list))
 
+    def test_an_unrelated_path_prefix_does_not_change_the_toolchain_identity(self):
+        result = subprocess.CompletedProcess([], 0, stdout=b"fixture-v1", stderr=b"")
+        extra = "/Applications/Cursor.app/Contents/Resources/app/node_modules/@vscode/ripgrep/bin"
+        with patch.object(verify.subprocess, "run", return_value=result):
+            with patch.dict(os.environ, {"PATH": os.environ["PATH"]}):
+                plain = verify.tool_identity(ROOT)
+            with patch.dict(os.environ, {"PATH": extra + os.pathsep + os.environ["PATH"]}):
+                hooked = verify.tool_identity(ROOT)
+        self.assertEqual(plain, hooked)
+        self.assertTrue(plain["toolchain"]["rustc"])
+
+    def test_an_earlier_compiler_changes_the_toolchain_identity(self):
+        result = subprocess.CompletedProcess([], 0, stdout=b"fixture-v1", stderr=b"")
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "rustc"
+            binary.write_text("#!/bin/sh\n")
+            binary.chmod(0o755)
+            with patch.object(verify.subprocess, "run", return_value=result):
+                with patch.dict(os.environ, {"PATH": os.environ["PATH"]}):
+                    plain = verify.tool_identity(ROOT)
+                with patch.dict(os.environ, {"PATH": temporary + os.pathsep + os.environ["PATH"]}):
+                    changed = verify.tool_identity(ROOT)
+        self.assertNotEqual(plain["toolchain"]["rustc"], changed["toolchain"]["rustc"])
+        self.assertNotEqual(plain, changed)
+
     def test_audio_identity_tracks_the_default_output_without_unrelated_devices(self):
         output = {"_name": "output", "coreaudio_device_srate": 96_000,
                   "coreaudio_default_audio_output_device": "spaudio_yes"}

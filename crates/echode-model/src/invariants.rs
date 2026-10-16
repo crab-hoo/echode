@@ -7,7 +7,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::id::Id;
-use crate::model::{ClipKind, Project, arrange_fault, fade_allowed, note_ord};
+use crate::model::{
+    CLIP_GAIN_MAX, ClipKind, Project, arrange_fault, clip_gain_allowed, fade_allowed, note_ord,
+};
 
 /// The first rule a snapshot broke, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,9 +144,9 @@ impl Project {
                 if clip.length.get() <= 0 {
                     return broken(format!("clip {} is empty", clip.id));
                 }
-                if !clip.gain.is_finite() || clip.gain < 0.0 {
+                if !clip_gain_allowed(clip.gain) {
                     return broken(format!(
-                        "clip {} gain must be finite and at least zero",
+                        "clip {} gain must be finite, at least zero, and at most {CLIP_GAIN_MAX}",
                         clip.id
                     ));
                 }

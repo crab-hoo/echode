@@ -414,10 +414,19 @@ fn worker(
         }
         if accepting {
             pending_saves.extend(audio.take_plugin_saves());
+            let mut captured = false;
             pending_saves.retain(|(device, bytes)| {
-                host.commit_plugin_state(Id::from_raw(*device), bytes)
-                    .is_err()
+                match host.commit_plugin_state(Id::from_raw(*device), bytes) {
+                    Ok(_) => {
+                        captured = true;
+                        false
+                    }
+                    Err(_) => true,
+                }
             });
+            if captured {
+                audio.update(host.snapshot());
+            }
         }
         {
             let meters = audio.meters();
@@ -452,6 +461,7 @@ fn worker(
             finish(&job, Err("document thread stopped".to_string()));
             continue;
         }
+        let before_doc = host.snapshot();
         let performed = catch_unwind(AssertUnwindSafe(|| {
             let history = match &job.operation {
                 Operation::Audio(bytes) => {
@@ -511,6 +521,10 @@ fn worker(
                 accepting = false;
                 finish(&job, Err("document thread panicked".to_string()));
             }
+        }
+        if !Arc::ptr_eq(&before_doc, &host.snapshot()) {
+            // A save captured for the previous graph must not land on the new one.
+            pending_saves.clear();
         }
     }
     drop(audio);

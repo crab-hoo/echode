@@ -46,5 +46,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。開始は `
 19. [ADR 0107](decisions/0107-mix-controls.md): トラックと音声クリップの画面操作、試聴と1回のUndo、フェーダー後のピーク。
 
 20. [ADR 0108](decisions/0108-phase1-loop-readiness.md): ループ先頭の事前準備と保持、製品のフェーダー前の差し替え口。
+21. [ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)、[2026-10-17 の境界再監査](reviews/2026-10-17-boundary-reaudit.md): 配置の原点、プラグイン状態の取り込み、クリップゲインの上限、停止中のキャッシュ範囲。
+22. [ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)、[2026-10-17 の Apple Silicon 監査](reviews/2026-10-17-apple-silicon-audit.md): 画面のリフレッシュレート、波形バッファの再利用、ピークキャッシュの部分読出、稼働表明。
+23. [ADR 0111](decisions/0111-macos-helper-notices.md)、[2026-10-17 の macOS 境界監査](reviews/2026-10-17-macos-helper-audit.md): 致命信号の印、Workgroup の起動時ポーリング、未実装の AU・GUI・スキャン制限。
 
 監査は発見時点の証拠を残す。本文の過去の「失敗」「未実施」を消して現在の合格に書き換えない。対応状況と回帰テストへの参照を追記し、現在のソースの検査は `target/verification/report.md` で確かめる。`target/` の証拠はローカル生成物で、別の環境には存在しないことがある。

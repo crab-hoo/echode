@@ -64,6 +64,12 @@ enum Request {
     Redo {
         reply: Sender<Result<(), HostError>>,
     },
+    /// Plugin bytes already written to the object store. This is not a user edit.
+    AbsorbPluginState {
+        device: Id,
+        state: String,
+        reply: Sender<Result<bool, HostError>>,
+    },
     Revisions {
         reply: Sender<Result<Vec<SavedRevision>, HostError>>,
     },
@@ -221,14 +227,17 @@ impl DocumentHost {
         if current.as_deref() == Some(hash.as_str()) {
             return Ok(true);
         }
-        match self.perform(Command::SetPluginState {
-            device,
-            state: Some(hash),
-        }) {
-            Ok(_) => Ok(true),
-            Err(_) if device_state(&self.snapshot(), device).is_none() => Ok(false),
-            Err(error) => Err(error),
-        }
+        let (reply, incoming) = mpsc::channel();
+        self.request
+            .send(Request::AbsorbPluginState {
+                device,
+                state: hash,
+                reply,
+            })
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+        incoming
+            .recv()
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
     }
 
     /// Applies `command` on the document thread and returns after the journal is written.
@@ -435,8 +444,11 @@ fn worker(
                 let _ = reply.send(result);
             }
             Request::Undo { reply } => {
+                let before = session.project().clone();
                 let result = match session.undo() {
-                    Ok(changes) => {
+                    Ok(stored) => {
+                        let after = session.project().clone();
+                        let changes = connecting_changeset(&after, &before, stored);
                         let saved = publish(
                             &mut Publish {
                                 directory: &directory,
@@ -461,8 +473,11 @@ fn worker(
                 let _ = reply.send(autosave.revisions().map_err(HostError::Package));
             }
             Request::Redo { reply } => {
+                let before = session.project().clone();
                 let result = match session.redo() {
-                    Ok(changes) => {
+                    Ok(stored) => {
+                        let after = session.project().clone();
+                        let changes = connecting_changeset(&before, &after, stored);
                         let saved = publish(
                             &mut Publish {
                                 directory: &directory,
@@ -479,6 +494,50 @@ fn worker(
                         invert_on_failure(&mut session, &mut halted, saved, false)
                     }
                     Err(error) => Err(HostError::Action(error)),
+                };
+                let _ = reply.send(result);
+            }
+            Request::AbsorbPluginState {
+                device,
+                state,
+                reply,
+            } => {
+                let previous = session.project().clone();
+                let result = match session.absorb_plugin_state(device, Some(state.clone())) {
+                    Ok(None) => Ok(true),
+                    Ok(Some(changes)) => {
+                        let saved = publish(
+                            &mut Publish {
+                                directory: &directory,
+                                snapshot: &snapshot,
+                                autosave: &autosave,
+                                inflight: &mut inflight,
+                                next_seq: &mut next_seq,
+                                session: &session,
+                            },
+                            JournalOp::Edit,
+                            vec![Action::SetPluginState {
+                                device,
+                                state: Some(state),
+                            }],
+                            changes,
+                        );
+                        match saved {
+                            Ok(()) => Ok(true),
+                            Err(error) => {
+                                session.reinstall_current(previous);
+                                note_failure(&mut halted, &error);
+                                Err(error)
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if device_state(session.project(), device).is_none() {
+                            Ok(false)
+                        } else {
+                            Err(HostError::Action(error))
+                        }
+                    }
                 };
                 let _ = reply.send(result);
             }
@@ -564,10 +623,24 @@ fn reply_halted(request: Request, halted: &Option<String>) {
         Request::Undo { reply } | Request::Redo { reply } => {
             let _ = reply.send(Err(error));
         }
+        Request::AbsorbPluginState { reply, .. } => {
+            let _ = reply.send(Err(error));
+        }
         Request::Revisions { reply } => {
             let _ = reply.send(Err(error));
         }
         Request::Shutdown => {}
+    }
+}
+
+/// Uses `stored` when it still connects the two snapshots. An absorbed plugin
+/// hash changes the current project without an undo step, so undo and redo
+/// then publish the snapshot difference instead of the older changeset.
+fn connecting_changeset(from: &Project, to: &Project, stored: ChangeSet) -> ChangeSet {
+    if from.apply_changeset(&stored).ok().as_ref() == Some(to) {
+        stored
+    } else {
+        from.diff(to)
     }
 }
 
@@ -1116,5 +1189,72 @@ mod tests {
         assert_ne!(id, tip);
         drop(host);
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    fn clap(project: &Project) -> &echode_model::Device {
+        project.tracks()[0]
+            .devices
+            .iter()
+            .find(|device| device.plugin.as_deref() == Some("dev.echode.capture"))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_captured_plugin_state_keeps_redo_and_does_not_add_an_undo_step() {
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack { name: "a".into() })
+            .unwrap();
+        let track = host.snapshot().tracks()[0].id;
+        host.perform(Command::AddDevice {
+            track,
+            plugin: "dev.echode.capture".into(),
+        })
+        .unwrap();
+        host.perform(Command::AddTrack { name: "b".into() })
+            .unwrap();
+        host.undo().unwrap();
+        assert_eq!(host.snapshot().tracks().len(), 1);
+        let device = clap(&host.snapshot()).id;
+        assert!(host.commit_plugin_state(device, b"captured-state").unwrap());
+        host.redo().unwrap();
+        assert_eq!(host.snapshot().tracks().len(), 2);
+        assert_eq!(host.snapshot().tracks()[1].name, "b");
+        drop(host);
+        let _ = std::fs::remove_dir_all(directory);
+
+        let directory = scratch();
+        write_package(&directory, &Project::new()).unwrap();
+        let host = DocumentHost::open(&directory).unwrap();
+        host.perform(Command::AddTrack { name: "a".into() })
+            .unwrap();
+        let track = host.snapshot().tracks()[0].id;
+        host.perform(Command::AddDevice {
+            track,
+            plugin: "dev.echode.capture".into(),
+        })
+        .unwrap();
+        let device = clap(&host.snapshot()).id;
+        assert!(host.commit_plugin_state(device, b"captured-state").unwrap());
+        let saved = clap(&host.snapshot()).state.clone();
+        host.undo().unwrap();
+        assert!(
+            host.snapshot().tracks()[0]
+                .devices
+                .iter()
+                .all(|device| device.plugin.is_none())
+        );
+        host.undo().unwrap();
+        assert!(host.snapshot().tracks().is_empty());
+        assert!(host.undo().is_err());
+        host.redo().unwrap();
+        host.redo().unwrap();
+        drop(host);
+        let again = DocumentHost::open(&directory).unwrap();
+        let project = again.snapshot();
+        drop(again);
+        let _ = std::fs::remove_dir_all(directory);
+        assert_eq!(clap(&project).state, saved);
     }
 }

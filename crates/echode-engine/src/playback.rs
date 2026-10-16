@@ -630,7 +630,7 @@ impl Prepared {
             clip_plane.fill(0.0);
             clip_right.fill(0.0);
             if let Some(cache) = cache {
-                read_cached_track(cache, spans, plane, right)?;
+                read_cached_track(cache, spans, plane, right, range)?;
                 *stereo = cache.right.is_some();
                 continue;
             }
@@ -730,8 +730,8 @@ impl Prepared {
             .zip(right)
             .zip(mix_left.iter().zip(mix_right.iter()))
         {
-            *left = *l as f32;
-            *right = *r as f32;
+            *left = finite_f32(*l);
+            *right = finite_f32(*r);
         }
         self.plugin_holds = true;
         Ok(())
@@ -813,16 +813,44 @@ impl Prepared {
     }
 }
 
+fn finite_f32(sample: f64) -> f32 {
+    let sample = sample as f32;
+    if sample.is_finite() { sample } else { 0.0 }
+}
+
 fn read_cached_track(
     cache: &CachedTrack,
     spans: &[Span],
     left: &mut [f32],
     right: &mut [f32],
+    range: RenderRange,
 ) -> Result<(), PlaybackError> {
+    // A flattened cache is one region. If it has not started, it stays silent
+    // for the stop tail. Onsets already mixed into a cache that started
+    // earlier cannot be separated here; the provider owns that content.
+    if range
+        .started_before
+        .is_some_and(|cutoff| cache.start_sample >= cutoff)
+    {
+        return Ok(());
+    }
     for span in spans {
+        let mut end = span
+            .start
+            .checked_add(i64::from(span.frames))
+            .ok_or(PlaybackError::Time)?;
+        if range.started_before.is_some()
+            && let Some(loop_end) = range.loop_bounds.1
+        {
+            end = end.min(loop_end);
+        }
+        if end <= span.start {
+            continue;
+        }
+        let frames = u32::try_from(end - span.start).map_err(|_| PlaybackError::Time)?;
         let played = [PlayedSpan {
             start_sample: span.start,
-            frames: span.frames,
+            frames,
             block_offset: span.block_offset,
             release_at: None,
             loop_end: None,

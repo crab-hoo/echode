@@ -17,6 +17,17 @@ struct CanvasInput: Sendable {
     var selectedClip: UUID? = nil
     var faderPreview: FaderPreview? = nil
     var clipDraft: ClipDraft? = nil
+    /// Screen refresh in frames per second. The display link follows this
+    /// instead of a fixed 60 Hz cap. 60 is the value before a window exists.
+    var displayFramesPerSecond: Double = 60
+}
+
+/// Matches the S1 spike: at least 60 Hz when the display can, otherwise the
+/// display's own maximum, and never above that maximum.
+public func displayFrameRateRange(maximumFramesPerSecond: Double) -> CAFrameRateRange {
+    let maximum = max(1, maximumFramesPerSecond)
+    let floor = min(60, maximum)
+    return CAFrameRateRange(minimum: Float(floor), maximum: Float(maximum), preferred: Float(maximum))
 }
 
 private struct RenderState {
@@ -77,6 +88,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private var link: CAMetalDisplayLink?
     // Only the render thread reads or changes these fields.
     private var buffers: [(any MTLBuffer)?] = [nil, nil, nil]
+    private var appliedFrameRate: Double = 0
     private var drawnRevision: UInt64?
     private var metersActive = false
 
@@ -139,10 +151,21 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 layer.contentsScale = input.scale
                 layer.drawableSize = CGSize(width: max(1, input.width * input.scale), height: max(1, input.height * input.scale))
             }
-            if let link { applyLinkPause(link) }
+            if let link {
+                applyFrameRate(link)
+                applyLinkPause(link)
+            }
             if state.withLock({ $0.stopping }) { CFRunLoopStop(CFRunLoopGetCurrent()) }
         }
         CFRunLoopWakeUp(loop)
+    }
+
+    /// The system clamps this to the display. A 60 Hz screen stays at 60.
+    private func applyFrameRate(_ link: CAMetalDisplayLink) {
+        let maximum = state.withLock { $0.input?.displayFramesPerSecond ?? 60 }
+        if maximum == appliedFrameRate { return }
+        appliedFrameRate = maximum
+        link.preferredFrameRateRange = displayFrameRateRange(maximumFramesPerSecond: maximum)
     }
 
     /// Writes pause only when it changes. Assigning the same value from the
@@ -173,7 +196,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         let link = CAMetalDisplayLink(metalLayer: layer)
         self.link = link
         link.delegate = self
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        applyFrameRate(link)
         link.add(to: .current, forMode: .common)
         let keepAlive = Port()
         RunLoop.current.add(keepAlive, forMode: .default)
@@ -191,6 +214,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     }
 
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+        applyFrameRate(link)
         state.withLock { $0.measurement.callbacks += 1 }
         let (input, revision, stopping, continuous, frame) = state.withLock {
             ($0.input, $0.revision, $0.stopping, $0.continuous, $0.measurement.frames)
@@ -245,7 +269,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
             return
         }
         painter.encode(encoder: encoder, texture: update.drawable.texture, buffer: buffer,
-                       timelineCount: timelineCount, headerCount: headerInstances.count, frame: arranged, piano: piano)
+                       timelineCount: timelineCount, headerCount: headerInstances.count, frame: arranged, piano: piano, slot: slot)
         encoder.endEncoding()
         let slots = slots
         command.addCompletedHandler { _ in slots.release(slot) }
