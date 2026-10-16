@@ -322,6 +322,155 @@ static PLUGIN_ENV: Mutex<()> = Mutex::new(());
 const PLUGIN_FRAMES: usize = 256;
 
 #[test]
+fn contract_phase1_project_survives_crash_history_and_cli_export() {
+    use echode_history::DocumentHost;
+    use std::io::{BufRead, Write};
+    use std::process::{Command as Process, Stdio};
+
+    const CHILD: &str = "ECHODE_P1_CRASH_PACKAGE";
+    const READY: &str = "ECHODE_P1_EDITS_CONFIRMED";
+    if let Some(directory) = std::env::var_os(CHILD) {
+        let host = DocumentHost::open(Path::new(&directory)).unwrap();
+        host.perform(Command::AddTrack {
+            name: "phase1".into(),
+        })
+        .unwrap();
+        let track = host.snapshot().tracks()[0].id;
+        host.perform(Command::AddDevice {
+            track,
+            plugin: "dev.echode.test-instrument".into(),
+        })
+        .unwrap();
+        host.perform(Command::InsertNote {
+            track,
+            draft: NoteDraft {
+                pitch: 69,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::quarters(1).unwrap(),
+            },
+        })
+        .unwrap();
+        println!("{READY}");
+        std::io::stdout().flush().unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let cache = directory.join("plugins.jsonl");
+    write_plugin_cache(&cache, &plugin_dylib());
+    let _env = PluginEnv::set(&cache);
+    // The fixture's note-driven stereo attack makes silence or a fallback
+    // synth distinguishable from actual isolated CLAP playback.
+    let _onset = FaultFile::set("dev.echode.test-instrument", "onset");
+    let mut child = Process::new(std::env::current_exe().unwrap())
+        .args([
+            "contract_phase1_project_survives_crash_history_and_cli_export",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(CHILD, &directory)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (sent, ready) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout).lines() {
+            if line.unwrap().trim() == READY {
+                let _ = sent.send(());
+            }
+        }
+    });
+    // Hang watchdog, not a performance assertion. Kill only our fixture child,
+    // after acknowledged edits, without DocumentHost's orderly shutdown.
+    let confirmed = ready.recv_timeout(std::time::Duration::from_secs(15));
+    let killed = child.kill();
+    let output = child.wait_with_output().unwrap();
+    reader.join().unwrap();
+    assert!(
+        confirmed.is_ok(),
+        "child did not confirm edits: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    killed.unwrap();
+    assert!(!output.status.success());
+
+    let host = DocumentHost::open(&directory).unwrap();
+    let original = host.snapshot();
+    assert_eq!(original.tracks().len(), 1);
+    assert_eq!(original.tracks()[0].name, "phase1");
+    assert!(
+        original.tracks()[0]
+            .devices
+            .iter()
+            .any(|device| device.plugin.as_deref() == Some("dev.echode.test-instrument"))
+    );
+    assert_eq!(original.contents()[0].notes.len(), 1);
+    assert_eq!(original.contents()[0].notes[0].pitch, 69);
+    // Force a saved checkpoint after recovering the acknowledged journal.
+    host.perform(Command::AddTrack {
+        name: "checkpoint".into(),
+    })
+    .unwrap();
+    host.undo().unwrap();
+    assert_eq!(host.snapshot(), original);
+    let revision = host.revisions().unwrap()[0].id.clone();
+    let played = play_plugins(&directory, &original);
+    assert!(played.iter().any(|sample| sample.abs() > 0.1));
+    drop(host);
+
+    let export = |name: &str| {
+        let wav = directory.join(name);
+        let output = Process::new(env!("CARGO_BIN_EXE_echode"))
+            .arg("render")
+            .arg(&directory)
+            .arg(&wav)
+            .args([
+                "--sample-rate",
+                "48000",
+                "--frames",
+                &PLUGIN_FRAMES.to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(wav_lefts(&wav, PLUGIN_FRAMES), played);
+        std::fs::read(wav).unwrap()
+    };
+    let reference = export("before.wav");
+    let host = DocumentHost::open(&directory).unwrap();
+    host.perform(Command::AddTrack {
+        name: "later".into(),
+    })
+    .unwrap();
+    host.perform(Command::Restore {
+        revision: revision.clone(),
+    })
+    .unwrap();
+    assert_eq!(host.snapshot(), original);
+    let revisions = host.revisions().unwrap();
+    assert_ne!(revisions[0].id, revision);
+    assert!(revisions.iter().any(|item| item.id == revision));
+    host.undo().unwrap();
+    assert_eq!(host.snapshot().tracks().len(), 2);
+    host.redo().unwrap();
+    assert_eq!(host.snapshot(), original);
+    drop(host);
+    assert_eq!(export("restored.wav"), reference);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     let _lock = PLUGIN_ENV.lock().unwrap();
     let directory = scratch();

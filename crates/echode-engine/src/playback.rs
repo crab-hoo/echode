@@ -122,6 +122,7 @@ struct Track {
     fader: FaderState,
     base_fader: TrackFader,
     meter: Arc<TrackMeter>,
+    cache: Option<CachedTrack>,
     /// Playback ids sorted for bounded lookup when carrying a live voice.
     notes: Vec<(u32, i64, i64)>,
     clips: Vec<StoredClip>,
@@ -146,6 +147,22 @@ pub struct LoadedClip {
     pub right: Option<Arc<[f32]>>,
     pub fade_in: u32,
     pub fade_out: u32,
+}
+
+/// A ready device-output plane, before the track fader. The provider owns
+/// rendering/provenance/invalidation; the engine only selects and reads it.
+#[derive(Clone, Debug)]
+pub struct CachedTrack {
+    pub track: u128,
+    pub sample_rate: u32,
+    pub start_sample: i64,
+    pub samples: Arc<[f32]>,
+    pub right: Option<Arc<[f32]>>,
+}
+
+struct PreparedSources<'a> {
+    clips: &'a [LoadedClip],
+    caches: &'a BTreeMap<u128, CachedTrack>,
 }
 
 /// Loads device-rate clips while a plan is built. The audio thread never calls it.
@@ -205,13 +222,14 @@ impl Prepared {
         rate: u32,
         frames: usize,
         ids: &mut PlaybackIds,
-        loaded: &[LoadedClip],
+        sources: PreparedSources<'_>,
         loop_bounds: Option<(i64, i64)>,
         meters: &mut BTreeMap<u128, Arc<TrackMeter>>,
     ) -> Result<Self, PlaybackError> {
         if rate == 0 || frames == 0 {
             return Err(PlaybackError::InvalidSampleRate);
         }
+        let loaded = sources.clips;
         if loaded.iter().any(|clip| {
             clip.right
                 .as_ref()
@@ -299,6 +317,7 @@ impl Prepared {
                 stereo: clip_stereo,
                 fader: FaderState::new(fader, rate),
                 base_fader: fader,
+                cache: sources.caches.get(&track.track).cloned(),
                 notes,
                 clips,
             });
@@ -591,6 +610,7 @@ impl Prepared {
                 clip_stereo,
                 stereo,
                 clips,
+                cache,
                 ..
             } = track;
             let plane = plane
@@ -609,6 +629,11 @@ impl Prepared {
             right.fill(0.0);
             clip_plane.fill(0.0);
             clip_right.fill(0.0);
+            if let Some(cache) = cache {
+                read_cached_track(cache, spans, plane, right)?;
+                *stereo = cache.right.is_some();
+                continue;
+            }
             let mut kept = 0usize;
             for event in events.iter() {
                 if event.track_key() != Some(*key) {
@@ -685,7 +710,9 @@ impl Prepared {
                 .right
                 .get_mut(..right.len())
                 .ok_or(PlaybackError::BufferTooSmall)?;
-            if let Some(stereo) = hosts.apply(track.key, plane, track_right) {
+            if track.cache.is_none()
+                && let Some(stereo) = hosts.apply(track.key, plane, track_right)
+            {
                 track.stereo = stereo;
             }
             let peak = track.fader.add(
@@ -784,6 +811,45 @@ impl Prepared {
         self.released = 0;
         Ok(())
     }
+}
+
+fn read_cached_track(
+    cache: &CachedTrack,
+    spans: &[Span],
+    left: &mut [f32],
+    right: &mut [f32],
+) -> Result<(), PlaybackError> {
+    for span in spans {
+        let played = [PlayedSpan {
+            start_sample: span.start,
+            frames: span.frames,
+            block_offset: span.block_offset,
+            release_at: None,
+            loop_end: None,
+            wrap_from: None,
+        }];
+        crate::voice::render_track(
+            crate::voice::TrackSource::Cache {
+                samples: &cache.samples,
+                origin: cache.start_sample,
+            },
+            &[],
+            &played,
+            left,
+        )?;
+        if let Some(samples) = &cache.right {
+            crate::voice::render_track(
+                crate::voice::TrackSource::Cache {
+                    samples,
+                    origin: cache.start_sample,
+                },
+                &[],
+                &played,
+                right,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn add_stored_clips(
@@ -936,6 +1002,13 @@ fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
         .tracks
         .iter()
         .filter_map(|planned| {
+            if prepared
+                .mixer_slot(planned.track)
+                .and_then(|slot| prepared.tracks.get(slot))
+                .is_some_and(|track| track.cache.is_some())
+            {
+                return None;
+            }
             let track = project
                 .tracks()
                 .iter()
@@ -1004,6 +1077,7 @@ pub struct PlaybackControl {
     host_bin: std::path::PathBuf,
     ids: PlaybackIds,
     meters: BTreeMap<u128, Arc<TrackMeter>>,
+    caches: BTreeMap<u128, CachedTrack>,
     rate: u32,
     frames: usize,
     status: Arc<Status>,
@@ -1115,12 +1189,16 @@ pub fn playback_with_clock(
     let (commands, actions) = RingBuffer::new(32);
     let mut ids = PlaybackIds::new();
     let mut meters = BTreeMap::new();
+    let caches = BTreeMap::new();
     let mut current = Box::new(Prepared::new(
         project,
         rate,
         frames,
         &mut ids,
-        &[],
+        PreparedSources {
+            clips: &[],
+            caches: &caches,
+        },
         None,
         &mut meters,
     )?);
@@ -1157,6 +1235,7 @@ pub fn playback_with_clock(
         host_bin: std::path::PathBuf::new(),
         ids,
         meters,
+        caches,
         rate,
         frames,
         status: status.clone(),
@@ -1221,6 +1300,43 @@ impl PlaybackControl {
 
     pub fn set_clip_loader(&mut self, loader: ClipLoader) {
         self.clip_loader = loader;
+    }
+
+    /// Stages sources for the next `replace`. Configure only while stopped,
+    /// after all transport commands have been acknowledged. A caller must wait
+    /// for the replacement plan before playing. Live crossfades and cache-key
+    /// invalidation belong to the Phase 3 provider, not this prepared-source port.
+    pub fn set_cached_tracks(&mut self, caches: &[CachedTrack]) -> Result<(), PlaybackError> {
+        if self.status.playing.load(Ordering::Acquire)
+            || self.status.applied_command.load(Ordering::Acquire) != self.command_revision
+        {
+            return Err(PlaybackError::Unsupported(
+                "cached sources require an idle transport".into(),
+            ));
+        }
+        let mut next = BTreeMap::new();
+        for cache in caches {
+            if cache.sample_rate != self.rate
+                || cache
+                    .right
+                    .as_ref()
+                    .is_some_and(|right| right.len() != cache.samples.len())
+                || i64::try_from(cache.samples.len())
+                    .ok()
+                    .and_then(|len| cache.start_sample.checked_add(len))
+                    .is_none()
+                || !self
+                    .project
+                    .tracks()
+                    .iter()
+                    .any(|track| track.id.raw() == cache.track)
+                || next.insert(cache.track, cache.clone()).is_some()
+            {
+                return Err(PlaybackError::Media);
+            }
+        }
+        self.caches = next;
+        Ok(())
     }
 
     pub fn command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
@@ -1319,7 +1435,10 @@ impl PlaybackControl {
             self.rate,
             self.frames,
             &mut self.ids,
-            &loaded,
+            PreparedSources {
+                clips: &loaded,
+                caches: &self.caches,
+            },
             self.loop_bounds,
             &mut self.meters,
         )?;

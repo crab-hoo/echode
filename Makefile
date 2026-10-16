@@ -62,7 +62,7 @@ check-base:
 
 # Named behavioral tests must actually run; ignored/deleted tests cannot pass.
 check-product-contracts:
-	cargo build --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin
+	cargo build --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \

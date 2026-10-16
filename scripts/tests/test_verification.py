@@ -84,6 +84,23 @@ class PolicyTests(unittest.TestCase):
                                  "check-bridge-miri"} <= self.selected(path))
         self.assertIn("rtsan", self.selected("crates/echode-engine/src/meter.rs"))
 
+    def test_phase1_readiness_and_acceptance_use_product_paths(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        expected = {"loop-head-residency": "echode-audio-io",
+                    "pre-fader-source": "echode-engine", "phase1-acceptance": "echode-cli"}
+        for name, package in expected.items():
+            with self.subTest(contract=name):
+                self.assertEqual(contracts[name]["package"], package)
+                self.assertEqual(contracts[name]["runner"], "rust")
+        self.assertTrue(contracts["loop-head-residency"]["test"].endswith("_under_rtsan"))
+        self.assertTrue(contracts["pre-fader-source"]["test"].endswith("_under_rtsan"))
+        check = next(c for c in self.policy["checks"] if c["id"] == "check-product-contracts")
+        self.assertIn("echode-cli", check["packages"])
+        for path in ("crates/echode-audio-io/src/clips.rs", "crates/echode-engine/src/playback.rs"):
+            self.assertTrue({"rtsan", "check-product-contracts"} <= self.selected(path))
+        self.assertTrue({"check-bridge-asan", "check-bridge-tsan"}
+                        <= self.selected("crates/echode-audio-io/src/clips.rs"))
+
     def test_model_changes_include_transitive_bridge_audio_and_measurements(self):
         checks = self.selected("crates/echode-model/src/time.rs")
         self.assertTrue({"check", "rtsan", "check-bridge-features", "check-bridge-asan",
@@ -223,7 +240,8 @@ class PolicyTests(unittest.TestCase):
                           "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
-                          "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter"})
+                          "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
+                          "loop-head-residency", "pre-fader-source", "phase1-acceptance"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]

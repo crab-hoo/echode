@@ -52,6 +52,7 @@
 - 文書モデルは `crates/echode-model`、変更・Undo / Redo は `crates/echode-actions`。保存、ジャーナル、復旧、内容アドレスの保管庫は `crates/echode-history`。
 - 音声計画、再生位置、MIDI、内蔵音源、サンプルレート変換、ループ、フェーダー、CLAP の信号経路は `crates/echode-engine`。製品の HAL 出力・通知と機器追従は `crates/echode-audio-io`。共通の RT 検出は `crates/echode-realtime`。
 - 素材の平面とSRCは `echode-audio-io/src/clips.rs`、配置とループは `echode-engine/src/playback.rs`、バスの受渡しは `plugins.rs`、ゲインの状態と f64 加算は `mix.rs`。CLAP のない書き出しも `render.rs` から同じ再生器を使う（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
+- ループ先頭を含む準備済みPCMの保持・失効は`clips.rs`の`media_loader`。フェーダー前の出力元の差し替えは`playback.rs`の`CachedTrack` / `set_cached_tracks`。供給側のキャッシュ生成はPhase 3。P1の4条件を同じ文書で通す統合契約は`echode-cli/tests/render.rs`に置く（[ADR 0108](decisions/0108-phase1-loop-readiness.md)、[最終照合](reviews/2026-10-17-phase1-acceptance.md)）。
 - ライブ出力の段差補正は `echode-engine/src/declick.rs` を HAL から使用する。定期保存の制御ハンドルは `echode-sandbox/src/session.rs` の `PluginControl`。音声グラフは `PlaybackAudio` だけが持ち、制御側のカタログから用意した計画と音声バッファを一緒に交換する。共有メモリの準備と採用も分ける（[ADR 0101](decisions/0101-live-output-discontinuities.md)、[ADR 0102](decisions/0102-exclusive-audio-graph.md)）。
 - 任意の停止出力診断は `echode-audio-io/src/trace.rs`。HALの実バッファを事前確保領域へ記録し、制御側で保存する。再描画した音を実出力の証拠へ代用しない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)）。
 - ライブ停止後の破棄する処理は `echode-engine/src/plugins.rs` の各ステージが保留し、完了をポーリングする。音声の出力を待つ通常の集約と混同しない。再開と計画交換は `playback.rs` が完了まで保留する（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）。

@@ -4,16 +4,69 @@
 //! gain is baked into those samples. Fades still run when the block is mixed.
 //! The callback only reads the slice that was stored on the plan. Offline
 //! render uses the same clips.
+//! The live loader retains one preparation across loop and transport changes,
+//! so every loop head is resident before its plan can be adopted.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use echode_engine::{ClipLoader, LoadedClip, PlaybackError, resample_into, tick_to_sample};
 use echode_history::read_pcm;
-use echode_model::{Project, Tick, fade_frames};
+use echode_model::{AudioRef, Id, Placement, Project, TempoMap, Tick, fade_frames};
+
+#[derive(PartialEq, Eq)]
+struct MediaKey {
+    rate: u32,
+    tempo: TempoMap,
+    placements: Vec<(Id, Placement, AudioRef)>,
+}
+
+impl MediaKey {
+    fn new(project: &Project, rate: u32) -> Self {
+        let placements = project
+            .tracks()
+            .iter()
+            .flat_map(|track| {
+                track.clips.iter().filter_map(|clip| {
+                    let audio = project.content(clip.content)?.audio.as_ref()?;
+                    Some((track.id, clip.clone(), audio.clone()))
+                })
+            })
+            .collect();
+        Self {
+            rate,
+            tempo: project.tempo().clone(),
+            placements,
+        }
+    }
+}
+
+struct PreparedMedia {
+    key: MediaKey,
+    clips: Vec<LoadedClip>,
+}
 
 pub(crate) fn media_loader(package: PathBuf) -> ClipLoader {
-    Arc::new(move |project, rate| load_placed_clips(&package, project, rate))
+    // Only PlaybackControl invokes this closure. Keep one successful preparation
+    // resident; loop/transport/fader/note edits must not read the same PCM again.
+    let prepared = Mutex::new(None::<PreparedMedia>);
+    Arc::new(move |project, rate| {
+        let mut prepared = prepared.lock().map_err(|_| PlaybackError::Media)?;
+        let key = MediaKey::new(project, rate);
+        if let Some(previous) = prepared.as_ref()
+            && previous.key == key
+        {
+            return Ok(previous.clips.clone());
+        }
+        let clips = load_placed_clips(&package, project, rate)?;
+        // Failed loading leaves the previous preparation available. The live
+        // plan and this control-side owner share immutable sample planes.
+        *prepared = Some(PreparedMedia {
+            key,
+            clips: clips.clone(),
+        });
+        Ok(clips)
+    })
 }
 
 pub fn load_placed_clips(
@@ -160,6 +213,127 @@ mod tests {
             wav.extend((-16_384i16).to_le_bytes());
         }
         wav
+    }
+
+    #[test]
+    fn contract_loop_head_is_resident_before_wrap_under_rtsan() {
+        for rate in [48_000, 96_000] {
+            for block in [1, 7, 64, 512] {
+                let fixture = Fixture(
+                    std::env::temp_dir().join(format!("echode-loop-head-{}", Id::generate().raw())),
+                );
+                std::fs::create_dir_all(&fixture.0).unwrap();
+                let source = fixture.0.join("stereo.wav");
+                std::fs::write(&source, stereo_wav(44_100, 4410)).unwrap();
+                let stored = echode_history::import_audio(&fixture.0, &source).unwrap();
+                let (project, track) = Project::new().add_track("head");
+                let clip = Id::generate();
+                let project = project
+                    .place_audio(
+                        track,
+                        clip,
+                        Id::generate(),
+                        Tick::quarters(1).unwrap(),
+                        AudioRef::try_new(
+                            stored.hash,
+                            stored.sample_rate,
+                            stored.channels,
+                            stored.frames,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap()
+                    .set_clip_gain(clip, 0.5)
+                    .unwrap()
+                    .set_clip_fades(clip, 0, 0)
+                    .unwrap();
+                let loader = media_loader(fixture.0.clone());
+                let (mut control, mut audio) = playback_pair(&project, rate, block).unwrap();
+                control.set_clip_loader(Arc::clone(&loader));
+                control.replace(&project).unwrap();
+                let expected = loader(&project, rate).unwrap();
+                let start = expected[0].start_sample + 101;
+                let end = start + 1009;
+                // Only this temporary project's objects disappear. A prepared
+                // loop must not re-read them or depend on a disk at its wrap.
+                std::fs::remove_dir_all(fixture.0.join("media/objects")).unwrap();
+                assert!(
+                    control
+                        .command(PlaybackCommand::SetLoop { start, end })
+                        .is_ok(),
+                    "loop head was discarded instead of retained before activation"
+                );
+                let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+                // Drain this fixture's queued plans while stopped.
+                for _ in 0..4 {
+                    audio.render(&mut left, &mut right);
+                    control.service();
+                }
+                assert!(!control.status().pending_plan);
+                control.command(PlaybackCommand::Locate(start)).unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                // These scratch sizes cover three passes of this short loop.
+                let total = 1009 * 3 + 37;
+                let mut heard = Vec::new();
+                for offset in (0..total).step_by(block) {
+                    let n = block.min(total - offset);
+                    audio.render(&mut left[..n], &mut right[..n]);
+                    assert!(!control.status().failed);
+                    heard.extend(left[..n].iter().copied().zip(right[..n].iter().copied()));
+                    control.service();
+                }
+                let fade = echode_engine::seam_fade_frames(rate).min(1009 / 2);
+                for (index, &(left, right)) in heard.iter().enumerate() {
+                    let position = (index % 1009) as i64;
+                    let gain = ((position as f32 / (fade - 1) as f32).min(1.0))
+                        * (((1008 - position) as f32 / (fade - 1) as f32).min(1.0));
+                    let source = (start + position - expected[0].start_sample) as usize;
+                    assert_eq!(left, expected[0].samples[source] * gain);
+                    assert_eq!(right, expected[0].right.as_ref().unwrap()[source] * gain);
+                }
+                assert!(
+                    heard
+                        .iter()
+                        .any(|(left, right)| *left > 0.24 && *right < -0.24)
+                );
+                // Clearing/changing a loop also retains the prepared placement.
+                assert!(control.command(PlaybackCommand::ClearLoop).is_ok());
+                assert!(
+                    control
+                        .command(PlaybackCommand::SetLoop {
+                            start: start + 7,
+                            end
+                        })
+                        .is_ok()
+                );
+                // A new rate is a different preparation, never stale PCM.
+                assert!(loader(&project, rate / 2).is_err());
+                assert!(loader(&project.set_clip_gain(clip, 0.25).unwrap(), rate).is_err());
+                assert!(loader(&project.set_clip_fades(clip, 1, 2).unwrap(), rate).is_err());
+                let slower = project.with_tempo(
+                    Tick::new(0),
+                    echode_model::Tempo::quarters_per_minute(60).unwrap(),
+                );
+                assert!(loader(&slower, rate).is_err());
+                let moved = project
+                    .resize_clip(track, clip, Tick::new(0), Tick::new(100))
+                    .unwrap();
+                assert!(loader(&moved, rate).is_err());
+                let gain = project.tracks()[0].devices[0].parameters[0].id;
+                let mixed = project.set_parameter(gain, 0.75).unwrap();
+                let retained = loader(&mixed, rate).unwrap();
+                assert!(Arc::ptr_eq(&retained[0].samples, &expected[0].samples));
+                assert!(
+                    loader(&project, rate).is_ok(),
+                    "failed preparation destroyed the retained head"
+                );
+                assert!(loader(&Project::new(), rate).unwrap().is_empty());
+                assert!(
+                    loader(&project, rate).is_err(),
+                    "unused media was not evicted"
+                );
+            }
+        }
     }
 
     #[test]

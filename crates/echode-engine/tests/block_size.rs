@@ -19,6 +19,110 @@ const BLOCKS: [u32; 4] = [1, 7, 64, 512];
 const VOICES_PER_TRACK: usize = 8;
 
 #[test]
+fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
+    use echode_engine::{CachedTrack, PlaybackCommand, playback_pair};
+    use echode_model::ParamKey;
+    let (live, track) = Project::new().add_track("source port");
+    let live = live.insert_note(track, note(0.0, 4.0, 60)).unwrap().0;
+    let gain = live.tracks()[0].devices[0]
+        .parameters
+        .iter()
+        .find(|parameter| parameter.key == ParamKey::Gain)
+        .unwrap()
+        .id;
+    let live = live.set_parameter(gain, 0.5).unwrap();
+    let project = live
+        .add_clap_device(track, Id::from_raw(1), "missing.fixture.instrument")
+        .unwrap();
+    for rate in [48_000, 96_000] {
+        let mut reference = None;
+        for block in BLOCKS {
+            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            control.set_routes(std::path::Path::new("/missing/fixture/helper"), &[]);
+            // These planes cover this fixture only; a provider can prepare any
+            // number of tracks or any duration outside the callback.
+            let cache = CachedTrack {
+                track: track.raw(),
+                sample_rate: rate,
+                start_sample: 137,
+                samples: vec![0.25; 3000].into(),
+                right: Some(vec![-0.5; 3000].into()),
+            };
+            control
+                .set_cached_tracks(std::slice::from_ref(&cache))
+                .unwrap();
+            let invalid = CachedTrack {
+                sample_rate: rate / 2,
+                ..cache.clone()
+            };
+            assert!(control.set_cached_tracks(&[invalid]).is_err());
+            assert!(
+                control.replace(&project).is_ok(),
+                "cached source tried to open its live devices"
+            );
+            control
+                .command(PlaybackCommand::SetLoop {
+                    start: 137,
+                    end: 1146,
+                })
+                .unwrap();
+            let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+            for _ in 0..4 {
+                audio.render(&mut left, &mut right);
+                control.service();
+            }
+            assert!(!control.status().pending_plan);
+            control.command(PlaybackCommand::Play).unwrap();
+            assert!(
+                control.set_cached_tracks(&[]).is_err(),
+                "queued Play must also exclude source reconfiguration"
+            );
+            let mut output = Vec::new();
+            for offset in (0..2300).step_by(block as usize) {
+                let n = (block as usize).min(2300 - offset);
+                audio.render(&mut left[..n], &mut right[..n]);
+                assert!(!control.status().failed);
+                output.extend(left[..n].iter().copied().zip(right[..n].iter().copied()));
+                control.service();
+            }
+            assert!(output[..137].iter().all(|sample| *sample == (0.0, 0.0)));
+            assert!(output[137..].iter().all(|sample| *sample == (0.125, -0.25)));
+            if let Some(reference) = &reference {
+                assert_eq!(&output, reference);
+            } else {
+                reference = Some(output);
+            }
+            // The same cached device output still passes through a changed fader.
+            control
+                .replace(&project.set_parameter(gain, 0.25).unwrap())
+                .unwrap();
+            for _ in 0..(rate as usize / 100 / block as usize + 4) {
+                audio.render(&mut left, &mut right);
+                control.service();
+            }
+            assert!(left.iter().all(|sample| *sample == 0.0625));
+            assert!(right.iter().all(|sample| *sample == -0.125));
+            control.command(PlaybackCommand::Pause).unwrap();
+            audio.render(&mut left, &mut right);
+            control.service();
+            control.set_cached_tracks(&[]).unwrap();
+            control.set_routes(std::path::Path::new(""), &[]);
+            control.replace(&live).unwrap();
+            for _ in 0..4 {
+                audio.render(&mut left, &mut right);
+                control.service();
+            }
+            control.command(PlaybackCommand::Play).unwrap();
+            for _ in 0..4 {
+                audio.render(&mut left, &mut right);
+            }
+            assert!(left.iter().any(|sample| *sample != 0.0));
+            assert!(left.iter().any(|sample| *sample != 0.125));
+        }
+    }
+}
+
+#[test]
 fn live_fader_preview_switches_only_previous_and_next_track_under_rtsan() {
     use echode_engine::{PlaybackCommand, playback_pair};
     let (project, a) = Project::new().add_track("first");

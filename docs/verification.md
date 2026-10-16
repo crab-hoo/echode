@@ -42,6 +42,7 @@ make verify
 - 必須契約 `plugin-onset` は、無音からの発音を音源の直接出力と全サンプルで比較する。48 / 96 kHz、7 / 64 / 512フレーム、再発音とステレオを検査し、ノートオンの時刻を0に変える負の対照を拒否する。通常検査は設置済みの音源へ依存せず、検査用音源でRTSanにも通す（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。既存の製品契約のMakefile入口から実行する。
 - ミックスの必須契約 `track-mix-ui` / `clip-mix-ui` は実Viewへのマウス入力から確定し、1回のUndo・取消・保存後の再読込を通す。`live-mix-meter` は製品の試聴・確定計画の採用・取消の波形とフェーダー後の実ピークを、レート・ブロック長を変えて検査する。各負の対照は操作やピークの接続を壊す。通常検査には初回出力前の試聴、遅れた送信とclose、テンポ変更をまたぐフェード・ABI寿命も含め、既存のRTSanと橋渡し検査へ通す（[ADR 0107](decisions/0107-mix-controls.md)）。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
+- P1の必須契約`loop-head-residency`は準備後に一時素材を除去してループ先頭の保持・失効を検査し、`pre-fader-source`は製品の差し替え・ループ・フェーダー・ライブ復帰をブロック長別とRTSanで検査する。`phase1-acceptance`は同じCLAPプロジェクトを持つ検証用子プロセスだけを強制終了し、復旧・再生・履歴復帰・実CLI書出しを通す。通常の`check-product-contracts`入口から実行し、保持の無効化・差し替えの切断・CLIの無音化を戻したコピーも拒否する（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。機器やユーザーのアプリを操作する検査ではない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
 - `check-bridge-tsan`: 標準ライブラリを含む製品の Rust 静的ライブラリと Swift を同じプロセスで競合検査する。
