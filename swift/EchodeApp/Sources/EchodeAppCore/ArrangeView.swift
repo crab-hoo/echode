@@ -56,6 +56,7 @@ public final class ArrangeView: NSView {
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
+        clipsToBounds = true
         wantsLayer = true
         setAccessibilityElement(true)
         setAccessibilityRole(.group)

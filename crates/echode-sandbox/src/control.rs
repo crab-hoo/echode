@@ -28,6 +28,8 @@ const CHAIN_REJECTED: u32 = 14;
 const PORTS: u32 = 15;
 const PORTS_REJECTED: u32 = 16;
 const STATE_REJECTED: u32 = 17;
+const CANCEL_REMAP: u32 = 18;
+const REMAP_CANCELLED: u32 = 19;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -47,6 +49,8 @@ pub enum ControlMessage {
     },
     Remapped,
     RemapFailed,
+    CancelRemap,
+    RemapCancelled,
     /// How many stages this helper runs, in order, for one submitted block.
     SetChain(u32),
     ChainReady,
@@ -256,6 +260,8 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         }
         ControlMessage::Remapped => (REMAPPED, Vec::new()),
         ControlMessage::RemapFailed => (REMAP_FAILED, Vec::new()),
+        ControlMessage::CancelRemap => (CANCEL_REMAP, Vec::new()),
+        ControlMessage::RemapCancelled => (REMAP_CANCELLED, Vec::new()),
         ControlMessage::SetChain(stages) => (SET_CHAIN, stages.to_le_bytes().to_vec()),
         ControlMessage::ChainReady => (CHAIN_READY, Vec::new()),
         ControlMessage::ChainRejected => (CHAIN_REJECTED, Vec::new()),
@@ -300,6 +306,8 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         }
         REMAPPED => ControlMessage::Remapped,
         REMAP_FAILED => ControlMessage::RemapFailed,
+        CANCEL_REMAP => ControlMessage::CancelRemap,
+        REMAP_CANCELLED => ControlMessage::RemapCancelled,
         SET_CHAIN => {
             let bytes: [u8; 4] = body.try_into().map_err(|_| {
                 io::Error::new(ErrorKind::InvalidData, "chain message is the wrong size")

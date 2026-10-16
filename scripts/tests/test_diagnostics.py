@@ -32,7 +32,7 @@ class DiagnosticTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / "scripts").mkdir()
         policy = {"version": 1, "global_inputs": [], "infrastructure": [], "areas": {}, "checks": [
-            {"id": "check", "mode": "automatic", "always": True, "areas": [], "timeout": 10}]}
+            {"id": "check", "mode": "automatic", "always": True, "areas": [], "inputs": ["**"], "timeout": 10}]}
         (self.root / "scripts/verification.json").write_text(json.dumps(policy))
         (self.root / ".gitignore").write_text("/target\n")
         (self.root / "source.txt").write_text("original")
@@ -50,9 +50,10 @@ class DiagnosticTests(unittest.TestCase):
         directory = self.root / "target/verification"
         directory.mkdir(parents=True, exist_ok=True)
         changed = diagnose.verify.changed_paths(self.root)
-        stamp = diagnose.verify.fingerprint(self.root, changed, None, self.tools)
-        (directory / "report.json").write_text(json.dumps({"version": 1, "fingerprint": stamp, "base": None,
-            "tools": self.tools, "results": {"check": {"status": status}}}))
+        policy = diagnose.verify.load_policy(self.root)
+        stamp = diagnose.verify.check_fingerprints(self.root, policy, self.tools)["check"]
+        (directory / "report.json").write_text(json.dumps({"version": 2, "base": None,
+            "tools": self.tools, "results": {"check": {"status": status, "fingerprint": stamp}}}))
 
     def test_current_partial_and_stale_results_are_distinct(self):
         self.assertEqual(diagnose.collect(self.root)["verification"]["freshness"], "unavailable")
@@ -63,7 +64,24 @@ class DiagnosticTests(unittest.TestCase):
         (self.root / "source.txt").write_text("later edit")
         data = diagnose.collect(self.root)
         self.assertEqual(data["verification"]["freshness"], "stale")
-        self.assertEqual(data["verification"]["checks"][0]["status"], "unknown")
+        self.assertEqual(data["verification"]["checks"][0]["status"], "stale")
+
+    def test_unrelated_check_stays_current_when_only_documentation_changes(self):
+        path = self.root / "scripts/verification.json"
+        policy = json.loads(path.read_text())
+        policy["checks"].append({"id": "audio", "mode": "automatic", "always": True,
+                                 "areas": [], "inputs": ["source.txt"], "timeout": 10})
+        path.write_text(json.dumps(policy))
+        directory = self.root / "target/verification"
+        directory.mkdir(parents=True)
+        stamps = diagnose.verify.check_fingerprints(self.root, policy, self.tools)
+        report = {"version": 2, "results": {name: {"status": "passed", "fingerprint": stamp}
+                                            for name, stamp in stamps.items()}}
+        (directory / "report.json").write_text(json.dumps(report))
+        (self.root / "README.md").write_text("updated instructions")
+        data = diagnose.collect(self.root)["verification"]
+        self.assertEqual(data["freshness"], "partial")
+        self.assertEqual([check["status"] for check in data["checks"]], ["stale", "passed"])
 
     def test_corrupt_report_is_diagnosable_and_environment_is_not_exported(self):
         self.save_report()
@@ -126,6 +144,10 @@ class DiagnosticTests(unittest.TestCase):
         outside = self.root / "private-project.json"
         outside.write_text("DO_NOT_COLLECT")
         (self.root / "target/spike-external.json").symlink_to(outside)
+        capture = self.root / "target/stop-diagnostics/captures"
+        capture.mkdir(parents=True)
+        (capture / "stop-example.json").write_text('{"pcm": "stop-example.f32le"}')
+        (capture / "stop-example.f32le").write_bytes(b"USER_PLAYBACK_DO_NOT_COLLECT")
         data = diagnose.collect(self.root)
         with patch.object(diagnose, "LOG_LIMIT", 16):
             output = diagnose.bundle(self.root, data)
@@ -136,6 +158,7 @@ class DiagnosticTests(unittest.TestCase):
         self.assertIn({"path": "verification/check.log", "truncated": True}, record["artifacts"])
         self.assertNotIn("SECRET_TEST_SETTING", (output / "diagnosis.json").read_text())
         self.assertFalse((output / "verification/report.json").exists())
+        self.assertFalse((output / "stop-diagnostics").exists())
 
 
 class DeveloperDocumentationTests(unittest.TestCase):

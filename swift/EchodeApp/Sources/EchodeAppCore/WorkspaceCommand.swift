@@ -80,7 +80,8 @@ final class WorkspaceSession {
         case .history: return editable
         case .addTrack: return editable
         case .plugins: return editable && controller.selection != nil
-        case .playback, .stop, .loop, .metronome, .output: return editable && !controller.audioBusy
+        case .playback, .stop: return editable
+        case .loop, .metronome, .output: return editable && !controller.audioBusy
         default: return true
         }
     }

@@ -372,9 +372,12 @@ pub fn scan_with_budget(
         let detail = stderr_text(&stderr, stderr_overflow);
         let detail = detail.trim();
         return Err(if detail.is_empty() {
-            format!("plugin scan failed ({})", bundle.display())
+            format!("plugin scan failed ({}, {status})", bundle.display())
         } else {
-            format!("plugin scan failed ({}): {detail}", bundle.display())
+            format!(
+                "plugin scan failed ({}, {status}): {detail}",
+                bundle.display()
+            )
         });
     }
     let stdout =
@@ -629,8 +632,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         permissions.set_mode(0o755);
         std::fs::set_permissions(&script, permissions).expect("mode");
-        let plugins =
-            super::scan_out_of_process(&script, std::path::Path::new("bundle")).expect("scan");
+        let plugins = super::scan_out_of_process(&script, std::path::Path::new("bundle"))
+            .unwrap_or_else(|error| panic!("scan fixture {}: {error}", script.display()));
         assert_eq!(plugins.len(), 128);
         assert_eq!(plugins[0].id, "p0");
         assert_eq!(plugins[127].id, "p127");

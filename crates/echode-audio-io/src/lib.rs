@@ -5,6 +5,8 @@ mod clips;
 mod hardware;
 mod session;
 mod stream;
+mod trace;
+mod transport;
 
 pub use clips::load_placed_clips;
 pub use hardware::{Inventory, OutputDevice, inventory};
@@ -12,6 +14,7 @@ pub use session::{AudioCommand, AudioState, Session};
 pub use stream::{
     OutputStream, installed_plugin_routes, project_plugin_ids, routes_with_saved_state,
 };
+pub use transport::TransportCancellation;
 
 #[cfg(all(test, debug_assertions))]
 #[global_allocator]

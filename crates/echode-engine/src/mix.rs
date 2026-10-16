@@ -7,6 +7,115 @@
 //! passes, not a fixed cap.
 
 use crate::transport::PlaybackError;
+use dasp_interpolate::{Interpolator, linear::Linear};
+
+/// A supported track bus. A mono source is promoted at equal power when it
+/// enters a stereo bus; stereo channels are never averaged together.
+#[derive(Clone, Copy)]
+pub(crate) struct Signal<'a> {
+    pub left: &'a [f32],
+    pub right: Option<&'a [f32]>,
+}
+
+impl Signal<'_> {
+    pub(crate) fn sample(self, channel: usize, frame: usize, stereo: bool) -> f32 {
+        if let Some(right) = self.right {
+            let plane = if channel == 0 { self.left } else { right };
+            plane.get(frame).copied().unwrap_or(0.0)
+        } else {
+            self.left.get(frame).copied().unwrap_or(0.0)
+                * if stereo {
+                    std::f32::consts::FRAC_1_SQRT_2
+                } else {
+                    1.0
+                }
+        }
+    }
+}
+
+/// Sample-counted gain ramps survive plan replacement. The four gains keep
+/// mono equal-power pan distinct from stereo balance even when a helper changes
+/// the track's output layout. Interpolation uses the existing dasp dependency.
+#[derive(Clone, Copy)]
+pub(crate) struct FaderState {
+    current: [f32; 4],
+    start: [f32; 4],
+    target: [f32; 4],
+    elapsed: u32,
+    frames: u32,
+}
+
+impl FaderState {
+    pub(crate) fn new(fader: TrackFader, rate: u32) -> Self {
+        let target = fader_gains(fader);
+        Self {
+            current: target,
+            start: target,
+            target,
+            elapsed: 0,
+            frames: fader_ramp_frames(rate),
+        }
+    }
+
+    pub(crate) fn carry(&mut self, previous: Self) {
+        let target = self.target;
+        *self = previous;
+        if self.target != target {
+            self.start = self.current;
+            self.target = target;
+            self.elapsed = 0;
+        }
+    }
+
+    pub(crate) fn settle(&mut self) {
+        self.current = self.target;
+        self.start = self.target;
+        self.elapsed = self.frames;
+    }
+
+    pub(crate) fn add(&mut self, signal: Signal<'_>, left: &mut [f64], right: &mut [f64]) {
+        for (frame, (left, right)) in left.iter_mut().zip(right).enumerate() {
+            if self.current != self.target {
+                self.elapsed = self.elapsed.saturating_add(1).min(self.frames);
+                self.current = if self.elapsed == self.frames {
+                    self.target
+                } else {
+                    Linear::new(self.start, self.target)
+                        .interpolate(f64::from(self.elapsed) / f64::from(self.frames))
+                };
+            }
+            let (l, r) = if let Some(source_right) = signal.right {
+                (
+                    scaled(signal.left[frame], self.current[2]),
+                    scaled(source_right[frame], self.current[3]),
+                )
+            } else {
+                (
+                    scaled(signal.left[frame], self.current[0]),
+                    scaled(signal.left[frame], self.current[1]),
+                )
+            };
+            *left += f64::from(l);
+            *right += f64::from(r);
+        }
+    }
+}
+
+fn fader_ramp_frames(rate: u32) -> u32 {
+    // Fader response is independent of the audio-clip loop seam policy.
+    (u64::from(rate) * 5 / 1_000).max(1) as u32
+}
+
+fn scaled(sample: f32, gain: f32) -> f32 {
+    if gain == 0.0 { 0.0 } else { sample * gain }
+}
+
+fn fader_gains(fader: TrackFader) -> [f32; 4] {
+    let gain = if fader.mute { 0.0 } else { fader.gain };
+    let (ml, mr) = pan_gains(fader.pan, gain);
+    let (sl, sr) = balance(fader.pan, gain);
+    [ml, mr, sl, sr]
+}
 
 /// One track's fader. Gain is linear amplitude, and 1 is unity.
 /// Pan is -1 (left) through 0 (center) to 1 (right).
@@ -182,23 +291,6 @@ fn add_mono(
         peak = peak.max(left_sample.abs()).max(right_sample.abs());
     }
     peak
-}
-
-/// Adds one prepared mono track without collecting a heap of borrowed planes.
-pub(crate) fn add_prepared_mono(
-    plane: &[f32],
-    fader: TrackFader,
-    left: &mut [f32],
-    right: &mut [f32],
-) {
-    if fader.mute {
-        return;
-    }
-    let (l, r) = pan_gains(fader.pan, fader.gain);
-    for ((sample, left), right) in plane.iter().zip(left).zip(right) {
-        *left += sample * l;
-        *right += sample * r;
-    }
 }
 
 fn add_stereo(

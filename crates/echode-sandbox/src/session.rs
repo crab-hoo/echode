@@ -9,7 +9,7 @@ use crate::control::{ControlMessage, Socket};
 use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
 use crate::workgroup::spawn_helper;
-use crate::{CMD_PROCESS, CMD_SHUTDOWN};
+use crate::{CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN};
 use echode_realtime::Event;
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -81,13 +81,14 @@ struct WatchSlots {
 unsafe impl Send for WatchSlots {}
 
 pub struct PluginHost {
-    region: MappedRegion,
+    region: Arc<MappedRegion>,
+    root: Arc<MappedRegion>,
+    previous_region: Option<Arc<MappedRegion>>,
     child: HelperProcess,
-    control: Socket,
-    inbox: VecDeque<ControlMessage>,
+    control: PluginControl,
     stderr: Arc<Mutex<String>>,
     closed: bool,
-    last_state: Vec<u8>,
+    reset_pending: bool,
     host_bin: PathBuf,
     plugin: Option<PathBuf>,
     plugin_id: Option<String>,
@@ -100,6 +101,194 @@ pub struct PluginHost {
     input_ports: Vec<u32>,
     /// Channel count of each declared output port.
     output_ports: Vec<u32>,
+}
+
+/// Socket and saved-state access for control threads, independent of the
+/// realtime mapping. Never call these methods from an audio callback.
+#[derive(Clone)]
+pub struct PluginControl(Arc<Mutex<ControlState>>);
+
+struct ControlState {
+    control: Socket,
+    inbox: VecDeque<ControlMessage>,
+    last_state: Option<Vec<u8>>,
+    dirty_again: bool,
+    save_requested: bool,
+}
+
+impl PluginControl {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ControlState> {
+        self.0.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    pub fn applied_state(&self) -> Option<Vec<u8>> {
+        self.lock().last_state.clone()
+    }
+
+    /// Poll notices and collect an asynchronous state save. A newer dirty
+    /// notice stays pending until the previous reply has been collected.
+    pub fn poll_state_save(&mut self) -> Option<Vec<u8>> {
+        let mut state = self.lock();
+        if matches!(state.poll_notice(), Ok(Some(PluginNotice::Dirty))) {
+            state.dirty_again = true;
+        }
+        if state.dirty_again && !state.save_requested && state.request_save().is_ok() {
+            state.save_requested = true;
+            state.dirty_again = false;
+        }
+        if !state.save_requested {
+            return None;
+        }
+        match state.poll_saved() {
+            Ok(Some(Ok(bytes))) => {
+                state.save_requested = false;
+                Some(bytes)
+            }
+            Ok(Some(Err(_))) | Err(_) => {
+                state.save_requested = false;
+                state.dirty_again = false;
+                None
+            }
+            Ok(None) => None,
+        }
+    }
+}
+
+impl ControlState {
+    /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
+    pub fn request_save(&mut self) -> Result<(), SessionError> {
+        self.control.send(&ControlMessage::SaveRequest)?;
+        Ok(())
+    }
+
+    /// A save reply already queued, or `None` when the helper has not answered.
+    pub fn poll_saved(&mut self) -> Result<Option<Result<Vec<u8>, String>>, SessionError> {
+        self.drain()?;
+        let index = self.inbox.iter().position(|message| {
+            matches!(
+                message,
+                ControlMessage::State(_) | ControlMessage::StateRejected(_)
+            )
+        });
+        let Some(index) = index else {
+            return Ok(None);
+        };
+        match self.inbox.remove(index) {
+            Some(ControlMessage::State(bytes)) => {
+                self.last_state = Some(bytes.clone());
+                Ok(Some(Ok(bytes)))
+            }
+            Some(ControlMessage::StateRejected(reason)) => Ok(Some(Err(reason))),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn save_state(&mut self) -> Result<Vec<u8>, SessionError> {
+        self.control.send(&ControlMessage::SaveRequest)?;
+        match self.wait_message(Duration::from_secs(2), |message| {
+            matches!(
+                message,
+                ControlMessage::State(_) | ControlMessage::StateRejected(_)
+            )
+        })? {
+            ControlMessage::State(bytes) => {
+                self.last_state = Some(bytes.clone());
+                Ok(bytes)
+            }
+            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
+            _ => Err(SessionError::Protocol(
+                "helper did not return state".to_string(),
+            )),
+        }
+    }
+
+    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), SessionError> {
+        self.control
+            .send(&ControlMessage::Restore(bytes.to_vec()))?;
+        match self.wait_message(Duration::from_secs(2), |message| {
+            matches!(
+                message,
+                ControlMessage::Restored | ControlMessage::StateRejected(_)
+            )
+        })? {
+            ControlMessage::Restored => {
+                self.last_state = Some(bytes.to_vec());
+                Ok(())
+            }
+            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
+            _ => Err(SessionError::Protocol(
+                "helper did not acknowledge restore".to_string(),
+            )),
+        }
+    }
+
+    pub fn poll_notice(&mut self) -> Result<Option<PluginNotice>, SessionError> {
+        self.drain()?;
+        let index = self.inbox.iter().position(|message| {
+            matches!(
+                message,
+                ControlMessage::Dirty
+                    | ControlMessage::PluginRestarted { .. }
+                    | ControlMessage::RequestProcess
+            )
+        });
+        let Some(index) = index else {
+            return Ok(None);
+        };
+        Ok(Some(match self.inbox.remove(index) {
+            Some(ControlMessage::Dirty) => PluginNotice::Dirty,
+            Some(ControlMessage::PluginRestarted { latency_samples }) => {
+                PluginNotice::PluginRestarted { latency_samples }
+            }
+            Some(ControlMessage::RequestProcess) => PluginNotice::RequestProcess,
+            _ => {
+                return Err(SessionError::Protocol(
+                    "queued notice disappeared".to_string(),
+                ));
+            }
+        }))
+    }
+
+    fn drain(&mut self) -> Result<(), SessionError> {
+        loop {
+            match self.control.try_recv() {
+                Ok(Some(message)) => self.inbox.push_back(message),
+                Ok(None) => return Ok(()),
+                // The helper can close after a complete message. That EOF must
+                // not discard a reason already sitting in the inbox.
+                Err(_) if !self.inbox.is_empty() => return Ok(()),
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    fn wait_message(
+        &mut self,
+        timeout: Duration,
+        want: impl Fn(&ControlMessage) -> bool,
+    ) -> Result<ControlMessage, SessionError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.drain()?;
+            if let Some(index) = self.inbox.iter().position(&want) {
+                return self.inbox.remove(index).ok_or_else(|| {
+                    SessionError::Protocol("queued control message disappeared".to_string())
+                });
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(SessionError::Timeout);
+            }
+            match self
+                .control
+                .recv_timeout(remaining.min(Duration::from_millis(50)))
+            {
+                Ok(message) => self.inbox.push_back(message),
+                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
 }
 
 /// A submitted block, looked at without waiting.
@@ -116,6 +305,7 @@ pub enum SessionError {
     Io(std::io::Error),
     Timeout,
     Missed,
+    MappingPending,
     HostExited {
         status: ExitStatus,
         stderr: String,
@@ -135,6 +325,7 @@ impl std::fmt::Display for SessionError {
             Self::Region(error) => write!(f, "{error}"),
             Self::Io(error) => write!(f, "{error}"),
             Self::Timeout => f.write_str("plugin process did not answer before the deadline"),
+            Self::MappingPending => f.write_str("prepared mapping has not been activated"),
             Self::Missed => f.write_str("both block slots are still in flight"),
             Self::Workgroup(error) => write!(f, "{error}"),
             Self::Protocol(error) => write!(f, "{error}"),
@@ -171,7 +362,7 @@ impl From<std::io::Error> for SessionError {
 
 impl PluginHost {
     pub fn spawn(mut options: SpawnOptions<'_>) -> Result<Self, SessionError> {
-        let region = MappedRegion::create_shared(options.layout)?;
+        let region = Arc::new(MappedRegion::create_shared(options.layout)?);
         let shm = region.as_raw_fd();
         let launched = launch(
             options.host_bin,
@@ -192,13 +383,20 @@ impl PluginHost {
         }));
         let watch_stop = Arc::new(AtomicBool::new(false));
         let mut host = Self {
+            root: Arc::clone(&region),
+            previous_region: None,
             region,
             child: launched.child,
-            control: launched.control,
-            inbox: VecDeque::new(),
+            control: PluginControl(Arc::new(Mutex::new(ControlState {
+                control: launched.control,
+                inbox: VecDeque::new(),
+                last_state: None,
+                dirty_again: false,
+                save_requested: false,
+            }))),
             stderr,
             closed: false,
-            last_state: Vec::new(),
+            reset_pending: false,
             host_bin: options.host_bin.to_path_buf(),
             plugin: options.plugin.map(Path::to_path_buf),
             plugin_id: options.plugin_id.map(str::to_string),
@@ -218,16 +416,23 @@ impl PluginHost {
         Ok(host)
     }
 
-    /// Attach a new helper to the same mapping after resetting its header.
-    /// The shared-memory name stays unlinked; the child receives the existing fd.
+    /// Start a new helper with fresh, unlinked storage. Old wake targets must
+    /// not retain a chain of previous process mappings across port changes.
     pub fn restart(&mut self) -> Result<(), SessionError> {
         self.stop_watch();
         if self.child.try_wait()?.is_none() {
             self.force_stop();
         }
-        self.region.reset_for_restart();
+        self.region = Arc::new(MappedRegion::create_shared(self.region.layout())?);
+        self.root = Arc::clone(&self.region);
+        self.previous_region = None;
         self.point_watch();
-        self.inbox.clear();
+        {
+            let mut control = self.control.lock();
+            control.inbox.clear();
+            control.save_requested = false;
+            control.dirty_again = false;
+        }
         self.closed = false;
         let fan = self.fan.clone();
         let launched = launch(
@@ -242,11 +447,11 @@ impl PluginHost {
         )?;
         spawn_stderr_reader(launched.stderr, Arc::clone(&self.stderr));
         self.child = launched.child;
-        self.control = launched.control;
+        self.control.lock().control = launched.control;
         self.start_watch();
         self.finish_launch()?;
-        if !self.last_state.is_empty() {
-            let state = self.last_state.clone();
+        let state = self.control.applied_state();
+        if let Some(state) = state {
             self.restore_state(&state)?;
         }
         Ok(())
@@ -282,48 +487,65 @@ impl PluginHost {
         self.exchange(CMD_PROCESS, input, output, timeout)
     }
 
-    /// Publish one block and return. Does not wait for the helper.
+    /// Create an endpoint for audio-owned storage.
+    ///
+    /// # Safety
+    /// Only one endpoint may submit or collect a mapping at a time. Standalone
+    /// host processing, synchronous remap, and restart must not overlap endpoint
+    /// use. Keep this host alive until endpoint use ends. Preparing a new mapping
+    /// is allowed while the previous endpoint processes its old mapping.
+    pub unsafe fn audio_handle(&self) -> PluginAudio {
+        PluginAudio {
+            region: Arc::clone(&self.region),
+            root: Arc::clone(&self.root),
+            reset_pending: false,
+        }
+    }
+
+    pub fn request_reset(&mut self) {
+        self.reset_pending = true;
+    }
+
     pub fn submit(
         &mut self,
         frames: usize,
         input: &[&[f32]],
         events: &[(Event, u32)],
     ) -> Result<u64, SessionError> {
-        self.region
-            .submit_block(frames, input, events)
-            .map_err(|error| self.report_inline(error))
+        // SAFETY: standalone calls hold exclusive host access. Endpoint users
+        // must exclude standalone processing under audio_handle's contract.
+        let mut audio = unsafe { self.audio_handle() };
+        audio.reset_pending = self.reset_pending;
+        let result = audio.submit(frames, input, events);
+        self.reset_pending = audio.reset_pending;
+        result
     }
 
-    /// Like [`Self::submit`], taking each channel as its own buffer.
-    ///
-    /// The callback uses this so it does not allocate a slice of slices.
     pub fn submit_planes(
         &mut self,
         frames: usize,
         input: &[Vec<f32>],
         events: &[(Event, u32)],
     ) -> Result<u64, SessionError> {
-        self.region
-            .submit_planes(frames, input, events)
-            .map_err(|error| self.report_inline(error))
+        // SAFETY: standalone calls hold exclusive host access. Endpoint users
+        // must exclude standalone processing under audio_handle's contract.
+        let mut audio = unsafe { self.audio_handle() };
+        audio.reset_pending = self.reset_pending;
+        let result = audio.submit_planes(frames, input, events);
+        self.reset_pending = audio.reset_pending;
+        result
     }
 
-    /// Read a submitted generation if it has finished. Does not wait.
     pub fn poll(
         &mut self,
         generation: u64,
         output: &mut [&mut [f32]],
         delivered: &mut [Delivered],
     ) -> Result<BlockProgress, SessionError> {
-        match self.region.collect_ready(generation, output, delivered) {
-            Ok(Collected::Pending) => Ok(BlockProgress::Pending),
-            Ok(Collected::Abandoned) => Ok(BlockProgress::Abandoned),
-            Ok(Collected::Ready { events }) => Ok(BlockProgress::Ready { events }),
-            Err(error) => Err(self.report_inline(error)),
-        }
+        // SAFETY: exclusive standalone host access; see audio_handle.
+        unsafe { self.audio_handle() }.poll(generation, output, delivered)
     }
 
-    /// Like [`Self::poll`], writing each channel into its own buffer.
     pub fn poll_planes(
         &mut self,
         generation: u64,
@@ -331,18 +553,10 @@ impl PluginHost {
         frames: usize,
         delivered: &mut [Delivered],
     ) -> Result<BlockProgress, SessionError> {
-        match self
-            .region
-            .collect_planes(generation, output, frames, delivered)
-        {
-            Ok(Collected::Pending) => Ok(BlockProgress::Pending),
-            Ok(Collected::Abandoned) => Ok(BlockProgress::Abandoned),
-            Ok(Collected::Ready { events }) => Ok(BlockProgress::Ready { events }),
-            Err(error) => Err(self.report_inline(error)),
-        }
+        // SAFETY: exclusive standalone host access; see audio_handle.
+        unsafe { self.audio_handle() }.poll_planes(generation, output, frames, delivered)
     }
 
-    /// The generation will not be read if the helper finishes it later.
     pub fn abandon(&mut self, generation: u64) {
         self.region.abandon(generation);
     }
@@ -355,7 +569,10 @@ impl PluginHost {
 
     /// Ask the helper to run `stages` process calls, in order, for each block.
     pub fn set_chain(&mut self, stages: u32) -> Result<(), SessionError> {
-        self.control.send(&ControlMessage::SetChain(stages))?;
+        self.control
+            .lock()
+            .control
+            .send(&ControlMessage::SetChain(stages))?;
         match self.wait_message(Duration::from_secs(2), |message| {
             matches!(
                 message,
@@ -423,105 +640,57 @@ impl PluginHost {
         )
     }
 
-    /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
-    pub fn request_save(&mut self) -> Result<(), SessionError> {
-        self.control.send(&ControlMessage::SaveRequest)?;
-        Ok(())
+    /// A control-only endpoint. Polling it never borrows the audio mapping.
+    pub fn control_handle(&self) -> PluginControl {
+        self.control.clone()
     }
 
-    /// A save reply already queued, or `None` when the helper has not answered.
+    pub fn request_save(&mut self) -> Result<(), SessionError> {
+        self.control.lock().request_save()
+    }
+
     pub fn poll_saved(&mut self) -> Result<Option<Result<Vec<u8>, String>>, SessionError> {
-        self.drain()?;
-        let index = self.inbox.iter().position(|message| {
-            matches!(
-                message,
-                ControlMessage::State(_) | ControlMessage::StateRejected(_)
-            )
-        });
-        let Some(index) = index else {
-            return Ok(None);
-        };
-        match self.inbox.remove(index) {
-            Some(ControlMessage::State(bytes)) => {
-                self.last_state.clone_from(&bytes);
-                Ok(Some(Ok(bytes)))
-            }
-            Some(ControlMessage::StateRejected(reason)) => Ok(Some(Err(reason))),
-            _ => Ok(None),
-        }
+        self.control.lock().poll_saved()
     }
 
     pub fn save_state(&mut self) -> Result<Vec<u8>, SessionError> {
-        self.control.send(&ControlMessage::SaveRequest)?;
-        match self.wait_message(Duration::from_secs(2), |message| {
-            matches!(
-                message,
-                ControlMessage::State(_) | ControlMessage::StateRejected(_)
-            )
-        })? {
-            ControlMessage::State(bytes) => {
-                self.last_state.clone_from(&bytes);
-                Ok(bytes)
-            }
-            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not return state".to_string(),
-            )),
-        }
+        self.control.lock().save_state()
     }
 
     pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), SessionError> {
-        self.control
-            .send(&ControlMessage::Restore(bytes.to_vec()))?;
-        match self.wait_message(Duration::from_secs(2), |message| {
-            matches!(
-                message,
-                ControlMessage::Restored | ControlMessage::StateRejected(_)
-            )
-        })? {
-            ControlMessage::Restored => {
-                self.last_state = bytes.to_vec();
-                Ok(())
-            }
-            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not acknowledge restore".to_string(),
-            )),
-        }
+        self.control.lock().restore_state(bytes)
     }
 
     pub fn poll_notice(&mut self) -> Result<Option<PluginNotice>, SessionError> {
-        self.drain()?;
-        let index = self.inbox.iter().position(|message| {
-            matches!(
-                message,
-                ControlMessage::Dirty
-                    | ControlMessage::PluginRestarted { .. }
-                    | ControlMessage::RequestProcess
-            )
-        });
-        let Some(index) = index else {
-            return Ok(None);
-        };
-        Ok(Some(match self.inbox.remove(index) {
-            Some(ControlMessage::Dirty) => PluginNotice::Dirty,
-            Some(ControlMessage::PluginRestarted { latency_samples }) => {
-                PluginNotice::PluginRestarted { latency_samples }
-            }
-            Some(ControlMessage::RequestProcess) => PluginNotice::RequestProcess,
-            _ => {
-                return Err(SessionError::Protocol(
-                    "queued notice disappeared".to_string(),
-                ));
-            }
-        }))
+        self.control.lock().poll_notice()
     }
 
-    /// Install a new mapping between blocks. A failed lock keeps the old one.
-    pub fn remap(&mut self, layout: SessionLayout) -> Result<(), SessionError> {
-        let region = MappedRegion::create_shared(layout)?;
-        let duplicate = region.duplicate_fd()?;
-        self.control.send_remap(layout, duplicate)?;
+    fn wait_message(
+        &mut self,
+        timeout: Duration,
+        want: impl Fn(&ControlMessage) -> bool,
+    ) -> Result<ControlMessage, SessionError> {
+        self.control.lock().wait_message(timeout, want)
+    }
+
+    /// Prepare replacement storage while the current mapping keeps processing.
+    /// The first request on the new endpoint activates it at a block boundary.
+    pub fn prepare_mapping(&mut self, layout: SessionLayout) -> Result<(), SessionError> {
+        if self.root.is_dead() {
+            return Err(SessionError::HelperDown);
+        }
+        if layout == self.layout() {
+            return Ok(());
+        }
+        if !self.region.is_ready() && self.previous_region.is_some() {
+            return Err(SessionError::MappingPending);
+        }
+        let mut region = MappedRegion::create_shared(layout)?;
+        region.set_wake_target(Arc::clone(&self.root));
+        self.control
+            .lock()
+            .control
+            .send_remap(layout, region.duplicate_fd()?)?;
         match self.wait_message(Duration::from_secs(2), |message| {
             matches!(
                 message,
@@ -529,16 +698,47 @@ impl PluginHost {
             )
         })? {
             ControlMessage::Remapped => {
-                self.install_region(region);
+                self.previous_region = Some(std::mem::replace(&mut self.region, Arc::new(region)));
                 Ok(())
             }
-            ControlMessage::RemapFailed => Err(SessionError::Protocol(
+            _ => Err(SessionError::Protocol(
                 "helper kept the previous mapping".to_string(),
             )),
-            _ => Err(SessionError::Protocol(
-                "helper did not answer remap".to_string(),
-            )),
         }
+    }
+
+    pub fn mapping_pending(&self) -> bool {
+        !self.region.is_ready() && !self.root.is_dead()
+    }
+
+    /// Undo a prepared mapping that has never been published to the callback.
+    pub fn cancel_mapping(&mut self) -> Result<(), SessionError> {
+        if self.region.is_ready() || self.previous_region.is_none() {
+            return Ok(());
+        }
+        if self.region.published() != 0 {
+            return Err(SessionError::MappingPending);
+        }
+        self.control
+            .lock()
+            .control
+            .send(&ControlMessage::CancelRemap)?;
+        self.wait_message(Duration::from_secs(2), |message| {
+            matches!(message, ControlMessage::RemapCancelled)
+        })?;
+        if let Some(previous) = self.previous_region.take() {
+            self.region = previous;
+        }
+        Ok(())
+    }
+
+    /// Synchronous control-only mapping change for standalone callers.
+    pub fn remap(&mut self, layout: SessionLayout) -> Result<(), SessionError> {
+        self.prepare_mapping(layout)?;
+        if !self.region.is_ready() {
+            self.region.activate_mapping(Duration::from_secs(2))?;
+        }
+        Ok(())
     }
 
     pub fn shutdown(&mut self) -> Result<(), SessionError> {
@@ -586,8 +786,18 @@ impl PluginHost {
         output: &mut [&mut [f32]],
         timeout: Duration,
     ) -> Result<(), SessionError> {
+        let command = if command == CMD_PROCESS && self.reset_pending {
+            CMD_RESET_PROCESS
+        } else {
+            command
+        };
         match self.region.request(0, input, output, command, timeout) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if command == CMD_RESET_PROCESS {
+                    self.reset_pending = false;
+                }
+                Ok(())
+            }
             Err(error) => Err(self.fail(error)),
         }
     }
@@ -603,27 +813,21 @@ impl PluginHost {
         command: u32,
         timeout: Duration,
     ) -> Result<usize, SessionError> {
+        let command = if command == CMD_PROCESS && self.reset_pending {
+            CMD_RESET_PROCESS
+        } else {
+            command
+        };
         match self.region.request_events(
             frames, input, output, events_in, events_out, command, timeout,
         ) {
-            Ok(count) => Ok(count),
-            Err(error) => Err(self.fail(error)),
-        }
-    }
-
-    /// Dead, busy, and timeout, without `waitpid` or the stderr lock.
-    fn report_inline(&self, error: RegionError) -> SessionError {
-        match error {
-            RegionError::Wait(crate::sync::WaitError::Timeout) => SessionError::Timeout,
-            RegionError::Dead => {
-                if self.region.process_refused() {
-                    SessionError::ProcessRefused
-                } else {
-                    SessionError::HelperDown
+            Ok(count) => {
+                if command == CMD_RESET_PROCESS {
+                    self.reset_pending = false;
                 }
+                Ok(count)
             }
-            RegionError::Busy => SessionError::Missed,
-            other => other.into(),
+            Err(error) => Err(self.fail(error)),
         }
     }
 
@@ -762,57 +966,8 @@ impl PluginHost {
 
     fn point_watch(&self) {
         if let Ok(mut slots) = self.watch_slots.lock() {
-            slots.notice = self.region.notice_ptr();
-            slots.dead = self.region.dead_ptr();
-        }
-    }
-
-    fn install_region(&mut self, region: MappedRegion) {
-        if let Ok(mut slots) = self.watch_slots.lock() {
-            slots.notice = region.notice_ptr();
-            slots.dead = region.dead_ptr();
-            self.region = region;
-        }
-    }
-
-    fn drain(&mut self) -> Result<(), SessionError> {
-        loop {
-            match self.control.try_recv() {
-                Ok(Some(message)) => self.inbox.push_back(message),
-                Ok(None) => return Ok(()),
-                // The helper can close after a complete message. That EOF must
-                // not discard a reason already sitting in the inbox.
-                Err(_) if !self.inbox.is_empty() => return Ok(()),
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-
-    fn wait_message(
-        &mut self,
-        timeout: Duration,
-        want: impl Fn(&ControlMessage) -> bool,
-    ) -> Result<ControlMessage, SessionError> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            self.drain()?;
-            if let Some(index) = self.inbox.iter().position(&want) {
-                return self.inbox.remove(index).ok_or_else(|| {
-                    SessionError::Protocol("queued control message disappeared".to_string())
-                });
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(SessionError::Timeout);
-            }
-            match self
-                .control
-                .recv_timeout(remaining.min(Duration::from_millis(50)))
-            {
-                Ok(message) => self.inbox.push_back(message),
-                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
-                Err(error) => return Err(error.into()),
-            }
+            slots.notice = self.root.notice_ptr();
+            slots.dead = self.root.dead_ptr();
         }
     }
 }
@@ -1105,6 +1260,141 @@ fn watch_exit(pid: i32, slots: Arc<Mutex<WatchSlots>>, stop: Arc<AtomicBool>) {
         }
     }
     unsafe { libc::close(queue) };
+}
+
+/// Realtime endpoint owned by one audio graph. Control code retains the process.
+/// Retire this endpoint on the control thread with its graph.
+pub struct PluginAudio {
+    region: Arc<MappedRegion>,
+    root: Arc<MappedRegion>,
+    reset_pending: bool,
+}
+
+impl PluginAudio {
+    /// Callback publication also activates a bank while transport is stopped.
+    pub fn activate_mapping(&mut self) -> Result<(), SessionError> {
+        if !self.region.is_ready() && self.region.published() == 0 {
+            self.region
+                .submit_activation()
+                .map_err(|error| self.report_inline(error))?;
+        }
+        Ok(())
+    }
+
+    pub fn carry(&mut self, old: &Self) {
+        self.reset_pending = old.reset_pending;
+    }
+    /// The next submitted block resets processing before receiving its new
+    /// events. Parameters and the helper process are retained. No socket IO.
+    pub fn request_reset(&mut self) {
+        self.reset_pending = true;
+    }
+
+    /// Publish one block and return. Does not wait for the helper.
+    pub fn submit(
+        &mut self,
+        frames: usize,
+        input: &[&[f32]],
+        events: &[(Event, u32)],
+    ) -> Result<u64, SessionError> {
+        self.check_alive()?;
+        match self
+            .region
+            .submit_block_with_reset(frames, input, events, self.reset_pending)
+        {
+            Ok(generation) => {
+                self.reset_pending = false;
+                Ok(generation)
+            }
+            Err(error) => Err(self.report_inline(error)),
+        }
+    }
+
+    /// Like [`Self::submit`], taking each channel as its own buffer.
+    ///
+    /// The callback uses this so it does not allocate a slice of slices.
+    pub fn submit_planes(
+        &mut self,
+        frames: usize,
+        input: &[Vec<f32>],
+        events: &[(Event, u32)],
+    ) -> Result<u64, SessionError> {
+        self.check_alive()?;
+        match self
+            .region
+            .submit_planes_with_reset(frames, input, events, self.reset_pending)
+        {
+            Ok(generation) => {
+                self.reset_pending = false;
+                Ok(generation)
+            }
+            Err(error) => Err(self.report_inline(error)),
+        }
+    }
+
+    /// Read a submitted generation if it has finished. Does not wait.
+    pub fn poll(
+        &mut self,
+        generation: u64,
+        output: &mut [&mut [f32]],
+        delivered: &mut [Delivered],
+    ) -> Result<BlockProgress, SessionError> {
+        self.check_alive()?;
+        match self.region.collect_ready(generation, output, delivered) {
+            Ok(Collected::Pending) => Ok(BlockProgress::Pending),
+            Ok(Collected::Abandoned) => Ok(BlockProgress::Abandoned),
+            Ok(Collected::Ready { events }) => Ok(BlockProgress::Ready { events }),
+            Err(error) => Err(self.report_inline(error)),
+        }
+    }
+
+    /// Like [`Self::poll`], writing each channel into its own buffer.
+    pub fn poll_planes(
+        &mut self,
+        generation: u64,
+        output: &mut [Vec<f32>],
+        frames: usize,
+        delivered: &mut [Delivered],
+    ) -> Result<BlockProgress, SessionError> {
+        self.check_alive()?;
+        match self
+            .region
+            .collect_planes(generation, output, frames, delivered)
+        {
+            Ok(Collected::Pending) => Ok(BlockProgress::Pending),
+            Ok(Collected::Abandoned) => Ok(BlockProgress::Abandoned),
+            Ok(Collected::Ready { events }) => Ok(BlockProgress::Ready { events }),
+            Err(error) => Err(self.report_inline(error)),
+        }
+    }
+
+    /// The generation will not be read if the helper finishes it later.
+    pub fn abandon(&mut self, generation: u64) {
+        self.region.abandon(generation);
+    }
+
+    fn check_alive(&self) -> Result<(), SessionError> {
+        if self.root.is_dead() {
+            return Err(self.report_inline(RegionError::Dead));
+        }
+        Ok(())
+    }
+
+    /// Dead, busy, and timeout, without `waitpid` or the stderr lock.
+    fn report_inline(&self, error: RegionError) -> SessionError {
+        match error {
+            RegionError::Wait(crate::sync::WaitError::Timeout) => SessionError::Timeout,
+            RegionError::Dead => {
+                if self.region.process_refused() || self.root.process_refused() {
+                    SessionError::ProcessRefused
+                } else {
+                    SessionError::HelperDown
+                }
+            }
+            RegionError::Busy => SessionError::Missed,
+            other => other.into(),
+        }
+    }
 }
 
 #[cfg(test)]

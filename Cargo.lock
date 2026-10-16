@@ -683,8 +683,10 @@ dependencies = [
  "objc2-core-audio",
  "objc2-core-audio-types",
  "objc2-core-foundation",
+ "rtrb",
  "rtsan-standalone",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

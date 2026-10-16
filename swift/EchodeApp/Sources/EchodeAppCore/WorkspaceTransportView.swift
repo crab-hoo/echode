@@ -15,18 +15,18 @@ struct WorkspaceTransportView: View {
     var body: some View {
         HStack(spacing: 12) {
             Button { Task { await controller.togglePlayback() } } label: {
-                Label(text(controller.audio.playing ? "Pause" : "Play"), systemImage: controller.audio.playing ? "pause.fill" : "play.fill")
+                Label(text(controller.playbackRequested ? "Pause" : "Play"), systemImage: controller.playbackRequested ? "pause.fill" : "play.fill")
             }
             Button { Task { await controller.stopPlayback() } } label: { Label(text("Stop"), systemImage: "stop.fill") }
             Button { Task { await controller.toggleMetronome() } } label: {
                 Label(text("Metronome"), systemImage: controller.audio.metronome ? "metronome.fill" : "metronome")
-            }
+            }.disabled(controller.audioBusy)
             LabeledContent(text("Position (beats)"), value: (Double(controller.audio.tick) / 705_600).formatted(.number.precision(.fractionLength(2))))
                 .monospacedDigit()
             TextField(text("Start beat"), text: $seek).frame(width: 80)
                 .focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Playback start beat")).onSubmit(locate)
-            Button(text("Go"), action: locate).disabled(seekBeat == nil)
+            Button(text("Go"), action: locate).disabled(seekBeat == nil || controller.audioBusy)
             TextField(text("Loop start (beats)"), text: $loopStart).frame(width: 64)
                 .focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Loop start (beats)")).onSubmit(commitLoop)
@@ -41,10 +41,10 @@ struct WorkspaceTransportView: View {
                 Task { await controller.toggleLoop() }
             } label: {
                 Label(text("Loop"), systemImage: controller.audio.loopStart == nil ? "repeat" : "repeat.circle.fill")
-            }.disabled(controller.audio.loopStart == nil && loopBeats == nil)
+            }.disabled(controller.audioBusy || (controller.audio.loopStart == nil && loopBeats == nil))
             Spacer()
             Text(controller.audio.activeDevice?.name ?? text("System Output")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        }.disabled(controller.snapshot == nil || controller.busy || controller.audioBusy)
+        }.disabled(controller.snapshot == nil || controller.busy)
             .padding(.horizontal, 12).padding(.vertical, 8)
             .onChange(of: loopStart) { _, _ in storeLoopDraft() }
             .onChange(of: loopEnd) { _, _ in storeLoopDraft() }

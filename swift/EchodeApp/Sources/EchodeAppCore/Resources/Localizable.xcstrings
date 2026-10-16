@@ -1397,6 +1397,22 @@
         }
       }
     },
+    "Preparing Playback": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing playback…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再生を準備中…"
+          }
+        }
+      }
+    },
     "Applying Changes": {
       "localizations": {
         "en": {

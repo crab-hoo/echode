@@ -21,6 +21,7 @@ public final class ArrangePaneView: NSView {
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
+        clipsToBounds = true
         addSubview(timeline)
         addSubview(headers)
         addSubview(divider)

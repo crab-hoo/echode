@@ -25,6 +25,11 @@ fn host_bin() -> PathBuf {
 }
 
 fn plugin_dylib() -> PathBuf {
+    static ARTIFACT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ARTIFACT.get_or_init(build_plugin_dylib).clone()
+}
+
+fn build_plugin_dylib() -> PathBuf {
     static BUILD: Mutex<()> = Mutex::new(());
     let host = host_bin();
     let sibling = host.parent().unwrap().join("libechode_test_plugin.dylib");
@@ -389,6 +394,37 @@ fn spawn_layout(layout: SessionLayout) -> PluginHost {
         plugin_id: None,
     })
     .unwrap_or_else(|error| panic!("spawn plugin host: {error}"))
+}
+
+#[test]
+fn reset_clears_delay_state_under_rtsan() {
+    for fault in ["tail", "tail-legacy"] {
+        let mut host = spawn_plugin(Some(fault), SessionLayout::stereo());
+        let mut input = stereo(64, 0.25); // Only this fixture's block/channel counts.
+        let mut output = stereo(64, 0.0);
+        host.process(
+            &[&input[0], &input[1]],
+            &mut outs(&mut output),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        input.iter_mut().for_each(|plane| plane.fill(0.0));
+        host.process(
+            &[&input[0], &input[1]],
+            &mut outs(&mut output),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(output.iter().flatten().any(|sample| *sample != 0.0));
+        host.request_reset();
+        host.process(
+            &[&input[0], &input[1]],
+            &mut outs(&mut output),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(output.iter().flatten().all(|sample| *sample == 0.0));
+    }
 }
 
 #[test]
@@ -860,5 +896,81 @@ fn two_stages_in_one_helper_are_one_round_trip() {
             break;
         }
         seen = fan.wait_until(seen, deadline).expect("fan-in");
+    }
+}
+
+#[test]
+fn prepared_mapping_keeps_old_audio_live_until_publication_and_can_be_cancelled_under_rtsan() {
+    let path = plugin_dylib();
+    let mut host = spawn(Some(&path), None);
+    // SAFETY: fixture endpoints are processed sequentially, with the host retained.
+    let mut old = unsafe { host.audio_handle() };
+    let original = host.layout();
+    let mut next = original;
+    next.input_events += 37; // Fixture growth, not an event limit.
+    host.prepare_mapping(next).unwrap();
+    assert!(host.mapping_pending());
+    let frames = 64; // Fixture buffers only.
+    let input = vec![vec![0.125; frames], vec![-0.25; frames]];
+    let mut output = vec![vec![0.0; frames]; 2];
+    let exchange = |audio: &mut echode_sandbox::PluginAudio, output: &mut [Vec<f32>]| {
+        let generation = audio.submit_planes(frames, &input, &[]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match audio
+                .poll_planes(generation, output, frames, &mut [])
+                .unwrap()
+            {
+                BlockProgress::Ready { .. } => break,
+                BlockProgress::Pending if Instant::now() < deadline => std::thread::yield_now(),
+                other => panic!("mapping exchange: {other:?}"),
+            }
+        }
+        assert!(output[0].iter().all(|sample| *sample == 0.25));
+        assert!(output[1].iter().all(|sample| *sample == -0.5));
+    };
+    for _ in 0..4 {
+        exchange(&mut old, &mut output);
+    }
+    assert!(
+        host.mapping_pending(),
+        "old requests activated unpublished storage"
+    );
+    host.cancel_mapping().unwrap();
+    assert_eq!(host.layout(), original);
+    exchange(&mut old, &mut output);
+    host.prepare_mapping(next).unwrap();
+    // SAFETY: fixture endpoints are processed sequentially, with the host retained.
+    let mut replacement = unsafe { host.audio_handle() };
+    exchange(&mut replacement, &mut output);
+    assert!(!host.mapping_pending());
+    host.prepare_mapping(original).unwrap();
+    // SAFETY: fixture endpoints are processed sequentially, with the host retained.
+    let mut shrunk = unsafe { host.audio_handle() };
+    exchange(&mut replacement, &mut output);
+    exchange(&mut shrunk, &mut output);
+    assert!(!host.mapping_pending());
+}
+
+#[test]
+fn an_endpoint_observes_a_crash_after_mapping_replacement_under_rtsan() {
+    let path = plugin_dylib();
+    let mut host = spawn(Some(&path), Some("crash"));
+    let mut next = host.layout();
+    next.input_events += 1;
+    host.prepare_mapping(next).unwrap();
+    // SAFETY: fixture endpoints are processed sequentially, with the host retained.
+    let mut audio = unsafe { host.audio_handle() };
+    // Fixture buffers only; the deadline detects a missing exit notification.
+    let input = vec![vec![0.0; 16]; 2];
+    let mut output = input.clone();
+    let generation = audio.submit_planes(16, &input, &[]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match audio.poll_planes(generation, &mut output, 16, &mut []) {
+            Err(SessionError::HelperDown) => break,
+            Ok(BlockProgress::Pending) if Instant::now() < deadline => std::thread::yield_now(),
+            other => panic!("replacement mapping lost exit notification: {other:?}"),
+        }
     }
 }

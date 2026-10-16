@@ -44,7 +44,11 @@ pub fn load_placed_clips(
             if !gain.is_finite() || gain < 0.0 {
                 return Err(PlaybackError::Media);
             }
-            let mono = fold_mono(&pcm.samples, pcm.channels);
+            if !matches!(pcm.channels, 1 | 2) {
+                return Err(PlaybackError::Unsupported(
+                    "audio placement requires a mono or stereo layout".into(),
+                ));
+            }
             let start = tick_to_sample(placement.start, project.tempo(), device_rate)
                 .ok_or(PlaybackError::Time)?;
             let end_tick = placement
@@ -68,16 +72,31 @@ pub fn load_placed_clips(
                 .ok_or(PlaybackError::Time)?;
             let offset = usize::try_from(offset_at.checked_sub(start).ok_or(PlaybackError::Time)?)
                 .map_err(|_| PlaybackError::Time)?;
-            let mut device = vec![0.0; device_frames(mono.len(), pcm.sample_rate, device_rate)?];
-            resample_into(&mono, pcm.sample_rate, &mut device, device_rate)?;
-            let mut samples = vec![0.0; window];
-            for (index, sample) in samples.iter_mut().enumerate() {
-                *sample = device.get(offset + index).copied().unwrap_or(0.0) * gain;
+            let mut planes = Vec::with_capacity(usize::from(pcm.channels));
+            for channel in 0..usize::from(pcm.channels) {
+                let source: Vec<_> = pcm
+                    .samples
+                    .chunks_exact(usize::from(pcm.channels))
+                    .map(|frame| frame[channel])
+                    .collect();
+                let mut device =
+                    vec![0.0; device_frames(source.len(), pcm.sample_rate, device_rate)?];
+                resample_into(&source, pcm.sample_rate, &mut device, device_rate)?;
+                let samples: Arc<[f32]> = (0..window)
+                    .map(|index| device.get(offset + index).copied().unwrap_or(0.0) * gain)
+                    .collect();
+                planes.push(samples);
             }
+            let right = if pcm.channels == 2 {
+                planes.pop()
+            } else {
+                None
+            };
             loaded.push(LoadedClip {
                 track: track.id.raw(),
                 start_sample: start,
-                samples: Arc::from(samples),
+                samples: planes.pop().ok_or(PlaybackError::Media)?,
+                right,
                 fade_in: fade_frames(placement.fade_in, device_rate).ok_or(PlaybackError::Time)?,
                 fade_out: fade_frames(placement.fade_out, device_rate)
                     .ok_or(PlaybackError::Time)?,
@@ -85,16 +104,6 @@ pub fn load_placed_clips(
         }
     }
     Ok(loaded)
-}
-
-fn fold_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {
-    if channels == 1 {
-        return interleaved.to_vec();
-    }
-    interleaved
-        .chunks(usize::from(channels))
-        .map(|frame| frame.iter().sum::<f32>() / f32::from(channels))
-        .collect()
 }
 
 fn device_frames(
@@ -117,4 +126,123 @@ fn device_frames(
 
 fn media_error(_error: echode_history::PackageError) -> PlaybackError {
     PlaybackError::Media
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use echode_engine::{PlaybackCommand, playback_pair, render_offline_blocks_with_clips};
+    use echode_model::{AudioRef, Id};
+
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn stereo_wav(rate: u32, frames: u32) -> Vec<u8> {
+        let size = frames * 4;
+        let mut wav = b"RIFF".to_vec();
+        wav.extend((36 + size).to_le_bytes());
+        wav.extend(b"WAVEfmt ");
+        wav.extend(16u32.to_le_bytes());
+        wav.extend(1u16.to_le_bytes());
+        wav.extend(2u16.to_le_bytes());
+        wav.extend(rate.to_le_bytes());
+        wav.extend((rate * 4).to_le_bytes());
+        wav.extend(4u16.to_le_bytes());
+        wav.extend(16u16.to_le_bytes());
+        wav.extend(b"data");
+        wav.extend(size.to_le_bytes());
+        for _ in 0..frames {
+            wav.extend(16_384i16.to_le_bytes());
+            wav.extend((-16_384i16).to_le_bytes());
+        }
+        wav
+    }
+
+    #[test]
+    fn contract_imported_stereo_survives_trim_gain_resampling_playback_and_export() {
+        let fixture =
+            Fixture(std::env::temp_dir().join(format!("echode-stereo-{}", Id::generate().raw())));
+        std::fs::create_dir_all(&fixture.0).unwrap();
+        for file_rate in [44_100, 48_000] {
+            let source = fixture.0.join(format!("opposite-{file_rate}.wav"));
+            std::fs::write(&source, stereo_wav(file_rate, 4800)).unwrap();
+            let stored = echode_history::import_audio(&fixture.0, &source).unwrap();
+            let (project, track) = Project::new().add_track("stereo");
+            let clip = Id::generate();
+            let project = project
+                .place_audio(
+                    track,
+                    clip,
+                    Id::generate(),
+                    Tick::new(0),
+                    AudioRef::try_new(
+                        stored.hash,
+                        stored.sample_rate,
+                        stored.channels,
+                        stored.frames,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let length = project.tracks()[0].clips[0].length.get();
+            let project = project
+                .resize_clip(track, clip, Tick::new(length / 4), Tick::new(length / 2))
+                .unwrap()
+                .set_clip_gain(clip, 0.5)
+                .unwrap()
+                .set_clip_fades(clip, 0, 0)
+                .unwrap();
+            let clips = load_placed_clips(&fixture.0, &project, 48_000).unwrap();
+            assert_eq!(clips.len(), 1);
+            let loaded = &clips[0];
+            let right = loaded
+                .right
+                .as_ref()
+                .expect("a stereo placement lost its right plane");
+            assert!(loaded.start_sample > 0);
+            assert_eq!(loaded.samples.len(), right.len());
+            let mid = loaded.samples.len() / 2;
+            assert!((loaded.samples[mid] - 0.25).abs() < 1.0e-4);
+            assert!((right[mid] + 0.25).abs() < 1.0e-4);
+            let frames = loaded.start_sample as usize + loaded.samples.len();
+            // Scratch sizes exercise stream partitioning, not product limits.
+            for block in [1, 64, 511] {
+                let (mut control, mut audio) = playback_pair(&project, 48_000, block).unwrap();
+                let clips = clips.clone();
+                let expected = clips.clone();
+                control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
+                control.replace(&project).unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                let mut heard = Vec::new();
+                for offset in (0..frames).step_by(block) {
+                    let count = block.min(frames - offset);
+                    let (mut left, mut right) = (vec![0.0; count], vec![0.0; count]);
+                    audio.render(&mut left, &mut right);
+                    heard.extend(left.into_iter().zip(right).flat_map(|(l, r)| [l, r]));
+                }
+                assert!(!control.status().failed);
+                let mut exported = Vec::new();
+                render_offline_blocks_with_clips(
+                    &project,
+                    48_000,
+                    frames as u32,
+                    block as u32,
+                    &expected,
+                    |samples| {
+                        exported.extend_from_slice(samples);
+                        Ok::<_, ()>(())
+                    },
+                )
+                .unwrap();
+                assert_eq!(heard, exported);
+                let at = (loaded.start_sample as usize + mid) * 2;
+                assert!((heard[at] - 0.25).abs() < 1.0e-4);
+                assert!((heard[at + 1] + 0.25).abs() < 1.0e-4);
+            }
+        }
+    }
 }

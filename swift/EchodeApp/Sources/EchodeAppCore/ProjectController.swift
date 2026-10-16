@@ -38,10 +38,19 @@ public final class ProjectController {
     public private(set) var playback: PlaybackFeed?
     /// Bumps on play, pause, stop, and locate. Position polling does not.
     public private(set) var transportGeneration: UInt64 = 0
+    public private(set) var pendingPlayback: Bool?
+    public var playbackRequested: Bool { pendingPlayback ?? audio.playing }
+    @ObservationIgnored private var audioRequests = 0
+    @ObservationIgnored private var audioRevision: UInt64 = 0
     @ObservationIgnored private var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
+    @ObservationIgnored private let sendAudio: @Sendable (Document, AudioCommand) async throws -> AudioState
 
-    public init() {}
+    public init() { sendAudio = { try await $0.audio($1) } }
+
+    init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState) {
+        self.sendAudio = sendAudio
+    }
 
     public func open(_ url: URL, creating: Bool = false) async {
         guard !busy else { return }
@@ -56,6 +65,8 @@ public final class ProjectController {
             let initialAudio = try initial.audioState()
             let previous = document
             document = opened
+            audioRevision &+= 1
+            pendingPlayback = nil
             documentID = UUID()
             playback = opened.playbackFeed
             transportGeneration = 0
@@ -157,6 +168,8 @@ public final class ProjectController {
         busy = true
         let previous = document
         document = nil
+        audioRevision &+= 1
+        pendingPlayback = nil
         documentID = nil
         playback = nil
         transportGeneration = 0
@@ -176,7 +189,7 @@ public final class ProjectController {
     }
 
     public func togglePlayback() async {
-        await audioCommand(audio.playing ? .pause : .play)
+        await audioCommand(playbackRequested ? .pause : .play)
     }
 
     public func stopPlayback() async { await audioCommand(.stop) }
@@ -212,9 +225,10 @@ public final class ProjectController {
     public func observeAudio() async {
         while !Task.isCancelled {
             if let document, !busy, !audioBusy {
+                let revision = audioRevision
                 do {
-                    let state = try await document.audio(.status)
-                    if self.document === document {
+                    let state = try await sendAudio(document, .status)
+                    if self.document === document, revision == audioRevision, !audioBusy {
                         if audio != state { audio = state }
                         if let error = state.error, error != reportedAudioError { errorMessage = error }
                         reportedAudioError = state.error
@@ -227,16 +241,24 @@ public final class ProjectController {
     }
 
     private func audioCommand(_ command: AudioCommand) async {
-        guard !busy, !audioBusy, let document else { return }
+        guard !busy, !audioBusy || command.playbackIntent != nil, let document else { return }
+        audioRevision &+= 1
+        let revision = audioRevision
+        if let intent = command.playbackIntent { pendingPlayback = intent }
+        audioRequests += 1
         audioBusy = true
-        defer { audioBusy = false }
+        defer {
+            audioRequests -= 1
+            audioBusy = audioRequests > 0
+            if revision == audioRevision { pendingPlayback = nil }
+        }
         do {
-            let state = try await document.audio(command)
-            if self.document === document {
+            let state = try await sendAudio(document, command)
+            if self.document === document, revision == audioRevision {
                 audio = state
                 if command.requestsPlayheadFrame { transportGeneration &+= 1 }
             }
-        } catch { if self.document === document { report(error) } }
+        } catch { if self.document === document, revision == audioRevision { report(error) } }
     }
 
     @discardableResult
@@ -288,6 +310,13 @@ public final class ProjectController {
 }
 
 extension AudioCommand {
+    var playbackIntent: Bool? {
+        switch self {
+        case .play: true
+        case .pause, .stop: false
+        default: nil
+        }
+    }
     /// Playhead frames are requested from the control side. Status polling is not.
     var requestsPlayheadFrame: Bool {
         switch self {

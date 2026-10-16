@@ -47,10 +47,31 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_graph_preparation_contract_uses_the_product_helper_and_rejects_silence(self):
+        contract = next(item for item in self.policy["product_contracts"] if item["id"] == "plugin-state-poll")
+        self.assertEqual(contract["package"], "echode-plugin-host")
+        self.assertEqual(contract["target"], ["--test", "hosted_playback"])
+        self.assertEqual(contract["test"], "contract_preparing_a_graph_keeps_current_audio_running_under_rtsan")
+        self.assertIn("return Ok(())", contract["negative_control"]["new"])
+
+    def test_stop_contract_checks_an_oscillating_waveform_and_cancellation_at_both_gates(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        self.assertEqual(contracts["transport-declick"]["test"], "stream::tests::contract_stop_preserves_waveform_while_fading_under_rtsan")
+        self.assertIn("process_stop", contracts["transport-declick"]["negative_control"]["old"])
+        self.assertEqual(contracts["transport-cancellation"]["negative_control"]["file"], "crates/echode-audio-io/src/transport.rs")
+
+    def test_onset_contract_checks_the_helper_and_sample_accurate_note_delivery(self):
+        contract = next(item for item in self.policy["product_contracts"] if item["id"] == "plugin-onset")
+        self.assertEqual(contract["package"], "echode-plugin-host")
+        self.assertEqual(contract["test"], "contract_plugin_note_onsets_preserve_source_samples_under_rtsan")
+        self.assertEqual(contract["negative_control"]["file"], "crates/echode-plugin-host/src/events.rs")
+        self.assertIn("note.time", contract["negative_control"]["old"])
+        self.assertIn("0,", contract["negative_control"]["new"])
+
     def test_model_changes_include_transitive_bridge_audio_and_measurements(self):
         checks = self.selected("crates/echode-model/src/time.rs")
         self.assertTrue({"check", "rtsan", "check-bridge-features", "check-bridge-asan",
-                         "check-bridge-tsan", "check-bridge-miri", "spike-engine",
+                         "check-bridge-tsan", "check-bridge-miri", "spike-engine-smoke",
                          "spike-history", "spike-draw", "spike-bridge", "spike-render"} <= checks)
 
     def test_bridge_changes_do_not_launch_unrelated_hardware(self):
@@ -64,13 +85,13 @@ class PolicyTests(unittest.TestCase):
                      "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift"):
             with self.subTest(path=path):
                 self.assertTrue({"check", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
-                self.assertTrue({"rtsan", "spike-engine", "spike-audio"} <= self.selected(path))
+                self.assertTrue({"rtsan", "spike-engine-smoke", "spike-audio"} <= self.selected(path))
 
     def test_product_audio_selects_realtime_and_an_explicit_silent_hal_probe(self):
         for path in ("crates/echode-audio-io/src/stream.rs", "crates/echode-engine/src/playback.rs",
                      "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift"):
             with self.subTest(path=path):
-                self.assertTrue({"check", "rtsan", "spike-engine", "spike-audio"} <= self.selected(path))
+                self.assertTrue({"check", "rtsan", "spike-engine-smoke", "spike-audio"} <= self.selected(path))
                 self.assertNotIn("spike-input", self.selected(path))
                 if path.startswith("crates/echode-audio-io"):
                     self.assertIn("check-bridge-asan", self.selected(path))
@@ -110,11 +131,11 @@ class PolicyTests(unittest.TestCase):
 
     def test_input_has_both_headless_tests_and_an_explicit_hardware_check(self):
         self.assertEqual(self.selected("spikes/input/Sources/EchodeInputCore/Gesture.swift"),
-                         {"check", "check-product-contracts", "check-input", "spike-input"})
+                         {"check-verification", "check", "check-product-contracts", "check-input", "spike-input"})
 
     def test_isolation_and_dependency_changes_select_their_extra_checks(self):
         checks = self.selected("crates/echode-sandbox/src/lib.rs")
-        self.assertTrue({"rtsan", "spike-engine", "spike-isolation"} <= checks)
+        self.assertTrue({"rtsan", "spike-engine-smoke", "spike-isolation"} <= checks)
         self.assertIn("advisories", self.selected("crates/echode-api/Cargo.toml"))
 
     def test_common_settings_do_not_require_unrelated_measurements(self):
@@ -130,7 +151,47 @@ class PolicyTests(unittest.TestCase):
         expected = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
         for path in ("scripts/verify.py", ".cursor/hooks.json", ".codex/hooks.json", ".github/workflows/check.yml", "Makefile"):
             self.assertEqual(self.selected(path), expected)
-        self.assertEqual(self.selected("docs/PLAN.md"), {"check", "check-product-contracts"})
+        self.assertEqual(self.selected("docs/PLAN.md"), {"check-verification", "check", "check-product-contracts"})
+
+    def test_long_engine_measurement_is_explicit_and_the_short_probe_is_separate(self):
+        checks = self.selected("crates/echode-engine/src/playback.rs")
+        self.assertIn("spike-engine-smoke", checks)
+        self.assertNotIn("spike-engine", checks)
+        long = next(c for c in self.policy["checks"] if c["id"] == "spike-engine")
+        self.assertTrue(long["extended"])
+        text = (ROOT / "Makefile").read_text()
+        short = text.split("spike-engine-smoke:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("--seconds 10 ", short)
+        self.assertIn("--native-rate", short)
+        self.assertIn("--report target/spike-s2-smoke.txt", short)
+        self.assertNotIn("--seconds 600", short)
+
+    def test_required_mutations_belong_to_the_contract_inputs(self):
+        check = next(c for c in self.policy["checks"] if c["id"] == "check-product-contracts")
+        folders = verify.package_directories(ROOT, check["packages"])
+        for contract in self.policy["product_contracts"]:
+            path = contract["negative_control"]["file"]
+            with self.subTest(contract=contract["id"]):
+                self.assertTrue(verify.matches([path], check["inputs"])
+                                or any(path.startswith(folder + "/") for folder in folders))
+
+    def test_shell_entry_points_and_their_helpers_are_declared_inputs(self):
+        makefile = (ROOT / "Makefile").read_text()
+        for check in self.policy["checks"]:
+            target = check.get("make_target", check["id"])
+            recipe = makefile.split(target + ":\n", 1)[1].split("\n\n", 1)[0]
+            pending = [recipe]
+            visited = set()
+            patterns = self.policy["global_inputs"] + self.policy["evidence_inputs"] + check.get("inputs", [])
+            while pending:
+                text = "\n".join(line for line in pending.pop().splitlines() if not line.lstrip().startswith("#"))
+                for helper in re.findall(r"scripts/[A-Za-z0-9_./-]+\.(?:py|sh|env)\b", text):
+                    if helper in visited or not (ROOT / helper).is_file():
+                        continue
+                    visited.add(helper)
+                    with self.subTest(check=check["id"], helper=helper):
+                        self.assertTrue(verify.matches([helper], patterns), "undeclared command dependency")
+                    pending.append((ROOT / helper).read_text())
 
     def test_required_behavioral_contracts_are_automatic_for_every_change(self):
         check = next(c for c in self.policy["checks"] if c["id"] == "check-product-contracts")
@@ -141,7 +202,11 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("check-product-contracts", self.selected(path))
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
-                         {"startup-position", "macos-plugin-bundle", "header-key-routing"})
+                         {"startup-position", "macos-plugin-bundle", "header-key-routing",
+                          "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
+                          "engine-measurement-completion", "pane-boundary", "pending-transport",
+                          "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
+                          "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
@@ -171,6 +236,7 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(target=target):
                 result = subprocess.run(["make", "-n", target], cwd=ROOT, capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.count("python3 scripts/check_product_contracts.py"), count)
+                self.assertEqual(result.stdout.count("python3 -m unittest discover"), count)
         check = next(check for check in self.policy["checks"] if check["id"] == "check")
         self.assertEqual(check["make_target"], "check-base")
 
@@ -188,6 +254,23 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(parallel["MAKEFLAGS"], ["-j4"])
         self.assertTrue(all(call.kwargs["env"]["RUSTUP_AUTO_INSTALL"] == "0" for call in query.call_args_list))
 
+    def test_audio_identity_tracks_the_default_output_without_unrelated_devices(self):
+        output = {"_name": "output", "coreaudio_device_srate": 96_000,
+                  "coreaudio_default_audio_output_device": "spaudio_yes"}
+        other = {"_name": "input", "coreaudio_device_srate": 48_000}
+        data = {"SPAudioDataType": [{"_items": [output, other]}]}
+        def profile(*args, **kwargs):
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps(data), stderr="")
+        with patch.object(verify.subprocess, "run", side_effect=profile):
+            initial = verify.audio_output_identity()
+            self.assertIsNotNone(initial)
+            other["coreaudio_device_srate"] = 44_100
+            self.assertEqual(verify.audio_output_identity(), initial)
+            output["coreaudio_device_srate"] = 48_000
+            self.assertNotEqual(verify.audio_output_identity(), initial)
+            data["SPAudioDataType"] = []
+            self.assertIsNone(verify.audio_output_identity())
+
 
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
@@ -201,8 +284,8 @@ class EvidenceTests(unittest.TestCase):
         (self.root / "Makefile").write_text("check:\n\t@echo check\n\nmeasure:\n\t@echo measure\n")
         policy = {"version": 1, "global_inputs": [], "infrastructure": [],
                   "areas": {"source": ["src/**"]}, "checks": [
-                      {"id": "check", "mode": "automatic", "always": True, "areas": [], "timeout": 10, "purpose": "fixture"},
-                      {"id": "measure", "mode": "manual", "areas": ["source"], "timeout": 10, "purpose": "fixture"}]}
+                      {"id": "check", "mode": "automatic", "always": True, "areas": [], "inputs": ["**"], "timeout": 10, "purpose": "fixture"},
+                      {"id": "measure", "mode": "manual", "areas": ["source"], "inputs": ["src/**"], "timeout": 10, "purpose": "fixture"}]}
         (self.root / verify.POLICY).write_text(json.dumps(policy))
         self.git("init", "--quiet")
         self.git("add", ".")
@@ -231,6 +314,142 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(verify.changed_paths(self.root),
                          ["Makefile", "src/example.rs", "src/new file.rs", "src/renamed file.rs"])
 
+    def test_document_edits_reuse_the_measurement_without_forging_a_new_run(self):
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
+        original = self.report()["results"]["measure"]
+        (self.root / "README.md").write_text("updated instructions\n")
+        self.assertEqual(self.run_verify(arguments()), (0, 1))
+        self.assertEqual(self.report()["results"]["measure"], original)
+
+    def test_committing_the_same_contents_does_not_expire_evidence(self):
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
+        base = self.git("rev-parse", "HEAD").strip().decode()
+        self.git("add", ".")
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "edit")
+        self.assertEqual(self.run_verify(arguments(base=base)), (0, 0))
+
+    def test_extended_measurements_are_explicit_and_not_normal_requirements(self):
+        path = self.root / verify.POLICY
+        policy = json.loads(path.read_text())
+        policy["checks"][1]["extended"] = True
+        path.write_text(json.dumps(policy))
+        self.assertEqual(self.run_verify(arguments()), (0, 1))
+        self.assertNotIn("measure", self.report()["selected"])
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 1))
+        self.assertEqual(self.report()["results"]["measure"]["status"], "passed")
+        self.assertEqual(self.run_verify(arguments()), (0, 0))
+        self.assertIn("通常の完了判定外", (self.root / "target/verification/report.md").read_text())
+
+    def test_legacy_whole_tree_results_cannot_be_relabelled_as_scoped_passes(self):
+        directory = self.root / "target/verification"
+        directory.mkdir(parents=True)
+        stamp = verify.fingerprint(self.root, verify.changed_paths(self.root), None, {"rust": "fixture-v1"})
+        (directory / "report.json").write_text(json.dumps({"version": 1, "fingerprint": stamp,
+            "results": {"check": {"status": "passed"}, "measure": {"status": "passed"}}}))
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
+        self.assertEqual(self.report()["version"], 2)
+
+    def test_a_changed_check_definition_does_not_expire_another_checks_evidence(self):
+        path = self.root / verify.POLICY
+        policy = json.loads(path.read_text())
+        policy["checks"][0]["inputs"] = ["src/**"]
+        path.write_text(json.dumps(policy))
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
+        policy["checks"][1]["timeout"] += 1
+        path.write_text(json.dumps(policy))
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 1))
+
+    def test_local_dependency_changes_expire_only_the_checks_that_use_them(self):
+        (self.root / "Cargo.toml").write_text(
+            '[workspace]\nmembers = ["app", "dependency", "unrelated"]\n'
+            '[workspace.dependencies]\nrenamed = { package="dependency", path="dependency" }\n')
+        for name in ("app", "dependency", "unrelated"):
+            folder = self.root / name
+            (folder / "src").mkdir(parents=True)
+            manifest = f'[package]\nname="{name}"\nversion="0.0.0"\n'
+            if name == "app":
+                manifest += '[target.\'cfg(unix)\'.build-dependencies]\nrenamed.workspace = true\n'
+            (folder / "Cargo.toml").write_text(manifest)
+            (folder / "src/lib.rs").write_text("original\n")
+        path = self.root / verify.POLICY
+        policy = json.loads(path.read_text())
+        policy["checks"][1].update({"inputs": [], "packages": ["app"]})
+        path.write_text(json.dumps(policy))
+        options = arguments(only=["measure"], run=["measure"])
+        self.assertEqual(self.run_verify(options), (0, 1))
+        (self.root / "unrelated/src/lib.rs").write_text("unrelated edit\n")
+        self.assertEqual(self.run_verify(options), (0, 0))
+        source = self.root / "dependency/src/lib.rs"
+        source.write_text("dependency edit\n")
+        self.assertEqual(self.run_verify(options), (0, 1))
+        source.chmod(0o755)
+        self.assertEqual(self.run_verify(options), (0, 1))
+        added = self.root / "dependency/src/new.rs"
+        added.write_text("new input\n")
+        self.assertEqual(self.run_verify(options), (0, 1))
+        added.rename(added.with_name("renamed.rs"))
+        self.assertEqual(self.run_verify(options), (0, 1))
+        source.unlink()
+        self.assertEqual(self.run_verify(options), (0, 1))
+
+    def test_a_symlink_target_outside_the_package_is_still_an_input(self):
+        resource = self.root / "resource.txt"
+        resource.write_text("original resource")
+        (self.root / "src/resource.rs").symlink_to("../resource.txt")
+        options = arguments(only=["measure"], run=["measure"])
+        self.assertEqual(self.run_verify(options), (0, 1))
+        resource.write_text("changed resource")
+        self.assertEqual(self.run_verify(options), (0, 1))
+        with tempfile.TemporaryDirectory() as outside:
+            target = Path(outside) / "resource.txt"
+            target.write_text("outside resource")
+            (self.root / "src/outside.rs").symlink_to(target)
+            with self.assertRaisesRegex(ValueError, "symlinks must resolve"):
+                self.run_verify(options)
+
+    def test_a_linked_input_change_during_the_check_cannot_be_recorded_as_a_pass(self):
+        target = self.root / "target/resource.txt"
+        target.parent.mkdir()
+        target.write_text("original resource")
+        (self.root / "src/resource.rs").symlink_to("../target/resource.txt")
+        def edit_while_running(*args):
+            target.write_text("changed resource")
+            return {"status": "passed"}
+        self.assertEqual(self.run_verify(arguments(only=["measure"], run=["measure"]), edit_while_running), (1, 1))
+        self.assertEqual(self.report()["results"]["measure"]["status"], "stale")
+
+    def test_a_failed_measurement_is_not_hidden_by_an_unrelated_edit(self):
+        def fail_measurement(root, check, log):
+            return {"status": "failed" if check["id"] == "measure" else "passed"}
+        self.assertEqual(self.run_verify(arguments(run=["measure"]), fail_measurement), (1, 2))
+        (self.root / "README.md").write_text("unrelated edit")
+        self.assertEqual(self.run_verify(arguments()), (1, 1))
+        self.assertEqual(self.report()["results"]["measure"]["status"], "failed")
+
+    def test_device_changes_expire_measurements_without_expiring_source_checks(self):
+        path = self.root / verify.POLICY
+        policy = json.loads(path.read_text())
+        policy["checks"][1]["device_context"] = True
+        path.write_text(json.dumps(policy))
+        with patch.object(verify, "audio_output_identity", return_value="device-A"):
+            self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
+            self.assertEqual(self.run_verify(arguments()), (0, 0))
+        with patch.object(verify, "audio_output_identity", return_value="device-B"):
+            self.assertEqual(self.run_verify(arguments()), (1, 0))
+            self.assertEqual(self.report()["results"]["check"]["status"], "passed")
+            self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 1))
+
+    def test_unidentified_devices_cannot_produce_cached_passes_but_allow_deferral(self):
+        path = self.root / verify.POLICY
+        policy = json.loads(path.read_text())
+        policy["checks"][1]["device_context"] = True
+        path.write_text(json.dumps(policy))
+        with patch.object(verify, "audio_output_identity", return_value=None):
+            self.assertEqual(self.run_verify(arguments(run=["measure"])), (1, 2))
+            self.assertEqual(self.report()["results"]["measure"]["status"], "failed")
+            self.assertEqual(self.run_verify(arguments(defer=["measure"], reason="device metadata unavailable")), (0, 0))
+            self.assertEqual(self.run_verify(arguments()), (0, 0))
+
     def test_committed_changes_require_an_explicit_base(self):
         base = self.git("rev-parse", "HEAD").strip().decode()
         self.git("add", ".")
@@ -249,7 +468,7 @@ class EvidenceTests(unittest.TestCase):
         (self.root / "src/example.rs").write_text("second edit\n")
         code, count = self.run_verify(arguments())
         self.assertEqual((code, count), (1, 1))
-        self.assertEqual(self.report()["results"]["measure"], {"status": "not_run"})
+        self.assertEqual(self.report()["results"]["measure"]["status"], "not_run")
 
     def test_selected_measurements_require_a_reason_without_opening_hardware(self):
         def invoke():

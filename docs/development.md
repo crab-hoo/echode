@@ -2,6 +2,8 @@
 
 必須規則は [AGENTS.md](../AGENTS.md)。この文書は実際の作業の案内である。
 
+検査基盤は Python 3.11 以降を使う。Rust のローカル依存を読むために標準の TOML パーサーを使用し、追加の Python パッケージは必要ない。
+
 ## 開始から完了まで
 
 1. `git status --short` で既存変更を把握する。他の作業の変更を巻き戻さない。`make doctor` で不足ツールとアプリ・検査の古さ、`make verify-plan` で対象を確認する。
@@ -10,6 +12,10 @@
 4. 境界と不変条件を守って修正し、必要なドキュメント・テスト・デバッグ基盤も同じ作業で更新する。途中で検査漏れや新しい失敗条件が判明したら、保守の対象を見直す。新しい判断は ADR、発見・修正の証拠は監査へ残す。
 5. 完了前に実装と基盤の整合を確認し、必要な更新を終えてから関係するテストと `make verify`。選択された実機・計測は実行するか理由を記録し、最後の編集後に全選択項目を確認する。途中の `--only` の成功を完了の証拠にしない。
 6. 最終報告には変更の効果、基盤の更新内容（不要なら理由）、検査結果、見送った検査名と理由、残る制約を簡潔に記す。コミット・プッシュはユーザーの依頼がある時だけ行う。
+
+実機・聴感テストは原則としてユーザーが担当する。エージェントは実機を使わない回帰を先に行う。音声だけの変更に Computer Use を使わず、機器を開く検査やアプリ操作は明示的な依頼がある時だけ行う。
+
+検査候補が多いことを理由に全実機検査を一律に動かさない。前の作業の変更が残っている時も、各検査の依存入力が同じなら合格を再利用する。通常の音声変更は波形と製品バッファで確認し、ユーザーが実機検査を依頼した場合は短時間確認から選ぶ。10分計測は大きなリアルタイム設計変更・長時間不具合・リリース確認など、目的を説明できる時に追加する。回帰検査で操作の順序と実際の出力を確認することを、同じ処理の反復回数で置き換えない。
 
 ## 基盤の保守を同じ作業で行う
 
@@ -45,8 +51,13 @@
 
 - 文書モデルは `crates/echode-model`、変更・Undo / Redo は `crates/echode-actions`。保存、ジャーナル、復旧、内容アドレスの保管庫は `crates/echode-history`。
 - 音声計画、再生位置、MIDI、内蔵音源、サンプルレート変換、ループ、フェーダー、CLAP の信号経路は `crates/echode-engine`。製品の HAL 出力・通知と機器追従は `crates/echode-audio-io`。共通の RT 検出は `crates/echode-realtime`。
+- 素材の平面とSRCは `echode-audio-io/src/clips.rs`、配置とループは `echode-engine/src/playback.rs`、バスの受渡しは `plugins.rs`、ゲインの状態と f64 加算は `mix.rs`。CLAP のない書き出しも `render.rs` から同じ再生器を使う（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
+- ライブ出力の段差補正は `echode-engine/src/declick.rs` を HAL から使用する。定期保存の制御ハンドルは `echode-sandbox/src/session.rs` の `PluginControl`。音声グラフは `PlaybackAudio` だけが持ち、制御側のカタログから用意した計画と音声バッファを一緒に交換する。共有メモリの準備と採用も分ける（[ADR 0101](decisions/0101-live-output-discontinuities.md)、[ADR 0102](decisions/0102-exclusive-audio-graph.md)）。
+- 任意の停止出力診断は `echode-audio-io/src/trace.rs`。HALの実バッファを事前確保領域へ記録し、制御側で保存する。再描画した音を実出力の証拠へ代用しない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)）。
+- ライブ停止後の破棄する処理は `echode-engine/src/plugins.rs` の各ステージが保留し、完了をポーリングする。音声の出力を待つ通常の集約と混同しない。再開と計画交換は `playback.rs` が完了まで保留する（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）。
 - 共有メモリは `crates/echode-sandbox`、本体外のロード・スキャン・処理は `crates/echode-plugin-host`、故障注入用 CLAP は `crates/echode-test-plugin`。
 - CLI の render / serve は `crates/echode-cli`、ローカル JSON-RPC は `crates/echode-api`。製品 C ABI は `crates/echode-ffi`、Swift の保持と非同期処理は `swift/EchodeBridge`。
+- 取消世代は `echode-audio-io/src/transport.rs`、投入順序は `echode-ffi/src/queue.rs`。準備の完了応答と、停止による発音禁止を別々に確認する（[ADR 0097](decisions/0097-cancellable-retained-transport.md)）。
 - 製品 UI は `swift/EchodeApp/Sources/EchodeAppCore`。描画・ヘッダ入力・ワークスペース・controller の責務を分ける。実ウィンドウ検査は `EchodePlayheadProbe` と `Tests/EchodePlayheadChecks`、通常のテストは `Tests/EchodeAppTests`。
 - 描画の大規模な検証は `crates/echode-draw` と `spikes/draw`。入力の前提検証は `spikes/input`。`spike` の型を製品モデルへ流用しない。
 - 検査の選択・予算・必須契約は `scripts/verification.json`、実行器は `scripts/verify.py`、検査基盤自体のテストは `scripts/tests`。フックは薄いアダプターに留める。

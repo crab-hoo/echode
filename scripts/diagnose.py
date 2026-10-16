@@ -93,22 +93,32 @@ def collect(root):
     stamp = source_stamp(root)
     tools = verify.tool_identity(root)
     policy = verify.load_policy(root)
+    contexts = verify.external_contexts(policy)
     report, error = read_json(root / "target/verification/report.json")
-    if report and (report.get("version") != 1 or not isinstance(report.get("results"), dict)
+    if report and (report.get("version") not in (1, 2) or not isinstance(report.get("results"), dict)
                    or not all(isinstance(value, dict) for value in report["results"].values())):
         report, error = None, "invalid verification record"
     base = os.environ.get("VERIFY_BASE", (report or {}).get("base"))
     changed = verify.changed_paths(root, base)
     selected = verify.select_checks(policy, changed)
-    current = verify.fingerprint(root, changed, base, tools)
+    stamps = verify.check_fingerprints(root, policy, tools, contexts)
     busy = lock_busy(root)
-    fresh = bool(report and report.get("version") == 1 and report.get("fingerprint") == current)
     results = (report or {}).get("results", {})
-    checks = [{"id": check["id"], "mode": check["mode"],
-               "status": results.get(check["id"], {}).get("status", "not_run") if fresh else "unknown",
-               "reason": results.get(check["id"], {}).get("reason") if fresh else None,
-               "log": f"target/verification/{check['id']}.log"}
-              for check in policy["checks"] if check["id"] in selected]
+    checks = []
+    for check in policy["checks"]:
+        name = check["id"]
+        if name not in selected:
+            continue
+        previous = results.get(name, {})
+        fresh = bool(report and report.get("version") == 2 and previous.get("fingerprint") == stamps[name]
+                     and not (previous.get("status") == "passed" and check.get("device_context")
+                              and contexts.get("audio-output") is None))
+        checks.append({"id": name, "mode": check["mode"],
+                       "status": previous.get("status", "not_run") if fresh else "stale" if previous else "not_run",
+                       "fresh": fresh, "reason": previous.get("reason") if fresh else None,
+                       "log": f"target/verification/{name}.log"})
+    freshness = ("unavailable" if not report else "current" if all(check["fresh"] for check in checks)
+                 else "partial" if any(check["fresh"] for check in checks) else "stale")
     tools_needed = ("git", "make", "rustc", "cargo", "swift", "xcodebuild", "xcrun", "cargo-deny")
     # Never export tools' raw environment values, Cargo config, or report.tools.
     versions = {key: value for key, value in tools.items()
@@ -120,7 +130,7 @@ def collect(root):
                             "tool_errors": [key for key, value in versions.items() if not value.startswith("0:")],
                             "missing_tools": [name for name in tools_needed if not shutil.which(name)]},
             "build": build_status(root, stamp),
-            "verification": {"freshness": "current" if fresh else "stale" if report else "unavailable",
+            "verification": {"freshness": freshness,
                              "running": busy, "error": error, "checks": checks,
                              "report": "target/verification/report.md"}}
     if source_stamp(root) != stamp:
@@ -145,7 +155,7 @@ def render(data):
         reason = f" — {check['reason']}" if check.get("reason") else ""
         lines.append(f"- {check['id']}: {check['status']}{reason}")
     lines += ["", "検査の詳細: target/verification/report.md",
-              "アプリが stale / unknown なら make app。検査が stale / unavailable なら make verify。",
+              "アプリが stale / unknown なら make app。検査が stale / partial / unavailable なら make verify。",
               "検査中は編集せず、完了を待つ。failed は該当ログ、not_run は実行か理由の記録が必要。",
               "この診断は新しいテストを実行せず、表示中のアプリの版や聴感も確認しない。", ""]
     return "\n".join(lines)
@@ -175,7 +185,7 @@ def bundle(root, data):
             target.write_bytes(input_file.read(LOG_LIMIT))
         copied.append({"path": str(target.relative_to(destination)), "truncated": size > LOG_LIMIT})
     data = {**data, "artifacts": copied,
-            "artifact_note": "ログは過去の実行を含む調査資料。合格の有効性は verification.freshness で判断する。"}
+            "artifact_note": "ログは過去の実行を含む調査資料。合格の有効性は verification の各 checks の fresh と status で判断する。"}
     (destination / "diagnosis.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     (destination / "README.md").write_text(render(data) + "\nログにはローカルのパスやプラグイン名が含まれ得る。共有前に内容を確認する。\n")
     return destination

@@ -192,8 +192,8 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
             ($0.input, $0.revision, $0.stopping, $0.continuous, $0.measurement.frames)
         }
         // Every callback owns a drawable. Leaving it unpresented stops later
-        // callbacks, including the next play or locate. A repeat of the current
-        // picture is still presented; pause afterwards when nothing is moving.
+        // callbacks, including the next play or locate. Clear skipped frames:
+        // a drawable from the pool does not contain the previous picture.
         guard !stopping, let input, input.width > 0, input.height > 0 else {
             present(update.drawable)
             applyLinkPause(link)
@@ -279,9 +279,17 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         }
     }
 
-    /// Returns the callback's drawable to the layer. The command draws nothing.
+    /// Returns a defined background, including during zero-size layout and
+    /// shutdown. An unrendered drawable can contain stale pool contents.
     private func present(_ drawable: any CAMetalDrawable) {
         guard let command = queue.makeCommandBuffer() else { return }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = drawable.texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.endEncoding()
         command.present(drawable)
         command.commit()
     }

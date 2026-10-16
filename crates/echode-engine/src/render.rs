@@ -1,45 +1,15 @@
-//! Offline render of a project through the test synth.
-//!
-//! Each block uses a fixed scratch length. That length is not a limit on the
-//! render. Voice slots follow the deepest overlap, including release, not the
-//! length of the score. Scheduling and the synth do not allocate. Gathering the track
-//! slices for the mixer does, and this function is not called from the audio thread.
-
-use echode_model::Project;
+//! Offline export through product playback, with the same clip buses and fader.
+//! Only preparation and the writer callback may allocate.
 
 use crate::builtin::Device;
+use echode_model::Project;
+
 use crate::clock::tick_to_sample;
-use crate::mix::{TrackFader, mix_tracks};
-use crate::plan::PlaybackIds;
-use crate::realtime::ForbidAlloc;
-use crate::sequence::play_prepared;
 use crate::synth::TestSynth;
-use crate::transport::{PlaybackError, PlayedSpan, Transport};
-use echode_realtime::{Event, sort_events};
+use crate::transport::PlaybackError;
 
 /// Scratch length for one offline block. The render can be any number of frames.
 const BLOCK_FRAMES: u32 = 64;
-
-fn track_fader(track: &echode_model::Track) -> Result<TrackFader, PlaybackError> {
-    use echode_model::{DeviceKind, ParamKey};
-    let mixer = track
-        .devices
-        .iter()
-        .find(|device| device.kind == DeviceKind::Mixer)
-        .ok_or(PlaybackError::InvalidFader)?;
-    let value = |key| {
-        mixer
-            .value(key)
-            .filter(|value| key.allows(*value))
-            .ok_or(PlaybackError::InvalidFader)
-    };
-    Ok(TrackFader {
-        gain: value(ParamKey::Gain)?,
-        pan: value(ParamKey::Pan)?,
-        mute: value(ParamKey::Mute)? != 0.0,
-        solo: value(ParamKey::Solo)? != 0.0,
-    })
-}
 
 /// How many frames cover the score.
 ///
@@ -111,7 +81,7 @@ impl<E: std::fmt::Display> std::fmt::Display for OfflineError<E> {
 
 /// Renders `frames` of stereo, interleaved left then right.
 ///
-/// Every track is the test synth at unity gain, centered. The buffer length
+/// Uses each track's test synth and project fader values. The buffer length
 /// must be `frames * 2`.
 pub fn render_offline(
     project: &Project,
@@ -167,154 +137,37 @@ pub fn render_offline_blocks_with_clips<E>(
     if block_frames == 0 {
         return Err(OfflineError::Playback(PlaybackError::BufferTooSmall));
     }
-    let mut transport =
-        Transport::new(sample_rate, project.tempo().clone()).map_err(OfflineError::Playback)?;
-    transport.play();
-
-    let tracks = project.tracks();
-    let mut ids = PlaybackIds::new();
-    let plan = crate::plan::build_plan(project, project.tempo(), sample_rate, &mut ids)
-        .map_err(OfflineError::Playback)?;
-    let tail = i64::from(
-        TestSynth::new(sample_rate)
-            .map_err(OfflineError::Playback)?
-            .tail_samples(sample_rate),
-    );
-    let mut devices = Vec::with_capacity(plan.tracks.len());
-    let mut note_total = 0usize;
-    for track in &plan.tracks {
-        note_total += track.notes.len();
-        let mut device = TestSynth::new(sample_rate).map_err(OfflineError::Playback)?;
-        let voices = crate::plan::voice_demand(&track.notes, tail).max(1);
-        device
-            .prepare(voices, sample_rate)
-            .map_err(OfflineError::Playback)?;
-        devices.push(device);
-    }
-    let event_cap = note_total.saturating_mul(4).saturating_add(2).max(1);
-    let silent = Event::note_off(0, 0, 0, 0);
-    let mut events = vec![silent; event_cap];
-    let mut track_events = vec![silent; event_cap];
-    let mut sort_order = vec![0usize; event_cap];
     let scratch = block_frames as usize;
-    let mut planes = vec![vec![0.0; scratch]; tracks.len()];
+    let (mut control, mut audio) = crate::playback::playback_pair(project, sample_rate, scratch)
+        .map_err(OfflineError::Playback)?;
+    let clips = clips.to_vec();
+    control.set_clip_loader(std::sync::Arc::new(move |_, _| Ok(clips.clone())));
+    control.replace(project).map_err(OfflineError::Playback)?;
+    control
+        .command(crate::PlaybackCommand::Play)
+        .map_err(OfflineError::Playback)?;
     let mut left = vec![0.0; scratch];
     let mut right = vec![0.0; scratch];
-    let mut interleaved_block = vec![0.0; scratch * 2];
-    let mut peaks = vec![0.0; tracks.len()];
-    let faders = tracks
-        .iter()
-        .map(|track| track_fader(track))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(OfflineError::Playback)?;
-    let mut spans = [PlayedSpan {
-        start_sample: 0,
-        frames: 0,
-        block_offset: 0,
-        release_at: None,
-        loop_end: None,
-        wrap_from: None,
-    }; 2];
-    let mut cursor = plan.cursor();
-    let meter = project.meter();
-
+    let mut interleaved = vec![0.0; scratch * 2];
     let mut rendered = 0u32;
     while rendered < frames {
-        let block = (frames - rendered).min(block_frames);
-        let block_len = block as usize;
-        let span_count = {
-            let _guard = ForbidAlloc::enter();
-            let span_count = transport
-                .pull(block, &mut spans)
-                .map_err(OfflineError::Playback)?;
-            let mut event_count = play_prepared(
-                &plan,
-                &mut cursor,
-                &spans[..span_count],
-                &mut events,
-                &mut sort_order,
-                &mut track_events,
+        let count = (frames - rendered).min(block_frames) as usize;
+        audio
+            .render_checked(
+                &mut left[..count],
+                &mut right[..count],
+                std::time::Instant::now(),
             )
             .map_err(OfflineError::Playback)?;
-            for span in &spans[..span_count] {
-                if event_count >= events.len() {
-                    return Err(OfflineError::Playback(PlaybackError::BufferTooSmall));
-                }
-                events[event_count] =
-                    transport.transport_event(span.start_sample, span.block_offset, meter);
-                event_count += 1;
-            }
-            if !sort_events(
-                &mut events[..event_count],
-                &mut sort_order,
-                &mut track_events,
-            ) {
-                return Err(OfflineError::Playback(PlaybackError::BufferTooSmall));
-            }
-            for (track_index, _track) in tracks.iter().enumerate() {
-                planes[track_index][..block_len].fill(0.0);
-                let mut kept = 0;
-                for event in &events[..event_count] {
-                    let keep = match event.track_key() {
-                        None => true,
-                        Some(key) => key == track_index as u32,
-                    };
-                    if keep {
-                        track_events[kept] = *event;
-                        kept += 1;
-                    }
-                }
-                let mut channels = [&mut planes[track_index][..block_len]];
-                devices[track_index]
-                    .process(&mut channels, &track_events[..kept], sample_rate)
-                    .map_err(OfflineError::Playback)?;
-            }
-            span_count
-        };
-        add_offline_clips(tracks, clips, &spans[..span_count], &mut planes, block_len)
-            .map_err(OfflineError::Playback)?;
-        let plane_refs: Vec<&[f32]> = planes.iter().map(|plane| &plane[..block_len]).collect();
-        mix_tracks(
-            &plane_refs,
-            &faders,
-            &mut left[..block_len],
-            &mut right[..block_len],
-            &mut peaks,
-        )
-        .map_err(OfflineError::Playback)?;
-        for index in 0..block_len {
-            interleaved_block[index * 2] = left[index];
-            interleaved_block[index * 2 + 1] = right[index];
+        for (pair, (left, right)) in interleaved
+            .chunks_exact_mut(2)
+            .zip(left.iter().zip(&right))
+            .take(count)
+        {
+            pair.copy_from_slice(&[*left, *right]);
         }
-        on_block(&interleaved_block[..block_len * 2]).map_err(OfflineError::Write)?;
-        rendered += block;
-    }
-    Ok(())
-}
-
-fn add_offline_clips(
-    tracks: &[std::sync::Arc<echode_model::Track>],
-    clips: &[crate::playback::LoadedClip],
-    spans: &[PlayedSpan],
-    planes: &mut [Vec<f32>],
-    block_len: usize,
-) -> Result<(), PlaybackError> {
-    if clips.is_empty() || spans.is_empty() {
-        return Ok(());
-    }
-    for clip in clips {
-        let track_index = tracks
-            .iter()
-            .position(|track| track.id.raw() == clip.track)
-            .ok_or(PlaybackError::Time)?;
-        let view = [crate::voice::FadedClip {
-            start_sample: clip.start_sample,
-            samples: clip.samples.as_ref(),
-            fade_in: clip.fade_in,
-            fade_out: clip.fade_out,
-        }];
-        let plane = planes.get_mut(track_index).ok_or(PlaybackError::Time)?;
-        crate::voice::render_faded_clips(&view, spans, &mut plane[..block_len])?;
+        on_block(&interleaved[..count * 2]).map_err(OfflineError::Write)?;
+        rendered += count as u32;
     }
     Ok(())
 }
@@ -434,6 +287,7 @@ mod tests {
             track: project.tracks()[0].id.raw(),
             start_sample: 0,
             samples: Arc::clone(&samples),
+            right: None,
             fade_in: 8,
             fade_out: 8,
         }];
@@ -452,6 +306,7 @@ mod tests {
                 track: track_raw,
                 start_sample: 0,
                 samples: Arc::clone(&samples),
+                right: None,
                 fade_in: 8,
                 fade_out: 8,
             }])

@@ -1,6 +1,7 @@
 """A green process exit must also prove the required regression ran."""
 
 import importlib.util
+import errno
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,6 +15,36 @@ spec.loader.exec_module(contracts)
 
 
 class ContractEvidenceTests(unittest.TestCase):
+    def test_source_copy_retries_metadata_created_during_cleanup(self):
+        remove = contracts.shutil.rmtree
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir()
+            def metadata_race(path):
+                if not (path / ".DS_Store").exists():
+                    (path / ".DS_Store").write_bytes(b"metadata")
+                    raise OSError(errno.ENOTEMPTY, "Directory not empty", str(path))
+                remove(path)
+            with patch.object(contracts.shutil, "rmtree", side_effect=metadata_race) as cleanup:
+                with contracts.source_copy(root) as checkout:
+                    self.assertTrue(checkout.is_relative_to(root / "target"))
+                    self.assertTrue(checkout.name.startswith(".product-contracts-"))
+                self.assertEqual(cleanup.call_count, 2)
+                self.assertFalse(checkout.exists())
+
+    def test_source_copy_does_not_hide_cleanup_failures(self):
+        for code, attempts in ((errno.ENOTEMPTY, 3), (errno.EACCES, 1)):
+            with self.subTest(errno=code), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "target").mkdir()
+                error = OSError(code, "cleanup failed")
+                with patch.object(contracts.shutil, "rmtree", side_effect=error) as cleanup:
+                    with self.assertRaises(OSError) as raised:
+                        with contracts.source_copy(root):
+                            pass
+                    self.assertIs(raised.exception, error)
+                    self.assertEqual(cleanup.call_count, attempts)
+
     def test_child_processes_stay_in_the_outer_verification_group(self):
         process = Mock(returncode=0)
         process.communicate.return_value = ("", "")

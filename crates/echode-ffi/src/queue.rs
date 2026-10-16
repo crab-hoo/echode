@@ -10,7 +10,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use echode_actions::Command;
-use echode_audio_io::{AudioCommand, AudioState, Session};
+use echode_audio_io::{AudioCommand, AudioState, Session, TransportCancellation};
 use echode_draw::{ArrangeIndex, ArrangeView, Element, ElementId, PianoNote, PianoView, Role};
 use echode_history::{DocumentHost, PeakColumn, Waveforms};
 use echode_model::{Id, Project};
@@ -24,6 +24,7 @@ pub struct Document {
     queue: Mutex<Option<Sender<Job>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
     position: Arc<Position>,
+    cancellation: TransportCancellation,
 }
 
 #[derive(Default)]
@@ -62,6 +63,7 @@ struct Job {
     operation: Operation,
     context: Context,
     complete: Complete,
+    transport_revision: u64,
 }
 
 impl Document {
@@ -70,14 +72,17 @@ impl Document {
         let (sender, incoming) = mpsc::channel();
         let position = Arc::new(Position::default());
         let published = Arc::clone(&position);
+        let cancellation = TransportCancellation::default();
+        let transport = cancellation.clone();
         let thread = thread::Builder::new()
             .name("echode-ffi".to_string())
-            .spawn(move || worker(host, incoming, published))
+            .spawn(move || worker(host, incoming, published, transport))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
             thread: Mutex::new(Some(thread)),
             position,
+            cancellation,
         })
     }
 
@@ -99,6 +104,7 @@ impl Document {
     }
 
     pub(crate) fn shutdown(&self) {
+        self.cancellation.request(&AudioCommand::Stop);
         {
             let mut queue = self
                 .queue
@@ -131,10 +137,11 @@ impl Document {
     }
 
     pub(crate) fn enqueue(&self, operation: Operation, context: *mut c_void, complete: Complete) {
-        let job = Job {
+        let mut job = Job {
             operation,
             context: Context(context),
             complete,
+            transport_revision: 0,
         };
         let rejected = {
             let queue = self
@@ -143,7 +150,17 @@ impl Document {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             match queue.as_ref() {
                 None => Some(job),
-                Some(sender) => sender.send(job).err().map(|error| error.0),
+                Some(sender) => {
+                    // Capture the generation in queue order. Stop silences an
+                    // existing callback and invalidates a loading Play here,
+                    // without waiting behind that load on the document worker.
+                    if let Operation::Audio(bytes) = &job.operation
+                        && let Ok(command) = serde_json::from_slice::<AudioCommand>(bytes)
+                    {
+                        job.transport_revision = self.cancellation.request(&command);
+                    }
+                    sender.send(job).err().map(|error| error.0)
+                }
             }
         };
         if let Some(job) = rejected {
@@ -360,10 +377,16 @@ fn id_bytes(id: Id) -> [u8; 16] {
     *uuid::Uuid::from_u128(id.raw()).as_bytes()
 }
 
-fn worker(host: DocumentHost, incoming: Receiver<Job>, position: Arc<Position>) {
+fn worker(
+    host: DocumentHost,
+    incoming: Receiver<Job>,
+    position: Arc<Position>,
+    cancellation: TransportCancellation,
+) {
     let mut accepting = true;
     let mut previous: Option<Snapshot> = None;
-    let mut audio = Session::with_media(host.snapshot(), host.directory());
+    let mut audio =
+        Session::with_media_and_cancellation(host.snapshot(), host.directory(), cancellation);
     let mut pending_saves: Vec<(u128, Vec<u8>)> = Vec::new();
     loop {
         if accepting && catch_unwind(AssertUnwindSafe(|| audio.service())).is_err() {
@@ -395,7 +418,7 @@ fn worker(host: DocumentHost, incoming: Receiver<Job>, position: Arc<Position>) 
                 Operation::Audio(bytes) => {
                     let command: AudioCommand =
                         serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-                    audio.perform(command)?;
+                    audio.perform_requested(command, job.transport_revision)?;
                     None
                 }
                 Operation::History(bytes) => {
@@ -530,4 +553,49 @@ fn finish_raw(job: &Job, status: i32, message: Option<String>, snapshot: *mut Sn
         .as_ref()
         .map_or(std::ptr::null(), |message| message.as_ptr());
     (job.complete)(job.context.0, status, pointer, snapshot);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_stop_submission_invalidates_queued_play_before_worker_receives_it() {
+        extern "C" fn complete(
+            _: *mut c_void,
+            _: i32,
+            _: *const std::ffi::c_char,
+            _: *mut Snapshot,
+        ) {
+        }
+        let (sender, incoming) = mpsc::channel();
+        let document = Document {
+            queue: Mutex::new(Some(sender)),
+            thread: Mutex::new(None),
+            position: Arc::new(Position::default()),
+            cancellation: TransportCancellation::default(),
+        };
+        document.enqueue(
+            Operation::Audio(br#"{"type":"transport.play"}"#.to_vec()),
+            std::ptr::null_mut(),
+            complete,
+        );
+        document.enqueue(
+            Operation::Audio(br#"{"type":"transport.stop"}"#.to_vec()),
+            std::ptr::null_mut(),
+            complete,
+        );
+        let play = incoming.try_recv().unwrap();
+        let stop = incoming.try_recv().unwrap();
+        // No worker has run, yet Stop must already cancel the earlier Play.
+        assert!(!document.cancellation.is_current(play.transport_revision));
+        assert!(document.cancellation.is_current(stop.transport_revision));
+        document.enqueue(
+            Operation::Audio(br#"{"type":"transport.play"}"#.to_vec()),
+            std::ptr::null_mut(),
+            complete,
+        );
+        let replay = incoming.try_recv().unwrap();
+        assert!(document.cancellation.is_current(replay.transport_revision));
+    }
 }

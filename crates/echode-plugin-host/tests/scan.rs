@@ -333,6 +333,22 @@ fn script(body: &str) -> std::path::PathBuf {
 const PLUGIN_LINE: &str = "{\"id\":\"dev.audit.scan\",\"name\":\"Scan\",\"vendor\":\"Echode\",\"version\":\"1\",\"features\":[],\"url\":\"\"}\n";
 
 #[test]
+fn failed_scans_report_exit_codes_and_signals_without_stderr() {
+    for (body, status) in [
+        ("#!/bin/sh\nexit 23\n", "exit status: 23"),
+        ("#!/bin/sh\nkill -TERM $$\n", "signal: 15"),
+    ] {
+        let host = script(body);
+        let error =
+            echode_plugin_host::scan_out_of_process(&host, std::path::Path::new("bundle.clap"))
+                .expect_err("scan must fail");
+        let _ = std::fs::remove_file(host);
+        assert!(error.contains(status), "{error}");
+        assert!(error.contains("bundle.clap"), "{error}");
+    }
+}
+
+#[test]
 fn audit_rea08_descendant_pipe_does_not_extend_deadline() {
     let json = script(&format!("#!/bin/sh\nprintf '%s' '{}'", PLUGIN_LINE));
     let started = std::time::Instant::now();

@@ -1,4 +1,4 @@
-.PHONY: app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
+.PHONY: app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
 
 app:
 	bash scripts/build-app.sh
@@ -44,12 +44,12 @@ spike-piano-frame:
 
 # Portable checks include required product regressions, once each.
 check:
+	$(MAKE) check-verification
 	$(MAKE) check-base
 	$(MAKE) check-product-contracts
 
 # The verifier records this part and product contracts as separate checks.
 check-base:
-	$(MAKE) check-verification
 	cargo build --workspace
 	cargo fmt --check
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -115,7 +115,7 @@ advisories:
 
 # Release measurement of cross-process plugin hosting. See docs/spikes/S3-plugin-isolation.md.
 spike-isolation:
-	cargo build --release --workspace
+	cargo build --release -p echode-plugin-host -p echode-test-plugin
 	cargo test --release -p echode-plugin-host --test isolation -- --include-ignored --test-threads=1 --nocapture
 	cargo test --release -p echode-plugin-host --test hosted_playback -- --include-ignored --test-threads=1 --nocapture
 
@@ -168,7 +168,12 @@ check-bridge-tsan:
 check-bridge-miri:
 	bash scripts/check-bridge-miri.sh
 
-# 1,000-node CoreAudio graph and the release event-sort measurement. See docs/spikes/S2-engine.md.
+# Brief hardware check of the same 1,000-node graph; not a long-run stability claim.
+spike-engine-smoke:
+	cargo build --release -p echode-engine
+	cargo run --release -p echode-engine --bin echode-engine-spike -- --seconds 10 --native-rate --workers auto --report target/spike-s2-smoke.txt
+
+# Explicit long-run stability and release event-sort measurement. See docs/spikes/S2-engine.md.
 spike-engine:
 	cargo build --release -p echode-engine
 	cargo test --release -p echode-engine -- --include-ignored --skip audit_ --nocapture

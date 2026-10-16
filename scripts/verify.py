@@ -7,6 +7,7 @@ import fcntl
 import fnmatch
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -14,6 +15,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
@@ -60,6 +62,16 @@ def load_policy(root):
             raise ValueError("invalid make target")
         if not set(check["areas"]).issubset(policy["areas"]):
             raise ValueError("unknown verification area")
+        for field in ("inputs", "packages", "policy_inputs"):
+            values = check.get(field, [])
+            if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+                raise ValueError("invalid verification " + field)
+        if not (check.get("inputs") or check.get("packages")):
+            raise ValueError("each check needs explicit inputs or packages")
+        if any(key not in policy for key in check.get("policy_inputs", [])):
+            raise ValueError("unknown verification policy input")
+        if check.get("extended") and check["mode"] != "manual":
+            raise ValueError("extended checks must be manual")
     return policy
 
 
@@ -76,7 +88,7 @@ def select_checks(policy, changed, all_checks=False):
         reasons = hits
         if check["mode"] == "automatic":
             reasons += global_hits + infrastructure
-        if all_checks or reasons or (changed and check.get("always")):
+        if all_checks or (not check.get("extended") and (reasons or (changed and check.get("always")))):
             selected[check["id"]] = sorted(set(reasons)) or ["all checks" if all_checks else "every change"]
     return selected
 
@@ -145,6 +157,108 @@ def fingerprint(root, changed, base, tools):
     return digest.hexdigest()
 
 
+def package_directories(root, names):
+    """Include local dependencies for all features/targets, including test/build dependencies."""
+    if not names:
+        return set()
+    workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
+    manifests = {}
+    for pattern in workspace["members"]:
+        for folder in root.glob(pattern):
+            relative = folder.relative_to(root).as_posix()
+            if any(fnmatch.fnmatchcase(relative, excluded) for excluded in workspace.get("exclude", [])):
+                continue
+            manifest = tomllib.loads((folder / "Cargo.toml").read_text())
+            manifests[manifest["package"]["name"]] = folder
+    requested = set(manifests) if names == ["*"] else set(names)
+    if requested - manifests.keys():
+        raise ValueError("unknown verification package: " + ", ".join(sorted(requested - manifests.keys())))
+    pending = [manifests[name] for name in requested]
+    visited = set()
+    while pending:
+        folder = pending.pop().resolve()
+        if not folder.is_relative_to(root.resolve()):
+            raise ValueError("verification cannot cache a local dependency outside the repository")
+        if folder in visited:
+            continue
+        visited.add(folder)
+        manifest = tomllib.loads((folder / "Cargo.toml").read_text())
+        sections = [manifest, *manifest.get("target", {}).values()]
+        for section in sections:
+            for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
+                for alias, dependency in section.get(kind, {}).items():
+                    base = folder
+                    if isinstance(dependency, dict) and dependency.get("workspace"):
+                        dependency = workspace.get("dependencies", {})[alias]
+                        base = root
+                    if isinstance(dependency, dict) and "path" in dependency:
+                        pending.append(base / dependency["path"])
+    return {folder.relative_to(root.resolve()).as_posix() for folder in visited}
+
+
+def audio_output_identity():
+    """Read device metadata without opening an IO stream; retain only a hash."""
+    try:
+        completed = subprocess.run(["system_profiler", "-json", "SPAudioDataType", "-detailLevel", "mini"],
+                                   capture_output=True, text=True, timeout=10, check=True)
+        sections = json.loads(completed.stdout)["SPAudioDataType"]
+        devices = [device for section in sections if isinstance(section, dict) for device in section.get("_items", [])
+                   if isinstance(device, dict) and device.get("coreaudio_default_audio_output_device") == "spaudio_yes"]
+        if len(devices) != 1:
+            return None
+        rate = float(devices[0].get("coreaudio_device_srate", 0))
+        if not math.isfinite(rate) or rate <= 0:
+            return None
+        fields = ("_name", "coreaudio_device_srate", "coreaudio_device_output",
+                  "coreaudio_device_manufacturer", "coreaudio_device_transport", "coreaudio_output_source")
+        description = {key: devices[0].get(key) for key in fields}
+        return hashlib.sha256(json.dumps(description, sort_keys=True).encode()).hexdigest()
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None
+
+
+def external_contexts(policy):
+    return {"audio-output": audio_output_identity()} if any(c.get("device_context") for c in policy["checks"]) else {}
+
+
+def check_fingerprints(root, policy, tools, contexts=None):
+    if contexts is None:
+        contexts = external_contexts(policy)
+    files = sorted(set(paths(git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"))))
+    common = policy["global_inputs"] + policy.get("evidence_inputs", ["Makefile", "scripts/verify.py", ".cargo/**"])
+    contents = {}
+    stamps = {}
+    for check in policy["checks"]:
+        patterns = common + check.get("inputs", [])
+        folders = package_directories(root, check.get("packages", []))
+        configuration = [check, common, tools, contexts if check.get("device_context") else {},
+                         {key: policy[key] for key in check.get("policy_inputs", [])}]
+        digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
+        for relative in files:
+            if not (matches([relative], patterns)
+                    or any(relative.startswith(folder + "/") for folder in folders)):
+                continue
+            if relative not in contents:
+                path = root / relative
+                value = hashlib.sha256()
+                if path.is_symlink():
+                    value.update(b"link:" + os.fsencode(os.readlink(path)))
+                    path = path.resolve()
+                    if not path.is_relative_to(root.resolve()) or not path.is_file():
+                        raise ValueError("verification input symlinks must resolve to files inside the repository")
+                if path.is_file():
+                    value.update(str(path.stat().st_mode).encode() + b"\0")
+                    with path.open("rb") as source:
+                        for block in iter(lambda: source.read(1024 * 1024), b""):
+                            value.update(block)
+                else:
+                    value.update(b"missing")
+                contents[relative] = value.digest()
+            digest.update(os.fsencode(relative) + b"\0" + contents[relative])
+        stamps[check["id"]] = digest.hexdigest()
+    return stamps
+
+
 @contextmanager
 def report_lock(directory):
     directory.mkdir(parents=True, exist_ok=True)
@@ -164,14 +278,17 @@ def report_lock(directory):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def load_report(directory, stamp):
+def load_report(directory):
     try:
         report = json.loads((directory / "report.json").read_text())
-        if report.get("version") == 1 and report.get("fingerprint") == stamp:
+        if (isinstance(report, dict) and report.get("version") == 2 and isinstance(report.get("results"), dict)
+                and all(isinstance(value, dict) and isinstance(value.get("fingerprint"), str)
+                        for value in report["results"].values())):
             return report
     except (OSError, ValueError):
         pass
-    return {"version": 1, "fingerprint": stamp, "results": {}}
+    # Whole-tree v1 evidence cannot prove the new per-check dependency identities.
+    return {"version": 2, "results": {}}
 
 
 def save_report(directory, report, policy, selected):
@@ -183,18 +300,25 @@ def save_report(directory, report, policy, selected):
              f"ソースの識別値: `{report['fingerprint']}`", "", "## 選ばれた検査", ""]
     for check in policy["checks"]:
         name = check["id"]
-        if name not in selected:
+        additional = check.get("extended") and name in report["results"]
+        if name not in selected and not additional:
             continue
-        kind = "自動検査" if check["mode"] == "automatic" else "計測などの候補"
+        kind = "自動検査" if check["mode"] == "automatic" else "追加の長時間検査" if check.get("extended") else "計測などの候補"
         result = report["results"][name]
-        lines.append(f"- `{name}` ({kind}): **{result['status']}** — {check['purpose']}")
+        status = result["status"]
+        if result.get("fingerprint") != report["input_fingerprints"][name]:
+            status = "stale"
+        if name not in selected:
+            kind += "・通常の完了判定外"
+        lines.append(f"- `{name}` ({kind}): **{status}** — {check['purpose']}")
         if result.get("reason"):
             lines.append(f"  - 未実行の理由: {result['reason']}")
         if result.get("log"):
             lines.append(f"  - ログ: [{name}]({name}.log)")
-        lines.append("  - 選択の根拠: " + ", ".join(selected[name]))
+        lines.append(f"  - 検査入力の識別値: `{result['fingerprint']}`")
+        lines.append("  - 選択の根拠: " + ", ".join(selected.get(name, ["以前に明示実行した追加検査の記録"])))
     lines += ["", "## 対象の変更", ""] + [f"- `{path}`" for path in report["changed_paths"]]
-    lines += ["", "passed はこの識別値のソースだけに有効。not_run は実行か理由の記録が必要。deferred は理由を記録した未実行であり、合格ではない。", ""]
+    lines += ["", "passed と deferred は各検査の入力・ツールが一致する間だけ有効。全体の識別値は変更監視用。not_run は実行か理由の記録が必要。deferred は合格ではない。", ""]
     temporary = directory / "report.md.tmp"
     temporary.write_text("\n".join(lines))
     temporary.replace(directory / "report.md")
@@ -234,6 +358,9 @@ def verify(root, args):
     changed = changed_paths(root, args.base)
     selected = select_checks(policy, changed, args.all)
     checks = {check["id"]: check for check in policy["checks"]}
+    for name in args.run:
+        if name in checks and checks[name].get("extended"):
+            selected[name] = ["explicit --run"]
     for name in args.only + args.run + args.defer:
         if name not in selected:
             raise ValueError(f"{name} is not selected; use --all to select an otherwise unrelated check")
@@ -249,7 +376,7 @@ def verify(root, args):
         raise ValueError("--run/--defer must be included in --only")
     if args.plan:
         for name, reasons in selected.items():
-            kind = "自動検査" if checks[name]["mode"] == "automatic" else "計測などの候補"
+            kind = "自動検査" if checks[name]["mode"] == "automatic" else "追加の長時間検査" if checks[name].get("extended") else "計測などの候補"
             print(f"{name} [{kind}]: {checks[name]['purpose']}")
             print("  " + ", ".join(reasons))
         if not selected:
@@ -259,13 +386,20 @@ def verify(root, args):
     with report_lock(directory):
         tools = tool_identity(root)
         stamp = fingerprint(root, changed, args.base, tools)
-        report = load_report(directory, stamp)
-        report.update({"changed_paths": changed, "base": args.base, "selected": selected, "tools": tools})
+        contexts = external_contexts(policy)
+        stamps = check_fingerprints(root, policy, tools, contexts)
+        report = load_report(directory)
+        report.update({"fingerprint": stamp, "input_fingerprints": stamps, "changed_paths": changed,
+                       "base": args.base, "selected": selected, "tools": tools})
         for name in selected:
             status = "pending" if checks[name]["mode"] == "automatic" else "not_run"
-            report["results"].setdefault(name, {"status": status})
+            previous = report["results"].get(name, {})
+            if (previous.get("fingerprint") != stamps[name]
+                    or (previous.get("status") == "passed" and checks[name].get("device_context")
+                        and contexts.get("audio-output") is None)):
+                report["results"][name] = {"status": status, "fingerprint": stamps[name]}
         for name in args.defer:
-            report["results"][name] = {"status": "deferred", "reason": args.reason.strip()}
+            report["results"][name] = {"status": "deferred", "reason": args.reason.strip(), "fingerprint": stamps[name]}
         save_report(directory, report, policy, selected)
         for check in policy["checks"]:
             name = check["id"]
@@ -273,17 +407,23 @@ def verify(root, args):
                 continue
             previous = report["results"].get(name, {}).get("status")
             if not args.force and previous == "passed":
-                print(f"{name}: passed (ソースが同じため前回の結果を使用)", flush=True)
+                print(f"{name}: passed (検査の入力・ツールが同じため前回の結果を使用)", flush=True)
                 continue
             if check["mode"] == "manual" and name not in args.run:
                 continue
             print(f"{name}: 実行中", flush=True)
-            report["results"][name] = {"status": "running"}
+            report["results"][name] = {"status": "running", "fingerprint": stamps[name]}
             save_report(directory, report, policy, selected)
             result = run_check(root, check, directory / f"{name}.log")
+            if result["status"] == "passed" and check.get("device_context") and contexts.get("audio-output") is None:
+                result.update({"status": "failed", "error": "audio device metadata unavailable; cannot attest this measurement"})
+            result["fingerprint"] = stamps[name]
             report["results"][name] = result
             # Concurrent edits may occur while an agent or CI runs a long check.
-            if changed_paths(root, args.base) != changed or fingerprint(root, changed, args.base, tool_identity(root)) != stamp:
+            current_tools = tool_identity(root)
+            if (changed_paths(root, args.base) != changed
+                    or fingerprint(root, changed, args.base, current_tools) != stamp
+                    or check_fingerprints(root, policy, current_tools)[name] != stamps[name]):
                 result["status"] = "stale"
                 result["error"] = "source or toolchain changed during verification"
                 save_report(directory, report, policy, selected)
@@ -293,7 +433,10 @@ def verify(root, args):
             print(f"{name}: {result['status']} ({name}.log)", flush=True)
             if result["status"] != "passed":
                 return 1
-        if changed_paths(root, args.base) != changed or fingerprint(root, changed, args.base, tool_identity(root)) != stamp:
+        current_tools = tool_identity(root)
+        current_stamps = check_fingerprints(root, policy, current_tools)
+        if (changed_paths(root, args.base) != changed or fingerprint(root, changed, args.base, current_tools) != stamp
+                or any(current_stamps[name] != stamps[name] for name in selected)):
             print("検査の確認中に変更がありました。make verify を再実行してください。", file=sys.stderr)
             return 1
         # Never open hardware automatically. Every selected manual check needs

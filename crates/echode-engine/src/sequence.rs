@@ -104,6 +104,17 @@ pub(crate) fn render_metronome_index(
     sample_rate: u32,
     output: &mut [f32],
 ) -> Result<(), PlaybackError> {
+    render_metronome_index_before(spans, index, meter, sample_rate, output, None)
+}
+
+pub(crate) fn render_metronome_index_before(
+    spans: &[PlayedSpan],
+    index: &TempoIndex,
+    meter: Meter,
+    sample_rate: u32,
+    output: &mut [f32],
+    cutoff: Option<i64>,
+) -> Result<(), PlaybackError> {
     let bar = meter.bar_ticks().ok_or(PlaybackError::Time)?.get();
     let length = i64::from((sample_rate / 200).max(1));
     for span in spans {
@@ -119,7 +130,8 @@ pub(crate) fn render_metronome_index(
                 .start_sample
                 .checked_add(i64::from(local))
                 .ok_or(PlaybackError::Time)?;
-            let Some((downbeat, age)) = click_at(index, project, bar, length, sample_rate)? else {
+            let Some((downbeat, age)) = click_at(index, project, bar, length, sample_rate, cutoff)?
+            else {
                 continue;
             };
             output[(span.block_offset + local) as usize] +=
@@ -135,6 +147,7 @@ fn click_at(
     bar: i64,
     length: i64,
     sample_rate: u32,
+    cutoff: Option<i64>,
 ) -> Result<Option<(bool, u32)>, PlaybackError> {
     let tick = index
         .sample_to_tick(project, sample_rate)
@@ -149,7 +162,7 @@ fn click_at(
         let start = index
             .tick_to_sample(start_tick, sample_rate)
             .ok_or(PlaybackError::Time)?;
-        if start <= project {
+        if start <= project && cutoff.is_none_or(|cutoff| start < cutoff) {
             let age = project - start;
             if age < length {
                 let downbeat = start_tick.rem_euclid(bar) == 0;

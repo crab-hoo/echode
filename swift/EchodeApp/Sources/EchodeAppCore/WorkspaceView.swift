@@ -19,8 +19,8 @@ public struct WorkspaceView: View {
             HStack {
                 Text(controller.projectURL?.lastPathComponent ?? text("No project")).lineLimit(1)
                 Spacer()
-                if controller.busy { ProgressView().controlSize(.small) }
-                Text(text(controller.busy ? "Applying Changes" : controller.snapshot == nil ? "Create or open a project to start" : "Changes recorded automatically"))
+                if controller.busy || controller.pendingPlayback == true { ProgressView().controlSize(.small) }
+                Text(text(controller.pendingPlayback == true ? "Preparing Playback" : controller.busy ? "Applying Changes" : controller.snapshot == nil ? "Create or open a project to start" : "Changes recorded automatically"))
                     .foregroundStyle(.secondary)
             }.font(.caption).padding(8)
         }
@@ -59,10 +59,10 @@ public struct WorkspaceView: View {
                     splitter(.inspector, value: sizes.inspector, size: geometry.size)
                 }
                 VStack(spacing: 0) {
-                    arrange.frame(height: sizes.arrange)
+                    arrange.frame(height: sizes.arrange).clipped()
                     if state.layout.editor {
                         splitter(.editor, value: sizes.editor, size: geometry.size)
-                        WorkspaceNoteEditorView(controller: controller, state: state).frame(height: sizes.editor)
+                        WorkspaceNoteEditorView(controller: controller, state: state).frame(height: sizes.editor).clipped()
                     }
                 }.frame(maxWidth: .infinity)
                 if state.layout.browser {

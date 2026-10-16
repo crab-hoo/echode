@@ -23,7 +23,8 @@ pub use region::{
     arm_abort_notice, point_abort_notice,
 };
 pub use session::{
-    BlockProgress, PluginHost, PluginNotice, SessionError, SpawnOptions, WorkgroupHandoff,
+    BlockProgress, PluginAudio, PluginControl, PluginHost, PluginNotice, SessionError,
+    SpawnOptions, WorkgroupHandoff,
 };
 pub use sync::{SyncFlags, WaitError, wait_until_ne, wake_one};
 pub use workgroup::{
@@ -37,8 +38,13 @@ pub const MAX_FRAMES: usize = 512;
 
 pub const CMD_PROCESS: u32 = 1;
 pub const CMD_SHUTDOWN: u32 = 2;
+/// Reset DSP state, then process the block's events and audio in that order.
+pub const CMD_RESET_PROCESS: u32 = 3;
 
-pub const MAGIC: u64 = 0xEC0D_E001_0000_0002;
+/// Adopt prepared storage without changing plugin DSP state.
+pub const CMD_ADOPT_MAPPING: u32 = 4;
+
+pub const MAGIC: u64 = 0xEC0D_E001_0000_0004;
 
 /// Sample rate used by the spike host when it activates a plugin.
 pub const SPIKE_SAMPLE_RATE: f64 = 48_000.0;

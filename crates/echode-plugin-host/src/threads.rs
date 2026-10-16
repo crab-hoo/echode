@@ -7,6 +7,10 @@
 use crate::events::write_input;
 use crate::{HostError, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
+use clack_host::events::{
+    Pckn,
+    event_types::{MidiEvent, NoteChokeEvent},
+};
 use clack_host::extensions::prelude::{
     Extension, ExtensionImplementation, HostExtensionSide, HostWrapper, RawExtension,
     RawExtensionImplementation,
@@ -15,14 +19,18 @@ use clack_host::prelude::*;
 use clap_sys::ext::audio_ports::{
     CLAP_EXT_AUDIO_PORTS, clap_audio_port_info, clap_plugin_audio_ports,
 };
+use clap_sys::ext::note_ports::{
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI_MPE, clap_note_port_info,
+    clap_plugin_note_ports,
+};
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::host::clap_host;
 use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
-    CMD_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn, MappedRegion, RegionError, Socket, SyncFlags,
-    wake_one,
+    CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn,
+    MappedRegion, RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
@@ -133,15 +141,16 @@ impl ProcessorHandoff {
 struct Bridge {
     source: AtomicPtr<CFRunLoopSource>,
     run_loop: AtomicPtr<CFRunLoop>,
-    current: AtomicPtr<MappedRegion>,
-    pending: AtomicPtr<MappedRegion>,
-    retired: AtomicPtr<MappedRegion>,
+    root: Arc<MappedRegion>,
+    current: AtomicPtr<Arc<MappedRegion>>,
+    pending: AtomicPtr<Arc<MappedRegion>>,
+    retired: AtomicPtr<Arc<MappedRegion>>,
     pending_buffers: AtomicPtr<PluginBuffers>,
     retired_buffers: AtomicPtr<PluginBuffers>,
     /// The processing thread has allocated its first buffers and can adopt replacements.
     buffers_live: AtomicBool,
     switched: AtomicU64,
-    map_lock: AtomicBool,
+    cancel_pending: AtomicBool,
     restart_request: AtomicU64,
     restart_ack: AtomicU64,
     want_process: AtomicBool,
@@ -181,7 +190,7 @@ struct Bridge {
 }
 
 // SAFETY: the CoreFoundation pointers stay valid until both worker threads have
-// been joined. Mapping pointers are swapped under `map_lock`, and the previous
+// been joined. Only the processing thread swaps mapping pointers, and the previous
 // mapping is freed only after the processing thread has left it. The stopped
 // processor slot is published through `processor.state`, not by aliasing.
 unsafe impl Send for Bridge {}
@@ -200,46 +209,12 @@ impl Bridge {
         }
     }
 
-    fn lock_map(&self) {
-        while self
-            .map_lock
-            .compare_exchange_weak(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            std::hint::spin_loop();
-        }
-    }
-
-    /// One attempt. The processing thread must not wait out a holder.
-    fn try_lock_map(&self) -> bool {
-        self.map_lock
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-    }
-
-    fn unlock_map(&self) {
-        self.map_lock.store(false, Ordering::Release);
-    }
-
     fn bump_audio(&self) {
-        // The processing thread is not waiting on this alarm. Waking would be
-        // a syscall inside the realtime section, and the next loop reads it.
         if ON_AUDIO.with(|flag| flag.get()) {
-            let region = self.current.load(Ordering::Acquire);
-            if !region.is_null() {
-                // SAFETY: this thread is the only one that retires `current`.
-                // It does not retire the mapping it is processing.
-                unsafe { (*region).raise_alarm() };
-            }
-            return;
+            self.root.raise_alarm();
+        } else {
+            self.root.bump_alarm();
         }
-        self.lock_map();
-        let region = self.current.load(Ordering::Acquire);
-        if !region.is_null() {
-            // SAFETY: `current` is not freed while `map_lock` is held.
-            unsafe { (*region).bump_alarm() };
-        }
-        self.unlock_map();
     }
 
     fn bump_fan(&self) {
@@ -550,11 +525,13 @@ fn serve_region(
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     let max_frames = region.layout().max_frames;
-    let region = Box::into_raw(Box::new(region));
+    let root = Arc::new(region);
+    let region = Box::into_raw(Box::new(Arc::clone(&root)));
     let fan = fan.map(|fan| Box::into_raw(Box::new(fan)));
     let bridge = Arc::new(Bridge {
         source: AtomicPtr::new(ptr::null_mut()),
         run_loop: AtomicPtr::new(ptr::null_mut()),
+        root,
         current: AtomicPtr::new(region),
         pending: AtomicPtr::new(ptr::null_mut()),
         retired: AtomicPtr::new(ptr::null_mut()),
@@ -562,7 +539,7 @@ fn serve_region(
         retired_buffers: AtomicPtr::new(ptr::null_mut()),
         buffers_live: AtomicBool::new(false),
         switched: AtomicU64::new(0),
-        map_lock: AtomicBool::new(false),
+        cancel_pending: AtomicBool::new(false),
         restart_request: AtomicU64::new(0),
         restart_ack: AtomicU64::new(0),
         want_process: AtomicBool::new(false),
@@ -641,6 +618,7 @@ fn serve_region(
             Err(error) => PortShape {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
+                reset_midi: Vec::new(),
                 error: Some(error),
             },
         };
@@ -722,7 +700,6 @@ fn serve_region(
 }
 
 fn release_maps(bridge: &Bridge) {
-    bridge.lock_map();
     let maps = [
         bridge.current.swap(ptr::null_mut(), Ordering::AcqRel),
         bridge.pending.swap(ptr::null_mut(), Ordering::AcqRel),
@@ -736,7 +713,6 @@ fn release_maps(bridge: &Bridge) {
             .retired_buffers
             .swap(ptr::null_mut(), Ordering::AcqRel),
     ];
-    bridge.unlock_map();
     for pointer in maps {
         if !pointer.is_null() {
             // SAFETY: both worker threads have been joined, so these mappings
@@ -837,14 +813,7 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
         stop_loop(bridge);
         return Err(error);
     }
-    bridge.lock_map();
-    let initial = bridge.current.load(Ordering::Acquire);
-    let mut seen_alarm = if initial.is_null() {
-        0
-    } else {
-        unsafe { (*initial).alarm() }
-    };
-    bridge.unlock_map();
+    let mut seen_alarm = bridge.root.alarm();
     let mut seen_request = 0u64;
     // Allocated once, after the mapping matches the declared ports.
     // Later blocks reuse this storage and do not allocate.
@@ -863,10 +832,14 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
         &output_counts,
         frames.max(1),
         event_cap.max(1),
+        shape
+            .map(|shape| shape.reset_midi.as_slice())
+            .unwrap_or_default(),
     ));
     bridge.buffers_live.store(true, Ordering::Release);
+    current_region(bridge).mark_ready();
     // `sigaction` is a syscall. Install it before the realtime section.
-    echode_sandbox::arm_abort_notice(current_region(bridge));
+    echode_sandbox::arm_abort_notice(&bridge.root);
     let result = audio_loop(
         bridge,
         &mut started,
@@ -898,11 +871,18 @@ struct PluginBuffers {
     output_ptrs: Vec<*mut f32>,
     events: EventBuffer,
     decoded: Vec<Event>,
+    reset_midi: Vec<MidiEvent>,
 }
 
 impl PluginBuffers {
     /// Sized once from the declared ports. Later blocks reuse this storage.
-    fn allocate(inputs: &[u32], outputs: &[u32], frames: usize, events: usize) -> Self {
+    fn allocate(
+        inputs: &[u32],
+        outputs: &[u32],
+        frames: usize,
+        events: usize,
+        reset_midi: &[MidiEvent],
+    ) -> Self {
         let input_channels = inputs.iter().map(|count| *count as usize).sum();
         let output_channels = outputs.iter().map(|count| *count as usize).sum();
         Self {
@@ -916,8 +896,12 @@ impl PluginBuffers {
             output_offsets: channel_offsets(outputs),
             input_ptrs: vec![ptr::null_mut(); input_channels],
             output_ptrs: vec![ptr::null_mut(); output_channels],
-            events: EventBuffer::with_capacity(events),
+            // One host lifecycle event in addition to the routed project events.
+            events: EventBuffer::with_capacity(
+                events.saturating_add(1).saturating_add(reset_midi.len()),
+            ),
             decoded: Vec::with_capacity(events),
+            reset_midi: reset_midi.to_vec(),
         }
     }
 
@@ -970,14 +954,8 @@ fn audio_loop(
     loop {
         if adopt(bridge, Some(buffers)) {
             *seen_request = 0;
-            *seen_alarm = current_region(bridge).alarm();
-        } else if handoff_pending(bridge) {
-            // The control thread holds the map lock only to swap pointers.
-            // Yielding lets it finish. Waiting here would miss the swap.
-            std::thread::yield_now();
-            continue;
+            *seen_alarm = bridge.root.alarm();
         }
-        echode_sandbox::point_abort_notice(current_region(bridge));
         if bridge.stop.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -985,7 +963,7 @@ fn audio_loop(
             Ok(Step::Again) => continue,
             Ok(Step::Stop) => return Ok(()),
             Ok(Step::Wait) => {
-                *seen_alarm = current_region(bridge).wait_alarm(*seen_alarm)?;
+                *seen_alarm = bridge.root.wait_alarm(*seen_alarm)?;
             }
             Err(error) => return Err(explain(error)),
         }
@@ -1014,7 +992,13 @@ fn service_block(
             bridge.bump_fan();
             return Ok(Step::Stop);
         }
-        if command != CMD_PROCESS {
+        if command == CMD_ADOPT_MAPPING {
+            region.finish(generation);
+            bridge.bump_fan();
+            *seen_request = generation;
+            return Ok(Step::Again);
+        }
+        if !matches!(command, CMD_PROCESS | CMD_RESET_PROCESS) {
             return Err(RtFail::Command(command));
         }
         let frames = region.prepare_block(generation)?;
@@ -1024,6 +1008,9 @@ fn service_block(
         let fits = buffers.fits(inputs, outputs, frames);
         if bridge.has_plugin.load(Ordering::Acquire) && fits {
             if let Some(active) = started.as_mut() {
+                if command == CMD_RESET_PROCESS {
+                    active.reset();
+                }
                 for stage in 0..stages {
                     if stage > 0 {
                         region.feed_output_to_input(generation)?;
@@ -1047,7 +1034,7 @@ fn service_block(
         *seen_request = generation;
         return Ok(Step::Again);
     }
-    let alarm = region.alarm();
+    let alarm = bridge.root.alarm();
     if alarm != *seen_alarm {
         *seen_alarm = alarm;
         return Ok(Step::Again);
@@ -1067,56 +1054,79 @@ fn handoff_pending(bridge: &Bridge) -> bool {
         || !bridge.pending_buffers.load(Ordering::Acquire).is_null()
 }
 
+#[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 fn adopt(bridge: &Bridge, buffers: Option<&mut Box<PluginBuffers>>) -> bool {
-    if !handoff_pending(bridge) {
+    let _guard = crate::realtime::ForbidAlloc::enter();
+    // The control thread publishes buffers before the mapping. Only this thread
+    // removes pending pointers; retired storage is freed by control after release.
+    let pending = bridge.pending.load(Ordering::Acquire);
+    if pending.is_null() {
         return false;
     }
-    if !bridge.try_lock_map() {
+    let cancel = bridge.cancel_pending.swap(false, Ordering::AcqRel);
+    // SAFETY: only this thread can retire this pending mapping.
+    if !cancel
+        && bridge.buffers_live.load(Ordering::Acquire)
+        && unsafe { (*pending).published() } == 0
+    {
         return false;
     }
-    let pending = bridge.pending.swap(ptr::null_mut(), Ordering::AcqRel);
-    let pending_buffers = bridge
+    if !bridge.retired.load(Ordering::Acquire).is_null()
+        || !bridge.retired_buffers.load(Ordering::Acquire).is_null()
+    {
+        if cancel {
+            bridge.cancel_pending.store(true, Ordering::Release);
+        }
+        return false;
+    }
+    let pending_buffers = bridge.pending_buffers.load(Ordering::Acquire);
+    if !cancel && !pending_buffers.is_null() && buffers.is_none() {
+        return false;
+    }
+    bridge.pending.store(ptr::null_mut(), Ordering::Release);
+    bridge
         .pending_buffers
-        .swap(ptr::null_mut(), Ordering::AcqRel);
-    if pending.is_null() && pending_buffers.is_null() {
-        bridge.unlock_map();
-        return false;
-    }
-    let retired_busy = !bridge.retired.load(Ordering::Acquire).is_null()
-        || !bridge.retired_buffers.load(Ordering::Acquire).is_null();
-    if retired_busy || (!pending_buffers.is_null() && buffers.is_none()) {
-        // The control thread still owns the previous set, or this thread has
-        // not allocated buffers yet. Put the new set back. Do not free it here.
-        if !pending.is_null() {
-            bridge.pending.store(pending, Ordering::Release);
-        }
-        if !pending_buffers.is_null() {
-            bridge
-                .pending_buffers
-                .store(pending_buffers, Ordering::Release);
-        }
-        bridge.unlock_map();
-        return false;
-    }
-    if !pending.is_null() {
-        let old = bridge.current.swap(pending, Ordering::AcqRel);
-        bridge.retired.store(old, Ordering::Release);
-        // SAFETY: `pending` is the mapping just published by the control thread.
-        echode_sandbox::point_abort_notice(unsafe { &*pending });
-    }
-    if let (Some(buffers), false) = (buffers, pending_buffers.is_null()) {
-        // SAFETY: the control thread allocated this set and will not read it
-        // again. The previous set is retired for that thread to free.
-        let replacement = unsafe { Box::from_raw(pending_buffers) };
-        let previous = std::mem::replace(buffers, replacement);
+        .store(ptr::null_mut(), Ordering::Release);
+    if cancel {
+        bridge.retired.store(pending, Ordering::Release);
         bridge
             .retired_buffers
-            .store(Box::into_raw(previous), Ordering::Release);
+            .store(pending_buffers, Ordering::Release);
+    } else {
+        let old = bridge.current.swap(pending, Ordering::AcqRel);
+        bridge.retired.store(old, Ordering::Release);
+        if let (Some(buffers), false) = (buffers, pending_buffers.is_null()) {
+            // SAFETY: control relinquished this allocation before publishing pending.
+            let replacement = unsafe { Box::from_raw(pending_buffers) };
+            let old = std::mem::replace(buffers, replacement);
+            bridge
+                .retired_buffers
+                .store(Box::into_raw(old), Ordering::Release);
+        }
+        if bridge.buffers_live.load(Ordering::Acquire) {
+            // SAFETY: current is now exclusively owned by this processing thread.
+            unsafe {
+                (*pending).mark_ready();
+            }
+        }
     }
     bridge.switched.fetch_add(1, Ordering::Release);
-    bridge.unlock_map();
     bridge.bump_control();
-    true
+    !cancel
+}
+
+fn reclaim_retired(bridge: &Bridge) {
+    let old = bridge.retired.swap(ptr::null_mut(), Ordering::AcqRel);
+    let buffers = bridge
+        .retired_buffers
+        .swap(ptr::null_mut(), Ordering::AcqRel);
+    // SAFETY: the processing thread relinquished these allocations before release.
+    if !old.is_null() {
+        drop(unsafe { Box::from_raw(old) });
+    }
+    if !buffers.is_null() {
+        drop(unsafe { Box::from_raw(buffers) });
+    }
 }
 
 fn pump(
@@ -1304,39 +1314,42 @@ fn handle_control(
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
             }
         }
+        ControlMessage::CancelRemap => {
+            if bridge.pending.load(Ordering::Acquire).is_null() {
+                socket
+                    .send(&ControlMessage::RemapFailed)
+                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+                return Ok(());
+            }
+            let target = bridge.switched.load(Ordering::Acquire) + 1;
+            bridge.cancel_pending.store(true, Ordering::Release);
+            bridge.bump_audio();
+            while bridge.switched.load(Ordering::Acquire) < target {
+                if bridge.stop.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                thread::sleep(std::time::Duration::from_millis(1));
+            }
+            reclaim_retired(bridge);
+            socket
+                .send(&ControlMessage::RemapCancelled)
+                .map_err(|error| HostError::Plugin(error.to_string()))?;
+        }
         ControlMessage::Remap { layout, fd } => match MappedRegion::from_fd(fd) {
-            Ok(region) if region.layout() == layout => {
+            Ok(region)
+                if region.layout() == layout
+                    && bridge.pending.load(Ordering::Acquire).is_null() =>
+            {
                 let buffers = if bridge.buffers_live.load(Ordering::Acquire) {
                     Box::into_raw(Box::new(buffers_for(bridge, &region)))
                 } else {
                     ptr::null_mut()
                 };
-                let pointer = Box::into_raw(Box::new(region));
-                let target = bridge.switched.load(Ordering::Acquire) + 1;
+                reclaim_retired(bridge);
+                let pointer = Box::into_raw(Box::new(Arc::new(region)));
                 bridge.pending_buffers.store(buffers, Ordering::Release);
                 bridge.pending.store(pointer, Ordering::Release);
                 bridge.bump_audio();
-                while bridge.switched.load(Ordering::Acquire) < target {
-                    if bridge.stop.load(Ordering::Acquire) {
-                        return Ok(());
-                    }
-                    thread::sleep(std::time::Duration::from_millis(1));
-                }
-                bridge.lock_map();
-                let old = bridge.retired.swap(ptr::null_mut(), Ordering::AcqRel);
-                let old_buffers = bridge
-                    .retired_buffers
-                    .swap(ptr::null_mut(), Ordering::AcqRel);
-                bridge.unlock_map();
-                if !old.is_null() {
-                    // SAFETY: the processing thread stored this after leaving it.
-                    drop(unsafe { Box::from_raw(old) });
-                }
-                if !old_buffers.is_null() {
-                    // SAFETY: the processing thread stored this after swapping
-                    // in the replacement buffers.
-                    drop(unsafe { Box::from_raw(old_buffers) });
-                }
                 socket
                     .send(&ControlMessage::Remapped)
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
@@ -1412,6 +1425,14 @@ fn render_plugin(
     let input_audio = buffers.input_ports.with_input_buffers(input_ports);
     let mut output_audio = buffers.output_ports.with_output_buffers(output_ports);
     buffers.events.clear();
+    if region.block_command(generation) == CMD_RESET_PROCESS {
+        buffers
+            .events
+            .push(&NoteChokeEvent::new(0, Pckn::match_all()));
+        for event in &buffers.reset_midi {
+            buffers.events.push(event);
+        }
+    }
     region.copy_input_events(generation, &mut buffers.decoded);
     write_input(&buffers.decoded, &mut buffers.events);
     let input_events = InputEvents::from_buffer(&buffers.events);
@@ -1500,6 +1521,9 @@ fn buffers_for(bridge: &Bridge, region: &MappedRegion) -> PluginBuffers {
         &outputs,
         layout.max_frames.max(1) as usize,
         layout.input_events.max(1) as usize,
+        shape
+            .map(|shape| shape.reset_midi.as_slice())
+            .unwrap_or_default(),
     )
 }
 
@@ -1512,6 +1536,7 @@ fn refresh_ptrs(planes: &mut [Vec<f32>], ptrs: &mut [*mut f32]) {
 struct PortShape {
     inputs: Vec<u32>,
     outputs: Vec<u32>,
+    reset_midi: Vec<MidiEvent>,
     error: Option<String>,
 }
 
@@ -1534,8 +1559,6 @@ fn wait_for_layout(bridge: &Bridge) -> Result<(), HostError> {
             continue;
         }
         if !bridge.has_plugin.load(Ordering::Acquire) {
-            let region = current_region(bridge);
-            region.mark_ready();
             return Ok(());
         }
         let Some(shape) = published_ports(bridge) else {
@@ -1544,20 +1567,18 @@ fn wait_for_layout(bridge: &Bridge) -> Result<(), HostError> {
             ));
         };
         if shape.error.is_some() {
-            let region = current_region(bridge);
-            let alarm = region.alarm();
-            let _ = region.wait_alarm(alarm);
+            let alarm = bridge.root.alarm();
+            let _ = bridge.root.wait_alarm(alarm);
             continue;
         }
         let region = current_region(bridge);
         let inputs = sum_ports(&shape.inputs);
         let outputs = sum_ports(&shape.outputs);
         if region.input_channels() == inputs && region.output_channels() == outputs {
-            region.mark_ready();
             return Ok(());
         }
-        let alarm = region.alarm();
-        let _ = region.wait_alarm(alarm);
+        let alarm = bridge.root.alarm();
+        let _ = bridge.root.wait_alarm(alarm);
     }
 }
 
@@ -1766,8 +1787,41 @@ fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape,
     Ok(PortShape {
         inputs,
         outputs,
+        reset_midi: query_midi_resets(plugin)?,
         error: None,
     })
+}
+
+fn query_midi_resets(plugin: &clap_plugin) -> Result<Vec<MidiEvent>, String> {
+    let mut result = Vec::new();
+    let Some(get_extension) = plugin.get_extension else {
+        return Ok(result);
+    };
+    // SAFETY: main thread, inactive plugin, typed public CLAP extension.
+    let raw = unsafe { get_extension(plugin, CLAP_EXT_NOTE_PORTS.as_ptr()) };
+    if raw.is_null() {
+        return Ok(result);
+    }
+    let ports = unsafe { &*(raw as *const clap_plugin_note_ports) };
+    let count = ports.count.ok_or("plugin note ports have no count")?;
+    let get = ports.get.ok_or("plugin note ports have no description")?;
+    for index in 0..unsafe { count(plugin, true) } {
+        let mut info = MaybeUninit::<clap_note_port_info>::zeroed();
+        if !unsafe { get(plugin, index, true, info.as_mut_ptr()) } {
+            return Err("plugin rejected a note port description".into());
+        }
+        let info = unsafe { info.assume_init() };
+        if info.supported_dialects & (CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_MIDI_MPE) == 0 {
+            continue;
+        }
+        let port =
+            u16::try_from(index).map_err(|_| "MIDI note port index cannot be represented")?;
+        // MIDI 1.0 defines sixteen channels per port. Port count is dynamic.
+        for channel in 0..16 {
+            result.push(MidiEvent::new(0, port, [0xB0 | channel, 120, 0]));
+        }
+    }
+    Ok(result)
 }
 
 fn read_port_list(

@@ -232,6 +232,7 @@ pub struct MappedRegion {
     file: File,
     layout: SessionLayout,
     stride: usize,
+    wake_target: Option<std::sync::Arc<MappedRegion>>,
     /// Parent-only. A generation stored here is not read if it completes late.
     abandoned: AtomicU64,
 }
@@ -411,7 +412,11 @@ impl MappedRegion {
 
     pub fn bump_alarm(&self) {
         self.raise_alarm();
-        sync::wake_one(&self.header().alarm, SyncFlags::PROCESS);
+        if let Some(target) = &self.wake_target {
+            target.bump_alarm();
+        } else {
+            sync::wake_one(&self.header().alarm, SyncFlags::PROCESS);
+        }
     }
 
     pub fn alarm(&self) -> u64 {
@@ -438,6 +443,46 @@ impl MappedRegion {
 
     pub fn process_refused(&self) -> bool {
         self.header().fail_len.load(Ordering::Acquire) == 1
+    }
+
+    /// Keep the helper's wait address stable across prepared mapping changes.
+    pub fn set_wake_target(&mut self, target: std::sync::Arc<MappedRegion>) {
+        self.wake_target = Some(target);
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.header().ready.load(Ordering::Acquire) != 0
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.header().dead.load(Ordering::Acquire) != 0
+            || self
+                .wake_target
+                .as_ref()
+                .is_some_and(|target| target.is_dead())
+    }
+
+    /// Publish storage activation without processing or allocating audio.
+    pub fn submit_activation(&self) -> Result<u64, RegionError> {
+        if self.is_dead() {
+            return Err(RegionError::Dead);
+        }
+        let generation = self.published().wrapping_add(1);
+        if generation.wrapping_sub(self.header().completed.load(Ordering::Acquire)) > SLOTS as u64 {
+            return Err(RegionError::Busy);
+        }
+        self.slot_head(generation)
+            .command
+            .store(crate::CMD_ADOPT_MAPPING, Ordering::Release);
+        self.header().published.store(generation, Ordering::Release);
+        self.bump_alarm();
+        Ok(generation)
+    }
+
+    /// Control-thread activation for callers that are not publishing live audio.
+    pub fn activate_mapping(&self, timeout: Duration) -> Result<(), RegionError> {
+        let generation = self.submit_activation()?;
+        self.wait_for_generation(generation, timeout)
     }
 
     pub fn mark_ready(&self) {
@@ -620,6 +665,16 @@ impl MappedRegion {
         input: &[&[f32]],
         events: &[(Event, u32)],
     ) -> Result<u64, RegionError> {
+        self.submit_block_with_reset(frames, input, events, false)
+    }
+
+    pub fn submit_block_with_reset(
+        &self,
+        frames: usize,
+        input: &[&[f32]],
+        events: &[(Event, u32)],
+        reset: bool,
+    ) -> Result<u64, RegionError> {
         if self.header().dead.load(Ordering::Acquire) != 0 {
             return Err(RegionError::Dead);
         }
@@ -678,7 +733,14 @@ impl MappedRegion {
             .store(events.len() as u32, Ordering::Release);
         head.output_events.store(0, Ordering::Release);
         head.frames.store(frames as u32, Ordering::Release);
-        head.command.store(crate::CMD_PROCESS, Ordering::Release);
+        head.command.store(
+            if reset {
+                crate::CMD_RESET_PROCESS
+            } else {
+                CMD_PROCESS
+            },
+            Ordering::Release,
+        );
         header.published.store(generation, Ordering::Release);
         self.bump_alarm();
         Ok(generation)
@@ -691,6 +753,16 @@ impl MappedRegion {
         frames: usize,
         input: &[Vec<f32>],
         events: &[(Event, u32)],
+    ) -> Result<u64, RegionError> {
+        self.submit_planes_with_reset(frames, input, events, false)
+    }
+
+    pub fn submit_planes_with_reset(
+        &self,
+        frames: usize,
+        input: &[Vec<f32>],
+        events: &[(Event, u32)],
+        reset: bool,
     ) -> Result<u64, RegionError> {
         if self.header().dead.load(Ordering::Acquire) != 0 {
             return Err(RegionError::Dead);
@@ -745,7 +817,14 @@ impl MappedRegion {
             .store(events.len() as u32, Ordering::Release);
         head.output_events.store(0, Ordering::Release);
         head.frames.store(frames as u32, Ordering::Release);
-        head.command.store(crate::CMD_PROCESS, Ordering::Release);
+        head.command.store(
+            if reset {
+                crate::CMD_RESET_PROCESS
+            } else {
+                CMD_PROCESS
+            },
+            Ordering::Release,
+        );
         header.published.store(generation, Ordering::Release);
         self.bump_alarm();
         Ok(generation)
@@ -1002,7 +1081,7 @@ impl MappedRegion {
         head.frames.store(frames as u32, Ordering::Release);
         head.command.store(command, Ordering::Release);
         self.publish_and_wait(generation, timeout)?;
-        if command == CMD_PROCESS {
+        if matches!(command, CMD_PROCESS | crate::CMD_RESET_PROCESS) {
             for (channel, plane) in output.iter_mut().enumerate() {
                 // SAFETY: `finish` release-stored `completed` before we observed it.
                 unsafe {
@@ -1021,10 +1100,15 @@ impl MappedRegion {
         let header = self.header();
         header.published.store(generation, Ordering::Release);
         self.bump_alarm();
+        self.wait_for_generation(generation, timeout)
+    }
+
+    fn wait_for_generation(&self, generation: u64, timeout: Duration) -> Result<(), RegionError> {
+        let header = self.header();
         let deadline = Instant::now() + timeout;
         let mut seen = header.notice.load(Ordering::Acquire);
         loop {
-            if header.dead.load(Ordering::Acquire) != 0 {
+            if self.is_dead() {
                 return Err(RegionError::Dead);
             }
             if header.completed.load(Ordering::Acquire) >= generation {
@@ -1034,8 +1118,18 @@ impl MappedRegion {
             if remaining.is_zero() {
                 return Err(RegionError::Wait(WaitError::Timeout));
             }
-            seen =
-                sync::wait_until_ne_timeout(&header.notice, seen, remaining, SyncFlags::PROCESS)?;
+            // Exit watches target the stable root. These blocking calls are
+            // control-only; periodically inspect that root after a remap.
+            let slice = if self.wake_target.is_some() {
+                remaining.min(Duration::from_millis(20))
+            } else {
+                remaining
+            };
+            match sync::wait_until_ne_timeout(&header.notice, seen, slice, SyncFlags::PROCESS) {
+                Ok(value) => seen = value,
+                Err(WaitError::Timeout) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
     }
 
@@ -1161,6 +1255,7 @@ fn map_new(file: File, layout: SessionLayout) -> Result<MappedRegion, RegionErro
         layout,
         stride,
         abandoned: AtomicU64::new(0),
+        wake_target: None,
     };
     region.init_header();
     region.lock_pages()?;
@@ -1195,6 +1290,7 @@ fn map_existing(file: File) -> Result<MappedRegion, RegionError> {
         layout,
         stride,
         abandoned: AtomicU64::new(0),
+        wake_target: None,
     };
     region.lock_pages()?;
     Ok(region)
@@ -1296,6 +1392,20 @@ mod tests {
             std::process::id(),
             SHM_SEQ.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[test]
+    fn replacement_control_wait_observes_the_stable_exit_notice() {
+        let root =
+            std::sync::Arc::new(MappedRegion::create_shared(SessionLayout::stereo()).unwrap());
+        let mut next = MappedRegion::create_shared(SessionLayout::stereo()).unwrap();
+        next.set_wake_target(std::sync::Arc::clone(&root));
+        root.mark_aborted();
+        // This is a missing-notification guard, not a performance threshold.
+        assert!(matches!(
+            next.activate_mapping(Duration::from_millis(100)),
+            Err(RegionError::Dead)
+        ));
     }
 
     #[test]

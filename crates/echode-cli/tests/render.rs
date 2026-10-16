@@ -125,7 +125,7 @@ fn a_minute_of_stereo_silence_is_written_in_bulk() {
 }
 
 /// Placement gain is linear on the prepared samples. Fades are zero so the
-/// body is the constant, and center pan is the same factor on every gain.
+/// body is constant on each side. Stereo center balance preserves each channel.
 #[test]
 fn audit_aud09_clip_gain_scales_playback_export_undo_and_recovery() {
     const FRAMES: usize = 128;
@@ -133,7 +133,8 @@ fn audit_aud09_clip_gain_scales_playback_export_undo_and_recovery() {
     let directory = scratch();
     std::fs::create_dir_all(&directory).unwrap();
     let source = directory.join("constant.wav");
-    write_wav(&source, 48_000, &vec![0.25f32; FRAMES * 2]).unwrap();
+    let stereo: Vec<_> = (0..FRAMES).flat_map(|_| [0.25, -0.5]).collect();
+    write_wav(&source, 48_000, &stereo).unwrap();
     let stored = echode_history::import_audio(&directory, &source).unwrap();
     let (project, track) = Project::new().add_track("file");
     let clip = Id::generate();
@@ -151,7 +152,7 @@ fn audit_aud09_clip_gain_scales_playback_export_undo_and_recovery() {
         .unwrap();
 
     let unity = play_middle(&directory, &project, FRAMES);
-    let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    let expected = 0.25;
     assert!(
         (unity - expected).abs() < 1e-4,
         "gain 1 playback {unity} expected {expected}"
@@ -200,6 +201,7 @@ fn play_middle(package: &Path, project: &Project, frames: usize) -> f32 {
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
     audio.render(&mut left, &mut right);
+    assert!(left.iter().zip(&right).all(|(l, r)| *r == -2.0 * *l));
     left[frames / 2]
 }
 
@@ -216,7 +218,10 @@ fn export_middle(package: &Path, project: &Project, clip: Id, frames: usize) -> 
     render_to_wav(package, &wav, 48_000, Some(u32::try_from(frames).unwrap())).unwrap();
     let bytes = std::fs::read(wav).unwrap();
     let start = 44 + (frames / 2) * 8;
-    f32::from_le_bytes(bytes[start..start + 4].try_into().unwrap())
+    let left = f32::from_le_bytes(bytes[start..start + 4].try_into().unwrap());
+    let right = f32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap());
+    assert_eq!(right, -2.0 * left, "the WAV writer lost the right channel");
+    left
 }
 
 #[test]
@@ -362,7 +367,7 @@ fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     let wav = directory.join("out.wav");
     render_to_wav(&directory, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap();
     let exported = wav_lefts(&wav, PLUGIN_FRAMES);
-    let expected = 0.25 * 2.0 * std::f32::consts::FRAC_1_SQRT_2;
+    let expected = 0.25 * 2.0;
     assert_eq!(played, exported);
     assert!(
         played

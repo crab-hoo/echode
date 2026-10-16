@@ -242,17 +242,19 @@ pub fn fade_loop_seam(
                 .checked_add(i64::from(local))
                 .ok_or(PlaybackError::Time)?;
             let mut gain = 1.0f32;
-            if let Some(loop_end) = span.loop_end {
-                let before_end = loop_end - 1 - project;
-                if (0..window).contains(&before_end) {
-                    gain *= before_end as f32 / denom;
-                }
+            if let Some(loop_end) = span.loop_end
+                && let Some(before_end) = loop_end
+                    .checked_sub(1)
+                    .and_then(|end| end.checked_sub(project))
+                && (0..window).contains(&before_end)
+            {
+                gain *= before_end as f32 / denom;
             }
-            if let Some(origin) = span.wrap_from {
-                let age = project - origin;
-                if (0..window).contains(&age) {
-                    gain *= age as f32 / denom;
-                }
+            if let Some(origin) = span.wrap_from
+                && let Some(age) = project.checked_sub(origin)
+                && (0..window).contains(&age)
+            {
+                gain *= age as f32 / denom;
             }
             output[index] *= gain;
         }

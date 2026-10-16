@@ -10,6 +10,7 @@ compile_error!("Echode only builds for macOS");
 
 mod builtin;
 mod clock;
+mod declick;
 mod device;
 mod graph;
 mod handoff;
@@ -31,6 +32,7 @@ mod wait;
 
 pub use builtin::Device;
 pub use clock::{sample_to_tick, tick_to_sample};
+pub use declick::OutputDeclick;
 pub use device::{IoWorkgroup, OutputInventory, output_inventory};
 pub use echode_realtime::Event;
 pub use handoff::{Audio, Control, Cycle, pair};

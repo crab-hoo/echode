@@ -19,6 +19,466 @@ const BLOCKS: [u32; 4] = [1, 7, 64, 512];
 const VOICES_PER_TRACK: usize = 8;
 
 #[test]
+fn ordinary_silent_to_note_boundaries_leave_the_source_unchanged() {
+    for rate in [48_000, 96_000] {
+        let mut source = vec![0.0f32; 1003];
+        // Include a gentle attack and a deliberate sharp attack. Neither is
+        // a transport discontinuity, even when it lands at a block boundary.
+        for (age, sample) in source[137..337].iter_mut().enumerate() {
+            *sample = 0.25 * (age.min(32) as f32 / 32.0);
+        }
+        source[700..900].fill(-0.5);
+        let expected_right: Vec<_> = source.iter().map(|sample| -*sample / 2.0).collect();
+        for block in BLOCKS {
+            let mut left = source.clone();
+            let mut right = expected_right.clone();
+            let mut declick = echode_engine::OutputDeclick::new(rate);
+            for (index, (left, right)) in left
+                .chunks_mut(block as usize)
+                .zip(right.chunks_mut(block as usize))
+                .enumerate()
+            {
+                declick.process(left, right, index == 0);
+            }
+            assert_eq!(left, source);
+            assert_eq!(right, expected_right);
+        }
+    }
+}
+
+fn clip_player(
+    project: &Project,
+    block: usize,
+    clips: Vec<echode_engine::LoadedClip>,
+) -> (echode_engine::PlaybackControl, echode_engine::PlaybackAudio) {
+    let (mut control, audio) = echode_engine::playback_pair(project, RATE, block).unwrap();
+    control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
+    control.replace(project).unwrap();
+    control
+        .command(echode_engine::PlaybackCommand::Play)
+        .unwrap();
+    (control, audio)
+}
+
+fn stereo_clip(track: Id, left: Vec<f32>, right: Vec<f32>) -> echode_engine::LoadedClip {
+    echode_engine::LoadedClip {
+        track: track.raw(),
+        start_sample: 0,
+        samples: left.into(),
+        right: Some(right.into()),
+        fade_in: 0,
+        fade_out: 0,
+    }
+}
+
+#[test]
+fn stereo_playback_and_export_preserve_opposite_phase_for_every_block_size() {
+    let (project, track) = Project::new().add_track("stereo");
+    let frames = 1003;
+    let left: Vec<_> = (0..frames).map(|index| index as f32 / 4096.0).collect();
+    let right: Vec<_> = left.iter().map(|sample| -*sample).collect();
+    let clips = vec![stereo_clip(track, left.clone(), right.clone())];
+    let expected: Vec<_> = left
+        .iter()
+        .zip(&right)
+        .flat_map(|(l, r)| [*l, *r])
+        .collect();
+    for block in BLOCKS {
+        let (control, mut audio) = clip_player(&project, block as usize, clips.clone());
+        let mut output = Vec::new();
+        for offset in (0..frames).step_by(block as usize) {
+            let count = (frames - offset).min(block as usize);
+            let (mut left, mut right) = (vec![0.0; count], vec![0.0; count]);
+            audio.render(&mut left, &mut right);
+            output.extend(left.into_iter().zip(right).flat_map(|(l, r)| [l, r]));
+        }
+        assert!(!control.status().failed);
+        assert_eq!(output, expected, "live block {block}");
+        let mut exported = Vec::new();
+        echode_engine::render_offline_blocks_with_clips(
+            &project,
+            RATE,
+            frames as u32,
+            block,
+            &clips,
+            |block| {
+                exported.extend_from_slice(block);
+                Ok::<_, ()>(())
+            },
+        )
+        .unwrap();
+        assert_eq!(exported, expected, "export block {block}");
+    }
+}
+
+#[test]
+fn product_audio_loop_fades_follow_project_positions_across_blocks() {
+    let (project, track) = Project::new().add_track("loop");
+    let start = 337;
+    let end = 1360;
+    let fade = seam_fade_frames(RATE) as usize;
+    let clips = vec![stereo_clip(track, vec![0.25; 2048], vec![-0.5; 2048])];
+    let mut reference = None;
+    for block in BLOCKS {
+        let (mut control, mut audio) =
+            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        let clips = clips.clone();
+        control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
+        control
+            .command(echode_engine::PlaybackCommand::SetLoop { start, end })
+            .unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::Locate(start))
+            .unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::Play)
+            .unwrap();
+        let frames = (end - start) as usize * 3;
+        let mut output = Vec::new();
+        for offset in (0..frames).step_by(block as usize) {
+            let count = (frames - offset).min(block as usize);
+            let (mut left, mut right) = (vec![0.0; count], vec![0.0; count]);
+            audio.render(&mut left, &mut right);
+            for (l, r) in left.into_iter().zip(right) {
+                assert_eq!(r, -2.0 * l);
+                output.push(l);
+            }
+        }
+        assert!(!control.status().failed);
+        for pass in output.chunks_exact((end - start) as usize) {
+            assert_eq!(pass[0], 0.0);
+            assert_eq!(pass[pass.len() - 1], 0.0);
+            assert_eq!(pass[fade], 0.25);
+            assert!(
+                pass.windows(2)
+                    .all(|pair| (pair[1] - pair[0]).abs() <= 0.25 / (fade - 1) as f32 + 1.0e-7)
+            );
+        }
+        if let Some(expected) = &reference {
+            assert_eq!(&output, expected, "loop block {block}");
+        } else {
+            reference = Some(output);
+        }
+    }
+}
+
+#[test]
+fn fader_edits_ramp_without_restarting_on_unrelated_replacement() {
+    use echode_model::ParamKey;
+    let (project, track) = Project::new().add_track("fader");
+    let clips = vec![stereo_clip(track, vec![0.25; 2048], vec![-0.25; 2048])];
+    let parameter = |key| {
+        project.tracks()[0].devices[0]
+            .parameters
+            .iter()
+            .find(|p| p.key == key)
+            .unwrap()
+            .id
+    };
+    let muted = project
+        .set_parameter(parameter(ParamKey::Mute), 1.0)
+        .unwrap();
+    let panned = project
+        .set_parameter(parameter(ParamKey::Pan), -1.0)
+        .unwrap();
+    let quiet = panned
+        .set_parameter(parameter(ParamKey::Gain), 0.5)
+        .unwrap();
+    let edits = [
+        (64, &muted),
+        (101, &muted),
+        (400, &panned),
+        (480, &quiet),
+        (503, &quiet),
+    ];
+    let mut reference = None;
+    for block in BLOCKS {
+        let (mut control, mut audio) = clip_player(&project, block as usize, clips.clone());
+        let mut output = Vec::new();
+        let mut position = 0;
+        let mut edit = 0;
+        while position < 900 {
+            if let Some((at, project)) = edits.get(edit)
+                && position == *at
+            {
+                control.replace(project).unwrap();
+                edit += 1;
+            }
+            let next = edits.get(edit).map_or(900, |(at, _)| *at);
+            let count = (next - position).min(block as usize);
+            let (mut left, mut right) = (vec![0.0; count], vec![0.0; count]);
+            audio.render(&mut left, &mut right);
+            output.extend(left.into_iter().zip(right));
+            position += count;
+        }
+        assert!(!control.status().failed);
+        assert_eq!(output[63], (0.25, -0.25));
+        assert!(output[64].0 < 0.25 && output[64].0 > 0.248);
+        assert_eq!(output[183], (0.125, -0.125));
+        assert_eq!(output[303], (0.0, 0.0));
+        assert_eq!(output[899], (0.125, 0.0));
+        assert!(
+            output
+                .windows(2)
+                .all(|pair| (pair[1].0 - pair[0].0).abs() < 0.002)
+        );
+        if let Some(expected) = &reference {
+            assert_eq!(&output, expected, "fader block {block}");
+        } else {
+            reference = Some(output);
+        }
+    }
+}
+
+#[test]
+fn product_master_accumulates_tracks_in_double_precision() {
+    let mut project = Project::new();
+    let mut clips = Vec::new();
+    for value in [16_777_216.0, 1.0, -16_777_216.0] {
+        let (next, track) = project.add_track("sum");
+        project = next;
+        clips.push(stereo_clip(track, vec![value; 1], vec![-value; 1]));
+    }
+    let (control, mut audio) = clip_player(&project, 1, clips);
+    let (mut left, mut right) = ([0.0], [0.0]);
+    audio.render(&mut left, &mut right);
+    assert!(!control.status().failed);
+    assert_eq!(left, [1.0]);
+    assert_eq!(right, [-1.0]);
+}
+
+#[test]
+fn short_audio_loops_keep_an_interior_and_never_depend_on_blocks() {
+    let (project, track) = Project::new().add_track("short");
+    for length in 1..=8 {
+        let mut reference = None;
+        for block in BLOCKS {
+            let (mut control, mut audio) =
+                echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+            control.set_clip_loader(Arc::new(move |_, _| {
+                Ok(vec![stereo_clip(track, vec![0.5; 32], vec![-0.5; 32])])
+            }));
+            control
+                .command(echode_engine::PlaybackCommand::SetLoop {
+                    start: 7,
+                    end: 7 + length,
+                })
+                .unwrap();
+            control
+                .command(echode_engine::PlaybackCommand::Locate(7))
+                .unwrap();
+            control
+                .command(echode_engine::PlaybackCommand::Play)
+                .unwrap();
+            let frames = length as usize * 4;
+            let mut heard = Vec::new();
+            for offset in (0..frames).step_by(block as usize) {
+                let count = (frames - offset).min(block as usize);
+                let (mut left, mut right) = (vec![0.0; count], vec![0.0; count]);
+                audio.render(&mut left, &mut right);
+                assert!(
+                    left.iter()
+                        .zip(&right)
+                        .all(|(l, r)| l.is_finite() && *r == -*l)
+                );
+                heard.extend(left);
+            }
+            assert!(!control.status().failed);
+            assert!(
+                heard.iter().any(|sample| *sample > 0.0),
+                "silenced {length}-frame loop"
+            );
+            if let Some(expected) = &reference {
+                assert_eq!(&heard, expected);
+            } else {
+                reference = Some(heard);
+            }
+        }
+    }
+}
+
+#[test]
+fn mono_and_stereo_placements_keep_their_bus_gains_on_the_same_track() {
+    let (project, track) = Project::new().add_track("mixed");
+    let mono = echode_engine::LoadedClip {
+        track: track.raw(),
+        start_sample: 0,
+        samples: Arc::from(vec![0.5; 8]),
+        right: None,
+        fade_in: 0,
+        fade_out: 0,
+    };
+    let mut stereo = stereo_clip(track, vec![0.5; 8], vec![-0.25; 8]);
+    stereo.start_sample = 8;
+    for block in BLOCKS {
+        let (control, mut audio) =
+            clip_player(&project, block as usize, vec![mono.clone(), stereo.clone()]);
+        let mut heard = Vec::new();
+        for offset in (0..16).step_by(block as usize) {
+            let count = (16 - offset).min(block as usize);
+            let (mut left, mut right) = (vec![0.0; count], vec![0.0; count]);
+            audio.render(&mut left, &mut right);
+            heard.extend(left.into_iter().zip(right));
+        }
+        assert!(!control.status().failed);
+        assert_eq!(
+            heard[..8],
+            [(
+                0.5 * std::f32::consts::FRAC_1_SQRT_2,
+                0.5 * std::f32::consts::FRAC_1_SQRT_2
+            ); 8]
+        );
+        assert_eq!(heard[8..], [(0.5, -0.25); 8]);
+    }
+}
+
+#[test]
+fn solo_and_mute_changes_ramp_with_mute_priority() {
+    use echode_model::ParamKey;
+    let (project, a) = Project::new().add_track("a");
+    let (project, b) = project.add_track("b");
+    let parameter = |key| {
+        project.tracks()[1].devices[0]
+            .parameters
+            .iter()
+            .find(|p| p.key == key)
+            .unwrap()
+            .id
+    };
+    let soloed = project
+        .set_parameter(parameter(ParamKey::Solo), 1.0)
+        .unwrap();
+    let muted = soloed
+        .set_parameter(parameter(ParamKey::Mute), 1.0)
+        .unwrap();
+    let unsoloed = muted.set_parameter(parameter(ParamKey::Solo), 0.0).unwrap();
+    let clips = vec![
+        stereo_clip(a, vec![0.25; 1024], vec![0.25; 1024]),
+        stereo_clip(b, vec![0.5; 1024], vec![0.5; 1024]),
+    ];
+    let mut reference = None;
+    for block in BLOCKS {
+        let (mut control, mut audio) = clip_player(&project, block as usize, clips.clone());
+        let mut heard = Vec::new();
+        for (index, (project, frames, expected)) in [
+            (&project, 64, 0.75),
+            (&soloed, 240, 0.5),
+            (&muted, 240, 0.0),
+            (&unsoloed, 240, 0.25),
+        ]
+        .iter()
+        .enumerate()
+        {
+            if index > 0 {
+                control.replace(project).unwrap();
+            }
+            let mut remaining = *frames;
+            while remaining > 0 {
+                let count = remaining.min(block as usize);
+                let (mut left, mut right) = (vec![0.0; count], vec![0.0; count]);
+                audio.render(&mut left, &mut right);
+                assert_eq!(left, right);
+                heard.extend(left);
+                remaining -= count;
+            }
+            assert_eq!(heard.last(), Some(expected));
+        }
+        assert!(!control.status().failed);
+        assert!(
+            heard
+                .windows(2)
+                .all(|pair| (pair[1] - pair[0]).abs() <= 0.5 / 240.0 + 1.0e-7)
+        );
+        if let Some(expected) = &reference {
+            assert_eq!(&heard, expected);
+        } else {
+            reference = Some(heard);
+        }
+    }
+}
+
+#[test]
+fn cancelled_output_drains_edits_without_advancing_for_every_block_size() {
+    use echode_engine::PlaybackCommand;
+    use std::time::{Duration, Instant};
+    let (project, track) = Project::new().add_track("cancelled transport");
+    let mute = project.tracks()[0].devices[0]
+        .parameters
+        .iter()
+        .find(|parameter| parameter.key == echode_model::ParamKey::Mute)
+        .unwrap()
+        .id;
+    for block in BLOCKS {
+        let (mut control, mut audio) = clip_player(
+            &project,
+            block as usize,
+            vec![stereo_clip(track, vec![0.25; 2048], vec![-0.5; 2048])],
+        );
+        let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+        audio.render(&mut left, &mut right);
+        let held = control.status().sample;
+        // More edits than the ownership rings can hold at once. Idle callbacks
+        // must continue consuming plans, without moving or leaking any sound.
+        for edit in 0..32 {
+            let changed = project
+                .set_parameter(mute, if edit % 2 == 0 { 0.0 } else { 1.0 })
+                .unwrap();
+            control.replace(&changed).unwrap();
+            audio.render_gated_until(
+                &mut left,
+                &mut right,
+                Instant::now() + Duration::from_secs(1),
+                false,
+            );
+            assert_eq!(control.status().sample, held);
+            assert!(!control.status().failed && !control.status().playing);
+            assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+            control.service();
+        }
+        control.command(PlaybackCommand::Play).unwrap();
+        audio.render(&mut left, &mut right);
+        assert_eq!(control.status().sample, held + i64::from(block));
+        assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+    }
+}
+
+#[test]
+fn a_fader_edit_while_paused_is_settled_before_playback_resumes() {
+    let (project, track) = Project::new().add_track("mute before play");
+    let mute = project.tracks()[0].devices[0]
+        .parameters
+        .iter()
+        .find(|parameter| parameter.key == echode_model::ParamKey::Mute)
+        .unwrap()
+        .id;
+    let muted = project.set_parameter(mute, 1.0).unwrap();
+    for block in BLOCKS {
+        let (mut control, mut audio) = clip_player(
+            &project,
+            block as usize,
+            vec![stereo_clip(track, vec![0.25; 2048], vec![-0.25; 2048])],
+        );
+        let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+        audio.render(&mut left, &mut right);
+        assert!(left.iter().all(|sample| *sample == 0.25));
+        control
+            .command(echode_engine::PlaybackCommand::Pause)
+            .unwrap();
+        audio.render(&mut left, &mut right);
+        control.replace(&muted).unwrap();
+        control
+            .command(echode_engine::PlaybackCommand::Play)
+            .unwrap();
+        audio.render(&mut left, &mut right);
+        assert!(!control.status().failed);
+        assert!(
+            left.iter().chain(&right).all(|sample| *sample == 0.0),
+            "muted audio leaked at resume for block {block}"
+        );
+    }
+}
+
+#[test]
 fn an_initial_position_matches_a_queued_locate_for_every_block_size() {
     let project = project();
     let sample = 24_000;
@@ -157,6 +617,7 @@ fn product_audio_clips_match_across_block_sizes() {
                 track: track_raw,
                 start_sample: 0,
                 samples: Arc::clone(&samples),
+                right: None,
                 fade_in: 8,
                 fade_out: 8,
             }])
@@ -404,4 +865,261 @@ fn audit_eng2_the_loop_seam_does_not_depend_on_the_block_size() {
             out.extend_from_slice(&buffer);
         })
     });
+}
+
+#[test]
+fn live_transport_declick_is_independent_of_blocks_and_leaves_steady_audio_unchanged() {
+    use echode_engine::OutputDeclick;
+    for rate in [48_000, 96_000] {
+        let fade = (rate / 200) as usize;
+        let mut reference = None;
+        for block in BLOCKS {
+            let mut declick = OutputDeclick::new(rate);
+            let mut output = Vec::new();
+            // DC makes transport steps independent of oscillator phase. Stereo
+            // asymmetry catches a shared or swapped correction. Each change can
+            // interrupt an unfinished ramp; no lookahead buffers are involved.
+            for (count, value, changed) in [
+                (fade + 31, [0.25, -0.5], true),
+                (fade / 2, [0.0, 0.0], true),
+                (fade + 19, [-0.125, 0.375], true),
+                (fade + 23, [0.0, 0.0], true),
+            ] {
+                for offset in (0..count).step_by(block as usize) {
+                    let frames = (count - offset).min(block as usize);
+                    let mut left = vec![value[0]; frames];
+                    let mut right = vec![value[1]; frames];
+                    declick.process(&mut left, &mut right, changed && offset == 0);
+                    for (index, (l, r)) in left.into_iter().zip(right).enumerate() {
+                        if offset + index >= fade - 1 {
+                            assert_eq!([l, r], value);
+                        }
+                        output.push([l, r]);
+                    }
+                }
+            }
+            assert_eq!(output[0], [0.0, 0.0]);
+            assert_eq!(output[fade + 31], [0.25, -0.5]);
+            assert_eq!(output.last().copied(), Some([0.0, 0.0]));
+            if let Some(expected) = &reference {
+                assert_eq!(&output, expected, "block {block}");
+            } else {
+                reference = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
+fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
+    use echode_engine::{OutputDeclick, PlaybackCommand, playback_pair};
+    for rate in [48_000, 96_000] {
+        let fade = (rate / 200) as usize;
+        let stop = rate as usize / 50;
+        let pcm: Arc<[f32]> = (0..rate as usize)
+            .map(|i| 0.25 * (i as f32 * std::f32::consts::TAU * 437.0 / rate as f32).sin())
+            .collect();
+        let mut reference = None;
+        for block in BLOCKS {
+            let (project, track) = Project::new().add_track("waveform");
+            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let clip = Arc::clone(&pcm);
+            control.set_clip_loader(Arc::new(move |_, _| {
+                Ok(vec![echode_engine::LoadedClip {
+                    track: track.raw(),
+                    start_sample: 0,
+                    samples: Arc::clone(&clip),
+                    right: Some(Arc::clone(&clip)),
+                    fade_in: 0,
+                    fade_out: 0,
+                }])
+            }));
+            control.replace(&project).unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut declick = OutputDeclick::new(rate);
+            let mut position = 0;
+            while position < stop {
+                let frames = (stop - position).min(block as usize);
+                let mut left = vec![0.0; frames];
+                let mut right = left.clone();
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                    true,
+                );
+                declick.process(&mut left, &mut right, position == 0);
+                position += frames;
+            }
+            control.command(PlaybackCommand::Stop).unwrap();
+            let mut output = Vec::new();
+            for offset in (0..fade + block as usize).step_by(block as usize) {
+                let frames = (fade + block as usize - offset).min(block as usize);
+                let mut left = vec![0.0; frames];
+                let mut right = left.clone();
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                    true,
+                );
+                if let Some(age) = audio.stop_fade_offset() {
+                    declick.process_stop(&mut left, &mut right, age);
+                } else {
+                    declick.process(&mut left, &mut right, false);
+                }
+                output.extend(left);
+                assert_eq!(control.status().sample as usize, stop);
+            }
+            output.truncate(fade);
+            assert!((output[0] - pcm[stop]).abs() < 1.0e-7);
+            assert_eq!(output.last(), Some(&0.0));
+            if let Some(expected) = &reference {
+                assert_eq!(&output, expected, "block {block}");
+            } else {
+                reference = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
+fn live_stop_does_not_start_future_clips_or_metronome_beats() {
+    use echode_engine::{PlaybackCommand, playback_pair_at};
+    let frames = 64; // Fixture-only buffer size.
+    let (project, track) = Project::new().add_track("future audio");
+    let (mut control, mut audio) =
+        playback_pair_at(&project, RATE, frames, RATE as i64 / 2 - frames as i64).unwrap();
+    control.set_clip_loader(Arc::new(move |_, _| {
+        Ok(vec![echode_engine::LoadedClip {
+            track: track.raw(),
+            start_sample: RATE as i64 / 2,
+            samples: vec![1.0; 512].into(),
+            right: None,
+            fade_in: 0,
+            fade_out: 0,
+        }])
+    }));
+    control.replace(&project).unwrap();
+    control
+        .command(PlaybackCommand::SetMetronome(true))
+        .unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; frames];
+    let mut right = left.clone();
+    audio.render_live_gated_until(
+        &mut left,
+        &mut right,
+        std::time::Instant::now() + std::time::Duration::from_secs(1),
+        true,
+    );
+    assert!(left.iter().all(|value| *value == 0.0));
+    control.command(PlaybackCommand::Stop).unwrap();
+    for _ in 0..6 {
+        audio.render_live_gated_until(
+            &mut left,
+            &mut right,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            true,
+        );
+        assert!(left.iter().chain(&right).all(|value| *value == 0.0));
+        assert_eq!(control.status().sample, RATE as i64 / 2);
+    }
+}
+
+#[test]
+fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
+    use echode_engine::{OutputDeclick, PlaybackCommand, playback_pair};
+    for rate in [48_000, 96_000] {
+        let fade = (rate / 200) as usize;
+        let end = fade * 8;
+        for stop in [fade / 2, end - fade / 2] {
+            let mut reference = None;
+            for block in BLOCKS {
+                let (project, track) = Project::new().add_track("loop seam");
+                let (mut control, mut audio) =
+                    playback_pair(&project, rate, block as usize).unwrap();
+                // This fixture's clip length covers the loop and the stop tail.
+                control.set_clip_loader(Arc::new(move |_, _| {
+                    Ok(vec![echode_engine::LoadedClip {
+                        track: track.raw(),
+                        start_sample: 0,
+                        samples: vec![0.25; end + fade].into(),
+                        right: Some(vec![-0.5; end + fade].into()),
+                        fade_in: 0,
+                        fade_out: 0,
+                    }])
+                }));
+                control
+                    .command(PlaybackCommand::SetLoop {
+                        start: 0,
+                        end: end as i64,
+                    })
+                    .unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                let mut position = 0;
+                while position < stop {
+                    let frames = (stop - position).min(block as usize);
+                    let mut left = vec![0.0; frames];
+                    let mut right = left.clone();
+                    audio.render_live_gated_until(
+                        &mut left,
+                        &mut right,
+                        std::time::Instant::now() + std::time::Duration::from_secs(1),
+                        true,
+                    );
+                    position += frames;
+                }
+                control.command(PlaybackCommand::Stop).unwrap();
+                let mut declick = OutputDeclick::new(rate);
+                let mut output = Vec::new();
+                for offset in (0..fade + block as usize).step_by(block as usize) {
+                    let frames = (fade + block as usize - offset).min(block as usize);
+                    let mut left = vec![0.0; frames];
+                    let mut right = left.clone();
+                    audio.render_live_gated_until(
+                        &mut left,
+                        &mut right,
+                        std::time::Instant::now() + std::time::Duration::from_secs(1),
+                        true,
+                    );
+                    if let Some(age) = audio.stop_fade_offset() {
+                        declick.process_stop(&mut left, &mut right, age);
+                    }
+                    for (local, (left, right)) in left.iter().zip(&right).enumerate() {
+                        let age = offset + local;
+                        let sample = stop + age;
+                        let seam = if sample >= end {
+                            0.0
+                        } else {
+                            (sample as f64 / (fade - 1) as f64).min(1.0)
+                                * ((end - 1 - sample) as f64 / (fade - 1) as f64).min(1.0)
+                        };
+                        let gain = if age >= fade - 1 {
+                            0.0
+                        } else {
+                            0.5 * (1.0
+                                + (std::f64::consts::PI * age as f64 / (fade - 1) as f64).cos())
+                        };
+                        for (value, amplitude) in [(*left, 0.25), (*right, -0.5)] {
+                            let expected = amplitude * seam * gain;
+                            assert!(
+                                (f64::from(value) - expected).abs() < 1.0e-7,
+                                "stop restored loop volume at {rate}/{block}, stop {stop}, age {age}: {value} != {expected}"
+                            );
+                        }
+                    }
+                    output.extend(left);
+                    assert!(!control.status().failed);
+                    assert_eq!(control.status().sample as usize, stop);
+                }
+                output.truncate(fade);
+                if let Some(expected) = &reference {
+                    assert_eq!(&output, expected);
+                } else {
+                    reference = Some(output);
+                }
+            }
+        }
+    }
 }

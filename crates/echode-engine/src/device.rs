@@ -9,7 +9,7 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const SYSTEM_OBJECT: u32 = 1;
 const SCOPE_GLOBAL: u32 = u32::from_be_bytes(*b"glob");
@@ -22,6 +22,81 @@ const WORKGROUP: u32 = u32::from_be_bytes(*b"oswg");
 const PROCESS_MUTE: u32 = u32::from_be_bytes(*b"appm");
 const TARGET_RATE: f64 = 48_000.0;
 const WARMUP_CALLBACKS: u32 = 200;
+// Liveness guard for this measurement, not a realtime processing budget.
+const CALLBACK_STALL_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeasurementEnd {
+    Completed,
+    Interrupted,
+    CallbacksStopped,
+    DefaultOutputChanged { expected: u32, actual: u32 },
+    DeviceUnavailable(i32),
+    ClockDiscontinuity,
+}
+
+#[derive(Clone, Copy)]
+struct Observation {
+    elapsed: Duration,
+    wall_elapsed: Option<Duration>,
+    callbacks: u32,
+    output: Result<u32, i32>,
+    interrupted: bool,
+}
+
+/// The same control loop drives the real device and deterministic fault tests.
+/// It never runs on the audio thread.
+fn measure_progress(
+    duration: Duration,
+    device: u32,
+    mut observe: impl FnMut() -> Observation,
+    mut wait: impl FnMut(),
+    mut report: impl FnMut(),
+) -> MeasurementEnd {
+    let mut previous = 0;
+    let mut last_progress = Duration::ZERO;
+    let mut next_report = Duration::from_secs(30);
+    loop {
+        let observation = observe();
+        if observation.interrupted {
+            return MeasurementEnd::Interrupted;
+        }
+        // On macOS the monotonic clock can pause during sleep. Reject a run
+        // across suspend or a large wall-clock adjustment even if HAL resumes
+        // before the next poll and no missing callback is directly observed.
+        if observation
+            .wall_elapsed
+            .is_none_or(|wall| wall.abs_diff(observation.elapsed) >= CALLBACK_STALL_TIMEOUT)
+        {
+            return MeasurementEnd::ClockDiscontinuity;
+        }
+        match observation.output {
+            Ok(actual) if actual != device => {
+                return MeasurementEnd::DefaultOutputChanged {
+                    expected: device,
+                    actual,
+                };
+            }
+            Err(status) => return MeasurementEnd::DeviceUnavailable(status),
+            _ => {}
+        }
+        if observation.callbacks != previous {
+            previous = observation.callbacks;
+            last_progress = observation.elapsed;
+        }
+        if observation.elapsed.saturating_sub(last_progress) >= CALLBACK_STALL_TIMEOUT {
+            return MeasurementEnd::CallbacksStopped;
+        }
+        if observation.elapsed >= duration {
+            return MeasurementEnd::Completed;
+        }
+        if observation.elapsed >= next_report {
+            report();
+            next_report = observation.elapsed + Duration::from_secs(30);
+        }
+        wait();
+    }
+}
 
 #[repr(C)]
 struct PropAddress {
@@ -73,6 +148,8 @@ impl Drop for Restore {
 }
 
 pub struct Report {
+    pub requested_seconds: u64,
+    pub measured_for: Duration,
     pub sample_rate: f64,
     pub buffer_frames: u32,
     pub callbacks: u32,
@@ -87,11 +164,30 @@ pub struct Report {
     pub policy_failures: u64,
     pub workgroup_parallel: i32,
     pub workers: usize,
-    pub passed: bool,
+    pub outcome: MeasurementEnd,
+}
+
+impl Report {
+    pub fn passed(&self) -> bool {
+        self.outcome == MeasurementEnd::Completed
+            && self.measured_for >= Duration::from_secs(self.requested_seconds)
+            && self.late == 0
+            && self.gaps == 0
+            && self.workgroup_failures == 0
+            && self.policy_failures == 0
+            && self.buffer_frames == BLOCK_FRAMES as u32
+            && self.callbacks > WARMUP_CALLBACKS
+    }
 }
 
 impl std::fmt::Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "duration: requested {} s, measured {:.3} s",
+            self.requested_seconds,
+            self.measured_for.as_secs_f64()
+        )?;
         writeln!(
             f,
             "device: {:.0} Hz, {} frames (budget {:.3} ms)",
@@ -120,7 +216,8 @@ impl std::fmt::Display for Report {
         writeln!(f, "time-constraint failures: {}", self.policy_failures)?;
         writeln!(f, "workgroup parallel threads: {}", self.workgroup_parallel)?;
         writeln!(f, "workers: {}", self.workers)?;
-        writeln!(f, "result: {}", if self.passed { "pass" } else { "fail" })?;
+        writeln!(f, "measurement: {:?}", self.outcome)?;
+        writeln!(f, "result: {}", if self.passed() { "pass" } else { "fail" })?;
         Ok(())
     }
 }
@@ -174,14 +271,51 @@ impl Session {
 
 /// `workers` of `None` uses `os_workgroup_max_parallel_threads`, minus the IO thread.
 pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
-    let device = default_output().map_err(|status| format!("default output device: {status}"))?;
-    let sample_rate =
-        get_f64(device, SAMPLE_RATE).map_err(|status| format!("sample rate: {status}"))?;
-    if (sample_rate - TARGET_RATE).abs() > 1.0 {
+    run_measurement(seconds, workers, true)
+}
+
+/// Brief hardware checks use the current device rate without reconfiguring it.
+pub fn run_at_device_rate(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
+    run_measurement(seconds, workers, false)
+}
+
+fn measurement_geometry(
+    sample_rate: f64,
+    seconds: u64,
+    require_reference_rate: bool,
+) -> Result<(u64, usize), String> {
+    if !sample_rate.is_finite() || sample_rate <= 0.0 {
+        return Err("invalid output sample rate".to_string());
+    }
+    if require_reference_rate && (sample_rate - TARGET_RATE).abs() > 1.0 {
         return Err(format!(
             "output device is at {sample_rate} Hz; this spike requires {TARGET_RATE}"
         ));
     }
+    let budget_ns = (BLOCK_FRAMES as f64 * 1_000_000_000.0 / sample_rate) as u64;
+    if budget_ns == 0 {
+        return Err("output period cannot be represented".to_string());
+    }
+    // Storage covers this measurement, including control-loop overshoot and
+    // warmup. It is not a project limit, and scales with the actual IO rate.
+    let callbacks_per_second = (sample_rate / BLOCK_FRAMES as f64).ceil() as u128;
+    let capacity = (u128::from(seconds) + 1)
+        .checked_mul(callbacks_per_second)
+        .and_then(|count| count.checked_add(u128::from(WARMUP_CALLBACKS)))
+        .and_then(|count| usize::try_from(count).ok())
+        .ok_or("measurement duration cannot be represented")?;
+    Ok((budget_ns, capacity))
+}
+
+fn run_measurement(
+    seconds: u64,
+    workers: Option<usize>,
+    require_reference_rate: bool,
+) -> Result<Report, String> {
+    let device = default_output().map_err(|status| format!("default output device: {status}"))?;
+    let sample_rate =
+        get_f64(device, SAMPLE_RATE).map_err(|status| format!("sample rate: {status}"))?;
+    let (budget_ns, capacity) = measurement_geometry(sample_rate, seconds, require_reference_rate)?;
     let original_buffer =
         get_u32(device, BUFFER_FRAMES).map_err(|status| format!("buffer size: {status}"))?;
     let original_mute = get_u32(device, PROCESS_MUTE).ok();
@@ -206,8 +340,8 @@ pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
     let mut timebase = Timebase { numer: 0, denom: 1 };
     // SAFETY: `timebase` is a valid out-parameter.
     unsafe { mach_timebase_info(&mut timebase) };
-    let budget_ticks = ((BLOCK_FRAMES as u128) * 1_000_000_000 * u128::from(timebase.denom)
-        / (TARGET_RATE as u128 * u128::from(timebase.numer.max(1)))) as u64;
+    let budget_ticks = (u128::from(budget_ns) * u128::from(timebase.denom)
+        / u128::from(timebase.numer.max(1))) as u64;
 
     let workgroup =
         get_pointer(device, WORKGROUP).map_err(|status| format!("workgroup: {status}"))?;
@@ -231,7 +365,6 @@ pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
     let period_ticks = u32::try_from(budget_ticks).unwrap_or(u32::MAX).max(1);
     let engine = Arc::new(Engine::new(worker_count));
     let workers = engine.spawn_workers(workgroup, period_ticks);
-    let capacity = usize::try_from(seconds).unwrap_or(1) * 800 + 4_000;
     let session = Box::new(Session {
         engine,
         samples: std::cell::UnsafeCell::new(vec![0u32; capacity].into_boxed_slice()),
@@ -268,11 +401,20 @@ pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
         return Err(format!("AudioDeviceStart: {status}"));
     }
 
-    let deadline = Instant::now() + Duration::from_secs(seconds);
-    let mut next_report = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline && !stop_requested() {
-        thread::sleep(Duration::from_millis(200));
-        if Instant::now() >= next_report {
+    let started = Instant::now();
+    let wall_started = SystemTime::now();
+    let outcome = measure_progress(
+        Duration::from_secs(seconds),
+        device,
+        || Observation {
+            elapsed: started.elapsed(),
+            wall_elapsed: wall_started.elapsed().ok(),
+            callbacks: session.sample_count.load(Ordering::Acquire),
+            output: default_output(),
+            interrupted: stop_requested(),
+        },
+        || thread::sleep(Duration::from_millis(200)),
+        || {
             eprintln!(
                 "callbacks={} late={} gaps={} max={:.3} ms",
                 session.sample_count.load(Ordering::Relaxed),
@@ -280,9 +422,9 @@ pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
                 session.gaps.load(Ordering::Relaxed),
                 session.max_ns.load(Ordering::Relaxed) as f64 / 1_000_000.0
             );
-            next_report = Instant::now() + Duration::from_secs(30);
-        }
-    }
+        },
+    );
+    let measured_for = started.elapsed();
 
     unsafe { AudioDeviceStop(device, proc_id) };
     unsafe { AudioDeviceDestroyIOProcID(device, proc_id) };
@@ -308,13 +450,9 @@ pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
     };
     let late = session.late.load(Ordering::Relaxed);
     let gaps = session.gaps.load(Ordering::Relaxed);
-    let passed = late == 0
-        && gaps == 0
-        && failures == 0
-        && policy_failures == 0
-        && actual_buffer == BLOCK_FRAMES as u32
-        && !sorted.is_empty();
     Ok(Report {
+        requested_seconds: seconds,
+        measured_for,
         sample_rate,
         buffer_frames: actual_buffer,
         callbacks: count as u32,
@@ -324,12 +462,12 @@ pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
         max_ns: session.max_ns.load(Ordering::Relaxed),
         p50_ns: percentile(0.50),
         p99_ns: percentile(0.99),
-        budget_ns: (BLOCK_FRAMES as u64) * 1_000_000_000 / TARGET_RATE as u64,
+        budget_ns,
         workgroup_failures: failures,
         policy_failures,
         workgroup_parallel,
         workers: worker_count,
-        passed,
+        outcome,
     })
 }
 
@@ -616,6 +754,175 @@ pub fn install_stop_handler() {
 
 unsafe extern "C" fn handle_stop(_signal: i32) {
     STOP.store(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn observation(millis: u64, callbacks: u32) -> Observation {
+        Observation {
+            elapsed: Duration::from_millis(millis),
+            wall_elapsed: Some(Duration::from_millis(millis)),
+            callbacks,
+            output: Ok(123),
+            interrupted: false,
+        }
+    }
+
+    fn outcome(observations: Vec<Observation>, duration: Duration) -> MeasurementEnd {
+        let mut observations = observations.into_iter();
+        measure_progress(
+            duration,
+            123,
+            || observations.next().expect("measurement did not terminate"),
+            || {},
+            || {},
+        )
+    }
+
+    fn report(outcome: MeasurementEnd, callbacks: u32) -> Report {
+        Report {
+            requested_seconds: 600,
+            measured_for: Duration::from_secs(600),
+            sample_rate: TARGET_RATE,
+            buffer_frames: BLOCK_FRAMES as u32,
+            callbacks,
+            late: 0,
+            gaps: 0,
+            warmup_late: 0,
+            max_ns: 300_000,
+            p50_ns: 200_000,
+            p99_ns: 250_000,
+            budget_ns: 1_333_333,
+            workgroup_failures: 0,
+            policy_failures: 0,
+            workgroup_parallel: 4,
+            workers: 3,
+            outcome,
+        }
+    }
+
+    #[test]
+    fn measurement_geometry_uses_the_device_rate_and_reserves_the_whole_run() {
+        let (budget, slots) = measurement_geometry(96_000.0, 10, false).unwrap();
+        assert_eq!(budget, 666_666);
+        assert!(slots >= 15_000 + WARMUP_CALLBACKS as usize);
+        let (budget, _) = measurement_geometry(44_100.0, 10, false).unwrap();
+        assert_eq!(budget, 1_451_247);
+        assert!(measurement_geometry(96_000.0, 10, true).is_err());
+        assert!(measurement_geometry(48_000.0, 600, true).is_ok());
+        for rate in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(measurement_geometry(rate, 10, false).is_err());
+        }
+        assert!(measurement_geometry(96_000.0, u64::MAX, false).is_err());
+    }
+
+    #[test]
+    fn contract_engine_measurement_requires_progress_and_completion() {
+        // Synthetic callback counts and elapsed times exercise the real control
+        // loop without hardware or wall-clock timing. They are not engine caps.
+        let complete = outcome(
+            (0..=5)
+                .map(|step| observation(step * 200, step as u32 * 150))
+                .collect(),
+            Duration::from_secs(1),
+        );
+        assert_eq!(complete, MeasurementEnd::Completed);
+        assert!(report(complete, 750).passed());
+
+        let stalled = outcome(
+            vec![
+                observation(0, 0),
+                observation(100, 77_386),
+                observation(2000, 77_386),
+                observation(2100, 77_386),
+            ],
+            Duration::from_secs(600),
+        );
+        assert_eq!(stalled, MeasurementEnd::CallbacksStopped);
+        assert!(
+            !report(stalled, 77_386).passed(),
+            "nonempty timing samples hid a stopped callback"
+        );
+
+        let cold = outcome(
+            vec![observation(0, 0), observation(2000, 0)],
+            Duration::from_secs(600),
+        );
+        assert_eq!(cold, MeasurementEnd::CallbacksStopped);
+        assert!(!report(cold, 0).passed());
+
+        let interrupted = outcome(
+            vec![
+                observation(0, 0),
+                Observation {
+                    interrupted: true,
+                    ..observation(400, 300)
+                },
+            ],
+            Duration::from_secs(600),
+        );
+        assert_eq!(interrupted, MeasurementEnd::Interrupted);
+        assert!(
+            !report(interrupted, 300).passed(),
+            "an interrupted run was treated as complete"
+        );
+
+        let changed = outcome(
+            vec![
+                observation(0, 0),
+                Observation {
+                    output: Ok(456),
+                    ..observation(400, 300)
+                },
+            ],
+            Duration::from_secs(600),
+        );
+        assert_eq!(
+            changed,
+            MeasurementEnd::DefaultOutputChanged {
+                expected: 123,
+                actual: 456
+            }
+        );
+        assert!(!report(changed, 300).passed());
+        let unavailable = outcome(
+            vec![Observation {
+                output: Err(-50),
+                ..observation(400, 300)
+            }],
+            Duration::from_secs(600),
+        );
+        assert_eq!(unavailable, MeasurementEnd::DeviceUnavailable(-50));
+        assert!(!report(unavailable, 300).passed());
+        let resumed = outcome(
+            vec![
+                observation(0, 0),
+                Observation {
+                    wall_elapsed: Some(Duration::from_secs(30)),
+                    ..observation(400, 300)
+                },
+            ],
+            Duration::from_secs(600),
+        );
+        assert_eq!(resumed, MeasurementEnd::ClockDiscontinuity);
+        assert!(!report(resumed, 300).passed());
+
+        assert!(!report(MeasurementEnd::Completed, WARMUP_CALLBACKS).passed());
+        let mut partial = report(MeasurementEnd::Completed, 77_386);
+        partial.measured_for = Duration::from_secs(103);
+        assert!(
+            !partial.passed(),
+            "partial elapsed time was treated as a complete measurement"
+        );
+        let mut invalid = report(MeasurementEnd::Completed, 750);
+        invalid.late = 1;
+        assert!(!invalid.passed());
+        invalid.late = 0;
+        invalid.gaps = 1;
+        assert!(!invalid.passed());
+    }
 }
 
 #[link(name = "CoreAudio", kind = "framework")]

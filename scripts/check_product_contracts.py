@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run required behavioral regressions; zero tests or skips are failures."""
 
+from contextlib import contextmanager
+import errno
 import json
 import os
 from pathlib import Path
@@ -108,6 +110,24 @@ def mutation_path(checkout, filename):
     return path
 
 
+@contextmanager
+def source_copy(root):
+    directory = Path(tempfile.mkdtemp(prefix=".product-contracts-", dir=root / "target"))
+    try:
+        yield directory
+    finally:
+        # Finder can recreate .DS_Store between traversal and rmdir. Retry only
+        # that directory-content race; permission errors and persistent failures
+        # must still fail verification. This path belongs to this invocation.
+        for attempt in range(3):
+            try:
+                shutil.rmtree(directory)
+                break
+            except OSError as error:
+                if error.errno != errno.ENOTEMPTY or attempt == 2:
+                    raise
+
+
 def negative_controls(root, contracts):
     evidence = root / "target/verification/product-contracts"
     cargo_target = root / "target/product-contract-mutations/rust"
@@ -115,8 +135,7 @@ def negative_controls(root, contracts):
     shutil.copy2(root / "target/debug/libechode_test_plugin.dylib",
                  cargo_target / "debug/libechode_test_plugin.dylib")
     results = []
-    with tempfile.TemporaryDirectory(prefix="product-contracts-", dir=root / "target") as directory:
-        checkout = Path(directory)
+    with source_copy(root) as checkout:
         snapshot(root, checkout)
         for contract in contracts:
             fault = contract["negative_control"]

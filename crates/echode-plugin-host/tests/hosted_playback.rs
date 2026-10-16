@@ -16,6 +16,11 @@ fn host_bin() -> PathBuf {
 }
 
 fn plugin_dylib() -> PathBuf {
+    static ARTIFACT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ARTIFACT.get_or_init(build_plugin_dylib).clone()
+}
+
+fn build_plugin_dylib() -> PathBuf {
     static BUILD: Mutex<()> = Mutex::new(());
     let sibling = host_bin()
         .parent()
@@ -346,6 +351,7 @@ fn audit_aud07_one_deadline_collects_a_healthy_track_beside_hangs() {
         );
     }
     assert!(!control.status().failed);
+    assert!(control.status().plugin_missed_blocks > 0);
 
     let started = std::time::Instant::now();
     audio.render_until(&mut left, &mut right, std::time::Instant::now());
@@ -355,6 +361,14 @@ fn audit_aud07_one_deadline_collects_a_healthy_track_beside_hangs() {
         "front-end work extended the hang deadline: {spent:?}"
     );
     assert!(!control.status().failed);
+    assert!(control.status().plugin_missed_blocks > 0);
+}
+
+/// Content assertions need a hung-helper guard, not a realtime deadline.
+/// The ignored deadline measurements and explicit hang/past-deadline probes
+/// above still use the product's actual budget (ADR 0049).
+fn render_content(audio: &mut echode_engine::PlaybackAudio, left: &mut [f32], right: &mut [f32]) {
+    audio.render_until(left, right, Instant::now() + Duration::from_secs(10));
 }
 
 fn count_route(path: &Path) -> PluginRoute {
@@ -368,7 +382,9 @@ fn count_route(path: &Path) -> PluginRoute {
 }
 
 fn level(events: f32) -> f32 {
-    events * std::f32::consts::FRAC_1_SQRT_2
+    // The count fixture writes the same level into both channels of a stereo
+    // main port. Center balance preserves that level in each channel.
+    events
 }
 
 fn assert_level(heard: f32, events: f32) {
@@ -421,7 +437,7 @@ fn audit_aud05_notes_added_after_the_plugin_all_reach_it_and_its_state_stays() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     // Three note-ons and three note-offs. The counter keeps both totals.
     assert_level(left[0], 3.0 + 3.0 * 16.0);
     assert!(!control.status().failed);
@@ -446,7 +462,7 @@ fn audit_aud05_notes_added_after_the_plugin_all_reach_it_and_its_state_stays() {
     let (mut control, mut audio) =
         playback_with_plugins(&project, 48_000, frames, &host_bin(), &[route]).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert_level(left[0], 1.0);
     let mut grown = project;
     for pitch in [64u8, 67] {
@@ -464,7 +480,7 @@ fn audit_aud05_notes_added_after_the_plugin_all_reach_it_and_its_state_stays() {
             .0;
     }
     control.replace(&grown).unwrap();
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     // The first note-on is still inside the plugin. Only the two new ones are sent.
     assert_level(left[0], 3.0);
     assert!(!control.status().failed);
@@ -501,7 +517,7 @@ fn audit_pro04_growing_a_short_chord_keeps_every_note_off() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert_level(left[0], 3.0 + 3.0 * 16.0);
     for pitch in [72u8, 76, 79] {
         chord = chord
@@ -519,7 +535,7 @@ fn audit_pro04_growing_a_short_chord_keeps_every_note_off() {
     }
     control.command(PlaybackCommand::Locate(0)).unwrap();
     control.replace(&chord).unwrap();
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     // Back at the start, all six notes start and end in this block. The counter
     // already holds the first three pairs, so the total is nine ons and nine offs
     // when none are dropped. Dropping offs leaves a smaller multiple of 16.
@@ -560,11 +576,11 @@ fn audit_pro05_an_empty_track_keeps_the_held_note() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert_level(left[0], 1.0);
     let (project, _) = project.add_track("empty");
     control.replace(&project).unwrap();
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert_level(left[0], 1.0);
     assert!(!control.status().failed);
 }
@@ -593,12 +609,12 @@ fn audit_pro05_a_new_plugin_receives_the_held_note() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     let project = project
         .add_clap_device(track, Id::from_raw(95), "dev.echode.test-gain")
         .unwrap();
     control.replace(&project).unwrap();
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert_level(left[0], 1.0);
     assert!(!control.status().failed);
 }
@@ -635,8 +651,160 @@ fn hold_note(pitch: u8) -> (Project, Id, Id) {
 fn first_sample(audio: &mut echode_engine::PlaybackAudio, frames: usize) -> f32 {
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
-    audio.render(&mut left, &mut right);
+    render_content(audio, &mut left, &mut right);
     left[0]
+}
+
+fn tail_player(
+    path: &Path,
+    frames: usize,
+    chain: usize,
+    fault: &str,
+) -> (
+    Project,
+    Id,
+    Id,
+    echode_engine::PlaybackControl,
+    echode_engine::PlaybackAudio,
+) {
+    let (mut project, track) = Project::new().add_track("tail regression");
+    let (noted, note) = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::quarters(2).unwrap(),
+            },
+        )
+        .unwrap();
+    project = noted;
+    let mut routes = Vec::new();
+    for (plugin, instrument, include) in [
+        ("dev.echode.test-instrument", true, chain != 1),
+        ("dev.echode.test-gain", false, chain != 0),
+    ] {
+        if !include {
+            continue;
+        }
+        project = project
+            .add_clap_device(track, Id::generate(), plugin)
+            .unwrap();
+        routes.push(PluginRoute {
+            clap_id: plugin.into(),
+            path: path.to_path_buf(),
+            instrument,
+            fault: Some(fault.into()),
+            state: None,
+        });
+    }
+    let (control, audio) =
+        playback_with_plugins(&project, 48000, frames, &host_bin(), &routes).unwrap();
+    (project, track, note, control, audio)
+}
+
+#[test]
+fn contract_stop_seek_resume_does_not_replay_plugin_tails() {
+    check_tail_lifecycle("tail");
+}
+
+#[test]
+fn contract_midi_lifecycle_stops_all_declared_ports() {
+    check_tail_lifecycle("tail-legacy");
+}
+
+fn check_tail_lifecycle(fault: &str) {
+    let path = plugin_dylib();
+    // Block sizes and three fixture chains only bound this regression's work.
+    for frames in [64, 512] {
+        for chain in 0..3 {
+            for command in [PlaybackCommand::Stop, PlaybackCommand::Pause] {
+                for coalesced in [false, true] {
+                    let (_, _, _, mut control, mut audio) =
+                        tail_player(&path, frames, chain, fault);
+                    let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+                    control.command(PlaybackCommand::Play).unwrap();
+                    render_content(&mut audio, &mut left, &mut right);
+                    assert!(left.iter().any(|sample| *sample != 0.0));
+                    control.command(command).unwrap();
+                    if !coalesced {
+                        render_content(&mut audio, &mut left, &mut right);
+                        assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+                    }
+                    control.command(PlaybackCommand::Locate(480_000)).unwrap();
+                    control.command(PlaybackCommand::Play).unwrap();
+                    for _ in 0..3 {
+                        render_content(&mut audio, &mut left, &mut right);
+                        assert!(
+                            left.iter().chain(&right).all(|sample| *sample == 0.0),
+                            "old tail after {command:?}, chain={chain}, coalesced={coalesced}: {}",
+                            left[0]
+                        );
+                    }
+                    // Moving while playing clears old state but still chases a
+                    // note which actually overlaps the destination.
+                    control.command(PlaybackCommand::Locate(0)).unwrap();
+                    render_content(&mut audio, &mut left, &mut right);
+                    assert!(left.iter().any(|sample| *sample != 0.0));
+                    control.command(PlaybackCommand::Locate(480_000)).unwrap();
+                    render_content(&mut audio, &mut left, &mut right);
+                    assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+                    assert!(control.plugin_failure().is_none());
+                    assert!(!control.status().failed);
+                }
+            }
+            // Stop/pause also clear tails when the position does not change.
+            // Removing the note leaves the retained player at an empty point.
+            for command in [
+                Some(PlaybackCommand::Stop),
+                Some(PlaybackCommand::Pause),
+                None,
+            ] {
+                let (project, track, note, mut control, mut audio) =
+                    tail_player(&path, frames, chain, fault);
+                let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+                control.command(PlaybackCommand::Play).unwrap();
+                render_content(&mut audio, &mut left, &mut right);
+                if let Some(command) = command {
+                    control.command(command).unwrap();
+                    render_content(&mut audio, &mut left, &mut right);
+                } else {
+                    audio.render_gated_until(
+                        &mut left,
+                        &mut right,
+                        Instant::now() + Duration::from_secs(10),
+                        false,
+                    );
+                }
+                control
+                    .replace(&project.delete_note(track, note).unwrap())
+                    .unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                render_content(&mut audio, &mut left, &mut right);
+                assert!(
+                    left.iter().chain(&right).all(|sample| *sample == 0.0),
+                    "stop without locate: {command:?}, chain={chain}"
+                );
+                assert!(control.plugin_failure().is_none());
+            }
+            // A naturally ending note keeps its release, even though there is
+            // no note at the new clock position. Muting empty regions is wrong.
+            let (_, _, _, mut control, mut audio) = tail_player(&path, frames, chain, fault);
+            let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+            control
+                .command(PlaybackCommand::Locate(48_000 - frames as i64))
+                .unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            for _ in 0..3 {
+                render_content(&mut audio, &mut left, &mut right);
+                assert!(
+                    left.iter().any(|sample| *sample != 0.0),
+                    "natural tail disappeared, chain={chain}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -810,6 +978,7 @@ fn constant_clips(track: u128, value: f32, frames: usize) -> echode_engine::Clip
             track,
             start_sample: 0,
             samples: Arc::clone(&samples),
+            right: None,
             fade_in: 0,
             fade_out: 0,
         }])
@@ -835,7 +1004,7 @@ fn play_left(
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert!(!control.status().failed);
     left
 }
@@ -845,6 +1014,120 @@ fn assert_close(heard: &[f32], expected: &[f32]) {
     for (heard, expected) in heard.iter().zip(expected) {
         assert!((heard - expected).abs() < 1.0e-5, "{heard} != {expected}");
     }
+}
+
+#[test]
+fn contract_stereo_planes_survive_effects_and_instrument_injection() {
+    let path = plugin_dylib();
+    // Deliberately asymmetric and opposite phase: duplicating either channel,
+    // averaging to mono, or applying mono center pan cannot pass this fixture.
+    for instrument in [false, true] {
+        let (project, track) = Project::new().add_track("stereo chain");
+        let project = project
+            .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+            .unwrap()
+            .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+            .unwrap();
+        let mut first = effect_route(&path);
+        first.instrument = instrument;
+        let block = 64; // Scratch for this regression, not a channel/frame limit.
+        let (mut control, mut audio) = playback_with_plugins(
+            &project,
+            48_000,
+            block,
+            &host_bin(),
+            &[first, effect_route(&path)],
+        )
+        .unwrap();
+        control.set_clip_loader(Arc::new(move |_, _| {
+            Ok(vec![LoadedClip {
+                track: track.raw(),
+                start_sample: 0,
+                samples: Arc::from(vec![0.125; 256]),
+                right: Some(Arc::from(vec![-0.25; 256])),
+                fade_in: 0,
+                fade_out: 0,
+            }])
+        }));
+        control.replace(&project).unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        for _ in 0..3 {
+            let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+            audio.render_until(
+                &mut left,
+                &mut right,
+                Instant::now() + Duration::from_secs(10),
+            );
+            assert!(!control.status().failed);
+            assert!(control.plugin_failure().is_none());
+            let gain = if instrument { 2.0 } else { 4.0 };
+            assert!(
+                left.iter().all(|sample| *sample == 0.125 * gain),
+                "left {left:?}"
+            );
+            assert!(
+                right.iter().all(|sample| *sample == -0.25 * gain),
+                "right {right:?}"
+            );
+            control.service();
+        }
+    }
+}
+
+#[test]
+fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
+    let (project, track) = Project::new().add_track("mono instrument");
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-mono")
+        .unwrap();
+    let route = PluginRoute {
+        clap_id: "dev.echode.test-mono".into(),
+        path: plugin_dylib(),
+        instrument: true,
+        fault: None,
+        state: None,
+    };
+    let block = 64; // This test's scratch size, not an engine limit.
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, block, &host_bin(), &[route]).unwrap();
+    control.set_clip_loader(constant_clips(track.raw(), 0.125, 1024));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+    audio.render_until(
+        &mut left,
+        &mut right,
+        Instant::now() + Duration::from_secs(10),
+    );
+    let before = left.clone();
+    assert!(
+        before
+            .iter()
+            .all(|sample| (*sample - 0.375 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1.0e-5)
+    );
+    control.set_clip_loader(Arc::new(move |_, _| {
+        Ok(vec![LoadedClip {
+            track: track.raw(),
+            start_sample: 0,
+            samples: Arc::from(vec![0.125; 1024]),
+            right: Some(Arc::from(vec![-0.125; 1024])),
+            fade_in: 0,
+            fade_out: 0,
+        }])
+    }));
+    let error = control
+        .replace(&project)
+        .expect_err("implicit stereo downmix was accepted");
+    assert!(error.to_string().contains("bus mapping"), "{error}");
+    audio.render_until(
+        &mut left,
+        &mut right,
+        Instant::now() + Duration::from_secs(10),
+    );
+    assert!(!control.status().failed);
+    assert!(control.plugin_failure().is_none());
+    assert_eq!(left, before);
+    assert_eq!(right, before);
 }
 
 #[test]
@@ -943,11 +1226,11 @@ fn audit_aud08_clips_and_notes_reach_the_track_effect_before_the_fader() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; frames];
     let mut right = vec![0.0; frames];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert!(!control.status().failed);
     // Count writes 1 and ignores its input. The clip is mixed onto that output,
     // then the gain effect doubles the sum.
-    let expected = (1.0 + 0.25) * 2.0 * pan;
+    let expected = (1.0 + 0.25 * pan) * 2.0;
     assert!(
         (left[body] - expected).abs() < 1.0e-4,
         "{} != {expected}",
@@ -1008,6 +1291,15 @@ fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
     .expect("restored");
     assert!((left[0] - 0.5).abs() < 1.0e-4, "{}", left[0]);
     assert_eq!(host.save_state().expect("save again"), vec![128]);
+    host.request_reset();
+    host.process(
+        &[&input, &input],
+        &mut [&mut left, &mut right],
+        Duration::from_secs(2),
+    )
+    .expect("processing reset");
+    assert!((left[0] - 0.5).abs() < 1.0e-4, "reset changed the preset");
+    assert_eq!(host.save_state().unwrap(), vec![128]);
     host.restart().expect("restart");
     host.process(
         &[&input, &input],
@@ -1042,8 +1334,8 @@ fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut heard = vec![0.0; 64];
     let mut silent = vec![0.0; 64];
-    audio.render(&mut heard, &mut silent);
-    let expected = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    render_content(&mut audio, &mut heard, &mut silent);
+    let expected = 0.5;
     assert!(
         (heard[32] - expected).abs() < 1.0e-3,
         "{} != {expected}",
@@ -1132,7 +1424,7 @@ fn audit_pro02_declared_ports_are_what_process_sees() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut heard = vec![0.0; 64];
     let mut right = vec![0.0; 64];
-    audio.render(&mut heard, &mut right);
+    render_content(&mut audio, &mut heard, &mut right);
     let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
     assert!(
         (heard[32] - expected).abs() < 1.0e-3,
@@ -1211,12 +1503,12 @@ fn audit_rea02_chased_notes_merge_before_future_events() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; 256];
     let mut right = vec![0.0; 256];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     let with_plugin = future
         .add_clap_device(track, Id::from_raw(999), "dev.echode.test-order")
         .unwrap();
     control.replace(&with_plugin).unwrap();
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert!(
         control.plugin_failure().is_none(),
         "{:?}",
@@ -1245,14 +1537,14 @@ fn audit_rea03_two_replacements_before_callback_keep_chase() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; 256];
     let mut right = vec![0.0; 256];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     let with_plugin = project
         .add_clap_device(track, Id::from_raw(999), "dev.echode.test-order")
         .unwrap();
     control.replace(&with_plugin).unwrap();
     let with_empty = with_plugin.add_track("empty").0;
     control.replace(&with_empty).unwrap();
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     assert!(
         control.plugin_failure().is_none(),
         "{:?}",
@@ -1285,8 +1577,9 @@ fn hear_state(
 ) -> f32 {
     let mut left = vec![0.0; 64];
     let mut right = vec![0.0; 64];
-    audio.render(&mut left, &mut right);
-    let _ = control;
+    render_content(audio, &mut left, &mut right);
+    assert!(!control.status().failed);
+    assert!(control.plugin_failure().is_none());
     left[32]
 }
 
@@ -1304,8 +1597,8 @@ fn audit_rea04_same_device_state_change_updates_sound() {
     )
     .unwrap();
     control.command(PlaybackCommand::Play).unwrap();
-    let quiet = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
-    let loud = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    let quiet = 0.25;
+    let loud = 0.5;
     let heard = hear_state(&mut control, &mut audio);
     assert!((heard - quiet).abs() < 1.0e-3, "start {heard}");
     control.set_routes(&host, &[state_route(&path, Some(vec![128]))]);
@@ -1344,8 +1637,8 @@ fn audit_rea04_two_devices_keep_their_own_state() {
     )
     .unwrap();
     control.command(PlaybackCommand::Play).unwrap();
-    let quiet = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
-    let loud = 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+    let quiet = 0.25;
+    let loud = 0.5;
     let heard = hear_state(&mut control, &mut audio);
     assert!(
         (heard - loud).abs() < 1.0e-3,
@@ -1409,7 +1702,7 @@ fn audit_rea05_dirty_reaches_durable_product_state() {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; 64];
     let mut right = vec![0.0; 64];
-    audio.render(&mut left, &mut right);
+    render_content(&mut audio, &mut left, &mut right);
     let started = Instant::now();
     let bytes = loop {
         control.service();
@@ -1437,4 +1730,621 @@ fn audit_rea05_dirty_reaches_durable_product_state() {
         vec![128]
     );
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn routine_state_polling_preserves_continuous_hosted_audio_under_rtsan() {
+    let (project, track) = Project::new().add_track("constant effect input");
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let path = plugin_dylib();
+    // The block and run lengths bound this fixture only. There is no realtime
+    // threshold here: render_content uses a hung-helper guard.
+    let frames = 64;
+    let blocks = 256;
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        96_000,
+        frames,
+        &host_bin(),
+        &[effect_route(&path)],
+    )
+    .unwrap();
+    control.set_clip_loader(constant_clips(track.raw(), 0.125, frames * blocks));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let worker_barrier = Arc::clone(&barrier);
+    let worker = std::thread::spawn(move || {
+        for _ in 0..blocks {
+            worker_barrier.wait();
+            control.service();
+            worker_barrier.wait();
+        }
+        control
+    });
+    let mut left = vec![0.0; frames];
+    let mut right = left.clone();
+    let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    let mut wrong_samples = 0;
+    for _ in 0..blocks {
+        barrier.wait();
+        render_content(&mut audio, &mut left, &mut right);
+        barrier.wait();
+        wrong_samples += left
+            .iter()
+            .chain(&right)
+            .filter(|sample| (**sample - expected).abs() > 1.0e-7)
+            .count();
+    }
+    let control = worker.join().unwrap();
+    assert_eq!(wrong_samples, 0, "state polling changed the plugin route");
+    assert_eq!(control.status().plugin_missed_blocks, 0);
+    assert_eq!(control.status().graph_unavailable_blocks, 0);
+}
+
+#[test]
+fn contract_preparing_a_graph_keeps_current_audio_running_under_rtsan() {
+    use std::io::{Read, Write};
+    let (project, track) = Project::new().add_track("continuous");
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let path = plugin_dylib();
+    // These sizes bound only this fixture, not project or device capacity.
+    let frames = 64;
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        96_000,
+        frames,
+        &host_bin(),
+        &[effect_route(&path)],
+    )
+    .unwrap();
+    control.set_clip_loader(constant_clips(track.raw(), 0.125, frames * 64));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; frames];
+    let mut right = left.clone();
+    render_content(&mut audio, &mut left, &mut right);
+    let before = control.status().sample;
+    let socket_path = Path::new("/private/tmp").join(format!("ep-{}.sock", Id::generate().raw()));
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let (changed, added) = project.add_track("initializing");
+    let changed = changed
+        .add_clap_device(added, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let mut waiting = effect_route(&path);
+    waiting.fault = Some(format!("prepare-wait:{}", socket_path.display()));
+    let worker = std::thread::spawn(move || {
+        control.set_routes(&host_bin(), &[effect_route(&path), waiting]);
+        let result = control.replace(&changed);
+        (control, result)
+    });
+    // A hung-initializer guard, not a realtime performance threshold.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut peer = loop {
+        match listener.accept() {
+            Ok((peer, _)) => break peer,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(1))
+            }
+            Err(error) => panic!("initializer handshake: {error}"),
+        }
+    };
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut reached = [0];
+    peer.read_exact(&mut reached).unwrap();
+    let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;
+    let mut wrong = 0;
+    for _ in 0..8 {
+        render_content(&mut audio, &mut left, &mut right);
+        wrong += left
+            .iter()
+            .chain(&right)
+            .filter(|value| (**value - expected).abs() > 1.0e-7)
+            .count();
+    }
+    peer.write_all(&[1]).unwrap();
+    let (control, result) = worker.join().unwrap();
+    std::fs::remove_file(socket_path).unwrap();
+    result.unwrap();
+    assert_eq!(wrong, 0, "graph preparation changed existing audio");
+    assert_eq!(control.status().sample, before + (frames * 8) as i64);
+    assert_eq!(control.status().graph_unavailable_blocks, 0);
+    render_content(&mut audio, &mut left, &mut right);
+    assert!(left.iter().all(|value| (*value - expected).abs() < 1.0e-7));
+}
+
+#[test]
+fn queued_event_capacity_changes_preserve_the_existing_processor_under_rtsan() {
+    let path = plugin_dylib();
+    let (base, track) = Project::new().add_track("held");
+    let base = base
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let base = base
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::quarters(16).unwrap(),
+            },
+        )
+        .unwrap()
+        .0;
+    let frames = 64; // Fixture block length only.
+    let (mut control, mut audio) =
+        playback_with_plugins(&base, 48_000, frames, &host_bin(), &[count_route(&path)]).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; frames];
+    let mut right = left.clone();
+    render_content(&mut audio, &mut left, &mut right);
+    assert_level(left[0], 1.0);
+    // Several edits arrive before audio adopts the first prepared mapping.
+    // Future notes increase storage without changing the sounding note.
+    for count in [4, 16, 2, 8, 0] {
+        let mut next = base.clone();
+        for offset in 0..count {
+            next = next
+                .insert_note(
+                    track,
+                    NoteDraft {
+                        pitch: 61,
+                        velocity: 100,
+                        start: Tick::quarters(20 + offset).unwrap(),
+                        length: Tick::quarters(1).unwrap(),
+                    },
+                )
+                .unwrap()
+                .0;
+        }
+        control.replace(&next).unwrap();
+    }
+    for _ in 0..16 {
+        render_content(&mut audio, &mut left, &mut right);
+        control.service();
+        assert!(control.take_preparation_error().is_none());
+        assert!(
+            left.iter().all(|sample| (*sample - 1.0).abs() < 1.0e-7),
+            "processor restarted or chased twice: {left:?}"
+        );
+    }
+    assert!(!control.status().pending_plan);
+    control.command(PlaybackCommand::Stop).unwrap();
+    render_content(&mut audio, &mut left, &mut right);
+    // Mapping publication must also progress without any sounding audio.
+    for count in [3, 9, 1] {
+        let mut next = base.clone();
+        for offset in 0..count {
+            next = next
+                .insert_note(
+                    track,
+                    NoteDraft {
+                        pitch: 61,
+                        velocity: 100,
+                        start: Tick::quarters(20 + offset).unwrap(),
+                        length: Tick::quarters(1).unwrap(),
+                    },
+                )
+                .unwrap()
+                .0;
+        }
+        control.replace(&next).unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while control.status().pending_plan {
+        render_content(&mut audio, &mut left, &mut right);
+        control.service();
+        assert!(control.take_preparation_error().is_none());
+        assert!(Instant::now() < deadline, "stopped bank failed to activate");
+        std::thread::yield_now();
+    }
+    assert_eq!(control.status().plugin_missed_blocks, 0);
+    assert_eq!(control.status().graph_unavailable_blocks, 0);
+}
+
+#[test]
+fn live_stop_fades_existing_voices_without_new_notes_and_resets_before_resume_under_rtsan() {
+    let path = plugin_dylib();
+    let frames = 64; // This fixture's callback buffer, not a device limit.
+    let (project, track) = score();
+    let project = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 67,
+                velocity: 100,
+                start: Tick::new(echode_model::TICKS_PER_QUARTER / 100),
+                length: Tick::quarters(2).unwrap(),
+            },
+        )
+        .unwrap()
+        .0;
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, frames, &host_bin(), &[count_route(&path)])
+            .unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; frames];
+    let mut right = left.clone();
+    for _ in 0..2 {
+        audio.render_live_gated_until(
+            &mut left,
+            &mut right,
+            Instant::now() + Duration::from_secs(5),
+            true,
+        );
+    }
+    assert_level(left[0], 1.0);
+    let stopped = control.status().sample;
+    control.command(PlaybackCommand::Stop).unwrap();
+    for _ in 0..4 {
+        audio.render_live_gated_until(
+            &mut left,
+            &mut right,
+            Instant::now() + Duration::from_secs(5),
+            true,
+        );
+        assert_eq!(control.status().sample, stopped);
+        assert!(audio.stop_fade_offset().is_some());
+        assert_level(left[0], 1.0); // A future note must not enter the fading block.
+    }
+    assert_eq!(control.status().plugin_missed_blocks, 0);
+    for fault in ["tail", "tail-legacy"] {
+        for chain in 0..3 {
+            let (_, _, _, mut control, mut audio) = tail_player(&path, frames, chain, fault);
+            control.command(PlaybackCommand::Play).unwrap();
+            audio.render_live_gated_until(
+                &mut left,
+                &mut right,
+                Instant::now() + Duration::from_secs(5),
+                true,
+            );
+            assert!(left.iter().any(|value| *value != 0.0));
+            control.command(PlaybackCommand::Stop).unwrap();
+            for _ in 0..6 {
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    Instant::now() + Duration::from_secs(5),
+                    true,
+                );
+            }
+            assert!(left.iter().all(|value| *value == 0.0));
+            control.command(PlaybackCommand::Locate(200_000)).unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let until = Instant::now() + Duration::from_secs(5);
+            while !control.status().playing {
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    Instant::now() + Duration::from_secs(5),
+                    true,
+                );
+                assert!(
+                    left.iter().chain(&right).all(|value| *value == 0.0),
+                    "old {fault}/{chain} voice survived live stop"
+                );
+                assert!(!control.status().failed);
+                assert!(
+                    Instant::now() < until,
+                    "cleanup did not finish for {fault}/{chain}"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            // Silence while cleanup is pending is insufficient. Inspect output
+            // after the new play has advanced and every helper has processed it.
+            for _ in 0..4 {
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    Instant::now() + Duration::from_secs(5),
+                    true,
+                );
+                assert!(left.iter().chain(&right).all(|value| *value == 0.0));
+            }
+            assert!(control.status().sample > 200_000);
+            assert!(control.plugin_failure().is_none());
+        }
+    }
+}
+
+#[test]
+fn contract_live_stop_cleanup_never_waits_for_a_reset() {
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    struct Gate(UnixStream, PathBuf);
+    impl Drop for Gate {
+        fn drop(&mut self) {
+            let _ = self.0.write_all(&[1]);
+            let _ = std::fs::remove_file(&self.1);
+        }
+    }
+    // macOS sockaddr_un is shorter than its default per-user temp path.
+    let socket_path =
+        PathBuf::from("/tmp").join(format!("echode-reset-{}.sock", Id::generate().raw()));
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    let path = plugin_dylib();
+    let (project, track, _) = hold_note(60);
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let route = PluginRoute {
+        clap_id: "dev.echode.test-gain".into(),
+        path,
+        instrument: false,
+        fault: Some(format!("reset-wait:{}", socket_path.display())),
+        state: None,
+    };
+    let frames = 512; // Matches the reported fixture, not a product buffer limit.
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 96_000, frames, &host_bin(), &[route]).unwrap();
+    // hold_note has one effect; the fixture adds a second so cleanup must be
+    // dispatched independently to both stages before either reset completes.
+    let mut gates = Vec::new();
+    for _ in 0..2 {
+        let (peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        gates.push(Gate(peer, socket_path.clone()));
+    }
+    let mut left = vec![0.0; frames];
+    let mut right = left.clone();
+    let render = |audio: &mut echode_engine::PlaybackAudio, left: &mut [f32], right: &mut [f32]| {
+        // A hung-helper guard, not a performance threshold. The held reset is
+        // released only after this call returns, so waiting loses the receipt.
+        audio.render_live_gated_until(left, right, Instant::now() + Duration::from_secs(2), true);
+    };
+    control.command(PlaybackCommand::Play).unwrap();
+    for _ in 0..8 {
+        render(&mut audio, &mut left, &mut right);
+    }
+    assert!(left.iter().any(|sample| *sample != 0.0));
+    let stopped = control.status().sample;
+    control.command(PlaybackCommand::Stop).unwrap();
+    render(&mut audio, &mut left, &mut right); // The audible tail completes.
+    render(&mut audio, &mut left, &mut right); // Cleanup cannot wait for reset.
+    let mut reached = [0];
+    gates[0].0.read_exact(&mut reached).unwrap();
+    assert!(
+        control.plugin_failure().is_none(),
+        "discarded cleanup waited for a helper: {:?}",
+        control.plugin_failure()
+    );
+    assert_eq!(control.status().plugin_missed_blocks, 0);
+    assert_eq!(control.status().sample, stopped);
+    assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+    gates[1].0.read_exact(&mut reached).unwrap();
+
+    // A score update and a late worker-side pause must not retire the graph
+    // that still owns these cleanup receipts, or restart either reset.
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Pause).unwrap();
+    render(&mut audio, &mut left, &mut right);
+    assert!(control.status().pending_plan);
+    assert_eq!(control.status().sample, stopped);
+
+    control.command(PlaybackCommand::Play).unwrap();
+    render(&mut audio, &mut left, &mut right);
+    assert_eq!(
+        control.status().sample,
+        stopped,
+        "new notes advanced before cleanup finished"
+    );
+    assert!(!control.status().playing);
+    assert!(control.plugin_failure().is_none());
+    for gate in &mut gates {
+        gate.0.write_all(&[1]).unwrap();
+        gate.0.read_exact(&mut reached).unwrap();
+        assert_eq!(reached, [2]);
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !control.status().playing {
+        render(&mut audio, &mut left, &mut right);
+        assert!(
+            !control.status().failed,
+            "resume failed: {:?}, {:?}",
+            control.status(),
+            control.plugin_failure()
+        );
+        assert!(
+            Instant::now() < deadline,
+            "cleanup receipt did not release the pending start: {:?}, {:?}",
+            control.status(),
+            control.plugin_failure()
+        );
+        // Only the test driver waits between synthetic callbacks. Do not
+        // monopolize a core while the separate helper publishes its receipt.
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(control.status().sample, stopped + frames as i64);
+    for _ in 0..8 {
+        render(&mut audio, &mut left, &mut right);
+    }
+    assert!(left.iter().any(|sample| *sample != 0.0));
+    assert_eq!(control.status().plugin_missed_blocks, 0);
+    assert!(!control.status().pending_plan);
+}
+
+fn compare_note_onsets(path: &Path, clap_id: &str, fault: Option<&str>) {
+    use echode_engine::OutputDeclick;
+    use echode_model::TICKS_PER_QUARTER;
+    use echode_realtime::Event;
+
+    for rate in [48_000, 96_000] {
+        let mut partition_reference = None;
+        for frames in [7, 64, 512] {
+            let (mut project, track) = Project::new().add_track("onset comparison");
+            project = project
+                .add_clap_device(track, Id::generate(), clap_id)
+                .unwrap();
+            let mut edges = Vec::new();
+            for start in [TICKS_PER_QUARTER / 20, TICKS_PER_QUARTER / 8] {
+                let length = TICKS_PER_QUARTER / 20;
+                project = project
+                    .insert_note(
+                        track,
+                        NoteDraft {
+                            pitch: 60,
+                            velocity: 100,
+                            start: Tick::new(start),
+                            length: Tick::new(length),
+                        },
+                    )
+                    .unwrap()
+                    .0;
+                edges.push((
+                    tick_to_sample(Tick::new(start), project.tempo(), rate).unwrap() as usize,
+                    true,
+                ));
+                edges.push((
+                    tick_to_sample(Tick::new(start + length), project.tempo(), rate).unwrap()
+                        as usize,
+                    false,
+                ));
+            }
+            let route = PluginRoute {
+                clap_id: clap_id.into(),
+                path: path.into(),
+                instrument: true,
+                fault: fault.map(str::to_owned),
+                state: None,
+            };
+            let (mut control, mut audio) =
+                playback_with_plugins(&project, rate, frames, &host_bin(), &[route]).unwrap();
+            let mut direct = PluginHost::spawn(SpawnOptions {
+                host_bin: &host_bin(),
+                plugin: Some(path),
+                fault,
+                workgroup: None,
+                // Storage covers only this diagnostic block. Plugin port counts
+                // are discovered by the helper, not fixed by this stereo seed.
+                layout: SessionLayout {
+                    max_frames: frames as u32,
+                    ..SessionLayout::stereo()
+                },
+                fan_in: None,
+                sample_rate: rate,
+                plugin_id: Some(clap_id),
+            })
+            .unwrap();
+            let inputs = vec![vec![0.0; frames]; direct.layout().input_channels as usize];
+            let inputs: Vec<_> = inputs.iter().map(Vec::as_slice).collect();
+            let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+            let (mut expected_left, mut expected_right) = (left.clone(), right.clone());
+            let mut declick = OutputDeclick::new(rate);
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut peak = 0.0f32;
+            let mut onset_delta = 0.0f32;
+            let mut previous = [0.0f32; 2];
+            let mut heard = [Vec::new(), Vec::new()];
+            // A tenth of a second includes two notes with silence between them.
+            // This bounds the fixture, not the supported project duration.
+            for start in (0..rate as usize / 10).step_by(frames) {
+                let events: Vec<_> = edges
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, &(sample, on))| {
+                        if !(start..start + frames).contains(&sample) {
+                            return None;
+                        }
+                        let time = (sample - start) as u32;
+                        let note_id = (id / 2) as u32;
+                        Some(if on {
+                            Event::note_on(
+                                time,
+                                0,
+                                note_id,
+                                60,
+                                f64::from(echode_model::midi7_to_velocity(100)) / 65535.0,
+                            )
+                        } else {
+                            Event::note_off(time, 0, note_id, 60)
+                        })
+                    })
+                    .collect();
+                direct
+                    .process_block(
+                        frames,
+                        &inputs,
+                        &mut [&mut expected_left, &mut expected_right],
+                        &events,
+                        &mut [],
+                        Duration::from_secs(10),
+                    )
+                    .unwrap();
+                // Only a hung-helper guard. This is a content comparison and
+                // makes no claim about device deadlines or audible hardware.
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    Instant::now() + Duration::from_secs(10),
+                    true,
+                );
+                // The same live output join used by HAL. No new transport
+                // command occurs when a note begins after ordinary silence.
+                declick.process(&mut left, &mut right, start == 0);
+                let kept = frames.min(rate as usize / 10 - start);
+                heard[0].extend_from_slice(&left[..kept]);
+                heard[1].extend_from_slice(&right[..kept]);
+                assert_eq!(
+                    left, expected_left,
+                    "left altered: {clap_id}, {rate} Hz, {frames} frames, at {start}"
+                );
+                assert_eq!(
+                    right, expected_right,
+                    "right altered: {clap_id}, {rate} Hz, {frames} frames, at {start}"
+                );
+                for (index, (&l, &r)) in left.iter().zip(&right).enumerate() {
+                    peak = peak.max(l.abs()).max(r.abs());
+                    if edges.iter().any(|&(sample, on)| {
+                        on && (sample..sample + rate as usize / 200).contains(&(start + index))
+                    }) {
+                        onset_delta = onset_delta
+                            .max((l - previous[0]).abs())
+                            .max((r - previous[1]).abs());
+                    }
+                    previous = [l, r];
+                    if start + index < edges[0].0 {
+                        assert_eq!([l, r], [0.0, 0.0]);
+                    }
+                }
+                assert!(
+                    control.plugin_failure().is_none(),
+                    "{:?}",
+                    control.plugin_failure()
+                );
+            }
+            assert!(
+                peak > 0.0,
+                "a silent fixture cannot prove onset transparency"
+            );
+            assert_eq!(control.status().plugin_missed_blocks, 0);
+            assert!(!control.status().failed);
+            if let Some(reference) = &partition_reference {
+                assert_eq!(
+                    &heard, reference,
+                    "partition changed the test voice at {rate} Hz / {frames} frames"
+                );
+            } else {
+                partition_reference = Some(heard);
+            }
+            println!(
+                "{clap_id}: {rate} Hz / {frames} frames, stereo sample error=0, peak={peak}, first 5 ms max delta={onset_delta}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contract_plugin_note_onsets_preserve_source_samples_under_rtsan() {
+    compare_note_onsets(&plugin_dylib(), "dev.echode.test-instrument", Some("onset"));
 }

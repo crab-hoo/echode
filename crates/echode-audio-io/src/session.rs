@@ -6,7 +6,7 @@ use echode_engine::ClipLoader;
 use echode_model::Project;
 use serde::{Deserialize, Serialize};
 
-use crate::{Inventory, OutputDevice, OutputStream, hardware};
+use crate::{Inventory, OutputDevice, OutputStream, TransportCancellation, hardware};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", deny_unknown_fields)]
@@ -47,6 +47,10 @@ pub struct AudioState {
     pub loop_start: Option<i64>,
     pub loop_end: Option<i64>,
     pub metronome: bool,
+    /// Counters belong to the current retained output stream, including pauses.
+    pub plugin_missed_blocks: u64,
+    pub graph_unavailable_blocks: u64,
+    pub pending_plan: bool,
 }
 
 /// One foreground project. No hardware is queried until the app asks for the
@@ -61,6 +65,8 @@ pub struct Session {
     selected_uid: Option<String>,
     tick: i64,
     playing: bool,
+    cancellation: TransportCancellation,
+    play_revision: u64,
     loop_ticks: Option<(i64, i64)>,
     metronome: bool,
     clips: ClipLoader,
@@ -80,6 +86,8 @@ impl Session {
             selected_uid: None,
             tick: 0,
             playing: false,
+            cancellation: TransportCancellation::default(),
+            play_revision: 0,
             loop_ticks: None,
             metronome: false,
             clips: Arc::new(|_project, _rate| Ok(Vec::new())),
@@ -96,26 +104,68 @@ impl Session {
         session
     }
 
+    pub fn with_media_and_cancellation(
+        project: Arc<Project>,
+        package: &Path,
+        cancellation: TransportCancellation,
+    ) -> Self {
+        let mut session = Self::with_media(project, package);
+        session.cancellation = cancellation;
+        session
+    }
+
     pub fn perform(&mut self, command: AudioCommand) -> Result<(), String> {
+        let revision = self.cancellation.request(&command);
+        self.perform_requested(command, revision)
+    }
+
+    /// `revision` is captured when the caller queues the command, not when
+    /// this worker finally reaches it after a potentially slow plugin load.
+    pub fn perform_requested(
+        &mut self,
+        command: AudioCommand,
+        revision: u64,
+    ) -> Result<(), String> {
         match command {
             AudioCommand::Play => {
+                if !self.cancellation.is_current(revision) {
+                    return Ok(());
+                }
+                let already_playing =
+                    self.playing && self.play_revision == revision && self.stream.is_some();
                 self.error = None;
-                self.refresh()?;
+                if self.notifications.is_none()
+                    || self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
+                {
+                    self.refresh()?;
+                }
+                self.play_revision = revision;
                 self.playing = true;
                 if let Err(error) = self.reconcile() {
                     self.playing = false;
                     self.error = Some(error.clone());
                     return Err(error);
                 }
+                self.playing = self.cancellation.is_current(revision);
+                if self.playing
+                    && !already_playing
+                    && let Some(stream) = &mut self.stream
+                    && let Err(error) = stream.resume(revision)
+                {
+                    self.cancellation.request(&AudioCommand::Stop);
+                    self.playing = false;
+                    self.error = Some(error.clone());
+                    return Err(error);
+                }
             }
-            AudioCommand::Pause => {
-                self.park();
+            AudioCommand::Pause | AudioCommand::Stop => {
+                // Retain prepared media, helpers and HAL. Cancellation already
+                // silenced the callback without waiting for this queue.
                 self.playing = false;
-            }
-            AudioCommand::Stop => {
-                // Park keeps the playhead. The next play opens at that tick.
-                self.park();
-                self.playing = false;
+                if let Some(stream) = &mut self.stream {
+                    self.tick = stream.status().tick;
+                    stream.pause()?;
+                }
             }
             AudioCommand::Locate { tick } => {
                 if tick < 0 {
@@ -250,8 +300,10 @@ impl Session {
     pub fn state(&self) -> AudioState {
         let status = self.stream.as_ref().map(OutputStream::status);
         AudioState {
-            playing: self.playing,
-            running: status.is_some_and(|status| status.playing && !status.failed),
+            playing: self.playing && self.cancellation.is_current(self.play_revision),
+            running: self.playing
+                && self.cancellation.is_current(self.play_revision)
+                && status.is_some_and(|status| status.playing && !status.failed),
             tick: status.map_or(self.tick, |status| status.tick),
             selected_uid: self.selected_uid.clone(),
             active_device: desired(&self.inventory, self.selected_uid.as_deref()).cloned(),
@@ -260,6 +312,9 @@ impl Session {
             loop_start: self.loop_ticks.map(|(start, _)| start),
             loop_end: self.loop_ticks.map(|(_, end)| end),
             metronome: self.metronome,
+            plugin_missed_blocks: status.map_or(0, |status| status.plugin_missed_blocks),
+            graph_unavailable_blocks: status.map_or(0, |status| status.graph_unavailable_blocks),
+            pending_plan: status.is_some_and(|status| status.pending_plan),
         }
     }
 
@@ -268,7 +323,7 @@ impl Session {
             self.stream
                 .as_ref()
                 .map_or(self.tick, |stream| stream.status().tick),
-            self.playing,
+            self.playing && self.cancellation.is_current(self.play_revision),
         )
     }
 
@@ -308,6 +363,8 @@ impl Session {
                         metronome: self.metronome,
                         clips: Arc::clone(&self.clips),
                         package: self.package.clone(),
+                        cancellation: self.cancellation.clone(),
+                        revision: self.play_revision,
                     },
                     Arc::clone(&self.hardware_epoch),
                     self.observed_epoch,
@@ -347,6 +404,19 @@ fn desired<'a>(inventory: &'a Inventory, uid: Option<&str>) -> Option<&'a Output
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancelled_queued_play_does_not_query_hardware_or_open_a_stream() {
+        let gate = TransportCancellation::default();
+        let play = gate.request(&AudioCommand::Play);
+        let stop = gate.request(&AudioCommand::Stop);
+        let mut session = Session::new(Arc::new(Project::new()));
+        session.cancellation = gate;
+        session.perform_requested(AudioCommand::Play, play).unwrap();
+        assert!(session.notifications.is_none() && session.stream.is_none());
+        assert!(!session.state().playing && !session.state().running);
+        session.perform_requested(AudioCommand::Stop, stop).unwrap();
+        assert_eq!(session.state().tick, 0);
+    }
     fn device(id: u32, uid: &str) -> OutputDevice {
         OutputDevice {
             id,
@@ -417,6 +487,48 @@ mod tests {
         assert_eq!(session.state().loop_start, None);
         assert!(session.notifications.is_none());
         assert!(Arc::ptr_eq(&session.project, &project));
+    }
+
+    #[test]
+    #[ignore = "needs CoreAudio; make spike-audio runs the silent product session"]
+    fn a_retained_session_resumes_without_preparing_media_again() {
+        use std::sync::atomic::AtomicUsize;
+        use std::time::{Duration, Instant};
+        let loads = Arc::new(AtomicUsize::new(0));
+        let counter = loads.clone();
+        let mut session = Session::new(Arc::new(Project::new()));
+        session.clips = Arc::new(move |_, _| {
+            counter.fetch_add(1, Ordering::Relaxed);
+            Ok(Vec::new())
+        });
+        let cold = Instant::now();
+        session.perform(AudioCommand::Play).unwrap();
+        println!("session cold prepare: {:?}", cold.elapsed());
+        let prepared = loads.load(Ordering::Relaxed);
+        assert!(prepared > 0);
+        for command in [AudioCommand::Pause, AudioCommand::Stop, AudioCommand::Pause] {
+            session.perform(command).unwrap();
+            let held = session.state().tick;
+            let before = session.stream.as_ref().unwrap().callbacks();
+            let until = Instant::now() + Duration::from_secs(2);
+            while session.stream.as_ref().unwrap().callbacks() <= before {
+                assert!(Instant::now() < until, "paused HAL callbacks stopped");
+                std::thread::sleep(Duration::from_millis(5));
+                session.service();
+            }
+            assert_eq!(session.state().tick, held);
+            assert!(!session.state().playing && !session.state().running);
+            let warm = Instant::now();
+            session.perform(AudioCommand::Play).unwrap();
+            println!("session retained resume: {:?}", warm.elapsed());
+            assert_eq!(loads.load(Ordering::Relaxed), prepared);
+            let until = Instant::now() + Duration::from_secs(2);
+            while session.state().tick <= held {
+                assert!(Instant::now() < until, "resume did not advance");
+                std::thread::sleep(Duration::from_millis(5));
+                session.service();
+            }
+        }
     }
 
     #[test]

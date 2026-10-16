@@ -14,7 +14,8 @@ use clap_sys::ext::audio_ports::{
     clap_audio_port_info, clap_plugin_audio_ports,
 };
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, clap_note_port_info, clap_plugin_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, clap_note_port_info,
+    clap_plugin_note_ports,
 };
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
@@ -101,7 +102,7 @@ impl Plugin for TestGain {
         if current_role() == Role::State {
             builder.register::<PluginStateExt>();
         }
-        if current_role() == Role::Order {
+        if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
             builder.register::<PluginNotePorts>();
         }
     }
@@ -187,6 +188,12 @@ enum Fault {
     Activate,
     Process,
     Generate,
+    /// One-voice release/delay fixture; cleared only by CLAP reset.
+    Tail,
+    /// Declares three note ports; only MIDI all-sounds-off clears its tail.
+    TailLegacy,
+    /// Sample-accurate stereo attack fixture for transparent note boundaries.
+    Onset,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -200,6 +207,9 @@ fn fault_code(text: &str) -> u8 {
         "activate" => 7,
         "process" => 8,
         "generate" => 9,
+        "tail" => 10,
+        "tail-legacy" => 11,
+        "onset" => 12,
         _ => 0,
     }
 }
@@ -215,6 +225,9 @@ fn fault_from_code(code: u8) -> Fault {
         7 => Fault::Activate,
         8 => Fault::Process,
         9 => Fault::Generate,
+        10 => Fault::Tail,
+        11 => Fault::TailLegacy,
+        12 => Fault::Onset,
         _ => Fault::None,
     }
 }
@@ -231,7 +244,57 @@ fn note_fault(plugin_id: &CStr) {
         std::fs::read_to_string(std::env::temp_dir().join(format!("echode-pro07-{id}"))).ok()
     });
     let text = from_env.or(from_file).unwrap_or_default();
+    if let Some(path) = text.trim().strip_prefix("prepare-wait:") {
+        use std::io::{Read, Write};
+        let mut socket = std::os::unix::net::UnixStream::connect(path).expect("prepare handshake");
+        socket.write_all(&[1]).expect("prepare reached");
+        let mut release = [0];
+        socket.read_exact(&mut release).expect("prepare released");
+    }
     FAULT_BITS.store(fault_code(text.trim()), Ordering::Relaxed);
+}
+
+/// One test voice, with a 32-sample attack and 64-sample period. These lengths
+/// describe this synthetic input only; the host has no voice or timing cap.
+#[derive(Clone, Copy, Default)]
+struct Onset {
+    held: bool,
+    age: u64,
+}
+
+impl Onset {
+    fn render(
+        &mut self,
+        output: &mut [f32],
+        events: &clack_plugin::events::io::InputEvents<'_>,
+        scale: f32,
+    ) {
+        let mut next = 0usize;
+        for (frame, sample) in output.iter_mut().enumerate() {
+            while next < events.len() as usize && events[next].header().time() as usize <= frame {
+                use clack_plugin::events::spaces::CoreEventSpace;
+                match events[next].as_core_event() {
+                    Some(CoreEventSpace::NoteOn(_)) => {
+                        self.held = true;
+                        self.age = 0;
+                    }
+                    Some(CoreEventSpace::NoteOff(_) | CoreEventSpace::NoteChoke(_)) => {
+                        self.held = false;
+                    }
+                    _ => {}
+                }
+                next += 1;
+            }
+            *sample = if self.held {
+                let ramp = self.age.min(32) as f32 / 32.0;
+                let triangle = 1.0 - ((self.age % 64) as f32 / 16.0 - 2.0).abs();
+                self.age += 1;
+                scale * triangle * ramp
+            } else {
+                0.0
+            };
+        }
+    }
 }
 
 pub struct TestGainProcessor<'a> {
@@ -244,6 +307,13 @@ pub struct TestGainProcessor<'a> {
     on_id: u32,
     /// Key of a note-off whose note id matches `on_id`.
     off_key: u8,
+    tail_gate: bool,
+    tail_remaining: usize,
+    onset: Onset,
+    // A deliberately misbehaving third-party reset for the parent's lifecycle
+    // regression. Socket setup is off RT; only this fault blocks in reset.
+    reset_gate: Option<std::os::unix::net::UnixStream>,
+    reset_gate_used: bool,
 }
 
 impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
@@ -265,7 +335,33 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             seen_offs: 0,
             on_id: u32::MAX,
             off_key: 0,
+            tail_gate: false,
+            tail_remaining: 0,
+            onset: Onset::default(),
+            reset_gate: std::env::var("ECHODE_TEST_FAULT")
+                .ok()
+                .and_then(|fault| fault.strip_prefix("reset-wait:").map(str::to_owned))
+                .map(|path| std::os::unix::net::UnixStream::connect(path).expect("reset gate")),
+            reset_gate_used: false,
         })
+    }
+
+    fn reset(&mut self) {
+        self.onset = Onset::default();
+        if !self.reset_gate_used
+            && let Some(gate) = &mut self.reset_gate
+        {
+            use std::io::{Read, Write};
+            self.reset_gate_used = true;
+            gate.write_all(&[1]).expect("reset reached");
+            let mut release = [0];
+            gate.read_exact(&mut release).expect("reset release");
+            gate.write_all(&[2]).expect("reset finished");
+        }
+        if self.fault != Fault::TailLegacy {
+            self.tail_gate = false;
+            self.tail_remaining = 0;
+        }
     }
 
     fn process(
@@ -282,6 +378,104 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             },
             Fault::Callback => self.host.request_callback(),
             Fault::Restart => self.host.request_restart(),
+            Fault::Onset => {
+                let initial = self.onset;
+                let mut channel = 0usize;
+                for mut port in &mut audio {
+                    let Some(channels) = port.channels()?.into_f32() else {
+                        continue;
+                    };
+                    for pair in channels {
+                        let output = match pair {
+                            ChannelPair::InputOnly(_) => continue,
+                            ChannelPair::OutputOnly(output)
+                            | ChannelPair::InputOutput(_, output)
+                            | ChannelPair::InPlace(output) => output,
+                        };
+                        let mut state = initial;
+                        state.render(
+                            output,
+                            events.input,
+                            if channel == 0 { 0.25 } else { -0.125 },
+                        );
+                        self.onset = state;
+                        channel += 1;
+                    }
+                }
+                return Ok(ProcessStatus::Continue);
+            }
+            Fault::Tail | Fault::TailLegacy => {
+                // This fixture's finite release is deliberately longer than a
+                // block. It is not a limit on product voices or tail duration.
+                const TAIL: usize = 4096;
+                for index in 0..events.input.len() as usize {
+                    match events.input[index].as_core_event() {
+                        Some(clack_plugin::events::spaces::CoreEventSpace::NoteOn(_)) => {
+                            self.tail_gate = true;
+                        }
+                        Some(clack_plugin::events::spaces::CoreEventSpace::NoteOff(_))
+                            if self.tail_gate =>
+                        {
+                            self.tail_gate = false;
+                            self.tail_remaining = TAIL;
+                        }
+                        Some(clack_plugin::events::spaces::CoreEventSpace::Midi(midi))
+                            if midi.port_index() == 2
+                                && midi.data()[0] & 0xF0 == 0xB0
+                                && midi.data()[1] == 120 =>
+                        {
+                            self.tail_gate = false;
+                            self.tail_remaining = 0;
+                        }
+                        _ => {}
+                    }
+                }
+                let frames = audio.frames_count() as usize;
+                for mut port in &mut audio {
+                    let Some(channels) = port.channels()?.into_f32() else {
+                        continue;
+                    };
+                    for channel in channels {
+                        match channel {
+                            ChannelPair::InputOnly(_) => {}
+                            ChannelPair::OutputOnly(output) => {
+                                for (index, sample) in output.iter_mut().enumerate() {
+                                    *sample = if self.tail_gate {
+                                        0.25
+                                    } else {
+                                        0.25 * self.tail_remaining.saturating_sub(index) as f32
+                                            / TAIL as f32
+                                    };
+                                }
+                            }
+                            ChannelPair::InputOutput(input, output) => {
+                                // Remember nonzero input as an effect's delay.
+                                if input.iter().any(|sample| *sample != 0.0) {
+                                    self.tail_remaining = TAIL;
+                                }
+                                for (index, (input, output)) in input.iter().zip(output).enumerate()
+                                {
+                                    *output = *input
+                                        + 0.125 * self.tail_remaining.saturating_sub(index) as f32
+                                            / TAIL as f32;
+                                }
+                            }
+                            ChannelPair::InPlace(output) => {
+                                if output.iter().any(|sample| *sample != 0.0) {
+                                    self.tail_remaining = TAIL;
+                                }
+                                for (index, sample) in output.iter_mut().enumerate() {
+                                    *sample += 0.125
+                                        * self.tail_remaining.saturating_sub(index) as f32
+                                        / TAIL as f32;
+                                }
+                            }
+                        }
+                    }
+                }
+                self.tail_remaining = self.tail_remaining.saturating_sub(frames);
+                return Ok(ProcessStatus::Continue);
+            }
             Fault::Count => {
                 for index in 0..events.input.len() as usize {
                     let Some(core) = events.input[index].as_core_event() else {
@@ -756,7 +950,12 @@ unsafe impl ExtensionImplementation<TestGain> for PluginNotePorts {
 }
 
 unsafe extern "C" fn note_port_count(_plugin: *const clap_plugin, is_input: bool) -> u32 {
-    u32::from(is_input)
+    // Three ports only exercise this fixture's declaration and final port.
+    if fault_now() == Fault::TailLegacy {
+        if is_input { 3 } else { 0 }
+    } else {
+        u32::from(is_input)
+    }
 }
 
 unsafe extern "C" fn note_port_get(
@@ -765,13 +964,18 @@ unsafe extern "C" fn note_port_get(
     is_input: bool,
     info: *mut clap_note_port_info,
 ) -> bool {
-    if info.is_null() || index != 0 || !is_input {
+    if info.is_null() || index >= unsafe { note_port_count(_plugin, is_input) } || !is_input {
         return false;
     }
     unsafe {
         *info = clap_note_port_info {
-            id: 0,
-            supported_dialects: CLAP_NOTE_DIALECT_CLAP,
+            id: index,
+            supported_dialects: CLAP_NOTE_DIALECT_CLAP
+                | if fault_now() == Fault::TailLegacy {
+                    CLAP_NOTE_DIALECT_MIDI
+                } else {
+                    0
+                },
             preferred_dialect: CLAP_NOTE_DIALECT_CLAP,
             name: [0; 256],
         };

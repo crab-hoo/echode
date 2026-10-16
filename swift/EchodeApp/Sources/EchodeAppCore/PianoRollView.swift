@@ -39,6 +39,7 @@ final class PianoRollView: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        clipsToBounds = true
         addSubview(grid)
     }
     @available(*, unavailable)
@@ -81,6 +82,7 @@ final class PianoGridView: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        clipsToBounds = true
         wantsLayer = true
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
