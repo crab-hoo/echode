@@ -595,38 +595,98 @@
     },
     "History": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "History" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "履歴" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "History"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "履歴"
+          }
+        }
       }
     },
     "Saved revisions": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Saved revisions" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "保存した版" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved revisions"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存した版"
+          }
+        }
       }
     },
     "No saved revision": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "No saved revision" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "保存した版はまだありません" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No saved revision"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存した版はまだありません"
+          }
+        }
       }
     },
     "Current revision": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Current revision" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "今の版" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current revision"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今の版"
+          }
+        }
       }
     },
     "Restore": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Restore" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "戻す" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "戻す"
+          }
+        }
       }
     },
     "Already at this revision": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Already at this revision" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "今の版と同じです" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already at this revision"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今の版と同じです"
+          }
+        }
       }
     },
     "Close": {
@@ -1633,6 +1693,198 @@
           "stringUnit": {
             "state": "translated",
             "value": "フォルダを選んでプロジェクトを探します"
+          }
+        }
+      }
+    },
+    "Volume": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volume"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音量"
+          }
+        }
+      }
+    },
+    "Pan": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pan"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パン"
+          }
+        }
+      }
+    },
+    "Mute": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mute"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ミュート"
+          }
+        }
+      }
+    },
+    "Solo": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ソロ"
+          }
+        }
+      }
+    },
+    "Track Controls": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Track Controls"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "トラックの調整"
+          }
+        }
+      }
+    },
+    "Peak Level": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Peak Level"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ピークレベル"
+          }
+        }
+      }
+    },
+    "Audio Clip": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio Clip"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オーディオクリップ"
+          }
+        }
+      }
+    },
+    "Clip Gain": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clip Gain"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クリップのゲイン"
+          }
+        }
+      }
+    },
+    "Fade In": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fade In"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フェードイン"
+          }
+        }
+      }
+    },
+    "Fade Out": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fade Out"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フェードアウト"
+          }
+        }
+      }
+    },
+    "Drag the clip corners to change fades. Drag its gain handle vertically.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag the clip corners to change fades. Drag its gain handle vertically."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クリップ上端のハンドルでフェードを、中央のゲインハンドルを上下にドラッグして音量を調整できます。"
+          }
+        }
+      }
+    },
+    "Enter a valid value in range": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter a valid value in range"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "範囲内の有効な値を入力してください"
           }
         }
       }

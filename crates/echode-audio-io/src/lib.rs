@@ -9,6 +9,7 @@ mod trace;
 mod transport;
 
 pub use clips::load_placed_clips;
+pub use echode_engine::TrackMeter;
 pub use hardware::{Inventory, OutputDevice, inventory};
 pub use session::{AudioCommand, AudioState, Session};
 pub use stream::{

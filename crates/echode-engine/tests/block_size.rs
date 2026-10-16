@@ -19,6 +19,163 @@ const BLOCKS: [u32; 4] = [1, 7, 64, 512];
 const VOICES_PER_TRACK: usize = 8;
 
 #[test]
+fn live_fader_preview_switches_only_previous_and_next_track_under_rtsan() {
+    use echode_engine::{PlaybackCommand, playback_pair};
+    let (project, a) = Project::new().add_track("first");
+    let (project, b) = project.add_track("second");
+    let (project, c) = project.add_track("unrelated");
+    let tracks = [(a, 0.125), (b, 0.25), (c, 0.5)];
+    for rate in [48_000, 96_000] {
+        let mut reference = None;
+        for block in BLOCKS {
+            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            // These planes cover only this four-phase fixture's timeline.
+            let clips: Vec<_> = tracks
+                .iter()
+                .map(|&(track, level)| stereo_clip(track, vec![level; 6000], vec![level; 6000]))
+                .collect();
+            control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
+            control.replace(&project).unwrap();
+            let mut output = Vec::new();
+            let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+            for phase in 0..4 {
+                let expected = if let Some(&(track, level)) = tracks.get(phase) {
+                    control.preview_fader(track.raw(), 0.0, 0.0).unwrap();
+                    0.875 - level
+                } else {
+                    control.clear_fader_preview(false).unwrap();
+                    0.875
+                };
+                if phase == 0 {
+                    control.command(PlaybackCommand::Play).unwrap();
+                }
+                let end = (phase as i64 + 1) * 1000;
+                while control.status().sample < end {
+                    let n = (block as usize).min((end - control.status().sample) as usize);
+                    audio.render_live_gated_until(
+                        &mut left[..n],
+                        &mut right[..n],
+                        std::time::Instant::now() + std::time::Duration::from_secs(5),
+                        true,
+                    );
+                    assert!(!control.status().failed);
+                    output.extend(left[..n].iter().copied().zip(right[..n].iter().copied()));
+                    control.service();
+                }
+                assert_eq!(output.last(), Some(&(expected, expected)));
+            }
+            if let Some(reference) = &reference {
+                assert_eq!(&output, reference);
+            } else {
+                reference = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
+fn contract_live_fader_preview_and_peak_taps_under_rtsan() {
+    use echode_engine::{PlaybackAudio, PlaybackCommand, PlaybackControl, playback_pair};
+    use echode_model::ParamKey;
+    fn until(
+        audio: &mut PlaybackAudio,
+        control: &mut PlaybackControl,
+        end: i64,
+        block: usize,
+        output: &mut Vec<(f32, f32)>,
+    ) {
+        let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+        while control.status().sample < end {
+            let n = block.min((end - control.status().sample) as usize);
+            audio.render_live_gated_until(
+                &mut left[..n],
+                &mut right[..n],
+                std::time::Instant::now() + std::time::Duration::from_secs(5),
+                true,
+            );
+            assert!(!control.status().failed);
+            output.extend(left[..n].iter().copied().zip(right[..n].iter().copied()));
+            control.service();
+        }
+    }
+    for rate in [48_000, 96_000] {
+        let mut reference = None;
+        for block in BLOCKS {
+            let (project, track) = Project::new().add_track("meter and preview");
+            let parameter = |key| {
+                project.tracks()[0].devices[0]
+                    .parameters
+                    .iter()
+                    .find(|p| p.key == key)
+                    .unwrap()
+                    .id
+            };
+            let committed = project
+                .set_parameter(parameter(ParamKey::Gain), 0.5)
+                .unwrap()
+                .set_parameter(parameter(ParamKey::Pan), 1.0)
+                .unwrap();
+            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            // These samples cover this fixture's timeline only.
+            let clip = stereo_clip(track, vec![0.25; 10_000], vec![-0.5; 10_000]);
+            control.set_clip_loader(Arc::new(move |_, _| Ok(vec![clip.clone()])));
+            control.replace(&project).unwrap();
+            let meter = control.meters().pop().unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut output = Vec::new();
+            until(&mut audio, &mut control, 137, block as usize, &mut output);
+            assert_eq!(meter.peak(), 0.5);
+            control.preview_fader(track.raw(), 0.5, 1.0).unwrap();
+            until(&mut audio, &mut control, 800, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.0, -0.25)));
+            assert_eq!(control.status().plugin_missed_blocks, 0);
+
+            // The clear must wait for the committed bank, even with an older
+            // bank still queued. It must never briefly restore the old gain.
+            control.replace(&project).unwrap();
+            control.replace(&committed).unwrap();
+            control.clear_fader_preview(true).unwrap();
+            until(&mut audio, &mut control, 1600, block as usize, &mut output);
+            assert!(
+                output[800..1600]
+                    .iter()
+                    .all(|sample| *sample == (0.0, -0.25))
+            );
+            assert!(Arc::ptr_eq(&meter, &control.meters()[0]));
+
+            control.preview_fader(track.raw(), 0.0, 0.0).unwrap();
+            until(&mut audio, &mut control, 2300, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.0, 0.0)));
+            control.clear_fader_preview(false).unwrap();
+            until(&mut audio, &mut control, 3000, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.0, -0.25)));
+            assert!(!control.status().pending_plan);
+            if let Some(reference) = &reference {
+                assert_eq!(&output, reference);
+            } else {
+                reference = Some(output);
+            }
+
+            let before = meter.peak();
+            control.command(PlaybackCommand::Pause).unwrap();
+            let mut left = vec![0.0; block as usize];
+            let mut right = left.clone();
+            for _ in 0..(rate / block + 1) {
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    std::time::Instant::now() + std::time::Duration::from_secs(5),
+                    true,
+                );
+            }
+            assert!(meter.peak() < before / 8.0, "paused meters did not decay");
+            assert_eq!(control.status().sample, 3000);
+            assert!(control.preview_fader(track.raw(), f32::NAN, 0.0).is_err());
+        }
+    }
+}
+
+#[test]
 fn ordinary_silent_to_note_boundaries_leave_the_source_unchanged() {
     for rate in [48_000, 96_000] {
         let mut source = vec![0.0f32; 1003];

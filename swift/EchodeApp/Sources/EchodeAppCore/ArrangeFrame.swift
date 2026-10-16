@@ -19,6 +19,8 @@ struct ArrangeHeaderRow: Sendable {
     let name: String
     let y: Float
     let height: Float
+    let mix: TrackMix?
+    let peak: Float
 }
 
 struct WaveformDraw: Sendable {
@@ -58,7 +60,8 @@ struct ArrangeFrame: Sendable {
         let rows = camera.rows(trackCount: snapshot.trackCount, height: input.height)
         headers = zip(rows.visible, elements.filter { $0.role == .track }).compactMap { index, lane in
             guard let name = snapshot.trackName(at: index) else { return nil }
-            return ArrangeHeaderRow(id: lane.id.track, name: name, y: lane.y, height: lane.height)
+            return ArrangeHeaderRow(id: lane.id.track, name: name, y: lane.y, height: lane.height,
+                                    mix: snapshot.mixer(onTrack: index), peak: input.playback?.peak(track: lane.id.track) ?? 0)
         }
     }
 
@@ -95,6 +98,7 @@ struct ArrangeFrame: Sendable {
         }
         instances.append(contentsOf: clips.map(instance))
         instances.append(contentsOf: notes.map(instance))
+        instances.append(contentsOf: clipControlInstances)
         if let position = input.playback?.position {
             let x = (Double(position.tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
             if x >= 0, x < timelineWidth {
@@ -115,6 +119,24 @@ struct ArrangeFrame: Sendable {
             instances.append(Instance(rect: SIMD4(0, row.y, width, max(0, row.height - 1)) * Float(input.scale),
                                       color: chosen ? palette.selected : palette.background))
             instances.append(Instance(rect: SIMD4(0, row.y + row.height - 1, width, 1) * Float(input.scale), color: palette.separator))
+            let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: Double(width), height: Double(row.height)))
+            if layout.visible, let mix = row.mix {
+                func add(_ rect: CGRect, _ color: SIMD4<Float>) {
+                    instances.append(Instance(rect: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)) * Float(input.scale), color: color))
+                }
+                add(layout.mute, mix.mute.value != 0 ? SIMD4(0.75, 0.25, 0.20, 1) : palette.separator)
+                add(layout.solo, mix.solo.value != 0 ? SIMD4(0.70, 0.55, 0.13, 1) : palette.separator)
+                let preview = input.faderPreview.flatMap { $0.track == row.id ? $0 : nil }
+                for (rect, value) in [(layout.gain, MixScale.position(preview?.gain ?? mix.gain.value)),
+                                      (layout.pan, Double((preview?.pan ?? mix.pan.value) + 1) / 2)] {
+                    add(CGRect(x: rect.minX, y: rect.midY - 1.5, width: rect.width, height: 3), palette.separator)
+                    add(CGRect(x: rect.minX + value * rect.width - 2, y: rect.minY + 3, width: 4, height: rect.height - 6), palette.foreground)
+                }
+                add(layout.meter, palette.separator)
+                add(CGRect(x: layout.meter.minX, y: layout.meter.minY, width: layout.meter.width * MixScale.meter(row.peak), height: layout.meter.height),
+                    row.peak >= 1 ? SIMD4(1, 0.25, 0.12, 1) : SIMD4(0.28, 0.80, 0.49, 1))
+                continue
+            }
             for (bar, height) in [4.0, 8.0, 12.0, 8.0, 4.0].enumerated() {
                 instances.append(Instance(rect: SIMD4(Float(8 + bar * 3), row.y + (row.height - Float(height)) / 2, 1.5, Float(height)) * Float(input.scale),
                                           color: chosen ? palette.selectedForeground : palette.foreground))
@@ -124,11 +146,40 @@ struct ArrangeFrame: Sendable {
         return instances
     }
 
+    var clipControlLayout: ClipControlLayout? {
+        guard let id = input.selectedClip, let clip = input.snapshot?.clipMix(id), clip.isAudio,
+              let element = elements.first(where: { $0.role == .clip && $0.id.placement == id }) else { return nil }
+        let draft = input.clipDraft.flatMap { $0.original.id == id ? $0 : nil }
+        return ClipControlLayout.make(clip, camera: camera, origin: timelineOrigin,
+            y: Double(element.y), height: Double(element.height), fadeInTicks: draft?.fadeInTicks, fadeOutTicks: draft?.fadeOutTicks)
+    }
+
+    private var clipControlInstances: [Instance] {
+        guard let layout = clipControlLayout else { return [] }
+        let color = SIMD4<Float>(0.93, 0.96, 0.85, 1)
+        func instance(_ rect: CGRect) -> Instance {
+            Instance(rect: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)) * Float(input.scale), color: color)
+        }
+        var result = [instance(layout.entering), instance(layout.leaving), instance(layout.gain)]
+        let left = max(timelineOrigin, layout.rect.minX)
+        let right = min(input.width, layout.rect.maxX)
+        guard right > left else { return result }
+        // At most one line sample per visible point, independent of clip duration.
+        for offset in 0..<Int((right - left).rounded(.up)) {
+            let x = left + Double(offset)
+            let entering = layout.fadeIn > 0 ? (x - layout.rect.minX) / layout.fadeIn : 1
+            let leaving = layout.fadeOut > 0 ? (layout.rect.maxX - x) / layout.fadeOut : 1
+            let gain = max(0, min(1, entering, leaving))
+            result.append(instance(CGRect(x: x, y: layout.rect.minY + (1 - gain) * (layout.rect.height - 1), width: 1, height: 1)))
+        }
+        return result
+    }
+
     private func instance(_ element: ArrangeElement) -> Instance {
         let color: SIMD4<Float>
         switch element.role {
         case .track: color = element.id.track == input.selected ? SIMD4(0.18, 0.23, 0.30, 1) : SIMD4(0.12, 0.13, 0.16, 1)
-        case .clip: color = SIMD4(0.18, 0.36, 0.47, 1)
+        case .clip: color = element.id.placement == input.selectedClip ? SIMD4(0.28, 0.54, 0.66, 1) : SIMD4(0.18, 0.36, 0.47, 1)
         case .note: color = SIMD4(0.52, 0.83, 0.88, 1)
         }
         return Instance(rect: SIMD4(Float(timelineOrigin) + element.x, element.y, element.width, max(1, element.height - 1)) * Float(input.scale), color: color)

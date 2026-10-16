@@ -68,6 +68,22 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("note.time", contract["negative_control"]["old"])
         self.assertIn("0,", contract["negative_control"]["new"])
 
+    def test_mix_controls_select_product_ownership_and_live_audio_checks(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for contract_id, swift_test in (("track-mix-ui", "contractHeaderMixerGesturesPersistOnceAndUndo"),
+                                       ("clip-mix-ui", "contractClipHandlesPersistGainAndFadesInDocumentTime")):
+            self.assertIn(swift_test, contracts[contract_id]["test"])
+        self.assertEqual(contracts["live-mix-meter"]["package"], "echode-engine")
+        self.assertEqual(contracts["live-mix-meter"]["target"], ["--test", "block_size"])
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/MixControls.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/MixInspectorView.swift",
+                     "swift/EchodeBridge/Sources/EchodeBridge/Controls.swift",
+                     "crates/echode-ffi/src/controls.rs"):
+            with self.subTest(path=path):
+                self.assertTrue({"check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
+                                 "check-bridge-miri"} <= self.selected(path))
+        self.assertIn("rtsan", self.selected("crates/echode-engine/src/meter.rs"))
+
     def test_model_changes_include_transitive_bridge_audio_and_measurements(self):
         checks = self.selected("crates/echode-model/src/time.rs")
         self.assertTrue({"check", "rtsan", "check-bridge-features", "check-bridge-asan",
@@ -100,6 +116,7 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("spike-app", self.selected("swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift"))
         for file in ("PianoRollView.swift", "PianoGeometry.swift", "PianoFrame.swift", "PianoOffscreenProbe.swift", "ArrangeGeometry.swift",
                      "ArrangeHeaderView.swift", "ArrangePaneView.swift", "ArrangeFrame.swift",
+                     "MixControls.swift", "MixInspectorView.swift",
                      "ArrangeLabels.swift", "ArrangePainter.swift", "ArrangeOffscreenProbe.swift", "WorkspaceView.swift",
                      "WorkspaceState.swift", "WorkspaceDivider.swift", "WorkspaceNoteEditorView.swift", "CanvasRenderer.swift", "FrameFeedbackGate.swift"):
             with self.subTest(file=file):
@@ -206,7 +223,7 @@ class PolicyTests(unittest.TestCase):
                           "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
-                          "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset"})
+                          "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]

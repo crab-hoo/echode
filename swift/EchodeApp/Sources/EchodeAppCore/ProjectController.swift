@@ -21,7 +21,7 @@ public final class ProjectController {
     public var selection: UUID? {
         didSet {
             if let selection, !tracks.contains(where: { $0.id == selection }) { self.selection = nil }
-            if selection != oldValue { noteFocus = nil }
+            if selection != oldValue { noteFocus = nil; clipFocus = nil }
         }
     }
     public var noteFocus: PianoNote.ID? {
@@ -30,6 +30,14 @@ public final class ProjectController {
         }
     }
     public var errorMessage: String?
+    public var clipFocus: UUID? {
+        didSet { if let clipFocus, snapshot?.clipMix(clipFocus)?.track != selection { self.clipFocus = nil } }
+    }
+    public private(set) var faderPreview: FaderPreview?
+    @ObservationIgnored private var previewPending: FaderPreview?
+    @ObservationIgnored private var previewTask: Task<Void, Never>?
+    @ObservationIgnored private var previewFinishing = false
+    @ObservationIgnored private var previewFinishTask: Task<Void, Never>?
     public private(set) var audio = AudioState()
     public private(set) var audioBusy = false
     /// Loop bounds in beats. Transport state, not part of the project.
@@ -53,6 +61,8 @@ public final class ProjectController {
     }
 
     public func open(_ url: URL, creating: Bool = false) async {
+        guard !busy else { return }
+        if faderPreview != nil { await finishFader(commit: false) }
         guard !busy else { return }
         if !creating, projectURL?.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() { return }
         busy = true
@@ -138,7 +148,9 @@ public final class ProjectController {
     }
 
     public func undo() async {
-        guard !busy, undoCount > 0, let document else { return }
+        let target = documentID
+        if faderPreview != nil { await finishFader(commit: false) }
+        guard !busy, documentID == target, undoCount > 0, let document else { return }
         busy = true
         defer { busy = false }
         do { publish(try await document.undo()); undoCount -= 1; redoCount += 1 }
@@ -146,7 +158,9 @@ public final class ProjectController {
     }
 
     public func redo() async {
-        guard !busy, redoCount > 0, let document else { return }
+        let target = documentID
+        if faderPreview != nil { await finishFader(commit: false) }
+        guard !busy, documentID == target, redoCount > 0, let document else { return }
         busy = true
         defer { busy = false }
         do { publish(try await document.redo()); redoCount -= 1; undoCount += 1 }
@@ -165,6 +179,9 @@ public final class ProjectController {
 
     public func close() async {
         guard !busy else { return }
+        let target = documentID
+        if faderPreview != nil { await finishFader(commit: false) }
+        guard !busy, documentID == target else { return }
         busy = true
         let previous = document
         document = nil
@@ -179,6 +196,7 @@ public final class ProjectController {
         projectURL = nil
         selection = nil
         noteFocus = nil
+        clipFocus = nil
         undoCount = 0
         redoCount = 0
         audio = AudioState()
@@ -262,8 +280,8 @@ public final class ProjectController {
     }
 
     @discardableResult
-    private func edit(_ fields: [String: Any], documentID: UUID? = nil) async -> Bool {
-        guard !busy, let document, documentID == nil || documentID == self.documentID else { return false }
+    private func edit(_ fields: [String: Any], documentID: UUID? = nil, finishingPreview: Bool = false) async -> Bool {
+        guard !busy, faderPreview == nil || finishingPreview, let document, documentID == nil || documentID == self.documentID else { return false }
         busy = true
         defer { busy = false }
         do {
@@ -302,6 +320,7 @@ public final class ProjectController {
         }
         if !tracks.contains(where: { $0.id == selection }) { selection = tracks.first?.id }
         if let noteFocus { self.noteFocus = snapshot.pianoNote(noteFocus)?.id }
+        if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
     }
 
     private func report(_ error: any Error) {
@@ -321,7 +340,92 @@ extension AudioCommand {
     var requestsPlayheadFrame: Bool {
         switch self {
         case .play, .pause, .stop, .locate: true
-        case .output, .refresh, .status, .loop, .metronome: false
+        case .output, .refresh, .status, .loop, .metronome, .previewFader, .clearFaderPreview: false
         }
+    }
+}
+
+extension ProjectController {
+    public func mixer(_ track: UUID) -> TrackMix? {
+        guard let index = tracks.firstIndex(where: { $0.id == track }) else { return nil }
+        return snapshot?.mixer(onTrack: index)
+    }
+
+    @discardableResult
+    public func setMixer(_ track: UUID, field: MixerField, value: Float, documentID: UUID? = nil) async -> Bool {
+        guard let mix = mixer(track), value.isFinite, mix[field].value != value,
+              field == .gain ? (0...4).contains(value) : field == .pan ? (-1...1).contains(value) : (value == 0 || value == 1) else { return false }
+        return await edit(["type": "param.set", "parameter": mix[field].id.uuidString, "value": value], documentID: documentID)
+    }
+
+    @discardableResult
+    public func beginFader(_ track: UUID, field: MixerField) -> Bool {
+        guard !busy, faderPreview == nil, field == .gain || field == .pan,
+              let documentID, let mix = mixer(track) else { return false }
+        faderPreview = FaderPreview(document: documentID, track: track, field: field,
+                                    parameter: mix[field].id, original: mix[field].value,
+                                    gain: mix.gain.value, pan: mix.pan.value)
+        return true
+    }
+
+    public func changeFader(_ value: Float) {
+        guard var preview = faderPreview, !previewFinishing, value.isFinite,
+              preview.field == .gain ? (0...4).contains(value) : (-1...1).contains(value),
+              let document else { return }
+        if preview.field == .gain { preview.gain = value } else { preview.pan = value }
+        faderPreview = preview
+        previewPending = preview
+        guard previewTask == nil else { return }
+        // At most one request is in flight and one latest value is retained.
+        // Mouse event frequency never creates an unbounded document queue.
+        previewTask = Task { [weak self] in
+            guard let self else { return }
+            while let pending = self.previewPending {
+                self.previewPending = nil
+                do { _ = try await self.sendAudio(document, .previewFader(track: pending.track, gain: pending.gain, pan: pending.pan)) }
+                catch { if pending.document == self.documentID { self.report(error) } }
+            }
+            self.previewTask = nil
+        }
+    }
+
+    public func finishFader(commit: Bool) async {
+        if let task = previewFinishTask { await task.value; return }
+        guard let preview = faderPreview, !previewFinishing, let document else { return }
+        previewFinishing = true
+        let task = Task { [self] in
+            await completeFader(preview, document: document, commit: commit)
+            previewFinishTask = nil
+            previewFinishing = false
+        }
+        previewFinishTask = task
+        await task.value
+    }
+
+    private func completeFader(_ preview: FaderPreview, document: Document, commit: Bool) async {
+        if let task = previewTask { await task.value }
+        var applied = false
+        if commit, preview.document == documentID, preview.value != preview.original {
+            applied = await edit(["type": "param.set", "parameter": preview.parameter.uuidString, "value": preview.value],
+                                 documentID: preview.document, finishingPreview: true)
+        }
+        if !applied {
+            do { _ = try await sendAudio(document, .clearFaderPreview) }
+            catch { if preview.document == documentID { report(error) } }
+        }
+        faderPreview = nil; previewPending = nil
+    }
+
+    @discardableResult
+    public func setClipGain(_ id: UUID, gain: Float, documentID: UUID? = nil) async -> Bool {
+        guard let clip = snapshot?.clipMix(id), clip.isAudio, gain.isFinite, gain >= 0, clip.gain != gain else { return false }
+        return await edit(["type": "clip.set_gain", "clip": id.uuidString, "gain": gain], documentID: documentID)
+    }
+
+    @discardableResult
+    public func setClipFades(_ id: UUID, fadeIn: Int64, fadeOut: Int64, documentID: UUID? = nil) async -> Bool {
+        guard let clip = snapshot?.clipMix(id), clip.isAudio, fadeIn >= 0, fadeOut >= 0,
+              clip.fadeIn != fadeIn || clip.fadeOut != fadeOut else { return false }
+        return await edit(["type": "clip.set_fades", "clip": id.uuidString, "fade_in": fadeIn, "fade_out": fadeOut], documentID: documentID)
     }
 }

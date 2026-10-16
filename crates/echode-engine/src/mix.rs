@@ -73,7 +73,17 @@ impl FaderState {
         self.elapsed = self.frames;
     }
 
-    pub(crate) fn add(&mut self, signal: Signal<'_>, left: &mut [f64], right: &mut [f64]) {
+    pub(crate) fn retarget(&mut self, fader: TrackFader) {
+        let target = fader_gains(fader);
+        if self.target != target {
+            self.start = self.current;
+            self.target = target;
+            self.elapsed = 0;
+        }
+    }
+
+    pub(crate) fn add(&mut self, signal: Signal<'_>, left: &mut [f64], right: &mut [f64]) -> f32 {
+        let mut peak = 0.0f32;
         for (frame, (left, right)) in left.iter_mut().zip(right).enumerate() {
             if self.current != self.target {
                 self.elapsed = self.elapsed.saturating_add(1).min(self.frames);
@@ -97,7 +107,9 @@ impl FaderState {
             };
             *left += f64::from(l);
             *right += f64::from(r);
+            peak = peak.max(l.abs()).max(r.abs());
         }
+        peak
     }
 }
 

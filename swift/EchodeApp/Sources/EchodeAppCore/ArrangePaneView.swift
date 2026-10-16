@@ -17,6 +17,10 @@ public final class ArrangePaneView: NSView {
     private var restoring = false
     var viewport: ArrangeCamera { camera }
     var onSelect: ((UUID) -> Void)?
+    var onSelectClip: ((UUID?) -> Void)? { didSet { timeline.onSelectClip = onSelectClip } }
+    var mixActions: MixActions? { didSet { headers.mixActions = mixActions } }
+    var onClipEdit: ((ClipMixEdit) -> Void)? { didSet { timeline.onClipEdit = onClipEdit } }
+    func setControlSelection(clip: UUID?, preview: FaderPreview?) { timeline.setControlSelection(clip: clip, preview: preview) }
     public override var isFlipped: Bool { true }
 
     public override init(frame: NSRect) {

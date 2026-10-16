@@ -11,7 +11,7 @@ public struct BridgeError: Error, Sendable {
 /// The handle is an immutable `Arc` published by the document thread. This class
 /// is `Sendable` because that storage does not change and Rust frees it once.
 public final class Snapshot: @unchecked Sendable {
-    private let handle: OpaquePointer
+    let handle: OpaquePointer
     /// Reused by `visibleElements` so a frame does not count, then query again.
     private var visibleBuffer: UnsafeMutablePointer<VisibleElement>?
     private var visibleCapacity = 0
@@ -362,6 +362,15 @@ public final class Document: @unchecked Sendable {
         var value = TransportPosition()
         _ = echode_document_position(handle, &value)
         return PlaybackPosition(tick: value.tick, playing: value.playing != 0)
+    }
+
+    func trackPeak(_ track: UUID) -> Float {
+        var bytes = track.uuid
+        return withExtendedLifetime(self) {
+            withUnsafeBytes(of: &bytes) { raw in
+                echode_document_track_peak(handle, raw.bindMemory(to: UInt8.self).baseAddress)
+            }
+        }
     }
 
     public func audio(_ command: AudioCommand) async throws -> AudioState {

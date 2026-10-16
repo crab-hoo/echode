@@ -11,6 +11,8 @@
     )
 )]
 
+use crate::TrackMeter;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
@@ -67,6 +69,15 @@ pub enum PlaybackCommand {
     },
     ClearLoop,
     SetMetronome(bool),
+    /// Transient UI audition. The durable mixer stays in the project plan.
+    PreviewFader {
+        track: u128,
+        gain: f32,
+        pan: f32,
+    },
+    ClearFaderPreview {
+        after_plan: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -109,6 +120,8 @@ struct Track {
     clip_stereo: bool,
     stereo: bool,
     fader: FaderState,
+    base_fader: TrackFader,
+    meter: Arc<TrackMeter>,
     /// Playback ids sorted for bounded lookup when carrying a live voice.
     notes: Vec<(u32, i64, i64)>,
     clips: Vec<StoredClip>,
@@ -149,6 +162,7 @@ struct Prepared {
     tempo: TempoIndex,
     tracks: Vec<Track>,
     track_indices: Vec<(u32, usize)>,
+    mixer_indices: Vec<(u128, usize)>,
     events: Vec<Event>,
     filtered: Vec<Event>,
     /// Index workspace for `sort_events`. Same length as `events`.
@@ -193,6 +207,7 @@ impl Prepared {
         ids: &mut PlaybackIds,
         loaded: &[LoadedClip],
         loop_bounds: Option<(i64, i64)>,
+        meters: &mut BTreeMap<u128, Arc<TrackMeter>>,
     ) -> Result<Self, PlaybackError> {
         if rate == 0 || frames == 0 {
             return Err(PlaybackError::InvalidSampleRate);
@@ -262,8 +277,19 @@ impl Prepared {
                 .checked_add(demand.chase)
                 .ok_or(PlaybackError::Time)?;
             demands.push(demand);
+            let fader = TrackFader {
+                gain: track.gain,
+                pan: track.pan,
+                mute: track.mute != 0.0 || (solo && track.solo == 0.0),
+                solo: false,
+            };
             tracks.push(Track {
                 key: track.track_key,
+                meter: Arc::clone(
+                    meters
+                        .entry(track.track)
+                        .or_insert_with(|| Arc::new(TrackMeter::new(track.track))),
+                ),
                 synth,
                 plane: vec![0.0; frames],
                 right: vec![0.0; frames],
@@ -271,15 +297,8 @@ impl Prepared {
                 clip_right: vec![0.0; frames],
                 clip_stereo,
                 stereo: clip_stereo,
-                fader: FaderState::new(
-                    TrackFader {
-                        gain: track.gain,
-                        pan: track.pan,
-                        mute: track.mute != 0.0 || (solo && track.solo == 0.0),
-                        solo: false,
-                    },
-                    rate,
-                ),
+                fader: FaderState::new(fader, rate),
+                base_fader: fader,
                 notes,
                 clips,
             });
@@ -294,12 +313,19 @@ impl Prepared {
             .map(|(index, track)| (track.key, index))
             .collect();
         track_indices.sort_unstable_by_key(|entry| entry.0);
+        let mut mixer_indices: Vec<_> = tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| (track.meter.track, index))
+            .collect();
+        mixer_indices.sort_unstable_by_key(|entry| entry.0);
         Ok(Self {
             plan,
             cursor,
             tempo,
             tracks,
             track_indices,
+            mixer_indices,
             events: vec![Event::note_off(0, 0, 0, 0); event_count],
             filtered: vec![Event::note_off(0, 0, 0, 0); event_count],
             sort_order: vec![0; event_count],
@@ -315,6 +341,47 @@ impl Prepared {
             mix_left: vec![0.0; frames],
             mix_right: vec![0.0; frames],
         })
+    }
+
+    fn mixer_slot(&self, id: u128) -> Option<usize> {
+        self.mixer_indices
+            .binary_search_by_key(&id, |entry| entry.0)
+            .ok()
+            .and_then(|index| self.mixer_indices.get(index))
+            .map(|entry| entry.1)
+    }
+
+    fn preview_fader(
+        &mut self,
+        previous: Option<u128>,
+        preview: Option<(u128, f32, f32)>,
+        playing: bool,
+    ) {
+        let apply = |track: &mut Track, values: Option<(f32, f32)>| {
+            let mut target = track.base_fader;
+            if let Some((gain, pan)) = values {
+                target.gain = gain;
+                target.pan = pan;
+            }
+            track.fader.retarget(target);
+            if !playing {
+                track.fader.settle();
+            }
+        };
+        // Resolve only the old and new audition targets through an index built
+        // on the control thread; dragging never scans the entire track list.
+        if previous != preview.map(|entry| entry.0)
+            && let Some(slot) = previous.and_then(|id| self.mixer_slot(id))
+            && let Some(track) = self.tracks.get_mut(slot)
+        {
+            apply(track, None);
+        }
+        if let Some((id, gain, pan)) = preview
+            && let Some(slot) = self.mixer_slot(id)
+            && let Some(track) = self.tracks.get_mut(slot)
+        {
+            apply(track, Some((gain, pan)));
+        }
     }
 
     fn place(&mut self, sample: i64, silence: bool) -> Result<(), PlaybackError> {
@@ -621,7 +688,7 @@ impl Prepared {
             if let Some(stereo) = hosts.apply(track.key, plane, track_right) {
                 track.stereo = stereo;
             }
-            track.fader.add(
+            let peak = track.fader.add(
                 Signal {
                     left: plane,
                     right: track.stereo.then_some(&*track_right),
@@ -629,6 +696,7 @@ impl Prepared {
                 mix_left,
                 mix_right,
             );
+            track.meter.publish(peak, 1.0);
         }
         for ((left, right), (l, r)) in left
             .iter_mut()
@@ -935,6 +1003,7 @@ pub struct PlaybackControl {
     routes: Vec<PluginRoute>,
     host_bin: std::path::PathBuf,
     ids: PlaybackIds,
+    meters: BTreeMap<u128, Arc<TrackMeter>>,
     rate: u32,
     frames: usize,
     status: Arc<Status>,
@@ -959,6 +1028,8 @@ pub struct PlaybackAudio {
     live_output: bool,
     stop_tail: Option<StopTail>,
     stop_fade_offset: Option<u32>,
+    fader_preview: Option<(u128, f32, f32)>,
+    clear_preview_after: Option<u64>,
     hosts: Box<HostGraph>,
     current: Box<Prepared>,
     clock: Box<dyn ClockSource>,
@@ -1043,7 +1114,16 @@ pub fn playback_with_clock(
     let (returning, returns) = RingBuffer::new(2);
     let (commands, actions) = RingBuffer::new(32);
     let mut ids = PlaybackIds::new();
-    let mut current = Box::new(Prepared::new(project, rate, frames, &mut ids, &[], None)?);
+    let mut meters = BTreeMap::new();
+    let mut current = Box::new(Prepared::new(
+        project,
+        rate,
+        frames,
+        &mut ids,
+        &[],
+        None,
+        &mut meters,
+    )?);
     current.place(clock.position(), false)?;
     let reserved_events = current.events.len();
     let status = Arc::new(Status {
@@ -1076,6 +1156,7 @@ pub fn playback_with_clock(
         routes: Vec::new(),
         host_bin: std::path::PathBuf::new(),
         ids,
+        meters,
         rate,
         frames,
         status: status.clone(),
@@ -1096,6 +1177,8 @@ pub fn playback_with_clock(
         live_output: false,
         stop_tail: None,
         stop_fade_offset: None,
+        fader_preview: None,
+        clear_preview_after: None,
         hosts: Box::new(HostGraph::empty()),
         current,
         clock,
@@ -1142,6 +1225,19 @@ impl PlaybackControl {
 
     pub fn command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
         match command {
+            PlaybackCommand::PreviewFader { track, gain, pan }
+                if !gain.is_finite()
+                    || !(0.0..=4.0).contains(&gain)
+                    || !pan.is_finite()
+                    || !(-1.0..=1.0).contains(&pan)
+                    || !self
+                        .project
+                        .tracks()
+                        .iter()
+                        .any(|entry| entry.id.raw() == track) =>
+            {
+                Err(PlaybackError::InvalidFader)
+            }
             PlaybackCommand::SetLoop { start, end } if end > start => {
                 self.set_loop(Some((start, end)))
             }
@@ -1182,6 +1278,27 @@ impl PlaybackControl {
         self.hosts.track_event_caps()
     }
 
+    pub fn preview_fader(&mut self, track: u128, gain: f32, pan: f32) -> Result<(), PlaybackError> {
+        self.command(PlaybackCommand::PreviewFader { track, gain, pan })
+    }
+
+    pub fn clear_fader_preview(&mut self, committed: bool) -> Result<(), PlaybackError> {
+        let after_plan = if committed {
+            self.status.requested_plan.load(Ordering::Acquire)
+        } else {
+            0
+        };
+        self.command(PlaybackCommand::ClearFaderPreview { after_plan })
+    }
+
+    pub fn meters(&self) -> Vec<Arc<TrackMeter>> {
+        self.project
+            .tracks()
+            .iter()
+            .filter_map(|track| self.meters.get(&track.id.raw()).cloned())
+            .collect()
+    }
+
     pub fn replace(&mut self, project: &Project) -> Result<(), PlaybackError> {
         let previous = std::mem::replace(&mut self.project, project.clone());
         let result = self.reprepare();
@@ -1204,7 +1321,10 @@ impl PlaybackControl {
             &mut self.ids,
             &loaded,
             self.loop_bounds,
+            &mut self.meters,
         )?;
+        self.meters
+            .retain(|id, _| prepared.mixer_slot(*id).is_some());
         let chain = chain_of(&self.project, &prepared);
         let revision = self
             .status
@@ -1439,6 +1559,10 @@ impl PlaybackAudio {
         let _guard = ForbidAlloc::enter();
         left.fill(0.0);
         right.fill(0.0);
+        let release = TrackMeter::release(left.len(), self.current.sample_rate);
+        for track in &self.current.tracks {
+            track.meter.publish(0.0, release);
+        }
         let result = self.step(left, right, deadline, enabled, live);
         if result.is_err() {
             self.playing = false;
@@ -1485,6 +1609,8 @@ impl PlaybackAudio {
             return Err(PlaybackError::BufferTooSmall);
         }
         self.stop_fade_offset = None;
+        let mut faders_changed = false;
+        let previous_fader = self.fader_preview.map(|entry| entry.0);
         if self.stop_tail.is_none()
             && !self.reset_plugins
             && !self.hosts.cleanup_pending()
@@ -1499,6 +1625,7 @@ impl PlaybackAudio {
                 next.hosts.activate_prepared();
                 std::mem::swap(&mut next.prepared, &mut self.current);
                 std::mem::swap(&mut next.hosts, &mut self.hosts);
+                faders_changed = true;
                 self.status
                     .applied_plan
                     .store(next.revision, Ordering::Release);
@@ -1543,8 +1670,36 @@ impl PlaybackAudio {
                     self.loop_end = None;
                 }
                 PlaybackCommand::SetMetronome(enabled) => self.metronome = enabled,
+                PlaybackCommand::PreviewFader { track, gain, pan } => {
+                    self.fader_preview = Some((track, gain, pan));
+                    self.clear_preview_after = None;
+                    faders_changed = true;
+                }
+                PlaybackCommand::ClearFaderPreview { after_plan } => {
+                    self.clear_preview_after = Some(after_plan)
+                }
             }
             self.applied_command = revision;
+        }
+        if self.clear_preview_after.is_some_and(|revision| {
+            revision == 0
+                || self
+                    .status
+                    .applied_plan
+                    .load(Ordering::Acquire)
+                    .wrapping_sub(revision)
+                    <= u64::MAX / 2
+        }) {
+            self.fader_preview = None;
+            self.clear_preview_after = None;
+            faders_changed = true;
+        }
+        if faders_changed {
+            self.current.preview_fader(
+                previous_fader,
+                self.fader_preview,
+                self.playing && (self.live_output || !live),
+            );
         }
         if !enabled && self.playing {
             self.output_revision = self.output_revision.wrapping_add(1);

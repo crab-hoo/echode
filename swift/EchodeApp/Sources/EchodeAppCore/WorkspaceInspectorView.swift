@@ -10,6 +10,14 @@ struct WorkspaceInspectorView: View {
                 if let track = controller.tracks.first(where: { $0.id == controller.selection }),
                    let index = controller.tracks.firstIndex(where: { $0.id == track.id }), let snapshot = controller.snapshot {
                     Label(track.name, systemImage: "waveform").lineLimit(2)
+                    if let mix = snapshot.mixer(onTrack: index) {
+                        Divider()
+                        TrackMixInspector(controller: controller, track: track.id, mix: mix)
+                    }
+                    if let id = controller.clipFocus, let clip = snapshot.clipMix(id), clip.isAudio {
+                        Divider()
+                        ClipMixInspector(controller: controller, clip: clip).id(clip.id)
+                    }
                     if let id = controller.noteFocus, let note = snapshot.pianoNote(id) {
                         Divider()
                         Text(text("Selected Note")).font(.subheadline)

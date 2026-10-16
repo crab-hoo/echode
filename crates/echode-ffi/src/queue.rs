@@ -1,11 +1,12 @@
 //! A submission returns before the document thread finishes the command.
 
+use std::collections::BTreeMap;
 use std::ffi::{CString, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -29,6 +30,7 @@ pub struct Document {
 
 #[derive(Default)]
 struct Position {
+    meters: RwLock<BTreeMap<u128, Arc<echode_audio_io::TrackMeter>>>,
     generation: AtomicU32,
     tick: AtomicI64,
     playing: AtomicU32,
@@ -37,6 +39,7 @@ struct Position {
 /// One owned reference to a project snapshot and the arrange index for that version.
 pub struct Snapshot {
     project: Arc<Project>,
+    pub(crate) controls: Arc<crate::controls::ControlIndex>,
     index: Arc<ArrangeIndex>,
     audio: Arc<Vec<u8>>,
     history: Arc<Vec<u8>>,
@@ -84,6 +87,15 @@ impl Document {
             position,
             cancellation,
         })
+    }
+
+    pub(crate) fn track_peak(&self, id: u128) -> f32 {
+        self.position
+            .meters
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&id)
+            .map_or(0.0, |meter| meter.peak())
     }
 
     pub(crate) fn position(&self) -> crate::TransportPosition {
@@ -176,12 +188,19 @@ impl Drop for Document {
 }
 
 impl Snapshot {
+    pub(crate) fn flicks_at(&self, tick: i64) -> Option<i64> {
+        self.project
+            .tempo()
+            .flicks_at(echode_model::Tick::new(tick))
+            .map(|time| time.get())
+    }
     pub(crate) fn from_project(project: Arc<Project>, previous: Option<&ArrangeIndex>) -> Self {
         let index = previous.map_or_else(
             || ArrangeIndex::build(&project),
             |index| index.update(&project),
         );
         Self {
+            controls: Arc::new(crate::controls::ControlIndex::build(&project)),
             project,
             index: Arc::new(index),
             audio: Arc::new(serde_json::to_vec(&AudioState::default()).unwrap_or_default()),
@@ -193,6 +212,7 @@ impl Snapshot {
     pub(crate) fn retain(&self) -> Self {
         Self {
             project: Arc::clone(&self.project),
+            controls: Arc::clone(&self.controls),
             index: Arc::clone(&self.index),
             audio: Arc::clone(&self.audio),
             history: Arc::clone(&self.history),
@@ -399,6 +419,25 @@ fn worker(
                     .is_err()
             });
         }
+        {
+            let meters = audio.meters();
+            let mut published = position
+                .meters
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if published.len() != meters.len()
+                || meters.iter().any(|meter| {
+                    published
+                        .get(&meter.track)
+                        .is_none_or(|old| !Arc::ptr_eq(old, meter))
+                })
+            {
+                *published = meters
+                    .into_iter()
+                    .map(|meter| (meter.track, meter))
+                    .collect();
+            }
+        }
         let (tick, playing) = audio.position();
         position.generation.fetch_add(1, Ordering::SeqCst);
         position.tick.store(tick, Ordering::SeqCst);
@@ -475,6 +514,11 @@ fn worker(
         }
     }
     drop(audio);
+    position
+        .meters
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
     position.playing.store(0, Ordering::SeqCst);
 }
 

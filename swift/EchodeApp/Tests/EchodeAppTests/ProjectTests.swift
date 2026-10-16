@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import EchodeAppCore
 
-private func wavMono(rate: UInt32, frames: Int) -> Data {
+func wavMono(rate: UInt32, frames: Int) -> Data {
     var data = Data()
     data.append(contentsOf: [0x52, 0x49, 0x46, 0x46])
     let dataBytes = UInt32(frames * 2)

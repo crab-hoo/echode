@@ -25,6 +25,14 @@ pub enum AudioCommand {
     Refresh,
     #[serde(rename = "audio.status")]
     Status,
+    #[serde(rename = "audio.preview_fader")]
+    PreviewFader {
+        track: echode_model::Id,
+        gain: f32,
+        pan: f32,
+    },
+    #[serde(rename = "audio.clear_fader_preview")]
+    ClearFaderPreview,
     /// Both ticks set the loop. Both absent clear it. A tick is a project position.
     #[serde(rename = "transport.loop")]
     Loop {
@@ -72,6 +80,7 @@ pub struct Session {
     clips: ClipLoader,
     package: Option<PathBuf>,
     error: Option<String>,
+    fader_preview: Option<(u128, f32, f32)>,
 }
 
 impl Session {
@@ -93,6 +102,7 @@ impl Session {
             clips: Arc::new(|_project, _rate| Ok(Vec::new())),
             package: None,
             error: None,
+            fader_preview: None,
         }
     }
 
@@ -127,6 +137,26 @@ impl Session {
         revision: u64,
     ) -> Result<(), String> {
         match command {
+            AudioCommand::PreviewFader { track, gain, pan } => {
+                if !self.project.tracks().iter().any(|entry| entry.id == track)
+                    || !gain.is_finite()
+                    || !(0.0..=4.0).contains(&gain)
+                    || !pan.is_finite()
+                    || !(-1.0..=1.0).contains(&pan)
+                {
+                    return Err("invalid mixer preview".into());
+                }
+                if let Some(stream) = &mut self.stream {
+                    stream.preview_fader(track.raw(), gain, pan)?;
+                }
+                self.fader_preview = Some((track.raw(), gain, pan));
+            }
+            AudioCommand::ClearFaderPreview => {
+                if let Some(stream) = &mut self.stream {
+                    stream.clear_fader_preview(false)?;
+                }
+                self.fader_preview = None;
+            }
             AudioCommand::Play => {
                 if !self.cancellation.is_current(revision) {
                     return Ok(());
@@ -227,7 +257,7 @@ impl Session {
             .map_or(self.tick, |stream| stream.status().tick);
         let changed_tempo = self.project.tempo() != project.tempo();
         self.project = project;
-        let replaced = if let Some(stream) = &mut self.stream {
+        let mut replaced = if let Some(stream) = &mut self.stream {
             stream.replace(&self.project).and_then(|_| {
                 if changed_tempo {
                     stream.locate(&self.project, tick)
@@ -238,6 +268,12 @@ impl Session {
         } else {
             Ok(())
         };
+        if self.fader_preview.take().is_some()
+            && let Some(stream) = &mut self.stream
+            && let Err(error) = stream.clear_fader_preview(true)
+        {
+            replaced = Err(error);
+        }
         if let Err(error) = replaced {
             self.park();
             self.playing = false;
@@ -247,6 +283,12 @@ impl Session {
             self.playing = false;
             self.error = Some(error);
         }
+    }
+
+    pub fn meters(&self) -> Vec<Arc<crate::TrackMeter>> {
+        self.stream
+            .as_ref()
+            .map_or_else(Vec::new, OutputStream::meters)
     }
 
     fn resend_loop(&mut self) -> Result<(), String> {
@@ -365,6 +407,7 @@ impl Session {
                         package: self.package.clone(),
                         cancellation: self.cancellation.clone(),
                         revision: self.play_revision,
+                        fader_preview: self.fader_preview,
                     },
                     Arc::clone(&self.hardware_epoch),
                     self.observed_epoch,

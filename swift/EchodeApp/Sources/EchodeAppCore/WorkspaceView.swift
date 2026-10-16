@@ -84,7 +84,9 @@ public struct WorkspaceView: View {
             if let snapshot = controller.snapshot, !controller.tracks.isEmpty {
                 ArrangeCanvas(snapshot: snapshot, selection: $controller.selection,
                               playback: controller.playback, transportGeneration: controller.transportGeneration,
-                              navigation: state.navigation, documentID: controller.documentID).id(controller.documentID)
+                              navigation: state.navigation, documentID: controller.documentID,
+                              selectedClip: controller.clipFocus, faderPreview: controller.faderPreview,
+                              mixActions: mixActions, onSelectClip: { controller.clipFocus = $0 }, onClipEdit: clipEdit).id(controller.documentID)
             } else {
                 VStack(spacing: 12) {
                     Text(text("Add a track to start"))
@@ -92,6 +94,24 @@ public struct WorkspaceView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+    private var clipEdit: (ClipMixEdit) -> Void {
+        let document = controller.documentID
+        return { edit in Task {
+            switch edit {
+            case .gain(let id, let gain): await controller.setClipGain(id, gain: gain, documentID: document)
+            case .fades(let id, let entering, let leaving): await controller.setClipFades(id, fadeIn: entering, fadeOut: leaving, documentID: document)
+            }
+        } }
+    }
+    private var mixActions: MixActions {
+        let document = controller.documentID
+        return MixActions(begin: { controller.beginFader($0, field: $1) }, change: { controller.changeFader($0) },
+            finish: { commit in Task { await controller.finishFader(commit: commit) } },
+            set: { track, field, value in Task {
+                if controller.faderPreview != nil { await controller.finishFader(commit: true) }
+                await controller.setMixer(track, field: field, value: value, documentID: document)
+            } })
     }
     private var welcome: some View {
         VStack(spacing: 16) {

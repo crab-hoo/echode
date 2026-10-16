@@ -59,6 +59,7 @@
 - CLI の render / serve は `crates/echode-cli`、ローカル JSON-RPC は `crates/echode-api`。製品 C ABI は `crates/echode-ffi`、Swift の保持と非同期処理は `swift/EchodeBridge`。
 - 取消世代は `echode-audio-io/src/transport.rs`、投入順序は `echode-ffi/src/queue.rs`。準備の完了応答と、停止による発音禁止を別々に確認する（[ADR 0097](decisions/0097-cancellable-retained-transport.md)）。
 - 製品 UI は `swift/EchodeApp/Sources/EchodeAppCore`。描画・ヘッダ入力・ワークスペース・controller の責務を分ける。実ウィンドウ検査は `EchodePlayheadProbe` と `Tests/EchodePlayheadChecks`、通常のテストは `Tests/EchodeAppTests`。
+- ミックス操作の配置と下書きは `MixControls.swift`、数値入力とピーク表示は `MixInspectorView.swift`、ドラッグの試聴・確定は `ProjectController.swift`。不変のパラメーター・クリップ値は `echode-ffi/src/controls.rs` と `EchodeBridge/Controls.swift`、音声所有のピークは `echode-engine/src/meter.rs`、一時フェーダーと計画採用は `playback.rs`。仕様と検査は [ADR 0107](decisions/0107-mix-controls.md)。
 - 描画の大規模な検証は `crates/echode-draw` と `spikes/draw`。入力の前提検証は `spikes/input`。`spike` の型を製品モデルへ流用しない。
 - 検査の選択・予算・必須契約は `scripts/verification.json`、実行器は `scripts/verify.py`、検査基盤自体のテストは `scripts/tests`。フックは薄いアダプターに留める。
 

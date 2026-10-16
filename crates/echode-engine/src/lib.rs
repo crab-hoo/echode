@@ -37,6 +37,8 @@ pub use device::{IoWorkgroup, OutputInventory, output_inventory};
 pub use echode_realtime::Event;
 pub use handoff::{Audio, Control, Cycle, pair};
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
+mod meter;
+pub use meter::TrackMeter;
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
 pub use playback::{

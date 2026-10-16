@@ -14,6 +14,9 @@ struct CanvasInput: Sendable {
     var piano: PianoRenderInput? = nil
     var playback: PlaybackFeed? = nil
     var header: ArrangeHeaderInput? = nil
+    var selectedClip: UUID? = nil
+    var faderPreview: FaderPreview? = nil
+    var clipDraft: ClipDraft? = nil
 }
 
 private struct RenderState {
@@ -75,6 +78,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     // Only the render thread reads or changes these fields.
     private var buffers: [(any MTLBuffer)?] = [nil, nil, nil]
     private var drawnRevision: UInt64?
+    private var metersActive = false
 
     init(layer: CAMetalLayer, size: CGSize, scale: CGFloat, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
          onPiano: (@MainActor @Sendable (PianoFrame) -> Void)? = nil,
@@ -154,7 +158,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private func publishLinkState() -> Bool {
         state.withLock { value in
             let ready = value.input.map { $0.width > 0 && $0.height > 0 } ?? false
-            let paused = !ready || (!value.continuous && value.input?.playback?.position.playing != true && drawnRevision == value.revision)
+            let paused = !ready || (!value.continuous && !metersActive && value.input?.playback?.position.playing != true && drawnRevision == value.revision)
             let wasPaused = value.measurement.displayLinkPaused
             value.measurement.displayLinkPaused = paused
             value.measurement.continuous = value.continuous
@@ -216,6 +220,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
             }
         }
         let arranged = input.piano == nil ? ArrangeFrame(input: input, camera: camera, revision: revision) : nil
+        metersActive = arranged?.headers.contains { $0.peak > 0.001 } ?? false
         let piano = input.piano.map { PianoFrame(input: input, piano: $0, revision: revision) }
         var instances = piano?.gridInstances ?? arranged?.timelineInstances ?? []
         let timelineCount = instances.count

@@ -37,7 +37,9 @@ public enum AudioCommand: Encodable, Sendable {
     /// Both ticks set the loop. Both nil clear it.
     case loop(start: Int64?, end: Int64?)
     case metronome(enabled: Bool)
-    enum CodingKeys: String, CodingKey { case type, tick, uid, start, end, enabled }
+    case previewFader(track: UUID, gain: Float, pan: Float)
+    case clearFaderPreview
+    enum CodingKeys: String, CodingKey { case type, tick, uid, start, end, enabled, track, gain, pan }
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         let type: String
@@ -56,6 +58,12 @@ public enum AudioCommand: Encodable, Sendable {
         case .metronome(let enabled):
             type = "transport.metronome"
             try container.encode(enabled, forKey: .enabled)
+        case .previewFader(let track, let gain, let pan):
+            type = "audio.preview_fader"
+            try container.encode(track, forKey: .track)
+            try container.encode(gain, forKey: .gain)
+            try container.encode(pan, forKey: .pan)
+        case .clearFaderPreview: type = "audio.clear_fader_preview"
         }
         try container.encode(type, forKey: .type)
     }
@@ -72,5 +80,6 @@ public struct PlaybackFeed: Sendable, Equatable {
     private let document: Document
     init(_ document: Document) { self.document = document }
     public var position: PlaybackPosition { document.playbackPosition }
+    public func peak(track: UUID) -> Float { document.trackPeak(track) }
     public static func == (lhs: Self, rhs: Self) -> Bool { lhs.document === rhs.document }
 }

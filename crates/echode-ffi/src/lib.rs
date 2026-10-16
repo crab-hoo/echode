@@ -5,8 +5,13 @@
 //! `spikes/bridge` is not used here.
 
 mod catalog;
+mod controls;
 mod piano;
 mod queue;
+pub use controls::{
+    ClipControls, MixerControls, echode_document_track_peak, echode_snapshot_clip_controls,
+    echode_snapshot_flicks, echode_snapshot_mixer_controls,
+};
 
 pub use queue::{Document, Snapshot};
 
@@ -1270,6 +1275,90 @@ mod snapshot_ownership {
         assert_eq!(uuid::Uuid::from_bytes(bytes).as_u128(), 1);
         assert!(unsafe { echode_snapshot_track_name(retained, 1, &mut length) }.is_null());
         assert_eq!(length, 0);
+        unsafe { echode_snapshot_free(retained) };
+    }
+
+    #[test]
+    fn retained_mix_controls_copy_ids_and_resolve_fades_across_tempo_changes() {
+        use echode_model::{AudioRef, FLICKS_PER_SECOND, ParamKey, Tempo, Tick};
+        let track = Id::from_raw(1);
+        let clip = Id::from_raw(32);
+        let project = Project::new()
+            .add_track_with_id(track, "audio", MixerIds::from_base(16))
+            .unwrap()
+            .with_tempo(
+                Tick::quarters(2).unwrap(),
+                Tempo::quarters_per_minute(60).unwrap(),
+            )
+            .place_audio(
+                track,
+                clip,
+                Id::from_raw(33),
+                Tick::new(0),
+                AudioRef::try_new("a".repeat(64), 48_000, 2, 144_000).unwrap(),
+            )
+            .unwrap()
+            .set_clip_gain(clip, 0.5)
+            .unwrap()
+            .set_clip_fades(clip, FLICKS_PER_SECOND * 3 / 2, FLICKS_PER_SECOND * 3 / 2)
+            .unwrap();
+        let gain = project.tracks()[0].devices[0]
+            .parameters
+            .iter()
+            .find(|parameter| parameter.key == ParamKey::Gain)
+            .unwrap()
+            .id;
+        let project = project.set_parameter(gain, 0.25).unwrap();
+        let original = Box::into_raw(Box::new(Snapshot::from_project(Arc::new(project), None)));
+        let retained = unsafe { echode_snapshot_retain(original) };
+        unsafe { echode_snapshot_free(original) };
+        let mut mixer = MixerControls::default();
+        assert_eq!(
+            unsafe { echode_snapshot_mixer_controls(retained, 0, &mut mixer) },
+            ECHODE_OK
+        );
+        assert_eq!(u128::from_be_bytes(mixer.gain_id), gain.raw());
+        assert_eq!(mixer.gain, 0.25);
+        assert_eq!(
+            unsafe { echode_snapshot_mixer_controls(retained, 1, &mut mixer) },
+            ECHODE_ERR
+        );
+        assert_eq!(
+            unsafe { echode_snapshot_mixer_controls(retained, 0, std::ptr::null_mut()) },
+            ECHODE_ERR
+        );
+        // This byte array tests an unaligned UUID input, not a product limit.
+        let mut unaligned = [0u8; 17];
+        unaligned[1..].copy_from_slice(&clip.raw().to_be_bytes());
+        let mut value = ClipControls::default();
+        assert_eq!(
+            unsafe { echode_snapshot_clip_controls(retained, unaligned[1..].as_ptr(), &mut value) },
+            ECHODE_OK
+        );
+        assert_eq!(u128::from_be_bytes(value.track_id), track.raw());
+        assert_eq!(value.gain, 0.5);
+        assert_eq!(value.audio, 1);
+        assert_eq!(value.length, 705_600 * 4);
+        assert_eq!(value.fade_in_ticks, 705_600 * 5 / 2);
+        assert_eq!(value.fade_out_ticks, 705_600 * 3 / 2);
+        let mut time = 0;
+        assert_eq!(
+            unsafe { echode_snapshot_flicks(retained, value.fade_in_ticks, &mut time) },
+            ECHODE_OK
+        );
+        assert_eq!(time, FLICKS_PER_SECOND * 3 / 2);
+        assert_eq!(
+            unsafe { echode_snapshot_clip_controls(retained, std::ptr::null(), &mut value) },
+            ECHODE_ERR
+        );
+        assert_eq!(
+            unsafe { echode_snapshot_flicks(retained, 0, std::ptr::null_mut()) },
+            ECHODE_ERR
+        );
+        assert_eq!(
+            unsafe { echode_document_track_peak(std::ptr::null_mut(), unaligned[1..].as_ptr()) },
+            0.0
+        );
         unsafe { echode_snapshot_free(retained) };
     }
 

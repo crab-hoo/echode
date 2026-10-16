@@ -8,4 +8,4 @@ sys_includes = ["stdint.h", "stddef.h"]
 parse_deps = false
 
 [export]
-include = ["Document", "Snapshot", "VisibleElement", "PianoNoteElement", "TransportPosition"]
+include = ["Document", "Snapshot", "VisibleElement", "PianoNoteElement", "TransportPosition", "MixerControls", "ClipControls"]

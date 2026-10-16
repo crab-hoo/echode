@@ -61,6 +61,7 @@ pub(crate) struct TransportSetup {
     pub(crate) package: Option<std::path::PathBuf>,
     pub(crate) cancellation: TransportCancellation,
     pub(crate) revision: u64,
+    pub(crate) fader_preview: Option<(u128, f32, f32)>,
 }
 
 impl TransportSetup {
@@ -72,6 +73,7 @@ impl TransportSetup {
             package: None,
             cancellation: TransportCancellation::default(),
             revision: 0,
+            fader_preview: None,
         }
     }
 }
@@ -87,6 +89,19 @@ pub struct OutputStream {
 }
 
 impl OutputStream {
+    pub(crate) fn preview_fader(&mut self, track: u128, gain: f32, pan: f32) -> Result<(), String> {
+        self.control
+            .preview_fader(track, gain, pan)
+            .map_err(|error| error.to_string())
+    }
+    pub(crate) fn clear_fader_preview(&mut self, committed: bool) -> Result<(), String> {
+        self.control
+            .clear_fader_preview(committed)
+            .map_err(|error| error.to_string())
+    }
+    pub(crate) fn meters(&self) -> Vec<Arc<echode_engine::TrackMeter>> {
+        self.control.meters()
+    }
     pub fn open(device: OutputDevice, project: &Project, tick: i64) -> Result<Self, String> {
         Self::open_mode(device, project, tick, false)
     }
@@ -457,6 +472,11 @@ fn prepare_playback(
     control
         .command(PlaybackCommand::SetMetronome(transport.metronome))
         .map_err(|error| error.to_string())?;
+    if let Some((track, gain, pan)) = transport.fader_preview {
+        control
+            .preview_fader(track, gain, pan)
+            .map_err(|error| error.to_string())?;
+    }
     control
         .command(PlaybackCommand::Play)
         .map_err(|error| error.to_string())?;
@@ -1346,6 +1366,52 @@ mod tests {
         assert!(!callback.failed.load(Ordering::Acquire));
     }
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn preview_before_open_applies_before_any_live_output_under_rtsan() {
+        let (project, track) = Project::new().add_track("preview before play");
+        let project = project
+            .insert_note(
+                track,
+                echode_model::NoteDraft {
+                    pitch: 60,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: Tick::quarters(4).unwrap(),
+                },
+            )
+            .unwrap()
+            .0;
+        for rate in [48_000, 96_000] {
+            let mut setup = TransportSetup::idle();
+            setup.fader_preview = Some((track.raw(), 0.0, 0.0));
+            let (mut control, mut player) =
+                prepare_playback(&project, rate, 64, 0, &setup).unwrap();
+            // These buffers cover only this product preparation fixture.
+            let (mut left, mut right) = (vec![0.0; 64], vec![0.0; 64]);
+            for _ in 0..16 {
+                player.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    Instant::now() + Duration::from_secs(5),
+                    true,
+                );
+                assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+            }
+            assert_eq!(control.status().sample, 1024);
+            control.clear_fader_preview(false).unwrap();
+            for _ in 0..16 {
+                player.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    Instant::now() + Duration::from_secs(5),
+                    true,
+                );
+            }
+            assert!(left.iter().chain(&right).any(|sample| *sample != 0.0));
+            assert!(!control.status().failed);
+        }
+    }
 
     #[test]
     fn contract_startup_position_is_published_before_the_first_callback() {

@@ -11,9 +11,12 @@ final class ArrangeHeaderView: NSView {
     private var selectedIndex: Int?
     private(set) var camera = ArrangeCamera()
     private var accessible: [UUID: AccessibleTrackHeader] = [:]
+    private var controlElements: [String: AccessibleMixControl] = [:]
     var onSelect: ((UUID) -> Void)?
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
+    var mixActions: MixActions?
+    private var drag: (track: UUID, field: MixerField, rect: CGRect)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -47,7 +50,34 @@ final class ArrangeHeaderView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        if let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) { onSelect?(id) }
+        guard let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) else { return }
+        onSelect?(id)
+        let controls = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
+        guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else { return }
+        if field == .mute || field == .solo {
+            mixActions.set(id, field, mix[field].value == 0 ? 1 : 0)
+        } else if mixActions.begin(id, field) {
+            drag = (id, field, controls.rect(field))
+            updateDrag(point)
+        }
+    }
+    override func mouseDragged(with event: NSEvent) { updateDrag(convert(event.locationInWindow, from: nil)) }
+    override func mouseUp(with event: NSEvent) {
+        guard drag != nil else { return }
+        updateDrag(convert(event.locationInWindow, from: nil)); drag = nil; mixActions?.finish(true)
+    }
+    override func mouseCancelled(with event: NSEvent) {
+        guard drag != nil else { return }
+        drag = nil; mixActions?.finish(false)
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil, drag != nil { drag = nil; mixActions?.finish(false) }
+    }
+    private func updateDrag(_ point: CGPoint) {
+        guard let drag else { return }
+        let position = min(1, max(0, (point.x - drag.rect.minX) / drag.rect.width))
+        mixActions?.change(drag.field == .gain ? MixScale.gain(position) : Float(position * 2 - 1))
     }
     override func scrollWheel(with event: NSEvent) {
         onScroll?(Double(event.scrollingDeltaX), Double(event.scrollingDeltaY))
@@ -58,6 +88,7 @@ final class ArrangeHeaderView: NSView {
         onZoom?(max(0.1, 1 + Double(event.magnification)), event.modifierFlags, CGPoint(x: 0, y: point.y))
     }
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == kVK_Escape, drag != nil { drag = nil; mixActions?.finish(false); return }
         guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
         switch Int(event.keyCode) {
         case kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End: interpretKeyEvents([event])
@@ -76,6 +107,7 @@ final class ArrangeHeaderView: NSView {
     override func accessibilityChildren() -> [Any]? {
         guard let snapshot, let window else { accessible = [:]; return [] }
         var retained: [UUID: AccessibleTrackHeader] = [:]
+        var retainedControls: [String: AccessibleMixControl] = [:]
         let children: [AccessibleTrackHeader] = rows.visible.compactMap { index in
             guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }
             let child = accessible[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
@@ -88,12 +120,56 @@ final class ArrangeHeaderView: NSView {
             let rect = rows.rect(at: index, width: Double(bounds.width)).intersection(bounds)
             child.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil)))
             child.actions.press = { [weak self] in self?.onSelect?(id) }
+            let layout = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
+            if layout.visible, let mix = snapshot.mixer(onTrack: index) {
+                let controls = MixerField.allCases.map { field in
+                    let key = "\(id)/\(field.rawValue)"
+                    let control = controlElements[key] ?? AccessibleMixControl(actions: MixAccessibilityActions())
+                    let title: String
+                    switch field { case .gain: title = "Volume"; case .pan: title = "Pan"; case .mute: title = "Mute"; case .solo: title = "Solo" }
+                    control.setAccessibilityElement(true)
+                    control.setAccessibilityRole(field == .gain || field == .pan ? .slider : .checkBox)
+                    control.setAccessibilityLabel(text(title) + " " + name)
+                    control.setAccessibilityValue(NSNumber(value: mix[field].value))
+                    control.setAccessibilityMinValue(NSNumber(value: field == .pan ? -1 : 0))
+                    control.setAccessibilityMaxValue(NSNumber(value: field == .gain ? 4 : 1))
+                    control.setAccessibilityParent(child)
+                    control.setAccessibilityIdentifier(key)
+                    control.setAccessibilityFrame(window.convertToScreen(convert(layout.rect(field).intersection(bounds), to: nil)))
+                    control.actions.adjust = { [weak self] direction in
+                        let value = mix[field].value
+                        let next: Float
+                        switch field {
+                        case .gain: next = min(4, max(0, value == 0 && direction > 0 ? 0.001 : value * Float(pow(10, direction / 20))))
+                        case .pan: next = min(1, max(-1, value + Float(direction) * 0.05))
+                        case .mute, .solo: next = value == 0 ? 1 : 0
+                        }
+                        self?.mixActions?.set(id, field, next)
+                    }
+                    retainedControls[key] = control
+                    return control
+                }
+                child.setAccessibilityChildren(controls)
+            } else { child.setAccessibilityChildren([]) }
             retained[id] = child
             return child
         }
         accessible = retained
+        controlElements = retainedControls
         return children
     }
+}
+
+@MainActor
+private final class MixAccessibilityActions { var adjust: ((Double) -> Void)? }
+
+@MainActor
+private final class AccessibleMixControl: NSAccessibilityElement {
+    nonisolated let actions: MixAccessibilityActions
+    init(actions: MixAccessibilityActions) { self.actions = actions; super.init() }
+    override func accessibilityPerformIncrement() -> Bool { Task { @MainActor [actions] in actions.adjust?(1) }; return true }
+    override func accessibilityPerformDecrement() -> Bool { Task { @MainActor [actions] in actions.adjust?(-1) }; return true }
+    override func accessibilityPerformPress() -> Bool { Task { @MainActor [actions] in actions.adjust?(1) }; return true }
 }
 
 @MainActor
