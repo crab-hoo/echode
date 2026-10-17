@@ -581,6 +581,8 @@ Phase 1 の初期実装は `PianoRollView.swift`、`PianoGeometry.swift` と `Pi
 - **JSON-RPC**: ユーザー本人だけが読み書きできる Unix ドメインソケットで提供する。1 行が 1 件の JSON-RPC 2.0 で、`actions.list`、`actions.perform`、`actions.transaction`、`edit.undo`、`edit.redo`、`project.summary`、`protocol.version` を受ける（[ADR 0020](decisions/0020-json-rpc.md)、[ADR 0034](decisions/0034-api-transaction.md)）。主なメソッドには、このほかモデルの変更の購読、トランスポートの操作、レンダリングがある
 - **CLI とヘッドレス**: `echode render`（書き出し）、`echode apply`（アクション列の実行）、`echode serve`（ヘッドレスのサーバー）、`echode mcp`（MCP サーバー）。`echode render` は、パッケージをテスト用シンセと置いた音声でステレオの float WAV にする（[ADR 0019](decisions/0019-offline-wav.md)、[ADR 0057](decisions/0057-crash-recovery.md)）
 - **MCP**: アクションの登録簿から MCP のツールを自動で生成し、プロジェクトの概要やトラックの一覧をリソースとして公開する。起動中の Echode にも、ヘッドレスのセッションにも接続できる
+
+  Phase 2 の初版（[ADR 0115](decisions/0115-phase2-mcp.md)）は `echode mcp SOCKET` の stdio と、同じビルドの `echode serve` の接続である。アクションのツールとまとめた編集・Undo / Redo、概要・トラックのリソースを実装し、MCP 2026-07-28 と 2025-11-25 の要求を分ける。書き手は既存の DocumentHost のままで、MCP がパッケージを開き直さない。起動中の GUI への接続、変更購読、再生・レンダリング操作と外部クライアント登録は将来の接続・確認に残る。
 - **自然言語コマンド**: コマンドパレットに自然な文を入力すると、Foundation Models のオンデバイスモデルが次の手順で処理する
   1. 入力に関係するアクションを検索して絞り込む（オンデバイスモデルは文脈長が短いので、全アクションは渡さない）
   2. 今の文脈（選択、フォーカス、プロジェクトの概要）をツール経由で取得する

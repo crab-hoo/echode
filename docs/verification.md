@@ -43,6 +43,7 @@ make verify
 - ミックスの必須契約 `track-mix-ui` / `clip-mix-ui` は実Viewへのマウス入力から確定し、1回のUndo・取消・保存後の再読込を通す。`live-mix-meter` は製品の試聴・確定計画の採用・取消の波形とフェーダー後の実ピークを、レート・ブロック長を変えて検査する。各負の対照は操作やピークの接続を壊す。通常検査には初回出力前の試聴、遅れた送信とclose、テンポ変更をまたぐフェード・ABI寿命も含め、既存のRTSanと橋渡し検査へ通す（[ADR 0107](decisions/0107-mix-controls.md)）。
 - 製品契約 `live-workgroup` は機器を開かない AudioWorkInterval で挿入・保持・再起動への接続を確認する。`shared-placement-pcm` は同じ PCM の共有・編集・失効・未参照の破棄、`cached-geometry` は実文書と表示範囲の変更で可視列を失効することを確認する。既存の製品契約の入口で通常と負の対照を実行する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
+- `mcp-edit` は既存の製品契約の入口から、実 CLI の stdio → Unix ソケット → DocumentHost を通す。依存する編集の単一 Undo / Redo、失敗の巻戻し、別クライアントへの公開、復旧と EOF を確認する。編集を概要の読取へ置き換えたコピーも拒否する。通常検査は旧・新プロトコル、不正な ID・通知・メタデータ・引数、停止した接続先、破損した応答・行の上限も扱う。実アプリや音声機器、ユーザーのパッケージは使わない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
 - P1の必須契約`loop-head-residency`は準備後に一時素材を除去してループ先頭の保持・失効を検査し、`pre-fader-source`は製品の差し替え・ループ・フェーダー・ライブ復帰をブロック長別とRTSanで検査する。`phase1-acceptance`は同じCLAPプロジェクトを持つ検証用子プロセスだけを強制終了し、復旧・再生・履歴復帰・実CLI書出しを通す。通常の`check-product-contracts`入口から実行し、保持の無効化・差し替えの切断・CLIの無音化を戻したコピーも拒否する（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。機器やユーザーのアプリを操作する検査ではない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。

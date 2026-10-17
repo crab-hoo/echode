@@ -21,6 +21,7 @@ echode-plugin-host = { path = "../echode-plugin-host" }
 
 [dev-dependencies]
 echode-actions = { path = "../echode-actions" }
+serde_json = "1"
 
 [lints]
 workspace = true

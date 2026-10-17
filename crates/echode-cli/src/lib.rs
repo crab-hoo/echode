@@ -129,6 +129,7 @@ where
     match command.as_ref() {
         "render" => render_command(&mut args),
         "serve" => serve_command(&mut args),
+        "mcp" => mcp_command(&mut args),
         _ => Err(usage()),
     }
 }
@@ -187,6 +188,25 @@ where
     }
     serve(Path::new(package.as_ref()), Path::new(socket.as_ref()))
         .map_err(|error| CliError::new(error.to_string()))
+}
+
+fn mcp_command<I, S>(args: &mut I) -> Result<(), CliError>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    let Some(socket) = args.next() else {
+        return Err(usage());
+    };
+    if args.next().is_some() {
+        return Err(usage());
+    }
+    echode_api::serve_mcp(
+        Path::new(socket.as_ref()),
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+    )
+    .map_err(|error| CliError::new(error.to_string()))
 }
 
 /// Recovers a package and writes a stereo IEEE-float WAV.
@@ -316,7 +336,7 @@ fn parse_u32(text: &str) -> Result<u32, CliError> {
 
 fn usage() -> CliError {
     CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N]\n       echode serve PACKAGE SOCKET",
+        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
     )
 }
 

@@ -58,6 +58,7 @@
 - ライブ停止後の破棄する処理は `echode-engine/src/plugins.rs` の各ステージが保留し、完了をポーリングする。音声の出力を待つ通常の集約と混同しない。再開と計画交換は `playback.rs` が完了まで保留する（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）。
 - 共有メモリは `crates/echode-sandbox`、本体外のロード・スキャン・処理は `crates/echode-plugin-host`、故障注入用 CLAP は `crates/echode-test-plugin`。致命信号の印は `echode-sandbox/src/region.rs` の `arm_abort_notice`。Workgroup の起動時ポーリングは `workgroup.rs`。スキャンは `echode-plugin-host/src/scan.rs`（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
 - CLI の render / serve は `crates/echode-cli`、ローカル JSON-RPC は `crates/echode-api`。製品 C ABI は `crates/echode-ffi`、Swift の保持と非同期処理は `swift/EchodeBridge`。
+- Phase 2 の MCP stdio は `echode-api/src/mcp.rs`、CLI は `echode mcp SOCKET`。同じビルドのヘッドレスセッションへ接続し、アクションの登録簿・既存の API と書き手を使う。実プロセスの統合回帰は `echode-cli/tests/mcp.rs`。GUI への接続や再生操作を実装済みと扱わない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
 - 取消世代は `echode-audio-io/src/transport.rs`、投入順序は `echode-ffi/src/queue.rs`。準備の完了応答と、停止による発音禁止を別々に確認する（[ADR 0097](decisions/0097-cancellable-retained-transport.md)）。
 - 製品 UI は `swift/EchodeApp/Sources/EchodeAppCore`。描画・ヘッダ入力・ワークスペース・controller の責務を分ける。実ウィンドウ検査は `EchodePlayheadProbe` と `Tests/EchodePlayheadChecks`、通常のテストは `Tests/EchodeAppTests`。
 - ミックス操作の配置と下書きは `MixControls.swift`、数値入力とピーク表示は `MixInspectorView.swift`、ドラッグの試聴・確定は `ProjectController.swift`。不変のパラメーター・クリップ値は `echode-ffi/src/controls.rs` と `EchodeBridge/Controls.swift`、音声所有のピークは `echode-engine/src/meter.rs`、一時フェーダーと計画採用は `playback.rs`。仕様と検査は [ADR 0107](decisions/0107-mix-controls.md)。

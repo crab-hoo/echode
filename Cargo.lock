@@ -714,6 +714,7 @@ dependencies = [
  "echode-history",
  "echode-model",
  "echode-plugin-host",
+ "serde_json",
 ]
 
 [[package]]

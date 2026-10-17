@@ -253,12 +253,23 @@ class PolicyTests(unittest.TestCase):
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",
-                          "live-workgroup", "shared-placement-pcm", "cached-geometry"})
+                          "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("check_product_contracts.py", recipe)
         self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", recipe)
+
+    def test_mcp_edits_use_the_real_cli_and_the_existing_contract_runner(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-edit")
+        self.assertEqual(contract["runner"], "rust")
+        self.assertEqual(contract["package"], "echode-cli")
+        self.assertEqual(contract["target"], ["--test", "mcp"])
+        self.assertEqual(contract["negative_control"]["file"], "crates/echode-api/src/mcp.rs")
+        self.assertIn("actions.transaction", contract["negative_control"]["old"])
+        self.assertIn("project.summary", contract["negative_control"]["new"])
+        self.assertIn("check-product-contracts", self.selected("crates/echode-api/src/mcp.rs"))
+        self.assertNotIn("rtsan", self.selected("crates/echode-api/src/mcp.rs"))
 
     def test_policy_references_real_targets_and_never_rewrites_sound_references(self):
         targets = set(re.findall(r"^([a-z][a-z0-9-]*):", (ROOT / "Makefile").read_text(), re.MULTILINE))

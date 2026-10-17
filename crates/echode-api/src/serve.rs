@@ -14,11 +14,11 @@ use std::time::Duration;
 use crate::rpc::ApiSession;
 
 /// One request line. This bounds a single JSON-RPC message, not the project.
-const MAX_REQUEST_LINE: usize = 1024 * 1024;
+pub(crate) const MAX_REQUEST_LINE: usize = 1024 * 1024;
 
 /// How long one connection may sit without sending a byte. A silent client
 /// must not hold the accept loop forever.
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Why the socket stopped.
 #[derive(Debug)]
@@ -27,7 +27,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -126,7 +126,7 @@ fn prepare_socket_path(path: &Path) -> Result<(), ApiError> {
     }
 }
 
-fn peer_uid(stream: &UnixStream) -> Result<u32, ApiError> {
+pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32, ApiError> {
     // libc declares getpeereid. This process never calls it from the audio thread.
     let mut uid = 0;
     let mut gid = 0;
@@ -137,7 +137,7 @@ fn peer_uid(stream: &UnixStream) -> Result<u32, ApiError> {
     Ok(uid)
 }
 
-fn current_uid() -> u32 {
+pub(crate) fn current_uid() -> u32 {
     unsafe { libc::getuid() }
 }
 

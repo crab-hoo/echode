@@ -1,6 +1,6 @@
 # Echode
 
-macOS 専用のオープンソース DAW。Phase 1 の開発中です。[現在の範囲と制約](docs/status.md)、[資料の入口](docs/README.md)、[計画](docs/PLAN.md)、[設計](docs/ARCHITECTURE.md) を参照してください。
+macOS 専用のオープンソース DAW。Phase 1 を完了し、Phase 2 を開始しました。[現在の範囲と制約](docs/status.md)、[Phase 2 の進め方](docs/phase2.md)、[資料の入口](docs/README.md)、[計画](docs/PLAN.md)、[設計](docs/ARCHITECTURE.md) を参照してください。
 
 ライセンスは GPL-3.0-or-later。全文は [LICENSE](LICENSE) にあります。
 
@@ -33,3 +33,9 @@ Tab / Shift-Tab は次 / 前のノート、上下は半音（Option で1オク�
 Space は再生／一時停止、Command-. は停止です。停止と一時停止は位置を保ちます。拍を指定する「移動」で位置を変更できます。「音声出力」はシステムの出力への追従か特定の機器を選び、現在のサンプルレートとバッファ長を表示します。
 
 「プラグイン」で CLAP 一覧を開き、ダブルクリックで選択トラックへ挿入します。Enter ならブラウザを開いたまま挿入します。楽器は内蔵 Sine Pad を置き換え、エフェクトは入力音を処理します。プラグイン GUI はまだ開けません。履歴から以前の版へ戻せ、音声ファイルは選択トラックへ取り込めます。ループとメトロノームは再生設定です。
+
+## MCP でヘッドレスのセッションへ接続する
+
+既存の `.echode` パッケージを指定して、別のターミナルで `target/release/echode serve PACKAGE SOCKET` を起動します。実行ファイルは `cargo build --release -p echode-cli` で作れます。MCP クライアントには、その実行ファイルの絶対パスを command、`["mcp", "SOCKETの絶対パス"]` を args として指定します。
+
+同じビルドの serve と mcp を使います。MCP は登録済みアクションのツール、まとめた編集、Undo / Redo、概要とトラックの読み取りを提供します。編集は既存のジャーナルへ記録されます。起動中の GUI アプリへの接続と再生・機器操作は初版の対象外です。GUI で開いている同じパッケージを serve で開き直さないでください。接続範囲と検査は [ADR 0115](docs/decisions/0115-phase2-mcp.md) を参照してください。
