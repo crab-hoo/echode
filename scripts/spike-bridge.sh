@@ -2,6 +2,7 @@
 # UI-2: regenerate both ABIs and test unmodified generated Swift under Swift 6.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/build-platform.env
 bridge_root="$PWD"
 bridge_output="$bridge_root/target/bridge"
 bridge_library="$bridge_root/target/release"
@@ -20,7 +21,7 @@ cp spikes/bridge/c/module.modulemap "$bridge_output/c/module.modulemap"
     --language swift --out-dir "$bridge_output/uniffi"
 
 # Put the compiler cache in the workspace, including inside the filesystem sandbox.
-swift_flags=(-O -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
+swift_flags=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -O -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
     -target arm64-apple-macos27.0 \
     -parse-as-library -module-cache-path "$bridge_output/module-cache" \
     -L "$bridge_library" -lechode_bridge_spike)

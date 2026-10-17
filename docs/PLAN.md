@@ -1,7 +1,7 @@
 # Echode 開発計画
 
 - 版: ドラフト v0.1（2026-10-07）
-- 対象: macOS 27 Golden Gate 以降、Apple Silicon 専用
+- 対象: macOS 27 Golden Gate 以降、M4 ファミリー以降の Apple Silicon 専用（[ADR 0112](decisions/0112-m4-minimum.md)）
 - 技術設計: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## 1. 目指すもの
@@ -30,7 +30,7 @@ Echode は macOS 専用の、フリーかつオープンソースの DAW です�
 
 | 項目 | 決定 | 補足 |
 |---|---|---|
-| 対象 OS | macOS 27 以降、Apple Silicon（arm64）のみ | macOS 27 は Intel Mac に非対応。Rosetta は使わず、Intel 専用のプラグインは読み込まない（スキャン結果に「非対応」と表示する） |
+| 対象 OS / チップ | macOS 27 以降、M4 ファミリー以降の Apple Silicon（arm64）のみ | M1〜M3 は対象外。Rosetta は使わず、Intel 専用のプラグインは読み込まない（スキャン結果に「非対応」と表示する）。自前のビルド対象は M4 を基準にし、汎用設定が同じ処理で速いと測定できる場合は例外とする（[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)） |
 | ライセンス | GPL-3.0-or-later | 作者が使えるライブラリが最も多くなる形。GPL や LGPL のライブラリも同梱できる（§2.1、[ADR 0004](decisions/0004-license-gpl.md)） |
 | 既存の実装 | 定番の実装がある処理は、自作する前に既存の実装を調べる。ほかに完全に劣るもの以外は、できるだけ多くをユーザーが選べる選択肢にする | §2.1、[ADR 0014](decisions/0014-existing-implementations-as-options.md) |
 | 実装言語 | Rust（コア、エンジン、プラグインホスト、CLI）と Swift 6.4（UI、OS との統合） | ツールチェーンは Xcode 27 |

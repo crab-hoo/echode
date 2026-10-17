@@ -13,7 +13,7 @@ rustc "+$BRIDGE_NIGHTLY" -vV >> "$bridge_output/versions.txt"
 export ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:detect_stack_use_after_return=1
 
 export CARGO_TARGET_DIR="$bridge_output/rust"
-export RUSTFLAGS='-Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes'
+export RUSTFLAGS='-Ctarget-cpu=apple-m4 -Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes'
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-bridge-spike --features fault-injection
@@ -23,7 +23,7 @@ python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/pro
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/audio-rust-tests.log" \
     cargo "+$BRIDGE_NIGHTLY" test --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib -p echode-audio-io
-rustc "+$BRIDGE_NIGHTLY" --edition=2024 --crate-type bin \
+rustc "+$BRIDGE_NIGHTLY" "${ECHODE_RUST_CPU_FLAGS[@]}" --edition=2024 --crate-type bin \
     --target "$bridge_target" -Zsanitizer=address -Cdebuginfo=2 \
     spikes/bridge/sanitizers/Main.rs -o "$bridge_output/control/rust-probe"
 python3 scripts/run-bridge-validation.py --log "$bridge_output/control/rust-clean.log" "$bridge_output/control/rust-probe"
@@ -45,9 +45,9 @@ cp spikes/bridge/c/module.modulemap "$bridge_output/c/module.modulemap"
 cat > "$bridge_output/control/module.modulemap" <<'MODULE'
 module CBridgeSanitizerProbe { header "probe.h" export * }
 MODULE
-rustc "+$BRIDGE_NIGHTLY" --edition=2024 --crate-type staticlib --target "$bridge_target" \
+rustc "+$BRIDGE_NIGHTLY" "${ECHODE_RUST_CPU_FLAGS[@]}" --edition=2024 --crate-type staticlib --target "$bridge_target" \
     spikes/bridge/sanitizers/probe.rs -o "$bridge_output/control/libcontrol.a"
-swift_flags=(-swift-version 6 -strict-concurrency=complete -warnings-as-errors \
+swift_flags=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
     -target arm64-apple-macos27.0 -parse-as-library -g -sanitize=address \
     -module-cache-path "$bridge_output/module-cache")
 swiftc "${swift_flags[@]}" -Onone -I "$bridge_output/control" \

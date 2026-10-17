@@ -51,6 +51,12 @@ pub struct WorkgroupHandoff {
     pub period_ticks: u32,
 }
 
+impl Drop for WorkgroupHandoff {
+    fn drop(&mut self) {
+        crate::workgroup::deallocate_port(self.port);
+    }
+}
+
 /// What the helper tells the parent without a reply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginNotice {
@@ -81,6 +87,7 @@ struct WatchSlots {
 unsafe impl Send for WatchSlots {}
 
 pub struct PluginHost {
+    workgroup: Option<crate::RetainedWorkgroup>,
     region: Arc<MappedRegion>,
     root: Arc<MappedRegion>,
     previous_region: Option<Arc<MappedRegion>>,
@@ -362,6 +369,12 @@ impl From<std::io::Error> for SessionError {
 
 impl PluginHost {
     pub fn spawn(mut options: SpawnOptions<'_>) -> Result<Self, SessionError> {
+        let workgroup = options
+            .workgroup
+            .take()
+            .map(crate::RetainedWorkgroup::from_handoff)
+            .transpose()
+            .map_err(SessionError::Workgroup)?;
         let region = Arc::new(MappedRegion::create_shared(options.layout)?);
         let shm = region.as_raw_fd();
         let launched = launch(
@@ -370,7 +383,11 @@ impl PluginHost {
             options.plugin_id,
             options.sample_rate,
             shm,
-            options.workgroup.take(),
+            workgroup
+                .as_ref()
+                .map(crate::RetainedWorkgroup::handoff)
+                .transpose()
+                .map_err(SessionError::Workgroup)?,
             options.fault,
             options.fan_in.as_deref(),
         )?;
@@ -383,6 +400,7 @@ impl PluginHost {
         }));
         let watch_stop = Arc::new(AtomicBool::new(false));
         let mut host = Self {
+            workgroup,
             root: Arc::clone(&region),
             previous_region: None,
             region,
@@ -441,7 +459,11 @@ impl PluginHost {
             self.plugin_id.as_deref(),
             self.sample_rate,
             self.region.as_raw_fd(),
-            None,
+            self.workgroup
+                .as_ref()
+                .map(crate::RetainedWorkgroup::handoff)
+                .transpose()
+                .map_err(SessionError::Workgroup)?,
             None,
             fan.as_deref(),
         )?;
@@ -1050,7 +1072,7 @@ fn launch(
     fault: Option<&str>,
     fan: Option<&FanIn>,
 ) -> Result<Launched, SessionError> {
-    let launched = launch_with(
+    launch_with(
         host_bin,
         plugin,
         plugin_id,
@@ -1059,11 +1081,7 @@ fn launch(
         workgroup.as_ref(),
         fault,
         fan,
-    );
-    if let Some(handoff) = workgroup {
-        crate::workgroup::deallocate_port(handoff.port);
-    }
-    launched
+    )
 }
 
 /// The parent is multithreaded, so the helper is started with `posix_spawn`

@@ -16,7 +16,7 @@ case "$product_sanitizer" in
         ;;
     thread)
         export CARGO_TARGET_DIR="$product_output/rust"
-        export RUSTFLAGS='-Zsanitizer=thread -Zexternal-clangrt -Cdebuginfo=2 -Cforce-frame-pointers=yes'
+        export RUSTFLAGS='-Ctarget-cpu=apple-m4 -Zsanitizer=thread -Zexternal-clangrt -Cdebuginfo=2 -Cforce-frame-pointers=yes'
         cargo "+$BRIDGE_NIGHTLY" rustc --locked --offline -Zbuild-std --target aarch64-apple-darwin \
             --release --lib --crate-type staticlib -p echode-ffi
         export ECHODE_RUST_LIBRARY_DIR="$CARGO_TARGET_DIR/aarch64-apple-darwin/release"

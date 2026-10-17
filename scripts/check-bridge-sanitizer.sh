@@ -29,7 +29,7 @@ MODULE
 # --target keeps host build scripts/macros uninstrumented. build-std is essential
 # for TSan to observe Rust's synchronization, including Arc and the command queue.
 export CARGO_TARGET_DIR="$bridge_output/rust"
-export RUSTFLAGS="-Zsanitizer=$bridge_sanitizer -Zexternal-clangrt -Cdebuginfo=2 -Cforce-frame-pointers=yes"
+export RUSTFLAGS="-Ctarget-cpu=apple-m4 -Zsanitizer=$bridge_sanitizer -Zexternal-clangrt -Cdebuginfo=2 -Cforce-frame-pointers=yes"
 cargo "+$BRIDGE_NIGHTLY" rustc --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib --crate-type staticlib -p echode-bridge-spike --features fault-injection
 bridge_library="$CARGO_TARGET_DIR/$bridge_target/release"
@@ -39,7 +39,7 @@ cp "$bridge_library/libechode_bridge_spike.a" "$bridge_output/c/libbridge.a"
 cargo "+$BRIDGE_NIGHTLY" rustc --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib --crate-type staticlib -p echode-bridge-spike --features fault-injection,sanitizer-control
 cp "$bridge_library/libechode_bridge_spike.a" "$bridge_output/control/libcontrol.a"
-swift_flags=(-swift-version 6 -strict-concurrency=complete -warnings-as-errors \
+swift_flags=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
     -target arm64-apple-macos27.0 -parse-as-library -g -sanitize="$bridge_sanitizer" \
     -module-cache-path "$bridge_output/module-cache")
 swiftc "${swift_flags[@]}" -Onone -I "$bridge_output/control" \

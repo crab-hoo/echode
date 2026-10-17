@@ -49,5 +49,11 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。開始は `
 21. [ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)、[2026-10-17 の境界再監査](reviews/2026-10-17-boundary-reaudit.md): 配置の原点、プラグイン状態の取り込み、クリップゲインの上限、停止中のキャッシュ範囲。
 22. [ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)、[2026-10-17 の Apple Silicon 監査](reviews/2026-10-17-apple-silicon-audit.md): 画面のリフレッシュレート、波形バッファの再利用、ピークキャッシュの部分読出、稼働表明。
 23. [ADR 0111](decisions/0111-macos-helper-notices.md)、[2026-10-17 の macOS 境界監査](reviews/2026-10-17-macos-helper-audit.md): 致命信号の印、Workgroup の起動時ポーリング、未実装の AU・GUI・スキャン制限。
+24. [2026-10-17 の macOS 27 最適化監査](reviews/2026-10-17-macos27-optimization-audit.md): 製品ヘルパーへの Workgroup の未接続、Rust の最低 OS、配置 PCM の重複、製品と S2 の並列化の境界、描画と Metal 4 の比較候補。
+25. [ADR 0112](decisions/0112-m4-minimum.md): ユーザー指定による M4 ファミリー以降への対象変更。旧監査の M1 基準を置き換え、M4 向けビルドと SME / SME2 を比較候補にする。性能の実装・計測とは区別する。
+
+26. [ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md): 製品の Workgroup 接続と再起動・変更通知、M4 / macOS 27 のビルド・配布契約、PCM と可視列の再利用。
 
 監査は発見時点の証拠を残す。本文の過去の「失敗」「未実施」を消して現在の合格に書き換えない。対応状況と回帰テストへの参照を追記し、現在のソースの検査は `target/verification/report.md` で確かめる。`target/` の証拠はローカル生成物で、別の環境には存在しないことがある。
+
+- [ADR 0114](decisions/0114-m4-build-baseline.md): 全ての自前のビルド対象の M4 基準、Swift / Clang の設定の一致、性能比較による例外。

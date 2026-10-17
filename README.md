@@ -6,7 +6,7 @@ macOS 専用のオープンソース DAW。Phase 1 の開発中です。[現在�
 
 ## 開発を始める
 
-Apple Silicon、macOS 27 以降、Xcode 27 と Rust を使います。Rust は `rust-toolchain.toml` に固定しています。
+M4 ファミリー以降の Apple Silicon、macOS 27 以降、Xcode 27 と Rust を使います。Rust は `rust-toolchain.toml` に固定しています。CPU の対象方針は [ADR 0112](docs/decisions/0112-m4-minimum.md) を参照してください。
 
 ```sh
 make doctor           # 環境、アプリと検査結果の古さを確認

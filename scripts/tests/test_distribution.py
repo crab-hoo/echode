@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
+CLANG = ["clang", "-arch", "arm64", "-mcpu=apple-m4", "-mmacosx-version-min=27.0"]
 
 
 def module():
@@ -35,6 +36,47 @@ def project_spec():
 
 
 class DistributionSpec(unittest.TestCase):
+    def test_cargo_emits_m4_and_macos27_despite_an_old_environment_target(self):
+        import os
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "src").mkdir()
+            (root / "Cargo.toml").write_text('[package]\nname="platform-contract"\nversion="0.0.0"\nedition="2024"\n')
+            (root / "src/main.rs").write_text('fn main() { println!("platform"); }\n')
+            env = dict(os.environ, MACOSX_DEPLOYMENT_TARGET="11.0", CARGO_TARGET_DIR=str(root / "target"))
+            subprocess.run(["cargo", "rustc", "--offline", "--manifest-path", str(root / "Cargo.toml"), "--", "--emit=llvm-ir"],
+                           cwd=ROOT, env=env, capture_output=True, text=True, check=True)
+            ir = '\n'.join(path.read_text() for path in (root / "target").rglob('*.ll'))
+            self.assertIn('"target-cpu"="apple-m4"', ir)
+            self.assertRegex(ir, r'target triple = "arm64-apple-macosx27\.0\.0"')
+            distribution.validate_binary(root / "target/debug/platform-contract")
+
+    def test_release_dylib_can_be_loaded_by_macos27(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "src").mkdir()
+            (root / "Cargo.toml").write_text('[package]\nname="platform-dylib"\nversion="0.0.0"\nedition="2024"\n[lib]\ncrate-type=["cdylib"]\n')
+            (root / "src/lib.rs").write_text('#[unsafe(no_mangle)] pub extern "C" fn answer() -> usize { std::env::args_os().count() + 1 }\n')
+            subprocess.run(["cargo", "build", "--offline", "--release", "--manifest-path", str(root / "Cargo.toml"),
+                            "--target-dir", str(root / "target")], cwd=ROOT, capture_output=True, text=True, check=True)
+            binary = root / "target/release/libplatform_dylib.dylib"
+            distribution.validate_binary(binary)
+            probe = 'import ctypes, sys; library = ctypes.CDLL(sys.argv[1]); library.answer.restype = ctypes.c_size_t; assert library.answer() > 0'
+            loaded = subprocess.run([sys.executable, "-c", probe, str(binary)], capture_output=True, text=True)
+            self.assertEqual(loaded.returncode, 0, loaded.stderr)
+
+    def test_old_deployment_target_is_rejected_before_bundle_assembly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "main.c"
+            source.write_text("int main(void) { return 0; }\n")
+            binary = root / "old"
+            subprocess.run(CLANG + ["-mmacosx-version-min=11.0", str(source), "-o", str(binary)], check=True)
+            app = root / "Echode.app"
+            with self.assertRaisesRegex(RuntimeError, "minimum macOS"):
+                distribution.assemble_app(app, binary, binary, ROOT / "swift/EchodeApp/Info.plist")
+            self.assertFalse(app.exists())
+
     def test_the_xcode_project_uses_the_shared_certificate(self):
         spec = project_spec()
         settings = spec["settings"]["base"]
@@ -42,6 +84,10 @@ class DistributionSpec(unittest.TestCase):
         self.assertEqual(settings["CODE_SIGN_STYLE"], "Manual")
         self.assertIs(settings["ENABLE_APP_SANDBOX"], False)
         self.assertEqual(settings["MACOSX_DEPLOYMENT_TARGET"], "27.0")
+        self.assertEqual(settings["ARCHS"], "arm64")
+        self.assertIn("-mcpu=apple-m4", settings["OTHER_CFLAGS"])
+        self.assertIn("-mcpu=apple-m4", settings["OTHER_CPLUSPLUSFLAGS"])
+        self.assertEqual(settings["OTHER_SWIFT_FLAGS"][-4:], ["-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])
         target = spec["targets"]["Echode"]
         self.assertEqual(target["settings"]["base"]["PRODUCT_BUNDLE_IDENTIFIER"], "io.echode.app")
         self.assertEqual(target["entitlements"]["path"], "Packaging/Echode.entitlements")
@@ -109,7 +155,7 @@ class SignedBundle(unittest.TestCase):
         source.write_text("void echode_distribution_probe(void) {}\n", encoding="utf-8")
         object_file = root / "probe.o"
         library = root / "libprobe.a"
-        subprocess.run(["clang", "-arch", "arm64", "-c", str(source), "-o", str(object_file)], check=True)
+        subprocess.run(CLANG + ["-c", str(source), "-o", str(object_file)], check=True)
         subprocess.run(["libtool", "-static", "-o", str(library), str(object_file)], check=True)
         headers = root / "include"
         headers.mkdir()
@@ -134,7 +180,7 @@ class SignedBundle(unittest.TestCase):
             encoding="utf-8",
         )
         subprocess.run(
-            ["clang", "-arch", "arm64", "-o", str(executable), str(source)],
+            CLANG + ["-o", str(executable), str(source)],
             check=True,
         )
 
@@ -143,7 +189,7 @@ class SignedBundle(unittest.TestCase):
         library = root / "libforeign.dylib"
         source.write_text("void echode_foreign(void) {}\n", encoding="utf-8")
         subprocess.run(
-            ["clang", "-arch", "arm64", "-dynamiclib", "-o", str(library), str(source)],
+            CLANG + ["-dynamiclib", "-o", str(library), str(source)],
             check=True,
         )
         subprocess.run(["codesign", "--force", "--sign", "-", str(library)], check=True)

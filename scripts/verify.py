@@ -117,7 +117,7 @@ def tool_identity(root):
         "RUSTUP_TOOLCHAIN", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS",
         "MIRIFLAGS", "ASAN_OPTIONS", "TSAN_OPTIONS", "RTSAN_ENABLE", "SDKROOT", "DEVELOPER_DIR",
         "CARGO_TARGET_DIR", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_TARGET",
-        "CC", "CFLAGS", "MACOSX_DEPLOYMENT_TARGET", "MAKEFLAGS",
+        "CC", "CFLAGS", "CXX", "CXXFLAGS", "MACOSX_DEPLOYMENT_TARGET", "MAKEFLAGS",
     )}
     identity["MAKEFLAGS"] = make_flags_identity(identity["MAKEFLAGS"])
     identity["toolchain"] = toolchain_paths()

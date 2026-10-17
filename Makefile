@@ -50,6 +50,7 @@ check:
 
 # The verifier records this part and product contracts as separate checks.
 check-base:
+	python3 -B scripts/check_build_host.py
 	cargo build --workspace
 	cargo fmt --check
 	cargo clippy --workspace --all-targets -- -D warnings

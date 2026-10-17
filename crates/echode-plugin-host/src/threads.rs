@@ -656,7 +656,13 @@ fn serve_region(
                 *slot = Some(thread::current().id());
             }
             let _audio = AudioFlag::enter();
-            audio_thread(&bridge_audio, workgroup.as_ref())
+            let result = audio_thread(&bridge_audio, workgroup.as_ref());
+            if result.is_err() {
+                bridge_audio.stop.store(true, Ordering::Release);
+                bridge_audio.bump_control();
+                stop_loop(&bridge_audio);
+            }
+            result
         });
         let control_handle = scope.spawn(|| control_thread(&bridge_control, control));
         bridge.signal();

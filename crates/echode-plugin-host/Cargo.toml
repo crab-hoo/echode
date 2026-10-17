@@ -25,6 +25,7 @@ rtsan-standalone = { version = "=0.3.0", optional = true }
 rtsan = ["dep:rtsan-standalone"]
 
 [dev-dependencies]
+libloading = "=0.8.9"
 echode-actions = { path = "../echode-actions" }
 echode-engine = { path = "../echode-engine" }
 echode-history = { path = "../echode-history" }

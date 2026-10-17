@@ -20,7 +20,7 @@ struct ArrangeHeaderRow: Sendable {
     let y: Float
     let height: Float
     let mix: TrackMix?
-    let peak: Float
+    var peak: Float
 }
 
 struct WaveformDraw: Sendable {
@@ -38,7 +38,7 @@ struct ArrangeFrame: Sendable {
     let timelineOrigin: Double
     let timelineWidth: Double
     let elements: [ArrangeElement]
-    let headers: [ArrangeHeaderRow]
+    var headers: [ArrangeHeaderRow]
     let waveforms: [WaveformDraw]
 
     init(input: CanvasInput, camera: ArrangeCamera? = nil, revision: UInt64 = 0) {
@@ -62,6 +62,12 @@ struct ArrangeFrame: Sendable {
             guard let name = snapshot.trackName(at: index) else { return nil }
             return ArrangeHeaderRow(id: lane.id.track, name: name, y: lane.y, height: lane.height,
                                     mix: snapshot.mixer(onTrack: index), peak: input.playback?.peak(track: lane.id.track) ?? 0)
+        }
+    }
+
+    mutating func refreshMeters() {
+        for index in headers.indices {
+            headers[index].peak = input.playback?.peak(track: headers[index].id) ?? 0
         }
     }
 

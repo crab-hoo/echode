@@ -7,6 +7,9 @@ private struct OffscreenArrangeReport: Codable {
     let frames: Int
     let comparedScanlines: Int
     let mismatchedScanlines: Int
+    let laneMismatches: Int
+    let clippedHeaderMismatches: Int
+    let headerProbeXPoints: Double
     let labelPixels: Int
     let device: String
 }
@@ -26,7 +29,10 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
     // Project size and event count are scoped to this regression only.
     for index in 0..<20 { await controller.addTrack(name: index == 0 ? "ピアノ 🎹" : "Track \(index)") }
     guard let snapshot = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
-    var frames = 0, scanlines = 0, mismatches = 0, labelPixels = 0
+    var frames = 0, scanlines = 0, laneMismatches = 0, clippedHeaderMismatches = 0, labelPixels = 0
+    // This probe samples reserved left padding, outside labels, icons and mixer
+    // controls. Its coordinates and scene sizes are scoped to this regression.
+    let headerProbeXPoints = 2.0
     for scale in [1.0, 2.0] {
         for event in 0..<80 {
             var palette = ArrangeHeaderPalette()
@@ -43,17 +49,17 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
             if scale == 2, event == 1 {
                 try image.writePNG(to: URL(fileURLWithPath: reportPath).deletingPathExtension().appendingPathExtension("png"))
             }
-            // Pick a timeline column clear of beat lines; x=25 is clear of
-            // both the header icon and its text. Compare every physical row.
+            // Pick a timeline column clear of beat lines. Compare every
+            // physical row with the unadorned header background/separator.
             let timelineX = (3..<Int(frame.timelineWidth - 3)).first { x in
                 let beatX = (camera.originBeat + Double(x) / camera.pixelsPerBeat).truncatingRemainder(dividingBy: 1) * camera.pixelsPerBeat
                 return beatX > 3 && beatX < camera.pixelsPerBeat - 3
             }!
             for y in 0..<image.height {
-                let a = image.pixel(x: Int(25 * scale), y: y)
+                let a = image.pixel(x: Int(headerProbeXPoints * scale), y: y)
                 let b = image.pixel(x: Int((frame.timelineOrigin + Double(timelineX)) * scale), y: y)
                 scanlines += 1
-                if a != b { mismatches += 1 }
+                if a != b { laneMismatches += 1 }
             }
             // Text must actually reach the GPU attachment, including Japanese
             // and fallback glyphs; checking only CPU geometry is insufficient.
@@ -73,14 +79,18 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
     let clipped = ArrangeFrame(input: CanvasInput(snapshot: notes, selected: nil, camera: ArrangeCamera(originBeat: 7),
                               width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette())))
     let image = try renderOffscreen(clipped, painter: painter, device: device, queue: queue)
-    let background = image.pixel(x: 50, y: 1)
+    let headerX = Int(headerProbeXPoints * clipped.input.scale)
+    let background = image.pixel(x: headerX, y: 1)
     for y in 2..<120 {
         scanlines += 1
-        if image.pixel(x: 50, y: y) != background { mismatches += 1 }
+        if image.pixel(x: headerX, y: y) != background { clippedHeaderMismatches += 1 }
     }
     frames += 1
     await controller.close()
+    let mismatches = laneMismatches + clippedHeaderMismatches
     let report = OffscreenArrangeReport(frames: frames, comparedScanlines: scanlines, mismatchedScanlines: mismatches,
+                                        laneMismatches: laneMismatches, clippedHeaderMismatches: clippedHeaderMismatches,
+                                        headerProbeXPoints: headerProbeXPoints,
                                         labelPixels: labelPixels, device: device.name)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

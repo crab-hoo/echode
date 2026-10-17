@@ -26,6 +26,8 @@ jobs:
         check: ${{ fromJSON(needs.verification-plan.outputs.checks) }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check the native M4 and macOS 27 baseline
+        run: python3 -B scripts/check_build_host.py
       - name: Install the toolchain in rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2

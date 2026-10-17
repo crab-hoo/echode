@@ -1092,6 +1092,7 @@ struct Pending {
 }
 
 pub struct PlaybackControl {
+    workgroup: Option<crate::plugins::PluginWorkgroup>,
     plans: Producer<Update>,
     returns: Consumer<Update>,
     commands: Producer<(u64, PlaybackCommand)>,
@@ -1196,7 +1197,30 @@ pub fn playback_with_plugins_at(
 ) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
     let (mut control, mut audio) = playback_pair_at(project, rate, frames, sample)?;
     let chain = chain_of(project, &audio.current);
-    control.hosts = HostGraph::open(host_bin, routes, &chain, frames, rate)?;
+    control.hosts = HostGraph::open(host_bin, routes, &chain, frames, rate, None)?;
+    control.save_controls = control.hosts.save_controls();
+    audio.hosts = Box::new(control.hosts.audio_snapshot());
+    control.chain = chain;
+    control.routes = routes.to_vec();
+    control.host_bin = host_bin.to_path_buf();
+    Ok((control, audio))
+}
+
+/// Live hosting with the selected output's retained workgroup.
+#[allow(clippy::too_many_arguments)]
+pub fn playback_with_plugins_in_workgroup_at(
+    project: &Project,
+    rate: u32,
+    frames: usize,
+    host_bin: &std::path::Path,
+    routes: &[PluginRoute],
+    sample: i64,
+    workgroup: crate::plugins::PluginWorkgroup,
+) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
+    let (mut control, mut audio) = playback_pair_at(project, rate, frames, sample)?;
+    let chain = chain_of(project, &audio.current);
+    control.hosts = HostGraph::open(host_bin, routes, &chain, frames, rate, Some(&workgroup))?;
+    control.workgroup = Some(workgroup);
     control.save_controls = control.hosts.save_controls();
     audio.hosts = Box::new(control.hosts.audio_snapshot());
     control.chain = chain;
@@ -1250,6 +1274,7 @@ pub fn playback_with_clock(
         applied_plan: AtomicU64::new(0),
     });
     let control = PlaybackControl {
+        workgroup: None,
         plans,
         returns,
         commands,
@@ -1513,6 +1538,7 @@ impl PlaybackControl {
                 &pending.chain,
                 self.frames,
                 self.rate,
+                self.workgroup.as_ref(),
             ) {
                 self.status
                     .requested_plan

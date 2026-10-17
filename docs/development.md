@@ -78,3 +78,11 @@
 必須契約を追加する時は既存の `product_contracts` を参考に、`scripts/verification.json` へ名前・実行経路・目的・誤りを戻す差分を登録する。正しいソースで実テストが実行され、誤りを戻したコピーではその期待値で失敗することを確認する。コンパイル失敗は検出の証拠にならない。新しい独立の検査は Makefile と同じ JSON へ登録し、選択のテストも更新する。
 
 資料の役割、コマンド、ローカルリンクの破損も通常検査で確認する。機能の追加は、その領域のテストを足してから資料の現在の範囲を更新する。
+
+### macOS の Workgroup と再利用の境界
+
+選択デバイスの Workgroup の取得と周期は `echode-audio-io/src/workgroup.rs`、変更通知は `hardware.rs`、出力の再準備は `stream.rs` / `session.rs`。保持とヘルパーへの引継ぎは `echode-sandbox/src/workgroup.rs` / `session.rs` と製品の `echode-engine/src/plugins.rs` にある。素材・配置のキャッシュは `echode-audio-io/src/clips.rs`、描画の可視列は `CanvasGeometryCache.swift`。条件・回帰・残る範囲は [ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md) を参照する。
+
+### ビルド対象の CPU 基準
+
+Rust と C / C++ 依存は `.cargo/config.toml`、Swift Package は各 `Package.swift`、Xcode の入口は `project.yml` を使う。Swift は CPU 指定と Clang import の指定を対にする。直接コンパイルする補助コードは `scripts/build-platform.env` に揃える。macOS 27 / M4 以降の実行機種の判定は `scripts/check_build_host.py`。変更時は新しいキャッシュでの import と実際の IR、検査の失効も確認する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。

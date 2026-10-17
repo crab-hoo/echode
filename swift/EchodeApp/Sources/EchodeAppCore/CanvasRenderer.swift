@@ -91,6 +91,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private var appliedFrameRate: Double = 0
     private var drawnRevision: UInt64?
     private var metersActive = false
+    private var geometry = CanvasGeometryCache()
 
     init(layer: CAMetalLayer, size: CGSize, scale: CGFloat, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
          onPiano: (@MainActor @Sendable (PianoFrame) -> Void)? = nil,
@@ -243,9 +244,8 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 camera.constrain(trackCount: input.snapshot?.trackCount ?? 0, height: input.height)
             }
         }
-        let arranged = input.piano == nil ? ArrangeFrame(input: input, camera: camera, revision: revision) : nil
+        let (arranged, piano) = geometry.frames(input: input, camera: camera, revision: revision, continuous: continuous)
         metersActive = arranged?.headers.contains { $0.peak > 0.001 } ?? false
-        let piano = input.piano.map { PianoFrame(input: input, piano: $0, revision: revision) }
         var instances = piano?.gridInstances ?? arranged?.timelineInstances ?? []
         let timelineCount = instances.count
         let headerInstances = piano.map { $0.degreeInstances + $0.keyboardInstances + $0.rulerInstances } ?? arranged?.headerInstances ?? []

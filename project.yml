@@ -16,6 +16,10 @@ settings:
     ENABLE_APP_SANDBOX: NO
     ENABLE_HARDENED_RUNTIME: YES
     MACOSX_DEPLOYMENT_TARGET: "27.0"
+    ARCHS: arm64
+    OTHER_CFLAGS: ["$(inherited)", "-mcpu=apple-m4"]
+    OTHER_CPLUSPLUSFLAGS: ["$(inherited)", "-mcpu=apple-m4"]
+    OTHER_SWIFT_FLAGS: ["$(inherited)", "-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"]
 packages:
   EchodeApp:
     path: swift/EchodeApp

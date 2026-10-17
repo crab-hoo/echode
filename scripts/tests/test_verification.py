@@ -47,6 +47,16 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_platform_configuration_selects_all_automatic_checks_and_product_workgroup_contracts(self):
+        automatic = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
+        for path in (".cargo/config.toml", "scripts/build-platform.env"):
+            self.assertTrue(automatic <= self.selected(path))
+        self.assertIn("scripts/build-platform.env", self.policy["evidence_inputs"])
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        self.assertEqual(contracts["live-workgroup"]["package"], "echode-plugin-host")
+        self.assertEqual(contracts["shared-placement-pcm"]["package"], "echode-audio-io")
+        self.assertIn("control.workgroup", contracts["live-workgroup"]["negative_control"]["old"])
+
     def test_graph_preparation_contract_uses_the_product_helper_and_rejects_silence(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "plugin-state-poll")
         self.assertEqual(contract["package"], "echode-plugin-host")
@@ -93,6 +103,7 @@ class PolicyTests(unittest.TestCase):
                 self.assertEqual(contracts[name]["package"], package)
                 self.assertEqual(contracts[name]["runner"], "rust")
         self.assertTrue(contracts["loop-head-residency"]["test"].endswith("_under_rtsan"))
+        self.assertIn("*prepared = None;", contracts["loop-head-residency"]["negative_control"]["new"])
         self.assertTrue(contracts["pre-fader-source"]["test"].endswith("_under_rtsan"))
         check = next(c for c in self.policy["checks"] if c["id"] == "check-product-contracts")
         self.assertIn("echode-cli", check["packages"])
@@ -241,7 +252,8 @@ class PolicyTests(unittest.TestCase):
                           "engine-measurement-completion", "pane-boundary", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
-                          "loop-head-residency", "pre-fader-source", "phase1-acceptance"})
+                          "loop-head-residency", "pre-fader-source", "phase1-acceptance",
+                          "live-workgroup", "shared-placement-pcm", "cached-geometry"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]

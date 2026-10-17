@@ -1,0 +1,11 @@
+[env]
+MACOSX_DEPLOYMENT_TARGET = { value = "27.0", force = true }
+CFLAGS = { value = "-mmacosx-version-min=27.0 -mcpu=apple-m4", force = true }
+CXXFLAGS = { value = "-mmacosx-version-min=27.0 -mcpu=apple-m4", force = true }
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=apple-m4"]
+
+[profile.release]
+# Rust's stripping can misalign LINKEDIT, which macOS 27 refuses to load.
+strip = "none"

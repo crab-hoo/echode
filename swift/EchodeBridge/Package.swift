@@ -20,7 +20,9 @@ let package = Package(
             name: "CEchodeFfi",
             path: "CEchodeFfi",
             publicHeadersPath: "include",
-                linkerSettings: [
+            cSettings: [.unsafeFlags(["-mcpu=apple-m4"])],
+            cxxSettings: [.unsafeFlags(["-mcpu=apple-m4"])],
+            linkerSettings: [
                 .linkedLibrary("echode_ffi"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),
@@ -32,7 +34,7 @@ let package = Package(
             dependencies: ["CEchodeFfi"],
             path: "Sources/EchodeBridge",
             swiftSettings: [
-                .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors"])
+                .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])
             ]
         ),
         .testTarget(
@@ -40,7 +42,7 @@ let package = Package(
             dependencies: ["EchodeBridge"],
             path: "Tests/EchodeBridgeTests",
             swiftSettings: [
-                .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors"])
+                .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])
             ]
         ),
     ]

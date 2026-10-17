@@ -5,6 +5,7 @@ The login keychain is used only by `setup-identity`. Tests pass a temporary keyc
 """
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -152,6 +153,8 @@ def import_identity(keychain, p12_password, keychain_password):
 
 
 def assemble_app(app, executable, helper, info_plist, xcframework=None, resources=()):
+    validate_binary(executable)
+    validate_binary(helper)
     if app.exists():
         shutil.rmtree(app)
     macos = app / "Contents" / "MacOS"
@@ -180,6 +183,16 @@ def embed_helper(app, helper):
 def _install_executable(source, destination):
     shutil.copy2(source, destination)
     destination.chmod(destination.stat().st_mode | 0o755)
+
+
+def validate_binary(path):
+    architectures = run(["lipo", "-archs", str(path)]).stdout.split()
+    if architectures != ["arm64"]:
+        raise RuntimeError(f"{path}: expected arm64 only, got {architectures}")
+    builds = run(["xcrun", "vtool", "-show-build", str(path)]).stdout
+    minimums = re.findall(r"^\s*minos\s+(\S+)", builds, re.MULTILINE)
+    if not minimums or any(value not in ("27.0", "27.0.0") for value in minimums):
+        raise RuntimeError(f"{path}: minimum macOS must be 27.0, got {minimums}")
 
 
 def create_xcframework(library, headers, output):

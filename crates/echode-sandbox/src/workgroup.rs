@@ -20,6 +20,66 @@ use std::path::Path;
 const QOS_USER_INTERACTIVE: u32 = 0x21;
 static NAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// A retained OS workgroup. Keep this owner on the control thread; helpers
+/// receive their own send rights and reconstruct their own retained objects.
+pub struct RetainedWorkgroup {
+    object: *mut std::ffi::c_void,
+    period_ticks: u32,
+}
+
+// SAFETY: workgroup retention and port copying are thread-safe OS operations.
+// This owner never joins a thread or contains a thread-local membership token.
+unsafe impl Send for RetainedWorkgroup {}
+unsafe impl Sync for RetainedWorkgroup {}
+
+impl RetainedWorkgroup {
+    /// Takes ownership of the caller's retained OS workgroup, even on error.
+    ///
+    /// # Safety
+    /// `object` must be null or a retained os_workgroup_t owned by the caller.
+    pub unsafe fn from_retained(
+        object: *mut std::ffi::c_void,
+        period_ticks: u32,
+    ) -> Result<Self, String> {
+        let owner = Self {
+            object,
+            period_ticks,
+        };
+        if object.is_null() || period_ticks == 0 {
+            return Err("device workgroup or period is invalid".into());
+        }
+        Ok(owner)
+    }
+
+    pub(crate) fn from_handoff(handoff: crate::WorkgroupHandoff) -> Result<Self, String> {
+        if handoff.port == 0 || handoff.period_ticks == 0 {
+            return Err("workgroup port or period is invalid".into());
+        }
+        // SAFETY: handoff owns its send right until the object is reconstructed.
+        let object =
+            unsafe { sync::os_workgroup_create_with_port(c"echode-parent".as_ptr(), handoff.port) };
+        // SAFETY: the OS returns a retained object (or null on failure).
+        unsafe { Self::from_retained(object, handoff.period_ticks) }
+    }
+
+    pub fn handoff(&self) -> Result<crate::WorkgroupHandoff, String> {
+        Ok(crate::WorkgroupHandoff {
+            // SAFETY: this owner keeps the workgroup retained for the call.
+            port: unsafe { copy_workgroup_port(self.object) }?,
+            period_ticks: self.period_ticks,
+        })
+    }
+}
+
+impl Drop for RetainedWorkgroup {
+    fn drop(&mut self) {
+        if !self.object.is_null() {
+            // SAFETY: this owner consumes exactly one retained reference.
+            unsafe { sync::os_release(self.object) };
+        }
+    }
+}
+
 #[repr(C)]
 pub(crate) struct Token {
     sig: u32,

@@ -236,6 +236,25 @@ pub(crate) struct Notifications {
 }
 
 impl Notifications {
+    pub(crate) fn workgroup(device: u32) -> Result<Self, String> {
+        let epoch = Arc::new(AtomicU64::new(0));
+        let captured = Arc::clone(&epoch);
+        let block = RcBlock::new(move |_: u32, _: NonNull<AudioObjectPropertyAddress>| {
+            captured.fetch_add(1, Ordering::Release);
+        });
+        let mut value = Self {
+            epoch,
+            block,
+            registered: Vec::new(),
+        };
+        value.add(device, kAudioDevicePropertyIOThreadOSWorkgroup)?;
+        Ok(value)
+    }
+
+    pub(crate) fn changed(&self) -> bool {
+        self.epoch.load(Ordering::Acquire) != 0
+    }
+
     pub(crate) fn new(inventory: &Inventory, epoch: Arc<AtomicU64>) -> Result<Self, String> {
         let captured = Arc::clone(&epoch);
         let block = RcBlock::new(move |_: u32, _: NonNull<AudioObjectPropertyAddress>| {

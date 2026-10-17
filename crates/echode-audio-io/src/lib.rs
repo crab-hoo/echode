@@ -8,6 +8,7 @@ mod session;
 mod stream;
 mod trace;
 mod transport;
+mod workgroup;
 
 pub use activity::UserActivity;
 pub use clips::load_placed_clips;

@@ -19,6 +19,11 @@ use echode_sandbox::{
 };
 
 use crate::PlaybackError;
+
+/// Control-thread factory for a fresh send right on each live helper launch.
+/// The captured owner retains the selected device's workgroup.
+pub type PluginWorkgroup =
+    Arc<dyn Fn() -> Result<echode_sandbox::WorkgroupHandoff, String> + Send + Sync>;
 use crate::mix::Signal;
 
 /// Where a CLAP id lives on disk, and whether it replaces the built-in synth.
@@ -490,9 +495,10 @@ impl HostGraph {
         chains: &[TrackChain],
         frames: usize,
         sample_rate: u32,
+        workgroup: Option<&PluginWorkgroup>,
     ) -> Result<Self, PlaybackError> {
         let mut graph = Self::empty();
-        graph.reconcile(host_bin, routes, chains, frames, sample_rate)?;
+        graph.reconcile(host_bin, routes, chains, frames, sample_rate, workgroup)?;
         Ok(graph)
     }
 
@@ -507,6 +513,7 @@ impl HostGraph {
         chains: &[TrackChain],
         frames: usize,
         sample_rate: u32,
+        workgroup: Option<&PluginWorkgroup>,
     ) -> Result<(), PlaybackError> {
         if frames == 0 || frames > u32::MAX as usize {
             return Err(PlaybackError::InvalidSampleRate);
@@ -571,6 +578,7 @@ impl HostGraph {
                         frames,
                         event_cap: delivery,
                         sample_rate,
+                        workgroup,
                     },
                 ) {
                     Ok(Some(stage)) => stages.push(stage),
@@ -1113,10 +1121,11 @@ fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
 /// Spawns one device. `Ok(None)` is an unknown id or a missing path.
 /// An installed bundle/file that cannot be hosted is an error, so playback does not pretend the
 /// built-in synth is that plugin.
-struct StageSize {
+struct StageSize<'a> {
     frames: usize,
     event_cap: usize,
     sample_rate: u32,
+    workgroup: Option<&'a PluginWorkgroup>,
 }
 
 fn spawn_stage(
@@ -1125,12 +1134,13 @@ fn spawn_stage(
     used: &mut [bool],
     fan: &mut Option<Arc<FanIn>>,
     device: &ChainDevice,
-    size: StageSize,
+    size: StageSize<'_>,
 ) -> Result<Option<Stage>, PlaybackError> {
     let StageSize {
         frames,
         event_cap,
         sample_rate,
+        workgroup,
     } = size;
     let Some(route) = take_route(routes, used, &device.clap_id) else {
         return Ok(None);
@@ -1156,7 +1166,10 @@ fn spawn_stage(
         host_bin,
         plugin: Some(route.path.as_path()),
         fault: route.fault.as_deref(),
-        workgroup: None,
+        workgroup: workgroup
+            .map(|source| source())
+            .transpose()
+            .map_err(PlaybackError::Unsupported)?,
         layout,
         fan_in: Some(shared),
         sample_rate,

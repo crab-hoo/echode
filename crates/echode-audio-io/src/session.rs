@@ -362,12 +362,13 @@ impl Session {
             // Recheck format even when a driver changed it before its listener
             // notification arrived. A valid reconfiguration resumes at the beat.
             let old = stream.device.clone();
+            let old_workgroup_changed = stream.workgroup_changed();
             match self.refresh().and_then(|_| self.reconcile()) {
                 Ok(())
-                    if self
-                        .stream
-                        .as_ref()
-                        .is_none_or(|stream| stream.device != old) => {}
+                    if self.stream.as_ref().is_none_or(|stream| {
+                        stream.device != old
+                            || (old_workgroup_changed && !stream.workgroup_changed())
+                    }) => {}
                 _ => {
                     self.park();
                     self.playing = false;
@@ -426,11 +427,9 @@ impl Session {
 
     fn reconcile(&mut self) -> Result<(), String> {
         let device = desired(&self.inventory, self.selected_uid.as_deref()).cloned();
-        if self
-            .stream
-            .as_ref()
-            .is_some_and(|stream| Some(&stream.device) != device.as_ref())
-        {
+        if self.stream.as_ref().is_some_and(|stream| {
+            Some(&stream.device) != device.as_ref() || stream.workgroup_changed()
+        }) {
             self.park();
         }
         if self.playing && self.stream.is_none() {

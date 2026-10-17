@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 
 use echode_engine::{
     ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
-    PluginRoute, playback_pair_at, playback_with_plugins_at, tick_to_sample,
+    PluginRoute, PluginWorkgroup, playback_pair_at, playback_with_plugins_at,
+    playback_with_plugins_in_workgroup_at, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -79,6 +80,7 @@ impl TransportSetup {
 }
 
 pub struct OutputStream {
+    workgroup_listener: Option<hardware::Notifications>,
     pub device: OutputDevice,
     control: PlaybackControl,
     callback: Option<Box<Callback>>,
@@ -153,8 +155,17 @@ impl OutputStream {
     ) -> Result<Self, String> {
         hardware::validate_streams(&device)?;
         let frames = device.buffer_frames as usize;
-        let (control, player) =
-            prepare_playback(project, device.sample_rate, frames, tick, &transport)?;
+        // Register before the lookup so a changed group cannot escape invalidation.
+        let workgroup_listener = hardware::Notifications::workgroup(device.id)?;
+        let workgroup = crate::workgroup::selected(&device)?;
+        let (control, player) = prepare_playback_mode(
+            project,
+            device.sample_rate,
+            frames,
+            tick,
+            &transport,
+            Some(workgroup),
+        )?;
         let (trace, trace_files) = crate::trace::configured(device.sample_rate, frames)
             .map_or((None, None), |(writer, files)| (Some(writer), Some(files)));
         let mut callback = Box::new(Callback {
@@ -187,6 +198,7 @@ impl OutputStream {
             return Err(format!("could not open the output device ({status})"));
         }
         let value = Self {
+            workgroup_listener: Some(workgroup_listener),
             device,
             control,
             callback: Some(callback),
@@ -271,6 +283,9 @@ impl OutputStream {
     }
 
     pub fn service(&mut self) -> Result<(), String> {
+        if self.workgroup_changed() {
+            return Err("the selected output device workgroup changed".into());
+        }
         self.control.service();
         if let Some(files) = &mut self.trace_files {
             files.service(self.control.status());
@@ -304,6 +319,12 @@ impl OutputStream {
         }
         status
     }
+    pub(crate) fn workgroup_changed(&self) -> bool {
+        self.workgroup_listener
+            .as_ref()
+            .is_some_and(hardware::Notifications::changed)
+    }
+
     pub fn callbacks(&self) -> u64 {
         self.callback
             .as_ref()
@@ -436,12 +457,24 @@ fn block_budget(frames: usize, sample_rate: u32) -> Duration {
 
 /// The exact preparation used before HAL registers its callback. Keeping it
 /// separate lets tests hold the first callback without an audio device.
+#[cfg(test)]
 fn prepare_playback(
     project: &Project,
     sample_rate: u32,
     frames: usize,
     tick: i64,
     transport: &TransportSetup,
+) -> Result<(PlaybackControl, PlaybackAudio), String> {
+    prepare_playback_mode(project, sample_rate, frames, tick, transport, None)
+}
+
+fn prepare_playback_mode(
+    project: &Project,
+    sample_rate: u32,
+    frames: usize,
+    tick: i64,
+    transport: &TransportSetup,
+    workgroup: Option<PluginWorkgroup>,
 ) -> Result<(PlaybackControl, PlaybackAudio), String> {
     let sample = tick_to_sample(Tick::new(tick), project.tempo(), sample_rate)
         .ok_or("playback time overflow")?;
@@ -451,6 +484,7 @@ fn prepare_playback(
         frames,
         transport.package.as_deref(),
         sample,
+        workgroup,
     )?;
     control.set_clip_loader(Arc::clone(&transport.clips));
     control
@@ -489,7 +523,26 @@ fn open_playback(
     frames: usize,
     package: Option<&std::path::Path>,
     sample: i64,
+    workgroup: Option<PluginWorkgroup>,
 ) -> Result<(PlaybackControl, PlaybackAudio), String> {
+    if let Some(workgroup) = workgroup {
+        let host = echode_plugin_host::host_binary().unwrap_or_default();
+        let routes = if host.as_os_str().is_empty() {
+            Vec::new()
+        } else {
+            plugin_routes(project, package)?
+        };
+        return playback_with_plugins_in_workgroup_at(
+            project,
+            sample_rate,
+            frames,
+            &host,
+            &routes,
+            sample,
+            workgroup,
+        )
+        .map_err(|error| error.to_string());
+    }
     if let Some(host) = echode_plugin_host::host_binary() {
         playback_with_plugins_at(
             project,
@@ -1251,6 +1304,7 @@ mod tests {
         let (control, mut player) =
             prepare_playback(&project, 48000, 64, 0, &TransportSetup::idle()).unwrap();
         let mut stream = OutputStream {
+            workgroup_listener: None,
             device: OutputDevice {
                 id: 0,
                 uid: "fixture".into(),

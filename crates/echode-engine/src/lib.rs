@@ -38,6 +38,7 @@ pub use echode_realtime::Event;
 pub use handoff::{Audio, Control, Cycle, pair};
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 mod meter;
+pub use echode_sandbox::RetainedWorkgroup;
 pub use meter::TrackMeter;
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
@@ -45,8 +46,9 @@ pub use playback::{
     CachedTrack, ClipLoader, ClockSource, InternalClock, LoadedClip, PlaybackAudio,
     PlaybackCommand, PlaybackControl, PlaybackStatus, playback_pair, playback_pair_at,
     playback_with_clock, playback_with_plugins, playback_with_plugins_at,
+    playback_with_plugins_in_workgroup_at,
 };
-pub use plugins::PluginRoute;
+pub use plugins::{PluginRoute, PluginWorkgroup};
 pub use realtime::ForbidAlloc;
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;

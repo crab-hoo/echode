@@ -15,6 +15,155 @@ fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))
 }
 
+#[test]
+fn contract_live_workgroup_failure_cannot_be_silent_offline_hosting() {
+    let (project, track) = score();
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let group: echode_engine::PluginWorkgroup = Arc::new(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err("selected device workgroup unavailable".into())
+    });
+    let route = PluginRoute {
+        clap_id: "dev.echode.test-gain".into(),
+        path: plugin_dylib(),
+        instrument: false,
+        fault: None,
+        state: None,
+    };
+    let result = echode_engine::playback_with_plugins_in_workgroup_at(
+        &project,
+        48000,
+        64,
+        &host_bin(),
+        &[route],
+        0,
+        group,
+    );
+    assert!(
+        matches!(result, Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("selected device workgroup unavailable"))
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+fn headless_workgroup() -> echode_engine::RetainedWorkgroup {
+    static LIBRARY: std::sync::OnceLock<libloading::Library> = std::sync::OnceLock::new();
+    let library = LIBRARY.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/workgroup-fixture");
+        std::fs::create_dir_all(&root).unwrap();
+        let binary = root.join("workgroup.dylib");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/workgroup.c");
+        assert!(
+            std::process::Command::new("clang")
+                .args([
+                    "-dynamiclib",
+                    "-arch",
+                    "arm64",
+                    "-mmacosx-version-min=27.0",
+                    "-mcpu=apple-m4",
+                    "-framework",
+                    "AudioToolbox"
+                ])
+                .arg(source)
+                .arg("-o")
+                .arg(&binary)
+                .status()
+                .unwrap()
+                .success()
+        );
+        // SAFETY: this fixture only calls public OS APIs; it contains no plugin.
+        unsafe { libloading::Library::new(binary) }.unwrap()
+    });
+    // SAFETY: this is the fixture's own C function with exactly this signature.
+    let create: libloading::Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> =
+        unsafe { library.get(b"echode_test_workgroup_create\0") }.unwrap();
+    // SAFETY: the fixture returns one retained OS object. This test's period is
+    // only a scheduling fixture, not a supported device or block-size limit.
+    unsafe { echode_engine::RetainedWorkgroup::from_retained(create(), 32000) }.unwrap()
+}
+
+#[test]
+fn live_workgroup_survives_product_edits_and_helper_restart() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    // The 64-frame buffers belong only to this lifecycle regression.
+    let owner = headless_workgroup();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let group: echode_engine::PluginWorkgroup = Arc::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+        owner.handoff()
+    });
+    let path = plugin_dylib();
+    let route = PluginRoute {
+        clap_id: "dev.echode.test-gain".into(),
+        path: path.clone(),
+        instrument: false,
+        fault: None,
+        state: None,
+    };
+    let (project, track) = score();
+    // Start without devices, then insert one after output preparation.
+    let (mut control, mut audio) = echode_engine::playback_with_plugins_in_workgroup_at(
+        &project,
+        48000,
+        64,
+        &host_bin(),
+        std::slice::from_ref(&route),
+        0,
+        Arc::clone(&group),
+    )
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let project = project
+        .add_clap_device(track, Id::generate(), &route.clap_id)
+        .unwrap();
+    control.replace(&project).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = ([0.0; 64], [0.0; 64]);
+    render_content(&mut audio, &mut left, &mut right);
+    assert!(left.iter().any(|sample| *sample != 0.0));
+    control.service();
+    control.replace(&project).unwrap();
+    render_content(&mut audio, &mut left, &mut right);
+    control.service();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "unchanged helper was replaced"
+    );
+    let project = project
+        .add_clap_device(track, Id::generate(), &route.clap_id)
+        .unwrap();
+    control.replace(&project).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    render_content(&mut audio, &mut left, &mut right);
+    assert_eq!(control.status().plugin_missed_blocks, 0);
+
+    let mut host = PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(&path),
+        plugin_id: Some(&route.clap_id),
+        workgroup: Some(group().unwrap()),
+        fault: None,
+        fan_in: None,
+        layout: SessionLayout {
+            max_frames: 64,
+            input_channels: 2,
+            output_channels: 2,
+            input_events: 1,
+            output_events: 1,
+        },
+        sample_rate: 48000,
+    })
+    .unwrap();
+    host.restart().unwrap();
+    assert!(host.stderr_log().is_empty(), "{}", host.stderr_log());
+}
+
 fn plugin_dylib() -> PathBuf {
     static ARTIFACT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     ARTIFACT.get_or_init(build_plugin_dylib).clone()

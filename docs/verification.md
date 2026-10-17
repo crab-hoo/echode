@@ -28,7 +28,7 @@ make verify
 
 ## 自動検査
 
-- `check-verification`: 検査選択、依存入力の失効、診断、署名と作業資料の整合。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
+- `check-verification`: 検査選択、依存入力の失効、診断、署名と作業資料の整合。macOS 27 / M4 の Cargo 生成物と、一時 release dylib の実読込も確認する。Swift の全パッケージと C / C++・直接の Rust の M4 設定、生成 IR、新しいキャッシュでの C import と Swift Testing も確認する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
 - `check`: Rust / Swift、ランダムな編集の不変条件・Undo / Redo・保存の往復、音声の基準比較、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、lint、FFI、ライセンス。
 - `check-product-contracts`: 実 macOS CLAP バンドルのスキャン→キャッシュ→楽器・エフェクト処理と失敗、初回音声処理前の位置、ネイティブ View のキー転送。指定した実テストが1件走った証拠を要求し、削除・無視・0件を拒否する。既知の誤りを一時コピーへ戻し、期待値で失敗しなければ検査も失敗する。コンパイル失敗は検出の証拠にしない（[ADR 0093](decisions/0093-product-contract-gate.md)）。
 - 音声の必須契約には、実 WAV の左右・トリム・ゲイン・SRC・再生／書き出し、別プロセスのステレオ受渡し、配置音声のループ端の振幅、フェーダーの時間方向の連続性も含む。ブロック間一致だけでなく、独立した振幅・位相の期待値と、誤りを戻したコピーでの失敗を確認する（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
@@ -41,6 +41,7 @@ make verify
 - 必須契約 `stop-cleanup` は、2個の別プロセスのリセットを保留し、破棄する処理が待たずに返ること、完了前の再開が時計・新規発音を進めないことを確認する。時間の性能閾値は使わず、期限付きの完了待ちを戻すと期待値で失敗する。故障注入音源のブロックは通常検査だけで使い、正常な楽器・エフェクト連鎖の後片付けと実際の再開後の旧音排除をRTSanでも確認する（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）。
 - 必須契約 `plugin-onset` は、無音からの発音を音源の直接出力と全サンプルで比較する。48 / 96 kHz、7 / 64 / 512フレーム、再発音とステレオを検査し、ノートオンの時刻を0に変える負の対照を拒否する。通常検査は設置済みの音源へ依存せず、検査用音源でRTSanにも通す（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。既存の製品契約のMakefile入口から実行する。
 - ミックスの必須契約 `track-mix-ui` / `clip-mix-ui` は実Viewへのマウス入力から確定し、1回のUndo・取消・保存後の再読込を通す。`live-mix-meter` は製品の試聴・確定計画の採用・取消の波形とフェーダー後の実ピークを、レート・ブロック長を変えて検査する。各負の対照は操作やピークの接続を壊す。通常検査には初回出力前の試聴、遅れた送信とclose、テンポ変更をまたぐフェード・ABI寿命も含め、既存のRTSanと橋渡し検査へ通す（[ADR 0107](decisions/0107-mix-controls.md)）。
+- 製品契約 `live-workgroup` は機器を開かない AudioWorkInterval で挿入・保持・再起動への接続を確認する。`shared-placement-pcm` は同じ PCM の共有・編集・失効・未参照の破棄、`cached-geometry` は実文書と表示範囲の変更で可視列を失効することを確認する。既存の製品契約の入口で通常と負の対照を実行する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
 - P1の必須契約`loop-head-residency`は準備後に一時素材を除去してループ先頭の保持・失効を検査し、`pre-fader-source`は製品の差し替え・ループ・フェーダー・ライブ復帰をブロック長別とRTSanで検査する。`phase1-acceptance`は同じCLAPプロジェクトを持つ検証用子プロセスだけを強制終了し、復旧・再生・履歴復帰・実CLI書出しを通す。通常の`check-product-contracts`入口から実行し、保持の無効化・差し替えの切断・CLIの無音化を戻したコピーも拒否する（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。機器やユーザーのアプリを操作する検査ではない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
@@ -49,6 +50,8 @@ make verify
 - `check-bridge-miri`: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。パッケージ I/O や Swift、Metal は対象外。
 
 通常の `make check` は `check-verification`、`check-base`、`check-product-contracts` を順に1回ずつ実行する。実行器では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、基盤と製品契約は別の結果として記録する。CI も同じ分割を使い、同じ検査を二重に実行しない。
+
+再生位置の UI 世代更新の通常テストは、既存の応答差し替え口から機器なしの再生応答を返す。位置・ループ・停止などの橋渡しと通知の期待値は維持する。実 HAL と実ウィンドウの検査は、明示実行のプローブと区別する。
 
 Swift の通常検査には、配置と保存、選択と入力の下書き、コマンドの有効条件、ファイル一覧の非同期更新、View 再作成時の表示位置、描画結果の世代・版も含む。実際のマウス・キー操作を網羅した主張とは区別する。
 
@@ -60,7 +63,7 @@ Swift の通常検査には、配置と保存、選択と入力の下書き、�
 
 - `spike-isolation`: 隔離の release 計測と製品 CLAP の実時間ブロック期限。実機計測の明示的な依頼がある時に実行し、[S3](spikes/S3-plugin-isolation.md) の数値を更新する。未実施なら理由を残す。通常の音声比較には性能閾値を持ち込まない。
 - `spike-draw`: Metal の大規模シーンと可視判定の実機計測。
-- `spike-arrange-frame`: 画面を開かず製品の Metal 描画を読み戻す。倍率1・2、部分行、ズーム・スクロール、幅、選択、文字、ヘッダへのはみ出し。`target/spike-arrange-frame.json` と PNG。
+- `spike-arrange-frame`: 画面を開かず製品の Metal 描画を読み戻す。倍率1・2、部分行、ズーム・スクロール、幅、選択、文字、ヘッダへのはみ出し。`target/spike-arrange-frame.json` と PNG。比較点は操作部品のない左余白で、行境界の不一致とヘッダへの描画漏れを分けて記録する。
 - `spike-piano-frame`: 同じく画面なし。鍵盤・ノートの音高行、調に依存しない白黒、ディグリーの文字・内外の色・区切り。`target/spike-piano-frame.json` と PNG。
 - `spike-app`: 製品のアレンジとピアノロールを実表示し、メインスレッドの0.5秒の負荷中も描画すること、共有する左右の行とアクセシビリティの ID を確認する。小規模な接続確認で、大規模性能の代用ではない。`target/spike-app.json`。
 - `spike-playhead`: 専用 AppKit プローブの起動完了後、イベントループで実行する。計測モードで強制起動せず、0→2拍、再生、一時停止、休止、破棄、計画・文書交換を確認する。現在の Space・非遮蔽を満たさなければ未検証項目を保存して失敗する。状態は close の前に記録する。`target/spike-playhead.json`。通常の `swift test` からは分離している。

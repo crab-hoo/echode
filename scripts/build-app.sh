@@ -9,6 +9,12 @@ test -n "$header"
 cp "$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 swift build --package-path swift/EchodeApp --scratch-path target/echode-app
 app_bin="$(swift build --package-path swift/EchodeApp --scratch-path target/echode-app --show-bin-path)"
+python3 - "$app_bin/Echode" target/debug/echode-plugin-host <<'PY'
+import sys
+from scripts.distribution import validate_binary
+for binary in sys.argv[1:]:
+    validate_binary(binary)
+PY
 app_dir=target/Echode.app
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$app_bin/Echode" "$app_dir/Contents/MacOS/Echode"

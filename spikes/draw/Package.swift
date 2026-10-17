@@ -9,9 +9,11 @@ let rustLibraryDir = packageDir
     .appendingPathComponent("target/release")
     .path
 
+let m4: [SwiftSetting] = [.unsafeFlags(["-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])]
+
 let package = Package(
     name: "EchodeDraw",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("27.0")],
     products: [
         .executable(name: "EchodeDraw", targets: ["EchodeDraw"])
     ],
@@ -20,6 +22,8 @@ let package = Package(
             name: "CEchodeDraw",
             path: "CEchodeDraw",
             publicHeadersPath: "include",
+            cSettings: [.unsafeFlags(["-mcpu=apple-m4"])],
+            cxxSettings: [.unsafeFlags(["-mcpu=apple-m4"])],
             linkerSettings: [
                 .linkedLibrary("echode_draw"),
                 .unsafeFlags(["-L", rustLibraryDir]),
@@ -29,6 +33,7 @@ let package = Package(
             name: "EchodeDraw",
             dependencies: ["CEchodeDraw"],
             path: "Sources/EchodeDraw",
+            swiftSettings: m4,
             linkerSettings: [
                 .linkedFramework("Metal"),
                 .linkedFramework("QuartzCore"),

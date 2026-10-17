@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-let strict: [SwiftSetting] = [.unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors"])]
+let strict: [SwiftSetting] = [.unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])]
 let package = Package(
     name: "EchodeApp",
     platforms: [.macOS("27.0")],

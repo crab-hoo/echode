@@ -186,6 +186,36 @@ struct ArrangeTests {
         await controller.close()
     }
 
+    @Test func cachedGeometryFollowsDocumentAndViewportRevisions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-geometry-cache-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ProjectController()
+        await controller.open(root, creating: true)
+        await controller.addTrack(name: "first")
+        let camera = ArrangeCamera(pixelsPerBeat: 100, pixelsPerTrack: 40)
+        var input = CanvasInput(snapshot: controller.snapshot, selected: nil, camera: camera,
+                                width: 320, height: 200, scale: 1)
+        var cache = CanvasGeometryCache()
+        let first = try #require(cache.frames(input: input, camera: camera, revision: 1).arranged)
+        let again = try #require(cache.frames(input: input, camera: camera, revision: 1).arranged)
+        #expect(cache.builds == 1)
+        #expect(first.elements.count == again.elements.count)
+        #expect(first.elements.filter { $0.role == .track }.count == 1)
+        await controller.addTrack(name: "second")
+        input = CanvasInput(snapshot: controller.snapshot, selected: nil, camera: camera,
+                            width: 160, height: 200, scale: 2)
+        let changed = try #require(cache.frames(input: input, camera: camera, revision: 2).arranged)
+        #expect(cache.builds == 2)
+        #expect(changed.elements.filter { $0.role == .track }.count == 2)
+        #expect(changed.timelineWidth == 160 && changed.input.scale == 2)
+        var moved = camera
+        moved.originBeat = 2
+        let shifted = try #require(cache.frames(input: input, camera: moved, revision: 2).arranged)
+        #expect(cache.builds == 3 && shifted.camera.originBeat == 2)
+        #expect(first.input.width == 320 && first.elements.filter { $0.role == .track }.count == 1)
+        await controller.close()
+    }
+
     @Test func labelsShapeUnicodeAndTruncateAtTheAvailableWidth() throws {
         for scale in [1.0, 2.0] {
             let empty = try #require(ArrangeLabelRaster(name: "", width: 40, scale: scale))

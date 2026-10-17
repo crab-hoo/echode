@@ -28,7 +28,8 @@ pub use session::{
 };
 pub use sync::{SyncFlags, WaitError, wait_until_ne, wake_one};
 pub use workgroup::{
-    WorkgroupMembership, copy_workgroup_port, join_passed_workgroup, join_workgroup,
+    RetainedWorkgroup, WorkgroupMembership, copy_workgroup_port, join_passed_workgroup,
+    join_workgroup,
 };
 
 /// Channels the test plugin is activated with. Not a protocol limit.
