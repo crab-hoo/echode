@@ -45,8 +45,20 @@ enum MixScale {
     static func decibels(_ gain: Float) -> Double { gain > 0 ? 20 * log10(Double(gain)) : -.infinity }
     static func gain(_ position: Double) -> Float { position <= 0 ? 0 : Float(pow(10, (-60 + min(1, position) * (60 + 20 * log10(4.0))) / 20)) }
     static func position(_ gain: Float) -> Double { gain > 0 ? min(1, max(0, (decibels(gain) + 60) / (60 + 20 * log10(4.0)))) : 0 }
-    static func meter(_ peak: Float) -> Double { peak > 0 ? min(1, max(0, (decibels(peak) + 60) / 60)) : 0 }
+    /// Linear amplitude at -60 dB. Matches `DISPLAY_FLOOR` in the engine meter.
+    /// The header bar and the inspector both treat this and anything quieter as silence.
+    static let meterSilence: Float = 0.001
+    static func meter(_ peak: Float) -> Double {
+        guard peak > meterSilence else { return 0 }
+        return min(1, max(0, (decibels(peak) + 60) / 60))
+    }
     static func label(_ gain: Float) -> String { gain > 0 ? String(format: "%.1f dB", decibels(gain)) : "−∞ dB" }
+    /// Peak readout. Unlike fader `label`, values at the meter floor stay at silence
+    /// instead of counting down through ever smaller dB numbers.
+    static func meterLabel(_ peak: Float) -> String {
+        guard peak > meterSilence else { return "−∞ dB" }
+        return String(format: "%.1f dB", decibels(peak))
+    }
 }
 
 public enum ClipMixEdit: Sendable {

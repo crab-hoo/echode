@@ -245,7 +245,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
             }
         }
         let (arranged, piano) = geometry.frames(input: input, camera: camera, revision: revision, continuous: continuous)
-        metersActive = arranged?.headers.contains { $0.peak > 0.001 } ?? false
+        metersActive = arranged?.headers.contains { $0.peak > MixScale.meterSilence } ?? false
         var instances = piano?.gridInstances ?? arranged?.timelineInstances ?? []
         let timelineCount = instances.count
         let headerInstances = piano.map { $0.degreeInstances + $0.keyboardInstances + $0.rulerInstances } ?? arranged?.headerInstances ?? []

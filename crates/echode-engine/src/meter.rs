@@ -1,6 +1,10 @@
 //! Read-only UI tap after the track fader. Only the audio owner publishes.
 use std::sync::atomic::{AtomicU32, Ordering};
 
+/// Linear amplitude at -60 dB. Header meters, the inspector readout, and the
+/// display-link hold all treat this as silence (`MixScale.meterSilence`).
+const DISPLAY_FLOOR: f32 = 0.001;
+
 pub struct TrackMeter {
     pub track: u128,
     peak: AtomicU32,
@@ -35,7 +39,46 @@ impl TrackMeter {
         } else {
             f32::MAX
         };
-        self.peak
-            .store(peak.max(previous).to_bits(), Ordering::Relaxed);
+        let held = peak.max(previous);
+        // Below the shared -60 dB floor the bar is already empty. Keeping the
+        // tail makes the dB readout run away and feeds denormals back in here.
+        let held = if held <= DISPLAY_FLOOR { 0.0 } else { held };
+        self.peak.store(held.to_bits(), Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TrackMeter;
+
+    #[test]
+    fn release_is_twenty_four_db_per_second_and_silence_is_zero() {
+        let meter = TrackMeter::new(1);
+        meter.publish(1.0, 1.0);
+        assert_eq!(meter.peak(), 1.0);
+        let one_second = TrackMeter::release(48_000, 48_000);
+        meter.publish(0.0, one_second);
+        let after_one = meter.peak();
+        let db = 20.0 * f64::from(after_one).log10();
+        assert!((db + 24.0).abs() < 0.05, "expected about -24 dB, got {db}");
+        // The same elapsed time in small blocks stays on that curve.
+        let chunked = TrackMeter::new(1);
+        chunked.publish(1.0, 1.0);
+        let chunk = TrackMeter::release(64, 48_000);
+        for _ in 0..(48_000 / 64) {
+            chunked.publish(0.0, chunk);
+        }
+        assert!((chunked.peak() - after_one).abs() < 1.0e-4);
+
+        for _ in 0..3 {
+            meter.publish(0.0, one_second);
+            chunked.publish(0.0, one_second);
+        }
+        assert_eq!(meter.peak(), 0.0);
+        assert_eq!(chunked.peak(), 0.0);
+        meter.publish(0.0, one_second);
+        assert_eq!(meter.peak(), 0.0, "silence kept decaying");
+        meter.publish(0.25, 1.0);
+        assert_eq!(meter.peak(), 0.25);
     }
 }

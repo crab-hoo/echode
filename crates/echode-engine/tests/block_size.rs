@@ -273,6 +273,17 @@ fn contract_live_fader_preview_and_peak_taps_under_rtsan() {
                 );
             }
             assert!(meter.peak() < before / 8.0, "paused meters did not decay");
+            // Two more seconds cross the shared -60 dB floor from that level.
+            // These renders only cover the meter release, not a longer timeline.
+            for _ in 0..(2 * rate / block + 1) {
+                audio.render_live_gated_until(
+                    &mut left,
+                    &mut right,
+                    std::time::Instant::now() + std::time::Duration::from_secs(5),
+                    true,
+                );
+            }
+            assert_eq!(meter.peak(), 0.0, "silence kept a runaway peak");
             assert_eq!(control.status().sample, 3000);
             assert!(control.preview_fader(track.raw(), f32::NAN, 0.0).is_err());
         }

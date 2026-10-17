@@ -253,6 +253,23 @@ struct MixControlTests {
         #expect(controller.snapshot?.clipMix(id) == saved)
         await controller.close()
     }
+
+    @Test func inspectorPeakUsesTheHeaderMeterScaleAndStopsAtSilence() {
+        #expect(MixScale.meter(1) == 1)
+        #expect(MixScale.meterLabel(1) == "0.0 dB")
+        let quiet = Float(pow(10.0, -20.0 / 20.0))
+        #expect(abs(MixScale.meter(quiet) - 40.0 / 60.0) < 0.001)
+        #expect(MixScale.meterLabel(quiet) == "-20.0 dB")
+        // The arrange header draws this same fraction of the meter width.
+        for peak: Float in [0, 0.0001, MixScale.meterSilence, MixScale.meterSilence / 8, 1e-20] {
+            #expect(MixScale.meter(peak) == 0)
+            #expect(MixScale.meterLabel(peak) == "−∞ dB")
+        }
+        #expect(MixScale.meterLabel(1e-6) == MixScale.meterLabel(1e-12))
+        let hot = Float(pow(10.0, 6.0 / 20.0))
+        #expect(MixScale.meter(hot) == 1)
+        #expect(MixScale.meterLabel(hot) == "6.0 dB")
+    }
 }
 
 private actor PreviewGate {

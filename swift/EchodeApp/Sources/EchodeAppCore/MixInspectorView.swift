@@ -21,11 +21,13 @@ struct TrackMixInspector: View {
             }.toggleStyle(.button)
             TimelineView(.periodic(from: .now, by: 0.05)) { _ in
                 let peak = controller.playback?.peak(track: track) ?? 0
-                HStack {
-                    ProgressView(value: MixScale.meter(peak)).tint(peak >= 1 ? .red : .green)
-                        .accessibilityLabel(text("Peak Level"))
-                    Text(MixScale.label(peak)).font(.caption.monospacedDigit()).frame(width: 65, alignment: .trailing)
+                HStack(spacing: 8) {
+                    PeakMeter(peak: peak)
+                    Text(MixScale.meterLabel(peak)).font(.caption.monospacedDigit()).frame(width: 72, alignment: .trailing)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(text("Peak Level"))
+                .accessibilityValue(MixScale.meterLabel(peak))
             }
         }.disabled(controller.busy || controller.faderPreview != nil)
     }
@@ -61,6 +63,25 @@ struct ClipMixInspector: View {
         let document = controller.documentID
         Task { await controller.setClipFades(clip.id, fadeIn: entering ? flicks : clip.fadeIn,
             fadeOut: entering ? clip.fadeOut : flicks, documentID: document) }
+    }
+}
+
+/// Same fraction and colors as the arrange header meter. A system progress
+/// view animates between values, so it cannot follow that bar.
+private struct PeakMeter: View {
+    let peak: Float
+    var body: some View {
+        Canvas { context, size in
+            let bounds = CGRect(origin: .zero, size: size)
+            context.fill(Path(bounds), with: .color(Color(red: 0.27, green: 0.29, blue: 0.33)))
+            var fill = bounds
+            fill.size.width *= MixScale.meter(peak)
+            let color = peak >= 1
+                ? Color(red: 1, green: 0.25, blue: 0.12)
+                : Color(red: 0.28, green: 0.80, blue: 0.49)
+            context.fill(Path(fill), with: .color(color))
+        }
+        .frame(height: 4)
     }
 }
 
