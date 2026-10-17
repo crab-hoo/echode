@@ -200,12 +200,18 @@ struct Prepared {
     demands: Vec<TrackEventDemand>,
     mix_left: Vec<f64>,
     mix_right: Vec<f64>,
+    /// Set for the block once its post-fader peaks are stored. A callback
+    /// publishes each meter once, after the block is mixed.
+    meters_committed: bool,
 }
 
 #[derive(Clone, Copy)]
 struct RenderRange {
     loop_bounds: (Option<i64>, Option<i64>),
     started_before: Option<i64>,
+    /// Release applied once, after the block is mixed. The coefficient covers
+    /// the whole callback, including a stop tail that renders only a prefix.
+    meter_release: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -359,6 +365,7 @@ impl Prepared {
             demands,
             mix_left: vec![0.0; frames],
             mix_right: vec![0.0; frames],
+            meters_committed: false,
         })
     }
 
@@ -691,6 +698,9 @@ impl Prepared {
             return Err(PlaybackError::BufferTooSmall);
         }
         hosts.collect(collect_deadline(deadline, left.len(), self.sample_rate));
+        // One store after the block, including plugin completion. A decay written
+        // before this point is what the UI samples for the whole callback.
+        self.meters_committed = true;
         let mix_left = self
             .mix_left
             .get_mut(..left.len())
@@ -723,7 +733,7 @@ impl Prepared {
                 mix_left,
                 mix_right,
             );
-            track.meter.publish(peak, 1.0);
+            track.meter.publish(peak, range.meter_release);
         }
         for ((left, right), (l, r)) in left
             .iter_mut()
@@ -1668,6 +1678,9 @@ impl PlaybackAudio {
         self.stop_tail = None;
         self.stop_fade_offset = None;
         self.live_output = false;
+        for track in &self.current.tracks {
+            track.meter.clear();
+        }
         if self.finish_stop().is_err() {
             self.failed = true;
         }
@@ -1733,10 +1746,13 @@ impl PlaybackAudio {
         left.fill(0.0);
         right.fill(0.0);
         let release = TrackMeter::release(left.len(), self.current.sample_rate);
-        for track in &self.current.tracks {
-            track.meter.publish(0.0, release);
+        self.current.meters_committed = false;
+        let result = self.step(left, right, deadline, enabled, live, release);
+        if !self.current.meters_committed {
+            for track in &self.current.tracks {
+                track.meter.publish(0.0, release);
+            }
         }
-        let result = self.step(left, right, deadline, enabled, live);
         if result.is_err() {
             self.playing = false;
             self.failed = true;
@@ -1777,6 +1793,7 @@ impl PlaybackAudio {
         deadline: Instant,
         enabled: bool,
         live: bool,
+        meter_release: f32,
     ) -> Result<(), PlaybackError> {
         if left.len() != right.len() {
             return Err(PlaybackError::BufferTooSmall);
@@ -1798,6 +1815,7 @@ impl PlaybackAudio {
                 next.hosts.activate_prepared();
                 std::mem::swap(&mut next.prepared, &mut self.current);
                 std::mem::swap(&mut next.hosts, &mut self.hosts);
+                self.current.meters_committed = false;
                 faders_changed = true;
                 self.status
                     .applied_plan
@@ -1879,7 +1897,7 @@ impl PlaybackAudio {
             self.begin_stop(live)?;
         }
         if let Some(tail) = self.stop_tail {
-            self.render_stop_tail(tail, left, right, deadline)?;
+            self.render_stop_tail(tail, left, right, deadline, meter_release)?;
             return Ok(());
         }
         if self.reset_plugins {
@@ -1937,6 +1955,7 @@ impl PlaybackAudio {
             RenderRange {
                 loop_bounds: (self.loop_start, self.loop_end),
                 started_before: None,
+                meter_release,
             },
         )?;
         if self.hosts.missed_block() {
@@ -1985,6 +2004,7 @@ impl PlaybackAudio {
         left: &mut [f32],
         right: &mut [f32],
         deadline: Instant,
+        meter_release: f32,
     ) -> Result<(), PlaybackError> {
         let frames = left.len().min(tail.remaining as usize);
         self.stop_fade_offset = Some((self.current.sample_rate / 200).max(2) - tail.remaining);
@@ -2006,6 +2026,7 @@ impl PlaybackAudio {
             RenderRange {
                 loop_bounds: tail.loop_bounds,
                 started_before: Some(tail.cutoff),
+                meter_release,
             },
         )?;
         if self.metronome {
@@ -2214,6 +2235,38 @@ mod tests {
         }
         assert_eq!(control.status().sample, 512);
         assert_eq!(control.status().graph_unavailable_blocks, 0);
+    }
+
+    #[test]
+    fn each_callback_publishes_each_track_meter_once() {
+        let (project, track) = Project::new().add_track("one meter store");
+        let block = 128; // Scratch for this test, not a playback limit.
+        let (mut control, mut audio) = playback_pair(&project, 48_000, block).unwrap();
+        let clip = placed(track.raw(), 0, 0.5, 4_096);
+        control.set_clip_loader(Arc::new(move |_, _| Ok(vec![clip.clone()])));
+        control.replace(&project).unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let meter = control.meters().pop().unwrap();
+        let mut left = vec![0.0f32; block];
+        let mut right = vec![0.0f32; block];
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        for index in 0..4 {
+            audio.render_live_gated_until(&mut left, &mut right, deadline, true);
+            assert_eq!(
+                meter.publications(),
+                index + 1,
+                "callback {index} stored the peak more than once"
+            );
+        }
+        let held = meter.peak();
+        assert!(held > 0.2, "{held}");
+        audio.render_live_gated_until(&mut left, &mut right, deadline, true);
+        assert_eq!(meter.publications(), 5);
+        assert!(
+            (meter.peak() - held).abs() < 1.0e-3,
+            "sustained peak moved from {held} to {}",
+            meter.peak()
+        );
     }
 
     fn callback_block(mut clips: Vec<LoadedClip>) -> Vec<f32> {

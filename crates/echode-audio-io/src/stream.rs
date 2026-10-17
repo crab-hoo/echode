@@ -1286,6 +1286,13 @@ mod tests {
             } else {
                 assert!(heard.iter().all(|sample| *sample == 0.0));
                 assert_eq!(control.status().sample, before);
+                let meters = control.meters();
+                assert!(!meters.is_empty(), "cancelled start had no meter");
+                let peak = meters
+                    .iter()
+                    .map(|meter| meter.peak())
+                    .fold(0.0f32, f32::max);
+                assert_eq!(peak, 0.0, "cancelled start kept a meter peak");
             }
             let stopped = control.status().sample;
             for _ in 0..8 {

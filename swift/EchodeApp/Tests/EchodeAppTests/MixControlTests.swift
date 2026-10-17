@@ -270,6 +270,21 @@ struct MixControlTests {
         #expect(MixScale.meter(hot) == 1)
         #expect(MixScale.meterLabel(hot) == "6.0 dB")
     }
+
+    @Test func inspectorMeterFollowsPlaybackAndStopsAtTheFloor() {
+        #expect(MeterFollow.running(transportActive: true, playing: false, peak: 0))
+        #expect(MeterFollow.running(transportActive: false, playing: true, peak: 0))
+        #expect(MeterFollow.running(transportActive: false, playing: false, peak: 0.2))
+        #expect(!MeterFollow.running(transportActive: false, playing: false, peak: 0))
+        #expect(!MeterFollow.running(transportActive: false, playing: false, peak: MixScale.meterSilence))
+        var hold = MeterLinkHold()
+        hold.note(playing: true, now: 10)
+        hold.note(playing: false, now: 10)
+        #expect(hold.holding(now: 10.1))
+        #expect(!hold.holding(now: 10 + MeterLinkHold.duration))
+        hold.note(playing: false, now: 12)
+        #expect(!hold.holding(now: 12))
+    }
 }
 
 private actor PreviewGate {

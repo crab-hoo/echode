@@ -6,21 +6,26 @@ struct TrackMixInspector: View {
     let controller: ProjectController
     let track: UUID
     let mix: TrackMix
+    @State private var meterPaused = false
     var body: some View {
+        let transport = controller.playbackRequested
         VStack(alignment: .leading, spacing: 10) {
-            Text(text("Track Controls")).font(.subheadline)
-            ControlNumberField(title: text("Volume"), value: MixScale.decibels(mix.gain.value), unit: "dB", minimum: -120,
-                maximum: 20 * log10(4), silence: true) { value in
-                let gain: Float = value == -.infinity ? 0 : Float(pow(10, value / 20))
-                set(.gain, gain)
-            }
-            ControlNumberField(title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%", minimum: -100, maximum: 100) { set(.pan, Float($0 / 100)) }
-            HStack {
-                Toggle(text("Mute"), isOn: Binding(get: { mix.mute.value != 0 }, set: { set(.mute, $0 ? 1 : 0) }))
-                Toggle(text("Solo"), isOn: Binding(get: { mix.solo.value != 0 }, set: { set(.solo, $0 ? 1 : 0) }))
-            }.toggleStyle(.button)
-            TimelineView(.periodic(from: .now, by: 0.05)) { _ in
+            VStack(alignment: .leading, spacing: 10) {
+                Text(text("Track Controls")).font(.subheadline)
+                ControlNumberField(title: text("Volume"), value: MixScale.decibels(mix.gain.value), unit: "dB", minimum: -120,
+                    maximum: 20 * log10(4), silence: true) { value in
+                    let gain: Float = value == -.infinity ? 0 : Float(pow(10, value / 20))
+                    set(.gain, gain)
+                }
+                ControlNumberField(title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%", minimum: -100, maximum: 100) { set(.pan, Float($0 / 100)) }
+                HStack {
+                    Toggle(text("Mute"), isOn: Binding(get: { mix.mute.value != 0 }, set: { set(.mute, $0 ? 1 : 0) }))
+                    Toggle(text("Solo"), isOn: Binding(get: { mix.solo.value != 0 }, set: { set(.solo, $0 ? 1 : 0) }))
+                }.toggleStyle(.button)
+            }.disabled(controller.busy || controller.faderPreview != nil)
+            TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: meterPaused && !transport)) { timeline in
                 let peak = controller.playback?.peak(track: track) ?? 0
+                let playing = controller.playback?.position.playing == true
                 HStack(spacing: 8) {
                     PeakMeter(peak: peak)
                     Text(MixScale.meterLabel(peak)).font(.caption.monospacedDigit()).frame(width: 72, alignment: .trailing)
@@ -28,8 +33,12 @@ struct TrackMixInspector: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(text("Peak Level"))
                 .accessibilityValue(MixScale.meterLabel(peak))
+                .onChange(of: timeline.date) { _, _ in
+                    let quiet = !MeterFollow.running(transportActive: transport, playing: playing, peak: peak)
+                    if meterPaused != quiet { meterPaused = quiet }
+                }
             }
-        }.disabled(controller.busy || controller.faderPreview != nil)
+        }
     }
     private func set(_ field: MixerField, _ value: Float) {
         let document = controller.documentID

@@ -61,6 +61,13 @@ enum MixScale {
     }
 }
 
+/// Whether the inspector should keep reading the post-fader peak.
+enum MeterFollow {
+    static func running(transportActive: Bool, playing: Bool, peak: Float) -> Bool {
+        transportActive || playing || peak > MixScale.meterSilence
+    }
+}
+
 public enum ClipMixEdit: Sendable {
     case gain(UUID, Float)
     case fades(UUID, Int64, Int64)

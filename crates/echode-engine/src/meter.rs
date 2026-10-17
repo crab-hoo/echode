@@ -8,6 +8,8 @@ const DISPLAY_FLOOR: f32 = 0.001;
 pub struct TrackMeter {
     pub track: u128,
     peak: AtomicU32,
+    #[cfg(test)]
+    publications: AtomicU32,
 }
 
 impl TrackMeter {
@@ -15,11 +17,23 @@ impl TrackMeter {
         Self {
             track,
             peak: AtomicU32::new(0),
+            #[cfg(test)]
+            publications: AtomicU32::new(0),
         }
     }
 
     pub fn peak(&self) -> f32 {
         f32::from_bits(self.peak.load(Ordering::Relaxed))
+    }
+
+    /// Drop a peak that never reached the device. The release tail does not apply.
+    pub(crate) fn clear(&self) {
+        self.peak.store(0f32.to_bits(), Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn publications(&self) -> u32 {
+        self.publications.load(Ordering::Relaxed)
     }
 
     pub(crate) fn release(frames: usize, rate: u32) -> f32 {
@@ -44,6 +58,10 @@ impl TrackMeter {
         // tail makes the dB readout run away and feeds denormals back in here.
         let held = if held <= DISPLAY_FLOOR { 0.0 } else { held };
         self.peak.store(held.to_bits(), Ordering::Relaxed);
+        #[cfg(test)]
+        {
+            self.publications.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

@@ -69,6 +69,24 @@ struct Instance {
     var color: SIMD4<Float>
 }
 
+/// Keeps the arrange display link awake for one late audio buffer after stop.
+/// A 4096-frame buffer at 48 kHz is 85 ms, and the live stop tail is 5 ms.
+struct MeterLinkHold: Equatable, Sendable {
+    static let duration = 0.2
+    var sawPlayback = false
+    var quiesceUntil = 0.0
+    mutating func note(playing: Bool, now: Double) {
+        if playing {
+            sawPlayback = true
+            quiesceUntil = 0
+        } else if sawPlayback {
+            sawPlayback = false
+            quiesceUntil = now + Self.duration
+        }
+    }
+    func holding(now: Double) -> Bool { quiesceUntil > now }
+}
+
 /// The display link, encoders and buffer array are confined to the render
 /// thread. MainActor exchanges immutable inputs through the mutex; completion
 /// handlers only release their frame slot. No AppKit view is read here.
@@ -91,6 +109,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private var appliedFrameRate: Double = 0
     private var drawnRevision: UInt64?
     private var metersActive = false
+    private var meterHold = MeterLinkHold()
     private var geometry = CanvasGeometryCache()
 
     init(layer: CAMetalLayer, size: CGSize, scale: CGFloat, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
@@ -245,7 +264,10 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
             }
         }
         let (arranged, piano) = geometry.frames(input: input, camera: camera, revision: revision, continuous: continuous)
-        metersActive = arranged?.headers.contains { $0.peak > MixScale.meterSilence } ?? false
+        let now = CACurrentMediaTime()
+        meterHold.note(playing: input.playback?.position.playing == true, now: now)
+        let peaksLive = arranged?.headers.contains { $0.peak > MixScale.meterSilence } ?? false
+        metersActive = peaksLive || meterHold.holding(now: now)
         var instances = piano?.gridInstances ?? arranged?.timelineInstances ?? []
         let timelineCount = instances.count
         let headerInstances = piano.map { $0.degreeInstances + $0.keyboardInstances + $0.rulerInstances } ?? arranged?.headerInstances ?? []
