@@ -131,6 +131,9 @@ final class ArrangeHeaderView: NSView {
                     control.setAccessibilityRole(field == .gain || field == .pan ? .slider : .checkBox)
                     control.setAccessibilityLabel(text(title) + " " + name)
                     control.setAccessibilityValue(NSNumber(value: mix[field].value))
+                    if let spoken = MixScale.spokenValue(field, mix[field].value) {
+                        control.setAccessibilityValueDescription(spoken)
+                    }
                     control.setAccessibilityMinValue(NSNumber(value: field == .pan ? -1 : 0))
                     control.setAccessibilityMaxValue(NSNumber(value: field == .gain ? 4 : 1))
                     control.setAccessibilityParent(child)

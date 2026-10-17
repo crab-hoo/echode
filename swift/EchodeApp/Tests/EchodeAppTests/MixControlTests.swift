@@ -271,6 +271,15 @@ struct MixControlTests {
         #expect(MixScale.meterLabel(hot) == "6.0 dB")
     }
 
+    @Test func headerControlsSpeakTheInspectorUnits() {
+        #expect(MixScale.spokenValue(.gain, 1) == "0.0 dB")
+        #expect(MixScale.spokenValue(.gain, 0) == "−∞ dB")
+        #expect(MixScale.spokenValue(.pan, 0) == "0.0%")
+        #expect(MixScale.spokenValue(.pan, -1) == "-100.0%")
+        #expect(MixScale.spokenValue(.mute, 1) == nil)
+        #expect(MixScale.spokenValue(.solo, 0) == nil)
+    }
+
     @Test func inspectorMeterFollowsPlaybackAndStopsAtTheFloor() {
         #expect(MeterFollow.running(transportActive: true, playing: false, peak: 0))
         #expect(MeterFollow.running(transportActive: false, playing: true, peak: 0))

@@ -53,6 +53,16 @@ enum MixScale {
         return min(1, max(0, (decibels(peak) + 60) / 60))
     }
     static func label(_ gain: Float) -> String { gain > 0 ? String(format: "%.1f dB", decibels(gain)) : "−∞ dB" }
+    /// Spoken pan. The inspector edits the same −100...100% range.
+    static func panLabel(_ pan: Float) -> String { String(format: "%.1f%%", Double(pan) * 100) }
+    /// Header accessibility speech. Mute and solo stay numeric checkboxes.
+    static func spokenValue(_ field: MixerField, _ value: Float) -> String? {
+        switch field {
+        case .gain: label(value)
+        case .pan: panLabel(value)
+        case .mute, .solo: nil
+        }
+    }
     /// Peak readout. Unlike fader `label`, values at the meter floor stay at silence
     /// instead of counting down through ever smaller dB numbers.
     static func meterLabel(_ peak: Float) -> String {
