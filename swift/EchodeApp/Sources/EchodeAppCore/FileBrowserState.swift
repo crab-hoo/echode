@@ -30,7 +30,10 @@ final class FileBrowserState {
             let files = try await Task.detached {
                 try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
                     .map { url in BrowserFile(url: url, directory: try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true) }
-                    .sorted { $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending }
+                    .sorted { left, right in
+                        if left.directory != right.directory { return left.directory }
+                        return left.url.lastPathComponent.localizedStandardCompare(right.url.lastPathComponent) == .orderedAscending
+                    }
             }.value
             guard request == token else { return }
             guard !Task.isCancelled else { loading = false; return }

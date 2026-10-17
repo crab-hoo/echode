@@ -168,6 +168,10 @@ struct WorkspaceTests {
         #expect(movedSelection("c", in: ["a", "b", "c"], offset: 1) == "c")
         #expect(movedSelection("a", in: ["a", "b", "c"], offset: -1) == "a")
         #expect(movedSelection("b", in: [String](), offset: 1) == nil)
+        #expect(retainedSelection("b", in: ["a", "b"]) == "b")
+        #expect(retainedSelection("c", in: ["a", "b"]) == "a")
+        #expect(retainedSelection(nil as String?, in: ["a"]) == "a")
+        #expect(retainedSelection("a", in: [String]()) == nil)
     }
 
     @Test func folderNavigationFiltersProjectsAndLatestRequestWins() async throws {
@@ -183,11 +187,27 @@ struct WorkspaceTests {
         while !started { await Task.yield() }
         await browser.load(second)
         await older.value
-        #expect(browser.folder == second && !browser.loading && browser.files.count == 2)
+        #expect(browser.folder == second && !browser.loading && browser.files.map(\.url.lastPathComponent) == ["Song.echode", "notes.txt"])
         browser.query = "song"
         #expect(browser.filtered.count == 1 && browser.filtered[0].project && browser.filtered[0].icon == "waveform")
         await browser.load(root.appendingPathComponent("missing"))
         #expect(browser.error != nil && !browser.loading && browser.folder == second)
+    }
+
+    @Test func overlappingCatalogReloadsKeepTheLaterRequest() {
+        var scans = CoalescedReload()
+        let first = scans.begin()
+        #expect(first == 1 && scans.begin() == nil && scans.finish(1) == 2 && scans.finish(2) == nil)
+        #expect(scans.begin() == 3)
+        #expect(scans.begin() == nil)
+        scans.abandon()
+        #expect(scans.begin() == 5)
+        #expect(!InspectorNotes.showsPrompt(noteFocused: true, audioClipFocused: false))
+        #expect(!InspectorNotes.showsPrompt(noteFocused: false, audioClipFocused: true))
+        #expect(InspectorNotes.showsPrompt(noteFocused: false, audioClipFocused: false))
+        #expect(!LoopCommit.needsSend(soundingStart: nil, soundingEnd: nil, start: 0, end: 4))
+        #expect(!LoopCommit.needsSend(soundingStart: 0, soundingEnd: 4, start: 0, end: 4))
+        #expect(LoopCommit.needsSend(soundingStart: 0, soundingEnd: 4, start: 0, end: 8))
     }
 
     @Test func rendererFeedbackRejectsOldGenerationsAndOutOfOrderFrames() {

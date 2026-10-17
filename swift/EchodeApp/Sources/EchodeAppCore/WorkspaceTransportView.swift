@@ -5,6 +5,8 @@ struct WorkspaceTransportView: View {
     @State private var seek = "0"
     @State private var loopStart = "0"
     @State private var loopEnd = "4"
+    @FocusState private var loopField: LoopField?
+    private enum LoopField: Hashable { case start, end }
     private var seekBeat: Double? { NoteDraft.number(seek).flatMap { $0 >= 0 && PianoCamera.ticks($0) != nil ? $0 : nil } }
     private var loopBeats: (Double, Double)? {
         guard let start = NoteDraft.number(loopStart), let end = NoteDraft.number(loopEnd),
@@ -28,10 +30,10 @@ struct WorkspaceTransportView: View {
                 .accessibilityLabel(text("Playback start beat")).onSubmit(locate)
             Button(text("Go"), action: locate).disabled(seekBeat == nil || controller.audioBusy)
             TextField(text("Loop start (beats)"), text: $loopStart).frame(width: 64)
-                .focusedValue(\.workspaceTextEntry, true)
+                .focused($loopField, equals: .start).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Loop start (beats)")).onSubmit(commitLoop)
             TextField(text("Loop end (beats)"), text: $loopEnd).frame(width: 64)
-                .focusedValue(\.workspaceTextEntry, true)
+                .focused($loopField, equals: .end).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Loop end (beats)")).onSubmit(commitLoop)
             Button {
                 if let beats = loopBeats {
@@ -48,6 +50,7 @@ struct WorkspaceTransportView: View {
             .padding(.horizontal, 12).padding(.vertical, 8)
             .onChange(of: loopStart) { _, _ in storeLoopDraft() }
             .onChange(of: loopEnd) { _, _ in storeLoopDraft() }
+            .onChange(of: loopField) { previous, _ in if previous != nil { commitLoop() } }
             .onChange(of: controller.documentID) { _, _ in
                 loopStart = "0"
                 loopEnd = "4"
@@ -61,8 +64,17 @@ struct WorkspaceTransportView: View {
     }
     private func commitLoop() {
         storeLoopDraft()
-        guard controller.audio.loopStart != nil else { return }
+        guard let start = PianoCamera.ticks(controller.loopStartBeat), let end = PianoCamera.ticks(controller.loopEndBeat),
+              LoopCommit.needsSend(soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd, start: start, end: end) else { return }
         Task { await controller.setLoop(enabled: true) }
+    }
+}
+
+enum LoopCommit {
+    /// An enabled loop sends a new range. The same sounding range is left alone.
+    static func needsSend(soundingStart: Int64?, soundingEnd: Int64?, start: Int64, end: Int64) -> Bool {
+        guard soundingStart != nil else { return false }
+        return soundingStart != start || soundingEnd != end
     }
 }
 

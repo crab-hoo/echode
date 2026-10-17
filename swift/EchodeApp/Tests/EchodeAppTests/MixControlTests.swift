@@ -278,6 +278,31 @@ struct MixControlTests {
         #expect(MixScale.spokenValue(.pan, -1) == "-100.0%")
         #expect(MixScale.spokenValue(.mute, 1) == nil)
         #expect(MixScale.spokenValue(.solo, 0) == nil)
+        let first = MixScale.adjusted(.gain, value: 0, direction: 1)
+        #expect(abs(MixScale.decibels(first) - (-59)) < 0.01)
+        #expect(MixScale.position(first) > 0.01)
+        #expect(MixScale.position(0.001) < 1e-6)
+        #expect(MixScale.adjusted(.gain, value: 0, direction: -1) == 0)
+        #expect(MixScale.adjusted(.gain, value: 0.001, direction: -1) == 0)
+        #expect(MixScale.adjusted(.gain, value: first, direction: -1) == 0)
+        #expect(abs(MixScale.decibels(MixScale.adjusted(.gain, value: 1, direction: -1)) - (-1)) < 0.01)
+        #expect(MixScale.adjusted(.gain, value: 4, direction: 1) == 4)
+        #expect(MixScale.adjusted(.pan, value: 0, direction: 1) == 0.05)
+        #expect(MixScale.adjusted(.pan, value: 1, direction: 1) == 1)
+        #expect(MixScale.adjusted(.mute, value: 0, direction: -1) == 1)
+        #expect(MixScale.adjusted(.mute, value: 1, direction: 1) == 0)
+    }
+
+    @Test func inspectorNumbersAcceptTheShownUnitAndSilence() {
+        #expect(MixEntry.number("−∞", unit: "dB", silence: true) == -.infinity)
+        #expect(MixEntry.number("-inf dB", unit: "dB", silence: true) == -.infinity)
+        #expect(MixEntry.number("−6 dB", unit: "dB", silence: true) == -6)
+        #expect(MixEntry.number("0,5", unit: "dB", silence: false) == 0.5)
+        #expect(MixEntry.number("50%", unit: "%", silence: false) == 50)
+        #expect(MixEntry.number("5 ms", unit: "ms", silence: false) == 5)
+        #expect(MixEntry.number("inf", unit: "dB", silence: true) == nil)
+        #expect(MixEntry.number("", unit: "dB", silence: true) == nil)
+        #expect(MixEntry.number("12 dB extra", unit: "dB", silence: false) == nil)
     }
 
     @Test func inspectorMeterFollowsPlaybackAndStopsAtTheFloor() {

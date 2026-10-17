@@ -201,6 +201,9 @@ struct ProjectTests {
         #expect(!fuzzyMatch("txr", in: "Add Track"))
         #expect(fuzzyMatch("取す", in: "取り消す"))
         #expect(noteName(60) == "C4")
+        #expect(noteName(0) == "C-1")
+        #expect(noteName(-1) == "-1")
+        #expect(noteName(128) == "128")
     }
 
     @Test func buffersStayReservedUntilTheirGpuFrameCompletes() {

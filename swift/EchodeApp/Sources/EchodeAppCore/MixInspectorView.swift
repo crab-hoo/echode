@@ -124,9 +124,8 @@ struct ControlNumberField: View {
     }
     private func reset() { draft = value.isFinite ? String(format: "%.2f", value) : "−∞"; invalid = false }
     private func submit() {
-        let normalized = draft.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
-        let parsed = silence && ["−∞", "-∞", "-inf"].contains(normalized.lowercased()) ? -Double.infinity : Double(normalized)
-        guard let parsed, silence && parsed == -.infinity || parsed.isFinite && parsed >= minimum && parsed <= maximum else { invalid = true; return }
+        guard let parsed = MixEntry.number(draft, unit: unit, silence: silence),
+              silence && parsed == -.infinity || parsed.isFinite && parsed >= minimum && parsed <= maximum else { invalid = true; return }
         invalid = false
         if abs(parsed - value) > 0.005 || parsed.isInfinite != value.isInfinite { commit(parsed) }
     }

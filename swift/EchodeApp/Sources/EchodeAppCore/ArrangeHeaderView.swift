@@ -140,14 +140,7 @@ final class ArrangeHeaderView: NSView {
                     control.setAccessibilityIdentifier(key)
                     control.setAccessibilityFrame(window.convertToScreen(convert(layout.rect(field).intersection(bounds), to: nil)))
                     control.actions.adjust = { [weak self] direction in
-                        let value = mix[field].value
-                        let next: Float
-                        switch field {
-                        case .gain: next = min(4, max(0, value == 0 && direction > 0 ? 0.001 : value * Float(pow(10, direction / 20))))
-                        case .pan: next = min(1, max(-1, value + Float(direction) * 0.05))
-                        case .mute, .solo: next = value == 0 ? 1 : 0
-                        }
-                        self?.mixActions?.set(id, field, next)
+                        self?.mixActions?.set(id, field, MixScale.adjusted(field, value: mix[field].value, direction: direction))
                     }
                     retainedControls[key] = control
                     return control

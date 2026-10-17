@@ -63,11 +63,46 @@ enum MixScale {
         case .mute, .solo: nil
         }
     }
+    /// One header accessibility step. Volume moves by 1 dB and pan by 5%.
+    /// The slider bottom is silence, so the first step up is 1 dB above the
+    /// −60 dB end. A downward step that would stay on that end becomes silence.
+    static func adjusted(_ field: MixerField, value: Float, direction: Double) -> Float {
+        switch field {
+        case .gain:
+            let floor = -60.0
+            let raised = Float(pow(10, (floor + 1) / 20))
+            guard value > 0 else { return direction > 0 ? raised : 0 }
+            let db = decibels(value) + direction
+            if db <= floor { return direction > 0 ? raised : 0 }
+            return min(4, Float(pow(10, db / 20)))
+        case .pan:
+            return min(1, max(-1, value + Float(direction) * 0.05))
+        case .mute, .solo:
+            return value == 0 ? 1 : 0
+        }
+    }
     /// Peak readout. Unlike fader `label`, values at the meter floor stay at silence
     /// instead of counting down through ever smaller dB numbers.
     static func meterLabel(_ peak: Float) -> String {
         guard peak > meterSilence else { return "−∞ dB" }
         return String(format: "%.1f dB", decibels(peak))
+    }
+}
+
+/// Inspector number text. Accepts the unit printed beside the field and the
+/// minus sign used by the silence label.
+enum MixEntry {
+    static func number(_ text: String, unit: String, silence: Bool) -> Double? {
+        var normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "−", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(of: ",", with: ".")
+        if !unit.isEmpty, normalized.lowercased().hasSuffix(unit.lowercased()) {
+            normalized = String(normalized.dropLast(unit.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if silence, ["-∞", "-inf", "-infinity"].contains(normalized.lowercased()) { return -.infinity }
+        guard let value = Double(normalized), value.isFinite else { return nil }
+        return value
     }
 }
 

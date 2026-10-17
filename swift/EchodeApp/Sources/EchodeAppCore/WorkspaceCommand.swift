@@ -166,6 +166,7 @@ extension FocusedValues {
 
 public func text(_ key: String) -> String { String(localized: String.LocalizationValue(key), bundle: .module) }
 func noteName(_ pitch: Int) -> String {
+    guard (0...127).contains(pitch) else { return String(pitch) }
     let names = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"]
     return "\(names[pitch % 12])\(pitch / 12 - 1)"
 }

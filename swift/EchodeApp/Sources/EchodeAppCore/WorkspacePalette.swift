@@ -28,7 +28,7 @@ struct WorkspacePalette: View {
             }
         }.padding(20).frame(width: 460, height: 460)
             .onAppear { searching = true; selected = available.first }
-            .onChange(of: query) { _, _ in selected = available.first }
+            .onChange(of: query) { _, _ in selected = retainedSelection(selected, in: available) }
     }
     private func move(_ offset: Int) { selected = movedSelection(selected, in: available, offset: offset) }
     private func run() {
@@ -42,4 +42,8 @@ func movedSelection<Value: Equatable>(_ selected: Value?, in items: [Value], off
     guard !items.isEmpty else { return nil }
     guard let selected, let index = items.firstIndex(of: selected) else { return offset < 0 ? items.last : items.first }
     return items[min(items.count - 1, max(0, index + offset))]
+}
+
+func retainedSelection<Value: Equatable>(_ selected: Value?, in items: [Value]) -> Value? {
+    if let selected, items.contains(selected) { selected } else { items.first }
 }
