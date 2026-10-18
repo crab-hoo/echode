@@ -47,3 +47,10 @@ func movedSelection<Value: Equatable>(_ selected: Value?, in items: [Value], off
 func retainedSelection<Value: Equatable>(_ selected: Value?, in items: [Value]) -> Value? {
     if let selected, items.contains(selected) { selected } else { items.first }
 }
+
+/// A file or plugin search keeps an empty selection empty. Return must not
+/// open whatever happens to be first after the query is cleared.
+func preservedSelection<Value: Equatable>(_ selected: Value?, in items: [Value]) -> Value? {
+    guard let selected else { return nil }
+    return items.contains(selected) ? selected : items.first
+}

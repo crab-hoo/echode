@@ -291,6 +291,55 @@ struct MixControlTests {
         #expect(MixScale.adjusted(.pan, value: 1, direction: 1) == 1)
         #expect(MixScale.adjusted(.mute, value: 0, direction: -1) == 1)
         #expect(MixScale.adjusted(.mute, value: 1, direction: 1) == 0)
+        var step = MixStep(basis: 1)
+        let raised = step.advance(.gain, direction: 1)
+        let raisedAgain = step.advance(.gain, direction: 1)
+        #expect(raised != nil && raisedAgain != nil && raised != raisedAgain)
+        #expect(step.adopt(1) == raisedAgain)
+        #expect(step.pending)
+        #expect(step.adopt(raisedAgain ?? 0) == raisedAgain)
+        #expect(!step.pending)
+    }
+
+    @Test func repeatedMixerStepsLandWhileTheFirstEditIsStillBusy() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-steps-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "Steps")
+        let track = try #require(controller.selection)
+        let before = controller.undoCount
+        let step1 = MixScale.adjusted(.gain, value: 1, direction: 1)
+        let step2 = MixScale.adjusted(.gain, value: step1, direction: 1)
+        let first = Task { await controller.setMixer(track, field: .gain, value: step1) }
+        var overlapped = false
+        for _ in 0..<1000 {
+            if controller.busy { overlapped = true; break }
+            await Task.yield()
+        }
+        let second = Task { await controller.setMixer(track, field: .gain, value: step2) }
+        #expect(await first.value)
+        #expect(await second.value)
+        #expect(abs(try #require(controller.mixer(track)).gain.value - step2) < 0.0001)
+        #expect(controller.undoCount == before + 2)
+        #expect(overlapped)
+        await controller.close()
+    }
+
+    @Test func editTurnWaitsForTheBodyAlreadyRunning() async {
+        let turn = EditTurn()
+        let gate = TurnGate()
+        var secondStarted = false
+        let first = Task { await turn.run { await gate.wait(); return 1 } }
+        await gate.entered()
+        let second = Task { await turn.run { secondStarted = true; return 2 } }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(!secondStarted)
+        #expect(turn.busy)
+        gate.resume()
+        #expect(await first.value == 1)
+        #expect(await second.value == 2)
+        #expect(!turn.busy)
     }
 
     @Test func inspectorNumbersAcceptTheShownUnitAndSilence() {
@@ -318,6 +367,31 @@ struct MixControlTests {
         #expect(!hold.holding(now: 10 + MeterLinkHold.duration))
         hold.note(playing: false, now: 12)
         #expect(!hold.holding(now: 12))
+    }
+}
+
+@MainActor
+private final class TurnGate {
+    private var started: CheckedContinuation<Void, Never>?
+    private var hold: CheckedContinuation<Void, Never>?
+    private var waiting = false
+    private var released = false
+    func wait() async {
+        waiting = true
+        let notify = started
+        started = nil
+        notify?.resume()
+        if released { return }
+        await withCheckedContinuation { hold = $0 }
+    }
+    func entered() async {
+        if waiting { return }
+        await withCheckedContinuation { started = $0 }
+    }
+    func resume() {
+        released = true
+        hold?.resume()
+        hold = nil
     }
 }
 

@@ -21,7 +21,7 @@ final class FileBrowserState {
     var query = "" {
         didSet {
             guard query != oldValue else { return }
-            selection = retainedSelection(selection, in: filtered.map(\.url))
+            selection = preservedSelection(selection, in: filtered.map(\.url))
         }
     }
     var selection: URL?

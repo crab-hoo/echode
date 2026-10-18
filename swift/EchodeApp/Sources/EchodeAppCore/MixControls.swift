@@ -89,6 +89,36 @@ enum MixScale {
     }
 }
 
+/// Header accessibility steps. The tree keeps showing the last snapshot while
+/// an edit is in flight, so the next step starts from the value already sent.
+struct MixStep: Equatable {
+    var basis: Float = 0
+    var pending = false
+
+    mutating func adopt(_ published: Float) -> Float {
+        if !pending || Self.same(basis, published) {
+            basis = published
+            pending = false
+        }
+        return basis
+    }
+
+    mutating func advance(_ field: MixerField, direction: Double) -> Float? {
+        let next = MixScale.adjusted(field, value: basis, direction: direction)
+        guard next != basis else { return nil }
+        basis = next
+        pending = true
+        return next
+    }
+
+    static func same(_ lhs: Float, _ rhs: Float) -> Bool {
+        if lhs == rhs { return true }
+        guard lhs.isFinite, rhs.isFinite else { return false }
+        let scale = max(abs(lhs), abs(rhs), 1)
+        return abs(lhs - rhs) <= scale * 1e-5
+    }
+}
+
 /// Inspector number text. Accepts the unit printed beside the field and the
 /// minus sign used by the silence label.
 enum MixEntry {

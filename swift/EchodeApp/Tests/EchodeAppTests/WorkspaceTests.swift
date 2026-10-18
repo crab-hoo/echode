@@ -174,6 +174,10 @@ struct WorkspaceTests {
         #expect(retainedSelection("c", in: ["a", "b"]) == "a")
         #expect(retainedSelection(nil as String?, in: ["a"]) == "a")
         #expect(retainedSelection("a", in: [String]()) == nil)
+        #expect(preservedSelection("b", in: ["a", "b"]) == "b")
+        #expect(preservedSelection("c", in: ["a", "b"]) == "a")
+        #expect(preservedSelection(nil as String?, in: ["a"]) == nil)
+        #expect(preservedSelection("a", in: [String]()) == nil)
         let precise = WheelScroll.points(x: 3, y: -2, precise: true, lineWidth: 72, lineHeight: 64)
         let lines = WheelScroll.points(x: 1, y: -3, precise: false, lineWidth: 72, lineHeight: 64)
         let rejected = WheelScroll.points(x: .nan, y: 1, precise: false, lineWidth: 72, lineHeight: 64)
@@ -204,7 +208,9 @@ struct WorkspaceTests {
         browser.query = "missing"
         #expect(browser.selection == nil)
         browser.query = ""
-        #expect(browser.selection == browser.files.first?.url)
+        #expect(browser.selection == nil)
+        browser.query = "notes"
+        #expect(browser.selection == nil)
         await browser.load(root.appendingPathComponent("missing"))
         #expect(browser.error != nil && !browser.loading && browser.folder == second)
     }

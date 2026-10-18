@@ -57,7 +57,7 @@ struct WorkspacePluginBrowser: View {
                 }
             }
         }
-            .onChange(of: query) { _, _ in selected = retainedSelection(selected, in: filtered.map(\.id)) }
+            .onChange(of: query) { _, _ in selected = preservedSelection(selected, in: filtered.map(\.id)) }
     }
     private func move(_ offset: Int) { selected = movedSelection(selected, in: filtered.map(\.id), offset: offset) }
     private func insert(closeAfter: Bool) {

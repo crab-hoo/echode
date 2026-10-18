@@ -70,6 +70,8 @@ final class PianoGridView: NSView {
     private var accessible: [PianoNote.ID: PianoAccessibleNote] = [:]
     private var gesture: PianoGesture?
     private var preview: PianoPreview?
+    /// Geometry already sent for a note whose snapshot has not caught up.
+    private var stepped: [PianoNote.ID: NoteGeometry] = [:]
     private var caretTick: Int64 = 0
     private var caretPitch = 60
     private(set) var camera = PianoCamera()
@@ -142,7 +144,7 @@ final class PianoGridView: NSView {
         let newGeometry = focus.flatMap { snapshot.pianoNote($0).map(NoteGeometry.init) }
         let needsReveal = trackChanged || (self.snapshot !== snapshot && oldGeometry != newGeometry) ||
             (self.focus != focus && !elements.contains(where: { $0.id == focus }))
-        if trackChanged { rememberViewport() }
+        if trackChanged { rememberViewport(); stepped = [:] }
         let memory = trackChanged && navigation?.permits(document: navigationDocument, track: track) == true ? navigation?.pianos[track] : nil
         let restoredFocus = memory != nil && memory?.focus == focus && memory?.geometry == focus.flatMap { snapshot.pianoNote($0).map(NoteGeometry.init) }
         if trackChanged { camera = memory?.camera ?? PianoCamera(); caretTick = 0; caretPitch = 60 }
@@ -153,6 +155,7 @@ final class PianoGridView: NSView {
         let needsRefresh = changed || self.focus != focus || self.key != key || self.busy != busy
         self.snapshot = snapshot; self.track = track; self.key = key; self.busy = busy
         self.focus = focus?.track == track ? focus : nil
+        syncStepped()
         if needsRefresh {
             // Clicking an already visible, partly clipped note must not move
             // the camera under a drag. Reveal after edits or offscreen focus.
@@ -200,6 +203,7 @@ final class PianoGridView: NSView {
               submittedFrame.piano.track == track, submittedFrame.piano.preview == nil else { return }
         let panePoint = convert(event.locationInWindow, from: nil)
         guard pianoLayout.grid.contains(panePoint) else { return }
+        stepped = [:]
         let point = pianoLayout.gridPoint(panePoint)
         caretTick = max(0, camera.tick(at: point.x) ?? 0); caretPitch = camera.pitch(at: point.y)
         if let hit = elements.last(where: { NSRect(x: Double($0.x), y: Double($0.y), width: max(2, Double($0.width)), height: Double($0.height)).contains(point) }) {
@@ -258,13 +262,27 @@ final class PianoGridView: NSView {
         return true
     }
     private func change(pitch: Int = 0, time: Int64 = 0, resize: Bool = false) {
-        guard !busy, let focus, let note = snapshot?.pianoNote(focus) else { return }
-        var value = NoteGeometry(note)
+        // The previous edit may still be in flight. Step from the geometry
+        // already sent, and let the controller queue the write.
+        guard let focus, let current = noteBasis(focus) else { return }
+        var value = current
         value.pitch = min(127, max(0, value.pitch + pitch))
         let moved = (resize ? value.length : value.start).addingReportingOverflow(time)
         guard !moved.overflow else { return }
         if resize { value.length = max(camera.grid, moved.partialValue) } else { value.start = max(0, moved.partialValue) }
-        if value.isValid { onEdit?(note.id, value) }
+        guard value.isValid, value != current else { return }
+        stepped[focus] = value
+        onEdit?(focus, value)
+    }
+    private func noteBasis(_ id: PianoNote.ID) -> NoteGeometry? {
+        if let geometry = stepped[id] { return geometry }
+        return snapshot?.pianoNote(id).map(NoteGeometry.init)
+    }
+    private func syncStepped() {
+        stepped = stepped.filter { id, geometry in
+            guard let note = snapshot?.pianoNote(id) else { return false }
+            return NoteGeometry(note) != geometry
+        }
     }
     private func cancelGesture() { gesture = nil; preview = nil; refresh() }
     /// Replaces the live feed. Equality is the document, not the playhead.
@@ -279,7 +297,7 @@ final class PianoGridView: NSView {
     private func rememberViewport() {
         guard let track, bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument, track: track) == true else { return }
         navigation?.pianos[track] = PianoViewportMemory(camera: camera, focus: focus,
-            geometry: focus.flatMap { snapshot?.pianoNote($0).map(NoteGeometry.init) })
+            geometry: focus.flatMap { noteBasis($0) })
     }
     private func refresh() {
         rememberViewport()

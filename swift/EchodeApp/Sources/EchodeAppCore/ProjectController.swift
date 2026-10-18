@@ -53,45 +53,49 @@ public final class ProjectController {
     @ObservationIgnored private var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
     @ObservationIgnored private let sendAudio: @Sendable (Document, AudioCommand) async throws -> AudioState
+    /// One document change at a time. A repeated step waits instead of being dropped.
+    @ObservationIgnored private let edits = EditTurn()
 
-    public init() { sendAudio = { try await $0.audio($1) } }
+    public init() {
+        sendAudio = { try await $0.audio($1) }
+        edits.onBusy = { [weak self] value in self?.busy = value }
+    }
 
     init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState) {
         self.sendAudio = sendAudio
+        edits.onBusy = { [weak self] value in self?.busy = value }
     }
 
     public func open(_ url: URL, creating: Bool = false) async {
-        guard !busy else { return }
         if faderPreview != nil { await finishFader(commit: false) }
-        guard !busy else { return }
-        if !creating, projectURL?.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() { return }
-        busy = true
-        defer { busy = false }
-        do {
-            let opened = try await Task.detached {
-                try creating ? Document(creating: url.path) : Document(opening: url.path)
-            }.value
-            let initial = try await opened.snapshot()
-            let initialAudio = try initial.audioState()
-            let previous = document
-            document = opened
-            audioRevision &+= 1
-            pendingPlayback = nil
-            documentID = UUID()
-            playback = opened.playbackFeed
-            transportGeneration = 0
-            audio = initialAudio
-            reportedAudioError = nil
-            loopStartBeat = 0
-            loopEndBeat = 4
-            projectURL = url
-            undoCount = 0
-            redoCount = 0
-            selection = nil
-            noteFocus = nil
-            publish(initial)
-            if let previous { await Task.detached { previous.shutdown() }.value }
-        } catch { report(error) }
+        await edits.run {
+            if !creating, self.projectURL?.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() { return }
+            do {
+                let opened = try await Task.detached {
+                    try creating ? Document(creating: url.path) : Document(opening: url.path)
+                }.value
+                let initial = try await opened.snapshot()
+                let initialAudio = try initial.audioState()
+                let previous = self.document
+                self.document = opened
+                self.audioRevision &+= 1
+                self.pendingPlayback = nil
+                self.documentID = UUID()
+                self.playback = opened.playbackFeed
+                self.transportGeneration = 0
+                self.audio = initialAudio
+                self.reportedAudioError = nil
+                self.loopStartBeat = 0
+                self.loopEndBeat = 4
+                self.projectURL = url
+                self.undoCount = 0
+                self.redoCount = 0
+                self.selection = nil
+                self.noteFocus = nil
+                self.publish(initial)
+                if let previous { await Task.detached { previous.shutdown() }.value }
+            } catch { self.report(error) }
+        }
     }
 
     @discardableResult
@@ -107,7 +111,7 @@ public final class ProjectController {
     }
 
     public func addTrack(name: String) async {
-        guard !busy, document != nil else { return }
+        guard document != nil else { return }
         guard await edit(["type": "track.add", "name": name]) else { return }
         if let last = tracks.last { selection = last.id }
     }
@@ -150,21 +154,21 @@ public final class ProjectController {
     public func undo() async {
         let target = documentID
         if faderPreview != nil { await finishFader(commit: false) }
-        guard !busy, documentID == target, undoCount > 0, let document else { return }
-        busy = true
-        defer { busy = false }
-        do { publish(try await document.undo()); undoCount -= 1; redoCount += 1 }
-        catch { report(error) }
+        await edits.run {
+            guard self.documentID == target, self.undoCount > 0, let document = self.document else { return }
+            do { self.publish(try await document.undo()); self.undoCount -= 1; self.redoCount += 1 }
+            catch { self.report(error) }
+        }
     }
 
     public func redo() async {
         let target = documentID
         if faderPreview != nil { await finishFader(commit: false) }
-        guard !busy, documentID == target, redoCount > 0, let document else { return }
-        busy = true
-        defer { busy = false }
-        do { publish(try await document.redo()); redoCount -= 1; undoCount += 1 }
-        catch { report(error) }
+        await edits.run {
+            guard self.documentID == target, self.redoCount > 0, let document = self.document else { return }
+            do { self.publish(try await document.redo()); self.redoCount -= 1; self.undoCount += 1 }
+            catch { self.report(error) }
+        }
     }
 
     /// Newest autosave first. An empty list means there is no commit yet, or the request failed.
@@ -178,32 +182,31 @@ public final class ProjectController {
     }
 
     public func close() async {
-        guard !busy else { return }
         let target = documentID
         if faderPreview != nil { await finishFader(commit: false) }
-        guard !busy, documentID == target else { return }
-        busy = true
-        let previous = document
-        document = nil
-        audioRevision &+= 1
-        pendingPlayback = nil
-        documentID = nil
-        playback = nil
-        transportGeneration = 0
-        if let previous { await Task.detached { previous.shutdown() }.value }
-        snapshot = nil
-        tracks = []
-        projectURL = nil
-        selection = nil
-        noteFocus = nil
-        clipFocus = nil
-        undoCount = 0
-        redoCount = 0
-        audio = AudioState()
-        reportedAudioError = nil
-        loopStartBeat = 0
-        loopEndBeat = 4
-        busy = false
+        await edits.run {
+            guard self.documentID == target else { return }
+            let previous = self.document
+            self.document = nil
+            self.audioRevision &+= 1
+            self.pendingPlayback = nil
+            self.documentID = nil
+            self.playback = nil
+            self.transportGeneration = 0
+            if let previous { await Task.detached { previous.shutdown() }.value }
+            self.snapshot = nil
+            self.tracks = []
+            self.projectURL = nil
+            self.selection = nil
+            self.noteFocus = nil
+            self.clipFocus = nil
+            self.undoCount = 0
+            self.redoCount = 0
+            self.audio = AudioState()
+            self.reportedAudioError = nil
+            self.loopStartBeat = 0
+            self.loopEndBeat = 4
+        }
     }
 
     public func togglePlayback() async {
@@ -281,34 +284,35 @@ public final class ProjectController {
 
     @discardableResult
     private func edit(_ fields: [String: Any], documentID: UUID? = nil, finishingPreview: Bool = false) async -> Bool {
-        guard !busy, faderPreview == nil || finishingPreview, let document, documentID == nil || documentID == self.documentID else { return false }
-        busy = true
-        defer { busy = false }
-        do {
-            let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
-            publish(try await document.perform(String(decoding: bytes, as: UTF8.self)))
-            undoCount += 1
-            redoCount = 0
-            return true
-        } catch { report(error); return false }
+        await edits.run {
+            guard self.faderPreview == nil || finishingPreview, let document = self.document,
+                  documentID == nil || documentID == self.documentID else { return false }
+            do {
+                let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+                self.publish(try await document.perform(String(decoding: bytes, as: UTF8.self)))
+                self.undoCount += 1
+                self.redoCount = 0
+                return true
+            } catch { self.report(error); return false }
+        }
     }
 
     private func history(_ command: HistoryCommand) async -> HistoryReport? {
-        guard !busy, let document else { return nil }
-        busy = true
-        defer { busy = false }
-        do {
-            let snapshot = try await document.history(command)
-            let report = try snapshot.historyReport()
-            if report.changed {
-                publish(snapshot)
-                undoCount += 1
-                redoCount = 0
+        await edits.run {
+            guard let document = self.document else { return nil }
+            do {
+                let snapshot = try await document.history(command)
+                let report = try snapshot.historyReport()
+                if report.changed {
+                    self.publish(snapshot)
+                    self.undoCount += 1
+                    self.redoCount = 0
+                }
+                return report
+            } catch {
+                self.report(error)
+                return nil
             }
-            return report
-        } catch {
-            report(error)
-            return nil
         }
     }
 
@@ -427,5 +431,38 @@ extension ProjectController {
         guard let clip = snapshot?.clipMix(id), clip.isAudio, fadeIn >= 0, fadeOut >= 0,
               clip.fadeIn != fadeIn || clip.fadeOut != fadeOut else { return false }
         return await edit(["type": "clip.set_fades", "clip": id.uuidString, "fade_in": fadeIn, "fade_out": fadeOut], documentID: documentID)
+    }
+}
+
+/// Runs document work one at a time. The body must not call `run` again.
+@MainActor
+final class EditTurn {
+    private var tail: Task<Void, Never>?
+    private var latest = 0
+    private(set) var busy = false
+    var onBusy: (@MainActor (Bool) -> Void)?
+
+    func run<T: Sendable>(_ body: @escaping @MainActor () async -> T) async -> T {
+        latest += 1
+        let mine = latest
+        let previous = tail
+        let result = Task { @MainActor in
+            await previous?.value
+            let value = await body()
+            if self.latest == mine {
+                self.setBusy(false)
+                self.tail = nil
+            }
+            return value
+        }
+        tail = Task { @MainActor in _ = await result.value }
+        setBusy(true)
+        return await result.value
+    }
+
+    private func setBusy(_ busy: Bool) {
+        guard self.busy != busy else { return }
+        self.busy = busy
+        onBusy?(busy)
     }
 }

@@ -132,8 +132,9 @@ final class ArrangeHeaderView: NSView {
                     control.setAccessibilityElement(true)
                     control.setAccessibilityRole(field == .gain || field == .pan ? .slider : .checkBox)
                     control.setAccessibilityLabel(text(title) + " " + name)
-                    control.setAccessibilityValue(NSNumber(value: mix[field].value))
-                    if let spoken = MixScale.spokenValue(field, mix[field].value) {
+                    let shown = control.actions.step.adopt(mix[field].value)
+                    control.setAccessibilityValue(NSNumber(value: shown))
+                    if let spoken = MixScale.spokenValue(field, shown) {
                         control.setAccessibilityValueDescription(spoken)
                     }
                     control.setAccessibilityMinValue(NSNumber(value: field == .pan ? -1 : 0))
@@ -141,8 +142,13 @@ final class ArrangeHeaderView: NSView {
                     control.setAccessibilityParent(child)
                     control.setAccessibilityIdentifier(key)
                     control.setAccessibilityFrame(window.convertToScreen(convert(layout.rect(field).intersection(bounds), to: nil)))
-                    control.actions.adjust = { [weak self] direction in
-                        self?.mixActions?.set(id, field, MixScale.adjusted(field, value: mix[field].value, direction: direction))
+                    control.actions.adjust = { [weak self, weak control] direction in
+                        guard let self, let control, let next = control.actions.step.advance(field, direction: direction) else { return }
+                        control.setAccessibilityValue(NSNumber(value: next))
+                        if let spoken = MixScale.spokenValue(field, next) {
+                            control.setAccessibilityValueDescription(spoken)
+                        }
+                        self.mixActions?.set(id, field, next)
                     }
                     retainedControls[key] = control
                     return control
@@ -159,7 +165,10 @@ final class ArrangeHeaderView: NSView {
 }
 
 @MainActor
-private final class MixAccessibilityActions { var adjust: ((Double) -> Void)? }
+private final class MixAccessibilityActions {
+    var adjust: ((Double) -> Void)?
+    var step = MixStep()
+}
 
 @MainActor
 private final class AccessibleMixControl: NSAccessibilityElement {

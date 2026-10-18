@@ -1,3 +1,5 @@
+import AppKit
+import Carbon.HIToolbox
 import CoreText
 import EchodeBridge
 import Foundation
@@ -166,6 +168,41 @@ struct PianoTests {
         let resolved = try #require(controller.snapshot?.pianoNote(far.id))
         #expect(resolved.id.placement == first.id.placement)
         await controller.editNote(first.id, geometry: NoteGeometry(start: .max, length: 1, pitch: 60))
+        #expect(controller.errorMessage == nil)
+        await controller.close()
+    }
+
+    @Test func repeatedArrowKeysMoveFromTheStepAlreadySent() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-steps-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "keys")
+        let track = try #require(controller.selection)
+        await controller.insertNote(pitch: 60, beat: 0, length: 1, on: track)
+        let snapshot = try #require(controller.snapshot)
+        let note = try #require(snapshot.pianoNeighbor(track: track, current: nil))
+        let count = controller.undoCount
+        let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
+        let document = controller.documentID
+        var sent: [Int] = []
+        var writes: [Task<Bool, Never>] = []
+        grid.onEdit = { id, geometry in
+            sent.append(geometry.pitch)
+            writes.append(Task { await controller.editNote(id, geometry: geometry, documentID: document) })
+        }
+        grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
+        let up = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: true, keyCode: UInt16(kVK_UpArrow)))
+        grid.keyDown(with: up)
+        grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: true)
+        grid.keyDown(with: up)
+        #expect(sent == [61, 62])
+        var applied: [Bool] = []
+        for write in writes { applied.append(await write.value) }
+        #expect(applied == [true, true])
+        #expect(controller.snapshot?.pianoNote(note.id)?.pitch == 62)
+        #expect(controller.undoCount == count + 2)
         #expect(controller.errorMessage == nil)
         await controller.close()
     }
