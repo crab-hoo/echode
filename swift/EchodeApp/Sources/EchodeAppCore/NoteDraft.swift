@@ -36,7 +36,10 @@ struct NoteDraft {
     }
 
     static func number(_ value: String, locale: Locale = .current) -> Double? {
-        let scanner = Scanner(string: value.trimmingCharacters(in: .whitespacesAndNewlines))
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "−", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+        let scanner = Scanner(string: normalized)
         scanner.locale = locale
         guard let number = scanner.scanDouble(), scanner.isAtEnd, number.isFinite else { return nil }
         return number

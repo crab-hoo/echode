@@ -24,6 +24,19 @@ struct InputRoutingTests {
             #expect(receiver.events.last === event)
         }
     }
+
+    @Test func pianoRollForwardsEscapeWhenNothingIsBeingDragged() throws {
+        let grid = PianoGridView(frame: .zero)
+        let receiver = KeyReceiver()
+        grid.nextResponder = receiver
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+            characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+            isARepeat: false, keyCode: UInt16(kVK_Escape)))
+        grid.keyDown(with: event)
+        #expect(receiver.events.count == 1)
+        #expect(receiver.events.last === event)
+    }
 }
 
 @MainActor

@@ -15,7 +15,7 @@ struct WorkspaceFileBrowser: View {
             if let folder = browser.folder {
                 HStack {
                     Button { Task { await browser.load(folder.deletingLastPathComponent()) } } label: { Image(systemName: "arrow.up") }
-                        .help(text("Parent Folder")).accessibilityLabel(text("Parent Folder")).disabled(browser.loading)
+                        .help(text("Parent Folder")).accessibilityLabel(text("Parent Folder")).disabled(browser.loading || !browser.canOpenParent)
                     Text(folder.lastPathComponent).font(.caption).lineLimit(1).help(folder.path)
                     Spacer()
                     Button { Task { await browser.load(folder) } } label: { Image(systemName: "arrow.clockwise") }

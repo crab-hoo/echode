@@ -80,7 +80,9 @@ final class ArrangeHeaderView: NSView {
         mixActions?.change(drag.field == .gain ? MixScale.gain(position) : Float(position * 2 - 1))
     }
     override func scrollWheel(with event: NSEvent) {
-        onScroll?(Double(event.scrollingDeltaX), Double(event.scrollingDeltaY))
+        let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
+            precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerTrack)
+        onScroll?(delta.x, delta.y)
     }
     override func magnify(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)

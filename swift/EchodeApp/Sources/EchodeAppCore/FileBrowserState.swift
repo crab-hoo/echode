@@ -18,8 +18,18 @@ final class FileBrowserState {
     private(set) var files: [BrowserFile] = []
     private(set) var loading = false
     private(set) var error: String?
-    var query = ""
+    var query = "" {
+        didSet {
+            guard query != oldValue else { return }
+            selection = retainedSelection(selection, in: filtered.map(\.url))
+        }
+    }
     var selection: URL?
+    var canOpenParent: Bool { folder.map { Self.canOpenParent(of: $0) } ?? false }
+    static func canOpenParent(of folder: URL) -> Bool {
+        let current = folder.standardizedFileURL
+        return current.deletingLastPathComponent().standardizedFileURL != current
+    }
     @ObservationIgnored private var request = UUID()
     var filtered: [BrowserFile] { files.filter { query.isEmpty || $0.url.lastPathComponent.localizedStandardContains(query) } }
 
@@ -37,7 +47,7 @@ final class FileBrowserState {
             }.value
             guard request == token else { return }
             guard !Task.isCancelled else { loading = false; return }
-            self.folder = folder; self.files = files; selection = nil; query = ""; loading = false
+            self.folder = folder; self.files = files; self.query = ""; selection = nil; loading = false
         } catch {
             guard request == token else { return }
             loading = false; self.error = error.localizedDescription

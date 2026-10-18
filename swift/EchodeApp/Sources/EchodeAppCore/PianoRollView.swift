@@ -178,8 +178,10 @@ final class PianoGridView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         cancelGesture()
-        camera.originBeat = max(0, camera.originBeat - Double(event.scrollingDeltaX) / camera.pixelsPerBeat)
-        camera.topPitch = min(127, max(0, camera.topPitch + Double(event.scrollingDeltaY) / camera.pixelsPerPitch))
+        let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
+            precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerPitch)
+        camera.originBeat = max(0, camera.originBeat - delta.x / camera.pixelsPerBeat)
+        camera.topPitch = min(127, max(0, camera.topPitch + delta.y / camera.pixelsPerPitch))
         refresh()
     }
     override func magnify(with event: NSEvent) {
@@ -227,7 +229,7 @@ final class PianoGridView: NSView {
         guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
         let shift = event.modifierFlags.contains(.shift)
         switch Int(event.keyCode) {
-        case kVK_Escape: cancelGesture()
+        case kVK_Escape: if gesture != nil || preview != nil { cancelGesture() } else { super.keyDown(with: event) }
         case kVK_Tab: if !navigate(backwards: shift) { super.keyDown(with: event) }
         case kVK_Return, kVK_ANSI_KeypadEnter: _ = insertAtCaret()
         case kVK_Delete, kVK_ForwardDelete: if !busy, let focus { onDelete?(focus) }

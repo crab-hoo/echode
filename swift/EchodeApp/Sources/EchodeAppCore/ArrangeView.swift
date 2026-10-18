@@ -154,9 +154,10 @@ public final class ArrangeView: NSView {
     public var rendererAvailable: Bool { renderer != nil }
 
     public override func scrollWheel(with event: NSEvent) {
-        let x = Double(event.scrollingDeltaX), y = Double(event.scrollingDeltaY)
-        if let onScroll { onScroll(x, y); return }
-        camera.scroll(x: x, y: y, trackCount: snapshot?.trackCount ?? 0, height: Double(bounds.height))
+        let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
+            precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerTrack)
+        if let onScroll { onScroll(delta.x, delta.y); return }
+        camera.scroll(x: delta.x, y: delta.y, trackCount: snapshot?.trackCount ?? 0, height: Double(bounds.height))
         refresh()
     }
 

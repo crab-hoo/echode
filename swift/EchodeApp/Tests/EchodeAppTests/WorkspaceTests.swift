@@ -37,6 +37,8 @@ struct WorkspaceTests {
     @Test func numericDraftsRejectPartialNonfiniteZeroAndOverflowValues() {
         #expect(NoteDraft.number(" 1.25 ", locale: Locale(identifier: "en_US")) == 1.25)
         #expect(NoteDraft.number("1,25", locale: Locale(identifier: "de_DE")) == 1.25)
+        #expect(NoteDraft.number("−1.5", locale: Locale(identifier: "en_US")) == -1.5)
+        #expect(NoteDraft.number("–2", locale: Locale(identifier: "ja_JP")) == -2)
         for value in ["1x", "NaN", "inf", "", "1.2.3"] { #expect(NoteDraft.number(value, locale: Locale(identifier: "en_US")) == nil) }
         var draft = NoteDraft()
         #expect(draft.geometry == NoteGeometry(start: 0, length: 705_600, pitch: 60))
@@ -172,6 +174,12 @@ struct WorkspaceTests {
         #expect(retainedSelection("c", in: ["a", "b"]) == "a")
         #expect(retainedSelection(nil as String?, in: ["a"]) == "a")
         #expect(retainedSelection("a", in: [String]()) == nil)
+        let precise = WheelScroll.points(x: 3, y: -2, precise: true, lineWidth: 72, lineHeight: 64)
+        let lines = WheelScroll.points(x: 1, y: -3, precise: false, lineWidth: 72, lineHeight: 64)
+        let rejected = WheelScroll.points(x: .nan, y: 1, precise: false, lineWidth: 72, lineHeight: 64)
+        #expect(precise.x == 3 && precise.y == -2)
+        #expect(lines.x == 72 && lines.y == -192)
+        #expect(rejected.x == 0 && rejected.y == 0)
     }
 
     @Test func folderNavigationFiltersProjectsAndLatestRequestWins() async throws {
@@ -188,8 +196,15 @@ struct WorkspaceTests {
         await browser.load(second)
         await older.value
         #expect(browser.folder == second && !browser.loading && browser.files.map(\.url.lastPathComponent) == ["Song.echode", "notes.txt"])
+        #expect(browser.canOpenParent && !FileBrowserState.canOpenParent(of: URL(fileURLWithPath: "/")))
+        browser.selection = browser.files.last?.url
         browser.query = "song"
         #expect(browser.filtered.count == 1 && browser.filtered[0].project && browser.filtered[0].icon == "waveform")
+        #expect(browser.selection == browser.filtered[0].url)
+        browser.query = "missing"
+        #expect(browser.selection == nil)
+        browser.query = ""
+        #expect(browser.selection == browser.files.first?.url)
         await browser.load(root.appendingPathComponent("missing"))
         #expect(browser.error != nil && !browser.loading && browser.folder == second)
     }

@@ -84,3 +84,12 @@ struct ArrangeRows: Sendable {
         return Int(value)
     }
 }
+
+/// Trackpad deltas are already points. A mouse wheel reports lines, and one
+/// line is one row or one beat before the camera divides by its scale.
+enum WheelScroll {
+    static func points(x: Double, y: Double, precise: Bool, lineWidth: Double, lineHeight: Double) -> (x: Double, y: Double) {
+        guard x.isFinite, y.isFinite, lineWidth.isFinite, lineHeight.isFinite, lineWidth > 0, lineHeight > 0 else { return (0, 0) }
+        return precise ? (x, y) : (x * lineWidth, y * lineHeight)
+    }
+}
