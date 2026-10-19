@@ -103,14 +103,8 @@ public final class ProjectController {
 
     @discardableResult
     public func importAudio(_ url: URL, on track: UUID? = nil) async -> Bool {
-        guard let target = track ?? selection, tracks.contains(where: { $0.id == target }) else { return false }
-        guard audio.tick >= 0 else { return false }
-        return await edit([
-            "type": "audio.import",
-            "track": target.uuidString,
-            "start": audio.tick,
-            "path": url.path,
-        ])
+        guard let request = captureAudioImport(url, on: track) else { return false }
+        return await importAudio(request)
     }
 
     public func addTrack(name: String) async {
@@ -345,7 +339,7 @@ public final class ProjectController {
     }
 
     @discardableResult
-    private func edit(_ fields: [String: Any], documentID: UUID? = nil, finishingPreview: Bool = false) async -> Bool {
+    func edit(_ fields: [String: Any], documentID: UUID? = nil, finishingPreview: Bool = false) async -> Bool {
         await edits.run {
             guard self.faderPreview == nil || finishingPreview, let document = self.document,
                   documentID == nil || documentID == self.documentID else { return false }

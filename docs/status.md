@@ -21,6 +21,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   - **P2-02（デバイスビューとチェイン操作）**: 着手中。
     トラックの FX ボタン、下部の FX ビュー、非モーダルの候補パネル、同一チェインの並べ替え・Command 複製・別トラックへのコピーを保存・Undo / Redo・再読込へ接続した（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
     CLAP のホストバイパスも FX 行から保存・Undo・再生・書出しへ接続した（[ADR 0120](decisions/0120-device-bypass.md)）。
+    共通サンプルブラウザの登録フォルダ全体の名前検索と、操作時のトラック・ライブ位置を保持する配置を接続した
+    （[ADR 0122](decisions/0122-sample-library-search-and-placement.md)）。選択時の単発試聴は未実装。
     プラグイン GUI・パラメーター編集・オフライン化・一括追加等は未接続。
 
 ## 利用時に残る制約

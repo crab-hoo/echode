@@ -61,7 +61,7 @@ check-base:
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
-# Named behavioral tests (including startup recovery and FX) must actually run; ignored/deleted tests cannot pass.
+# Named behavioral tests (including startup recovery, FX, and samples) must actually run; ignored/deleted tests cannot pass.
 check-product-contracts:
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \

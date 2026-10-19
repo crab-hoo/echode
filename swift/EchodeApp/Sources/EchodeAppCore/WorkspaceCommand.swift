@@ -130,7 +130,7 @@ final class WorkspaceSession {
         panel.begin { [self] response in
             state.choosingFile = false
             guard response == .OK, let url = panel.url else { return }
-            Task { await state.browser.load(url) }
+            Task { await state.browser.register(url) }
         }
     }
 

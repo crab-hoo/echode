@@ -125,6 +125,17 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-isolation"}
                         <= self.selected("crates/echode-engine/src/bypass.rs"))
 
+    def test_sample_browser_keeps_search_and_captured_target_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        self.assertEqual(contracts["sample-library-search"]["suite"], "SampleBrowserTests")
+        self.assertEqual(contracts["sample-import-target"]["suite"], "SampleBrowserTests")
+        self.assertIn("libraryFiles", contracts["sample-library-search"]["negative_control"]["old"])
+        self.assertIn("selection", contracts["sample-import-target"]["negative_control"]["new"])
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/SampleLibrary.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/AudioImportRequest.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+
     def test_model_changes_include_transitive_bridge_audio_and_measurements(self):
         checks = self.selected("crates/echode-model/src/time.rs")
         self.assertTrue({"check", "rtsan", "check-bridge-features", "check-bridge-asan",
@@ -291,7 +302,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",
                           "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui",
-                          "fx-bypass-ui", "plugin-bypass", "startup-recovery"})
+                          "fx-bypass-ui", "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]

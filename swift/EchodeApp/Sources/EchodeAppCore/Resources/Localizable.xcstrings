@@ -1,6 +1,30 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Sample Folders": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Sample Folders" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サンプルフォルダ" } }
+      }
+    },
+    "Remove Sample Folder": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Remove Sample Folder" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サンプルフォルダの登録解除" } }
+      }
+    },
+    "Search all samples": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Search all samples" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "全サンプルを検索" } }
+      }
+    },
+    "Some sample folders could not be read": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Some sample folders could not be read" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "読み込めないサンプルフォルダがあります" } }
+      }
+    },
     "Bypass": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Bypass" } },

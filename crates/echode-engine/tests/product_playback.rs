@@ -18,6 +18,17 @@ fn score() -> Project {
 }
 
 #[test]
+fn notes_without_an_instrument_do_not_create_an_implicit_synth() {
+    let project = score();
+    // These buffers cover this device-free regression only.
+    let (mut control, mut audio) = playback_pair(&project, 48_000, 128).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = ([0.0; 128], [0.0; 128]);
+    audio.render(&mut left, &mut right);
+    assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+}
+
+#[test]
 fn pause_and_stop_hold_the_position_and_seek_chases_a_note() {
     let project = score();
     // Scratch lengths belong to this probe, never to a product track cap.

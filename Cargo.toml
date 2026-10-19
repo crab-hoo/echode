@@ -4,6 +4,7 @@ members = [
     "crates/echode-sandbox",
     "crates/echode-plugin-host",
     "crates/echode-test-plugin",
+    "crates/echode-sine-pad",
     "crates/echode-draw",
     "crates/echode-engine",
     "crates/echode-audio-io",

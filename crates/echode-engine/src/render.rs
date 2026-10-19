@@ -1,11 +1,9 @@
 //! Offline export through product playback, with the same clip buses and fader.
 //! Only preparation and the writer callback may allocate.
 
-use crate::builtin::Device;
 use echode_model::Project;
 
 use crate::clock::tick_to_sample;
-use crate::synth::TestSynth;
 use crate::transport::PlaybackError;
 
 /// Scratch length for one offline block. The render can be any number of frames.
@@ -13,8 +11,7 @@ const BLOCK_FRAMES: u32 = 64;
 
 /// How many frames cover the score.
 ///
-/// A note's end includes the test synth's tail. An audio clip ends at the
-/// placement, with no extra tail.
+/// Covers note and audio placement ends. Device tails are added by the host.
 pub fn render_span_frames(project: &Project, sample_rate: u32) -> Result<u32, PlaybackError> {
     if sample_rate == 0 {
         return Err(PlaybackError::InvalidSampleRate);
@@ -57,8 +54,7 @@ pub fn render_span_frames(project: &Project, sample_rate: u32) -> Result<u32, Pl
     }
     let mut end = audio_end.max(0);
     if heard_notes {
-        let release = i64::from(TestSynth::new(sample_rate)?.tail_samples(sample_rate));
-        end = end.max(note_end.saturating_add(release));
+        end = end.max(note_end);
     }
     u32::try_from(end).map_err(|_| PlaybackError::Time)
 }
@@ -81,7 +77,7 @@ impl<E: std::fmt::Display> std::fmt::Display for OfflineError<E> {
 
 /// Renders `frames` of stereo, interleaved left then right.
 ///
-/// Uses each track's test synth and project fader values. The buffer length
+/// Uses placed audio and project fader values. The buffer length
 /// must be `frames * 2`.
 pub fn render_offline(
     project: &Project,
@@ -123,7 +119,7 @@ pub fn render_offline_blocks<E>(
     render_offline_blocks_with_clips(project, sample_rate, frames, block_frames, &[], on_block)
 }
 
-/// [`render_offline_blocks`] plus device-rate clips mixed after the synth and
+/// [`render_offline_blocks`] plus device-rate clips mixed
 /// before the fader. This path does not host CLAP devices. `echode render`
 /// uses product playback for a project that has one.
 pub fn render_offline_blocks_with_clips<E>(

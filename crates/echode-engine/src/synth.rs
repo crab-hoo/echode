@@ -116,7 +116,7 @@ impl TestSynth {
         })
     }
 
-    pub(crate) fn silence(&mut self) {
+    pub fn silence(&mut self) {
         for voice in &mut self.voices {
             voice.inner = Voice::new(self.sample_rate as f32, Instrument::SinePad);
             voice.note_id = None;
@@ -124,14 +124,8 @@ impl TestSynth {
         }
     }
 
-    pub(crate) fn sounding(&self, note_id: u32) -> bool {
-        self.voices
-            .iter()
-            .any(|voice| voice.note_id == Some(note_id) && voice.inner.is_active())
-    }
-
     /// Slots, including release tails, were reserved on the control thread.
-    pub(crate) fn carry_from(&mut self, old: &mut Self, covers: impl Fn(u32) -> Option<bool>) {
+    pub fn carry_from(&mut self, old: &mut Self, covers: impl Fn(u32) -> Option<bool>) {
         for old in old
             .voices
             .iter_mut()

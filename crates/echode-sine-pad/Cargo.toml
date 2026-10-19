@@ -1,0 +1,20 @@
+[package]
+name = "echode-sine-pad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Sine Pad CLAP instrument bundled with Echode"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clack-plugin = { workspace = true }
+clap-sys = "=0.5.0"
+echode-engine = { path = "../echode-engine" }
+echode-realtime = { path = "../echode-realtime" }
+
+[lints]
+workspace = true

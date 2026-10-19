@@ -825,6 +825,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "echode-sine-pad"
+version = "0.0.0"
+dependencies = [
+ "clack-plugin",
+ "clap-sys",
+ "echode-engine",
+ "echode-realtime",
+]
+
+[[package]]
 name = "echode-test-plugin"
 version = "0.0.0"
 dependencies = [

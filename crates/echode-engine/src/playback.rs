@@ -25,7 +25,7 @@ use crate::mix::{FaderState, Signal};
 use crate::plugins::{ChainDevice, HostGraph, PluginRoute, TrackChain, collect_deadline};
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
-use crate::{Device, PlaybackError, PlaybackIds, PlayedSpan, TestSynth, TrackFader};
+use crate::{ PlaybackError, PlaybackIds, PlayedSpan, TrackFader};
 
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
@@ -110,11 +110,9 @@ struct Status {
 
 struct Track {
     key: u32,
-    synth: TestSynth,
     plane: Vec<f32>,
     right: Vec<f32>,
-    /// Placed audio for this block, kept apart from the synth so an instrument
-    /// can replace the synth without eating the clips.
+    /// Placed audio to mix with the first instrument before downstream effects.
     clip_plane: Vec<f32>,
     clip_right: Vec<f32>,
     clip_stereo: bool,
@@ -123,8 +121,6 @@ struct Track {
     base_fader: TrackFader,
     meter: Arc<TrackMeter>,
     cache: Option<CachedTrack>,
-    /// Playback ids sorted for bounded lookup when carrying a live voice.
-    notes: Vec<(u32, i64, i64)>,
     clips: Vec<StoredClip>,
 }
 
@@ -191,7 +187,7 @@ struct Prepared {
     chase: bool,
     /// The plugin has been told about the cursor's sounding notes.
     plugin_holds: bool,
-    /// Note-ons chased from the previous plan. The synth already has these voices.
+    /// Note-ons chased from the previous plan. Retained helpers hold these voices.
     /// A plugin that was just spawned still needs them. Timeline note-ons stay in `events`.
     chased_ons: Vec<Event>,
     /// Installed with the event buffers. The callback does not change these alone.
@@ -257,16 +253,7 @@ impl Prepared {
         let mut chase_count = 0usize;
         let mut demands = Vec::with_capacity(plan.tracks.len());
         for track in &plan.tracks {
-            let mut synth = TestSynth::new(rate)?;
-            let demand =
-                crate::plan::voice_demand(&track.notes, i64::from(synth.tail_samples(rate)));
-            synth.prepare(demand.max(1), rate)?;
-            let mut notes: Vec<_> = track
-                .notes
-                .iter()
-                .map(|note| (note.note_id, note.on, note.off))
-                .collect();
-            notes.sort_unstable_by_key(|note| note.0);
+            let voices = track.notes.len();
             let mut clips: Vec<StoredClip> = loaded
                 .iter()
                 .filter(|clip| clip.track == track.track)
@@ -292,7 +279,6 @@ impl Prepared {
                     }
                 }
             }
-            let voices = demand;
             let demand = track_event_demand(track, loop_bounds, iterations, voices)?;
             event_count = event_count
                 .checked_add(demand.events)
@@ -314,7 +300,6 @@ impl Prepared {
                         .entry(track.track)
                         .or_insert_with(|| Arc::new(TrackMeter::new(track.track))),
                 ),
-                synth,
                 plane: vec![0.0; frames],
                 right: vec![0.0; frames],
                 clip_plane: vec![0.0; frames],
@@ -324,7 +309,6 @@ impl Prepared {
                 fader: FaderState::new(fader, rate),
                 base_fader: fader,
                 cache: sources.caches.get(&track.track).cloned(),
-                notes,
                 clips,
             });
         }
@@ -417,11 +401,6 @@ impl Prepared {
         }
         self.cursor.catch_up(&self.plan, sample);
         self.chase = true;
-        if silence {
-            for track in &mut self.tracks {
-                track.synth.silence();
-            }
-        }
         Ok(())
     }
 
@@ -483,16 +462,7 @@ impl Prepared {
                 if playing {
                     track.fader.carry(old.fader);
                 }
-                let notes = &track.notes;
-                track.synth.carry_from(&mut old.synth, |id| {
-                    let note = notes
-                        .binary_search_by_key(&id, |note| note.0)
-                        .ok()
-                        .and_then(|index| notes.get(index))?;
-                    let tail = i64::from(self.sample_rate) * 400 / 1000;
-                    (note.1 < sample && note.2.saturating_add(tail) > sample)
-                        .then_some(note.2 >= sample)
-                });
+
             }
         }
         if previous.plugin_holds {
@@ -505,48 +475,24 @@ impl Prepared {
         Ok(())
     }
 
-    /// Moves chased note-ons whose voice was carried into `chased_ons`.
-    ///
-    /// Playing them again would restart the built-in envelope. They stay available
-    /// for a plugin that has not heard them yet. Note-ons `play` adds afterwards,
-    /// including a loop restart, remain in `events`.
+    /// Chased notes belong only to newly created helpers. Retained helpers
+    /// already own their DSP voices and must not retrigger their envelopes.
     fn take_carried_note_ons(&mut self, count: usize) -> Result<usize, PlaybackError> {
         self.chased_ons.clear();
-        let mut kept = 0usize;
+        let mut kept = 0;
         for index in 0..count {
-            let event = *self
-                .events
-                .get(index)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            if event.is_note_on() && self.voice_is_sounding(event) {
+            let event = *self.events.get(index).ok_or(PlaybackError::BufferTooSmall)?;
+            if event.is_note_on() && self.plugin_holds {
                 if self.chased_ons.len() == self.chased_ons.capacity() {
                     return Err(PlaybackError::BufferTooSmall);
                 }
                 self.chased_ons.push(event);
-                continue;
+            } else {
+                *self.events.get_mut(kept).ok_or(PlaybackError::BufferTooSmall)? = event;
+                kept += 1;
             }
-            *self
-                .events
-                .get_mut(kept)
-                .ok_or(PlaybackError::BufferTooSmall)? = event;
-            kept += 1;
         }
         Ok(kept)
-    }
-
-    fn voice_is_sounding(&self, event: Event) -> bool {
-        let Some(id) = event.note_id() else {
-            return false;
-        };
-        let Some(key) = event.track_key() else {
-            return false;
-        };
-        self.track_indices
-            .binary_search_by_key(&key, |entry| entry.0)
-            .ok()
-            .and_then(|index| self.track_indices.get(index))
-            .and_then(|entry| self.tracks.get(entry.1))
-            .is_some_and(|track| track.synth.sounding(id))
     }
 
     fn render(
@@ -609,7 +555,6 @@ impl Prepared {
             let frames = left.len();
             let Track {
                 key,
-                synth,
                 plane,
                 right,
                 clip_plane,
@@ -657,7 +602,6 @@ impl Prepared {
                 .filtered
                 .get(..kept)
                 .ok_or(PlaybackError::BufferTooSmall)?;
-            synth.process(&mut [plane], filtered, self.sample_rate)?;
             add_stored_clips(
                 clips,
                 spans,
@@ -668,18 +612,8 @@ impl Prepared {
                 self.sample_rate,
             )?;
             *stereo = *clip_stereo;
-            for (((sample, right), clip), clip_right) in plane
-                .iter_mut()
-                .zip(right.iter_mut())
-                .zip(clip_plane.iter())
-                .zip(clip_right.iter())
-            {
-                if *clip_stereo {
-                    *sample *= std::f32::consts::FRAC_1_SQRT_2;
-                    *right = *sample + *clip_right;
-                }
-                *sample += *clip;
-            }
+            plane.copy_from_slice(clip_plane);
+            right.copy_from_slice(clip_right);
             hosts.submit(
                 *key,
                 Signal {
@@ -1186,7 +1120,7 @@ pub fn playback_pair_at(
 }
 
 /// Same transport as [`playback_pair`], and a helper for each resolved CLAP
-/// device. Devices whose id is not in `routes` stay on the built-in synth.
+/// device. Unresolved devices do not create a substitute instrument.
 pub fn playback_with_plugins(
     project: &Project,
     rate: u32,

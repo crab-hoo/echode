@@ -5,6 +5,7 @@
 //! marks in those buffers.
 
 mod event;
+pub mod plugin_capacity;
 
 pub use event::{
     ChokeEvent, Event, ExpressionEvent, ExpressionKind, NoteEvent, ParamEvent, Target, Transport,

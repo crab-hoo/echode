@@ -31,6 +31,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0050](../decisions/0050-arrange-viewport.md)、[ADR 0051](../decisions/0051-arrange-presentation.md)、[ADR 0107](../decisions/0107-mix-controls.md)）
 - **状態分離**: 文書・選択・確定編集を `ProjectController`、配置・表示設定・下書きを `WorkspaceState`、画面操作を `WorkspaceSession` に分け、共通の `WorkspaceCommand` を使う
   （[ADR 0053](../decisions/0053-workspace-ui-foundation.md)）
+- **共通サンプルブラウザ**: 登録フォルダはウィンドウ設定に保持し、素材一覧は非同期で作る。
+  入力イベントで文書・トラック・ライブ位置を確定し、既存の `audio.import` へ渡す。
+  検索対象・除外・再読込の規則は [ADR 0122](../decisions/0122-sample-library-search-and-placement.md)、単発試聴は未実装。
 - **P2 のアレンジ・ミックス編集**: 右ドラッグでクリップ選択、空白左ドラッグで編集区間選択、リージョン作成、複数選択ミキサー操作に対応する
   （[ADR 0117](../decisions/0117-workflow-interactions.md)、[ミックスの要件](../interaction-design.md#ミキサーの複数選択)）
 

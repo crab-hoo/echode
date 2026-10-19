@@ -4,7 +4,7 @@
 //! deadline. A missed deadline silences that track for the block. Main mono and
 //! stereo buses preserve their layout through the chain and into the fader.
 //!
-//! Effects hear the built-in synth plus placed audio. The first instrument
+//! Effects hear the upstream devices and placed audio. The first instrument
 //! hears silence and the track's notes; placed audio is added to its output,
 //! so a later effect hears the instrument and the clips together.
 
@@ -26,7 +26,7 @@ pub type PluginWorkgroup =
     Arc<dyn Fn() -> Result<echode_sandbox::WorkgroupHandoff, String> + Send + Sync>;
 use crate::mix::Signal;
 
-/// Where a CLAP id lives on disk, and whether it replaces the built-in synth.
+/// Where a CLAP id lives on disk, and its instrument role.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginRoute {
     pub clap_id: String,
@@ -93,7 +93,7 @@ struct TrackHost {
     inject_live: bool,
     /// This block's events, copied once so each stage can keep or skip note-ons.
     source_events: Vec<Event>,
-    /// Note-ons the built-in synth already holds. Only a new helper receives them.
+    /// Note-ons retained helpers already hold. Only a new helper receives them.
     chased_ons: Vec<Event>,
     chase_order: Vec<usize>,
     chase_scratch: Vec<Event>,
@@ -128,7 +128,7 @@ struct Stage {
     bypassed: bool,
     /// Dry main planes follow the upstream bus even if the wet port shape differs.
     bypass_output: Vec<Vec<f32>>,
-    /// This process has not yet been told about notes the synth is already playing.
+    /// This process has not yet been told about notes already held on this track.
     awaiting_notes: bool,
     /// The buffer just built includes chased note-ons. Promoted when submit succeeds.
     chase_in_buffer: bool,
@@ -655,7 +655,7 @@ impl HostGraph {
 
     /// Copies this track's input and publishes the first stage. Does not wait.
     ///
-    /// `source` is the built-in synth plus placed audio. `clips` is the placed
+    /// `source` contains placed audio. `clips` is the placed
     /// audio alone. The first instrument ignores `source` and receives notes;
     /// `clips` is added to that instrument's output. A track with no helper is
     /// left idle so the caller keeps `source`.
@@ -1212,7 +1212,7 @@ fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
 
 /// Spawns one device. `Ok(None)` is an unknown id or a missing path.
 /// An installed bundle/file that cannot be hosted is an error, so playback does not pretend the
-/// built-in synth is that plugin.
+/// a substitute instrument is that plugin.
 struct StageSize<'a> {
     frames: usize,
     event_cap: usize,

@@ -69,13 +69,14 @@ public final class WorkspaceState {
     var deviceEditor = false
     var choosingFile = false
     var draft = NoteDraft()
-    let browser = FileBrowserState()
+    let browser: FileBrowserState
     @ObservationIgnored let navigation = CanvasNavigationState()
     @ObservationIgnored private let defaults: UserDefaults
     private static let layoutKey = "workspace.layout.v1"
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        browser = FileBrowserState(defaults: defaults)
         layout = defaults.data(forKey: Self.layoutKey).flatMap { try? JSONDecoder().decode(WorkspaceLayout.self, from: $0) } ?? WorkspaceLayout()
         // Invalid saved values cannot affect frame sizes or native controls.
         if !layout.inspectorWidth.isFinite || !layout.browserWidth.isFinite || !layout.editorHeight.isFinite { layout = WorkspaceLayout() }
