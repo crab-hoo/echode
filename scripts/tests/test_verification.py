@@ -116,16 +116,44 @@ class PolicyTests(unittest.TestCase):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         self.assertEqual(contracts["fx-chain-ui"]["suite"], "DeviceChainTests")
         self.assertIn("track != target", contracts["fx-chain-ui"]["negative_control"]["old"])
+        self.assertEqual(contracts["fx-bypass-ui"]["suite"], "DeviceChainTests")
+        self.assertEqual(contracts["plugin-bypass"]["package"], "echode-plugin-host")
         for path in ("swift/EchodeApp/Sources/EchodeAppCore/DeviceChain.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceDeviceView.swift"):
             self.assertTrue({"check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
+        self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-isolation"}
+                        <= self.selected("crates/echode-engine/src/bypass.rs"))
 
     def test_model_changes_include_transitive_bridge_audio_and_measurements(self):
         checks = self.selected("crates/echode-model/src/time.rs")
         self.assertTrue({"check", "rtsan", "check-bridge-features", "check-bridge-asan",
                          "check-bridge-tsan", "check-bridge-miri", "spike-engine-smoke",
                          "spike-history", "spike-draw", "spike-bridge", "spike-render"} <= checks)
+
+    def test_startup_failure_uses_the_product_history_path_and_a_shutdown_negative_control(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "startup-recovery")
+        self.assertEqual(contract["package"], "echode-history")
+        self.assertEqual(contract["target"], ["--lib"])
+        self.assertIn("Request::Shutdown", contract["negative_control"]["old"])
+        self.assertTrue({"check", "check-product-contracts", "check-bridge-features",
+                         "check-bridge-asan", "check-bridge-tsan"}
+                        <= self.selected("crates/echode-history/src/autosave.rs"))
+
+    def test_tsan_runtime_is_checked_with_its_negative_control_and_pinned_binaries(self):
+        checks = {check["id"]: check for check in self.policy["checks"]}
+        self.assertIn("check-tsan-runtime", self.selected("spikes/bridge/sanitizers/Errno.c"))
+        self.assertIn("scripts/tsan_runtime.py", checks["check-bridge-tsan"]["inputs"])
+        for name in ("check-tsan-runtime", "check-bridge-tsan"):
+            inputs = checks[name]["tool_inputs"]
+            self.assertIn("target/toolchains/tsan/manifest.json", inputs)
+            for variant in ("baseline", "fixed"):
+                self.assertTrue(any(f"/{variant}/libclang_rt.tsan_" in path for path in inputs))
+        workflow = (ROOT / ".github/workflows/check.yml").read_text()
+        setup = [json.loads(value) for value in re.findall(r"fromJSON\('([^']+)'\)", workflow)]
+        self.assertTrue(any("check-tsan-runtime" in group and "check-bridge-tsan" in group for group in setup))
+        self.assertIn("target/toolchains/tsan/manifest.json", workflow)
+        self.assertIn("target/bridge/thread/errno/*.log", workflow)
 
     def test_bridge_changes_do_not_launch_unrelated_hardware(self):
         checks = self.selected("spikes/bridge/swift/CBridge.swift")
@@ -262,7 +290,8 @@ class PolicyTests(unittest.TestCase):
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",
-                          "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui"})
+                          "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui",
+                          "fx-bypass-ui", "plugin-bypass", "startup-recovery"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
@@ -398,6 +427,27 @@ class EvidenceTests(unittest.TestCase):
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = verify.verify(self.root, options)
         return code, invocation.call_count
+
+    def test_ignored_runtime_bytes_expire_only_the_dependent_check(self):
+        policy = verify.load_policy(self.root)
+        policy["checks"][1]["tool_inputs"] = ["target/runtime.dylib"]
+        (self.root / verify.POLICY).write_text(json.dumps(policy))
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
+        runtime = self.root / "target/runtime.dylib"
+        for data in (b"runtime-v1", b"runtime-v2"):
+            runtime.write_bytes(data)
+            self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 1))
+            self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 0))
+        runtime.unlink()
+        self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 1))
+
+    def test_tool_inputs_cannot_escape_the_repository_or_use_patterns(self):
+        policy = verify.load_policy(self.root)
+        for name in ("/tmp/outside", "../outside", "target/*"):
+            policy["checks"][0]["tool_inputs"] = [name]
+            (self.root / verify.POLICY).write_text(json.dumps(policy))
+            with self.assertRaisesRegex(ValueError, "exact repository-relative"):
+                verify.load_policy(self.root)
 
     def test_changed_paths_include_staged_untracked_deleted_and_renamed_files_with_spaces(self):
         self.git("mv", "src/example.rs", "src/renamed file.rs")

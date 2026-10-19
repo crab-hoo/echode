@@ -1,4 +1,4 @@
-.PHONY: app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-bridge-miri check-shell rtsan
+.PHONY: app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
 
 app:
 	bash scripts/build-app.sh
@@ -61,7 +61,7 @@ check-base:
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
-# Named behavioral tests (including FX chain input) must actually run; ignored/deleted tests cannot pass.
+# Named behavioral tests (including startup recovery and FX) must actually run; ignored/deleted tests cannot pass.
 check-product-contracts:
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
@@ -165,6 +165,10 @@ check-bridge-asan:
 
 check-bridge-tsan:
 	bash scripts/check-bridge-sanitizer.sh thread
+
+# No Echode code: require the errno lifetime fix and detection of a real race.
+check-tsan-runtime:
+	bash scripts/check-tsan-runtime.sh
 
 check-bridge-miri:
 	bash scripts/check-bridge-miri.sh

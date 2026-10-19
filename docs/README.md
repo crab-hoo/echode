@@ -46,6 +46,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - CLAP バンドル・停止時リセット・自然な発音: [ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0099](decisions/0099-transport-plugin-state.md)、[ADR 0106](decisions/0106-natural-plugin-onsets.md)。
 - macOS ヘルパー通知・Workgroup 引き継ぎ: [2026-10-17 macOS 境界監査](reviews/2026-10-17-macos-helper-audit.md)、[ADR 0111](decisions/0111-macos-helper-notices.md)、[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)。
 - フォルダ型ドラムラックと FX チェイン: [ADR 0116](decisions/0116-folder-drum-rack.md)、[ADR 0118](decisions/0118-track-fx-chain-editing.md)。
+- CLAP のホストバイパス・保存形式 4: [ADR 0120](decisions/0120-device-bypass.md)。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 
@@ -61,3 +62,4 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 - macOS 27 / M4 基準と最適化監査: [2026-10-17 macOS 27 最適化監査](reviews/2026-10-17-macos27-optimization-audit.md)、[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)。
 - 検査基盤とトークン効率化: [ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0094](decisions/0094-agent-development-foundation.md)、[ADR 0100](decisions/0100-scoped-verification.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)。
+- 起動復旧の終了待ち・Darwin errno の検査ランタイム修正: [ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)。

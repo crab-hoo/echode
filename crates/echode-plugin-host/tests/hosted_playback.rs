@@ -1158,6 +1158,131 @@ fn play_left(
     left
 }
 
+#[test]
+fn contract_host_bypass_keeps_dry_audio_and_silences_instruments_under_rtsan() {
+    let (project, track) = score();
+    let frames = 64;
+    let dry = play_left(&project, None, track.raw(), Some(0.25), frames);
+    for instrument in [false, true] {
+        let id = Id::from_raw(91);
+        let mut route = effect_route(&plugin_dylib());
+        // Bypass must not process even a discarded lifecycle block.
+        route.fault = Some("process".into());
+        if instrument {
+            route.clap_id = "dev.echode.test-instrument".into();
+            route.instrument = true;
+        }
+        let with = project.add_clap_device(track, id, &route.clap_id).unwrap();
+        let bypassed = with.set_device_bypassed(id, true).unwrap();
+        let heard = play_left(
+            &bypassed,
+            Some(route.clone()),
+            track.raw(),
+            Some(0.25),
+            frames,
+        );
+        let expected = if instrument {
+            vec![0.25 * std::f32::consts::FRAC_1_SQRT_2; frames]
+        } else {
+            dry.clone()
+        };
+        assert_close(&heard, &expected);
+        if instrument {
+            assert!(
+                play_left(&bypassed, Some(route), track.raw(), None, frames)
+                    .iter()
+                    .all(|sample| *sample == 0.0)
+            );
+        }
+    }
+}
+
+#[test]
+fn bypassed_runs_preserve_stereo_audio_between_active_effects_under_rtsan() {
+    let path = plugin_dylib();
+    for flags in [
+        [true, true, true],
+        [false, true, false],
+        [true, false, true],
+    ] {
+        for block in [7usize, 64] {
+            // Fixture partitions, not a device/frame limit.
+            let (mut project, track) = Project::new().add_track("bypass chain");
+            for bypassed in flags {
+                let device = Id::generate();
+                project = project
+                    .add_clap_device(track, device, "dev.echode.test-gain")
+                    .unwrap()
+                    .set_device_bypassed(device, bypassed)
+                    .unwrap();
+            }
+            let (mut control, mut audio) =
+                playback_with_plugins(&project, 48000, block, &host_bin(), &[effect_route(&path)])
+                    .unwrap();
+            control.set_clip_loader(Arc::new(move |_, _| {
+                Ok(vec![LoadedClip {
+                    track: track.raw(),
+                    start_sample: 0,
+                    samples: vec![0.125; 256].into(),
+                    right: Some(vec![-0.25; 256].into()),
+                    fade_in: 0,
+                    fade_out: 0,
+                }])
+            }));
+            control.replace(&project).unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let gain = 2.0f32.powi(flags.into_iter().filter(|bypassed| !bypassed).count() as i32);
+            let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+            for _ in 0..3 {
+                render_content(&mut audio, &mut left, &mut right);
+                assert!(!control.status().failed);
+                assert!(control.plugin_failure().is_none());
+                assert!(left.iter().all(|sample| *sample == 0.125 * gain));
+                assert!(right.iter().all(|sample| *sample == -0.25 * gain));
+                control.service();
+            }
+        }
+    }
+}
+
+#[test]
+fn reenabling_bypass_resets_stale_voices_and_chases_current_notes_under_rtsan() {
+    for fault in ["tail", "tail-legacy"] {
+        let (project, track, note, mut control, mut audio) =
+            tail_player(&plugin_dylib(), 64, 0, fault);
+        let device = project.tracks()[0].devices[0].id;
+        control.command(PlaybackCommand::Play).unwrap();
+        assert!(first_sample(&mut audio, 64) > 0.0);
+        let bypassed = project.set_device_bypassed(device, true).unwrap();
+        control.replace(&bypassed).unwrap();
+        for _ in 0..8 {
+            assert_eq!(first_sample(&mut audio, 64), 0.0);
+            control.service();
+        }
+        control.replace(&project).unwrap();
+        assert!(
+            first_sample(&mut audio, 64) > 0.0,
+            "current notes must be chased after resetting"
+        );
+        control.service();
+        control.replace(&bypassed).unwrap();
+        assert_eq!(first_sample(&mut audio, 64), 0.0);
+        control.service();
+        let removed = bypassed.delete_note(track, note).unwrap();
+        control.replace(&removed).unwrap();
+        assert_eq!(first_sample(&mut audio, 64), 0.0);
+        control.service();
+        control
+            .replace(&removed.set_device_bypassed(device, false).unwrap())
+            .unwrap();
+        assert_eq!(
+            first_sample(&mut audio, 64),
+            0.0,
+            "the helper must not resume its stale voice or tail"
+        );
+    }
+}
+
 fn assert_close(heard: &[f32], expected: &[f32]) {
     assert_eq!(heard.len(), expected.len());
     for (heard, expected) in heard.iter().zip(expected) {
@@ -1277,6 +1402,52 @@ fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
     assert!(control.plugin_failure().is_none());
     assert_eq!(left, before);
     assert_eq!(right, before);
+}
+
+#[test]
+fn rejected_unbypass_preserves_the_stereo_dry_graph_under_rtsan() {
+    let (project, track) = Project::new().add_track("bypassed mono instrument");
+    let device = Id::generate();
+    let project = project
+        .add_clap_device(track, device, "dev.echode.test-mono")
+        .unwrap();
+    let bypassed = project.set_device_bypassed(device, true).unwrap();
+    let route = PluginRoute {
+        clap_id: "dev.echode.test-mono".into(),
+        path: plugin_dylib(),
+        instrument: true,
+        fault: None,
+        state: None,
+    };
+    let block = 64; // Scratch for this regression, not an engine limit.
+    let (mut control, mut audio) =
+        playback_with_plugins(&bypassed, 48_000, block, &host_bin(), &[route]).unwrap();
+    control.set_clip_loader(Arc::new(move |_, _| {
+        Ok(vec![LoadedClip {
+            track: track.raw(),
+            start_sample: 0,
+            samples: vec![0.125; 1024].into(),
+            right: Some(vec![-0.25; 1024].into()),
+            fade_in: 0,
+            fade_out: 0,
+        }])
+    }));
+    control.replace(&bypassed).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+    render_content(&mut audio, &mut left, &mut right);
+    let before = (left.clone(), right.clone());
+    assert_eq!(before, (vec![0.125; block], vec![-0.25; block]));
+    let error = control
+        .replace(&project)
+        .expect_err("implicit stereo downmix was accepted");
+    assert!(error.to_string().contains("bus mapping"), "{error}");
+    render_content(&mut audio, &mut left, &mut right);
+    assert_eq!((left.clone(), right.clone()), before);
+    assert!(!control.status().failed);
+    control.replace(&bypassed).unwrap();
+    render_content(&mut audio, &mut left, &mut right);
+    assert_eq!((left, right), before);
 }
 
 #[test]

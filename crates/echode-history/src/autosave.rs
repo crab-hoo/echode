@@ -158,6 +158,9 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
         Ok(repo) => repo,
         Err(error) => {
             while let Ok(request) = incoming.recv() {
+                if matches!(request, Request::Shutdown) {
+                    break;
+                }
                 fail(request, error.clone());
             }
             return;

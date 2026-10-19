@@ -25,6 +25,8 @@ make debug-report
   `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 - **ツール不足・ビルド失敗**:
   `doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`、動的検査は `make setup-bridge`。
+  `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、同じ引数へ `-v` を加えて `target/` のログへ保存し、`error:` 周辺を読む。
+  Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
 - **macOS 27 / M4 ビルド基準の不一致**:
   Cargo 生成物は `xcrun vtool -show-build <バイナリ>` と `lipo -archs` で確認する（単体の `rustc --print deployment-target` は `.cargo/config.toml` を読まない）。
   Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。
@@ -52,6 +54,9 @@ make debug-report
   定期保存確認による一時バイパス排除（[ADR 0101](decisions/0101-live-output-discontinuities.md)）、音声側の排他グラフ所有（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）、5 ms の停止波形減衰（[ADR 0103](decisions/0103-live-stop-waveform.md)）、待機しない後片付け（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）のどの境界かを確認する。
 - **CLAP が鳴らない・走査失敗**:
   プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。
+- **バイパスの表示と音が一致しない・解除後に古い音が鳴る**:
+  文書のデバイス ID と `bypassed`、計画の要求・適用版、プラグイン失敗、ドライ／ウェットの平面数を確認する。
+  バイパスした音源ではノートが無音でも同じトラックの配置音声は鳴る。解除時のリセットと現在のノート追跡を確認する（[ADR 0120](decisions/0120-device-bypass.md)）。
 - **空白への移動・再開で以前の残響が鳴る**:
   停止・シーク時の `active.reset()`、`NOTE_CHOKE`、宣言された全 MIDI ポートへの CC120 / All Notes Off を確認し、自然な余韻と区別する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
 - **左右の消失・定位変化・ループやフェーダーの段差**:
@@ -63,6 +68,12 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **起動直後から新規作成・開くが無効で「変更を保存中」のまま**:
+  前回プロジェクトの自動復元と `ProjectController.busy` を確認する。
+  `sample` の読取で復元側が `Autosave::drop` の join、`echode-autosave` が初期化失敗後の受信待ちなら、終了要求を無視する旧不具合と一致する。
+  初期化失敗中も `Shutdown` で終了し、復元エラーとパッケージロックの解放を返す必要がある。
+  `startup-recovery` は子プロセスの停止防止期限でこの循環待ちを検出し、Swift の `failedStartupOpenReenablesNewAndOpen` はエラー後の新規作成を確認する。
+  復元対象の削除や前回パスの初期化で問題を隠さず、エラーと Git の状態を切り分ける。
 - **直したのに画面が変わらない**:
   `doctor` でアプリが `stale` / `unknown` なら `make app` を実行し、`target/Echode.app` を開き直す。
 - **FX が違うトラックへ入る・並びが変わらない**:
@@ -76,13 +87,17 @@ make debug-report
   ヘッダの `keyDown` から上位への Space 転送、マウスホイールの行単位とトラックパッドのポイント単位（[ADR 0050](decisions/0050-arrange-viewport.md)）、ピアノロールのドラッグ中のみの Escape と連続矢印キー（[ADR 0052](decisions/0052-piano-keyboard.md)）、空選択時の検索解除（[ADR 0053](decisions/0053-workspace-ui-foundation.md)）、ループ欄の確定時送信（[ADR 0055](decisions/0055-loop-metronome.md)）を確認する。
 - **保存・復旧・Undo / Redo・MCP**:
   バックグラウンドのプラグイン状態保存は Undo に積まず Redo も消さない（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
+  CLI 書出しは `DocumentHost` の復旧スナップショットを使う。
+  テストで既存パッケージの JSON だけを上書きしても保存済み履歴は置き換わらない。文書の編集経路を使うか、別の入力は新しいパッケージへ書く。
   MCP（`echode mcp SOCKET`）は接続先の `echode serve PACKAGE SOCKET` と同じビルド・絶対ソケットパス・API 版 1 を確認し、stdout へログを混ぜない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
 
 ### サニタイザー（TSan / ASan / RTSan）
 
 - **TSan の既知の環境要因と製品不具合の切り分け**:
   1. UI テストは機器なしの応答差し替え口を使い、実 HAL を開かない（`target/macos27-audit/tsan-hal-before.log`）。
-  2. Rust 標準ライブラリの終了済みスレッドと新規スレッドの `errno` 競合は、製品を含まない最小 staticlib + Swift でも再現している（`target/m4-build-audit/`、[ADR 0114](decisions/0114-m4-build-baseline.md)）。
+  2. 終了済みと新規のスレッドの `errno` 誤検出は、C のみでも再現し、検査ランタイムの寿命処理を修正した（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
+     `target/bridge/thread/errno/` の baseline・fixed・real-race の対照と、同じランタイムのロード証拠を確認する。
+     準備が古い時は `make setup-bridge` を使う。取得済みソースの再ビルドには `python3 scripts/tsan_runtime.py --prepare` も使える。
   いずれも抑制（suppression）や不要なロックで隠さず、スタックと対象アドレスを確認して製品データの競合と区別する。
 
 ## 再現と引き継ぎに残す情報

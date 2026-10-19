@@ -41,7 +41,7 @@ make verify
 通常の `make check` は `check-verification`、`check-base`、`check-product-contracts` を順に 1 回ずつ実行する。
 `scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、基盤と製品契約は別の結果として記録する。
 
-- `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、macOS 27 / M4 のビルド基準と生成物の検査（[ADR 0114](decisions/0114-m4-build-baseline.md)）。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
+- `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク（`target/` の手元の証拠は除く）、macOS 27 / M4 のビルド基準と生成物の検査（[ADR 0114](decisions/0114-m4-build-baseline.md)）。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
 - `check` (`check-base`): Rust / Swift のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
@@ -50,8 +50,10 @@ make verify
 - `rtsan`: テスト用シンセ、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作（ロック、確保、ブロックするシステムコール）を検出する。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
+- `check-tsan-runtime`: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
 - `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
-- `check-bridge-tsan`: 標準ライブラリを含む製品の Rust 静的ライブラリと Swift を同じプロセスで競合検査する。
+- `check-bridge-tsan`: 標準ライブラリを含む製品の Rust と Swift を、同じ固定ランタイムで競合検査する。
+  読み込まれたランタイムも照合する（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
 - `check-bridge-miri`: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
 
 ## 実機・計測・ネットワークの検査
@@ -89,6 +91,7 @@ make verify
 - `deferred`: 理由付きの未実行。合格ではない。
 
 検査ごとの `inputs` と `packages`（Cargo のローカル path 依存を再帰的に含む）、共通設定、ツールの版と解決パスをハッシュ化して識別する。
+`tool_inputs` に指定した検査専用ランタイムは、Git の対象外でも実バイトをハッシュ化する。
 文書だけの変更は製品コードの検査結果を失効させない。
 `device_context` を持つ実機計測は、`system_profiler` で読み取った既定出力デバイスのメタデータのハッシュも識別に含める。
 `target/verification/.lock` の排他ロックを保持する間はファイル変更を待つ。`make doctor` はロックの保持状態と各検査結果の鮮度（`current` / `partial` / `stale`）を確認する。
@@ -97,6 +100,9 @@ make verify
 
 新しい環境では `make setup`、動的検査には `make setup-bridge` を実行する。
 製品のコンパイラーは `rust-toolchain.toml`、橋渡しの動的検査（ASan / TSan / Miri）は `scripts/bridge-toolchain.env` の固定 nightly を使う（[ADR 0044](decisions/0044-swift-bridge.md)）。
+TSan のセットアップには CMake と Ninja も必要で、固定した公式 LLVM のソースを取得する。
+検査専用ランタイムの準備・再生成は `make setup-bridge`、取得済みソースだけの再ビルドは `python3 scripts/tsan_runtime.py --prepare` を使う。
+Xcode や製品アプリは変更しない。通常検査はネットワークを使わず、古い準備は失敗として報告する。
 
 `.cursor/hooks.json` の `preToolUse` は編集ツールをロック解除まで待たせ、`stop` は `completed` イベントで `scripts/verify.py` を呼ぶ。
 `.codex/hooks.json` もアダプターを備えるが、設定ファイルの存在だけでホスト側のフック発火済みとは扱わない。フックのない環境でも `make verify` は必須である。

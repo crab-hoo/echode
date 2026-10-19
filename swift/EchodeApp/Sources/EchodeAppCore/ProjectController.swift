@@ -120,7 +120,7 @@ public final class ProjectController {
     }
 
     func deviceRows(on track: UUID) -> [TrackDevice] {
-        (snapshot?.devices(on: track) ?? []).map { TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin]) }
+        (snapshot?.devices(on: track) ?? []).map { TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed) }
     }
 
     func rememberPluginNames(_ listings: [PluginListing]) {
@@ -159,6 +159,9 @@ public final class ProjectController {
         guard self.documentID == documentID else { return false }
         var command: [String: Any]
         switch change {
+        case .bypass(let device, let bypassed):
+            guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.bypassed != bypassed else { return false }
+            command = ["type": "device.bypass", "device": device.uuidString, "bypassed": bypassed]
         case .reorder(let device, let before):
             guard let snapshot, let owner = tracks.first(where: { snapshot.devices(on: $0.id).contains(where: { $0.id == device }) }) else { return false }
             let ids = snapshot.devices(on: owner.id).map(\.id)

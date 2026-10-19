@@ -11,6 +11,68 @@ fn scratch() -> std::path::PathBuf {
 }
 
 #[test]
+fn contract_failed_initial_autosave_returns_and_releases_the_package() {
+    const CHILD: &str = "ECHODE_FAILED_INITIAL_AUTOSAVE";
+    if let Some(directory) = std::env::var_os(CHILD) {
+        let directory = std::path::PathBuf::from(directory);
+        let error = DocumentHost::open(&directory)
+            .err()
+            .expect("invalid Git metadata must fail");
+        assert!(!error.to_string().is_empty());
+        assert_eq!(crate::read_package(&directory).unwrap(), Project::new());
+        // Only this test's deliberately invalid metadata is removed.
+        std::fs::remove_dir_all(directory.join(".git")).unwrap();
+        let host = DocumentHost::open(&directory).expect("the failed open must release its lock");
+        host.perform(Command::AddTrack {
+            name: "recovered".into(),
+        })
+        .unwrap();
+        assert_eq!(host.snapshot().tracks()[0].name, "recovered");
+        drop(host);
+        return;
+    }
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    std::fs::create_dir(directory.join(".git")).unwrap();
+    std::fs::create_dir(directory.join(".git/config")).unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .env(CHILD, &directory)
+        .args([
+            "--exact",
+            "host::tests::contract_failed_initial_autosave_returns_and_releases_the_package",
+            "--nocapture",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Bound a deadlock, not a performance measurement. The child owns no UI or hardware.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let completed = loop {
+        if child.try_wait().unwrap().is_some() {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let output = child.wait_with_output().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert!(
+        completed,
+        "failed initial autosave deadlocked during shutdown"
+    );
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn an_edit_is_still_there_after_the_host_is_dropped() {
     let directory = scratch();
     write_package(&directory, &Project::new()).unwrap();

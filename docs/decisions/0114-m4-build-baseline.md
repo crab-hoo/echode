@@ -46,3 +46,6 @@ Apple M4 / macOS 27.0 / Swift 6.4 / `-O`。既存の C ABI 橋渡しプローブ
 証拠は `target/m4-build-audit/tsan-errno-product-before.log`、`tsan-errno-verification-before.log`、`verification-before-errno.json`、独立再現は `errno-probe/src/lib.rs`・`errno-probe/Main.swift`・`errno-standalone.log`。以前のデバッグ資料の同型の警告に、現在の環境の証拠を追加する。
 
 同じ正式な入口の再実行では、自動検査9項目、画面なしの `spike-arrange-frame` / `spike-piano-frame`、`spike-bridge` が合格した。基盤89テストと製品契約27件・負の対照27件を含む。TSan の警告の解決やリモート CI の成功とは扱わない。配布アプリの組立・起動、実機・聴感検査は行っていない。選択された実機項目はユーザー担当として見送り、`spike-render` の時間計測と依存版追加のない `advisories` も理由付きで未実行を記録した。最新の再利用・見送りの有効性は検査レポートを参照する。
+
+2026-10-19 追記: errno 警告は C のみでも再現し、スレッド寿命の追跡不足を修正した検査専用ランタイムへ移行する。
+当時の失敗・再実行の記録は保持する。原因・対照・現在の入口は [ADR 0121](0121-startup-recovery-and-errno-validation.md) を参照する。

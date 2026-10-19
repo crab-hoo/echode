@@ -1,6 +1,12 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Bypass": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Bypass" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "バイパス" } }
+      }
+    },
     "Arrange": {
       "localizations": {
         "en": {

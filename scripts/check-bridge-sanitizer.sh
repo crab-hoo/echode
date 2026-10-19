@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# UI-2: TSan instruments Rust, dependencies/std, and Swift with one Apple runtime.
+# UI-2: TSan instruments Rust, dependencies/std, and Swift with one pinned runtime.
 # AddressSanitizer dispatches to its explicitly separate-language checks.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,6 +13,7 @@ esac
 bridge_root="$PWD"
 bridge_output="$bridge_root/target/bridge/$bridge_sanitizer"
 bridge_target=aarch64-apple-darwin
+bridge_tsan_runtime="$(python3 scripts/tsan_runtime.py --directory fixed)/libclang_rt.tsan_osx_dynamic.dylib"
 mkdir -p "$bridge_output/c" "$bridge_output/control"
 swift --version > "$bridge_output/versions.txt"
 rustc "+$BRIDGE_NIGHTLY" -vV >> "$bridge_output/versions.txt"
@@ -48,10 +49,12 @@ swiftc "${swift_flags[@]}" -Onone -I "$bridge_output/control" \
 export TSAN_OPTIONS=halt_on_error=1:exitcode=66
 bridge_fault=thread
 bridge_diagnostic='ThreadSanitizer: data race'
-python3 scripts/run-bridge-validation.py --log "$bridge_output/control/clean.log" "$bridge_output/control/probe" clean
+python3 scripts/run-bridge-validation.py --tsan-runtime "$bridge_tsan_runtime" \
+    --log "$bridge_output/control/clean.log" "$bridge_output/control/probe" clean
 for bridge_language in rust swift; do
     if [ "$bridge_language" = rust ]; then bridge_site=eb_sanitizer_thread_fault; else bridge_site=swiftThreadFault; fi
-    python3 scripts/run-bridge-validation.py --log "$bridge_output/control/$bridge_language.log" \
+    python3 scripts/run-bridge-validation.py --tsan-runtime "$bridge_tsan_runtime" \
+        --log "$bridge_output/control/$bridge_language.log" \
         --expect "$bridge_diagnostic" --site "$bridge_site" "$bridge_output/control/probe" "$bridge_language-$bridge_fault"
 done
 
@@ -59,5 +62,6 @@ swiftc "${swift_flags[@]}" -O -D BRIDGE_VALIDATION -Xcc -DECHODE_BRIDGE_FAULT_IN
     -I "$bridge_output/c" "$bridge_output/c/libbridge.a" \
     spikes/bridge/swift/CBridge.swift spikes/bridge/swift/CProbe.swift spikes/bridge/swift/ContractProbe.swift \
     -o "$bridge_output/c-probe"
-python3 scripts/run-bridge-validation.py --log "$bridge_output/c-probe.log" "$bridge_output/c-probe"
+python3 scripts/run-bridge-validation.py --tsan-runtime "$bridge_tsan_runtime" \
+    --log "$bridge_output/c-probe.log" "$bridge_output/c-probe"
 bash scripts/check-product-bridge.sh thread

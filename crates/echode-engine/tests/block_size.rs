@@ -19,6 +19,37 @@ const BLOCKS: [u32; 4] = [1, 7, 64, 512];
 const VOICES_PER_TRACK: usize = 8;
 
 #[test]
+fn bypass_copies_each_plane_without_partition_or_gain_changes() {
+    // Three planes and this duration exercise this copy operation only; neither
+    // is a device/channel limit. Product buses validate their own layouts.
+    let input: Vec<Vec<f32>> = (0..3)
+        .map(|channel| {
+            (0..1537)
+                .map(|n| (n as f32 * 0.031 + channel as f32).sin())
+                .collect()
+        })
+        .collect();
+    for block in BLOCKS {
+        let mut output = vec![vec![0.0; block as usize]; input.len()];
+        let mut heard = vec![Vec::new(); input.len()];
+        for offset in (0..input[0].len()).step_by(block as usize) {
+            let frames = (block as usize).min(input[0].len() - offset);
+            echode_engine::copy_bypassed_audio(
+                input.iter().map(|plane| &plane[offset..offset + frames]),
+                &mut output,
+                frames,
+            );
+            for (heard, output) in heard.iter_mut().zip(&output) {
+                heard.extend_from_slice(&output[..frames]);
+            }
+        }
+        assert_eq!(heard, input);
+        echode_engine::copy_bypassed_audio(std::iter::empty(), &mut output, block as usize);
+        assert!(output.iter().flatten().all(|sample| *sample == 0.0));
+    }
+}
+
+#[test]
 fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
     use echode_engine::{CachedTrack, PlaybackCommand, playback_pair};
     use echode_model::ParamKey;

@@ -136,6 +136,8 @@ MySong.echode/
   （[ADR 0074](../decisions/0074-package-entry-io.md)）
 - キー順序を固定し、時間は整数、1 ノート 1 行で出力する。スキーマは 1 段ずつマイグレーションして読む
   （[ADR 0028](../decisions/0028-package-schema.md)）
+- 現行スキーマは 4。デバイスの `bypassed` を保存し、3 以前は有効状態へ段階変換する。
+  旧リーダーが新しい音声状態を無視しないよう版を進める（[ADR 0120](../decisions/0120-device-bypass.md)）
 
 ### 6.3 メディアの保管庫
 
@@ -148,6 +150,7 @@ MySong.echode/
 - **自動保存**: `refs/echode/autosave/<オルタネイト>`（Phase 1 は `refs/echode/autosave/main`）。
   先端コミットの連番より後のジャーナル行を再生し、先端が無いパッケージは編集前に同期コミットする
   （[ADR 0009](../decisions/0009-package-autosave.md)、[ADR 0033](../decisions/0033-journal-log.md)、[ADR 0057](../decisions/0057-crash-recovery.md)）
+  Git の初期化失敗中も終了要求を受け付ける。初回保存を拒否した後の破棄で待ち続けず、開く処理へエラーを返してパッケージのロックを解放する。
 - **Cmd+S と間引き**: `refs/heads/<オルタネイト>` の保存ポイントは間引かず、自動保存だけを `gix-pack` で間引く
   （[ADR 0046](../decisions/0046-history-thin.md)）
 

@@ -603,6 +603,19 @@ define_actions! {
                 .map_err(Into::into)
         }
     }
+    BypassDevice {
+        id: "device.bypass",
+        name_ja: "FX のバイパスを切り替える",
+        name_en: "Set FX bypass",
+        description_ja: "設定を保持し、ホスト側で音源を無音・エフェクトをドライ通過にする",
+        description_en: "Keep settings while silencing an instrument or passing dry audio through an effect",
+        command { device: Id, bypassed: bool, }
+        action { device: Id, bypassed: bool, }
+        commit { Action::BypassDevice { device, bypassed } }
+        edit |project: &Project| {
+            project.set_device_bypassed(*device, *bypassed).map_err(Into::into)
+        }
+    }
     ReorderDevice {
         id: "device.reorder",
         name_ja: "FX の順番を変える",

@@ -63,10 +63,13 @@ def load_policy(root):
             raise ValueError("invalid make target")
         if not set(check["areas"]).issubset(policy["areas"]):
             raise ValueError("unknown verification area")
-        for field in ("inputs", "packages", "policy_inputs"):
+        for field in ("inputs", "packages", "policy_inputs", "tool_inputs"):
             values = check.get(field, [])
             if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
                 raise ValueError("invalid verification " + field)
+        for value in check.get("tool_inputs", []):
+            if Path(value).is_absolute() or ".." in Path(value).parts or any(c in value for c in "*?["):
+                raise ValueError("verification tool inputs must be exact repository-relative paths")
         if not (check.get("inputs") or check.get("packages")):
             raise ValueError("each check needs explicit inputs or packages")
         if any(key not in policy for key in check.get("policy_inputs", [])):
@@ -244,8 +247,9 @@ def check_fingerprints(root, policy, tools, contexts=None):
         configuration = [check, common, tools, contexts if check.get("device_context") else {},
                          {key: policy[key] for key in check.get("policy_inputs", [])}]
         digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
-        for relative in files:
-            if not (matches([relative], patterns)
+        tool_inputs = set(check.get("tool_inputs", []))
+        for relative in sorted(set(files) | tool_inputs):
+            if not (relative in tool_inputs or matches([relative], patterns)
                     or any(relative.startswith(folder + "/") for folder in folders)):
                 continue
             if relative not in contents:

@@ -3,7 +3,7 @@ source: crates/echode-history/tests/document.rs
 expression: content_json
 ---
 {
-  "schema":3,
+  "schema":4,
   "id":"00000000-0000-0000-0000-000000000001",
   "audio":null,
   "takes":[],

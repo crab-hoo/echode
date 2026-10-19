@@ -6,7 +6,7 @@
 
 ## 背景
 
-中身の `audio` は識別子か null で、常に null だった。フェードを音に使う経路は、オーディオ参照ができてから接続すると [ADR 0022](0022-clip-content-fields.md) で決めてある。保管庫は BLAKE3-256 のオブジェクトを置けるが、音声ファイルに名前を付ける `media/index.json` はまだ作っていなかった（[ADR 0031](0031-content-addressed-store.md)）。
+中身の `audio` は識別子か null で、常に null だった。フェードを音に使う経路は、オーディオ参照ができてから接続すると [ADR 0022](0022-clip-content-and-placement.md) で決めてある。保管庫は BLAKE3-256 のオブジェクトを置けるが、音声ファイルに名前を付ける `media/index.json` はまだ作っていなかった（[ADR 0031](0031-content-addressed-store.md)）。
 
 ## 決定
 

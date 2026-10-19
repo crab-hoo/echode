@@ -485,6 +485,21 @@ pub unsafe extern "C" fn echode_snapshot_device_id(
     }
 }
 
+/// Returns 1 for bypassed, 0 for active, or -1 for an invalid snapshot/index.
+///
+/// # Safety
+/// `snapshot` is null or owned for the whole read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_device_bypassed(
+    snapshot: *const Snapshot,
+    track: usize,
+    device: usize,
+) -> c_int {
+    snapshot_ref(snapshot)
+        .and_then(|snapshot| snapshot.device_bypassed(track, device))
+        .map_or(-1, c_int::from)
+}
+
 /// Borrows the CLAP id of a device. The mixer has none and returns null.
 ///
 /// # Safety

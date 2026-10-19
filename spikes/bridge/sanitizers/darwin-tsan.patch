@@ -1,0 +1,61 @@
+diff --git a/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp b/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp
+index 979729f1..f0a356cf 100644
+--- a/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp
++++ b/compiler-rt/lib/sanitizer_common/sanitizer_procmaps_mac.cpp
+@@ -16,6 +16,7 @@
+ #include "sanitizer_procmaps.h"
+ 
+ #include <mach-o/dyld.h>
++#include <mach-o/dyld_images.h>
+ #include <mach-o/loader.h>
+ #include <mach/mach.h>
+ 
+@@ -272,6 +273,19 @@ static mach_header *GetDyldImageHeaderViaSharedCache() {
+ 
+ const mach_header *get_dyld_hdr() {
+   if (!dyld_hdr) {
++    // Query dyld without invoking framework initializers during TSan bootstrap.
++    task_dyld_info_data_t info;
++    mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
++    if (task_info(mach_task_self(), TASK_DYLD_INFO,
++                  reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
++      auto *images = reinterpret_cast<const dyld_all_image_infos *>(
++          info.all_image_info_addr);
++      if (images && images->version >= 2 && images->dyldImageLoadAddress &&
++          IsDyldHdr(images->dyldImageLoadAddress)) {
++        dyld_hdr = const_cast<mach_header *>(images->dyldImageLoadAddress);
++        return dyld_hdr;
++      }
++    }
+     // On macOS 13+, dyld itself has moved into the shared cache.  Looking it up
+     // via vm_region_recurse_64() causes spins/hangs/crashes.
+     if (GetMacosAlignedVersion() >= MacosVersion(13, 0)) {
+diff --git a/compiler-rt/lib/tsan/rtl/tsan_rtl_thread.cpp b/compiler-rt/lib/tsan/rtl/tsan_rtl_thread.cpp
+index 978d853b..5996d7e6 100644
+--- a/compiler-rt/lib/tsan/rtl/tsan_rtl_thread.cpp
++++ b/compiler-rt/lib/tsan/rtl/tsan_rtl_thread.cpp
+@@ -17,6 +17,10 @@
+ #include "tsan_report.h"
+ #include "tsan_sync.h"
+ 
++#if SANITIZER_APPLE && defined(__aarch64__)
++#include <errno.h>
++#endif
++
+ namespace __tsan {
+ 
+ // ThreadContext implementation.
+@@ -190,6 +194,13 @@ void ThreadStart(ThreadState *thr, Tid tid, ThreadID os_id,
+   if (thread_type != ThreadType::Fiber)
+     GetThreadStackAndTls(tid == kMainTid, &stk_addr, &stk_end, &tls_addr,
+                          &tls_end);
++#endif
++#if SANITIZER_APPLE && defined(__aarch64__) && !SANITIZER_GO
++  // Darwin arm64 reports no TLS range. A newly started OS thread owns a fresh
++  // errno object even if pthread reused the previous thread's storage.
++  constexpr bool reset_errno_lifetime = true;
++  if (reset_errno_lifetime && tid != kMainTid && thread_type != ThreadType::Fiber)
++    MemoryResetRange(thr, 0, reinterpret_cast<uptr>(&errno), sizeof(errno));
+ #endif
+   uptr stk_size = stk_end - stk_addr;
+   uptr tls_size = tls_end - tls_addr;

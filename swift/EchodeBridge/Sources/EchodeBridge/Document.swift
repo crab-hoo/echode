@@ -119,6 +119,12 @@ public final class Snapshot: @unchecked Sendable {
     }
 
     /// CLAP id of an inserted device. The mixer returns nil.
+    public func deviceBypassed(onTrack track: Int, at device: Int) -> Bool? {
+        guard track >= 0, device >= 0 else { return nil }
+        let value = echode_snapshot_device_bypassed(handle, track, device)
+        return value < 0 ? nil : value != 0
+    }
+
     public func devicePlugin(onTrack track: Int, at device: Int) -> String? {
         guard track >= 0, device >= 0 else { return nil }
         return withExtendedLifetime(self) {

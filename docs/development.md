@@ -2,6 +2,7 @@
 
 必須規則は [AGENTS.md](../AGENTS.md)。この文書は実際の作業手順とコードの所在を案内する。
 検査基盤は Python 3.11 以降（標準の `tomllib` を使用、追加パッケージ不要）で動く。
+動的検査の初回は `make setup-bridge` を使う。TSan の固定ソース取得・CMake / Ninja と検査専用ランタイムは [検査手順](verification.md#環境フックと-ci) を参照する。
 
 ## 開始から完了まで
 
@@ -62,7 +63,7 @@
 | アクション・編集セッション | `crates/echode-actions` | `action.rs`（`Action` / 登録簿）、`session.rs`（`Session` の Undo / Redo 履歴） |
 | Git 履歴・パッケージ・ピーク | `crates/echode-history` | `host.rs`（`DocumentHost`・ジャーナル・復旧）、`store.rs`（CAS）、`peaks.rs`（ピークキャッシュ） |
 | リアルタイム検査 | `crates/echode-realtime` | `alloc.rs`（RT 確保禁止ガード）、`event.rs`（固定容量イベント列）、`ring.rs`（SPSC） |
-| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（実機計測） |
+| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（実機計測） |
 | CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止） |
 | 共有メモリ・IPC | `crates/echode-sandbox` | `region.rs`（共有メモリ・`arm_abort_notice`）、`session.rs`（`PluginControl`）、`workgroup.rs`、`wire.rs` |
 | プラグインヘルパー | `crates/echode-plugin-host` | `scan.rs`（バンドル走査）、`catalog.rs`（キャッシュ）、`threads.rs` / `events.rs`（CLAP 処理・リセット）、`awake.rs` |

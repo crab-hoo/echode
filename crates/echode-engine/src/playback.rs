@@ -1058,6 +1058,7 @@ fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
                     Some(ChainDevice {
                         id: device.id.raw(),
                         clap_id: device.plugin.clone()?,
+                        bypassed: device.bypassed,
                     })
                 })
                 .collect();

@@ -6,3 +6,4 @@ rustup toolchain install "$BRIDGE_NIGHTLY" --profile minimal --component rust-sr
 cargo fetch --locked
 # Preparing Miri also fetches the fixed nightly std dependencies used by build-std.
 cargo "+$BRIDGE_NIGHTLY" miri setup
+python3 scripts/tsan_runtime.py --fetch

@@ -1,4 +1,87 @@
-use echode_model::{Id, Project};
+use echode_model::{Change, ChangeSet, Id, ObjectKey, ObjectKind, Project, Property, Value};
+
+#[test]
+fn legacy_device_creation_without_bypass_replays_as_active() {
+    let (before, track) = Project::new().add_track("legacy");
+    let after = before
+        .add_clap_device(track, Id::generate(), "org.example.effect")
+        .unwrap();
+    let mut legacy = ChangeSet::new();
+    for change in before.diff(&after).changes() {
+        let mut change = change.clone();
+        if let Change::Create {
+            kind: ObjectKind::Device,
+            fields,
+            ..
+        } = &mut change
+        {
+            fields.retain(|field| field.property != Property::Bypassed);
+        }
+        legacy.push(change);
+    }
+    assert_eq!(before.apply_changeset(&legacy).unwrap(), after);
+    assert_eq!(after.apply_changeset(&legacy.invert()).unwrap(), before);
+}
+
+#[test]
+fn bypass_preserves_device_state_and_survives_copy_and_diff_inversion() {
+    let (project, track) = Project::new().add_track("track");
+    let device = Id::from_raw(100);
+    let project = project
+        .add_clap_device(track, device, "org.example.effect")
+        .unwrap()
+        .set_device_state(device, Some("a".repeat(64)))
+        .unwrap();
+    let bypassed = project.set_device_bypassed(device, true).unwrap();
+    let value = &bypassed.tracks()[0].devices[0];
+    assert!(value.bypassed);
+    assert_eq!(value.id, device);
+    assert_eq!(value.state, project.tracks()[0].devices[0].state);
+    let diff = project.diff(&bypassed);
+    assert_eq!(project.apply_changeset(&diff).unwrap(), bypassed);
+    assert_eq!(bypassed.apply_changeset(&diff.invert()).unwrap(), project);
+    let copied = bypassed
+        .copy_device(device, track, Id::from_raw(101), None)
+        .unwrap();
+    assert!(copied.tracks()[0].devices[1].bypassed);
+    copied.check_invariants().unwrap();
+    assert_eq!(
+        bypassed.set_device_bypassed(device, false).unwrap(),
+        project
+    );
+    assert!(
+        project
+            .set_device_bypassed(project.tracks()[0].devices.last().unwrap().id, true)
+            .is_err()
+    );
+    assert!(
+        project
+            .set_device_bypassed(Id::from_raw(999), false)
+            .is_err()
+    );
+}
+
+#[test]
+fn a_journal_change_cannot_bypass_a_mixer_or_give_it_plugin_state() {
+    let (project, _) = Project::new().add_track("track");
+    let mixer = project.tracks()[0].devices.last().unwrap().id;
+    for (property, after) in [
+        (Property::Bypassed, Value::Byte(1)),
+        (Property::PluginState, Value::Text("a".repeat(64))),
+    ] {
+        let mut changes = ChangeSet::new();
+        changes.push(Change::Update {
+            id: ObjectKey::Id(mixer),
+            property,
+            before: match property {
+                Property::Bypassed => Value::Byte(0),
+                _ => Value::Text(String::new()),
+            },
+            after,
+        });
+        assert!(project.apply_changeset(&changes).is_err(), "{property:?}");
+    }
+}
 
 #[test]
 fn chain_reorder_and_copy_keep_identity_settings_and_mixer() {

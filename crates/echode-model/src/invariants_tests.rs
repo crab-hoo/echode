@@ -193,6 +193,18 @@ fn the_shared_check_sees_gain_fade_overflow_takes_and_mixer_ends() {
     hosted.devices[0].parameters[0].max = 5.0;
     let wide = project(vec![content], vec![hosted]);
     assert!(broken_rule(&wide).contains("outside its range"));
+
+    let (content, placement) = clip(2, ClipKind::Fixed, 0, 1);
+    let mut bypassed = track(1, None, vec![placement]);
+    bypassed.devices[0].bypassed = true;
+    let bypassed = project(vec![content], vec![bypassed]);
+    assert!(broken_rule(&bypassed).contains("mixer is bypassed"));
+
+    let (content, placement) = clip(2, ClipKind::Fixed, 0, 1);
+    let mut stateful = track(1, None, vec![placement]);
+    stateful.devices[0].state = Some("a".repeat(64));
+    let stateful = project(vec![content], vec![stateful]);
+    assert!(broken_rule(&stateful).contains("holds plugin state"));
 }
 
 #[cfg(debug_assertions)]

@@ -119,7 +119,7 @@ def collect(root):
                        "log": f"target/verification/{name}.log"})
     freshness = ("unavailable" if not report else "current" if all(check["fresh"] for check in checks)
                  else "partial" if any(check["fresh"] for check in checks) else "stale")
-    tools_needed = ("git", "make", "rustc", "cargo", "swift", "xcodebuild", "xcrun", "cargo-deny")
+    tools_needed = ("git", "make", "rustc", "cargo", "swift", "xcodebuild", "xcrun", "cargo-deny", "cmake", "ninja")
     # Never export tools' raw environment values, Cargo config, or report.tools.
     versions = {key: value for key, value in tools.items()
                 if key in ("rustc -vV", "cargo --version", "swift --version", "xcodebuild -version")
@@ -166,6 +166,9 @@ def bundle(root, data):
     parent.mkdir(parents=True, exist_ok=True)
     destination = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime()), dir=parent))
     candidates = [Path("target/agent-check.log"), Path("target/verification/product-contracts.json")]
+    candidates += [Path("target/toolchains/tsan/manifest.json")]
+    for pattern in ("thread/errno/*.log", "thread/control/*.log", "*/product/*.log"):
+        candidates += sorted(path.relative_to(root) for path in (root / "target/bridge").glob(pattern))
     policy = verify.load_policy(root)
     candidates += [Path(f"target/verification/{check['id']}.log") for check in policy["checks"]]
     candidates += [Path(f"target/verification/product-contracts/{contract['id']}{suffix}.log")
@@ -200,6 +203,8 @@ def main():
     mode.add_argument("--source-stamp", action="store_true")
     parser.add_argument("--expected-source")
     args = parser.parse_args()
+    if args.record_build and not args.expected_source:
+        parser.error("--record-build requires --expected-source")
     try:
         if args.record_build:
             record_build(ROOT, args.expected_source)

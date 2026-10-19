@@ -42,6 +42,7 @@ pub struct PluginRoute {
 pub(crate) struct ChainDevice {
     pub id: u128,
     pub clap_id: String,
+    pub bypassed: bool,
 }
 
 /// One track's CLAP devices, in project order. Identity is the device id, so an
@@ -100,7 +101,7 @@ struct TrackHost {
 
 struct TrackRestore {
     key: u32,
-    devices: Vec<u128>,
+    devices: Vec<(u128, bool, usize)>,
     frames: usize,
     events: usize,
     chase: usize,
@@ -124,6 +125,9 @@ enum Cleanup {
 struct Stage {
     device: u128,
     clap_id: String,
+    bypassed: bool,
+    /// Dry main planes follow the upstream bus even if the wet port shape differs.
+    bypass_output: Vec<Vec<f32>>,
     /// This process has not yet been told about notes the synth is already playing.
     awaiting_notes: bool,
     /// The buffer just built includes chased note-ons. Promoted when submit succeeds.
@@ -153,6 +157,16 @@ struct Instance {
     control: PluginControl,
     restart: AtomicBool,
     failure: AtomicU8,
+}
+
+impl Stage {
+    fn rendered(&self) -> &[Vec<f32>] {
+        if self.bypassed {
+            &self.bypass_output
+        } else {
+            &self.output[..self.main_outputs.min(self.output.len())]
+        }
+    }
 }
 
 pub(crate) struct PreparationCheckpoint(Vec<(Arc<Instance>, bool)>);
@@ -229,6 +243,13 @@ impl HostGraph {
                 event.track_key() == Some(track.key)
             });
             for stage in &mut track.stages {
+                if stage.bypassed {
+                    // No discarded process block is needed while dry. The
+                    // pending reset is consumed when this helper is enabled.
+                    stage.host.request_reset();
+                    stage.awaiting_notes = true;
+                    continue;
+                }
                 if !matches!(stage.cleanup, Cleanup::None) {
                     continue;
                 }
@@ -309,6 +330,9 @@ impl HostGraph {
     /// still silence for that block; this is what export refuses to call success.
     pub(crate) fn export_failure(&self) -> Option<String> {
         for stage in self.tracks.iter().flat_map(|track| &track.stages) {
+            if stage.bypassed {
+                continue;
+            }
             let mut reason = stage.instance.failure.load(Ordering::Acquire);
             if reason == 0 {
                 continue;
@@ -344,6 +368,8 @@ impl HostGraph {
                     .map(|stage| Stage {
                         device: stage.device,
                         clap_id: stage.clap_id.clone(),
+                        bypassed: stage.bypassed,
+                        bypass_output: stage.bypass_output.clone(),
                         awaiting_notes: true,
                         chase_in_buffer: false,
                         chase_pending: false,
@@ -404,6 +430,16 @@ impl HostGraph {
                 stage.needs_restart = previous.needs_restart;
                 stage.block_complete = previous.block_complete;
                 stage.host.carry(&previous.host);
+                if stage.bypassed != previous.bypassed {
+                    // The helper may still hold voices from before bypass.
+                    // Reset on its audio thread, then chase only current notes.
+                    stage.host.request_reset();
+                    stage.awaiting_notes = true;
+                    stage.chase_in_buffer = false;
+                    stage.chase_pending = false;
+                    stage.block_complete = false;
+                    stage.needs_restart = false;
+                }
             }
         }
     }
@@ -525,7 +561,11 @@ impl HostGraph {
             .iter()
             .map(|track| TrackRestore {
                 key: track.key,
-                devices: track.stages.iter().map(|stage| stage.device).collect(),
+                devices: track
+                    .stages
+                    .iter()
+                    .map(|stage| (stage.device, stage.bypassed, stage.bypass_output.len()))
+                    .collect(),
                 frames: track.inject.len(),
                 events: track.source_events.capacity(),
                 chase: track.chased_ons.capacity(),
@@ -563,7 +603,8 @@ impl HostGraph {
                         // dropped, and spawn a helper that restores the new bytes.
                     } else {
                         let _ = take_route(routes, &mut used, &device.clap_id);
-                        let stage = kept.swap_remove(index);
+                        let mut stage = kept.swap_remove(index);
+                        stage.bypassed = device.bypassed;
                         stages.push(stage);
                         continue;
                     }
@@ -589,7 +630,7 @@ impl HostGraph {
                     }
                 }
             }
-            let result = validate_chain(&stages, chain.stereo).and_then(|()| {
+            let result = validate_chain(&mut stages, chain.stereo).and_then(|()| {
                 stages
                     .iter_mut()
                     .try_for_each(|stage| fit_stage(stage, delivery))
@@ -642,7 +683,7 @@ impl HostGraph {
         if self.submit_stage(index, 0, frames) {
             true
         } else {
-            self.note_miss(index, 0, MISS_SUBMIT);
+            self.note_miss(index, self.tracks[index].stage, MISS_SUBMIT);
             self.tracks[index].run = Run::Missed;
             self.tracks[index].frames = frames;
             true
@@ -720,7 +761,7 @@ impl HostGraph {
             let before = track.stages.len();
             track
                 .stages
-                .retain(|stage| !stage.instance.restart.load(Ordering::Acquire));
+                .retain(|stage| stage.bypassed || !stage.instance.restart.load(Ordering::Acquire));
             restart |= track.stages.len() != before;
         }
         self.tracks.retain(|track| !track.stages.is_empty());
@@ -732,12 +773,13 @@ impl HostGraph {
         let track = self.tracks.iter().find(|track| track.key == key)?;
         let frames = left.len().min(right.len()).min(track.frames);
         let stage = track.stages.get(track.stage)?;
-        let stereo = stage.main_outputs == 2;
+        let output = stage.rendered();
+        let stereo = output.len() == 2;
         match track.run {
             Run::Heard => {
-                left[..frames].copy_from_slice(&stage.output[0][..frames]);
+                left[..frames].copy_from_slice(&output[0][..frames]);
                 if stereo {
-                    right[..frames].copy_from_slice(&stage.output[1][..frames]);
+                    right[..frames].copy_from_slice(&output[1][..frames]);
                 }
             }
             Run::Missed => {
@@ -781,6 +823,18 @@ impl HostGraph {
     ) {
         let heard = self.tracks[track].heard;
         let stage = &mut self.tracks[track].stages[stage_index];
+        if stage.bypassed {
+            if stage.instrument && !heard {
+                crate::copy_bypassed_audio(std::iter::empty(), &mut stage.bypass_output, frames);
+            } else {
+                crate::copy_bypassed_audio(
+                    std::iter::once(source.left).chain(source.right),
+                    &mut stage.bypass_output,
+                    frames,
+                );
+            }
+            return;
+        }
         let frames = bounded(&stage.input, frames);
         // Notes still go out through `events`. Placed audio is not an input;
         // `arm_inject` puts it on this stage's output after the instrument runs.
@@ -817,6 +871,9 @@ impl HostGraph {
             let Some(stage) = stages.get_mut(stage_index) else {
                 return;
             };
+            if stage.bypassed {
+                return;
+            }
             let include_chase =
                 stage.awaiting_notes && !stage.needs_restart && !stage.chase_pending;
             stage.routed.clear();
@@ -863,7 +920,31 @@ impl HostGraph {
         }
     }
 
-    fn submit_stage(&mut self, track: usize, stage_index: usize, frames: usize) -> bool {
+    fn submit_stage(&mut self, track: usize, mut stage_index: usize, mut frames: usize) -> bool {
+        // A run of bypassed stages consumes no helper deadline and no stack
+        // frames. The number of devices is not limited by recursive calls.
+        loop {
+            self.tracks[track].stage = stage_index;
+            if !self.tracks[track].stages[stage_index].bypassed {
+                break;
+            }
+            frames = bounded(
+                &self.tracks[track].stages[stage_index].bypass_output,
+                frames,
+            );
+            self.tracks[track].frames = frames;
+            self.mix_injected(track, stage_index, frames);
+            self.tracks[track].stages[stage_index].awaiting_notes = true;
+            self.tracks[track].heard = true;
+            let next = stage_index + 1;
+            if next == self.tracks[track].stages.len() {
+                self.tracks[track].run = Run::Heard;
+                return true;
+            }
+            copy_mix(&mut self.tracks[track].stages, stage_index, next, frames);
+            self.route_events(track, next);
+            stage_index = next;
+        }
         let frames = {
             let stage = &self.tracks[track].stages[stage_index];
             bounded(&stage.input, frames.min(bounded(&stage.output, frames)))
@@ -940,7 +1021,7 @@ impl HostGraph {
         if self.hand_off(index, stage_index, next, frames) {
             return;
         }
-        self.note_miss(index, next, MISS_SUBMIT);
+        self.note_miss(index, self.tracks[index].stage, MISS_SUBMIT);
         self.tracks[index].run = Run::Missed;
     }
 
@@ -965,13 +1046,19 @@ impl HostGraph {
         if !stage.instrument {
             return;
         }
-        let main = stage.main_outputs.min(stage.output.len());
-        let frames = bounded(&stage.output[..main], frames.min(inject.len()));
+        let output = if stage.bypassed {
+            &mut stage.bypass_output[..]
+        } else {
+            let main = stage.main_outputs.min(stage.output.len());
+            &mut stage.output[..main]
+        };
+        let main = output.len();
+        let frames = bounded(output, frames.min(inject.len()));
         let source = Signal {
             left: inject,
             right: inject_stereo.then_some(&*inject_right),
         };
-        for (channel, plane) in stage.output.iter_mut().take(main).enumerate() {
+        for (channel, plane) in output.iter_mut().enumerate() {
             let frames = frames.min(plane.len());
             for (frame, sample) in plane[..frames].iter_mut().enumerate() {
                 *sample += source.sample(channel, frame, main == 2);
@@ -1083,11 +1170,16 @@ fn restore_tracks(
             let stages = old
                 .devices
                 .into_iter()
-                .filter_map(|id| {
+                .filter_map(|(id, bypassed, channels)| {
                     // A restored state may have spawned another helper with the same
                     // device id. `kept` starts with the original process in that case.
                     let at = kept.iter().position(|stage| stage.device == id)?;
-                    Some(kept.remove(at))
+                    let mut stage = kept.remove(at);
+                    stage.bypassed = bypassed;
+                    stage
+                        .bypass_output
+                        .resize_with(channels, || vec![0.0; old.frames]);
+                    Some(stage)
                 })
                 .collect();
             track_host(old.key, stages, old.frames, old.events, old.chase)
@@ -1204,6 +1296,8 @@ fn spawn_stage(
     Ok(Some(Stage {
         device: device.id,
         clap_id: device.clap_id.clone(),
+        bypassed: device.bypassed,
+        bypass_output: Vec::new(),
         awaiting_notes: true,
         block_complete: false,
         cleanup: Cleanup::None,
@@ -1354,16 +1448,22 @@ fn copy_mix(stages: &mut [Stage], from: usize, to: usize, frames: usize) {
     let Some(dest) = tail.first_mut() else {
         return;
     };
-    let main = source.main_outputs.min(source.output.len());
-    let frames = frames
-        .min(bounded(
-            &source.output[..main.min(source.output.len())],
+    let output = source.rendered();
+    if dest.bypassed {
+        crate::copy_bypassed_audio(
+            output.iter().map(Vec::as_slice),
+            &mut dest.bypass_output,
             frames,
-        ))
+        );
+        return;
+    }
+    let main = output.len();
+    let frames = frames
+        .min(bounded(output, frames))
         .min(bounded(&dest.input, frames));
     let signal = Signal {
-        left: &source.output[0],
-        right: (main == 2).then(|| source.output[1].as_slice()),
+        left: &output[0],
+        right: (main == 2).then(|| output[1].as_slice()),
     };
     for (channel, plane) in dest.input.iter_mut().enumerate() {
         for (frame, sample) in plane.iter_mut().take(frames).enumerate() {
@@ -1376,9 +1476,19 @@ fn copy_mix(stages: &mut [Stage], from: usize, to: usize, frames: usize) {
     }
 }
 
-fn validate_chain(stages: &[Stage], clip_stereo: bool) -> Result<(), PlaybackError> {
+fn validate_chain(stages: &mut [Stage], clip_stereo: bool) -> Result<(), PlaybackError> {
     let mut channels = if clip_stereo { 2 } else { 1 };
-    for (index, stage) in stages.iter().enumerate() {
+    for (index, stage) in stages.iter_mut().enumerate() {
+        let frames = stage.output.first().map_or(0, Vec::len);
+        stage
+            .bypass_output
+            .resize_with(channels, || vec![0.0; frames]);
+        for plane in &mut stage.bypass_output {
+            plane.resize(frames, 0.0);
+        }
+        if stage.bypassed {
+            continue;
+        }
         // These are the layouts implemented by the stereo master, rather than
         // a storage/channel cap. Auxiliary ports retain their declared sizes.
         if !(1..=2).contains(&stage.main_outputs)

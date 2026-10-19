@@ -279,6 +279,15 @@ impl Snapshot {
         true
     }
 
+    pub(crate) fn device_bypassed(&self, track: usize, device: usize) -> Option<bool> {
+        self.project
+            .tracks()
+            .get(track)?
+            .devices
+            .get(device)
+            .map(|device| device.bypassed)
+    }
+
     pub(crate) fn device_plugin(&self, track: usize, device: usize) -> Option<&str> {
         self.project
             .tracks()

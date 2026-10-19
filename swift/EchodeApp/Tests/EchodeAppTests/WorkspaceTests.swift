@@ -6,6 +6,34 @@ import Testing
 
 @MainActor
 struct WorkspaceTests {
+    @Test func failedStartupOpenReenablesNewAndOpen() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-startup-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let previous = root.appendingPathComponent("Previous.echode")
+        let fresh = root.appendingPathComponent("Fresh.echode")
+        let controller = ProjectController()
+        let state = WorkspaceState(defaults: .init())
+        let session = WorkspaceSession(controller: controller, state: state)
+        await controller.open(previous, creating: true)
+        #expect(controller.snapshot != nil)
+        await controller.close()
+        // Replace only this fixture's metadata with the failing initialization case.
+        try FileManager.default.removeItem(at: previous.appendingPathComponent(".git"))
+        let config = previous.appendingPathComponent(".git/config")
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        await controller.open(previous)
+        #expect(controller.errorMessage != nil && controller.snapshot == nil)
+        #expect(!controller.busy && session.enabled(.newProject) && session.enabled(.openProject))
+        controller.errorMessage = nil
+        await controller.open(fresh, creating: true)
+        #expect(controller.snapshot != nil && controller.errorMessage == nil)
+        #expect(controller.projectURL == fresh && !controller.busy)
+        await controller.addTrack(name: "ready")
+        #expect(controller.tracks.map(\.name) == ["ready"])
+        await controller.close()
+    }
+
     @Test func layoutsFitTheMinimumWindowAndKeepPreferencesWhileHidden() throws {
         var layout = WorkspaceLayout()
         for mask in 0..<8 {

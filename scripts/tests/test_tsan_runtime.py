@@ -1,0 +1,85 @@
+"""Validation must use the pinned runtime and reject stale or mixed runtimes."""
+
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[2]
+spec = importlib.util.spec_from_file_location("tsan_runtime", ROOT / "scripts/tsan_runtime.py")
+runtime = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runtime)
+
+
+class RuntimeTests(unittest.TestCase):
+    def test_address_check_still_launches_swift_with_macos_bash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            for name in ("check-product-bridge.sh", "run-bridge-validation.py",
+                         "bridge-toolchain.env", "build-platform.env"):
+                shutil.copy2(ROOT / "scripts" / name, scripts / name)
+            header = root / "target/debug/build/echode-ffi-fixture/out/echode.h"
+            header.parent.mkdir(parents=True)
+            header.write_text("/* fixture header */")
+            (root / "swift/EchodeBridge/CEchodeFfi/include").mkdir(parents=True)
+            tools = root / "tools"
+            tools.mkdir()
+            (tools / "cargo").write_text("#!/bin/sh\nexit 0\n")
+            (tools / "swift").write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$ECHODE_TEST_COMMAND_LOG"\n')
+            for tool in tools.iterdir():
+                tool.chmod(0o755)
+            log = root / "swift-arguments.log"
+            result = subprocess.run(["/bin/bash", str(scripts / "check-product-bridge.sh"), "address"],
+                                    capture_output=True, text=True, timeout=10, env={
+                                        **os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
+                                        "ECHODE_TEST_COMMAND_LOG": str(log),
+                                    })
+            self.assertEqual(result.returncode, 0, result.stderr)
+            arguments = log.read_text().splitlines()
+            self.assertEqual(arguments[0], "test")
+            self.assertEqual(arguments[arguments.index("--sanitize") + 1], "address")
+
+    def test_both_runtime_artifacts_and_the_build_context_must_match(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(runtime, "CACHE", Path(directory)):
+            libraries = {}
+            for variant in ("baseline", "fixed"):
+                path = runtime.CACHE / variant / runtime.LIBRARY
+                path.parent.mkdir()
+                path.write_bytes(variant.encode())
+                libraries[variant] = runtime.sha256(path)
+            manifest = runtime.CACHE / "manifest.json"
+            manifest.write_text(json.dumps({"context": {"fixture": 1}, "libraries": libraries}))
+            self.assertTrue(runtime.prepared({"fixture": 1}))
+            self.assertFalse(runtime.prepared({"fixture": 2}))
+            (runtime.CACHE / "baseline" / runtime.LIBRARY).write_bytes(b"changed")
+            self.assertFalse(runtime.prepared({"fixture": 1}))
+            manifest.write_text("{invalid")
+            self.assertFalse(runtime.prepared({"fixture": 1}))
+
+    def test_validation_refuses_missing_or_mixed_loader_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / runtime.LIBRARY
+            library.write_bytes(b"loader protocol fixture, never loaded")
+            for libraries, accepted in (([], False), ([library], True),
+                                         ([library, root / "other" / runtime.LIBRARY], False)):
+                lines = "\n".join(f"dyld[42]: <fixture> {path}" for path in libraries)
+                result = subprocess.run([
+                    sys.executable, str(ROOT / "scripts/run-bridge-validation.py"),
+                    "--log", str(root / "probe.log"), "--tsan-runtime", str(library),
+                    sys.executable, "-c", f"print({lines!r})",
+                ], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

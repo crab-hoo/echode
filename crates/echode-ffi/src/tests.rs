@@ -277,6 +277,18 @@ fn an_inserted_plugin_is_visible_on_the_snapshot_and_undo_removes_it() {
     assert!(!plugin.is_null());
     let text = unsafe { std::slice::from_raw_parts(plugin, length) };
     assert_eq!(text, b"dev.echode.test-gain");
+    assert_eq!(
+        unsafe { echode_snapshot_device_bypassed(inserted.snapshot, 0, 0) },
+        0
+    );
+    assert_eq!(
+        unsafe { echode_snapshot_device_bypassed(inserted.snapshot, 0, usize::MAX) },
+        -1
+    );
+    assert_eq!(
+        unsafe { echode_snapshot_device_bypassed(std::ptr::null(), 0, 0) },
+        -1
+    );
     let mut mixer_length = 0usize;
     assert!(
         unsafe { echode_snapshot_device_plugin(inserted.snapshot, 0, 1, &mut mixer_length) }

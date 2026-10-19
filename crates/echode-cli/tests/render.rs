@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use echode_actions::{Command, Session};
 use echode_cli::{
@@ -63,6 +63,32 @@ fn a_package_renders_to_the_committed_reference() {
     assert!(rendered.len() > 44);
     assert!(rendered[44..].iter().any(|byte| *byte != 0));
     assert_eq!(rendered, reference);
+}
+
+#[test]
+fn a_zero_sample_rate_and_a_negative_frame_count_leave_the_output() {
+    let directory = scratch();
+    write_package(&directory, &reference_project()).unwrap();
+    let wav = directory.join("out.wav");
+    std::fs::write(&wav, b"keep").unwrap();
+    for frames in [None, Some(0), Some(16)] {
+        let error = render_to_wav(&directory, &wav, 0, frames).unwrap_err();
+        assert!(error.to_string().contains("sample rate"), "{error}");
+        assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
+    }
+    let parsed = echode_cli::run([
+        "render",
+        directory.to_str().unwrap(),
+        wav.to_str().unwrap(),
+        "--frames",
+        "-1",
+    ])
+    .unwrap_err();
+    assert!(
+        parsed.to_string().contains("non-negative integer"),
+        "{parsed}"
+    );
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -471,6 +497,46 @@ fn contract_phase1_project_survives_crash_history_and_cli_export() {
 }
 
 #[test]
+fn bypass_export_matches_dry_effects_and_silent_instruments() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let cache = directory.join("clap-scan.jsonl");
+    let _env = PluginEnv::set(&cache);
+    write_plugin_cache(&cache, &plugin_dylib());
+    let project = reference_project();
+    write_package(&directory, &project).unwrap();
+    let wav = directory.join("out.wav");
+    render_to_wav(&directory, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap();
+    let dry = wav_lefts(&wav, PLUGIN_FRAMES);
+    assert!(dry.iter().any(|sample| *sample != 0.0));
+    let track = project.tracks()[0].id;
+    for (plugin, instrument) in [
+        ("dev.echode.test-gain", false),
+        ("dev.echode.test-instrument", true),
+    ] {
+        let device = Id::generate();
+        let bypassed = project
+            .add_clap_device(track, device, plugin)
+            .unwrap()
+            .set_device_bypassed(device, true)
+            .unwrap();
+        let package = directory.join(if instrument { "instrument" } else { "effect" });
+        write_package(&package, &bypassed).unwrap();
+        let wav = package.join("out.wav");
+        render_to_wav(&package, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap();
+        let exported = wav_lefts(&wav, PLUGIN_FRAMES);
+        assert_eq!(exported, play_plugins(&package, &bypassed));
+        if instrument {
+            assert!(exported.iter().all(|sample| *sample == 0.0));
+        } else {
+            assert_eq!(exported, dry);
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     let _lock = PLUGIN_ENV.lock().unwrap();
     let directory = scratch();
@@ -794,7 +860,14 @@ fn play_plugins(package: &Path, project: &Project) -> Vec<f32> {
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; PLUGIN_FRAMES];
     let mut right = vec![0.0; PLUGIN_FRAMES];
-    audio.render(&mut left, &mut right);
+    // Compare content, not whether a helper met a live callback deadline.
+    audio.render_until(
+        &mut left,
+        &mut right,
+        Instant::now() + Duration::from_secs(10),
+    );
+    assert!(!control.status().failed);
+    assert!(control.plugin_failure().is_none());
     left
 }
 

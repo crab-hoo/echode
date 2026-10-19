@@ -137,6 +137,13 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(result["status"], "stale")
         self.assertFalse(result["binaries_match"])
 
+    def test_record_build_without_an_expected_source_is_a_usage_error(self):
+        result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/diagnose.py"), "--record-build"],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--record-build requires --expected-source", result.stderr)
+        self.assertNotIn("source changed", result.stderr)
+
     def test_bundle_is_bounded_keeps_originals_and_does_not_follow_external_links(self):
         self.save_report()
         log = self.root / "target/verification/check.log"
@@ -148,6 +155,13 @@ class DiagnosticTests(unittest.TestCase):
         capture.mkdir(parents=True)
         (capture / "stop-example.json").write_text('{"pcm": "stop-example.f32le"}')
         (capture / "stop-example.f32le").write_bytes(b"USER_PLAYBACK_DO_NOT_COLLECT")
+        runtime = self.root / "target/toolchains/tsan"
+        runtime.mkdir(parents=True)
+        (runtime / "manifest.json").write_text("pinned-runtime")
+        (runtime / "runtime.dylib").write_bytes(b"DO_NOT_BUNDLE_RUNTIME")
+        control = self.root / "target/bridge/thread/errno"
+        control.mkdir(parents=True)
+        (control / "real-race.log").write_text("errno-control")
         data = diagnose.collect(self.root)
         with patch.object(diagnose, "LOG_LIMIT", 16):
             output = diagnose.bundle(self.root, data)
@@ -159,6 +173,9 @@ class DiagnosticTests(unittest.TestCase):
         self.assertNotIn("SECRET_TEST_SETTING", (output / "diagnosis.json").read_text())
         self.assertFalse((output / "verification/report.json").exists())
         self.assertFalse((output / "stop-diagnostics").exists())
+        self.assertEqual((output / "toolchains/tsan/manifest.json").read_text(), "pinned-runtime")
+        self.assertEqual((output / "bridge/thread/errno/real-race.log").read_text(), "errno-control")
+        self.assertFalse((output / "toolchains/tsan/runtime.dylib").exists())
 
 
 class DeveloperDocumentationTests(unittest.TestCase):
@@ -201,6 +218,18 @@ class DeveloperDocumentationTests(unittest.TestCase):
             for target in re.findall(r"\bmake ([a-z](?:[a-z0-9-]*[a-z0-9])?)(?=[\s`.,;]|$)", content):
                 with self.subTest(guide=name, target=target):
                     self.assertIn(target, targets, "unknown make target")
+
+    def test_records_link_to_existing_files_except_local_evidence(self):
+        # Reviews cite evidence under target/, which stays on the machine that ran the audit.
+        for path in sorted((ROOT / "docs").rglob("*.md")):
+            for destination in re.findall(r"\]\(([^)]+)\)", path.read_text()):
+                if "://" in destination or destination.startswith("#"):
+                    continue
+                relative = unquote(destination.split("#", 1)[0])
+                if (path.parent / relative).resolve().is_relative_to(ROOT / "target"):
+                    continue
+                with self.subTest(document=str(path.relative_to(ROOT)), link=relative):
+                    self.assertTrue((path.parent / relative).exists(), "broken local link")
 
 
 if __name__ == "__main__":

@@ -474,8 +474,61 @@ fn the_package_repo_ignores_the_object_store() {
 fn a_bad_schema_is_rejected() {
     let directory = scratch();
     write_package(&directory, &with_note("piano")).unwrap();
-    std::fs::write(directory.join("project.json"), "{\"schema\": 4}\n").unwrap();
+    std::fs::write(directory.join("project.json"), "{\"schema\": 5}\n").unwrap();
     assert!(read_package(&directory).is_err());
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn schema_three_devices_migrate_to_active_and_current_schema_requires_a_boolean() {
+    let directory = scratch();
+    let (project, track) = Project::new().add_track("legacy");
+    let project = project
+        .add_clap_device(track, Id::generate(), "org.example.effect")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    let track_path = directory.join("tracks").join(format!("{track}.json"));
+    for path in [directory.join("project.json"), track_path.clone()] {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value["schema"] = 3.into();
+        if let Some(devices) = value
+            .get_mut("devices")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for device in devices {
+                device.as_object_mut().unwrap().remove("bypassed");
+            }
+        }
+        std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    assert_eq!(read_package(&directory).unwrap(), project);
+    write_package(&directory, &project).unwrap();
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&track_path).unwrap()).unwrap();
+    let mut missing = original.clone();
+    missing["devices"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("bypassed");
+    std::fs::write(&track_path, serde_json::to_vec(&missing).unwrap()).unwrap();
+    assert!(read_package(&directory).is_err());
+    for malformed in [
+        serde_json::Value::Null,
+        serde_json::Value::String("true".into()),
+    ] {
+        let mut value = original.clone();
+        value["devices"][0]["bypassed"] = malformed;
+        std::fs::write(&track_path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(read_package(&directory).is_err());
+    }
+    let mut value = original;
+    value["devices"][1]["bypassed"] = true.into();
+    std::fs::write(&track_path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(
+        read_package(&directory).is_err(),
+        "the mixer cannot be bypassed"
+    );
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -644,8 +697,8 @@ fn a_schema_other_than_the_current_one_is_rejected() {
             _ => unreachable!(),
         };
         let original = std::fs::read_to_string(&path).unwrap();
-        for schema in ["4", "0", "2.0"] {
-            let text = original.replacen("\"schema\":3", &format!("\"schema\":{schema}"), 1);
+        for schema in ["5", "0", "2.0"] {
+            let text = original.replacen("\"schema\":4", &format!("\"schema\":{schema}"), 1);
             std::fs::write(&path, &text).unwrap();
             let error = read_package(&directory).unwrap_err().to_string();
             assert!(
@@ -653,7 +706,7 @@ fn a_schema_other_than_the_current_one_is_rejected() {
                 "{kind} {schema}: {error}"
             );
         }
-        let missing = original.replacen("\"schema\":3,", "", 1);
+        let missing = original.replacen("\"schema\":4,", "", 1);
         std::fs::write(&path, missing).unwrap();
         let error = read_package(&directory).unwrap_err().to_string();
         assert!(

@@ -100,6 +100,7 @@ pub enum Property {
     DeviceOrder,
     Plugin,
     PluginState,
+    Bypassed,
 }
 
 /// A property value. The variant has to match the [`Property`].
@@ -540,6 +541,14 @@ fn diff_devices(
 }
 
 fn diff_device_fields(before: &Device, after: &Device, updates: &mut Vec<Change>) {
+    if before.bypassed != after.bypassed {
+        updates.push(update(
+            ObjectKey::Id(after.id),
+            Property::Bypassed,
+            Value::Byte(u8::from(before.bypassed)),
+            Value::Byte(u8::from(after.bypassed)),
+        ));
+    }
     if before.state != after.state {
         updates.push(update(
             ObjectKey::Id(after.id),
@@ -619,6 +628,10 @@ fn device_change(create: bool, track: Id, device: &Device) -> Change {
             value: Value::Text(device.kind.as_str().to_string()),
         },
     ];
+    fields.push(Field {
+        property: Property::Bypassed,
+        value: Value::Byte(u8::from(device.bypassed)),
+    });
     if let Some(plugin) = &device.plugin {
         fields.push(Field {
             property: Property::Plugin,
@@ -1205,6 +1218,7 @@ struct DeviceState {
     kind: String,
     plugin: Option<String>,
     state: Option<String>,
+    bypassed: bool,
     parameters: Vec<Id>,
 }
 
@@ -1304,6 +1318,7 @@ impl Draft {
                         kind: device.kind.as_str().to_string(),
                         plugin: device.plugin.clone(),
                         state: device.state.clone(),
+                        bypassed: device.bypassed,
                         parameters: device
                             .parameters
                             .iter()
@@ -1424,6 +1439,7 @@ impl Draft {
                         kind: field_text(fields, Property::DeviceKind)?,
                         plugin: field_optional_text(fields, Property::Plugin)?,
                         state,
+                        bypassed: field_bypassed(fields)?,
                         parameters: field_ids(fields, Property::ParamOrder)?,
                     },
                 );
@@ -1570,6 +1586,13 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .device_order = ids.clone();
+                Ok(())
+            }
+            (ObjectKey::Id(id), Property::Bypassed, Value::Byte(value)) if *value <= 1 => {
+                self.devices
+                    .get_mut(&id)
+                    .ok_or(ModelError::InvalidChange)?
+                    .bypassed = *value != 0;
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Plugin, Value::Text(plugin)) => {
@@ -1844,6 +1867,9 @@ impl Draft {
                     return Err(ModelError::InvalidChange);
                 }
                 let kind = DeviceKind::parse(&device.kind).ok_or(ModelError::InvalidChange)?;
+                if kind == DeviceKind::Mixer && (device.bypassed || device.state.is_some()) {
+                    return Err(ModelError::InvalidChange);
+                }
                 let mut parameters = Vec::with_capacity(device.parameters.len());
                 for parameter_id in &device.parameters {
                     let Some(parameter) = self.parameters.get(parameter_id) else {
@@ -1867,6 +1893,7 @@ impl Draft {
                     kind,
                     plugin: device.plugin.clone(),
                     state: device.state.clone(),
+                    bypassed: device.bypassed,
                     parameters,
                 });
             }
@@ -2073,6 +2100,18 @@ fn field_u16(fields: &[Field], property: Property) -> Result<u16, ModelError> {
             _ => None,
         })
         .ok_or(ModelError::InvalidChange)
+}
+
+fn field_bypassed(fields: &[Field]) -> Result<bool, ModelError> {
+    match fields
+        .iter()
+        .find(|field| field.property == Property::Bypassed)
+        .map(|field| &field.value)
+    {
+        None | Some(Value::Byte(0)) => Ok(false),
+        Some(Value::Byte(1)) => Ok(true),
+        _ => Err(ModelError::InvalidChange),
+    }
 }
 
 fn field_byte(fields: &[Field], property: Property) -> Result<u8, ModelError> {

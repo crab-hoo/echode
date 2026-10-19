@@ -14,6 +14,7 @@ parser.add_argument("--log", type=Path, required=True)
 parser.add_argument("--expect")
 parser.add_argument("--site")
 parser.add_argument("--timeout", type=int, default=120)
+parser.add_argument("--tsan-runtime", type=Path)
 parser.add_argument("command", nargs=argparse.REMAINDER)
 args = parser.parse_args()
 if not args.command:
@@ -22,7 +23,14 @@ args.log.parent.mkdir(parents=True, exist_ok=True)
 # The common runner already owns an isolated group. Do not detach grandchildren
 # from it: its outer watchdog must be able to terminate the entire check.
 supervised = os.environ.get("ECHODE_VERIFY_GROUP") == "1" and os.getsid(0) == os.getpgrp()
-process = subprocess.Popen(args.command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=not supervised)
+environment = os.environ.copy()
+if args.tsan_runtime:
+    runtime = args.tsan_runtime.resolve(strict=True)
+    environment["DYLD_LIBRARY_PATH"] = str(runtime.parent) + (
+        ":" + environment["DYLD_LIBRARY_PATH"] if environment.get("DYLD_LIBRARY_PATH") else "")
+    environment["DYLD_PRINT_LIBRARIES"] = "1"
+process = subprocess.Popen(args.command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True, env=environment, start_new_session=not supervised)
 try:
     stdout, stderr = process.communicate(timeout=args.timeout)
 except subprocess.TimeoutExpired as error:
@@ -44,6 +52,12 @@ except subprocess.TimeoutExpired as error:
     sys.exit("bridge validation did not complete; see " + str(args.log))
 output = stdout + stderr
 args.log.write_text(output)
+if args.tsan_runtime:
+    loaded = {Path(path).resolve() for path in re.findall(
+        r"dyld\[\d+\]:[^\n]*?(/[^\n]*libclang_rt\.tsan_osx_dynamic\.dylib)\s*$",
+        output, re.MULTILINE)}
+    if loaded != {runtime}:
+        sys.exit("TSan runtime provenance mismatch: " + str(loaded) + "; see " + str(args.log))
 if args.expect:
     # A crash, linker error, or timeout alone never proves the tool was active.
     if process.returncode == 0 or not re.search(args.expect, output) or (args.site and not re.search(args.site, output)):

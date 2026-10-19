@@ -6,6 +6,43 @@ import Testing
 
 @MainActor
 struct DeviceChainTests {
+    @Test func contractDeviceBypassPersistsWithUndo() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-bypass-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        let document = try #require(controller.documentID)
+        await controller.addTrack(name: "track")
+        let track = try #require(controller.selection)
+        #expect(await controller.insertPlugin("org.example.effect", on: track, documentID: document))
+        let device = try #require(controller.deviceRows(on: track).first)
+        let list = DeviceChainListView(frame: CGRect(x: 0, y: 0, width: 520, height: 100))
+        var pending: Task<Bool, Never>?
+        list.onEdit = { change in pending = Task { await controller.editDeviceChain(change, documentID: document) } }
+        list.configure(devices: controller.deviceRows(on: track), track: track, document: document, busy: false)
+        let row = try #require(list.subviews.first as? DeviceChainRow)
+        #expect(row.bypass.state == .off)
+        let count = controller.undoCount
+        row.bypass.performClick(nil)
+        #expect(await pending?.value == true)
+        #expect(controller.undoCount == count + 1)
+        #expect(controller.deviceRows(on: track).first?.bypassed == true)
+        await controller.undo()
+        #expect(controller.deviceRows(on: track).first?.bypassed == false)
+        await controller.redo()
+        #expect(controller.deviceRows(on: track).first?.bypassed == true)
+        #expect(await controller.editDeviceChain(.copy(source: device.id, track: track, before: nil), documentID: document))
+        #expect(controller.deviceRows(on: track).allSatisfy { $0.bypassed })
+        await controller.close(); await controller.open(url)
+        #expect(controller.deviceRows(on: track).count == 2)
+        #expect(controller.deviceRows(on: track).allSatisfy { $0.bypassed })
+        #expect(!(await controller.editDeviceChain(.bypass(device: device.id, bypassed: false), documentID: document)))
+        let snapshot = try #require(controller.snapshot)
+        #expect(snapshot.deviceBypassed(onTrack: -1, at: 0) == nil)
+        #expect(snapshot.deviceBypassed(onTrack: 0, at: 999) == nil)
+        await controller.close()
+    }
+
     @Test func contractDeviceChainGesturesPersistOnceAndUndo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-chain-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }

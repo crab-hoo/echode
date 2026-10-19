@@ -183,6 +183,8 @@ pub struct Device {
     pub plugin: Option<String>,
     /// BLAKE3 of the plugin's saved bytes in `media/objects`. The mixer is `None`.
     pub state: Option<String>,
+    /// Host bypass keeps the helper and its settings, while passing dry audio.
+    pub bypassed: bool,
     pub parameters: Vec<Parameter>,
 }
 
@@ -193,6 +195,7 @@ impl Device {
             kind: DeviceKind::Mixer,
             plugin: None,
             state: None,
+            bypassed: false,
             parameters: vec![
                 Parameter::at_default(ids.gain, ParamKey::Gain),
                 Parameter::at_default(ids.pan, ParamKey::Pan),
@@ -208,6 +211,7 @@ impl Device {
             kind: DeviceKind::Clap,
             plugin: Some(plugin),
             state: None,
+            bypassed: false,
             parameters: Vec::new(),
         }
     }
@@ -280,6 +284,7 @@ pub(crate) fn validate_mixer(
     }
     if device.kind != DeviceKind::Mixer
         || device.state.is_some()
+        || device.bypassed
         || device.parameters.len() != ParamKey::ORDER.len()
     {
         return Err(ModelError::InvalidParameter);

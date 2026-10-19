@@ -331,7 +331,7 @@ fn render_with_plugins(
 
 fn parse_u32(text: &str) -> Result<u32, CliError> {
     text.parse::<u32>()
-        .map_err(|_| CliError::new(format!("expected a positive integer, got {text}")))
+        .map_err(|_| CliError::new(format!("expected a non-negative integer, got {text}")))
 }
 
 fn usage() -> CliError {

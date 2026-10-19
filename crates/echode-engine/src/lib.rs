@@ -9,6 +9,7 @@
 compile_error!("Echode only builds for macOS");
 
 mod builtin;
+mod bypass;
 mod clock;
 mod declick;
 mod device;
@@ -31,6 +32,7 @@ mod voice;
 mod wait;
 
 pub use builtin::Device;
+pub use bypass::copy_bypassed_audio;
 pub use clock::{sample_to_tick, tick_to_sample};
 pub use declick::OutputDeclick;
 pub use device::{IoWorkgroup, OutputInventory, output_inventory};

@@ -79,7 +79,7 @@ final class ArrangeHeaderView: NSView {
         switch operation {
         case .copy(let source, _, _): onDropFX(track, .copyDevice(source))
         case .reorder(let source, _): onDropFX(track, .moveToEnd(source))
-        case .remove: return false
+        case .remove, .bypass: return false
         }
         return true
     }

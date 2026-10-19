@@ -524,6 +524,17 @@ impl Project {
         Ok(self.write_track(index, track))
     }
 
+    /// Changes host bypass without changing the device identity or saved state.
+    pub fn set_device_bypassed(&self, device: Id, bypassed: bool) -> Result<Self, ModelError> {
+        let (owner, index) = self.clap_location(device)?;
+        if self.tracks[owner].devices[index].bypassed == bypassed {
+            return Ok(self.clone());
+        }
+        let mut track = (*self.tracks[owner]).clone();
+        track.devices[index].bypassed = bypassed;
+        Ok(self.write_track(owner, track))
+    }
+
     /// Reorders a CLAP device inside its track. `None` means just before the
     /// mixer. An id anchor must belong to the same chain; it is never an index
     /// into a snapshot that may have changed while a gesture was pending.

@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 source scripts/bridge-toolchain.env
 product_sanitizer="${1:?usage: check-product-bridge.sh address|thread}"
 product_output="$PWD/target/bridge/$product_sanitizer/product"
+product_validation=(python3 scripts/run-bridge-validation.py --timeout 600 --log "$product_output/swift-tests.log")
+product_swift=swift
 mkdir -p "$product_output"
 case "$product_sanitizer" in
     address)
@@ -15,6 +17,10 @@ case "$product_sanitizer" in
         export ECHODE_RUST_LIBRARY_DIR="$PWD/target/debug"
         ;;
     thread)
+        product_runtime="$(python3 scripts/tsan_runtime.py --directory fixed)/libclang_rt.tsan_osx_dynamic.dylib"
+        product_validation+=(--tsan-runtime "$product_runtime")
+        # The /usr/bin Swift forwarding shim strips DYLD_* before forwarding.
+        product_swift="$(xcrun --find swift)"
         export CARGO_TARGET_DIR="$product_output/rust"
         export RUSTFLAGS='-Ctarget-cpu=apple-m4 -Zsanitizer=thread -Zexternal-clangrt -Cdebuginfo=2 -Cforce-frame-pointers=yes'
         cargo "+$BRIDGE_NIGHTLY" rustc --locked --offline -Zbuild-std --target aarch64-apple-darwin \
@@ -38,6 +44,6 @@ print(max(headers, key=lambda path: path.stat().st_mtime_ns))
 PY
 )"
 cp "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h
-python3 scripts/run-bridge-validation.py --timeout 600 --log "$product_output/swift-tests.log" \
-    swift test --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
+"${product_validation[@]}" "$product_swift" test -q \
+    --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
     --sanitize "$product_sanitizer" -Xswiftc -warnings-as-errors

@@ -51,6 +51,9 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
   （[ADR 0061](../decisions/0061-distribution-signing.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - P2-02 の最初の接続では、下部のトラック FX ビュー、ヘッダの FX ボタン、候補の非モーダルパネル、`device.reorder` / `device.copy` を追加した。
   ヘルパー GUI とパラメーター編集は未接続である（[ADR 0118](../decisions/0118-track-fx-chain-editing.md)）
+- トラック CLAP のホストバイパスは FX 行から保存・Undo・再生・書出しへ接続済み。
+  FX はドライ音を通し、音源は発音を止めて配置音声を保つ。ヘルパーを保持し、再有効化はリセットと現在のノート追跡を通す。
+  オフライン化は未接続（[ADR 0120](../decisions/0120-device-bypass.md)）
 - Phase 2 のクリップ FX では、デバイスビューの編集対象を「トラック」と「クリップ」で切り替え、クリップ上にも FX ボタンと状態を表示する
 
 ### 9.6 スキャンとプラグインブラウザ

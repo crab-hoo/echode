@@ -94,7 +94,7 @@ pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageErro
 pub fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, PackageError> {
     if !is_content_hash(hash) {
         return Err(PackageError::new(
-            "state hash must be 64 lowercase hex digits",
+            "object hash must be 64 lowercase hex digits",
         ));
     }
     let path = package.join("media").join("objects").join(hash);
@@ -195,6 +195,10 @@ mod tests {
         fs::write(objects.join(&other), b"nope").unwrap();
         let mismatch = read_object(&package, &other).unwrap_err().to_string();
         assert!(mismatch.contains("does not match"), "{mismatch}");
+        let named = read_object(&package, &other.to_ascii_uppercase())
+            .unwrap_err()
+            .to_string();
+        assert!(named.starts_with("object hash"), "{named}");
 
         let outside = package.join("outside.bin");
         fs::write(&outside, b"").unwrap();

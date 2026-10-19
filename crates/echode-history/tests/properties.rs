@@ -98,6 +98,11 @@ enum Step {
         track: usize,
         plugin: u8,
     },
+    BypassDevice {
+        track: usize,
+        device: usize,
+        bypassed: bool,
+    },
     ReorderDevice {
         track: usize,
         device: usize,
@@ -189,6 +194,8 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (1u32..=7, prop_oneof![Just(2u32), Just(4), Just(8)])
             .prop_map(|(numerator, denominator)| Step::SetMeter { numerator, denominator }),
         2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
+        2 => (any::<usize>(), any::<usize>(), any::<bool>())
+            .prop_map(|(track, device, bypassed)| Step::BypassDevice { track, device, bypassed }),
         2 => (any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
             .prop_map(|(track, device, before)| Step::ReorderDevice { track, device, before }),
         2 => (any::<usize>(), any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
@@ -386,6 +393,21 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
             Command::AddDevice {
                 track: track(*index)?,
                 plugin: plugins[usize::from(*plugin)].to_string(),
+            }
+        }
+        Step::BypassDevice {
+            track: index,
+            device,
+            bypassed,
+        } => {
+            let owner = project
+                .tracks()
+                .iter()
+                .find(|item| Some(item.id) == track(*index))?;
+            let ids: Vec<_> = owner.devices.iter().map(|device| device.id).collect();
+            Command::BypassDevice {
+                device: pick(&ids, *device)?,
+                bypassed: *bypassed,
             }
         }
         Step::ReorderDevice {
