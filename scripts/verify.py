@@ -301,6 +301,43 @@ def load_report(directory):
     return {"version": 2, "results": {}}
 
 
+def summarize_reasons(reasons, limit=3):
+    if len(reasons) <= limit:
+        return ", ".join(reasons)
+    return ", ".join(reasons[:limit]) + f" ほか {len(reasons) - limit} 件 (詳細は対象の変更)"
+
+
+def failure_excerpt(log_path, max_lines=35, max_chars=3500):
+    try:
+        text = Path(log_path).read_text(errors="replace")
+    except OSError:
+        return ""
+    lines = [line.rstrip() for line in text.splitlines()]
+    pattern = re.compile(
+        r"(^failures:$|^---- .* stdout ----$|^test .* \.\.\. FAILED$|^Diff in "
+        r"|✘ Test .* failed|Expectation failed|^FAIL: |^ERROR: "
+        r"|^error(\[[A-Z0-9]+\])?:|panicked at |SUMMARY: .*Sanitizer"
+        r"|VERIFICATION TIMEOUT|^make(\[\d+\])?: \*\*\*)"
+    )
+    indices = [idx for idx, line in enumerate(lines) if pattern.search(line)]
+    if indices:
+        selected = []
+        seen = set()
+        for idx in indices:
+            for pos in range(max(0, idx - 1), min(len(lines), idx + 8)):
+                if pos not in seen:
+                    seen.add(pos)
+                    selected.append(lines[pos])
+        excerpt = selected[-max_lines:]
+    else:
+        non_empty = [line for line in lines if line.strip()]
+        excerpt = non_empty[-min(20, max_lines):]
+    output = "\n".join(excerpt)
+    if len(output) > max_chars:
+        output = "...\n" + output[-max_chars:]
+    return output
+
+
 def save_report(directory, report, policy, selected):
     report["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     temporary = directory / "report.json.tmp"
@@ -326,7 +363,8 @@ def save_report(directory, report, policy, selected):
         if result.get("log"):
             lines.append(f"  - ログ: [{name}]({name}.log)")
         lines.append(f"  - 検査入力の識別値: `{result['fingerprint']}`")
-        lines.append("  - 選択の根拠: " + ", ".join(selected.get(name, ["以前に明示実行した追加検査の記録"])))
+        reasons = selected.get(name, ["以前に明示実行した追加検査の記録"])
+        lines.append("  - 選択の根拠: " + summarize_reasons(reasons))
     lines += ["", "## 対象の変更", ""] + [f"- `{path}`" for path in report["changed_paths"]]
     lines += ["", "passed と deferred は各検査の入力・ツールが一致する間だけ有効。全体の識別値は変更監視用。not_run は実行か理由の記録が必要。deferred は合格ではない。", ""]
     temporary = directory / "report.md.tmp"
@@ -385,10 +423,11 @@ def verify(root, args):
     if args.only and not set(args.run + args.defer).issubset(requested):
         raise ValueError("--run/--defer must be included in --only")
     if args.plan:
+        if changed:
+            print(f"対象の変更 ({len(changed)} 件): " + summarize_reasons(changed, limit=8))
         for name, reasons in selected.items():
             kind = "自動検査" if checks[name]["mode"] == "automatic" else "追加の長時間検査" if checks[name].get("extended") else "計測などの候補"
-            print(f"{name} [{kind}]: {checks[name]['purpose']}")
-            print("  " + ", ".join(reasons))
+            print(f"{name} [{kind}]: {checks[name]['purpose']} (根拠: {summarize_reasons(reasons)})")
         if not selected:
             print("対象の変更はありません。コミット済みの変更には --base、全検査には --all を指定します。")
         return 0
@@ -442,6 +481,9 @@ def verify(root, args):
             save_report(directory, report, policy, selected)
             print(f"{name}: {result['status']} ({name}.log)", flush=True)
             if result["status"] != "passed":
+                excerpt = failure_excerpt(directory / f"{name}.log")
+                if excerpt:
+                    print(f"--- {name} 失敗箇所の抜粋 ({name}.log) ---\n{excerpt}\n---", file=sys.stderr)
                 return 1
         current_tools = tool_identity(root)
         current_stamps = check_fingerprints(root, policy, current_tools)

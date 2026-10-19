@@ -603,6 +603,47 @@ define_actions! {
                 .map_err(Into::into)
         }
     }
+    ReorderDevice {
+        id: "device.reorder",
+        name_ja: "FX の順番を変える",
+        name_en: "Reorder an FX",
+        description_ja: "同じトラック内の指定した FX の前へ動かす。省略時はミキサーの直前",
+        description_en: "Move an FX before another in its chain, or before the mixer",
+        command {
+            device: Id,
+            before: Option<Id>,
+        }
+        action {
+            device: Id,
+            before: Option<Id>,
+        }
+        commit { Action::ReorderDevice { device, before } }
+        edit |project: &Project| {
+            project.reorder_device(*device, *before).map_err(Into::into)
+        }
+    }
+    CopyDevice {
+        id: "device.copy",
+        name_ja: "FX を複製する",
+        name_en: "Copy an FX",
+        description_ja: "元を残し、同じ設定の FX を指定トラックへ追加する",
+        description_en: "Copy an FX and its saved settings to a track, keeping the source",
+        command {
+            source: Id,
+            track: Id,
+            before: Option<Id>,
+        }
+        action {
+            source: Id,
+            track: Id,
+            device: Id,
+            before: Option<Id>,
+        }
+        commit { Action::CopyDevice { source, track, device: Id::generate(), before } }
+        edit |project: &Project| {
+            project.copy_device(*source, *track, *device, *before).map_err(Into::into)
+        }
+    }
     RemoveDevice {
         id: "device.remove",
         name_ja: "プラグインを外す",

@@ -10,101 +10,96 @@ make verify-plan
 make debug-report
 ```
 
-`doctor` はソースを変更せず、アプリ・ウィンドウ・音声デバイス・プラグインを開かない。現在のソース、必要なツール、検査結果の有効期限、ロックの保持、開発用アプリの出所を表示する。新しい検査を実行したという意味ではない。機械向けの形式は `python3 -B scripts/diagnose.py --json`。
-
-`debug-report` は `target/debug-reports/<日時>-<一意名>/` へ診断 JSON、案内、既存ログとスパイクの JSON をコピーする。元の記録を上書きしない。検査の生の環境変数・Cargo 設定・ユーザープロジェクトは収集しない。ログにはローカルパスやプラグイン名が含まれ得るので共有前に確認する。各コピーは最大2 MiBの末尾で、切り詰めは診断 JSON の artifacts に記録する。古いログも調査資料として残すため、合否は verification.freshness と checks で判断する。収集時に検査が動いていれば実行中の資料であり、最終結果ではない。
-
-`make app` は署名後の本体・ヘルパーのハッシュとソースを `target/Echode.build.json` に記録する。ビルド中にソースが変わった場合は新しい版の記録を作らず失敗する。診断の `current` はディスク上の開発用バンドルとの照合であり、いま開いているプロセスの版は確認しない。検査の `current` も記録が新しいという意味で、すべて合格とは限らない。各検査の状態を見る。
-
-検査の `partial` は一部の結果だけ依存入力が変わった状態である。`checks` の `fresh` と `status` を個別に見る。文書変更で音声の有効な合格まで捨てない。version 1 の古い結果は依存入力を証明できないため、新形式の合格として扱わない。検査入力の対応は JSON の `inputs`・`packages` を確認する。パッケージの path 依存も自動でたどる。
-
-ソースが同じでも実機計測だけが古くなったら、既定出力とレートの変更、`system_profiler -json SPAudioDataType -detailLevel mini` の読取可否を確認する。実行環境の制限では成功終了しても機器一覧が空になる場合がある。空の一覧を同じ機器の証拠にしない。許可された環境で確認するか、実機計測の未実行理由を残す。機器設定を診断のために勝手に変えない。
+- `doctor` はソースを変更せず、アプリ・ウィンドウ・音声デバイス・プラグインを開かない。
+  現在のソース、必要なツール、検査結果の有効期限（`current` / `partial` / `stale`）、ロックの保持、開発用アプリ（`target/Echode.app`）の出所を表示する（機械向けは `python3 -B scripts/diagnose.py --json`）。
+- `debug-report` は `target/debug-reports/<日時>-<一意名>/` へ診断 JSON、案内、既存ログ（末尾最大 2 MiB）とスパイクの JSON をコピーする。
+  生の環境変数・Cargo 設定・ユーザープロジェクトは収集しない。
+- `make app` は署名後の本体・ヘルパーのハッシュとソースを `target/Echode.build.json` に記録する。
+- ソースが同じでも実機計測だけが古くなったら、既定出力とレートの変更、`system_profiler -json SPAudioDataType -detailLevel mini` の読取可否を確認する。機器設定を診断のために勝手に変えない。
 
 ## 症状から調べる順番
 
-- **MCP の初期化・ツール呼出しが失敗する**: `echode mcp SOCKET` の stdio と、その接続先の `echode serve PACKAGE SOCKET` を区別する。同じビルドと絶対ソケットパスを使い、同じ uid・API 版1を確認する。新プロトコルは各要求の `params._meta` に版と clientCapabilities が必要で、旧版は initialize → initialized を通す。MCP の版不一致、JSON-RPC の形、既知ツールの `isError`、接続先の停止を分ける。初版は GUI の共有ソケットや再生を提供しない。stdout へログを出さず stderr を確認し、切断後の編集を無条件で再送しない。実 CLI の回帰と負の対照は `target/verification/product-contracts/` に記録され、既存の debug-report が収集する（[ADR 0115](decisions/0115-phase2-mcp.md)）。
-- **S2 / S3 は通るのに製品だけ負荷に弱い**: スパイクと製品の起動引数・選択デバイス・Workgroup の保持と参加経路を照合する。監査時の `workgroup: None` は [ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md) で接続した。`output device <ID> workgroup`、参加・ポートのエラーは準備の失敗として区別し、Workgroup を外して隠さない。Workgroup 変更の通知後は保持した出力も再準備する。S2 の並列 CPU グラフは製品の内蔵 DSP の経路ではない。`plugin_missed_blocks` と実際の条件を記録し、実機の改善量は別に確認する。
-- **macOS 27 専用なのに古い OS 向けの生成物になる**: Cargo は `.cargo/config.toml` から最低 OS 27.0 と M4 を指定する。単体の `rustc --print deployment-target` はこの設定を読まないため、Cargo でビルドした対象を `xcrun vtool -show-build <対象バイナリ>` と `lipo -archs` で確認する。`minos` と `sdk` を混同しない。外部の `RUSTFLAGS` は CPU 設定を上書きし得るため、platform の IR 検査の失敗時には確認する。Swift の Package.swift や Info.plist だけを根拠にしない。
-- **release の proc-macro が見つからない・dylib が読めない**: `E0463` だけで依存の不在と決めず、`RUSTC_LOG=rustc_metadata::locator=info` で最初の `dlopen` の理由を読む。2026-10-17 は Rust 1.96.1 のデバッグ情報削除が `mis-aligned LINKEDIT string pool` を生成し、最低 OS 27.0 の proc-macro を macOS が拒否した。外部 crate なしの release cdylib でも再現したため、`.cargo/config.toml` の release を `strip = "none"` にする。最低 OS を下げたり Mach-O を手で書き換えたりせず、配布の一時ライブラリ読込テストと橋渡し生成を再実行する。コンパイラー更新時も実際の読込を確認する。証拠と上流報告は [ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)。
-- **Swift の SDK モジュールが target feature の不一致でコンパイルできない**: 以前は Swift の `-target-cpu apple-m4` だけで Testing と SwiftShims PCM の CPU 機能が一致しなかった。新しいキャッシュでも再現したが、`-Xcc -mcpu=apple-m4` を対で渡すと解消した。全ての Swift ターゲット・直接の swiftc の両方で対を維持する。SDK 自体の不具合や更新待ちと決めず、モジュール検証は有効なままにする。以前の失敗は `target/macos27-audit/swift-m4-sdk-failure.log`、最小再現と解消は `target/m4-build-audit/`、現在の判断は [ADR 0114](decisions/0114-m4-build-baseline.md)。
-- **ネイティブ検査前に M4 ホストの確認が止まる**: `scripts/check_build_host.py` は報告されたチップ名・OS・architecture を確認する。隔離環境が `sysctl machdep.cpu.brand_string` の読取りを拒否した場合も未確認として停止する。検査を外したり M4 と仮定したりせず、CPU 情報の読取りを許す環境で同じ入口を再実行する。CI の `xcode-27` ラベルだけを機種の証拠にしない。
-- **隔離回帰や署名検査が実行環境の制限で止まる**: `shm_open: Operation not permitted` は共有メモリの作成、`test_a_temporary_identity_signs_the_helper_app_and_leaves_the_main_app_strict` の `SecKeychainCreate` は一時キーチェーン作成の段階である。2026-10-17 の制限された実行環境で両者を確認した。元のログを保持し、必要な OS 操作が許される環境で同じ検査を再実行する。テストの省略や期待値の緩和で合格にせず、ユーザーのログインキーチェーンを直す問題と混同しない。
+### ビルド・環境・検査基盤
 
-- **ツール不足・ビルドできない**: doctor の missing_tools とコンパイラーの版、最初のエラーを読む。通常の不足ツールは `make setup`、動的検査は `make setup-bridge`。Xcode の選択・ライセンス・署名鍵は現在の設定を確認し、エージェントが勝手に OS 設定や同意を変更しない。
-- **直したのに画面が変わらない**: アプリの状態が stale / unknown なら `make app`。保存状態を確認して通常終了し、生成された `target/Echode.app` を開く。別の場所の同名アプリや古い起動中プロセスと混同しない。
-- **自動検査が失敗**: `target/verification/<ID>.log` の最初の原因を読む。製品契約なら `product-contracts.json` と該当の通常・negative ログを見る。コンパイル・リンク・タイムアウトは、意図した期待値が失敗した証拠にはならない。修正後に同じテストを実行し、最後に `make verify`。
-- **最適化後に製品契約の負の対照が成功してしまう**: 通常検査の失敗とは分け、戻した変更が現在も本来の誤りを作るか調べる。2026-10-17 の PCM 共有後は、準備キーの一致だけを無効にしても、配置ごとの平面を再利用でき、保持の破壊にならなくなった。`loop-head-residency` の負の対照は準備キャッシュ全体を捨て、削除済み素材を再読込して期待値で失敗する条件へ更新する。検査を無効化したり合格条件を緩めたりせず、通常と負の対照を取り直す。
-- **製品契約の最後に Directory not empty**: 2026-10-15 は14契約の通常・negative の判定後、検査用コピーの削除中に `.DS_Store` が残って失敗した。音声の期待値の失敗とは区別し、最後の例外と残ったコピーを調べる。コピーは隠しディレクトリで作り、内容追加との競合だけを最大3回削除し直す。権限不足や継続する失敗は合格にしない。ログ上の個別成功だけで検査全体を合格にせず、修正後に正式な結果を再取得する。
-- **基準コミットが見つからない**: `VERIFY_BASE` と対象リポジトリを確認する。コミット済みの変更の検査では、親プロジェクトの基準 ref が一時リポジトリのテストへも渡る。一時リポジトリの fixture はその設定を隔離し、自身に存在する ref で検査する。利用者が診断する対象へ明示した無効な ref は、黙って HEAD へ置き換えずエラーにする。
-- **スキップ・0件なのに成功に見える**: Rust と Swift Testing の実テスト名・件数を確認する。空の XCTest の成功フッターは Swift Testing の成功ではない。必須契約はこれを自動で拒否する。
-- **画面や画像を取得できない**: 対象 PID・ウィンドウ・現在の Space・遮蔽・画面の点灯を新しい取得で確認する。古い座標を使い続けない。`noWindowsAvailable`、取得サービスの切断、`-3811` は製品の不具合と即断せず、[取得エラーの調査](reviews/2026-10-14-computer-use-reinvestigation.md) と照合する。
-- **プレイヘッドが止まる**: `spike-playhead` の表示条件・未検証項目と通常の世代テストを分ける。専用 AppKit プローブを正式な入口で動かし、Swift Testing のヘルパーから実ウィンドウを起動して代用しない。閉じる前の状態と期待値の実行を確認する。描いた tick は音声が最後に書いた tick と一致させる。表示予定時刻への補間はしない。バッファ周期が表示周期より長いと、同じ tick のフレームが続く（[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)）。
-- **120 Hz の画面でもアレンジが 60 Hz に見える**: `displayFrameRateRange` が画面の最大を上限と希望にしているかを見る。値はウィンドウの画面からメインスレッドが読み、描画スレッドは保存した数だけをリンクへ書く。画面が無いテスト入力は 60 である。停止中で世代が一致しているリンクは休止するので、止まっている画面のコールバック数を再生中のレートと混同しない。
-- **長い音声を開くたびに全部読む**: ピークキャッシュのフレーム数とバケット幅 64 が一致すれば、粗い列は `cache/peaks/` だけで答える。正準 PCM を読むのは、キャッシュミスと、バケットに揃わない端や 64 サンプル未満の列である。オブジェクトを消したあとの短い列が 0 になるのは、マップできない時の閉じた失敗である。ファイルをマップしたあとに切り詰めると、描画スレッドがフォールトし得る。再生準備はこれまでどおりデバイスレートの平面を作り、ハッシュも確認する。
-- **Space が効かない**: 最初にフォーカスを持った View、テキスト編集中か、アプリ復帰直後かを記録する。ヘッダの keyDown→上位への転送、ワークスペースのコマンド経路、controller を順に確認する。タイムラインをクリックして回復するだけで修正済みにしない。
-- **再生開始が遅い・準備中に停止できない**: 初回と保持した出力の再開を分ける。`spike-audio` の準備時間・再開操作の投入時間・素材ローダーの回数を確認し、発音までの時間と混同しない。`pending-transport`、`queued-stop`、`transport-cancellation` で画面の受付・投入直後・HAL 出力を分ける。停止中の位置移動は要求位置と音声側の反映済み連番も調べる。初期化中のサードパーティー処理の完了と、取消後に発音しないことは別である（[ADR 0097](decisions/0097-cancellable-retained-transport.md)）。
-- **画面なしアレンジ検査が行境界の不一致を報告**: `spike-arrange-frame.json` の `laneMismatches` と `clippedHeaderMismatches` を分けて読む。2026-10-17 は旧比較点の x=25 pt がミキサーの M ボタン内に入り、背景との比較で9,453行の不一致を報告した。比較点を操作部品のない左余白の x=2 pt に揃え、全161フレーム・50,758行の比較と不一致0の条件は維持する。境界をずらした一時コピーも拒否する。画像と比較点を確認して、検査の誤り・座標やクリップ境界の製品不具合を区別する。元の画像・JSON・ログは `target/macos27-audit/arrange-probe-before.*`。
-- **ペイン開閉で画面が覆われる**: 安定後だけでなく、親の縮小後・子のレイアウト前の `visibleRect` を調べる。`pane-boundary` と実ウィンドウ検査を分け、`clipsToBounds`、SwiftUI の割当境界、未描画 drawable のクリアを確認する。メインスレッドを GPU 待ちにして症状を隠さない（[ADR 0098](decisions/0098-pane-render-boundaries.md)）。
-- **プラグインが落ちたあとも締め切りまで待つ**: `SIGABRT` だけでなく `SIGSEGV`、`SIGBUS`、`SIGILL` も共有領域の印を立てる。印は次の提出で見える。いまカーネル待ちに入ったブロックは、印だけでは戻らない。プロセス終了までの 123 ms 以上は S3 の測定のままで、今回測り直していない。Mach 例外ポートは使っていない（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
-- **CLAP が鳴らない**: プラグイン ID、スキャンされたバンドルとキャッシュ、ヘルパー起動、楽器・エフェクトの入力と出力を追う。macOS の `.clap` はディレクトリでも正しい。Sine Pad だけの成功を CLAP 処理の成功にしない。本体でバンドルをロードして切り分けてはいけない。GUI は [現在の制約](status.md) を確認する。
-- **走査が stderr なしで失敗**: エラーには子の終了コードまたはシグナルも含める。2026-10-15 の長い走査出力の検査は旧表示の `plugin scan failed (bundle)` だけで一度失敗し、単独実行では成功した。元の終了理由は記録不足で確定できないため、タイムアウトや製品のロード不良と断定しない。`failed_scans_report_exit_codes_and_signals_without_stderr` で診断を維持する。長い出力の検査では失敗時に一時スクリプトのパスも残す。
-- **空白から再開すると以前の音が出る**: 停止中だけでなく、再開後の最初の数ブロックのピークを見る。ノートオフの到達は内部ボイス・残響の消去ではない。`plugin-transport-reset` と `plugin-midi-panic` は通常の余韻も確認するため、空白の一律ミュートを拒否する。標準リセットと NOTE_CHOKE だけで消えない設置済み Vital の事例と、宣言された MIDI ポートへの CC120 の対応は [ADR 0099](decisions/0099-transport-plugin-state.md)。ヘルパーを差し替えた後は本体も新版で通常起動し、古いプロセスと新しい通信の版を混ぜない。
-- **左右が消える・定位が変わる**: 逆位相で振幅の異なる左右を使い、素材読込の平面、最初のエフェクト入力、各メイン出力、次の入力、フェーダー後を照合する。モノの中央は等電力分配、ステレオの中央は左右の振幅を保持する。`unsupported mono/stereo bus mapping` はデバイス ID と宣言したメインポートを調べる。暗黙の平均や右の複製でエラーを隠さない。`stereo-media` と `stereo-plugin-chain` の通常・negative 証拠は `target/verification/product-contracts.json` を参照する。
-- **ループ・フェーダーで段差が出る**: ループのサンプル単位の両端、各境界の前後の振幅、レート、ブロック長、編集を適用したサンプル位置を記録する。配置フェードとループフェードを区別し、楽器の余韻を誤って消していないか調べる。フェーダーは再生中の 5 ms で移行し、同じ目標の計画交換ではやり直さない。`audio-loop-seam` / `audio-fader-ramp` と `block_size` の独立した振幅の期待値を確認する。ブロック間一致だけでは無音化やクリックを除外できない。
-- **ループ変更で読込が再発する・先頭の音が古い**: `clips.rs`の保持キー（レート・テンポ・音声配置・AudioRef）と、要求／採用した計画を照合する。P1は全PCMを事前準備し、同じ入力ならArcを再利用する。入力が変わった読込の失敗を、以前のPCMの成功へ置き換えない。`loop-head-residency`は一時素材を消して保持・失効・失敗後の復帰を区別する。開いている計画が鳴り続けることと、素材を失ったパッケージを再オープンできることも別である。`CachedTrack`使用時は供給側の内容の失効・レート・原点・範囲、停止中の設定、次の`replace`の採用を確認する。フェーダー前の平面へ音量を焼き込んで二重適用しない（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。
-- **トリム後に別の位置が鳴る、または左へ伸ばすと再生できない**: 内容位置 0 は `start - offset` である。スキップ長は原点から窓の開始までのテンポ積分で、窓の開始から同じ tick 幅を足した区間ではない。負のオフセットは無音で、`PlaybackError::Time` や波形の引き伸ばしにはしない。波形はゲインとフェードの前のファイルサンプルを見る（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
-- **Undo のあと Redo が失敗する、またはプラグイン保存でグラフが作り直る**: バックグラウンドの状態ハッシュは Undo に積まず、Redo も消さない。画面の Undo / Redo 数はユーザー操作の成功時だけ変わる。プラグイン状態だけの差分では出力グラフを交換しない。文書が別の操作で変わったあとの古い保存バイトは捨てる（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
-- **画面のミックス値と音が一致しない**: 文書・トラック・パラメーター・クリップのIDと、確定したスナップショット、一時的な `faderPreview` を区別する。ドラッグ中は確定値とUndo数が変わらず、離して1回だけ記録する。音量・パンの試聴は送信中1件と最新値へ集約し、確定後の解除は `requested_plan` / `applied_plan` を通した採用待ちになる。取消・close時の未完了送信を `MixControlTests`、波形を `contract_live_fader_preview_and_peak_taps_under_rtsan` で調べる。メーターはフェーダー後の左右最大ピークで、マスターやDACの値ではない。ストリームがなければ0、停止中は24dB/秒で減衰し、−60 dB（線形 0.001）以下の保持値は 0 になる。1コールバックにつき公開はブロック末の1回である。途中の減衰値が見えると持続音がバッファ周期で凹む。インスペクターの dB が無音後も −60 より小さく落ち続けるときは、この下限が外れている。バーはヘッダと同じ割合で、進捗表示の補間とは別である。更新は画面周期で、無音で止まる。試聴中にメーターだけが暗くなるときは、操作欄の disabled がメーター行まで掛かっている。停止直後にヘッダが動かないときは、表示リンクの 200 ms 保持が外れて、遅れたテールのピークで起きていない。0 dB は無音ではなく基準振幅で、無音の表示は −∞ である。聞こえない開始の取消後にメーターだけ残るときは、`cancel_unheard_start` がセルを 0 にしていない。ヘッダの読み上げが線形ゲインや −1〜1 のパンになるときは、アクセシビリティの値の説明がインスペクターの単位になっていない。VoiceOver で音量を上げてもつまみが動かない、または無音まで届かないときは、増減が −60 dB（線形 0.001）を無音と別の段にしている。数値欄が、横の単位や無音ラベルと同じ − を拒否するときは、表示と同じ解釈になっていない。clipの値が読めてもMIDIには配置ゲイン・フェードを適用しない。フェードの見た目とmsの差はテンポマップとflickの換算を照合する（[ADR 0107](decisions/0107-mix-controls.md)）。
-- **ループの欄と鳴っている範囲が違う**: ループが有効なあいだ、開始または終了の欄を離れるか Return で、有効な拍を音声へ送る。鳴っている範囲と同じなら送り直さない。欄の途中の無効な文字では、直前の有効範囲のままである（[ADR 0055](decisions/0055-loop-metronome.md)）。
-- **プラグイン一覧がフォルダの変化より古い**: 走査中に届いた改訂を、終わった走査の結果で捨てていないか見る。重なった読み直しは、終わったあとにもう一度読む（[ADR 0060](decisions/0060-plugin-folder-watch.md)）。
-- **マウスホイールでほとんど動かない**: 行数のイベントを 1 ポイントとして割っていないか見る。1 段はアレンジで 1 トラックと 1 拍、ピアノロールで 1 音高と 1 拍である。トラックパッドのポイントはそのままである（[ADR 0050](decisions/0050-arrange-viewport.md)）。
-- **ピアノロールの Escape がドラッグ以外で消える**: 編集中でなければ上の応答者へ渡す。ドラッグ中だけ下書きを捨てる（[ADR 0052](decisions/0052-piano-keyboard.md)）。
-- **矢印キーを連打してもノートが 1 段しか動かない**: 前のスナップショットを基準にしていないか、編集中の `busy` で次のキーを捨てていないかを見る。2 回の上キーは 2 半音である（[ADR 0052](decisions/0052-piano-keyboard.md)）。
-- **VoiceOver の音量が 1 段しか動かない**: 増減が木を作った時の値を閉じていないか、編集中の次の `param.set` が `busy` で捨てられていないかを見る。2 段は 2 dB になる（[ADR 0107](decisions/0107-mix-controls.md)）。
-- **ファイル検索を消すと先頭が開く**: 選択が空の検索を消したときに先頭のファイルを選んでいないか見る。見えていた行が隠れたときだけ、残っている先頭へ移る。CLAP 一覧も空の選択は空のままである（[ADR 0053](decisions/0053-workspace-ui-foundation.md)）。
-- **並列実行の CLAP 出力比較がゼロになる**: `plugin_failure` の期限超過と状態保存の不一致を分ける。正しさの検査は `render_content` のハング検出期限で実行し、時間性能は `spike-isolation` の専用検査で測る。製品の待ち期限や性能の閾値を延長して期待値を通してはいけない。状態を読む `hear_state` でも失敗理由を確認する（[ADR 0049](decisions/0049-hosted-playback.md)）。
-- **確保・競合・寿命・音切れ**: debug の確保検出、RTSan、ASan / TSan / Miri のどの境界を通ったか確認する。音声スレッドへ println、ファイル出力、ロックなどを追加しない。常時の統合トレースが実装済みとは仮定せず、既存の状態・エラーと、制御側の一時的な診断を使う。
-- **合格の直後に終了フックが TSan を最初から実行する**: フックの PATH は Cursor の ripgrep を先頭に足し、ログインシェルは同じ項目を繰り返すことがある。識別が PATH の文字列だと、解決されるコンパイラが同じでも合格と見送りが失効し、既知の errno 競合を引き直す。識別は解決された `rustc` などのパスである。PATH を変えて別の `rustc` が選ばれたときは失効が正しい。
-- **TSan が HAL の出力と保存処理の同じアドレスを報告**: 2026-10-17 は Swift の UI 世代更新テストが意図せず実 HAL を起動し、`fill_inner` の出力バッファ書込みと別スレッドの zlib の書込みを同じ領域として報告した。`target/macos27-audit/tsan-hal-before.log` に保持する。アドレスだけで所有権の不具合や誤検出と断定せず、HAL から渡されたバッファの生存期間と OS が管理する領域の再利用を区別する。errno の旧報告とは異なる。UI テストは既存の応答差し替え口で機器を開かず世代更新を確認する。警告の抑制は追加しない。実機の追加調査は明示的な依頼を受けてから実 HAL の境界を調べ、自動検査の成功を実機の解決へ読み替えない。
-- **TSan が終了済みスレッドの errno と競合を報告**: 2026-10-15 の Swift 製品検査で、`std::sys::io::error::unix::set_errno` とパッケージ検査のエラー読取が同じアドレスとして報告された。同じ nightly・Apple ランタイムで、Echode や外部 crate を含まない Rust 標準ライブラリだけでも再現した。8本の親スレッドから300回ずつ子を生成・join し、各子で存在しないファイルの metadata エラーと read_dir の完走を8回繰り返すと、終了済みの子と新しい子の errno 読書きが競合として報告された。ローカルの `target/tail-audit/errno-probe/`、`errno-result.log` と `target/debug-reports/20261015T073647Z-4ss0b_rm/` に独立再現と元の失敗を保持した。ツール内部の修正箇所まで確定したという意味ではない。同じスタックという理由だけで別の警告まで無視せず、製品の対象・所有権・終了順も確認する。抑制や製品側への不要なロックで隠さず、判定条件を変えず再実行し、続く場合は検査環境の制約として未合格を残す。
+- **空き容量不足（`No space left on device` / `Errno 28`）**:
+  `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
+- **ツール不足・ビルド失敗**:
+  `doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`、動的検査は `make setup-bridge`。
+- **macOS 27 / M4 ビルド基準の不一致**:
+  Cargo 生成物は `xcrun vtool -show-build <バイナリ>` と `lipo -archs` で確認する（単体の `rustc --print deployment-target` は `.cargo/config.toml` を読まない）。
+  Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。
+  release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT string pool`）は `.cargo/config.toml` の `strip = "none"` を確認する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
+  `scripts/check_build_host.py` が `sysctl machdep.cpu.brand_string` を読めない隔離環境では、CPU 情報の読取が許される環境で再実行する。
+- **実行環境の権限制限（共有メモリ・キーチェーン）**:
+  `shm_open: Operation not permitted` や `SecKeychainCreate` の失敗はサンドボックス制限によるため、許可された環境で再実行する。
+- **自動検査・製品契約の失敗**:
+  `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
+  最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
+  一時コピー削除時の `.DS_Store` 競合は自動リトライされるが、権限エラー等の継続失敗は合格にしない。
+- **基準コミット（`VERIFY_BASE`）エラー**:
+  一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
+- **終了フック直後の不要な再実行**:
+  ツール識別は PATH 文字列ではなく解決された `rustc` / `swift` 等の実パスを使う。
 
-  2026-10-17 の M4 統一後も同型を観測し、固定 M4 / macOS 27・nightly-2026-10-09・Apple TSan で独立再現した。`target/m4-build-audit/errno-probe` の Rust 標準ライブラリだけの staticlib を、呼出しだけの Swift へ `-sanitize=thread` でリンクする。標準ライブラリも `-Zbuild-std` で計装し、Swift と同じランタイムを使う。製品の失敗は `tsan-errno-product-before.log`、独立再現は `errno-standalone.log`（いずれも `target/m4-build-audit/`）。再現条件と現在の検査結果は [ADR 0114](decisions/0114-m4-build-baseline.md) と検査レポートを参照する。実 HAL の出力警告とは別であり、再実行の成功だけを警告の解決にしない。
-- **長時間の実機計測だけが失敗**: 処理時間の期限超過（late）と、HAL が呼ばれない期間（host-time gaps）を分ける。`pmset -g log` の検査時刻の Sleep / Wake を読み、蓋閉じ・OS の停止と照合する。2026-10-15 は処理の期限超過0件でも、蓋閉じのスリープをまたいで間隔異常1件となり、不合格になった。失敗した report とログを `make debug-report` で退避し、必要な時刻の Sleep / Wake だけを補足資料にする。蓋を開いた連続稼働の条件で再計測する。閾値を緩めたり、スリープ中の異常を黙って差し引いたりして合格にしない。通常のスリープ抑止は、蓋閉じまで防げるとは限らない。
-- **短時間の音声確認がレート条件で止まる**: 2026-10-16 に現在の機器が96 kHzで、旧48 kHz専用計測器の入口で拒否された。通常の短時間確認は `--native-rate` を使い、期限と記録容量を実際のレートから決める。機器設定を勝手に48 kHzへ変えない。比較用の10分計測は48 kHz条件を維持し、短時間の結果と別ファイルへ保存する。
-- **コールバック数が止まったまま**: [ADR 0096](decisions/0096-measurement-completion.md) の終了理由、要求時間と測定時間、最後の増加を確認する。Sleep がなければ `/usr/bin/log show` の該当時刻の coreaudiod とデバイス変更を読む。zsh の `log` と混同しない。検査用 PID の `sample` で、IO スレッドが処理中なのか、ワーカーだけが待っていて HAL から呼ばれていないのかを分ける。2026-10-15 の別事例は USB EarPods の IO 停止と既定出力の変更だった。途中停止・機器変更・中断の旧合格は無効。共有前に CoreAudio ログの機器識別子等を確認する。
-- **再生中のぶつぶつ・停止時のクリック**: `audio.status` の `plugin_missed_blocks` と `graph_unavailable_blocks` を開始前後で比べる。前者は処理・投入・期限の失敗。後者は旧実装の構造更新による一時的な経路喪失で、ADR 0102 以降は加算経路がない。出力を作り直すと累積がリセットされる。`pending_plan` は計画交換の保留を示し、音声を止める条件ではない。保留が解けない場合は、停止中の領域採用、ヘルパーの生存、非同期の準備エラーを確認する。2026-10-16 は期限超過なしでも20 msごとの保存確認がプラグインを一時バイパスした。停止の直後だけなら、位相の違うPCMを途中停止し、継続する波形を減衰しているか確認する。最後の値を0へつなぐだけでは、一定値の回帰が通っても周期を持つ波形を切断する。初回提出前の取消と、既発音の描画途中の取消も分ける（[ADR 0103](decisions/0103-live-stop-waveform.md)）。停止中が0だけでは合格にしない。通常の保存確認と停止波形の再現は必須契約へ移した（[ADR 0101](decisions/0101-live-output-discontinuities.md)、[ADR 0102](decisions/0102-exclusive-audio-graph.md)）。実機・聴感はユーザー担当とし、明示的な依頼がある時だけ短時間のプラグイン・HAL 検査を加え、長時間計測を最初の切り分けにしない。
-- **保存・復旧の不一致**: ユーザー文書へ障害注入せず一時プロジェクトで再現する。成功応答、公開版、ジャーナル、再オープン後の内容を照合する。強制終了は未保存データを失い得るので、対象と許可の範囲を確かめる。
+### オーディオ・トランスポート・プラグイン
+
+- **S2 / S3 は通るのに製品だけ負荷に弱い**:
+  選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。
+- **再生開始が遅い・準備中に停止できない**:
+  `pending-transport`（UI 受付）、`queued-stop`（ABI 投入時取消）、`transport-cancellation`（HAL 初回発音禁止）の 3 境界を切り分ける（[ADR 0097](decisions/0097-cancellable-retained-transport.md)）。
+- **再生中のぶつぶつ・停止時のクリック**:
+  `audio.status` の `plugin_missed_blocks` と `pending_plan` を確認する。
+  定期保存確認による一時バイパス排除（[ADR 0101](decisions/0101-live-output-discontinuities.md)）、音声側の排他グラフ所有（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）、5 ms の停止波形減衰（[ADR 0103](decisions/0103-live-stop-waveform.md)）、待機しない後片付け（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）のどの境界かを確認する。
+- **CLAP が鳴らない・走査失敗**:
+  プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。
+- **空白への移動・再開で以前の残響が鳴る**:
+  停止・シーク時の `active.reset()`、`NOTE_CHOKE`、宣言された全 MIDI ポートへの CC120 / All Notes Off を確認し、自然な余韻と区別する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
+- **左右の消失・定位変化・ループやフェーダーの段差**:
+  逆位相・異振幅の左右信号で素材読込・エフェクト間・フェーダー後を照合する（`stereo-media`、`stereo-plugin-chain`、`audio-loop-seam`、`audio-fader-ramp`、[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
+- **ループ変更での再読込・トリム位置ずれ**:
+  `clips.rs` の保持キーと `CachedTrack` の失効条件を確認する（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。内容位置 0 は `start - offset` のテンポ積分で、負のオフセットは無音となる（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
+- **長時間・短時間の実機音声計測の失敗**:
+  処理期限超過（`late`）と HAL 呼出欠落（`gaps`、`pmset -g log` の Sleep / Wake や `/usr/bin/log show` の coreaudiod デバイス変更）を区別する（[ADR 0096](decisions/0096-measurement-completion.md)）。短時間確認は `--native-rate` を使う。
+
+### UI・描画・入力・履歴・MCP
+
+- **直したのに画面が変わらない**:
+  `doctor` でアプリが `stale` / `unknown` なら `make app` を実行し、`target/Echode.app` を開き直す。
+- **FX が違うトラックへ入る・並びが変わらない**:
+  候補を開いた文書セッション、追加操作時の選択トラック、ドロップ先トラックを区別し、`device.reorder` / `device.copy` と状態ハッシュの引き継ぎを `fx-chain-ui` で確認する（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
+- **画面のミックス値・メーターと音が一致しない**:
+  確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
+  メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。
+- **プレイヘッド・リフレッシュレート・ペイン境界・行境界**:
+  プレイヘッドは音声が最後に書いた tick を補間せず描画する。`displayFrameRateRange`（最大 120 Hz）、ペイン縮小時の `clipsToBounds`（[ADR 0098](decisions/0098-pane-render-boundaries.md)）、オフスクリーン検査の左余白比較点（`x=2 pt`）を確認する（[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)）。
+- **キー入力・ホイール・検索・ループ欄**:
+  ヘッダの `keyDown` から上位への Space 転送、マウスホイールの行単位とトラックパッドのポイント単位（[ADR 0050](decisions/0050-arrange-viewport.md)）、ピアノロールのドラッグ中のみの Escape と連続矢印キー（[ADR 0052](decisions/0052-piano-keyboard.md)）、空選択時の検索解除（[ADR 0053](decisions/0053-workspace-ui-foundation.md)）、ループ欄の確定時送信（[ADR 0055](decisions/0055-loop-metronome.md)）を確認する。
+- **保存・復旧・Undo / Redo・MCP**:
+  バックグラウンドのプラグイン状態保存は Undo に積まず Redo も消さない（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
+  MCP（`echode mcp SOCKET`）は接続先の `echode serve PACKAGE SOCKET` と同じビルド・絶対ソケットパス・API 版 1 を確認し、stdout へログを混ぜない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
+
+### サニタイザー（TSan / ASan / RTSan）
+
+- **TSan の既知の環境要因と製品不具合の切り分け**:
+  1. UI テストは機器なしの応答差し替え口を使い、実 HAL を開かない（`target/macos27-audit/tsan-hal-before.log`）。
+  2. Rust 標準ライブラリの終了済みスレッドと新規スレッドの `errno` 競合は、製品を含まない最小 staticlib + Swift でも再現している（`target/m4-build-audit/`、[ADR 0114](decisions/0114-m4-build-baseline.md)）。
+  いずれも抑制（suppression）や不要なロックで隠さず、スタックと対象アドレスを確認して製品データの競合と区別する。
 
 ## 再現と引き継ぎに残す情報
 
-### 減衰の回帰が通っても停止クリックが残る場合
+### 停止クリック・発音アタックの実出力診断
 
-最初に確認した版と音源、ループの状態を照合する。2026-10-16 は `target/stop-click/Echode.app`・複数の音源・ループ無効でもユーザーが再現した。停止時にループのフェードが外れる別の不具合は修正したが、この報告の主因とは扱わない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)）。
-
-`ECHODE_STOP_TRACE_DIR` を設定した診断版では、ユーザーが普段のプロジェクトで再生して1回停止すると、停止から50 ms後までの実出力を `.f32le` と `.json` に保存する。診断のために別の `.app` を増やさず、通常の `target/Echode.app` を使う。起動中のアプリは置換せず、先にコードと自動検査を完了する。通常ビルドは記録無効。診断版のビルド時にも同じ変数を指定でき、ソース識別値は `ECHODE_TRACE_BUILD` で埋め込む。実行時の出力先はビルド時の値より優先される。停止を連打せず、一つの停止を記録する。
-
-PCMは左右順のfloat32 little-endianで、加工しない。メタデータの `sample_rate` と `pcm` を使う。`stop_retained` を確認し、`stop_frame - first_frame` が記録内の停止位置となる。各ブロックの `first_frame` も同じ通算フレーム基準である。位相の連続性、途中のゼロや振幅の段差、`stop_fade_offset` の進み方、`authorized`、`hardware_changed`、`invalid_buffer`、`callback_failed`、`engine_failed`、`plugin_missed_blocks` の増加を照合する。処理時間は `render_ns` とコピーを含む `elapsed_ns` をフレーム数／レートの期限と比較し、`entry_ns` とHALの `output_host_time` で呼出の欠落も調べる。診断自体の負荷と製品処理を混同しない。
-
-同日のユーザーの7記録では、減衰後の破棄する処理が約5.3 msを使い、次の呼出が約11 ms後になっていた。波形の減衰だけを見て合格にせず、その後の無音ブロックまで調べる。旧版の `plugin_missed_blocks` は破棄する処理を加算しないため、増加がないことだけでも除外できない。入力のハッシュと集計は `target/noise-audit/stop-capture-analysis.json`、原因と修正は [ADR 0105](decisions/0105-nonblocking-stop-cleanup.md) を参照する。
-
-新しい記録の `cleanup_pending` は後片付けの未完了で、待機や失敗を意味しない。ライブでは一度の投入・完了ポーリングで戻り、完了前の再開は時計を保持して `running=false` となる。5秒進まない場合の失敗・制御側の再起動と、通常の短い保留を区別する。旧記録にこの項目がないことを、後片付けがなかった証拠にしない。
-
-これはHALへ渡すまでの記録で、デバイスやDACの後の音は含まれない。ファイルがなければ記録成功と扱わない。音声ストリーム・マイク・別の再生器は追加しない。ファイル保存は制御側で行い、音声側は事前確保した一つの領域を受け渡す。記録にはユーザーの再生音が含まれるため、通常の `debug-report` へ自動で含めず、共有対象を選ぶ。
-
-### 無音からの自然な発音がクリックに聞こえる場合
-
-音源・プリセット・ノート・ベロシティ・レート・音量を揃え、別プロセスでの直接出力と製品のイベント配送・ミックス・ライブ出力補正後のサンプルを比較する。ノートオンのブロック内位置と、最初の発音前の無音も確認する。波形の隣接差が大きいだけで不具合とせず、直接出力にも含まれるアタックとホストの追加の変化を区別する。2026-10-16のVital Initでは6条件で全サンプルが一致した（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
-
-直接出力と一致しても聴感が違う場合は、実際の出力時の失敗数の増加・呼出間隔・機器・レベル差を別に調べる。オフラインの一致を、実機の期限内処理や他DAWの実出力との比較へ読み替えない。通常のアタックへ一律のフェードを追加して隠さない。
+- `ECHODE_STOP_TRACE_DIR` を指定した診断実行では、停止から 50 ms 後までの HAL 実出力を `.f32le` と `.json` に記録する（通常ビルドは記録無効、[ADR 0104](decisions/0104-stop-output-diagnostics.md)）。
+  `stop_frame - first_frame`、位相の連続性、`stop_fade_offset`、`cleanup_pending`（ライブ後片付けの非待機保留、[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）、`render_ns` / `elapsed_ns` と `output_host_time` の呼出間隔を照合する。
+  ユーザーの再生音が含まれるため、通常の `debug-report` には自動収集しない。
+- 無音からの発音アタックは、別プロセスでの直接出力と製品の再生・出力補正後の全サンプルを比較し、音源本来のアタックとホストの追加変化を区別する（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
 
 ### 共通の記録項目
 
 1. 対象のコミットと作業ツリー、診断資料の場所、実行ファイルの出所。
-2. 最小の入力と初期状態、操作順、期待と実際。文書・トラック・ノートなどは ID も使う。
+2. 最小の入力と初期状態、操作順、期待と実際（文書・トラック・ノート等の ID を含む）。
 3. 実行した正式な検査名、終了コード、期待値が実際に走った証拠、ログの場所。
-4. 原因の根拠と、まだ推測の部分。製品不良・テスト起動・ツール取得・環境条件を区別する。
+4. 原因の根拠と未確定の部分（製品不良・テスト起動・ツール取得・環境条件の区別）。
 5. 修正した境界と回帰テスト、未実行の検査・理由、残る制約。
 
-`/tmp` だけの再現や画像を唯一の修正根拠にしない。再現を通常のテストか登録したプローブへ移し、監査に参照を残す。ローカル資料を残す場合は `target/` の一意のフォルダにまとめ、別の環境では利用できないことを明示する。
-
-テスト用プラグインの読み込み時だけ一時的なファイル不在が出た場合は、同じテストプロセスが共通のライブラリを並行して再ビルドしていないか調べる。`hosted_playback` と `isolation` はビルド結果をプロセスごとに一度だけ決定し、使用中の入力を更新しない。
+`/tmp` だけの再現や画像を唯一の修正根拠にせず、通常のテストか登録プローブへ移して監査に参照を残す。

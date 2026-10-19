@@ -28,7 +28,7 @@ public struct WorkspaceView: View {
             ToolbarItemGroup(placement: .navigation) { command(.newProject); command(.openProject) }
             ToolbarItemGroup { command(.undo); command(.redo); command(.history); command(.addTrack) }
             ToolbarItemGroup(placement: .primaryAction) {
-                command(.output); command(.plugins); command(.inspector); command(.editor); command(.browser); command(.palette)
+                command(.output); command(.plugins); command(.devices); command(.inspector); command(.editor); command(.browser); command(.palette)
             }
         }
         .focusedSceneValue(\.workspaceActions, WorkspaceActions(perform: session.perform,
@@ -36,11 +36,11 @@ public struct WorkspaceView: View {
         .sheet(item: $state.presentation) { presentation in
             switch presentation {
             case .palette: WorkspacePalette(session: session)
-            case .plugins(let track, let document): WorkspacePluginBrowser(controller: controller, track: track, document: document) { if state.presentation == presentation { state.presentation = nil } }
             case .output: WorkspaceOutputView(controller: controller) { if state.presentation == presentation { state.presentation = nil } }
             case .history: WorkspaceHistoryView(controller: controller) { if state.presentation == presentation { state.presentation = nil } }
             }
         }
+        .background(WorkspacePluginPanel(controller: controller, document: state.pluginBrowserDocument) { state.pluginBrowserDocument = nil })
         .alert(text("Could not complete the operation"), isPresented: Binding(
             get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } }
         )) { Button(text("OK")) { controller.errorMessage = nil } } message: { Text(controller.errorMessage ?? "") }
@@ -62,7 +62,17 @@ public struct WorkspaceView: View {
                     arrange.frame(height: sizes.arrange).clipped()
                     if state.layout.editor {
                         splitter(.editor, value: sizes.editor, size: geometry.size)
-                        WorkspaceNoteEditorView(controller: controller, state: state).frame(height: sizes.editor).clipped()
+                        VStack(spacing: 0) {
+                            Picker(text("Editor"), selection: $state.deviceEditor) {
+                                Text(text("Piano Roll")).tag(false)
+                                Text(text("Track FX")).tag(true)
+                            }.pickerStyle(.segmented).fixedSize().padding(6)
+                            if state.deviceEditor {
+                                WorkspaceDeviceView(controller: controller, add: { session.openPlugins() })
+                            } else {
+                                WorkspaceNoteEditorView(controller: controller, state: state)
+                            }
+                        }.frame(height: sizes.editor).clipped()
                     }
                 }.frame(maxWidth: .infinity)
                 if state.layout.browser {
@@ -86,7 +96,8 @@ public struct WorkspaceView: View {
                               playback: controller.playback, transportGeneration: controller.transportGeneration,
                               navigation: state.navigation, documentID: controller.documentID,
                               selectedClip: controller.clipFocus, faderPreview: controller.faderPreview,
-                              mixActions: mixActions, onSelectClip: { controller.clipFocus = $0 }, onClipEdit: clipEdit).id(controller.documentID)
+                              mixActions: mixActions, onSelectClip: { controller.clipFocus = $0 }, onClipEdit: clipEdit,
+                              onOpenFX: { session.openPlugins(on: $0) }, onDropFX: fxDrop).id(controller.documentID)
             } else {
                 VStack(spacing: 12) {
                     Text(text("Add a track to start"))
@@ -102,6 +113,13 @@ public struct WorkspaceView: View {
             case .gain(let id, let gain): await controller.setClipGain(id, gain: gain, documentID: document)
             case .fades(let id, let entering, let leaving): await controller.setClipFades(id, fadeIn: entering, fadeOut: leaving, documentID: document)
             }
+        } }
+    }
+    private var fxDrop: (UUID, TrackFXDrop) -> Void {
+        let document = controller.documentID
+        return { track, drop in Task {
+            guard let document else { return }
+            await controller.dropFX(drop, on: track, documentID: document)
         } }
     }
     private var mixActions: MixActions {

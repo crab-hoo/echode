@@ -19,6 +19,8 @@ public final class ArrangePaneView: NSView {
     var onSelect: ((UUID) -> Void)?
     var onSelectClip: ((UUID?) -> Void)? { didSet { timeline.onSelectClip = onSelectClip } }
     var mixActions: MixActions? { didSet { headers.mixActions = mixActions } }
+    var onOpenFX: ((UUID) -> Void)? { didSet { headers.onOpenFX = onOpenFX } }
+    var onDropFX: ((UUID, TrackFXDrop) -> Void)? { didSet { headers.onDropFX = onDropFX } }
     var onClipEdit: ((ClipMixEdit) -> Void)? { didSet { timeline.onClipEdit = onClipEdit } }
     func setControlSelection(clip: UUID?, preview: FaderPreview?) { timeline.setControlSelection(clip: clip, preview: preview) }
     public override var isFlipped: Bool { true }

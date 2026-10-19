@@ -1,0 +1,48 @@
+# API・MCP・品質保証・ビルド配布アーキテクチャ（§15〜§17）
+
+- 全体索引: [../ARCHITECTURE.md](../ARCHITECTURE.md)
+- 検査手順: [../verification.md](../verification.md)
+- デバッグ手順: [../debugging.md](../debugging.md)
+- 現在の実装範囲: [../status.md](../status.md)
+
+## 15. 外部制御・API・AI
+
+- **JSON-RPC**: ユーザー本人だけが読み書きできる Unix ドメインソケットで 1 行 1 件の JSON-RPC 2.0 を提供する。
+  `actions.list`、`actions.perform`、`actions.transaction`、`edit.undo`、`edit.redo`、`project.summary`、`protocol.version` を受ける
+  （[ADR 0020](../decisions/0020-json-rpc.md)、[ADR 0034](../decisions/0034-api-transaction.md)）
+- **CLI とヘッドレス**: `echode render`（ステレオ float WAV 書き出し、[ADR 0019](../decisions/0019-offline-wav.md)、[ADR 0057](../decisions/0057-crash-recovery.md)）、
+  `echode apply`（アクション列の実行）、`echode serve`（ヘッドレスサーバー）、`echode mcp`（MCP サーバー）
+- **MCP**: アクション登録簿から MCP ツールを自動生成し、プロジェクト概要やトラック一覧をリソースとして公開する。
+  Phase 2 の初版（[ADR 0115](../decisions/0115-phase2-mcp.md)）は `echode mcp SOCKET` の stdio と同一ビルドの `echode serve` 接続を実装し、MCP `2026-07-28` と `2025-11-25` の要求を分ける。
+  書き手は既存の `DocumentHost` のままで、MCP がパッケージを開き直さない
+- **自然言語コマンド**: コマンドパレットから Foundation Models のオンデバイスモデルで関連アクション検索・文脈取得・構造化計画を作成し、利用者確認後に 1 つの Undo 単位として実行する（Apple Intelligence 非対応環境では通常パレットとして動作）
+
+## 16. 品質保証
+
+現在の接続範囲は [status.md](../status.md)、実行と証拠の扱いは [検査手順](../verification.md) と [デバッグ手順](../debugging.md) を参照。
+
+| 種類 | 内容 |
+|---|---|
+| 単体テスト | モデルの操作、テンポマップ、時間の変換、スマートクリップの規則、グラフの組み立て、PDC の計算 |
+| プロパティベーステスト | ランダムなアクション列を流し、Undo / Redo の対称性、保存と読み込みの往復、マージの性質を検査する（`proptest`） |
+| ゴールデンテスト | テスト用プロジェクトを CLI でレンダリングし、基準音声と比べる |
+| 隔離のテスト | わざと壊れるテスト用プラグインでクラッシュ、ハング、遅延、大量イベントを再現する |
+| 互換性のテスト | 無料プラグインでスキャン、処理、状態の保存と復元、GUI の表示を確かめる |
+| UI のテスト | オフスクリーン描画の比較と主要操作の自動テスト |
+| 性能のテスト | エンジンのベンチマーク（トラック数 × デバイス数）と描画のフレーム時間 |
+| ファジング・耐久テスト | プロジェクト読み込み、API 入力、MIDI 解析のファジングと長時間再生編集 |
+
+変更に応じた検査の入口は `make verify` であり、対応規則は `scripts/verification.json` に一元化する。
+リアルタイム処理の規則はデバッグビルドのメモリ確保検出と `make rtsan` で機械的に守らせる。
+
+## 17. ビルドと配布
+
+- **ツールチェーンと最低 OS**: Xcode 27（Swift 6.4、macOS 27 SDK）と Rust stable。ターゲットは `aarch64-apple-darwin`（最低 OS `27.0`）、対象 CPU は M4 ファミリー以降（`apple-m4`）。
+  Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する
+  （[ADR 0112](../decisions/0112-m4-minimum.md)、[ADR 0114](../decisions/0114-m4-build-baseline.md)）
+- **XCFramework と XcodeGen**: Rust を静的ライブラリとして XCFramework にまとめ、`project.yml` から XcodeGen でプロジェクトを生成する（`.xcodeproj` は手編集しない）
+- **署名と配布**: 開発でも配布でも自己署名証明書 `Echode Local` で署名し、マイク等の TCC 許可を維持する（証明書未作成時の `make app` のみアドホック署名）。
+  配布バンドルは `Echode.app/Contents/MacOS/Echode`、`Contents/Helpers/EchodePluginHost.app`（`LSUIElement`、このヘルパーのみ library validation 無効化）、`Contents/Frameworks/EchodeFFI.xcframework` で構成する
+  （[ADR 0061](../decisions/0061-distribution-signing.md)）
+- **GPL-3.0-or-later**: リリースごとに同一版のソースを公開し、同梱ライブラリのライセンス表記をアプリ内から読めるようにする。
+  任意のプラグインを読み込むため App Sandbox は使わない

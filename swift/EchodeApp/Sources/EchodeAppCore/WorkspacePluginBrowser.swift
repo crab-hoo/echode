@@ -3,8 +3,7 @@ import SwiftUI
 
 struct WorkspacePluginBrowser: View {
     let controller: ProjectController
-    let track: UUID
-    let document: UUID?
+    let document: UUID
     let close: () -> Void
     @State private var query = ""
     @State private var plugins: [PluginListing] = []
@@ -14,12 +13,12 @@ struct WorkspacePluginBrowser: View {
     @State private var scans = CoalescedReload()
     @FocusState private var searching: Bool
     private var filtered: [PluginListing] { plugins.filter { fuzzyMatch(query, in: "\($0.name) \($0.vendor) \($0.id)") } }
-    private var targetExists: Bool { controller.documentID == document && controller.tracks.contains { $0.id == track } }
+    private var targetExists: Bool { controller.documentID == document && controller.tracks.contains { $0.id == controller.selection } }
     private var canInsert: Bool { targetExists && !controller.busy && selected != nil && !loading }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(text("Plugin Browser")).font(.headline)
-            LabeledContent(text("Track"), value: controller.tracks.first { $0.id == track }?.name ?? text("Select a track"))
+            LabeledContent(text("Track"), value: controller.tracks.first { $0.id == controller.selection }?.name ?? text("Select a track"))
             TextField(text("Search plugins"), text: $query).focused($searching).focusedValue(\.workspaceTextEntry, true)
                 .onSubmit { insert(closeAfter: false) }.onKeyPress(.downArrow) { move(1); return .handled }.onKeyPress(.upArrow) { move(-1); return .handled }
             if loading { ProgressView().controlSize(.small) }
@@ -34,6 +33,7 @@ struct WorkspacePluginBrowser: View {
                         Text([plugin.vendor, plugin.id].filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.tag(plugin.id).contentShape(Rectangle()).onTapGesture(count: 2) { selected = plugin.id; insert(closeAfter: true) }
+                        .onDrag { FXDrag(document: document, track: nil, device: nil, plugin: plugin.id).provider() }
                 }
             }.onMoveCommand { if $0 == .down { move(1) }; if $0 == .up { move(-1) } }
                 .onKeyPress(.return) { insert(closeAfter: false); return .handled }
@@ -61,7 +61,7 @@ struct WorkspacePluginBrowser: View {
     }
     private func move(_ offset: Int) { selected = movedSelection(selected, in: filtered.map(\.id), offset: offset) }
     private func insert(closeAfter: Bool) {
-        guard canInsert, let selected, filtered.contains(where: { $0.id == selected }) else { return }
+        guard canInsert, let track = controller.selection, let selected, filtered.contains(where: { $0.id == selected }) else { return }
         Task {
             guard controller.documentID == document else { return }
             if await controller.insertPlugin(selected, on: track, documentID: document) {
@@ -85,6 +85,7 @@ struct WorkspacePluginBrowser: View {
                     return try PluginCatalog.listings()
                 }.value
                 plugins = next
+                controller.rememberPluginNames(next)
                 selected = retainedSelection(keep, in: filtered.map(\.id))
                 message = plugins.isEmpty ? text("No plugins found") : nil
             } catch {

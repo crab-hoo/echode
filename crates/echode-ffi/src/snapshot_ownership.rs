@@ -1,0 +1,278 @@
+use super::*;
+use echode_model::{Id, MixerIds};
+use std::sync::Arc;
+
+fn snapshot() -> *mut Snapshot {
+    let project = Project::new()
+        .add_track_with_id(Id::from_raw(1), "鍵盤 🎹", MixerIds::from_base(16))
+        .unwrap();
+    Box::into_raw(Box::new(Snapshot::from_project(Arc::new(project), None)))
+}
+
+#[test]
+fn retained_snapshot_keeps_borrowed_utf8_and_uuid_alive() {
+    let original = snapshot();
+    let retained = unsafe { echode_snapshot_retain(original) };
+    let mut length = 0;
+    let name = unsafe { echode_snapshot_track_name(retained, 0, &mut length) };
+    unsafe { echode_snapshot_free(original) };
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(name, length) },
+        "鍵盤 🎹".as_bytes()
+    );
+    let mut bytes = [0; 16];
+    assert_eq!(
+        unsafe { echode_snapshot_track_id(retained, 0, bytes.as_mut_ptr()) },
+        0
+    );
+    assert_eq!(uuid::Uuid::from_bytes(bytes).as_u128(), 1);
+    assert!(unsafe { echode_snapshot_track_name(retained, 1, &mut length) }.is_null());
+    assert_eq!(length, 0);
+    unsafe { echode_snapshot_free(retained) };
+}
+
+#[test]
+fn retained_mix_controls_copy_ids_and_resolve_fades_across_tempo_changes() {
+    use echode_model::{AudioRef, FLICKS_PER_SECOND, ParamKey, Tempo, Tick};
+    let track = Id::from_raw(1);
+    let clip = Id::from_raw(32);
+    let project = Project::new()
+        .add_track_with_id(track, "audio", MixerIds::from_base(16))
+        .unwrap()
+        .with_tempo(
+            Tick::quarters(2).unwrap(),
+            Tempo::quarters_per_minute(60).unwrap(),
+        )
+        .place_audio(
+            track,
+            clip,
+            Id::from_raw(33),
+            Tick::new(0),
+            AudioRef::try_new("a".repeat(64), 48_000, 2, 144_000).unwrap(),
+        )
+        .unwrap()
+        .set_clip_gain(clip, 0.5)
+        .unwrap()
+        .set_clip_fades(clip, FLICKS_PER_SECOND * 3 / 2, FLICKS_PER_SECOND * 3 / 2)
+        .unwrap();
+    let gain = project.tracks()[0].devices[0]
+        .parameters
+        .iter()
+        .find(|parameter| parameter.key == ParamKey::Gain)
+        .unwrap()
+        .id;
+    let project = project.set_parameter(gain, 0.25).unwrap();
+    let original = Box::into_raw(Box::new(Snapshot::from_project(Arc::new(project), None)));
+    let retained = unsafe { echode_snapshot_retain(original) };
+    unsafe { echode_snapshot_free(original) };
+    let mut mixer = MixerControls::default();
+    assert_eq!(
+        unsafe { echode_snapshot_mixer_controls(retained, 0, &mut mixer) },
+        ECHODE_OK
+    );
+    assert_eq!(u128::from_be_bytes(mixer.gain_id), gain.raw());
+    assert_eq!(mixer.gain, 0.25);
+    assert_eq!(
+        unsafe { echode_snapshot_mixer_controls(retained, 1, &mut mixer) },
+        ECHODE_ERR
+    );
+    assert_eq!(
+        unsafe { echode_snapshot_mixer_controls(retained, 0, std::ptr::null_mut()) },
+        ECHODE_ERR
+    );
+    // This byte array tests an unaligned UUID input, not a product limit.
+    let mut unaligned = [0u8; 17];
+    unaligned[1..].copy_from_slice(&clip.raw().to_be_bytes());
+    let mut value = ClipControls::default();
+    assert_eq!(
+        unsafe { echode_snapshot_clip_controls(retained, unaligned[1..].as_ptr(), &mut value) },
+        ECHODE_OK
+    );
+    assert_eq!(u128::from_be_bytes(value.track_id), track.raw());
+    assert_eq!(value.gain, 0.5);
+    assert_eq!(value.audio, 1);
+    assert_eq!(value.length, 705_600 * 4);
+    assert_eq!(value.fade_in_ticks, 705_600 * 5 / 2);
+    assert_eq!(value.fade_out_ticks, 705_600 * 3 / 2);
+    let mut time = 0;
+    assert_eq!(
+        unsafe { echode_snapshot_flicks(retained, value.fade_in_ticks, &mut time) },
+        ECHODE_OK
+    );
+    assert_eq!(time, FLICKS_PER_SECOND * 3 / 2);
+    assert_eq!(
+        unsafe { echode_snapshot_clip_controls(retained, std::ptr::null(), &mut value) },
+        ECHODE_ERR
+    );
+    assert_eq!(
+        unsafe { echode_snapshot_flicks(retained, 0, std::ptr::null_mut()) },
+        ECHODE_ERR
+    );
+    assert_eq!(
+        unsafe { echode_document_track_peak(std::ptr::null_mut(), unaligned[1..].as_ptr()) },
+        0.0
+    );
+    unsafe { echode_snapshot_free(retained) };
+}
+
+#[test]
+fn retained_audio_json_stays_owned_and_null_queries_clear_the_length() {
+    let original = snapshot();
+    let retained = unsafe { echode_snapshot_retain(original) };
+    let mut length = 0usize;
+    let pointer = unsafe { echode_snapshot_audio(retained, &mut length) };
+    unsafe { echode_snapshot_free(original) };
+    let state: serde_json::Value =
+        serde_json::from_slice(unsafe { std::slice::from_raw_parts(pointer, length) }).unwrap();
+    assert_eq!(state["playing"], false);
+    assert_eq!(state["tick"], 0);
+    assert_eq!(state["devices"], serde_json::json!([]));
+    assert!(unsafe { echode_snapshot_audio(std::ptr::null(), &mut length) }.is_null());
+    assert_eq!(length, 0);
+    assert!(unsafe { echode_snapshot_audio(retained, std::ptr::null_mut()) }.is_null());
+    unsafe { echode_snapshot_free(retained) };
+}
+
+#[test]
+fn visible_capacity_and_null_contract_leave_the_canary_intact() {
+    let snapshot = snapshot();
+    let empty = VisibleElement {
+        role: u32::MAX,
+        track_id: [0; 16],
+        placement_id: [0; 16],
+        note_id: [0; 16],
+        has_placement: 0,
+        has_note: 0,
+        pad: [0; 2],
+        x: 0.,
+        y: 0.,
+        w: 0.,
+        h: 0.,
+    };
+    let mut elements = [empty; 2]; // One writable element followed by a canary, for this test only.
+    let mut written = 0;
+    let mut dropped = 0;
+    let mut query = |out, capacity, origin| unsafe {
+        echode_snapshot_visible(
+            snapshot,
+            0,
+            705_600,
+            origin,
+            1.,
+            1.,
+            64.,
+            out,
+            capacity,
+            &mut written,
+            &mut dropped,
+        )
+    };
+    assert_eq!(query(std::ptr::null_mut(), 0, 0.), 0);
+    assert_eq!(query(elements.as_mut_ptr(), 1, 0.), 0);
+    assert_eq!(elements[0].role, ECHODE_ROLE_TRACK);
+    assert_eq!(elements[1].role, u32::MAX);
+    assert_eq!(query(elements.as_mut_ptr(), 1, f64::NAN), 0);
+    assert_eq!(query(std::ptr::null_mut(), 1, 0.), -1);
+    assert_eq!(written, 0);
+    assert_eq!(dropped, 0);
+    unsafe { echode_snapshot_free(snapshot) };
+}
+
+#[test]
+fn piano_buffers_and_navigation_keep_ids_alive_after_retain() {
+    use crate::piano::{
+        echode_snapshot_piano_neighbor, echode_snapshot_piano_note, echode_snapshot_piano_visible,
+    };
+    use echode_model::{NoteDraft, Tick};
+    let track = Id::from_raw(1);
+    let project = Project::new()
+        .add_track_with_id(track, "keys", MixerIds::from_base(16))
+        .unwrap()
+        .insert_note_with_id(
+            track,
+            Id::from_raw(32),
+            Id::from_raw(33),
+            Id::from_raw(34),
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::new(705_600),
+            },
+        )
+        .unwrap();
+    let original = Box::into_raw(Box::new(Snapshot::from_project(Arc::new(project), None)));
+    let retained = unsafe { echode_snapshot_retain(original) };
+    unsafe { echode_snapshot_free(original) };
+    let track = track.raw().to_be_bytes();
+    let canary = PianoNoteElement {
+        pitch: u32::MAX,
+        ..PianoNoteElement::default()
+    };
+    let mut out = [canary; 2]; // One output and a canary for this ABI test only.
+    let (mut written, mut dropped) = (0, 0);
+    let mut query = |output, capacity, top| unsafe {
+        echode_snapshot_piano_visible(
+            retained,
+            track.as_ptr(),
+            0,
+            705_600 * 4,
+            top,
+            2.,
+            1. / 705_600.,
+            20.,
+            output,
+            capacity,
+            &mut written,
+            &mut dropped,
+        )
+    };
+    assert_eq!(query(std::ptr::null_mut(), 0, 60.), 0);
+    assert_eq!(query(out.as_mut_ptr(), 1, 60.), 0);
+    assert_eq!(out[0].pitch, 60);
+    assert_eq!(out[1], canary);
+    assert_eq!(query(std::ptr::null_mut(), 1, 60.), -1);
+    assert_eq!((written, dropped), (0, 0));
+    let mut resolved = canary;
+    assert_eq!(
+        unsafe {
+            echode_snapshot_piano_note(
+                retained,
+                track.as_ptr(),
+                out[0].placement_id.as_ptr(),
+                out[0].note_id.as_ptr(),
+                &mut resolved,
+            )
+        },
+        0
+    );
+    assert_eq!(resolved.note_id, out[0].note_id);
+    assert_eq!(
+        unsafe {
+            echode_snapshot_piano_neighbor(
+                retained,
+                track.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                &mut resolved,
+            )
+        },
+        0
+    );
+    assert_eq!(resolved.note_id, out[0].note_id);
+    assert_eq!(
+        unsafe {
+            echode_snapshot_piano_neighbor(
+                retained,
+                track.as_ptr(),
+                out[0].placement_id.as_ptr(),
+                out[0].note_id.as_ptr(),
+                0,
+                &mut resolved,
+            )
+        },
+        -1
+    );
+    unsafe { echode_snapshot_free(retained) };
+}

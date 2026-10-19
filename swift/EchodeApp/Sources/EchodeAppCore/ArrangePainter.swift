@@ -133,25 +133,28 @@ final class ArrangePainter {
 
     private func encodeLabels(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {
         guard let header = frame.input.header else { return }
-        let width = max(0, header.width - 38)
+        let width = max(0, header.width - 65)
         let scale = frame.input.scale
         let text = frame.headers.flatMap { row -> [CanvasLabel] in
             let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: header.width, height: Double(row.height)))
+            let fx = TrackFXLayout(row: layout.row)
+            let color = row.id == frame.input.selected ? header.palette.selectedForeground : header.palette.foreground
+            let fxLabels = fx.visible ? [CanvasLabel(text: "FX", rect: SIMD4(Float(fx.rect.minX + 3), Float(fx.rect.minY), Float(fx.rect.width - 3), Float(fx.rect.height)),
+                clip: SIMD4(Float(fx.rect.minX), Float(fx.rect.minY), Float(fx.rect.width), Float(fx.rect.height)), color: color)] : []
             if layout.visible {
-                let color = row.id == frame.input.selected ? header.palette.selectedForeground : header.palette.foreground
                 var labels = [CanvasLabel(text: row.name,
-                    rect: SIMD4(8, row.y + 4, Float(header.width - 16), Float(ArrangeLabelRaster.height)),
-                    clip: SIMD4(8, row.y, Float(header.width - 16), 27), color: color)]
+                    rect: SIMD4(8, row.y + 4, Float(max(0, header.width - 45)), Float(ArrangeLabelRaster.height)),
+                    clip: SIMD4(8, row.y, Float(max(0, header.width - 45)), 27), color: color)]
                 for (label, rect) in [("M", layout.mute), ("S", layout.solo)] {
                     labels.append(CanvasLabel(text: label, rect: SIMD4(Float(rect.minX + 4), Float(rect.minY), Float(rect.width - 4), Float(rect.height)),
                         clip: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)), color: color))
                 }
-                return labels
+                return labels + fxLabels
             }
             return [CanvasLabel(text: row.name,
                         rect: SIMD4(30, row.y + (row.height - Float(ArrangeLabelRaster.height)) / 2, Float(width), Float(ArrangeLabelRaster.height)),
                         clip: SIMD4(30, row.y, Float(width), max(0, row.height - 1)),
-                        color: row.id == frame.input.selected ? header.palette.selectedForeground : header.palette.foreground)]
+                        color: color)] + fxLabels
         }
         encodeLabels(text, scale: scale, encoder: encoder, texture: texture)
         if let layout = frame.clipControlLayout, let id = frame.input.selectedClip, let clip = frame.input.snapshot?.clipMix(id) {

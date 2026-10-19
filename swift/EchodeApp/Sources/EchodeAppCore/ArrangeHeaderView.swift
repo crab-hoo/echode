@@ -12,7 +12,11 @@ final class ArrangeHeaderView: NSView {
     private(set) var camera = ArrangeCamera()
     private var accessible: [UUID: AccessibleTrackHeader] = [:]
     private var controlElements: [String: AccessibleMixControl] = [:]
+    private var fxElements: [UUID: AccessibleTrackHeader] = [:]
     var onSelect: ((UUID) -> Void)?
+    var onOpenFX: ((UUID) -> Void)?
+    var onDropFX: ((UUID, TrackFXDrop) -> Void)?
+    var documentID: UUID?
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var mixActions: MixActions?
@@ -23,6 +27,7 @@ final class ArrangeHeaderView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.list)
         setAccessibilityLabel(text("Track"))
+        registerForDraggedTypes([FXDrag.deviceType, FXDrag.pluginType])
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -52,6 +57,8 @@ final class ArrangeHeaderView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) else { return }
         onSelect?(id)
+        let fx = TrackFXLayout(row: rows.rect(at: index, width: Double(bounds.width)))
+        if fx.visible, fx.rect.contains(point) { onOpenFX?(id); return }
         let controls = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
         guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else { return }
         if field == .mute || field == .solo {
@@ -62,6 +69,31 @@ final class ArrangeHeaderView: NSView {
         }
     }
     override func mouseDragged(with event: NSEvent) { updateDrag(convert(event.locationInWindow, from: nil)) }
+    func acceptFX(_ pasteboard: NSPasteboard, at point: CGPoint, copying: Bool) -> Bool {
+        guard point.y.isFinite, let payload = FXDrag.read(pasteboard), payload.document == documentID,
+              let index = rows.index(at: Double(point.y)), let track = snapshot?.trackID(at: index), let onDropFX else { return false }
+        if let plugin = payload.plugin { onDropFX(track, .plugin(plugin)); return true }
+        guard let sourceTrack = payload.track, let source = payload.device,
+              snapshot?.devices(on: sourceTrack).contains(where: { $0.id == source }) == true,
+              let operation = payload.operation(on: track, copying: copying, before: nil) else { return false }
+        switch operation {
+        case .copy(let source, _, _): onDropFX(track, .copyDevice(source))
+        case .reorder(let source, _): onDropFX(track, .moveToEnd(source))
+        case .remove: return false
+        }
+        return true
+    }
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { fxDragOperation(sender) }
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation { fxDragOperation(sender) }
+    private func fxDragOperation(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        let point = convert(sender.draggingLocation, from: nil)
+        guard let payload = FXDrag.read(sender.draggingPasteboard), payload.document == documentID,
+              let index = rows.index(at: Double(point.y)), let track = snapshot?.trackID(at: index) else { return [] }
+        return payload.plugin != nil || payload.track != track || NSEvent.modifierFlags.contains(.command) ? .copy : .move
+    }
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        acceptFX(sender.draggingPasteboard, at: convert(sender.draggingLocation, from: nil), copying: NSEvent.modifierFlags.contains(.command))
+    }
     override func mouseUp(with event: NSEvent) {
         guard drag != nil else { return }
         updateDrag(convert(event.locationInWindow, from: nil)); drag = nil; mixActions?.finish(true)
@@ -110,6 +142,7 @@ final class ArrangeHeaderView: NSView {
         guard let snapshot, let window else { accessible = [:]; return [] }
         var retained: [UUID: AccessibleTrackHeader] = [:]
         var retainedControls: [String: AccessibleMixControl] = [:]
+        var retainedFX: [UUID: AccessibleTrackHeader] = [:]
         let children: [AccessibleTrackHeader] = rows.visible.compactMap { index in
             guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }
             let child = accessible[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
@@ -155,11 +188,24 @@ final class ArrangeHeaderView: NSView {
                 }
                 child.setAccessibilityChildren(controls)
             } else { child.setAccessibilityChildren([]) }
+            let fx = TrackFXLayout(row: rows.rect(at: index, width: Double(bounds.width)))
+            if fx.visible, fx.rect.intersects(bounds) {
+                let control = fxElements[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
+                control.setAccessibilityElement(true); control.setAccessibilityRole(.button)
+                control.setAccessibilityLabel(text("Add FX") + " " + name)
+                control.setAccessibilityIdentifier("\(id)/fx")
+                control.setAccessibilityParent(child)
+                control.setAccessibilityFrame(window.convertToScreen(convert(fx.rect.intersection(bounds), to: nil)))
+                control.actions.press = { [weak self] in self?.onSelect?(id); self?.onOpenFX?(id) }
+                child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
+                retainedFX[id] = control
+            }
             retained[id] = child
             return child
         }
         accessible = retained
         controlElements = retainedControls
+        fxElements = retainedFX
         return children
     }
 }

@@ -163,12 +163,35 @@ class DiagnosticTests(unittest.TestCase):
 
 class DeveloperDocumentationTests(unittest.TestCase):
     def test_maintained_guides_link_to_existing_local_files_and_make_targets(self):
-        guides = ["AGENTS.md", "README.md", "docs/README.md", "docs/status.md",
-                  "docs/development.md", "docs/debugging.md", "docs/verification.md"]
+        guides = [
+            "AGENTS.md",
+            "README.md",
+            "docs/README.md",
+            "docs/status.md",
+            "docs/development.md",
+            "docs/debugging.md",
+            "docs/verification.md",
+            "docs/PLAN.md",
+            "docs/ARCHITECTURE.md",
+            "docs/phase2.md",
+            "docs/interaction-design.md",
+            "docs/architecture/model-and-history.md",
+            "docs/architecture/audio-engine.md",
+            "docs/architecture/plugins-and-devices.md",
+            "docs/architecture/ui-and-metal.md",
+            "docs/architecture/api-qa-and-distribution.md",
+        ]
         targets = set(re.findall(r"^([a-z][a-z0-9-]*):", (ROOT / "Makefile").read_text(), re.MULTILINE))
         for name in guides:
             path = ROOT / name
             content = path.read_text()
+            for lineno, line in enumerate(content.splitlines(), start=1):
+                with self.subTest(guide=name, line=lineno):
+                    self.assertLessEqual(
+                        len(line.encode("utf-8")),
+                        600,
+                        f"{name}:{lineno} exceeds 600 UTF-8 bytes ({len(line.encode('utf-8'))} B)",
+                    )
             for destination in re.findall(r"\]\(([^)]+)\)", content):
                 if "://" in destination or destination.startswith("#"):
                     continue

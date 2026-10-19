@@ -14,7 +14,7 @@ swift --version > "$bridge_output/report.txt"
 rustc --version >> "$bridge_output/report.txt"
 cat "$bridge_output/report.txt"
 
-cargo build --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection
+cargo build -q --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection
 "$bridge_library/echode-bridge-bindgen" c-header "$bridge_output/c/echode_bridge.h"
 cp spikes/bridge/c/module.modulemap "$bridge_output/c/module.modulemap"
 "$bridge_library/echode-bridge-bindgen" generate "$bridge_library/libechode_bridge_spike.dylib" \
@@ -41,7 +41,7 @@ python3 scripts/run-bridge-validation.py --log "$bridge_output/uniffi-probe.log"
 
 # Async foreign callbacks are a separate probe; a failure must match the upstream
 # Swift concurrency diagnostic, never a linker/configuration error or test crash.
-cargo build --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection,async-callback
+cargo build -q --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection,async-callback
 "$bridge_library/echode-bridge-bindgen" generate "$bridge_library/libechode_bridge_spike.dylib" \
     --language swift --out-dir "$bridge_output/uniffi-async"
 if swiftc "${swift_flags[@]}" -I "$bridge_output/uniffi-async" \
@@ -53,9 +53,9 @@ if swiftc "${swift_flags[@]}" -I "$bridge_output/uniffi-async" \
         "$bridge_output/uniffi-async-probe" | tee -a "$bridge_output/report.txt"
 else
     # Reject failures outside the generated file and any additional error kinds.
-    errors=$(rg ': error:' "$bridge_output/uniffi-async.log")
+    errors=$(grep -E ': error:' "$bridge_output/uniffi-async.log" || true)
     if [ -z "$errors" ] || printf '%s\n' "$errors" | \
-        rg -v '/uniffi-async/UniBridge.swift:.*SendingClosureRisksDataRace' >/dev/null; then
+        grep -E -v '/uniffi-async/UniBridge.swift:.*SendingClosureRisksDataRace' >/dev/null; then
         cat "$bridge_output/uniffi-async.log"
         exit 1
     fi
@@ -65,4 +65,4 @@ fi
 
 # Leave the normal library matching the normal generated bindings, even after
 # the intentionally unsupported callback probe.
-cargo build --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection
+cargo build -q --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection

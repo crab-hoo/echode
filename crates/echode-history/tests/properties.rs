@@ -3,8 +3,8 @@
 //! After every step the project keeps `check_invariants`, and a refused edit leaves it
 //! unchanged. At the end the journal rebuilds the project, the package round-trips it,
 //! undoing everything returns to the start, and redoing as many steps returns to the end
-//! (ARCHITECTURE §16). Folder order is not checked yet: `set_parent` still breaks it
-//! (audit MOD-3). Sequence lengths and case counts are this test's budget, not limits.
+//! (ARCHITECTURE §16), including folder and device order. Sequence lengths and
+//! case counts are this test's budget, not limits.
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -98,6 +98,17 @@ enum Step {
         track: usize,
         plugin: u8,
     },
+    ReorderDevice {
+        track: usize,
+        device: usize,
+        before: Option<usize>,
+    },
+    CopyDevice {
+        source_track: usize,
+        device: usize,
+        target: usize,
+        before: Option<usize>,
+    },
     RemoveDevice {
         track: usize,
         device: usize,
@@ -178,6 +189,10 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (1u32..=7, prop_oneof![Just(2u32), Just(4), Just(8)])
             .prop_map(|(numerator, denominator)| Step::SetMeter { numerator, denominator }),
         2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
+        2 => (any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
+            .prop_map(|(track, device, before)| Step::ReorderDevice { track, device, before }),
+        2 => (any::<usize>(), any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
+            .prop_map(|(source_track, device, target, before)| Step::CopyDevice { source_track, device, target, before }),
         1 => (any::<usize>(), any::<usize>())
             .prop_map(|(track, device)| Step::RemoveDevice { track, device }),
         1 => (any::<usize>(), any::<bool>()).prop_map(|(device, present)| Step::SetPluginState {
@@ -371,6 +386,46 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
             Command::AddDevice {
                 track: track(*index)?,
                 plugin: plugins[usize::from(*plugin)].to_string(),
+            }
+        }
+        Step::ReorderDevice {
+            track: index,
+            device,
+            before,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let devices: Vec<Id> = owner.devices.iter().map(|device| device.id).collect();
+            Command::ReorderDevice {
+                device: pick(&devices, *device)?,
+                before: before.and_then(|index| pick(&devices, index)),
+            }
+        }
+        Step::CopyDevice {
+            source_track,
+            device,
+            target,
+            before,
+        } => {
+            let source_track = track(*source_track)?;
+            let owner = project
+                .tracks()
+                .iter()
+                .find(|item| item.id == source_track)?;
+            let devices: Vec<Id> = owner.devices.iter().map(|device| device.id).collect();
+            let target = track(*target)?;
+            let anchors: Vec<Id> = project
+                .tracks()
+                .iter()
+                .find(|item| item.id == target)?
+                .devices
+                .iter()
+                .map(|device| device.id)
+                .collect();
+            Command::CopyDevice {
+                source: pick(&devices, *device)?,
+                track: target,
+                before: before.and_then(|index| pick(&anchors, index)),
             }
         }
         Step::RemoveDevice {

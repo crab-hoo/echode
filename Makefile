@@ -19,14 +19,14 @@ spike-app:
 
 # Real-window checks run under AppKit; the normal suite never invokes them.
 spike-playhead:
-	cargo build --locked --offline -p echode-ffi
+	cargo build -q --locked --offline -p echode-ffi
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include "$(CURDIR)/target"; \
 	cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h; \
 	frameworks="$$(xcrun --show-sdk-platform-path)/Developer/Library/Frameworks"; \
 	test -d "$$frameworks/Testing.framework"; \
-	swift build --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
+	swift build -q --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
 		-Xswiftc -warnings-as-errors --product EchodePlayheadProbe; \
 	bin="$$(swift build --package-path swift/EchodeApp --scratch-path target/echode-app-tests --show-bin-path)"; \
 	DYLD_FRAMEWORK_PATH="$$frameworks" \
@@ -35,11 +35,11 @@ spike-playhead:
 
 # Actual GPU pixels, without creating windows or controlling the computer UI.
 spike-arrange-frame:
-	cargo build -p echode-ffi
+	cargo build -q -p echode-ffi
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen "$(CURDIR)/target/spike-arrange-frame.json"
 
 spike-piano-frame:
-	cargo build -p echode-ffi
+	cargo build -q -p echode-ffi
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen-piano "$(CURDIR)/target/spike-piano-frame.json"
 
 # Portable checks include required product regressions, once each.
@@ -51,19 +51,19 @@ check:
 # The verifier records this part and product contracts as separate checks.
 check-base:
 	python3 -B scripts/check_build_host.py
-	cargo build --workspace
+	cargo build -q --workspace
 	cargo fmt --check
-	cargo clippy --workspace --all-targets -- -D warnings
-	cargo test --workspace
+	cargo clippy -q --workspace --all-targets -- -D warnings
+	cargo test -q --workspace
 	scripts/check-ffi.sh
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
-	cargo deny check licenses bans sources
+	cargo deny -L error check licenses bans sources
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
-# Named behavioral tests must actually run; ignored/deleted tests cannot pass.
+# Named behavioral tests (including FX chain input) must actually run; ignored/deleted tests cannot pass.
 check-product-contracts:
-	cargo build --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
+	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
@@ -78,7 +78,7 @@ verify-plan:
 	python3 scripts/verify.py --plan $(VERIFY_ARGS)
 
 check-verification:
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 
 doctor:
 	@python3 -B scripts/diagnose.py
@@ -116,20 +116,20 @@ advisories:
 
 # Release measurement of cross-process plugin hosting. See docs/spikes/S3-plugin-isolation.md.
 spike-isolation:
-	cargo build --release -p echode-plugin-host -p echode-test-plugin
-	cargo test --release -p echode-plugin-host --test isolation -- --include-ignored --test-threads=1 --nocapture
-	cargo test --release -p echode-plugin-host --test hosted_playback -- --include-ignored --test-threads=1 --nocapture
+	cargo build -q --release -p echode-plugin-host -p echode-test-plugin
+	cargo test -q --release -p echode-plugin-host --test isolation -- --include-ignored --test-threads=1
+	cargo test -q --release -p echode-plugin-host --test hosted_playback -- --include-ignored --test-threads=1
 
 # Metal scroll/zoom measurement. See docs/spikes/S1-drawing.md.
 spike-draw:
-	cargo build --release -p echode-draw
-	cargo test --release -p echode-draw -- --nocapture
+	cargo build -q --release -p echode-draw
+	cargo test -q --release -p echode-draw
 	cd spikes/draw && swift run -c release EchodeDraw --bench --report ../../target/spike-s1.txt
 
 # Plain-text project history. See docs/spikes/S4-history.md.
 spike-history:
-	cargo test --release -p echode-history --test roundtrip -- --include-ignored --test-threads=1 --nocapture
-	cargo test --release -p echode-model --lib a_gain_edit_stays_cheap_as_unrelated_notes_grow -- --ignored --nocapture
+	cargo test -q --release -p echode-history --test roundtrip -- --include-ignored --test-threads=1
+	cargo test -q --release -p echode-model --lib a_gain_edit_stays_cheap_as_unrelated_notes_grow -- --ignored
 
 # Trackpad pinch, haptics, and chord pressure. See docs/spikes/S5-input.md.
 spike-input:
@@ -137,11 +137,11 @@ spike-input:
 	cd spikes/input && swift run
 
 check-input:
-	swift test --package-path spikes/input --scratch-path target/input-tests
+	swift test -q --package-path spikes/input --scratch-path target/input-tests
 
 # Timing belongs in release measurements, not in the normal correctness checks.
 spike-render:
-	cargo test --release -p echode-cli --test render a_minute_of_stereo_silence_is_written_in_bulk -- --ignored --exact --nocapture
+	cargo test -q --release -p echode-cli --test render a_minute_of_stereo_silence_is_written_in_bulk -- --ignored --exact
 
 # UI-2: regenerate UniFFI and cbindgen bindings; Swift 6 strict concurrency.
 # check-bridge has no timing assertions. spike-bridge also prints measurements.
@@ -156,9 +156,9 @@ spike-bridge:
 	bash scripts/spike-bridge.sh --bench
 
 check-bridge-features:
-	cargo clippy --locked -p echode-bridge-spike --all-targets --all-features -- -D warnings
-	cargo test --locked -p echode-bridge-spike --lib --all-features
-	cargo deny --all-features check licenses bans sources
+	cargo clippy -q --locked -p echode-bridge-spike --all-targets --all-features -- -D warnings
+	cargo test -q --locked -p echode-bridge-spike --lib --all-features
+	cargo deny -L error --all-features check licenses bans sources
 
 check-bridge-asan:
 	bash scripts/check-bridge-sanitizer.sh address
@@ -171,22 +171,22 @@ check-bridge-miri:
 
 # Brief hardware check of the same 1,000-node graph; not a long-run stability claim.
 spike-engine-smoke:
-	cargo build --release -p echode-engine
-	cargo run --release -p echode-engine --bin echode-engine-spike -- --seconds 10 --native-rate --workers auto --report target/spike-s2-smoke.txt
+	cargo build -q --release -p echode-engine
+	cargo run -q --release -p echode-engine --bin echode-engine-spike -- --seconds 10 --native-rate --workers auto --report target/spike-s2-smoke.txt
 
 # Explicit long-run stability and release event-sort measurement. See docs/spikes/S2-engine.md.
 spike-engine:
-	cargo build --release -p echode-engine
-	cargo test --release -p echode-engine -- --include-ignored --skip audit_ --nocapture
-	cargo run --release -p echode-engine --bin echode-engine-spike -- --seconds 600 --workers auto --report target/spike-s2.txt
+	cargo build -q --release -p echode-engine
+	cargo test -q --release -p echode-engine -- --include-ignored --skip audit_
+	cargo run -q --release -p echode-engine --bin echode-engine-spike -- --seconds 600 --workers auto --report target/spike-s2.txt
 
 # RealtimeSanitizer on the test synth, plan handoff, and the plugin helper.
 # The first build downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).
 rtsan:
-	RTSAN_ENABLE=1 cargo test -p echode-engine --features rtsan under_rtsan -- --nocapture
-	RTSAN_ENABLE=1 cargo test -p echode-audio-io --features rtsan under_rtsan -- --nocapture
-	RTSAN_ENABLE=1 cargo test -p echode-plugin-host --features rtsan under_rtsan -- --nocapture
+	RTSAN_ENABLE=1 cargo test -q -p echode-engine --features rtsan under_rtsan
+	RTSAN_ENABLE=1 cargo test -q -p echode-audio-io --features rtsan under_rtsan
+	RTSAN_ENABLE=1 cargo test -q -p echode-plugin-host --features rtsan under_rtsan
 
 # Product HAL callback/lifecycle probe. Writes silence and never opens a window.
 spike-audio:
-	cargo test --release -p echode-audio-io -- --ignored --nocapture
+	cargo test -q --release -p echode-audio-io -- --ignored

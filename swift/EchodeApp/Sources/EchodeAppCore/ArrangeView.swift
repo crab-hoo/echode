@@ -15,8 +15,10 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var mixActions: MixActions?
     public var onSelectClip: ((UUID?) -> Void)?
     public var onClipEdit: ((ClipMixEdit) -> Void)?
+    public var onOpenFX: ((UUID) -> Void)?
+    public var onDropFX: ((UUID, TrackFXDrop) -> Void)?
 
-    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil) {
+    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
@@ -24,6 +26,8 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.navigation = navigation
         self.documentID = documentID
         self.selectedClip = selectedClip; self.faderPreview = faderPreview; self.mixActions = mixActions; self.onSelectClip = onSelectClip; self.onClipEdit = onClipEdit
+        self.onOpenFX = onOpenFX
+        self.onDropFX = onDropFX
     }
 
     public func makeNSView(context: Context) -> ArrangePaneView {
@@ -36,6 +40,9 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.onSelectClip = onSelectClip
         view.mixActions = mixActions
         view.onClipEdit = onClipEdit
+        view.onOpenFX = onOpenFX
+        view.onDropFX = onDropFX
+        view.headers.documentID = documentID
         view.setControlSelection(clip: selectedClip, preview: faderPreview)
         view.setSnapshot(snapshot, selected: selection)
         view.setPlayback(playback)

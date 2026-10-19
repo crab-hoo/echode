@@ -49,11 +49,10 @@ struct WorkspaceLayout: Codable, Equatable {
 struct WorkspaceDimensions: Equatable { let inspector: Double; let browser: Double; let editor: Double; let arrange: Double }
 
 enum WorkspacePresentation: Identifiable, Equatable {
-    case palette, plugins(track: UUID, document: UUID), output, history
+    case palette, output, history
     var id: String {
         switch self {
         case .palette: "palette"
-        case .plugins(let track, let document): "plugins/\(document)/\(track)"
         case .output: "output"
         case .history: "history"
         }
@@ -66,6 +65,8 @@ public final class WorkspaceState {
     var layout: WorkspaceLayout
     var displayKey = DisplayKey()
     var presentation: WorkspacePresentation?
+    var pluginBrowserDocument: UUID?
+    var deviceEditor = false
     var choosingFile = false
     var draft = NoteDraft()
     let browser = FileBrowserState()
@@ -84,7 +85,7 @@ public final class WorkspaceState {
     func saveLayout() { if let data = try? JSONEncoder().encode(layout) { defaults.set(data, forKey: Self.layoutKey) } }
 
     func synchronize(_ controller: ProjectController) {
-        if case .plugins(_, let document) = presentation, document != controller.documentID { presentation = nil }
+        if pluginBrowserDocument != controller.documentID { pluginBrowserDocument = nil }
         if case .history = presentation, controller.snapshot == nil { presentation = nil }
         navigation.prepare(document: controller.documentID, tracks: Set(controller.tracks.map(\.id)))
         draft.synchronize(document: controller.documentID, track: controller.selection,

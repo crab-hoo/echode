@@ -128,7 +128,7 @@ struct WorkspaceTests {
         await controller.close()
     }
 
-    @Test func commandCapabilitiesAreSharedAndModalPresentationCannotRetargetPlugins() async throws {
+    @Test func commandCapabilitiesAndNonmodalPluginDocumentOwnershipStayConsistent() async throws {
         let url = temporaryProject()
         defer { try? FileManager.default.removeItem(at: url) }
         let controller = ProjectController()
@@ -149,14 +149,17 @@ struct WorkspaceTests {
             state.presentation = .palette
         }
         state.presentation = nil; session.perform(.plugins)
+        let document = try #require(controller.documentID)
+        #expect(state.presentation == nil && state.pluginBrowserDocument == document && state.deviceEditor)
         await controller.addTrack(name: "second")
-        #expect(state.presentation == .plugins(track: first, document: controller.documentID!))
-        state.presentation = nil; state.choosingFile = true
+        #expect(controller.selection != first && state.pluginBrowserDocument == document)
+        #expect(session.enabled(.undo) && session.enabled(.addTrack))
+        state.choosingFile = true
         #expect(!session.enabled(.openProject) && !session.enabled(.palette))
         state.choosingFile = false
-        state.presentation = .plugins(track: first, document: UUID())
+        state.pluginBrowserDocument = UUID()
         state.synchronize(controller)
-        #expect(state.presentation == nil)
+        #expect(state.pluginBrowserDocument == nil)
         state.presentation = .history
         state.synchronize(controller)
         #expect(state.presentation == .history)

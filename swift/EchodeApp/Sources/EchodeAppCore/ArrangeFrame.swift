@@ -125,6 +125,10 @@ struct ArrangeFrame: Sendable {
             instances.append(Instance(rect: SIMD4(0, row.y, width, max(0, row.height - 1)) * Float(input.scale),
                                       color: chosen ? palette.selected : palette.background))
             instances.append(Instance(rect: SIMD4(0, row.y + row.height - 1, width, 1) * Float(input.scale), color: palette.separator))
+            let fx = TrackFXLayout(row: CGRect(x: 0, y: Double(row.y), width: Double(width), height: Double(row.height)))
+            if fx.visible {
+                instances.append(Instance(rect: SIMD4(Float(fx.rect.minX), Float(fx.rect.minY), Float(fx.rect.width), Float(fx.rect.height)) * Float(input.scale), color: palette.separator))
+            }
             let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: Double(width), height: Double(row.height)))
             if layout.visible, let mix = row.mix {
                 func add(_ rect: CGRect, _ color: SIMD4<Float>) {

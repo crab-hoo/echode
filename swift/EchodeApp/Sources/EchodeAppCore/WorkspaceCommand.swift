@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track"
-    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor"
+    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Track FX"
     case playback = "Play / Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
     public var id: Self { self }
     public var title: String { text(rawValue) }
@@ -19,6 +19,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .inspector: "sidebar.left"
         case .browser: "sidebar.right"
         case .editor: "pianokeys"
+        case .devices: "slider.horizontal.3"
         case .playback: "playpause"
         case .stop: "stop.fill"
         case .loop: "repeat"
@@ -79,7 +80,7 @@ final class WorkspaceSession {
         case .redo: return editable && controller.redoCount > 0
         case .history: return editable
         case .addTrack: return editable
-        case .plugins: return editable && controller.selection != nil
+        case .plugins, .devices: return editable && controller.selection != nil
         case .playback, .stop: return editable
         case .loop, .metronome, .output: return editable && !controller.audioBusy
         default: return true
@@ -103,10 +104,21 @@ final class WorkspaceSession {
         case .inspector: state.toggle(.inspector)
         case .browser: state.toggle(.browser)
         case .editor: state.toggle(.editor)
-        case .plugins: if let track = controller.selection, let document = controller.documentID { state.presentation = .plugins(track: track, document: document) }
+        case .devices: state.deviceEditor = true; state.layout.editor = true; state.saveLayout()
+        case .plugins: openPlugins()
         case .output: state.presentation = .output
         case .palette: state.presentation = .palette
         }
+    }
+
+    func openPlugins(on track: UUID? = nil) {
+        guard enabled(.plugins), let document = controller.documentID else { return }
+        if let track {
+            guard controller.tracks.contains(where: { $0.id == track }) else { return }
+            controller.selection = track
+        }
+        state.deviceEditor = true; state.layout.editor = true; state.saveLayout()
+        state.pluginBrowserDocument = document
     }
 
     func chooseFolder() {

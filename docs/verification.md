@@ -1,12 +1,19 @@
 # 検査の手順
 
-選択・依存関係・実行予算・必須契約の正本は [scripts/verification.json](../scripts/verification.json)。実行器は `scripts/verify.py`。AGENTS、終了フック、CI に別の選択条件を持たせない。
+選択・依存関係・実行予算・必須契約の正本は [scripts/verification.json](../scripts/verification.json)。
+実行器は `scripts/verify.py`。AGENTS、終了フック、CI に別の選択条件を持たせない。
 
 ## 作業の入口と完了
 
-着手時に `make verify-plan`。作業中は関係するテストを先に実行し、最後の編集後に `make verify`。HEAD と作業ツリーの差分には、ステージ済み・未ステージ・未追跡・削除・移動前後を含む。コミット済みの変更には `VERIFY_BASE=<変更前のref> make verify` を使う。存在しない ref は失敗する。
+着手時に `make verify-plan` を実行する。
+作業中は関係するテストを `-q` 付きで先に実行し（例: `cargo test -q -p echode-engine`）、最後の編集後に `make verify` を実行する。
+HEAD と作業ツリーの差分には、ステージ済み・未ステージ・未追跡・削除・移動前後を含む。
+コミット済みの変更には `VERIFY_BASE=<変更前のref> make verify` を使う（存在しない ref は失敗する）。
 
-自動検査は選択されたものをすべて通す。選択された計測・実機・ネットワーク検査は、明示して実行するか、未実行の理由を記録する。理由なしの未実行が残れば `make verify` は非ゼロで終わる。終了フックが自動でウィンドウや音声デバイスを開くことはない。
+自動検査は選択されたものをすべて通す。
+自動検査が失敗した時は、`scripts/verify.py` が該当ログから失敗箇所の抜粋を標準エラーへ表示する。
+選択された計測・実機・ネットワーク検査は、明示して実行するか、未実行の理由を記録する。
+理由なしの未実行が残れば `make verify` は非ゼロで終わる。終了フックが自動でウィンドウや音声デバイスを開くことはない。
 
 ```sh
 # 手動検査の実行（他の自動検査も必要に応じて実行する）
@@ -18,94 +25,79 @@ make verify VERIFY_ARGS='--defer spike-audio --reason "今回の変更は文書�
 make verify
 ```
 
-`--all` は追加の長時間検査も含めて全検査を選択する。10分計測は `make verify VERIFY_ARGS='--run spike-engine'` でも追加できる。通常の音声変更で毎回実行したり、毎回見送り理由を書いたりする必要はない。スケジューラー・リアルタイム処理の大きな変更、長時間でだけ起きる不具合、リリース前など、目的がある時に実行する。通常検査の完了は長時間の安定性を保証しない。
+`--all` は追加の長時間検査も含めて全検査を選択する。
+10分計測は `make verify VERIFY_ARGS='--run spike-engine'` でも追加できる。
+スケジューラー・リアルタイム処理の大きな変更、長時間でだけ起きる不具合、リリース前など、目的がある時に実行する。
 
-`--only ID` は作業中の個別検査か CI の分割用で、完了報告前には使わない。無関係な検査を追加実行する時は `python3 scripts/verify.py --all --only ID`、手動検査ならさらに `--run ID`。自動検査の失敗は見送れない。手動検査の見送りも合格ではなく、最終報告に名前と理由を残す。
+`--only ID` は作業中の個別検査か CI の分割用で、完了報告前には使わない。
+無関係な検査を追加実行する時は `python3 scripts/verify.py --all --only ID`、手動検査ならさらに `--run ID` を付ける。
+自動検査の失敗は見送れない。手動検査の見送りも合格ではなく、最終報告に名前と理由を残す。
 
-通常検査は全変更で選択する。共通依存・ツールチェーン・検査基盤・フック・CI の変更では全自動検査を選ぶ。手動検査は関係する領域の変更から選ぶため、Cargo.lock だけで全実機検査を要求しない。パスでは意味の影響をすべて判定できないので、必要な検査は追加する。
-
-選択と再実行は別である。未コミットの変更が複数の作業にまたがっていても、各検査の入力が前回と同じなら結果を再利用する。候補を一律に `--run` せず、今回の影響・過去の有効な結果・検査の目的を確認する。
+未コミットの変更が複数の作業にまたがっていても、各検査の依存入力が前回と同じなら結果を再利用する。
+候補を一律に `--run` せず、今回の影響・過去の有効な結果・検査の目的を確認する。
 
 ## 自動検査
 
-- `check-verification`: 検査選択、依存入力の失効、診断、署名と作業資料の整合。macOS 27 / M4 の Cargo 生成物と、一時 release dylib の実読込も確認する。Swift の全パッケージと C / C++・直接の Rust の M4 設定、生成 IR、新しいキャッシュでの C import と Swift Testing も確認する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
-- `check`: Rust / Swift、ランダムな編集の不変条件・Undo / Redo・保存の往復、音声の基準比較、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、lint、FFI、ライセンス。
-- `check-product-contracts`: 実 macOS CLAP バンドルのスキャン→キャッシュ→楽器・エフェクト処理と失敗、初回音声処理前の位置、ネイティブ View のキー転送。指定した実テストが1件走った証拠を要求し、削除・無視・0件を拒否する。既知の誤りを一時コピーへ戻し、期待値で失敗しなければ検査も失敗する。コンパイル失敗は検出の証拠にしない（[ADR 0093](decisions/0093-product-contract-gate.md)）。
-- 音声の必須契約には、実 WAV の左右・トリム・ゲイン・SRC・再生／書き出し、別プロセスのステレオ受渡し、配置音声のループ端の振幅、フェーダーの時間方向の連続性も含む。ブロック間一致だけでなく、独立した振幅・位相の期待値と、誤りを戻したコピーでの失敗を確認する（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
-- 音声計測も完走を必須契約にする。`spike-engine` は600秒の要求に対して測定時間と終了理由を出し、途中停止・既定出力変更・中断・空の計測を不合格にする。短いデバッグ実行は代わりの合格にならない（[ADR 0096](decisions/0096-measurement-completion.md)）。
-- 再生準備中の停止は、保留した UI 応答、ABI への投入時点、製品 HAL バッファの三つの必須契約で確認する。ペインの描画境界は、子のレイアウト前の親の縮小を通常検査と誤りを戻す検査へ加える（[ADR 0097](decisions/0097-cancellable-retained-transport.md)、[ADR 0098](decisions/0098-pane-render-boundaries.md)）。
-- 保持したプラグインの停止→空白へ移動→再開は、残響を持つ楽器・エフェクト・連鎖で出力を確認する。通常の余韻、移動先に重なるノート、設定値の保持も要求し、リセット／MIDI 全発音停止の省略を別々に拒否する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
-- プラグインの初期化を保留中にも既存の音声と時計が続くことと、HAL の停止時の波形の段差を必須契約へ含める。容量変更中の旧領域の処理、取消、採用、連続編集と停止中の更新は通常検査と RTSan でも確認する（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）。停止は一定値だけでなく、位相を変えた左右別のPCMで、波形を保持した減衰を確認する。描画中の停止は既発音と未発音を区別する（[ADR 0103](decisions/0103-live-stop-waveform.md)）。補正は48 / 96 kHz・複数ブロック長と RTSan でも確認し、準備取消の初回無音と通常の余韻の契約を維持する（[ADR 0101](decisions/0101-live-output-discontinuities.md)）。
-- `rtsan`: テスト用シンセ、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間の禁止操作。HAL 全体や未実装音源を網羅する検査ではない。
-- 任意の停止診断も通常検査とRTSanに含む。取消後0/1/20ブロックで届く一時停止、インターリーブ・平面・モノ、記録と実バッファのビット一致、循環領域の再利用を確認する。ループの先頭・末尾で停止しても既存のフェードを解除しない回帰は `block_size.rs` に置く。聴感の未解決を自動検査の合格で上書きしない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)）。
-- 必須契約 `stop-cleanup` は、2個の別プロセスのリセットを保留し、破棄する処理が待たずに返ること、完了前の再開が時計・新規発音を進めないことを確認する。時間の性能閾値は使わず、期限付きの完了待ちを戻すと期待値で失敗する。故障注入音源のブロックは通常検査だけで使い、正常な楽器・エフェクト連鎖の後片付けと実際の再開後の旧音排除をRTSanでも確認する（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）。
-- 必須契約 `plugin-onset` は、無音からの発音を音源の直接出力と全サンプルで比較する。48 / 96 kHz、7 / 64 / 512フレーム、再発音とステレオを検査し、ノートオンの時刻を0に変える負の対照を拒否する。通常検査は設置済みの音源へ依存せず、検査用音源でRTSanにも通す（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。既存の製品契約のMakefile入口から実行する。
-- ミックスの必須契約 `track-mix-ui` / `clip-mix-ui` は実Viewへのマウス入力から確定し、1回のUndo・取消・保存後の再読込を通す。`live-mix-meter` は製品の試聴・確定計画の採用・取消の波形とフェーダー後の実ピークを、レート・ブロック長を変えて検査する。各負の対照は操作やピークの接続を壊す。通常検査には初回出力前の試聴、遅れた送信とclose、テンポ変更をまたぐフェード・ABI寿命も含め、既存のRTSanと橋渡し検査へ通す（[ADR 0107](decisions/0107-mix-controls.md)）。
-- 製品契約 `live-workgroup` は機器を開かない AudioWorkInterval で挿入・保持・再起動への接続を確認する。`shared-placement-pcm` は同じ PCM の共有・編集・失効・未参照の破棄、`cached-geometry` は実文書と表示範囲の変更で可視列を失効することを確認する。既存の製品契約の入口で通常と負の対照を実行する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
+通常の `make check` は `check-verification`、`check-base`、`check-product-contracts` を順に 1 回ずつ実行する。
+`scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、基盤と製品契約は別の結果として記録する。
+
+- `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、macOS 27 / M4 のビルド基準と生成物の検査（[ADR 0114](decisions/0114-m4-build-baseline.md)）。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
+- `check` (`check-base`): Rust / Swift のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
+- `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
+  指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
+  さらに一時コピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする（コンパイル失敗は検出の証拠にしない）。
+  各契約の ID・対象テスト・目的・負の対照は `scripts/verification.json` を正本とし、本書へ重複記載しない（[ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
+- `rtsan`: テスト用シンセ、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作（ロック、確保、ブロックするシステムコール）を検出する。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
-- `mcp-edit` は既存の製品契約の入口から、実 CLI の stdio → Unix ソケット → DocumentHost を通す。依存する編集の単一 Undo / Redo、失敗の巻戻し、別クライアントへの公開、復旧と EOF を確認する。編集を概要の読取へ置き換えたコピーも拒否する。通常検査は旧・新プロトコル、不正な ID・通知・メタデータ・引数、停止した接続先、破損した応答・行の上限も扱う。実アプリや音声機器、ユーザーのパッケージは使わない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
-- P1の必須契約`loop-head-residency`は準備後に一時素材を除去してループ先頭の保持・失効を検査し、`pre-fader-source`は製品の差し替え・ループ・フェーダー・ライブ復帰をブロック長別とRTSanで検査する。`phase1-acceptance`は同じCLAPプロジェクトを持つ検証用子プロセスだけを強制終了し、復旧・再生・履歴復帰・実CLI書出しを通す。通常の`check-product-contracts`入口から実行し、保持の無効化・差し替えの切断・CLIの無音化を戻したコピーも拒否する（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。機器やユーザーのアプリを操作する検査ではない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
 - `check-bridge-tsan`: 標準ライブラリを含む製品の Rust 静的ライブラリと Swift を同じプロセスで競合検査する。
-- `check-bridge-miri`: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。パッケージ I/O や Swift、Metal は対象外。
-
-通常の `make check` は `check-verification`、`check-base`、`check-product-contracts` を順に1回ずつ実行する。実行器では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、基盤と製品契約は別の結果として記録する。CI も同じ分割を使い、同じ検査を二重に実行しない。
-
-再生位置の UI 世代更新の通常テストは、既存の応答差し替え口から機器なしの再生応答を返す。位置・ループ・停止などの橋渡しと通知の期待値は維持する。実 HAL と実ウィンドウの検査は、明示実行のプローブと区別する。
-
-Swift の通常検査には、配置と保存、選択と入力の下書き、コマンドの有効条件、ファイル一覧の非同期更新、View 再作成時の表示位置、描画結果の世代・版も含む。実際のマウス・キー操作を網羅した主張とは区別する。
+- `check-bridge-miri`: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
 
 ## 実機・計測・ネットワークの検査
 
-実機・聴感の判定は原則としてユーザーが担当する。エージェントは波形・製品バッファ・別プロセスの回帰を先に使う。音声だけの変更に Computer Use を使わない。実機を使う検査は明示的な依頼がある時だけ実行し、ユーザーが担当する項目は理由付きで見送る。候補に選ばれたことは実行の依頼を意味しない。
+実機・聴感の判定は原則としてユーザーが担当する。
+実機を使う検査は明示的な依頼がある時だけ `--run ID` で実行し、ユーザーが担当する項目は理由付きで `--defer ID --reason 理由` で見送る。
+ウィンドウを使う検査は現在の Space で表示条件を満たせる環境で実行する。
 
-実行は `--run ID`。ウィンドウを使う検査は現在の Space で表示条件を満たせる環境で実行する。期限は検査の予算であり、製品の性能の閾値とは別である。
+- `spike-isolation`: 隔離の release 計測と製品 CLAP の実時間ブロック期限。明示的な依頼がある時に実行し、[S3](spikes/S3-plugin-isolation.md) の数値を更新する。
+- `spike-draw`: Metal の大規模シーンと可視判定の実機計測（[S1](spikes/S1-drawing.md)）。
+- `spike-arrange-frame`: 画面を開かず製品の Metal 描画を読み戻し、倍率 1・2、ズーム・スクロール、幅、文字、行境界とヘッダへのはみ出しを比較する（`target/spike-arrange-frame.json`）。
+- `spike-piano-frame`: 画面を開かず製品の Metal 描画を読み戻し、鍵盤・ノートの音高行、調に依存しない白黒、ディグリー表示を比較する（`target/spike-piano-frame.json`）。
+- `spike-app`: 製品のアレンジとピアノロールを実表示し、メインスレッドの 0.5 秒の負荷中も描画することとアクセシビリティ ID を確認する（`target/spike-app.json`）。
+- `spike-playhead`: 専用 AppKit プローブ（`EchodePlayheadProbe`）で実ウィンドウのプレイヘッド移動・再生・一時停止・休止・破棄・文書交換を確認する（`target/spike-playhead.json`）。
+- `spike-history`: 大きい文書の保存・復元と、無関係なノートを増やしたゲイン差分の release 計測（[S4](spikes/S4-history.md)）。
+- `spike-input`: 確認ウィンドウでピンチ・触覚・感圧を実機確認する（[S5](spikes/S5-input.md)）。
+- `spike-engine-smoke`: 現在の音声機器のレートで 1,000 ノードの処理を 10 秒確認する（`target/spike-s2-smoke.txt`）。
+- `spike-engine`: 明示実行用の 10 分計測（600 秒）と逆順イベント整列の release 計測（[S2](spikes/S2-engine.md)、[ADR 0096](decisions/0096-measurement-completion.md)）。途中停止・機器変更・中断は不合格とする。
+- `spike-audio`: 製品の CoreAudio 出力を無音で開き、コールバック、停止・再起動、機器一覧と通知登録、再生中の計画更新・位置移動を確認する。
+- `spike-bridge`: スナップショットと配列の受け渡しの release 計測。
+- `spike-render`: WAV の一括書き出しの release 計測。
+- `advisories`: ネットワークで依存ライブラリの脆弱性情報を確認する。
 
-- `spike-isolation`: 隔離の release 計測と製品 CLAP の実時間ブロック期限。実機計測の明示的な依頼がある時に実行し、[S3](spikes/S3-plugin-isolation.md) の数値を更新する。未実施なら理由を残す。通常の音声比較には性能閾値を持ち込まない。
-- `spike-draw`: Metal の大規模シーンと可視判定の実機計測。
-- `spike-arrange-frame`: 画面を開かず製品の Metal 描画を読み戻す。倍率1・2、部分行、ズーム・スクロール、幅、選択、文字、ヘッダへのはみ出し。`target/spike-arrange-frame.json` と PNG。比較点は操作部品のない左余白で、行境界の不一致とヘッダへの描画漏れを分けて記録する。
-- `spike-piano-frame`: 同じく画面なし。鍵盤・ノートの音高行、調に依存しない白黒、ディグリーの文字・内外の色・区切り。`target/spike-piano-frame.json` と PNG。
-- `spike-app`: 製品のアレンジとピアノロールを実表示し、メインスレッドの0.5秒の負荷中も描画すること、共有する左右の行とアクセシビリティの ID を確認する。小規模な接続確認で、大規模性能の代用ではない。`target/spike-app.json`。
-- `spike-playhead`: 専用 AppKit プローブの起動完了後、イベントループで実行する。計測モードで強制起動せず、0→2拍、再生、一時停止、休止、破棄、計画・文書交換を確認する。現在の Space・非遮蔽を満たさなければ未検証項目を保存して失敗する。状態は close の前に記録する。`target/spike-playhead.json`。通常の `swift test` からは分離している。
-- `spike-history`: 大きい文書の保存・復元と、無関係なノートを増やしたゲイン差分の release 計測。
-- `spike-input`: 実際にピンチ・触覚・感圧を確認する。ウィンドウを閉じるだけでは確認にならない。
-- `spike-engine-smoke`: 現在の音声機器のレートを使い、1,000ノードの同じ処理を10秒確認する。レートの設定は変えない。`target/spike-s2-smoke.txt` は短時間の結果で、10分計測の資料を上書きしない。
-- `spike-engine`: 明示実行用の10分計測と、逆順イベント整列の release 計測。比較条件の48 kHzを維持する。通常の候補から外し、`--run spike-engine` または `--all` で選ぶ。
-- `spike-audio`: 製品の CoreAudio 出力を無音で開き、コールバック、停止・再起動、機器の一覧と通知登録、再生中の計画更新・位置移動。画面は開かない。抜き差しや聴感の代用ではない。
-- `spike-bridge`: スナップショットと配列の受け渡しの計測。
-- `spike-render`: WAV の一括書き出しの release 計測。正しさのテストに時間の閾値を入れない。
-- `advisories`: ネットワークで依存の脆弱性情報を確認する。
-
-`make known-bugs` は登録済みの未解決の再現を実行する入口で、未登録の指摘もある。修正後は再現テストの ignore を外し、監査に対応を記録する。`make bless` は意図した音の変更だけに使う。両方とも自動検査へ入れない。
+`make known-bugs` は登録済みの未解決の再現（`audit_*`）を実行する入口であり、`make bless` は意図した音の変更だけに使う。両方とも自動検査には含めない。
 
 ## 記録と有効期限
 
-`target/verification/report.json` と `report.md`、各 `<ID>.log` に記録する。製品契約の詳細は `product-contracts.json` と `product-contracts/`。状態は次の通り。
+結果は `target/verification/report.json`、`report.md`、各 `<ID>.log` に記録する（製品契約の詳細は `product-contracts.json` と `product-contracts/`）。
 
 - `passed`: その検査の依存入力とツールで合格。
-- `failed`: ログを調査して修正し、再実行する。
+- `failed`: ログと標準エラーの抜粋を調査して修正し、再実行する。
 - `pending` / `running`: 自動検査の未完了。終了報告には使えない。
-- `stale`: 検査中の変更などで無効。再実行する。
+- `stale`: 検査中の変更や依存入力の更新で無効。再実行する。
 - `not_run`: 手動検査の未実行。実行か理由の記録が必要。
 - `deferred`: 理由付きの未実行。合格ではない。
 
-検査ごとの `inputs` と `packages` を JSON に宣言する。`packages` は Cargo の path 依存を、workspace 継承・名前の変更・全 target・optional・開発用・ビルド用を含めてたどる。共通設定、実行器、Makefile、ツールの版と設定、検査の定義と実際の依存ファイルを識別へ含める。内容、追加・削除・移動、実行属性が変われば該当する結果を失効させる。外部のローカル依存を識別できない時は黙って再利用しない。
-
-文書だけの変更は製品音声の合格を失効させない。変更一覧や基準コミット自体も結果の入力にはしないため、内容が同じならコミット後も再利用できる。必須契約の定義は製品契約の入力として識別する。`VERIFY_ARGS` だけを Make の識別から除き、並列数などビルド設定は維持する。PATH の文字列そのものは識別に使わない。終了フックが検査と無関係なディレクトリを先頭に足しても、解決される `rustc`、`cargo`、`swift`、`xcodebuild`、`python3`、`make`、`cc`、`clang` が同じなら合格は失効しない。別のバイナリに解決されれば失効する。依存入力・ツールが変われば合格と見送りは失効する。`--force` は同じ入力でも再実行する。外部の可変入力を使う検査は、その入力も識別へ含める。
-
-`device_context` のある実機計測は、`system_profiler` で読み取った既定出力の記述・レート・チャンネル等のハッシュも入力に含める。音声ストリームを開かず、機器名の生データは検査結果へ保存しない。機器の変更時は音声計測だけを失効させる。情報を取得できない場合に合格を再利用せず、未実行の理由は記録できる。機器記述に表れない内部状態や抜き差しまで証明する仕組みではない。
-
-結果の形式は version 2。従来の全体識別値だけの結果を新しい合格へ移し替えず、移行時は必要な検査を再取得する。全体の識別値も検査中の変更監視用に残す。`doctor` は各項目の有効性を照合し、一部だけ古い時は `partial` と表示する。追加の長時間検査の過去結果は、通常の完了判定外であることを明記して保持する。
-
-検査中に編集を検出すると結果は無効になる。`target/verification/.lock` の排他ロックを保持する間は編集を待つ。ファイルはロック解除後も残るので、存在するだけで「実行中」と判定しない。ロックファイルを削除して並行実行を許してはいけない。`make doctor` はロックの保持状態を確認する。
+検査ごとの `inputs` と `packages`（Cargo のローカル path 依存を再帰的に含む）、共通設定、ツールの版と解決パスをハッシュ化して識別する。
+文書だけの変更は製品コードの検査結果を失効させない。
+`device_context` を持つ実機計測は、`system_profiler` で読み取った既定出力デバイスのメタデータのハッシュも識別に含める。
+`target/verification/.lock` の排他ロックを保持する間はファイル変更を待つ。`make doctor` はロックの保持状態と各検査結果の鮮度（`current` / `partial` / `stale`）を確認する。
 
 ## 環境、フックと CI
 
-新しい環境では `make setup`、動的検査には `make setup-bridge`。製品のコンパイラーは `rust-toolchain.toml`、動的検査だけは `scripts/bridge-toolchain.env` の固定 nightly。ASan の言語別実行と TSan の同一プロセス実行の理由は [ADR 0044](decisions/0044-swift-bridge.md)。自動検査の環境不足も合格ではない。ソケットやキーチェーンが実行環境に拒否された場合は、許可された環境で再実行する。
+新しい環境では `make setup`、動的検査には `make setup-bridge` を実行する。
+製品のコンパイラーは `rust-toolchain.toml`、橋渡しの動的検査（ASan / TSan / Miri）は `scripts/bridge-toolchain.env` の固定 nightly を使う（[ADR 0044](decisions/0044-swift-bridge.md)）。
 
-`.cursor/hooks.json` の preToolUse は変更するツールをロック解除まで待たせ、stop は completed イベントで同じ検査器を呼ぶ。失敗・理由のない未実行は続行指示を返す。JSON の入力不良も黙って合格にしない。フックのない環境でも `make verify` は必須。
-
-`.codex/hooks.json` とそのアダプターも存在するが、イベント名・設定形式は `.cursor` と異なる。設定ファイルがあることだけでは現在のホストで有効とは判定できない。直接のプロトコル検査、ホストの実イベントの発火、リモート CI の実行を別々に報告する。ホスト側の Hooks 設定・出力で発火を確認するまでは、終了検査が自動で働いたと宣言しない。
-
-CI の自動検査一覧は JSON から生成する。各ジョブは `--all --only ID` で分担し、advisories は別に明示実行する。ローカルの `make verify` の合格を GitHub ランナー上の合格へ読み替えない。調査資料の収集は [デバッグ手順](debugging.md) を参照する。
+`.cursor/hooks.json` の `preToolUse` は編集ツールをロック解除まで待たせ、`stop` は `completed` イベントで `scripts/verify.py` を呼ぶ。
+`.codex/hooks.json` もアダプターを備えるが、設定ファイルの存在だけでホスト側のフック発火済みとは扱わない。フックのない環境でも `make verify` は必須である。
+CI の自動検査一覧は `scripts/verification.json` から生成し、各ジョブが `--all --only ID` で分担する。調査資料の収集は [デバッグ手順](debugging.md) を参照する。

@@ -18,6 +18,9 @@ public final class ProjectController {
     public private(set) var busy = false
     public private(set) var undoCount = 0
     public private(set) var redoCount = 0
+    private(set) var pluginNames: [String: String] = [:]
+    @ObservationIgnored private var pluginNamesLoading = false
+    @ObservationIgnored private var pluginNamesLoaded = false
     public var selection: UUID? {
         didSet {
             if let selection, !tracks.contains(where: { $0.id == selection }) { self.selection = nil }
@@ -116,6 +119,31 @@ public final class ProjectController {
         if let last = tracks.last { selection = last.id }
     }
 
+    func deviceRows(on track: UUID) -> [TrackDevice] {
+        (snapshot?.devices(on: track) ?? []).map { TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin]) }
+    }
+
+    func rememberPluginNames(_ listings: [PluginListing]) {
+        for plugin in listings where !plugin.name.isEmpty { pluginNames[plugin.id] = plugin.name }
+        pluginNamesLoaded = true
+    }
+
+    func loadPluginNames() async {
+        guard !pluginNamesLoaded && !pluginNamesLoading else { return }
+        pluginNamesLoading = true
+        defer { pluginNamesLoading = false }
+        do {
+            let listings = try await Task.detached {
+                try PluginCatalog.startWatch()
+                return try PluginCatalog.listings()
+            }.value
+            rememberPluginNames(listings)
+        } catch {
+            // Keep the recorded id visible if metadata is unavailable. The
+            // candidate browser reports scan failures without editing a project.
+        }
+    }
+
     @discardableResult
     public func insertPlugin(_ plugin: String, on track: UUID? = nil, documentID: UUID? = nil) async -> Bool {
         guard let target = track ?? selection, tracks.contains(where: { $0.id == target }), !plugin.isEmpty else { return false }
@@ -124,6 +152,37 @@ public final class ProjectController {
 
     public func removeDevice(_ id: UUID, documentID: UUID? = nil) async {
         await edit(["type": "device.remove", "device": id.uuidString], documentID: documentID)
+    }
+
+    @discardableResult
+    func editDeviceChain(_ change: DeviceChainEdit, documentID: UUID) async -> Bool {
+        guard self.documentID == documentID else { return false }
+        var command: [String: Any]
+        switch change {
+        case .reorder(let device, let before):
+            guard let snapshot, let owner = tracks.first(where: { snapshot.devices(on: $0.id).contains(where: { $0.id == device }) }) else { return false }
+            let ids = snapshot.devices(on: owner.id).map(\.id)
+            guard let index = ids.firstIndex(of: device) else { return false }
+            if before == device || (before == nil && index == ids.count - 1) || (index + 1 < ids.count && before == ids[index + 1]) { return false }
+            command = ["type": "device.reorder", "device": device.uuidString]
+            if let before { command["before"] = before.uuidString }
+        case .copy(let source, let track, let before):
+            command = ["type": "device.copy", "source": source.uuidString, "track": track.uuidString]
+            if let before { command["before"] = before.uuidString }
+        case .remove(let device):
+            command = ["type": "device.remove", "device": device.uuidString]
+        }
+        return await edit(command, documentID: documentID)
+    }
+
+    @discardableResult
+    func dropFX(_ drop: TrackFXDrop, on track: UUID, documentID: UUID) async -> Bool {
+        guard self.documentID == documentID, tracks.contains(where: { $0.id == track }) else { return false }
+        switch drop {
+        case .plugin(let plugin): return await insertPlugin(plugin, on: track, documentID: documentID)
+        case .copyDevice(let device): return await editDeviceChain(.copy(source: device, track: track, before: nil), documentID: documentID)
+        case .moveToEnd(let device): return await editDeviceChain(.reorder(device: device, before: nil), documentID: documentID)
+        }
     }
 
     @discardableResult

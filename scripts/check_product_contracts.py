@@ -159,8 +159,8 @@ def negative_controls(root, contracts):
             log.write_text(output)
             results.append({"id": contract["id"], "status": "passed" if caught else "failed",
                             "log": str(log), "purpose": "The test must reject the reintroduced defect"})
-            print(f"{contract['id']} negative control: {'rejected defect' if caught else 'FAILED'}", flush=True)
             if not caught:
+                print(f"{contract['id']} negative control: FAILED", flush=True)
                 print(output[-5000:], file=sys.stderr)
     return results
 
@@ -191,11 +191,13 @@ def run(root, contracts, invoke=run_process):
         results.append({"id": name, "status": "passed" if ok else "failed", "exit_code": code,
                         "test": contract["test"], "command": args, "log": str(log),
                         "purpose": contract["purpose"]})
-        print(f"{name}: {'passed' if ok else 'FAILED (missing, skipped, or failed required test)'}", flush=True)
         if not ok:
+            print(f"{name}: FAILED (missing, skipped, or failed required test)", flush=True)
             print(output[-5000:], file=sys.stderr)
     controls = negative_controls(root, contracts) if all(r["status"] == "passed" for r in results) else []
     ok = all(r["status"] == "passed" for r in results + controls)
+    if ok:
+        print(f"product contracts: {len(results)} passed, {len(controls)} negative controls rejected defects", flush=True)
     report.write_text(json.dumps({"status": "passed" if ok else "failed",
                                   "tests": results, "negative_controls": controls}, indent=2) + "\n")
     return 0 if ok else 1

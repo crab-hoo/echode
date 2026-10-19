@@ -33,10 +33,10 @@ struct WorkspaceInspectorView: View {
                     ForEach(0..<snapshot.deviceCount(onTrack: index), id: \.self) { device in
                         if let plugin = snapshot.devicePlugin(onTrack: index, at: device), let id = snapshot.deviceID(onTrack: index, at: device) {
                             HStack {
-                                Text(plugin).font(.caption).lineLimit(2).help(plugin)
+                                Text(controller.pluginNames[plugin] ?? plugin).font(.caption).lineLimit(2).help(plugin)
                                 Spacer()
                                 Button { Task { await controller.removeDevice(id, documentID: document) } } label: { Image(systemName: "minus.circle") }
-                                    .help(text("Remove")).accessibilityLabel(text("Remove") + " " + plugin).disabled(controller.busy)
+                                    .help(text("Remove")).accessibilityLabel(text("Remove") + " " + (controller.pluginNames[plugin] ?? plugin)).disabled(controller.busy)
                             }
                         }
                     }
