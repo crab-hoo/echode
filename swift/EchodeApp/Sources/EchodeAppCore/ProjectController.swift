@@ -60,8 +60,13 @@ public final class ProjectController {
     @ObservationIgnored private(set) var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
     @ObservationIgnored private let sendAudio: @Sendable (Document, AudioCommand) async throws -> AudioState
-    /// Parameters of the device the FX view is editing, as its plugin reported them.
-    public internal(set) var parameterPanel: ParameterPanel?
+    /// Parameter lists the device view has shown in this document, by device.
+    /// Values change inside each state; this map changes only when a list is
+    /// added or a device leaves the document.
+    public internal(set) var parameterStates: [UUID: DeviceParameterState] = [:]
+    /// Undo, Redo or a restored revision may load plugin bytes. A parameter
+    /// drag waits for that instead of racing it; other edits do not.
+    public private(set) var historyBusy = false
     @ObservationIgnored var parameterGesture: ParameterGesture?
     @ObservationIgnored var parameterTask: Task<Void, Never>?
     @ObservationIgnored let sendDevice: @Sendable (Document, DeviceCommand) async throws -> DeviceResult
@@ -107,7 +112,7 @@ public final class ProjectController {
                 self.redoCount = 0
                 self.selection = nil
                 self.noteFocus = nil
-                self.closeParameters()
+                self.forgetParameters()
                 self.publish(initial)
                 if let previous { await Task.detached { previous.shutdown() }.value }
             } catch { self.report(error) }
@@ -156,7 +161,10 @@ public final class ProjectController {
     }
 
     func deviceRows(on track: UUID) -> [TrackDevice] {
-        (snapshot?.devices(on: track) ?? []).map { TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed, offline: $0.offline) }
+        (snapshot?.devices(on: track) ?? []).map {
+            TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed,
+                        offline: $0.offline, pinned: $0.pinned)
+        }
     }
 
     func rememberPluginNames(_ listings: [PluginListing]) {
@@ -264,23 +272,30 @@ public final class ProjectController {
     public func undo() async {
         let target = documentID
         if faderPreview != nil { await finishFader(commit: false) }
-        await edits.run {
-            guard self.documentID == target, self.undoCount > 0, let document = self.document else { return }
-            do { self.publish(try await document.undo()); self.undoCount -= 1; self.redoCount += 1 }
-            catch { self.report(error) }
-            await self.reloadParameters()
+        if parameterGesture != nil { await finishParameter(commit: true) }
+        let changed = await edits.run {
+            guard self.documentID == target, self.undoCount > 0, let document = self.document else { return false }
+            self.historyBusy = true
+            defer { self.historyBusy = false }
+            do { self.publish(try await document.undo()); self.undoCount -= 1; self.redoCount += 1; return true }
+            catch { self.report(error); return false }
         }
+        // Values are read after the turn, so a slow plugin does not hold later edits.
+        if changed { await reloadParameters() }
     }
 
     public func redo() async {
         let target = documentID
         if faderPreview != nil { await finishFader(commit: false) }
-        await edits.run {
-            guard self.documentID == target, self.redoCount > 0, let document = self.document else { return }
-            do { self.publish(try await document.redo()); self.redoCount -= 1; self.undoCount += 1 }
-            catch { self.report(error) }
-            await self.reloadParameters()
+        if parameterGesture != nil { await finishParameter(commit: true) }
+        let changed = await edits.run {
+            guard self.documentID == target, self.redoCount > 0, let document = self.document else { return false }
+            self.historyBusy = true
+            defer { self.historyBusy = false }
+            do { self.publish(try await document.redo()); self.redoCount -= 1; self.undoCount += 1; return true }
+            catch { self.report(error); return false }
         }
+        if changed { await reloadParameters() }
     }
 
     /// Newest autosave first. An empty list means there is no commit yet, or the request failed.
@@ -312,7 +327,7 @@ public final class ProjectController {
             self.selection = nil
             self.noteFocus = nil
             self.clipFocus = nil
-            self.closeParameters()
+            self.forgetParameters()
             self.undoCount = 0
             self.redoCount = 0
             self.audio = AudioState()
@@ -433,8 +448,11 @@ public final class ProjectController {
     }
 
     private func history(_ command: HistoryCommand) async -> HistoryReport? {
-        await edits.run {
+        if parameterGesture != nil { await finishParameter(commit: true) }
+        let report: HistoryReport? = await edits.run {
             guard let document = self.document else { return nil }
+            self.historyBusy = true
+            defer { self.historyBusy = false }
             do {
                 let snapshot = try await document.history(command)
                 let report = try snapshot.historyReport()
@@ -449,6 +467,8 @@ public final class ProjectController {
                 return nil
             }
         }
+        if report?.changed == true { await reloadParameters() }
+        return report
     }
 
     func publish(_ snapshot: Snapshot) {
@@ -462,8 +482,18 @@ public final class ProjectController {
         if selection != previous { noteFocus = nil; clipFocus = nil }
         if let noteFocus { self.noteFocus = snapshot.pianoNote(noteFocus)?.id }
         if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
-        if let panel = parameterPanel, !tracks.contains(where: { snapshot.devices(on: $0.id).contains { $0.id == panel.device && !$0.offline } }) {
-            closeParameters()
+        if !parameterStates.isEmpty {
+            // A removed or offline device has no running plugin to list.
+            var running: Set<UUID> = []
+            for track in 0..<snapshot.trackCount {
+                for device in 0..<snapshot.deviceCount(onTrack: track) where snapshot.deviceOffline(onTrack: track, at: device) == false {
+                    if snapshot.devicePlugin(onTrack: track, at: device) != nil, let id = snapshot.deviceID(onTrack: track, at: device) {
+                        running.insert(id)
+                    }
+                }
+            }
+            for id in parameterStates.keys where !running.contains(id) { parameterStates[id] = nil }
+            if let gesture = parameterGesture, !running.contains(gesture.device) { parameterGesture = nil }
         }
     }
 

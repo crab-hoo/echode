@@ -211,6 +211,9 @@ enum ValueRecord {
     Flicks {
         value: i64,
     },
+    ParamIds {
+        ids: Vec<u32>,
+    },
     OrderStep {
         index: u32,
         id: String,
@@ -332,6 +335,7 @@ impl From<&Value> for ValueRecord {
             Value::Gain(bits) => Self::Gain { bits: *bits },
             Value::Bits(bits) => Self::Bits { bits: *bits },
             Value::Flicks(value) => Self::Flicks { value: *value },
+            Value::ParamIds(ids) => Self::ParamIds { ids: ids.clone() },
             Value::OrderStep { index, id, present } => Self::OrderStep {
                 index: *index,
                 id: id.to_string(),
@@ -385,6 +389,7 @@ impl ValueRecord {
             Self::Gain { bits } => Value::Gain(*bits),
             Self::Bits { bits } => Value::Bits(*bits),
             Self::Flicks { value } => Value::Flicks(*value),
+            Self::ParamIds { ids } => Value::ParamIds(ids.clone()),
             Self::OrderStep { index, id, present } => Value::OrderStep {
                 index: *index,
                 id: parse_id(id)?,
@@ -469,6 +474,7 @@ fn property_name(property: Property) -> &'static str {
         Property::PluginState => "plugin_state",
         Property::Bypassed => "bypassed",
         Property::Offline => "offline",
+        Property::PinnedParameters => "pinned_parameters",
     }
 }
 
@@ -510,6 +516,7 @@ fn parse_property(property: &str) -> Result<Property, ActionError> {
         "plugin_state" => Property::PluginState,
         "bypassed" => Property::Bypassed,
         "offline" => Property::Offline,
+        "pinned_parameters" => Property::PinnedParameters,
         _ => return Err(ActionError::CorruptJournal),
     })
 }

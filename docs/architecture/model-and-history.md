@@ -91,7 +91,8 @@ flick は 44.1kHz 系と 48kHz 系の主要なサンプルレート（8kHz〜192
 - **アドレス**: トラック FX は `track/<id>/device/<id>/param/<id>`、Phase 2 のクリップ FX は `clip/<id>/device/<id>/param/<id>`
   （[ADR 0026](../decisions/0026-parameters.md)）
 - **CLAP の値**: プラグインの状態バイトが正本で、モデルのパラメーター配列には複製しない。
-  パラメーターの `<id>` は CLAP の `u32` ID とし、ホストの編集は状態の記録として履歴に入る（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）
+  パラメーターの `<id>` は CLAP の `u32` ID とし、ホストの編集は状態の記録として履歴に入る（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）。
+  一覧のピン留めは値ではなく ID の集合で、デバイスの設定として `device.pin_parameter` で記録する（[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）
 
 ### 4.7 オートメーション
 
@@ -142,8 +143,9 @@ MySong.echode/
   （[ADR 0074](../decisions/0074-package-entry-io.md)）
 - キー順序を固定し、時間は整数、1 ノート 1 行で出力する。スキーマは 1 段ずつマイグレーションして読む
   （[ADR 0028](../decisions/0028-package-schema.md)）
-- 現行スキーマは 5。デバイスの `bypassed` と `offline` を保存する。
-  3 以前はバイパス解除、4 以前はオンラインとして段階変換する。
+- 現行スキーマは 6。デバイスの `bypassed`・`offline` と、一覧の最上部に固定する CLAP パラメーター ID の `pinned` を保存する
+  （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
+  3 以前はバイパス解除、4 以前はオンライン、5 以前はピン留めなしとして段階変換する。
   旧リーダーが新しい音声状態を無視しないよう版を進める
   （[ADR 0120](../decisions/0120-device-bypass.md)、[ADR 0125](../decisions/0125-device-offline.md)）。
 

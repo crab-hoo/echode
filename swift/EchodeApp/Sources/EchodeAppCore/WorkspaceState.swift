@@ -4,6 +4,10 @@ import Observation
 
 enum WorkspacePane: String, Sendable { case inspector, browser, editor }
 
+/// What the bottom pane shows. Each view keeps its own target: the piano
+/// roll its notes, the device view the selected track's chain.
+enum BottomView: String, Sendable, CaseIterable { case editor, devices, both }
+
 struct WorkspaceLayout: Codable, Equatable {
     var inspector = true
     var browser = true
@@ -66,7 +70,16 @@ public final class WorkspaceState {
     var displayKey = DisplayKey()
     var presentation: WorkspacePresentation?
     var pluginBrowserDocument: UUID?
-    var deviceEditor = false
+    var bottom = BottomView.editor
+    var showsDevices: Bool { bottom != .editor }
+    var showsEditor: Bool { bottom != .devices }
+
+    /// Brings the device view up without hiding a piano roll shown beside it.
+    func showDevices() {
+        if bottom == .editor { bottom = .devices }
+        layout.editor = true
+        saveLayout()
+    }
     var collapsedTracks: Set<UUID> = []
     @ObservationIgnored private var folderDocument: UUID?
     @ObservationIgnored private var projectionSource: Snapshot?

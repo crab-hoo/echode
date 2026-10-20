@@ -16,11 +16,11 @@ struct DeviceChainTests {
         let track = try #require(controller.selection)
         #expect(await controller.insertPlugin("org.example.effect", on: track, documentID: document))
         let device = try #require(controller.deviceRows(on: track).first)
-        let list = DeviceChainListView(frame: CGRect(x: 0, y: 0, width: 520, height: 100))
+        let list = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 520, height: 300))
         var pending: Task<Bool, Never>?
         list.onEdit = { change in pending = Task { await controller.editDeviceChain(change, documentID: document) } }
         list.configure(devices: controller.deviceRows(on: track), track: track, document: document, busy: false)
-        let row = try #require(list.subviews.first as? DeviceChainRow)
+        let row = try #require(list.columns.first)
         #expect(row.bypass.state == .off)
         let count = controller.undoCount
         row.bypass.performClick(nil)
@@ -71,20 +71,23 @@ struct DeviceChainTests {
         let rect = TrackFXLayout(row: header.camera.rows(trackCount: 2, height: 200).rect(at: 0, width: 160)).rect
         header.mouseDown(with: try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: header.convert(CGPoint(x: rect.midX, y: rect.midY), to: nil),
             modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)))
-        #expect(controller.selection == first && state.pluginBrowserDocument == document && state.deviceEditor)
+        #expect(controller.selection == first && state.pluginBrowserDocument == document && state.showsDevices)
         #expect(session.enabled(.undo))
 
-        let list = DeviceChainListView(frame: CGRect(x: 0, y: 0, width: 520, height: 160))
+        let list = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 520, height: 300))
         var pending: Task<Bool, Never>?
         list.onEdit = { edit in pending = Task { await controller.editDeviceChain(edit, documentID: document) } }
         list.configure(devices: controller.deviceRows(on: first), track: first, document: document, busy: false)
         list.layoutSubtreeIfNeeded()
-        let namedRow = try #require(list.subviews.first as? DeviceChainRow)
-        let label = try #require(namedRow.subviews.compactMap { $0 as? NSTextField }.first)
-        #expect(label.stringValue == "Example EQ" && label.toolTip == original[0].plugin)
-        let row = try #require(list.subviews[1] as? DeviceChainRow)
+        let named = try #require(list.columns.first)
+        #expect(named.title.stringValue == "Example EQ" && named.title.toolTip == original[0].plugin)
+        // Devices sit side by side in processing order.
+        #expect(named.frame.maxX <= list.columns[1].frame.minX)
+        #expect(!named.left.isEnabled && named.right.isEnabled)
+        let row = list.columns[1]
+        #expect(row.left.isEnabled && !row.right.isEnabled)
         let before = controller.undoCount
-        row.up.performClick(nil)
+        row.left.performClick(nil)
         #expect(await pending?.value == true)
         #expect(controller.undoCount == before + 1)
         #expect(controller.snapshot?.devices(on: first).map(\.id) == [original[1].id, original[0].id])
@@ -117,7 +120,8 @@ struct DeviceChainTests {
 
         list.configure(devices: try #require(controller.snapshot).devices(on: first), track: first, document: document, busy: false)
         pending = nil
-        #expect(list.accept(pasteboard, at: CGPoint(x: 5, y: 150), copying: true))
+        // Past the last device is the end of the chain.
+        #expect(list.accept(pasteboard, at: CGPoint(x: DeviceStripView.columnWidth * 2 + 20, y: 5), copying: true))
         #expect(await pending?.value == true)
         let duplicated = try #require(controller.snapshot).devices(on: first)
         #expect(duplicated.count == 3 && duplicated.last?.plugin == original[0].plugin)
@@ -132,7 +136,7 @@ struct DeviceChainTests {
     }
 
     @Test func staleMalformedAndBusyDropsDoNotEdit() async throws {
-        let list = DeviceChainListView(frame: CGRect(x: 0, y: 0, width: 520, height: 100))
+        let list = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 520, height: 100))
         let track = UUID(), document = UUID(), device = UUID()
         var edits = [DeviceChainEdit]()
         list.onEdit = { edits.append($0) }
@@ -148,20 +152,29 @@ struct DeviceChainTests {
         board.setData(try JSONEncoder().encode(FXDrag(document: document, track: track, device: device, plugin: nil)), forType: FXDrag.deviceType)
         #expect(!list.accept(board, at: CGPoint(x: 0, y: CGFloat.infinity), copying: false))
         #expect(!list.accept(board, at: CGPoint(x: CGFloat.infinity, y: 0), copying: false))
+        #expect(!list.accept(board, at: CGPoint(x: CGFloat.greatestFiniteMagnitude, y: 0), copying: false))
         list.configure(devices: [], track: track, document: document, busy: true)
         #expect(!list.accept(board, at: .zero, copying: true))
         #expect(edits.isEmpty)
     }
 
     @Test func emptyChainKeepsTheWholeViewportAvailableForDrops() throws {
-        let scroll = DeviceChainScrollView(frame: CGRect(x: 0, y: 0, width: 520, height: 220))
-        let list = DeviceChainListView(frame: .zero)
+        let scroll = DeviceStripScrollView(frame: CGRect(x: 0, y: 0, width: 520, height: 220))
+        let list = DeviceStripView(frame: .zero)
         scroll.documentView = list
         let track = UUID(), document = UUID()
         list.configure(devices: [], track: track, document: document, busy: false)
         scroll.layout()
-        #expect(list.frame.height == scroll.contentSize.height)
+        #expect(list.frame.size == scroll.contentSize)
         scroll.setFrameSize(CGSize(width: 640, height: 420))
+        scroll.layout()
+        #expect(list.frame.size == scroll.contentSize)
+        // A chain wider than the view scrolls sideways instead of squeezing devices.
+        let wide = (0..<3).map { TrackDevice(id: UUID(), plugin: "org.example.\($0)") }
+        list.configure(devices: wide, track: track, document: document, busy: false)
+        scroll.layout()
+        #expect(list.frame.width == list.contentWidth && list.frame.width > scroll.contentSize.width)
+        list.configure(devices: [], track: track, document: document, busy: false)
         scroll.layout()
         #expect(list.frame.size == scroll.contentSize)
 

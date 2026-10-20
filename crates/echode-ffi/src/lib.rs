@@ -612,6 +612,35 @@ pub unsafe extern "C" fn echode_snapshot_device_plugin(
     plugin.as_ptr()
 }
 
+/// Borrows the ascending CLAP parameter ids pinned on a device. An invalid
+/// snapshot or index returns null with a zero count; no pins return a count of 0.
+///
+/// # Safety
+/// `count` is writable. `snapshot` is null or owned for the whole read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_device_pins(
+    snapshot: *const Snapshot,
+    track: usize,
+    device: usize,
+    count: *mut usize,
+) -> *const u32 {
+    if count.is_null() {
+        return std::ptr::null();
+    }
+    unsafe {
+        *count = 0;
+    }
+    let Some(pins) =
+        snapshot_ref(snapshot).and_then(|snapshot| snapshot.device_pins(track, device))
+    else {
+        return std::ptr::null();
+    };
+    unsafe {
+        *count = pins.len();
+    }
+    pins.as_ptr()
+}
+
 /// Writes the installed CLAP catalog as UTF-8 JSON.
 ///
 /// Returns 0 when `out` holds the document. Returns 1 when `capacity` is too

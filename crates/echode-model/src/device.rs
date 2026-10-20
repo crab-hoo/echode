@@ -187,6 +187,9 @@ pub struct Device {
     pub bypassed: bool,
     /// Offline devices keep their recorded settings without loading a helper.
     pub offline: bool,
+    /// CLAP parameter ids shown first in this device's parameter list,
+    /// ascending and unique. Values stay in the plugin state; the mixer has none.
+    pub pinned: Vec<u32>,
     pub parameters: Vec<Parameter>,
 }
 
@@ -199,6 +202,7 @@ impl Device {
             state: None,
             bypassed: false,
             offline: false,
+            pinned: Vec::new(),
             parameters: vec![
                 Parameter::at_default(ids.gain, ParamKey::Gain),
                 Parameter::at_default(ids.pan, ParamKey::Pan),
@@ -216,6 +220,7 @@ impl Device {
             state: None,
             bypassed: false,
             offline: false,
+            pinned: Vec::new(),
             parameters: Vec::new(),
         }
     }
@@ -273,10 +278,16 @@ fn validate_clap(
         .state
         .as_deref()
         .is_some_and(|hash| !valid_state_hash(hash))
+        || !valid_pins(&device.pinned)
     {
         return Err(ModelError::InvalidDevice);
     }
     Ok(())
+}
+
+/// Ascending, unique, and never CLAP's invalid id.
+pub(crate) fn valid_pins(pinned: &[u32]) -> bool {
+    pinned.windows(2).all(|pair| pair[0] < pair[1]) && !pinned.contains(&u32::MAX)
 }
 
 pub(crate) fn validate_mixer(
@@ -290,6 +301,7 @@ pub(crate) fn validate_mixer(
         || device.state.is_some()
         || device.bypassed
         || device.offline
+        || !device.pinned.is_empty()
         || device.parameters.len() != ParamKey::ORDER.len()
     {
         return Err(ModelError::InvalidParameter);

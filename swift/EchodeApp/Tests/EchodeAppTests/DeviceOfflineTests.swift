@@ -16,20 +16,20 @@ struct DeviceOfflineTests {
         #expect(await controller.insertPlugin("org.example.fx", on: track, documentID: document))
         let device = try #require(controller.deviceRows(on: track).first)
         #expect(await controller.editDeviceChain(.bypass(device: device.id, bypassed: true), documentID: document))
-        let list = DeviceChainListView(frame: CGRect(x: 0, y: 0, width: 620, height: 100))
+        let list = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 620, height: 300))
         var pending: Task<Bool, Never>?
         list.onEdit = { change in pending = Task { await controller.editDeviceChain(change, documentID: document) } }
         list.configure(devices: controller.deviceRows(on: track), track: track, document: document, busy: false)
         list.layoutSubtreeIfNeeded()
-        let row = try #require(list.subviews.first as? DeviceChainRow)
+        let row = try #require(list.columns.first)
         #expect(row.offline.state == .off && row.bypass.state == .on)
-        for width in [200.0, 260.0, 620.0] {
+        for width in [240.0, DeviceStripView.columnWidth - 1] {
             row.frame.size.width = width
             row.needsLayout = true; row.layoutSubtreeIfNeeded()
             #expect(!row.offline.frame.intersects(row.bypass.frame))
-            #expect(!row.bypass.frame.intersects(row.up.frame))
-            let title = try #require(row.subviews.compactMap { $0 as? NSTextField }.first)
-            #expect(!title.frame.intersects(row.offline.frame))
+            #expect(!row.bypass.frame.intersects(row.left.frame))
+            #expect(!row.title.frame.intersects(row.offline.frame))
+            #expect(!row.search.frame.intersects(row.bypass.frame))
         }
         let before = controller.undoCount
         row.offline.performClick(nil)

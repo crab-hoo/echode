@@ -355,7 +355,8 @@ class PolicyTests(unittest.TestCase):
                           "fx-bypass-ui", "fx-batch-ui", "fx-offline-ui", "plugin-offline", "offline-export",
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
-                          "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui"})
+                          "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
+                          "device-lane-held", "device-view-slow-ui", "device-view-long-ui"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
@@ -373,6 +374,19 @@ class PolicyTests(unittest.TestCase):
         panel = contracts["fx-params-ui"]
         self.assertEqual((panel["runner"], panel["suite"]), ("swift", "DeviceParameterTests"))
         self.assertEqual(panel["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift")
+        # A held helper reply must not hold the control side or the screen.
+        lane = contracts["device-lane-held"]
+        self.assertEqual((lane["runner"], lane["package"], lane["target"]),
+                         ("rust", "echode-plugin-host", ["--test", "hosted_playback"]))
+        self.assertEqual(lane["negative_control"]["file"], "crates/echode-sandbox/src/session.rs")
+        self.assertIn("try_lock", lane["negative_control"]["old"])
+        for name in ("device-view-slow-ui", "device-view-long-ui"):
+            with self.subTest(contract=name):
+                self.assertEqual((contracts[name]["runner"], contracts[name]["suite"]), ("swift", "DeviceParameterTests"))
+        for path in ("crates/echode-ffi/src/lane.rs", "crates/echode-sandbox/src/session.rs",
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceParameterView.swift"):
+            with self.subTest(path=path):
+                self.assertIn("check-product-contracts", self.selected(path))
         # These files open the output engine for device views.
         for path in ("swift/EchodeBridge/Sources/EchodeBridge/Device.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift"):

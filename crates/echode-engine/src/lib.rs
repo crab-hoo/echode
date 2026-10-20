@@ -40,7 +40,7 @@ pub use echode_realtime::Event;
 pub use handoff::{Audio, Control, Cycle, pair};
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 mod meter;
-pub use echode_sandbox::{ParamChange, ParamInfo, ParamValue, RetainedWorkgroup};
+pub use echode_sandbox::{ParamChange, ParamInfo, ParamValue, PluginControl, RetainedWorkgroup};
 pub use meter::TrackMeter;
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;

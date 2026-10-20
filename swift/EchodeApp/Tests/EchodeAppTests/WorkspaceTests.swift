@@ -178,7 +178,7 @@ struct WorkspaceTests {
         }
         state.presentation = nil; session.perform(.plugins)
         let document = try #require(controller.documentID)
-        #expect(state.presentation == nil && state.pluginBrowserDocument == document && state.deviceEditor)
+        #expect(state.presentation == nil && state.pluginBrowserDocument == document && state.showsDevices)
         await controller.addTrack(name: "second")
         #expect(controller.selection != first && state.pluginBrowserDocument == document)
         #expect(session.enabled(.undo) && session.enabled(.addTrack))

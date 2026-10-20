@@ -793,13 +793,14 @@ fn render_track(track: &Track) -> String {
         };
         let _ = writeln!(
             out,
-            "    {{\"id\":{},\"kind\":{},\"plugin\":{},\"state\":{},\"bypassed\":{},\"offline\":{},\"parameters\":[",
+            "    {{\"id\":{},\"kind\":{},\"plugin\":{},\"state\":{},\"bypassed\":{},\"offline\":{},\"pinned\":{},\"parameters\":[",
             to_json(&device.id.to_string()),
             to_json(device.kind.as_str()),
             to_json(&device.plugin),
             to_json(&device.state),
             to_json(&device.bypassed),
-            to_json(&device.offline)
+            to_json(&device.offline),
+            to_json(&device.pinned)
         );
         push_json_lines(
             &mut out,
@@ -891,19 +892,39 @@ fn format_gain(gain: f32) -> String {
 }
 
 /// Current package schema. Older numbers are raised by [`SCHEMA_STEPS`].
-const SCHEMA: u32 = 5;
+const SCHEMA: u32 = 6;
 
 /// Raises one schema number. Index 0 raises schema 1 to schema 2.
 type SchemaStep = fn(&mut serde_json::Value) -> Result<(), String>;
 
 /// Schema 1 devices have no plugin id. Schema 2 stores audio as null or an id.
-/// Schema 3 devices were always active.
+/// Schema 3 devices were always active. Schema 5 devices pinned no parameters.
 const SCHEMA_STEPS: &[SchemaStep] = &[
     add_device_plugin,
     audio_reference,
     add_device_bypass,
     add_device_offline,
+    add_device_pins,
 ];
+
+/// Earlier devices listed parameters in the plugin's order only.
+fn add_device_pins(value: &mut serde_json::Value) -> Result<(), String> {
+    let Some(devices) = value.get_mut("devices") else {
+        return Ok(());
+    };
+    let Some(devices) = devices.as_array_mut() else {
+        return Err("devices is not an array".into());
+    };
+    for device in devices {
+        let Some(device) = device.as_object_mut() else {
+            return Err("device is not an object".into());
+        };
+        device
+            .entry("pinned")
+            .or_insert(serde_json::Value::Array(Vec::new()));
+    }
+    Ok(())
+}
 
 /// Earlier devices always retained a runtime instance, including bypassed ones.
 fn add_device_offline(value: &mut serde_json::Value) -> Result<(), String> {
@@ -1261,6 +1282,7 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
                     state,
                     bypassed: device.bypassed,
                     offline: device.offline,
+                    pinned: device.pinned,
                     parameters,
                 })
             })
@@ -1606,6 +1628,7 @@ struct DeviceFile {
     state: Option<String>,
     bypassed: bool,
     offline: bool,
+    pinned: Vec<u32>,
     parameters: Vec<ParameterFile>,
 }
 

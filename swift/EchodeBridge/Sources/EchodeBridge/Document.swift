@@ -142,6 +142,17 @@ public final class Snapshot: @unchecked Sendable {
         }
     }
 
+    /// CLAP parameter ids pinned to the top of a device's list, ascending.
+    /// `nil` for an index that is not a device.
+    public func devicePins(onTrack track: Int, at device: Int) -> [UInt32]? {
+        guard track >= 0, device >= 0 else { return nil }
+        return withExtendedLifetime(self) {
+            var count = 0
+            guard let pins = echode_snapshot_device_pins(handle, track, device, &count) else { return nil }
+            return Array(UnsafeBufferPointer(start: pins, count: count))
+        }
+    }
+
     /// Copies the visible arrange elements. The borrowed C buffer does not escape.
     public func visibleElements(
         originTick: Int64,

@@ -7,6 +7,8 @@ struct TrackDevice: Identifiable, Equatable {
     var name: String? = nil
     var bypassed = false
     var offline = false
+    /// CLAP parameter ids shown first in this device's list.
+    var pinned: [UInt32] = []
     var title: String { name ?? plugin }
 }
 
@@ -16,7 +18,8 @@ extension Snapshot {
         return (0..<deviceCount(onTrack: index)).compactMap {
             guard let id = deviceID(onTrack: index, at: $0), let plugin = devicePlugin(onTrack: index, at: $0) else { return nil }
             return TrackDevice(id: id, plugin: plugin, bypassed: deviceBypassed(onTrack: index, at: $0) ?? false,
-                               offline: deviceOffline(onTrack: index, at: $0) ?? false)
+                               offline: deviceOffline(onTrack: index, at: $0) ?? false,
+                               pinned: devicePins(onTrack: index, at: $0) ?? [])
         }
     }
 }

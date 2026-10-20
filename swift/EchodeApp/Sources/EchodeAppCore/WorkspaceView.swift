@@ -63,14 +63,17 @@ public struct WorkspaceView: View {
                     if state.layout.editor {
                         splitter(.editor, value: sizes.editor, size: geometry.size)
                         VStack(spacing: 0) {
-                            Picker(text("Editor"), selection: $state.deviceEditor) {
-                                Text(text("Piano Roll")).tag(false)
-                                Text(text("Track FX")).tag(true)
+                            Picker(text("Editor"), selection: $state.bottom) {
+                                Text(text("Piano Roll")).tag(BottomView.editor)
+                                Text(text("Devices")).tag(BottomView.devices)
+                                Text(text("Piano Roll and Devices")).tag(BottomView.both)
                             }.pickerStyle(.segmented).fixedSize().padding(6)
-                            if state.deviceEditor {
-                                WorkspaceDeviceView(controller: controller, add: { session.openPlugins() })
-                            } else {
+                            if state.showsEditor {
                                 WorkspaceNoteEditorView(controller: controller, state: state)
+                            }
+                            if state.bottom == .both { Divider() }
+                            if state.showsDevices {
+                                WorkspaceDeviceView(controller: controller, add: { session.openPlugins() })
                             }
                         }.frame(height: sizes.editor).clipped()
                     }

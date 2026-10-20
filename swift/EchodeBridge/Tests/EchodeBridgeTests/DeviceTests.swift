@@ -31,6 +31,19 @@ final class DeviceTests: XCTestCase {
         let unchanged = try await document.snapshot()
         XCTAssertEqual(unchanged.trackCount, 1)
         XCTAssertEqual(try unchanged.deviceReport(), DeviceReport())
+
+        let track = try XCTUnwrap(unchanged.trackID(at: 0))
+        _ = try await document.perform(#"{"type":"device.add","track":"\#(track.uuidString)","plugin":"org.example.fx"}"#)
+        let inserted = try await document.snapshot()
+        let fx = try XCTUnwrap(inserted.deviceID(onTrack: 0, at: 0))
+        for parameter in [9, 2] {
+            _ = try await document.perform(#"{"type":"device.pin_parameter","device":"\#(fx.uuidString)","parameter":\#(parameter),"pinned":true}"#)
+        }
+        let pinned = try await document.snapshot()
+        XCTAssertEqual(pinned.devicePins(onTrack: 0, at: 0), [2, 9])
+        XCTAssertEqual(pinned.devicePins(onTrack: 0, at: 1), [])
+        XCTAssertNil(pinned.devicePins(onTrack: 0, at: 2))
+        XCTAssertNil(pinned.devicePins(onTrack: -1, at: 0))
     }
 
     func testReportsDecodeParametersAndFlags() throws {

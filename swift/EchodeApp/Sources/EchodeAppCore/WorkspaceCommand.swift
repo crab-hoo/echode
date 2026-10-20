@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track", duplicateTrack = "Duplicate Track"
-    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Track FX"
+    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Devices"
     case playback = "Play / Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
     public var id: Self { self }
     public var title: String { text(rawValue) }
@@ -106,7 +106,7 @@ final class WorkspaceSession {
         case .inspector: state.toggle(.inspector)
         case .browser: state.toggle(.browser)
         case .editor: state.toggle(.editor)
-        case .devices: state.deviceEditor = true; state.layout.editor = true; state.saveLayout()
+        case .devices: state.showDevices()
         case .plugins: openPlugins()
         case .output: state.presentation = .output
         case .palette: state.presentation = .palette
@@ -119,7 +119,7 @@ final class WorkspaceSession {
             guard controller.tracks.contains(where: { $0.id == track }) else { return }
             controller.selectTrack(track, change: .focus)
         }
-        state.deviceEditor = true; state.layout.editor = true; state.saveLayout()
+        state.showDevices()
         state.pluginBrowserDocument = document
     }
 

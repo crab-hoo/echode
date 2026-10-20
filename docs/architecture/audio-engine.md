@@ -88,6 +88,8 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
 - **準備中の取消と保持**: 準備中の取消世代を投入時に共有し、停止後の素材・ヘルパー・出力を再利用する
   （[ADR 0097](../decisions/0097-cancellable-retained-transport.md)）。
   デバイスビューの要求では、再生指令を入れずに出力とヘルパーを開いて同じく保持する（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）。
+  開いた後のヘルパーとの往復はデバイスレーンが待ち、制御側の背景保存とグラフ交換は通信中の制御端点を待たない
+  （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
   停止・一時停止・位置移動では保持した CLAP ヘルパーへ次のイベントより前の DSP リセットと全発音停止を送る
   （[ADR 0099](../decisions/0099-transport-plugin-state.md)）
 - **P2 の開始位置**: プロジェクトに保存する再生開始位置と進行中の位置を分け、停止は開始位置へ戻し、一時停止はその場から再開する

@@ -115,6 +115,12 @@ enum Step {
         device: usize,
         offline: bool,
     },
+    PinParameter {
+        track: usize,
+        device: usize,
+        parameter: u32,
+        pinned: bool,
+    },
     ReorderDevice {
         track: usize,
         device: usize,
@@ -212,6 +218,9 @@ fn step() -> impl Strategy<Value = Step> {
             .prop_map(|(track, device, bypassed)| Step::BypassDevice { track, device, bypassed }),
         2 => (any::<usize>(), any::<usize>(), any::<bool>())
             .prop_map(|(track, device, offline)| Step::OfflineDevice { track, device, offline }),
+        // A few ids repeat often enough to pin, unpin, and refuse CLAP's invalid id.
+        2 => (any::<usize>(), any::<usize>(), prop_oneof![Just(0u32), Just(1), Just(7), Just(u32::MAX)], any::<bool>())
+            .prop_map(|(track, device, parameter, pinned)| Step::PinParameter { track, device, parameter, pinned }),
         2 => (any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
             .prop_map(|(track, device, before)| Step::ReorderDevice { track, device, before }),
         2 => (any::<usize>(), any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
@@ -447,6 +456,23 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
             Command::OfflineDevice {
                 device: pick(&ids, *device)?,
                 offline: *offline,
+            }
+        }
+        Step::PinParameter {
+            track: index,
+            device,
+            parameter,
+            pinned,
+        } => {
+            let owner = project
+                .tracks()
+                .iter()
+                .find(|item| Some(item.id) == track(*index))?;
+            let ids: Vec<_> = owner.devices.iter().map(|device| device.id).collect();
+            Command::PinParameter {
+                device: pick(&ids, *device)?,
+                parameter: *parameter,
+                pinned: *pinned,
             }
         }
         Step::ReorderDevice {

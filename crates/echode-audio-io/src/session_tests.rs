@@ -207,7 +207,9 @@ fn device_access_without_a_running_plugin_does_not_open_hardware() {
         .unwrap();
     for project in [project, offline] {
         let mut session = Session::new(Arc::new(project));
-        let error = session.device_parameters(device).unwrap_err();
+        let Err(error) = session.device_control(device) else {
+            panic!("a project without a running plugin has no device control");
+        };
         assert!(error.contains("no running plugin"), "{error}");
         assert!(session.notifications.is_none() && session.stream.is_none());
         assert!(!session.engine_held && !session.state().playing);

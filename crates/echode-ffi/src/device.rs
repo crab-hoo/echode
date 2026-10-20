@@ -1,10 +1,15 @@
 //! Parameter access for a running device. Values change in its helper; the
 //! project changes only when a captured state is recorded as one Undo step.
+//!
+//! The document worker checks a command and resolves the helper. The round
+//! trip then runs on the device lane, so a plugin that is slow to answer
+//! does not delay edits, transport or other devices. Captured bytes return to
+//! the worker, which records them in order with every other edit.
 
 use std::collections::BTreeSet;
 
 use echode_actions::Command;
-use echode_audio_io::{ParamChange, ParamInfo, ParamValue, Session};
+use echode_audio_io::{ParamChange, ParamInfo, ParamValue, PluginControl, Session};
 use echode_history::DocumentHost;
 use echode_model::Id;
 use serde::{Deserialize, Serialize};
@@ -50,51 +55,96 @@ struct Value<'a> {
     text: &'a str,
 }
 
-/// Runs one device command on the document worker and returns its JSON report.
+/// What the lane asks the helper.
+pub(crate) enum Request {
+    Parameters,
+    Set(Vec<ParamChange>),
+    /// The helper's bytes, which the worker records with [`commit`].
+    Capture,
+}
+
+/// A checked command and the helper that answers it.
+pub(crate) struct Dispatch {
+    pub(crate) device: Id,
+    pub(crate) control: PluginControl,
+    pub(crate) request: Request,
+}
+
+/// Checks one device command on the document worker and resolves its helper.
+/// The first device view of a stopped session opens the output here.
 ///
 /// `editing` holds devices whose values changed since their last commit. The
 /// worker defers background saves for them: a plugin that marks itself dirty
 /// after a host change must not turn the edit into a non-undoable capture.
-pub(crate) fn device_report(
+pub(crate) fn dispatch(
     host: &DocumentHost,
     audio: &mut Session,
     editing: &mut BTreeSet<u128>,
     bytes: &[u8],
-) -> Result<Vec<u8>, String> {
+) -> Result<Dispatch, String> {
     let command: DeviceCommand =
         serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-    let report = match command {
-        DeviceCommand::Parameters { device } => {
-            hosted(host, device)?;
-            let infos = audio.device_parameters(device)?;
-            serde_json::json!({ "parameters": infos.iter().map(parameter).collect::<Vec<_>>() })
-        }
+    let (device, request) = match command {
+        DeviceCommand::Parameters { device } => (device, Request::Parameters),
         DeviceCommand::SetParameters { device, changes } => {
             hosted(host, device)?;
             if changes.is_empty() || changes.iter().any(|change| !change.value.is_finite()) {
                 return Err("parameter changes are empty or not finite".into());
             }
-            let changes: Vec<_> = changes
+            let changes = changes
                 .iter()
                 .map(|change| ParamChange {
                     id: change.id,
                     value: change.value,
                 })
                 .collect();
-            editing.insert(device.raw());
-            let values = audio.set_device_parameters(device, &changes)?;
+            (device, Request::Set(changes))
+        }
+        DeviceCommand::Commit { device } => (device, Request::Capture),
+    };
+    hosted(host, device)?;
+    let control = audio.device_control(device)?;
+    if matches!(request, Request::Set(_)) {
+        editing.insert(device.raw());
+    }
+    Ok(Dispatch {
+        device,
+        control,
+        request,
+    })
+}
+
+/// Runs on the device lane. Returns the JSON report, or captured bytes.
+pub(crate) fn round_trip(control: &PluginControl, request: &Request) -> Result<Vec<u8>, String> {
+    let report = match request {
+        Request::Parameters => {
+            let infos = control.parameters().map_err(|error| error.to_string())?;
+            serde_json::json!({ "parameters": infos.iter().map(parameter).collect::<Vec<_>>() })
+        }
+        Request::Set(changes) => {
+            let values = control
+                .set_parameters(changes)
+                .map_err(|error| error.to_string())?;
             serde_json::json!({ "values": values.iter().map(value).collect::<Vec<_>>() })
         }
-        DeviceCommand::Commit { device } => {
-            hosted(host, device)?;
-            let bytes = audio.capture_device_state(device)?;
-            let changed = record_state(host, device, &bytes)?;
-            editing.remove(&device.raw());
-            audio.update(host.snapshot());
-            serde_json::json!({ "changed": changed })
-        }
+        Request::Capture => return control.capture_state().map_err(|error| error.to_string()),
     };
     serde_json::to_vec(&report).map_err(|error| error.to_string())
+}
+
+/// Records bytes the lane captured and ends the device's parameter edit.
+pub(crate) fn commit(
+    host: &DocumentHost,
+    audio: &mut Session,
+    editing: &mut BTreeSet<u128>,
+    device: Id,
+    bytes: &[u8],
+) -> Result<Vec<u8>, String> {
+    let changed = record_state(host, device, bytes)?;
+    editing.remove(&device.raw());
+    audio.update(host.snapshot());
+    serde_json::to_vec(&serde_json::json!({ "changed": changed }))
+        .map_err(|error| error.to_string())
 }
 
 /// Writes the bytes and names them on `device` as an ordinary edit. Bytes
@@ -198,13 +248,14 @@ mod tests {
         let mut audio = Session::new(host.snapshot());
         let mut editing = BTreeSet::new();
         let unknown = br#"{"type":"device.parameters","device":"00000000-0000-0000-0000-0000000000d0","extra":1}"#;
-        assert!(device_report(&host, &mut audio, &mut editing, unknown).is_err());
+        assert!(dispatch(&host, &mut audio, &mut editing, unknown).is_err());
         let mixer_request = format!(r#"{{"type":"device.parameters","device":"{mixer}"}}"#);
-        let error =
-            device_report(&host, &mut audio, &mut editing, mixer_request.as_bytes()).unwrap_err();
+        let Err(error) = dispatch(&host, &mut audio, &mut editing, mixer_request.as_bytes()) else {
+            panic!("the mixer has no helper");
+        };
         assert!(error.contains("mixer"), "{error}");
         let empty = format!(r#"{{"type":"device.parameter.set","device":"{mixer}","changes":[]}}"#);
-        assert!(device_report(&host, &mut audio, &mut editing, empty.as_bytes()).is_err());
+        assert!(dispatch(&host, &mut audio, &mut editing, empty.as_bytes()).is_err());
         assert!(editing.is_empty());
         drop(host);
         let _ = std::fs::remove_dir_all(dir);

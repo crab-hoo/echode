@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use echode_engine::{
-    ClipLoader, ForbidAlloc, ParamChange, ParamInfo, ParamValue, PlaybackAudio, PlaybackCommand,
-    PlaybackControl, PlaybackStatus, PluginRoute, PluginWorkgroup, playback_pair_at,
-    playback_with_plugins_at, playback_with_plugins_in_workgroup_at, tick_to_sample,
+    ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
+    PluginControl, PluginRoute, PluginWorkgroup, playback_pair_at, playback_with_plugins_at,
+    playback_with_plugins_in_workgroup_at, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -285,25 +285,10 @@ impl OutputStream {
         self.control.take_plugin_saves()
     }
 
-    pub fn device_parameters(&self, device: u128) -> Result<Vec<ParamInfo>, String> {
+    /// The control endpoint of the helper hosting `device`.
+    pub fn device_control(&self, device: u128) -> Result<PluginControl, String> {
         self.control
-            .device_parameters(device)
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn set_device_parameters(
-        &self,
-        device: u128,
-        changes: &[ParamChange],
-    ) -> Result<Vec<ParamValue>, String> {
-        self.control
-            .set_device_parameters(device, changes)
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn capture_device_state(&self, device: u128) -> Result<Vec<u8>, String> {
-        self.control
-            .capture_device_state(device)
+            .device_control_handle(device)
             .map_err(|error| error.to_string())
     }
 

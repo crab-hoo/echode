@@ -604,6 +604,34 @@ impl Project {
         Ok(self.write_track(owner, track))
     }
 
+    /// Pins or unpins one CLAP parameter id in a device's list. The id need
+    /// not be listed now: a plugin reports its parameters only while running.
+    pub fn set_parameter_pinned(
+        &self,
+        device: Id,
+        parameter: u32,
+        pinned: bool,
+    ) -> Result<Self, ModelError> {
+        let (owner, index) = self.clap_location(device)?;
+        if parameter == u32::MAX {
+            return Err(ModelError::InvalidParameter);
+        }
+        let current = &self.tracks[owner].devices[index].pinned;
+        let at = current.binary_search(&parameter);
+        if at.is_ok() == pinned {
+            return Ok(self.clone());
+        }
+        let mut track = (*self.tracks[owner]).clone();
+        let list = &mut track.devices[index].pinned;
+        match at {
+            Ok(at) => {
+                list.remove(at);
+            }
+            Err(at) => list.insert(at, parameter),
+        }
+        Ok(self.write_track(owner, track))
+    }
+
     /// Reorders a CLAP device inside its track. `None` means just before the
     /// mixer. An id anchor must belong to the same chain; it is never an index
     /// into a snapshot that may have changed while a gesture was pending.

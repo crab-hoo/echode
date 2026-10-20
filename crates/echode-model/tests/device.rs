@@ -120,6 +120,7 @@ fn a_journal_change_cannot_bypass_a_mixer_or_give_it_plugin_state() {
         (Property::Bypassed, Value::Byte(1)),
         (Property::Offline, Value::Byte(1)),
         (Property::PluginState, Value::Text("a".repeat(64))),
+        (Property::PinnedParameters, Value::ParamIds(vec![1])),
     ] {
         let mut changes = ChangeSet::new();
         changes.push(Change::Update {
@@ -127,6 +128,7 @@ fn a_journal_change_cannot_bypass_a_mixer_or_give_it_plugin_state() {
             property,
             before: match property {
                 Property::Bypassed | Property::Offline => Value::Byte(0),
+                Property::PinnedParameters => Value::ParamIds(Vec::new()),
                 _ => Value::Text(String::new()),
             },
             after,
@@ -229,4 +231,81 @@ fn a_plugin_is_inserted_before_the_mixer_and_the_mixer_stays() {
     let changes = project.diff(&again);
     assert_eq!(project.apply_changeset(&changes).unwrap(), again);
     assert_eq!(again.apply_changeset(&changes.invert()).unwrap(), project);
+}
+
+#[test]
+fn pins_stay_sorted_and_survive_copy_duplicate_and_changesets() {
+    let (project, track) = Project::new().add_track("pins");
+    let id = Id::generate();
+    let project = project
+        .add_clap_device(track, id, "org.example.fx")
+        .unwrap();
+    let pinned = project
+        .set_parameter_pinned(id, 9, true)
+        .unwrap()
+        .set_parameter_pinned(id, 3, true)
+        .unwrap();
+    assert_eq!(pinned.tracks()[0].devices[0].pinned, [3, 9]);
+    // Pinning again or unpinning an absent id changes nothing.
+    assert_eq!(pinned.set_parameter_pinned(id, 3, true).unwrap(), pinned);
+    assert_eq!(pinned.set_parameter_pinned(id, 4, false).unwrap(), pinned);
+    let diff = project.diff(&pinned);
+    assert_eq!(project.apply_changeset(&diff).unwrap(), pinned);
+    assert_eq!(pinned.apply_changeset(&diff.invert()).unwrap(), project);
+    let released = pinned.set_parameter_pinned(id, 9, false).unwrap();
+    assert_eq!(released.tracks()[0].devices[0].pinned, [3]);
+    let step = pinned.diff(&released);
+    assert_eq!(released.apply_changeset(&step.invert()).unwrap(), pinned);
+
+    // A copy is the same settings under a new identity.
+    let copied = pinned.copy_device(id, track, Id::generate(), None).unwrap();
+    assert!(
+        copied.tracks()[0].devices[..2]
+            .iter()
+            .all(|device| device.pinned == [3, 9])
+    );
+    let duplicated = pinned.duplicate_track(track, Id::generate()).unwrap();
+    assert_eq!(duplicated.tracks()[1].devices[0].pinned, [3, 9]);
+    duplicated.check_invariants().unwrap();
+    // Each copy keeps its own list.
+    let copy = copied.tracks()[0].devices[1].id;
+    let edited = copied.set_parameter_pinned(copy, 3, false).unwrap();
+    assert_eq!(edited.tracks()[0].devices[0].pinned, [3, 9]);
+    assert_eq!(edited.tracks()[0].devices[1].pinned, [9]);
+
+    let mixer = project.tracks()[0].devices.last().unwrap().id;
+    assert!(project.set_parameter_pinned(mixer, 1, true).is_err());
+    assert!(project.set_parameter_pinned(id, u32::MAX, true).is_err());
+    assert!(
+        project
+            .set_parameter_pinned(Id::generate(), 1, true)
+            .is_err()
+    );
+    for invalid in [vec![9, 3], vec![3, 3], vec![u32::MAX]] {
+        let mut changes = ChangeSet::new();
+        changes.push(Change::Update {
+            id: ObjectKey::Id(id),
+            property: Property::PinnedParameters,
+            before: Value::ParamIds(Vec::new()),
+            after: Value::ParamIds(invalid.clone()),
+        });
+        assert!(project.apply_changeset(&changes).is_err(), "{invalid:?}");
+    }
+
+    // A device created by a journal from before pins existed has none.
+    let mut legacy = ChangeSet::new();
+    for change in project.diff(&copied).changes() {
+        let mut change = change.clone();
+        if let Change::Create {
+            kind: ObjectKind::Device,
+            fields,
+            ..
+        } = &mut change
+        {
+            fields.retain(|field| field.property != Property::PinnedParameters);
+        }
+        legacy.push(change);
+    }
+    let restored = project.apply_changeset(&legacy).unwrap();
+    assert!(restored.tracks()[0].devices[1].pinned.is_empty());
 }

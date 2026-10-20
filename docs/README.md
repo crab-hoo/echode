@@ -52,6 +52,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - CLAP のホストバイパス・保存形式 4: [ADR 0120](decisions/0120-device-bypass.md)。
 - CLAP のオフライン化・保存形式 5: [ADR 0125](decisions/0125-device-offline.md)。
 - CLAP のパラメーター編集・停止中のヘルパー起動・状態の Undo: [ADR 0130](decisions/0130-clap-parameter-editing.md)。
+- 横並びのデバイスビュー・画面内の行だけの一覧・検索とピン留め・保存形式 6・ワーカー外のデバイス要求: [ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 

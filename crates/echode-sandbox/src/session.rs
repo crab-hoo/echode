@@ -118,24 +118,51 @@ const PARAMETER_REPLY: Duration = Duration::from_secs(5);
 
 /// Socket and saved-state access for control threads, independent of the
 /// realtime mapping. Never call these methods from an audio callback.
+///
+/// The bytes last applied are kept apart from the socket. Reading them, and
+/// polling a background save, never wait behind a request on another thread
+/// that is still waiting for the helper's reply.
 #[derive(Clone)]
-pub struct PluginControl(Arc<Mutex<ControlState>>);
+pub struct PluginControl {
+    socket: Arc<Mutex<ControlState>>,
+    applied: Arc<Mutex<Option<Vec<u8>>>>,
+}
 
 struct ControlState {
     control: Socket,
     inbox: VecDeque<ControlMessage>,
-    last_state: Option<Vec<u8>>,
+    /// The same storage as [`PluginControl::applied_state`].
+    applied: Arc<Mutex<Option<Vec<u8>>>>,
     dirty_again: bool,
     save_requested: bool,
 }
 
 impl PluginControl {
+    fn new(control: Socket) -> Self {
+        let applied = Arc::new(Mutex::new(None));
+        Self {
+            socket: Arc::new(Mutex::new(ControlState {
+                control,
+                inbox: VecDeque::new(),
+                applied: Arc::clone(&applied),
+                dirty_again: false,
+                save_requested: false,
+            })),
+            applied,
+        }
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, ControlState> {
-        self.0.lock().unwrap_or_else(|error| error.into_inner())
+        self.socket
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     pub fn applied_state(&self) -> Option<Vec<u8>> {
-        self.lock().last_state.clone()
+        self.applied
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 
     /// Every parameter the plugin describes, with its value and text.
@@ -160,8 +187,14 @@ impl PluginControl {
 
     /// Poll notices and collect an asynchronous state save. A newer dirty
     /// notice stays pending until the previous reply has been collected.
+    /// A request in flight on another thread keeps the socket; this poll
+    /// returns `None` and the save is collected on a later call.
     pub fn poll_state_save(&mut self) -> Option<Vec<u8>> {
-        let mut state = self.lock();
+        let mut state = match self.socket.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
         if matches!(state.poll_notice(), Ok(Some(PluginNotice::Dirty))) {
             state.dirty_again = true;
         }
@@ -188,6 +221,13 @@ impl PluginControl {
 }
 
 impl ControlState {
+    fn remember(&self, bytes: &[u8]) {
+        *self
+            .applied
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(bytes.to_vec());
+    }
+
     /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
     pub fn request_save(&mut self) -> Result<(), SessionError> {
         self.control.send(&ControlMessage::SaveRequest)?;
@@ -208,7 +248,7 @@ impl ControlState {
         };
         match self.inbox.remove(index) {
             Some(ControlMessage::State(bytes)) => {
-                self.last_state = Some(bytes.clone());
+                self.remember(&bytes);
                 Ok(Some(Ok(bytes)))
             }
             Some(ControlMessage::StateRejected(reason)) => Ok(Some(Err(reason))),
@@ -225,7 +265,7 @@ impl ControlState {
             )
         })? {
             ControlMessage::State(bytes) => {
-                self.last_state = Some(bytes.clone());
+                self.remember(&bytes);
                 Ok(bytes)
             }
             ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
@@ -301,7 +341,7 @@ impl ControlState {
             )
         })? {
             ControlMessage::Restored => {
-                self.last_state = Some(bytes.to_vec());
+                self.remember(bytes);
                 Ok(())
             }
             ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
@@ -487,13 +527,7 @@ impl PluginHost {
             previous_region: None,
             region,
             child: launched.child,
-            control: PluginControl(Arc::new(Mutex::new(ControlState {
-                control: launched.control,
-                inbox: VecDeque::new(),
-                last_state: None,
-                dirty_again: false,
-                save_requested: false,
-            }))),
+            control: PluginControl::new(launched.control),
             stderr,
             closed: false,
             reset_pending: false,

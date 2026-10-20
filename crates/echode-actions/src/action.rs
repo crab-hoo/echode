@@ -685,6 +685,21 @@ define_actions! {
             project.set_device_offline(*device, *offline).map_err(Into::into)
         }
     }
+    PinParameter {
+        id: "device.pin_parameter",
+        name_ja: "パラメーターのピン留めを切り替える",
+        name_en: "Pin a parameter",
+        description_ja: "CLAP パラメーター ID の項目を、このデバイスのパラメーター一覧の最上部に固定または解除する",
+        description_en: "Show a CLAP parameter id first in this device's parameter list, or stop doing so",
+        command { device: Id, parameter: u32, pinned: bool, }
+        action { device: Id, parameter: u32, pinned: bool, }
+        commit { Action::PinParameter { device, parameter, pinned } }
+        edit |project: &Project| {
+            project
+                .set_parameter_pinned(*device, *parameter, *pinned)
+                .map_err(Into::into)
+        }
+    }
     ReorderDevice {
         id: "device.reorder",
         name_ja: "FX の順番を変える",

@@ -249,7 +249,9 @@ CLAP（`clack-host`）、VST3、AU の共通インターフェース（AUv3 は�
 
 ### 9.5 GUI とデバイスビュー
 
-ヘルパー側の GUI ウィンドウ管理（[ADR 0041](decisions/0041-helper-threads.md)）と、P2-02 の下部トラック FX ビュー・非モーダル候補パネル・`device.reorder` / `device.copy`（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
+ヘルパー側の GUI ウィンドウ管理（[ADR 0041](decisions/0041-helper-threads.md)）と、P2-02 の非モーダル候補パネル・`device.reorder` / `device.copy`（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
+下部は選択トラックのデバイスを横に並べ、各デバイスが画面内の行だけを作る全パラメーターの一覧・検索・ピン留めを持つ。
+デバイス要求の往復は文書ワーカーの外で待つ（[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
 
 ### 9.6 スキャンとプラグインブラウザ
 

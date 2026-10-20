@@ -3,13 +3,13 @@ source: crates/echode-history/tests/document.rs
 expression: track_json
 ---
 {
-  "schema":5,
+  "schema":6,
   "id":"00000000-0000-0000-0000-000000000003",
   "name":"piano",
   "parent":null,
   "order":"80",
   "devices":[
-    {"id":"00000000-0000-0000-0000-000000000010","kind":"mixer","plugin":null,"state":null,"bypassed":false,"offline":false,"parameters":[
+    {"id":"00000000-0000-0000-0000-000000000010","kind":"mixer","plugin":null,"state":null,"bypassed":false,"offline":false,"pinned":[],"parameters":[
       {"id":"00000000-0000-0000-0000-000000000011","key":"gain","min":0,"max":4,"default":1,"value":1},
       {"id":"00000000-0000-0000-0000-000000000012","key":"pan","min":-1,"max":1,"default":0,"value":0},
       {"id":"00000000-0000-0000-0000-000000000013","key":"mute","min":0,"max":1,"default":0,"value":0},

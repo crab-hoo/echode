@@ -1607,6 +1607,15 @@ impl PlaybackControl {
             .ok_or_else(|| PlaybackError::Unsupported("the device has no running plugin".into()))
     }
 
+    /// A clone of the endpoint that [`Self::device_parameters`] uses, so another
+    /// control thread can wait for the helper's reply. Control thread only.
+    pub fn device_control_handle(
+        &self,
+        device: u128,
+    ) -> Result<echode_sandbox::PluginControl, PlaybackError> {
+        self.device_control(device).cloned()
+    }
+
     /// Descriptions and values from the device's own helper. Control thread only.
     pub fn device_parameters(
         &self,

@@ -265,6 +265,9 @@ fn note_fault(plugin_id: &CStr) {
         let mut release = [0];
         socket.read_exact(&mut release).expect("prepare released");
     }
+    if let Some(path) = text.trim().strip_prefix("params-wait:") {
+        params::hold_listings(path);
+    }
     FAULT_BITS.store(fault_code(text.trim()), Ordering::Relaxed);
 }
 

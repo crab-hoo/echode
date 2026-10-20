@@ -195,6 +195,10 @@ fn retained_mix_controls_copy_ids_and_resolve_fades_across_tempo_changes() {
         .add_clap_device(track, plugin, "org.example.offline")
         .unwrap()
         .set_device_offline(plugin, true)
+        .unwrap()
+        .set_parameter_pinned(plugin, 12, true)
+        .unwrap()
+        .set_parameter_pinned(plugin, 3, true)
         .unwrap();
     let original = Box::into_raw(Box::new(Snapshot::from_project(Arc::new(project), None)));
     let retained = unsafe { echode_snapshot_retain(original) };
@@ -213,6 +217,16 @@ fn retained_mix_controls_copy_ids_and_resolve_fades_across_tempo_changes() {
         unsafe { echode_snapshot_device_offline(std::ptr::null(), 0, 0) },
         -1
     );
+    let pins = |track, device| {
+        let mut count = usize::MAX;
+        let pointer = unsafe { echode_snapshot_device_pins(retained, track, device, &mut count) };
+        (!pointer.is_null()).then(|| unsafe { std::slice::from_raw_parts(pointer, count) }.to_vec())
+    };
+    assert_eq!(pins(0, 0), Some(vec![3, 12]));
+    assert_eq!(pins(0, 1), Some(Vec::new()));
+    assert_eq!(pins(1, 0), None);
+    assert_eq!(pins(0, usize::MAX), None);
+    assert!(unsafe { echode_snapshot_device_pins(retained, 0, 0, std::ptr::null_mut()) }.is_null());
     let mut mixer = MixerControls::default();
     assert_eq!(
         unsafe { echode_snapshot_mixer_controls(retained, 0, &mut mixer) },

@@ -365,3 +365,59 @@ fn recorded_parameter_state_is_independent_of_block_size_under_rtsan() {
         }
     }
 }
+
+/// A device view waits for a helper's reply on its own thread. While the
+/// plugin holds a parameter listing, the control thread still polls
+/// background saves, replaces the graph for an unrelated edit and reads the
+/// applied bytes, so a slow plugin does not hold the document worker.
+#[test]
+fn contract_held_parameter_listing_does_not_hold_the_control_thread() {
+    use std::io::{Read, Write};
+    let (project, track) = Project::new().add_track("params");
+    let device = Id::from_raw(0x9E);
+    let project = project
+        .add_clap_device(track, device, "dev.echode.test-params")
+        .unwrap();
+    // A short name: Unix socket paths have a small fixed limit on macOS.
+    let socket = std::env::temp_dir().join(format!("echode-hold-{}", std::process::id()));
+    let _ = std::fs::remove_file(&socket);
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let mut route = params_route(None);
+    route.fault = Some(format!("params-wait:{}", socket.display()));
+    let frames = 64;
+    let (mut control, mut audio) =
+        playback_with_plugins(&project, 48_000, frames, &host_bin(), &[route]).unwrap();
+    control.set_clip_loader(stereo_clip(track.raw()));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    close(hear(&mut control, &mut audio, frames), 0.25);
+
+    let endpoint = control.device_control_handle(device.raw()).unwrap();
+    let (sender, listed) = std::sync::mpsc::channel();
+    let lane = std::thread::spawn(move || {
+        let _ = sender.send(endpoint.parameters());
+    });
+    let (mut held, _) = listener.accept().unwrap();
+    let mut reached = [0];
+    held.read_exact(&mut reached).unwrap();
+
+    // What the document worker does for other requests meanwhile.
+    let (edited, _) = project.add_track("unrelated");
+    control.replace(&edited).unwrap();
+    close(hear(&mut control, &mut audio, frames), 0.25);
+    assert!(!control.status().pending_plan);
+    assert_eq!(control.device_applied_state(device.raw()).unwrap(), None);
+    assert!(
+        listed.try_recv().is_err(),
+        "control work waited for the held parameter listing"
+    );
+
+    held.write_all(&[1]).unwrap();
+    let infos = listed
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap()
+        .unwrap();
+    assert_eq!(infos[0].name, "Gain");
+    lane.join().unwrap();
+    let _ = std::fs::remove_file(&socket);
+}

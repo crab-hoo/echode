@@ -7,8 +7,7 @@ use echode_model::Project;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Inventory, OutputDevice, OutputStream, ParamChange, ParamInfo, ParamValue,
-    TransportCancellation, hardware,
+    Inventory, OutputDevice, OutputStream, PluginControl, TransportCancellation, hardware,
 };
 
 #[derive(Debug, Deserialize)]
@@ -340,28 +339,11 @@ impl Session {
         }
     }
 
-    /// Every parameter of a running device, read from its helper.
-    pub fn device_parameters(
-        &mut self,
-        device: echode_model::Id,
-    ) -> Result<Vec<ParamInfo>, String> {
-        self.open_engine()?.device_parameters(device.raw())
-    }
-
-    /// Changes values in the running helper. Nothing is recorded until
-    /// [`Self::capture_device_state`] is journaled by the caller.
-    pub fn set_device_parameters(
-        &mut self,
-        device: echode_model::Id,
-        changes: &[ParamChange],
-    ) -> Result<Vec<ParamValue>, String> {
-        self.open_engine()?
-            .set_device_parameters(device.raw(), changes)
-    }
-
-    /// Bytes including every applied change, for the caller to record.
-    pub fn capture_device_state(&mut self, device: echode_model::Id) -> Result<Vec<u8>, String> {
-        self.open_engine()?.capture_device_state(device.raw())
+    /// The helper hosting a running device. A device view waits for its
+    /// replies on another thread, so a slow helper does not hold this one.
+    /// Nothing is recorded until the caller journals a captured state.
+    pub fn device_control(&mut self, device: echode_model::Id) -> Result<PluginControl, String> {
+        self.open_engine()?.device_control(device.raw())
     }
 
     /// Device views need running helpers. Opens the output stopped at the

@@ -4,8 +4,12 @@
 //! it, 2 mutes. A hidden and a read-only parameter test what a host shows.
 //! One parameter reports an inverted range, which a host must not offer.
 //! The helper hosts one plugin per process, so the values are process-wide.
+//!
+//! `ECHODE_TEST_FAULT=params-wait:<socket>` holds every parameter listing on
+//! the plugin's main thread until the test answers on that Unix socket.
 
 use std::ffi::{CStr, c_char};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use clack_plugin::events::spaces::CoreEventSpace;
@@ -33,6 +37,27 @@ const INVERTED: u32 = 5;
 static GAIN_BITS: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000); // 1.0
 static MODE_BITS: AtomicU64 = AtomicU64::new(0);
 static HIDDEN_BITS: AtomicU64 = AtomicU64::new(0);
+static LISTING_WAIT: OnceLock<String> = OnceLock::new();
+
+pub fn hold_listings(socket: &str) {
+    let _ = LISTING_WAIT.set(socket.to_string());
+}
+
+/// Tells the test that a listing started, then waits for its release byte.
+/// A test that already ended closes the socket, and the listing goes on.
+fn wait_for_release() {
+    use std::io::{Read, Write};
+    let Some(path) = LISTING_WAIT.get() else {
+        return;
+    };
+    let Ok(mut socket) = std::os::unix::net::UnixStream::connect(path) else {
+        return;
+    };
+    let mut release = [0];
+    let _ = socket
+        .write_all(&[1])
+        .and_then(|()| socket.read_exact(&mut release));
+}
 
 struct Spec {
     id: u32,
@@ -226,6 +251,7 @@ unsafe impl ExtensionImplementation<TestGain> for PluginParamsExt {
 }
 
 unsafe extern "C" fn count(_plugin: *const clap_plugin) -> u32 {
+    wait_for_release();
     SPECS.len() as u32
 }
 

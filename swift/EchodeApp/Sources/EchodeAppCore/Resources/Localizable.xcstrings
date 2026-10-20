@@ -1,22 +1,58 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Devices": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Devices" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "デバイス" } }
+      }
+    },
+    "Piano Roll and Devices": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Both" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "両方" } }
+      }
+    },
+    "Search parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Search parameters" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを検索" } }
+      }
+    },
+    "Pin Parameter": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Pin to Top" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "最上部にピン留め" } }
+      }
+    },
+    "Unpin Parameter": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Unpin" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ピン留めを解除" } }
+      }
+    },
+    "Move FX Earlier": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Move FX Earlier" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "FX を前へ移動" } }
+      }
+    },
+    "Move FX Later": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Move FX Later" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "FX を後ろへ移動" } }
+      }
+    },
+    "Offline device parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "This FX is offline. Its settings are kept; turn Offline off to list its parameters." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "この FX はオフラインです。設定は保持しています。パラメーターを表示するにはオフラインを解除してください。" } }
+      }
+    },
     "Parameters": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Parameters" } },
         "ja": { "stringUnit": { "state": "translated", "value": "パラメーター" } }
-      }
-    },
-    "Show Parameters": {
-      "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Show Parameters" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを表示" } }
-      }
-    },
-    "Close Parameters": {
-      "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Close" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "閉じる" } }
       }
     },
     "Loading parameters": {
@@ -29,12 +65,6 @@
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "This plugin reports no editable parameters." } },
         "ja": { "stringUnit": { "state": "translated", "value": "このプラグインには編集できるパラメーターがありません。" } }
-      }
-    },
-    "Choose parameters help": {
-      "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Choose Show Parameters on an FX to edit its values. The plugin starts without playing." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "FX の「パラメーターを表示」を選ぶと値を編集できます。プラグインは再生せずに起動します。" } }
       }
     },
     "Expand Folder": {
@@ -2007,22 +2037,6 @@
         }
       }
     },
-    "Track FX": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Track FX"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "トラック FX"
-          }
-        }
-      }
-    },
     "Add FX": {
       "localizations": {
         "en": {
@@ -2051,38 +2065,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "エディタ"
-          }
-        }
-      }
-    },
-    "Move FX Up": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Move FX Up"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "FX を上へ移動"
-          }
-        }
-      }
-    },
-    "Move FX Down": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Move FX Down"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "FX を下へ移動"
           }
         }
       }

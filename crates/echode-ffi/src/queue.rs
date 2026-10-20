@@ -18,6 +18,10 @@ use echode_model::{Id, Project};
 
 use crate::{PianoNoteElement, TrackTreeInfo, VisibleElement};
 
+#[path = "lane.rs"]
+mod lane;
+use lane::{DeviceLane, Returned, RoundTrip};
+
 use crate::{Complete, ECHODE_ERR, ECHODE_OK};
 
 /// An open package. The worker, not the caller, runs [`DocumentHost::perform`].
@@ -81,9 +85,10 @@ impl Document {
         let published = Arc::clone(&position);
         let cancellation = TransportCancellation::default();
         let transport = cancellation.clone();
+        let lane = DeviceLane::start()?;
         let thread = thread::Builder::new()
             .name("echode-ffi".to_string())
-            .spawn(move || worker(host, incoming, published, transport))
+            .spawn(move || worker(host, incoming, published, transport, lane))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
@@ -299,6 +304,12 @@ impl Snapshot {
         &self.device
     }
 
+    /// The same snapshot, reporting a device command's result.
+    fn with_device(mut self, report: Vec<u8>) -> Self {
+        self.device = Arc::new(report);
+        self
+    }
+
     pub(crate) fn track_count(&self) -> usize {
         self.row_map
             .as_ref()
@@ -352,6 +363,12 @@ impl Snapshot {
         self.track(track)
             .and_then(|track| track.devices.get(device))
             .and_then(|device| device.plugin.as_deref())
+    }
+
+    pub(crate) fn device_pins(&self, track: usize, device: usize) -> Option<&[u32]> {
+        self.track(track)
+            .and_then(|track| track.devices.get(device))
+            .map(|device| device.pinned.as_slice())
     }
 
     pub(crate) fn write_visible(
@@ -475,6 +492,7 @@ fn worker(
     incoming: Receiver<Job>,
     position: Arc<Position>,
     cancellation: TransportCancellation,
+    mut lane: DeviceLane,
 ) {
     let mut accepting = true;
     let mut previous: Option<Snapshot> = None;
@@ -526,12 +544,42 @@ fn worker(
                     .collect();
             }
         }
-        let (tick, playing) = audio.position();
-        position.generation.fetch_add(1, Ordering::SeqCst);
-        position.tick.store(tick, Ordering::SeqCst);
-        position.playing.store(u32::from(playing), Ordering::SeqCst);
-        position.generation.fetch_add(1, Ordering::SeqCst);
-        let job = match incoming.recv_timeout(Duration::from_millis(20)) {
+        publish_position(&position, &audio);
+        // Bytes the lane captured are recorded here, in order with other edits.
+        while let Some(Returned { job, device, reply }) = lane.take_returned() {
+            if !accepting {
+                finish(&job, Err("document thread stopped".to_string()));
+                continue;
+            }
+            let before_doc = host.snapshot();
+            let performed = catch_unwind(AssertUnwindSafe(|| {
+                let report =
+                    crate::device::commit(&host, &mut audio, &mut editing, device, &reply?)?;
+                publish(&host, &audio, previous.as_ref(), None, Some(report))
+            }));
+            match performed {
+                Ok(Ok(snapshot)) => {
+                    publish_position(&position, &audio);
+                    previous = Some(snapshot.retain());
+                    finish_raw(&job, ECHODE_OK, None, Box::into_raw(Box::new(snapshot)));
+                }
+                Ok(Err(error)) => finish(&job, Err(error)),
+                Err(_) => {
+                    accepting = false;
+                    finish(&job, Err("document thread panicked".to_string()));
+                }
+            }
+            if !Arc::ptr_eq(&before_doc, &host.snapshot()) {
+                pending_saves.clear();
+                editing.clear();
+            }
+        }
+        let idle = if lane.waiting() {
+            Duration::from_millis(1)
+        } else {
+            Duration::from_millis(20)
+        };
+        let job = match incoming.recv_timeout(idle) {
             Ok(job) => job,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -541,8 +589,8 @@ fn worker(
             continue;
         }
         let before_doc = host.snapshot();
+        let mut dispatched = None;
         let performed = catch_unwind(AssertUnwindSafe(|| {
-            let mut device = None;
             let history = match &job.operation {
                 Operation::Audio(bytes) => {
                     let command: AudioCommand =
@@ -556,7 +604,7 @@ fn worker(
                     Some(report)
                 }
                 Operation::Device(bytes) => {
-                    device = Some(crate::device::device_report(
+                    dispatched = Some(crate::device::dispatch(
                         &host,
                         &mut audio,
                         &mut editing,
@@ -570,41 +618,32 @@ fn worker(
                     None
                 }
             };
-            let project = host.snapshot();
-            let mut snapshot = if let Some(previous) = &previous
-                && Arc::ptr_eq(&project, &previous.project)
-            {
-                previous.retain()
-            } else {
-                let mut snapshot = Snapshot::from_project(
-                    Arc::clone(&project),
-                    previous.as_ref().map(|snapshot| &*snapshot.index),
-                );
-                snapshot.waveforms = Arc::new(Waveforms::load(
-                    host.directory(),
-                    &project,
-                    previous
-                        .as_ref()
-                        .map(|snapshot| snapshot.waveforms.as_ref()),
-                ));
-                snapshot
-            };
-            snapshot.audio =
-                Arc::new(serde_json::to_vec(&audio.state()).map_err(|error| error.to_string())?);
-            snapshot.history = Arc::new(history.unwrap_or_else(empty_history));
-            snapshot.device = Arc::new(device.unwrap_or_else(empty_device));
-            Ok::<_, String>(snapshot)
+            publish(&host, &audio, previous.as_ref(), history, None)
         }));
         match performed {
             Ok(Ok(snapshot)) => {
-                let (tick, playing) = audio.position();
-                position.generation.fetch_add(1, Ordering::SeqCst);
-                position.tick.store(tick, Ordering::SeqCst);
-                position.playing.store(u32::from(playing), Ordering::SeqCst);
-                position.generation.fetch_add(1, Ordering::SeqCst);
+                publish_position(&position, &audio);
                 previous = Some(snapshot.retain());
-                let snapshot = Box::into_raw(Box::new(snapshot));
-                finish_raw(&job, ECHODE_OK, None, snapshot);
+                match dispatched {
+                    None => {
+                        let snapshot = Box::into_raw(Box::new(snapshot));
+                        finish_raw(&job, ECHODE_OK, None, snapshot);
+                    }
+                    Some(crate::device::Dispatch {
+                        device,
+                        control,
+                        request,
+                    }) => {
+                        let capture = matches!(request, crate::device::Request::Capture);
+                        let round_trip: RoundTrip =
+                            Box::new(move || crate::device::round_trip(&control, &request));
+                        if capture {
+                            lane.capture(job, device, round_trip);
+                        } else {
+                            lane.report(job, snapshot, round_trip);
+                        }
+                    }
+                }
             }
             Ok(Err(error)) => finish(&job, Err(error)),
             Err(_) => {
@@ -619,13 +658,58 @@ fn worker(
             editing.clear();
         }
     }
+    // Queued device requests are refused. One already waiting ends when its
+    // helper exits with the session below.
+    lane.close();
     drop(audio);
+    lane.join();
     position
         .meters
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clear();
     position.playing.store(0, Ordering::SeqCst);
+}
+
+fn publish_position(position: &Position, audio: &Session) {
+    let (tick, playing) = audio.position();
+    position.generation.fetch_add(1, Ordering::SeqCst);
+    position.tick.store(tick, Ordering::SeqCst);
+    position.playing.store(u32::from(playing), Ordering::SeqCst);
+    position.generation.fetch_add(1, Ordering::SeqCst);
+}
+
+/// The snapshot a completion hands out. An unchanged project reuses the
+/// previous arrange index and waveforms.
+fn publish(
+    host: &DocumentHost,
+    audio: &Session,
+    previous: Option<&Snapshot>,
+    history: Option<Vec<u8>>,
+    device: Option<Vec<u8>>,
+) -> Result<Snapshot, String> {
+    let project = host.snapshot();
+    let mut snapshot = if let Some(previous) = previous
+        && Arc::ptr_eq(&project, &previous.project)
+    {
+        previous.retain()
+    } else {
+        let mut snapshot = Snapshot::from_project(
+            Arc::clone(&project),
+            previous.map(|snapshot| &*snapshot.index),
+        );
+        snapshot.waveforms = Arc::new(Waveforms::load(
+            host.directory(),
+            &project,
+            previous.map(|snapshot| snapshot.waveforms.as_ref()),
+        ));
+        snapshot
+    };
+    snapshot.audio =
+        Arc::new(serde_json::to_vec(&audio.state()).map_err(|error| error.to_string())?);
+    snapshot.history = Arc::new(history.unwrap_or_else(empty_history));
+    snapshot.device = Arc::new(device.unwrap_or_else(empty_device));
+    Ok(snapshot)
 }
 
 fn apply(host: &DocumentHost, operation: &Operation) -> Result<(), String> {

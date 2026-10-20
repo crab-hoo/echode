@@ -38,6 +38,8 @@ make debug-report
   `scripts/check_build_host.py` が `sysctl machdep.cpu.brand_string` を読めない隔離環境では、CPU 情報の読取が許される環境で再実行する。
 - **実行環境の権限制限（共有メモリ・キーチェーン）**:
   `shm_open: Operation not permitted` や `SecKeychainCreate` の失敗はサンドボックス制限によるため、許可された環境で再実行する。
+  Swift のマニフェスト読込時に `ModuleCache: Operation not permitted` と標準ライブラリ読込失敗が続く場合も、先にキャッシュの書込権限を確認する。
+  文書だけの検査でもビルド設定と一時署名の検査を含むため、これらの環境エラーを製品の型エラーや設計資料の不整合と混同しない。
 - **自動検査・製品契約の失敗**:
   `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
   最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
@@ -76,9 +78,10 @@ make debug-report
   `chain_of` と `project_plugin_ids` / `routes_with_saved_state` の対象、計画の要求・適用版を確認する。
   `device rendering requires the isolated plugin host` が全オフライン時に出たら、ホストなし書出しの対象判定を確認する。
   再有効化後の未検出・状態オブジェクトの読込エラーとは区別する（[ADR 0125](decisions/0125-device-offline.md)）。
-- **パラメーター欄が開かない・値が音に反映しない・Undo で音が戻らない**:
-  欄の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、
+- **パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない**:
+  デバイスの列の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、
   `no output device is available` は停止中の出力起動、`parameter changes timed out` はヘルパーの処理スレッドの `flush` を疑う。
+  `document thread stopped` は文書を閉じた後の要求、`device request panicked` はデバイスレーンでの異常終了である。
   `plugin-params` は実ヘルパーとエンジン、`fx-params-ui` は画面と履歴のログである。
   Undo では記録のハッシュとヘルパーが最後に保存・読込したバイトを比べ、一致すれば読み込まない（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
 - **空白への移動・再開で以前の残響が鳴る**:
@@ -92,6 +95,19 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **プラグイン付きトラックの選択が止まる・パラメーター画面が重い**:
+  2026-10-20 のユーザー報告は「選択のたび」と「汎用パラメーター画面」の 2 症状であり、独自プラグイン GUI の問題ではない。
+  機器なしで、旧欄の全行一括生成（800 個で約 0.68 秒）と再選択での作り直し、文書ワーカー上の応答待ちを再現し、対応した
+  （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
+  再発時は、プラグイン名・版・パラメータ数、再生状態、下部の表示、初回と再選択、停止時間、入力全体が固まるか操作が無効表示になるかを区別する。
+  初回だけ止まり、後続の編集も待つなら、停止中の最初の表示で出力とヘルパーを開く `Session.open_engine` の待ちである（残る制約）。
+  毎回止まるなら、`DeviceParameterListView.visibleRows` の数と `table.numberOfRows` を比べ、全行を作っていないかを確認する。
+  列が作り直されているなら `DeviceStripView` の列の保持（文書の切替でだけ捨てる）を確認する。
+  値の往復で止まるなら、`device-lane-held` を実行し、背景保存の確認と適用済み状態の読取りが通信中の制御端点を待っていないか確かめる。
+  画面だけが古い一覧へ戻るなら、`device-view-slow-ui` で要求世代の照合を確かめる。
+  テスト用 CLAP の `ECHODE_TEST_FAULT=params-wait:<socket>` は一覧をメインスレッドで保留し、機器なしで遅いプラグインを再現する。
+  実測時間を使う性能検査は通常回帰から分ける。実機操作とサンプリングが必要な場合は担当・許可を確認し、既存アプリの終了・置換は行わない。
+  [追加受入条件](phase2.md#p2-02-デバイスビューとパラメーター編集着手中)を参照する。
 - **起動直後から新規作成・開くが無効で「変更を保存中」のまま**:
   前回プロジェクトの自動復元と `ProjectController.busy` を確認する。
   `sample` の読取で復元側が `Autosave::drop` の join、`echode-autosave` が初期化失敗後の受信待ちなら、終了要求を無視する旧不具合と一致する。
