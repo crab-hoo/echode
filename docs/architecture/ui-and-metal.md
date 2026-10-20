@@ -31,7 +31,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   下部は選択トラックのデバイスを横に並べ、各列が画面内の行だけを作る全パラメーター一覧・検索・ピン留めを持つ。
   切替は「ピアノロール」「デバイス」「両方（上下）」。列と一覧はデバイスごとに文書を開いている間保持する
   （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
-  FX 一覧の名前クリックで独自 GUI を開く操作、展開・折りたたみ、複数選択時の対象は未実装・未決である
+  列とインスペクターの名前クリックで独自 GUI を開く（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。
+  展開・折りたたみ、複数選択時の対象は未実装・未決である
   （[操作要件](../interaction-design.md#デバイスビューと-fx-一覧の役割)）。
 - **単一 drawable のアレンジ表示**: トラックヘッダとタイムラインの縦の原点・行の高さは `ArrangePaneView` が単一所有し、左右の名前・背景・行境界・オブジェクト・音量・パン・M/S・ピークを 1 つの Metal フレームへ描く
   （[ADR 0050](../decisions/0050-arrange-viewport.md)、[ADR 0051](../decisions/0051-arrange-presentation.md)、[ADR 0107](../decisions/0107-mix-controls.md)）

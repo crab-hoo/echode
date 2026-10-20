@@ -6,6 +6,7 @@
 //! helper exits.
 
 use crate::control::{ControlMessage, Socket};
+use crate::gui::{GuiReport, PluginActivity};
 use crate::params::{ParamChange, ParamInfo, ParamValue};
 use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
@@ -116,16 +117,25 @@ pub struct PluginHost {
 /// thread read), so a slow reply is not left to answer the next request.
 const PARAMETER_REPLY: Duration = Duration::from_secs(5);
 
+/// Longer than the helper's 8 s bound for creating a plugin's view, which can
+/// load large resources the first time.
+const WINDOW_REPLY: Duration = Duration::from_secs(10);
+
 /// Socket and saved-state access for control threads, independent of the
 /// realtime mapping. Never call these methods from an audio callback.
 ///
 /// The bytes last applied are kept apart from the socket. Reading them, and
 /// polling a background save, never wait behind a request on another thread
 /// that is still waiting for the helper's reply.
+///
+/// Window notices and parameter changes the plugin made on its own are kept
+/// apart in the same way. Whoever reads the socket moves them aside, and
+/// [`PluginControl::take_activity`] collects them without the socket.
 #[derive(Clone)]
 pub struct PluginControl {
     socket: Arc<Mutex<ControlState>>,
     applied: Arc<Mutex<Option<Vec<u8>>>>,
+    activity: Arc<Mutex<PluginActivity>>,
 }
 
 struct ControlState {
@@ -133,6 +143,10 @@ struct ControlState {
     inbox: VecDeque<ControlMessage>,
     /// The same storage as [`PluginControl::applied_state`].
     applied: Arc<Mutex<Option<Vec<u8>>>>,
+    /// The same storage as [`PluginControl::take_activity`].
+    activity: Arc<Mutex<PluginActivity>>,
+    /// The helper showed the window and has not reported it closed.
+    window_open: bool,
     dirty_again: bool,
     save_requested: bool,
 }
@@ -140,16 +154,44 @@ struct ControlState {
 impl PluginControl {
     fn new(control: Socket) -> Self {
         let applied = Arc::new(Mutex::new(None));
+        let activity = Arc::new(Mutex::new(PluginActivity::default()));
         Self {
             socket: Arc::new(Mutex::new(ControlState {
                 control,
                 inbox: VecDeque::new(),
                 applied: Arc::clone(&applied),
+                activity: Arc::clone(&activity),
+                window_open: false,
                 dirty_again: false,
                 save_requested: false,
             })),
             applied,
+            activity,
         }
+    }
+
+    /// Opens the plugin's window in its helper, or raises it when it is open.
+    /// The window does not take keyboard focus. `title` names a new window.
+    pub fn show_gui(&self, title: &str) -> Result<GuiReport, SessionError> {
+        self.lock().show_gui(title)
+    }
+
+    /// Closes the plugin's window. Closing a window that is not open succeeds.
+    pub fn close_gui(&self) -> Result<(), SessionError> {
+        self.lock().close_gui()
+    }
+
+    /// Window notices and plugin-made changes since the last call, in order.
+    /// Never waits for the socket. `None` when nothing happened.
+    pub fn take_activity(&self) -> Option<PluginActivity> {
+        let mut activity = self
+            .activity
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if activity.is_empty() {
+            return None;
+        }
+        Some(std::mem::take(&mut *activity))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ControlState> {
@@ -221,6 +263,81 @@ impl PluginControl {
 }
 
 impl ControlState {
+    /// Files a received message in arrival order. Activity goes to its own
+    /// storage; a dirty notice stays for the background save and, while the
+    /// window is open, also counts as a change the user made in the plugin.
+    /// Window replies update the open state here, not when a request takes
+    /// them, so a notice right behind the reply sees the new state.
+    fn accept(&mut self, message: ControlMessage) {
+        match &message {
+            ControlMessage::GuiShown(_) => self.window_open = true,
+            ControlMessage::GuiClosedReply => self.window_open = false,
+            _ => {}
+        }
+        let note = match message {
+            ControlMessage::ParamRelay(relay) => PluginActivity {
+                relay,
+                window_open: self.window_open,
+                ..PluginActivity::default()
+            },
+            ControlMessage::GuiClosed => {
+                self.window_open = false;
+                PluginActivity {
+                    closed: true,
+                    ..PluginActivity::default()
+                }
+            }
+            ControlMessage::Dirty if self.window_open => {
+                self.inbox.push_back(ControlMessage::Dirty);
+                PluginActivity {
+                    dirty: true,
+                    ..PluginActivity::default()
+                }
+            }
+            other => {
+                self.inbox.push_back(other);
+                return;
+            }
+        };
+        self.activity
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .merge(note);
+    }
+
+    fn show_gui(&mut self, title: &str) -> Result<GuiReport, SessionError> {
+        self.control
+            .send(&ControlMessage::GuiShow(title.to_string()))?;
+        match self.wait_message(WINDOW_REPLY, |message| {
+            matches!(
+                message,
+                ControlMessage::GuiShown(_) | ControlMessage::GuiRejected(_)
+            )
+        })? {
+            ControlMessage::GuiShown(report) => Ok(report),
+            ControlMessage::GuiRejected(reason) => Err(SessionError::Protocol(reason)),
+            _ => Err(SessionError::Protocol(
+                "helper did not show the window".to_string(),
+            )),
+        }
+    }
+
+    fn close_gui(&mut self) -> Result<(), SessionError> {
+        self.control.send(&ControlMessage::GuiClose)?;
+        match self.wait_message(WINDOW_REPLY, |message| {
+            matches!(
+                message,
+                ControlMessage::GuiClosedReply | ControlMessage::GuiRejected(_)
+            )
+        })? {
+            ControlMessage::GuiClosedReply => Ok(()),
+            ControlMessage::GuiRejected(reason) => Err(SessionError::Protocol(reason)),
+            _ => Err(SessionError::Protocol(
+                "helper did not close the window".to_string(),
+            )),
+        }
+    }
+
     fn remember(&self, bytes: &[u8]) {
         *self
             .applied
@@ -381,7 +498,7 @@ impl ControlState {
     fn drain(&mut self) -> Result<(), SessionError> {
         loop {
             match self.control.try_recv() {
-                Ok(Some(message)) => self.inbox.push_back(message),
+                Ok(Some(message)) => self.accept(message),
                 Ok(None) => return Ok(()),
                 // The helper can close after a complete message. That EOF must
                 // not discard a reason already sitting in the inbox.
@@ -412,7 +529,7 @@ impl ControlState {
                 .control
                 .recv_timeout(remaining.min(Duration::from_millis(50)))
             {
-                Ok(message) => self.inbox.push_back(message),
+                Ok(message) => self.accept(message),
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
                 Err(error) => return Err(error.into()),
             }
@@ -1552,8 +1669,67 @@ impl PluginAudio {
 
 #[cfg(test)]
 mod tests {
-    use super::{FanIn, inheritable, push_stderr};
+    use super::{FanIn, PluginControl, inheritable, push_stderr};
+    use crate::control::{ControlMessage, Socket};
+    use crate::gui::{GuiReport, ParamEvent, ParamEventKind, ParamRelay};
     use std::os::fd::AsRawFd;
+    use std::time::Duration;
+
+    /// Window notices and plugin-made changes leave the inbox, so a request
+    /// waiting for its reply never takes them, and a dirty notice counts as
+    /// the user's change only while the window is open.
+    #[test]
+    fn window_activity_is_kept_apart_from_replies() {
+        let (parent, mut helper) = Socket::pair().unwrap();
+        let control = PluginControl::new(parent);
+        let answer = std::thread::spawn(move || {
+            helper.send(&ControlMessage::Dirty).unwrap();
+            let request = helper.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(matches!(request, ControlMessage::GuiShow(title) if title == "Pad"));
+            let relay = ParamRelay {
+                events: vec![ParamEvent {
+                    id: 1,
+                    kind: ParamEventKind::Begin,
+                }],
+                ..ParamRelay::default()
+            };
+            // A notice sent before the reply must not be taken as the reply.
+            helper.send(&ControlMessage::ParamRelay(relay)).unwrap();
+            helper
+                .send(&ControlMessage::GuiShown(GuiReport {
+                    created: true,
+                    visible: true,
+                    key: false,
+                }))
+                .unwrap();
+            helper.send(&ControlMessage::Dirty).unwrap();
+            helper.send(&ControlMessage::GuiClosed).unwrap();
+            helper.send(&ControlMessage::Dirty).unwrap();
+            helper
+        });
+        let report = control.show_gui("Pad").unwrap();
+        assert!(report.created && !report.key);
+        let helper = answer.join().unwrap();
+        let mut state = control.lock();
+        state.drain().unwrap();
+        let dirty = state
+            .inbox
+            .iter()
+            .filter(|message| matches!(message, ControlMessage::Dirty))
+            .count();
+        assert_eq!(dirty, 3, "every dirty notice stays for the background save");
+        drop(state);
+        let activity = control.take_activity().unwrap();
+        assert_eq!(activity.relay.events.len(), 1);
+        assert!(activity.dirty, "the dirty notice while the window was open");
+        assert!(
+            !activity.window_open,
+            "the relay arrived before the window opened"
+        );
+        assert!(activity.closed);
+        assert!(control.take_activity().is_none());
+        drop(helper);
+    }
 
     #[test]
     fn spawn_sources_stay_above_the_child_fds() {

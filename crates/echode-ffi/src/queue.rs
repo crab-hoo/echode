@@ -16,6 +16,7 @@ use echode_draw::{ArrangeIndex, ArrangeView, Element, ElementId, PianoNote, Pian
 use echode_history::{DocumentHost, PeakColumn, Waveforms};
 use echode_model::{Id, Project};
 
+use crate::activity::ActivityHub;
 use crate::{PianoNoteElement, TrackTreeInfo, VisibleElement};
 
 #[path = "lane.rs"]
@@ -30,6 +31,7 @@ pub struct Document {
     thread: Mutex<Option<JoinHandle<()>>>,
     position: Arc<Position>,
     cancellation: TransportCancellation,
+    activity: Arc<ActivityHub>,
 }
 
 #[derive(Default)]
@@ -86,16 +88,25 @@ impl Document {
         let cancellation = TransportCancellation::default();
         let transport = cancellation.clone();
         let lane = DeviceLane::start()?;
+        let activity = Arc::new(ActivityHub::new());
+        let hub = Arc::clone(&activity);
         let thread = thread::Builder::new()
             .name("echode-ffi".to_string())
-            .spawn(move || worker(host, incoming, published, transport, lane))
+            .spawn(move || worker(host, incoming, published, transport, lane, hub))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
             thread: Mutex::new(Some(thread)),
             position,
             cancellation,
+            activity,
         })
+    }
+
+    /// Plugin activity after `after`, waiting up to `timeout`. Never waits for
+    /// the worker.
+    pub(crate) fn plugin_activity(&self, after: u64, timeout: Duration) -> Vec<u8> {
+        self.activity.read(after, timeout)
     }
 
     pub(crate) fn track_peak(&self, id: u128) -> f32 {
@@ -493,19 +504,29 @@ fn worker(
     position: Arc<Position>,
     cancellation: TransportCancellation,
     mut lane: DeviceLane,
+    activity: Arc<ActivityHub>,
 ) {
     let mut accepting = true;
     let mut previous: Option<Snapshot> = None;
     let mut audio =
         Session::with_media_and_cancellation(host.snapshot(), host.directory(), cancellation);
     let mut pending_saves: Vec<(u128, Vec<u8>)> = Vec::new();
-    // Devices with parameter values sent since their last commit.
+    // Devices with values changed since their last commit, by the device view
+    // or by the plugin's own window.
     let mut editing = BTreeSet::new();
     loop {
         if accepting && catch_unwind(AssertUnwindSafe(|| audio.service())).is_err() {
             accepting = false;
         }
         if accepting {
+            // Before this turn's saves: a change the app will record as one
+            // Undo step must not be journaled first as a background save.
+            for (device, plugin) in audio.take_plugin_activity() {
+                if crate::device::defers_saves(&plugin) {
+                    editing.insert(device);
+                }
+                activity.publish(device, plugin);
+            }
             pending_saves.extend(audio.take_plugin_saves());
             let mut captured = false;
             pending_saves.retain(|(device, bytes)| {
@@ -636,7 +657,7 @@ fn worker(
                     }) => {
                         let capture = matches!(request, crate::device::Request::Capture);
                         let round_trip: RoundTrip =
-                            Box::new(move || crate::device::round_trip(&control, &request));
+                            Box::new(move || crate::device::round_trip(control.as_ref(), &request));
                         if capture {
                             lane.capture(job, device, round_trip);
                         } else {
@@ -658,6 +679,7 @@ fn worker(
             editing.clear();
         }
     }
+    activity.close();
     // Queued device requests are refused. One already waiting ends when its
     // helper exits with the session below.
     lane.close();
@@ -820,6 +842,7 @@ mod tests {
             thread: Mutex::new(None),
             position: Arc::new(Position::default()),
             cancellation: TransportCancellation::default(),
+            activity: Arc::new(ActivityHub::new()),
         };
         document.enqueue(
             Operation::Audio(br#"{"type":"transport.play"}"#.to_vec()),

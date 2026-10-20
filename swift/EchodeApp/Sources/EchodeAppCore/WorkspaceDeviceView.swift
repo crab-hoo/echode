@@ -81,7 +81,8 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         let document = document
         let track = track
         strip.onEdit = { edit in Task { await controller.editDeviceChain(edit, documentID: document) } }
-        strip.onInsert = { plugin in Task { await controller.insertPlugin(plugin, on: track, documentID: document) } }
+        strip.onInsert = { plugin in Task { await controller.addPluginOpeningWindow(plugin, on: track, documentID: document) } }
+        strip.onOpenWindow = { device in Task { await controller.openPluginWindow(device, documentID: document) } }
         strip.onBegin = { controller.beginParameter($0, device: $1) }
         strip.onChange = { controller.changeParameter($0) }
         strip.onEnd = { Task { await controller.finishParameter(commit: true) } }
@@ -120,6 +121,8 @@ final class DeviceStripView: NSView {
     private let empty = NSTextField(labelWithString: "")
     var onEdit: ((DeviceChainEdit) -> Void)?
     var onInsert: ((String) -> Void)?
+    /// A click on a device's name opens its plugin window.
+    var onOpenWindow: ((UUID) -> Void)?
     var onBegin: ((UInt32, UUID) -> Bool)?
     var onChange: ((Double) -> Void)?
     var onEnd: (() -> Void)?
@@ -156,6 +159,7 @@ final class DeviceStripView: NSView {
             column.onRight = { [weak self] in
                 self?.onEdit?(.reorder(device: device.id, before: index + 2 < devices.count ? devices[index + 2].id : nil))
             }
+            column.onOpenWindow = { [weak self] in self?.onOpenWindow?(device.id) }
             column.onCopy = { [weak self] in
                 self?.onEdit?(.copy(source: device.id, track: track, before: index + 1 < devices.count ? devices[index + 1].id : nil))
             }
@@ -226,6 +230,8 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     var dragEnabled = true
     var onEdit: ((DeviceChainEdit) -> Void)?
     var onLeft: (() -> Void)?, onRight: (() -> Void)?, onCopy: (() -> Void)?
+    /// A click on the name, without a drag, opens the plugin's own window.
+    var onOpenWindow: (() -> Void)?
     override var isFlipped: Bool { true }
 
     init(device: TrackDevice, payload: FXDrag) {
@@ -267,8 +273,11 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         self.state = state
         self.locked = locked
         title.stringValue = device.title
-        title.toolTip = device.plugin
+        title.toolTip = device.offline ? device.plugin : device.plugin + "\n" + text("Open plugin window")
         title.setAccessibilityLabel(device.title)
+        title.setAccessibilityCustomActions(device.offline ? [] : [
+            NSAccessibilityCustomAction(name: text("Open plugin window")) { [weak self] in self?.openWindow() ?? false }
+        ])
         title.textColor = device.bypassed || device.offline ? .secondaryLabelColor : .labelColor
         bypass.state = device.bypassed ? .on : .off
         offline.state = device.offline ? .on : .off
@@ -346,7 +355,17 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         dragging.setDraggingFrame(CGRect(x: 0, y: 0, width: bounds.width, height: 60), contents: NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil))
         beginDraggingSession(with: [dragging], event: event, source: self)
     }
-    override func mouseUp(with event: NSEvent) { origin = nil }
+    override func mouseUp(with event: NSEvent) {
+        defer { origin = nil }
+        guard origin != nil, title.frame.contains(convert(event.locationInWindow, from: nil)) else { return }
+        openWindow()
+    }
+    @discardableResult
+    private func openWindow() -> Bool {
+        guard !device.offline, let onOpenWindow else { return false }
+        onOpenWindow()
+        return true
+    }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         context == .withinApplication ? [.copy, .move] : []
     }

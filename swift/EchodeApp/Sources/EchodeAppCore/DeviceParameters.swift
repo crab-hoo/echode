@@ -154,6 +154,11 @@ extension ProjectController {
         }
     }
 
+    /// Reads one list again, for example after a plugin rescanned it.
+    func relistParameters(_ state: DeviceParameterState) async {
+        await listParameters(state)
+    }
+
     private func listParameters(_ state: DeviceParameterState) async {
         guard let document, state.document == documentID else { return }
         state.request &+= 1
@@ -260,8 +265,9 @@ extension ProjectController {
         }
     }
 
+    /// Records the plugin's bytes as one Undo step when they changed.
     @discardableResult
-    private func record(device: UUID, document: Document, documentID: UUID) async -> Bool {
+    func record(device: UUID, document: Document, documentID: UUID) async -> Bool {
         await edits.run {
             guard self.document === document, self.documentID == documentID else { return false }
             do {

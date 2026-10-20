@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 
 use echode_engine::{
     ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
-    PluginControl, PluginRoute, PluginWorkgroup, playback_pair_at, playback_with_plugins_at,
-    playback_with_plugins_in_workgroup_at, tick_to_sample,
+    PluginActivity, PluginControl, PluginRoute, PluginWorkgroup, playback_pair_at,
+    playback_with_plugins_at, playback_with_plugins_in_workgroup_at, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -283,6 +283,10 @@ impl OutputStream {
 
     pub fn take_plugin_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
         self.control.take_plugin_saves()
+    }
+
+    pub fn take_plugin_activity(&self) -> Vec<(u128, PluginActivity)> {
+        self.control.take_plugin_activity()
     }
 
     /// The control endpoint of the helper hosting `device`.

@@ -129,6 +129,11 @@ fn value(id: u32) -> Option<f64> {
     Some(f64::from_bits(bits.load(Ordering::Acquire)))
 }
 
+/// A value the user set in the plugin's window.
+pub fn set_by_user(id: u32, value: f64) {
+    set(id, value);
+}
+
 /// Stores a value inside its range. Read-only and unknown ids are ignored.
 fn set(id: u32, value: f64) {
     if !value.is_finite() {
@@ -357,12 +362,15 @@ unsafe extern "C" fn text_to_value(
     true
 }
 
-/// Applies host values while the plugin is not processing a block.
+/// Applies host values while the plugin is not processing a block, and
+/// reports a change made in its window.
 unsafe extern "C" fn flush(
     _plugin: *const clap_plugin,
     input: *const clap_input_events,
-    _output: *const clap_output_events,
+    output: *const clap_output_events,
 ) {
+    // SAFETY: the host passes its output list for this call, or null.
+    unsafe { crate::gui::emit_raw(output) };
     let Some(input) = (unsafe { input.as_ref() }) else {
         return;
     };

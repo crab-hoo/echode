@@ -104,7 +104,7 @@ fn helper_lists_applies_and_saves_clap_parameters_under_rtsan() {
     assert!(refused.to_string().contains("parameter"), "{refused}");
 }
 
-fn params_route(state: Option<Vec<u8>>) -> PluginRoute {
+pub(super) fn params_route(state: Option<Vec<u8>>) -> PluginRoute {
     PluginRoute {
         clap_id: "dev.echode.test-params".into(),
         path: plugin_dylib(),
@@ -114,7 +114,7 @@ fn params_route(state: Option<Vec<u8>>) -> PluginRoute {
     }
 }
 
-fn stereo_clip(track: u128) -> echode_engine::ClipLoader {
+pub(super) fn stereo_clip(track: u128) -> echode_engine::ClipLoader {
     // Long enough for every block below; not a playback limit.
     let left: Arc<[f32]> = vec![0.25; 48_000].into();
     let right: Arc<[f32]> = vec![-0.25; 48_000].into();
@@ -130,7 +130,7 @@ fn stereo_clip(track: u128) -> echode_engine::ClipLoader {
     })
 }
 
-fn hear(
+pub(super) fn hear(
     control: &mut echode_engine::PlaybackControl,
     audio: &mut echode_engine::PlaybackAudio,
     frames: usize,
@@ -151,7 +151,7 @@ fn hear(
     (left[frames - 1], right[frames - 1])
 }
 
-fn close(heard: (f32, f32), level: f32) {
+pub(super) fn close(heard: (f32, f32), level: f32) {
     assert!(
         (heard.0 - level).abs() < 1.0e-6 && (heard.1 + level).abs() < 1.0e-6,
         "{heard:?} != {level}"

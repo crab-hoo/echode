@@ -53,6 +53,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - CLAP のオフライン化・保存形式 5: [ADR 0125](decisions/0125-device-offline.md)。
 - CLAP のパラメーター編集・停止中のヘルパー起動・状態の Undo: [ADR 0130](decisions/0130-clap-parameter-editing.md)。
 - 横並びのデバイスビュー・画面内の行だけの一覧・検索とピン留め・保存形式 6・ワーカー外のデバイス要求: [ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)。
+- ヘルパー所有のプラグインウィンドウ・フォーカス・プラグイン側の変更の中継と単一 Undo: [ADR 0132](decisions/0132-helper-plugin-windows.md)。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 

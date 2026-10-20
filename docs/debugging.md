@@ -108,6 +108,17 @@ make debug-report
   テスト用 CLAP の `ECHODE_TEST_FAULT=params-wait:<socket>` は一覧をメインスレッドで保留し、機器なしで遅いプラグインを再現する。
   実測時間を使う性能検査は通常回帰から分ける。実機操作とサンプリングが必要な場合は担当・許可を確認し、既存アプリの終了・置換は行わない。
   [追加受入条件](phase2.md#p2-02-デバイスビューとパラメーター編集着手中)を参照する。
+- **プラグインのウィンドウが開かない・フォーカスを奪う・値や Undo が届かない**:
+  エラー表示で境界を分ける。`the plugin has no window` はプラグインが `clap.gui` を持たない、
+  `the plugin has no Cocoa window` は Cocoa の API を持たない、`the plugin refused the window` は `set_parent` の拒否である。
+  `plugin window timed out` はヘルパーのメインスレッドが 8 秒以内に `create` / `show` を終えなかったことを示す（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
+  開くまでの待ちは、停止中の最初の表示で出力とヘルパーを開く待ちと区別する。
+  ウィンドウがキーになる・隠れない・戻らない場合は、記録用の窓で規則を確かめる `plugin-window-helper` を先に実行し、
+  合格なら AppKit の実画面の問題としてユーザーの確認へ回す。実画面の操作は依頼がある時だけ行う。
+  値が一覧へ届かないなら `plugin-window-relay` で処理スレッドのリングと制御スレッドの読み戻しを、
+  Undo が増えない・増えすぎるなら `plugin-window-undo-ui` でジェスチャーの数え方と静止の待ちを確かめる。
+  窓が閉じている時のプラグイン自身の変化は自動保存だけで、Undo に入らないのが正しい。
+  テスト用 CLAP の `ECHODE_TEST_FAULT=gui:<socket>` は、ヘルパーに記録用の窓を選ばせ、ソケットからプラグイン画面の操作を送る。
 - **起動直後から新規作成・開くが無効で「変更を保存中」のまま**:
   前回プロジェクトの自動復元と `ProjectController.busy` を確認する。
   `sample` の読取で復元側が `Autosave::drop` の join、`echode-autosave` が初期化失敗後の受信待ちなら、終了要求を無視する旧不具合と一致する。

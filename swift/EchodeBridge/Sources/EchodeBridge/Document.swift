@@ -350,7 +350,7 @@ private func completeCommand(
 /// and completes exactly once. The pointer is `Sendable` for the same reason as
 /// `Snapshot`: Swift does not mutate it, and the queue serializes edits.
 public final class Document: @unchecked Sendable {
-    private let handle: OpaquePointer
+    let handle: OpaquePointer
 
     /// Creates an empty package at `path` and opens it.
     public init(creating path: String) throws {

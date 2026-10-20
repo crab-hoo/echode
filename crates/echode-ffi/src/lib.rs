@@ -4,6 +4,7 @@
 //! then the completion callback runs once, without a lock held. The spike in
 //! `spikes/bridge` is not used here.
 
+mod activity;
 mod catalog;
 mod controls;
 mod device;
@@ -108,10 +109,10 @@ pub unsafe extern "C" fn echode_document_history(
     ECHODE_OK
 }
 
-/// Queues a device parameter command (`device.parameters`,
-/// `device.parameter.set` or `device.parameter.commit`). Only a commit that
-/// records new plugin bytes enters Undo. The completed snapshot carries the
-/// JSON report.
+/// Queues a device command (`device.parameters`, `device.parameter.set`,
+/// `device.parameter.commit`, `device.gui.show` or `device.gui.close`). Only a
+/// commit that records new plugin bytes enters Undo. The completed snapshot
+/// carries the JSON report.
 ///
 /// # Safety
 /// `document` is null or open. `json` is null only when `json_len` is zero.
@@ -172,6 +173,47 @@ pub unsafe extern "C" fn echode_snapshot_device(
     let bytes = snapshot.device();
     *len = bytes.len();
     bytes.as_ptr()
+}
+
+/// Waits up to `timeout_ms` for plugin activity newer than `after` and writes
+/// it as UTF-8 JSON `{"next", "closed", "entries"}`: window notices and the
+/// values and gestures each plugin made on its own. Entries up to `after` are
+/// dropped, because the caller already has them; pass `next` on the next call.
+///
+/// Returns 0 when `out` holds the page. Returns 1 when `capacity` is too
+/// small and `written` is the size needed; nothing newer is dropped, so the
+/// next call returns at once. Returns -1 for a null document or `written`.
+/// Never waits for the document thread.
+///
+/// # Safety
+/// `document` is null or open. `written` is writable. `out` is null or has
+/// room for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_document_plugin_activity(
+    document: *const Document,
+    after: u64,
+    timeout_ms: u32,
+    out: *mut u8,
+    capacity: usize,
+    written: *mut usize,
+) -> c_int {
+    let (Some(document), Some(written)) =
+        (unsafe { document.as_ref() }, unsafe { written.as_mut() })
+    else {
+        return -1;
+    };
+    let json = document.plugin_activity(
+        after,
+        std::time::Duration::from_millis(u64::from(timeout_ms)),
+    );
+    *written = json.len();
+    if out.is_null() || capacity < json.len() {
+        return 1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
+    }
+    0
 }
 
 /// Reads the live playhead without submitting a command or taking a lock.

@@ -5,7 +5,9 @@
 //! parent block and for a restart that arrives while the transport is idle.
 
 use crate::events::write_input;
-use crate::{HostError, load_entry};
+use crate::gui::GuiRequests;
+use crate::relay::{RelayOutput, RelayRing};
+use crate::{HostError, gui, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::events::{
     Pckn,
@@ -20,11 +22,16 @@ use clack_host::utils::ClapId;
 use clap_sys::ext::audio_ports::{
     CLAP_EXT_AUDIO_PORTS, clap_audio_port_info, clap_plugin_audio_ports,
 };
+use clap_sys::ext::gui::{CLAP_EXT_GUI, clap_host_gui};
 use clap_sys::ext::note_ports::{
     CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI_MPE, clap_note_port_info,
     clap_plugin_note_ports,
 };
-use clap_sys::ext::params::{CLAP_EXT_PARAMS, clap_param_info, clap_plugin_params};
+use clap_sys::ext::params::{
+    CLAP_EXT_PARAMS, CLAP_PARAM_IS_READONLY, CLAP_PARAM_RESCAN_ALL, CLAP_PARAM_RESCAN_INFO,
+    clap_host_params, clap_param_clear_flags, clap_param_info, clap_param_rescan_flags,
+    clap_plugin_params,
+};
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::host::clap_host;
 use clap_sys::plugin::clap_plugin;
@@ -32,13 +39,14 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
     CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn,
-    MappedRegion, ParamChange, ParamInfo, ParamValue, RegionError, Socket, SyncFlags, wake_one,
+    GuiReport, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamValue,
+    RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
-    kCFRunLoopDefaultMode,
 };
-use std::cell::{Cell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
+use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_void};
 use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
@@ -54,6 +62,13 @@ const STATE_LOAD: u8 = 2;
 const PREPARE_CAPACITY: u8 = 3;
 const PARAM_LIST: u8 = 4;
 const PARAM_READ: u8 = 5;
+const PARAM_RELAY: u8 = 6;
+const GUI_SHOW: u8 = 7;
+const GUI_CLOSE: u8 = 8;
+
+/// Creating a plugin's view can load large resources the first time.
+const WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
+const STATE_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 const HANDOFF_EMPTY: u8 = 0;
 const HANDOFF_FULL: u8 = 1;
@@ -63,6 +78,9 @@ thread_local! {
     static INSTANCE: Cell<*mut PluginInstance<EchodeHost>> = const { Cell::new(ptr::null_mut()) };
     /// Set for the whole processing thread, including restarts between blocks.
     static ON_AUDIO: Cell<bool> = const { Cell::new(false) };
+    /// Flags by parameter id, read on the main thread for relays. Cleared
+    /// when the plugin rescans its descriptions.
+    static PARAM_FLAGS: RefCell<Option<HashMap<u32, u32>>> = const { RefCell::new(None) };
 }
 
 struct AudioFlag;
@@ -196,6 +214,16 @@ struct Bridge {
     param_flushed: AtomicU64,
     /// What the last main-thread parameter read produced.
     param_read: std::sync::Mutex<ParamRead>,
+    /// Values and gestures from the plugin's output events.
+    relay: RelayRing,
+    /// The plugin asked for `flush` while no block may come.
+    flush_request: AtomicBool,
+    /// The plugin asked the host to read its parameters again.
+    rescan_request: AtomicBool,
+    /// Window requests the plugin made from any thread.
+    gui: GuiRequests,
+    /// The user or the plugin closed the window; the parent is told once.
+    gui_closed: AtomicBool,
     // Read after `serve` returns, from the unit test.
     #[allow(dead_code)]
     main_id: std::sync::Mutex<Option<ThreadId>>,
@@ -456,6 +484,141 @@ where
     }
 }
 
+/// Runs `action` with the bridge of the plugin that called the host.
+///
+/// # Safety
+/// `host` is the pointer this helper gave the plugin.
+unsafe fn with_bridge(host: *const clap_host, action: impl FnOnce(&Bridge)) {
+    unsafe {
+        HostWrapper::<EchodeHost>::handle(host, |wrapper| {
+            if let Some(bridge) = &wrapper.shared().bridge {
+                action(bridge);
+            }
+            Ok(())
+        });
+    }
+}
+
+#[derive(Copy, Clone)]
+struct HostGui;
+
+unsafe impl Extension for HostGui {
+    const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_GUI];
+    type ExtensionSide = HostExtensionSide;
+
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+unsafe impl ExtensionImplementation<EchodeHost> for HostGui {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_host_gui {
+            resize_hints_changed: Some(host_gui_hints),
+            request_resize: Some(host_gui_resize),
+            request_show: Some(host_gui_show),
+            request_hide: Some(host_gui_hide),
+            closed: Some(host_gui_closed),
+        });
+}
+
+/// The helper reads the hints only when the user resizes the window.
+unsafe extern "C" fn host_gui_hints(_host: *const clap_host) {}
+
+unsafe extern "C" fn host_gui_resize(host: *const clap_host, width: u32, height: u32) -> bool {
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.gui.request_resize(width, height);
+            bridge.signal();
+        });
+    }
+    true
+}
+
+unsafe extern "C" fn host_gui_show(host: *const clap_host) -> bool {
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.gui.request_show();
+            bridge.signal();
+        });
+    }
+    true
+}
+
+unsafe extern "C" fn host_gui_hide(host: *const clap_host) -> bool {
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.gui.request_hide();
+            bridge.signal();
+        });
+    }
+    true
+}
+
+/// A floating window closed. The host destroys the plugin's view either way.
+unsafe extern "C" fn host_gui_closed(host: *const clap_host, _was_destroyed: bool) {
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.gui.closed();
+            bridge.signal();
+        });
+    }
+}
+
+#[derive(Copy, Clone)]
+struct HostParams;
+
+unsafe impl Extension for HostParams {
+    const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_PARAMS];
+    type ExtensionSide = HostExtensionSide;
+
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+unsafe impl ExtensionImplementation<EchodeHost> for HostParams {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_host_params {
+            rescan: Some(host_params_rescan),
+            clear: Some(host_params_clear),
+            request_flush: Some(host_params_flush),
+        });
+}
+
+/// Main thread. The parent reads the list again; changed descriptions also
+/// drop the flags the relay uses.
+unsafe extern "C" fn host_params_rescan(host: *const clap_host, flags: clap_param_rescan_flags) {
+    if flags & (CLAP_PARAM_RESCAN_INFO | CLAP_PARAM_RESCAN_ALL) != 0 {
+        PARAM_FLAGS.with(|cache| cache.borrow_mut().take());
+    }
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.rescan_request.store(true, Ordering::Release);
+            bridge.bump_control();
+        });
+    }
+}
+
+/// The host keeps no automation or modulation yet, so there is nothing to clear.
+unsafe extern "C" fn host_params_clear(
+    _host: *const clap_host,
+    _param: u32,
+    _flags: clap_param_clear_flags,
+) {
+}
+
+/// Any thread. The processing thread calls `flush` between blocks, and is
+/// woken for it when the transport is stopped.
+unsafe extern "C" fn host_params_flush(host: *const clap_host) {
+    unsafe {
+        with_bridge(host, |bridge| {
+            bridge.flush_request.store(true, Ordering::Release);
+            bridge.bump_audio();
+        });
+    }
+}
+
 impl HostHandlers for EchodeHost {
     type Shared<'a> = HostShared;
     type MainThread<'a> = HostMain<'a>;
@@ -463,6 +626,8 @@ impl HostHandlers for EchodeHost {
 
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
         builder.register::<HostState>();
+        builder.register::<HostGui>();
+        builder.register::<HostParams>();
     }
 }
 
@@ -589,6 +754,11 @@ fn serve_region(
         param_generation: AtomicU64::new(0),
         param_flushed: AtomicU64::new(0),
         param_read: std::sync::Mutex::new(ParamRead::Infos(Vec::new())),
+        relay: RelayRing::new(),
+        flush_request: AtomicBool::new(false),
+        rescan_request: AtomicBool::new(false),
+        gui: GuiRequests::default(),
+        gui_closed: AtomicBool::new(false),
         main_id: std::sync::Mutex::new(None),
         audio_id: std::sync::Mutex::new(None),
         callbacks: AtomicU64::new(0),
@@ -697,9 +867,9 @@ fn serve_region(
         });
         let control_handle = scope.spawn(|| control_thread(&bridge_control, control));
         bridge.signal();
-        let mode = unsafe { kCFRunLoopDefaultMode };
         while !bridge.stop.load(Ordering::Acquire) {
-            let _ = CFRunLoop::run_in_mode(mode, 0.05, true);
+            gui::run_once(0.05);
+            tick_window(&bridge);
         }
         audio
             .join()
@@ -707,6 +877,10 @@ fn serve_region(
             .and(control_handle.join().expect("control thread"))
     });
 
+    if let Some(loaded) = loaded.as_ref() {
+        // The plugin's view goes before the plugin is deactivated and destroyed.
+        gui::shut_down(loaded.instance.raw_instance());
+    }
     INSTANCE.with(|cell| cell.set(ptr::null_mut()));
     if let Some(loaded) = loaded.as_mut()
         && let Some(stopped) = bridge.processor.try_take()
@@ -1059,7 +1233,9 @@ fn service_block(
                     if stage > 0 {
                         region.feed_output_to_input(generation)?;
                     }
-                    if render_plugin(region, generation, active, frames, buffers).is_err() {
+                    if render_plugin(region, generation, active, frames, buffers, &bridge.relay)
+                        .is_err()
+                    {
                         region.mark_process_refused();
                         return Err(RtFail::Process);
                     }
@@ -1299,6 +1475,12 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             let _ = socket.send(&ControlMessage::RequestProcess);
         }
         if let Some(socket) = &mut socket {
+            send_relay(bridge, socket);
+            if bridge.gui_closed.swap(false, Ordering::AcqRel) {
+                let _ = socket.send(&ControlMessage::GuiClosed);
+            }
+        }
+        if let Some(socket) = &mut socket {
             match socket.try_recv() {
                 Ok(Some(message)) => {
                     if handle_control(bridge, socket, message).is_err() {
@@ -1361,6 +1543,32 @@ fn handle_control(
                 Ok(values) => ControlMessage::ParamsApplied(values),
                 Err(error) => ControlMessage::ParamsRejected(error),
             };
+            socket
+                .send(&reply)
+                .map_err(|error| HostError::Plugin(error.to_string()))?;
+        }
+        ControlMessage::GuiShow(title) => {
+            let reply = match call_plugin_operation_within(
+                bridge,
+                GUI_SHOW,
+                title.into_bytes(),
+                WINDOW_WAIT,
+            )
+            .and_then(|bytes| decode_report(&bytes))
+            {
+                Ok(report) => ControlMessage::GuiShown(report),
+                Err(error) => ControlMessage::GuiRejected(error),
+            };
+            socket
+                .send(&reply)
+                .map_err(|error| HostError::Plugin(error.to_string()))?;
+        }
+        ControlMessage::GuiClose => {
+            let reply =
+                match call_plugin_operation_within(bridge, GUI_CLOSE, Vec::new(), WINDOW_WAIT) {
+                    Ok(_) => ControlMessage::GuiClosedReply,
+                    Err(error) => ControlMessage::GuiRejected(error),
+                };
             socket
                 .send(&reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
@@ -1473,6 +1681,7 @@ fn render_plugin(
     started: &mut StartedPluginAudioProcessor<EchodeHost>,
     frames: usize,
     buffers: &mut PluginBuffers,
+    relay: &RelayRing,
 ) -> Result<(), ()> {
     for (channel, plane) in buffers.input.iter_mut().enumerate() {
         unsafe {
@@ -1512,7 +1721,9 @@ fn render_plugin(
     region.copy_input_events(generation, &mut buffers.decoded);
     write_input(&buffers.decoded, &mut buffers.events);
     let input_events = InputEvents::from_buffer(&buffers.events);
-    let mut output_events = OutputEvents::void();
+    // Values and gestures the plugin reports go to the ring; nothing allocates.
+    let mut relay = RelayOutput(relay);
+    let mut output_events = OutputEvents::from_buffer(&mut relay);
     // The error string would allocate. The parent reads the refusal flag.
     started
         .process(
@@ -1681,6 +1892,18 @@ fn call_plugin_state(bridge: &Bridge, load: Option<Vec<u8>>) -> Result<Vec<u8>, 
 }
 
 fn call_plugin_operation(bridge: &Bridge, kind: u8, input: Vec<u8>) -> Result<Vec<u8>, String> {
+    call_plugin_operation_within(bridge, kind, input, STATE_WAIT)
+}
+
+fn call_plugin_operation_within(
+    bridge: &Bridge,
+    kind: u8,
+    input: Vec<u8>,
+    wait: std::time::Duration,
+) -> Result<Vec<u8>, String> {
+    if !bridge.has_plugin.load(Ordering::Acquire) {
+        return Err("no plugin".to_string());
+    }
     {
         let mut bytes = bridge
             .state_bytes
@@ -1700,8 +1923,12 @@ fn call_plugin_operation(bridge: &Bridge, kind: u8, input: Vec<u8>) -> Result<Ve
         if bridge.stop.load(Ordering::Acquire) {
             return Err("plugin stopped before state finished".to_string());
         }
-        if started.elapsed() > std::time::Duration::from_secs(2) {
-            return Err("plugin state timed out".to_string());
+        if started.elapsed() > wait {
+            return Err(if kind == GUI_SHOW || kind == GUI_CLOSE {
+                "plugin window timed out".to_string()
+            } else {
+                "plugin state timed out".to_string()
+            });
         }
         thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -1745,13 +1972,19 @@ fn perform_plugin_state(bridge: &Bridge, kind: u8) -> Result<Vec<u8>, String> {
                 );
                 prepare_event_capacity(instance, capacity)?;
             }
-            PARAM_LIST | PARAM_READ => {
+            PARAM_LIST | PARAM_READ | PARAM_RELAY => {
                 let read = read_on_main(bridge, instance, kind, &bytes);
                 *bridge
                     .param_read
                     .lock()
                     .unwrap_or_else(|error| error.into_inner()) = read;
             }
+            GUI_SHOW => {
+                let title = String::from_utf8_lossy(&bytes);
+                let report = gui::show(instance.raw_instance(), &title)?;
+                return Ok(encode_report(report));
+            }
+            GUI_CLOSE => gui::close(instance.raw_instance()),
             _ => load_plugin_state(instance, &bytes)?,
         }
         Ok(bytes)
@@ -1786,32 +2019,46 @@ fn params_extension(instance: &PluginInstance<EchodeHost>) -> *mut clap_plugin_p
 /// Applies queued parameter values between blocks, on the processing thread.
 /// CLAP allows `flush` there while the plugin is active, and never during
 /// `process`. The control thread allocated the batch; this only moves pointers.
+/// A plugin's own `request_flush` runs `flush` with no input, so changes made
+/// in its window reach the relay while the transport is stopped.
 fn flush_params(bridge: &Bridge, started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>) {
     let Some(active) = started.as_mut() else {
         return;
     };
-    if bridge.param_pending.load(Ordering::Acquire).is_null() {
-        return;
-    }
-    let batch = bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel);
-    if batch.is_null() {
+    let requested = bridge.flush_request.swap(false, Ordering::AcqRel);
+    let batch = if bridge.param_pending.load(Ordering::Acquire).is_null() {
+        ptr::null_mut()
+    } else {
+        bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel)
+    };
+    if batch.is_null() && !requested {
         return;
     }
     let params = bridge.params.load(Ordering::Acquire);
+    let mut relay = RelayOutput(&bridge.relay);
     // SAFETY: the control thread does not touch a published batch again until
     // it is on the retired list, and the extension table outlives the plugin.
-    let generation = unsafe {
+    unsafe {
         if let Some(flush) = params.as_ref().and_then(|params| params.flush) {
-            let input = InputEvents::from_buffer(&(*batch).events);
-            let mut output = OutputEvents::void();
+            let input = if batch.is_null() {
+                InputEvents::empty()
+            } else {
+                InputEvents::from_buffer(&(*batch).events)
+            };
+            let mut output = OutputEvents::from_buffer(&mut relay);
             flush(
                 active.plugin_handle().as_raw(),
                 input.as_raw(),
                 output.as_raw(),
             );
         }
-        (*batch).generation
-    };
+    }
+    if batch.is_null() {
+        bridge.bump_control();
+        return;
+    }
+    // SAFETY: this thread took the batch from `param_pending` above.
+    let generation = unsafe { (*batch).generation };
     let mut head = bridge.param_retired.load(Ordering::Acquire);
     loop {
         // SAFETY: this thread owns the batch until the exchange publishes it.
@@ -1945,11 +2192,28 @@ fn read_on_main(
     if kind == PARAM_LIST {
         return ParamRead::Infos(param_infos(plugin, params));
     }
+    // A relay leaves out ids the plugin does not describe and read-only
+    // parameters, which report output such as meters rather than an edit.
+    let flags = (kind == PARAM_RELAY).then(|| {
+        PARAM_FLAGS.with(|cache| {
+            cache
+                .borrow_mut()
+                .get_or_insert_with(|| param_flags(plugin, params))
+                .clone()
+        })
+    });
     ParamRead::Values(
         input
             .chunks_exact(4)
             .filter_map(|chunk| {
                 let id = u32::from_le_bytes(chunk.try_into().ok()?);
+                if let Some(flags) = &flags
+                    && flags
+                        .get(&id)
+                        .is_none_or(|bits| bits & CLAP_PARAM_IS_READONLY != 0)
+                {
+                    return None;
+                }
                 let value = param_value(plugin, params, id)?;
                 Some(ParamValue {
                     id,
@@ -1959,6 +2223,106 @@ fn read_on_main(
             })
             .collect(),
     )
+}
+
+/// Every described id and its flags, for filtering relays.
+fn param_flags(plugin: &clap_plugin, params: &clap_plugin_params) -> HashMap<u32, u32> {
+    let (Some(count), Some(get_info)) = (params.count, params.get_info) else {
+        return HashMap::new();
+    };
+    // SAFETY: called on the plugin main thread, as `clap.params` requires.
+    let total = unsafe { count(plugin) };
+    let mut flags = HashMap::with_capacity(total as usize);
+    for index in 0..total {
+        let mut raw = MaybeUninit::<clap_param_info>::zeroed();
+        // SAFETY: main thread; `raw` is writable storage for one description.
+        if unsafe { get_info(plugin, index, raw.as_mut_ptr()) } {
+            // SAFETY: the plugin filled the description it accepted.
+            let info = unsafe { raw.assume_init() };
+            flags.insert(info.id, info.flags);
+        }
+    }
+    flags
+}
+
+/// Sends what the plugin reported on its own since the last call: gestures
+/// and value events in order, with the values read back on the main thread.
+fn send_relay(bridge: &Bridge, socket: &mut Socket) {
+    if !bridge.relay.pending() && !bridge.rescan_request.load(Ordering::Acquire) {
+        return;
+    }
+    let rescan = bridge.rescan_request.swap(false, Ordering::AcqRel);
+    let mut events: Vec<ParamEvent> = Vec::new();
+    let lost = bridge.relay.drain(&mut events);
+    let mut ids: Vec<u32> = Vec::new();
+    for event in &events {
+        if !ids.contains(&event.id) {
+            ids.push(event.id);
+        }
+    }
+    let values = if ids.is_empty() {
+        Vec::new()
+    } else {
+        let bytes = ids.iter().flat_map(|id| id.to_le_bytes()).collect();
+        match call_plugin_operation(bridge, PARAM_RELAY, bytes).map(|_| take_param_read(bridge)) {
+            Ok(ParamRead::Values(values)) => values,
+            // The values could not be read; the parent reads the list again.
+            _ => {
+                let _ = socket.send(&ControlMessage::ParamRelay(ParamRelay {
+                    lost: true,
+                    rescan: true,
+                    ..ParamRelay::default()
+                }));
+                return;
+            }
+        }
+    };
+    events.retain(|event| values.iter().any(|value| value.id == event.id));
+    let relay = ParamRelay {
+        events,
+        values,
+        rescan,
+        lost,
+    };
+    if !relay.is_empty() {
+        let _ = socket.send(&ControlMessage::ParamRelay(relay));
+    }
+}
+
+fn encode_report(report: GuiReport) -> Vec<u8> {
+    vec![
+        u8::from(report.created),
+        u8::from(report.visible),
+        u8::from(report.key),
+    ]
+}
+
+fn decode_report(bytes: &[u8]) -> Result<GuiReport, String> {
+    let [created, visible, key] = bytes else {
+        return Err("window report is the wrong size".to_string());
+    };
+    Ok(GuiReport {
+        created: *created != 0,
+        visible: *visible != 0,
+        key: *key != 0,
+    })
+}
+
+/// Applies the plugin's window requests and follows the active app, once per
+/// turn of the main run loop. A window the user closed is reported once.
+fn tick_window(bridge: &Bridge) {
+    INSTANCE.with(|cell| {
+        let instance = cell.get();
+        if instance.is_null() {
+            return;
+        }
+        // SAFETY: the instance stays loaded while the main loop runs.
+        let plugin = unsafe { (*instance).raw_instance() };
+        if gui::tick(plugin, &bridge.gui) {
+            bridge.gui_closed.store(true, Ordering::Release);
+            bridge.bump_control();
+        }
+    });
 }
 
 /// Descriptions the plugin reports now. A refused index, CLAP's invalid id, or

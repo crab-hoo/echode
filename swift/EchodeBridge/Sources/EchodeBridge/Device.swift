@@ -42,14 +42,32 @@ public struct DeviceParameterChange: Encodable, Sendable, Equatable {
     public init(id: UInt32, value: Double) { self.id = id; self.value = value }
 }
 
+/// What showing a plugin's own window did in its helper.
+public struct DeviceWindowReport: Decodable, Sendable, Equatable {
+    /// This request created the window. False when an open window was raised.
+    public let created: Bool
+    /// On screen. False while the window waits for Echode to be the active app.
+    public let visible: Bool
+    /// The window took keyboard focus. Showing never does.
+    public let key: Bool
+    public init(created: Bool, visible: Bool, key: Bool) {
+        self.created = created; self.visible = visible; self.key = key
+    }
+}
+
 /// What a device command returned. Only the field for that command is set.
 public struct DeviceReport: Decodable, Sendable, Equatable {
     public let parameters: [DeviceParameter]?
     public let values: [DeviceParameterValue]?
     /// A commit recorded new plugin bytes as one Undo step.
     public let changed: Bool?
-    public init(parameters: [DeviceParameter]? = nil, values: [DeviceParameterValue]? = nil, changed: Bool? = nil) {
+    public let window: DeviceWindowReport?
+    /// A close request finished; there is no window now.
+    public let closed: Bool?
+    public init(parameters: [DeviceParameter]? = nil, values: [DeviceParameterValue]? = nil, changed: Bool? = nil,
+                window: DeviceWindowReport? = nil, closed: Bool? = nil) {
         self.parameters = parameters; self.values = values; self.changed = changed
+        self.window = window; self.closed = closed
     }
 }
 
@@ -60,8 +78,12 @@ public enum DeviceCommand: Encodable, Sendable, Equatable {
     case set(device: UUID, changes: [DeviceParameterChange])
     /// Records the plugin's current bytes when they differ from the project.
     case commit(device: UUID)
+    /// Opens the plugin's own window, or raises it, without taking focus.
+    case showWindow(device: UUID, title: String)
+    /// Closes the plugin's own window. Never starts a helper to do it.
+    case closeWindow(device: UUID)
 
-    enum CodingKeys: String, CodingKey { case type, device, changes }
+    enum CodingKeys: String, CodingKey { case type, device, changes, title }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -75,6 +97,13 @@ public enum DeviceCommand: Encodable, Sendable, Equatable {
             try container.encode(changes, forKey: .changes)
         case .commit(let device):
             try container.encode("device.parameter.commit", forKey: .type)
+            try container.encode(device, forKey: .device)
+        case .showWindow(let device, let title):
+            try container.encode("device.gui.show", forKey: .type)
+            try container.encode(device, forKey: .device)
+            try container.encode(title, forKey: .title)
+        case .closeWindow(let device):
+            try container.encode("device.gui.close", forKey: .type)
             try container.encode(device, forKey: .device)
         }
     }

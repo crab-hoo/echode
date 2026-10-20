@@ -3,6 +3,39 @@ import XCTest
 @testable import EchodeBridge
 
 final class DeviceTests: XCTestCase {
+    /// Window commands go to the device lane; closing never starts a helper,
+    /// and a quiet document reports no plugin activity without waiting long.
+    func testPluginWindowCommandsAndActivityPages() async throws {
+        let device = UUID(uuidString: "00000000-0000-0000-0000-0000000000D0")!
+        let encoded = try JSONEncoder().encode(DeviceCommand.showWindow(device: device, title: "fx — Gain"))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(object["type"] as? String, "device.gui.show")
+        XCTAssertEqual(object["title"] as? String, "fx — Gain")
+        let page = try JSONDecoder().decode(PluginActivityPage.self, from: Data(#"""
+            {"next":3,"closed":false,"entries":[{"device":"00000000-0000-0000-0000-0000000000d0",
+            "events":[{"id":1,"kind":"begin"},{"id":1,"kind":"end"}],"values":[{"id":1,"value":1.5,"text":"1.50x"}],
+            "rescan":false,"lost":false,"dirty":false,"closed":false,"window":true}]}
+            """#.utf8))
+        XCTAssertEqual(page.next, 3)
+        XCTAssertEqual(page.entries.first?.device, device)
+        XCTAssertEqual(page.entries.first?.events.map(\.kind), [.begin, .end])
+        XCTAssertEqual(page.entries.first?.windowOpen, true)
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-window-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try Document(creating: url.path)
+        let quiet = try document.pluginActivity(after: 0, timeout: 0.01)
+        XCTAssertEqual(quiet, PluginActivityPage(next: 0))
+        let added = try await document.perform(#"{"type":"track.add","name":"fx"}"#)
+        let track = try XCTUnwrap(added.trackID(at: 0))
+        let inserted = try await document.perform(#"{"type":"device.add","track":"\#(track.uuidString)","plugin":"org.example.fx"}"#)
+        let fx = try XCTUnwrap(inserted.deviceID(onTrack: 0, at: 1) ?? inserted.deviceID(onTrack: 0, at: 0))
+        let closed = try await document.device(.closeWindow(device: fx))
+        XCTAssertEqual(try closed.deviceReport().closed, true)
+        document.shutdown()
+        XCTAssertTrue(try document.pluginActivity(after: 0, timeout: 5).closed, "a closed document ends the reader")
+    }
+
     func testDeviceCommandsEncodeAndRefuseDevicesWithoutAPlugin() async throws {
         let device = UUID(uuidString: "00000000-0000-0000-0000-0000000000D0")!
         let encoded = try JSONEncoder().encode(DeviceCommand.set(device: device, changes: [DeviceParameterChange(id: 2, value: 0.5)]))

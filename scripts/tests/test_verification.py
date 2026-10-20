@@ -356,7 +356,9 @@ class PolicyTests(unittest.TestCase):
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
-                          "device-lane-held", "device-view-slow-ui", "device-view-long-ui"})
+                          "device-lane-held", "device-view-slow-ui", "device-view-long-ui",
+                          "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
+                          "plugin-window-open-ui"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
@@ -393,6 +395,29 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn("rtsan", self.selected(path))
                 self.assertIn("check-product-contracts", self.selected(path))
+
+    def test_plugin_window_contracts_cover_the_real_helper_and_the_screen(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        for name, source in (("plugin-window-helper", "crates/echode-plugin-host/src/gui.rs"),
+                             ("plugin-window-relay", "crates/echode-plugin-host/src/relay.rs")):
+            with self.subTest(contract=name):
+                helper = contracts[name]
+                self.assertEqual((helper["runner"], helper["package"], helper["target"]),
+                                 ("rust", "echode-plugin-host", ["--test", "hosted_playback"]))
+                self.assertTrue(helper["test"].startswith("plugin_gui::contract_"))
+                self.assertEqual(helper["negative_control"]["file"], source)
+        for name in ("plugin-window-undo-ui", "plugin-window-open-ui"):
+            with self.subTest(contract=name):
+                self.assertEqual((contracts[name]["runner"], contracts[name]["suite"]), ("swift", "PluginWindowTests"))
+        # A key window would take Space and shortcuts from Echode.
+        self.assertIn("key: false", contracts["plugin-window-helper"]["negative_control"]["old"])
+        for path in ("crates/echode-plugin-host/src/gui.rs", "crates/echode-plugin-host/src/relay.rs",
+                     "crates/echode-ffi/src/activity.rs", "crates/echode-sandbox/src/gui.rs",
+                     "swift/EchodeApp/Sources/EchodeAppCore/PluginWindows.swift"):
+            with self.subTest(path=path):
+                self.assertIn("check-product-contracts", self.selected(path))
+        # The processing thread writes the plugin's output events.
+        self.assertIn("rtsan", self.selected("crates/echode-plugin-host/src/relay.rs"))
 
     def test_mcp_edits_use_the_real_cli_and_the_existing_contract_runner(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-edit")

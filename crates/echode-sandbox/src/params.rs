@@ -86,7 +86,7 @@ pub(crate) fn write_infos(infos: &[ParamInfo]) -> Vec<u8> {
 }
 
 pub(crate) fn read_infos(body: &[u8]) -> io::Result<Vec<ParamInfo>> {
-    let mut cursor = Cursor { body, at: 0 };
+    let mut cursor = Cursor::new(body);
     let count = cursor.u32()? as usize;
     // Each entry needs at least 52 bytes, so a corrupt count cannot reserve
     // more than the message already holds.
@@ -119,26 +119,35 @@ pub(crate) fn read_infos(body: &[u8]) -> io::Result<Vec<ParamInfo>> {
 
 pub(crate) fn write_values(values: &[ParamValue]) -> Vec<u8> {
     let mut body = Vec::new();
+    write_values_into(&mut body, values);
+    body
+}
+
+pub(crate) fn write_values_into(body: &mut Vec<u8>, values: &[ParamValue]) {
     body.extend_from_slice(&len32(values.len()).to_le_bytes());
     for value in values {
         body.extend_from_slice(&value.id.to_le_bytes());
         body.extend_from_slice(&value.value.to_bits().to_le_bytes());
-        write_text(&mut body, &value.text);
+        write_text(body, &value.text);
     }
-    body
 }
 
 pub(crate) fn read_values(body: &[u8]) -> io::Result<Vec<ParamValue>> {
-    let mut cursor = Cursor { body, at: 0 };
+    let mut cursor = Cursor::new(body);
+    let values = read_values_from(&mut cursor)?;
+    cursor.finish()?;
+    Ok(values)
+}
+
+pub(crate) fn read_values_from(cursor: &mut Cursor<'_>) -> io::Result<Vec<ParamValue>> {
     let count = cursor.u32()? as usize;
-    let mut values = Vec::with_capacity(count.min(body.len() / 16));
+    let mut values = Vec::with_capacity(count.min(cursor.remaining() / 16));
     for _ in 0..count {
         let id = cursor.u32()?;
         let value = cursor.f64()?;
         let text = cursor.text()?;
         values.push(ParamValue { id, value, text });
     }
-    cursor.finish()?;
     Ok(values)
 }
 
@@ -153,7 +162,7 @@ pub(crate) fn write_changes(changes: &[ParamChange]) -> Vec<u8> {
 }
 
 pub(crate) fn read_changes(body: &[u8]) -> io::Result<Vec<ParamChange>> {
-    let mut cursor = Cursor { body, at: 0 };
+    let mut cursor = Cursor::new(body);
     let count = cursor.u32()? as usize;
     let mut changes = Vec::with_capacity(count.min(body.len() / 12));
     for _ in 0..count {
@@ -168,7 +177,7 @@ pub(crate) fn read_changes(body: &[u8]) -> io::Result<Vec<ParamChange>> {
     Ok(changes)
 }
 
-fn len32(len: usize) -> u32 {
+pub(crate) fn len32(len: usize) -> u32 {
     u32::try_from(len).unwrap_or(u32::MAX)
 }
 
@@ -177,17 +186,25 @@ fn write_text(body: &mut Vec<u8>, text: &str) {
     body.extend_from_slice(text.as_bytes());
 }
 
-fn invalid(message: &'static str) -> io::Error {
+pub(crate) fn invalid(message: &'static str) -> io::Error {
     io::Error::new(ErrorKind::InvalidData, message)
 }
 
-struct Cursor<'a> {
+pub(crate) struct Cursor<'a> {
     body: &'a [u8],
     at: usize,
 }
 
-impl Cursor<'_> {
-    fn take(&mut self, len: usize) -> io::Result<&[u8]> {
+impl<'a> Cursor<'a> {
+    pub(crate) fn new(body: &'a [u8]) -> Self {
+        Self { body, at: 0 }
+    }
+
+    pub(crate) fn remaining(&self) -> usize {
+        self.body.len() - self.at
+    }
+
+    fn take(&mut self, len: usize) -> io::Result<&'a [u8]> {
         let end = self
             .at
             .checked_add(len)
@@ -198,25 +215,29 @@ impl Cursor<'_> {
         Ok(bytes)
     }
 
-    fn u32(&mut self) -> io::Result<u32> {
+    pub(crate) fn u8(&mut self) -> io::Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    pub(crate) fn u32(&mut self) -> io::Result<u32> {
         Ok(u32::from_le_bytes(
             self.take(4)?.try_into().expect("4 bytes"),
         ))
     }
 
-    fn f64(&mut self) -> io::Result<f64> {
+    pub(crate) fn f64(&mut self) -> io::Result<f64> {
         Ok(f64::from_bits(u64::from_le_bytes(
             self.take(8)?.try_into().expect("8 bytes"),
         )))
     }
 
-    fn text(&mut self) -> io::Result<String> {
+    pub(crate) fn text(&mut self) -> io::Result<String> {
         let len = self.u32()? as usize;
         String::from_utf8(self.take(len)?.to_vec())
             .map_err(|_| invalid("parameter text is not UTF-8"))
     }
 
-    fn finish(&self) -> io::Result<()> {
+    pub(crate) fn finish(&self) -> io::Result<()> {
         if self.at == self.body.len() {
             Ok(())
         } else {

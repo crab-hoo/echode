@@ -12,6 +12,8 @@ use std::path::Path;
 compile_error!("Echode only builds for macOS");
 
 mod awake;
+mod gui;
+mod relay;
 pub use awake::HelperActivity;
 
 #[derive(Debug)]

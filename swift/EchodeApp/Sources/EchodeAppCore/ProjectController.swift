@@ -72,6 +72,17 @@ public final class ProjectController {
     @ObservationIgnored let sendDevice: @Sendable (Document, DeviceCommand) async throws -> DeviceResult
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()
+    /// Reads plugin windows' activity for the open document (ADR 0132).
+    @ObservationIgnored var pluginActivity: PluginActivityReader?
+    /// Parameters each plugin reports as being adjusted in its own window.
+    @ObservationIgnored var pluginGestures: [UUID: Set<UInt32>] = [:]
+    /// A plugin-made change without a gesture waits this long for quiet.
+    @ObservationIgnored var pluginQuiet: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored var pluginQuietDelay: Duration = .milliseconds(500)
+    /// Plugin-made edits are recorded one after another, in arrival order.
+    @ObservationIgnored var pluginRecordTask: Task<Void, Never>?
+    /// The window a single add opens, after the add finished.
+    @ObservationIgnored var pluginWindowTask: Task<Void, Never>?
 
     public init() {
         sendAudio = { try await $0.audio($1) }
@@ -113,6 +124,8 @@ public final class ProjectController {
                 self.selection = nil
                 self.noteFocus = nil
                 self.forgetParameters()
+                self.stopPluginActivity()
+                self.startPluginActivity(opened, documentID: self.documentID!)
                 self.publish(initial)
                 if let previous { await Task.detached { previous.shutdown() }.value }
             } catch { self.report(error) }
@@ -238,7 +251,7 @@ public final class ProjectController {
     func dropFX(_ drop: TrackFXDrop, on track: UUID, documentID: UUID) async -> Bool {
         guard self.documentID == documentID, tracks.contains(where: { $0.id == track }) else { return false }
         switch drop {
-        case .plugin(let plugin): return await insertPlugin(plugin, on: track, documentID: documentID)
+        case .plugin(let plugin): return await addPluginOpeningWindow(plugin, on: track, documentID: documentID)
         case .copyDevice(let device): return await editDeviceChain(.copy(source: device, track: track, before: nil), documentID: documentID)
         case .moveToEnd(let device): return await editDeviceChain(.reorder(device: device, before: nil), documentID: documentID)
         }
@@ -314,6 +327,7 @@ public final class ProjectController {
         await edits.run {
             guard self.documentID == target else { return }
             let previous = self.document
+            self.stopPluginActivity()
             self.document = nil
             self.audioRevision &+= 1
             self.pendingPlayback = nil

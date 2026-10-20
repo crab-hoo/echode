@@ -4,6 +4,7 @@
 //! one file descriptor with `SCM_RIGHTS`. A body longer than 64 MiB is rejected
 //! so a corrupt peer cannot force an unbounded allocation.
 
+use crate::gui::{GuiReport, ParamRelay, read_relay, read_report, write_relay, write_report};
 use crate::params::{
     ParamChange, ParamInfo, ParamValue, read_changes, read_infos, read_values, write_changes,
     write_infos, write_values,
@@ -39,6 +40,13 @@ const PARAMS: u32 = 21;
 const SET_PARAMS: u32 = 22;
 const PARAMS_APPLIED: u32 = 23;
 const PARAMS_REJECTED: u32 = 24;
+const GUI_SHOW: u32 = 25;
+const GUI_SHOWN: u32 = 26;
+const GUI_CLOSE: u32 = 27;
+const GUI_CLOSED_REPLY: u32 = 28;
+const GUI_REJECTED: u32 = 29;
+const GUI_CLOSED: u32 = 30;
+const PARAM_RELAY: u32 = 31;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -88,13 +96,31 @@ pub enum ControlMessage {
     ParamsApplied(Vec<ParamValue>),
     /// A parameter request did not reach the plugin. The bytes are the reason.
     ParamsRejected(String),
+    /// Opens the plugin window, or raises it when it is open. Never takes focus.
+    /// The bytes are the window title.
+    GuiShow(String),
+    GuiShown(GuiReport),
+    /// Closes the plugin window and destroys the plugin's view.
+    GuiClose,
+    GuiClosedReply,
+    /// The window could not be shown or closed. The bytes are the reason.
+    GuiRejected(String),
+    /// Notice: the user closed the plugin window.
+    GuiClosed,
+    /// Notice: values and gestures the plugin reported on its own.
+    ParamRelay(ParamRelay),
 }
 
 impl ControlMessage {
     pub fn is_notice(&self) -> bool {
         matches!(
             self,
-            Self::Dirty | Self::PluginRestarted { .. } | Self::RequestProcess | Self::Hello
+            Self::Dirty
+                | Self::PluginRestarted { .. }
+                | Self::RequestProcess
+                | Self::Hello
+                | Self::GuiClosed
+                | Self::ParamRelay(_)
         )
     }
 }
@@ -302,6 +328,13 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         ControlMessage::SetParams(changes) => (SET_PARAMS, write_changes(changes)),
         ControlMessage::ParamsApplied(values) => (PARAMS_APPLIED, write_values(values)),
         ControlMessage::ParamsRejected(reason) => (PARAMS_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::GuiShow(title) => (GUI_SHOW, title.as_bytes().to_vec()),
+        ControlMessage::GuiShown(report) => (GUI_SHOWN, write_report(*report)),
+        ControlMessage::GuiClose => (GUI_CLOSE, Vec::new()),
+        ControlMessage::GuiClosedReply => (GUI_CLOSED_REPLY, Vec::new()),
+        ControlMessage::GuiRejected(reason) => (GUI_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::GuiClosed => (GUI_CLOSED, Vec::new()),
+        ControlMessage::ParamRelay(relay) => (PARAM_RELAY, write_relay(relay)),
     })
 }
 
@@ -380,6 +413,20 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
                 io::Error::new(ErrorKind::InvalidData, "parameter refusal is not text")
             })?)
         }
+        GUI_SHOW => ControlMessage::GuiShow(
+            String::from_utf8(body.to_vec())
+                .map_err(|_| io::Error::new(ErrorKind::InvalidData, "window title is not text"))?,
+        ),
+        GUI_SHOWN => ControlMessage::GuiShown(read_report(body)?),
+        GUI_CLOSE if body.is_empty() => ControlMessage::GuiClose,
+        GUI_CLOSED_REPLY if body.is_empty() => ControlMessage::GuiClosedReply,
+        GUI_REJECTED => {
+            ControlMessage::GuiRejected(String::from_utf8(body.to_vec()).map_err(|_| {
+                io::Error::new(ErrorKind::InvalidData, "window refusal is not text")
+            })?)
+        }
+        GUI_CLOSED if body.is_empty() => ControlMessage::GuiClosed,
+        PARAM_RELAY => ControlMessage::ParamRelay(read_relay(body)?),
         _ => {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
@@ -674,6 +721,56 @@ mod tests {
             .expect("restore");
         let message = child.recv_timeout(Duration::from_secs(2)).expect("recv");
         assert!(matches!(message, ControlMessage::Restore(bytes) if bytes == b"abc"));
+    }
+
+    #[test]
+    fn window_messages_cross_the_socket() {
+        use crate::gui::{ParamEvent, ParamEventKind};
+        let (mut parent, mut child) = Socket::pair().expect("socketpair");
+        parent
+            .send(&ControlMessage::GuiShow("Bass — Test".into()))
+            .expect("show");
+        assert!(matches!(
+            child.recv_timeout(Duration::from_secs(2)).expect("recv"),
+            ControlMessage::GuiShow(title) if title == "Bass — Test"
+        ));
+        let report = GuiReport {
+            created: true,
+            visible: true,
+            key: false,
+        };
+        child
+            .send(&ControlMessage::GuiShown(report))
+            .expect("shown");
+        let relay = ParamRelay {
+            events: vec![ParamEvent {
+                id: 2,
+                kind: ParamEventKind::End,
+            }],
+            ..ParamRelay::default()
+        };
+        child
+            .send(&ControlMessage::ParamRelay(relay.clone()))
+            .expect("relay");
+        child.send(&ControlMessage::GuiClosed).expect("closed");
+        assert!(matches!(
+            parent.recv_timeout(Duration::from_secs(2)).expect("recv"),
+            ControlMessage::GuiShown(got) if got == report
+        ));
+        let notice = parent.recv_timeout(Duration::from_secs(2)).expect("recv");
+        assert!(notice.is_notice());
+        assert!(matches!(notice, ControlMessage::ParamRelay(got) if got == relay));
+        assert!(matches!(
+            parent.recv_timeout(Duration::from_secs(2)).expect("recv"),
+            ControlMessage::GuiClosed
+        ));
+        let (kind, _) = encode(&ControlMessage::GuiClose).unwrap();
+        let mut payload = kind.to_le_bytes().to_vec();
+        payload.push(0);
+        assert!(
+            decode(&payload, None).is_err(),
+            "a close request has no body"
+        );
     }
 
     #[test]

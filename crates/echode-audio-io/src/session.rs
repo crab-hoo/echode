@@ -7,7 +7,8 @@ use echode_model::Project;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Inventory, OutputDevice, OutputStream, PluginControl, TransportCancellation, hardware,
+    Inventory, OutputDevice, OutputStream, PluginActivity, PluginControl, TransportCancellation,
+    hardware,
 };
 
 #[derive(Debug, Deserialize)]
@@ -346,6 +347,12 @@ impl Session {
         self.open_engine()?.device_control(device.raw())
     }
 
+    /// The helper hosting `device`, only when the output is already open.
+    /// Never opens the output, so a request with nothing to do stays cheap.
+    pub fn running_device_control(&self, device: echode_model::Id) -> Option<PluginControl> {
+        self.stream.as_ref()?.device_control(device.raw()).ok()
+    }
+
     /// Device views need running helpers. Opens the output stopped at the
     /// current position when playback has not opened it yet.
     fn open_engine(&mut self) -> Result<&mut OutputStream, String> {
@@ -401,6 +408,14 @@ impl Session {
                     }
                 )
             })
+    }
+
+    /// Window notices and plugin-made parameter changes, by device.
+    pub fn take_plugin_activity(&self) -> Vec<(u128, PluginActivity)> {
+        self.stream
+            .as_ref()
+            .map(OutputStream::take_plugin_activity)
+            .unwrap_or_default()
     }
 
     /// Plugin bytes the document thread still has to journal.

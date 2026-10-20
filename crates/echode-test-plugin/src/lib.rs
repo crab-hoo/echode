@@ -22,6 +22,7 @@ use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 
+mod gui;
 mod params;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,6 +112,7 @@ impl Plugin for TestGain {
         }
         if current_role() == Role::Params {
             builder.register::<params::PluginParamsExt>();
+            builder.register::<gui::PluginGuiExt>();
         }
         if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
             builder.register::<PluginNotePorts>();
@@ -127,10 +129,11 @@ impl DefaultPluginFactory for TestGain {
             .with_features([c"audio-effect"])
     }
 
-    fn new_shared(_host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
+    fn new_shared(host: HostSharedHandle<'_>) -> Result<Self::Shared<'_>, PluginError> {
         if fault_now() == Fault::Generate {
             return Err(PluginError::Message("generate refused"));
         }
+        gui::remember_host(host);
         Ok(())
     }
 
@@ -177,6 +180,14 @@ impl TestMain {
 
 impl PluginMainThread<'_, ()> for TestMain {
     fn on_main_thread(&self) {
+        if gui::CLOSE.swap(false, Ordering::AcqRel) {
+            gui::report_closed();
+            return;
+        }
+        if gui::DIRTY.swap(false, Ordering::AcqRel) {
+            self.mark_dirty();
+            return;
+        }
         let mut stderr = std::io::stderr().lock();
         use std::io::Write;
         let _ = writeln!(stderr, "on-main-thread");
@@ -267,6 +278,9 @@ fn note_fault(plugin_id: &CStr) {
     }
     if let Some(path) = text.trim().strip_prefix("params-wait:") {
         params::hold_listings(path);
+    }
+    if let Some(path) = text.trim().strip_prefix("gui:") {
+        gui::remote_at(path);
     }
     FAULT_BITS.store(fault_code(text.trim()), Ordering::Relaxed);
 }
@@ -581,6 +595,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         }
         if self.role == Role::Params {
             params::process(&mut audio, events.input)?;
+            gui::emit(events.output);
             return Ok(ProcessStatus::Continue);
         }
         if self.role == Role::Order {

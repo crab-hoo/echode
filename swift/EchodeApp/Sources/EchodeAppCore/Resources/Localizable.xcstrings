@@ -91,6 +91,12 @@
         "ja": { "stringUnit": { "state": "translated", "value": "オフライン" } }
       }
     },
+    "Open plugin window": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Open plugin window" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プラグインのウィンドウを開く" } }
+      }
+    },
     "Offline FX help": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Keep recorded settings and release the plugin helper." } },

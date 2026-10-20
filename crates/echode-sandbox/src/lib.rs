@@ -11,6 +11,7 @@
 compile_error!("Echode only builds for macOS");
 
 mod control;
+mod gui;
 mod params;
 mod region;
 mod session;
@@ -19,6 +20,7 @@ mod wire;
 mod workgroup;
 
 pub use control::{ControlMessage, Socket};
+pub use gui::{GuiReport, ParamEvent, ParamEventKind, ParamRelay, PluginActivity};
 pub use params::{
     PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,
     PARAM_STEPPED, ParamChange, ParamInfo, ParamValue,

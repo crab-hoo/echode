@@ -19,6 +19,9 @@ actor FakeParameterPlugin {
     private(set) var sentGains: [Double] = []
     private(set) var sent: [UInt32: Double] = [:]
     private(set) var reads = 0
+    /// Window requests in order, with the title each one carried.
+    private(set) var windows: [(device: UUID, title: String)] = []
+    private var openWindows: Set<UUID> = []
     private var started: [UUID: Int] = [:]
     private var holds: Set<UUID> = []
     private var waiting: [UUID: [CheckedContinuation<Void, Never>]] = [:]
@@ -52,6 +55,8 @@ actor FakeParameterPlugin {
     }
     func listings(_ device: UUID) -> Int { started[device] ?? 0 }
     func setGain(_ value: Double) { gain = value }
+    func windowRequests() -> [UUID] { windows.map(\.device) }
+    func windowTitles() -> [String] { windows.map(\.title) }
 
     func send(_ document: Document, _ command: DeviceCommand) async throws -> DeviceResult {
         switch command {
@@ -74,6 +79,14 @@ actor FakeParameterPlugin {
             let values = table().filter { parameter in changes.contains { $0.id == parameter.id } }
                 .map { DeviceParameterValue(id: $0.id, value: $0.value, text: $0.text) }
             return DeviceResult(report: DeviceReport(values: values), snapshot: try await document.snapshot())
+        case .showWindow(let device, let title):
+            windows.append((device, title))
+            let created = openWindows.insert(device).inserted
+            return DeviceResult(report: DeviceReport(window: DeviceWindowReport(created: created, visible: true, key: false)),
+                                snapshot: try await document.snapshot())
+        case .closeWindow(let device):
+            openWindows.remove(device)
+            return DeviceResult(report: DeviceReport(closed: true), snapshot: try await document.snapshot())
         case .commit(let device):
             let hash = Self.hash(gain: gain, mode: mode)
             guard hash != recorded else {

@@ -1594,6 +1594,15 @@ impl PlaybackControl {
         std::mem::take(&mut self.plugin_saves)
     }
 
+    /// Window notices and changes each running plugin made on its own since
+    /// the last call. Reading them never waits for a helper's socket.
+    pub fn take_plugin_activity(&self) -> Vec<(u128, echode_sandbox::PluginActivity)> {
+        self.save_controls
+            .iter()
+            .filter_map(|(device, control)| Some((*device, control.take_activity()?)))
+            .collect()
+    }
+
     /// The helper currently hosting `device`. Offline, unresolved and not yet
     /// published devices have none.
     fn device_control(

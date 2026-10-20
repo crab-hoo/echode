@@ -13,6 +13,8 @@ use echode_model::{AudioRef, Id, NoteDraft, NoteGeometry, Project, Tick};
 mod device_offline;
 #[path = "hosted_playback/device_params.rs"]
 mod device_params;
+#[path = "hosted_playback/plugin_gui.rs"]
+mod plugin_gui;
 
 fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))
