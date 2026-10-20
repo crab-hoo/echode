@@ -5,6 +5,7 @@ The login keychain is used only by `setup-identity`. Tests pass a temporary keyc
 """
 
 import argparse
+import plistlib
 import re
 import shutil
 import subprocess
@@ -152,9 +153,11 @@ def import_identity(keychain, p12_password, keychain_password):
         )
 
 
-def assemble_app(app, executable, helper, info_plist, xcframework=None, resources=()):
+def assemble_app(app, executable, helper, info_plist, xcframework=None, resources=(), plugins=()):
     validate_binary(executable)
     validate_binary(helper)
+    for plugin in plugins:
+        validate_binary(plugin_binary(plugin))
     if app.exists():
         shutil.rmtree(app)
     macos = app / "Contents" / "MacOS"
@@ -171,6 +174,20 @@ def assemble_app(app, executable, helper, info_plist, xcframework=None, resource
         resource_dir.mkdir(parents=True)
         for bundle in resources:
             shutil.copytree(bundle, resource_dir / bundle.name)
+
+    if plugins:
+        plugin_dir = app / "Contents" / "PlugIns"
+        plugin_dir.mkdir(parents=True)
+        for plugin in plugins:
+            shutil.copytree(plugin, plugin_dir / plugin.name)
+
+
+def plugin_binary(plugin):
+    with (plugin / "Contents" / "Info.plist").open("rb") as source:
+        name = plistlib.load(source)["CFBundleExecutable"]
+    if Path(name).name != name:
+        raise RuntimeError("invalid plugin executable name")
+    return plugin / "Contents" / "MacOS" / name
 
 
 def embed_helper(app, helper):
@@ -224,6 +241,10 @@ def sign_app(app, identity=IDENTITY, keychain=None):
     framework = app / "Contents" / "Frameworks" / "EchodeFFI.xcframework"
     if framework.is_dir():
         _codesign(framework, identity, keychain, None)
+    for plugin in sorted((app / "Contents" / "PlugIns").glob("*.clap")):
+        validate_binary(plugin_binary(plugin))
+        _codesign(plugin_binary(plugin), identity, keychain, None)
+        _codesign(plugin, identity, keychain, None)
     _codesign(app / "Contents" / "MacOS" / "Echode", identity, keychain, None)
     _codesign(app, identity, keychain, APP_ENTITLEMENTS)
 
@@ -233,6 +254,9 @@ def sign_development(app):
     if identity_installed(login_keychain()):
         sign_app(app)
         return IDENTITY
+    for plugin in sorted((app / "Contents" / "PlugIns").glob("*.clap")):
+        run(["codesign", "--force", "--sign", "-", str(plugin_binary(plugin))])
+        run(["codesign", "--force", "--sign", "-", str(plugin)])
     run(["codesign", "--force", "--sign", "-", str(app)])
     return "adhoc"
 
@@ -284,6 +308,8 @@ def main(argv):
     framework.add_argument("--headers", type=Path, required=True)
     framework.add_argument("--output", type=Path, required=True)
 
+    assembled.add_argument("--plugin", type=Path, action="append", default=[])
+
     args = parser.parse_args(argv)
     if args.command == "identity-installed":
         return 0 if identity_installed(login_keychain()) else 1
@@ -299,6 +325,7 @@ def main(argv):
             args.info,
             args.xcframework,
             args.resource,
+            args.plugin,
         )
     elif args.command == "embed-helper":
         embed_helper(args.app, args.helper)

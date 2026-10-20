@@ -468,6 +468,7 @@ fn property_name(property: Property) -> &'static str {
         Property::Plugin => "plugin",
         Property::PluginState => "plugin_state",
         Property::Bypassed => "bypassed",
+        Property::Offline => "offline",
     }
 }
 
@@ -508,6 +509,7 @@ fn parse_property(property: &str) -> Result<Property, ActionError> {
         "plugin" => Property::Plugin,
         "plugin_state" => Property::PluginState,
         "bypassed" => Property::Bypassed,
+        "offline" => Property::Offline,
         _ => return Err(ActionError::CorruptJournal),
     })
 }

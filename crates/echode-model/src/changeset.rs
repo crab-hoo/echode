@@ -101,6 +101,7 @@ pub enum Property {
     Plugin,
     PluginState,
     Bypassed,
+    Offline,
 }
 
 /// A property value. The variant has to match the [`Property`].
@@ -541,6 +542,14 @@ fn diff_devices(
 }
 
 fn diff_device_fields(before: &Device, after: &Device, updates: &mut Vec<Change>) {
+    if before.offline != after.offline {
+        updates.push(update(
+            ObjectKey::Id(after.id),
+            Property::Offline,
+            Value::Byte(u8::from(before.offline)),
+            Value::Byte(u8::from(after.offline)),
+        ));
+    }
     if before.bypassed != after.bypassed {
         updates.push(update(
             ObjectKey::Id(after.id),
@@ -631,6 +640,10 @@ fn device_change(create: bool, track: Id, device: &Device) -> Change {
     fields.push(Field {
         property: Property::Bypassed,
         value: Value::Byte(u8::from(device.bypassed)),
+    });
+    fields.push(Field {
+        property: Property::Offline,
+        value: Value::Byte(u8::from(device.offline)),
     });
     if let Some(plugin) = &device.plugin {
         fields.push(Field {
@@ -1219,6 +1232,7 @@ struct DeviceState {
     plugin: Option<String>,
     state: Option<String>,
     bypassed: bool,
+    offline: bool,
     parameters: Vec<Id>,
 }
 
@@ -1319,6 +1333,7 @@ impl Draft {
                         plugin: device.plugin.clone(),
                         state: device.state.clone(),
                         bypassed: device.bypassed,
+                        offline: device.offline,
                         parameters: device
                             .parameters
                             .iter()
@@ -1440,6 +1455,7 @@ impl Draft {
                         plugin: field_optional_text(fields, Property::Plugin)?,
                         state,
                         bypassed: field_bypassed(fields)?,
+                        offline: field_offline(fields)?,
                         parameters: field_ids(fields, Property::ParamOrder)?,
                     },
                 );
@@ -1593,6 +1609,13 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .bypassed = *value != 0;
+                Ok(())
+            }
+            (ObjectKey::Id(id), Property::Offline, Value::Byte(value)) if *value <= 1 => {
+                self.devices
+                    .get_mut(&id)
+                    .ok_or(ModelError::InvalidChange)?
+                    .offline = *value != 0;
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Plugin, Value::Text(plugin)) => {
@@ -1867,7 +1890,9 @@ impl Draft {
                     return Err(ModelError::InvalidChange);
                 }
                 let kind = DeviceKind::parse(&device.kind).ok_or(ModelError::InvalidChange)?;
-                if kind == DeviceKind::Mixer && (device.bypassed || device.state.is_some()) {
+                if kind == DeviceKind::Mixer
+                    && (device.bypassed || device.offline || device.state.is_some())
+                {
                     return Err(ModelError::InvalidChange);
                 }
                 let mut parameters = Vec::with_capacity(device.parameters.len());
@@ -1894,6 +1919,7 @@ impl Draft {
                     plugin: device.plugin.clone(),
                     state: device.state.clone(),
                     bypassed: device.bypassed,
+                    offline: device.offline,
                     parameters,
                 });
             }
@@ -2103,9 +2129,17 @@ fn field_u16(fields: &[Field], property: Property) -> Result<u16, ModelError> {
 }
 
 fn field_bypassed(fields: &[Field]) -> Result<bool, ModelError> {
+    field_flag(fields, Property::Bypassed)
+}
+
+fn field_offline(fields: &[Field]) -> Result<bool, ModelError> {
+    field_flag(fields, Property::Offline)
+}
+
+fn field_flag(fields: &[Field], property: Property) -> Result<bool, ModelError> {
     match fields
         .iter()
-        .find(|field| field.property == Property::Bypassed)
+        .find(|field| field.property == property)
         .map(|field| &field.value)
     {
         None | Some(Value::Byte(0)) => Ok(false),

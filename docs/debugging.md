@@ -5,16 +5,17 @@
 ## 最初に確認すること
 
 ```sh
-make doctor
-make verify-plan
+make agent-context
 make debug-report
 ```
 
 - `doctor` はソースを変更せず、アプリ・ウィンドウ・音声デバイス・プラグインを開かない。
   現在のソース、必要なツール、検査結果の有効期限（`current` / `partial` / `stale`）、ロックの保持、開発用アプリ（`target/Echode.app`）の出所を表示する（機械向けは `python3 -B scripts/diagnose.py --json`）。
+- `agent-context` は同じ診断経路と検査選択を一度で使い、要約と根拠の JSON を作る。
+  取得の失敗、本文予算の超過、曖昧な節、古い行番号の識別と復旧は [エージェントの手順](agent-workflow.md) を参照する。
 - `debug-report` は `target/debug-reports/<日時>-<一意名>/` へ診断 JSON、案内、既存ログ（末尾最大 2 MiB）とスパイクの JSON をコピーする。
   生の環境変数・Cargo 設定・ユーザープロジェクトは収集しない。
-- `make app` は署名後の本体・ヘルパーのハッシュとソースを `target/Echode.build.json` に記録する。
+- `make app` は署名後の本体・ヘルパー・同梱プラグインのハッシュとソースを `target/Echode.build.json` に記録する。
 - ソースが同じでも実機計測だけが古くなったら、既定出力とレートの変更、`system_profiler -json SPAudioDataType -detailLevel mini` の読取可否を確認する。機器設定を診断のために勝手に変えない。
 
 ## 症状から調べる順番
@@ -27,6 +28,9 @@ make debug-report
   `doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`、動的検査は `make setup-bridge`。
   `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、同じ引数へ `-v` を加えて `target/` のログへ保存し、`error:` 周辺を読む。
   Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
+- **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
+  Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
+  Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。
 - **macOS 27 / M4 ビルド基準の不一致**:
   Cargo 生成物は `xcrun vtool -show-build <バイナリ>` と `lipo -archs` で確認する（単体の `rustc --print deployment-target` は `.cargo/config.toml` を読まない）。
   Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。
@@ -52,11 +56,26 @@ make debug-report
 - **再生中のぶつぶつ・停止時のクリック**:
   `audio.status` の `plugin_missed_blocks` と `pending_plan` を確認する。
   定期保存確認による一時バイパス排除（[ADR 0101](decisions/0101-live-output-discontinuities.md)）、音声側の排他グラフ所有（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）、5 ms の停止波形減衰（[ADR 0103](decisions/0103-live-stop-waveform.md)）、待機しない後片付け（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）のどの境界かを確認する。
+- **音源なしのノート・Sine Pad が鳴らない**:
+  音源のないトラックは無音である。デバイス一覧に `dev.echode.sine-pad` があるかを確認する。
+  一覧にない時は `make bundled-plugins` とヘルパー隣の `plugins/`、アプリ内の `Contents/PlugIns/`、同梱用走査キャッシュを確認する。
+  `host event capacity was not prepared` はイベント領域の準備漏れであり、音声側の確保や固定発音数で回避しない
+  （[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
+- **同梱 CLAP の初回だけ RTSan が malloc を検出する**:
+  子プロセスの標準エラーを収集し、`_tlv_get_addr` と `ForbidAlloc` が並ぶかを確認する。
+  dylib 固有の検査用 TLS は、ヘルパーの最初の非 RT 起動段階の `start_processing` で初期化する。
+  検知を外さず、未発音の新しいヘルパーで最初の処理も検査する。
 - **CLAP が鳴らない・走査失敗**:
   プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。
 - **バイパスの表示と音が一致しない・解除後に古い音が鳴る**:
   文書のデバイス ID と `bypassed`、計画の要求・適用版、プラグイン失敗、ドライ／ウェットの平面数を確認する。
   バイパスした音源ではノートが無音でも同じトラックの配置音声は鳴る。解除時のリセットと現在のノート追跡を確認する（[ADR 0120](decisions/0120-device-bypass.md)）。
+- **オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する**:
+  文書の `offline`、`bypassed`、`state` を分け、保存形式 5 と旧版からの変換を確認する。
+  `fx-offline-ui` は実ボタンと履歴、`plugin-offline` は隔離グラフと記録済み状態の復元、`offline-export` は実 CLI のログである。
+  `chain_of` と `project_plugin_ids` / `routes_with_saved_state` の対象、計画の要求・適用版を確認する。
+  `device rendering requires the isolated plugin host` が全オフライン時に出たら、ホストなし書出しの対象判定を確認する。
+  再有効化後の未検出・状態オブジェクトの読込エラーとは区別する（[ADR 0125](decisions/0125-device-offline.md)）。
 - **空白への移動・再開で以前の残響が鳴る**:
   停止・シーク時の `active.reset()`、`NOTE_CHOKE`、宣言された全 MIDI ポートへの CC120 / All Notes Off を確認し、自然な余韻と区別する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
 - **左右の消失・定位変化・ループやフェーダーの段差**:
@@ -78,6 +97,26 @@ make debug-report
   `doctor` でアプリが `stale` / `unknown` なら `make app` を実行し、`target/Echode.app` を開き直す。
 - **FX が違うトラックへ入る・並びが変わらない**:
   候補を開いた文書セッション、追加操作時の選択トラック、ドロップ先トラックを区別し、`device.reorder` / `device.copy` と状態ハッシュの引き継ぎを `fx-chain-ui` で確認する（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
+- **トラックが違う位置へ追加される・追加後の選択が違う**:
+  `TrackInsertionRequest` の文書セッションと `after`、ジャーナルの `track.add` / `track.insert` と `into_folder` を区別する。
+  展開フォルダは最後の子、折りたたみ中は部分木の外側、末尾ボタンは最上位末尾へ追加する。
+  `TrackInsertionTests` と `track_insertion` のログで操作後の選択変更・消えた対象・旧文書の拒否を確認する
+  （[ADR 0127](decisions/0127-positioned-track-insertion.md)）。
+- **複製が違う位置に入る・二重に増える・元のノートまで変わる**:
+  `TrackDuplicationRequest` の文書セッションと `sources`（選択された祖先を持つ行は除く）、ジャーナルの `track.duplicate` の `source` と `seed` を区別する。
+  複製の ID は `seed` から導出した UUIDv8 で、元と同じ中身 ID の配置が複製先に残っていれば独立化の不具合である。
+  `TrackDuplicationTests` と履歴・CLI の `track_duplication` で、位置・選択・中身の独立・書出しの 2 倍一致を確認する
+  （[ADR 0129](decisions/0129-track-duplication.md)）。
+- **フォルダ開閉後に行・ミックス値・FX の対象がずれる**:
+  元スナップショットと表示用ハンドルの行数・ID、`TrackTreeInfo` と `row_map` を区別する。
+  ヘッダ、可視矩形、ミキサーとデバイスが同じ表示行から元トラックを参照することを
+  `FolderDisclosureTests` と `snapshot_ownership` の必須契約で確認する。
+  開閉後に古いフレームが反映される場合は、入力ハンドルと描画キャッシュの版も確認する
+  （[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)）。
+- **FX の一括追加が一部だけ・Undo が複数回になる**:
+  単一フォーカスと `selectedTracks`、クリック時の `PluginInsertionRequest` の文書・対象配列を区別する。
+  製品 ABI が配列を同じ `DocumentHost::apply` へ渡すことを `TransactionTests` と `fx-batch-ui` のログで確認する。
+  選択変更後の付け替え、旧文書、欠けた対象、途中失敗時の部分追加を分けて調べる（[ADR 0124](decisions/0124-selected-track-fx-batches.md)）。
 - **サンプル検索で見つからない・配置先や位置が違う**:
   登録フォルダの一覧と索引の読込中表示、読込失敗の詳細を確認し、素材変更後は更新ボタンで再読込する。
   索引は隠しファイル・シンボリックリンク・パッケージ内部を含めず、重なる登録から同じパスを重複表示しない。

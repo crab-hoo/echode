@@ -132,6 +132,10 @@ class DiagnosticTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source changed"):
             diagnose.record_build(self.root, stamp)
         self.assertEqual(diagnose.build_status(self.root, diagnose.source_stamp(self.root))["status"], "stale")
+        plugin = self.root / "target/Echode.app" / diagnose.BUILD_FILES[2]
+        plugin.write_bytes(b"different plugin")
+        self.assertFalse(diagnose.build_status(self.root, stamp)["binaries_match"])
+        plugin.write_bytes(b"fixture binary")
         (self.root / "target/Echode.app" / diagnose.BUILD_FILES[0]).write_bytes(b"different binary")
         result = diagnose.build_status(self.root, stamp)
         self.assertEqual(result["status"], "stale")
@@ -143,6 +147,21 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("--record-build requires --expected-source", result.stderr)
         self.assertNotIn("source changed", result.stderr)
+
+    def test_markdown_used_as_a_build_input_still_invalidates_app_provenance(self):
+        # A future embedded document is a dependency even though its suffix is .md.
+        (self.root / "docs").mkdir()
+        embedded = self.root / "docs/embedded.md"
+        embedded.write_text("First embedded help")
+        (self.root / "embedded.rs").write_text('const HELP: &str = include_str!("docs/embedded.md");\n')
+        stamp = diagnose.source_stamp(self.root)
+        for name in diagnose.BUILD_FILES:
+            path = self.root / "target/Echode.app" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fixture binary")
+        diagnose.record_build(self.root, stamp)
+        embedded.write_text("Changed embedded help")
+        self.assertEqual(diagnose.build_status(self.root, diagnose.source_stamp(self.root))["status"], "stale")
 
     def test_bundle_is_bounded_keeps_originals_and_does_not_follow_external_links(self):
         self.save_report()
@@ -186,6 +205,7 @@ class DeveloperDocumentationTests(unittest.TestCase):
             "docs/README.md",
             "docs/status.md",
             "docs/development.md",
+            "docs/agent-workflow.md",
             "docs/debugging.md",
             "docs/verification.md",
             "docs/PLAN.md",

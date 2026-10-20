@@ -34,6 +34,11 @@ struct WorkspacePluginBrowser: View {
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.tag(plugin.id).contentShape(Rectangle()).onTapGesture(count: 2) { selected = plugin.id; insert(closeAfter: true) }
                         .onDrag { FXDrag(document: document, track: nil, device: nil, plugin: plugin.id).provider() }
+                        .contextMenu {
+                            Button(text("Insert on selected tracks")) {
+                                insert(plugin.id, allSelected: true, closeAfter: false)
+                            }.disabled(controller.documentID != document || controller.selectedTracks.isEmpty || controller.busy || loading)
+                        }
                 }
             }.onMoveCommand { if $0 == .down { move(1) }; if $0 == .up { move(-1) } }
                 .onKeyPress(.return) { insert(closeAfter: false); return .handled }
@@ -61,10 +66,14 @@ struct WorkspacePluginBrowser: View {
     }
     private func move(_ offset: Int) { selected = movedSelection(selected, in: filtered.map(\.id), offset: offset) }
     private func insert(closeAfter: Bool) {
-        guard canInsert, let track = controller.selection, let selected, filtered.contains(where: { $0.id == selected }) else { return }
+        guard canInsert, let selected, filtered.contains(where: { $0.id == selected }) else { return }
+        insert(selected, allSelected: false, closeAfter: closeAfter)
+    }
+    private func insert(_ plugin: String, allSelected: Bool, closeAfter: Bool) {
+        guard !loading, filtered.contains(where: { $0.id == plugin }),
+              let request = controller.capturePluginInsertion(plugin, allSelected: allSelected, document: document) else { return }
         Task {
-            guard controller.documentID == document else { return }
-            if await controller.insertPlugin(selected, on: track, documentID: document) {
+            if await controller.insertPlugin(request) {
                 if closeAfter { close() }
             } else {
                 message = controller.errorMessage ?? text("Could not complete the operation")

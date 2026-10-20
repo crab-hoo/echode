@@ -66,7 +66,7 @@ final class DeviceChainScrollView: NSScrollView {
 /// Row dragging is an additional entry into the durable chain actions.
 @MainActor
 final class DeviceChainListView: NSView {
-    static let rowHeight = 42.0
+    static let rowHeight = 64.0
     private(set) var devices: [TrackDevice] = []
     private var track: UUID?
     private var document: UUID?
@@ -93,7 +93,9 @@ final class DeviceChainListView: NSView {
             row.down.isEnabled = !busy && index + 1 < devices.count
             row.copy.isEnabled = !busy; row.remove.isEnabled = !busy; row.dragEnabled = !busy
             row.bypass.isEnabled = !busy
+            row.offline.isEnabled = !busy
             row.onBypass = { [weak self] value in self?.onEdit?(.bypass(device: device.id, bypassed: value)) }
+            row.onOffline = { [weak self] value in self?.onEdit?(.offline(device: device.id, offline: value)) }
             row.onUp = { [weak self] in self?.onEdit?(.reorder(device: device.id, before: index > 0 ? devices[index - 1].id : device.id)) }
             row.onDown = { [weak self] in self?.onEdit?(.reorder(device: device.id, before: index + 2 < devices.count ? devices[index + 2].id : nil)) }
             row.onCopy = { [weak self] in self?.onEdit?(.copy(source: device.id, track: track, before: index + 1 < devices.count ? devices[index + 1].id : nil)) }
@@ -137,24 +139,32 @@ final class DeviceChainListView: NSView {
 final class DeviceChainRow: NSView, NSDraggingSource {
     let up = NSButton(), down = NSButton(), copy = NSButton(), remove = NSButton()
     let bypass = NSButton()
+    let offline = NSButton()
     private let label: NSTextField
     private let payload: FXDrag
     private var origin: CGPoint?
     var dragEnabled = true
     var onUp: (() -> Void)?, onDown: (() -> Void)?, onCopy: (() -> Void)?, onRemove: (() -> Void)?
     var onBypass: ((Bool) -> Void)?
+    var onOffline: ((Bool) -> Void)?
     override var isFlipped: Bool { true }
     init(device: TrackDevice, payload: FXDrag) {
         self.payload = payload; label = NSTextField(labelWithString: device.title)
         super.init(frame: .zero)
         label.lineBreakMode = .byTruncatingMiddle; label.setAccessibilityLabel(device.title); label.toolTip = device.plugin
-        label.textColor = device.bypassed ? .secondaryLabelColor : .labelColor
+        label.textColor = device.bypassed || device.offline ? .secondaryLabelColor : .labelColor
         addSubview(label)
         bypass.setButtonType(.switch); bypass.title = text("Bypass")
         bypass.state = device.bypassed ? .on : .off
         bypass.target = self; bypass.action = #selector(bypassFX)
         bypass.setAccessibilityLabel(text("Bypass") + " " + device.title)
         addSubview(bypass)
+        offline.setButtonType(.switch); offline.title = text("Offline")
+        offline.state = device.offline ? .on : .off
+        offline.target = self; offline.action = #selector(offlineFX)
+        offline.setAccessibilityLabel(text("Offline") + " " + device.title)
+        offline.toolTip = text("Offline FX help")
+        addSubview(offline)
         for (button, symbol, title, action) in [
             (up, "arrow.up", "Move FX Up", #selector(moveUpFX)), (down, "arrow.down", "Move FX Down", #selector(moveDownFX)),
             (copy, "plus.square.on.square", "Duplicate FX", #selector(copyFX)), (remove, "trash", "Remove FX", #selector(removeFX))
@@ -172,15 +182,17 @@ final class DeviceChainRow: NSView, NSDraggingSource {
         super.layout()
         let controls = [up, down, copy, remove]
         let start = max(0, bounds.width - 136)
-        label.frame = CGRect(x: 4, y: 11, width: max(0, start - 104), height: 20)
-        bypass.frame = CGRect(x: max(0, start - 94), y: 7, width: 90, height: 28)
-        for (index, control) in controls.enumerated() { control.frame = CGRect(x: start + Double(index) * 34, y: 7, width: 30, height: 28) }
+        label.frame = CGRect(x: 4, y: 5, width: max(0, bounds.width - 114), height: 20)
+        offline.frame = CGRect(x: max(0, bounds.width - 106), y: 2, width: min(102, bounds.width), height: 28)
+        bypass.frame = CGRect(x: 4, y: 32, width: min(90, max(0, start - 8)), height: 28)
+        for (index, control) in controls.enumerated() { control.frame = CGRect(x: start + Double(index) * 34, y: 32, width: 30, height: 28) }
     }
     @objc private func moveUpFX() { onUp?() }
     @objc private func moveDownFX() { onDown?() }
     @objc private func copyFX() { onCopy?() }
     @objc private func removeFX() { onRemove?() }
     @objc private func bypassFX() { onBypass?(bypass.state == .on) }
+    @objc private func offlineFX() { onOffline?(offline.state == .on) }
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         return hit === label ? self : hit

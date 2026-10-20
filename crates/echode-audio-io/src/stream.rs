@@ -378,11 +378,14 @@ fn plugin_routes(
     }
 }
 
-/// CLAP ids in the order devices first name them. A repeated id is listed once.
+/// Online CLAP ids in project order. A repeated id is listed once.
 pub fn project_plugin_ids(project: &Project) -> Vec<String> {
     let mut ids = Vec::new();
     for track in project.tracks() {
         for device in &track.devices {
+            if device.offline {
+                continue;
+            }
             let Some(plugin) = device.plugin.as_ref() else {
                 continue;
             };
@@ -398,7 +401,7 @@ pub fn project_plugin_ids(project: &Project) -> Vec<String> {
 /// Installed plugins, in [`project_plugin_ids`] order.
 ///
 /// An id missing from the scan cache is omitted. Playback leaves that device
-/// on the built-in synth. Export must refuse the file instead.
+/// silent. Export must refuse the file instead. Offline devices are not resolved.
 pub fn installed_plugin_routes(project: &Project) -> Vec<PluginRoute> {
     echode_plugin_host::resolve_installed(&project_plugin_ids(project))
         .into_iter()
@@ -412,7 +415,7 @@ pub fn installed_plugin_routes(project: &Project) -> Vec<PluginRoute> {
         .collect()
 }
 
-/// One route per CLAP device, in project order, with saved bytes when the device names them.
+/// One route per online CLAP device, in project order, with its saved bytes.
 ///
 /// A hash whose object is missing or does not match is an error. Devices that share a
 /// plugin id keep separate bytes so a later device does not reuse the first one's state.
@@ -424,6 +427,9 @@ pub fn routes_with_saved_state(
     let mut routes = Vec::new();
     for track in project.tracks() {
         for device in &track.devices {
+            if device.offline {
+                continue;
+            }
             let Some(id) = device.plugin.as_deref() else {
                 continue;
             };

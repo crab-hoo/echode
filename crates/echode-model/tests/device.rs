@@ -1,6 +1,57 @@
 use echode_model::{Change, ChangeSet, Id, ObjectKey, ObjectKind, Project, Property, Value};
 
 #[test]
+fn offline_preserves_state_and_bypass_through_copy_and_changesets() {
+    let (project, track) = Project::new().add_track("offline");
+    let id = Id::generate();
+    let project = project
+        .add_clap_device(track, id, "org.example.fx")
+        .unwrap()
+        .set_device_state(id, Some("a".repeat(64)))
+        .unwrap()
+        .set_device_bypassed(id, true)
+        .unwrap();
+    let offline = project.set_device_offline(id, true).unwrap();
+    assert!(offline.tracks()[0].devices[0].offline);
+    assert!(offline.tracks()[0].devices[0].bypassed);
+    assert_eq!(offline.tracks()[0].devices[0].state, Some("a".repeat(64)));
+    let diff = project.diff(&offline);
+    assert_eq!(project.apply_changeset(&diff).unwrap(), offline);
+    assert_eq!(offline.apply_changeset(&diff.invert()).unwrap(), project);
+    let copied = offline
+        .copy_device(id, track, Id::generate(), None)
+        .unwrap();
+    assert!(
+        copied.tracks()[0].devices[..2]
+            .iter()
+            .all(|device| device.offline && device.bypassed)
+    );
+    copied.check_invariants().unwrap();
+    assert_eq!(offline.set_device_offline(id, false).unwrap(), project);
+    assert!(project.set_device_offline(Id::generate(), true).is_err());
+    assert!(
+        project
+            .set_device_offline(project.tracks()[0].devices.last().unwrap().id, true)
+            .is_err()
+    );
+    let mut legacy = ChangeSet::new();
+    for change in project.diff(&copied).changes() {
+        let mut change = change.clone();
+        if let Change::Create {
+            kind: ObjectKind::Device,
+            fields,
+            ..
+        } = &mut change
+        {
+            fields.retain(|field| field.property != Property::Offline);
+        }
+        legacy.push(change);
+    }
+    let restored = project.apply_changeset(&legacy).unwrap();
+    assert!(!restored.tracks()[0].devices[1].offline);
+}
+
+#[test]
 fn legacy_device_creation_without_bypass_replays_as_active() {
     let (before, track) = Project::new().add_track("legacy");
     let after = before
@@ -67,6 +118,7 @@ fn a_journal_change_cannot_bypass_a_mixer_or_give_it_plugin_state() {
     let mixer = project.tracks()[0].devices.last().unwrap().id;
     for (property, after) in [
         (Property::Bypassed, Value::Byte(1)),
+        (Property::Offline, Value::Byte(1)),
         (Property::PluginState, Value::Text("a".repeat(64))),
     ] {
         let mut changes = ChangeSet::new();
@@ -74,7 +126,7 @@ fn a_journal_change_cannot_bypass_a_mixer_or_give_it_plugin_state() {
             id: ObjectKey::Id(mixer),
             property,
             before: match property {
-                Property::Bypassed => Value::Byte(0),
+                Property::Bypassed | Property::Offline => Value::Byte(0),
                 _ => Value::Text(String::new()),
             },
             after,

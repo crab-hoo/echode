@@ -17,8 +17,14 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var onClipEdit: ((ClipMixEdit) -> Void)?
     public var onOpenFX: ((UUID) -> Void)?
     public var onDropFX: ((UUID, TrackFXDrop) -> Void)?
+    public var selectedTracks: Set<UUID>?
+    public var onSelectTrack: ((UUID, TrackSelectionChange) -> Void)?
+    public var collapsedTracks: Set<UUID> = []
+    public var onFolderDisclosure: ((UUID, Bool) -> Void)?
+    public var onDuplicateTracks: (() -> Void)?
 
-    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil) {
+    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
+                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
@@ -28,6 +34,11 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.selectedClip = selectedClip; self.faderPreview = faderPreview; self.mixActions = mixActions; self.onSelectClip = onSelectClip; self.onClipEdit = onClipEdit
         self.onOpenFX = onOpenFX
         self.onDropFX = onDropFX
+        self.selectedTracks = selectedTracks
+        self.onSelectTrack = onSelectTrack
+        self.collapsedTracks = collapsedTracks
+        self.onFolderDisclosure = onFolderDisclosure
+        self.onDuplicateTracks = onDuplicateTracks
     }
 
     public func makeNSView(context: Context) -> ArrangePaneView {
@@ -37,14 +48,17 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public func updateNSView(_ view: ArrangePaneView, context: Context) {
         view.setNavigation(navigation, documentID: documentID)
         view.onSelect = { selection = $0 }
+        view.onSelectTrack = onSelectTrack
         view.onSelectClip = onSelectClip
         view.mixActions = mixActions
         view.onClipEdit = onClipEdit
         view.onOpenFX = onOpenFX
         view.onDropFX = onDropFX
+        view.onFolderDisclosure = onFolderDisclosure
+        view.onDuplicateTracks = onDuplicateTracks
         view.headers.documentID = documentID
         view.setControlSelection(clip: selectedClip, preview: faderPreview)
-        view.setSnapshot(snapshot, selected: selection)
+        view.setSnapshot(snapshot, selected: selection, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks)
         view.setPlayback(playback)
         view.noteTransport(transportGeneration)
     }

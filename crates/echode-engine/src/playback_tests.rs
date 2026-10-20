@@ -325,6 +325,9 @@ fn audit_pro06_a_hundred_sample_loop_keeps_playing_in_a_large_block() {
         .0;
     for frames in [64usize, 512] {
         let (mut control, mut audio) = playback_pair(&project, 48_000, frames).unwrap();
+        control.set_clip_loader(Arc::new(move |_, _| {
+            Ok(vec![placed(track.raw(), 0, 0.25, 100)])
+        }));
         control
             .command(PlaybackCommand::SetLoop { start: 0, end: 100 })
             .unwrap();

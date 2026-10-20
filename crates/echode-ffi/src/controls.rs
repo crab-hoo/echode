@@ -130,9 +130,12 @@ pub unsafe extern "C" fn echode_snapshot_mixer_controls(
     track: usize,
     out: *mut MixerControls,
 ) -> i32 {
-    let Some(value) =
-        snapshot_ref(snapshot).and_then(|snapshot| snapshot.controls.mixers.get(track))
-    else {
+    let Some(value) = snapshot_ref(snapshot).and_then(|snapshot| {
+        snapshot
+            .controls
+            .mixers
+            .get(snapshot.source_track_index(track)?)
+    }) else {
         return ECHODE_ERR;
     };
     if out.is_null() {

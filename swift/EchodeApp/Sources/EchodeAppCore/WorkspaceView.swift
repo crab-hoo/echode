@@ -97,7 +97,18 @@ public struct WorkspaceView: View {
                               navigation: state.navigation, documentID: controller.documentID,
                               selectedClip: controller.clipFocus, faderPreview: controller.faderPreview,
                               mixActions: mixActions, onSelectClip: { controller.clipFocus = $0 }, onClipEdit: clipEdit,
-                              onOpenFX: { session.openPlugins(on: $0) }, onDropFX: fxDrop).id(controller.documentID)
+                              onOpenFX: { session.openPlugins(on: $0) }, onDropFX: fxDrop,
+                              selectedTracks: controller.selectedTracks, onSelectTrack: { controller.selectTrack($0, change: $1, visibleOrder: state.visibleTrackOrder(controller)) },
+                              collapsedTracks: state.collapsedTracks, onFolderDisclosure: { id, collapsed in
+                                  if collapsed { state.collapsedTracks.insert(id) } else { state.collapsedTracks.remove(id) }
+                              }, onDuplicateTracks: { _ = session.duplicateTracks() }).id(controller.documentID)
+                Divider()
+                HStack {
+                    Button { session.addTrack(atEnd: true) } label: {
+                        Label(text("Add Track at End"), systemImage: "plus")
+                    }.disabled(!session.enabled(.addTrack)).accessibilityIdentifier("track.append")
+                    Spacer()
+                }.padding(8)
             } else {
                 VStack(spacing: 12) {
                     Text(text("Add a track to start"))
@@ -149,7 +160,7 @@ public struct WorkspaceView: View {
     }
     private var context: WorkspaceSelectionContext {
         WorkspaceSelectionContext(document: controller.documentID, tracks: controller.tracks.map(\.id), track: controller.selection,
-            note: controller.noteFocus, geometry: controller.noteFocus.flatMap { controller.snapshot?.pianoNote($0).map(NoteGeometry.init) })
+            note: controller.noteFocus, geometry: controller.noteFocus.flatMap { controller.snapshot?.pianoNote($0).map(NoteGeometry.init) }, snapshot: controller.snapshot)
     }
 }
 private struct WorkspaceSelectionContext: Equatable {
@@ -158,4 +169,8 @@ private struct WorkspaceSelectionContext: Equatable {
     let track: UUID?
     let note: PianoNote.ID?
     let geometry: NoteGeometry?
+    let snapshot: Snapshot?
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.document == rhs.document && lhs.tracks == rhs.tracks && lhs.track == rhs.track && lhs.note == rhs.note && lhs.geometry == rhs.geometry && lhs.snapshot === rhs.snapshot
+    }
 }

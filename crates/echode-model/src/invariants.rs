@@ -81,9 +81,9 @@ impl Project {
             if mixer.kind != crate::device::DeviceKind::Mixer || mixer.plugin.is_some() {
                 return broken(format!("track {} does not have one mixer", track.name));
             }
-            if mixer.bypassed || mixer.state.is_some() {
+            if mixer.bypassed || mixer.offline || mixer.state.is_some() {
                 return broken(format!(
-                    "track {} mixer is bypassed or holds plugin state",
+                    "track {} mixer is bypassed, offline or holds plugin state",
                     track.name
                 ));
             }

@@ -460,6 +460,64 @@ impl Project {
         })
     }
 
+    /// Adds a track after an anchor's subtree, retaining its sibling group.
+    /// When `into_folder` is true and the anchor has children, appends a child
+    /// instead. Only the new track receives an order key; existing keys stay put.
+    pub fn insert_track_after_with_id(
+        &self,
+        id: Id,
+        after: Id,
+        into_folder: bool,
+        name: impl Into<String>,
+        mixer: MixerIds,
+    ) -> Result<Self, ModelError> {
+        let anchor = &self.tracks[self.track_index(after)?];
+        if into_folder && self.tracks.iter().any(|track| track.parent == Some(after)) {
+            return self.add_child_with_id(id, after, name, mixer);
+        }
+        if self.id_in_use(id)
+            || !crate::device::mixer_ids_free(mixer, |candidate| {
+                self.id_in_use(candidate) || candidate == id
+            })
+        {
+            return Err(ModelError::DuplicateId);
+        }
+        let order = self.order_after(anchor)?;
+        let mut tracks = self.tracks.clone();
+        tracks.push(Arc::new(Track {
+            id,
+            name: name.into(),
+            parent: anchor.parent,
+            order,
+            clips: Vec::new(),
+            devices: vec![Device::unity(mixer)],
+        }));
+        Ok(Self {
+            meter: self.meter,
+            tempo: self.tempo.clone(),
+            contents: self.contents.clone(),
+            tracks: arrange_tracks(&tracks)?,
+        })
+    }
+
+    /// A sibling key between `anchor` and the next sibling under the same parent.
+    pub(crate) fn order_after(&self, anchor: &Track) -> Result<String, ModelError> {
+        let left = FractionalIndex::from_string(&anchor.order).map_err(|_| ModelError::BadOrder)?;
+        let right = self
+            .tracks
+            .iter()
+            .find(|track| track.parent == anchor.parent && track.order > anchor.order);
+        let order = match right {
+            Some(right) => {
+                let right =
+                    FractionalIndex::from_string(&right.order).map_err(|_| ModelError::BadOrder)?;
+                FractionalIndex::new_between(&left, &right).ok_or(ModelError::BadOrder)?
+            }
+            None => FractionalIndex::new_after(&left),
+        };
+        Ok(order.to_string())
+    }
+
     /// Inserts a CLAP device before the mixer. The id is the plugin's CLAP id,
     /// not a file path. Two devices may name the same plugin.
     pub fn add_clap_device(
@@ -532,6 +590,17 @@ impl Project {
         }
         let mut track = (*self.tracks[owner]).clone();
         track.devices[index].bypassed = bypassed;
+        Ok(self.write_track(owner, track))
+    }
+
+    /// Releases the runtime instance without changing identity or recorded settings.
+    pub fn set_device_offline(&self, device: Id, offline: bool) -> Result<Self, ModelError> {
+        let (owner, index) = self.clap_location(device)?;
+        if self.tracks[owner].devices[index].offline == offline {
+            return Ok(self.clone());
+        }
+        let mut track = (*self.tracks[owner]).clone();
+        track.devices[index].offline = offline;
         Ok(self.write_track(owner, track))
     }
 
@@ -1031,7 +1100,7 @@ impl Project {
         Ok(self.write_track(index, track))
     }
 
-    fn with_parts(&self, contents: Vec<Arc<Content>>, tracks: Vec<Arc<Track>>) -> Self {
+    pub(crate) fn with_parts(&self, contents: Vec<Arc<Content>>, tracks: Vec<Arc<Track>>) -> Self {
         Self {
             meter: self.meter,
             tempo: self.tempo.clone(),
@@ -1040,7 +1109,7 @@ impl Project {
         }
     }
 
-    fn track_index(&self, id: Id) -> Result<usize, ModelError> {
+    pub(crate) fn track_index(&self, id: Id) -> Result<usize, ModelError> {
         self.tracks
             .iter()
             .position(|track| track.id == id)

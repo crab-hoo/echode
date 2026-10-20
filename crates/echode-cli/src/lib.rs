@@ -1,7 +1,7 @@
 //! `echode render` writes a project package to a stereo float WAV.
 //!
-//! A project with no CLAP device uses the test synth. Placed audio is loaded
-//! the same way as product playback and mixed after the synth. A project with
+//! A project with no instrument does not synthesize notes. Placed audio uses
+//! the same buffers and faders as product playback. A project with
 //! a CLAP device uses that same isolated playback chain, and refuses the
 //! export when a plugin or the helper is missing. The project is the document
 //! host's recovered snapshot, so a journaled edit is included and a save that
@@ -221,6 +221,9 @@ pub fn render_to_wav(
     sample_rate: u32,
     frames: Option<u32>,
 ) -> Result<(), CliError> {
+    if sample_rate == 0 {
+        return Err(CliError::new("invalid sample rate"));
+    }
     let _activity = echode_audio_io::UserActivity::begin("Echode is writing audio");
     let host = DocumentHost::open(package).map_err(|error| CliError::new(error.to_string()))?;
     let project = host.snapshot();
@@ -228,6 +231,7 @@ pub fn render_to_wav(
         .recovered_label()
         .map_err(|error| CliError::new(error.to_string()))?;
     drop(host);
+    let include_tail = frames.is_none();
     let frames = match frames {
         Some(frames) => frames,
         None => render_span_frames(&project, sample_rate)
@@ -256,7 +260,7 @@ pub fn render_to_wav(
         .filter(|id| {
             !routes
                 .iter()
-                .any(|route| route.clap_id == **id && route.path.is_file())
+                .any(|route| route.clap_id == **id && route.path.exists())
         })
         .map(String::as_str)
         .collect();
@@ -266,27 +270,44 @@ pub fn render_to_wav(
             missing.join(", ")
         )));
     }
-    render_with_plugins(package, wav, &project, sample_rate, frames, &host, &routes)?;
+    render_with_plugins(
+        package,
+        wav,
+        &project,
+        sample_rate,
+        frames,
+        include_tail,
+        &host,
+        &routes,
+    )?;
     note_export(&revision, seq);
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_with_plugins(
     package: &Path,
     wav: &Path,
     project: &Project,
     sample_rate: u32,
     frames: u32,
+    include_tail: bool,
     host: &Path,
     routes: &[PluginRoute],
 ) -> Result<(), CliError> {
     if frames == 0 {
         return WavFile::create(wav, sample_rate, 0)?.finish();
     }
-    let total = usize::try_from(frames).map_err(|_| CliError::new("export length overflowed"))?;
-    let block = total.min(PLUGIN_CALLBACK_FRAMES);
+    let block = (frames as usize).min(PLUGIN_CALLBACK_FRAMES);
     let (mut control, mut audio) = playback_with_plugins(project, sample_rate, block, host, routes)
         .map_err(|error| CliError::new(error.to_string()))?;
+    let tail = if include_tail {
+        control.tail_samples()
+    } else {
+        0
+    };
+    let frames = frames_with_device_tail(frames, tail)?;
+    let total = frames as usize;
     let package = package.to_path_buf();
     control.set_clip_loader(Arc::new(move |project, rate| {
         load_placed_clips(&package, project, rate)
@@ -327,6 +348,15 @@ fn render_with_plugins(
         rendered += count;
     }
     wav.finish()
+}
+
+fn frames_with_device_tail(frames: u32, tail: u32) -> Result<u32, CliError> {
+    if tail >= i32::MAX as u32 {
+        return Err(CliError::new("infinite plugin tail; specify --frames"));
+    }
+    frames
+        .checked_add(tail)
+        .ok_or_else(|| CliError::new("export length overflowed"))
 }
 
 fn parse_u32(text: &str) -> Result<u32, CliError> {
@@ -492,4 +522,23 @@ fn sync_parent(path: &Path) -> std::io::Result<()> {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     File::open(parent)?.sync_all()
+}
+
+#[cfg(test)]
+mod tail_tests {
+    #[test]
+    fn every_clap_infinite_tail_value_requires_an_explicit_length() {
+        for tail in [i32::MAX as u32, i32::MAX as u32 + 1, u32::MAX] {
+            assert!(
+                super::frames_with_device_tail(1, tail)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("infinite plugin tail")
+            );
+        }
+        assert_eq!(
+            super::frames_with_device_tail(1, i32::MAX as u32 - 1).unwrap(),
+            i32::MAX as u32
+        );
+    }
 }

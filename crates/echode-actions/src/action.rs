@@ -221,6 +221,62 @@ define_actions! {
                 .map_err(Into::into)
         }
     }
+    InsertTrack {
+        id: "track.insert",
+        name_ja: "選択位置にトラックを追加",
+        name_en: "Insert a track",
+        description_ja: "指定トラックの下、または子を持つフォルダの末尾に空トラックを追加する",
+        description_en: "Insert an empty sibling after a track, or append inside a folder with children",
+        command {
+            after: Id,
+            into_folder: bool,
+            name: String,
+        }
+        action {
+            id: Id,
+            after: Id,
+            into_folder: bool,
+            name: String,
+            device: Id,
+            gain: Id,
+            pan: Id,
+            mute: Id,
+            solo: Id,
+        }
+        commit {
+            let mixer = MixerIds::generate();
+            Action::InsertTrack {
+                id: Id::generate(), after, into_folder, name,
+                device: mixer.device, gain: mixer.gain, pan: mixer.pan,
+                mute: mixer.mute, solo: mixer.solo,
+            }
+        }
+        edit |project: &Project| {
+            project.insert_track_after_with_id(
+                *id, *after, *into_folder, name.clone(),
+                MixerIds { device: *device, gain: *gain, pan: *pan, mute: *mute, solo: *solo },
+            ).map_err(Into::into)
+        }
+    }
+    DuplicateTrack {
+        id: "track.duplicate",
+        name_ja: "トラックを複製",
+        name_en: "Duplicate a track",
+        description_ja: "トラックと子孫を、音源・FX・クリップ・ミキサー値ごと元の直後へ複製する。クリップの中身は元と独立する",
+        description_en: "Copy a track and its descendants after the original, with plugins, clips, and mixer values. Clip contents become independent",
+        command {
+            source: Id,
+        }
+        action {
+            source: Id,
+            /// Every copied id is derived from this and the original id.
+            seed: Id,
+        }
+        commit { Action::DuplicateTrack { source, seed: Id::generate() } }
+        edit |project: &Project| {
+            project.duplicate_track(*source, *seed).map_err(Into::into)
+        }
+    }
     SetMeter {
         id: "project.set_meter",
         name_ja: "拍子を変える",
@@ -614,6 +670,19 @@ define_actions! {
         commit { Action::BypassDevice { device, bypassed } }
         edit |project: &Project| {
             project.set_device_bypassed(*device, *bypassed).map_err(Into::into)
+        }
+    }
+    OfflineDevice {
+        id: "device.offline",
+        name_ja: "FX のオフラインを切り替える",
+        name_en: "Set FX offline",
+        description_ja: "記録済み設定を保持し、プラグインの処理とヘルパーを解放する",
+        description_en: "Keep recorded settings while releasing plugin processing and its helper",
+        command { device: Id, offline: bool, }
+        action { device: Id, offline: bool, }
+        commit { Action::OfflineDevice { device, offline } }
+        edit |project: &Project| {
+            project.set_device_offline(*device, *offline).map_err(Into::into)
         }
     }
     ReorderDevice {

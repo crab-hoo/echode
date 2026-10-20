@@ -456,7 +456,31 @@ fn located_host(exe: &Path) -> Option<PathBuf> {
         .join("Contents")
         .join("MacOS")
         .join("echode-plugin-host");
-    nested.is_file().then_some(nested)
+    if nested.is_file() {
+        return Some(nested);
+    }
+    // Cargo integration tests live in deps, beside the product's build folder.
+    if parent.file_name().is_some_and(|name| name == "deps") {
+        let binary = parent.parent()?.join("echode-plugin-host");
+        return binary.is_file().then_some(binary);
+    }
+    None
+}
+
+/// Bundled plugins are catalogued and scanned exactly like installed CLAPs.
+/// Distribution helpers may themselves live in a nested app bundle.
+pub(crate) fn bundled_plugin_directory(host: &Path) -> PathBuf {
+    if let Some(contents) = host
+        .ancestors()
+        .filter(|path| path.file_name().is_some_and(|name| name == "Contents"))
+        .last()
+    {
+        contents.join("PlugIns")
+    } else {
+        host.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("plugins")
+    }
 }
 
 /// Cache shared by the app and playback. Scanning writes it; playback only reads it.
@@ -484,7 +508,21 @@ pub struct ResolvedPlugin {
 
 /// Looks up `ids` in the shared cache. Missing ids are omitted. This does not scan.
 pub fn resolve_installed(ids: &[impl AsRef<str>]) -> Vec<ResolvedPlugin> {
-    resolve_cached(&shared_cache_path(), ids)
+    let mut resolved = resolve_cached(&shared_cache_path(), ids);
+    if let Some(host) = host_binary() {
+        let root = bundled_plugin_directory(&host);
+        let bundles = crate::list_bundles_including_clap_path(&[root], None);
+        if !bundles.is_empty() {
+            let cache = shared_cache_path().with_file_name("bundled-clap-scan.jsonl");
+            if refresh_catalog(&host, &cache, &bundles).is_ok() {
+                for plugin in resolve_cached(&cache, ids) {
+                    resolved.retain(|old| old.clap_id != plugin.clap_id);
+                    resolved.push(plugin);
+                }
+            }
+        }
+    }
+    resolved
 }
 
 /// Resolve the same cache format from an explicit location. Callers can test
@@ -524,6 +562,9 @@ pub fn installed_clap_bundles(clap_path: Option<&str>) -> Vec<crate::BundleFound
     let mut roots = vec![PathBuf::from("/Library/Audio/Plug-Ins/CLAP")];
     if let Some(home) = std::env::var_os("HOME") {
         roots.push(PathBuf::from(home).join("Library/Audio/Plug-Ins/CLAP"));
+    }
+    if let Some(host) = host_binary() {
+        roots.push(bundled_plugin_directory(&host));
     }
     crate::list_bundles_including_clap_path(&roots, clap_path)
         .into_iter()

@@ -10,6 +10,134 @@ fn snapshot() -> *mut Snapshot {
 }
 
 #[test]
+fn contract_arrange_projection_retains_hierarchy_rows_and_controls_after_source_release() {
+    // Deterministic identities keep the ownership fixture independent of OS
+    // clock/randomness under Miri. These IDs only describe this four-row tree.
+    let folder = Id::from_raw(1);
+    let child = Id::from_raw(2);
+    let tail = Id::from_raw(4);
+    let project = Project::new()
+        .add_track_with_id(folder, "folder", MixerIds::from_base(16))
+        .unwrap()
+        .add_child_with_id(child, folder, "child", MixerIds::from_base(32))
+        .unwrap()
+        .add_child_with_id(Id::from_raw(3), child, "nested", MixerIds::from_base(48))
+        .unwrap()
+        .add_track_with_id(tail, "tail", MixerIds::from_base(64))
+        .unwrap();
+    let gain = project.tracks()[3].devices[0].parameters[0].id;
+    let project = Arc::new(project.set_parameter(gain, 0.25).unwrap());
+    let source = Box::into_raw(Box::new(Snapshot::from_project(Arc::clone(&project), None)));
+    let collapsed = *uuid::Uuid::from_u128(folder.raw()).as_bytes();
+    assert!(unsafe { echode_snapshot_project_arrange(source, std::ptr::null(), 1) }.is_null());
+    assert!(
+        unsafe { echode_snapshot_project_arrange(source, collapsed.as_ptr(), usize::MAX) }
+            .is_null()
+    );
+    assert!(
+        unsafe { echode_snapshot_project_arrange(std::ptr::null(), collapsed.as_ptr(), 1) }
+            .is_null()
+    );
+    let projected = unsafe { echode_snapshot_project_arrange(source, collapsed.as_ptr(), 1) };
+    assert!(!projected.is_null());
+    assert_eq!(unsafe { echode_snapshot_track_count(source) }, 4);
+    assert_eq!(unsafe { echode_snapshot_track_count(projected) }, 2);
+    let retained = unsafe { echode_snapshot_retain(projected) };
+    unsafe {
+        echode_snapshot_free(projected);
+        echode_snapshot_free(source);
+    }
+    let mut tree = TrackTreeInfo::default();
+    assert_eq!(
+        unsafe { echode_snapshot_track_tree(retained, 0, &mut tree) },
+        0
+    );
+    assert_eq!(tree.has_children, 1);
+    assert_eq!(tree.has_parent, 0);
+    assert_eq!(
+        unsafe { echode_snapshot_track_tree(retained, 1, &mut tree) },
+        0
+    );
+    assert_eq!(tree.depth, 0);
+    let mut id = [0; 16]; // One UUID, for this ABI fixture only.
+    assert_eq!(
+        unsafe { echode_snapshot_track_id(retained, 1, id.as_mut_ptr()) },
+        0
+    );
+    assert_eq!(u128::from_be_bytes(id), tail.raw());
+    let mut mixer = MixerControls::default();
+    assert_eq!(
+        unsafe { echode_snapshot_mixer_controls(retained, 1, &mut mixer) },
+        0
+    );
+    assert_eq!(mixer.gain, 0.25);
+    assert_eq!(
+        unsafe { echode_snapshot_mixer_controls(retained, 2, &mut mixer) },
+        ECHODE_ERR
+    );
+    let mut written = 0;
+    let mut dropped = 0;
+    // Two rows and one canary are this fixture's query capacity, not a product limit.
+    let canary = VisibleElement {
+        role: u32::MAX,
+        track_id: [0; 16],
+        placement_id: [0; 16],
+        note_id: [0; 16],
+        has_placement: 0,
+        has_note: 0,
+        pad: [0; 2],
+        x: 0.,
+        y: 0.,
+        w: 0.,
+        h: 0.,
+    };
+    let mut elements = [canary; 3];
+    assert_eq!(
+        unsafe {
+            echode_snapshot_visible(
+                retained,
+                0,
+                705_600,
+                0.5,
+                1.5,
+                1.,
+                64.,
+                elements.as_mut_ptr(),
+                2,
+                &mut written,
+                &mut dropped,
+            )
+        },
+        0
+    );
+    assert_eq!((written, dropped), (2, 0));
+    assert_eq!(elements[0].y, -32.);
+    assert_eq!(elements[1].y, 32.);
+    assert_eq!(u128::from_be_bytes(elements[1].track_id), tail.raw());
+    assert_eq!(elements[2].role, u32::MAX);
+    let expanded = unsafe { echode_snapshot_project_arrange(retained, std::ptr::null(), 0) };
+    unsafe { echode_snapshot_free(retained) };
+    assert_eq!(unsafe { echode_snapshot_track_count(expanded) }, 4);
+    assert_eq!(
+        unsafe { echode_snapshot_track_tree(expanded, 2, &mut tree) },
+        0
+    );
+    assert_eq!(tree.depth, 2);
+    assert_eq!(u128::from_be_bytes(tree.parent), child.raw());
+    assert_eq!(
+        unsafe { echode_snapshot_track_tree(expanded, 4, &mut tree) },
+        -1
+    );
+    assert_eq!(
+        unsafe { echode_snapshot_track_tree(expanded, 0, std::ptr::null_mut()) },
+        -1
+    );
+    unsafe { echode_snapshot_free(expanded) };
+    assert_eq!(project.tracks().len(), 4);
+    project.check_invariants().unwrap();
+}
+
+#[test]
 fn retained_snapshot_keeps_borrowed_utf8_and_uuid_alive() {
     let original = snapshot();
     let retained = unsafe { echode_snapshot_retain(original) };
@@ -62,9 +190,29 @@ fn retained_mix_controls_copy_ids_and_resolve_fades_across_tempo_changes() {
         .unwrap()
         .id;
     let project = project.set_parameter(gain, 0.25).unwrap();
+    let plugin = Id::from_raw(48);
+    let project = project
+        .add_clap_device(track, plugin, "org.example.offline")
+        .unwrap()
+        .set_device_offline(plugin, true)
+        .unwrap();
     let original = Box::into_raw(Box::new(Snapshot::from_project(Arc::new(project), None)));
     let retained = unsafe { echode_snapshot_retain(original) };
     unsafe { echode_snapshot_free(original) };
+    assert_eq!(unsafe { echode_snapshot_device_offline(retained, 0, 0) }, 1);
+    assert_eq!(unsafe { echode_snapshot_device_offline(retained, 0, 1) }, 0);
+    assert_eq!(
+        unsafe { echode_snapshot_device_offline(retained, 1, 0) },
+        -1
+    );
+    assert_eq!(
+        unsafe { echode_snapshot_device_offline(retained, 0, usize::MAX) },
+        -1
+    );
+    assert_eq!(
+        unsafe { echode_snapshot_device_offline(std::ptr::null(), 0, 0) },
+        -1
+    );
     let mut mixer = MixerControls::default();
     assert_eq!(
         unsafe { echode_snapshot_mixer_controls(retained, 0, &mut mixer) },

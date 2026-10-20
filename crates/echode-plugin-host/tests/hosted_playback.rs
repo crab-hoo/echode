@@ -6,13 +6,59 @@ use std::time::{Duration, Instant};
 
 use echode_sandbox::{PluginHost, PluginNotice, SessionLayout, SpawnOptions};
 
-use echode_engine::{
-    LoadedClip, PlaybackCommand, PluginRoute, playback_pair, playback_with_plugins, tick_to_sample,
-};
+use echode_engine::{LoadedClip, PlaybackCommand, PluginRoute, tick_to_sample};
 use echode_model::{AudioRef, Id, NoteDraft, NoteGeometry, Project, Tick};
+
+#[path = "hosted_playback/device_offline.rs"]
+mod device_offline;
 
 fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))
+}
+
+fn sine_route() -> PluginRoute {
+    PluginRoute {
+        clap_id: "dev.echode.sine-pad".into(),
+        path: host_bin()
+            .parent()
+            .unwrap()
+            .join("plugins/EchodeSinePad.clap"),
+        instrument: true,
+        fault: None,
+        state: None,
+    }
+}
+
+fn with_sine(project: Project, track: Id) -> Project {
+    project
+        .add_clap_device(track, Id::generate(), "dev.echode.sine-pad")
+        .unwrap()
+}
+
+fn playback_with_plugins(
+    project: &Project,
+    rate: u32,
+    frames: usize,
+    host: &Path,
+    routes: &[PluginRoute],
+) -> Result<
+    (echode_engine::PlaybackControl, echode_engine::PlaybackAudio),
+    echode_engine::PlaybackError,
+> {
+    let mut routes = routes.to_vec();
+    routes.push(sine_route());
+    echode_engine::playback_with_plugins(project, rate, frames, host, &routes)
+}
+
+fn playback_pair(
+    project: &Project,
+    rate: u32,
+    frames: usize,
+) -> Result<
+    (echode_engine::PlaybackControl, echode_engine::PlaybackAudio),
+    echode_engine::PlaybackError,
+> {
+    playback_with_plugins(project, rate, frames, &host_bin(), &[])
 }
 
 #[test]
@@ -104,7 +150,7 @@ fn live_workgroup_survives_product_edits_and_helper_restart() {
         fault: None,
         state: None,
     };
-    let (project, track) = score();
+    let (project, track) = Project::new().add_track("workgroup fixture");
     // Start without devices, then insert one after output preparation.
     let (mut control, mut audio) = echode_engine::playback_with_plugins_in_workgroup_at(
         &project,
@@ -116,6 +162,17 @@ fn live_workgroup_survives_product_edits_and_helper_restart() {
         Arc::clone(&group),
     )
     .unwrap();
+    control.set_clip_loader(Arc::new(move |_, _| {
+        // This source covers the device-free workgroup lifecycle fixture only.
+        Ok(vec![LoadedClip {
+            track: track.raw(),
+            start_sample: 0,
+            samples: vec![0.25; 4096].into(),
+            right: None,
+            fade_in: 0,
+            fade_out: 0,
+        }])
+    }));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let project = project
         .add_clap_device(track, Id::generate(), &route.clap_id)
@@ -237,7 +294,7 @@ fn contract_macos_bundle_scan_to_playback_and_load_errors() {
     let (mut dry_control, mut dry) = playback_pair(&dry_project, 48000, frames).unwrap();
     dry_control.command(PlaybackCommand::Play).unwrap();
     let (mut expected, mut right) = (vec![0.0; frames], vec![0.0; frames]);
-    dry.render(&mut expected, &mut right);
+    render_content(&mut dry, &mut expected, &mut right);
     assert!(expected.iter().any(|sample| *sample != 0.0));
     for id in ["dev.echode.test-gain", "dev.echode.test-instrument"] {
         let resolved = resolve_cached(&cache, &[id]);
@@ -307,7 +364,7 @@ fn score() -> (Project, Id) {
         )
         .unwrap()
         .0;
-    (project, track)
+    (with_sine(project, track), track)
 }
 
 fn render(project: &Project, route: Option<PluginRoute>, frames: usize, blocks: usize) -> Vec<f32> {
@@ -445,6 +502,7 @@ fn audit_aud07_one_deadline_collects_a_healthy_track_beside_hangs() {
         project = next.insert_note(id, note).unwrap().0;
         hang_ids.push(id);
     }
+    project = with_sine(project, live);
     let mut device = 90u128;
     project = project
         .add_clap_device(live, Id::from_raw(device), "dev.echode.test-gain")
@@ -473,7 +531,10 @@ fn audit_aud07_one_deadline_collects_a_healthy_track_beside_hangs() {
         });
     }
     let (dry_project, dry_track) = Project::new().add_track("live");
-    let dry_project = dry_project.insert_note(dry_track, note).unwrap().0;
+    let dry_project = with_sine(
+        dry_project.insert_note(dry_track, note).unwrap().0,
+        dry_track,
+    );
     let dry = render(&dry_project, None, 2048, 1);
     let expected: Vec<_> = dry.iter().map(|sample| sample * 2.0).collect();
     assert!(expected.iter().any(|sample| *sample != 0.0));
@@ -780,7 +841,7 @@ fn key_route(path: &Path) -> PluginRoute {
 
 fn hold_note(pitch: u8) -> (Project, Id, Id) {
     let (project, track) = Project::new().add_track("pad");
-    let project = project
+    let project = with_sine(project, track)
         .add_clap_device(track, Id::from_raw(92), "dev.echode.test-gain")
         .unwrap();
     let (project, note) = project
@@ -828,7 +889,11 @@ fn tail_player(
             },
         )
         .unwrap();
-    project = noted;
+    project = if chain == 1 {
+        with_sine(noted, track)
+    } else {
+        noted
+    };
     let mut routes = Vec::new();
     for (plugin, instrument, include) in [
         ("dev.echode.test-instrument", true, chain != 1),
@@ -1172,7 +1237,14 @@ fn contract_host_bypass_keeps_dry_audio_and_silences_instruments_under_rtsan() {
             route.clap_id = "dev.echode.test-instrument".into();
             route.instrument = true;
         }
-        let with = project.add_clap_device(track, id, &route.clap_id).unwrap();
+        let source = if instrument {
+            project
+                .remove_device(project.tracks()[0].devices[0].id)
+                .unwrap()
+        } else {
+            project.clone()
+        };
+        let with = source.add_clap_device(track, id, &route.clap_id).unwrap();
         let bypassed = with.set_device_bypassed(id, true).unwrap();
         let heard = play_left(
             &bypassed,
@@ -1529,6 +1601,8 @@ fn audit_aud08_clips_and_notes_reach_the_track_effect_before_the_fader() {
 
     let (project, track) = score();
     let project = project
+        .remove_device(project.tracks()[0].devices[0].id)
+        .unwrap()
         .add_clap_device(track, Id::from_raw(96), "dev.echode.test-gain")
         .unwrap()
         .add_clap_device(track, Id::from_raw(97), "dev.echode.test-gain")
@@ -2304,6 +2378,11 @@ fn live_stop_fades_existing_voices_without_new_notes_and_resets_before_resume_un
             true,
         );
     }
+    assert!(
+        control.plugin_failure().is_none(),
+        "{:?}",
+        control.plugin_failure()
+    );
     assert_level(left[0], 1.0);
     let stopped = control.status().sample;
     control.command(PlaybackCommand::Stop).unwrap();

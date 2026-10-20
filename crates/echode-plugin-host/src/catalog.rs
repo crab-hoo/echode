@@ -218,6 +218,9 @@ pub fn catalog_roots() -> Vec<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         roots.push(PathBuf::from(home).join("Library/Audio/Plug-Ins/CLAP"));
     }
+    if let Some(host) = crate::host_binary() {
+        roots.push(crate::scan::bundled_plugin_directory(&host));
+    }
     if let Ok(value) = std::env::var("CLAP_PATH") {
         roots.extend(clap_path_directories(Some(&value)));
     }

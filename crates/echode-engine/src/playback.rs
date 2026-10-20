@@ -25,7 +25,7 @@ use crate::mix::{FaderState, Signal};
 use crate::plugins::{ChainDevice, HostGraph, PluginRoute, TrackChain, collect_deadline};
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
-use crate::{ PlaybackError, PlaybackIds, PlayedSpan, TrackFader};
+use crate::{PlaybackError, PlaybackIds, PlayedSpan, TrackFader};
 
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
@@ -121,6 +121,12 @@ struct Track {
     base_fader: TrackFader,
     meter: Arc<TrackMeter>,
     cache: Option<CachedTrack>,
+    /// Note ids and bounds, sorted for bounded lookup during plan adoption.
+    notes: Arc<[(u32, i64, i64)]>,
+    /// Keep the previous index alive until control retires this bank. Audio
+    /// queries only chased notes and never scans the score or drops its index.
+    carried_notes: Option<Arc<[(u32, i64, i64)]>>,
+    carried_at: Option<i64>,
     clips: Vec<StoredClip>,
 }
 
@@ -254,6 +260,12 @@ impl Prepared {
         let mut demands = Vec::with_capacity(plan.tracks.len());
         for track in &plan.tracks {
             let voices = track.notes.len();
+            let mut notes: Vec<_> = track
+                .notes
+                .iter()
+                .map(|note| (note.note_id, note.on, note.off))
+                .collect();
+            notes.sort_unstable_by_key(|note| note.0);
             let mut clips: Vec<StoredClip> = loaded
                 .iter()
                 .filter(|clip| clip.track == track.track)
@@ -309,6 +321,9 @@ impl Prepared {
                 fader: FaderState::new(fader, rate),
                 base_fader: fader,
                 cache: sources.caches.get(&track.track).cloned(),
+                carried_notes: None,
+                carried_at: None,
+                notes: notes.into(),
                 clips,
             });
         }
@@ -401,6 +416,11 @@ impl Prepared {
         }
         self.cursor.catch_up(&self.plan, sample);
         self.chase = true;
+        if silence {
+            for track in &mut self.tracks {
+                track.carried_at = None;
+            }
+        }
         Ok(())
     }
 
@@ -462,7 +482,8 @@ impl Prepared {
                 if playing {
                     track.fader.carry(old.fader);
                 }
-
+                track.carried_notes = Some(Arc::clone(&old.notes));
+                track.carried_at = previous.plugin_holds.then_some(sample);
             }
         }
         if previous.plugin_holds {
@@ -481,18 +502,53 @@ impl Prepared {
         self.chased_ons.clear();
         let mut kept = 0;
         for index in 0..count {
-            let event = *self.events.get(index).ok_or(PlaybackError::BufferTooSmall)?;
-            if event.is_note_on() && self.plugin_holds {
+            let event = *self
+                .events
+                .get(index)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            if event.is_note_on() && self.note_was_carried(event) {
                 if self.chased_ons.len() == self.chased_ons.capacity() {
                     return Err(PlaybackError::BufferTooSmall);
                 }
                 self.chased_ons.push(event);
             } else {
-                *self.events.get_mut(kept).ok_or(PlaybackError::BufferTooSmall)? = event;
+                *self
+                    .events
+                    .get_mut(kept)
+                    .ok_or(PlaybackError::BufferTooSmall)? = event;
                 kept += 1;
             }
         }
+        for track in &mut self.tracks {
+            track.carried_at = None;
+        }
         Ok(kept)
+    }
+
+    fn note_was_carried(&self, event: Event) -> bool {
+        let Some((key, id)) = event.track_key().zip(event.note_id()) else {
+            return false;
+        };
+        self.track_indices
+            .binary_search_by_key(&key, |entry| entry.0)
+            .ok()
+            .and_then(|index| self.track_indices.get(index))
+            .and_then(|entry| self.tracks.get(entry.1))
+            .is_some_and(|track| {
+                let Some(sample) = track.carried_at else {
+                    return false;
+                };
+                track
+                    .carried_notes
+                    .as_ref()
+                    .and_then(|notes| {
+                        notes
+                            .binary_search_by_key(&id, |note| note.0)
+                            .ok()
+                            .and_then(|index| notes.get(index))
+                    })
+                    .is_some_and(|note| note.1 < sample && note.2 >= sample)
+            })
     }
 
     fn render(
@@ -989,6 +1045,9 @@ fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
                 .devices
                 .iter()
                 .filter_map(|device| {
+                    if device.offline {
+                        return None;
+                    }
                     Some(ChainDevice {
                         id: device.id.raw(),
                         clap_id: device.plugin.clone()?,
@@ -1291,6 +1350,11 @@ pub fn playback_with_clock(
 }
 
 impl PlaybackControl {
+    /// Declared finite device tails summed through each chain, before the fader.
+    pub fn tail_samples(&self) -> u32 {
+        self.hosts.tail_samples()
+    }
+
     pub fn set_routes(&mut self, host_bin: &std::path::Path, routes: &[PluginRoute]) {
         self.host_bin = host_bin.to_path_buf();
         self.routes = routes.to_vec();

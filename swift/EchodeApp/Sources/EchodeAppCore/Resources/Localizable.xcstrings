@@ -1,6 +1,42 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Expand Folder": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Expand Folder" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "フォルダを展開" } }
+      }
+    },
+    "Collapse Folder": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Collapse Folder" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "フォルダを折りたたむ" } }
+      }
+    },
+    "Add Track at End": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Add Track at End" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "末尾にトラックを追加" } }
+      }
+    },
+    "Offline": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Offline" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "オフライン" } }
+      }
+    },
+    "Offline FX help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Keep recorded settings and release the plugin helper." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "記録済みの設定を残し、プラグインのヘルパーを解放します。" } }
+      }
+    },
+    "Insert on selected tracks": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Insert on selected tracks" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "選択トラックすべてに追加" } }
+      }
+    },
     "Sample Folders": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Sample Folders" } },
@@ -219,6 +255,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "トラックを追加"
+          }
+        }
+      }
+    },
+    "Duplicate Track": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Duplicate Track"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "トラックを複製"
           }
         }
       }
@@ -1428,13 +1480,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Track notes play through the built-in Sine Pad."
+            "value": "Insert an instrument such as Sine Pad to play track notes."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "各トラックのノートを内蔵の Sine Pad で再生します。"
+            "value": "ノートを鳴らすには Sine Pad などの音源を挿入します。"
           }
         }
       }

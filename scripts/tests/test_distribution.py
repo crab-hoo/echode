@@ -130,6 +130,10 @@ class SignedBundle(unittest.TestCase):
                 self.assertTrue((app / "Contents/Frameworks/EchodeFFI.xcframework").is_dir())
                 self.assertFalse((app / "Contents/MacOS/echode-plugin-host").exists())
                 subprocess.run(["codesign", "--verify", "--strict", str(app)], check=True)
+                plugin = app / "Contents/PlugIns/EchodeSinePad.clap"
+                self.assertTrue(distribution.plugin_binary(plugin).is_file())
+                subprocess.run(["codesign", "--verify", "--strict", str(plugin)], check=True)
+                self.assertIn("Authority=Echode Local", self.codesign_details(plugin))
                 described = self.codesign_details(app)
                 self.assertIn("Authority=Echode Local", described)
                 self.assertNotIn("Signature=adhoc", described)
@@ -167,7 +171,12 @@ class SignedBundle(unittest.TestCase):
         self.compile_loader(root / "loader.c", executable)
         shutil.copy(executable, helper)
         app = root / "Echode.app"
-        distribution.assemble_app(app, executable, helper, ROOT / "swift/EchodeApp/Info.plist", framework)
+        plugin = root / "EchodeSinePad.clap"
+        binary = plugin / "Contents/MacOS/EchodeSinePad"
+        binary.parent.mkdir(parents=True)
+        shutil.copy2(self.foreign_library(root), binary)
+        shutil.copy2(ROOT / "Packaging/EchodeSinePad-Info.plist", plugin / "Contents/Info.plist")
+        distribution.assemble_app(app, executable, helper, ROOT / "swift/EchodeApp/Info.plist", framework, plugins=[plugin])
         distribution.sign_app(app, keychain=keychain)
         return app
 

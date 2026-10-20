@@ -8,9 +8,16 @@ Echode は macOS 専用の DAW です。このファイルは全エージェン�
 - コード、識別子、コードコメント、コミットメッセージは英語
 - 計画書、設計書、ADR、このファイルは日本語
 
+## 進捗と結果の報告
+
+- テスト・検査の合格ごとの報告と、待機中の実況はしない。
+- 検査の報告は、失敗・見送り・ユーザーの対応が必要な事項に絞る。合格の一覧や件数は、求められた時だけ示す。
+- 検査結果と見送り理由は、従来どおり `target/verification/report.md` に記録する。
+
 ## 作業の入口
 
-1. `make doctor` と `make verify-plan` で環境・変更範囲・古い結果を確認する。
+1. `make agent-context` で環境・変更範囲・古い結果・関連資料を一度に確認する。
+   個別確認は `make doctor` と `make verify-plan`。情報取得・実行の方針は [エージェントの手順](docs/agent-workflow.md) に従う。
 2. [資料の入口](docs/README.md) から [現在の制約](docs/status.md)、触る領域の PLAN・ARCHITECTURE（および `docs/architecture/` の領域別設計書）、関連 ADR と監査を読む。
 3. [開発手順](docs/development.md) に従い、製品と同じ経路で不具合を再現してから修正する。開始時にドキュメント・テスト基盤・デバッグ基盤への影響も確認する。
 4. 必要な基盤の更新を同じ作業で終え、[検査手順](docs/verification.md) で全選択項目を処理し、最後に `make verify`。失敗時は [デバッグ手順](docs/debugging.md)。
@@ -63,7 +70,10 @@ Phase 0 は確定済み、Phase 1 の完了範囲は [現在の制約](docs/stat
 
 ## 確認
 
-着手時に `make verify-plan`、変更を終えたら `make verify` を実行します。変更箇所と追加検査の対応は `scripts/verification.json` だけに置きます。
+検査は [まとめて進める方針](docs/development.md#検査をまとめて進める) に従い、範囲・合否基準を維持したまま重複実行と読み込む出力を抑えます。
+
+着手時に `make agent-context` または `make verify-plan`、変更を終えたら `make verify` を実行します。
+変更箇所と追加検査の対応は `scripts/verification.json` だけに置きます。
 通常の `make check`（フォーマット、clippy、Rust / Swift、FFI、ライセンス）に加え、橋渡しの全 feature・ASan・TSan・Miri、音声の RTSan、入力の単体テストを必要な範囲で選びます。
 依存するモデルの変更も対象です。実行方法と検査範囲は `docs/verification.md` を読んでください。
 

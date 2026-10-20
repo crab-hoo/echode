@@ -185,6 +185,8 @@ pub struct Device {
     pub state: Option<String>,
     /// Host bypass keeps the helper and its settings, while passing dry audio.
     pub bypassed: bool,
+    /// Offline devices keep their recorded settings without loading a helper.
+    pub offline: bool,
     pub parameters: Vec<Parameter>,
 }
 
@@ -196,6 +198,7 @@ impl Device {
             plugin: None,
             state: None,
             bypassed: false,
+            offline: false,
             parameters: vec![
                 Parameter::at_default(ids.gain, ParamKey::Gain),
                 Parameter::at_default(ids.pan, ParamKey::Pan),
@@ -212,6 +215,7 @@ impl Device {
             plugin: Some(plugin),
             state: None,
             bypassed: false,
+            offline: false,
             parameters: Vec::new(),
         }
     }
@@ -285,6 +289,7 @@ pub(crate) fn validate_mixer(
     if device.kind != DeviceKind::Mixer
         || device.state.is_some()
         || device.bypassed
+        || device.offline
         || device.parameters.len() != ParamKey::ORDER.len()
     {
         return Err(ModelError::InvalidParameter);

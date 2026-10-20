@@ -46,6 +46,10 @@ Phase 1 は変わっていないトラックを `Arc` で共有し、ノート�
 - トラックの並び順は、同じ親の兄弟ごとに分数インデックスの文字列で持つ。
   アレンジ画面の順はそのキーで木から作る（[ADR 0024](../decisions/0024-track-order.md)）。
   デバイスの並びも同じ形にする
+- `track.insert` は指定トラックの下、または子を持つフォルダの末尾へ追加する。
+  新規トラックのキーだけを決め、既存トラックを保持する（[ADR 0127](../decisions/0127-positioned-track-insertion.md)）。
+- `track.duplicate` は部分木を元の直後へ複製し、根だけに新しいキーを振る。
+  複製の ID は記録した `seed` と元 ID から導出し、配置の中身とノートは元と独立させる（[ADR 0129](../decisions/0129-track-duplication.md)）。
 
 ### 4.4 時間の表現
 
@@ -136,8 +140,10 @@ MySong.echode/
   （[ADR 0074](../decisions/0074-package-entry-io.md)）
 - キー順序を固定し、時間は整数、1 ノート 1 行で出力する。スキーマは 1 段ずつマイグレーションして読む
   （[ADR 0028](../decisions/0028-package-schema.md)）
-- 現行スキーマは 4。デバイスの `bypassed` を保存し、3 以前は有効状態へ段階変換する。
-  旧リーダーが新しい音声状態を無視しないよう版を進める（[ADR 0120](../decisions/0120-device-bypass.md)）
+- 現行スキーマは 5。デバイスの `bypassed` と `offline` を保存する。
+  3 以前はバイパス解除、4 以前はオンラインとして段階変換する。
+  旧リーダーが新しい音声状態を無視しないよう版を進める
+  （[ADR 0120](../decisions/0120-device-bypass.md)、[ADR 0125](../decisions/0125-device-offline.md)）。
 
 ### 6.3 メディアの保管庫
 

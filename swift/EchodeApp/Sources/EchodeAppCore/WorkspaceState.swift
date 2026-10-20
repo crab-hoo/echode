@@ -67,6 +67,11 @@ public final class WorkspaceState {
     var presentation: WorkspacePresentation?
     var pluginBrowserDocument: UUID?
     var deviceEditor = false
+    var collapsedTracks: Set<UUID> = []
+    @ObservationIgnored private var folderDocument: UUID?
+    @ObservationIgnored private var projectionSource: Snapshot?
+    @ObservationIgnored private var projectionCollapsed: Set<UUID> = []
+    @ObservationIgnored private var projectedOrder: [UUID] = []
     var choosingFile = false
     var draft = NoteDraft()
     let browser: FileBrowserState
@@ -86,11 +91,43 @@ public final class WorkspaceState {
     func saveLayout() { if let data = try? JSONEncoder().encode(layout) { defaults.set(data, forKey: Self.layoutKey) } }
 
     func synchronize(_ controller: ProjectController) {
+        if folderDocument != controller.documentID { collapsedTracks = []; folderDocument = controller.documentID }
+        if let snapshot = controller.snapshot {
+            let folders = Set((0..<snapshot.trackCount).compactMap { index in
+                snapshot.trackHierarchy(at: index)?.hasChildren == true ? snapshot.trackID(at: index) : nil
+            })
+            collapsedTracks.formIntersection(folders)
+            let visible = Set(visibleTrackOrder(controller))
+            if let hidden = controller.tracks.first(where: { controller.selectedTracks.contains($0.id) && !visible.contains($0.id) })?.id {
+                let parents = Dictionary(uniqueKeysWithValues: (0..<snapshot.trackCount).compactMap { index -> (UUID, UUID)? in
+                    guard let id = snapshot.trackID(at: index), let parent = snapshot.trackHierarchy(at: index)?.parent else { return nil }
+                    return (id, parent)
+                })
+                var cursor = hidden
+                while let parent = parents[cursor] { cursor = parent; if visible.contains(parent) { break } }
+                controller.selection = cursor
+            }
+        } else {
+            collapsedTracks = []; projectionSource = nil; projectedOrder = []; projectionCollapsed = []
+        }
         if pluginBrowserDocument != controller.documentID { pluginBrowserDocument = nil }
         if case .history = presentation, controller.snapshot == nil { presentation = nil }
         navigation.prepare(document: controller.documentID, tracks: Set(controller.tracks.map(\.id)))
         draft.synchronize(document: controller.documentID, track: controller.selection,
                           note: controller.noteFocus.flatMap { controller.snapshot?.pianoNote($0) })
+    }
+
+    func visibleTrackOrder(_ controller: ProjectController) -> [UUID] {
+        guard let snapshot = controller.snapshot else {
+            projectionSource = nil; projectedOrder = []; projectionCollapsed = []
+            return []
+        }
+        if projectionSource !== snapshot || projectionCollapsed != collapsedTracks {
+            guard let projected = snapshot.arrangeProjection(collapsedTracks: collapsedTracks) else { return [] }
+            projectedOrder = (0..<projected.trackCount).compactMap { projected.trackID(at: $0) }
+            projectionSource = snapshot; projectionCollapsed = collapsedTracks
+        }
+        return projectedOrder
     }
 }
 

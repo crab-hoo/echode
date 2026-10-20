@@ -1,6 +1,6 @@
 //! A submission returns before the document thread finishes the command.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
@@ -16,7 +16,7 @@ use echode_draw::{ArrangeIndex, ArrangeView, Element, ElementId, PianoNote, Pian
 use echode_history::{DocumentHost, PeakColumn, Waveforms};
 use echode_model::{Id, Project};
 
-use crate::{PianoNoteElement, VisibleElement};
+use crate::{PianoNoteElement, TrackTreeInfo, VisibleElement};
 
 use crate::{Complete, ECHODE_ERR, ECHODE_OK};
 
@@ -44,6 +44,8 @@ pub struct Snapshot {
     audio: Arc<Vec<u8>>,
     history: Arc<Vec<u8>>,
     waveforms: Arc<Waveforms>,
+    hierarchy: Arc<Vec<TrackTreeInfo>>,
+    row_map: Option<Arc<Vec<usize>>>,
 }
 
 pub(crate) enum Operation {
@@ -201,6 +203,8 @@ impl Snapshot {
         );
         Self {
             controls: Arc::new(crate::controls::ControlIndex::build(&project)),
+            hierarchy: Arc::new(crate::projection::hierarchy(&project)),
+            row_map: None,
             project,
             index: Arc::new(index),
             audio: Arc::new(serde_json::to_vec(&AudioState::default()).unwrap_or_default()),
@@ -217,7 +221,55 @@ impl Snapshot {
             audio: Arc::clone(&self.audio),
             history: Arc::clone(&self.history),
             waveforms: Arc::clone(&self.waveforms),
+            hierarchy: Arc::clone(&self.hierarchy),
+            row_map: self.row_map.clone(),
         }
+    }
+
+    pub(crate) fn project_arrange(&self, collapsed: &BTreeSet<Id>) -> Self {
+        if collapsed.is_empty() {
+            let mut projected = self.retain();
+            projected.row_map = None;
+            return projected;
+        }
+        let mut hidden = BTreeSet::new();
+        let rows =
+            self.project
+                .tracks()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, track)| {
+                    if track.parent.is_some_and(|parent| {
+                        collapsed.contains(&parent) || hidden.contains(&parent)
+                    }) {
+                        hidden.insert(track.id);
+                        None
+                    } else {
+                        Some(index)
+                    }
+                })
+                .collect();
+        let mut projected = self.retain();
+        projected.row_map = Some(Arc::new(rows));
+        projected
+    }
+
+    pub(crate) fn source_track_index(&self, row: usize) -> Option<usize> {
+        match &self.row_map {
+            Some(rows) => rows.get(row).copied(),
+            None => (row < self.project.tracks().len()).then_some(row),
+        }
+    }
+
+    pub(crate) fn track_tree(&self, row: usize) -> Option<TrackTreeInfo> {
+        self.hierarchy.get(self.source_track_index(row)?).copied()
+    }
+
+    fn track(&self, row: usize) -> Option<&echode_model::Track> {
+        self.project
+            .tracks()
+            .get(self.source_track_index(row)?)
+            .map(AsRef::as_ref)
     }
 
     pub(crate) fn waveform(
@@ -240,18 +292,17 @@ impl Snapshot {
     }
 
     pub(crate) fn track_count(&self) -> usize {
-        self.project.tracks().len()
+        self.row_map
+            .as_ref()
+            .map_or(self.project.tracks().len(), |rows| rows.len())
     }
 
     pub(crate) fn track_name(&self, index: usize) -> Option<&str> {
-        self.project
-            .tracks()
-            .get(index)
-            .map(|track| track.name.as_str())
+        self.track(index).map(|track| track.name.as_str())
     }
 
     pub(crate) fn write_track_id(&self, index: usize, out: &mut [u8; 16]) -> bool {
-        let Some(track) = self.project.tracks().get(index) else {
+        let Some(track) = self.track(index) else {
             return false;
         };
         *out = id_bytes(track.id);
@@ -259,18 +310,14 @@ impl Snapshot {
     }
 
     pub(crate) fn device_count(&self, track: usize) -> usize {
-        self.project
-            .tracks()
-            .get(track)
+        self.track(track)
             .map(|track| track.devices.len())
             .unwrap_or(0)
     }
 
     pub(crate) fn write_device_id(&self, track: usize, device: usize, out: &mut [u8; 16]) -> bool {
         let Some(device) = self
-            .project
-            .tracks()
-            .get(track)
+            .track(track)
             .and_then(|track| track.devices.get(device))
         else {
             return false;
@@ -280,18 +327,21 @@ impl Snapshot {
     }
 
     pub(crate) fn device_bypassed(&self, track: usize, device: usize) -> Option<bool> {
-        self.project
-            .tracks()
-            .get(track)?
+        self.track(track)?
             .devices
             .get(device)
             .map(|device| device.bypassed)
     }
 
+    pub(crate) fn device_offline(&self, track: usize, device: usize) -> Option<bool> {
+        self.track(track)?
+            .devices
+            .get(device)
+            .map(|device| device.offline)
+    }
+
     pub(crate) fn device_plugin(&self, track: usize, device: usize) -> Option<&str> {
-        self.project
-            .tracks()
-            .get(track)
+        self.track(track)
             .and_then(|track| track.devices.get(device))
             .and_then(|device| device.plugin.as_deref())
     }
@@ -303,14 +353,20 @@ impl Snapshot {
     ) -> (usize, usize) {
         let mut written = 0usize;
         let mut dropped = 0usize;
-        self.index.visit_visible(&self.project, view, |element| {
+        let emit = |element| {
             if written < out.len() {
                 out[written] = visible_element(element);
                 written += 1;
             } else {
                 dropped = dropped.saturating_add(1);
             }
-        });
+        };
+        if let Some(rows) = &self.row_map {
+            self.index
+                .visit_visible_rows(&self.project, view, rows, emit);
+        } else {
+            self.index.visit_visible(&self.project, view, emit);
+        }
         (written, dropped)
     }
 
@@ -559,6 +615,13 @@ fn apply(host: &DocumentHost, operation: &Operation) -> Result<(), String> {
                 Ok(_) => return Err("command is empty".to_string()),
                 Err(_) => return Err("command is not utf-8".to_string()),
             };
+            if text.trim_start().starts_with('[') {
+                let actions = serde_json::from_str(text).map_err(|error| error.to_string())?;
+                return host
+                    .apply(actions)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string());
+            }
             let command =
                 serde_json::from_str::<Command>(text).map_err(|error| error.to_string())?;
             host.perform(command)

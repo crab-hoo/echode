@@ -133,6 +133,16 @@ pub fn render_offline_blocks_with_clips<E>(
     if block_frames == 0 {
         return Err(OfflineError::Playback(PlaybackError::BufferTooSmall));
     }
+    if project
+        .tracks()
+        .iter()
+        .flat_map(|track| &track.devices)
+        .any(|device| device.plugin.is_some() && !device.offline)
+    {
+        return Err(OfflineError::Playback(PlaybackError::Unsupported(
+            "device rendering requires the isolated plugin host".into(),
+        )));
+    }
     let scratch = block_frames as usize;
     let (mut control, mut audio) = crate::playback::playback_pair(project, sample_rate, scratch)
         .map_err(OfflineError::Playback)?;

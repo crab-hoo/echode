@@ -7,7 +7,8 @@
 ## 開始から完了まで
 
 1. `git status --short` で既存変更を把握し、他の作業の変更を巻き戻さない。
-   `make doctor` で不足ツールと鮮度、`make verify-plan` で選択された検査を確認する。
+   `make agent-context` で不足ツール・鮮度・選択された検査・関連資料を一度に確認する。
+   個別確認は `make doctor` と `make verify-plan`、必要な節の読込と根拠の扱いは [エージェントの手順](agent-workflow.md) に従う。
 2. [現在の制約](status.md)、触る領域の [ARCHITECTURE](ARCHITECTURE.md) 分割資料、関連 ADR、[監査の読み順](README.md#監査の読み順) を読む。
    設計上の将来機能と実装済みの機能を区別し、下記の保守の観点から今回の影響範囲も確認する。
 3. 不具合は最小入力、初期状態、操作順、期待と実際、使用した版を記録する。
@@ -15,13 +16,28 @@
 4. 境界と不変条件を守って修正し、必要なドキュメント・テスト・デバッグ基盤も同じ作業で更新する。
    作業中の個別テストは `-q` を付けて出力を抑え（例: `cargo test -q -p <crate> <filter>`）、最後の編集後に `make verify` を実行する。
 5. 選択された実機・計測は実行するか理由を記録し、最後の編集後に全選択項目を確認する。途中の `--only` の成功を完了の証拠にしない。
-6. 最終報告には変更の効果、基盤の更新内容（不要なら理由）、検査結果、見送った検査名と理由、残る制約を簡潔に記す。
+6. 最終報告には変更の効果、基盤の更新内容（不要なら理由）、失敗した検査、見送った検査名と理由、残る制約を簡潔に記す。
+   検査の報告範囲は [AGENTS.md](../AGENTS.md#進捗と結果の報告) に従う。
    コミット・プッシュはユーザーの依頼がある時だけ行う。
 
 実機・聴感テストは原則としてユーザーが担当し、エージェントは実機を使わない自動回帰を先に行う。
 音声だけの変更に Computer Use を使わず、機器を開く検査やアプリ操作は明示的な依頼がある時だけ行う。
 前の作業の変更が残っている時も、各検査の依存入力が同じなら合格を再利用する。
 10分計測（`spike-engine`）は大きなリアルタイム設計変更・長時間不具合・リリース確認など、目的を説明できる時に追加する。
+
+## 検査をまとめて進める
+
+検査の範囲・合否基準・必須契約を維持し、重複実行とエージェントへ渡す出力を抑える。
+
+- 関連する実装・資料・回帰テストを一つの完了条件にまとめ、更新をそろえてから最終検査する。
+- 作業中は再現・修正確認に必要な個別テストを `-q` で実行し、最後の編集後に `make verify` で全選択項目をまとめて処理する。
+  再実行は追加変更・失敗の修正・未解決の懸念がある時に行う。
+- 結果の再利用と失効は [検査基盤](verification.md#記録と有効期限) に任せ、入力とツールが同じ有効な結果を使う。
+- 詳細ログは検査基盤の保存先に残し、成功時は集計、失敗時は抜粋と必要な範囲だけを読む。
+  実行中は完了をまとめて待ち、短い間隔の進捗確認や成功ログの読み直しを避ける。
+  ユーザーへの報告は [AGENTS.md](../AGENTS.md#進捗と結果の報告) に従う。
+- 一括実行でも検査の排他と必須契約の負の対照ごとの隔離を維持する。
+  実機・計測の実行条件と未実施理由の記録は [検査手順](verification.md) に従う。
 
 ## 基盤の保守を同じ作業で行う
 
@@ -59,7 +75,7 @@
 
 | 領域 | パス | 役割・主な入口 |
 | :--- | :--- | :--- |
-| モデル・時間・不変条件 | `crates/echode-model` | `model.rs`（`Project`）、`time.rs`（`Tick` / `Flicks` / `TempoMap`）、`invariants.rs`、`changeset.rs` |
+| モデル・時間・不変条件 | `crates/echode-model` | `model.rs`（`Project`）、`time.rs`（`Tick` / `Flicks` / `TempoMap`）、`invariants.rs`、`changeset.rs`、`duplicate.rs`（部分木の複製と導出 ID） |
 | アクション・編集セッション | `crates/echode-actions` | `action.rs`（`Action` / 登録簿）、`session.rs`（`Session` の Undo / Redo 履歴） |
 | Git 履歴・パッケージ・ピーク | `crates/echode-history` | `host.rs`（`DocumentHost`・ジャーナル・復旧）、`store.rs`（CAS）、`peaks.rs`（ピークキャッシュ） |
 | リアルタイム検査 | `crates/echode-realtime` | `alloc.rs`（RT 確保禁止ガード）、`event.rs`（固定容量イベント列）、`ring.rs`（SPSC） |
@@ -67,6 +83,7 @@
 | CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止） |
 | 共有メモリ・IPC | `crates/echode-sandbox` | `region.rs`（共有メモリ・`arm_abort_notice`）、`session.rs`（`PluginControl`）、`workgroup.rs`、`wire.rs` |
 | プラグインヘルパー | `crates/echode-plugin-host` | `scan.rs`（バンドル走査）、`catalog.rs`（キャッシュ）、`threads.rs` / `events.rs`（CLAP 処理・リセット）、`awake.rs` |
+| 同梱音源 | `crates/echode-sine-pad` | Sine Pad CLAP、事前領域拡張、状態と余韻。`scripts/build-bundled-plugins.sh` で通常の走査用バンドルを作る |
 | 故障注入プラグイン | `crates/echode-test-plugin` | クラッシュ・ハング・ステレオ・残響・MIDI 検証用 CLAP プラグイン |
 | 描画クエリ・可視列 | `crates/echode-draw` | `query.rs`（アレンジ・ピアノロールの可視列抽出・空間インデックス） |
 | JSON-RPC・MCP | `crates/echode-api` | `rpc.rs` / `serve.rs`（Unix ソケット RPC）、`mcp.rs`（MCP stdio ブリッジ） |
@@ -76,6 +93,11 @@
 | 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`diagnose.py`、`distribution.py`、`tests/` |
+
+フォルダ表示の製品 ABI は `crates/echode-ffi/src/projection.rs`、Swift の保持と階層取得は
+`swift/EchodeBridge/Sources/EchodeBridge/TrackHierarchy.swift` に置く。
+ヘッダの開閉と表示行の共有は `ArrangePaneView.swift`、追加位置の保持は `TrackInsertion.swift` を使う。
+複製対象の保持は `TrackDuplication.swift`、ヘッダの右メニューは `ArrangeHeaderView.swift` に置く。
 
 ### ビルド対象の CPU・OS 基準
 

@@ -782,6 +782,7 @@ dependencies = [
 name = "echode-model"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "fractional_index",
  "schemars",
  "serde",

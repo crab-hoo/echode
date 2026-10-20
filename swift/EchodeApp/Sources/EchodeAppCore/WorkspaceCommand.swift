@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
-    case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track"
+    case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track", duplicateTrack = "Duplicate Track"
     case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Track FX"
     case playback = "Play / Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
     public var id: Self { self }
@@ -13,6 +13,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .newProject: "doc.badge.plus"
         case .openProject: "folder"
         case .addTrack: "plus"
+        case .duplicateTrack: "plus.square.on.square"
         case .undo: "arrow.uturn.backward"
         case .redo: "arrow.uturn.forward"
         case .history: "clock.arrow.circlepath"
@@ -80,7 +81,7 @@ final class WorkspaceSession {
         case .redo: return editable && controller.redoCount > 0
         case .history: return editable
         case .addTrack: return editable
-        case .plugins, .devices: return editable && controller.selection != nil
+        case .duplicateTrack, .plugins, .devices: return editable && controller.selection != nil
         case .playback, .stop: return editable
         case .loop, .metronome, .output: return editable && !controller.audioBusy
         default: return true
@@ -93,7 +94,8 @@ final class WorkspaceSession {
         case .newProject: chooseProject(creating: true)
         case .openProject: chooseProject(creating: false)
         case .addTrack:
-            Task { await controller.addTrack(name: "\(text("Track")) \(controller.tracks.count + 1)") }
+            addTrack()
+        case .duplicateTrack: duplicateTracks()
         case .undo: Task { await controller.undo() }
         case .redo: Task { await controller.redo() }
         case .history: state.presentation = .history
@@ -115,7 +117,7 @@ final class WorkspaceSession {
         guard enabled(.plugins), let document = controller.documentID else { return }
         if let track {
             guard controller.tracks.contains(where: { $0.id == track }) else { return }
-            controller.selection = track
+            controller.selectTrack(track, change: .focus)
         }
         state.deviceEditor = true; state.layout.editor = true; state.saveLayout()
         state.pluginBrowserDocument = document

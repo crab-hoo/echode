@@ -19,6 +19,81 @@ const BLOCKS: [u32; 4] = [1, 7, 64, 512];
 const VOICES_PER_TRACK: usize = 8;
 
 #[test]
+fn offline_devices_keep_stereo_clips_independent_of_block_size_under_rtsan() {
+    use echode_engine::{LoadedClip, PlaybackCommand, PluginRoute, playback_with_plugins};
+    let (project, track) = Project::new().add_track("offline instrument");
+    let device = Id::generate();
+    let project = project
+        .add_clap_device(track, device, "missing.instrument")
+        .unwrap()
+        .set_device_offline(device, true)
+        .unwrap()
+        .insert_note(track, note(0.0, 4.0, 60))
+        .unwrap()
+        .0;
+    // This duration and these two planes bound only this stereo regression.
+    let input: Arc<[f32]> = (0..1537)
+        .map(|index| (index as f32 * 0.031).sin() * 0.25)
+        .collect::<Vec<_>>()
+        .into();
+    let other: Arc<[f32]> = input
+        .iter()
+        .map(|sample| sample * -0.5)
+        .collect::<Vec<_>>()
+        .into();
+    let route = PluginRoute {
+        clap_id: "missing.instrument".into(),
+        path: std::env::current_exe().unwrap(),
+        instrument: true,
+        state: None,
+        fault: None,
+    };
+    for rate in [48_000, 96_000] {
+        let mut reference = None;
+        for block in BLOCKS {
+            let (mut control, mut audio) = playback_with_plugins(
+                &project,
+                rate,
+                block as usize,
+                std::path::Path::new("/missing-offline-host"),
+                std::slice::from_ref(&route),
+            )
+            .unwrap();
+            let source = Arc::clone(&input);
+            let right = Arc::clone(&other);
+            control.set_clip_loader(Arc::new(move |_, _| {
+                Ok(vec![LoadedClip {
+                    track: track.raw(),
+                    start_sample: 0,
+                    samples: Arc::clone(&source),
+                    right: Some(Arc::clone(&right)),
+                    fade_in: 0,
+                    fade_out: 0,
+                }])
+            }));
+            control.replace(&project).unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut left = vec![0.0; block as usize];
+            let mut right = left.clone();
+            let mut heard = (Vec::new(), Vec::new());
+            for offset in (0..input.len()).step_by(block as usize) {
+                let count = (block as usize).min(input.len() - offset);
+                audio.render(&mut left[..count], &mut right[..count]);
+                heard.0.extend_from_slice(&left[..count]);
+                heard.1.extend_from_slice(&right[..count]);
+            }
+            assert_eq!(heard.0.as_slice(), input.as_ref());
+            assert_eq!(heard.1.as_slice(), other.as_ref());
+            if let Some(reference) = &reference {
+                assert_eq!(&heard, reference);
+            } else {
+                reference = Some(heard);
+            }
+        }
+    }
+}
+
+#[test]
 fn bypass_copies_each_plane_without_partition_or_gain_changes() {
     // Three planes and this duration exercise this copy operation only; neither
     // is a device/channel limit. Product buses validate their own layouts.
@@ -138,6 +213,16 @@ fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
             control.service();
             control.set_cached_tracks(&[]).unwrap();
             control.set_routes(std::path::Path::new(""), &[]);
+            control.set_clip_loader(std::sync::Arc::new(move |_, _| {
+                Ok(vec![echode_engine::LoadedClip {
+                    track: track.raw(),
+                    start_sample: 0,
+                    samples: vec![0.5; 48_000].into(),
+                    right: None,
+                    fade_in: 0,
+                    fade_out: 0,
+                }])
+            }));
             control.replace(&live).unwrap();
             for _ in 0..4 {
                 audio.render(&mut left, &mut right);
@@ -796,6 +881,18 @@ fn an_initial_position_matches_a_queued_locate_for_every_block_size() {
                 .unwrap();
             (control, audio)
         };
+        let track = project.tracks()[0].id.raw();
+        control.set_clip_loader(std::sync::Arc::new(move |_, _| {
+            Ok(vec![echode_engine::LoadedClip {
+                track,
+                start_sample: 0,
+                samples: vec![0.25; 48_000].into(),
+                right: None,
+                fade_in: 0,
+                fade_out: 0,
+            }])
+        }));
+        control.replace(&project).unwrap();
         control
             .command(echode_engine::PlaybackCommand::Play)
             .unwrap();
@@ -1539,5 +1636,46 @@ fn cached_stop_does_not_start_a_later_region_or_pass_the_loop_end() {
             assert!(tail.iter().skip(10).all(|sample| *sample == 0.0));
             assert!(tail.iter().all(|sample| (*sample - 0.9).abs() > 0.2));
         }
+    }
+}
+
+#[test]
+fn the_prepared_sine_pad_dsp_is_independent_of_blocks_and_spare_capacity() {
+    use echode_engine::{Device, TestSynth};
+    // Durations, voices, and capacities describe this DSP regression only.
+    let events = [
+        Event::note_on(0, 0, 1, 69, 1.0),
+        Event::note_on(37, 0, 2, 64, 0.7),
+        Event::note_off(701, 0, 1, 69),
+        Event::note_off(1801, 0, 2, 64),
+    ];
+    let render = |block: u32, capacity| {
+        let mut synth = TestSynth::new(RATE).unwrap();
+        synth.prepare(capacity, RATE).unwrap();
+        let mut output = Vec::new();
+        for offset in (0..24_000).step_by(block as usize) {
+            let count = (24_000 - offset).min(block as usize);
+            let local: Vec<_> = events
+                .iter()
+                .copied()
+                .filter(|event| (offset..offset + count).contains(&(event.time() as usize)))
+                .map(|mut event| {
+                    if let Event::NoteOn(note) | Event::NoteOff(note) = &mut event {
+                        note.time -= offset as u32;
+                    }
+                    event
+                })
+                .collect();
+            let mut samples = vec![0.0; count];
+            synth.process(&mut [&mut samples], &local, RATE).unwrap();
+            output.extend(samples);
+        }
+        output
+    };
+    let expected = render(BLOCKS[0], 2);
+    assert!(expected.iter().any(|sample| *sample != 0.0));
+    for block in BLOCKS {
+        assert_same(&expected, &render(block, 2), block);
+        assert_same(&expected, &render(block, 4096), block);
     }
 }

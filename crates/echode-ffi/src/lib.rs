@@ -7,11 +7,13 @@
 mod catalog;
 mod controls;
 mod piano;
+mod projection;
 mod queue;
 pub use controls::{
     ClipControls, MixerControls, echode_document_track_peak, echode_snapshot_clip_controls,
     echode_snapshot_flicks, echode_snapshot_mixer_controls,
 };
+pub use projection::{TrackTreeInfo, echode_snapshot_project_arrange, echode_snapshot_track_tree};
 
 pub use queue::{Document, Snapshot};
 
@@ -497,6 +499,21 @@ pub unsafe extern "C" fn echode_snapshot_device_bypassed(
 ) -> c_int {
     snapshot_ref(snapshot)
         .and_then(|snapshot| snapshot.device_bypassed(track, device))
+        .map_or(-1, c_int::from)
+}
+
+/// Returns 1 for offline, 0 for online, or -1 for an invalid snapshot/index.
+///
+/// # Safety
+/// `snapshot` is null or owned for the whole read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_device_offline(
+    snapshot: *const Snapshot,
+    track: usize,
+    device: usize,
+) -> c_int {
+    snapshot_ref(snapshot)
+        .and_then(|snapshot| snapshot.device_offline(track, device))
         .map_or(-1, c_int::from)
 }
 

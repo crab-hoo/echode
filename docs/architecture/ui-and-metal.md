@@ -31,6 +31,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0050](../decisions/0050-arrange-viewport.md)、[ADR 0051](../decisions/0051-arrange-presentation.md)、[ADR 0107](../decisions/0107-mix-controls.md)）
 - **状態分離**: 文書・選択・確定編集を `ProjectController`、配置・表示設定・下書きを `WorkspaceState`、画面操作を `WorkspaceSession` に分け、共通の `WorkspaceCommand` を使う
   （[ADR 0053](../decisions/0053-workspace-ui-foundation.md)）
+- **フォルダの開閉**: 元のプロジェクト・索引を共有する表示用スナップショットを作り、同じ行対応をヘッダ・タイムライン・選択・ミックス・FX ドロップへ使う。
+  開閉は表示設定とし、再生・保存・Undo を変えない（[ADR 0128](../decisions/0128-folder-disclosure-and-row-projection.md)）。
 - **共通サンプルブラウザ**: 登録フォルダはウィンドウ設定に保持し、素材一覧は非同期で作る。
   入力イベントで文書・トラック・ライブ位置を確定し、既存の `audio.import` へ渡す。
   検索対象・除外・再読込の規則は [ADR 0122](../decisions/0122-sample-library-search-and-placement.md)、単発試聴は未実装。
@@ -56,6 +58,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 | 計測値 | 共有メモリ（アトミック変数） | メーター、プレイヘッド、CPU 負荷 |
 
 命令とデータを C ABI にそろえ、`EchodeBridge` が非同期関数・エラー・所有権へ包む（[ADR 0044](../decisions/0044-swift-bridge.md)）。
+編集 JSON は単一のアクション、または単一 Undo のアクション配列を受ける。
+配列は同じ文書ワーカーの `DocumentHost::apply` で全体を確定・巻戻しする
+（[ADR 0124](../decisions/0124-selected-track-fx-batches.md)）。
 命令は制御スレッドへ送ってすぐ戻り、ロックを保持したまま Swift を呼ばない。
 配列を借りる同期クロージャーの間はハンドルを保持し、ポインタを外へ出さず `await` しない。
 

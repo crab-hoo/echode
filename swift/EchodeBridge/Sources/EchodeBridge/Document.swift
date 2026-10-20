@@ -19,7 +19,7 @@ public final class Snapshot: @unchecked Sendable {
     private var pianoCapacity = 0
     private let visibleLock = NSLock()
 
-    fileprivate init(taking handle: OpaquePointer) {
+    init(taking handle: OpaquePointer) {
         self.handle = handle
     }
 
@@ -118,7 +118,15 @@ public final class Snapshot: @unchecked Sendable {
         }
     }
 
-    /// CLAP id of an inserted device. The mixer returns nil.
+    /// Whether an inserted device is excluded from runtime hosting.
+    public func deviceOffline(onTrack track: Int, at device: Int) -> Bool? {
+        guard track >= 0, device >= 0 else { return nil }
+        return withExtendedLifetime(self) {
+            let value = echode_snapshot_device_offline(handle, track, device)
+            return value < 0 ? nil : value == 1
+        }
+    }
+
     public func deviceBypassed(onTrack track: Int, at device: Int) -> Bool? {
         guard track >= 0, device >= 0 else { return nil }
         let value = echode_snapshot_device_bypassed(handle, track, device)
@@ -353,7 +361,8 @@ public final class Document: @unchecked Sendable {
         echode_document_close(handle)
     }
 
-    /// Queues `json`. A cancellation that arrives before the command is sent
+    /// Queues one action object or an atomic array of actions (one Undo).
+    /// An empty array leaves history intact. A cancellation before submission
     /// does not send it. A cancellation after that does not undo the edit.
     public func perform(_ json: String) async throws -> Snapshot {
         try Task.checkCancellation()

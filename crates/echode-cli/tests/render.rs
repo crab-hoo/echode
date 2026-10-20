@@ -21,6 +21,8 @@ fn scratch() -> PathBuf {
 fn reference_project() -> Project {
     let (project, track) = Project::new().add_track("piano");
     project
+        .add_clap_device(track, Id::generate(), "dev.echode.sine-pad")
+        .unwrap()
         .insert_note(
             track,
             NoteDraft {
@@ -63,6 +65,29 @@ fn a_package_renders_to_the_committed_reference() {
     assert!(rendered.len() > 44);
     assert!(rendered[44..].iter().any(|byte| *byte != 0));
     assert_eq!(rendered, reference);
+}
+
+#[test]
+fn default_export_uses_the_declared_device_tail_and_respects_bypass() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    let project = reference_project();
+    let device = project.tracks()[0].devices[0].id;
+    for (index, project, tail) in [
+        (0, project.clone(), 19_200usize),
+        (1, project.set_device_bypassed(device, true).unwrap(), 0),
+        (2, project.remove_device(device).unwrap(), 0),
+    ] {
+        let package = directory.join(index.to_string());
+        write_package(&package, &project).unwrap();
+        let wav = package.join("tail.wav");
+        render_to_wav(&package, &wav, 48_000, None).unwrap();
+        assert_eq!(
+            std::fs::metadata(wav).unwrap().len() as usize,
+            44 + (24_000 + tail) * 8
+        );
+    }
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -263,6 +288,12 @@ fn audit_aud11_a_journaled_note_exports_and_a_pending_save_is_not_mixed() {
         })
         .unwrap();
     let track = session.project().tracks()[0].id;
+    session
+        .perform(Command::AddDevice {
+            track,
+            plugin: "dev.echode.sine-pad".into(),
+        })
+        .unwrap();
     session
         .perform(Command::InsertNote {
             track,
@@ -516,7 +547,14 @@ fn bypass_export_matches_dry_effects_and_silent_instruments() {
         ("dev.echode.test-instrument", true),
     ] {
         let device = Id::generate();
-        let bypassed = project
+        let source = if instrument {
+            project
+                .remove_device(project.tracks()[0].devices[0].id)
+                .unwrap()
+        } else {
+            project.clone()
+        };
+        let bypassed = source
             .add_clap_device(track, device, plugin)
             .unwrap()
             .set_device_bypassed(device, true)

@@ -108,6 +108,7 @@ pub struct PluginHost {
     input_ports: Vec<u32>,
     /// Channel count of each declared output port.
     output_ports: Vec<u32>,
+    tail_samples: u32,
 }
 
 /// Socket and saved-state access for control threads, independent of the
@@ -425,6 +426,7 @@ impl PluginHost {
             fan: options.fan_in.clone(),
             input_ports: Vec::new(),
             output_ports: Vec::new(),
+            tail_samples: 0,
         };
         host.start_watch();
         if let Err(error) = host.finish_launch() {
@@ -870,6 +872,11 @@ impl PluginHost {
 
     /// Reads the plugin's declared ports, resizes the mapping, then waits until
     /// the helper is ready to process that layout.
+    /// Tail declared at activation, in device frames. Values at least i32::MAX are infinite.
+    pub fn tail_samples(&self) -> u32 {
+        self.tail_samples
+    }
+
     fn finish_launch(&mut self) -> Result<(), SessionError> {
         if self.plugin.is_some() {
             self.align_declared_ports()?;
@@ -884,7 +891,14 @@ impl PluginHost {
                 ControlMessage::Ports { .. } | ControlMessage::PortsRejected(_)
             )
         })? {
-            ControlMessage::Ports { inputs, outputs } => (inputs, outputs),
+            ControlMessage::Ports {
+                inputs,
+                outputs,
+                tail_samples,
+            } => {
+                self.tail_samples = tail_samples;
+                (inputs, outputs)
+            }
             ControlMessage::PortsRejected(reason) => return Err(SessionError::Protocol(reason)),
             _ => {
                 return Err(SessionError::Protocol(

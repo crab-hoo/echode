@@ -32,6 +32,13 @@ fn plugin_state_hash() -> &'static str {
 #[derive(Clone, Debug)]
 enum Step {
     AddTrack,
+    InsertTrack {
+        after: usize,
+        into_folder: bool,
+    },
+    DuplicateTrack {
+        track: usize,
+    },
     AddChild {
         parent: usize,
     },
@@ -103,6 +110,11 @@ enum Step {
         device: usize,
         bypassed: bool,
     },
+    OfflineDevice {
+        track: usize,
+        device: usize,
+        offline: bool,
+    },
     ReorderDevice {
         track: usize,
         device: usize,
@@ -135,6 +147,8 @@ enum Step {
 fn step() -> impl Strategy<Value = Step> {
     prop_oneof![
         2 => Just(Step::AddTrack),
+        2 => (any::<usize>(), any::<bool>()).prop_map(|(after, into_folder)| Step::InsertTrack { after, into_folder }),
+        1 => any::<usize>().prop_map(|track| Step::DuplicateTrack { track }),
         1 => any::<usize>().prop_map(|parent| Step::AddChild { parent }),
         1 => (any::<usize>(), proptest::option::of(any::<usize>()))
             .prop_map(|(track, parent)| Step::SetParent { track, parent }),
@@ -196,6 +210,8 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
         2 => (any::<usize>(), any::<usize>(), any::<bool>())
             .prop_map(|(track, device, bypassed)| Step::BypassDevice { track, device, bypassed }),
+        2 => (any::<usize>(), any::<usize>(), any::<bool>())
+            .prop_map(|(track, device, offline)| Step::OfflineDevice { track, device, offline }),
         2 => (any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
             .prop_map(|(track, device, before)| Step::ReorderDevice { track, device, before }),
         2 => (any::<usize>(), any::<usize>(), any::<usize>(), proptest::option::of(any::<usize>()))
@@ -225,6 +241,14 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
     Some(match step {
         Step::AddTrack => Command::AddTrack {
             name: format!("track {}", tracks.len()),
+        },
+        Step::InsertTrack { after, into_folder } => Command::InsertTrack {
+            after: track(*after)?,
+            into_folder: *into_folder,
+            name: format!("inserted {}", tracks.len()),
+        },
+        Step::DuplicateTrack { track: index } => Command::DuplicateTrack {
+            source: track(*index)?,
         },
         Step::AddChild { parent } => Command::AddChild {
             parent: track(*parent)?,
@@ -408,6 +432,21 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
             Command::BypassDevice {
                 device: pick(&ids, *device)?,
                 bypassed: *bypassed,
+            }
+        }
+        Step::OfflineDevice {
+            track: index,
+            device,
+            offline,
+        } => {
+            let owner = project
+                .tracks()
+                .iter()
+                .find(|item| Some(item.id) == track(*index))?;
+            let ids: Vec<_> = owner.devices.iter().map(|device| device.id).collect();
+            Command::OfflineDevice {
+                device: pick(&ids, *device)?,
+                offline: *offline,
             }
         }
         Step::ReorderDevice {

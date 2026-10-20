@@ -12,6 +12,8 @@ struct ArrangeHeaderPalette: Sendable, Equatable {
 struct ArrangeHeaderInput: Sendable, Equatable {
     let width: Double
     let palette: ArrangeHeaderPalette
+    var selectedTracks: Set<UUID>? = nil
+    var collapsedTracks: Set<UUID> = []
 }
 
 struct ArrangeHeaderRow: Sendable {
@@ -21,6 +23,9 @@ struct ArrangeHeaderRow: Sendable {
     let height: Float
     let mix: TrackMix?
     var peak: Float
+    let depth: Int
+    let folder: Bool
+    let collapsed: Bool
 }
 
 struct WaveformDraw: Sendable {
@@ -60,8 +65,11 @@ struct ArrangeFrame: Sendable {
         let rows = camera.rows(trackCount: snapshot.trackCount, height: input.height)
         headers = zip(rows.visible, elements.filter { $0.role == .track }).compactMap { index, lane in
             guard let name = snapshot.trackName(at: index) else { return nil }
+            let hierarchy = snapshot.trackHierarchy(at: index)
             return ArrangeHeaderRow(id: lane.id.track, name: name, y: lane.y, height: lane.height,
-                                    mix: snapshot.mixer(onTrack: index), peak: input.playback?.peak(track: lane.id.track) ?? 0)
+                                    mix: snapshot.mixer(onTrack: index), peak: input.playback?.peak(track: lane.id.track) ?? 0,
+                                    depth: hierarchy?.depth ?? 0, folder: hierarchy?.hasChildren ?? false,
+                                    collapsed: input.header?.collapsedTracks.contains(lane.id.track) == true)
         }
     }
 
@@ -115,13 +123,17 @@ struct ArrangeFrame: Sendable {
         return instances
     }
 
+    func isTrackSelected(_ id: UUID) -> Bool {
+        input.header?.selectedTracks?.contains(id) ?? (id == input.selected)
+    }
+
     var headerInstances: [Instance] {
         guard let header = input.header else { return [] }
         let width = Float(header.width)
         let palette = header.palette
         var instances = [Instance(rect: SIMD4(0, 0, Float(timelineOrigin), Float(input.height)) * Float(input.scale), color: palette.background)]
         for row in headers {
-            let chosen = row.id == input.selected
+            let chosen = isTrackSelected(row.id)
             instances.append(Instance(rect: SIMD4(0, row.y, width, max(0, row.height - 1)) * Float(input.scale),
                                       color: chosen ? palette.selected : palette.background))
             instances.append(Instance(rect: SIMD4(0, row.y + row.height - 1, width, 1) * Float(input.scale), color: palette.separator))
@@ -147,8 +159,9 @@ struct ArrangeFrame: Sendable {
                     row.peak >= 1 ? SIMD4(1, 0.25, 0.12, 1) : SIMD4(0.28, 0.80, 0.49, 1))
                 continue
             }
-            for (bar, height) in [4.0, 8.0, 12.0, 8.0, 4.0].enumerated() {
-                instances.append(Instance(rect: SIMD4(Float(8 + bar * 3), row.y + (row.height - Float(height)) / 2, 1.5, Float(height)) * Float(input.scale),
+            let folder = TrackFolderLayout(row: CGRect(x: 0, y: Double(row.y), width: Double(width), height: Double(row.height)), depth: row.depth, folder: row.folder)
+            for (bar, height) in (row.folder ? [] : [4.0, 8.0, 12.0, 8.0, 4.0]).enumerated() {
+                instances.append(Instance(rect: SIMD4(Float(folder.titleX - 22) + Float(bar * 3), row.y + (row.height - Float(height)) / 2, 1.5, Float(height)) * Float(input.scale),
                                           color: chosen ? palette.selectedForeground : palette.foreground))
             }
         }
@@ -188,7 +201,7 @@ struct ArrangeFrame: Sendable {
     private func instance(_ element: ArrangeElement) -> Instance {
         let color: SIMD4<Float>
         switch element.role {
-        case .track: color = element.id.track == input.selected ? SIMD4(0.18, 0.23, 0.30, 1) : SIMD4(0.12, 0.13, 0.16, 1)
+        case .track: color = isTrackSelected(element.id.track) ? SIMD4(0.18, 0.23, 0.30, 1) : SIMD4(0.12, 0.13, 0.16, 1)
         case .clip: color = element.id.placement == input.selectedClip ? SIMD4(0.28, 0.54, 0.66, 1) : SIMD4(0.18, 0.36, 0.47, 1)
         case .note: color = SIMD4(0.52, 0.83, 0.88, 1)
         }

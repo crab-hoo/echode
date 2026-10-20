@@ -17,7 +17,9 @@ sys.dont_write_bytecode = True
 import verify
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD_FILES = ("Contents/MacOS/Echode", "Contents/MacOS/echode-plugin-host")
+BUILD_FILES = ("Contents/MacOS/Echode", "Contents/MacOS/echode-plugin-host",
+               "Contents/PlugIns/EchodeSinePad.clap/Contents/MacOS/EchodeSinePad",
+               "Contents/PlugIns/EchodeSinePad.clap/Contents/Info.plist")
 LOG_LIMIT = 2 * 1024 * 1024  # Diagnostic copies only; never a product capacity limit.
 
 
@@ -89,7 +91,7 @@ def build_status(root, stamp):
             "source_matches": record.get("source") == stamp, "next": "make app"}
 
 
-def collect(root):
+def collect(root, *, use_report_base=True):
     stamp = source_stamp(root)
     tools = verify.tool_identity(root)
     policy = verify.load_policy(root)
@@ -98,7 +100,7 @@ def collect(root):
     if report and (report.get("version") not in (1, 2) or not isinstance(report.get("results"), dict)
                    or not all(isinstance(value, dict) for value in report["results"].values())):
         report, error = None, "invalid verification record"
-    base = os.environ.get("VERIFY_BASE", (report or {}).get("base"))
+    base = os.environ.get("VERIFY_BASE", (report or {}).get("base") if use_report_base else None)
     changed = verify.changed_paths(root, base)
     selected = verify.select_checks(policy, changed)
     stamps = verify.check_fingerprints(root, policy, tools, contexts)

@@ -49,6 +49,7 @@ const OP_RESTART: u8 = 1;
 const OP_ARM: u8 = 2;
 const STATE_SAVE: u8 = 1;
 const STATE_LOAD: u8 = 2;
+const PREPARE_CAPACITY: u8 = 3;
 
 const HANDOFF_EMPTY: u8 = 0;
 const HANDOFF_FULL: u8 = 1;
@@ -170,6 +171,7 @@ struct Bridge {
     fan: AtomicPtr<FanIn>,
     sample_bits: AtomicU64,
     activation_frames: AtomicU32,
+    tail_samples: AtomicU32,
     /// Port channel counts, published before the worker threads start.
     ports: AtomicPtr<PortShape>,
     /// 0 idle, [`STATE_SAVE`], or [`STATE_LOAD`]. The main thread clears it.
@@ -559,6 +561,7 @@ fn serve_region(
         fan: AtomicPtr::new(fan.unwrap_or(ptr::null_mut())),
         sample_bits: AtomicU64::new(sample_rate.to_bits()),
         activation_frames: AtomicU32::new(max_frames.max(1)),
+        tail_samples: AtomicU32::new(0),
         ports: AtomicPtr::new(ptr::null_mut()),
         state_kind: AtomicU8::new(0),
         state_gen: AtomicU64::new(0),
@@ -641,6 +644,11 @@ fn serve_region(
                     return Err(error);
                 }
             };
+            bridge
+                .tail_samples
+                .store(query_tail(&loaded.instance), Ordering::Release);
+            prepare_event_capacity(&loaded.instance, bridge.root.layout().input_events)
+                .map_err(HostError::Plugin)?;
             publish_stopped(&bridge.processor, stopped, false);
             bridge.need_start.store(true, Ordering::Release);
             INSTANCE.with(|cell| cell.set(ptr::from_mut(&mut loaded.instance)));
@@ -1189,6 +1197,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             ControlMessage::Ports {
                 inputs: shape.inputs.clone(),
                 outputs: shape.outputs.clone(),
+                tail_samples: bridge.tail_samples.load(Ordering::Acquire),
             }
         };
         if socket.send(&message).is_err() {
@@ -1346,6 +1355,19 @@ fn handle_control(
                 if region.layout() == layout
                     && bridge.pending.load(Ordering::Acquire).is_null() =>
             {
+                if bridge.has_plugin.load(Ordering::Acquire)
+                    && call_plugin_operation(
+                        bridge,
+                        PREPARE_CAPACITY,
+                        layout.input_events.to_le_bytes().to_vec(),
+                    )
+                    .is_err()
+                {
+                    socket
+                        .send(&ControlMessage::RemapFailed)
+                        .map_err(|error| HostError::Plugin(error.to_string()))?;
+                    return Ok(());
+                }
                 let buffers = if bridge.buffers_live.load(Ordering::Acquire) {
                     Box::into_raw(Box::new(buffers_for(bridge, &region)))
                 } else {
@@ -1607,12 +1629,16 @@ fn call_plugin_state(bridge: &Bridge, load: Option<Vec<u8>>) -> Result<Vec<u8>, 
     } else {
         STATE_SAVE
     };
+    call_plugin_operation(bridge, kind, load.unwrap_or_default())
+}
+
+fn call_plugin_operation(bridge: &Bridge, kind: u8, input: Vec<u8>) -> Result<Vec<u8>, String> {
     {
         let mut bytes = bridge
             .state_bytes
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        *bytes = load.unwrap_or_default();
+        *bytes = input;
     }
     *bridge
         .state_error
@@ -1661,10 +1687,58 @@ fn perform_plugin_state(bridge: &Bridge, kind: u8) -> Result<Vec<u8>, String> {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .clone();
-            load_plugin_state(instance, &bytes)?;
+            if kind == PREPARE_CAPACITY {
+                let capacity = u32::from_le_bytes(
+                    bytes
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| "invalid capacity")?,
+                );
+                prepare_event_capacity(instance, capacity)?;
+            } else {
+                load_plugin_state(instance, &bytes)?;
+            }
             Ok(bytes)
         }
     })
+}
+
+fn query_tail(instance: &PluginInstance<EchodeHost>) -> u32 {
+    use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_plugin_tail};
+    let plugin = instance.raw_instance();
+    let Some(get) = plugin.get_extension else {
+        return 0;
+    };
+    // SAFETY: standard CLAP extension, queried on the main thread after activation.
+    let raw = unsafe { get(plugin, CLAP_EXT_TAIL.as_ptr()) };
+    if raw.is_null() {
+        return 0;
+    }
+    let extension = unsafe { &*raw.cast::<clap_plugin_tail>() };
+    extension.get.map(|get| unsafe { get(plugin) }).unwrap_or(0)
+}
+
+/// Optional vendor extension; every plugin is prepared through the same path.
+fn prepare_event_capacity(
+    instance: &PluginInstance<EchodeHost>,
+    events: u32,
+) -> Result<(), String> {
+    use echode_realtime::plugin_capacity::{PLUGIN_EVENT_CAPACITY, PluginEventCapacity};
+    let plugin = instance.raw_instance();
+    let Some(get) = plugin.get_extension else {
+        return Ok(());
+    };
+    // SAFETY: the extension is queried and called on the plugin main thread.
+    let raw = unsafe { get(plugin, PLUGIN_EVENT_CAPACITY.as_ptr()) };
+    if raw.is_null() {
+        return Ok(());
+    }
+    let extension = unsafe { &*raw.cast::<PluginEventCapacity>() };
+    if unsafe { (extension.prepare)((plugin as *const clap_plugin).cast(), events) } {
+        Ok(())
+    } else {
+        Err("plugin refused event capacity preparation".into())
+    }
 }
 
 fn state_extension<'a>(plugin: *const clap_plugin) -> Result<&'a clap_plugin_state, String> {

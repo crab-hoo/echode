@@ -1,4 +1,7 @@
-.PHONY: app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
+
+bundled-plugins:
+	bash scripts/build-bundled-plugins.sh
 
 app:
 	bash scripts/build-app.sh
@@ -50,6 +53,7 @@ check:
 
 # The verifier records this part and product contracts as separate checks.
 check-base:
+	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
 	cargo build -q --workspace
 	cargo fmt --check
@@ -61,8 +65,9 @@ check-base:
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
-# Named behavioral tests (including startup recovery, FX, and samples) must actually run; ignored/deleted tests cannot pass.
+# Named behavioral tests (including track insertion/duplication/disclosure, FX, and samples) must run; ignored/deleted tests cannot pass.
 check-product-contracts:
+	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
@@ -82,6 +87,9 @@ check-verification:
 
 doctor:
 	@python3 -B scripts/diagnose.py
+
+agent-context:
+	@python3 -B scripts/agent_context.py $(CONTEXT_ARGS)
 
 debug-report:
 	@python3 -B scripts/diagnose.py --bundle
@@ -116,6 +124,7 @@ advisories:
 
 # Release measurement of cross-process plugin hosting. See docs/spikes/S3-plugin-isolation.md.
 spike-isolation:
+	bash scripts/build-bundled-plugins.sh release
 	cargo build -q --release -p echode-plugin-host -p echode-test-plugin
 	cargo test -q --release -p echode-plugin-host --test isolation -- --include-ignored --test-threads=1
 	cargo test -q --release -p echode-plugin-host --test hosted_playback -- --include-ignored --test-threads=1
@@ -187,6 +196,7 @@ spike-engine:
 # RealtimeSanitizer on the test synth, plan handoff, and the plugin helper.
 # The first build downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).
 rtsan:
+	$(MAKE) bundled-plugins
 	RTSAN_ENABLE=1 cargo test -q -p echode-engine --features rtsan under_rtsan
 	RTSAN_ENABLE=1 cargo test -q -p echode-audio-io --features rtsan under_rtsan
 	RTSAN_ENABLE=1 cargo test -q -p echode-plugin-host --features rtsan under_rtsan

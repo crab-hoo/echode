@@ -522,6 +522,22 @@ impl HostGraph {
         self.export_reason = reason;
     }
 
+    pub(crate) fn tail_samples(&self) -> u32 {
+        self.tracks
+            .iter()
+            .map(|track| {
+                track
+                    .stages
+                    .iter()
+                    .filter(|stage| !stage.bypassed)
+                    .fold(0u32, |sum, stage| {
+                        sum.saturating_add(stage.instance.host().tail_samples())
+                    })
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Spawns a helper for every resolved device. An unknown id is skipped.
     /// A helper that fails to start is skipped too, so one missing plugin does
     /// not stop the other tracks.
@@ -1206,7 +1222,7 @@ fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
     let mut next = layout;
     next.input_events = delivery;
     host.prepare_mapping(next)
-        .map_err(|_| PlaybackError::Plugin)?;
+        .map_err(|error| PlaybackError::Unsupported(error.to_string()))?;
     Ok(())
 }
 
@@ -1243,7 +1259,9 @@ fn spawn_stage(
     let shared = if let Some(fan) = fan {
         Arc::clone(fan)
     } else {
-        let created = Arc::new(FanIn::create().map_err(|_| PlaybackError::Plugin)?);
+        let created = Arc::new(
+            FanIn::create().map_err(|error| PlaybackError::Unsupported(error.to_string()))?,
+        );
         *fan = Some(Arc::clone(&created));
         created
     };

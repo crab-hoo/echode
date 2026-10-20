@@ -1,6 +1,18 @@
 use super::*;
 use echode_engine::playback_pair;
 
+fn fixture_clips(track: u128, rate: u32) -> Vec<echode_engine::LoadedClip> {
+    // This constant source covers these device-free HAL fixtures only.
+    vec![echode_engine::LoadedClip {
+        track,
+        start_sample: 0,
+        samples: vec![0.25; rate as usize * 4].into(),
+        right: None,
+        fade_in: 0,
+        fade_out: 0,
+    }]
+}
+
 #[test]
 fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_rtsan() {
     let rate = 48_000;
@@ -556,7 +568,7 @@ fn contract_stop_during_preparation_gates_callbacks_under_rtsan() {
     // can start. Submit Stop from that phase, without relying on timing.
     setup.clips = Arc::new(move |_, _| {
         interrupt.request(&crate::AudioCommand::Stop);
-        Ok(Vec::new())
+        Ok(fixture_clips(track.raw(), 48_000))
     });
     let (mut control, player) = prepare_playback(&project, 48000, 64, 0, &setup).unwrap();
     let callback = Callback {
@@ -631,6 +643,7 @@ fn preview_before_open_applies_before_any_live_output_under_rtsan() {
         .0;
     for rate in [48_000, 96_000] {
         let mut setup = TransportSetup::idle();
+        setup.clips = Arc::new(move |_, _| Ok(fixture_clips(track.raw(), rate)));
         setup.fader_preview = Some((track.raw(), 0.0, 0.0));
         let (mut control, mut player) = prepare_playback(&project, rate, 64, 0, &setup).unwrap();
         // These buffers cover only this product preparation fixture.
@@ -703,6 +716,8 @@ fn interleaved_and_planar_hal_buffers_match_under_rtsan() {
         .0;
     let callback = || {
         let (mut control, player) = playback_pair(&project, 48000, 64).unwrap();
+        control.set_clip_loader(Arc::new(move |_, _| Ok(fixture_clips(track.raw(), 48_000))));
+        control.replace(&project).unwrap();
         control.command(PlaybackCommand::Play).unwrap();
         (
             control,
@@ -799,6 +814,8 @@ fn the_hal_deadline_starts_when_the_callback_is_entered() {
         .unwrap()
         .0;
     let (mut control, player) = playback_pair(&project, 48_000, 64).unwrap();
+    control.set_clip_loader(Arc::new(move |_, _| Ok(fixture_clips(track.raw(), 48_000))));
+    control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
     let callback = Callback {
         render: UnsafeCell::new(Render {

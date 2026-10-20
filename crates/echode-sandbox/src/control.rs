@@ -62,6 +62,7 @@ pub enum ControlMessage {
     Ports {
         inputs: Vec<u32>,
         outputs: Vec<u32>,
+        tail_samples: u32,
     },
     /// The plugin has no usable audio-port description. The bytes are the reason.
     PortsRejected(String),
@@ -265,7 +266,15 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         ControlMessage::SetChain(stages) => (SET_CHAIN, stages.to_le_bytes().to_vec()),
         ControlMessage::ChainReady => (CHAIN_READY, Vec::new()),
         ControlMessage::ChainRejected => (CHAIN_REJECTED, Vec::new()),
-        ControlMessage::Ports { inputs, outputs } => (PORTS, port_bytes(inputs, outputs)),
+        ControlMessage::Ports {
+            inputs,
+            outputs,
+            tail_samples,
+        } => {
+            let mut bytes = port_bytes(inputs, outputs);
+            bytes.extend_from_slice(&tail_samples.to_le_bytes());
+            (PORTS, bytes)
+        }
         ControlMessage::PortsRejected(reason) => (PORTS_REJECTED, reason.as_bytes().to_vec()),
         ControlMessage::StateRejected(reason) => (STATE_REJECTED, reason.as_bytes().to_vec()),
     })
@@ -317,8 +326,17 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         CHAIN_READY => ControlMessage::ChainReady,
         CHAIN_REJECTED => ControlMessage::ChainRejected,
         PORTS => {
-            let (inputs, outputs) = read_ports(body)?;
-            ControlMessage::Ports { inputs, outputs }
+            let split = body
+                .len()
+                .checked_sub(4)
+                .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "port tail is missing"))?;
+            let (inputs, outputs) = read_ports(&body[..split])?;
+            let tail_samples = u32::from_le_bytes(body[split..].try_into().expect("4 bytes"));
+            ControlMessage::Ports {
+                inputs,
+                outputs,
+                tail_samples,
+            }
         }
         PORTS_REJECTED => ControlMessage::PortsRejected(
             String::from_utf8(body.to_vec())
@@ -622,5 +640,22 @@ mod tests {
             .expect("restore");
         let message = child.recv_timeout(Duration::from_secs(2)).expect("recv");
         assert!(matches!(message, ControlMessage::Restore(bytes) if bytes == b"abc"));
+    }
+
+    #[test]
+    fn port_metadata_round_trips_the_declared_tail() {
+        let message = ControlMessage::Ports {
+            inputs: vec![],
+            outputs: vec![1],
+            tail_samples: 19_200,
+        };
+        let (kind, bytes) = encode(&message).unwrap();
+        let mut payload = kind.to_le_bytes().to_vec();
+        payload.extend(bytes);
+        assert!(
+            matches!(decode(&payload, None).unwrap(), Some(ControlMessage::Ports { inputs, outputs, tail_samples: 19_200 }) if inputs.is_empty() && outputs == [1])
+        );
+        payload.pop();
+        assert!(decode(&payload, None).is_err());
     }
 }

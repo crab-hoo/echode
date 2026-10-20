@@ -18,7 +18,7 @@ fn noted() -> Project {
 }
 
 #[test]
-fn two_renders_match_and_a_note_is_audible() {
+fn two_renders_match_and_notes_without_an_instrument_are_silent() {
     let project = noted();
     let mut once = vec![0.0; 256];
     let mut twice = vec![0.0; 256];
@@ -26,7 +26,7 @@ fn two_renders_match_and_a_note_is_audible() {
     render_offline(&project, 48_000, 128, &mut twice).unwrap();
     assert_eq!(once, twice);
     assert_eq!(once[0], 0.0);
-    assert!(once.iter().any(|sample| *sample != 0.0));
+    assert!(once.iter().all(|sample| *sample == 0.0));
     let mut streamed = Vec::new();
     render_offline_blocks(&project, 48_000, 128, BLOCK_FRAMES, |block| {
         streamed.extend_from_slice(block);
@@ -34,6 +34,23 @@ fn two_renders_match_and_a_note_is_audible() {
     })
     .unwrap();
     assert_eq!(once, streamed);
+}
+
+#[test]
+fn unhosted_export_refuses_to_ignore_a_recorded_instrument() {
+    let project = noted();
+    let project = project
+        .add_clap_device(
+            project.tracks()[0].id,
+            echode_model::Id::generate(),
+            "dev.echode.sine-pad",
+        )
+        .unwrap();
+    let mut samples = [0.0; 128];
+    assert!(matches!(
+        render_offline(&project, 48_000, 64, &mut samples),
+        Err(PlaybackError::Unsupported(_))
+    ));
 }
 
 #[test]
@@ -52,12 +69,9 @@ fn a_silent_fader_renders_silence() {
 }
 
 #[test]
-fn the_default_length_includes_the_release() {
+fn the_score_length_does_not_assume_an_instrument_tail() {
     let project = noted();
-    assert_eq!(
-        render_span_frames(&project, 48_000).unwrap(),
-        24_000 + 19_200
-    );
+    assert_eq!(render_span_frames(&project, 48_000).unwrap(), 24_000);
     assert_eq!(render_span_frames(&Project::new(), 48_000).unwrap(), 0);
     let mut silence = [];
     render_offline(&Project::new(), 48_000, 0, &mut silence).unwrap();

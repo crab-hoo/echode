@@ -121,32 +121,6 @@ fn assign(ids: &mut HashMap<u128, u32>, next: &mut u32, model: u128) -> Result<u
     Ok(id)
 }
 
-/// How many voices this track can occupy at once.
-///
-/// `tail` is how long a voice stays after the note ends, in samples. The count
-/// is the deepest overlap of those occupied intervals, not the length of the
-/// score and not a polyphony cap. Built on the control thread.
-pub fn voice_demand(notes: &[echode_realtime::NoteSpan], tail: i64) -> usize {
-    if notes.is_empty() || tail < 0 {
-        return 0;
-    }
-    let mut changes = Vec::with_capacity(notes.len().saturating_mul(2));
-    for note in notes {
-        changes.push((note.on, 1i32));
-        changes.push((note.off.saturating_add(tail), -1i32));
-    }
-    changes.sort_unstable_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-    let mut current = 0i32;
-    let mut max = 0i32;
-    for (_, delta) in changes {
-        current += delta;
-        if current > max {
-            max = current;
-        }
-    }
-    usize::try_from(max.max(0)).unwrap_or(0)
-}
-
 pub fn build_plan(
     project: &Project,
     tempo: &TempoMap,
@@ -234,33 +208,4 @@ fn mixer_values(track: &echode_model::Track) -> Result<(f32, f32, f32, f32), Pla
         value(ParamKey::Mute)?,
         value(ParamKey::Solo)?,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::voice_demand;
-    use echode_realtime::NoteSpan;
-
-    fn note(on: i64, off: i64) -> NoteSpan {
-        NoteSpan {
-            on,
-            off,
-            note: on as u128,
-            note_id: 0,
-            pitch: 60,
-            velocity: 0,
-        }
-    }
-
-    #[test]
-    fn demand_is_the_overlap_including_release() {
-        assert_eq!(voice_demand(&[], 0), 0);
-        assert_eq!(voice_demand(&[note(0, 10), note(10, 20)], 0), 1);
-        assert_eq!(voice_demand(&[note(0, 10), note(5, 15)], 0), 2);
-        assert_eq!(voice_demand(&[note(0, 10), note(10, 20)], 5), 2);
-        let later: Vec<_> = (0..100)
-            .map(|index| note(index * 100, index * 100 + 10))
-            .collect();
-        assert_eq!(voice_demand(&later, 0), 1);
-    }
 }

@@ -21,10 +21,14 @@ public final class ProjectController {
     private(set) var pluginNames: [String: String] = [:]
     @ObservationIgnored private var pluginNamesLoading = false
     @ObservationIgnored private var pluginNamesLoaded = false
+    private var trackSelection = TrackSelection()
+    public var selectedTracks: Set<UUID> { trackSelection.ids }
     public var selection: UUID? {
-        didSet {
-            if let selection, !tracks.contains(where: { $0.id == selection }) { self.selection = nil }
-            if selection != oldValue { noteFocus = nil; clipFocus = nil }
+        get { trackSelection.focus }
+        set {
+            let previous = selection
+            trackSelection.replace(newValue.flatMap { id in tracks.contains(where: { $0.id == id }) ? id : nil })
+            if selection != previous { noteFocus = nil; clipFocus = nil }
         }
     }
     public var noteFocus: PianoNote.ID? {
@@ -108,13 +112,42 @@ public final class ProjectController {
     }
 
     public func addTrack(name: String) async {
-        guard document != nil else { return }
-        guard await edit(["type": "track.add", "name": name]) else { return }
-        if let last = tracks.last { selection = last.id }
+        guard let documentID else { return }
+        await insertTrack(TrackInsertionRequest(document: documentID, after: nil, name: name))
+    }
+
+    @discardableResult
+    func insertTrack(_ request: TrackInsertionRequest) async -> Bool {
+        var fields: [String: Any] = ["type": "track.add", "name": request.name]
+        if let after = request.after {
+            fields = ["type": "track.insert", "name": request.name,
+                      "after": after.uuidString, "into_folder": request.intoFolder]
+        }
+        return await performEdit(fields, documentID: request.document, selectingAddedTrack: true)
+    }
+
+    /// One undo step. Each copy lands right after its source subtree.
+    @discardableResult
+    func duplicateTracks(_ request: TrackDuplicationRequest) async -> Bool {
+        guard documentID == request.document, !request.sources.isEmpty,
+              Set(request.sources).count == request.sources.count,
+              Set(request.sources).isSubset(of: Set(tracks.map(\.id))) else { return false }
+        let actions = request.sources.map { ["type": "track.duplicate", "source": $0.uuidString] }
+        return await performEdit(actions, documentID: request.document, selectingAddedTrack: true)
+    }
+
+    public func selectTrack(_ id: UUID, change: TrackSelectionChange = .replace, visibleOrder: [UUID]? = nil) {
+        let previous = selection
+        let order = visibleOrder.map { visible in
+            let existing = Set(tracks.map(\.id))
+            return visible.filter { existing.contains($0) }
+        } ?? tracks.map(\.id)
+        trackSelection.select(id, change: change, order: order)
+        if selection != previous { noteFocus = nil; clipFocus = nil }
     }
 
     func deviceRows(on track: UUID) -> [TrackDevice] {
-        (snapshot?.devices(on: track) ?? []).map { TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed) }
+        (snapshot?.devices(on: track) ?? []).map { TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed, offline: $0.offline) }
     }
 
     func rememberPluginNames(_ listings: [PluginListing]) {
@@ -144,6 +177,15 @@ public final class ProjectController {
         return await edit(["type": "device.add", "track": target.uuidString, "plugin": plugin], documentID: documentID)
     }
 
+    @discardableResult
+    func insertPlugin(_ plugin: String, on targets: [UUID], documentID: UUID) async -> Bool {
+        guard self.documentID == documentID, !plugin.isEmpty, !targets.isEmpty,
+              Set(targets).count == targets.count,
+              Set(targets).isSubset(of: Set(tracks.map(\.id))) else { return false }
+        let actions = targets.map { ["type": "device.add", "track": $0.uuidString, "plugin": plugin] }
+        return await performEdit(actions, documentID: documentID)
+    }
+
     public func removeDevice(_ id: UUID, documentID: UUID? = nil) async {
         await edit(["type": "device.remove", "device": id.uuidString], documentID: documentID)
     }
@@ -153,6 +195,9 @@ public final class ProjectController {
         guard self.documentID == documentID else { return false }
         var command: [String: Any]
         switch change {
+        case .offline(let device, let offline):
+            guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.offline != offline else { return false }
+            command = ["type": "device.offline", "device": device.uuidString, "offline": offline]
         case .bypass(let device, let bypassed):
             guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.bypassed != bypassed else { return false }
             command = ["type": "device.bypass", "device": device.uuidString, "bypassed": bypassed]
@@ -340,17 +385,39 @@ public final class ProjectController {
 
     @discardableResult
     func edit(_ fields: [String: Any], documentID: UUID? = nil, finishingPreview: Bool = false) async -> Bool {
+        await performEdit(fields, documentID: documentID, finishingPreview: finishingPreview)
+    }
+
+    private func performEdit(_ fields: Any, documentID: UUID?, finishingPreview: Bool = false, selectingAddedTrack: Bool = false) async -> Bool {
         await edits.run {
             guard self.faderPreview == nil || finishingPreview, let document = self.document,
                   documentID == nil || documentID == self.documentID else { return false }
             do {
+                let previousTracks = selectingAddedTrack ? Set(self.tracks.map(\.id)) : []
                 let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
                 self.publish(try await document.perform(String(decoding: bytes, as: UTF8.self)))
+                if selectingAddedTrack { self.selectAddedRoots(previous: previousTracks) }
                 self.undoCount += 1
                 self.redoCount = 0
                 return true
             } catch { self.report(error); return false }
         }
+    }
+
+    /// Selects each added track whose parent was not added with it, focusing the first.
+    private func selectAddedRoots(previous: Set<UUID>) {
+        guard let snapshot else { return }
+        var added: Set<UUID> = []
+        var roots: [UUID] = []
+        for row in 0..<snapshot.trackCount {
+            guard let id = snapshot.trackID(at: row), !previous.contains(id) else { continue }
+            added.insert(id)
+            if snapshot.trackHierarchy(at: row)?.parent.map({ !added.contains($0) }) ?? true { roots.append(id) }
+        }
+        guard let last = roots.last else { return }
+        // Toggling ends on the first root, so it becomes the focus.
+        selection = last
+        for id in roots.dropLast().reversed() { selectTrack(id, change: .toggle) }
     }
 
     private func history(_ command: HistoryCommand) async -> HistoryReport? {
@@ -378,7 +445,9 @@ public final class ProjectController {
             guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }
             return TrackRow(id: id, name: name)
         }
-        if !tracks.contains(where: { $0.id == selection }) { selection = tracks.first?.id }
+        let previous = selection
+        trackSelection.reconcile(order: tracks.map(\.id))
+        if selection != previous { noteFocus = nil; clipFocus = nil }
         if let noteFocus { self.noteFocus = snapshot.pianoNote(noteFocus)?.id }
         if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
     }

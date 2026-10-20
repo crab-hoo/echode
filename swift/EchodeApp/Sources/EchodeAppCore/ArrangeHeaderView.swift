@@ -8,14 +8,20 @@ import EchodeBridge
 final class ArrangeHeaderView: NSView {
     private var snapshot: Snapshot?
     private var selected: UUID?
+    private var selectedTracks: Set<UUID> = []
     private var selectedIndex: Int?
     private(set) var camera = ArrangeCamera()
     private var accessible: [UUID: AccessibleTrackHeader] = [:]
     private var controlElements: [String: AccessibleMixControl] = [:]
     private var fxElements: [UUID: AccessibleTrackHeader] = [:]
+    private var folderElements: [UUID: AccessibleTrackHeader] = [:]
+    private var collapsedTracks: Set<UUID> = []
     var onSelect: ((UUID) -> Void)?
+    var onSelectTrack: ((UUID, TrackSelectionChange) -> Void)?
     var onOpenFX: ((UUID) -> Void)?
+    var onToggleFolder: ((UUID) -> Void)?
     var onDropFX: ((UUID, TrackFXDrop) -> Void)?
+    var onDuplicateTracks: (() -> Void)?
     var documentID: UUID?
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
@@ -34,10 +40,13 @@ final class ArrangeHeaderView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    func setSnapshot(_ snapshot: Snapshot, selected: UUID?) {
-        guard self.snapshot !== snapshot || self.selected != selected else { return }
+    func setSnapshot(_ snapshot: Snapshot, selected: UUID?, selectedTracks: Set<UUID>? = nil, collapsedTracks: Set<UUID> = []) {
+        let selectedTracks = selectedTracks ?? Set(selected.map { [$0] } ?? [])
+        guard self.snapshot !== snapshot || self.selected != selected || self.selectedTracks != selectedTracks || self.collapsedTracks != collapsedTracks else { return }
         self.snapshot = snapshot
         self.selected = selected
+        self.selectedTracks = selectedTracks
+        self.collapsedTracks = collapsedTracks
         selectedIndex = (0..<snapshot.trackCount).first { snapshot.trackID(at: $0) == selected }
         NSAccessibility.post(element: self, notification: .selectedRowsChanged)
     }
@@ -56,10 +65,17 @@ final class ArrangeHeaderView: NSView {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         guard let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) else { return }
-        onSelect?(id)
+        if let tree = snapshot?.trackHierarchy(at: index), tree.hasChildren,
+           TrackFolderLayout(row: rows.rect(at: index, width: bounds.width), depth: tree.depth, folder: true).disclosure.contains(point) {
+            onToggleFolder?(id); return
+        }
         let fx = TrackFXLayout(row: rows.rect(at: index, width: Double(bounds.width)))
-        if fx.visible, fx.rect.contains(point) { onOpenFX?(id); return }
+        if fx.visible, fx.rect.contains(point) { select(id, change: .focus); onOpenFX?(id); return }
         let controls = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
+        if controls.hit(point) != nil { select(id, change: .focus) }
+        else {
+            select(id, change: event.modifierFlags.contains(.command) ? .toggle : event.modifierFlags.contains(.shift) ? .extend : .replace)
+        }
         guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else { return }
         if field == .mute || field == .solo {
             mixActions.set(id, field, mix[field].value == 0 ? 1 : 0)
@@ -69,6 +85,19 @@ final class ArrangeHeaderView: NSView {
         }
     }
     override func mouseDragged(with event: NSEvent) { updateDrag(convert(event.locationInWindow, from: nil)) }
+    /// A right click on a selected row keeps the selection; on another row it selects that row.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard drag == nil, onDuplicateTracks != nil, let index = rows.index(at: Double(point.y)),
+              let id = snapshot?.trackID(at: index) else { return nil }
+        select(id, change: .focus)
+        let menu = NSMenu()
+        let duplicate = NSMenuItem(title: text("Duplicate Track"), action: #selector(duplicateTracks), keyEquivalent: "")
+        duplicate.target = self
+        menu.addItem(duplicate)
+        return menu
+    }
+    @objc private func duplicateTracks() { onDuplicateTracks?() }
     func acceptFX(_ pasteboard: NSPasteboard, at point: CGPoint, copying: Bool) -> Bool {
         guard point.y.isFinite, let payload = FXDrag.read(pasteboard), payload.document == documentID,
               let index = rows.index(at: Double(point.y)), let track = snapshot?.trackID(at: index), let onDropFX else { return false }
@@ -79,7 +108,7 @@ final class ArrangeHeaderView: NSView {
         switch operation {
         case .copy(let source, _, _): onDropFX(track, .copyDevice(source))
         case .reorder(let source, _): onDropFX(track, .moveToEnd(source))
-        case .remove, .bypass: return false
+        case .remove, .bypass, .offline: return false
         }
         return true
     }
@@ -125,6 +154,11 @@ final class ArrangeHeaderView: NSView {
         if event.keyCode == kVK_Escape, drag != nil { drag = nil; mixActions?.finish(false); return }
         guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
         switch Int(event.keyCode) {
+        case kVK_LeftArrow, kVK_RightArrow:
+            guard let index = selectedIndex, let id = snapshot?.trackID(at: index), let tree = snapshot?.trackHierarchy(at: index) else { return }
+            if tree.hasChildren && collapsedTracks.contains(id) == (event.keyCode == kVK_RightArrow) { onToggleFolder?(id) }
+            else if event.keyCode == kVK_LeftArrow, let parent = tree.parent { onSelect?(parent) }
+            else { super.keyDown(with: event) }
         case kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End: interpretKeyEvents([event])
         default: super.keyDown(with: event)
         }
@@ -138,18 +172,23 @@ final class ArrangeHeaderView: NSView {
         if let id = snapshot?.trackID(at: index) { onSelect?(id) }
     }
 
+    private func select(_ id: UUID, change: TrackSelectionChange) {
+        if let onSelectTrack { onSelectTrack(id, change) } else { onSelect?(id) }
+    }
+
     override func accessibilityChildren() -> [Any]? {
         guard let snapshot, let window else { accessible = [:]; return [] }
         var retained: [UUID: AccessibleTrackHeader] = [:]
         var retainedControls: [String: AccessibleMixControl] = [:]
         var retainedFX: [UUID: AccessibleTrackHeader] = [:]
+        var retainedFolders: [UUID: AccessibleTrackHeader] = [:]
         let children: [AccessibleTrackHeader] = rows.visible.compactMap { index in
             guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }
             let child = accessible[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
             child.setAccessibilityElement(true)
             child.setAccessibilityRole(.row)
             child.setAccessibilityLabel(name)
-            child.setAccessibilitySelected(id == selected)
+            child.setAccessibilitySelected(selectedTracks.contains(id))
             child.setAccessibilityIdentifier(id.uuidString)
             child.setAccessibilityParent(self)
             let rect = rows.rect(at: index, width: Double(bounds.width)).intersection(bounds)
@@ -188,6 +227,18 @@ final class ArrangeHeaderView: NSView {
                 }
                 child.setAccessibilityChildren(controls)
             } else { child.setAccessibilityChildren([]) }
+            if let tree = snapshot.trackHierarchy(at: index), tree.hasChildren {
+                let control = folderElements[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
+                let folder = TrackFolderLayout(row: rows.rect(at: index, width: bounds.width), depth: tree.depth, folder: true)
+                control.setAccessibilityElement(true); control.setAccessibilityRole(.button)
+                control.setAccessibilityLabel(text(collapsedTracks.contains(id) ? "Expand Folder" : "Collapse Folder") + " " + name)
+                control.setAccessibilityIdentifier("\(id)/disclosure")
+                control.setAccessibilityParent(child)
+                control.setAccessibilityFrame(window.convertToScreen(convert(folder.disclosure.intersection(bounds), to: nil)))
+                control.actions.press = { [weak self] in self?.onToggleFolder?(id) }
+                child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
+                retainedFolders[id] = control
+            }
             let fx = TrackFXLayout(row: rows.rect(at: index, width: Double(bounds.width)))
             if fx.visible, fx.rect.intersects(bounds) {
                 let control = fxElements[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
@@ -196,7 +247,7 @@ final class ArrangeHeaderView: NSView {
                 control.setAccessibilityIdentifier("\(id)/fx")
                 control.setAccessibilityParent(child)
                 control.setAccessibilityFrame(window.convertToScreen(convert(fx.rect.intersection(bounds), to: nil)))
-                control.actions.press = { [weak self] in self?.onSelect?(id); self?.onOpenFX?(id) }
+                control.actions.press = { [weak self] in self?.select(id, change: .focus); self?.onOpenFX?(id) }
                 child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
                 retainedFX[id] = control
             }
@@ -206,6 +257,7 @@ final class ArrangeHeaderView: NSView {
         accessible = retained
         controlElements = retainedControls
         fxElements = retainedFX
+        folderElements = retainedFolders
         return children
     }
 }

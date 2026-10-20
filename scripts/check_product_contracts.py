@@ -134,6 +134,7 @@ def negative_controls(root, contracts):
     (cargo_target / "debug").mkdir(parents=True, exist_ok=True)
     shutil.copy2(root / "target/debug/libechode_test_plugin.dylib",
                  cargo_target / "debug/libechode_test_plugin.dylib")
+    shutil.copytree(root / "target/debug/plugins", cargo_target / "debug/plugins", dirs_exist_ok=True)
     results = []
     with source_copy(root) as checkout:
         snapshot(root, checkout)

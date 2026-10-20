@@ -18,7 +18,7 @@
 //! - Notes in a content are sorted by start, then pitch, then id.
 //! - Each track ends with one mixer. CLAP devices, if any, sit before it in
 //!   insertion order and carry a plugin id with no parameters. The mixer is
-//!   never bypassed and holds no plugin state. Its
+//!   never bypassed or offline and holds no plugin state. Its
 //!   parameters are gain, pan, mute, and solo, in that order, with that
 //!   control's minimum, maximum, and default. The value lies in range.
 //! - Placements on a track are stored in start order. Their half-open ranges
@@ -37,6 +37,7 @@
 
 mod changeset;
 mod device;
+mod duplicate;
 mod id;
 mod invariants;
 mod model;

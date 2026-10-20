@@ -793,12 +793,13 @@ fn render_track(track: &Track) -> String {
         };
         let _ = writeln!(
             out,
-            "    {{\"id\":{},\"kind\":{},\"plugin\":{},\"state\":{},\"bypassed\":{},\"parameters\":[",
+            "    {{\"id\":{},\"kind\":{},\"plugin\":{},\"state\":{},\"bypassed\":{},\"offline\":{},\"parameters\":[",
             to_json(&device.id.to_string()),
             to_json(device.kind.as_str()),
             to_json(&device.plugin),
             to_json(&device.state),
-            to_json(&device.bypassed)
+            to_json(&device.bypassed),
+            to_json(&device.offline)
         );
         push_json_lines(
             &mut out,
@@ -890,14 +891,38 @@ fn format_gain(gain: f32) -> String {
 }
 
 /// Current package schema. Older numbers are raised by [`SCHEMA_STEPS`].
-const SCHEMA: u32 = 4;
+const SCHEMA: u32 = 5;
 
 /// Raises one schema number. Index 0 raises schema 1 to schema 2.
 type SchemaStep = fn(&mut serde_json::Value) -> Result<(), String>;
 
 /// Schema 1 devices have no plugin id. Schema 2 stores audio as null or an id.
 /// Schema 3 devices were always active.
-const SCHEMA_STEPS: &[SchemaStep] = &[add_device_plugin, audio_reference, add_device_bypass];
+const SCHEMA_STEPS: &[SchemaStep] = &[
+    add_device_plugin,
+    audio_reference,
+    add_device_bypass,
+    add_device_offline,
+];
+
+/// Earlier devices always retained a runtime instance, including bypassed ones.
+fn add_device_offline(value: &mut serde_json::Value) -> Result<(), String> {
+    let Some(devices) = value.get_mut("devices") else {
+        return Ok(());
+    };
+    let Some(devices) = devices.as_array_mut() else {
+        return Err("devices is not an array".into());
+    };
+    for device in devices {
+        let Some(device) = device.as_object_mut() else {
+            return Err("device is not an object".into());
+        };
+        device
+            .entry("offline")
+            .or_insert(serde_json::Value::Bool(false));
+    }
+    Ok(())
+}
 
 /// Older devices were always active. The mixer cannot be bypassed.
 fn add_device_bypass(value: &mut serde_json::Value) -> Result<(), String> {
@@ -1235,6 +1260,7 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
                     plugin,
                     state,
                     bypassed: device.bypassed,
+                    offline: device.offline,
                     parameters,
                 })
             })
@@ -1579,6 +1605,7 @@ struct DeviceFile {
     plugin: Option<String>,
     state: Option<String>,
     bypassed: bool,
+    offline: bool,
     parameters: Vec<ParameterFile>,
 }
 

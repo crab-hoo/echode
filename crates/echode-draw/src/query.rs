@@ -294,6 +294,19 @@ impl ArrangeIndex {
         self.each_visible(project, view, emit);
     }
 
+    /// Queries a display projection without changing project order or playback.
+    /// `rows` maps each displayed row to its source track. Only visible rows
+    /// are visited, and rectangles use their displayed row positions.
+    pub fn visit_visible_rows(
+        &self,
+        project: &Project,
+        view: ArrangeView,
+        rows: &[usize],
+        emit: impl FnMut(Element),
+    ) {
+        self.each_visible_rows(project, view, Some(rows), emit);
+    }
+
     /// The front-most element whose rectangle contains the point.
     pub fn hit(&self, project: &Project, view: ArrangeView, x: f32, y: f32) -> Option<ElementId> {
         let mut found = None;
@@ -382,8 +395,19 @@ impl ArrangeIndex {
         revealed
     }
 
-    fn each_visible(&self, project: &Project, view: ArrangeView, mut emit: impl FnMut(Element)) {
-        let Some((first, last)) = visible_tracks(view, project.tracks().len()) else {
+    fn each_visible(&self, project: &Project, view: ArrangeView, emit: impl FnMut(Element)) {
+        self.each_visible_rows(project, view, None, emit);
+    }
+
+    fn each_visible_rows(
+        &self,
+        project: &Project,
+        view: ArrangeView,
+        rows: Option<&[usize]>,
+        mut emit: impl FnMut(Element),
+    ) {
+        let count = rows.map_or(project.tracks().len(), <[usize]>::len);
+        let Some((first, last)) = visible_tracks(view, count) else {
             return;
         };
         let origin = view.origin_tick.get();
@@ -392,7 +416,10 @@ impl ArrangeIndex {
             None => return,
         };
         for track_index in first..last {
-            let track = &project.tracks()[track_index];
+            let source = rows.map_or(track_index, |rows| rows[track_index]);
+            let Some(track) = project.tracks().get(source) else {
+                continue;
+            };
             emit(track_element(track.id, track_index, &view));
             let Some(&slot) = self.tracks.get(&track.id) else {
                 continue;

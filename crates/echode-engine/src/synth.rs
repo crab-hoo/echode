@@ -117,36 +117,32 @@ impl TestSynth {
     }
 
     pub fn silence(&mut self) {
-        for voice in &mut self.voices {
-            voice.inner = Voice::new(self.sample_rate as f32, Instrument::SinePad);
-            voice.note_id = None;
-            voice.releasing = false;
-        }
+        self.voices.clear();
     }
 
-    /// Slots, including release tails, were reserved on the control thread.
+    /// Transfers only active DSP voices into prepared storage, without allocation.
     pub fn carry_from(&mut self, old: &mut Self, covers: impl Fn(u32) -> Option<bool>) {
-        for old in old
-            .voices
-            .iter_mut()
-            .filter(|voice| voice.inner.is_active())
-        {
+        old.voices.retain_mut(|old| {
             let Some(held) = old.note_id.and_then(&covers) else {
-                continue;
+                return true;
             };
-            let Some(new) = self
-                .voices
-                .iter_mut()
-                .find(|voice| !voice.inner.is_active())
-            else {
-                continue;
-            };
-            std::mem::swap(new, old);
-            if !held && !new.releasing {
-                new.inner.note_off();
-                new.releasing = true;
+            if self.voices.len() == self.voices.capacity() {
+                return true;
             }
-        }
+            let fresh = SynthVoice {
+                inner: Voice::new(self.sample_rate as f32, Instrument::SinePad),
+                sample_rate: self.sample_rate,
+                note_id: None,
+                releasing: false,
+            };
+            let mut voice = std::mem::replace(old, fresh);
+            if !held && !voice.releasing {
+                voice.inner.note_off();
+                voice.releasing = true;
+            }
+            self.voices.push(voice);
+            false
+        });
     }
 }
 
@@ -423,7 +419,33 @@ impl crate::builtin::Device for TestSynth {
         if rest.iter().any(|plane| plane.len() != frames) {
             return Err(PlaybackError::BufferTooSmall);
         }
-        render_test_synth(events, &mut self.voices, sample_rate, first)?;
+        // Reserved capacity can cover a long score. Walk only sounding voices,
+        // so callback work never scales with the number of future notes.
+        drive(
+            events,
+            first,
+            self,
+            |synth, event| {
+                if event.is_note_on()
+                    && event.note_id().is_some()
+                    && !synth
+                        .voices
+                        .iter()
+                        .any(|voice| voice.note_id == event.note_id())
+                {
+                    if synth.voices.len() == synth.voices.capacity() {
+                        return Err(PlaybackError::BufferTooSmall);
+                    }
+                    synth.voices.push(SynthVoice::new(sample_rate)?);
+                }
+                note_on_synth(&mut synth.voices, event)
+            },
+            |synth| {
+                let sample = mix_synth(&mut synth.voices);
+                synth.voices.retain(|voice| voice.inner.is_active());
+                sample
+            },
+        )?;
         for plane in rest.iter_mut() {
             for (sample, source) in plane.iter_mut().zip(first.iter()) {
                 *sample += *source;
@@ -439,9 +461,6 @@ impl crate::builtin::Device for TestSynth {
         let count = voices.max(1);
         self.voices.clear();
         self.voices.reserve(count);
-        for _ in 0..count {
-            self.voices.push(SynthVoice::new(sample_rate)?);
-        }
         self.sample_rate = sample_rate;
         Ok(())
     }
