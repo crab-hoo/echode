@@ -6,6 +6,7 @@
 //! helper exits.
 
 use crate::control::{ControlMessage, Socket};
+use crate::params::{ParamChange, ParamInfo, ParamValue};
 use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
 use crate::workgroup::spawn_helper;
@@ -111,6 +112,10 @@ pub struct PluginHost {
     tail_samples: u32,
 }
 
+/// Longer than the helper's own bounds (2 s for the flush, 2 s for the main
+/// thread read), so a slow reply is not left to answer the next request.
+const PARAMETER_REPLY: Duration = Duration::from_secs(5);
+
 /// Socket and saved-state access for control threads, independent of the
 /// realtime mapping. Never call these methods from an audio callback.
 #[derive(Clone)]
@@ -131,6 +136,26 @@ impl PluginControl {
 
     pub fn applied_state(&self) -> Option<Vec<u8>> {
         self.lock().last_state.clone()
+    }
+
+    /// Every parameter the plugin describes, with its value and text.
+    pub fn parameters(&self) -> Result<Vec<ParamInfo>, SessionError> {
+        self.lock().parameters()
+    }
+
+    /// Applies `changes` in order and returns those parameters as read back.
+    pub fn set_parameters(&self, changes: &[ParamChange]) -> Result<Vec<ParamValue>, SessionError> {
+        self.lock().set_parameters(changes)
+    }
+
+    /// Saves after every change already sent on this socket has been applied.
+    pub fn capture_state(&self) -> Result<Vec<u8>, SessionError> {
+        self.lock().capture_state()
+    }
+
+    /// Loads recorded bytes into the running plugin.
+    pub fn restore_state(&self, bytes: &[u8]) -> Result<(), SessionError> {
+        self.lock().restore_state(bytes)
     }
 
     /// Poll notices and collect an asynchronous state save. A newer dirty
@@ -208,6 +233,62 @@ impl ControlState {
                 "helper did not return state".to_string(),
             )),
         }
+    }
+
+    pub fn parameters(&mut self) -> Result<Vec<ParamInfo>, SessionError> {
+        self.control.send(&ControlMessage::ParamsRequest)?;
+        match self.wait_message(PARAMETER_REPLY, |message| {
+            matches!(
+                message,
+                ControlMessage::Params(_) | ControlMessage::ParamsRejected(_)
+            )
+        })? {
+            ControlMessage::Params(infos) => Ok(infos),
+            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
+            _ => Err(SessionError::Protocol(
+                "helper did not return parameters".to_string(),
+            )),
+        }
+    }
+
+    pub fn set_parameters(
+        &mut self,
+        changes: &[ParamChange],
+    ) -> Result<Vec<ParamValue>, SessionError> {
+        if changes.iter().any(|change| !change.value.is_finite()) {
+            return Err(SessionError::Protocol(
+                "parameter value is not finite".to_string(),
+            ));
+        }
+        self.control
+            .send(&ControlMessage::SetParams(changes.to_vec()))?;
+        match self.wait_message(PARAMETER_REPLY, |message| {
+            matches!(
+                message,
+                ControlMessage::ParamsApplied(_) | ControlMessage::ParamsRejected(_)
+            )
+        })? {
+            ControlMessage::ParamsApplied(values) => Ok(values),
+            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
+            _ => Err(SessionError::Protocol(
+                "helper did not apply parameters".to_string(),
+            )),
+        }
+    }
+
+    /// A background save already in flight answers first on this socket.
+    /// Collect it so the reply taken here is the one requested after the edits.
+    pub fn capture_state(&mut self) -> Result<Vec<u8>, SessionError> {
+        if self.save_requested {
+            self.wait_message(Duration::from_secs(2), |message| {
+                matches!(
+                    message,
+                    ControlMessage::State(_) | ControlMessage::StateRejected(_)
+                )
+            })?;
+            self.save_requested = false;
+        }
+        self.save_state()
     }
 
     pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), SessionError> {

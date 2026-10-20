@@ -753,6 +753,7 @@ dependencies = [
  "echode-model",
  "echode-plugin-host",
  "libc",
+ "serde",
  "serde_json",
  "uuid",
 ]

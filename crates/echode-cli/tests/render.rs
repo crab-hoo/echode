@@ -952,10 +952,8 @@ fn host_bin() -> PathBuf {
         .unwrap();
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sources = [
-        manifest.join("../echode-plugin-host/src/lib.rs"),
-        manifest.join("../echode-plugin-host/src/threads.rs"),
-        manifest.join("../echode-sandbox/src/region.rs"),
-        manifest.join("../echode-sandbox/src/session.rs"),
+        manifest.join("../echode-plugin-host/src"),
+        manifest.join("../echode-sandbox/src"),
     ];
     let fresh = path.is_file() && sources.iter().all(|source| newer_than(&path, source));
     if fresh {
@@ -974,7 +972,7 @@ fn newer_than(built: &Path, source: &Path) -> bool {
     let Ok(built) = built.metadata().and_then(|meta| meta.modified()) else {
         return false;
     };
-    let Ok(edited) = source.metadata().and_then(|meta| meta.modified()) else {
+    let Ok(edited) = newest_source(source) else {
         return true;
     };
     built >= edited
@@ -983,12 +981,12 @@ fn newer_than(built: &Path, source: &Path) -> bool {
 fn plugin_dylib() -> PathBuf {
     let host = host_bin();
     let sibling = host.parent().unwrap().join("libechode_test_plugin.dylib");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src/lib.rs");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src");
     let current = |path: &Path| {
         let Ok(built) = path.metadata().and_then(|meta| meta.modified()) else {
             return false;
         };
-        let Ok(edited) = source.metadata().and_then(|meta| meta.modified()) else {
+        let Ok(edited) = newest_source(&source) else {
             return false;
         };
         built >= edited
@@ -1065,4 +1063,13 @@ fn bless_the_reference() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, &rendered).unwrap();
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Newest edit among the test plugin's sources, so a change to any module rebuilds it.
+fn newest_source(dir: &Path) -> std::io::Result<std::time::SystemTime> {
+    let mut newest = std::time::SystemTime::UNIX_EPOCH;
+    for entry in std::fs::read_dir(dir)? {
+        newest = newest.max(entry?.metadata()?.modified()?);
+    }
+    Ok(newest)
 }

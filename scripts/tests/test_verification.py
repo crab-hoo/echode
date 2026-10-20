@@ -355,12 +355,30 @@ class PolicyTests(unittest.TestCase):
                           "fx-bypass-ui", "fx-batch-ui", "fx-offline-ui", "plugin-offline", "offline-export",
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
-                          "track-duplicate-ui", "track-duplicate-model"})
+                          "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("check_product_contracts.py", recipe)
         self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", recipe)
+
+    def test_parameter_contracts_cover_the_real_helper_and_the_panel(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        helper = contracts["plugin-params"]
+        self.assertEqual((helper["runner"], helper["package"], helper["target"]),
+                         ("rust", "echode-plugin-host", ["--test", "hosted_playback"]))
+        self.assertTrue(helper["test"].startswith("device_params::contract_"))
+        self.assertEqual(helper["negative_control"]["file"], "crates/echode-plugin-host/src/threads.rs")
+        self.assertIn("params.flush", helper["negative_control"]["old"])
+        panel = contracts["fx-params-ui"]
+        self.assertEqual((panel["runner"], panel["suite"]), ("swift", "DeviceParameterTests"))
+        self.assertEqual(panel["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift")
+        # These files open the output engine for device views.
+        for path in ("swift/EchodeBridge/Sources/EchodeBridge/Device.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift"):
+            with self.subTest(path=path):
+                self.assertIn("rtsan", self.selected(path))
+                self.assertIn("check-product-contracts", self.selected(path))
 
     def test_mcp_edits_use_the_real_cli_and_the_existing_contract_runner(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-edit")

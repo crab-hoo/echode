@@ -870,3 +870,25 @@ fn a_live_output_runs_silently_and_stops_repeatedly() {
         assert!(status.sample > 0 && !status.failed);
     }
 }
+
+#[test]
+fn a_stream_opened_for_devices_stays_stopped_until_play() {
+    let (project, track) = Project::new().add_track("audio");
+    let mut setup = TransportSetup::idle();
+    setup.start = false;
+    setup.clips = Arc::new(move |_, rate| Ok(fixture_clips(track.raw(), rate)));
+    let (mut control, mut player) = prepare_playback(&project, 48000, 64, 0, &setup).unwrap();
+    let (mut left, mut right) = (vec![0.0; 64], vec![0.0; 64]);
+    // No Stop was ever requested, so only the missing Play keeps this silent.
+    for _ in 0..4 {
+        player.render(&mut left, &mut right);
+        control.service();
+    }
+    assert!(left.iter().chain(&right).all(|sample| *sample == 0.0));
+    assert!(!control.status().playing);
+    assert_eq!(control.status().sample, 0);
+    control.command(PlaybackCommand::Play).unwrap();
+    player.render(&mut left, &mut right);
+    assert!(control.status().playing);
+    assert!(left.iter().any(|sample| *sample != 0.0));
+}

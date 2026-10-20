@@ -22,6 +22,8 @@ use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 
+mod params;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
     Gain,
@@ -34,6 +36,8 @@ enum Role {
     State,
     /// Refuses a block whose input events go backwards in time.
     Order,
+    /// Gain and mode parameters, saved in its state. See [`params`].
+    Params,
 }
 
 /// `declare_extensions` can run on another thread than `create_plugin`.
@@ -52,6 +56,7 @@ fn role_bits(role: Role) -> u8 {
         Role::Flip => 5,
         Role::State => 6,
         Role::Order => 7,
+        Role::Params => 8,
     }
 }
 
@@ -64,6 +69,7 @@ fn role_from_bits(bits: u8) -> Role {
         5 => Role::Flip,
         6 => Role::State,
         7 => Role::Order,
+        8 => Role::Params,
         _ => Role::Gain,
     }
 }
@@ -100,8 +106,11 @@ impl Plugin for TestGain {
         if current_role() != Role::NoPorts {
             builder.register::<PluginAudioPorts>();
         }
-        if current_role() == Role::State {
+        if matches!(current_role(), Role::State | Role::Params) {
             builder.register::<PluginStateExt>();
+        }
+        if current_role() == Role::Params {
+            builder.register::<params::PluginParamsExt>();
         }
         if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
             builder.register::<PluginNotePorts>();
@@ -153,7 +162,7 @@ impl TestMain {
             Role::Mono => (&[], &[1]),
             Role::Ports => (&[2], &[2, 1]),
             Role::NoPorts => (&[], &[]),
-            Role::State => (&[2], &[2]),
+            Role::State | Role::Params => (&[2], &[2]),
             Role::Order => (&[], &[2]),
         }
     }
@@ -567,6 +576,10 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             fill_outputs(&mut audio, state_level());
             return Ok(ProcessStatus::Continue);
         }
+        if self.role == Role::Params {
+            params::process(&mut audio, events.input)?;
+            return Ok(ProcessStatus::Continue);
+        }
         if self.role == Role::Order {
             let mut last = 0u32;
             let mut ons = 0u32;
@@ -725,6 +738,11 @@ impl TestFactory {
                 ),
                 described("dev.echode.test-zflip", "Echode Test Flip", c"audio-effect"),
                 described("dev.echode.test-order", "Echode Test Order", c"instrument"),
+                described(
+                    "dev.echode.test-params",
+                    "Echode Test Params",
+                    c"audio-effect",
+                ),
             ],
         }
     }
@@ -748,6 +766,7 @@ fn role_of(id: &CStr) -> Option<Role> {
         b"dev.echode.test-state" => Some(Role::State),
         b"dev.echode.test-zflip" => Some(Role::Flip),
         b"dev.echode.test-order" => Some(Role::Order),
+        b"dev.echode.test-params" => Some(Role::Params),
         _ => None,
     }
 }
@@ -902,6 +921,15 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
     if stream.is_null() {
         return false;
     }
+    if current_role() == Role::Params {
+        let bytes = params::save();
+        return unsafe {
+            let Some(write) = (*stream).write else {
+                return false;
+            };
+            write(stream, bytes.as_ptr().cast::<c_void>(), bytes.len() as u64) == bytes.len() as i64
+        };
+    }
     let byte = STATE_BYTE.load(Ordering::Acquire);
     unsafe {
         let Some(write) = (*stream).write else {
@@ -914,6 +942,21 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
 unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_istream) -> bool {
     if stream.is_null() {
         return false;
+    }
+    if current_role() == Role::Params {
+        // One byte more than the fixture writes, so trailing bytes are refused.
+        let mut bytes = [0u8; 17];
+        let read = unsafe {
+            let Some(read) = (*stream).read else {
+                return false;
+            };
+            read(
+                stream,
+                bytes.as_mut_ptr().cast::<c_void>(),
+                bytes.len() as u64,
+            )
+        };
+        return usize::try_from(read).is_ok_and(|read| params::load(&bytes[..read]));
     }
     let mut byte = 0u8;
     let mut extra = 0u8;

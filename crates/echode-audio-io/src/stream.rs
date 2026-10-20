@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use echode_engine::{
-    ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
-    PluginRoute, PluginWorkgroup, playback_pair_at, playback_with_plugins_at,
-    playback_with_plugins_in_workgroup_at, tick_to_sample,
+    ClipLoader, ForbidAlloc, ParamChange, ParamInfo, ParamValue, PlaybackAudio, PlaybackCommand,
+    PlaybackControl, PlaybackStatus, PluginRoute, PluginWorkgroup, playback_pair_at,
+    playback_with_plugins_at, playback_with_plugins_in_workgroup_at, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -63,6 +63,8 @@ pub(crate) struct TransportSetup {
     pub(crate) cancellation: TransportCancellation,
     pub(crate) revision: u64,
     pub(crate) fader_preview: Option<(u128, f32, f32)>,
+    /// False opens helpers and the device without starting the transport.
+    pub(crate) start: bool,
 }
 
 impl TransportSetup {
@@ -75,6 +77,7 @@ impl TransportSetup {
             cancellation: TransportCancellation::default(),
             revision: 0,
             fader_preview: None,
+            start: true,
         }
     }
 }
@@ -280,6 +283,58 @@ impl OutputStream {
 
     pub fn take_plugin_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
         self.control.take_plugin_saves()
+    }
+
+    pub fn device_parameters(&self, device: u128) -> Result<Vec<ParamInfo>, String> {
+        self.control
+            .device_parameters(device)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn set_device_parameters(
+        &self,
+        device: u128,
+        changes: &[ParamChange],
+    ) -> Result<Vec<ParamValue>, String> {
+        self.control
+            .set_device_parameters(device, changes)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn capture_device_state(&self, device: u128) -> Result<Vec<u8>, String> {
+        self.control
+            .capture_device_state(device)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Brings the helpers of `devices` to the project's recorded plugin states,
+    /// for an Undo, Redo or API edit that changed only those hashes.
+    pub fn sync_plugin_states(
+        &mut self,
+        project: &Project,
+        devices: &[u128],
+    ) -> Result<(), String> {
+        let package = self.package.clone();
+        let recorded = |device: u128| -> Result<Option<Vec<u8>>, String> {
+            let state = project
+                .tracks()
+                .iter()
+                .flat_map(|track| &track.devices)
+                .find(|item| item.id.raw() == device)
+                .and_then(|item| item.state.as_deref());
+            match (state, package.as_deref()) {
+                (None, _) => Ok(None),
+                (Some(hash), Some(package)) => echode_history::read_object(package, hash)
+                    .map(Some)
+                    .map_err(|error| error.to_string()),
+                (Some(_), None) => Err("plugin state has no package".into()),
+            }
+        };
+        if self.control.restore_recorded_states(devices, recorded) {
+            self.replace(project)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn service(&mut self) -> Result<(), String> {
@@ -517,9 +572,11 @@ fn prepare_playback_mode(
             .preview_fader(track, gain, pan)
             .map_err(|error| error.to_string())?;
     }
-    control
-        .command(PlaybackCommand::Play)
-        .map_err(|error| error.to_string())?;
+    if transport.start {
+        control
+            .command(PlaybackCommand::Play)
+            .map_err(|error| error.to_string())?;
+    }
     Ok((control, player))
 }
 

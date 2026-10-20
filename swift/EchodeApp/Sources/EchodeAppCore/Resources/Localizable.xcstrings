@@ -1,6 +1,42 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Parameters" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "パラメーター" } }
+      }
+    },
+    "Show Parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Show Parameters" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを表示" } }
+      }
+    },
+    "Close Parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Close" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "閉じる" } }
+      }
+    },
+    "Loading parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Loading parameters…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを読み込み中…" } }
+      }
+    },
+    "No editable parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "This plugin reports no editable parameters." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このプラグインには編集できるパラメーターがありません。" } }
+      }
+    },
+    "Choose parameters help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Choose Show Parameters on an FX to edit its values. The plugin starts without playing." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "FX の「パラメーターを表示」を選ぶと値を編集できます。プラグインは再生せずに起動します。" } }
+      }
+    },
     "Expand Folder": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Expand Folder" } },

@@ -21,8 +21,8 @@ pub(crate) fn is_content_hash(text: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-/// BLAKE3-256 of `bytes`, as 64 lowercase hex digits.
-pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
+/// BLAKE3-256 of `bytes`, as 64 lowercase hex digits: the object's name.
+pub fn hash_bytes(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 

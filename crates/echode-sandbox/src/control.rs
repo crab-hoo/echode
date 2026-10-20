@@ -4,6 +4,10 @@
 //! one file descriptor with `SCM_RIGHTS`. A body longer than 64 MiB is rejected
 //! so a corrupt peer cannot force an unbounded allocation.
 
+use crate::params::{
+    ParamChange, ParamInfo, ParamValue, read_changes, read_infos, read_values, write_changes,
+    write_infos, write_values,
+};
 use crate::region::SessionLayout;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -30,6 +34,11 @@ const PORTS_REJECTED: u32 = 16;
 const STATE_REJECTED: u32 = 17;
 const CANCEL_REMAP: u32 = 18;
 const REMAP_CANCELLED: u32 = 19;
+const PARAMS_REQUEST: u32 = 20;
+const PARAMS: u32 = 21;
+const SET_PARAMS: u32 = 22;
+const PARAMS_APPLIED: u32 = 23;
+const PARAMS_REJECTED: u32 = 24;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -68,6 +77,17 @@ pub enum ControlMessage {
     PortsRejected(String),
     /// Save or load did not call the plugin, or the plugin refused. The bytes are the reason.
     StateRejected(String),
+    /// Asks for every parameter description and current value.
+    ParamsRequest,
+    /// The plugin's parameters in its own order. A plugin without the params
+    /// extension sends an empty list.
+    Params(Vec<ParamInfo>),
+    /// Values to apply in order on the plugin's processing thread.
+    SetParams(Vec<ParamChange>),
+    /// The changed parameters, read back after the plugin applied them.
+    ParamsApplied(Vec<ParamValue>),
+    /// A parameter request did not reach the plugin. The bytes are the reason.
+    ParamsRejected(String),
 }
 
 impl ControlMessage {
@@ -277,6 +297,11 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         }
         ControlMessage::PortsRejected(reason) => (PORTS_REJECTED, reason.as_bytes().to_vec()),
         ControlMessage::StateRejected(reason) => (STATE_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::ParamsRequest => (PARAMS_REQUEST, Vec::new()),
+        ControlMessage::Params(infos) => (PARAMS, write_infos(infos)),
+        ControlMessage::SetParams(changes) => (SET_PARAMS, write_changes(changes)),
+        ControlMessage::ParamsApplied(values) => (PARAMS_APPLIED, write_values(values)),
+        ControlMessage::ParamsRejected(reason) => (PARAMS_REJECTED, reason.as_bytes().to_vec()),
     })
 }
 
@@ -346,6 +371,15 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
             String::from_utf8(body.to_vec())
                 .map_err(|_| io::Error::new(ErrorKind::InvalidData, "state refusal is not text"))?,
         ),
+        PARAMS_REQUEST if body.is_empty() => ControlMessage::ParamsRequest,
+        PARAMS => ControlMessage::Params(read_infos(body)?),
+        SET_PARAMS => ControlMessage::SetParams(read_changes(body)?),
+        PARAMS_APPLIED => ControlMessage::ParamsApplied(read_values(body)?),
+        PARAMS_REJECTED => {
+            ControlMessage::ParamsRejected(String::from_utf8(body.to_vec()).map_err(|_| {
+                io::Error::new(ErrorKind::InvalidData, "parameter refusal is not text")
+            })?)
+        }
         _ => {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
@@ -640,6 +674,47 @@ mod tests {
             .expect("restore");
         let message = child.recv_timeout(Duration::from_secs(2)).expect("recv");
         assert!(matches!(message, ControlMessage::Restore(bytes) if bytes == b"abc"));
+    }
+
+    #[test]
+    fn parameter_messages_cross_the_socket() {
+        let (mut parent, mut child) = Socket::pair().expect("socketpair");
+        let change = ParamChange { id: 3, value: 0.75 };
+        parent
+            .send(&ControlMessage::SetParams(vec![change]))
+            .expect("set");
+        let message = child.recv_timeout(Duration::from_secs(2)).expect("recv");
+        assert!(matches!(message, ControlMessage::SetParams(changes) if changes == [change]));
+        let applied = ParamValue {
+            id: 3,
+            value: 0.75,
+            text: "75 %".into(),
+        };
+        child
+            .send(&ControlMessage::ParamsApplied(vec![applied.clone()]))
+            .expect("applied");
+        let reply = parent.recv_timeout(Duration::from_secs(2)).expect("reply");
+        assert!(matches!(reply, ControlMessage::ParamsApplied(values) if values == [applied]));
+        let info = ParamInfo {
+            id: 3,
+            flags: 0,
+            name: "Mix".into(),
+            module: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            value: 0.75,
+            text: "75 %".into(),
+        };
+        child
+            .send(&ControlMessage::Params(vec![info.clone()]))
+            .expect("params");
+        let reply = parent.recv_timeout(Duration::from_secs(2)).expect("reply");
+        assert!(matches!(reply, ControlMessage::Params(infos) if infos == [info]));
+        let (kind, _) = encode(&ControlMessage::ParamsRequest).unwrap();
+        let mut payload = kind.to_le_bytes().to_vec();
+        payload.push(1);
+        assert!(decode(&payload, None).is_err());
     }
 
     #[test]

@@ -51,6 +51,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 同梱 Sine Pad の明示的な CLAP 化・音源なしの無音: [ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)。
 - CLAP のホストバイパス・保存形式 4: [ADR 0120](decisions/0120-device-bypass.md)。
 - CLAP のオフライン化・保存形式 5: [ADR 0125](decisions/0125-device-offline.md)。
+- CLAP のパラメーター編集・停止中のヘルパー起動・状態の Undo: [ADR 0130](decisions/0130-clap-parameter-editing.md)。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 

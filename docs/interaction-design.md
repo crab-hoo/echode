@@ -237,7 +237,8 @@
   共通サンプルブラウザの登録素材検索・位置を保持する配置は接続済みである。
   全選択トラックへの FX 一括追加は [ADR 0124](decisions/0124-selected-track-fx-batches.md) で接続した。
   トラックの通常複製は部分木単位で接続し、オートメーションとルーティングの引き継ぎは P2-03 / P2-04 で決める（[ADR 0129](decisions/0129-track-duplication.md)）。
-  プラグイン GUI・パラメーター編集・サンプルの単発試聴・ドラムラックは未接続である（[status](status.md)）。
+  CLAP の汎用パラメーター欄は接続した（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
+  プラグイン GUI・サンプルの単発試聴・ドラムラックは未接続である（[status](status.md)）。
 
 ## 実装へ進む時の受入と基盤の保守
 

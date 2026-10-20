@@ -6,7 +6,10 @@ use echode_engine::ClipLoader;
 use echode_model::Project;
 use serde::{Deserialize, Serialize};
 
-use crate::{Inventory, OutputDevice, OutputStream, TransportCancellation, hardware};
+use crate::{
+    Inventory, OutputDevice, OutputStream, ParamChange, ParamInfo, ParamValue,
+    TransportCancellation, hardware,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", deny_unknown_fields)]
@@ -82,6 +85,9 @@ pub struct Session {
     error: Option<String>,
     fader_preview: Option<(u128, f32, f32)>,
     activity: Option<crate::activity::UserActivity>,
+    /// A device view asked for running plugins. The output stays open while
+    /// stopped, as it does after playback.
+    engine_held: bool,
 }
 
 impl Session {
@@ -105,6 +111,7 @@ impl Session {
             error: None,
             fader_preview: None,
             activity: None,
+            engine_held: false,
         }
     }
 
@@ -268,9 +275,33 @@ impl Session {
         }
         let diff = self.project.diff(&project);
         if diff.is_empty() || Self::plugin_state_only(&diff) {
-            // A saved plugin hash is already sounding. Rebuilding the graph
-            // here would drop a fader preview and restart every helper.
+            // A hash the helper saved is already sounding. Undo or Redo of a
+            // recorded state loads those bytes into the same helper instead;
+            // rebuilding here would drop a fader preview and restart every helper.
+            let devices: Vec<u128> = diff
+                .changes()
+                .iter()
+                .filter_map(|change| match change {
+                    echode_model::Change::Update {
+                        id: echode_model::ObjectKey::Id(id),
+                        ..
+                    } => Some(id.raw()),
+                    _ => None,
+                })
+                .collect();
+            let synced = match &mut self.stream {
+                Some(stream) if !devices.is_empty() => {
+                    stream.sync_plugin_states(&project, &devices)
+                }
+                _ => Ok(()),
+            };
             self.project = project;
+            if let Err(error) = synced {
+                self.park();
+                self.playing = false;
+                self.sync_activity();
+                self.error = Some(error);
+            }
             return;
         }
         let tick = self
@@ -307,6 +338,58 @@ impl Session {
             self.sync_activity();
             self.error = Some(error);
         }
+    }
+
+    /// Every parameter of a running device, read from its helper.
+    pub fn device_parameters(
+        &mut self,
+        device: echode_model::Id,
+    ) -> Result<Vec<ParamInfo>, String> {
+        self.open_engine()?.device_parameters(device.raw())
+    }
+
+    /// Changes values in the running helper. Nothing is recorded until
+    /// [`Self::capture_device_state`] is journaled by the caller.
+    pub fn set_device_parameters(
+        &mut self,
+        device: echode_model::Id,
+        changes: &[ParamChange],
+    ) -> Result<Vec<ParamValue>, String> {
+        self.open_engine()?
+            .set_device_parameters(device.raw(), changes)
+    }
+
+    /// Bytes including every applied change, for the caller to record.
+    pub fn capture_device_state(&mut self, device: echode_model::Id) -> Result<Vec<u8>, String> {
+        self.open_engine()?.capture_device_state(device.raw())
+    }
+
+    /// Device views need running helpers. Opens the output stopped at the
+    /// current position when playback has not opened it yet.
+    fn open_engine(&mut self) -> Result<&mut OutputStream, String> {
+        if self.stream.is_none() {
+            if !self
+                .project
+                .tracks()
+                .iter()
+                .flat_map(|track| &track.devices)
+                .any(|device| device.plugin.is_some() && !device.offline)
+            {
+                return Err("the project has no running plugin".into());
+            }
+            self.engine_held = true;
+            if self.notifications.is_none()
+                || self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
+            {
+                self.refresh()?;
+            }
+            self.reconcile()?;
+        }
+        let missing = self
+            .error
+            .clone()
+            .unwrap_or_else(|| "no output device is available".into());
+        self.stream.as_mut().ok_or(missing)
     }
 
     pub fn meters(&self) -> Vec<Arc<crate::TrackMeter>> {
@@ -432,7 +515,7 @@ impl Session {
         }) {
             self.park();
         }
-        if self.playing && self.stream.is_none() {
+        if (self.playing || self.engine_held) && self.stream.is_none() {
             if let Some(device) = device {
                 self.stream = Some(OutputStream::open_guarded(
                     device,
@@ -446,6 +529,7 @@ impl Session {
                         cancellation: self.cancellation.clone(),
                         revision: self.play_revision,
                         fader_preview: self.fader_preview,
+                        start: self.playing,
                     },
                     Arc::clone(&self.hardware_epoch),
                     self.observed_epoch,

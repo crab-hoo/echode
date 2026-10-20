@@ -196,3 +196,35 @@ fn a_plugin_hash_keeps_the_fader_preview_without_a_stream() {
     assert!(session.stream.is_none());
     assert!(session.error.is_none());
 }
+#[test]
+fn device_access_without_a_running_plugin_does_not_open_hardware() {
+    let (project, track) = Project::new().add_track("fx");
+    let device = echode_model::Id::from_raw(0xD7);
+    let offline = project
+        .add_clap_device(track, device, "org.example.fx")
+        .unwrap()
+        .set_device_offline(device, true)
+        .unwrap();
+    for project in [project, offline] {
+        let mut session = Session::new(Arc::new(project));
+        let error = session.device_parameters(device).unwrap_err();
+        assert!(error.contains("no running plugin"), "{error}");
+        assert!(session.notifications.is_none() && session.stream.is_none());
+        assert!(!session.engine_held && !session.state().playing);
+    }
+}
+#[test]
+fn a_plugin_state_only_update_without_a_stream_keeps_the_session_idle() {
+    let (project, track) = Project::new().add_track("fx");
+    let device = echode_model::Id::from_raw(0xD8);
+    let project = project
+        .add_clap_device(track, device, "org.example.fx")
+        .unwrap();
+    let recorded = project
+        .set_device_state(device, Some("a".repeat(64)))
+        .unwrap();
+    let mut session = Session::new(Arc::new(project));
+    session.update(Arc::new(recorded.clone()));
+    assert_eq!(session.project.as_ref(), &recorded);
+    assert!(session.stream.is_none() && session.state().error.is_none());
+}

@@ -98,6 +98,9 @@
 `swift/EchodeBridge/Sources/EchodeBridge/TrackHierarchy.swift` に置く。
 ヘッダの開閉と表示行の共有は `ArrangePaneView.swift`、追加位置の保持は `TrackInsertion.swift` を使う。
 複製対象の保持は `TrackDuplication.swift`、ヘッダの右メニューは `ArrangeHeaderView.swift` に置く。
+CLAP パラメーターの通信は `crates/echode-sandbox/src/params.rs`、ヘルパー側は `threads.rs` の `flush_params` / `param_infos`、
+FFI は `crates/echode-ffi/src/device.rs`、画面は `DeviceParameters.swift` と `WorkspaceParameterView.swift` に置く。
+テスト用 CLAP のパラメーターは `crates/echode-test-plugin/src/params.rs` が持つ。
 
 ### ビルド対象の CPU・OS 基準
 

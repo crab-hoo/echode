@@ -43,6 +43,7 @@ pub struct Snapshot {
     index: Arc<ArrangeIndex>,
     audio: Arc<Vec<u8>>,
     history: Arc<Vec<u8>>,
+    device: Arc<Vec<u8>>,
     waveforms: Arc<Waveforms>,
     hierarchy: Arc<Vec<TrackTreeInfo>>,
     row_map: Option<Arc<Vec<usize>>>,
@@ -52,6 +53,7 @@ pub(crate) enum Operation {
     Perform(Vec<u8>),
     Audio(Vec<u8>),
     History(Vec<u8>),
+    Device(Vec<u8>),
     Snapshot,
     Undo,
     Redo,
@@ -209,6 +211,7 @@ impl Snapshot {
             index: Arc::new(index),
             audio: Arc::new(serde_json::to_vec(&AudioState::default()).unwrap_or_default()),
             history: Arc::new(empty_history()),
+            device: Arc::new(empty_device()),
             waveforms: Arc::new(Waveforms::empty()),
         }
     }
@@ -220,6 +223,7 @@ impl Snapshot {
             index: Arc::clone(&self.index),
             audio: Arc::clone(&self.audio),
             history: Arc::clone(&self.history),
+            device: Arc::clone(&self.device),
             waveforms: Arc::clone(&self.waveforms),
             hierarchy: Arc::clone(&self.hierarchy),
             row_map: self.row_map.clone(),
@@ -289,6 +293,10 @@ impl Snapshot {
 
     pub(crate) fn history(&self) -> &[u8] {
         &self.history
+    }
+
+    pub(crate) fn device(&self) -> &[u8] {
+        &self.device
     }
 
     pub(crate) fn track_count(&self) -> usize {
@@ -473,6 +481,8 @@ fn worker(
     let mut audio =
         Session::with_media_and_cancellation(host.snapshot(), host.directory(), cancellation);
     let mut pending_saves: Vec<(u128, Vec<u8>)> = Vec::new();
+    // Devices with parameter values sent since their last commit.
+    let mut editing = BTreeSet::new();
     loop {
         if accepting && catch_unwind(AssertUnwindSafe(|| audio.service())).is_err() {
             accepting = false;
@@ -481,6 +491,10 @@ fn worker(
             pending_saves.extend(audio.take_plugin_saves());
             let mut captured = false;
             pending_saves.retain(|(device, bytes)| {
+                // The commit that ends this edit supersedes these bytes.
+                if editing.contains(device) {
+                    return true;
+                }
                 match host.commit_plugin_state(Id::from_raw(*device), bytes) {
                     Ok(_) => {
                         captured = true;
@@ -528,6 +542,7 @@ fn worker(
         }
         let before_doc = host.snapshot();
         let performed = catch_unwind(AssertUnwindSafe(|| {
+            let mut device = None;
             let history = match &job.operation {
                 Operation::Audio(bytes) => {
                     let command: AudioCommand =
@@ -539,6 +554,15 @@ fn worker(
                     let report = history_report(&host, bytes)?;
                     audio.update(host.snapshot());
                     Some(report)
+                }
+                Operation::Device(bytes) => {
+                    device = Some(crate::device::device_report(
+                        &host,
+                        &mut audio,
+                        &mut editing,
+                        bytes,
+                    )?);
+                    None
                 }
                 _ => {
                     apply(&host, &job.operation)?;
@@ -568,6 +592,7 @@ fn worker(
             snapshot.audio =
                 Arc::new(serde_json::to_vec(&audio.state()).map_err(|error| error.to_string())?);
             snapshot.history = Arc::new(history.unwrap_or_else(empty_history));
+            snapshot.device = Arc::new(device.unwrap_or_else(empty_device));
             Ok::<_, String>(snapshot)
         }));
         match performed {
@@ -589,7 +614,9 @@ fn worker(
         }
         if !Arc::ptr_eq(&before_doc, &host.snapshot()) {
             // A save captured for the previous graph must not land on the new one.
+            // A commit, Undo or other edit also ends any parameter edit.
             pending_saves.clear();
+            editing.clear();
         }
     }
     drop(audio);
@@ -609,6 +636,7 @@ fn apply(host: &DocumentHost, operation: &Operation) -> Result<(), String> {
         Operation::Invalid => Err("unknown document operation".to_string()),
         Operation::Audio(_) => Err("audio command must run on the session".to_string()),
         Operation::History(_) => Err("history command must run on the session".to_string()),
+        Operation::Device(_) => Err("device command must run on the session".to_string()),
         Operation::Perform(bytes) => {
             let text = match str::from_utf8(bytes) {
                 Ok(text) if !text.is_empty() => text,
@@ -633,6 +661,10 @@ fn apply(host: &DocumentHost, operation: &Operation) -> Result<(), String> {
 
 fn empty_history() -> Vec<u8> {
     br#"{"revisions":[],"changed":false}"#.to_vec()
+}
+
+fn empty_device() -> Vec<u8> {
+    b"{}".to_vec()
 }
 
 fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> {

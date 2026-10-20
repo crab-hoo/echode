@@ -50,7 +50,12 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
   自動表示だけで入力フォーカスを奪わず、ピアノロールもそのまま操作できるようにする
   （[ADR 0061](../decisions/0061-distribution-signing.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - P2-02 の最初の接続では、下部のトラック FX ビュー、ヘッダの FX ボタン、候補の非モーダルパネル、`device.reorder` / `device.copy` を追加した。
-  ヘルパー GUI とパラメーター編集は未接続である（[ADR 0118](../decisions/0118-track-fx-chain-editing.md)）
+  ヘルパー GUI は未接続である（[ADR 0118](../decisions/0118-track-fx-chain-editing.md)）
+- パラメーター編集は FX 行から開く汎用欄で行う。CLAP の値はモデルへ複製せず、プラグイン状態を正本とする。
+  説明と値はヘルパーのメインスレッドで読み、変更は処理スレッドがブロックの合間に `params.flush` で反映する。
+  ジェスチャーの終了時に状態を取り込み、`device.set_state` として 1 回の Undo に記録する。
+  状態だけの Undo / Redo は同じヘルパーへ記録済みのバイトを読み込み、既定や読込拒否はヘルパーを作り直す
+  （[ADR 0130](../decisions/0130-clap-parameter-editing.md)）
 - トラック CLAP のホストバイパスは FX 行から保存・Undo・再生・書出しへ接続済み。
   FX はドライ音を通し、音源は発音を止めて配置音声を保つ。ヘルパーを保持し、再有効化はリセットと現在のノート追跡を通す。
   バイパスの詳細は [ADR 0120](../decisions/0120-device-bypass.md) を参照する。

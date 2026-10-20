@@ -16,8 +16,8 @@ public final class ProjectController {
     public private(set) var documentID: UUID?
     public private(set) var projectURL: URL?
     public private(set) var busy = false
-    public private(set) var undoCount = 0
-    public private(set) var redoCount = 0
+    public internal(set) var undoCount = 0
+    public internal(set) var redoCount = 0
     private(set) var pluginNames: [String: String] = [:]
     @ObservationIgnored private var pluginNamesLoading = false
     @ObservationIgnored private var pluginNamesLoaded = false
@@ -57,19 +57,27 @@ public final class ProjectController {
     public var playbackRequested: Bool { pendingPlayback ?? audio.playing }
     @ObservationIgnored private var audioRequests = 0
     @ObservationIgnored private var audioRevision: UInt64 = 0
-    @ObservationIgnored private var document: Document?
+    @ObservationIgnored private(set) var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
     @ObservationIgnored private let sendAudio: @Sendable (Document, AudioCommand) async throws -> AudioState
+    /// Parameters of the device the FX view is editing, as its plugin reported them.
+    public internal(set) var parameterPanel: ParameterPanel?
+    @ObservationIgnored var parameterGesture: ParameterGesture?
+    @ObservationIgnored var parameterTask: Task<Void, Never>?
+    @ObservationIgnored let sendDevice: @Sendable (Document, DeviceCommand) async throws -> DeviceResult
     /// One document change at a time. A repeated step waits instead of being dropped.
-    @ObservationIgnored private let edits = EditTurn()
+    @ObservationIgnored let edits = EditTurn()
 
     public init() {
         sendAudio = { try await $0.audio($1) }
+        sendDevice = DeviceResult.send
         edits.onBusy = { [weak self] value in self?.busy = value }
     }
 
-    init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState) {
+    init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) },
+         sendDevice: @escaping @Sendable (Document, DeviceCommand) async throws -> DeviceResult = DeviceResult.send) {
         self.sendAudio = sendAudio
+        self.sendDevice = sendDevice
         edits.onBusy = { [weak self] value in self?.busy = value }
     }
 
@@ -99,6 +107,7 @@ public final class ProjectController {
                 self.redoCount = 0
                 self.selection = nil
                 self.noteFocus = nil
+                self.closeParameters()
                 self.publish(initial)
                 if let previous { await Task.detached { previous.shutdown() }.value }
             } catch { self.report(error) }
@@ -259,6 +268,7 @@ public final class ProjectController {
             guard self.documentID == target, self.undoCount > 0, let document = self.document else { return }
             do { self.publish(try await document.undo()); self.undoCount -= 1; self.redoCount += 1 }
             catch { self.report(error) }
+            await self.reloadParameters()
         }
     }
 
@@ -269,6 +279,7 @@ public final class ProjectController {
             guard self.documentID == target, self.redoCount > 0, let document = self.document else { return }
             do { self.publish(try await document.redo()); self.redoCount -= 1; self.undoCount += 1 }
             catch { self.report(error) }
+            await self.reloadParameters()
         }
     }
 
@@ -301,6 +312,7 @@ public final class ProjectController {
             self.selection = nil
             self.noteFocus = nil
             self.clipFocus = nil
+            self.closeParameters()
             self.undoCount = 0
             self.redoCount = 0
             self.audio = AudioState()
@@ -439,7 +451,7 @@ public final class ProjectController {
         }
     }
 
-    private func publish(_ snapshot: Snapshot) {
+    func publish(_ snapshot: Snapshot) {
         self.snapshot = snapshot
         tracks = (0..<snapshot.trackCount).compactMap { index in
             guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }
@@ -450,9 +462,12 @@ public final class ProjectController {
         if selection != previous { noteFocus = nil; clipFocus = nil }
         if let noteFocus { self.noteFocus = snapshot.pianoNote(noteFocus)?.id }
         if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
+        if let panel = parameterPanel, !tracks.contains(where: { snapshot.devices(on: $0.id).contains { $0.id == panel.device && !$0.offline } }) {
+            closeParameters()
+        }
     }
 
-    private func report(_ error: any Error) {
+    func report(_ error: any Error) {
         errorMessage = (error as? BridgeError)?.message ?? error.localizedDescription
     }
 }

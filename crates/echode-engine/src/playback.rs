@@ -1593,6 +1593,87 @@ impl PlaybackControl {
     pub fn take_plugin_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
         std::mem::take(&mut self.plugin_saves)
     }
+
+    /// The helper currently hosting `device`. Offline, unresolved and not yet
+    /// published devices have none.
+    fn device_control(
+        &self,
+        device: u128,
+    ) -> Result<&echode_sandbox::PluginControl, PlaybackError> {
+        self.save_controls
+            .iter()
+            .find(|(id, _)| *id == device)
+            .map(|(_, control)| control)
+            .ok_or_else(|| PlaybackError::Unsupported("the device has no running plugin".into()))
+    }
+
+    /// Descriptions and values from the device's own helper. Control thread only.
+    pub fn device_parameters(
+        &self,
+        device: u128,
+    ) -> Result<Vec<echode_sandbox::ParamInfo>, PlaybackError> {
+        self.device_control(device)?
+            .parameters()
+            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
+    }
+
+    /// Applies values in the running helper. The project is unchanged until
+    /// the caller records a captured state.
+    pub fn set_device_parameters(
+        &self,
+        device: u128,
+        changes: &[echode_sandbox::ParamChange],
+    ) -> Result<Vec<echode_sandbox::ParamValue>, PlaybackError> {
+        self.device_control(device)?
+            .set_parameters(changes)
+            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
+    }
+
+    /// Plugin bytes that include every value applied before this call.
+    pub fn capture_device_state(&self, device: u128) -> Result<Vec<u8>, PlaybackError> {
+        self.device_control(device)?
+            .capture_state()
+            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
+    }
+
+    /// Bytes the running helper last saved or loaded. `Ok(None)` is a helper
+    /// still on the plugin's defaults; `Err` is a device without a helper.
+    pub fn device_applied_state(&self, device: u128) -> Result<Option<Vec<u8>>, PlaybackError> {
+        Ok(self.device_control(device)?.applied_state())
+    }
+
+    /// Loads recorded bytes into the running helper without replacing it.
+    pub fn restore_device_state(&self, device: u128, bytes: &[u8]) -> Result<(), PlaybackError> {
+        self.device_control(device)?
+            .restore_state(bytes)
+            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
+    }
+
+    /// Brings the running helpers of `devices` to their recorded bytes, for an
+    /// Undo, Redo or API edit that changed only plugin states. `recorded` gives
+    /// a device's bytes, `Ok(None)` for plugin defaults. A helper that already
+    /// saved or loaded those bytes is left alone. Returns `true` when the
+    /// caller must replace the graph: defaults need a fresh plugin, and an
+    /// unreadable or refused load needs a helper spawned with the bytes.
+    /// A device without a helper is left to that replacement too.
+    pub fn restore_recorded_states(
+        &self,
+        devices: &[u128],
+        recorded: impl Fn(u128) -> Result<Option<Vec<u8>>, String>,
+    ) -> bool {
+        let mut replace = false;
+        for &device in devices {
+            let Ok(applied) = self.device_applied_state(device) else {
+                continue;
+            };
+            match recorded(device) {
+                Ok(want) if want == applied => {}
+                Ok(Some(bytes)) => replace |= self.restore_device_state(device, &bytes).is_err(),
+                Ok(None) | Err(_) => replace = true,
+            }
+        }
+        replace
+    }
     /// Device id and reason when a plugin missed the block that just rendered.
     /// Live playback still silences that block and leaves [`PlaybackStatus::failed`]
     /// clear. Export uses this so a deadline miss is not a finished file.

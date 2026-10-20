@@ -16,10 +16,22 @@ struct WorkspaceDeviceView: View {
             }.padding(10)
             Divider()
             if let document = controller.documentID, let track = controller.selection {
-                DeviceChainCanvas(devices: controller.deviceRows(on: track), track: track, document: document, busy: controller.busy,
-                    edit: { edit in Task { await controller.editDeviceChain(edit, documentID: document) } },
-                    insert: { plugin in Task { await controller.insertPlugin(plugin, on: track, documentID: document) } })
-                Text(text("FX chain gesture help")).font(.caption).foregroundStyle(.secondary).padding(8)
+                let devices = controller.deviceRows(on: track)
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        DeviceChainCanvas(devices: devices, track: track, document: document, busy: controller.busy,
+                            focused: controller.parameterPanel?.device,
+                            edit: { edit in Task { await controller.editDeviceChain(edit, documentID: document) } },
+                            insert: { plugin in Task { await controller.insertPlugin(plugin, on: track, documentID: document) } },
+                            parameters: { device in
+                                if controller.parameterPanel?.device == device { controller.closeParameters() }
+                                else { Task { await controller.showParameters(device) } }
+                            })
+                        Text(text("FX chain gesture help")).font(.caption).foregroundStyle(.secondary).padding(8)
+                    }.frame(minWidth: 280, idealWidth: 380, maxWidth: 460)
+                    Divider()
+                    WorkspaceParameterView(controller: controller, devices: devices).frame(maxWidth: .infinity)
+                }
             } else {
                 Text(text("Select a track")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -32,8 +44,10 @@ private struct DeviceChainCanvas: NSViewRepresentable {
     let track: UUID
     let document: UUID
     let busy: Bool
+    let focused: UUID?
     let edit: (DeviceChainEdit) -> Void
     let insert: (String) -> Void
+    let parameters: (UUID) -> Void
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = DeviceChainScrollView()
         scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
@@ -43,8 +57,8 @@ private struct DeviceChainCanvas: NSViewRepresentable {
     }
     func updateNSView(_ view: NSScrollView, context: Context) {
         guard let list = view.documentView as? DeviceChainListView else { return }
-        list.onEdit = edit; list.onInsert = insert
-        list.configure(devices: devices, track: track, document: document, busy: busy)
+        list.onEdit = edit; list.onInsert = insert; list.onParameters = parameters
+        list.configure(devices: devices, track: track, document: document, busy: busy, focused: focused)
         list.setFrameSize(CGSize(width: view.contentSize.width, height: max(view.contentSize.height, list.contentHeight)))
         list.autoresizingMask = [.width]
         view.needsLayout = true
@@ -71,8 +85,11 @@ final class DeviceChainListView: NSView {
     private var track: UUID?
     private var document: UUID?
     private var busy = false
+    private var focused: UUID?
     var onEdit: ((DeviceChainEdit) -> Void)?
     var onInsert: ((String) -> Void)?
+    /// Shows or hides the parameters of a row's device.
+    var onParameters: ((UUID) -> Void)?
     var contentHeight: Double { max(Self.rowHeight, Double(devices.count + 1) * Self.rowHeight) }
     override var isFlipped: Bool { true }
     override init(frame: NSRect) {
@@ -83,9 +100,10 @@ final class DeviceChainListView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(devices: [TrackDevice], track: UUID, document: UUID, busy: Bool) {
-        guard self.devices != devices || self.track != track || self.document != document || self.busy != busy else { return }
-        self.devices = devices; self.track = track; self.document = document; self.busy = busy
+    func configure(devices: [TrackDevice], track: UUID, document: UUID, busy: Bool, focused: UUID? = nil) {
+        guard self.devices != devices || self.track != track || self.document != document || self.busy != busy
+                || self.focused != focused else { return }
+        self.devices = devices; self.track = track; self.document = document; self.busy = busy; self.focused = focused
         subviews.forEach { $0.removeFromSuperview() }
         for (index, device) in devices.enumerated() {
             let row = DeviceChainRow(device: device, payload: FXDrag(document: document, track: track, device: device.id, plugin: nil))
@@ -94,6 +112,10 @@ final class DeviceChainListView: NSView {
             row.copy.isEnabled = !busy; row.remove.isEnabled = !busy; row.dragEnabled = !busy
             row.bypass.isEnabled = !busy
             row.offline.isEnabled = !busy
+            // Offline devices keep settings but have no running plugin to read.
+            row.parameters.isEnabled = !device.offline
+            row.parameters.state = focused == device.id ? .on : .off
+            row.onParameters = { [weak self] in self?.onParameters?(device.id) }
             row.onBypass = { [weak self] value in self?.onEdit?(.bypass(device: device.id, bypassed: value)) }
             row.onOffline = { [weak self] value in self?.onEdit?(.offline(device: device.id, offline: value)) }
             row.onUp = { [weak self] in self?.onEdit?(.reorder(device: device.id, before: index > 0 ? devices[index - 1].id : device.id)) }
@@ -138,6 +160,7 @@ final class DeviceChainListView: NSView {
 @MainActor
 final class DeviceChainRow: NSView, NSDraggingSource {
     let up = NSButton(), down = NSButton(), copy = NSButton(), remove = NSButton()
+    let parameters = NSButton()
     let bypass = NSButton()
     let offline = NSButton()
     private let label: NSTextField
@@ -147,6 +170,7 @@ final class DeviceChainRow: NSView, NSDraggingSource {
     var onUp: (() -> Void)?, onDown: (() -> Void)?, onCopy: (() -> Void)?, onRemove: (() -> Void)?
     var onBypass: ((Bool) -> Void)?
     var onOffline: ((Bool) -> Void)?
+    var onParameters: (() -> Void)?
     override var isFlipped: Bool { true }
     init(device: TrackDevice, payload: FXDrag) {
         self.payload = payload; label = NSTextField(labelWithString: device.title)
@@ -165,7 +189,9 @@ final class DeviceChainRow: NSView, NSDraggingSource {
         offline.setAccessibilityLabel(text("Offline") + " " + device.title)
         offline.toolTip = text("Offline FX help")
         addSubview(offline)
+        parameters.setButtonType(.pushOnPushOff)
         for (button, symbol, title, action) in [
+            (parameters, "slider.horizontal.3", "Show Parameters", #selector(showParameters)),
             (up, "arrow.up", "Move FX Up", #selector(moveUpFX)), (down, "arrow.down", "Move FX Down", #selector(moveDownFX)),
             (copy, "plus.square.on.square", "Duplicate FX", #selector(copyFX)), (remove, "trash", "Remove FX", #selector(removeFX))
         ] {
@@ -180,8 +206,8 @@ final class DeviceChainRow: NSView, NSDraggingSource {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func layout() {
         super.layout()
-        let controls = [up, down, copy, remove]
-        let start = max(0, bounds.width - 136)
+        let controls = [parameters, up, down, copy, remove]
+        let start = max(0, bounds.width - 170)
         label.frame = CGRect(x: 4, y: 5, width: max(0, bounds.width - 114), height: 20)
         offline.frame = CGRect(x: max(0, bounds.width - 106), y: 2, width: min(102, bounds.width), height: 28)
         bypass.frame = CGRect(x: 4, y: 32, width: min(90, max(0, start - 8)), height: 28)
@@ -193,6 +219,7 @@ final class DeviceChainRow: NSView, NSDraggingSource {
     @objc private func removeFX() { onRemove?() }
     @objc private func bypassFX() { onBypass?(bypass.state == .on) }
     @objc private func offlineFX() { onOffline?(offline.state == .on) }
+    @objc private func showParameters() { onParameters?() }
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         return hit === label ? self : hit

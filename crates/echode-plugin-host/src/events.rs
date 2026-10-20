@@ -47,21 +47,26 @@ pub fn write_input(events: &[Event], buffer: &mut EventBuffer) {
                     note.value,
                 ));
             }
+            // CLAP's invalid id would panic in `ClapId::new` on the audio thread.
             Event::ParamValue(note) => {
-                buffer.push(&ParamValueEvent::new(
-                    note.time,
-                    ClapId::new(note.param_id),
-                    pckn(note.target),
-                    note.value,
-                ));
+                if let Some(id) = ClapId::from_raw(note.param_id) {
+                    buffer.push(&ParamValueEvent::new(
+                        note.time,
+                        id,
+                        pckn(note.target),
+                        note.value,
+                    ));
+                }
             }
             Event::ParamMod(note) => {
-                buffer.push(&ParamModEvent::new(
-                    note.time,
-                    ClapId::new(note.param_id),
-                    pckn(note.target),
-                    note.value,
-                ));
+                if let Some(id) = ClapId::from_raw(note.param_id) {
+                    buffer.push(&ParamModEvent::new(
+                        note.time,
+                        id,
+                        pckn(note.target),
+                        note.value,
+                    ));
+                }
             }
             Event::Transport(note) => buffer.push(&transport(note)),
         }
@@ -154,5 +159,22 @@ mod tests {
         };
         assert_eq!(param.note_id(), clack_host::events::Match::All);
         assert_eq!(param.param_id(), clack_host::utils::ClapId::new(2));
+    }
+
+    #[test]
+    fn the_invalid_clap_parameter_id_is_skipped() {
+        let invalid = ParamEvent {
+            time: 0,
+            track: 1,
+            param_id: u32::MAX,
+            target: Target::any(),
+            value: 0.5,
+        };
+        let mut buffer = EventBuffer::new();
+        write_input(
+            &[Event::ParamValue(invalid), Event::ParamMod(invalid)],
+            &mut buffer,
+        );
+        assert_eq!(InputEvents::from_buffer(&buffer).len(), 0);
     }
 }

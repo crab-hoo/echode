@@ -9,13 +9,14 @@ use crate::{HostError, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::events::{
     Pckn,
-    event_types::{MidiEvent, NoteChokeEvent},
+    event_types::{MidiEvent, NoteChokeEvent, ParamValueEvent},
 };
 use clack_host::extensions::prelude::{
     Extension, ExtensionImplementation, HostExtensionSide, HostWrapper, RawExtension,
     RawExtensionImplementation,
 };
 use clack_host::prelude::*;
+use clack_host::utils::ClapId;
 use clap_sys::ext::audio_ports::{
     CLAP_EXT_AUDIO_PORTS, clap_audio_port_info, clap_plugin_audio_ports,
 };
@@ -23,6 +24,7 @@ use clap_sys::ext::note_ports::{
     CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI_MPE, clap_note_port_info,
     clap_plugin_note_ports,
 };
+use clap_sys::ext::params::{CLAP_EXT_PARAMS, clap_param_info, clap_plugin_params};
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_host_state, clap_plugin_state};
 use clap_sys::host::clap_host;
 use clap_sys::plugin::clap_plugin;
@@ -30,14 +32,14 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
     CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn,
-    MappedRegion, RegionError, Socket, SyncFlags, wake_one,
+    MappedRegion, ParamChange, ParamInfo, ParamValue, RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
     kCFRunLoopDefaultMode,
 };
 use std::cell::{Cell, UnsafeCell};
-use std::ffi::{CStr, c_void};
+use std::ffi::{CStr, c_char, c_void};
 use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
 use std::ptr;
@@ -50,6 +52,8 @@ const OP_ARM: u8 = 2;
 const STATE_SAVE: u8 = 1;
 const STATE_LOAD: u8 = 2;
 const PREPARE_CAPACITY: u8 = 3;
+const PARAM_LIST: u8 = 4;
+const PARAM_READ: u8 = 5;
 
 const HANDOFF_EMPTY: u8 = 0;
 const HANDOFF_FULL: u8 = 1;
@@ -182,6 +186,16 @@ struct Bridge {
     state_bytes: std::sync::Mutex<Vec<u8>>,
     state_error: std::sync::Mutex<Option<String>>,
     plugin_dirty: AtomicBool,
+    /// `clap.params`, looked up on the main thread after load. Null when absent.
+    params: AtomicPtr<clap_plugin_params>,
+    /// Changes the control thread prepared. The processing thread flushes them.
+    param_pending: AtomicPtr<ParamBatch>,
+    /// Flushed batches, newest first. Only the control thread frees them.
+    param_retired: AtomicPtr<ParamBatch>,
+    param_generation: AtomicU64,
+    param_flushed: AtomicU64,
+    /// What the last main-thread parameter read produced.
+    param_read: std::sync::Mutex<ParamRead>,
     // Read after `serve` returns, from the unit test.
     #[allow(dead_code)]
     main_id: std::sync::Mutex<Option<ThreadId>>,
@@ -569,6 +583,12 @@ fn serve_region(
         state_bytes: std::sync::Mutex::new(Vec::new()),
         state_error: std::sync::Mutex::new(None),
         plugin_dirty: AtomicBool::new(false),
+        params: AtomicPtr::new(ptr::null_mut()),
+        param_pending: AtomicPtr::new(ptr::null_mut()),
+        param_retired: AtomicPtr::new(ptr::null_mut()),
+        param_generation: AtomicU64::new(0),
+        param_flushed: AtomicU64::new(0),
+        param_read: std::sync::Mutex::new(ParamRead::Infos(Vec::new())),
         main_id: std::sync::Mutex::new(None),
         audio_id: std::sync::Mutex::new(None),
         callbacks: AtomicU64::new(0),
@@ -651,6 +671,9 @@ fn serve_region(
                 .map_err(HostError::Plugin)?;
             publish_stopped(&bridge.processor, stopped, false);
             bridge.need_start.store(true, Ordering::Release);
+            bridge
+                .params
+                .store(params_extension(&loaded.instance), Ordering::Release);
             INSTANCE.with(|cell| cell.set(ptr::from_mut(&mut loaded.instance)));
         }
     }
@@ -702,6 +725,12 @@ fn serve_region(
         });
     }
     release_maps(&bridge);
+    // Both worker threads have been joined, so no batch is still being flushed.
+    let unclaimed = bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel);
+    if !unclaimed.is_null() {
+        drop(unsafe { Box::from_raw(unclaimed) });
+    }
+    reclaim_param_batches(&bridge);
     let ports = bridge.ports.swap(ptr::null_mut(), Ordering::AcqRel);
     if !ports.is_null() {
         drop(unsafe { Box::from_raw(ports) });
@@ -996,6 +1025,7 @@ fn service_block(
 ) -> Result<Step, RtFail> {
     let _guard = crate::realtime::ForbidAlloc::enter();
     pump(bridge, started)?;
+    flush_params(bridge, started);
     let region = current_region(bridge);
     let published = region.published();
     if published > *seen_request {
@@ -1312,6 +1342,24 @@ fn handle_control(
             let reply = match call_plugin_state(bridge, Some(bytes)) {
                 Ok(_) => ControlMessage::Restored,
                 Err(error) => ControlMessage::StateRejected(error),
+            };
+            socket
+                .send(&reply)
+                .map_err(|error| HostError::Plugin(error.to_string()))?;
+        }
+        ControlMessage::ParamsRequest => {
+            let reply = match read_params(bridge) {
+                Ok(infos) => ControlMessage::Params(infos),
+                Err(error) => ControlMessage::ParamsRejected(error),
+            };
+            socket
+                .send(&reply)
+                .map_err(|error| HostError::Plugin(error.to_string()))?;
+        }
+        ControlMessage::SetParams(changes) => {
+            let reply = match apply_params(bridge, &changes) {
+                Ok(values) => ControlMessage::ParamsApplied(values),
+                Err(error) => ControlMessage::ParamsRejected(error),
             };
             socket
                 .send(&reply)
@@ -1680,14 +1728,15 @@ fn perform_plugin_state(bridge: &Bridge, kind: u8) -> Result<Vec<u8>, String> {
         }
         let instance = unsafe { &*instance };
         if kind == STATE_SAVE {
-            save_plugin_state(instance)
-        } else {
-            let bytes = bridge
-                .state_bytes
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .clone();
-            if kind == PREPARE_CAPACITY {
+            return save_plugin_state(instance);
+        }
+        let bytes = bridge
+            .state_bytes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        match kind {
+            PREPARE_CAPACITY => {
                 let capacity = u32::from_le_bytes(
                     bytes
                         .as_slice()
@@ -1695,12 +1744,297 @@ fn perform_plugin_state(bridge: &Bridge, kind: u8) -> Result<Vec<u8>, String> {
                         .map_err(|_| "invalid capacity")?,
                 );
                 prepare_event_capacity(instance, capacity)?;
-            } else {
-                load_plugin_state(instance, &bytes)?;
             }
-            Ok(bytes)
+            PARAM_LIST | PARAM_READ => {
+                let read = read_on_main(bridge, instance, kind, &bytes);
+                *bridge
+                    .param_read
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = read;
+            }
+            _ => load_plugin_state(instance, &bytes)?,
         }
+        Ok(bytes)
     })
+}
+
+/// Changes published together by the control thread and flushed together.
+struct ParamBatch {
+    generation: u64,
+    events: EventBuffer,
+    /// The next older batch on the retired list.
+    next: *mut ParamBatch,
+}
+
+enum ParamRead {
+    Infos(Vec<ParamInfo>),
+    Values(Vec<ParamValue>),
+}
+
+fn params_extension(instance: &PluginInstance<EchodeHost>) -> *mut clap_plugin_params {
+    let plugin = instance.raw_instance();
+    let Some(get) = plugin.get_extension else {
+        return ptr::null_mut();
+    };
+    // SAFETY: standard extension id, queried on the main thread after creation.
+    // The table stays valid for the plugin's lifetime.
+    unsafe { get(plugin, CLAP_EXT_PARAMS.as_ptr()) }
+        .cast::<clap_plugin_params>()
+        .cast_mut()
+}
+
+/// Applies queued parameter values between blocks, on the processing thread.
+/// CLAP allows `flush` there while the plugin is active, and never during
+/// `process`. The control thread allocated the batch; this only moves pointers.
+fn flush_params(bridge: &Bridge, started: &mut Option<StartedPluginAudioProcessor<EchodeHost>>) {
+    let Some(active) = started.as_mut() else {
+        return;
+    };
+    if bridge.param_pending.load(Ordering::Acquire).is_null() {
+        return;
+    }
+    let batch = bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel);
+    if batch.is_null() {
+        return;
+    }
+    let params = bridge.params.load(Ordering::Acquire);
+    // SAFETY: the control thread does not touch a published batch again until
+    // it is on the retired list, and the extension table outlives the plugin.
+    let generation = unsafe {
+        if let Some(flush) = params.as_ref().and_then(|params| params.flush) {
+            let input = InputEvents::from_buffer(&(*batch).events);
+            let mut output = OutputEvents::void();
+            flush(
+                active.plugin_handle().as_raw(),
+                input.as_raw(),
+                output.as_raw(),
+            );
+        }
+        (*batch).generation
+    };
+    let mut head = bridge.param_retired.load(Ordering::Acquire);
+    loop {
+        // SAFETY: this thread owns the batch until the exchange publishes it.
+        unsafe { (*batch).next = head };
+        match bridge.param_retired.compare_exchange_weak(
+            head,
+            batch,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(current) => head = current,
+        }
+    }
+    bridge.param_flushed.store(generation, Ordering::Release);
+    bridge.bump_control();
+}
+
+/// Frees every flushed batch. Only the control thread and teardown call this.
+fn reclaim_param_batches(bridge: &Bridge) {
+    let mut batch = bridge.param_retired.swap(ptr::null_mut(), Ordering::AcqRel);
+    while !batch.is_null() {
+        // SAFETY: swapping the list moved every retired batch to this thread.
+        let owned = unsafe { Box::from_raw(batch) };
+        batch = owned.next;
+    }
+}
+
+fn read_params(bridge: &Bridge) -> Result<Vec<ParamInfo>, String> {
+    call_plugin_operation(bridge, PARAM_LIST, Vec::new())?;
+    match take_param_read(bridge) {
+        ParamRead::Infos(infos) => Ok(infos),
+        ParamRead::Values(_) => Err("parameter read returned values".to_string()),
+    }
+}
+
+fn take_param_read(bridge: &Bridge) -> ParamRead {
+    std::mem::replace(
+        &mut *bridge
+            .param_read
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()),
+        ParamRead::Values(Vec::new()),
+    )
+}
+
+/// Publishes `changes` for the processing thread, waits until they were
+/// flushed, then reads those values back on the main thread.
+fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamValue>, String> {
+    if !bridge.has_plugin.load(Ordering::Acquire) {
+        return Err("no plugin".to_string());
+    }
+    let params = bridge.params.load(Ordering::Acquire);
+    // SAFETY: the extension table lives as long as the plugin instance.
+    if unsafe { params.as_ref() }
+        .and_then(|params| params.flush)
+        .is_none()
+    {
+        return Err("plugin does not accept parameter changes".to_string());
+    }
+    let mut events = EventBuffer::with_capacity(changes.len());
+    let mut ids: Vec<u32> = Vec::with_capacity(changes.len());
+    for change in changes {
+        let id = ClapId::from_raw(change.id)
+            .filter(|_| change.value.is_finite())
+            .ok_or_else(|| "invalid parameter change".to_string())?;
+        events.push(&ParamValueEvent::new(
+            0,
+            id,
+            Pckn::match_all(),
+            change.value,
+        ));
+        if !ids.contains(&change.id) {
+            ids.push(change.id);
+        }
+    }
+    reclaim_param_batches(bridge);
+    let generation = bridge.param_generation.fetch_add(1, Ordering::AcqRel) + 1;
+    let batch = Box::into_raw(Box::new(ParamBatch {
+        generation,
+        events,
+        next: ptr::null_mut(),
+    }));
+    let stale = bridge.param_pending.swap(batch, Ordering::AcqRel);
+    if !stale.is_null() {
+        // The processing thread never took it, so this thread still owns it.
+        drop(unsafe { Box::from_raw(stale) });
+    }
+    bridge.bump_audio();
+    let started = std::time::Instant::now();
+    while bridge.param_flushed.load(Ordering::Acquire) < generation {
+        if bridge.stop.load(Ordering::Acquire) {
+            return Err("plugin stopped before parameters were applied".to_string());
+        }
+        if started.elapsed() > std::time::Duration::from_secs(2) {
+            let unclaimed = bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel);
+            if !unclaimed.is_null() {
+                drop(unsafe { Box::from_raw(unclaimed) });
+            }
+            return Err("parameter changes timed out".to_string());
+        }
+        thread::sleep(std::time::Duration::from_millis(1));
+    }
+    reclaim_param_batches(bridge);
+    let bytes = ids.iter().flat_map(|id| id.to_le_bytes()).collect();
+    call_plugin_operation(bridge, PARAM_READ, bytes)?;
+    match take_param_read(bridge) {
+        ParamRead::Values(values) => Ok(values),
+        ParamRead::Infos(_) => Err("parameter read returned descriptions".to_string()),
+    }
+}
+
+/// `clap.params` reads are main-thread calls. A plugin without the extension
+/// has no parameters, which is an empty result rather than an error.
+fn read_on_main(
+    bridge: &Bridge,
+    instance: &PluginInstance<EchodeHost>,
+    kind: u8,
+    input: &[u8],
+) -> ParamRead {
+    let plugin = instance.raw_instance();
+    let params = bridge.params.load(Ordering::Acquire);
+    // SAFETY: the extension table lives as long as the plugin instance.
+    let Some(params) = (unsafe { params.as_ref() }) else {
+        return if kind == PARAM_LIST {
+            ParamRead::Infos(Vec::new())
+        } else {
+            ParamRead::Values(Vec::new())
+        };
+    };
+    if kind == PARAM_LIST {
+        return ParamRead::Infos(param_infos(plugin, params));
+    }
+    ParamRead::Values(
+        input
+            .chunks_exact(4)
+            .filter_map(|chunk| {
+                let id = u32::from_le_bytes(chunk.try_into().ok()?);
+                let value = param_value(plugin, params, id)?;
+                Some(ParamValue {
+                    id,
+                    value,
+                    text: param_text(plugin, params, id, value),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Descriptions the plugin reports now. A refused index, CLAP's invalid id, or
+/// a non-finite or inverted range is skipped rather than repaired.
+fn param_infos(plugin: &clap_plugin, params: &clap_plugin_params) -> Vec<ParamInfo> {
+    let (Some(count), Some(get_info)) = (params.count, params.get_info) else {
+        return Vec::new();
+    };
+    // SAFETY: called on the plugin main thread, as `clap.params` requires.
+    let total = unsafe { count(plugin) };
+    let mut infos = Vec::new();
+    for index in 0..total {
+        let mut raw = MaybeUninit::<clap_param_info>::zeroed();
+        // SAFETY: the index is below the count the plugin just returned.
+        if !unsafe { get_info(plugin, index, raw.as_mut_ptr()) } {
+            continue;
+        }
+        // SAFETY: all-zero is a valid `clap_param_info`, and the plugin filled it.
+        let raw = unsafe { raw.assume_init() };
+        if raw.id == u32::MAX {
+            continue;
+        }
+        let value = param_value(plugin, params, raw.id).unwrap_or(f64::NAN);
+        let info = ParamInfo {
+            id: raw.id,
+            flags: raw.flags,
+            name: c_text(&raw.name),
+            module: c_text(&raw.module),
+            min: raw.min_value,
+            max: raw.max_value,
+            default: raw.default_value,
+            value,
+            text: if value.is_finite() {
+                param_text(plugin, params, raw.id, value)
+            } else {
+                String::new()
+            },
+        };
+        if info.usable() {
+            infos.push(info);
+        }
+    }
+    infos
+}
+
+fn param_value(plugin: &clap_plugin, params: &clap_plugin_params, id: u32) -> Option<f64> {
+    let get_value = params.get_value?;
+    let mut value = 0.0;
+    // SAFETY: main thread, and `value` is writable for the call.
+    unsafe { get_value(plugin, id, &mut value) }
+        .then_some(value)
+        .filter(|value| value.is_finite())
+}
+
+fn param_text(plugin: &clap_plugin, params: &clap_plugin_params, id: u32, value: f64) -> String {
+    let Some(to_text) = params.value_to_text else {
+        return String::new();
+    };
+    // Display text for one value. The plugin truncates to this buffer; it is
+    // not a limit on parameters or their count.
+    let mut buffer = [0 as c_char; 256];
+    // SAFETY: main thread; the capacity matches the buffer passed.
+    if !unsafe { to_text(plugin, id, value, buffer.as_mut_ptr(), buffer.len() as u32) } {
+        return String::new();
+    }
+    c_text(&buffer)
+}
+
+/// Text up to the first NUL, or the whole array when the plugin left none.
+fn c_text(chars: &[c_char]) -> String {
+    let bytes: Vec<u8> = chars
+        .iter()
+        .take_while(|ch| **ch != 0)
+        .map(|ch| *ch as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn query_tail(instance: &PluginInstance<EchodeHost>) -> u32 {

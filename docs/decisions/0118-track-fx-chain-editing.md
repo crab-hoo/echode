@@ -38,4 +38,6 @@ P2-02 はヘルパー所有の GUI、パラメーター、バイパス・オフ�
 最新の検査結果は `target/verification/report.md` を参照する。設計記録の作成時点だけで全検査の合格や P2-02 の完了を主張しない。
 
 2026-10-19 追記: 同型の errno 警告の原因・検査ランタイムの修正と対照を [ADR 0121](0121-startup-recovery-and-errno-validation.md) に記録した。
+
+2026-10-20 追記: CLAP の値はモデルに複製せずプラグイン状態を正本としたため、`device.copy` でのパラメーター子 ID の再採番は不要になった（[ADR 0130](0130-clap-parameter-editing.md)）。
 上記の当時の未解決記録と失敗ログは保持する。

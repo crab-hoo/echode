@@ -6,6 +6,7 @@
 
 mod catalog;
 mod controls;
+mod device;
 mod piano;
 mod projection;
 mod queue;
@@ -105,6 +106,72 @@ pub unsafe extern "C" fn echode_document_history(
     };
     document.enqueue(queue::Operation::History(bytes.to_vec()), context, complete);
     ECHODE_OK
+}
+
+/// Queues a device parameter command (`device.parameters`,
+/// `device.parameter.set` or `device.parameter.commit`). Only a commit that
+/// records new plugin bytes enters Undo. The completed snapshot carries the
+/// JSON report.
+///
+/// # Safety
+/// `document` is null or open. `json` is null only when `json_len` is zero.
+/// The callback owns `context` until completion.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_document_device(
+    document: *mut Document,
+    json: *const u8,
+    json_len: usize,
+    context: *mut c_void,
+    complete: Complete,
+) -> c_int {
+    let Some(document) = document_ref(document) else {
+        complete(
+            context,
+            ECHODE_ERR,
+            c"document is null".as_ptr(),
+            std::ptr::null_mut(),
+        );
+        return ECHODE_ERR;
+    };
+    if json_len > isize::MAX as usize || (json.is_null() && json_len != 0) {
+        complete(
+            context,
+            ECHODE_ERR,
+            c"device command is null or too long".as_ptr(),
+            std::ptr::null_mut(),
+        );
+        return ECHODE_ERR;
+    }
+    let bytes = if json_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(json, json_len) }
+    };
+    document.enqueue(queue::Operation::Device(bytes.to_vec()), context, complete);
+    ECHODE_OK
+}
+
+/// UTF-8 JSON report from the snapshot that completed a device command.
+/// Other snapshots carry `{}`. The pointer is valid until the snapshot is freed.
+///
+/// # Safety
+/// `snapshot` is null or an owned handle that has not been freed. `len` is
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_snapshot_device(
+    snapshot: *const Snapshot,
+    len: *mut usize,
+) -> *const u8 {
+    let Some(len) = (unsafe { len.as_mut() }) else {
+        return std::ptr::null();
+    };
+    *len = 0;
+    let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
+        return std::ptr::null();
+    };
+    let bytes = snapshot.device();
+    *len = bytes.len();
+    bytes.as_ptr()
 }
 
 /// Reads the live playhead without submitting a command or taking a lock.

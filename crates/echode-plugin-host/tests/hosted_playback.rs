@@ -11,6 +11,8 @@ use echode_model::{AudioRef, Id, NoteDraft, NoteGeometry, Project, Tick};
 
 #[path = "hosted_playback/device_offline.rs"]
 mod device_offline;
+#[path = "hosted_playback/device_params.rs"]
+mod device_params;
 
 fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))
@@ -232,12 +234,12 @@ fn build_plugin_dylib() -> PathBuf {
         .parent()
         .unwrap()
         .join("libechode_test_plugin.dylib");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src/lib.rs");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src");
     let current = |path: &Path| {
         let Ok(built) = path.metadata().and_then(|meta| meta.modified()) else {
             return false;
         };
-        let Ok(edited) = source.metadata().and_then(|meta| meta.modified()) else {
+        let Ok(edited) = newest_source(&source) else {
             return false;
         };
         built >= edited
@@ -2746,4 +2748,13 @@ fn compare_note_onsets(path: &Path, clap_id: &str, fault: Option<&str>) {
 #[test]
 fn contract_plugin_note_onsets_preserve_source_samples_under_rtsan() {
     compare_note_onsets(&plugin_dylib(), "dev.echode.test-instrument", Some("onset"));
+}
+
+/// Newest edit among the test plugin's sources, so a change to any module rebuilds it.
+fn newest_source(dir: &Path) -> std::io::Result<std::time::SystemTime> {
+    let mut newest = std::time::SystemTime::UNIX_EPOCH;
+    for entry in std::fs::read_dir(dir)? {
+        newest = newest.max(entry?.metadata()?.modified()?);
+    }
+    Ok(newest)
 }

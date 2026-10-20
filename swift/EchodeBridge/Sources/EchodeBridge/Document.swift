@@ -426,6 +426,19 @@ public final class Document: @unchecked Sendable {
         }
     }
 
+    /// Queues a device command. Reads and value changes talk to the running
+    /// plugin; only a commit that records new bytes changes the project.
+    public func device(_ command: DeviceCommand) async throws -> Snapshot {
+        try Task.checkCancellation()
+        let bytes = Array(try JSONEncoder().encode(command))
+        return try await withCheckedThrowingContinuation { continuation in
+            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+            bytes.withUnsafeBufferPointer { buffer in
+                _ = echode_document_device(handle, buffer.baseAddress, buffer.count, context, completeCommand)
+            }
+        }
+    }
+
     public func undo() async throws -> Snapshot {
         try await query(UInt32(ECHODE_DOCUMENT_UNDO))
     }

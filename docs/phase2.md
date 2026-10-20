@@ -9,6 +9,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   - **P2-02（デバイスビューとチェイン操作）**: 着手中。トラックの FX ボタン、下部の FX ビュー、非モーダルの候補パネル、並べ替え・複製・別トラックへのコピーを接続済み（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
     Sine Pad を明示的な同梱 CLAP とし、通常のデバイス操作と隔離へ統合した（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
     CLAP のホストバイパスを保存・Undo・再生・書出しへ接続した（[ADR 0120](decisions/0120-device-bypass.md)）。
+    CLAP の汎用パラメーター欄と、プラグイン状態としての単一 Undo を接続した（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
 - **操作要件の正本**:
   コード→メロディ→ドラム→ベース→構成→編曲→ミックス・オートメーション→書出しまでの操作要件は [制作ワークフローとインタラクション](interaction-design.md)、既存設計との置換範囲は [ADR 0117](decisions/0117-workflow-interactions.md) に置く。
   ループ素材の BPM 推定・テンポ追従・ストレッチ方式切替は後続 Phase の範囲とする。
@@ -52,8 +53,11 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 - **トラックの通常複製（[ADR 0129](decisions/0129-track-duplication.md)）**:
   選択の部分木を元の直後へ複製し、音源・FX・クリップ・ミキサー値を写して中身とノートを独立させた。
   メニュー・パレット・ヘッダの右メニューから操作時の対象を保持し、単一 Undo / Redo・保存再読込・書出しの一致を必須契約で確認する。
+- **CLAP のパラメーター編集（[ADR 0130](decisions/0130-clap-parameter-editing.md)）**:
+  FX 行の汎用パラメーター欄から一覧・ドラッグ中の試聴・終了時の単一 Undo を接続した。値はプラグイン状態として記録し、Undo / Redo は同じヘルパーへ戻す。
+  必須契約 `plugin-params` は製品エンジンと実ヘルパー、`fx-params-ui` は実スライダーと履歴を確認する。
 - **残る範囲（[操作要件](interaction-design.md#fx-候補とチェインの操作)）**:
-  - CLAP のパラメーター編集、ヘルパー所有 GUI の開閉（単体追加時のみ GUI 自動表示、トラック複製時は手動）、サムネイル。
+  - ヘルパー所有 GUI の開閉（単体追加時のみ GUI 自動表示、トラック複製時は手動）、プラグイン側の値変更の中継、サムネイル。
   - 共通サンプルブラウザ：選択時の単発試聴（新しい選択で前の試聴を停止、曲の再生と重ねて鳴らす）は未実装
     （[共通サンプルブラウザ](interaction-design.md#共通サンプルブラウザ)）。
   - フォルダ型ドラムラック（[ADR 0116](decisions/0116-folder-drum-rack.md)）：サンプルのドロップ、子トラックとサンプラーの作成、既存行の差替え。

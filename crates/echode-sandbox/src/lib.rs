@@ -11,6 +11,7 @@
 compile_error!("Echode only builds for macOS");
 
 mod control;
+mod params;
 mod region;
 mod session;
 mod sync;
@@ -18,6 +19,10 @@ mod wire;
 mod workgroup;
 
 pub use control::{ControlMessage, Socket};
+pub use params::{
+    PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,
+    PARAM_STEPPED, ParamChange, ParamInfo, ParamValue,
+};
 pub use region::{
     Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout,
     arm_abort_notice, point_abort_notice,

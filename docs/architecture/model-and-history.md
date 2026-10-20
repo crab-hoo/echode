@@ -90,6 +90,8 @@ flick は 44.1kHz 系と 48kHz 系の主要なサンプルレート（8kHz〜192
 - **CLAP / VST3 / AU**: CLAP にはベース値イベントと変調イベントを分けて送り、VST3 / AU には最終値をサンプル位置付きイベントで送る
 - **アドレス**: トラック FX は `track/<id>/device/<id>/param/<id>`、Phase 2 のクリップ FX は `clip/<id>/device/<id>/param/<id>`
   （[ADR 0026](../decisions/0026-parameters.md)）
+- **CLAP の値**: プラグインの状態バイトが正本で、モデルのパラメーター配列には複製しない。
+  パラメーターの `<id>` は CLAP の `u32` ID とし、ホストの編集は状態の記録として履歴に入る（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）
 
 ### 4.7 オートメーション
 

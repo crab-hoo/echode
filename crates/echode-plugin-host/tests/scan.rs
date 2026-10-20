@@ -11,12 +11,12 @@ fn plugin_dylib() -> PathBuf {
     static BUILD: Mutex<()> = Mutex::new(());
     let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"));
     let sibling = host.parent().unwrap().join("libechode_test_plugin.dylib");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src/lib.rs");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../echode-test-plugin/src");
     let current = |path: &Path| {
         let Ok(built) = path.metadata().and_then(|meta| meta.modified()) else {
             return false;
         };
-        let Ok(edited) = source.metadata().and_then(|meta| meta.modified()) else {
+        let Ok(edited) = newest_source(&source) else {
             return false;
         };
         built >= edited
@@ -53,7 +53,7 @@ fn plugin_dylib() -> PathBuf {
 #[test]
 fn scanning_reads_the_factory_descriptor() {
     let plugins = scan_descriptors(&plugin_dylib()).expect("scan");
-    assert_eq!(plugins.len(), 8);
+    assert_eq!(plugins.len(), 9);
     assert_eq!(plugins[0].id, "dev.echode.test-gain");
     assert_eq!(plugins[0].name, "Echode Test Gain");
     assert_eq!(plugins[0].vendor, "Echode");
@@ -174,6 +174,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-mono",
             "dev.echode.test-noports",
             "dev.echode.test-order",
+            "dev.echode.test-params",
             "dev.echode.test-ports",
             "dev.echode.test-state",
             "dev.echode.test-zflip",
@@ -193,6 +194,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-mono",
             "dev.echode.test-noports",
             "dev.echode.test-order",
+            "dev.echode.test-params",
             "dev.echode.test-ports",
             "dev.echode.test-state",
             "dev.echode.test-zflip",
@@ -211,6 +213,7 @@ fn the_helper_scans_a_bundle_and_a_second_refresh_uses_the_cache() {
             "dev.echode.test-mono",
             "dev.echode.test-noports",
             "dev.echode.test-order",
+            "dev.echode.test-params",
             "dev.echode.test-ports",
             "dev.echode.test-state",
             "dev.echode.test-zflip",
@@ -426,4 +429,13 @@ fn audit_rea08_descendant_pipe_does_not_extend_deadline() {
     let _ = std::fs::remove_file(failed);
     assert!(error.contains("failed"), "{error}");
     assert!(error.contains("boom"), "{error}");
+}
+
+/// Newest edit among the test plugin's sources, so a change to any module rebuilds it.
+fn newest_source(dir: &Path) -> std::io::Result<std::time::SystemTime> {
+    let mut newest = std::time::SystemTime::UNIX_EPOCH;
+    for entry in std::fs::read_dir(dir)? {
+        newest = newest.max(entry?.metadata()?.modified()?);
+    }
+    Ok(newest)
 }
