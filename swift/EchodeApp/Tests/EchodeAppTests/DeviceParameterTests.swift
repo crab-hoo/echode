@@ -1,6 +1,8 @@
 import AppKit
 import EchodeBridge
 import Foundation
+import Observation
+import Synchronization
 import Testing
 @testable import EchodeAppCore
 
@@ -230,6 +232,43 @@ struct DeviceParameterTests {
         #expect(column.list.isHidden && !column.message.isHidden && !column.search.isEnabled)
         await controller.close()
         #expect(controller.parameterStates.isEmpty)
+    }
+
+    /// Device edits keep the workspace enabled for their entire edit turn,
+    /// including the state capture at the end of a parameter gesture.
+    @Test func contractDeviceEditsNeverDisableTheWorkspace() async throws {
+        let plugin = FakeParameterPlugin()
+        let (controller, document, track, url) = try await project("enabled", plugin: plugin)
+        defer { try? FileManager.default.removeItem(at: url) }
+        await controller.showDevices(on: track).value
+        let harness = Harness(controller, track: track, document: document)
+        let column = try #require(harness.strip.columns.first)
+        let gain = try #require(column.list.visibleRows.first)
+
+        // Observe every transition, so even a lock that clears before the
+        // request returns fails. A final-state assertion misses the flash.
+        func staysEnabled(_ operation: @MainActor () async -> Void) async {
+            let changes = Mutex(0)
+            withObservationTracking { _ = controller.busy } onChange: {
+                changes.withLock { $0 += 1 }
+            }
+            await operation()
+            #expect(changes.withLock { $0 } == 0, "a device edit disabled the whole workspace")
+        }
+        let before = controller.undoCount
+        await staysEnabled {
+            gain.slider.beginDrag()
+            gain.slider.doubleValue = 1.5
+            gain.slider.sendAction(gain.slider.action, to: gain.slider.target)
+            gain.slider.endDrag()
+            await harness.settle()
+        }
+        await staysEnabled { column.bypass.performClick(nil); await harness.settle() }
+        await staysEnabled { column.offline.performClick(nil); await harness.settle() }
+        #expect(controller.undoCount == before + 3)
+        #expect(controller.deviceRows(on: track).first?.bypassed == true)
+        #expect(controller.deviceRows(on: track).first?.offline == true)
+        await controller.close()
     }
 
     /// A plugin that is slow to list its parameters delays only its own list.

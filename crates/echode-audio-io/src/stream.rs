@@ -809,16 +809,13 @@ unsafe fn fill_inner(callback: &Callback, buffers: &mut [AudioBuffer], entered: 
         state.player.cancel_unheard_start(start_sample);
     }
     let output_revision = state.player.output_revision();
-    // An already sounding in-flight block completes. The next boundary fades
-    // held voices without scheduling new notes. An unheard start is suppressed.
+    // An already sounding in-flight block completes. The next boundary releases
+    // notes and fades score audio before plugins. An unheard start is suppressed.
     let effective = enabled && (allowed || had_output);
-    let changed =
-        (effective && output_revision != state.output_revision) || effective != state.enabled;
-    if let Some(offset) = state.player.stop_fade_offset() {
-        state.declick.process_stop(left, right, offset);
-    } else {
-        state.declick.process(left, right, changed);
-    }
+    let changed = effective && (output_revision != state.output_revision || !state.enabled);
+    // Stop fades the score source before plugins. A master fade would also
+    // cut their releases, delays and keyboard output while stopped.
+    state.declick.process(left, right, changed);
     state.output_revision = output_revision;
     state.enabled = effective;
     if callback.silent {

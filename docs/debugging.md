@@ -58,6 +58,14 @@ make debug-report
 - **再生中のぶつぶつ・停止時のクリック**:
   `audio.status` の `plugin_missed_blocks` と `pending_plan` を確認する。
   定期保存確認による一時バイパス排除（[ADR 0101](decisions/0101-live-output-discontinuities.md)）、音声側の排他グラフ所有（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）、5 ms の停止波形減衰（[ADR 0103](decisions/0103-live-stop-waveform.md)）、待機しない後片付け（[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）のどの境界かを確認する。
+  [ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md) 以降は素材をプラグインの手前で減衰し、マスターの停止フェードは使わない。
+  `stop_fade_offset` は素材の減衰位置である。停止後も余韻・自発的な発音が出ることは正常で、停止中の `plugin_missed_blocks` も実際の処理失敗を表す。
+- **停止中にプラグインの時間・鍵盤の発音が止まる、または余韻が切れる**:
+  `playing = false` とライブ処理の停止を混同しない。保持した出力は無音入力の処理を続ける。
+  `stopped-plugin-output` で実ヘルパーと後段 FX の出力、`stopped-plugin-tails` でノートオフと自然な余韻の終端を確認する。
+  音源・FX の `bypassed` / `offline`、出力が既に開いているか、位置移動・準備取消でリセットが要求されていないかを分ける。
+  停止だけで `cleanup_pending` が立つなら旧仕様か不具合を疑う。位置移動の後片付け中なら正常である。
+  位置移動直後の停止で期限切れになる場合は `stop-cleanup` を使い、保留中に通常の素材処理を始めていないか確認する。
 - **音源なしのノート・Sine Pad が鳴らない**:
   音源のないトラックは無音である。デバイス一覧に `dev.echode.sine-pad` があるかを確認する。
   一覧にない時は `make bundled-plugins` とヘルパー隣の `plugins/`、アプリ内の `Contents/PlugIns/`、同梱用走査キャッシュを確認する。
@@ -86,6 +94,8 @@ make debug-report
   Undo では記録のハッシュとヘルパーが最後に保存・読込したバイトを比べ、一致すれば読み込まない（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
 - **空白への移動・再開で以前の残響が鳴る**:
   停止・シーク時の `active.reset()`、`NOTE_CHOKE`、宣言された全 MIDI ポートへの CC120 / All Notes Off を確認し、自然な余韻と区別する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
+  ライブ停止では余韻を残す。上の消去は位置移動・未発音の準備取消とオフライン停止の検査であり、ライブ停止へ戻さない
+  （[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - **左右の消失・定位変化・ループやフェーダーの段差**:
   逆位相・異振幅の左右信号で素材読込・エフェクト間・フェーダー後を照合する（`stereo-media`、`stereo-plugin-chain`、`audio-loop-seam`、`audio-fader-ramp`、[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
 - **ループ変更での再読込・トリム位置ずれ**:
@@ -95,6 +105,11 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **パラメーター・バイパス・オフライン操作で全ボタンが一瞬暗転する**:
+  `ProjectController.busy` の完了時の値だけでは短い暗転を見落とす。`device-edit-enabled-ui` で操作中の全遷移を観測する。
+  `EditTurn.busy` は編集待ち行列の状態、画面の `busy` は作成・交換・終了の明示的な排他だけである。
+  排他の既定値を通常編集へ広げていないか、各ビューが個別の `historyBusy` と全体の `busy` を取り違えていないか確認する。
+  初回のヘルパー起動で後続編集が待つ制約とは別の経路である（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - **プラグイン付きトラックの選択が止まる・パラメーター画面が重い**:
   2026-10-20 のユーザー報告は「選択のたび」と「汎用パラメーター画面」の 2 症状であり、独自プラグイン GUI の問題ではない。
   機器なしで、旧欄の全行一括生成（800 個で約 0.68 秒）と再選択での作り直し、文書ワーカー上の応答待ちを再現し、対応した

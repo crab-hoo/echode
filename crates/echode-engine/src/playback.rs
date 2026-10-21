@@ -211,8 +211,11 @@ struct Prepared {
 struct RenderRange {
     loop_bounds: (Option<i64>, Option<i64>),
     started_before: Option<i64>,
+    /// Fade only the score's audio source, before plugins. Their own release,
+    /// delay and autonomous output remain audible after the transport stops.
+    source_fade: Option<u32>,
     /// Release applied once, after the block is mixed. The coefficient covers
-    /// the whole callback, including a stop tail that renders only a prefix.
+    /// the whole callback, including when only a prefix still reads score audio.
     meter_release: f32,
 }
 
@@ -561,11 +564,11 @@ impl Prepared {
         range: RenderRange,
     ) -> Result<(), PlaybackError> {
         hosts.begin_block();
+        let mut count = self.released;
+        self.released = 0;
         let count = if range.started_before.is_some() {
-            0
+            count
         } else {
-            let mut count = self.released;
-            self.released = 0;
             if self.chase {
                 self.chase = false;
                 let rest = self
@@ -639,6 +642,7 @@ impl Prepared {
             clip_right.fill(0.0);
             if let Some(cache) = cache {
                 read_cached_track(cache, spans, plane, right, range)?;
+                fade_stopped_source(plane, right, range.source_fade, self.sample_rate);
                 *stereo = cache.right.is_some();
                 continue;
             }
@@ -667,6 +671,7 @@ impl Prepared {
                 range,
                 self.sample_rate,
             )?;
+            fade_stopped_source(clip_plane, clip_right, range.source_fade, self.sample_rate);
             *stereo = *clip_stereo;
             plane.copy_from_slice(clip_plane);
             right.copy_from_slice(clip_right);
@@ -681,7 +686,11 @@ impl Prepared {
                     right: clip_stereo.then_some(&*clip_right),
                 },
                 filtered,
-                &self.chased_ons,
+                if range.started_before.is_none() {
+                    &self.chased_ons
+                } else {
+                    &[]
+                },
             );
         }
         if hosts.dropped_events() {
@@ -733,7 +742,7 @@ impl Prepared {
             *left = finite_f32(*l);
             *right = finite_f32(*r);
         }
-        self.plugin_holds = true;
+        self.plugin_holds |= range.started_before.is_none();
         Ok(())
     }
 
@@ -810,6 +819,16 @@ impl Prepared {
         }
         self.released = 0;
         Ok(())
+    }
+}
+
+fn fade_stopped_source(left: &mut [f32], right: &mut [f32], offset: Option<u32>, rate: u32) {
+    let Some(offset) = offset else { return };
+    let frames = (rate / 200).max(2);
+    for (index, (left, right)) in left.iter_mut().zip(right).enumerate() {
+        let gain = crate::declick::stop_gain(u64::from(offset) + index as u64, frames);
+        *left *= gain;
+        *right *= gain;
     }
 }
 
@@ -1133,6 +1152,9 @@ pub struct PlaybackAudio {
     reset_plugins: bool,
     output_revision: u64,
     live_output: bool,
+    /// The live graph has mixed a block, including while the score is stopped.
+    /// Faders must ramp over that output without treating it as a heard Play.
+    live_processed: bool,
     stop_tail: Option<StopTail>,
     stop_fade_offset: Option<u32>,
     fader_preview: Option<(u128, f32, f32)>,
@@ -1311,6 +1333,7 @@ pub fn playback_with_clock(
         reset_plugins: false,
         output_revision: 0,
         live_output: false,
+        live_processed: false,
         stop_tail: None,
         stop_fade_offset: None,
         fader_preview: None,
@@ -1739,6 +1762,7 @@ impl PlaybackAudio {
     pub fn current_sample(&self) -> i64 {
         self.clock.position()
     }
+    /// The score source's fade position, before plugins, not a master mute.
     pub fn stop_fade_offset(&self) -> Option<u32> {
         self.stop_fade_offset
     }
@@ -1756,8 +1780,8 @@ impl PlaybackAudio {
         self.hosts.cleanup_pending()
     }
 
-    /// Live stop renders only already sounding voices and placements for 5 ms.
-    /// The published transport clock stops at the boundary; offline stop is immediate.
+    /// Live stop releases score notes and fades placed audio before plugins.
+    /// The clock holds while the graph keeps processing its tails and live output.
     #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
     pub fn render_live_gated_until(
         &mut self,
@@ -1846,6 +1870,7 @@ impl PlaybackAudio {
         let release = TrackMeter::release(left.len(), self.current.sample_rate);
         self.current.meters_committed = false;
         let result = self.step(left, right, deadline, enabled, live, release);
+        self.live_processed |= live && self.current.meters_committed;
         if !self.current.meters_committed {
             for track in &self.current.tracks {
                 track.meter.publish(0.0, release);
@@ -1905,9 +1930,11 @@ impl PlaybackAudio {
             && self.returns.slots() > 0
             && let Ok(mut next) = self.plans.pop()
         {
-            let carried =
-                next.prepared
-                    .carry(&mut self.current, self.clock.position(), self.playing);
+            let carried = next.prepared.carry(
+                &mut self.current,
+                self.clock.position(),
+                self.playing || (live && self.live_processed),
+            );
             if carried.is_ok() {
                 next.hosts.carry(&self.hosts);
                 next.hosts.activate_prepared();
@@ -1929,16 +1956,16 @@ impl PlaybackAudio {
         while let Ok((revision, command)) = self.commands.pop() {
             match command {
                 PlaybackCommand::Play => {
-                    if self.stop_tail.is_some() {
-                        self.finish_stop()?;
-                    }
+                    self.stop_tail = None;
                     self.output_revision = self.output_revision.wrapping_add(1);
                     self.playing = true;
                     self.failed = false;
                     self.current.place(self.clock.position(), false)?;
                 }
                 PlaybackCommand::Pause | PlaybackCommand::Stop => {
-                    self.output_revision = self.output_revision.wrapping_add(1);
+                    if !live {
+                        self.output_revision = self.output_revision.wrapping_add(1);
+                    }
                     self.begin_stop(live)?;
                 }
                 PlaybackCommand::Locate(sample) => {
@@ -1987,11 +2014,13 @@ impl PlaybackAudio {
             self.current.preview_fader(
                 previous_fader,
                 self.fader_preview,
-                self.playing && (self.live_output || !live),
+                (self.playing && (self.live_output || !live)) || (live && self.live_processed),
             );
         }
         if !enabled && self.playing {
-            self.output_revision = self.output_revision.wrapping_add(1);
+            if !live {
+                self.output_revision = self.output_revision.wrapping_add(1);
+            }
             self.begin_stop(live)?;
         }
         if let Some(tail) = self.stop_tail {
@@ -2022,7 +2051,26 @@ impl PlaybackAudio {
             }
         }
         if !self.playing {
-            if !live {
+            if live {
+                self.current.render(
+                    &[],
+                    left,
+                    right,
+                    &mut self.hosts,
+                    deadline,
+                    RenderRange {
+                        loop_bounds: (self.loop_start, self.loop_end),
+                        started_before: Some(self.clock.position()),
+                        source_fade: None,
+                        meter_release,
+                    },
+                )?;
+                if self.hosts.missed_block() {
+                    self.status
+                        .plugin_missed_blocks
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            } else {
                 let flushed = self.current.released != 0;
                 self.current.flush_releases(&mut self.hosts, deadline)?;
                 if flushed && self.hosts.missed_block() {
@@ -2053,6 +2101,7 @@ impl PlaybackAudio {
             RenderRange {
                 loop_bounds: (self.loop_start, self.loop_end),
                 started_before: None,
+                source_fade: None,
                 meter_release,
             },
         )?;
@@ -2070,13 +2119,27 @@ impl PlaybackAudio {
     }
 
     fn begin_stop(&mut self, live: bool) -> Result<(), PlaybackError> {
-        if live && self.live_output && self.playing && self.stop_tail.is_none() {
+        if live
+            && self.live_output
+            && self.playing
+            && self.stop_tail.is_none()
+            && !self.reset_plugins
+            && !self.hosts.cleanup_pending()
+        {
             self.stop_tail = Some(StopTail {
                 position: self.clock.position(),
                 cutoff: self.clock.position(),
                 remaining: (self.current.sample_rate / 200).max(2),
                 loop_bounds: (self.loop_start, self.loop_end),
             });
+        }
+        if live {
+            if self.playing {
+                self.current.place(self.clock.position(), true)?;
+            }
+            self.playing = false;
+            self.live_output = false;
+            return Ok(());
         }
         self.playing = false;
         if self.stop_tail.is_none() || !live {
@@ -2114,16 +2177,14 @@ impl PlaybackAudio {
         };
         self.current.render(
             &[span],
-            left.get_mut(..frames)
-                .ok_or(PlaybackError::BufferTooSmall)?,
-            right
-                .get_mut(..frames)
-                .ok_or(PlaybackError::BufferTooSmall)?,
+            left,
+            right,
             &mut self.hosts,
             deadline,
             RenderRange {
                 loop_bounds: tail.loop_bounds,
                 started_before: Some(tail.cutoff),
+                source_fade: self.stop_fade_offset,
                 meter_release,
             },
         )?;
@@ -2132,16 +2193,7 @@ impl PlaybackAudio {
                 .spans
                 .first_mut()
                 .ok_or(PlaybackError::BufferTooSmall)? = span;
-            mix_metronome(
-                self,
-                1,
-                left.get_mut(..frames)
-                    .ok_or(PlaybackError::BufferTooSmall)?,
-                right
-                    .get_mut(..frames)
-                    .ok_or(PlaybackError::BufferTooSmall)?,
-                Some(tail.cutoff),
-            )?;
+            mix_metronome(self, 1, left, right, Some(tail.cutoff))?;
         }
         if self.hosts.missed_block() {
             self.status
@@ -2154,7 +2206,7 @@ impl PlaybackAudio {
             .checked_add(frames as i64)
             .ok_or(PlaybackError::Time)?;
         if tail.remaining == 0 {
-            self.finish_stop()?;
+            self.stop_tail = None;
         } else {
             self.stop_tail = Some(tail);
         }
@@ -2254,9 +2306,21 @@ fn mix_metronome(
         .clicks
         .get(..left.len())
         .ok_or(PlaybackError::BufferTooSmall)?;
-    for ((sample_left, sample_right), click) in left.iter_mut().zip(right.iter_mut()).zip(clicks) {
-        *sample_left += click;
-        *sample_right += click;
+    for (index, ((sample_left, sample_right), click)) in left
+        .iter_mut()
+        .zip(right.iter_mut())
+        .zip(clicks)
+        .enumerate()
+    {
+        let gain = match (cutoff, audio.stop_fade_offset) {
+            (Some(_), Some(offset)) => crate::declick::stop_gain(
+                u64::from(offset) + index as u64,
+                (audio.current.sample_rate / 200).max(2),
+            ),
+            _ => 1.0,
+        };
+        *sample_left += click * gain;
+        *sample_right += click * gain;
     }
     Ok(())
 }

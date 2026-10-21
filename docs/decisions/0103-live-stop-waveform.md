@@ -2,6 +2,7 @@
 
 - 日付: 2026-10-16
 - 状態: 採用
+- 後続仕様: [ADR 0133](0133-stopped-plugin-processing-and-edit-input.md) でライブ停止の減衰を素材側へ移し、プラグインの余韻と停止中の出力を保持した。
 - 範囲: ライブ出力の停止・一時停止・取消。[ADR 0101](0101-live-output-discontinuities.md) の停止時の定数補正と、[ADR 0097](0097-cancellable-retained-transport.md) の既発音中の取消を改訂する。
 
 ## 前回の修正で残った問題

@@ -67,8 +67,20 @@ class PolicyTests(unittest.TestCase):
     def test_stop_contract_checks_an_oscillating_waveform_and_cancellation_at_both_gates(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         self.assertEqual(contracts["transport-declick"]["test"], "stream::tests::contract_stop_preserves_waveform_while_fading_under_rtsan")
-        self.assertIn("process_stop", contracts["transport-declick"]["negative_control"]["old"])
+        self.assertIn("stop_gain", contracts["transport-declick"]["negative_control"]["old"])
+        self.assertEqual(contracts["transport-declick"]["negative_control"]["file"], "crates/echode-engine/src/playback.rs")
         self.assertEqual(contracts["transport-cancellation"]["negative_control"]["file"], "crates/echode-audio-io/src/transport.rs")
+
+    def test_stopped_processing_and_device_interaction_use_product_boundaries(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name in ("stopped-plugin-tails", "stopped-plugin-output"):
+            self.assertEqual(contracts[name]["package"], "echode-plugin-host")
+            self.assertEqual(contracts[name]["target"], ["--test", "hosted_playback"])
+            self.assertTrue(contracts[name]["test"].startswith("stopped_processing::contract_"))
+        self.assertEqual(contracts["stop-cleanup"]["test"], "contract_live_discontinuity_cleanup_never_waits_for_a_reset")
+        ui = contracts["device-edit-enabled-ui"]
+        self.assertEqual((ui["runner"], ui["suite"]), ("swift", "DeviceParameterTests"))
+        self.assertIn("exclusive: Bool = true", ui["negative_control"]["new"])
 
     def test_onset_contract_checks_the_helper_and_sample_accurate_note_delivery(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "plugin-onset")
@@ -358,7 +370,7 @@ class PolicyTests(unittest.TestCase):
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
-                          "plugin-window-open-ui"})
+                          "plugin-window-open-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]

@@ -1311,6 +1311,131 @@ fn live_transport_declick_is_independent_of_blocks_and_leaves_steady_audio_uncha
 }
 
 #[test]
+fn stopped_callbacks_do_not_play_sources_or_advance_the_loop_under_rtsan() {
+    use echode_engine::{LoadedClip, PlaybackCommand, playback_pair};
+    // Fixture-only loop, placement and callback sizes; no host limit.
+    for block in BLOCKS {
+        let (project, track) = Project::new().add_track("stopped sources");
+        let frames = block as usize;
+        let (mut control, mut audio) = playback_pair(&project, RATE, frames).unwrap();
+        control.set_clip_loader(Arc::new(move |_, _| {
+            Ok(vec![LoadedClip {
+                track: track.raw(),
+                start_sample: 0,
+                samples: vec![0.25; 1024].into(),
+                right: Some(vec![-0.5; 1024].into()),
+                fade_in: 0,
+                fade_out: 0,
+            }])
+        }));
+        control.replace(&project).unwrap();
+        control
+            .command(PlaybackCommand::SetLoop { start: 0, end: 17 })
+            .unwrap();
+        control
+            .command(PlaybackCommand::SetMetronome(true))
+            .unwrap();
+        let mut left = vec![1.0; frames];
+        let mut right = left.clone();
+        for _ in 0..4 {
+            audio.render_live_gated_until(
+                &mut left,
+                &mut right,
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+                true,
+            );
+            assert!(left.iter().chain(&right).all(|value| *value == 0.0));
+            assert_eq!(control.status().sample, 0);
+        }
+        control.command(PlaybackCommand::Play).unwrap();
+        audio.render_live_gated_until(
+            &mut left,
+            &mut right,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            true,
+        );
+        let stopped = control.status().sample;
+        control.command(PlaybackCommand::Stop).unwrap();
+        for _ in 0..(RATE as usize / 200).div_ceil(frames) + 2 {
+            audio.render_live_gated_until(
+                &mut left,
+                &mut right,
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+                true,
+            );
+            assert_eq!(control.status().sample, stopped);
+            assert!(!control.status().playing);
+        }
+        assert!(left.iter().chain(&right).all(|value| *value == 0.0));
+        assert!(!control.status().failed);
+    }
+}
+
+#[test]
+fn live_stop_fades_an_existing_metronome_click_without_starting_another_under_rtsan() {
+    use echode_engine::{PlaybackCommand, playback_pair};
+    let project = Project::new();
+    let fade = RATE as usize / 200;
+    let stop = 64usize; // Inside one click, only for this regression.
+    let mut expected = vec![0.0; fade];
+    render_metronome(
+        &[PlayedSpan {
+            start_sample: stop as i64,
+            frames: fade as u32,
+            block_offset: 0,
+            release_at: None,
+            loop_end: None,
+            wrap_from: None,
+        }],
+        project.tempo(),
+        project.meter(),
+        RATE,
+        &mut expected,
+    )
+    .unwrap();
+    for block in BLOCKS {
+        let (mut control, mut audio) = playback_pair(&project, RATE, block as usize).unwrap();
+        control
+            .command(PlaybackCommand::SetMetronome(true))
+            .unwrap();
+        control.command(PlaybackCommand::Play).unwrap();
+        let (mut left, mut right) = (vec![0.0; block as usize], vec![0.0; block as usize]);
+        let mut position = 0;
+        while position < stop {
+            let n = (stop - position).min(block as usize);
+            audio.render_live_gated_until(
+                &mut left[..n],
+                &mut right[..n],
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+                true,
+            );
+            position += n;
+        }
+        control.command(PlaybackCommand::Stop).unwrap();
+        let mut output = Vec::new();
+        for offset in (0..fade).step_by(block as usize) {
+            let n = (fade - offset).min(block as usize);
+            audio.render_live_gated_until(
+                &mut left[..n],
+                &mut right[..n],
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+                true,
+            );
+            output.extend_from_slice(&left[..n]);
+            assert_eq!(&left[..n], &right[..n]);
+            assert_eq!(control.status().sample, stop as i64);
+        }
+        for (age, (&heard, &source)) in output.iter().zip(&expected).enumerate() {
+            let gain = 0.5 * (1.0 + (std::f64::consts::PI * age as f64 / (fade - 1) as f64).cos());
+            assert!(
+                (f64::from(heard) - f64::from(source) * gain).abs() < 1.0e-7,
+                "metronome was cut at {block}/{age}: {heard}"
+            );
+        }
+    }
+}
+
+#[test]
 fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
     use echode_engine::{OutputDeclick, PlaybackCommand, playback_pair};
     for rate in [48_000, 96_000] {
@@ -1363,11 +1488,9 @@ fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
                     std::time::Instant::now() + std::time::Duration::from_secs(1),
                     true,
                 );
-                if let Some(age) = audio.stop_fade_offset() {
-                    declick.process_stop(&mut left, &mut right, age);
-                } else {
-                    declick.process(&mut left, &mut right, false);
-                }
+                // The engine fades the source before plugins; the device
+                // boundary must leave their release and autonomous output alone.
+                declick.process(&mut left, &mut right, false);
                 output.extend(left);
                 assert_eq!(control.status().sample as usize, stop);
             }
@@ -1483,9 +1606,7 @@ fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
                         std::time::Instant::now() + std::time::Duration::from_secs(1),
                         true,
                     );
-                    if let Some(age) = audio.stop_fade_offset() {
-                        declick.process_stop(&mut left, &mut right, age);
-                    }
+                    declick.process(&mut left, &mut right, false);
                     for (local, (left, right)) in left.iter().zip(&right).enumerate() {
                         let age = offset + local;
                         let sample = stop + age;
@@ -1627,12 +1748,14 @@ fn cached_stop_does_not_start_a_later_region_or_pass_the_loop_end() {
                 );
                 tail.extend_from_slice(&left[..n]);
             }
-            assert!(
-                tail.iter()
-                    .take(10)
-                    .all(|sample| (*sample - 0.4).abs() < 1.0e-5),
-                "tail start {tail:?}"
-            );
+            for (age, sample) in tail.iter().take(10).enumerate() {
+                let gain =
+                    0.5 * (1.0 + (std::f64::consts::PI * age as f64 / (fade - 1) as f64).cos());
+                assert!(
+                    (f64::from(*sample) - 0.4 * gain).abs() < 1.0e-7,
+                    "tail start at {age}: {sample}"
+                );
+            }
             assert!(tail.iter().skip(10).all(|sample| *sample == 0.0));
             assert!(tail.iter().all(|sample| (*sample - 0.9).abs() > 0.2));
         }

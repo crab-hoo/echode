@@ -201,7 +201,8 @@ impl Session {
             }
             AudioCommand::Pause | AudioCommand::Stop => {
                 // Retain prepared media, helpers and HAL. Cancellation already
-                // silenced the callback without waiting for this queue.
+                // stopped the score without waiting for this queue; plugin
+                // releases and autonomous output keep running in the callback.
                 self.playing = false;
                 if let Some(stream) = &mut self.stream {
                     self.tick = stream.status().tick;

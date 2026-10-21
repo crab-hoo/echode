@@ -15,6 +15,8 @@ mod device_offline;
 mod device_params;
 #[path = "hosted_playback/plugin_gui.rs"]
 mod plugin_gui;
+#[path = "hosted_playback/stopped_processing.rs"]
+mod stopped_processing;
 
 fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))
@@ -2349,7 +2351,7 @@ fn queued_event_capacity_changes_preserve_the_existing_processor_under_rtsan() {
 }
 
 #[test]
-fn live_stop_fades_existing_voices_without_new_notes_and_resets_before_resume_under_rtsan() {
+fn live_stop_releases_notes_and_locate_clears_tails_under_rtsan() {
     let path = plugin_dylib();
     let frames = 64; // This fixture's callback buffer, not a device limit.
     let (project, track) = score();
@@ -2399,7 +2401,7 @@ fn live_stop_fades_existing_voices_without_new_notes_and_resets_before_resume_un
         );
         assert_eq!(control.status().sample, stopped);
         assert!(audio.stop_fade_offset().is_some());
-        assert_level(left[0], 1.0); // A future note must not enter the fading block.
+        assert_level(left[0], 17.0); // One off, and no future note-on.
     }
     assert_eq!(control.status().plugin_missed_blocks, 0);
     for fault in ["tail", "tail-legacy"] {
@@ -2422,7 +2424,10 @@ fn live_stop_fades_existing_voices_without_new_notes_and_resets_before_resume_un
                     true,
                 );
             }
-            assert!(left.iter().all(|value| *value == 0.0));
+            assert!(
+                left.iter().any(|value| *value != 0.0),
+                "stop cut the natural tail"
+            );
             control.command(PlaybackCommand::Locate(200_000)).unwrap();
             control.command(PlaybackCommand::Play).unwrap();
             let until = Instant::now() + Duration::from_secs(5);
@@ -2462,7 +2467,7 @@ fn live_stop_fades_existing_voices_without_new_notes_and_resets_before_resume_un
 }
 
 #[test]
-fn contract_live_stop_cleanup_never_waits_for_a_reset() {
+fn contract_live_discontinuity_cleanup_never_waits_for_a_reset() {
     use std::io::{Read, Write};
     use std::os::unix::net::{UnixListener, UnixStream};
     struct Gate(UnixStream, PathBuf);
@@ -2512,8 +2517,9 @@ fn contract_live_stop_cleanup_never_waits_for_a_reset() {
     }
     assert!(left.iter().any(|sample| *sample != 0.0));
     let stopped = control.status().sample;
-    control.command(PlaybackCommand::Stop).unwrap();
-    render(&mut audio, &mut left, &mut right); // The audible tail completes.
+    // Stop preserves tails now; an explicit position change still clears old
+    // voices without waiting for discarded processing on the callback thread.
+    control.command(PlaybackCommand::Locate(stopped)).unwrap();
     render(&mut audio, &mut left, &mut right); // Cleanup cannot wait for reset.
     let mut reached = [0];
     gates[0].0.read_exact(&mut reached).unwrap();
@@ -2573,7 +2579,13 @@ fn contract_live_stop_cleanup_never_waits_for_a_reset() {
         render(&mut audio, &mut left, &mut right);
     }
     assert!(left.iter().any(|sample| *sample != 0.0));
-    assert_eq!(control.status().plugin_missed_blocks, 0);
+    assert_eq!(
+        control.status().plugin_missed_blocks,
+        0,
+        "{:?}, {:?}",
+        control.status(),
+        control.plugin_failure()
+    );
     assert!(!control.status().pending_plan);
 }
 

@@ -2,8 +2,8 @@
 //! offline rendering or ordinary note releases, and adds no lookahead latency.
 
 /// Sample-counted live output transitions. Starts and location changes use an
-/// offset join. Stops fade the continuing source waveform over 5 ms; the live
-/// engine holds its public clock while producing only that bounded continuation.
+/// offset join. The live engine separately fades score sources before plugins,
+/// keeping their release tails and autonomous output audible while stopped.
 pub struct OutputDeclick {
     last: [f32; 2],
     offset: [f32; 2],
@@ -30,12 +30,7 @@ impl OutputDeclick {
         self.process(left, right, false);
         for (index, (left, right)) in left.iter_mut().zip(right).enumerate() {
             let age = u64::from(offset) + index as u64;
-            let gain = if age >= u64::from(self.frames - 1) {
-                0.0
-            } else {
-                0.5 * (1.0
-                    + libm::cosf(std::f32::consts::PI * age as f32 / (self.frames - 1) as f32))
-            };
+            let gain = stop_gain(age, self.frames);
             *left *= gain;
             *right *= gain;
             self.last = [*left, *right];
@@ -77,6 +72,14 @@ impl OutputDeclick {
             }
             self.last = [*left, *right];
         }
+    }
+}
+
+pub(crate) fn stop_gain(age: u64, frames: u32) -> f32 {
+    if age >= u64::from(frames - 1) {
+        0.0
+    } else {
+        0.5 * (1.0 + libm::cosf(std::f32::consts::PI * age as f32 / (frames - 1) as f32))
     }
 }
 

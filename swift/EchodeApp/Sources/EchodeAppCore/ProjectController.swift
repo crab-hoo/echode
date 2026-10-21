@@ -15,6 +15,8 @@ public final class ProjectController {
     public private(set) var tracks: [TrackRow] = []
     public private(set) var documentID: UUID?
     public private(set) var projectURL: URL?
+    /// Replacing or closing the document disables workspace input. Ordinary
+    /// edits keep their order without changing the controls' enabled state.
     public private(set) var busy = false
     public internal(set) var undoCount = 0
     public internal(set) var redoCount = 0
@@ -87,19 +89,19 @@ public final class ProjectController {
     public init() {
         sendAudio = { try await $0.audio($1) }
         sendDevice = DeviceResult.send
-        edits.onBusy = { [weak self] value in self?.busy = value }
+        edits.onExclusive = { [weak self] value in self?.busy = value }
     }
 
     init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) },
          sendDevice: @escaping @Sendable (Document, DeviceCommand) async throws -> DeviceResult = DeviceResult.send) {
         self.sendAudio = sendAudio
         self.sendDevice = sendDevice
-        edits.onBusy = { [weak self] value in self?.busy = value }
+        edits.onExclusive = { [weak self] value in self?.busy = value }
     }
 
     public func open(_ url: URL, creating: Bool = false) async {
         if faderPreview != nil { await finishFader(commit: false) }
-        await edits.run {
+        await edits.run(exclusive: true) {
             if !creating, self.projectURL?.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() { return }
             do {
                 let opened = try await Task.detached {
@@ -150,7 +152,7 @@ public final class ProjectController {
             fields = ["type": "track.insert", "name": request.name,
                       "after": after.uuidString, "into_folder": request.intoFolder]
         }
-        return await performEdit(fields, documentID: request.document, selectingAddedTrack: true)
+        return await performEdit({ fields }, documentID: request.document, selectingAddedTrack: true)
     }
 
     /// One undo step. Each copy lands right after its source subtree.
@@ -160,7 +162,7 @@ public final class ProjectController {
               Set(request.sources).count == request.sources.count,
               Set(request.sources).isSubset(of: Set(tracks.map(\.id))) else { return false }
         let actions = request.sources.map { ["type": "track.duplicate", "source": $0.uuidString] }
-        return await performEdit(actions, documentID: request.document, selectingAddedTrack: true)
+        return await performEdit({ actions }, documentID: request.document, selectingAddedTrack: true)
     }
 
     public func selectTrack(_ id: UUID, change: TrackSelectionChange = .replace, visibleOrder: [UUID]? = nil) {
@@ -213,7 +215,7 @@ public final class ProjectController {
               Set(targets).count == targets.count,
               Set(targets).isSubset(of: Set(tracks.map(\.id))) else { return false }
         let actions = targets.map { ["type": "device.add", "track": $0.uuidString, "plugin": plugin] }
-        return await performEdit(actions, documentID: documentID)
+        return await performEdit({ actions }, documentID: documentID)
     }
 
     public func removeDevice(_ id: UUID, documentID: UUID? = nil) async {
@@ -222,29 +224,31 @@ public final class ProjectController {
 
     @discardableResult
     func editDeviceChain(_ change: DeviceChainEdit, documentID: UUID) async -> Bool {
-        guard self.documentID == documentID else { return false }
-        var command: [String: Any]
-        switch change {
-        case .offline(let device, let offline):
-            guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.offline != offline else { return false }
-            command = ["type": "device.offline", "device": device.uuidString, "offline": offline]
-        case .bypass(let device, let bypassed):
-            guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.bypassed != bypassed else { return false }
-            command = ["type": "device.bypass", "device": device.uuidString, "bypassed": bypassed]
-        case .reorder(let device, let before):
-            guard let snapshot, let owner = tracks.first(where: { snapshot.devices(on: $0.id).contains(where: { $0.id == device }) }) else { return false }
-            let ids = snapshot.devices(on: owner.id).map(\.id)
-            guard let index = ids.firstIndex(of: device) else { return false }
-            if before == device || (before == nil && index == ids.count - 1) || (index + 1 < ids.count && before == ids[index + 1]) { return false }
-            command = ["type": "device.reorder", "device": device.uuidString]
-            if let before { command["before"] = before.uuidString }
-        case .copy(let source, let track, let before):
-            command = ["type": "device.copy", "source": source.uuidString, "track": track.uuidString]
-            if let before { command["before"] = before.uuidString }
-        case .remove(let device):
-            command = ["type": "device.remove", "device": device.uuidString]
-        }
-        return await edit(command, documentID: documentID)
+        await edit({ [self] in
+            guard self.documentID == documentID else { return nil }
+            var command: [String: Any]
+            switch change {
+            case .offline(let device, let offline):
+                guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.offline != offline else { return nil }
+                command = ["type": "device.offline", "device": device.uuidString, "offline": offline]
+            case .bypass(let device, let bypassed):
+                guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.bypassed != bypassed else { return nil }
+                command = ["type": "device.bypass", "device": device.uuidString, "bypassed": bypassed]
+            case .reorder(let device, let before):
+                guard let snapshot, let owner = tracks.first(where: { snapshot.devices(on: $0.id).contains(where: { $0.id == device }) }) else { return nil }
+                let ids = snapshot.devices(on: owner.id).map(\.id)
+                guard let index = ids.firstIndex(of: device) else { return nil }
+                if before == device || (before == nil && index == ids.count - 1) || (index + 1 < ids.count && before == ids[index + 1]) { return nil }
+                command = ["type": "device.reorder", "device": device.uuidString]
+                if let before { command["before"] = before.uuidString }
+            case .copy(let source, let track, let before):
+                command = ["type": "device.copy", "source": source.uuidString, "track": track.uuidString]
+                if let before { command["before"] = before.uuidString }
+            case .remove(let device):
+                command = ["type": "device.remove", "device": device.uuidString]
+            }
+            return command
+        }, documentID: documentID)
     }
 
     @discardableResult
@@ -270,10 +274,12 @@ public final class ProjectController {
 
     @discardableResult
     public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry, documentID: UUID? = nil) async -> Bool {
-        guard let before = snapshot?.pianoNote(id), geometry.isValid,
-              before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch else { return false }
-        return await edit(["type": "note.edit", "track": id.track.uuidString, "clip": before.id.placement.uuidString,
-                          "note": id.note.uuidString, "pitch": geometry.pitch, "start": geometry.start, "length": geometry.length], documentID: documentID)
+        await edit({ [self] in
+            guard let before = snapshot?.pianoNote(id), geometry.isValid,
+                  before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch else { return nil }
+            return ["type": "note.edit", "track": id.track.uuidString, "clip": before.id.placement.uuidString,
+                    "note": id.note.uuidString, "pitch": geometry.pitch, "start": geometry.start, "length": geometry.length]
+        }, documentID: documentID)
     }
 
     @discardableResult
@@ -324,7 +330,7 @@ public final class ProjectController {
     public func close() async {
         let target = documentID
         if faderPreview != nil { await finishFader(commit: false) }
-        await edits.run {
+        await edits.run(exclusive: true) {
             guard self.documentID == target else { return }
             let previous = self.document
             self.stopPluginActivity()
@@ -426,13 +432,22 @@ public final class ProjectController {
 
     @discardableResult
     func edit(_ fields: [String: Any], documentID: UUID? = nil, finishingPreview: Bool = false) async -> Bool {
-        await performEdit(fields, documentID: documentID, finishingPreview: finishingPreview)
+        await performEdit({ fields }, documentID: documentID, finishingPreview: finishingPreview)
     }
 
-    private func performEdit(_ fields: Any, documentID: UUID?, finishingPreview: Bool = false, selectingAddedTrack: Bool = false) async -> Bool {
-        await edits.run {
-            guard self.faderPreview == nil || finishingPreview, let document = self.document,
-                  documentID == nil || documentID == self.documentID else { return false }
+    /// Resolve no-op checks after earlier edits publish. Otherwise a quick
+    /// switch back to the displayed value can be dropped while its first
+    /// change is still queued.
+    @discardableResult
+    func edit(_ fields: @escaping @MainActor () -> [String: Any]?, documentID: UUID? = nil) async -> Bool {
+        await performEdit({ fields() }, documentID: documentID)
+    }
+
+    private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false, selectingAddedTrack: Bool = false) async -> Bool {
+        guard faderPreview == nil || finishingPreview else { return false }
+        return await edits.run {
+            guard let document = self.document,
+                  documentID == nil || documentID == self.documentID, let fields = fields() else { return false }
             do {
                 let previousTracks = selectingAddedTrack ? Set(self.tracks.map(\.id)) : []
                 let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
@@ -541,9 +556,11 @@ extension ProjectController {
 
     @discardableResult
     public func setMixer(_ track: UUID, field: MixerField, value: Float, documentID: UUID? = nil) async -> Bool {
-        guard let mix = mixer(track), value.isFinite, mix[field].value != value,
-              field == .gain ? (0...4).contains(value) : field == .pan ? (-1...1).contains(value) : (value == 0 || value == 1) else { return false }
-        return await edit(["type": "param.set", "parameter": mix[field].id.uuidString, "value": value], documentID: documentID)
+        await edit({ [self] in
+            guard let mix = mixer(track), value.isFinite, mix[field].value != value,
+                  field == .gain ? (0...4).contains(value) : field == .pan ? (-1...1).contains(value) : (value == 0 || value == 1) else { return nil }
+            return ["type": "param.set", "parameter": mix[field].id.uuidString, "value": value]
+        }, documentID: documentID)
     }
 
     @discardableResult
@@ -593,7 +610,8 @@ extension ProjectController {
     private func completeFader(_ preview: FaderPreview, document: Document, commit: Bool) async {
         if let task = previewTask { await task.value }
         var applied = false
-        if commit, preview.document == documentID, preview.value != preview.original {
+        if commit, preview.document == documentID,
+           let recorded = mixer(preview.track)?[preview.field].value, preview.value != recorded {
             applied = await edit(["type": "param.set", "parameter": preview.parameter.uuidString, "value": preview.value],
                                  documentID: preview.document, finishingPreview: true)
         }
@@ -606,15 +624,19 @@ extension ProjectController {
 
     @discardableResult
     public func setClipGain(_ id: UUID, gain: Float, documentID: UUID? = nil) async -> Bool {
-        guard let clip = snapshot?.clipMix(id), clip.isAudio, gain.isFinite, gain >= 0, clip.gain != gain else { return false }
-        return await edit(["type": "clip.set_gain", "clip": id.uuidString, "gain": gain], documentID: documentID)
+        await edit({ [self] in
+            guard let clip = snapshot?.clipMix(id), clip.isAudio, gain.isFinite, gain >= 0, clip.gain != gain else { return nil }
+            return ["type": "clip.set_gain", "clip": id.uuidString, "gain": gain]
+        }, documentID: documentID)
     }
 
     @discardableResult
     public func setClipFades(_ id: UUID, fadeIn: Int64, fadeOut: Int64, documentID: UUID? = nil) async -> Bool {
-        guard let clip = snapshot?.clipMix(id), clip.isAudio, fadeIn >= 0, fadeOut >= 0,
-              clip.fadeIn != fadeIn || clip.fadeOut != fadeOut else { return false }
-        return await edit(["type": "clip.set_fades", "clip": id.uuidString, "fade_in": fadeIn, "fade_out": fadeOut], documentID: documentID)
+        await edit({ [self] in
+            guard let clip = snapshot?.clipMix(id), clip.isAudio, fadeIn >= 0, fadeOut >= 0,
+                  clip.fadeIn != fadeIn || clip.fadeOut != fadeOut else { return nil }
+            return ["type": "clip.set_fades", "clip": id.uuidString, "fade_in": fadeIn, "fade_out": fadeOut]
+        }, documentID: documentID)
     }
 }
 
@@ -624,29 +646,32 @@ final class EditTurn {
     private var tail: Task<Void, Never>?
     private var latest = 0
     private(set) var busy = false
-    var onBusy: (@MainActor (Bool) -> Void)?
+    private var exclusiveRequests = 0
+    var onExclusive: (@MainActor (Bool) -> Void)?
 
-    func run<T: Sendable>(_ body: @escaping @MainActor () async -> T) async -> T {
+    func run<T: Sendable>(exclusive: Bool = false, _ body: @escaping @MainActor () async -> T) async -> T {
         latest += 1
         let mine = latest
         let previous = tail
+        if exclusive {
+            exclusiveRequests += 1
+            if exclusiveRequests == 1 { onExclusive?(true) }
+        }
         let result = Task { @MainActor in
             await previous?.value
             let value = await body()
+            if exclusive {
+                self.exclusiveRequests -= 1
+                if self.exclusiveRequests == 0 { self.onExclusive?(false) }
+            }
             if self.latest == mine {
-                self.setBusy(false)
+                self.busy = false
                 self.tail = nil
             }
             return value
         }
         tail = Task { @MainActor in _ = await result.value }
-        setBusy(true)
+        busy = true
         return await result.value
-    }
-
-    private func setBusy(_ busy: Bool) {
-        guard self.busy != busy else { return }
-        self.busy = busy
-        onBusy?(busy)
     }
 }

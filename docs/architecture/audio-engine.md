@@ -90,8 +90,12 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
   デバイスビューの要求では、再生指令を入れずに出力とヘルパーを開いて同じく保持する（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）。
   開いた後のヘルパーとの往復はデバイスレーンが待ち、制御側の背景保存とグラフ交換は通信中の制御端点を待たない
   （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
-  停止・一時停止・位置移動では保持した CLAP ヘルパーへ次のイベントより前の DSP リセットと全発音停止を送る
-  （[ADR 0099](../decisions/0099-transport-plugin-state.md)）
+  ライブ停止・一時停止は時計を保持して現在のノートを解放し、配置音声とキャッシュの素材だけを最大 5 ms で減衰する。
+  減衰はプラグインの手前で行い、停止中も無音入力でチェイン全体を処理して余韻・自発的な発音をミキサーへ通す。
+  マスターの停止ミュートと DSP リセットは行わない（[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+  位置移動・未発音の準備取消とオフライン停止では、次のイベントより前に DSP リセットと全発音停止を送る。
+  ライブの破棄する後片付けは完了を待たず、保留中の停止で素材の継続処理を始めない
+  （[ADR 0099](../decisions/0099-transport-plugin-state.md)、[ADR 0105](../decisions/0105-nonblocking-stop-cleanup.md)）
 - **P2 の開始位置**: プロジェクトに保存する再生開始位置と進行中の位置を分け、停止は開始位置へ戻し、一時停止はその場から再開する
   （[操作要件](../interaction-design.md#再生の開始位置)、[ADR 0117](../decisions/0117-workflow-interactions.md)）
 - **出力デバイス追従**: 既定はシステム出力に追従し、明示選択したデバイスが抜けたときはシステム出力へフォールバックし、戻ったら復帰する

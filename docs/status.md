@@ -56,6 +56,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   旧欄が全パラメーターの行を一括生成していたこと（800 個で約 0.68 秒、3000 個で約 2.7 秒）と、デバイス要求が文書ワーカーを塞いでいたことに対応した。
   実機と第三者プラグインでの解消はユーザー確認待ちである
   （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
+  パラメーター確定・バイパス・オフライン操作で全ボタンが一瞬無効になる経路は、編集順序と文書交換の排他を分けて修正した。
+  実画面での暗転解消はユーザー確認待ちである（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
   停止中の最初の表示で出力とヘルパーを開く間は、後続の編集がまだ待つ。
   展開・折りたたみ、複数選択時の表示対象は未実装・未決である
   （[デバイスビュー](interaction-design.md#デバイスビューと-fx-一覧の役割)、[作業継続](interaction-design.md#処理中も作業を続ける)）。
@@ -75,9 +77,15 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
 - **トランスポートと状態保持**:
   - 再生開始時の位置巻き戻り（CU-04）とトラックヘッダの Space 転送（CU-05）は必須契約で回帰検査している。
   - 再生準備中の停止は投入時に音声側へ伝え、停止後は準備済み出力を再利用する（[ADR 0097](decisions/0097-cancellable-retained-transport.md)）。初回の素材・プラグイン初期化時間は残る。
-  - 保持したプラグインの発音状態は停止・一時停止・位置移動で消去し、通常の余韻と区別する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
+  - ライブ停止・一時停止はノートオフを送り、素材だけを最大 5 ms で減衰する。
+    停止中も無音入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する。
+    開いた出力の停止中の処理負荷は残る。実機と第三者プラグインの聴感はユーザー確認待ちである
+    （[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+  - 位置移動・未発音の準備取消とオフライン停止では、以前の発音状態を消去する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
   - 音声グラフは音声側が排他所有し、構造更新中も現在の計画で再生を続けて準備完了後に交換する（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）。
-  - ライブ停止・一時停止は波形を 5 ms 以内に減衰させ（[ADR 0103](decisions/0103-live-stop-waveform.md)）、減衰後の後片付けはヘルパーの完了を待たずに返る（[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）。
+  - 位置移動・準備取消の後片付けはヘルパーの完了を待たずに返る。
+    停止診断の減衰位置は素材側を示し、マスター出力の無音化を示さない
+    （[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - **音声バス・ループ・キャッシュ・描画**:
   - 素材・CLAP 間・書き出しのステレオ保持、配置音声のループ継ぎ目、5 ms のフェーダー補間と f64 加算を接続済み（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。暗黙のステレオ→モノ変換はエラーにする。
   - ループ先頭は全素材を事前準備して保持し、フェーダー前の出力元の差し替え口（`CachedTrack`）も接続済み（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。ディスクストリーミング、Phase 3 のレンダリングキャッシュ生成本体、Ogg、プラグインのサムネイルは未実装。

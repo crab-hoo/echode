@@ -314,7 +314,7 @@ struct MixControlTests {
         let first = Task { await controller.setMixer(track, field: .gain, value: step1) }
         var overlapped = false
         for _ in 0..<1000 {
-            if controller.busy { overlapped = true; break }
+            if controller.edits.busy { overlapped = true; break }
             await Task.yield()
         }
         let second = Task { await controller.setMixer(track, field: .gain, value: step2) }
@@ -340,6 +340,97 @@ struct MixControlTests {
         #expect(await first.value == 1)
         #expect(await second.value == 2)
         #expect(!turn.busy)
+    }
+
+    @Test func onlyDocumentReplacementLocksInteractionWhileEditsStayOrdered() async {
+        let turn = EditTurn()
+        let gate = TurnGate()
+        var locks: [Bool] = []
+        turn.onExclusive = { locks.append($0) }
+        let first = Task { await turn.run { await gate.wait(); return 1 } }
+        await gate.entered()
+        #expect(turn.busy && locks.isEmpty)
+        let replacement = Task { await turn.run(exclusive: true) { return 2 } }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(locks == [true])
+        let last = Task { await turn.run { #expect(locks == [true, false]); return 3 } }
+        gate.resume()
+        #expect(await first.value == 1)
+        #expect(await replacement.value == 2)
+        #expect(await last.value == 3)
+        #expect(!turn.busy && locks == [true, false])
+    }
+
+    @Test func queuedSwitchesBackToTheDisplayedValueAreNotDropped() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-switches-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "switches")
+        let document = try #require(controller.documentID)
+        let track = try #require(controller.selection)
+        #expect(await controller.insertPlugin("org.example.fx", on: track, documentID: document))
+        let device = try #require(controller.deviceRows(on: track).first?.id)
+
+        func roundTrip(_ on: @escaping @MainActor () async -> Bool, _ off: @escaping @MainActor () async -> Bool) async {
+            let gate = TurnGate()
+            let held = Task { await controller.edits.run { await gate.wait() } }
+            await gate.entered()
+            let before = controller.undoCount
+            let first = Task { await on() }
+            for _ in 0..<20 { await Task.yield() }
+            let second = Task { await off() }
+            for _ in 0..<20 { await Task.yield() }
+            // Both requests arrive while the snapshot still shows the old
+            // value. The second must be compared after the first publishes.
+            gate.resume()
+            await held.value
+            #expect(await first.value)
+            #expect(await second.value)
+            #expect(controller.undoCount == before + 2)
+        }
+        await roundTrip({ await controller.editDeviceChain(.bypass(device: device, bypassed: true), documentID: document) },
+                        { await controller.editDeviceChain(.bypass(device: device, bypassed: false), documentID: document) })
+        await roundTrip({ await controller.editDeviceChain(.offline(device: device, offline: true), documentID: document) },
+                        { await controller.editDeviceChain(.offline(device: device, offline: false), documentID: document) })
+        await roundTrip({ await controller.setPinned(1, device: device, pinned: true, documentID: document) },
+                        { await controller.setPinned(1, device: device, pinned: false, documentID: document) })
+        await roundTrip({ await controller.setMixer(track, field: .gain, value: 0.5, documentID: document) },
+                        { await controller.setMixer(track, field: .gain, value: 1, documentID: document) })
+        let row = try #require(controller.deviceRows(on: track).first)
+        #expect(!row.bypassed && !row.offline && row.pinned.isEmpty)
+        #expect(controller.mixer(track)?.gain.value == 1)
+        await controller.undo()
+        #expect(controller.mixer(track)?.gain.value == 0.5)
+        await controller.close()
+    }
+
+    @Test func startingAFaderDoesNotDropAnEditAlreadyQueued() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-queued-fader-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController(sendAudio: { _, _ in AudioState() })
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "queued fader")
+        let track = try #require(controller.selection)
+        let document = try #require(controller.documentID)
+        let gate = TurnGate()
+        let held = Task { await controller.edits.run { await gate.wait() } }
+        await gate.entered()
+        let edit = Task { await controller.setMixer(track, field: .gain, value: 0.5, documentID: document) }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(controller.beginFader(track, field: .gain))
+        // A drag that ends back on its displayed starting value still has to
+        // restore that value if the earlier edit changed it in the meantime.
+        controller.changeFader(1)
+        gate.resume()
+        await held.value
+        #expect(await edit.value)
+        #expect(controller.mixer(track)?.gain.value == 0.5)
+        await controller.finishFader(commit: true)
+        #expect(controller.mixer(track)?.gain.value == 1)
+        await controller.undo()
+        #expect(controller.mixer(track)?.gain.value == 0.5)
+        await controller.close()
     }
 
     @Test func inspectorNumbersAcceptTheShownUnitAndSilence() {
