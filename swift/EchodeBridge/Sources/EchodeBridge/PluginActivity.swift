@@ -20,6 +20,8 @@ public struct PluginParameterEvent: Decodable, Sendable, Equatable {
 /// What one plugin did since the previous entry for it.
 public struct PluginActivity: Decodable, Sendable, Equatable {
     public let device: UUID
+    /// Existing DAW shortcuts forwarded by the focused plugin window.
+    public let commands: [String]
     /// Gestures and value changes in the order the plugin reported them.
     public let events: [PluginParameterEvent]
     /// The current value and text of each parameter with a value event.
@@ -39,14 +41,15 @@ public struct PluginActivity: Decodable, Sendable, Equatable {
 
     public init(device: UUID, events: [PluginParameterEvent] = [], values: [DeviceParameterValue] = [],
                 rescan: Bool = false, lost: Bool = false, dirty: Bool = false, closed: Bool = false,
-                windowOpen: Bool = false) {
+                windowOpen: Bool = false, commands: [String] = []) {
         self.device = device; self.events = events; self.values = values
         self.rescan = rescan; self.lost = lost; self.dirty = dirty; self.closed = closed
         self.windowOpen = windowOpen
+        self.commands = commands
     }
 
     enum CodingKeys: String, CodingKey {
-        case device, events, values, rescan, lost, dirty, closed, windowOpen = "window"
+        case device, commands, events, values, rescan, lost, dirty, closed, windowOpen = "window"
     }
 }
 

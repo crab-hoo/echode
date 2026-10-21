@@ -47,6 +47,7 @@ const GUI_CLOSED_REPLY: u32 = 28;
 const GUI_REJECTED: u32 = 29;
 const GUI_CLOSED: u32 = 30;
 const PARAM_RELAY: u32 = 31;
+const GUI_COMMAND: u32 = 32;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -109,6 +110,8 @@ pub enum ControlMessage {
     GuiClosed,
     /// Notice: values and gestures the plugin reported on its own.
     ParamRelay(ParamRelay),
+    /// Notice: a global DAW shortcut from the focused plugin window.
+    GuiCommand(crate::PluginCommand),
 }
 
 impl ControlMessage {
@@ -121,6 +124,7 @@ impl ControlMessage {
                 | Self::Hello
                 | Self::GuiClosed
                 | Self::ParamRelay(_)
+                | Self::GuiCommand(_)
         )
     }
 }
@@ -334,6 +338,7 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         ControlMessage::GuiClosedReply => (GUI_CLOSED_REPLY, Vec::new()),
         ControlMessage::GuiRejected(reason) => (GUI_REJECTED, reason.as_bytes().to_vec()),
         ControlMessage::GuiClosed => (GUI_CLOSED, Vec::new()),
+        ControlMessage::GuiCommand(command) => (GUI_COMMAND, vec![*command as u8]),
         ControlMessage::ParamRelay(relay) => (PARAM_RELAY, write_relay(relay)),
     })
 }
@@ -426,6 +431,10 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
             })?)
         }
         GUI_CLOSED if body.is_empty() => ControlMessage::GuiClosed,
+        GUI_COMMAND if body.len() == 1 => ControlMessage::GuiCommand(
+            crate::PluginCommand::decode(body[0])
+                .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "unknown plugin command"))?,
+        ),
         PARAM_RELAY => ControlMessage::ParamRelay(read_relay(body)?),
         _ => {
             return Err(io::Error::new(

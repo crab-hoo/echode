@@ -14,7 +14,7 @@ pub use activity::UserActivity;
 pub use clips::load_placed_clips;
 pub use echode_engine::{
     GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamValue,
-    PluginActivity, PluginControl, TrackMeter,
+    PluginActivity, PluginCommand, PluginControl, TrackMeter,
 };
 pub use hardware::{Inventory, OutputDevice, inventory};
 pub use session::{AudioCommand, AudioState, Session};

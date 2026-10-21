@@ -15,7 +15,6 @@ struct WorkspaceDeviceView: View {
                 Text(controller.tracks.first { $0.id == controller.selection }?.name ?? text("Select a track"))
                     .foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                Button(text("Add FX"), action: add).disabled(controller.busy || controller.selection == nil)
             }.padding(10)
             Divider()
             if let document = controller.documentID, let track = controller.selection {
@@ -26,7 +25,7 @@ struct WorkspaceDeviceView: View {
                 VStack(spacing: 0) {
                     DeviceStripCanvas(controller: controller, devices: devices, track: track, document: document,
                                       states: states, busy: controller.busy, locked: controller.historyBusy,
-                                      changes: devices.map { states[$0.id].map(DeviceListChange.init) })
+                                      changes: devices.map { states[$0.id].map(DeviceListChange.init) }, add: add)
                     Text(text("FX chain gesture help")).font(.caption).foregroundStyle(.secondary).padding(6)
                 }
                 .task(id: DeviceViewKey(document: document, track: track, running: devices.filter { !$0.offline }.map(\.id))) {
@@ -67,6 +66,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
     let busy: Bool
     let locked: Bool
     let changes: [DeviceListChange?]
+    let add: () -> Void
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = DeviceStripScrollView()
         scroll.hasHorizontalScroller = true; scroll.hasVerticalScroller = false
@@ -83,6 +83,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         strip.onEdit = { edit in Task { await controller.editDeviceChain(edit, documentID: document) } }
         strip.onInsert = { plugin in Task { await controller.addPluginOpeningWindow(plugin, on: track, documentID: document) } }
         strip.onOpenWindow = { device in Task { await controller.openPluginWindow(device, documentID: document) } }
+        strip.onAdd = add
         strip.onBegin = { controller.beginParameter($0, device: $1) }
         strip.onChange = { controller.changeParameter($0) }
         strip.onEnd = { Task { await controller.finishParameter(commit: true) } }
@@ -119,6 +120,8 @@ final class DeviceStripView: NSView {
     private var document: UUID?
     private var busy = false
     private let empty = NSTextField(labelWithString: "")
+    let addButton = NSButton(title: text("Add FX"), target: nil, action: nil)
+    var onAdd: (() -> Void)?
     var onEdit: ((DeviceChainEdit) -> Void)?
     var onInsert: ((String) -> Void)?
     /// A click on a device's name opens its plugin window.
@@ -137,6 +140,9 @@ final class DeviceStripView: NSView {
         setAccessibilityElement(false)
         empty.textColor = .secondaryLabelColor; empty.alignment = .center
         addSubview(empty)
+        addButton.bezelStyle = .rounded
+        addButton.target = self; addButton.action = #selector(addFX)
+        addSubview(addButton)
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -146,6 +152,7 @@ final class DeviceStripView: NSView {
                    locked: Bool = false, states: [UUID: DeviceParameterState] = [:]) {
         if self.document != document { cache = [:] }
         self.devices = devices; self.track = track; self.document = document; self.busy = busy
+        addButton.isEnabled = !busy
         var next: [DeviceColumnView] = []
         for (index, device) in devices.enumerated() {
             let column = cache[device.id] ?? DeviceColumnView(
@@ -185,8 +192,11 @@ final class DeviceStripView: NSView {
             column.frame = CGRect(x: Double(index) * Self.columnWidth, y: 0, width: Self.columnWidth - 1, height: bounds.height)
         }
         let start = Double(columns.count) * Self.columnWidth
-        empty.frame = CGRect(x: start + 8, y: max(0, bounds.height / 2 - 10), width: max(0, bounds.width - start - 16), height: 20)
+        addButton.frame = CGRect(x: start + 16, y: max(8, bounds.height / 2 - 32), width: Self.trailingWidth - 32, height: 28)
+        empty.frame = CGRect(x: start + 8, y: addButton.frame.maxY + 8, width: Self.trailingWidth - 16, height: 20)
     }
+
+    @objc private func addFX() { if !busy { onAdd?() } }
 
     private func targetBefore(_ point: CGPoint) -> UUID? {
         let index = Int(max(0, (point.x / Self.columnWidth + 0.5).rounded(.down)))

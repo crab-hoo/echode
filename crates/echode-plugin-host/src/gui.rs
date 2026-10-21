@@ -133,11 +133,11 @@ trait Surface {
     fn order_out(&mut self);
     fn destroy(&mut self);
     fn is_key(&self) -> bool;
-    /// False once the user closed the window with its close button.
-    fn on_screen(&self) -> bool;
+    /// An explicit close, independent of temporary OS visibility changes.
+    fn user_closed(&self) -> bool;
     fn content_size(&self) -> Option<(u32, u32)>;
     fn set_content_size(&mut self, width: u32, height: u32);
-    /// Echode, the process that started this helper, is the active app.
+    /// Echode or a helper from the same parent is the active workspace.
     fn parent_active(&self) -> bool;
 }
 
@@ -218,8 +218,7 @@ pub(crate) fn tick(plugin: &clap_plugin, requests: &GuiRequests) -> bool {
             requests.closed.store(false, Ordering::Release);
             return false;
         };
-        let closed_by_user =
-            !host.floating && host.policy.is_visible() && !host.surface.on_screen();
+        let closed_by_user = !host.floating && host.surface.user_closed();
         if closed_by_user
             || requests.closed.swap(false, Ordering::AcqRel)
             || requests.hide.swap(false, Ordering::AcqRel)
@@ -255,9 +254,9 @@ pub(crate) fn shut_down(plugin: &clap_plugin) {
 
 /// Runs the main run loop once. After a window was created, AppKit events are
 /// handled in the same loop (ADR 0041).
-pub(crate) fn run_once(seconds: f64) {
+pub(crate) fn run_once(seconds: f64, command: impl FnMut(echode_sandbox::PluginCommand)) {
     if APPKIT.with(Cell::get) {
-        appkit::run_once(seconds);
+        appkit::run_once(seconds, command);
     } else {
         // SAFETY: the default-mode symbol is a process-wide constant.
         let mode = unsafe { objc2_core_foundation::kCFRunLoopDefaultMode };
@@ -444,8 +443,8 @@ impl Surface for Recorded {
         self.key
     }
 
-    fn on_screen(&self) -> bool {
-        self.visible
+    fn user_closed(&self) -> bool {
+        false
     }
 
     fn content_size(&self) -> Option<(u32, u32)> {
@@ -461,197 +460,9 @@ impl Surface for Recorded {
     }
 }
 
-mod appkit {
-    use super::{APPKIT, Surface};
-    use objc2::rc::Retained;
-    use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
-    use objc2_app_kit::{
-        NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSEventMask, NSPanel,
-        NSWindowStyleMask, NSWorkspace,
-    };
-    use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSPoint, NSRect, NSSize, NSString};
-    use std::cell::Cell;
-    use std::ffi::c_void;
-
-    pub(super) struct Panel {
-        mtm: MainThreadMarker,
-        panel: Option<Retained<NSPanel>>,
-        parent: libc::pid_t,
-    }
-
-    impl Panel {
-        pub(super) fn new() -> Result<Self, String> {
-            let mtm = MainThreadMarker::new().ok_or("plugin windows need the main thread")?;
-            if !APPKIT.with(Cell::get) {
-                let app = NSApplication::sharedApplication(mtm);
-                // No Dock icon and no menu bar: Echode stays the app the user works in.
-                app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-                app.finishLaunching();
-                APPKIT.with(|started| started.set(true));
-            }
-            Ok(Self {
-                mtm,
-                panel: None,
-                // SAFETY: `getppid` has no preconditions.
-                parent: unsafe { libc::getppid() },
-            })
-        }
-    }
-
-    impl Surface for Panel {
-        fn create(
-            &mut self,
-            title: &str,
-            width: u32,
-            height: u32,
-            resizable: bool,
-        ) -> Result<*mut c_void, String> {
-            let mut style = NSWindowStyleMask::Titled
-                | NSWindowStyleMask::Closable
-                | NSWindowStyleMask::NonactivatingPanel;
-            if resizable {
-                style |= NSWindowStyleMask::Resizable;
-            }
-            let frame = NSRect::new(
-                NSPoint::new(0.0, 0.0),
-                NSSize::new(f64::from(width), f64::from(height)),
-            );
-            // SAFETY: a standard initializer on a freshly allocated panel.
-            let panel: Retained<NSPanel> = unsafe {
-                msg_send![
-                    NSPanel::alloc(self.mtm),
-                    initWithContentRect: frame,
-                    styleMask: style,
-                    backing: NSBackingStoreType::Buffered,
-                    defer: false
-                ]
-            };
-            // Above Echode's windows while Echode is active; never the app that is active.
-            panel.setFloatingPanel(true);
-            panel.setHidesOnDeactivate(false);
-            // A click inside makes the panel key, so the plugin gets typing then.
-            panel.setBecomesKeyOnlyIfNeeded(false);
-            // SAFETY: the panel is kept in `self.panel` until `destroy`.
-            unsafe { panel.setReleasedWhenClosed(false) };
-            panel.setTitle(&NSString::from_str(title));
-            panel.center();
-            let view = panel
-                .contentView()
-                .ok_or("the window has no content view")?;
-            let pointer = Retained::as_ptr(&view).cast_mut().cast::<c_void>();
-            self.panel = Some(panel);
-            Ok(pointer)
-        }
-
-        fn order_front(&mut self, key: bool) {
-            if let Some(panel) = &self.panel {
-                if key {
-                    panel.makeKeyAndOrderFront(None);
-                } else {
-                    // Without activating the helper or taking the keyboard.
-                    panel.orderFrontRegardless();
-                }
-            }
-        }
-
-        fn order_out(&mut self) {
-            if let Some(panel) = &self.panel {
-                panel.orderOut(None);
-            }
-        }
-
-        fn destroy(&mut self) {
-            if let Some(panel) = self.panel.take() {
-                panel.close();
-            }
-        }
-
-        fn is_key(&self) -> bool {
-            self.panel.as_ref().is_some_and(|panel| panel.isKeyWindow())
-        }
-
-        fn on_screen(&self) -> bool {
-            self.panel.as_ref().is_some_and(|panel| panel.isVisible())
-        }
-
-        fn content_size(&self) -> Option<(u32, u32)> {
-            let view = self.panel.as_ref()?.contentView()?;
-            let size = view.frame().size;
-            Some((size.width.round() as u32, size.height.round() as u32))
-        }
-
-        fn set_content_size(&mut self, width: u32, height: u32) {
-            if let Some(panel) = &self.panel {
-                panel.setContentSize(NSSize::new(f64::from(width), f64::from(height)));
-            }
-        }
-
-        fn parent_active(&self) -> bool {
-            NSWorkspace::sharedWorkspace()
-                .frontmostApplication()
-                .is_some_and(|app| app.processIdentifier() == self.parent)
-        }
-    }
-
-    /// Handles AppKit events for up to `seconds`, then returns to the caller's loop.
-    pub(super) fn run_once(seconds: f64) {
-        let Some(mtm) = MainThreadMarker::new() else {
-            return;
-        };
-        let app = NSApplication::sharedApplication(mtm);
-        let until = NSDate::dateWithTimeIntervalSinceNow(seconds);
-        // SAFETY: the default run-loop mode is a process-wide constant.
-        let mode = unsafe { NSDefaultRunLoopMode };
-        let mut wait = Some(until);
-        while let Some(event) = app.nextEventMatchingMask_untilDate_inMode_dequeue(
-            NSEventMask::Any,
-            wait.as_deref(),
-            mode,
-            true,
-        ) {
-            app.sendEvent(&event);
-            // Drain what is already queued without waiting again.
-            wait = Some(NSDate::distantPast());
-        }
-        app.updateWindows();
-    }
-}
+#[path = "gui_appkit.rs"]
+mod appkit;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn showing_and_raising_never_take_focus() {
-        let mut policy = WindowPolicy::default();
-        assert_eq!(
-            policy.show(true),
-            [
-                WindowAction::Create,
-                WindowAction::OrderFront { key: false }
-            ]
-        );
-        assert_eq!(policy.show(true), [WindowAction::OrderFront { key: false }]);
-        assert!(policy.is_open() && policy.is_visible());
-    }
-
-    #[test]
-    fn the_window_follows_echode_being_active() {
-        let mut policy = WindowPolicy::default();
-        // Opened while another app is active: created, but kept off screen.
-        assert_eq!(policy.show(false), [WindowAction::Create]);
-        assert!(!policy.is_visible());
-        assert_eq!(
-            policy.parent(true),
-            [WindowAction::OrderFront { key: false }]
-        );
-        assert!(policy.parent(true).is_empty());
-        assert_eq!(policy.parent(false), [WindowAction::OrderOut]);
-        assert_eq!(policy.close(), [WindowAction::Destroy]);
-        assert!(policy.close().is_empty());
-        assert!(
-            policy.parent(true).is_empty(),
-            "a closed window stays closed"
-        );
-    }
-}
+#[path = "gui_tests.rs"]
+mod tests;

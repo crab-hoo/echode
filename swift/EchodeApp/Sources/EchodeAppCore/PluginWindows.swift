@@ -91,6 +91,11 @@ extension ProjectController {
         for entry in entries {
             let device = entry.device
             guard tracks.contains(where: { track in deviceRows(on: track.id).contains { $0.id == device } }) else { continue }
+            if entry.windowOpen {
+                for name in entry.commands {
+                    if let command = WorkspaceCommand(rawValue: name) { pluginCommand?(command) }
+                }
+            }
             // The parameter under the user's pointer in the device view keeps its slider.
             let dragging = parameterGesture.flatMap { $0.device == device ? $0.parameter : nil }
             for value in entry.values where value.id != dragging {

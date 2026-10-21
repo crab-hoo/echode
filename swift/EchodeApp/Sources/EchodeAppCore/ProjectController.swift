@@ -76,6 +76,7 @@ public final class ProjectController {
     @ObservationIgnored let edits = EditTurn()
     /// Reads plugin windows' activity for the open document (ADR 0132).
     @ObservationIgnored var pluginActivity: PluginActivityReader?
+    @ObservationIgnored var pluginCommand: ((WorkspaceCommand) -> Void)?
     /// Parameters each plugin reports as being adjusted in its own window.
     @ObservationIgnored var pluginGestures: [UUID: Set<UInt32>] = [:]
     /// A plugin-made change without a gesture waits this long for quiet.

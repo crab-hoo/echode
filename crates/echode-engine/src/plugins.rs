@@ -171,6 +171,11 @@ impl Stage {
 
 pub(crate) struct PreparationCheckpoint(Vec<(Arc<Instance>, bool)>);
 
+pub(crate) struct ReconcileRoutes<'a> {
+    pub entries: &'a [PluginRoute],
+    pub restore_states: bool,
+}
+
 impl Instance {
     fn host(&self) -> std::sync::MutexGuard<'_, PluginHost> {
         self.host.lock().unwrap_or_else(|error| error.into_inner())
@@ -550,7 +555,17 @@ impl HostGraph {
         workgroup: Option<&PluginWorkgroup>,
     ) -> Result<Self, PlaybackError> {
         let mut graph = Self::empty();
-        graph.reconcile(host_bin, routes, chains, frames, sample_rate, workgroup)?;
+        graph.reconcile(
+            host_bin,
+            ReconcileRoutes {
+                entries: routes,
+                restore_states: true,
+            },
+            chains,
+            frames,
+            sample_rate,
+            workgroup,
+        )?;
         Ok(graph)
     }
 
@@ -561,12 +576,13 @@ impl HostGraph {
     pub(crate) fn reconcile(
         &mut self,
         host_bin: &Path,
-        routes: &[PluginRoute],
+        selection: ReconcileRoutes<'_>,
         chains: &[TrackChain],
         frames: usize,
         sample_rate: u32,
         workgroup: Option<&PluginWorkgroup>,
     ) -> Result<(), PlaybackError> {
+        let routes = selection.entries;
         if frames == 0 || frames > u32::MAX as usize {
             return Err(PlaybackError::InvalidSampleRate);
         }
@@ -614,7 +630,9 @@ impl HostGraph {
                 {
                     let incoming = unused_route(routes, &used, &device.clap_id)
                         .and_then(|route| route.state.clone());
-                    if kept[index].instance.control.applied_state() != incoming {
+                    if selection.restore_states
+                        && kept[index].instance.control.applied_state() != incoming
+                    {
                         // State changed. Leave the old process in `kept` so it is
                         // dropped, and spawn a helper that restores the new bytes.
                     } else {

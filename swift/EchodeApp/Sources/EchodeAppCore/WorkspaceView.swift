@@ -46,7 +46,14 @@ public struct WorkspaceView: View {
         )) { Button(text("OK")) { controller.errorMessage = nil } } message: { Text(controller.errorMessage ?? "") }
         .frame(minWidth: state.layout.minimumWidth, minHeight: state.layout.minimumHeight)
         .onChange(of: context) { _, _ in state.synchronize(controller) }
-        .onAppear { state.synchronize(controller) }
+        .onAppear { [controller, state] in
+            state.synchronize(controller)
+            controller.pluginCommand = { [weak controller, state] command in
+                guard let controller else { return }
+                WorkspaceSession(controller: controller, state: state).perform(command)
+            }
+        }
+        .onDisappear { controller.pluginCommand = nil }
         .task { await controller.observeAudio() }
     }
 

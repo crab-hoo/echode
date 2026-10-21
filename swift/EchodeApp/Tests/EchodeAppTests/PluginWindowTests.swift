@@ -9,10 +9,77 @@ import Testing
 /// the helper relays. Rust's `plugin_gui` contracts cover the real helper.
 @MainActor
 struct PluginWindowTests {
-    private func project(_ name: String, plugin: FakeParameterPlugin, tracks: Int = 1)
+    @Test func contractPluginShortcutsUseTheWorkspaceCommands() async throws {
+        let plugin = FakeParameterPlugin()
+        let sent = AsyncStream<AudioCommand>.makeStream()
+        let (controller, document, tracks, url) = try await project("window-keys", plugin: plugin, sendAudio: { _, command in
+            sent.continuation.yield(command)
+            let playing = if case .play = command { true } else { false }
+            return try JSONDecoder().decode(AudioState.self, from: Data("""
+                {"playing":\(playing),"running":true,"tick":0,"devices":[],"metronome":false}
+                """.utf8))
+        })
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(await controller.insertPlugin("dev.echode.test-params", on: tracks[0], documentID: document))
+        let device = try #require(controller.deviceRows(on: tracks[0]).first).id
+        let state = WorkspaceState(defaults: .init())
+        let session = WorkspaceSession(controller: controller, state: state)
+        var received: [WorkspaceCommand] = []
+        controller.pluginCommand = { command in received.append(command); session.perform(command) }
+        defer { controller.pluginCommand = nil }
+        let before = state.layout.inspector
+        controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: ["Toggle Inspector"])], documentID: document)
+        try #require(received == [.inspector])
+        #expect(state.layout.inspector != before)
+        // Modal capability checks still apply to forwarded shortcuts.
+        state.presentation = .palette
+        controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: ["Toggle Inspector"])], documentID: document)
+        #expect(state.layout.inspector != before)
+        state.presentation = nil
+        for (id, target, open) in [(document, device, false), (UUID(), device, true), (document, UUID(), true)] {
+            controller.receivePluginActivity([PluginActivity(device: target, windowOpen: open, commands: ["Toggle Inspector"])], documentID: id)
+        }
+        #expect(received == [.inspector, .inspector], "closed windows and stale targets cannot issue commands")
+        controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: ["unknown"])], documentID: document)
+        #expect(received.count == 2)
+        var commands = sent.stream.makeAsyncIterator()
+        for (name, expected) in [("Play / Pause", "transport.play"), ("Play / Pause", "transport.pause"), ("Stop", "transport.stop")] {
+            controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: [name])], documentID: document)
+            let command = try #require(await commands.next())
+            let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(command)) as? [String: Any]
+            #expect(encoded?["type"] as? String == expected)
+        }
+    }
+    @Test func contractAddFXFollowsTheLastDevice() throws {
+        let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 800, height: 320))
+        let track = UUID(), document = UUID()
+        let rows = (0..<2).map { index in
+            TrackDevice(id: UUID(), plugin: "FX \(index)")
+        }
+        var additions = 0
+        strip.onAdd = { additions += 1 }
+        for count in [0, 2, 1, 0] {
+            strip.configure(devices: Array(rows.prefix(count)), track: track, document: document, busy: false)
+            strip.layoutSubtreeIfNeeded()
+            let button = try #require(strip.subviews.compactMap { $0 as? NSButton }.first { $0.title == text("Add FX") })
+            #expect(button.frame.minX >= Double(count) * DeviceStripView.columnWidth)
+            #expect(button.frame.maxX <= strip.contentWidth)
+            #expect(button.isEnabled)
+            // The actual native button is the keyboard and VoiceOver entry too.
+            button.performClick(nil)
+        }
+        #expect(additions == 4)
+        strip.configure(devices: rows, track: track, document: document, busy: true)
+        let button = try #require(strip.subviews.compactMap { $0 as? NSButton }.first { $0.title == text("Add FX") })
+        #expect(!button.isEnabled)
+        button.performClick(nil)
+        #expect(additions == 4)
+    }
+    private func project(_ name: String, plugin: FakeParameterPlugin, tracks: Int = 1,
+                         sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) })
         async throws -> (ProjectController, UUID, [UUID], URL) {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-\(name)-\(UUID()).echode")
-        let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
+        let controller = ProjectController(sendAudio: sendAudio, sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
         var ids: [UUID] = []

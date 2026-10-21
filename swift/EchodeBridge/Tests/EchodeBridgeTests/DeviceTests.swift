@@ -14,12 +14,13 @@ final class DeviceTests: XCTestCase {
         let page = try JSONDecoder().decode(PluginActivityPage.self, from: Data(#"""
             {"next":3,"closed":false,"entries":[{"device":"00000000-0000-0000-0000-0000000000d0",
             "events":[{"id":1,"kind":"begin"},{"id":1,"kind":"end"}],"values":[{"id":1,"value":1.5,"text":"1.50x"}],
-            "rescan":false,"lost":false,"dirty":false,"closed":false,"window":true}]}
+            "commands":["Play / Pause","Undo"],"rescan":false,"lost":false,"dirty":false,"closed":false,"window":true}]}
             """#.utf8))
         XCTAssertEqual(page.next, 3)
         XCTAssertEqual(page.entries.first?.device, device)
         XCTAssertEqual(page.entries.first?.events.map(\.kind), [.begin, .end])
         XCTAssertEqual(page.entries.first?.windowOpen, true)
+        XCTAssertEqual(page.entries.first?.commands, ["Play / Pause", "Undo"])
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-window-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }

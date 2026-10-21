@@ -71,6 +71,8 @@ impl ParamRelay {
 /// What one helper reported since the last read, for the device view and history.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PluginActivity {
+    /// Global DAW commands received while the plugin window had focus.
+    pub commands: Vec<crate::PluginCommand>,
     pub relay: ParamRelay,
     /// The plugin marked its state changed while its window was open.
     pub dirty: bool,
@@ -83,10 +85,11 @@ pub struct PluginActivity {
 
 impl PluginActivity {
     pub fn is_empty(&self) -> bool {
-        self.relay.is_empty() && !self.dirty && !self.closed
+        self.commands.is_empty() && self.relay.is_empty() && !self.dirty && !self.closed
     }
 
     pub fn merge(&mut self, later: Self) {
+        self.commands.extend(later.commands);
         self.relay.merge(later.relay);
         self.dirty |= later.dirty;
         self.closed |= later.closed;
@@ -255,12 +258,14 @@ mod tests {
             dirty: true,
             closed: false,
             window_open: true,
+            commands: vec![crate::PluginCommand::Playback],
         });
         assert_eq!(first.relay.events.len(), 4);
         assert_eq!(first.relay.values.len(), 1);
         assert_eq!(first.relay.values[0].value, 0.5);
         assert!(first.relay.rescan && first.relay.lost && first.dirty && !first.closed);
         assert!(first.window_open);
+        assert_eq!(first.commands, [crate::PluginCommand::Playback]);
         assert!(PluginActivity::default().is_empty());
     }
 }

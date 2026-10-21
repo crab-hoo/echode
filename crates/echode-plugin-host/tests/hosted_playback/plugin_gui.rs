@@ -74,6 +74,18 @@ fn gui_session(
     let project = project
         .add_clap_device(track, device, "dev.echode.test-params")
         .unwrap();
+    let project = project
+        .insert_note(
+            track,
+            NoteDraft {
+                pitch: 64,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::quarters(2).unwrap(),
+            },
+        )
+        .unwrap()
+        .0;
     // A short name: Unix socket paths have a small fixed limit on macOS.
     let socket = std::env::temp_dir().join(format!("echode-{name}-{}", std::process::id()));
     let _ = std::fs::remove_file(&socket);
@@ -87,7 +99,7 @@ fn gui_session(
     control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
     close(hear(&mut control, &mut audio, frames), 0.25);
-    // Stopped, so the parent sends the helper no blocks.
+    // Stopped; control requests still work without further audio callbacks.
     control.command(PlaybackCommand::Stop).unwrap();
     let _ = hear(&mut control, &mut audio, frames);
     (listener, socket, control, audio, device, frames)
@@ -115,6 +127,50 @@ fn collect(
 
 fn event(id: u32, kind: ParamEventKind) -> ParamEvent {
     ParamEvent { id, kind }
+}
+
+/// Rebuilding the loop's event storage must keep the live helper, including
+/// its window, unsaved parameters and values omitted from the plugin state.
+#[test]
+fn contract_loop_changes_keep_the_open_plugin_and_its_live_state() {
+    let (listener, socket, mut control, mut audio, device, frames) = gui_session("gui-loop");
+    let endpoint = control.device_control_handle(device.raw()).unwrap();
+    endpoint.show_gui("window — Params").unwrap();
+    let mut window = Window::accept(&listener);
+    assert_eq!(window.lines(3), ["create", "parent", "show"]);
+    window.act("value 1 1.5");
+    let captured = control.capture_device_state(device.raw()).unwrap();
+    window.act("value 1 1.75");
+    window.act("value 3 0.75");
+    let initial_events: usize = control.plugin_event_caps().iter().sum();
+    for playing in [false, true] {
+        if playing {
+            control.command(PlaybackCommand::Play).unwrap();
+        }
+        // This fixture's short loop needs more events than its original bank,
+        // so the retained helper also adopts a larger shared mapping.
+        for (command, looped) in [
+            (PlaybackCommand::SetLoop { start: 0, end: 17 }, true),
+            (PlaybackCommand::ClearLoop, false),
+        ] {
+            control.command(command).unwrap();
+            let _ = hear(&mut control, &mut audio, frames);
+            if looped {
+                assert!(control.plugin_event_caps().iter().sum::<usize>() > initial_events);
+            }
+            let current = control.device_control_handle(device.raw()).unwrap();
+            let report = current.show_gui("window — Params").unwrap();
+            assert!(!report.created, "loop changes must keep the plugin window");
+            assert_eq!(window.line(), "show");
+            let values = current.parameters().unwrap();
+            assert_eq!(values[0].value, 1.75, "an unsaved change was lost");
+            assert_eq!(values[2].value, 0.75, "the helper was replaced or reset");
+            assert_eq!(current.applied_state(), Some(captured.clone()));
+        }
+    }
+    endpoint.close_gui().unwrap();
+    drop((audio, control));
+    let _ = std::fs::remove_file(socket);
 }
 
 /// Showing creates the helper's window and the plugin's view, raising an open

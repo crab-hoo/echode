@@ -1112,6 +1112,8 @@ struct Pending {
     chain: Vec<TrackChain>,
     routes: Vec<PluginRoute>,
     revision: u64,
+    /// A loop-only preparation changes event storage, never plugin state.
+    restore_states: bool,
 }
 
 pub struct PlaybackControl {
@@ -1461,7 +1463,7 @@ impl PlaybackControl {
 
     fn set_loop(&mut self, bounds: Option<(i64, i64)>) -> Result<(), PlaybackError> {
         let previous = std::mem::replace(&mut self.loop_bounds, bounds);
-        let result = self.reprepare();
+        let result = self.reprepare(false);
         if result.is_err() {
             self.loop_bounds = previous;
         }
@@ -1502,14 +1504,14 @@ impl PlaybackControl {
 
     pub fn replace(&mut self, project: &Project) -> Result<(), PlaybackError> {
         let previous = std::mem::replace(&mut self.project, project.clone());
-        let result = self.reprepare();
+        let result = self.reprepare(true);
         if result.is_err() {
             self.project = previous;
         }
         result
     }
 
-    fn reprepare(&mut self) -> Result<(), PlaybackError> {
+    fn reprepare(&mut self, restore_states: bool) -> Result<(), PlaybackError> {
         self.service();
         if let Some(error) = self.take_preparation_error() {
             return Err(error);
@@ -1537,11 +1539,18 @@ impl PlaybackControl {
             .wrapping_add(1);
         let previous_events = self.reserved_events;
         self.reserved_events = prepared.events.len();
+        // Coalescing a loop change must not discard a pending project edit.
+        let restore_states = restore_states
+            || self
+                .held
+                .as_ref()
+                .is_some_and(|pending| pending.restore_states);
         self.held = Some(Pending {
             prepared: Box::new(prepared),
             chain,
             routes: self.routes.clone(),
             revision,
+            restore_states,
         });
         let result = self.publish_pending();
         if result.is_err() {
@@ -1566,7 +1575,10 @@ impl PlaybackControl {
             let checkpoint = self.hosts.preparation_checkpoint();
             if let Err(error) = self.hosts.reconcile(
                 &self.host_bin,
-                &pending.routes,
+                crate::plugins::ReconcileRoutes {
+                    entries: &pending.routes,
+                    restore_states: pending.restore_states,
+                },
                 &pending.chain,
                 self.frames,
                 self.rate,

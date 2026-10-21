@@ -26,7 +26,8 @@ make debug-report
   `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 - **ツール不足・ビルド失敗**:
   `doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`、動的検査は `make setup-bridge`。
-  `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、同じ引数へ `-v` を加えて `target/` のログへ保存し、`error:` 周辺を読む。
+  `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、`swift build --build-tests` で診断を取得する。
+  同じ `--package-path`・`--scratch-path` と `-Xswiftc -warnings-as-errors` を指定し、`target/` のログで `error:` 周辺を読む。
   Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
 - **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
   Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
@@ -123,6 +124,15 @@ make debug-report
   テスト用 CLAP の `ECHODE_TEST_FAULT=params-wait:<socket>` は一覧をメインスレッドで保留し、機器なしで遅いプラグインを再現する。
   実測時間を使う性能検査は通常回帰から分ける。実機操作とサンプリングが必要な場合は担当・許可を確認し、既存アプリの終了・置換は行わない。
   [追加受入条件](phase2.md#p2-02-デバイスビューとパラメーター編集着手中)を参照する。
+- **プラグイン GUI がすぐ消える・ループ切替で状態が戻る・Space が届かない**:
+  `plugin-window-visibility` は OS の一時非表示を閉鎖と誤判定する経路を確認する。
+  `NSPanel.close` の記録、親・自分・同じ親のヘルパーの最前面判定を調べ、実際の閉鎖と隠れただけの状態を区別する。
+  `plugin-window-loop` は状態の取り込み後に未保存の値を変え、停止中・再生中のループ切替で同じ GUI と値が残ることを確認する。
+  `Pending.restore_states` がループだけで真にならないこと、保留中のプロジェクト編集の復元を落とさないことを調べる。
+  キーは `plugin-key-events`（AppKit）、`plugin-key-socket`（制御通知）、`plugin-key-ui`（既存コマンド）で境界を分ける。
+  文字入力中は転送しない。独自入力欄は `NSTextInputClient.selectedRange` の公開状態を確認する。
+  実画面の再発時はプラグイン名・版、前面のアプリ、窓を開く前の状態保存、入力欄の編集中かも記録する
+  （[ADR 0134](decisions/0134-plugin-window-lifetime-and-shortcuts.md)）。
 - **プラグインのウィンドウが開かない・フォーカスを奪う・値や Undo が届かない**:
   エラー表示で境界を分ける。`the plugin has no window` はプラグインが `clap.gui` を持たない、
   `the plugin has no Cocoa window` は Cocoa の API を持たない、`the plugin refused the window` は `set_parent` の拒否である。

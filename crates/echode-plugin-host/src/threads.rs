@@ -224,6 +224,8 @@ struct Bridge {
     gui: GuiRequests,
     /// The user or the plugin closed the window; the parent is told once.
     gui_closed: AtomicBool,
+    /// Main-thread AppKit shortcuts, drained only by the control thread.
+    gui_commands: std::sync::Mutex<Vec<echode_sandbox::PluginCommand>>,
     // Read after `serve` returns, from the unit test.
     #[allow(dead_code)]
     main_id: std::sync::Mutex<Option<ThreadId>>,
@@ -759,6 +761,7 @@ fn serve_region(
         rescan_request: AtomicBool::new(false),
         gui: GuiRequests::default(),
         gui_closed: AtomicBool::new(false),
+        gui_commands: std::sync::Mutex::new(Vec::new()),
         main_id: std::sync::Mutex::new(None),
         audio_id: std::sync::Mutex::new(None),
         callbacks: AtomicU64::new(0),
@@ -868,7 +871,14 @@ fn serve_region(
         let control_handle = scope.spawn(|| control_thread(&bridge_control, control));
         bridge.signal();
         while !bridge.stop.load(Ordering::Acquire) {
-            gui::run_once(0.05);
+            gui::run_once(0.05, |command| {
+                bridge
+                    .gui_commands
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push(command);
+                bridge.bump_control();
+            });
             tick_window(&bridge);
         }
         audio
@@ -1476,6 +1486,15 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
         }
         if let Some(socket) = &mut socket {
             send_relay(bridge, socket);
+            let commands = std::mem::take(
+                &mut *bridge
+                    .gui_commands
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()),
+            );
+            for command in commands {
+                let _ = socket.send(&ControlMessage::GuiCommand(command));
+            }
             if bridge.gui_closed.swap(false, Ordering::AcqRel) {
                 let _ = socket.send(&ControlMessage::GuiClosed);
             }

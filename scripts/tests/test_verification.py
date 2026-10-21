@@ -370,7 +370,8 @@ class PolicyTests(unittest.TestCase):
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
-                          "plugin-window-open-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output"})
+                          "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop",
+                          "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
@@ -418,13 +419,14 @@ class PolicyTests(unittest.TestCase):
                                  ("rust", "echode-plugin-host", ["--test", "hosted_playback"]))
                 self.assertTrue(helper["test"].startswith("plugin_gui::contract_"))
                 self.assertEqual(helper["negative_control"]["file"], source)
-        for name in ("plugin-window-undo-ui", "plugin-window-open-ui"):
+        for name in ("plugin-window-undo-ui", "plugin-window-open-ui", "plugin-key-ui", "fx-add-trailing-ui"):
             with self.subTest(contract=name):
                 self.assertEqual((contracts[name]["runner"], contracts[name]["suite"]), ("swift", "PluginWindowTests"))
         # A key window would take Space and shortcuts from Echode.
         self.assertIn("key: false", contracts["plugin-window-helper"]["negative_control"]["old"])
         for path in ("crates/echode-plugin-host/src/gui.rs", "crates/echode-plugin-host/src/relay.rs",
                      "crates/echode-ffi/src/activity.rs", "crates/echode-sandbox/src/gui.rs",
+                     "crates/echode-plugin-host/src/gui_appkit.rs", "crates/echode-sandbox/src/shortcuts.rs",
                      "swift/EchodeApp/Sources/EchodeAppCore/PluginWindows.swift"):
             with self.subTest(path=path):
                 self.assertIn("check-product-contracts", self.selected(path))

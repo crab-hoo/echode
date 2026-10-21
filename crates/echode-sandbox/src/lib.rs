@@ -15,6 +15,7 @@ mod gui;
 mod params;
 mod region;
 mod session;
+mod shortcuts;
 mod sync;
 mod wire;
 mod workgroup;
@@ -33,6 +34,7 @@ pub use session::{
     BlockProgress, PluginAudio, PluginControl, PluginHost, PluginNotice, SessionError,
     SpawnOptions, WorkgroupHandoff,
 };
+pub use shortcuts::PluginCommand;
 pub use sync::{SyncFlags, WaitError, wait_until_ne, wake_one};
 pub use workgroup::{
     RetainedWorkgroup, WorkgroupMembership, copy_workgroup_port, join_passed_workgroup,

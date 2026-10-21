@@ -35,7 +35,7 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     一覧・値の往復は文書ワーカーの外で待ち、選択と無関係な編集はプラグインの応答を待たない
     （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
     プラグイン独自のウィンドウをヘルパーが持ち、列の名前とインスペクターの名前のクリック、候補からの単体追加で開く。
-    開く・前面化のどちらもフォーカスを取らず、Echode が非アクティブの間は隠す。
+    開く・前面化のどちらもフォーカスを取らず、Echode とそのヘルパー以外が最前面の間は隠す。
     プラグイン側のジェスチャーは終了時に 1 回の Undo、窓が開いている間のジェスチャーなしの変更は静止後に記録する
     （[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
     オートメーションは未接続。
@@ -67,7 +67,10 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
 - **プラグイン GUI・パラメーター編集**: デバイスビューの一覧はプラグインが `clap.params` で公開する値だけを扱う。
   プラグイン画面で変えた値は一覧へ即時に反映し、ジェスチャーと窓が開いている間の変更を Undo に記録する。
   窓が閉じている時のプラグイン自身の変化は自動保存だけである。
-  プラグイン画面が受けたキー（Space・Command＋Z など）は Echode へ転送しない。
+  GUI にフォーカス中の Space と既存の DAW キーを中継し、文字入力中はプラグインに渡す。
+  一時非表示を閉鎖とみなさず、ループ切替でヘルパーと未保存状態を保つ。
+  FX 追加ボタンは最後のデバイスの右に置く
+  （[ADR 0134](decisions/0134-plugin-window-lifetime-and-shortcuts.md)）。
   実ウィンドウの表示・アプリ切替時の隠れ方・第三者プラグインの GUI と聴感は未確認でユーザー担当である
   （[設計 §9.5](ARCHITECTURE.md#95-gui-とデバイスビュー)、[ADR 0130](decisions/0130-clap-parameter-editing.md)、[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
 - **Sine Pad と音源の選択**: Sine Pad は同梱 CLAP として通常の FX 一覧から追加・削除・バイパスできる。
@@ -93,7 +96,7 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   - トラックメーターはフェーダー後の左右最大ピークであり、LUFS やトゥルーピークではない。
   - 表示リンクは画面の最大リフレッシュレートに追従し、波形バッファ再利用、ピークキャッシュの部分読出、再生・書き出し・ヘルパー処理中の App Nap 抑止を備える（[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)）。ペイン縮小時の描画クリップも接続済み（[ADR 0098](decisions/0098-pane-render-boundaries.md)）。
 - **プラグイン隔離・Workgroup・キャッシュ**:
-  - ヘルパーは `SIGABRT` / `SIGSEGV` / `SIGBUS` / `SIGILL` で共有領域にクラッシュ印を書く。AUv3 の二重隔離回避、プラグイン画面からのキー転送、スキャンの Seatbelt、Workgroup ポートの 2 ms ポーリング置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
+  - ヘルパーは `SIGABRT` / `SIGSEGV` / `SIGBUS` / `SIGILL` で共有領域にクラッシュ印を書く。AUv3 の二重隔離回避、スキャンの Seatbelt、Workgroup ポートの 2 ms ポーリング置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
   - 選択デバイスの Workgroup をヘルパーの追加・保持・再起動へ引き継ぎ、変更通知で出力を再準備する。同一素材・同一配置結果の PCM 共有と、版・カメラによる可視列キャッシュを接続済み（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。CPU 並列グラフ、メーカー単位のヘルパー集約、SME、Metal 4 は未実装。
 
 ## 検査基盤で区別すること
