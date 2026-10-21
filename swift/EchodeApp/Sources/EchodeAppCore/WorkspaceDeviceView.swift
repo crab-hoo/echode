@@ -273,7 +273,8 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         self.state = state
         self.locked = locked
         title.stringValue = device.title
-        title.toolTip = device.offline ? device.plugin : device.plugin + "\n" + text("Open plugin window")
+        // The tooltip names the plugin; opening its window is the click and the accessibility action.
+        title.toolTip = device.plugin
         title.setAccessibilityLabel(device.title)
         title.setAccessibilityCustomActions(device.offline ? [] : [
             NSAccessibilityCustomAction(name: text("Open plugin window")) { [weak self] in self?.openWindow() ?? false }

@@ -123,10 +123,17 @@ extension ProjectController {
         }
     }
 
-    /// Waits for every plugin-made edit already scheduled, for tests and teardown.
+    /// Waits for every plugin-made edit already scheduled, including quiet
+    /// waits that are still running, so tests do not depend on timing.
     func settlePluginEdits() async {
         await pluginWindowTask?.value
-        while let task = pluginRecordTask {
+        while true {
+            if let (device, quiet) = pluginQuiet.first {
+                await quiet.value
+                if pluginQuiet[device] == quiet { pluginQuiet[device] = nil }
+                continue
+            }
+            guard let task = pluginRecordTask else { return }
             await task.value
             if pluginRecordTask == task { pluginRecordTask = nil }
         }

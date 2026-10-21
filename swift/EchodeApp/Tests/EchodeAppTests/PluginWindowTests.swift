@@ -60,20 +60,19 @@ struct PluginWindowTests {
         #expect(state.parameter(1)?.text == "1.60x")
 
         // A preset-like change without a gesture, while the window is open.
+        // Settling waits for the quiet timer itself, so no test timing is measured.
         controller.pluginQuietDelay = .milliseconds(20)
         await plugin.setGain(0.5)
         for _ in 0..<3 {
             controller.receivePluginActivity([PluginActivity(device: device, events: [.init(id: 1, kind: .value)],
                                                              values: [value(1, 0.5)], windowOpen: true)], documentID: document)
         }
-        try await Task.sleep(for: .milliseconds(200))
         await controller.settlePluginEdits()
         #expect(controller.undoCount == before + 2, "one step once the plugin was quiet")
 
         // A state change without parameters, while the window is open.
         await plugin.setGain(0.75)
         controller.receivePluginActivity([PluginActivity(device: device, dirty: true, windowOpen: true)], documentID: document)
-        try await Task.sleep(for: .milliseconds(200))
         await controller.settlePluginEdits()
         #expect(controller.undoCount == before + 3)
 
@@ -81,7 +80,6 @@ struct PluginWindowTests {
         await plugin.setGain(0.25)
         controller.receivePluginActivity([PluginActivity(device: device, events: [.init(id: 1, kind: .value)],
                                                          values: [value(1, 0.25)], lost: true)], documentID: document)
-        try await Task.sleep(for: .milliseconds(200))
         await controller.settlePluginEdits()
         #expect(controller.undoCount == before + 3)
         #expect(state.parameter(1)?.value == 0.25, "the list still shows the plugin's value")
