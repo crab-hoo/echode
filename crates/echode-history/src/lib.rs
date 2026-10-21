@@ -26,7 +26,7 @@ pub use document::{
 };
 pub use gix::ObjectId;
 pub use host::{DocumentHost, HostError};
-pub use media::{DecodedPcm, StoredAudio, import_audio, read_pcm};
+pub use media::{DecodedPcm, StoredAudio, decode_audio_file, import_audio, read_pcm};
 pub use objects::{hash_bytes as object_hash, read_object, write_object};
 pub use peaks::{PeakColumn, Waveforms, cache_peaks};
 pub use thin::{

@@ -216,6 +216,38 @@ pub unsafe extern "C" fn echode_document_plugin_activity(
     0
 }
 
+/// Plays the audio file at the UTF-8 `path` once over the project, from its
+/// first sample and without the project's FX or faders, replacing any earlier
+/// audition. A null or empty `path` fades the audition out. Returns at once:
+/// decoding and the audition output run on their own thread, not the document
+/// worker. The next snapshot's audio state reports the newest request.
+///
+/// # Safety
+/// `document` is null or open. `path` is null only when `path_len` is zero.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_document_audition(
+    document: *const Document,
+    path: *const u8,
+    path_len: usize,
+) -> c_int {
+    let Some(document) = (unsafe { document.as_ref() }) else {
+        return ECHODE_ERR;
+    };
+    if path_len > isize::MAX as usize || (path.is_null() && path_len != 0) {
+        return ECHODE_ERR;
+    }
+    if path_len == 0 {
+        document.audition(None);
+        return ECHODE_OK;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return ECHODE_ERR;
+    };
+    document.audition(Some(std::path::PathBuf::from(text)));
+    ECHODE_OK
+}
+
 /// Reads the live playhead without submitting a command or taking a lock.
 ///
 /// # Safety
@@ -878,6 +910,9 @@ fn snapshot_ref<'a>(snapshot: *const Snapshot) -> Option<&'a Snapshot> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod opening_tests;
 
 // Pure snapshot tests also run under Miri. No package IO, UUID randomness, or OS
 // threads are needed to check borrowed names, retained ownership and capacities.

@@ -1,5 +1,6 @@
 import EchodeBridge
 import Foundation
+import Synchronization
 import Testing
 @testable import EchodeAppCore
 
@@ -94,6 +95,39 @@ struct SampleBrowserTests {
         #expect(!(await controller.importAudio(absent)))
         #expect(controller.captureAudioImport(wav, on: UUID()) == nil)
         #expect(session.importSample(BrowserFile(url: root, directory: true)) == nil)
+        #expect(controller.undoCount == 0)
+        await controller.close()
+    }
+
+    @Test func contractBrowserSelectionAuditionsOnlySamplesWithoutTheEditQueue() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-audition-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("samples")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
+        for name in ["kick.wav", "snare.aif", "notes.txt"] {
+            try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name))
+        }
+        let requests = Mutex<[URL?]>([])
+        let controller = ProjectController(sendAudition: { _, url in requests.withLock { $0.append(url) } })
+        let state = WorkspaceState(defaults: .init())
+        let session = WorkspaceSession(controller: controller, state: state)
+        await state.browser.load(folder)
+        let rows = Dictionary(uniqueKeysWithValues: state.browser.filtered.map { ($0.url.lastPathComponent, $0.url) })
+        let kick = try #require(rows["kick.wav"]), snare = try #require(rows["snare.aif"])
+        // Nothing plays without a document.
+        #expect(session.auditionSelection(kick) == nil)
+        #expect(requests.withLock { $0.isEmpty })
+        await controller.open(root.appendingPathComponent("Song.echode"), creating: true)
+        // The request is synchronous; it is not an edit and never waits for one.
+        #expect(session.auditionSelection(kick) == kick)
+        #expect(session.auditionSelection(snare) == snare)
+        let loops = try #require(rows["loops"]), notes = try #require(rows["notes.txt"])
+        #expect(session.auditionSelection(loops) == nil)
+        #expect(session.auditionSelection(notes) == nil)
+        #expect(session.auditionSelection(nil) == nil)
+        // A path that is not a shown row cannot start a sound.
+        #expect(session.auditionSelection(root.appendingPathComponent("elsewhere.wav")) == nil)
+        #expect(requests.withLock { $0 } == [kick, snare, nil, nil, nil, nil])
         #expect(controller.undoCount == 0)
         await controller.close()
     }

@@ -342,11 +342,12 @@ GUI の応答性と編集継続は P2 のデバイス表示・読込みから守
   全選択トラックへの FX 一括追加は [ADR 0124](decisions/0124-selected-track-fx-batches.md) で接続した。
   トラックの通常複製は部分木単位で接続し、オートメーションとルーティングの引き継ぎは P2-03 / P2-04 で決める（[ADR 0129](decisions/0129-track-duplication.md)）。
   CLAP の汎用パラメーター欄は接続した（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
-  サンプルの単発試聴・ドラムラックは未接続である。プラグイン GUI は [ADR 0132](decisions/0132-helper-plugin-windows.md) で接続した（[status](status.md)）。
+  サンプルの単発試聴は [ADR 0135](decisions/0135-sample-audition.md) で接続し、ドラムラックは未接続である。プラグイン GUI は [ADR 0132](decisions/0132-helper-plugin-windows.md) で接続した（[status](status.md)）。
   横並びのデバイスビュー・各デバイスのパラメータ検索とピン留め・エディタとの上下同時表示を接続した
   （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
   2026-10-20 の選択時の停止とパラメーター画面の重さは機器なしで再現して対応し、実機での解消はユーザー確認待ちである。
-  停止中の最初の表示で出力とヘルパーを開く間は後続の編集が待つ。診断は [デバッグ手順](debugging.md#ui描画入力履歴mcp) を参照する。
+  停止中の最初の表示・再生での出力とヘルパーの準備は文書ワーカーの外で行う（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
+  出力を開いた後に新しいヘルパーが必要な編集は、まだワーカーで起動を待つ。診断は [デバッグ手順](debugging.md#ui描画入力履歴mcp) を参照する。
 
 ## 実装へ進む時の受入と基盤の保守
 

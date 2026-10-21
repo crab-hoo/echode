@@ -6,6 +6,7 @@ use echode_engine::ClipLoader;
 use echode_model::Project;
 use serde::{Deserialize, Serialize};
 
+use crate::opening::{Basis, HalOutputs, Opening, Outputs};
 use crate::{
     Inventory, OutputDevice, OutputStream, PluginActivity, PluginControl, TransportCancellation,
     hardware,
@@ -62,6 +63,19 @@ pub struct AudioState {
     pub plugin_missed_blocks: u64,
     pub graph_unavailable_blocks: u64,
     pub pending_plan: bool,
+    /// The sample audition, which runs beside this session's output.
+    pub audition: Option<crate::AuditionReport>,
+    /// Helpers and media are being prepared for the output on another thread.
+    /// The worker keeps taking edits; nothing sounds until this clears.
+    pub opening: bool,
+}
+
+/// A device view's way to its running plugin.
+pub enum DeviceAccess {
+    Ready(PluginControl),
+    /// The output is opening. Ask [`Session::opened_device_control`] once
+    /// [`Session::opening`] is false; asking again does not open twice.
+    Opening,
 }
 
 /// One foreground project. No hardware is queried until the app asks for the
@@ -69,6 +83,13 @@ pub struct AudioState {
 pub struct Session {
     project: Arc<Project>,
     stream: Option<OutputStream>,
+    /// Prepares off this thread. Its result becomes `stream` in `service`.
+    opening: Option<Opening>,
+    /// Abandoned openings, dropped once their threads exit.
+    retiring: Vec<Opening>,
+    outputs: Arc<dyn Outputs>,
+    /// The inventory has been read at least once.
+    refreshed: bool,
     notifications: Option<hardware::Notifications>,
     hardware_epoch: Arc<AtomicU64>,
     observed_epoch: u64,
@@ -88,6 +109,8 @@ pub struct Session {
     /// A device view asked for running plugins. The output stays open while
     /// stopped, as it does after playback.
     engine_held: bool,
+    /// Follows this session's output choice. Its requests do not come here.
+    audition: Option<crate::Audition>,
 }
 
 impl Session {
@@ -95,6 +118,10 @@ impl Session {
         Self {
             project,
             stream: None,
+            opening: None,
+            retiring: Vec::new(),
+            outputs: Arc::new(HalOutputs),
+            refreshed: false,
             notifications: None,
             hardware_epoch: Arc::new(AtomicU64::new(0)),
             observed_epoch: 0,
@@ -112,7 +139,20 @@ impl Session {
             fader_preview: None,
             activity: None,
             engine_held: false,
+            audition: None,
         }
+    }
+
+    /// The document's audition plays on the output this session selects.
+    pub fn set_audition(&mut self, audition: crate::Audition) {
+        audition.follow_output(self.selected_uid.clone());
+        self.audition = Some(audition);
+    }
+
+    /// Uses a stand-in output with no device. Preparation is unchanged.
+    #[cfg(any(test, feature = "headless-output"))]
+    pub fn use_headless_output(&mut self, output: crate::HeadlessOutput) {
+        self.outputs = Arc::new(output);
     }
 
     /// Playback reads audio objects from `package`.
@@ -170,10 +210,11 @@ impl Session {
                 if !self.cancellation.is_current(revision) {
                     return Ok(());
                 }
-                let already_playing =
-                    self.playing && self.play_revision == revision && self.stream.is_some();
+                let already_playing = self.playing
+                    && self.play_revision == revision
+                    && (self.stream.is_some() || self.opening.is_some());
                 self.error = None;
-                if self.notifications.is_none()
+                if !self.refreshed
                     || self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
                 {
                     self.refresh()?;
@@ -187,6 +228,7 @@ impl Session {
                     return Err(error);
                 }
                 self.playing = self.cancellation.is_current(revision);
+                // An opening output starts at install, from the revision then current.
                 if self.playing
                     && !already_playing
                     && let Some(stream) = &mut self.stream
@@ -220,6 +262,9 @@ impl Session {
             }
             AudioCommand::Output { uid } => {
                 self.refresh()?;
+                if let Some(audition) = &self.audition {
+                    audition.follow_output(uid.clone());
+                }
                 self.selected_uid = uid;
                 self.error = None;
                 self.reconcile()?;
@@ -344,20 +389,14 @@ impl Session {
     /// The helper hosting a running device. A device view waits for its
     /// replies on another thread, so a slow helper does not hold this one.
     /// Nothing is recorded until the caller journals a captured state.
-    pub fn device_control(&mut self, device: echode_model::Id) -> Result<PluginControl, String> {
-        self.open_engine()?.device_control(device.raw())
-    }
-
-    /// The helper hosting `device`, only when the output is already open.
-    /// Never opens the output, so a request with nothing to do stays cheap.
-    pub fn running_device_control(&self, device: echode_model::Id) -> Option<PluginControl> {
-        self.stream.as_ref()?.device_control(device.raw()).ok()
-    }
-
-    /// Device views need running helpers. Opens the output stopped at the
-    /// current position when playback has not opened it yet.
-    fn open_engine(&mut self) -> Result<&mut OutputStream, String> {
-        if self.stream.is_none() {
+    ///
+    /// The first request of a stopped session opens the output stopped at
+    /// the current position. Helpers start on another thread meanwhile.
+    pub fn device_control(&mut self, device: echode_model::Id) -> Result<DeviceAccess, String> {
+        if let Some(stream) = &self.stream {
+            return stream.device_control(device.raw()).map(DeviceAccess::Ready);
+        }
+        if self.opening.is_none() {
             if !self
                 .project
                 .tracks()
@@ -368,18 +407,44 @@ impl Session {
                 return Err("the project has no running plugin".into());
             }
             self.engine_held = true;
-            if self.notifications.is_none()
-                || self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
+            if !self.refreshed || self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
             {
                 self.refresh()?;
             }
+            self.error = None;
             self.reconcile()?;
         }
-        let missing = self
-            .error
+        match (&self.stream, &self.opening) {
+            (Some(stream), _) => stream.device_control(device.raw()).map(DeviceAccess::Ready),
+            (None, Some(_)) => Ok(DeviceAccess::Opening),
+            (None, None) => Err(self.missing_output()),
+        }
+    }
+
+    /// True while helpers and media are prepared for the output.
+    pub fn opening(&self) -> bool {
+        self.opening.is_some()
+    }
+
+    /// For a request that waited on [`DeviceAccess::Opening`]: the helper
+    /// hosting `device`, or why the output did not open. Never opens again.
+    pub fn opened_device_control(&self, device: echode_model::Id) -> Result<PluginControl, String> {
+        match &self.stream {
+            Some(stream) => stream.device_control(device.raw()),
+            None => Err(self.missing_output()),
+        }
+    }
+
+    /// The helper hosting `device`, only when the output is already open.
+    /// Never opens the output, so a request with nothing to do stays cheap.
+    pub fn running_device_control(&self, device: echode_model::Id) -> Option<PluginControl> {
+        self.stream.as_ref()?.device_control(device.raw()).ok()
+    }
+
+    fn missing_output(&self) -> String {
+        self.error
             .clone()
-            .unwrap_or_else(|| "no output device is available".into());
-        self.stream.as_mut().ok_or(missing)
+            .unwrap_or_else(|| "no output device is available".into())
     }
 
     pub fn meters(&self) -> Vec<Arc<crate::TrackMeter>> {
@@ -428,9 +493,19 @@ impl Session {
     }
 
     pub fn service(&mut self) {
-        if self.notifications.is_some()
+        if self.refreshed
             && self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
             && let Err(error) = self.refresh().and_then(|_| self.reconcile())
+        {
+            self.park();
+            self.playing = false;
+            self.sync_activity();
+            self.error = Some(error);
+        }
+        self.retiring.retain(|opening| !opening.finished());
+        if let Some(result) = self.opening.as_mut().and_then(Opening::poll)
+            && let Some(opening) = self.opening.take()
+            && let Err(error) = result.and_then(|prepared| self.install(opening, prepared))
         {
             self.park();
             self.playing = false;
@@ -478,6 +553,8 @@ impl Session {
             plugin_missed_blocks: status.map_or(0, |status| status.plugin_missed_blocks),
             graph_unavailable_blocks: status.map_or(0, |status| status.graph_unavailable_blocks),
             pending_plan: status.is_some_and(|status| status.pending_plan),
+            audition: self.audition.as_ref().map(crate::Audition::report),
+            opening: self.opening.is_some(),
         }
     }
 
@@ -492,15 +569,9 @@ impl Session {
 
     fn refresh(&mut self) -> Result<(), String> {
         let epoch = self.hardware_epoch.load(Ordering::Acquire);
-        let inventory = hardware::inventory()?;
-        let notifications =
-            hardware::Notifications::new(&inventory, Arc::clone(&self.hardware_epoch))?;
-        // Close the enumeration/registration gap. Subsequent changes are
-        // covered by the new system/device listeners.
-        if hardware::inventory()? != inventory {
-            notifications.invalidate();
-        }
-        self.notifications = Some(notifications);
+        let (inventory, notifications) = self.outputs.refresh(&self.hardware_epoch)?;
+        self.notifications = notifications;
+        self.refreshed = true;
         self.inventory = inventory;
         self.observed_epoch = epoch;
         Ok(())
@@ -513,25 +584,17 @@ impl Session {
         }) {
             self.park();
         }
-        if (self.playing || self.engine_held) && self.stream.is_none() {
+        if self.opening.as_ref().is_some_and(|opening| {
+            opening.device() != device.as_ref() || opening.workgroup_changed()
+        }) && let Some(opening) = self.opening.take()
+        {
+            // Its helpers cannot be stopped mid-start. They exit with the
+            // result once the thread is done.
+            self.retiring.push(opening);
+        }
+        if (self.playing || self.engine_held) && self.stream.is_none() && self.opening.is_none() {
             if let Some(device) = device {
-                self.stream = Some(OutputStream::open_guarded(
-                    device,
-                    &self.project,
-                    self.tick,
-                    crate::stream::TransportSetup {
-                        loop_ticks: self.loop_ticks,
-                        metronome: self.metronome,
-                        clips: Arc::clone(&self.clips),
-                        package: self.package.clone(),
-                        cancellation: self.cancellation.clone(),
-                        revision: self.play_revision,
-                        fader_preview: self.fader_preview,
-                        start: self.playing,
-                    },
-                    Arc::clone(&self.hardware_epoch),
-                    self.observed_epoch,
-                )?);
+                self.opening = Some(self.begin(device)?);
             } else {
                 self.error = Some("no output device is available".into());
             }
@@ -540,6 +603,102 @@ impl Session {
             stream.acknowledge_configuration(self.observed_epoch);
             self.error = None;
         }
+        Ok(())
+    }
+
+    /// Claims `device` here and prepares its helpers and media on another
+    /// thread, from the state at this turn.
+    fn begin(&mut self, device: OutputDevice) -> Result<Opening, String> {
+        let claim = self.outputs.claim(device)?;
+        let transport = crate::stream::TransportSetup {
+            loop_ticks: self.loop_ticks,
+            metronome: self.metronome,
+            clips: Arc::clone(&self.clips),
+            package: self.package.clone(),
+            cancellation: self.cancellation.clone(),
+            revision: self.play_revision,
+            fader_preview: self.fader_preview,
+            start: self.playing,
+        };
+        let basis = Basis {
+            project: Arc::clone(&self.project),
+            tick: self.tick,
+            loop_ticks: self.loop_ticks,
+            metronome: self.metronome,
+            fader_preview: self.fader_preview,
+            start: self.playing,
+            revision: self.play_revision,
+        };
+        Opening::begin(Arc::clone(&self.outputs), claim, basis, transport)
+    }
+
+    /// Sends what changed while the output was prepared, as if it had been
+    /// open throughout, then starts its callback: the first block already
+    /// has every change.
+    fn install(
+        &mut self,
+        opening: Opening,
+        prepared: crate::stream::Prepared,
+    ) -> Result<(), String> {
+        let (claim, basis) = opening.finish()?;
+        self.stream = Some(OutputStream::assemble(
+            claim,
+            prepared,
+            crate::stream::Start {
+                cancellation: self.cancellation.clone(),
+                revision: basis.revision,
+                package: self.package.clone(),
+                hardware_epoch: Arc::clone(&self.hardware_epoch),
+                observed_epoch: self.observed_epoch,
+                silent: false,
+            },
+        ));
+        let edited = !Arc::ptr_eq(&basis.project, &self.project);
+        if edited {
+            // An edit while preparing already ended any fader preview. One
+            // started after it still applies below.
+            let current = std::mem::replace(&mut self.project, Arc::clone(&basis.project));
+            let preview = self.fader_preview.take();
+            self.update(current);
+            self.fader_preview = preview;
+            if self.stream.is_none() {
+                return Err(self.missing_output());
+            }
+        }
+        let project = Arc::clone(&self.project);
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or("the output closed while it opened")?;
+        if self.tick != basis.tick {
+            stream.locate(&project, self.tick)?;
+        }
+        if self.loop_ticks != basis.loop_ticks {
+            match self.loop_ticks {
+                Some((start, end)) => stream.set_loop(&project, start, end)?,
+                None => stream.clear_loop()?,
+            }
+        }
+        if self.metronome != basis.metronome {
+            stream.set_metronome(self.metronome)?;
+        }
+        if self.fader_preview != basis.fader_preview {
+            match self.fader_preview {
+                Some((track, gain, pan)) => stream.preview_fader(track, gain, pan)?,
+                // The edit that ended it holds the value until its plan applies.
+                None => stream.clear_fader_preview(edited)?,
+            }
+        }
+        if self.playing && self.cancellation.is_current(self.play_revision) {
+            if !(basis.start && basis.revision == self.play_revision) {
+                stream.resume(self.play_revision)?;
+            }
+        } else if basis.start {
+            stream.pause()?;
+        }
+        stream.acknowledge_configuration(self.observed_epoch);
+        self.outputs.register(stream)?;
+        self.error = None;
         Ok(())
     }
 
@@ -554,7 +713,7 @@ impl Session {
     }
 }
 
-fn desired<'a>(inventory: &'a Inventory, uid: Option<&str>) -> Option<&'a OutputDevice> {
+pub(crate) fn desired<'a>(inventory: &'a Inventory, uid: Option<&str>) -> Option<&'a OutputDevice> {
     uid.and_then(|uid| inventory.devices.iter().find(|device| device.uid == uid))
         .or_else(|| {
             inventory

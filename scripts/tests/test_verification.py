@@ -190,6 +190,37 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
 
+    def test_sample_audition_keeps_the_raw_fade_and_selection_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        engine = contracts["sample-audition"]
+        self.assertEqual((engine["runner"], engine["package"], engine["target"]), ("rust", "echode-audio-io", ["--lib"]))
+        self.assertTrue(engine["test"].startswith("audition::tests::contract_") and engine["test"].endswith("_under_rtsan"))
+        self.assertEqual(engine["negative_control"]["file"], "crates/echode-engine/src/audition.rs")
+        ui = contracts["sample-audition-ui"]
+        self.assertEqual((ui["runner"], ui["suite"]), ("swift", "SampleBrowserTests"))
+        self.assertIn("audio", ui["negative_control"]["old"])
+        for path in ("crates/echode-engine/src/audition.rs", "crates/echode-audio-io/src/audition.rs"):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+        for path in ("crates/echode-ffi/src/queue.rs", "swift/EchodeApp/Sources/EchodeAppCore/SampleAudition.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+
+    def test_output_opening_keeps_the_session_and_worker_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        session = contracts["output-opening"]
+        self.assertEqual((session["runner"], session["package"], session["target"]), ("rust", "echode-audio-io", ["--lib"]))
+        self.assertTrue(session["test"].startswith("session::tests::contract_") and session["test"].endswith("_under_rtsan"))
+        self.assertEqual(session["negative_control"]["file"], "crates/echode-audio-io/src/session.rs")
+        worker = contracts["output-opening-worker"]
+        self.assertEqual((worker["runner"], worker["package"], worker["target"]), ("rust", "echode-ffi", ["--lib"]))
+        self.assertTrue(worker["test"].startswith("opening_tests::contract_"))
+        self.assertIn("audio.opening()", worker["negative_control"]["old"])
+        for path in ("crates/echode-audio-io/src/opening.rs", "crates/echode-audio-io/src/session.rs"):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+        for path in ("crates/echode-ffi/src/queue.rs", "crates/echode-ffi/src/device.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+
     def test_bundled_instrument_selects_audio_isolation_and_export_regressions(self):
         for path in ("crates/echode-sine-pad/src/lib.rs", "crates/echode-sine-pad/Cargo.toml"):
             self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-isolation", "spike-render"}
@@ -366,12 +397,14 @@ class PolicyTests(unittest.TestCase):
                           "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui",
                           "fx-bypass-ui", "fx-batch-ui", "fx-offline-ui", "plugin-offline", "offline-export",
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
+                          "sample-audition", "sample-audition-ui",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop",
-                          "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output"})
+                          "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
+                          "output-opening", "output-opening-worker"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]

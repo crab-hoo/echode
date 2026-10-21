@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use echode_engine::{ClipLoader, LoadedClip, PlaybackError, resample_into, tick_to_sample};
-use echode_history::read_pcm;
+use echode_history::{DecodedPcm, read_pcm};
 use echode_model::{
     AudioRef, Id, Placement, Project, TempoMap, Tick, clip_gain_allowed, fade_frames,
     placement_media_lead,
@@ -55,9 +55,9 @@ struct PreparedMedia {
 }
 
 #[derive(Clone)]
-struct Planes {
-    left: Arc<[f32]>,
-    right: Option<Arc<[f32]>>,
+pub(crate) struct Planes {
+    pub(crate) left: Arc<[f32]>,
+    pub(crate) right: Option<Arc<[f32]>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -273,6 +273,15 @@ fn source_planes(package: &Path, audio: &AudioRef, rate: u32) -> Result<Planes, 
     if (pcm.sample_rate, pcm.channels, pcm.frames)
         != (audio.sample_rate, audio.channels, audio.frames)
     {
+        return Err(PlaybackError::Media);
+    }
+    device_planes(&pcm, rate)
+}
+
+/// Splits interleaved PCM into planes at the device `rate`, the same way for
+/// placed clips and for a sample audition.
+pub(crate) fn device_planes(pcm: &DecodedPcm, rate: u32) -> Result<Planes, PlaybackError> {
+    if !matches!(pcm.channels, 1 | 2) {
         return Err(PlaybackError::Media);
     }
     let mut planes = Vec::with_capacity(usize::from(pcm.channels));

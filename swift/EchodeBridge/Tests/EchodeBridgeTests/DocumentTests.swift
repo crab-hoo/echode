@@ -40,6 +40,30 @@ final class DocumentTests: XCTestCase {
             XCTFail("stopped session accepted a command")
         } catch let error as BridgeError { XCTAssertTrue(error.message.contains("stopped")) }
     }
+    func testAnAuditionReportsAnUnreadableFileThroughTheSnapshot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audition-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = try Document(creating: directory.path)
+        // Decoding fails before any output device is asked for.
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("echode-missing-\(UUID()).wav")
+        document.audition(missing)
+        var status: AuditionStatus?
+        for _ in 0..<1000 {
+            status = try await document.audio(.status).audition
+            if status?.phase == .failed { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(status?.phase, .failed)
+        XCTAssertEqual(status?.path, missing.path)
+        XCTAssertNotNil(status?.error)
+        XCTAssertEqual(status?.handled, status?.request)
+        XCTAssertNil(status?.sampleRate)
+        document.audition(nil)
+        let stopped = try await document.audio(.status).audition
+        XCTAssertEqual(stopped?.phase, .stopped)
+        XCTAssertEqual(stopped?.request, (status?.request ?? 0) + 1)
+        document.shutdown()
+    }
     func testAddingATrackCompletesOnceAndSurvivesClose() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("echode-bridge-\(UUID().uuidString)", isDirectory: true)

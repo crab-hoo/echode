@@ -45,6 +45,9 @@ make debug-report
   `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
   最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
   一時コピー削除時の `.DS_Store` 競合は自動リトライされるが、権限エラー等の継続失敗は合格にしない。
+  単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
+  失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
+  一時パッケージを作る `scratch()` は使用前に同じパスを削除する。
 - **基準コミット（`VERIFY_BASE`）エラー**:
   一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
 - **終了フック直後の不要な再実行**:
@@ -110,13 +113,16 @@ make debug-report
   `ProjectController.busy` の完了時の値だけでは短い暗転を見落とす。`device-edit-enabled-ui` で操作中の全遷移を観測する。
   `EditTurn.busy` は編集待ち行列の状態、画面の `busy` は作成・交換・終了の明示的な排他だけである。
   排他の既定値を通常編集へ広げていないか、各ビューが個別の `historyBusy` と全体の `busy` を取り違えていないか確認する。
-  初回のヘルパー起動で後続編集が待つ制約とは別の経路である（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+  出力を開いた後の FX 追加で新しいヘルパーの起動を待つ制約とは別の経路である（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - **プラグイン付きトラックの選択が止まる・パラメーター画面が重い**:
   2026-10-20 のユーザー報告は「選択のたび」と「汎用パラメーター画面」の 2 症状であり、独自プラグイン GUI の問題ではない。
   機器なしで、旧欄の全行一括生成（800 個で約 0.68 秒）と再選択での作り直し、文書ワーカー上の応答待ちを再現し、対応した
   （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
   再発時は、プラグイン名・版・パラメータ数、再生状態、下部の表示、初回と再選択、停止時間、入力全体が固まるか操作が無効表示になるかを区別する。
-  初回だけ止まり、後続の編集も待つなら、停止中の最初の表示で出力とヘルパーを開く `Session.open_engine` の待ちである（残る制約）。
+  初回だけ一覧が遅いなら、音声状態の `opening` を見る。真の間に編集・Undo が終わるなら、出力の準備（ヘルパー起動・素材）の時間である。
+  `opening` の間に編集も終わらないなら、ワーカーが準備を待っている。`output-opening-worker` を実行して手番を確かめる。
+  導入後に位置・ループ・追加したトラックが反映されないなら `output-opening` で導入時の差分を確かめる（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
+  FX の追加・オフライン解除で止まるなら、開いた出力への `replace` がワーカー上で新しいヘルパーを起動する待ちである（残る制約）。
   毎回止まるなら、`DeviceParameterListView.visibleRows` の数と `table.numberOfRows` を比べ、全行を作っていないかを確認する。
   列が作り直されているなら `DeviceStripView` の列の保持（文書の切替でだけ捨てる）を確認する。
   値の往復で止まるなら、`device-lane-held` を実行し、背景保存の確認と適用済み状態の読取りが通信中の制御端点を待っていないか確かめる。
@@ -137,7 +143,7 @@ make debug-report
   エラー表示で境界を分ける。`the plugin has no window` はプラグインが `clap.gui` を持たない、
   `the plugin has no Cocoa window` は Cocoa の API を持たない、`the plugin refused the window` は `set_parent` の拒否である。
   `plugin window timed out` はヘルパーのメインスレッドが 8 秒以内に `create` / `show` を終えなかったことを示す（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
-  開くまでの待ちは、停止中の最初の表示で出力とヘルパーを開く待ちと区別する。
+  開くまでの待ちは、停止中の最初の表示で出力とヘルパーを準備する待ち（`opening`）と区別する。
   ウィンドウがキーになる・隠れない・戻らない場合は、記録用の窓で規則を確かめる `plugin-window-helper` を先に実行し、
   合格なら AppKit の実画面の問題としてユーザーの確認へ回す。実画面の操作は依頼がある時だけ行う。
   値が一覧へ届かないなら `plugin-window-relay` で処理スレッドのリングと制御スレッドの読み戻しを、
@@ -180,6 +186,12 @@ make debug-report
   配置は `AudioImportRequest` の文書セッション・トラック・tick を使う。
   定期更新の `audio.tick` とライブの `playback.position.tick` を区別し、非同期待機後の選択へ付け替えない。
   `SampleBrowserTests` と必須契約の検索・配置ログを確認する（[ADR 0122](decisions/0122-sample-library-search-and-placement.md)）。
+- **サンプルの試聴が鳴らない・古い素材が鳴る・止まらない**:
+  スナップショットの音声状態 `audition` の `request`・`handled`・`phase`・`error`・`sample_rate` を見る。
+  `handled` が `request` に届かなければ試聴スレッドが処理前、`failed` は復号か出力準備の失敗、`sample_rate` が空なら出力は閉じている。
+  機器の通知を受けると出力を閉じ、`stopped` と機器変更のエラーを残す。
+  ボイスは `echode-engine` の試聴の単体回帰、スレッドとコールバックは必須契約 `sample-audition` で切り分ける
+  （[ADR 0135](decisions/0135-sample-audition.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。

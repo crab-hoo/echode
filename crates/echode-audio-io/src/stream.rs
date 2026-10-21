@@ -88,9 +88,94 @@ pub struct OutputStream {
     control: PlaybackControl,
     callback: Option<Box<Callback>>,
     proc: AudioDeviceIOProcID,
+    /// False for a headless stream, whose callback HAL never calls.
+    registered: bool,
     package: Option<std::path::PathBuf>,
     pending_locate: Option<(u64, i64, i64)>,
     trace_files: Option<crate::trace::Files>,
+}
+
+/// A checked output device, before any helper starts for it.
+pub(crate) struct Claim {
+    pub(crate) device: OutputDevice,
+    /// Registered before the workgroup lookup, so a changed group cannot
+    /// escape invalidation while helpers start.
+    pub(crate) listener: Option<hardware::Notifications>,
+    pub(crate) workgroup: Option<PluginWorkgroup>,
+}
+
+impl Claim {
+    /// The device's checks and workgroup. HAL calls only; helpers start later.
+    pub(crate) fn hal(device: OutputDevice) -> Result<Self, String> {
+        hardware::validate_streams(&device)?;
+        let listener = hardware::Notifications::workgroup(device.id)?;
+        let workgroup = crate::workgroup::selected(&device)?;
+        Ok(Self {
+            device,
+            listener: Some(listener),
+            workgroup: Some(workgroup),
+        })
+    }
+
+    pub(crate) fn workgroup_changed(&self) -> bool {
+        self.listener
+            .as_ref()
+            .is_some_and(hardware::Notifications::changed)
+    }
+}
+
+/// Helpers started and media prepared for a claimed device. The slow part of
+/// opening an output; it needs no HAL call and may run on any thread.
+pub(crate) struct Prepared {
+    control: PlaybackControl,
+    player: PlaybackAudio,
+}
+
+impl Prepared {
+    pub(crate) fn new(
+        project: &Project,
+        target: &Target,
+        tick: i64,
+        transport: &TransportSetup,
+    ) -> Result<Self, String> {
+        let (control, player) = prepare_playback_mode(
+            project,
+            target.sample_rate,
+            target.frames,
+            tick,
+            transport,
+            target.workgroup.clone(),
+        )?;
+        Ok(Self { control, player })
+    }
+}
+
+/// What preparation needs from a claim. Unlike the claim, it can be sent.
+#[derive(Clone)]
+pub(crate) struct Target {
+    pub(crate) sample_rate: u32,
+    pub(crate) frames: usize,
+    pub(crate) workgroup: Option<PluginWorkgroup>,
+}
+
+impl Claim {
+    pub(crate) fn target(&self) -> Target {
+        Target {
+            sample_rate: self.device.sample_rate,
+            frames: self.device.buffer_frames as usize,
+            workgroup: self.workgroup.clone(),
+        }
+    }
+}
+
+/// The transport a prepared stream starts its callback with.
+pub(crate) struct Start {
+    pub(crate) cancellation: TransportCancellation,
+    pub(crate) revision: u64,
+    pub(crate) package: Option<std::path::PathBuf>,
+    pub(crate) hardware_epoch: Arc<AtomicU64>,
+    pub(crate) observed_epoch: u64,
+    pub(crate) silent: bool,
 }
 
 impl OutputStream {
@@ -111,67 +196,78 @@ impl OutputStream {
         Self::open_mode(device, project, tick, false)
     }
 
+    /// Opens on this thread, helpers included.
     fn open_mode(
         device: OutputDevice,
         project: &Project,
         tick: i64,
         silent: bool,
     ) -> Result<Self, String> {
-        Self::open_with_epoch(
-            device,
-            project,
-            tick,
-            silent,
-            TransportSetup::idle(),
-            Arc::new(AtomicU64::new(0)),
-            0,
+        let transport = TransportSetup::idle();
+        let claim = Claim::hal(device)?;
+        let prepared = Prepared::new(project, &claim.target(), tick, &transport)?;
+        Self::start(
+            claim,
+            prepared,
+            Start {
+                cancellation: transport.cancellation,
+                revision: transport.revision,
+                package: transport.package,
+                hardware_epoch: Arc::new(AtomicU64::new(0)),
+                observed_epoch: 0,
+                silent,
+            },
         )
     }
 
-    pub(crate) fn open_guarded(
-        device: OutputDevice,
-        project: &Project,
-        tick: i64,
-        transport: TransportSetup,
-        hardware_epoch: Arc<AtomicU64>,
-        observed_epoch: u64,
-    ) -> Result<Self, String> {
-        Self::open_with_epoch(
-            device,
-            project,
-            tick,
-            false,
-            transport,
-            hardware_epoch,
-            observed_epoch,
-        )
+    /// Registers and starts HAL's callback around prepared playback.
+    pub(crate) fn start(claim: Claim, prepared: Prepared, start: Start) -> Result<Self, String> {
+        let mut value = Self::assemble(claim, prepared, start);
+        value.register()?;
+        Ok(value)
     }
 
-    fn open_with_epoch(
-        device: OutputDevice,
-        project: &Project,
-        tick: i64,
-        silent: bool,
-        transport: TransportSetup,
-        hardware_epoch: Arc<AtomicU64>,
-        observed_epoch: u64,
-    ) -> Result<Self, String> {
-        hardware::validate_streams(&device)?;
+    /// Starts HAL's callback. Commands sent before this reach its first block.
+    pub(crate) fn register(&mut self) -> Result<(), String> {
+        if self.registered {
+            return Ok(());
+        }
+        let mut proc = None;
+        let Some(callback) = self.callback.as_mut() else {
+            return Err("the output callback is missing".into());
+        };
+        let context = (&mut **callback as *mut Callback).cast();
+        // SAFETY: the boxed context has a stable address and out_proc is SDK typed.
+        let status = unsafe {
+            AudioDeviceCreateIOProcID(
+                self.device.id,
+                Some(render),
+                context,
+                NonNull::from(&mut proc),
+            )
+        };
+        if status != 0 {
+            return Err(format!("could not open the output device ({status})"));
+        }
+        self.proc = proc;
+        self.registered = true;
+        let status = unsafe { AudioDeviceStart(self.device.id, self.proc) };
+        if status != 0 {
+            return Err(format!("could not start the output device ({status})"));
+        }
+        Ok(())
+    }
+
+    /// The stream with its callback built but not registered with HAL.
+    pub(crate) fn assemble(claim: Claim, prepared: Prepared, start: Start) -> Self {
+        let Claim {
+            device, listener, ..
+        } = claim;
+        let Prepared { control, player } = prepared;
         let frames = device.buffer_frames as usize;
-        // Register before the lookup so a changed group cannot escape invalidation.
-        let workgroup_listener = hardware::Notifications::workgroup(device.id)?;
-        let workgroup = crate::workgroup::selected(&device)?;
-        let (control, player) = prepare_playback_mode(
-            project,
-            device.sample_rate,
-            frames,
-            tick,
-            &transport,
-            Some(workgroup),
-        )?;
         let (trace, trace_files) = crate::trace::configured(device.sample_rate, frames)
             .map_or((None, None), |(writer, files)| (Some(writer), Some(files)));
-        let mut callback = Box::new(Callback {
+        let callback = Box::new(Callback {
             render: UnsafeCell::new(Render {
                 player,
                 declick: echode_engine::OutputDeclick::new(device.sample_rate),
@@ -185,36 +281,39 @@ impl OutputStream {
             trace: UnsafeCell::new(trace),
             channels: device.channels,
             sample_rate: device.sample_rate,
-            silent,
-            hardware_epoch,
-            observed_epoch: AtomicU64::new(observed_epoch),
-            cancellation: transport.cancellation.clone(),
-            transport_revision: AtomicU64::new(transport.revision),
+            silent: start.silent,
+            hardware_epoch: start.hardware_epoch,
+            observed_epoch: AtomicU64::new(start.observed_epoch),
+            cancellation: start.cancellation,
+            transport_revision: AtomicU64::new(start.revision),
         });
-        let mut proc = None;
-        let context = (&mut *callback as *mut Callback).cast();
-        // SAFETY: the boxed context has a stable address and out_proc is SDK typed.
-        let status = unsafe {
-            AudioDeviceCreateIOProcID(device.id, Some(render), context, NonNull::from(&mut proc))
-        };
-        if status != 0 {
-            return Err(format!("could not open the output device ({status})"));
-        }
-        let value = Self {
-            workgroup_listener: Some(workgroup_listener),
+        Self {
+            workgroup_listener: listener,
             device,
             control,
             callback: Some(callback),
-            proc,
-            package: transport.package.clone(),
+            proc: None,
+            registered: false,
+            package: start.package,
             pending_locate: None,
             trace_files,
-        };
-        let status = unsafe { AudioDeviceStart(value.device.id, value.proc) };
-        if status != 0 {
-            return Err(format!("could not start the output device ({status})"));
         }
-        Ok(value)
+    }
+
+    /// Runs the callback once with owned buffers, as HAL would.
+    #[cfg(test)]
+    pub(crate) fn pump(&self, frames: usize) -> Vec<f32> {
+        let channels = self.device.channels.max(1) as usize;
+        let mut data = vec![0.0f32; frames * channels];
+        let buffer = AudioBuffer {
+            mNumberChannels: channels as u32,
+            mDataByteSize: (data.len() * size_of::<f32>()) as u32,
+            mData: data.as_mut_ptr().cast(),
+        };
+        if let Some(callback) = &self.callback {
+            unsafe { fill(callback, &mut [buffer], Instant::now()) };
+        }
+        data
     }
 
     pub fn replace(&mut self, project: &Project) -> Result<(), String> {
@@ -385,7 +484,9 @@ impl OutputStream {
     /// control thread, including every plan still in an ownership ring.
     pub fn close(&mut self) -> PlaybackStatus {
         let mut failed = false;
-        if let Some(callback) = self.callback.take() {
+        if let Some(callback) = self.callback.take()
+            && self.registered
+        {
             let stopped = unsafe { AudioDeviceStop(self.device.id, self.proc) };
             let destroyed = unsafe { AudioDeviceDestroyIOProcID(self.device.id, self.proc) };
             if destroyed != 0
@@ -743,7 +844,12 @@ unsafe fn submitted_pair(buffers: &[AudioBuffer], frame: usize, mono: bool) -> [
     }
 }
 
-unsafe fn fill_inner(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instant) {
+/// Zeroes every HAL buffer and returns the shared frame count, with false
+/// when any buffer is not native float frames of that count.
+///
+/// # Safety
+/// Each non-null buffer points to `mDataByteSize` writable bytes.
+pub(crate) unsafe fn clear_buffers(buffers: &mut [AudioBuffer]) -> (Option<usize>, bool) {
     let mut frames = None;
     let mut valid = true;
     for buffer in buffers.iter_mut() {
@@ -768,6 +874,57 @@ unsafe fn fill_inner(callback: &Callback, buffers: &mut [AudioBuffer], entered: 
         }
         frames = Some(size);
     }
+    (frames, valid)
+}
+
+/// Writes the stereo planes to the device's channels. A mono device gets the
+/// equal-power sum; channels after the first two stay silent.
+///
+/// # Safety
+/// [`clear_buffers`] accepted these buffers for at least `left.len()` frames.
+pub(crate) unsafe fn write_planes(
+    buffers: &mut [AudioBuffer],
+    left: &[f32],
+    right: &[f32],
+    mono: bool,
+) {
+    let mut channel_base = 0usize;
+    for buffer in buffers {
+        let channels = buffer.mNumberChannels as usize;
+        if channels == 0 {
+            continue;
+        }
+        if !buffer.mData.is_null() && buffer.mDataByteSize != 0 {
+            let data = unsafe {
+                std::slice::from_raw_parts_mut(
+                    buffer.mData.cast::<f32>(),
+                    buffer.mDataByteSize as usize / size_of::<f32>(),
+                )
+            };
+            for ((frame, left), right) in data
+                .chunks_exact_mut(channels)
+                .zip(left.iter())
+                .zip(right.iter())
+            {
+                for (channel, sample) in frame.iter_mut().enumerate() {
+                    *sample = if mono {
+                        (*left + *right) * std::f32::consts::FRAC_1_SQRT_2
+                    } else {
+                        match channel_base + channel {
+                            0 => *left,
+                            1 => *right,
+                            _ => 0.0,
+                        }
+                    };
+                }
+            }
+        }
+        channel_base = channel_base.saturating_add(channels);
+    }
+}
+
+unsafe fn fill_inner(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instant) {
+    let (frames, valid) = unsafe { clear_buffers(buffers) };
     // Notifications never query HAL here. Leave bytes zeroed and hold the
     // clock until the control thread has checked the notified configuration.
     if callback.hardware_epoch.load(Ordering::Acquire)
@@ -821,39 +978,7 @@ unsafe fn fill_inner(callback: &Callback, buffers: &mut [AudioBuffer], entered: 
     if callback.silent {
         return;
     }
-    let mut channel_base = 0usize;
-    for buffer in buffers {
-        let channels = buffer.mNumberChannels as usize;
-        if channels == 0 {
-            continue;
-        }
-        if !buffer.mData.is_null() && buffer.mDataByteSize != 0 {
-            let data = unsafe {
-                std::slice::from_raw_parts_mut(
-                    buffer.mData.cast::<f32>(),
-                    buffer.mDataByteSize as usize / size_of::<f32>(),
-                )
-            };
-            for ((frame, left), right) in data
-                .chunks_exact_mut(channels)
-                .zip(left.iter())
-                .zip(right.iter())
-            {
-                for (channel, sample) in frame.iter_mut().enumerate() {
-                    *sample = if callback.channels == 1 {
-                        (*left + *right) * std::f32::consts::FRAC_1_SQRT_2
-                    } else {
-                        match channel_base + channel {
-                            0 => *left,
-                            1 => *right,
-                            _ => 0.0,
-                        }
-                    };
-                }
-            }
-        }
-        channel_base = channel_base.saturating_add(channels);
-    }
+    unsafe { write_planes(buffers, left, right, callback.channels == 1) };
 }
 
 #[cfg(test)]

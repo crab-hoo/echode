@@ -8,6 +8,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
 
+mod audition;
 mod builtin;
 mod bypass;
 mod clock;
@@ -31,6 +32,7 @@ mod transport;
 mod voice;
 mod wait;
 
+pub use audition::{AuditionAudio, AuditionControl, AuditionSound, audition_pair};
 pub use builtin::Device;
 pub use bypass::copy_bypassed_audio;
 pub use clock::{sample_to_tick, tick_to_sample};

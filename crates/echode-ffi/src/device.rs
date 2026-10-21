@@ -6,12 +6,17 @@
 //! trip then runs on the device lane, so a plugin that is slow to answer
 //! does not delay edits, transport or other devices. Captured bytes return to
 //! the worker, which records them in order with every other edit.
+//!
+//! The first request of a stopped session opens the output, whose helpers
+//! start on another thread. That request and every later one wait on the
+//! worker, in order, without holding its other turns (ADR 0136).
 
 use std::collections::BTreeSet;
 
 use echode_actions::Command;
 use echode_audio_io::{
-    GuiReport, ParamChange, ParamInfo, ParamValue, PluginActivity, PluginControl, Session,
+    DeviceAccess, GuiReport, ParamChange, ParamInfo, ParamValue, PluginActivity, PluginControl,
+    Session,
 };
 use echode_history::DocumentHost;
 use echode_model::Id;
@@ -83,8 +88,22 @@ pub(crate) struct Dispatch {
     pub(crate) request: Request,
 }
 
+/// A checked command whose helper is not known yet: the output is opening,
+/// or an earlier request is still waiting for it.
+pub(crate) struct Waiting {
+    device: Id,
+    request: Request,
+}
+
+pub(crate) enum Resolution {
+    Ready(Dispatch),
+    Waiting(Waiting),
+}
+
 /// Checks one device command on the document worker and resolves its helper.
-/// The first device view of a stopped session opens the output here.
+/// The first device view of a stopped session starts opening the output here.
+/// `behind` is true while earlier requests wait for it; this one then waits
+/// too, so the lane receives requests in their submission order.
 ///
 /// `editing` holds devices whose values changed since their last commit. The
 /// worker defers background saves for them: a plugin that marks itself dirty
@@ -94,7 +113,8 @@ pub(crate) fn dispatch(
     audio: &mut Session,
     editing: &mut BTreeSet<u128>,
     bytes: &[u8],
-) -> Result<Dispatch, String> {
+    behind: bool,
+) -> Result<Resolution, String> {
     let command: DeviceCommand =
         serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let (device, request) = match command {
@@ -115,25 +135,55 @@ pub(crate) fn dispatch(
         }
         DeviceCommand::Commit { device } => (device, Request::Capture),
         DeviceCommand::ShowGui { device, title } => (device, Request::ShowGui(title)),
-        DeviceCommand::CloseGui { device } => {
-            // Closing never opens the output or starts a helper.
-            return Ok(Dispatch {
-                device,
-                control: audio.running_device_control(device),
-                request: Request::CloseGui,
-            });
-        }
+        DeviceCommand::CloseGui { device } => (device, Request::CloseGui),
     };
-    hosted(host, device)?;
-    let control = Some(audio.device_control(device)?);
-    if matches!(request, Request::Set(_)) {
-        editing.insert(device.raw());
+    let waiting = Waiting { device, request };
+    if !matches!(waiting.request, Request::CloseGui) {
+        hosted(host, device)?;
     }
-    Ok(Dispatch {
-        device,
-        control,
-        request,
+    if behind {
+        return Ok(Resolution::Waiting(waiting));
+    }
+    if matches!(waiting.request, Request::CloseGui) {
+        // Closing never opens the output or starts a helper.
+        let control = audio.running_device_control(device);
+        return Ok(Resolution::Ready(waiting.ready(control, editing)));
+    }
+    Ok(match audio.device_control(device)? {
+        DeviceAccess::Ready(control) => Resolution::Ready(waiting.ready(Some(control), editing)),
+        DeviceAccess::Opening => Resolution::Waiting(waiting),
     })
+}
+
+impl Waiting {
+    /// Resolves the helper once the output has opened, or reports why it did
+    /// not. Never starts another opening. The device may have been removed
+    /// or taken offline meanwhile.
+    pub(crate) fn resume(
+        self,
+        host: &DocumentHost,
+        audio: &Session,
+        editing: &mut BTreeSet<u128>,
+    ) -> Result<Dispatch, String> {
+        let control = if matches!(self.request, Request::CloseGui) {
+            audio.running_device_control(self.device)
+        } else {
+            hosted(host, self.device)?;
+            Some(audio.opened_device_control(self.device)?)
+        };
+        Ok(self.ready(control, editing))
+    }
+
+    fn ready(self, control: Option<PluginControl>, editing: &mut BTreeSet<u128>) -> Dispatch {
+        if matches!(self.request, Request::Set(_)) {
+            editing.insert(self.device.raw());
+        }
+        Dispatch {
+            device: self.device,
+            control,
+            request: self.request,
+        }
+    }
 }
 
 /// Runs on the device lane. Returns the JSON report, or captured bytes.
@@ -305,16 +355,22 @@ mod tests {
         let mut audio = Session::new(host.snapshot());
         let mut editing = BTreeSet::new();
         let unknown = br#"{"type":"device.parameters","device":"00000000-0000-0000-0000-0000000000d0","extra":1}"#;
-        assert!(dispatch(&host, &mut audio, &mut editing, unknown).is_err());
+        assert!(dispatch(&host, &mut audio, &mut editing, unknown, false).is_err());
         let mixer_request = format!(r#"{{"type":"device.parameters","device":"{mixer}"}}"#);
-        let Err(error) = dispatch(&host, &mut audio, &mut editing, mixer_request.as_bytes()) else {
+        let Err(error) = dispatch(
+            &host,
+            &mut audio,
+            &mut editing,
+            mixer_request.as_bytes(),
+            false,
+        ) else {
             panic!("the mixer has no helper");
         };
         assert!(error.contains("mixer"), "{error}");
         let empty = format!(r#"{{"type":"device.parameter.set","device":"{mixer}","changes":[]}}"#);
-        assert!(dispatch(&host, &mut audio, &mut editing, empty.as_bytes()).is_err());
+        assert!(dispatch(&host, &mut audio, &mut editing, empty.as_bytes(), false).is_err());
         let window = format!(r#"{{"type":"device.gui.show","device":"{mixer}","title":"Mix"}}"#);
-        let Err(error) = dispatch(&host, &mut audio, &mut editing, window.as_bytes()) else {
+        let Err(error) = dispatch(&host, &mut audio, &mut editing, window.as_bytes(), false) else {
             panic!("the mixer has no plugin window");
         };
         assert!(error.contains("mixer"), "{error}");
@@ -338,7 +394,11 @@ mod tests {
         let mut audio = Session::new(host.snapshot());
         let mut editing = BTreeSet::new();
         let close = format!(r#"{{"type":"device.gui.close","device":"{device}"}}"#);
-        let dispatched = dispatch(&host, &mut audio, &mut editing, close.as_bytes()).unwrap();
+        let Resolution::Ready(dispatched) =
+            dispatch(&host, &mut audio, &mut editing, close.as_bytes(), false).unwrap()
+        else {
+            panic!("closing never waits for an output");
+        };
         assert!(dispatched.control.is_none());
         let report = round_trip(dispatched.control.as_ref(), &dispatched.request).unwrap();
         assert_eq!(report, br#"{"closed":true}"#);

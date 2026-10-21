@@ -49,7 +49,7 @@ pub struct DecodedPcm {
 /// The same bytes are not written twice. The index keeps the first file name
 /// for a hash.
 pub fn import_audio(package: &Path, source: &Path) -> Result<StoredAudio, PackageError> {
-    let decoded = decode_file(source)?;
+    let decoded = decode_file(source, &|| true)?;
     let bytes = encode_pcm(
         decoded.sample_rate,
         decoded.channels,
@@ -130,7 +130,16 @@ fn decode_pcm(bytes: &[u8]) -> Result<DecodedPcm, PackageError> {
     })
 }
 
-fn decode_file(source: &Path) -> Result<DecodedPcm, PackageError> {
+/// Decodes `source` at its own rate without storing it, for a sample audition.
+/// Reading stops with an error once `keep_going` returns false.
+pub fn decode_audio_file(
+    source: &Path,
+    keep_going: &dyn Fn() -> bool,
+) -> Result<DecodedPcm, PackageError> {
+    decode_file(source, keep_going)
+}
+
+fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPcm, PackageError> {
     let file = open_audio(source)?;
     let file_format = audio_property::<AudioStreamBasicDescription>(
         file.0,
@@ -158,6 +167,9 @@ fn decode_file(source: &Path) -> Result<DecodedPcm, PackageError> {
     let mut samples = vec![0.0; count];
     let mut written = 0u64;
     while written < frames {
+        if !keep_going() {
+            return Err(PackageError::new("audio decoding was cancelled"));
+        }
         let ask = u32::try_from((frames - written).min(16_384)).unwrap_or(u32::MAX);
         let mut got = ask;
         let offset = usize::try_from(written)

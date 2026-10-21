@@ -80,7 +80,7 @@
 | Git 履歴・パッケージ・ピーク | `crates/echode-history` | `host.rs`（`DocumentHost`・ジャーナル・復旧）、`store.rs`（CAS）、`peaks.rs`（ピークキャッシュ） |
 | リアルタイム検査 | `crates/echode-realtime` | `alloc.rs`（RT 確保禁止ガード）、`event.rs`（固定容量イベント列）、`ring.rs`（SPSC） |
 | オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（実機計測） |
-| CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止） |
+| CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`opening.rs`（出力準備の別スレッド・機器なしの検査用出力）、`session.rs`（文書の音声セッション）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止） |
 | 共有メモリ・IPC | `crates/echode-sandbox` | `region.rs`（共有メモリ・`arm_abort_notice`）、`session.rs`（`PluginControl`）、`workgroup.rs`、`wire.rs` |
 | プラグインヘルパー | `crates/echode-plugin-host` | `scan.rs`（バンドル走査）、`catalog.rs`（キャッシュ）、`threads.rs` / `events.rs`（CLAP 処理・リセット）、`awake.rs` |
 | 同梱音源 | `crates/echode-sine-pad` | Sine Pad CLAP、事前領域拡張、状態と余韻。`scripts/build-bundled-plugins.sh` で通常の走査用バンドルを作る |
@@ -106,6 +106,10 @@ FFI は `crates/echode-ffi/src/device.rs`（検査・往復・記録）と `lane
 プラグイン独自のウィンドウは、ヘルパーの `crates/echode-plugin-host/src/gui.rs`（窓と規則）・`gui_appkit.rs`（AppKit とキー入力）と `relay.rs`（出力イベントのリング）、
 通信の `crates/echode-sandbox/src/gui.rs`、FFI の `crates/echode-ffi/src/activity.rs`（文書単位の受け口）に置く。
 画面は `PluginWindows.swift`（開く要求・活動の読取り・記録）、テスト用 CLAP の窓は `crates/echode-test-plugin/src/gui.rs` が持つ。
+サンプルの試聴は、ボイスを `crates/echode-engine/src/audition.rs`、試聴スレッドと専用 IOProc を `crates/echode-audio-io/src/audition.rs`、
+FFI の入口を `echode_document_audition`、画面の選択の扱いを `SampleAudition.swift` に置く。
+最初の出力準備は `crates/echode-audio-io/src/opening.rs`（`Outputs`・`Opening`・`HeadlessOutput`）と `session.rs` の `install`、
+準備を待つデバイス要求の順序は `crates/echode-ffi/src/queue.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
 
 ### ビルド対象の CPU・OS 基準
 

@@ -522,6 +522,7 @@ fn retained_stream_publishes_a_stopped_locate_before_its_callback() {
         control,
         callback: None,
         proc: None,
+        registered: false,
         package: None,
         pending_locate: None,
         trace_files: None,

@@ -72,6 +72,8 @@ public final class ProjectController {
     @ObservationIgnored var parameterGesture: ParameterGesture?
     @ObservationIgnored var parameterTask: Task<Void, Never>?
     @ObservationIgnored let sendDevice: @Sendable (Document, DeviceCommand) async throws -> DeviceResult
+    /// Starts or stops the browser's sample audition. It skips the edit queue.
+    @ObservationIgnored let sendAudition: @Sendable (Document, URL?) -> Void
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()
     /// Reads plugin windows' activity for the open document (ADR 0132).
@@ -90,13 +92,16 @@ public final class ProjectController {
     public init() {
         sendAudio = { try await $0.audio($1) }
         sendDevice = DeviceResult.send
+        sendAudition = { $0.audition($1) }
         edits.onExclusive = { [weak self] value in self?.busy = value }
     }
 
     init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) },
-         sendDevice: @escaping @Sendable (Document, DeviceCommand) async throws -> DeviceResult = DeviceResult.send) {
+         sendDevice: @escaping @Sendable (Document, DeviceCommand) async throws -> DeviceResult = DeviceResult.send,
+         sendAudition: @escaping @Sendable (Document, URL?) -> Void = { $0.audition($1) }) {
         self.sendAudio = sendAudio
         self.sendDevice = sendDevice
+        self.sendAudition = sendAudition
         edits.onExclusive = { [weak self] value in self?.busy = value }
     }
 

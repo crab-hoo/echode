@@ -57,6 +57,7 @@ struct WorkspaceFileBrowser: View {
                             .contentShape(Rectangle()).onTapGesture(count: 2) { open(file) }
                     }
                 }.onKeyPress(.return) { openSelected(); return .handled }
+                    .onChange(of: browser.selection) { _, url in session.auditionSelection(url) }
                 HStack {
                     Button(text("Open"), action: openSelected).disabled(!canOpenSelection)
                     Button(text("Import Audio"), action: importSelected).disabled(!canImportSelection)

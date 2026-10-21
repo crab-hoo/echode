@@ -25,6 +25,8 @@ libc = "=0.2.190"
 
 [features]
 rtsan = ["echode-engine/rtsan", "dep:rtsan-standalone"]
+# A device-free output for tests of the session and the document worker.
+headless-output = []
 
 [lints]
 workspace = true

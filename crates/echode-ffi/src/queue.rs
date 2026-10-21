@@ -1,6 +1,6 @@
 //! A submission returns before the document thread finishes the command.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{CString, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
@@ -11,7 +11,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use echode_actions::Command;
-use echode_audio_io::{AudioCommand, AudioState, Session, TransportCancellation};
+use echode_audio_io::{AudioCommand, AudioState, Audition, Session, TransportCancellation};
 use echode_draw::{ArrangeIndex, ArrangeView, Element, ElementId, PianoNote, PianoView, Role};
 use echode_history::{DocumentHost, PeakColumn, Waveforms};
 use echode_model::{Id, Project};
@@ -32,6 +32,8 @@ pub struct Document {
     position: Arc<Position>,
     cancellation: TransportCancellation,
     activity: Arc<ActivityHub>,
+    /// Sample audition requests go straight to their own thread.
+    audition: Audition,
 }
 
 #[derive(Default)]
@@ -79,8 +81,28 @@ struct Job {
     transport_revision: u64,
 }
 
+/// Runs on the worker once its session exists.
+type Configure = Box<dyn FnOnce(&mut Session) + Send>;
+
 impl Document {
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
+        Self::open_with(path, Box::new(|_| {}))
+    }
+
+    /// The document with a device-free output whose preparations `output`
+    /// can hold. Everything else is the product's.
+    #[cfg(test)]
+    pub(crate) fn open_headless(
+        path: &Path,
+        output: echode_audio_io::HeadlessOutput,
+    ) -> Result<Self, String> {
+        Self::open_with(
+            path,
+            Box::new(move |session| session.use_headless_output(output)),
+        )
+    }
+
+    fn open_with(path: &Path, configure: Configure) -> Result<Self, String> {
         let host = DocumentHost::open(path).map_err(|error| error.to_string())?;
         let (sender, incoming) = mpsc::channel();
         let position = Arc::new(Position::default());
@@ -90,9 +112,15 @@ impl Document {
         let lane = DeviceLane::start()?;
         let activity = Arc::new(ActivityHub::new());
         let hub = Arc::clone(&activity);
+        let audition = Audition::start()?;
+        let follower = audition.clone();
         let thread = thread::Builder::new()
             .name("echode-ffi".to_string())
-            .spawn(move || worker(host, incoming, published, transport, lane, hub))
+            .spawn(move || {
+                worker(
+                    host, incoming, published, transport, lane, hub, follower, configure,
+                )
+            })
             .map_err(|error| error.to_string())?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
@@ -100,7 +128,17 @@ impl Document {
             position,
             cancellation,
             activity,
+            audition,
         })
+    }
+
+    /// Plays `path` once over the project, replacing any audition, or fades
+    /// the audition out for `None`. Never waits for the document worker.
+    pub(crate) fn audition(&self, path: Option<std::path::PathBuf>) -> u64 {
+        match path {
+            Some(path) => self.audition.play(path),
+            None => self.audition.stop(),
+        }
     }
 
     /// Plugin activity after `after`, waiting up to `timeout`. Never waits for
@@ -137,6 +175,9 @@ impl Document {
 
     pub(crate) fn shutdown(&self) {
         self.cancellation.request(&AudioCommand::Stop);
+        // Cancels a decode in progress. The thread closes its output and exits
+        // once the last handle is dropped with this document.
+        self.audition.stop();
         {
             let mut queue = self
                 .queue
@@ -498,6 +539,7 @@ fn id_bytes(id: Id) -> [u8; 16] {
     *uuid::Uuid::from_u128(id.raw()).as_bytes()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn worker(
     host: DocumentHost,
     incoming: Receiver<Job>,
@@ -505,15 +547,22 @@ fn worker(
     cancellation: TransportCancellation,
     mut lane: DeviceLane,
     activity: Arc<ActivityHub>,
+    audition: Audition,
+    configure: Configure,
 ) {
     let mut accepting = true;
     let mut previous: Option<Snapshot> = None;
     let mut audio =
         Session::with_media_and_cancellation(host.snapshot(), host.directory(), cancellation);
+    audio.set_audition(audition);
+    configure(&mut audio);
     let mut pending_saves: Vec<(u128, Vec<u8>)> = Vec::new();
     // Devices with values changed since their last commit, by the device view
     // or by the plugin's own window.
     let mut editing = BTreeSet::new();
+    // Device requests waiting for the output to open, in submission order.
+    // Other jobs keep their turns meanwhile.
+    let mut waiting: VecDeque<(Job, crate::device::Waiting)> = VecDeque::new();
     loop {
         if accepting && catch_unwind(AssertUnwindSafe(|| audio.service())).is_err() {
             accepting = false;
@@ -595,7 +644,31 @@ fn worker(
                 editing.clear();
             }
         }
-        let idle = if lane.waiting() {
+        if !waiting.is_empty() && (!accepting || !audio.opening()) {
+            while let Some((job, request)) = waiting.pop_front() {
+                if !accepting {
+                    finish(&job, Err("document thread stopped".to_string()));
+                    continue;
+                }
+                let performed = catch_unwind(AssertUnwindSafe(|| {
+                    let dispatch = request.resume(&host, &audio, &mut editing)?;
+                    let snapshot = publish(&host, &audio, previous.as_ref(), None, None)?;
+                    Ok::<_, String>((dispatch, snapshot))
+                }));
+                match performed {
+                    Ok(Ok((dispatch, snapshot))) => {
+                        previous = Some(snapshot.retain());
+                        send_to_lane(&mut lane, job, snapshot, dispatch);
+                    }
+                    Ok(Err(error)) => finish(&job, Err(error)),
+                    Err(_) => {
+                        accepting = false;
+                        finish(&job, Err("document thread panicked".to_string()));
+                    }
+                }
+            }
+        }
+        let idle = if lane.waiting() || audio.opening() {
             Duration::from_millis(1)
         } else {
             Duration::from_millis(20)
@@ -630,6 +703,7 @@ fn worker(
                         &mut audio,
                         &mut editing,
                         bytes,
+                        !waiting.is_empty(),
                     )?);
                     None
                 }
@@ -650,19 +724,11 @@ fn worker(
                         let snapshot = Box::into_raw(Box::new(snapshot));
                         finish_raw(&job, ECHODE_OK, None, snapshot);
                     }
-                    Some(crate::device::Dispatch {
-                        device,
-                        control,
-                        request,
-                    }) => {
-                        let capture = matches!(request, crate::device::Request::Capture);
-                        let round_trip: RoundTrip =
-                            Box::new(move || crate::device::round_trip(control.as_ref(), &request));
-                        if capture {
-                            lane.capture(job, device, round_trip);
-                        } else {
-                            lane.report(job, snapshot, round_trip);
-                        }
+                    Some(crate::device::Resolution::Ready(dispatch)) => {
+                        send_to_lane(&mut lane, job, snapshot, dispatch);
+                    }
+                    Some(crate::device::Resolution::Waiting(request)) => {
+                        waiting.push_back((job, request));
                     }
                 }
             }
@@ -680,6 +746,9 @@ fn worker(
         }
     }
     activity.close();
+    for (job, _) in waiting.drain(..) {
+        finish(&job, Err("document thread stopped".to_string()));
+    }
     // Queued device requests are refused. One already waiting ends when its
     // helper exits with the session below.
     lane.close();
@@ -691,6 +760,29 @@ fn worker(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clear();
     position.playing.store(0, Ordering::SeqCst);
+}
+
+/// Hands a resolved request to the lane. A capture returns to the worker to
+/// be recorded; anything else completes from the lane with `snapshot`.
+fn send_to_lane(
+    lane: &mut DeviceLane,
+    job: Job,
+    snapshot: Snapshot,
+    dispatch: crate::device::Dispatch,
+) {
+    let crate::device::Dispatch {
+        device,
+        control,
+        request,
+    } = dispatch;
+    let capture = matches!(request, crate::device::Request::Capture);
+    let round_trip: RoundTrip =
+        Box::new(move || crate::device::round_trip(control.as_ref(), &request));
+    if capture {
+        lane.capture(job, device, round_trip);
+    } else {
+        lane.report(job, snapshot, round_trip);
+    }
 }
 
 fn publish_position(position: &Position, audio: &Session) {
@@ -843,6 +935,7 @@ mod tests {
             position: Arc::new(Position::default()),
             cancellation: TransportCancellation::default(),
             activity: Arc::new(ActivityHub::new()),
+            audition: Audition::start().unwrap(),
         };
         document.enqueue(
             Operation::Audio(br#"{"type":"transport.play"}"#.to_vec()),

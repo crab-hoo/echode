@@ -1802,3 +1802,48 @@ fn the_prepared_sine_pad_dsp_is_independent_of_blocks_and_spare_capacity() {
         assert_same(&expected, &render(block, 4096), block);
     }
 }
+
+#[test]
+fn sample_audition_replacement_and_stop_do_not_depend_on_the_block_size_under_rtsan() {
+    use echode_engine::{AuditionSound, audition_pair};
+    // Requests land on samples 3584 and 7168, boundaries that every tested
+    // block length shares. The lengths and waves shape this fixture only.
+    let wave = |frames: usize, step: f32, scale: f32| -> Arc<[f32]> {
+        (0..frames)
+            .map(|index| scale * (index as f32 * step).sin())
+            .collect::<Vec<_>>()
+            .into()
+    };
+    let (left, right, mono) = (
+        wave(5000, 0.021, 0.5),
+        wave(5000, 0.007, -0.4),
+        wave(6000, 0.033, 0.3),
+    );
+    assert_block_independent(|block| {
+        let (mut control, mut audio) = audition_pair(RATE).unwrap();
+        control.play(AuditionSound::new(Arc::clone(&left), Some(Arc::clone(&right))).unwrap());
+        let mut out = Vec::new();
+        let mut rendered = 0usize;
+        for (until, next) in [(3584, Some(Arc::clone(&mono))), (7168, None), (9000, None)] {
+            while rendered < until {
+                let length = (block as usize).min(until - rendered);
+                let (mut l, mut r) = (vec![0.0f32; length], vec![0.0f32; length]);
+                audio.mix(&mut l, &mut r);
+                for frame in 0..length {
+                    out.push(l[frame]);
+                    out.push(r[frame]);
+                }
+                rendered += length;
+            }
+            control.service();
+            match next {
+                Some(sound) => {
+                    control.play(AuditionSound::new(sound, None).unwrap());
+                }
+                None if until == 7168 => control.stop(),
+                None => {}
+            }
+        }
+        out
+    });
+}

@@ -26,10 +26,16 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     ヘッダの複数選択と候補の右メニューからの全選択トラックへの一括追加を、単一 Undo・保存へ接続した
     （[ADR 0124](decisions/0124-selected-track-fx-batches.md)）。
     共通サンプルブラウザの登録フォルダ全体の名前検索と、操作時のトラック・ライブ位置を保持する配置を接続した
-    （[ADR 0122](decisions/0122-sample-library-search-and-placement.md)）。選択時の単発試聴は未実装。
+    （[ADR 0122](decisions/0122-sample-library-search-and-placement.md)）。
+    選択時の単発試聴は、文書ワーカーを通らない試聴スレッドと専用の IOProc で、素の音を先頭から 1 回鳴らす。
+    新しい選択は前の音を 5 ms で消し、曲の再生に重ねる。プラグインのヘルパーは起動しない
+    （[ADR 0135](decisions/0135-sample-audition.md)）。
     稼働中の CLAP のパラメーター一覧・ドラッグ中の試聴・終了時の単一 Undo を接続した。
     値はプラグイン状態として記録し、Undo / Redo は同じヘルパーへ状態を戻す。停止中は再生せずに出力とヘルパーを開く
     （[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
+    最初の出力準備（ヘルパー起動・素材）は準備スレッドで行い、文書ワーカーは後続の編集を続ける。
+    デバイス要求だけが投入順に準備の終わりを待ち、準備中の変更は導入時に反映する
+    （[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
     下部は選択トラックのデバイスを横に並べ、各列に全パラメーターの一覧・検索・ピン留めを持つ。
     一覧は画面内の行だけを作り、ピン留めは保存形式 6 でデバイスごとに記録する。
     一覧・値の往復は文書ワーカーの外で待ち、選択と無関係な編集はプラグインの応答を待たない
@@ -58,7 +64,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
   パラメーター確定・バイパス・オフライン操作で全ボタンが一瞬無効になる経路は、編集順序と文書交換の排他を分けて修正した。
   実画面での暗転解消はユーザー確認待ちである（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
-  停止中の最初の表示で出力とヘルパーを開く間は、後続の編集がまだ待つ。
+  停止中の最初の表示・再生で出力とヘルパーを準備する間も、後続の編集は待たない（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
+  出力を開いた後の FX 追加・オフライン解除・コピーでは、新しいヘルパーの起動を文書ワーカーで待つ。
   展開・折りたたみ、複数選択時の表示対象は未実装・未決である
   （[デバイスビュー](interaction-design.md#デバイスビューと-fx-一覧の役割)、[作業継続](interaction-design.md#処理中も作業を続ける)）。
 - **プロジェクトの開始**: 起動直後も「新規プロジェクト」と「開く」を利用できる。
@@ -73,6 +80,9 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   （[ADR 0134](decisions/0134-plugin-window-lifetime-and-shortcuts.md)）。
   実ウィンドウの表示・アプリ切替時の隠れ方・第三者プラグインの GUI と聴感は未確認でユーザー担当である
   （[設計 §9.5](ARCHITECTURE.md#95-gui-とデバイスビュー)、[ADR 0130](decisions/0130-clap-parameter-editing.md)、[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
+- **サンプルの試聴**: 素材全体を読み終えてから鳴らし、読込み中の表示と試聴の音量は持たない。
+  2 つの IOProc の加算と機器切替時の挙動、聴感は実機でのユーザー確認待ちである
+  （[ADR 0135](decisions/0135-sample-audition.md)）。
 - **Sine Pad と音源の選択**: Sine Pad は同梱 CLAP として通常の FX 一覧から追加・削除・バイパスできる。
   音源のないトラックのノートは無音とし、旧プロジェクトへ暗黙の音源を補わない。
   従来の既定音を使う場合は Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。

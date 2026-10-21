@@ -426,6 +426,17 @@ public final class Document: @unchecked Sendable {
         return try snapshot.audioState()
     }
 
+    /// Plays the audio file at `url` once over the project, from its first
+    /// sample and without the project's FX or faders, replacing any earlier
+    /// audition. `nil` fades the audition out. Returns at once: the request
+    /// does not wait behind queued edits.
+    public func audition(_ url: URL?) {
+        let bytes = Array((url?.path ?? "").utf8)
+        bytes.withUnsafeBufferPointer { buffer in
+            _ = echode_document_audition(handle, buffer.baseAddress, buffer.count)
+        }
+    }
+
     public func history(_ command: HistoryCommand) async throws -> Snapshot {
         try Task.checkCancellation()
         let bytes = Array(try JSONEncoder().encode(command))

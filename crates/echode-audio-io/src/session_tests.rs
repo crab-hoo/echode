@@ -98,6 +98,8 @@ fn a_retained_session_resumes_without_preparing_media_again() {
     });
     let cold = Instant::now();
     session.perform(AudioCommand::Play).unwrap();
+    // Helpers and media are prepared off this thread; service installs them.
+    until_opened(&mut session);
     println!("session cold prepare: {:?}", cold.elapsed());
     let prepared = loads.load(Ordering::Relaxed);
     assert!(prepared > 0);
@@ -229,4 +231,182 @@ fn a_plugin_state_only_update_without_a_stream_keeps_the_session_idle() {
     session.update(Arc::new(recorded.clone()));
     assert_eq!(session.project.as_ref(), &recorded);
     assert!(session.stream.is_none() && session.state().error.is_none());
+}
+
+/// Tracks named "audio" sound a constant 0.25 from the project start, about
+/// 0.18 per channel after the centre pan. The clip length covers these
+/// fixtures only.
+fn audio_tracks_sound(session: &mut Session) {
+    session.clips = Arc::new(|project, rate| {
+        Ok(project
+            .tracks()
+            .iter()
+            .filter(|track| track.name == "audio")
+            .map(|track| echode_engine::LoadedClip {
+                track: track.id.raw(),
+                start_sample: 0,
+                samples: vec![0.25; rate as usize * 4].into(),
+                right: None,
+                fade_in: 0,
+                fade_out: 0,
+            })
+            .collect())
+    });
+}
+
+fn until_opened(session: &mut Session) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while session.opening() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the output never opened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        session.service();
+    }
+}
+
+fn until_waiting(output: &crate::HeadlessOutput) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while output.waiting() == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "preparation never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// Renders `blocks` callbacks of the installed stream and returns the peak.
+fn pumped_peak(session: &mut Session, blocks: usize) -> f32 {
+    let mut peak = 0.0f32;
+    for _ in 0..blocks {
+        let stream = session.stream.as_ref().expect("installed output");
+        let data = stream.pump(stream.device.buffer_frames as usize);
+        peak = data
+            .iter()
+            .fold(peak, |peak, sample| peak.max(sample.abs()));
+        session.service();
+    }
+    peak
+}
+
+#[test]
+fn contract_a_first_device_view_opens_the_output_without_holding_edits_or_transport_under_rtsan() {
+    let (project, fx) = Project::new().add_track("fx");
+    let device = echode_model::Id::from_raw(0xDA);
+    let project = project
+        .add_clap_device(fx, device, "org.example.fx")
+        .unwrap();
+    let mut session = Session::new(Arc::new(project.clone()));
+    audio_tracks_sound(&mut session);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    output.hold();
+    assert!(matches!(
+        session.device_control(device),
+        Ok(DeviceAccess::Opening)
+    ));
+    until_waiting(&output);
+    // The worker's other turns finish while helpers and media are prepared.
+    let (edited, _) = project.add_track("audio");
+    session.update(Arc::new(edited.clone()));
+    let beat = echode_model::TICKS_PER_QUARTER;
+    session
+        .perform(AudioCommand::Locate { tick: beat })
+        .unwrap();
+    session
+        .perform(AudioCommand::Loop {
+            start: Some(0),
+            end: Some(beat * 64),
+        })
+        .unwrap();
+    session.perform(AudioCommand::Play).unwrap();
+    let state = session.state();
+    assert!(state.opening && state.playing && !state.running);
+    assert_eq!(state.tick, beat);
+    assert!(matches!(
+        session.device_control(device),
+        Ok(DeviceAccess::Opening)
+    ));
+    assert_eq!(output.waiting() + output.prepared(), 1, "one opening only");
+    assert!(session.stream.is_none());
+    output.release();
+    until_opened(&mut session);
+    assert_eq!(output.prepared(), 1);
+    let state = session.state();
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(state.tick, beat, "the locate made while opening applies");
+    assert_eq!(state.loop_start, Some(0));
+    // The track added while opening sounds, from the located position.
+    assert!(pumped_peak(&mut session, 8) > 0.1);
+    let state = session.state();
+    assert!(state.running && !state.opening && state.tick > beat);
+    // An unresolvable plugin has no helper; the request reports that once.
+    let Err(error) = session.opened_device_control(device) else {
+        panic!("org.example.fx is not installed");
+    };
+    assert!(!error.is_empty());
+    session.perform(AudioCommand::Stop).unwrap();
+    assert!(!session.state().playing);
+}
+
+#[test]
+fn a_stop_while_playback_opens_the_output_installs_it_stopped() {
+    let (project, _) = Project::new().add_track("audio");
+    let mut session = Session::new(Arc::new(project));
+    audio_tracks_sound(&mut session);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    output.hold();
+    session.perform(AudioCommand::Play).unwrap();
+    assert!(session.state().opening && session.state().playing);
+    until_waiting(&output);
+    session.perform(AudioCommand::Stop).unwrap();
+    assert!(!session.state().playing);
+    output.release();
+    until_opened(&mut session);
+    assert_eq!(
+        pumped_peak(&mut session, 8),
+        0.0,
+        "a stopped Play stays unheard"
+    );
+    assert_eq!(session.state().tick, 0);
+    assert!(!session.state().running);
+    // The retained output resumes without preparing again.
+    session.perform(AudioCommand::Play).unwrap();
+    assert!(pumped_peak(&mut session, 8) > 0.1);
+    assert!(session.state().running && session.state().tick > 0);
+    assert_eq!(output.prepared(), 1);
+}
+
+#[test]
+fn a_failed_opening_reports_its_error_and_is_not_retried_by_service() {
+    let (project, fx) = Project::new().add_track("fx");
+    let device = echode_model::Id::from_raw(0xDB);
+    let project = project
+        .add_clap_device(fx, device, "org.example.fx")
+        .unwrap();
+    let mut session = Session::new(Arc::new(project));
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    output.fail_next("helpers could not start");
+    assert!(matches!(
+        session.device_control(device),
+        Ok(DeviceAccess::Opening)
+    ));
+    until_opened(&mut session);
+    assert_eq!(
+        session.state().error.as_deref(),
+        Some("helpers could not start")
+    );
+    let Err(error) = session.opened_device_control(device) else {
+        panic!("the output did not open");
+    };
+    assert_eq!(error, "helpers could not start");
+    for _ in 0..4 {
+        session.service();
+    }
+    assert!(!session.opening() && session.stream.is_none());
+    assert_eq!(output.prepared(), 1);
 }

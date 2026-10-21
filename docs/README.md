@@ -42,6 +42,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 再生準備の取消・排他グラフ・停止減衰・非ブロック後片付け: [ADR 0097](decisions/0097-cancellable-retained-transport.md)、[ADR 0101](decisions/0101-live-output-discontinuities.md)、[ADR 0102](decisions/0102-exclusive-audio-graph.md)、[ADR 0103](decisions/0103-live-stop-waveform.md)、[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)。
 - 停止中のプラグイン処理・自然な余韻・編集時の全体暗転の解消: [ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)。
 - 実機計測の完走条件: [ADR 0096](decisions/0096-measurement-completion.md)。
+- 文書ワーカーから独立したサンプルの単発試聴・専用 IOProc: [ADR 0135](decisions/0135-sample-audition.md)。
+- 出力とヘルパーの準備を文書ワーカーの外で行う・機器なしの検査用出力: [ADR 0136](decisions/0136-output-opening-off-worker.md)。
 
 ### 3. プラグイン隔離・サンドボックス・Workgroup
 

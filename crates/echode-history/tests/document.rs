@@ -15,7 +15,11 @@ use echode_model::{
 fn scratch() -> std::path::PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("echode-package-{}-{n}", std::process::id()))
+    let path = std::env::temp_dir().join(format!("echode-package-{}-{n}", std::process::id()));
+    // A failed earlier run can leave a package under a reused pid. Its
+    // journal would replay into this test.
+    let _ = std::fs::remove_dir_all(&path);
+    path
 }
 
 fn note(start: i64) -> NoteDraft {

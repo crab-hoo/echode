@@ -22,14 +22,29 @@ public struct AudioState: Decodable, Sendable, Equatable {
     public let loopStart: Int64?
     public let loopEnd: Int64?
     public let metronome: Bool
+    /// The sample audition beside the project output, when one was ever requested.
+    public let audition: AuditionStatus?
     public init() {
         playing = false; running = false; tick = 0; selectedUID = nil; activeDevice = nil; devices = []; error = nil
-        loopStart = nil; loopEnd = nil; metronome = false
+        loopStart = nil; loopEnd = nil; metronome = false; audition = nil
     }
     enum CodingKeys: String, CodingKey {
-        case playing, running, tick, devices, error, metronome, selectedUID = "selected_uid", activeDevice = "active_device"
+        case playing, running, tick, devices, error, metronome, audition, selectedUID = "selected_uid", activeDevice = "active_device"
         case loopStart = "loop_start", loopEnd = "loop_end"
     }
+}
+
+/// The newest audition request and what became of it.
+public struct AuditionStatus: Decodable, Sendable, Equatable {
+    public enum Phase: String, Decodable, Sendable { case idle, loading, sounding, ended, stopped, failed }
+    public let request: UInt64
+    /// The newest request the audition thread has acted on.
+    public let handled: UInt64
+    public let path: String?
+    public let phase: Phase
+    public let error: String?
+    public let sampleRate: UInt32?
+    enum CodingKeys: String, CodingKey { case request, handled, path, phase, error, sampleRate = "sample_rate" }
 }
 
 public enum AudioCommand: Encodable, Sendable {

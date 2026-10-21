@@ -46,7 +46,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   開閉は表示設定とし、再生・保存・Undo を変えない（[ADR 0128](../decisions/0128-folder-disclosure-and-row-projection.md)）。
 - **共通サンプルブラウザ**: 登録フォルダはウィンドウ設定に保持し、素材一覧は非同期で作る。
   入力イベントで文書・トラック・ライブ位置を確定し、既存の `audio.import` へ渡す。
-  検索対象・除外・再読込の規則は [ADR 0122](../decisions/0122-sample-library-search-and-placement.md)、単発試聴は未実装。
+  検索対象・除外・再読込の規則は [ADR 0122](../decisions/0122-sample-library-search-and-placement.md)。
+  選択の変化で `WorkspaceSession.auditionSelection` が音声素材の試聴を要求し、編集の待ち行列を通さない
+  （[ADR 0135](../decisions/0135-sample-audition.md)）。
 - **P2 のアレンジ・ミックス編集**: 右ドラッグでクリップ選択、空白左ドラッグで編集区間選択、リージョン作成、複数選択ミキサー操作に対応する
   （[ADR 0117](../decisions/0117-workflow-interactions.md)、[ミックスの要件](../interaction-design.md#ミキサーの複数選択)）
 
@@ -80,7 +82,9 @@ GUI 応答性の追加要件は [処理中も作業を続ける](../interaction-
 デバイス要求の往復は文書ワーカーの外のデバイスレーンで待ち、取り込んだ状態の記録だけをワーカーの順序へ戻す。
 一覧の応答は文書・デバイス・要求世代で照合し、Undo 後の読み直しは編集の手番の外で行う。
 パラメーターのドラッグを止めるのは状態を読み込みうる履歴操作の間だけで、通常の編集中は止めない。
-停止中の最初の表示で出力とヘルパーを開く処理はまだワーカーで待つ（[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
+停止中の最初の表示・再生で出力とヘルパーを準備する間も、ワーカーは後続の編集を続け、デバイス要求だけが投入順に待つ
+（[ADR 0136](../decisions/0136-output-opening-off-worker.md)）。
+出力を開いた後に新しいヘルパーが必要な編集は、まだワーカーで起動を待つ。
 
 ### 13.4 トラックパッドとジェスチャー
 
