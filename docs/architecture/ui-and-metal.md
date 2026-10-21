@@ -33,7 +33,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
   FX 追加ボタンは最後の列の右側に置き、空のチェインでも同じ位置から候補を開く。
   列とインスペクターの名前クリックで独自 GUI を開く（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。
-  展開・折りたたみ、複数選択時の対象は未実装・未決である
+  列の開閉は文書内だけでデバイス ID ごとに保持し、保存・Undo・プラグイン通信を変更しない（[ADR 0137](../decisions/0137-device-disclosure.md)）。
+  可変幅の累積を配置とドロップ判定に共有する。複数選択時の対象は未決である
   （[操作要件](../interaction-design.md#デバイスビューと-fx-一覧の役割)）。
 - **単一 drawable のアレンジ表示**: トラックヘッダとタイムラインの縦の原点・行の高さは `ArrangePaneView` が単一所有し、左右の名前・背景・行境界・オブジェクト・音量・パン・M/S・ピークを 1 つの Metal フレームへ描く
   （[ADR 0050](../decisions/0050-arrange-viewport.md)、[ADR 0051](../decisions/0051-arrange-presentation.md)、[ADR 0107](../decisions/0107-mix-controls.md)）

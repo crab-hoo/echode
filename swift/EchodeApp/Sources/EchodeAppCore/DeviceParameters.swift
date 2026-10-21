@@ -142,6 +142,7 @@ extension ProjectController {
     /// Drops every list, for example when the document closes.
     func forgetParameters() {
         parameterStates = [:]
+        collapsedDevices = []
         parameterGesture = nil
     }
 

@@ -254,6 +254,7 @@ CLAP（`clack-host`）、VST3、AU の共通インターフェース（AUv3 は�
 デバイス要求の往復は文書ワーカーの外で待つ（[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
 プラグイン独自のウィンドウはヘルパーの `NSPanel` が持ち、フォーカスを取らずに開く。プラグイン側の値とジェスチャーは処理スレッドのリングから親へ中継し、
 ジェスチャー終了を 1 回の Undo にする（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
+列の開閉は文書内の表示設定として保持し、音・保存・Undo を変えない（[ADR 0137](decisions/0137-device-disclosure.md)）。
 
 ### 9.6 スキャンとプラグインブラウザ
 

@@ -13,6 +13,18 @@
         "ja": { "stringUnit": { "state": "translated", "value": "両方" } }
       }
     },
+    "Expand device": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Expand device" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "デバイスを展開" } }
+      }
+    },
+    "Collapse device": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Collapse device" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "デバイスを折りたたむ" } }
+      }
+    },
     "Search parameters": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Search parameters" } },

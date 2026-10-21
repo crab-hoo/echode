@@ -400,7 +400,7 @@ class PolicyTests(unittest.TestCase):
                           "sample-audition", "sample-audition-ui",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
-                          "device-lane-held", "device-view-slow-ui", "device-view-long-ui",
+                          "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
@@ -435,6 +435,10 @@ class PolicyTests(unittest.TestCase):
                      "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceParameterView.swift"):
             with self.subTest(path=path):
                 self.assertIn("check-product-contracts", self.selected(path))
+        disclosure = contracts["device-disclosure-ui"]
+        self.assertEqual((disclosure["runner"], disclosure["suite"]), ("swift", "DeviceDisclosureTests"))
+        self.assertIn("column.preferredWidth", disclosure["negative_control"]["old"])
+        self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Sources/EchodeAppCore/DeviceDisclosure.swift"))
         # These files open the output engine for device views.
         for path in ("swift/EchodeBridge/Sources/EchodeBridge/Device.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift"):

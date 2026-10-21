@@ -25,6 +25,7 @@ struct WorkspaceDeviceView: View {
                 VStack(spacing: 0) {
                     DeviceStripCanvas(controller: controller, devices: devices, track: track, document: document,
                                       states: states, busy: controller.busy, locked: controller.historyBusy,
+                                      collapsed: controller.collapsedDevices,
                                       changes: devices.map { states[$0.id].map(DeviceListChange.init) }, add: add)
                     Text(text("FX chain gesture help")).font(.caption).foregroundStyle(.secondary).padding(6)
                 }
@@ -65,6 +66,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
     let states: [UUID: DeviceParameterState]
     let busy: Bool
     let locked: Bool
+    let collapsed: Set<UUID>
     let changes: [DeviceListChange?]
     let add: () -> Void
     func makeNSView(context: Context) -> NSScrollView {
@@ -83,13 +85,16 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         strip.onEdit = { edit in Task { await controller.editDeviceChain(edit, documentID: document) } }
         strip.onInsert = { plugin in Task { await controller.addPluginOpeningWindow(plugin, on: track, documentID: document) } }
         strip.onOpenWindow = { device in Task { await controller.openPluginWindow(device, documentID: document) } }
+        strip.onCollapse = { device, collapsed in
+            controller.setDeviceCollapsed(device, collapsed: collapsed, documentID: document)
+        }
         strip.onAdd = add
         strip.onBegin = { controller.beginParameter($0, device: $1) }
         strip.onChange = { controller.changeParameter($0) }
         strip.onEnd = { Task { await controller.finishParameter(commit: true) } }
         strip.onStep = { device, id, value in Task { await controller.setParameter(id, device: device, value: value) } }
         strip.onPin = { device, id, pinned in Task { await controller.setPinned(id, device: device, pinned: pinned, documentID: document) } }
-        strip.configure(devices: devices, track: track, document: document, busy: busy, locked: locked, states: states)
+        strip.configure(devices: devices, track: track, document: document, busy: busy, locked: locked, states: states, collapsed: collapsed)
         view.needsLayout = true
     }
 }
@@ -110,6 +115,7 @@ final class DeviceStripScrollView: NSScrollView {
 @MainActor
 final class DeviceStripView: NSView {
     static let columnWidth = 300.0
+    static let collapsedWidth = 200.0
     static let trailingWidth = 180.0
     private(set) var devices: [TrackDevice] = []
     private(set) var columns: [DeviceColumnView] = []
@@ -126,12 +132,13 @@ final class DeviceStripView: NSView {
     var onInsert: ((String) -> Void)?
     /// A click on a device's name opens its plugin window.
     var onOpenWindow: ((UUID) -> Void)?
+    var onCollapse: ((UUID, Bool) -> Void)?
     var onBegin: ((UInt32, UUID) -> Bool)?
     var onChange: ((Double) -> Void)?
     var onEnd: (() -> Void)?
     var onStep: ((UUID, UInt32, Double) -> Void)?
     var onPin: ((UUID, UInt32, Bool) -> Void)?
-    var contentWidth: Double { Double(columns.count) * Self.columnWidth + Self.trailingWidth }
+    var contentWidth: Double { columns.reduce(Self.trailingWidth) { $0 + $1.preferredWidth } }
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -149,7 +156,7 @@ final class DeviceStripView: NSView {
 
     /// Keeps the column of a device that stays, with its list and scroll position.
     func configure(devices: [TrackDevice], track: UUID, document: UUID, busy: Bool,
-                   locked: Bool = false, states: [UUID: DeviceParameterState] = [:]) {
+                   locked: Bool = false, states: [UUID: DeviceParameterState] = [:], collapsed: Set<UUID> = []) {
         if self.document != document { cache = [:] }
         self.devices = devices; self.track = track; self.document = document; self.busy = busy
         addButton.isEnabled = !busy
@@ -167,6 +174,12 @@ final class DeviceStripView: NSView {
                 self?.onEdit?(.reorder(device: device.id, before: index + 2 < devices.count ? devices[index + 2].id : nil))
             }
             column.onOpenWindow = { [weak self] in self?.onOpenWindow?(device.id) }
+            column.onCollapse = { [weak self] collapsed in
+                guard let self else { return }
+                self.onCollapse?(device.id, collapsed)
+                self.needsLayout = true
+                self.enclosingScrollView?.needsLayout = true
+            }
             column.onCopy = { [weak self] in
                 self?.onEdit?(.copy(source: device.id, track: track, before: index + 1 < devices.count ? devices[index + 1].id : nil))
             }
@@ -176,7 +189,7 @@ final class DeviceStripView: NSView {
             column.list.onStep = { [weak self] id, value in self?.onStep?(device.id, id, value) }
             column.list.onPin = { [weak self] id, pinned in self?.onPin?(device.id, id, pinned) }
             column.configure(device: device, first: index == 0, last: index + 1 == devices.count,
-                             busy: busy, locked: locked, state: states[device.id])
+                             busy: busy, locked: locked, collapsed: collapsed.contains(device.id), state: states[device.id])
             next.append(column)
         }
         let kept = Set(next.map(ObjectIdentifier.init))
@@ -184,14 +197,16 @@ final class DeviceStripView: NSView {
         columns = next
         empty.stringValue = text(devices.isEmpty ? "No FX on this track" : "Drop FX here")
         needsLayout = true
+        enclosingScrollView?.needsLayout = true
     }
 
     override func layout() {
         super.layout()
-        for (index, column) in columns.enumerated() {
-            column.frame = CGRect(x: Double(index) * Self.columnWidth, y: 0, width: Self.columnWidth - 1, height: bounds.height)
+        var start = 0.0
+        for column in columns {
+            column.frame = CGRect(x: start, y: 0, width: column.preferredWidth - 1, height: bounds.height)
+            start += column.preferredWidth
         }
-        let start = Double(columns.count) * Self.columnWidth
         addButton.frame = CGRect(x: start + 16, y: max(8, bounds.height / 2 - 32), width: Self.trailingWidth - 32, height: 28)
         empty.frame = CGRect(x: start + 8, y: addButton.frame.maxY + 8, width: Self.trailingWidth - 16, height: 20)
     }
@@ -199,8 +214,12 @@ final class DeviceStripView: NSView {
     @objc private func addFX() { if !busy { onAdd?() } }
 
     private func targetBefore(_ point: CGPoint) -> UUID? {
-        let index = Int(max(0, (point.x / Self.columnWidth + 0.5).rounded(.down)))
-        return index < devices.count ? devices[index].id : nil
+        var start = 0.0
+        for column in columns {
+            if point.x < start + column.preferredWidth / 2 { return column.device.id }
+            start += column.preferredWidth
+        }
+        return nil
     }
 
     func accept(_ pasteboard: NSPasteboard, at point: CGPoint, copying: Bool) -> Bool {
@@ -227,6 +246,9 @@ final class DeviceStripView: NSView {
 @MainActor
 final class DeviceColumnView: NSView, NSDraggingSource {
     private(set) var device: TrackDevice
+    let disclosure = NSButton()
+    private(set) var isCollapsed = false
+    var preferredWidth: Double { isCollapsed ? DeviceStripView.collapsedWidth : DeviceStripView.columnWidth }
     let title = NSTextField(labelWithString: "")
     let bypass = NSButton(), offline = NSButton()
     let left = NSButton(), right = NSButton(), copy = NSButton(), remove = NSButton()
@@ -237,11 +259,13 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     private var origin: CGPoint?
     private var state: DeviceParameterState?
     private var locked = false
+    private var first = true, last = true
     var dragEnabled = true
     var onEdit: ((DeviceChainEdit) -> Void)?
     var onLeft: (() -> Void)?, onRight: (() -> Void)?, onCopy: (() -> Void)?
     /// A click on the name, without a drag, opens the plugin's own window.
     var onOpenWindow: (() -> Void)?
+    var onCollapse: ((Bool) -> Void)?
     override var isFlipped: Bool { true }
 
     init(device: TrackDevice, payload: FXDrag) {
@@ -254,6 +278,10 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         layer?.cornerRadius = 6
         title.lineBreakMode = .byTruncatingMiddle
         title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        disclosure.identifier = NSUserInterfaceItemIdentifier("device-disclosure")
+        disclosure.bezelStyle = .disclosure
+        disclosure.setButtonType(.pushOnPushOff)
+        disclosure.target = self; disclosure.action = #selector(toggleDisclosure)
         for (button, name, action) in [(bypass, "Bypass", #selector(bypassFX)), (offline, "Offline", #selector(offlineFX))] {
             button.setButtonType(.switch); button.title = text(name)
             button.target = self; button.action = action
@@ -272,16 +300,28 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         search.target = self; search.action = #selector(searched)
         message.textColor = .secondaryLabelColor
         message.alignment = .center
-        for view in [title, offline, bypass, left, right, copy, remove, search, list, message] { addSubview(view) }
+        for view in [disclosure, title, offline, bypass, left, right, copy, remove, search, list, message] { addSubview(view) }
         configure(device: device, first: true, last: true, busy: false, locked: false, state: nil)
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(device: TrackDevice, first: Bool, last: Bool, busy: Bool, locked: Bool, state: DeviceParameterState?) {
+    func configure(device: TrackDevice, first: Bool, last: Bool, busy: Bool, locked: Bool, collapsed: Bool = false, state: DeviceParameterState?) {
         self.device = device
         self.state = state
         self.locked = locked
+        self.first = first; self.last = last
+        disclosure.isEnabled = !busy
+        if collapsed, let window, let responder = window.firstResponder as? NSView,
+           responder.isDescendant(of: list) || responder.isDescendant(of: search) || responder === search.currentEditor() {
+            // A hidden search field or slider must not keep consuming workspace keys.
+            window.makeFirstResponder(nil)
+        }
+        isCollapsed = collapsed
+        disclosure.state = collapsed ? .off : .on
+        let disclosureLabel = text(collapsed ? "Expand device" : "Collapse device") + " " + device.title
+        disclosure.setAccessibilityLabel(disclosureLabel)
+        disclosure.toolTip = disclosureLabel
         title.stringValue = device.title
         // The tooltip names the plugin; opening its window is the click and the accessibility action.
         title.toolTip = device.plugin
@@ -317,25 +357,34 @@ final class DeviceColumnView: NSView, NSDraggingSource {
             nil
         }
         message.stringValue = note ?? ""
-        message.isHidden = note == nil
-        list.isHidden = note != nil
-        if let state, note == nil { list.configure(state: state, pinned: Set(device.pinned), locked: locked) }
+        search.isHidden = isCollapsed
+        message.isHidden = isCollapsed || note == nil
+        list.isHidden = isCollapsed || note != nil
+        if let state, note == nil, !isCollapsed { list.configure(state: state, pinned: Set(device.pinned), locked: locked) }
         needsLayout = true
     }
 
     override func layout() {
         super.layout()
         let width = bounds.width - 16
-        title.frame = CGRect(x: 8, y: 8, width: max(0, width - 96), height: 20)
-        offline.frame = CGRect(x: max(8, bounds.width - 100), y: 6, width: 92, height: 24)
-        bypass.frame = CGRect(x: 8, y: 34, width: min(100, max(0, width - 140)), height: 24)
+        disclosure.frame = CGRect(x: 6, y: 6, width: 22, height: 24)
+        title.frame = CGRect(x: 32, y: 8, width: max(0, bounds.width - 40 - (isCollapsed ? 0 : 96)), height: 20)
+        offline.frame = CGRect(x: max(8, bounds.width - 100), y: isCollapsed ? 34 : 6, width: 92, height: 24)
+        bypass.frame = CGRect(x: 8, y: 34, width: isCollapsed ? 76 : min(100, max(0, width - 140)), height: 24)
         for (index, button) in [left, right, copy, remove].enumerated() {
-            button.frame = CGRect(x: max(8, bounds.width - 8 - Double(4 - index) * 32), y: 32, width: 28, height: 26)
+            button.frame = CGRect(x: max(8, bounds.width - 8 - Double(4 - index) * 32), y: isCollapsed ? 64 : 32, width: 28, height: 26)
         }
         search.frame = CGRect(x: 8, y: 64, width: max(0, width), height: 24)
         let body = CGRect(x: 4, y: 94, width: max(0, bounds.width - 8), height: max(0, bounds.height - 98))
         list.frame = body
         message.frame = body.insetBy(dx: 8, dy: 8)
+    }
+
+    @objc private func toggleDisclosure() {
+        guard dragEnabled else { return }
+        configure(device: device, first: first, last: last,
+                  busy: false, locked: locked, collapsed: !isCollapsed, state: state)
+        onCollapse?(isCollapsed)
     }
 
     @objc private func moveEarlier() { onLeft?() }

@@ -66,6 +66,8 @@ public final class ProjectController {
     /// Values change inside each state; this map changes only when a list is
     /// added or a device leaves the document.
     public internal(set) var parameterStates: [UUID: DeviceParameterState] = [:]
+    /// Presentation only, keyed by device identity for this open document.
+    public internal(set) var collapsedDevices: Set<UUID> = []
     /// Undo, Redo or a restored revision may load plugin bytes. A parameter
     /// drag waits for that instead of racing it; other edits do not.
     public private(set) var historyBusy = false
