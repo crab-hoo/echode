@@ -24,6 +24,13 @@ public final class ArrangePaneView: NSView {
     var onSelectClip: ((UUID?) -> Void)? { didSet { timeline.onSelectClip = onSelectClip } }
     var mixActions: MixActions? { didSet { headers.mixActions = mixActions } }
     var onOpenFX: ((UUID) -> Void)? { didSet { headers.onOpenFX = onOpenFX } }
+    var onOpenPlugin: ((UUID, UUID) -> Void)? { didSet { headers.onOpenPlugin = onOpenPlugin } }
+    var pluginNames: [String: String] = [:] {
+        didSet {
+            guard oldValue != pluginNames else { return }
+            headers.pluginNames = pluginNames; updateViewport()
+        }
+    }
     var onDropFX: ((UUID, TrackFXDrop) -> Void)? { didSet { headers.onDropFX = onDropFX } }
     var onDuplicateTracks: (() -> Void)? { didSet { headers.onDuplicateTracks = onDuplicateTracks } }
     var onFolderDisclosure: ((UUID, Bool) -> Void)?
@@ -144,7 +151,7 @@ public final class ArrangePaneView: NSView {
             palette.selectedForeground = rgba(.alternateSelectedControlTextColor)
             palette.separator = rgba(.separatorColor)
         }
-        timeline.setViewport(camera, header: ArrangeHeaderInput(width: headerWidth, palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks))
+        timeline.setViewport(camera, header: ArrangeHeaderInput(width: headerWidth, palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames))
         if bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument) == true {
             navigation?.arrange = camera; navigation?.headerWidth = headerWidth
         }

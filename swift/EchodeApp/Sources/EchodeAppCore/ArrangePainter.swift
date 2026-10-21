@@ -138,12 +138,19 @@ final class ArrangePainter {
             let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: header.width, height: Double(row.height)))
             let fx = TrackFXLayout(row: layout.row)
             let color = frame.isTrackSelected(row.id) ? header.palette.selectedForeground : header.palette.foreground
-            let folder = TrackFolderLayout(row: layout.row, depth: row.depth, folder: row.folder)
+            let folder = TrackFolderLayout(row: layout.row, depth: row.depth, folder: row.folder, titleEnd: TrackFXNamesLayout(row: layout.row, count: row.devices.count, depth: row.depth).titleEnd)
             let folderLabels = row.folder ? [CanvasLabel(text: row.collapsed ? "▸" : "▾",
                 rect: SIMD4(Float(folder.disclosure.minX), Float(folder.disclosure.minY), Float(folder.disclosure.width), Float(folder.disclosure.height)),
                 clip: SIMD4(Float(folder.disclosure.minX), Float(folder.disclosure.minY), Float(folder.disclosure.width), Float(folder.disclosure.height)), color: color)] : []
             let fxLabels = fx.visible ? [CanvasLabel(text: "FX", rect: SIMD4(Float(fx.rect.minX + 3), Float(fx.rect.minY), Float(fx.rect.width - 3), Float(fx.rect.height)),
                 clip: SIMD4(Float(fx.rect.minX), Float(fx.rect.minY), Float(fx.rect.width), Float(fx.rect.height)), color: color)] : []
+            let names = TrackFXNamesLayout(row: layout.row, count: row.devices.count, depth: row.depth)
+            func deviceLabel(_ title: String, _ rect: CGRect) -> CanvasLabel {
+                CanvasLabel(text: title, rect: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)),
+                            clip: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)), color: color)
+            }
+            let nameLabels = names.name.isEmpty ? [] : [deviceLabel(header.pluginNames[row.devices[0].plugin] ?? row.devices[0].plugin, names.name)]
+                + (names.overflow.isEmpty ? [] : [deviceLabel("…", names.overflow)])
             if layout.visible {
                 var labels = [CanvasLabel(text: row.name,
                     rect: SIMD4(Float(folder.titleX), Float(folder.titleY), Float(folder.titleWidth), Float(ArrangeLabelRaster.height)),
@@ -152,12 +159,12 @@ final class ArrangePainter {
                     labels.append(CanvasLabel(text: label, rect: SIMD4(Float(rect.minX + 4), Float(rect.minY), Float(rect.width - 4), Float(rect.height)),
                         clip: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)), color: color))
                 }
-                return labels + fxLabels + folderLabels
+                return labels + fxLabels + folderLabels + nameLabels
             }
             return [CanvasLabel(text: row.name,
                         rect: SIMD4(Float(folder.titleX), Float(folder.titleY), Float(folder.titleWidth), Float(ArrangeLabelRaster.height)),
                         clip: SIMD4(Float(folder.titleX), row.y, Float(folder.titleWidth), max(0, row.height - 1)),
-                        color: color)] + fxLabels + folderLabels
+                        color: color)] + fxLabels + folderLabels + nameLabels
         }
         encodeLabels(text, scale: scale, encoder: encoder, texture: texture)
         if let layout = frame.clipControlLayout, let id = frame.input.selectedClip, let clip = frame.input.snapshot?.clipMix(id) {

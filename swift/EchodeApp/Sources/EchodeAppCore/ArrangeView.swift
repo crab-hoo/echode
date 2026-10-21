@@ -16,6 +16,8 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var onSelectClip: ((UUID?) -> Void)?
     public var onClipEdit: ((ClipMixEdit) -> Void)?
     public var onOpenFX: ((UUID) -> Void)?
+    public var onOpenPlugin: ((UUID, UUID) -> Void)?
+    public var pluginNames: [String: String] = [:]
     public var onDropFX: ((UUID, TrackFXDrop) -> Void)?
     public var selectedTracks: Set<UUID>?
     public var onSelectTrack: ((UUID, TrackSelectionChange) -> Void)?
@@ -24,7 +26,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var onDuplicateTracks: (() -> Void)?
 
     public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
-                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil) {
+                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:]) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
@@ -39,6 +41,8 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.collapsedTracks = collapsedTracks
         self.onFolderDisclosure = onFolderDisclosure
         self.onDuplicateTracks = onDuplicateTracks
+        self.onOpenPlugin = onOpenPlugin
+        self.pluginNames = pluginNames
     }
 
     public func makeNSView(context: Context) -> ArrangePaneView {
@@ -53,6 +57,8 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.mixActions = mixActions
         view.onClipEdit = onClipEdit
         view.onOpenFX = onOpenFX
+        view.onOpenPlugin = onOpenPlugin
+        view.pluginNames = pluginNames
         view.onDropFX = onDropFX
         view.onFolderDisclosure = onFolderDisclosure
         view.onDuplicateTracks = onDuplicateTracks

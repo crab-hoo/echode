@@ -14,6 +14,7 @@ struct ArrangeHeaderInput: Sendable, Equatable {
     let palette: ArrangeHeaderPalette
     var selectedTracks: Set<UUID>? = nil
     var collapsedTracks: Set<UUID> = []
+    var pluginNames: [String: String] = [:]
 }
 
 struct ArrangeHeaderRow: Sendable {
@@ -26,6 +27,7 @@ struct ArrangeHeaderRow: Sendable {
     let depth: Int
     let folder: Bool
     let collapsed: Bool
+    let devices: [TrackDevice]
 }
 
 struct WaveformDraw: Sendable {
@@ -69,7 +71,7 @@ struct ArrangeFrame: Sendable {
             return ArrangeHeaderRow(id: lane.id.track, name: name, y: lane.y, height: lane.height,
                                     mix: snapshot.mixer(onTrack: index), peak: input.playback?.peak(track: lane.id.track) ?? 0,
                                     depth: hierarchy?.depth ?? 0, folder: hierarchy?.hasChildren ?? false,
-                                    collapsed: input.header?.collapsedTracks.contains(lane.id.track) == true)
+                                    collapsed: input.header?.collapsedTracks.contains(lane.id.track) == true, devices: snapshot.devices(onTrack: index))
         }
     }
 
@@ -140,6 +142,10 @@ struct ArrangeFrame: Sendable {
             let fx = TrackFXLayout(row: CGRect(x: 0, y: Double(row.y), width: Double(width), height: Double(row.height)))
             if fx.visible {
                 instances.append(Instance(rect: SIMD4(Float(fx.rect.minX), Float(fx.rect.minY), Float(fx.rect.width), Float(fx.rect.height)) * Float(input.scale), color: palette.separator))
+            }
+            let names = TrackFXNamesLayout(row: CGRect(x: 0, y: Double(row.y), width: Double(width), height: Double(row.height)), count: row.devices.count, depth: row.depth)
+            for rect in [names.name, names.overflow] where !rect.isEmpty {
+                instances.append(Instance(rect: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)) * Float(input.scale), color: palette.separator))
             }
             let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: Double(width), height: Double(row.height)))
             if layout.visible, let mix = row.mix {

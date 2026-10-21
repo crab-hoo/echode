@@ -249,7 +249,7 @@
   複数選択時の表示対象、トラック／クリップ切替、独自 GUI の追従は別々に確認する。
 - 候補を開く FX 空欄と、挿入済みデバイスの操作入口を区別する。
   FX 空欄からは従来の候補を開き、挿入済みの名前クリックからは独自 GUI を開く。
-  デバイスビューの列とインスペクターの名前は接続済みで、トラックヘッダの FX ボタンの区別は未接続である。
+  デバイスビューの列・インスペクターに加え、トラックヘッダも名前と候補の入口を分けた（[ADR 0139](decisions/0139-track-header-fx-names.md)）。
 
 比較の参考:
 [Live の Device View](https://www.ableton.com/en/manual/working-with-instruments-and-effects/#device-view)

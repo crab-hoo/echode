@@ -14,11 +14,16 @@ final class ArrangeHeaderView: NSView {
     private var accessible: [UUID: AccessibleTrackHeader] = [:]
     private var controlElements: [String: AccessibleMixControl] = [:]
     private var fxElements: [UUID: AccessibleTrackHeader] = [:]
+    private var deviceElements: [UUID: AccessibleTrackHeader] = [:]
+    private var overflowElements: [UUID: AccessibleTrackHeader] = [:]
     private var folderElements: [UUID: AccessibleTrackHeader] = [:]
     private var collapsedTracks: Set<UUID> = []
     var onSelect: ((UUID) -> Void)?
     var onSelectTrack: ((UUID, TrackSelectionChange) -> Void)?
     var onOpenFX: ((UUID) -> Void)?
+    var onOpenPlugin: ((UUID, UUID) -> Void)?
+    var pluginNames: [String: String] = [:]
+    func headerDevices(on track: UUID) -> [TrackDevice] { snapshot?.devices(on: track) ?? [] }
     var onToggleFolder: ((UUID) -> Void)?
     var onDropFX: ((UUID, TrackFXDrop) -> Void)?
     var onDuplicateTracks: (() -> Void)?
@@ -71,6 +76,16 @@ final class ArrangeHeaderView: NSView {
         }
         let fx = TrackFXLayout(row: rows.rect(at: index, width: Double(bounds.width)))
         if fx.visible, fx.rect.contains(point) { select(id, change: .focus); onOpenFX?(id); return }
+        let devices = headerDevices(on: id)
+        let names = TrackFXNamesLayout(row: fx.row, count: devices.count, depth: snapshot?.trackHierarchy(at: index)?.depth ?? 0)
+        if !names.name.isEmpty, names.name.contains(point), let device = devices.first {
+            select(id, change: .focus); openHeaderDevice(device, track: id); return
+        }
+        if !names.overflow.isEmpty, names.overflow.contains(point) {
+            select(id, change: .focus)
+            deviceMenu(Array(devices.dropFirst()), track: id).popUp(positioning: nil, at: point, in: self)
+            return
+        }
         let controls = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
         if controls.hit(point) != nil { select(id, change: .focus) }
         else {
@@ -178,10 +193,13 @@ final class ArrangeHeaderView: NSView {
 
     override func accessibilityChildren() -> [Any]? {
         guard let snapshot, let window else { accessible = [:]; return [] }
+        let document = documentID
         var retained: [UUID: AccessibleTrackHeader] = [:]
         var retainedControls: [String: AccessibleMixControl] = [:]
         var retainedFX: [UUID: AccessibleTrackHeader] = [:]
         var retainedFolders: [UUID: AccessibleTrackHeader] = [:]
+        var retainedDevices: [UUID: AccessibleTrackHeader] = [:]
+        var retainedOverflow: [UUID: AccessibleTrackHeader] = [:]
         let children: [AccessibleTrackHeader] = rows.visible.compactMap { index in
             guard let id = snapshot.trackID(at: index), let name = snapshot.trackName(at: index) else { return nil }
             let child = accessible[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
@@ -251,6 +269,39 @@ final class ArrangeHeaderView: NSView {
                 child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
                 retainedFX[id] = control
             }
+            let devices = headerDevices(on: id)
+            let names = TrackFXNamesLayout(row: fx.row, count: devices.count, depth: snapshot.trackHierarchy(at: index)?.depth ?? 0)
+            if !names.name.isEmpty, let device = devices.first {
+                let control = deviceElements[device.id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
+                control.setAccessibilityElement(true); control.setAccessibilityRole(.button)
+                control.setAccessibilityLabel((pluginNames[device.plugin] ?? device.plugin) + " " + name)
+                control.setAccessibilityEnabled(!device.offline)
+                control.setAccessibilityIdentifier("\(device.id)/window")
+                control.setAccessibilityParent(child)
+                control.setAccessibilityFrame(window.convertToScreen(convert(names.name.intersection(bounds), to: nil)))
+                control.actions.press = { [weak self] in
+                    guard let self, self.documentID == document, let current = self.headerDevices(on: id).first(where: { $0.id == device.id }) else { return }
+                    self.select(id, change: .focus); self.openHeaderDevice(current, track: id)
+                }
+                child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
+                retainedDevices[device.id] = control
+            }
+            if !names.overflow.isEmpty {
+                let control = overflowElements[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
+                control.setAccessibilityElement(true); control.setAccessibilityRole(.menuButton)
+                control.setAccessibilityLabel(text("FX") + " … " + name)
+                control.setAccessibilityIdentifier("\(id)/fx-more")
+                control.setAccessibilityParent(child)
+                control.setAccessibilityFrame(window.convertToScreen(convert(names.overflow.intersection(bounds), to: nil)))
+                control.actions.press = { [weak self] in
+                    guard let self, self.documentID == document else { return }
+                    self.select(id, change: .focus)
+                    self.deviceMenu(Array(self.headerDevices(on: id).dropFirst()), track: id)
+                        .popUp(positioning: nil, at: CGPoint(x: names.overflow.minX, y: names.overflow.maxY), in: self)
+                }
+                child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
+                retainedOverflow[id] = control
+            }
             retained[id] = child
             return child
         }
@@ -258,6 +309,8 @@ final class ArrangeHeaderView: NSView {
         controlElements = retainedControls
         fxElements = retainedFX
         folderElements = retainedFolders
+        deviceElements = retainedDevices
+        overflowElements = retainedOverflow
         return children
     }
 }

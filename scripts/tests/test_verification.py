@@ -402,7 +402,7 @@ class PolicyTests(unittest.TestCase):
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
-                          "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
+                          "fx-header-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "output-opening", "output-opening-worker"})
         for contract in contracts:
@@ -459,6 +459,9 @@ class PolicyTests(unittest.TestCase):
         for name in ("plugin-window-undo-ui", "plugin-window-open-ui", "plugin-key-ui", "fx-add-trailing-ui"):
             with self.subTest(contract=name):
                 self.assertEqual((contracts[name]["runner"], contracts[name]["suite"]), ("swift", "PluginWindowTests"))
+        header = contracts["fx-header-ui"]
+        self.assertEqual((header["runner"], header["suite"]), ("swift", "TrackFXHeaderTests"))
+        self.assertIn("onOpenPlugin", header["negative_control"]["old"])
         status = contracts["plugin-window-status-ui"]
         self.assertEqual((status["runner"], status["suite"]), ("swift", "PluginWindowStatusTests"))
         self.assertIn("entry.windowState", status["negative_control"]["old"])

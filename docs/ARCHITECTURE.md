@@ -256,6 +256,7 @@ CLAP（`clack-host`）、VST3、AU の共通インターフェース（AUv3 は�
 ジェスチャー終了を 1 回の Undo にする（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
 列の開閉は文書内の表示設定として保持し、音・保存・Undo を変えない（[ADR 0137](decisions/0137-device-disclosure.md)）。
 独自ウィンドウの寿命は活動の編集時の状態と分け、デバイス列・インスペクターの名前の横へ窓アイコンで表示する（[ADR 0138](decisions/0138-plugin-window-status.md)）。
+ヘッダは先頭名と残りのチェインのメニューから独自 GUI を開き、FX 追加ボタンとは入口を分ける（[ADR 0139](decisions/0139-track-header-fx-names.md)）。
 
 ### 9.6 スキャンとプラグインブラウザ
 

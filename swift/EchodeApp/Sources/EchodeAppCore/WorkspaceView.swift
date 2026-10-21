@@ -111,7 +111,10 @@ public struct WorkspaceView: View {
                               selectedTracks: controller.selectedTracks, onSelectTrack: { controller.selectTrack($0, change: $1, visibleOrder: state.visibleTrackOrder(controller)) },
                               collapsedTracks: state.collapsedTracks, onFolderDisclosure: { id, collapsed in
                                   if collapsed { state.collapsedTracks.insert(id) } else { state.collapsedTracks.remove(id) }
-                              }, onDuplicateTracks: { _ = session.duplicateTracks() }).id(controller.documentID)
+                              }, onDuplicateTracks: { _ = session.duplicateTracks() }, onOpenPlugin: { _, device in
+                                  guard let document = controller.documentID else { return }
+                                  Task { _ = await controller.openPluginWindow(device, documentID: document) }
+                              }, pluginNames: controller.pluginNames).id(controller.documentID)
                 Divider()
                 HStack {
                     Button { session.addTrack(atEnd: true) } label: {

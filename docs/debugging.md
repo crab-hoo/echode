@@ -109,6 +109,11 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **ヘッダの名前が出ない・名前で候補が開く・違う窓が開く**:
+  名前は行高 52 pt 以上かつ幅と字下げに余裕がある時に表示する。先頭以外は「…」のメニューで選ぶ。
+  `TrackFXNamesLayout` の矩形とカタログ名、スナップショットのチェイン順を確認する。
+  名前は `onOpenPlugin`、追加ボタンは `onOpenFX` であり、`fx-header-ui` で入力と古い対象の拒否を区別する。
+  その後のヘルパーの表示失敗は既存の `plugin-window-helper` の経路を調べる（[ADR 0139](decisions/0139-track-header-fx-names.md)）。
 - **窓アイコンが消えない・閉じた窓が再び開として表示される**:
   アイコンは物理的な可視性ではなく寿命を示す。別アプリの操作中に隠れていても開の表示は正しい。
   `plugin-window-state` でソケット受信順の `window_state`、`plugin-window-status-ui` で画面の `openPluginWindows` を確認する。

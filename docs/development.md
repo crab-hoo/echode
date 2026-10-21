@@ -103,6 +103,7 @@ FFI は `crates/echode-ffi/src/device.rs`（検査・往復・記録）と `lane
 画面は `DeviceParameters.swift`（デバイスごとの状態・世代・ピン留め）、`WorkspaceParameterView.swift`（画面内の行だけの一覧）、
 `WorkspaceDeviceView.swift`（横並びの列とドロップ）に置く。
 列の開閉と文書 ID の検査は `DeviceDisclosure.swift`、幅・入力・フォーカスの制御は `WorkspaceDeviceView.swift` に置く。
+ヘッダの FX 名前と残りのチェインのメニューは `TrackFXNames.swift`、入力とアクセシビリティは `ArrangeHeaderView.swift` に置く。
 テスト用 CLAP のパラメーターは `crates/echode-test-plugin/src/params.rs` が持つ。
 プラグイン独自のウィンドウは、ヘルパーの `crates/echode-plugin-host/src/gui.rs`（窓と規則）・`gui_appkit.rs`（AppKit とキー入力）と `relay.rs`（出力イベントのリング）、
 通信の `crates/echode-sandbox/src/gui.rs`、FFI の `crates/echode-ffi/src/activity.rs`（文書単位の受け口）に置く。

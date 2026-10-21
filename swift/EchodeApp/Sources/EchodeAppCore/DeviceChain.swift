@@ -1,7 +1,7 @@
 import AppKit
 import EchodeBridge
 
-struct TrackDevice: Identifiable, Equatable {
+struct TrackDevice: Identifiable, Equatable, Sendable {
     let id: UUID
     let plugin: String
     var name: String? = nil
@@ -17,6 +17,10 @@ struct TrackDevice: Identifiable, Equatable {
 extension Snapshot {
     func devices(on track: UUID) -> [TrackDevice] {
         guard let index = (0..<trackCount).first(where: { trackID(at: $0) == track }) else { return [] }
+        return devices(onTrack: index)
+    }
+
+    func devices(onTrack index: Int) -> [TrackDevice] {
         return (0..<deviceCount(onTrack: index)).compactMap {
             guard let id = deviceID(onTrack: index, at: $0), let plugin = devicePlugin(onTrack: index, at: $0) else { return nil }
             return TrackDevice(id: id, plugin: plugin, bypassed: deviceBypassed(onTrack: index, at: $0) ?? false,
