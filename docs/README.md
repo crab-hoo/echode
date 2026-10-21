@@ -63,6 +63,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 
+- 操作の要望の照合（リサイズ時の伸縮、ブラウザ・クリップの D&D、既定値と値入力のクリック、試聴、下部の積み方）: [2026-10-21 操作の要望の照合](reviews/2026-10-21-ui-feedback-audit.md)。
 - デバイス列での初回出力準備と一覧の応答待ちの区別: [ADR 0141](decisions/0141-device-output-preparation-status.md)。
 - パラメーター一覧の失敗からの列内の再試行・連打の集約: [ADR 0140](decisions/0140-device-parameter-list-retry.md)。
 - 独自ウィンドウの寿命通知と、デバイス列・インスペクターの窓アイコン: [ADR 0138](decisions/0138-plugin-window-status.md)。

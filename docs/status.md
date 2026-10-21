@@ -94,6 +94,9 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   （[ADR 0134](decisions/0134-plugin-window-lifetime-and-shortcuts.md)）。
   窓アイコンの実画面・VoiceOver、実ウィンドウの表示・アプリ切替時の隠れ方・第三者プラグインの GUI と聴感は未確認でユーザー担当である
   （[設計 §9.5](ARCHITECTURE.md#95-gui-とデバイスビュー)、[ADR 0130](decisions/0130-clap-parameter-editing.md)、[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
+- **操作の要望（2026-10-21）**: ペインのリサイズ時のアレンジの伸縮とヘッダ幅の縮小、ブラウザとクリップの D&D、
+  値の既定値・入力のクリック、試聴の遅れ、下部の積み方を照合し、2026-10-22 に操作を決めて操作要件へ移した。
+  修正は未着手である。試聴のループ（UIF-10）は再現しておらず、原因は未確定である（[照合](reviews/2026-10-21-ui-feedback-audit.md)）。
 - **サンプルの試聴**: 素材全体を読み終えてから鳴らし、読込み中の表示と試聴の音量は持たない。
   2 つの IOProc の加算と機器切替時の挙動、聴感は実機でのユーザー確認待ちである
   （[ADR 0135](decisions/0135-sample-audition.md)）。

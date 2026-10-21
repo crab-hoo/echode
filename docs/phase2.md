@@ -16,6 +16,9 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     （[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
     共通サンプルブラウザの選択時の単発試聴を接続した（[ADR 0135](decisions/0135-sample-audition.md)）。
     停止中の最初のデバイス表示・再生で、出力とヘルパーの準備を文書ワーカーの外へ移した（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
+  - **操作の要望の修正（UIF-01〜10）**: 2026-10-22 に操作を決めた。順番・場所・回帰・受入は
+    [照合の「修正の進め方」](reviews/2026-10-21-ui-feedback-audit.md#修正の進め方) に置く。
+    UIF-08 は P2-02 の下部の切替を置き換え、UIF-03 は P2-07 のアレンジ編集を先に接続する。
 - **操作要件の正本**:
   コード→メロディ→ドラム→ベース→構成→編曲→ミックス・オートメーション→書出しまでの操作要件は [制作ワークフローとインタラクション](interaction-design.md)、既存設計との置換範囲は [ADR 0117](decisions/0117-workflow-interactions.md) に置く。
   ループ素材の BPM 推定・テンポ追従・ストレッチ方式切替は後続 Phase の範囲とする。
@@ -140,6 +143,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 ### P2-05: VST3 / AU とブラウザの対応形式
 
 - 共通チェインの契約へ VST3、AUv2、AUv3 を順に加える。AUv3 は OS の XPC extension にヘルパーを重ねない（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
+- プラグインのプリセットは、FX 候補パネルの側で検索・追加できるようにする。CLAP は preset-discovery で索引を作り、preset-load で読み込む。
+  ファイルブラウザの一覧には出さない（[共通サンプルブラウザ](interaction-design.md#共通サンプルブラウザ)、2026-10-22 の回答）。
 - 受入: 実形式の fixture と別プロセスを使い、追加検知・スキャン・状態・イベント・バス・GUI・再起動から製品再生・書出しまで確認する。
 
 ### P2-06: ミキサーと内蔵基本デバイス
