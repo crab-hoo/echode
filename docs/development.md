@@ -116,6 +116,9 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 開いた出力の置換グラフの準備スレッドと回収は `crates/echode-engine/src/playback_preparation.rs`、
 要求の集約と公開は `playback.rs` の `publish_pending` に置く（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
 
+描画面の左上固定と drawable サイズの主スレッド更新は `CanvasSurface.swift`、対応する製品 View の回帰は `CanvasResizeTests.swift` に置く
+（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
+
 ### ビルド対象の CPU・OS 基準
 
 - 対象は macOS 27.0 以降、Apple M4 ファミリー以降（[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)）。

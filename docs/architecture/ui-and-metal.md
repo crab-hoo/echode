@@ -27,6 +27,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 - **ペイン構成**: 左ペイン（インスペクター）、中央（アレンジ画面）、中央下部（MIDI エディタ・オーディオエディタ・デバイスビュー）、右ペイン（ブラウザ・マスター）。
   ペインの親が先に縮んでも隣の領域へはみ出さないよう AppKit の親・表示面で明示的に切る
   （[ADR 0098](../decisions/0098-pane-render-boundaries.md)）
+  リサイズでは前のフレームを左上に等倍で保ち、主スレッドで drawable のサイズも更新する。
+  指定ヘッダ幅と現在の表示幅を分け、狭い layout を往復しても指定を失わない（[ADR 0144](../decisions/0144-unscaled-canvas-resizing.md)）。
 - **デバイスビュー**:
   下部は選択トラックのデバイスを横に並べ、各列が画面内の行だけを作る全パラメーター一覧・検索・ピン留めを持つ。
   切替は「ピアノロール」「デバイス」「両方（上下）」。列と一覧はデバイスごとに文書を開いている間保持する
@@ -64,6 +66,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 - **専用描画スレッドと `CAMetalDisplayLink`**: `CanvasRenderer` がアレンジとピアノロールを共用し、専用 run loop 上で 3 つのフレーム枠（インスタンス用・波形用 Metal バッファ）を回す。
   停止中からの再開・一時停止・位置移動は世代を増やして 1 枚描いてから休止する
   （[ADR 0091](../decisions/0091-playhead-wake.md)、[ADR 0092](../decisions/0092-playhead-spike.md)、[ADR 0110](../decisions/0110-apple-silicon-draw-and-peaks.md)）
+  レイヤーのサイズは主スレッドが所有する。入力と大きさの違う drawable はクリアし、その入力の版を消費せずに再試行する
+  （[ADR 0144](../decisions/0144-unscaled-canvas-resizing.md)）。
 - **可視要素とキャッシュ**: 見えているトラック・配置・ノートを単一の可視列として問い合わせ、描画・ヒットテスト・VoiceOver で共用する
   （[ADR 0045](../decisions/0045-visible-elements.md)）。
   入力の版とカメラが変わらない間は `CanvasGeometryCache` で再利用し、再生位置とピークだけを毎フレーム読む

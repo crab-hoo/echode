@@ -85,7 +85,7 @@ final class PianoGridView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         clipsToBounds = true
-        wantsLayer = true
+        CanvasSurface.configure(self, layer: metalLayer)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(text("Piano Roll"))
@@ -107,7 +107,7 @@ final class PianoGridView: NSView {
         if renderer == nil {
             do {
                 let generation = feedback.restart()
-                renderer = try CanvasRenderer(layer: metalLayer, size: bounds.size, scale: window?.backingScaleFactor ?? 1,
+                renderer = try CanvasRenderer(layer: metalLayer,
                     onElements: { _ in }, onPiano: { [weak self] frame in
                         guard let self, self.snapshot === frame.input.snapshot, self.track == frame.piano.track,
                               self.feedback.accept(generation, revision: frame.revision) else { return }
@@ -168,6 +168,8 @@ final class PianoGridView: NSView {
             refresh()
         }
     }
+    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); refresh() }
+    override func setBoundsSize(_ newSize: NSSize) { super.setBoundsSize(newSize); refresh() }
     override func layout() {
         super.layout()
         if revealOnLayout, pianoLayout.grid.width > 0, pianoLayout.grid.height > 0,
@@ -300,10 +302,12 @@ final class PianoGridView: NSView {
             geometry: focus.flatMap { noteBasis($0) })
     }
     private func refresh() {
+        let scale = Double(window?.backingScaleFactor ?? 1)
+        CanvasSurface.resize(metalLayer, size: canvasDrawableSize(width: bounds.width, height: bounds.height, scale: scale), scale: scale)
         rememberViewport()
         guard let track else { return }
         renderer?.update(CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
-            width: bounds.width, height: bounds.height, scale: Double(window?.backingScaleFactor ?? 1),
+            width: bounds.width, height: bounds.height, scale: scale,
             piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview), playback: playback,
             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
     }

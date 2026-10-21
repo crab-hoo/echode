@@ -100,7 +100,7 @@ public final class ArrangeView: NSView {
     public override init(frame: NSRect) {
         super.init(frame: frame)
         clipsToBounds = true
-        wantsLayer = true
+        CanvasSurface.configure(self, layer: metalLayer)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(text("Arrange"))
@@ -118,7 +118,7 @@ public final class ArrangeView: NSView {
         if renderer == nil {
             do {
                 let generation = feedback.restart()
-                renderer = try CanvasRenderer(layer: metalLayer, size: bounds.size, scale: window?.backingScaleFactor ?? 1,
+                renderer = try CanvasRenderer(layer: metalLayer,
                     onElements: { _ in }, onArrange: { [weak self] frame in
                         guard let self, self.snapshot === frame.input.snapshot, self.feedback.accept(generation, revision: frame.revision) else { return }
                         self.present(frame)
@@ -168,6 +168,8 @@ public final class ArrangeView: NSView {
         refresh()
     }
 
+    public override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); refresh() }
+    public override func setBoundsSize(_ newSize: NSSize) { super.setBoundsSize(newSize); refresh() }
     public override func layout() { super.layout(); refresh() }
     public override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); refresh() }
 
@@ -307,7 +309,11 @@ public final class ArrangeView: NSView {
                             selectedClip: selectedClip, faderPreview: faderPreview, clipDraft: clipDraft,
                             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60))
     }
-    private func refresh() { renderer?.update(renderInput) }
+    private func refresh() {
+        let input = renderInput
+        CanvasSurface.resize(metalLayer, size: input.drawableSize, scale: input.scale)
+        renderer?.update(input)
+    }
 }
 
 @MainActor

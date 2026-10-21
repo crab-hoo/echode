@@ -20,6 +20,9 @@ struct CanvasInput: Sendable {
     /// Screen refresh in frames per second. The display link follows this
     /// instead of a fixed 60 Hz cap. 60 is the value before a window exists.
     var displayFramesPerSecond: Double = 60
+
+    var drawableSize: CGSize { canvasDrawableSize(width: width, height: height, scale: scale) }
+    func acceptsDrawable(size: CGSize) -> Bool { width > 0 && height > 0 && size == drawableSize }
 }
 
 /// Matches the S1 spike: at least 60 Hz when the display can, otherwise the
@@ -45,6 +48,8 @@ public struct ArrangeMeasurement: Sendable, Codable {
     public var frames = 0
     public var framesOffMain = 0
     public var framesWhileMainBusy = 0
+    /// Old drawable extents cleared during resize without consuming a revision.
+    public var sizeMismatches = 0
     public var unavailableSlots = 0
     public var maxCPUSeconds = 0.0
     public var headerFrames = 0
@@ -112,7 +117,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private var meterHold = MeterLinkHold()
     private var geometry = CanvasGeometryCache()
 
-    init(layer: CAMetalLayer, size: CGSize, scale: CGFloat, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
+    init(layer: CAMetalLayer, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
          onPiano: (@MainActor @Sendable (PianoFrame) -> Void)? = nil,
          onArrange: (@MainActor @Sendable (ArrangeFrame) -> Void)? = nil) throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
@@ -129,8 +134,6 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         layer.pixelFormat = .bgra8Unorm
         layer.framebufferOnly = true
         layer.maximumDrawableCount = 3
-        layer.contentsScale = scale
-        layer.drawableSize = CGSize(width: max(1, size.width * scale), height: max(1, size.height * scale))
         super.init()
         let thread = Thread { [self] in run() }
         thread.name = "echode-metal"
@@ -165,12 +168,6 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         guard let loop else { return }
         CFRunLoopPerformBlock(loop, CFRunLoopMode.defaultMode.rawValue) { [self] in
             state.withLock { $0.measurement.wakeCount += 1 }
-            if let input = state.withLock({ $0.input }) {
-                // Apply between display-link callbacks, after any preceding
-                // frame was submitted, so layer sizing is confined too.
-                layer.contentsScale = input.scale
-                layer.drawableSize = CGSize(width: max(1, input.width * input.scale), height: max(1, input.height * input.scale))
-            }
             if let link {
                 applyFrameRate(link)
                 applyLinkPause(link)
@@ -243,6 +240,14 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         // callbacks, including the next play or locate. Clear skipped frames:
         // a drawable from the pool does not contain the previous picture.
         guard !stopping, let input, input.width > 0, input.height > 0 else {
+            present(update.drawable)
+            applyLinkPause(link)
+            return
+        }
+        // A resize can overtake an already acquired drawable. Clear that old
+        // extent without consuming the revision; the next callback retries it.
+        guard input.acceptsDrawable(size: CGSize(width: update.drawable.texture.width, height: update.drawable.texture.height)) else {
+            state.withLock { $0.measurement.sizeMismatches += 1 }
             present(update.drawable)
             applyLinkPause(link)
             return

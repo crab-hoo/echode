@@ -234,6 +234,13 @@ make debug-report
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。
+- **ペインのドラッグ中に絵が伸縮する・狭くした後にヘッダ幅が戻らない**:
+  `canvas-resize-ui` は両表示面の左上固定と即時の drawable サイズ、`header-width-ui` は幅 0・狭い幅の往復と表示記憶を確認する。
+  `CanvasSurface` がレイヤーのサイズを主スレッドで更新し、描画スレッドが後から古いサイズを書いていないか調べる。
+  `ArrangeMeasurement.sizeMismatches` は入力と異なるサイズの drawable をクリアした数で、リサイズ中の一時的な増加は正常である。
+  安定後も増える場合は入力の幅・高さ・倍率と drawable のサイズを照合する。
+  `ArrangePaneView.headerWidth` と `CanvasNavigationState.headerWidth` は指定幅、描画入力の `header.width` は現在の制限値である。
+  自動回帰は設定と幾何の確認であり、ドラッグ中の見え方は実画面のユーザー確認とする（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
 - **プレイヘッド・リフレッシュレート・ペイン境界・行境界**:
   プレイヘッドは音声が最後に書いた tick を補間せず描画する。`displayFrameRateRange`（最大 120 Hz）、ペイン縮小時の `clipsToBounds`（[ADR 0098](decisions/0098-pane-render-boundaries.md)）、オフスクリーン検査の左余白比較点（`x=2 pt`）を確認する（[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)）。
 - **キー入力・ホイール・検索・ループ欄**:

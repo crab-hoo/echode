@@ -298,3 +298,14 @@ Swift の指摘は `make known-bugs`（Rust の `audit_` テスト）の対象�
 - 診断: スナップショットの `audition.history` と、アプリが書く `~/Library/Logs/Echode/audition.ndjson`（`make debug-report` の `app-logs/`）。
 - 未確認: 実画面のクリックの体感とフォーカス、表の見た目、遅れの量、UIF-10 の原因。ユーザーの確認と再発時の記録を待つ。
   プラグイン候補とコマンドパレットの一覧には同じ行のダブルタップの認識が残る。
+
+### 2. ペインのリサイズ
+
+- [ADR 0144](../decisions/0144-unscaled-canvas-resizing.md) で接続した。
+  両方の製品表示面を左上固定にし、枠・bounds の変更時に主スレッドが drawable のサイズを更新する。
+  入力と違うサイズの drawable はクリアして再試行し、GPU 完了を主スレッドで待たない。
+- 指定ヘッダ幅は layout で変更せず、現在のペインの制限値だけを入力・描画へ渡す。文書内の表示記憶にも指定幅を残す。
+- 再現と回帰: `CanvasResizeTests` の両契約を修正前の製品 View で失敗させた。
+  必須契約 `canvas-resize-ui`・`header-width-ui` に負の対照を持たせ、倍率 1・2 と端数・古い drawable の拒否も単体回帰へ追加した。
+- 診断: `ArrangeMeasurement.sizeMismatches` でサイズ不一致の再試行を数え、[デバッグ手順](../debugging.md)へ切分けを追加した。
+- 未確認: 実画面でのペイン境界のドラッグ、倍率の違う画面への移動、VoiceOver の操作感。ユーザー確認とする。

@@ -14,6 +14,7 @@ public final class ArrangePaneView: NSView {
     private var selected: UUID?
     private var selectedTracks: Set<UUID> = []
     private var camera = ArrangeCamera()
+    // Preserve the requested width; narrow layouts only constrain its display.
     private var headerWidth = 160.0
     private var navigation: CanvasNavigationState?
     private var navigationDocument: UUID?
@@ -58,7 +59,7 @@ public final class ArrangePaneView: NSView {
 
     public override func layout() {
         super.layout()
-        headerWidth = constrainedHeaderWidth(headerWidth)
+        let headerWidth = constrainedHeaderWidth(headerWidth)
         timeline.frame = bounds
         headers.frame = NSRect(x: 0, y: 0, width: headerWidth, height: bounds.height)
         divider.frame = NSRect(x: max(0, headerWidth - 3), y: 0, width: 7, height: bounds.height)
@@ -151,7 +152,7 @@ public final class ArrangePaneView: NSView {
             palette.selectedForeground = rgba(.alternateSelectedControlTextColor)
             palette.separator = rgba(.separatorColor)
         }
-        timeline.setViewport(camera, header: ArrangeHeaderInput(width: headerWidth, palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames))
+        timeline.setViewport(camera, header: ArrangeHeaderInput(width: constrainedHeaderWidth(headerWidth), palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames))
         if bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument) == true {
             navigation?.arrange = camera; navigation?.headerWidth = headerWidth
         }

@@ -322,12 +322,23 @@ class PolicyTests(unittest.TestCase):
                      "ArrangeHeaderView.swift", "ArrangePaneView.swift", "ArrangeFrame.swift",
                      "MixControls.swift", "MixInspectorView.swift",
                      "ArrangeLabels.swift", "ArrangePainter.swift", "ArrangeOffscreenProbe.swift", "WorkspaceView.swift",
-                     "WorkspaceState.swift", "WorkspaceDivider.swift", "WorkspaceNoteEditorView.swift", "CanvasRenderer.swift", "FrameFeedbackGate.swift"):
+                     "WorkspaceState.swift", "WorkspaceDivider.swift", "WorkspaceNoteEditorView.swift", "CanvasRenderer.swift", "CanvasSurface.swift", "FrameFeedbackGate.swift"):
             with self.subTest(file=file):
                 checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + file)
                 self.assertTrue({"spike-app", "spike-playhead", "spike-arrange-frame", "spike-piano-frame", "spike-draw", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= checks)
         self.assertNotIn("spike-app", self.selected("crates/echode-engine/src/voice.rs"))
         self.assertNotIn("spike-playhead", self.selected("crates/echode-engine/src/voice.rs"))
+
+    def test_canvas_resize_keeps_surface_and_header_regressions_in_the_product_gate(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, source in (("canvas-resize-ui", "CanvasSurface.swift"), ("header-width-ui", "ArrangePaneView.swift")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"]), ("swift", "CanvasResizeTests"))
+            self.assertTrue(contract["negative_control"]["file"].endswith(source))
+        for name in ("CanvasSurface.swift", "CanvasRenderer.swift", "ArrangePaneView.swift", "ArrangeView.swift", "PianoRollView.swift"):
+            checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + name)
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
+                             "spike-arrange-frame", "spike-piano-frame", "spike-playhead"} <= checks)
 
     def test_playhead_window_regression_is_an_explicit_spike(self):
         self.assertIn("spike-playhead", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PlayheadTests.swift"))
@@ -425,7 +436,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
-                          "engine-measurement-completion", "pane-boundary", "pending-transport",
+                          "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "header-width-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",

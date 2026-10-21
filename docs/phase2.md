@@ -19,6 +19,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   - **操作の要望の修正（UIF-01〜10）**: 2026-10-22 に操作を決めた。順番・場所・回帰・受入は
     [照合の「修正の進め方」](reviews/2026-10-21-ui-feedback-audit.md#修正の進め方) に置く。
     1 番目のブラウザのクリック経路と試聴の診断を接続した（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
+    2 番目のペインのリサイズで前のフレームを伸縮しない配置と、指定ヘッダ幅の保持を接続した（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
     UIF-08 は P2-02 の下部の切替を置き換え、UIF-03 は P2-07 のアレンジ編集を先に接続する。
 - **操作要件の正本**:
   コード→メロディ→ドラム→ベース→構成→編曲→ミックス・オートメーション→書出しまでの操作要件は [制作ワークフローとインタラクション](interaction-design.md)、既存設計との置換範囲は [ADR 0117](decisions/0117-workflow-interactions.md) に置く。
