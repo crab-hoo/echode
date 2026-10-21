@@ -13,7 +13,11 @@ struct EchodeApp: App {
 }
 
 struct ProjectWindow: View {
-    @State private var controller = ProjectController()
+    @State private var controller: ProjectController = {
+        let controller = ProjectController()
+        controller.keepAuditionLog()
+        return controller
+    }()
     @State private var pendingOpen: URL?
     var body: some View {
         WorkspaceView(controller: controller)

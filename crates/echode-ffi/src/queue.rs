@@ -134,10 +134,15 @@ impl Document {
 
     /// Plays `path` once over the project, replacing any audition, or fades
     /// the audition out for `None`. Never waits for the document worker.
-    pub(crate) fn audition(&self, path: Option<std::path::PathBuf>) -> u64 {
+    /// `origin` is only recorded in the audition's history.
+    pub(crate) fn audition(
+        &self,
+        path: Option<std::path::PathBuf>,
+        origin: echode_audio_io::AuditionOrigin,
+    ) -> u64 {
         match path {
-            Some(path) => self.audition.play(path),
-            None => self.audition.stop(),
+            Some(path) => self.audition.play_with(path, origin),
+            None => self.audition.stop_with(origin),
         }
     }
 

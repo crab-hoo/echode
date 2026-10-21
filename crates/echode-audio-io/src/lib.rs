@@ -13,7 +13,9 @@ mod transport;
 mod workgroup;
 
 pub use activity::UserActivity;
-pub use audition::{Audition, AuditionPhase, AuditionReport};
+pub use audition::{
+    Audition, AuditionEntry, AuditionInput, AuditionOrigin, AuditionPhase, AuditionReport,
+};
 pub use clips::load_placed_clips;
 pub use echode_engine::{
     GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamValue,

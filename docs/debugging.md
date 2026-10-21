@@ -14,6 +14,7 @@ make debug-report
 - `agent-context` は同じ診断経路と検査選択を一度で使い、要約と根拠の JSON を作る。
   取得の失敗、本文予算の超過、曖昧な節、古い行番号の識別と復旧は [エージェントの手順](agent-workflow.md) を参照する。
 - `debug-report` は `target/debug-reports/<日時>-<一意名>/` へ診断 JSON、案内、既存ログ（末尾最大 2 MiB）とスパイクの JSON をコピーする。
+  アプリが `~/Library/Logs/Echode/` に書いた試聴の記録も `app-logs/` へ写す（素材のパスを含む）。
   生の環境変数・Cargo 設定・ユーザープロジェクトは収集しない。
 - `make app` は署名後の本体・ヘルパー・同梱プラグインのハッシュとソースを `target/Echode.build.json` に記録する。
 - ソースが同じでも実機計測だけが古くなったら、既定出力とレートの変更、`system_profiler -json SPAudioDataType -detailLevel mini` の読取可否を確認する。機器設定を診断のために勝手に変えない。
@@ -223,6 +224,13 @@ make debug-report
   機器の通知を受けると出力を閉じ、`stopped` と機器変更のエラーを残す。
   ボイスは `echode-engine` の試聴の単体回帰、スレッドとコールバックは必須契約 `sample-audition` で切り分ける
   （[ADR 0135](decisions/0135-sample-audition.md)）。
+- **試聴が遅れる・意図しない試聴が鳴る・クリックでフォーカスが移らない**:
+  `make debug-report` の `app-logs/audition.ndjson`（アプリが書く要求ごとの記録、直近はスナップショットの `audition.history`）を読む。
+  `input_delay_us` は入力イベントから要求まで（画面の待ち）、`picked_us` から `handed_us` は試聴スレッドの各段、
+  `heard_us` はその音を採用したブロックの出力時刻である。`opened_output` が真なら出力を開き直している。
+  `input` が `other` の要求、同じパスの繰り返し、`superseded` の多さで、利用者の操作以外の要求や連続した選択を区別する。
+  クリックの選択とフォーカスは必須契約 `sample-browser-click-ui` で確認する。
+  ブラウザ自身の選択の付け替えは要求を出さない（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。

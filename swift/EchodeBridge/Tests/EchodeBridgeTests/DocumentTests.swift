@@ -46,7 +46,7 @@ final class DocumentTests: XCTestCase {
         let document = try Document(creating: directory.path)
         // Decoding fails before any output device is asked for.
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("echode-missing-\(UUID()).wav")
-        document.audition(missing)
+        document.audition(missing, origin: AuditionOrigin(input: .key, delayMicroseconds: 900))
         var status: AuditionStatus?
         for _ in 0..<1000 {
             status = try await document.audio(.status).audition
@@ -58,10 +58,20 @@ final class DocumentTests: XCTestCase {
         XCTAssertNotNil(status?.error)
         XCTAssertEqual(status?.handled, status?.request)
         XCTAssertNil(status?.sampleRate)
+        let failed = try XCTUnwrap(status?.history.last)
+        XCTAssertEqual(failed.request, status?.request)
+        XCTAssertEqual(failed.input, .key)
+        XCTAssertEqual(failed.inputDelayUs, 900)
+        XCTAssertEqual(failed.phase, .failed)
+        XCTAssertTrue(failed.settled)
+        XCTAssertNotNil(failed.pickedUs)
+        XCTAssertNil(failed.handedUs)
         document.audition(nil)
         let stopped = try await document.audio(.status).audition
         XCTAssertEqual(stopped?.phase, .stopped)
         XCTAssertEqual(stopped?.request, (status?.request ?? 0) + 1)
+        XCTAssertEqual(stopped?.history.last?.input, .other)
+        XCTAssertNil(stopped?.history.last?.inputDelayUs)
         document.shutdown()
     }
     func testAddingATrackCompletesOnceAndSurvivesClose() async throws {

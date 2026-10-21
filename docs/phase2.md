@@ -18,6 +18,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     停止中の最初のデバイス表示・再生で、出力とヘルパーの準備を文書ワーカーの外へ移した（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
   - **操作の要望の修正（UIF-01〜10）**: 2026-10-22 に操作を決めた。順番・場所・回帰・受入は
     [照合の「修正の進め方」](reviews/2026-10-21-ui-feedback-audit.md#修正の進め方) に置く。
+    1 番目のブラウザのクリック経路と試聴の診断を接続した（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
     UIF-08 は P2-02 の下部の切替を置き換え、UIF-03 は P2-07 のアレンジ編集を先に接続する。
 - **操作要件の正本**:
   コード→メロディ→ドラム→ベース→構成→編曲→ミックス・オートメーション→書出しまでの操作要件は [制作ワークフローとインタラクション](interaction-design.md)、既存設計との置換範囲は [ADR 0117](decisions/0117-workflow-interactions.md) に置く。
@@ -76,6 +77,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   新しい選択は先頭から鳴らし、前の音は 5 ms で消す。要求は文書ワーカーを通らず、専用の IOProc で曲の再生に重ねる。
   必須契約 `sample-audition` は実際の復号・試聴スレッド・コールバック、`sample-audition-ui` は選択の扱いを確認する。
   ブロック長比較と RTSan の回帰を持つ。2 つの IOProc の加算と聴感はユーザー確認とする。
+  一覧は押した時点で選択し、試聴は利用者のクリックとキーだけで変わる。要求ごとの各段の時刻を記録する
+  （[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)、必須契約 `sample-browser-click-ui`）。
 - **ヘルパー所有のプラグインウィンドウ（[ADR 0132](decisions/0132-helper-plugin-windows.md)）**:
   列の名前・インスペクターの名前のクリックと候補からの単体追加で開き、一括追加・コピー・トラック複製では開かない。
   開く・前面化はフォーカスを取らず、Echode が非アクティブの間は隠す。

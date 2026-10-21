@@ -21,6 +21,9 @@ BUILD_FILES = ("Contents/MacOS/Echode", "Contents/MacOS/echode-plugin-host",
                "Contents/PlugIns/EchodeSinePad.clap/Contents/MacOS/EchodeSinePad",
                "Contents/PlugIns/EchodeSinePad.clap/Contents/Info.plist")
 LOG_LIMIT = 2 * 1024 * 1024  # Diagnostic copies only; never a product capacity limit.
+# The app's own diagnostic records (ADR 0143), never user projects.
+APP_LOG_DIR = Path.home() / "Library/Logs/Echode"
+APP_LOG_FILES = ("audition.ndjson", "audition.1.ndjson")
 
 
 def read_json(path):
@@ -182,18 +185,30 @@ def bundle(root, data):
         # Do not follow links into user projects or external diagnostic files.
         if not source.is_file() or source.is_symlink() or not source.resolve().is_relative_to((root / "target").resolve()):
             continue
-        target = destination / relative.relative_to("target")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with source.open("rb") as input_file:
-            size = os.fstat(input_file.fileno()).st_size
-            input_file.seek(max(0, size - LOG_LIMIT))
-            target.write_bytes(input_file.read(LOG_LIMIT))
-        copied.append({"path": str(target.relative_to(destination)), "truncated": size > LOG_LIMIT})
-    data = {**data, "artifacts": copied,
+        copied.append(copy_tail(source, destination / relative.relative_to("target"), destination))
+    app_logs = []
+    for name in APP_LOG_FILES:
+        source = APP_LOG_DIR / name
+        if not source.is_file() or source.is_symlink():
+            continue
+        app_logs.append(copy_tail(source, destination / "app-logs" / name, destination))
+    data = {**data, "artifacts": copied, "app_logs": app_logs,
             "artifact_note": "ログは過去の実行を含む調査資料。合格の有効性は verification の各 checks の fresh と status で判断する。"}
     (destination / "diagnosis.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-    (destination / "README.md").write_text(render(data) + "\nログにはローカルのパスやプラグイン名が含まれ得る。共有前に内容を確認する。\n")
+    note = "\nログにはローカルのパスやプラグイン名が含まれ得る。共有前に内容を確認する。\n"
+    if app_logs:
+        note += "app-logs/ はアプリが書いた試聴の要求の記録（操作の種類と各段の時刻、素材のパス）。\n"
+    (destination / "README.md").write_text(render(data) + note)
     return destination
+
+
+def copy_tail(source, target, destination):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with source.open("rb") as input_file:
+        size = os.fstat(input_file.fileno()).st_size
+        input_file.seek(max(0, size - LOG_LIMIT))
+        target.write_bytes(input_file.read(LOG_LIMIT))
+    return {"path": str(target.relative_to(destination)), "truncated": size > LOG_LIMIT}
 
 
 def main():

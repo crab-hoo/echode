@@ -48,16 +48,8 @@ struct WorkspaceFileBrowser: View {
                 Text(text("Choose a folder to browse projects")).font(.caption).foregroundStyle(.secondary)
                 Spacer()
             } else {
-                List(selection: $browser.selection) {
-                    ForEach(browser.filtered) { file in
-                        VStack(alignment: .leading) {
-                            Label(file.url.lastPathComponent, systemImage: file.icon)
-                            if browser.searchingLibrary { Text(file.url.deletingLastPathComponent().path).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                        }.tag(file.url).help(file.url.path)
-                            .contentShape(Rectangle()).onTapGesture(count: 2) { open(file) }
-                    }
-                }.onKeyPress(.return) { openSelected(); return .handled }
-                    .onChange(of: browser.selection) { _, url in session.auditionSelection(url) }
+                SampleFileList(files: browser.filtered, searching: browser.searchingLibrary, selection: browser.selection,
+                               onSelect: { session.chooseInBrowser($0, origin: $1) }, onOpen: open)
                 HStack {
                     Button(text("Open"), action: openSelected).disabled(!canOpenSelection)
                     Button(text("Import Audio"), action: importSelected).disabled(!canImportSelection)
@@ -71,14 +63,23 @@ struct WorkspaceFileBrowser: View {
         selected.map { $0.audio && !browser.loading && !session.controller.busy && session.controller.selection != nil } ?? false
     }
     private func openSelected() { if let selected { open(selected) } }
-    private func importSelected() { if let selected { importAudio(selected) } }
-    private func open(_ file: BrowserFile) {
-        guard !browser.loading, !session.controller.busy else { return }
-        if file.audio { importAudio(file) }
-        else if file.project { Task { await session.controller.open(file.url) } }
-        else if file.directory { Task { await browser.load(file.url) } }
-    }
-    private func importAudio(_ file: BrowserFile) {
-        session.importSample(file)
+    private func importSelected() { if let selected { session.importSample(selected) } }
+    private func open(_ file: BrowserFile) { session.openInBrowser(file) }
+}
+
+extension WorkspaceSession {
+    /// A double click or Return on a row: places a sample, opens a project
+    /// or enters a folder. The returned task finishes with that work.
+    @discardableResult
+    func openInBrowser(_ file: BrowserFile) -> Task<Void, Never>? {
+        let browser = state.browser
+        guard !browser.loading, !controller.busy else { return nil }
+        if file.audio {
+            guard let pending = importSample(file) else { return nil }
+            return Task { _ = await pending.value }
+        }
+        if file.project { return Task { await controller.open(file.url) } }
+        if file.directory { return Task { await browser.load(file.url) } }
+        return nil
     }
 }

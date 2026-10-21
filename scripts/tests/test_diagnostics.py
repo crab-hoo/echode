@@ -181,8 +181,12 @@ class DiagnosticTests(unittest.TestCase):
         control = self.root / "target/bridge/thread/errno"
         control.mkdir(parents=True)
         (control / "real-race.log").write_text("errno-control")
+        app_logs = self.root / "home-logs"
+        app_logs.mkdir()
+        (app_logs / "audition.ndjson").write_text('{"request":1}\n' * 4)
+        (app_logs / "audition.1.ndjson").symlink_to(outside)
         data = diagnose.collect(self.root)
-        with patch.object(diagnose, "LOG_LIMIT", 16):
+        with patch.object(diagnose, "LOG_LIMIT", 16), patch.object(diagnose, "APP_LOG_DIR", app_logs):
             output = diagnose.bundle(self.root, data)
         self.assertEqual((output / "verification/check.log").read_bytes(), log.read_bytes()[-16:])
         self.assertEqual(log.stat().st_size, 100)
@@ -195,6 +199,11 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual((output / "toolchains/tsan/manifest.json").read_text(), "pinned-runtime")
         self.assertEqual((output / "bridge/thread/errno/real-race.log").read_text(), "errno-control")
         self.assertFalse((output / "toolchains/tsan/runtime.dylib").exists())
+        # The app's audition record is copied, bounded; a link out of its folder is not followed.
+        self.assertEqual((output / "app-logs/audition.ndjson").read_text(), ('{"request":1}\n' * 4)[-16:])
+        self.assertEqual(record["app_logs"], [{"path": "app-logs/audition.ndjson", "truncated": True}])
+        self.assertFalse((output / "app-logs/audition.1.ndjson").exists())
+        self.assertIn("app-logs/", (output / "README.md").read_text())
 
 
 class DeveloperDocumentationTests(unittest.TestCase):

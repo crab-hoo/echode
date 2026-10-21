@@ -1,3 +1,4 @@
+import AppKit
 import EchodeBridge
 import Foundation
 import Synchronization
@@ -108,7 +109,7 @@ struct SampleBrowserTests {
             try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name))
         }
         let requests = Mutex<[URL?]>([])
-        let controller = ProjectController(sendAudition: { _, url in requests.withLock { $0.append(url) } })
+        let controller = ProjectController(sendAudition: { _, url, _ in requests.withLock { $0.append(url) } })
         let state = WorkspaceState(defaults: .init())
         let session = WorkspaceSession(controller: controller, state: state)
         await state.browser.load(folder)
@@ -130,6 +131,144 @@ struct SampleBrowserTests {
         #expect(requests.withLock { $0 } == [kick, snare, nil, nil, nil, nil])
         #expect(controller.undoCount == 0)
         await controller.close()
+    }
+
+    @Test func contractBrowserClickSelectsAndFocusesAtOnceAndOpensOnlyOnDoubleClick() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-browser-click-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("samples")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
+        for name in ["kick.wav", "snare.wav"] { try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name)) }
+        let requests = Mutex<[(URL?, AuditionOrigin)]>([])
+        let controller = ProjectController(sendAudition: { _, url, origin in requests.withLock { $0.append((url, origin)) } })
+        let state = WorkspaceState(defaults: .init())
+        let session = WorkspaceSession(controller: controller, state: state)
+        await controller.open(root.appendingPathComponent("Song.echode"), creating: true)
+        await controller.addTrack(name: "audio")
+        let browser = state.browser
+        await browser.load(folder)
+        // The view wires the list to the session the same way.
+        let list = FileListView()
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 240, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = list
+        var pending: Task<Void, Never>?
+        list.onSelect = { session.chooseInBrowser($0, origin: $1) }
+        list.onOpen = { pending = session.openInBrowser($0) }
+        func refresh() {
+            list.show(browser.filtered, searching: browser.searchingLibrary, selection: browser.selection)
+            window.layoutIfNeeded()
+        }
+        refresh()
+        #expect(browser.filtered.map(\.url.lastPathComponent) == ["loops", "kick.wav", "snare.wav"])
+        let table = list.table
+        func point(_ row: Int, below: Bool = false) -> CGPoint {
+            let rect = table.rect(ofRow: row)
+            return table.convert(CGPoint(x: rect.midX, y: below ? rect.maxY + 40 : rect.midY), to: nil)
+        }
+        func click(_ location: CGPoint, count: Int) throws {
+            table.mouseDown(with: try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: count, clickCount: count, pressure: 1)))
+        }
+        func key(_ code: UInt16, _ characters: String) throws {
+            table.keyDown(with: try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)))
+        }
+        func asked() -> [URL?] { requests.withLock { $0.map(\.0) } }
+        let kick = browser.filtered[1].url, snare = browser.filtered[2].url
+        let undo = controller.undoCount
+
+        // One click selects, takes the keyboard and asks for the sound before it returns.
+        try click(point(1), count: 1)
+        #expect(browser.selection == kick && table.selectedRow == 1)
+        #expect(window.firstResponder === table)
+        #expect(asked() == [kick])
+        let origin = try #require(requests.withLock { $0.last?.1 })
+        #expect(origin.input == .click && origin.delayMicroseconds < 1_000_000)
+        #expect(pending == nil && controller.undoCount == undo)
+        // The second click of a double click places it, with no second request.
+        try click(point(1), count: 2)
+        await pending?.value
+        #expect(controller.undoCount == undo + 1 && asked() == [kick])
+
+        // Arrow keys move the selection as key input. Return places.
+        pending = nil
+        try key(125, "\u{F701}")
+        #expect(browser.selection == snare && asked() == [kick, snare])
+        #expect(requests.withLock { $0.last?.1.input } == .key)
+        await controller.locate(beat: 4) // Placements on one track cannot overlap.
+        try key(36, "\r")
+        await pending?.value
+        #expect(controller.undoCount == undo + 2 && asked() == [kick, snare])
+        // Typing a name selects its row as key input.
+        #expect(list.tableView(table, typeSelectStringFor: nil, row: 1) == "kick.wav")
+
+        // The browser moving its own selection after a search is silent.
+        browser.query = "kick"
+        refresh()
+        #expect(browser.selection == kick && table.selectedRow == 0)
+        browser.query = ""
+        refresh()
+        #expect(table.selectedRow == 1 && asked() == [kick, snare])
+
+        // A click below the rows clears the selection and stops the sound.
+        try click(point(2, below: true), count: 1)
+        #expect(browser.selection == nil && table.selectedRow == -1)
+        #expect(asked() == [kick, snare, nil])
+        // A folder stops it too, and entering it clears the selection silently.
+        try click(point(0), count: 1)
+        try click(point(0), count: 2)
+        await pending?.value
+        refresh()
+        #expect(browser.folder?.lastPathComponent == "loops" && browser.selection == nil)
+        #expect(asked() == [kick, snare, nil, nil])
+        #expect(controller.undoCount == undo + 2)
+        await controller.close()
+    }
+
+    @Test func auditionLogWritesEachRequestOnceWhenNothingMoreWillBeRecorded() throws {
+        func status(_ newest: UInt64, _ entries: [String]) throws -> AuditionStatus {
+            let json = #"{"request":\#(newest),"handled":\#(newest),"phase":"sounding","history":[\#(entries.joined(separator: ","))]}"#
+            return try JSONDecoder().decode(AuditionStatus.self, from: Data(json.utf8))
+        }
+        func entry(_ request: UInt64, _ phase: String, heard: Bool = false) -> String {
+            #"{"request":\#(request),"input":"click","requested_at_ms":1,"phase":"\#(phase)","opened_output":false\#(heard ? #","heard_us":9"# : "")}"#
+        }
+        let log = AuditionLog()
+        var written: [UInt64] = []
+        log.write = { written.append($0.request) }
+        log.record(try status(2, [entry(1, "sounding", heard: true), entry(2, "loading")]))
+        log.record(try status(2, [entry(1, "sounding", heard: true), entry(2, "loading")]))
+        #expect(written == [1])
+        // The newest waits until it is heard or ends.
+        log.record(try status(2, [entry(1, "sounding", heard: true), entry(2, "sounding")]))
+        #expect(written == [1])
+        // Replaced before it was heard: no later stage can come.
+        log.record(try status(3, [entry(2, "sounding"), entry(3, "failed")]))
+        #expect(written == [1, 2, 3])
+        // A closed document resets the numbering for the next one.
+        log.record(nil)
+        log.record(try status(1, [entry(1, "stopped")]))
+        #expect(written == [1, 2, 3, 1])
+
+        // The app's file holds one JSON line per entry and keeps one older file.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audition-log-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = LineLog(url: folder.appendingPathComponent("audition.ndjson"), limit: 250)
+        let kept = AuditionLog()
+        kept.keep(in: file)
+        kept.record(try status(2, [entry(1, "sounding", heard: true), entry(2, "failed")]))
+        file.flush()
+        let lines = try String(contentsOf: file.url, encoding: .utf8).split(separator: "\n")
+        #expect(lines.count == 2)
+        let first = try #require(JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as? [String: Any])
+        #expect(first["request"] as? Int == 1 && first["heard_us"] as? Int == 9 && first["input"] as? String == "click")
+        kept.record(try status(4, [entry(3, "stopped"), entry(4, "stopped")]))
+        file.flush()
+        #expect(FileManager.default.fileExists(atPath: file.previous.path))
+        let current = try String(contentsOf: file.url, encoding: .utf8) + String(contentsOf: file.previous, encoding: .utf8)
+        #expect(current.split(separator: "\n").count == 4)
     }
 
     @Test func supersededLibraryScanCannotRestoreARemovedRoot() async throws {

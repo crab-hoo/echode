@@ -48,7 +48,10 @@ public final class ProjectController {
     @ObservationIgnored private var previewFinishing = false
     @ObservationIgnored private var previewFinishTask: Task<Void, Never>?
     public private(set) var audio = AudioState() {
-        didSet { if outputOpening != audio.opening { outputOpening = audio.opening } }
+        didSet {
+            if outputOpening != audio.opening { outputOpening = audio.opening }
+            if audio.audition != oldValue.audition { auditionLog.record(audio.audition) }
+        }
     }
     /// Observed separately so position polls do not rebuild the device strip.
     public private(set) var outputOpening = false
@@ -81,7 +84,8 @@ public final class ProjectController {
     @ObservationIgnored var parameterTask: Task<Void, Never>?
     @ObservationIgnored let sendDevice: @Sendable (Document, DeviceCommand) async throws -> DeviceResult
     /// Starts or stops the browser's sample audition. It skips the edit queue.
-    @ObservationIgnored let sendAudition: @Sendable (Document, URL?) -> Void
+    @ObservationIgnored let sendAudition: @Sendable (Document, URL?, AuditionOrigin) -> Void
+    @ObservationIgnored let auditionLog = AuditionLog()
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()
     /// Reads plugin windows' activity for the open document (ADR 0132).
@@ -100,13 +104,13 @@ public final class ProjectController {
     public init() {
         sendAudio = { try await $0.audio($1) }
         sendDevice = DeviceResult.send
-        sendAudition = { $0.audition($1) }
+        sendAudition = { $0.audition($1, origin: $2) }
         edits.onExclusive = { [weak self] value in self?.busy = value }
     }
 
     init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) },
          sendDevice: @escaping @Sendable (Document, DeviceCommand) async throws -> DeviceResult = DeviceResult.send,
-         sendAudition: @escaping @Sendable (Document, URL?) -> Void = { $0.audition($1) }) {
+         sendAudition: @escaping @Sendable (Document, URL?, AuditionOrigin) -> Void = { $0.audition($1, origin: $2) }) {
         self.sendAudio = sendAudio
         self.sendDevice = sendDevice
         self.sendAudition = sendAudition

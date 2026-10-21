@@ -146,7 +146,9 @@ P2 のトラック追加位置・フォルダ展開／折りたたみ時の挿�
   （[操作要件](../interaction-design.md#共通サンプルブラウザ)）
 - **サンプルの試聴**: 文書ごとの試聴スレッドが復号・SRC・専用 IOProc を持ち、文書ワーカーとプロジェクトの出力ストリームを通らない。
   `AuditionAudio` は等倍の素材を先頭から加算し、置換・停止は 5 ms で消す。HAL がプロジェクトの IOProc と加算する
-  （[ADR 0135](../decisions/0135-sample-audition.md)）
+  （[ADR 0135](../decisions/0135-sample-audition.md)）。
+  直近の要求ごとに操作の種類と、受付・復号・出力の準備・変換・受渡し・発音（HAL の出力時刻）の経過を記録する
+  （[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）
 - **デコードと書き出し**: AudioToolbox（WAV、AIFF、CAF、MP3、AAC、ALAC、FLAC 等）と Symphonia（Ogg Vorbis 等）を組み合わせる
 - **波形のピーク**: 正準 PCM から CPU で最小・最大のピラミッド（1 段目 64 サンプル）を作り、`cache/peaks/` に置く。
   キャッシュ一致時は正準 PCM を全読込せず、端と 64 サンプル未満の列だけを読み取り専用マップから読む

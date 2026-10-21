@@ -39,7 +39,8 @@ public struct AudioState: Decodable, Sendable, Equatable {
 
 /// The newest audition request and what became of it.
 public struct AuditionStatus: Decodable, Sendable, Equatable {
-    public enum Phase: String, Decodable, Sendable { case idle, loading, sounding, ended, stopped, failed }
+    /// `superseded` appears only in history: a newer request came before it was heard.
+    public enum Phase: String, Codable, Sendable { case idle, loading, sounding, ended, stopped, failed, superseded }
     public let request: UInt64
     /// The newest request the audition thread has acted on.
     public let handled: UInt64
@@ -47,7 +48,51 @@ public struct AuditionStatus: Decodable, Sendable, Equatable {
     public let phase: Phase
     public let error: String?
     public let sampleRate: UInt32?
-    enum CodingKeys: String, CodingKey { case request, handled, path, phase, error, sampleRate = "sample_rate" }
+    /// The latest requests, oldest first, with the time each stage finished.
+    public let history: [AuditionEntry]
+    enum CodingKeys: String, CodingKey { case request, handled, path, phase, error, history, sampleRate = "sample_rate" }
+}
+
+/// What made the UI ask for an audition. It is recorded, never acted on.
+public enum AuditionInput: String, Codable, Sendable { case other, click, key }
+
+/// The input behind an audition request, as the UI measured it.
+public struct AuditionOrigin: Sendable, Equatable {
+    public var input: AuditionInput
+    /// From the input event to the request. Ignored for `other`.
+    public var delayMicroseconds: UInt64
+    public init(input: AuditionInput, delayMicroseconds: UInt64 = 0) {
+        self.input = input; self.delayMicroseconds = delayMicroseconds
+    }
+    public static let other = AuditionOrigin(input: .other)
+}
+
+/// One audition request. Stage times are microseconds after the request.
+public struct AuditionEntry: Codable, Sendable, Equatable {
+    public let request: UInt64
+    public let path: String?
+    public let input: AuditionInput
+    public let inputDelayUs: UInt64?
+    public let requestedAtMs: UInt64
+    public let phase: AuditionStatus.Phase
+    public let error: String?
+    public let pickedUs: UInt64?
+    public let decodedUs: UInt64?
+    public let sourceFrames: UInt64?
+    public let sourceRate: UInt32?
+    public let outputUs: UInt64?
+    public let openedOutput: Bool
+    public let convertedUs: UInt64?
+    public let handedUs: UInt64?
+    public let heardUs: UInt64?
+    /// Nothing more will be recorded for it: it was heard, or it ended without sound.
+    public var settled: Bool { heardUs != nil || ![.loading, .sounding].contains(phase) }
+    enum CodingKeys: String, CodingKey {
+        case request, path, input, phase, error
+        case inputDelayUs = "input_delay_us", requestedAtMs = "requested_at_ms", pickedUs = "picked_us", decodedUs = "decoded_us"
+        case sourceFrames = "source_frames", sourceRate = "source_rate", outputUs = "output_us", openedOutput = "opened_output"
+        case convertedUs = "converted_us", handedUs = "handed_us", heardUs = "heard_us"
+    }
 }
 
 public enum AudioCommand: Encodable, Sendable {

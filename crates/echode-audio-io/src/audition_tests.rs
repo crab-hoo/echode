@@ -60,41 +60,56 @@ fn tone(frames: usize, channels: usize, step: f32, scale: f32) -> Vec<i16> {
 #[derive(Clone, Default)]
 struct Probe {
     audio: Arc<Mutex<Option<AuditionAudio>>>,
+    notes: Arc<Mutex<Option<StartNotes>>>,
     opens: Arc<AtomicUsize>,
     asked: Arc<Mutex<Vec<Option<String>>>>,
     broken: Arc<AtomicBool>,
+    /// While set, `prepare` waits after noting `held`.
+    hold: Arc<AtomicBool>,
+    held: Arc<AtomicBool>,
 }
 
 struct TestOutputs {
     probe: Probe,
     rate: u32,
-    control: Option<(Option<String>, AuditionControl)>,
+    control: Option<(Option<String>, AuditionControl, HeardNotes)>,
 }
 
 impl AuditionOutputs for TestOutputs {
-    fn prepare(&mut self, uid: Option<&str>) -> Result<u32, String> {
+    fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), String> {
         lock(&self.probe.asked).push(uid.map(str::to_owned));
+        while self.probe.hold.load(Ordering::Acquire) {
+            self.probe.held.store(true, Ordering::Release);
+            std::thread::sleep(Duration::from_millis(1));
+        }
         if self.healthy()
-            && let Some((asked, _)) = &self.control
+            && let Some((asked, _, _)) = &self.control
             && asked.as_deref() == uid
         {
-            return Ok(self.rate);
+            return Ok((self.rate, false));
         }
         let (control, audio) = audition_pair(self.rate).map_err(|error| error.to_string())?;
+        let (notes, heard) = heard_notes();
         *lock(&self.probe.audio) = Some(audio);
+        *lock(&self.probe.notes) = Some(notes);
         self.probe.broken.store(false, Ordering::Release);
         self.probe.opens.fetch_add(1, Ordering::AcqRel);
-        self.control = Some((uid.map(str::to_owned), control));
-        Ok(self.rate)
+        self.control = Some((uid.map(str::to_owned), control, heard));
+        Ok((self.rate, true))
     }
     fn control(&mut self) -> Option<&mut AuditionControl> {
-        self.control.as_mut().map(|(_, control)| control)
+        self.control.as_mut().map(|(_, control, _)| control)
     }
     fn is_open(&self) -> bool {
         self.control.is_some()
     }
     fn healthy(&self) -> bool {
         self.control.is_some() && !self.probe.broken.load(Ordering::Acquire)
+    }
+    fn heard(&mut self) -> Option<(u64, u64)> {
+        self.control
+            .as_mut()
+            .and_then(|(_, _, heard)| heard.latest())
     }
     fn close(&mut self) {
         self.control = None;
@@ -139,7 +154,9 @@ fn hear(callback: &AuditionCallback, frames: usize, block: usize) -> Vec<[f32; 2
             mDataByteSize: std::mem::size_of_val(data) as u32,
             mData: data.as_mut_ptr().cast(),
         }];
-        unsafe { fill(callback, &mut buffers) };
+        // SAFETY: reads the host clock and takes no pointers.
+        let host = unsafe { AudioGetCurrentHostTime() };
+        unsafe { fill(callback, &mut buffers, host) };
         heard.extend(data.chunks_exact(2).map(|pair| [pair[0], pair[1]]));
     }
     heard
@@ -149,7 +166,8 @@ fn callback(probe: &Probe, block: usize) -> AuditionCallback {
     let audio = lock(&probe.audio)
         .take()
         .expect("an opened audition output");
-    AuditionCallback::new(audio, block, 2, Arc::new(AtomicU64::new(0)), 0)
+    let notes = lock(&probe.notes).take().expect("its start notes");
+    AuditionCallback::new(audio, notes, block, 2, Arc::new(AtomicU64::new(0)), 0)
 }
 
 fn planes(path: &std::path::Path, rate: u32) -> (Vec<f32>, Vec<f32>) {
@@ -289,6 +307,140 @@ fn the_audition_follows_the_project_output_and_closes_when_the_device_changes() 
     assert_eq!(probe.opens.load(Ordering::Acquire), 3);
 }
 
+fn entry(audition: &Audition, request: u64) -> AuditionEntry {
+    audition
+        .report()
+        .history
+        .into_iter()
+        .find(|entry| entry.request == request)
+        .expect("a history entry")
+}
+
+#[test]
+fn the_history_times_each_stage_and_keeps_the_input_that_asked() {
+    let fixture = fixture("history");
+    let sample = fixture.0.join("short.wav");
+    std::fs::write(&sample, wav(44_100, 1, &tone(2_000, 1, 0.05, 0.4))).unwrap();
+    let (audition, probe) = audition(RATE);
+    let click = AuditionOrigin {
+        input: AuditionInput::Click,
+        delay_us: Some(1_500),
+    };
+    let first = audition.play_with(sample.clone(), click);
+    wait(&audition, |report| report.phase == AuditionPhase::Sounding);
+    let callback = callback(&probe, 128);
+    hear(&callback, 128, 128);
+    // The thread reads the callback's note while it services the output.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let timed = loop {
+        let timed = entry(&audition, first);
+        if timed.heard_us.is_some() {
+            break timed;
+        }
+        assert!(Instant::now() < deadline, "no start time in {timed:?}");
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    assert_eq!(
+        (timed.input, timed.input_delay_us),
+        (AuditionInput::Click, Some(1_500))
+    );
+    assert_eq!(timed.path, Some(sample.display().to_string()));
+    assert_eq!(
+        (timed.source_frames, timed.source_rate),
+        (Some(2_000), Some(44_100))
+    );
+    assert!(timed.opened_output && timed.requested_at_ms > 0);
+    let stages = [
+        timed.picked_us,
+        timed.decoded_us,
+        timed.output_us,
+        timed.converted_us,
+        timed.handed_us,
+        timed.heard_us,
+    ]
+    .map(|stage| stage.expect("every stage is timed"));
+    assert!(stages.is_sorted(), "{timed:?}");
+
+    // A request the thread passes over is marked, and is never handed over.
+    probe.hold.store(true, Ordering::Release);
+    let key = AuditionOrigin {
+        input: AuditionInput::Key,
+        delay_us: Some(40),
+    };
+    let held = audition.play_with(sample.clone(), key);
+    while !probe.held.load(Ordering::Acquire) {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let newest = audition.play_with(sample.clone(), key);
+    probe.hold.store(false, Ordering::Release);
+    wait(&audition, |report| {
+        report.request == newest && report.phase == AuditionPhase::Sounding
+    });
+    let passed = entry(&audition, held);
+    assert_eq!(passed.phase, AuditionPhase::Superseded, "{passed:?}");
+    assert!(passed.decoded_us.is_some() && passed.handed_us.is_none());
+    let kept = entry(&audition, newest);
+    assert_eq!(kept.input, AuditionInput::Key);
+    // The output was still open from the first request.
+    assert!(kept.output_us.is_some() && !kept.opened_output);
+
+    // A stop is recorded with its input. The record stays bounded.
+    let stopped = audition.stop_with(click);
+    wait(&audition, |report| report.handled == stopped);
+    let stop = entry(&audition, stopped);
+    assert_eq!(
+        (stop.phase, stop.path.as_deref()),
+        (AuditionPhase::Stopped, None)
+    );
+    assert!(stop.picked_us.is_some() && stop.decoded_us.is_none());
+    for _ in 0..HISTORY {
+        audition.stop();
+    }
+    let report = audition.report();
+    assert_eq!(report.history.len(), HISTORY);
+    assert_eq!(
+        report.history.back().map(|entry| entry.request),
+        Some(report.request)
+    );
+    assert!(report.history.iter().all(|entry| entry.request > stopped));
+    let value = serde_json::to_value(entry(&audition, report.request)).unwrap();
+    assert_eq!(value["input"], "other");
+    assert!(value.get("requested").is_none());
+    drop(callback);
+}
+
+#[test]
+fn the_callback_notes_each_new_sound_once_with_its_block_time_under_rtsan() {
+    let (mut control, audio) = audition_pair(RATE).unwrap();
+    let (notes, mut heard) = heard_notes();
+    let callback = AuditionCallback::new(audio, notes, 64, 2, Arc::new(AtomicU64::new(0)), 0);
+    let mut data = vec![0.0f32; 64 * 2];
+    let mut run = |host: u64| {
+        let mut buffers = [AudioBuffer {
+            mNumberChannels: 2,
+            mDataByteSize: std::mem::size_of_val(data.as_slice()) as u32,
+            mData: data.as_mut_ptr().cast(),
+        }];
+        unsafe { fill(&callback, &mut buffers, host) };
+    };
+    // SAFETY: reads the host clock and takes no pointers.
+    let now = unsafe { AudioGetCurrentHostTime() };
+    run(now);
+    assert_eq!(heard.latest(), None);
+    // Shorter than a block: it ends where it starts, and is still noted.
+    let short = control.play(AuditionSound::new(Arc::from([0.25f32; 8]), None).unwrap());
+    run(now + 10);
+    run(now + 20);
+    let (sound, at) = heard.latest().unwrap();
+    assert_eq!(sound, short);
+    assert_eq!(at, unsafe { AudioConvertHostTimeToNanos(now + 10) });
+    // HAL without a host time leaves the time unknown, not wrong.
+    let next = control.play(AuditionSound::new(Arc::from([0.25f32; 8]), None).unwrap());
+    run(0);
+    assert_eq!(heard.latest().map(|(sound, _)| sound), Some(short));
+    assert_ne!(next, short);
+}
+
 #[test]
 fn the_callback_writes_every_layout_and_is_silent_after_a_device_change_under_rtsan() {
     let frames = 64;
@@ -297,7 +449,8 @@ fn the_callback_writes_every_layout_and_is_silent_after_a_device_change_under_rt
         let (mut control, audio) = audition_pair(RATE).unwrap();
         let epoch = Arc::new(AtomicU64::new(0));
         let channels = if layout == 2 { 1 } else { 2 };
-        let callback = AuditionCallback::new(audio, frames, channels, Arc::clone(&epoch), 0);
+        let (notes, _heard) = heard_notes();
+        let callback = AuditionCallback::new(audio, notes, frames, channels, Arc::clone(&epoch), 0);
         let right: Arc<[f32]> = sound.iter().map(|sample| -sample).collect();
         control.play(AuditionSound::new(Arc::clone(&sound), Some(right)).unwrap());
         let mut interleaved = vec![1.0f32; frames * channels as usize];
@@ -319,7 +472,7 @@ fn the_callback_writes_every_layout_and_is_silent_after_a_device_change_under_rt
                     mData: interleaved.as_mut_ptr().cast(),
                 }]
             };
-            unsafe { fill(&callback, &mut buffers) };
+            unsafe { fill(&callback, &mut buffers, 0) };
             (0..frames)
                 .map(|frame| match layout {
                     1 => [planar[0][frame], planar[1][frame]],

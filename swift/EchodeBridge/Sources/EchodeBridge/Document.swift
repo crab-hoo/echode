@@ -429,11 +429,17 @@ public final class Document: @unchecked Sendable {
     /// Plays the audio file at `url` once over the project, from its first
     /// sample and without the project's FX or faders, replacing any earlier
     /// audition. `nil` fades the audition out. Returns at once: the request
-    /// does not wait behind queued edits.
-    public func audition(_ url: URL?) {
+    /// does not wait behind queued edits. `origin` is only recorded in the
+    /// audition's history.
+    public func audition(_ url: URL?, origin: AuditionOrigin = .other) {
         let bytes = Array((url?.path ?? "").utf8)
+        let input = switch origin.input {
+        case .other: UInt32(ECHODE_AUDITION_INPUT_OTHER)
+        case .click: UInt32(ECHODE_AUDITION_INPUT_CLICK)
+        case .key: UInt32(ECHODE_AUDITION_INPUT_KEY)
+        }
         bytes.withUnsafeBufferPointer { buffer in
-            _ = echode_document_audition(handle, buffer.baseAddress, buffer.count)
+            _ = echode_document_audition(handle, buffer.baseAddress, buffer.count, input, origin.delayMicroseconds)
         }
     }
 

@@ -92,6 +92,7 @@ pub struct AuditionAudio {
     fading: Option<Voice>,
     fade_frames: u32,
     shared: Arc<Shared>,
+    started: u64,
 }
 
 struct Voice {
@@ -128,6 +129,7 @@ pub fn audition_pair(sample_rate: u32) -> Result<(AuditionControl, AuditionAudio
             fading: None,
             fade_frames: (sample_rate / 200).max(2),
             shared,
+            started: 0,
         },
     ))
 }
@@ -197,6 +199,7 @@ impl AuditionAudio {
         while let Ok(message) = self.commands.pop() {
             self.release_current();
             if let Message::Play { id, sound } = message {
+                self.started = id;
                 self.current = Some(Voice {
                     id,
                     sound,
@@ -224,6 +227,13 @@ impl AuditionAudio {
         }
         let heard = self.current.as_ref().map_or(0, |voice| voice.id);
         self.shared.heard.store(heard, Ordering::Release);
+    }
+
+    /// The newest sound adopted so far, or 0. It started at the first frame
+    /// of the block whose [`AuditionAudio::mix`] adopted it, even if it
+    /// already ended there.
+    pub fn started(&self) -> u64 {
+        self.started
     }
 
     fn release_current(&mut self) {

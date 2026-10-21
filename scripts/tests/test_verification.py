@@ -231,6 +231,9 @@ class PolicyTests(unittest.TestCase):
         ui = contracts["sample-audition-ui"]
         self.assertEqual((ui["runner"], ui["suite"]), ("swift", "SampleBrowserTests"))
         self.assertIn("audio", ui["negative_control"]["old"])
+        click = contracts["sample-browser-click-ui"]
+        self.assertEqual((click["runner"], click["suite"]), ("swift", "SampleBrowserTests"))
+        self.assertEqual(click["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceFileList.swift")
         for path in ("crates/echode-engine/src/audition.rs", "crates/echode-audio-io/src/audition.rs"):
             self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
         for path in ("crates/echode-ffi/src/queue.rs", "swift/EchodeApp/Sources/EchodeAppCore/SampleAudition.swift"):
@@ -429,7 +432,7 @@ class PolicyTests(unittest.TestCase):
                           "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui",
                           "fx-bypass-ui", "fx-batch-ui", "fx-offline-ui", "plugin-offline", "offline-export",
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
-                          "sample-audition", "sample-audition-ui",
+                          "sample-audition", "sample-audition-ui", "sample-browser-click-ui",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",

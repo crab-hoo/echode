@@ -54,6 +54,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   検索対象・除外・再読込の規則は [ADR 0122](../decisions/0122-sample-library-search-and-placement.md)。
   選択の変化で `WorkspaceSession.auditionSelection` が音声素材の試聴を要求し、編集の待ち行列を通さない
   （[ADR 0135](../decisions/0135-sample-audition.md)）。
+  一覧は AppKit の表（`FileListTable`）で、押した時点で選択しフォーカスを取り、2 回目のクリックと Return で開く。
+  試聴を変えるのは利用者のクリックとキーだけで、ブラウザ自身の選択の付け替えは鳴らさない（[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）。
 - **P2 のアレンジ・ミックス編集**: 右ドラッグでクリップ選択、空白左ドラッグで編集区間選択、リージョン作成、複数選択ミキサー操作に対応する
   （[ADR 0117](../decisions/0117-workflow-interactions.md)、[ミックスの要件](../interaction-design.md#ミキサーの複数選択)）
 

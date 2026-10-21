@@ -580,7 +580,15 @@ fn an_audition_returns_without_the_worker_and_reports_an_unreadable_file() {
         std::env::temp_dir().join(format!("echode-ffi-missing-{}.wav", std::process::id()));
     let path = missing.to_str().unwrap();
     assert_eq!(
-        unsafe { echode_document_audition(document, path.as_ptr(), path.len()) },
+        unsafe {
+            echode_document_audition(
+                document,
+                path.as_ptr(),
+                path.len(),
+                ECHODE_AUDITION_INPUT_CLICK,
+                2_500,
+            )
+        },
         0
     );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -595,25 +603,70 @@ fn an_audition_returns_without_the_worker_and_reports_an_unreadable_file() {
     assert_eq!(audition["path"], path);
     assert_eq!(audition["request"], audition["handled"]);
     assert!(audition["sample_rate"].is_null());
+    let failed = audition["history"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(failed["input"], "click");
+    assert_eq!(failed["input_delay_us"], 2_500);
+    assert_eq!(failed["phase"], "failed");
+    assert!(failed["picked_us"].is_u64() && failed["handed_us"].is_null());
     let request = audition["request"].as_u64().unwrap();
     assert_eq!(
-        unsafe { echode_document_audition(document, std::ptr::null(), 0) },
+        unsafe {
+            echode_document_audition(
+                document,
+                std::ptr::null(),
+                0,
+                ECHODE_AUDITION_INPUT_OTHER,
+                7,
+            )
+        },
         0
     );
     let audition = audio_state(document, &reply, &incoming)["audition"].clone();
     assert_eq!(audition["phase"], "stopped");
     assert_eq!(audition["request"].as_u64(), Some(request + 1));
+    let stop = audition["history"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
     assert_eq!(
-        unsafe { echode_document_audition(document, std::ptr::null(), 4) },
+        (&stop["input"], &stop["input_delay_us"]),
+        (&"other".into(), &serde_json::Value::Null)
+    );
+    let call = |path: *const u8, len: usize, input: u32| unsafe {
+        echode_document_audition(document, path, len, input, 0)
+    };
+    assert_eq!(
+        call(std::ptr::null(), 4, ECHODE_AUDITION_INPUT_OTHER),
         ECHODE_ERR
     );
     let invalid = [0xff_u8, 0xfe];
     assert_eq!(
-        unsafe { echode_document_audition(document, invalid.as_ptr(), 2) },
+        call(invalid.as_ptr(), 2, ECHODE_AUDITION_INPUT_OTHER),
         ECHODE_ERR
     );
+    // An unknown input is refused before anything is requested.
+    assert_eq!(call(std::ptr::null(), 0, 3), ECHODE_ERR);
     assert_eq!(
-        unsafe { echode_document_audition(std::ptr::null(), std::ptr::null(), 0) },
+        audio_state(document, &reply, &incoming)["audition"]["request"].as_u64(),
+        Some(request + 1)
+    );
+    assert_eq!(
+        unsafe {
+            echode_document_audition(
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                ECHODE_AUDITION_INPUT_KEY,
+                0,
+            )
+        },
         ECHODE_ERR
     );
     unsafe { echode_document_close(document) };

@@ -109,7 +109,8 @@ FFI は `crates/echode-ffi/src/device.rs`（検査・往復・記録）と `lane
 通信の `crates/echode-sandbox/src/gui.rs`、FFI の `crates/echode-ffi/src/activity.rs`（文書単位の受け口）に置く。
 画面は `PluginWindows.swift`（開く要求・活動の読取り・記録）、テスト用 CLAP の窓は `crates/echode-test-plugin/src/gui.rs` が持つ。
 サンプルの試聴は、ボイスを `crates/echode-engine/src/audition.rs`、試聴スレッドと専用 IOProc を `crates/echode-audio-io/src/audition.rs`、
-FFI の入口を `echode_document_audition`、画面の選択の扱いを `SampleAudition.swift` に置く。
+FFI の入口を `echode_document_audition`、画面の選択の扱いと要求の記録（`AuditionLog`）を `SampleAudition.swift`、
+ブラウザの一覧の入力を `WorkspaceFileList.swift` に置く（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
 最初の出力準備は `crates/echode-audio-io/src/opening.rs`（`Outputs`・`Opening`・`HeadlessOutput`）と `session.rs` の `install`、
 準備を待つデバイス要求の順序は `crates/echode-ffi/src/queue.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
 開いた出力の置換グラフの準備スレッドと回収は `crates/echode-engine/src/playback_preparation.rs`、

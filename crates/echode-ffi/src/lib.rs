@@ -216,11 +216,23 @@ pub unsafe extern "C" fn echode_document_plugin_activity(
     0
 }
 
+/// An audition request that came from neither a click nor a key.
+pub const ECHODE_AUDITION_INPUT_OTHER: u32 = 0;
+/// An audition request made by a pointer click.
+pub const ECHODE_AUDITION_INPUT_CLICK: u32 = 1;
+/// An audition request made by a key press.
+pub const ECHODE_AUDITION_INPUT_KEY: u32 = 2;
+
 /// Plays the audio file at the UTF-8 `path` once over the project, from its
 /// first sample and without the project's FX or faders, replacing any earlier
 /// audition. A null or empty `path` fades the audition out. Returns at once:
 /// decoding and the audition output run on their own thread, not the document
 /// worker. The next snapshot's audio state reports the newest request.
+///
+/// `input` is one of the `ECHODE_AUDITION_INPUT_*` values and
+/// `input_delay_us` the microseconds from that click or key to this call.
+/// Both are only recorded in the audition's history; the delay is ignored
+/// for `ECHODE_AUDITION_INPUT_OTHER`.
 ///
 /// # Safety
 /// `document` is null or open. `path` is null only when `path_len` is zero.
@@ -229,6 +241,8 @@ pub unsafe extern "C" fn echode_document_audition(
     document: *const Document,
     path: *const u8,
     path_len: usize,
+    input: u32,
+    input_delay_us: u64,
 ) -> c_int {
     let Some(document) = (unsafe { document.as_ref() }) else {
         return ECHODE_ERR;
@@ -236,15 +250,25 @@ pub unsafe extern "C" fn echode_document_audition(
     if path_len > isize::MAX as usize || (path.is_null() && path_len != 0) {
         return ECHODE_ERR;
     }
+    let input = match input {
+        ECHODE_AUDITION_INPUT_OTHER => echode_audio_io::AuditionInput::Other,
+        ECHODE_AUDITION_INPUT_CLICK => echode_audio_io::AuditionInput::Click,
+        ECHODE_AUDITION_INPUT_KEY => echode_audio_io::AuditionInput::Key,
+        _ => return ECHODE_ERR,
+    };
+    let origin = echode_audio_io::AuditionOrigin {
+        input,
+        delay_us: (input != echode_audio_io::AuditionInput::Other).then_some(input_delay_us),
+    };
     if path_len == 0 {
-        document.audition(None);
+        document.audition(None, origin);
         return ECHODE_OK;
     }
     let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
     let Ok(text) = std::str::from_utf8(bytes) else {
         return ECHODE_ERR;
     };
-    document.audition(Some(std::path::PathBuf::from(text)));
+    document.audition(Some(std::path::PathBuf::from(text)), origin);
     ECHODE_OK
 }
 
