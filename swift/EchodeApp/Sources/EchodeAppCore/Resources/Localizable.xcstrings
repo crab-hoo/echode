@@ -73,6 +73,12 @@
         "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを読み込み中…" } }
       }
     },
+    "Retry parameters": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Retry Parameters" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを再読込み" } }
+      }
+    },
     "No editable parameters": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "This plugin reports no editable parameters." } },

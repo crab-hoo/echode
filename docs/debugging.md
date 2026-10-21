@@ -94,6 +94,10 @@ make debug-report
   デバイスの列の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、
   `no output device is available` は停止中の出力起動、`parameter changes timed out` はヘルパーの処理スレッドの `flush` を疑う。
   `document thread stopped` は文書を閉じた後の要求、`device request panicked` はデバイスレーンでの異常終了である。
+  一覧取得の失敗は列の「パラメーターを再読込み」で対象だけを再試行する。検索・選択・履歴は変えず、再失敗も同じ列に出す。
+  プラグインの再起動や状態の再読込とは異なるため、クラッシュしたヘルパーや未検出のプラグインの復旧を保証しない。
+  再試行で他の列も消える・連打で要求が重なる場合は `device-list-retry-ui` と `DeviceParameterRetryTests` を使う
+  （[ADR 0140](decisions/0140-device-parameter-list-retry.md)）。
   `plugin-params` は実ヘルパーとエンジン、`fx-params-ui` は画面と履歴のログである。
   Undo では記録のハッシュとヘルパーが最後に保存・読込したバイトを比べ、一致すれば読み込まない（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
 - **空白への移動・再開で以前の残響が鳴る**:

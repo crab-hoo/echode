@@ -27,6 +27,7 @@ actor FakeParameterPlugin {
     private var started: [UUID: Int] = [:]
     private var holds: Set<UUID> = []
     private var waiting: [UUID: [CheckedContinuation<Void, Never>]] = [:]
+    private var failures: Set<UUID> = []
 
     init(extra: Int = 0) { self.extra = extra }
 
@@ -50,6 +51,8 @@ actor FakeParameterPlugin {
             }
     }
 
+    func failNextListing(_ device: UUID) { failures.insert(device) }
+
     /// The next listing of `device` waits until `release`.
     func hold(_ device: UUID) { holds.insert(device) }
     func release(_ device: UUID) {
@@ -65,6 +68,7 @@ actor FakeParameterPlugin {
         case .parameters(let device):
             reads += 1
             started[device, default: 0] += 1
+            if failures.remove(device) != nil { throw CancellationError() }
             // The reply describes the plugin when the request arrived.
             let listed = table()
             if holds.remove(device) != nil {

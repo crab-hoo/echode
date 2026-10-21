@@ -94,6 +94,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         strip.onEnd = { Task { await controller.finishParameter(commit: true) } }
         strip.onStep = { device, id, value in Task { await controller.setParameter(id, device: device, value: value) } }
         strip.onPin = { device, id, pinned in Task { await controller.setPinned(id, device: device, pinned: pinned, documentID: document) } }
+        strip.onRetry = { device in controller.retryParameters(device, documentID: document) }
         strip.configure(devices: devices, track: track, document: document, busy: busy, locked: locked, states: states, collapsed: collapsed)
         view.needsLayout = true
     }
@@ -138,6 +139,7 @@ final class DeviceStripView: NSView {
     var onEnd: (() -> Void)?
     var onStep: ((UUID, UInt32, Double) -> Void)?
     var onPin: ((UUID, UInt32, Bool) -> Void)?
+    var onRetry: ((UUID) -> Void)?
     var contentWidth: Double { columns.reduce(Self.trailingWidth) { $0 + $1.preferredWidth } }
     override var isFlipped: Bool { true }
 
@@ -188,6 +190,7 @@ final class DeviceStripView: NSView {
             column.list.onEnd = { [weak self] in self?.onEnd?() }
             column.list.onStep = { [weak self] id, value in self?.onStep?(device.id, id, value) }
             column.list.onPin = { [weak self] id, pinned in self?.onPin?(device.id, id, pinned) }
+            column.onRetry = { [weak self] in self?.onRetry?(device.id) }
             column.configure(device: device, first: index == 0, last: index + 1 == devices.count,
                              busy: busy, locked: locked, collapsed: collapsed.contains(device.id), state: states[device.id])
             next.append(column)
@@ -256,6 +259,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     let search = NSSearchField()
     let list = DeviceParameterListView(frame: .zero)
     let message = NSTextField(wrappingLabelWithString: "")
+    let retry = NSButton(title: text("Retry parameters"), target: nil, action: nil)
     private let payload: FXDrag
     private var origin: CGPoint?
     private var state: DeviceParameterState?
@@ -267,6 +271,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     /// A click on the name, without a drag, opens the plugin's own window.
     var onOpenWindow: (() -> Void)?
     var onCollapse: ((Bool) -> Void)?
+    var onRetry: (() -> Void)?
     override var isFlipped: Bool { true }
 
     init(device: TrackDevice, payload: FXDrag) {
@@ -306,6 +311,10 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         search.target = self; search.action = #selector(searched)
         message.textColor = .secondaryLabelColor
         message.alignment = .center
+        retry.identifier = NSUserInterfaceItemIdentifier("retry-parameters")
+        retry.bezelStyle = .rounded
+        retry.target = self; retry.action = #selector(retryList)
+        addSubview(retry)
         for view in [disclosure, title, windowIndicator, offline, bypass, left, right, copy, remove, search, list, message] { addSubview(view) }
         configure(device: device, first: true, last: true, busy: false, locked: false, state: nil)
     }
@@ -319,8 +328,8 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         self.first = first; self.last = last
         disclosure.isEnabled = !busy
         if collapsed, let window, let responder = window.firstResponder as? NSView,
-           responder.isDescendant(of: list) || responder.isDescendant(of: search) || responder === search.currentEditor() {
-            // A hidden search field or slider must not keep consuming workspace keys.
+           responder.isDescendant(of: list) || responder.isDescendant(of: search) || responder === search.currentEditor() || responder === retry {
+            // Hidden parameter controls must not keep consuming workspace keys.
             window.makeFirstResponder(nil)
         }
         isCollapsed = collapsed
@@ -366,6 +375,9 @@ final class DeviceColumnView: NSView, NSDraggingSource {
             nil
         }
         message.stringValue = note ?? ""
+        retry.isHidden = isCollapsed || device.offline || state?.error == nil || state?.loading == true
+        retry.isEnabled = !busy && !retry.isHidden
+        retry.setAccessibilityLabel(text("Retry parameters") + " " + device.title)
         search.isHidden = isCollapsed
         message.isHidden = isCollapsed || note == nil
         list.isHidden = isCollapsed || note != nil
@@ -390,6 +402,10 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         let body = CGRect(x: 4, y: 94, width: max(0, bounds.width - 8), height: max(0, bounds.height - 98))
         list.frame = body
         message.frame = body.insetBy(dx: 8, dy: 8)
+        if !retry.isHidden {
+            message.frame.size.height = max(0, message.frame.height - 40)
+        }
+        retry.frame = CGRect(x: 12, y: max(body.minY, body.maxY - 38), width: max(0, bounds.width - 24), height: 28)
     }
 
     @objc private func toggleDisclosure() {
@@ -397,6 +413,11 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         configure(device: device, first: first, last: last,
                   busy: false, locked: locked, collapsed: !isCollapsed, state: state)
         onCollapse?(isCollapsed)
+    }
+
+    @objc private func retryList() {
+        guard retry.isEnabled, !retry.isHidden else { return }
+        onRetry?()
     }
 
     @objc private func moveEarlier() { onLeft?() }

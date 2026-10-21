@@ -62,6 +62,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 
+- パラメーター一覧の失敗からの列内の再試行・連打の集約: [ADR 0140](decisions/0140-device-parameter-list-retry.md)。
 - 独自ウィンドウの寿命通知と、デバイス列・インスペクターの窓アイコン: [ADR 0138](decisions/0138-plugin-window-status.md)。
 - トラックヘッダの名前と FX 追加入口・残りのチェインのメニュー: [ADR 0139](decisions/0139-track-header-fx-names.md)。
 - フォルダ開閉と表示行の保持: [ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)。

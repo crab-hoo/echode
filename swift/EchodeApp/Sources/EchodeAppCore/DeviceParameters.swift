@@ -22,7 +22,7 @@ public final class DeviceParameterState {
     public let device: UUID
     /// Parameters the plugin does not hide, in the plugin's order.
     public private(set) var parameters: [DeviceParameter] = []
-    /// True until the first listing arrives or fails.
+    /// True while an empty or failed list is waiting for its first result.
     public private(set) var loading = true
     public private(set) var error: String?
     /// Bumps when the listed ids change, which is the only time rows are rebuilt.
@@ -59,6 +59,12 @@ public final class DeviceParameterState {
             layout &+= 1
         }
         loading = false
+        error = nil
+    }
+
+    /// A failed list can be read again without touching the plugin's state.
+    func beginLoading() {
+        loading = parameters.isEmpty
         error = nil
     }
 
@@ -139,6 +145,16 @@ extension ProjectController {
         return state
     }
 
+    /// Retries only this failed list. Capture the document and device at the
+    /// click, and mark it loading before yielding so repeated clicks coalesce.
+    @discardableResult
+    public func retryParameters(_ device: UUID, documentID: UUID) -> Task<Void, Never> {
+        guard self.documentID == documentID, !busy, let state = parameterState(device),
+              state.error != nil, !state.loading else { return Task {} }
+        state.beginLoading()
+        return Task { [weak self] in await self?.listParameters(state) }
+    }
+
     /// Drops every list, for example when the document closes.
     func forgetParameters() {
         parameterStates = [:]
@@ -161,7 +177,8 @@ extension ProjectController {
     }
 
     private func listParameters(_ state: DeviceParameterState) async {
-        guard let document, state.document == documentID else { return }
+        guard let document, state.document == documentID, parameterStates[state.device] === state else { return }
+        state.beginLoading()
         state.request &+= 1
         let request = state.request
         // A reply for an older request, a closed document or a removed device is dropped.

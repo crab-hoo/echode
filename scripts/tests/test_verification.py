@@ -144,6 +144,16 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-isolation"}
                         <= self.selected("crates/echode-engine/src/bypass.rs"))
 
+    def test_parameter_list_retry_keeps_the_native_control_and_bridge_checks(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "device-list-retry-ui")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "DeviceParameterRetryTests"))
+        self.assertIn("onRetry", contract["negative_control"]["old"])
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceDeviceView.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/DeviceParameterRetryTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+
     def test_positioned_track_insertion_keeps_order_and_ui_contracts(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         self.assertEqual(contracts["track-insertion-ui"]["suite"], "TrackInsertionTests")
@@ -404,7 +414,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "fx-header-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
-                          "output-opening", "output-opening-worker"})
+                          "device-list-retry-ui", "output-opening", "output-opening-worker"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
