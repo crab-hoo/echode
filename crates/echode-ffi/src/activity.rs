@@ -52,6 +52,7 @@ struct EntryJson<'a> {
     dirty: bool,
     closed: bool,
     window: bool,
+    window_state: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -142,10 +143,13 @@ fn collapse(state: &mut HubState) {
             Some(known) => {
                 known.seq = entry.seq;
                 known.activity.closed |= closed;
+                known.activity.window_state =
+                    entry.activity.window_state.or(known.activity.window_state);
             }
             None => {
                 let mut activity = PluginActivity {
                     closed,
+                    window_state: entry.activity.window_state,
                     ..PluginActivity::default()
                 };
                 activity.relay.lost = true;
@@ -198,6 +202,7 @@ fn entry_json(entry: &Entry) -> EntryJson<'_> {
         dirty: entry.activity.dirty,
         closed: entry.activity.closed,
         window: entry.activity.window_open,
+        window_state: entry.activity.window_state,
     }
 }
 

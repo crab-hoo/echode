@@ -21,6 +21,14 @@ final class DeviceTests: XCTestCase {
         XCTAssertEqual(page.entries.first?.events.map(\.kind), [.begin, .end])
         XCTAssertEqual(page.entries.first?.windowOpen, true)
         XCTAssertEqual(page.entries.first?.commands, ["Play / Pause", "Undo"])
+        XCTAssertNil(page.entries.first?.windowState, "an older page has no lifetime change")
+        let lifetime = try JSONDecoder().decode(PluginActivityPage.self, from: Data(#"""
+            {"next":4,"closed":false,"entries":[{"device":"00000000-0000-0000-0000-0000000000d0",
+            "events":[],"values":[],"commands":[],"rescan":false,"lost":false,"dirty":false,
+            "closed":true,"window":true,"window_state":false}]}
+            """#.utf8))
+        XCTAssertEqual(lifetime.entries.first?.windowState, false)
+        XCTAssertEqual(lifetime.entries.first?.windowOpen, true, "edit context is independent of lifetime")
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-window-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }

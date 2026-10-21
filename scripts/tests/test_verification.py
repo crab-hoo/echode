@@ -402,7 +402,7 @@ class PolicyTests(unittest.TestCase):
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
-                          "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop",
+                          "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "output-opening", "output-opening-worker"})
         for contract in contracts:
@@ -459,6 +459,13 @@ class PolicyTests(unittest.TestCase):
         for name in ("plugin-window-undo-ui", "plugin-window-open-ui", "plugin-key-ui", "fx-add-trailing-ui"):
             with self.subTest(contract=name):
                 self.assertEqual((contracts[name]["runner"], contracts[name]["suite"]), ("swift", "PluginWindowTests"))
+        status = contracts["plugin-window-status-ui"]
+        self.assertEqual((status["runner"], status["suite"]), ("swift", "PluginWindowStatusTests"))
+        self.assertIn("entry.windowState", status["negative_control"]["old"])
+        lifetime = contracts["plugin-window-state"]
+        self.assertEqual((lifetime["runner"], lifetime["package"], lifetime["target"]),
+                         ("rust", "echode-sandbox", ["--lib"]))
+        self.assertIn("set_window_state(true)", lifetime["negative_control"]["old"])
         # A key window would take Space and shortcuts from Echode.
         self.assertIn("key: false", contracts["plugin-window-helper"]["negative_control"]["old"])
         for path in ("crates/echode-plugin-host/src/gui.rs", "crates/echode-plugin-host/src/relay.rs",

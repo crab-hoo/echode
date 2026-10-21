@@ -30,18 +30,24 @@ struct WorkspaceInspectorView: View {
                     }
                     Divider()
                     Text(text("Plugins")).font(.subheadline)
-                    ForEach(0..<snapshot.deviceCount(onTrack: index), id: \.self) { device in
-                        if let plugin = snapshot.devicePlugin(onTrack: index, at: device), let id = snapshot.deviceID(onTrack: index, at: device) {
-                            HStack {
-                                Button { if let document { Task { await controller.openPluginWindow(id, documentID: document) } } } label: {
-                                    Text(controller.pluginNames[plugin] ?? plugin).font(.caption).lineLimit(2)
+                    ForEach(controller.deviceRows(on: track.id)) { device in
+                        HStack {
+                            Button { if let document { Task { await controller.openPluginWindow(device.id, documentID: document) } } } label: {
+                                HStack {
+                                    Text(device.title).font(.caption).lineLimit(2)
+                                    if device.windowOpen {
+                                        Image(systemName: "macwindow")
+                                            .foregroundStyle(Color.accentColor)
+                                            .accessibilityLabel(text("Plugin window open") + " " + device.title)
+                                    }
                                 }
-                                .buttonStyle(.plain).help(plugin + "\n" + text("Open plugin window"))
-                                .accessibilityHint(text("Open plugin window"))
-                                Spacer()
-                                Button { Task { await controller.removeDevice(id, documentID: document) } } label: { Image(systemName: "minus.circle") }
-                                    .help(text("Remove")).accessibilityLabel(text("Remove") + " " + (controller.pluginNames[plugin] ?? plugin)).disabled(controller.busy)
                             }
+                            .buttonStyle(.plain).help(device.plugin + "\n" + text("Open plugin window"))
+                            .accessibilityHint(text("Open plugin window"))
+                            .disabled(controller.busy || device.offline)
+                            Spacer()
+                            Button { Task { await controller.removeDevice(device.id, documentID: document) } } label: { Image(systemName: "minus.circle") }
+                                .help(text("Remove")).accessibilityLabel(text("Remove") + " " + device.title).disabled(controller.busy)
                         }
                     }
                 } else { Text(text("Select a track")).foregroundStyle(.secondary) }

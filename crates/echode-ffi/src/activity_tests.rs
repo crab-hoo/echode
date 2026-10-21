@@ -48,6 +48,47 @@ fn gui_commands_reach_the_activity_json_in_order() {
 }
 
 #[test]
+fn window_lifetimes_survive_json_and_backlog_collapse_in_order() {
+    let hub = ActivityHub::new();
+    for (index, state) in [Some(true), Some(false), Some(true), None]
+        .into_iter()
+        .enumerate()
+    {
+        hub.publish(
+            0xD0,
+            PluginActivity {
+                window_state: state,
+                ..PluginActivity::default()
+            },
+        );
+        let received = page(&hub.read(index as u64, Duration::ZERO));
+        assert_eq!(
+            received["entries"][0]["window_state"],
+            serde_json::json!(state)
+        );
+    }
+    // Counts describe only this backlog regression, not a device/track limit.
+    for index in 0..BACKLOG + 1 {
+        let state = match index {
+            0 | 2 => Some(true),
+            1 => Some(false),
+            _ => None,
+        };
+        hub.publish(
+            0xD0,
+            PluginActivity {
+                window_state: state,
+                ..PluginActivity::default()
+            },
+        );
+    }
+    let collapsed = page(&hub.read(4, Duration::ZERO));
+    assert_eq!(collapsed["entries"][0]["window_state"], true);
+    assert_eq!(collapsed["entries"][0]["lost"], true);
+    assert!(collapsed["entries"][1]["window_state"].is_null());
+}
+
+#[test]
 fn a_reader_gets_each_entry_until_it_moves_past_it() {
     let hub = ActivityHub::new();
     let quiet = page(&hub.read(0, Duration::from_millis(1)));

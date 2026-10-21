@@ -61,6 +61,56 @@ fn window_activity_is_kept_apart_from_replies() {
 }
 
 #[test]
+fn contract_window_lifetimes_cross_the_control_socket_in_order() {
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    let shown = ControlMessage::GuiShown(GuiReport {
+        created: true,
+        visible: false,
+        key: false,
+    });
+    // A successfully created but hidden window is open; visibility is not its lifetime.
+    helper.send(&shown).unwrap();
+    control.lock().drain().unwrap();
+    let opened = control.take_activity().unwrap();
+    assert_eq!(opened.window_state, Some(true));
+    assert!(
+        !opened.window_open,
+        "no edit arrived while the window was open"
+    );
+    assert!(control.take_activity().is_none());
+
+    // A close followed by a reopen in the same unread page must show as open,
+    // even though the history still needs the earlier close and relay flags.
+    helper.send(&ControlMessage::GuiClosed).unwrap();
+    helper.send(&shown).unwrap();
+    helper.send(&ControlMessage::Dirty).unwrap();
+    control.lock().drain().unwrap();
+    let reopened = control.take_activity().unwrap();
+    assert!(reopened.closed && reopened.dirty);
+    assert_eq!(reopened.window_state, Some(true));
+    helper.send(&ControlMessage::GuiClosedReply).unwrap();
+    control.lock().drain().unwrap();
+    assert_eq!(control.take_activity().unwrap().window_state, Some(false));
+
+    // A rejected request does not light the indicator. Socket death closes it
+    // even when complete replies remain in the inbox for another requester.
+    helper
+        .send(&ControlMessage::GuiRejected("no window".into()))
+        .unwrap();
+    control.lock().drain().unwrap();
+    assert!(control.take_activity().is_none());
+    helper.send(&shown).unwrap();
+    control.lock().drain().unwrap();
+    assert_eq!(control.take_activity().unwrap().window_state, Some(true));
+    drop(helper);
+    let _ = control.lock().drain();
+    assert_eq!(control.take_activity().unwrap().window_state, Some(false));
+    let _ = control.lock().drain();
+    assert!(control.take_activity().is_none());
+}
+
+#[test]
 fn contract_plugin_shortcuts_cross_the_control_socket_once() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);

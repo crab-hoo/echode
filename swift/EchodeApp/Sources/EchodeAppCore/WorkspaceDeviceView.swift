@@ -250,6 +250,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     private(set) var isCollapsed = false
     var preferredWidth: Double { isCollapsed ? DeviceStripView.collapsedWidth : DeviceStripView.columnWidth }
     let title = NSTextField(labelWithString: "")
+    let windowIndicator = NSImageView()
     let bypass = NSButton(), offline = NSButton()
     let left = NSButton(), right = NSButton(), copy = NSButton(), remove = NSButton()
     let search = NSSearchField()
@@ -278,6 +279,11 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         layer?.cornerRadius = 6
         title.lineBreakMode = .byTruncatingMiddle
         title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        windowIndicator.identifier = NSUserInterfaceItemIdentifier("plugin-window-open")
+        windowIndicator.image = NSImage(systemSymbolName: "macwindow", accessibilityDescription: text("Plugin window open"))
+        windowIndicator.contentTintColor = .controlAccentColor
+        windowIndicator.setAccessibilityElement(true)
+        windowIndicator.setAccessibilityRole(.image)
         disclosure.identifier = NSUserInterfaceItemIdentifier("device-disclosure")
         disclosure.bezelStyle = .disclosure
         disclosure.setButtonType(.pushOnPushOff)
@@ -300,7 +306,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         search.target = self; search.action = #selector(searched)
         message.textColor = .secondaryLabelColor
         message.alignment = .center
-        for view in [disclosure, title, offline, bypass, left, right, copy, remove, search, list, message] { addSubview(view) }
+        for view in [disclosure, title, windowIndicator, offline, bypass, left, right, copy, remove, search, list, message] { addSubview(view) }
         configure(device: device, first: true, last: true, busy: false, locked: false, state: nil)
     }
     @available(*, unavailable)
@@ -323,6 +329,9 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         disclosure.setAccessibilityLabel(disclosureLabel)
         disclosure.toolTip = disclosureLabel
         title.stringValue = device.title
+        windowIndicator.isHidden = !device.windowOpen || device.offline
+        windowIndicator.toolTip = text("Plugin window open")
+        windowIndicator.setAccessibilityLabel(text("Plugin window open") + " " + device.title)
         // The tooltip names the plugin; opening its window is the click and the accessibility action.
         title.toolTip = device.plugin
         title.setAccessibilityLabel(device.title)
@@ -368,7 +377,10 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         super.layout()
         let width = bounds.width - 16
         disclosure.frame = CGRect(x: 6, y: 6, width: 22, height: 24)
-        title.frame = CGRect(x: 32, y: 8, width: max(0, bounds.width - 40 - (isCollapsed ? 0 : 96)), height: 20)
+        let titleWidth = max(0, bounds.width - 40 - (isCollapsed ? 0 : 96))
+        let indicatorWidth = windowIndicator.isHidden ? 0.0 : 22.0
+        title.frame = CGRect(x: 32, y: 8, width: max(0, titleWidth - indicatorWidth), height: 20)
+        windowIndicator.frame = CGRect(x: title.frame.maxX + 2, y: 8, width: 18, height: 18)
         offline.frame = CGRect(x: max(8, bounds.width - 100), y: isCollapsed ? 34 : 6, width: 92, height: 24)
         bypass.frame = CGRect(x: 8, y: 34, width: isCollapsed ? 76 : min(100, max(0, width - 140)), height: 24)
         for (index, button) in [left, right, copy, remove].enumerated() {

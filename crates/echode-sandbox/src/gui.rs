@@ -81,11 +81,18 @@ pub struct PluginActivity {
     /// The window was open when the relay arrived. Only then does a change
     /// without a gesture count as the user's edit (ADR 0132).
     pub window_open: bool,
+    /// Latest confirmed window lifetime, independent of visibility and of
+    /// whether an earlier relay arrived while the window was open.
+    pub window_state: Option<bool>,
 }
 
 impl PluginActivity {
     pub fn is_empty(&self) -> bool {
-        self.commands.is_empty() && self.relay.is_empty() && !self.dirty && !self.closed
+        self.commands.is_empty()
+            && self.relay.is_empty()
+            && !self.dirty
+            && !self.closed
+            && self.window_state.is_none()
     }
 
     pub fn merge(&mut self, later: Self) {
@@ -94,6 +101,7 @@ impl PluginActivity {
         self.dirty |= later.dirty;
         self.closed |= later.closed;
         self.window_open |= later.window_open;
+        self.window_state = later.window_state.or(self.window_state);
     }
 }
 
@@ -259,6 +267,7 @@ mod tests {
             closed: false,
             window_open: true,
             commands: vec![crate::PluginCommand::Playback],
+            window_state: Some(true),
         });
         assert_eq!(first.relay.events.len(), 4);
         assert_eq!(first.relay.values.len(), 1);
@@ -266,6 +275,17 @@ mod tests {
         assert!(first.relay.rescan && first.relay.lost && first.dirty && !first.closed);
         assert!(first.window_open);
         assert_eq!(first.commands, [crate::PluginCommand::Playback]);
+        assert_eq!(first.window_state, Some(true));
+        first.merge(PluginActivity {
+            window_state: Some(false),
+            ..PluginActivity::default()
+        });
+        first.merge(PluginActivity::default());
+        assert_eq!(first.window_state, Some(false));
+        assert!(
+            first.window_open,
+            "the earlier edit's context is independent"
+        );
         assert!(PluginActivity::default().is_empty());
     }
 }

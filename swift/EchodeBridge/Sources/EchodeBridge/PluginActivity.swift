@@ -38,18 +38,23 @@ public struct PluginActivity: Decodable, Sendable, Equatable {
     /// The plugin's window was open when these changes arrived. Only then is
     /// a change without a gesture the user's edit.
     public let windowOpen: Bool
+    /// Latest confirmed lifetime, not physical visibility. Nil means this
+    /// entry carries no lifecycle change; `windowOpen` describes past edits.
+    public let windowState: Bool?
 
     public init(device: UUID, events: [PluginParameterEvent] = [], values: [DeviceParameterValue] = [],
                 rescan: Bool = false, lost: Bool = false, dirty: Bool = false, closed: Bool = false,
-                windowOpen: Bool = false, commands: [String] = []) {
+                windowOpen: Bool = false, commands: [String] = [], windowState: Bool? = nil) {
         self.device = device; self.events = events; self.values = values
         self.rescan = rescan; self.lost = lost; self.dirty = dirty; self.closed = closed
         self.windowOpen = windowOpen
         self.commands = commands
+        self.windowState = windowState
     }
 
     enum CodingKeys: String, CodingKey {
         case device, commands, events, values, rescan, lost, dirty, closed, windowOpen = "window"
+        case windowState = "window_state"
     }
 }
 

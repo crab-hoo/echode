@@ -263,6 +263,18 @@ impl PluginControl {
 }
 
 impl ControlState {
+    /// Lifecycle notices share the activity stream's order, not the ordering
+    /// of a device reply and a later main-thread callback.
+    fn set_window_state(&mut self, open: bool) {
+        if self.window_open != open {
+            self.window_open = open;
+            self.activity
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .window_state = Some(open);
+        }
+    }
+
     /// Files a received message in arrival order. Activity goes to its own
     /// storage; a dirty notice stays for the background save and, while the
     /// window is open, also counts as a change the user made in the plugin.
@@ -270,8 +282,8 @@ impl ControlState {
     /// them, so a notice right behind the reply sees the new state.
     fn accept(&mut self, message: ControlMessage) {
         match &message {
-            ControlMessage::GuiShown(_) => self.window_open = true,
-            ControlMessage::GuiClosedReply => self.window_open = false,
+            ControlMessage::GuiShown(_) => self.set_window_state(true),
+            ControlMessage::GuiClosedReply => self.set_window_state(false),
             _ => {}
         }
         let note = match message {
@@ -286,7 +298,7 @@ impl ControlState {
                 ..PluginActivity::default()
             },
             ControlMessage::GuiClosed => {
-                self.window_open = false;
+                self.set_window_state(false);
                 PluginActivity {
                     closed: true,
                     ..PluginActivity::default()
@@ -507,8 +519,13 @@ impl ControlState {
                 Ok(None) => return Ok(()),
                 // The helper can close after a complete message. That EOF must
                 // not discard a reason already sitting in the inbox.
-                Err(_) if !self.inbox.is_empty() => return Ok(()),
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    self.set_window_state(false);
+                    if !self.inbox.is_empty() {
+                        return Ok(());
+                    }
+                    return Err(error.into());
+                }
             }
         }
     }
@@ -536,7 +553,10 @@ impl ControlState {
             {
                 Ok(message) => self.accept(message),
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    self.set_window_state(false);
+                    return Err(error.into());
+                }
             }
         }
     }
@@ -686,6 +706,7 @@ impl PluginHost {
         self.point_watch();
         {
             let mut control = self.control.lock();
+            control.set_window_state(false);
             control.inbox.clear();
             control.save_requested = false;
             control.dirty_again = false;

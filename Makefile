@@ -65,7 +65,7 @@ check-base:
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
-# Named behavioral tests (including device disclosure/drop targets, plugin windows/keys, tracks, FX, and samples) must run; ignored/deleted tests cannot pass.
+# Named behavioral tests (including device disclosure/drop targets, plugin window lifetimes/status/keys, tracks, FX, and samples) must run; ignored/deleted tests cannot pass.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

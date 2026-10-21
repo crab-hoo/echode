@@ -79,6 +79,7 @@ extension ProjectController {
         for task in pluginQuiet.values { task.cancel() }
         pluginQuiet = [:]
         pluginGestures = [:]
+        openPluginWindows = []
     }
 
     /// Applies what plugins did on their own. Values reach each device's list
@@ -90,7 +91,10 @@ extension ProjectController {
         guard self.documentID == documentID else { return }
         for entry in entries {
             let device = entry.device
-            guard tracks.contains(where: { track in deviceRows(on: track.id).contains { $0.id == device } }) else { continue }
+            guard tracks.contains(where: { track in deviceRows(on: track.id).contains { $0.id == device && !$0.offline } }) else { continue }
+            if let open = entry.windowState {
+                if open { openPluginWindows.insert(device) } else { openPluginWindows.remove(device) }
+            }
             if entry.windowOpen {
                 for name in entry.commands {
                     if let command = WorkspaceCommand(rawValue: name) { pluginCommand?(command) }

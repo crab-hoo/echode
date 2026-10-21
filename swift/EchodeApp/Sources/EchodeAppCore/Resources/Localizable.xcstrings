@@ -103,6 +103,12 @@
         "ja": { "stringUnit": { "state": "translated", "value": "オフライン" } }
       }
     },
+    "Plugin window open": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Plugin window open" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プラグインのウィンドウは開いています" } }
+      }
+    },
     "Open plugin window": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Open plugin window" } },

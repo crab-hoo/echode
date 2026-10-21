@@ -9,6 +9,8 @@ struct TrackDevice: Identifiable, Equatable {
     var offline = false
     /// CLAP parameter ids shown first in this device's list.
     var pinned: [UInt32] = []
+    /// Presentation only: a confirmed window lifetime, even while hidden.
+    var windowOpen = false
     var title: String { name ?? plugin }
 }
 

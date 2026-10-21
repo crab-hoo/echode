@@ -416,6 +416,12 @@ mod tests {
             !defers_saves(&activity),
             "a rescan or a closed window records nothing"
         );
+        activity.closed = false;
+        activity.window_state = Some(true);
+        assert!(
+            !defers_saves(&activity),
+            "a window lifetime is not a plugin edit"
+        );
         let value = ParamEvent {
             id: 1,
             kind: ParamEventKind::Value,

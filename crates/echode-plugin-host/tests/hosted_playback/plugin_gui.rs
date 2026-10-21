@@ -173,6 +173,42 @@ fn contract_loop_changes_keep_the_open_plugin_and_its_live_state() {
     let _ = std::fs::remove_file(socket);
 }
 
+#[test]
+fn restarting_a_helper_closes_its_window_lifetime_without_reopening_it() {
+    let socket = std::env::temp_dir().join(format!("echode-gui-restart-{}", std::process::id()));
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket).unwrap();
+    let fault = format!("gui:{}", socket.display());
+    let mut host = PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(plugin_dylib().as_path()),
+        plugin_id: Some("dev.echode.test-params"),
+        fault: Some(&fault),
+        workgroup: None,
+        fan_in: None,
+        // This layout is only the fixture's process buffer, not a product limit.
+        layout: SessionLayout {
+            max_frames: 64,
+            input_channels: 2,
+            output_channels: 2,
+            input_events: 4,
+            output_events: 1,
+        },
+        sample_rate: 48_000,
+    })
+    .unwrap();
+    let endpoint = host.control_handle();
+    endpoint.show_gui("window — Params").unwrap();
+    let mut window = Window::accept(&listener);
+    assert_eq!(window.lines(3), ["create", "parent", "show"]);
+    assert_eq!(endpoint.take_activity().unwrap().window_state, Some(true));
+    host.restart().unwrap();
+    assert_eq!(endpoint.take_activity().unwrap().window_state, Some(false));
+    assert!(endpoint.take_activity().is_none());
+    host.shutdown().unwrap();
+    let _ = std::fs::remove_file(socket);
+}
+
 /// Showing creates the helper's window and the plugin's view, raising an open
 /// window does not create another, and neither takes keyboard focus. Closing
 /// destroys the view; the plugin closing its window is reported once; the
@@ -187,6 +223,8 @@ fn contract_plugin_window_opens_and_raises_without_focus() {
     assert!(!opened.key, "a shown plugin window must not take focus");
     let mut window = Window::accept(&listener);
     assert_eq!(window.lines(3), ["create", "parent", "show"]);
+    let activity = collect(&mut control, device, |seen| seen.window_state.is_some());
+    assert_eq!(activity.window_state, Some(true));
 
     let raised = endpoint.show_gui("window — Params").unwrap();
     assert!(
@@ -200,6 +238,8 @@ fn contract_plugin_window_opens_and_raises_without_focus() {
     // Closing what is closed is not an error.
     endpoint.close_gui().unwrap();
 
+    let activity = collect(&mut control, device, |seen| seen.window_state.is_some());
+    assert_eq!(activity.window_state, Some(false));
     let reopened = endpoint.show_gui("window — Params").unwrap();
     assert!(reopened.created && !reopened.key, "{reopened:?}");
     let mut window = Window::accept(&listener);
@@ -208,6 +248,7 @@ fn contract_plugin_window_opens_and_raises_without_focus() {
     // The plugin closes its window itself. The parent hears it once.
     window.act("closed");
     let closed = collect(&mut control, device, |seen| seen.closed);
+    assert_eq!(closed.window_state, Some(false));
     assert!(closed.relay.is_empty() && !closed.dirty);
     assert_eq!(window.lines(2), ["hide", "destroy"]);
     assert!(control.take_plugin_activity().is_empty());

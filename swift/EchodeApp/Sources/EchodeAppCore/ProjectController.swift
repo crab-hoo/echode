@@ -68,6 +68,8 @@ public final class ProjectController {
     public internal(set) var parameterStates: [UUID: DeviceParameterState] = [:]
     /// Presentation only, keyed by device identity for this open document.
     public internal(set) var collapsedDevices: Set<UUID> = []
+    /// Confirmed helper window lifetimes. Never saved or restored by Undo.
+    public internal(set) var openPluginWindows: Set<UUID> = []
     /// Undo, Redo or a restored revision may load plugin bytes. A parameter
     /// drag waits for that instead of racing it; other edits do not.
     public private(set) var historyBusy = false
@@ -186,7 +188,7 @@ public final class ProjectController {
     func deviceRows(on track: UUID) -> [TrackDevice] {
         (snapshot?.devices(on: track) ?? []).map {
             TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed,
-                        offline: $0.offline, pinned: $0.pinned)
+                        offline: $0.offline, pinned: $0.pinned, windowOpen: openPluginWindows.contains($0.id))
         }
     }
 
@@ -519,7 +521,7 @@ public final class ProjectController {
         if selection != previous { noteFocus = nil; clipFocus = nil }
         if let noteFocus { self.noteFocus = snapshot.pianoNote(noteFocus)?.id }
         if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
-        if !parameterStates.isEmpty {
+        if !parameterStates.isEmpty || !openPluginWindows.isEmpty {
             // A removed or offline device has no running plugin to list.
             var running: Set<UUID> = []
             for track in 0..<snapshot.trackCount {
@@ -529,6 +531,7 @@ public final class ProjectController {
                     }
                 }
             }
+            openPluginWindows.formIntersection(running)
             for id in parameterStates.keys where !running.contains(id) { parameterStates[id] = nil }
             if let gesture = parameterGesture, !running.contains(gesture.device) { parameterGesture = nil }
         }

@@ -33,6 +33,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
   FX 追加ボタンは最後の列の右側に置き、空のチェインでも同じ位置から候補を開く。
   列とインスペクターの名前クリックで独自 GUI を開く（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。
+  開いている窓は名前の横のアイコンで示し、一時非表示と閉鎖を区別する。表示は文書内だけに保ち、保存・Undo に含めない
+  （[ADR 0138](../decisions/0138-plugin-window-status.md)）。
   列の開閉は文書内だけでデバイス ID ごとに保持し、保存・Undo・プラグイン通信を変更しない（[ADR 0137](../decisions/0137-device-disclosure.md)）。
   可変幅の累積を配置とドロップ判定に共有する。複数選択時の対象は未決である
   （[操作要件](../interaction-design.md#デバイスビューと-fx-一覧の役割)）。
