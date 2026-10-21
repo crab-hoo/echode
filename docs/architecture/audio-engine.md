@@ -26,6 +26,8 @@
   古い計画は制御スレッドが解放する（[ADR 0036](../decisions/0036-audio-handoff.md)）
 - Phase 1 の製品経路も再生計画と対応するプラグイン音声バッファを 1 つの更新として渡し、音声スレッドが排他所有する。
   容量変更は新領域の準備と音声側の採用を分ける（[ADR 0102](../decisions/0102-exclusive-audio-graph.md)）
+- 開いた出力の置換ヘルパー・共有領域は準備スレッドで作り、文書ワーカーは編集とトランスポートを続ける。
+  制御用カタログの受渡し・後続編集の集約・既存状態の保持は [ADR 0142](../decisions/0142-background-plugin-graph-preparation.md) を参照する。
 - `PlaybackControl::set_cached_tracks` で停止中に準備した平面を次の計画へ載せ、トラックのデバイス処理の代わりに読む。
   供給側の失効・レンダリング本体・再生中の切替は Phase 3（§7.8、[ADR 0108](../decisions/0108-phase1-loop-readiness.md)）
 - スケジューラはノードごとの依存カウンタで動き、残りのノードがどれも実行中のときだけ待つ

@@ -15,6 +15,9 @@ public struct AudioState: Decodable, Sendable, Equatable {
     public let playing: Bool
     public let running: Bool
     public let tick: Int64
+    /// Helpers and media are being prepared for the shared audio output.
+    /// Independent of transport intent and of each device's parameter reply.
+    public let opening: Bool
     public let selectedUID: String?
     public let activeDevice: OutputDevice?
     public let devices: [OutputDevice]
@@ -25,11 +28,11 @@ public struct AudioState: Decodable, Sendable, Equatable {
     /// The sample audition beside the project output, when one was ever requested.
     public let audition: AuditionStatus?
     public init() {
-        playing = false; running = false; tick = 0; selectedUID = nil; activeDevice = nil; devices = []; error = nil
+        playing = false; running = false; opening = false; tick = 0; selectedUID = nil; activeDevice = nil; devices = []; error = nil
         loopStart = nil; loopEnd = nil; metronome = false; audition = nil
     }
     enum CodingKeys: String, CodingKey {
-        case playing, running, tick, devices, error, metronome, audition, selectedUID = "selected_uid", activeDevice = "active_device"
+        case playing, running, opening, tick, devices, error, metronome, audition, selectedUID = "selected_uid", activeDevice = "active_device"
         case loopStart = "loop_start", loopEnd = "loop_end"
     }
 }

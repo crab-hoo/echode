@@ -27,6 +27,9 @@ use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
 use crate::{PlaybackError, PlaybackIds, PlayedSpan, TrackFader};
 
+#[path = "playback_preparation.rs"]
+mod preparation;
+use preparation::GraphPreparation;
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
 pub trait ClockSource: Send {
@@ -1124,6 +1127,8 @@ pub struct PlaybackControl {
     command_revision: u64,
     held: Option<Pending>,
     hosts: HostGraph,
+    background: bool,
+    preparing: Option<GraphPreparation>,
     preparation_error: Option<PlaybackError>,
     published_plan: u64,
     chain: Vec<TrackChain>,
@@ -1309,6 +1314,8 @@ pub fn playback_with_clock(
         command_revision: 0,
         held: None,
         hosts: HostGraph::empty(),
+        background: false,
+        preparing: None,
         preparation_error: None,
         published_plan: 0,
         chain: Vec::new(),
@@ -1375,9 +1382,22 @@ pub fn playback_with_clock(
 }
 
 impl PlaybackControl {
+    /// Prepares replacement plugin graphs away from the caller. Initial output
+    /// preparation and offline rendering keep their synchronous path.
+    pub fn prepare_in_background(&mut self) {
+        self.background = true;
+    }
+
+    /// A replacement's helper catalog is being prepared, or waiting to publish.
+    pub fn preparing_graph(&self) -> bool {
+        self.preparing.is_some() || self.held.is_some()
+    }
+
     /// Declared finite device tails summed through each chain, before the fader.
     pub fn tail_samples(&self) -> u32 {
-        self.hosts.tail_samples()
+        self.preparing
+            .as_ref()
+            .map_or_else(|| self.hosts.tail_samples(), |job| job.tail_samples)
     }
 
     pub fn set_routes(&mut self, host_bin: &std::path::Path, routes: &[PluginRoute]) {
@@ -1478,7 +1498,10 @@ impl PlaybackControl {
 
     /// Event slots reserved on each live plugin track.
     pub fn plugin_event_caps(&self) -> Vec<usize> {
-        self.hosts.track_event_caps()
+        self.preparing.as_ref().map_or_else(
+            || self.hosts.track_event_caps(),
+            |job| job.event_caps.clone(),
+        )
     }
 
     pub fn preview_fader(&mut self, track: u128, gain: f32, pan: f32) -> Result<(), PlaybackError> {
@@ -1544,7 +1567,11 @@ impl PlaybackControl {
             || self
                 .held
                 .as_ref()
-                .is_some_and(|pending| pending.restore_states);
+                .is_some_and(|pending| pending.restore_states)
+            || self
+                .preparing
+                .as_ref()
+                .is_some_and(|job| job.restore_states);
         self.held = Some(Pending {
             prepared: Box::new(prepared),
             chain,
@@ -1560,6 +1587,22 @@ impl PlaybackControl {
     }
 
     fn publish_pending(&mut self) -> Result<(), PlaybackError> {
+        if let Some(job) = &mut self.preparing {
+            let Some(result) = job.poll() else {
+                return Ok(());
+            };
+            self.preparing = None;
+            let (hosts, pending, result) = result?;
+            self.hosts = hosts;
+            if let Err(error) = result {
+                self.held = None;
+                self.status
+                    .requested_plan
+                    .store(self.published_plan, Ordering::Release);
+                return Err(error);
+            }
+            self.publish_graph(pending)?;
+        }
         if self.plans.slots() == 0 {
             return Ok(());
         }
@@ -1570,6 +1613,18 @@ impl PlaybackControl {
             return Ok(());
         }
         let pending = self.held.take().ok_or(PlaybackError::Plugin)?;
+        if self.background && !self.host_bin.as_os_str().is_empty() {
+            let hosts = std::mem::replace(&mut self.hosts, HostGraph::empty());
+            self.preparing = Some(GraphPreparation::begin(
+                hosts,
+                pending,
+                self.host_bin.clone(),
+                self.frames,
+                self.rate,
+                self.workgroup.clone(),
+            )?);
+            return Ok(());
+        }
         if !self.host_bin.as_os_str().is_empty() {
             self.hosts.take_restarts();
             let checkpoint = self.hosts.preparation_checkpoint();
@@ -1578,6 +1633,7 @@ impl PlaybackControl {
                 crate::plugins::ReconcileRoutes {
                     entries: &pending.routes,
                     restore_states: pending.restore_states,
+                    preserve: &[],
                 },
                 &pending.chain,
                 self.frames,
@@ -1592,6 +1648,11 @@ impl PlaybackControl {
             }
             self.save_controls = self.hosts.save_controls();
         }
+        self.publish_graph(pending)
+    }
+
+    fn publish_graph(&mut self, pending: Pending) -> Result<(), PlaybackError> {
+        self.save_controls = self.hosts.save_controls();
         self.chain = pending.chain;
         let update = Update {
             prepared: pending.prepared,

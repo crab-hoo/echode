@@ -67,6 +67,12 @@
         "ja": { "stringUnit": { "state": "translated", "value": "パラメーター" } }
       }
     },
+    "Preparing audio output": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Preparing audio output…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "音声出力を準備中…" } }
+      }
+    },
     "Loading parameters": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Loading parameters…" } },

@@ -174,6 +174,9 @@ pub(crate) struct PreparationCheckpoint(Vec<(Arc<Instance>, bool)>);
 pub(crate) struct ReconcileRoutes<'a> {
     pub entries: &'a [PluginRoute],
     pub restore_states: bool,
+    /// Devices whose state matched at submission. Later live edits to those
+    /// helpers must not turn an unrelated preparation into a stale reload.
+    pub preserve: &'a [u128],
 }
 
 impl Instance {
@@ -543,6 +546,29 @@ impl HostGraph {
             .unwrap_or(0)
     }
 
+    /// Devices whose recorded states still matched when a graph was submitted.
+    pub(crate) fn matching_states(
+        &self,
+        chains: &[TrackChain],
+        routes: &[PluginRoute],
+    ) -> Vec<u128> {
+        let mut used = vec![false; routes.len()];
+        chains
+            .iter()
+            .flat_map(|chain| &chain.devices)
+            .filter_map(|device| {
+                let incoming = take_route(routes, &mut used, &device.clap_id)
+                    .and_then(|route| route.state.as_ref());
+                let stage = self
+                    .tracks
+                    .iter()
+                    .flat_map(|track| &track.stages)
+                    .find(|stage| stage.device == device.id && stage.clap_id == device.clap_id)?;
+                (stage.instance.control.applied_state().as_ref() == incoming).then_some(device.id)
+            })
+            .collect()
+    }
+
     /// Spawns a helper for every resolved device. An unknown id is skipped.
     /// A helper that fails to start is skipped too, so one missing plugin does
     /// not stop the other tracks.
@@ -560,6 +586,7 @@ impl HostGraph {
             ReconcileRoutes {
                 entries: routes,
                 restore_states: true,
+                preserve: &[],
             },
             chains,
             frames,
@@ -631,6 +658,7 @@ impl HostGraph {
                     let incoming = unused_route(routes, &used, &device.clap_id)
                         .and_then(|route| route.state.clone());
                     if selection.restore_states
+                        && !selection.preserve.contains(&device.id)
                         && kept[index].instance.control.applied_state() != incoming
                     {
                         // State changed. Leave the old process in `kept` so it is

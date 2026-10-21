@@ -224,6 +224,7 @@ impl OutputStream {
     pub(crate) fn start(claim: Claim, prepared: Prepared, start: Start) -> Result<Self, String> {
         let mut value = Self::assemble(claim, prepared, start);
         value.register()?;
+        value.prepare_in_background();
         Ok(value)
     }
 
@@ -258,6 +259,25 @@ impl OutputStream {
         Ok(())
     }
 
+    /// Initial installation has sent all changes before callbacks can start.
+    /// Later replacement helpers may prepare while this output keeps running.
+    pub(crate) fn prepare_in_background(&mut self) {
+        self.control.prepare_in_background();
+    }
+    /// Tests can exercise unresolved-device graph publication even when a
+    /// sanitizer's build directory has no installed helper executable.
+    #[cfg(test)]
+    pub(crate) fn set_test_plugin_routes(
+        &mut self,
+        host: &std::path::Path,
+        routes: &[PluginRoute],
+    ) {
+        self.control.set_routes(host, routes);
+    }
+
+    pub(crate) fn preparing_graph(&self) -> bool {
+        self.control.preparing_graph()
+    }
     /// The stream with its callback built but not registered with HAL.
     pub(crate) fn assemble(claim: Claim, prepared: Prepared, start: Start) -> Self {
         let Claim {
@@ -418,7 +438,8 @@ impl OutputStream {
                 (Some(_), None) => Err("plugin state has no package".into()),
             }
         };
-        if self.control.restore_recorded_states(devices, recorded) {
+        let replace = self.control.restore_recorded_states(devices, recorded);
+        if self.control.preparing_graph() || replace {
             self.replace(project)
         } else {
             Ok(())

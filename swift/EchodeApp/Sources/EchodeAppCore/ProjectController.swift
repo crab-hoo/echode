@@ -47,7 +47,11 @@ public final class ProjectController {
     @ObservationIgnored private var previewTask: Task<Void, Never>?
     @ObservationIgnored private var previewFinishing = false
     @ObservationIgnored private var previewFinishTask: Task<Void, Never>?
-    public private(set) var audio = AudioState()
+    public private(set) var audio = AudioState() {
+        didSet { if outputOpening != audio.opening { outputOpening = audio.opening } }
+    }
+    /// Observed separately so position polls do not rebuild the device strip.
+    public private(set) var outputOpening = false
     public private(set) var audioBusy = false
     /// Loop bounds in beats. Transport state, not part of the project.
     public var loopStartBeat = 0.0

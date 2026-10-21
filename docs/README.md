@@ -44,6 +44,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 実機計測の完走条件: [ADR 0096](decisions/0096-measurement-completion.md)。
 - 文書ワーカーから独立したサンプルの単発試聴・専用 IOProc: [ADR 0135](decisions/0135-sample-audition.md)。
 - 出力とヘルパーの準備を文書ワーカーの外で行う・機器なしの検査用出力: [ADR 0136](decisions/0136-output-opening-off-worker.md)。
+- 開いた出力の置換ヘルパー・共有領域の準備と後続編集の集約: [ADR 0142](decisions/0142-background-plugin-graph-preparation.md)。
 
 ### 3. プラグイン隔離・サンドボックス・Workgroup
 
@@ -62,6 +63,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 
+- デバイス列での初回出力準備と一覧の応答待ちの区別: [ADR 0141](decisions/0141-device-output-preparation-status.md)。
 - パラメーター一覧の失敗からの列内の再試行・連打の集約: [ADR 0140](decisions/0140-device-parameter-list-retry.md)。
 - 独自ウィンドウの寿命通知と、デバイス列・インスペクターの窓アイコン: [ADR 0138](decisions/0138-plugin-window-status.md)。
 - トラックヘッダの名前と FX 追加入口・残りのチェインのメニュー: [ADR 0139](decisions/0139-track-header-fx-names.md)。

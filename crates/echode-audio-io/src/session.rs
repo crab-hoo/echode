@@ -73,8 +73,9 @@ pub struct AudioState {
 /// A device view's way to its running plugin.
 pub enum DeviceAccess {
     Ready(PluginControl),
-    /// The output is opening. Ask [`Session::opened_device_control`] once
-    /// [`Session::opening`] is false; asking again does not open twice.
+    /// Initial output or replacement helpers are being prepared. Ask
+    /// [`Session::opened_device_control`] once [`Session::opening`] is false;
+    /// asking again does not open twice.
     Opening,
 }
 
@@ -394,7 +395,11 @@ impl Session {
     /// the current position. Helpers start on another thread meanwhile.
     pub fn device_control(&mut self, device: echode_model::Id) -> Result<DeviceAccess, String> {
         if let Some(stream) = &self.stream {
-            return stream.device_control(device.raw()).map(DeviceAccess::Ready);
+            return match stream.device_control(device.raw()) {
+                Ok(control) => Ok(DeviceAccess::Ready(control)),
+                Err(_) if stream.preparing_graph() => Ok(DeviceAccess::Opening),
+                Err(error) => Err(error),
+            };
         }
         if self.opening.is_none() {
             if !self
@@ -421,9 +426,13 @@ impl Session {
         }
     }
 
-    /// True while helpers and media are prepared for the output.
+    /// True while initial output or replacement helpers are being prepared.
     pub fn opening(&self) -> bool {
         self.opening.is_some()
+            || self
+                .stream
+                .as_ref()
+                .is_some_and(OutputStream::preparing_graph)
     }
 
     /// For a request that waited on [`DeviceAccess::Opening`]: the helper
@@ -698,6 +707,7 @@ impl Session {
         }
         stream.acknowledge_configuration(self.observed_epoch);
         self.outputs.register(stream)?;
+        stream.prepare_in_background();
         self.error = None;
         Ok(())
     }

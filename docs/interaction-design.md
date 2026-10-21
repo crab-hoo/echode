@@ -352,7 +352,9 @@ GUI の応答性と編集継続は P2 のデバイス表示・読込みから守
   （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
   2026-10-20 の選択時の停止とパラメーター画面の重さは機器なしで再現して対応し、実機での解消はユーザー確認待ちである。
   停止中の最初の表示・再生での出力とヘルパーの準備は文書ワーカーの外で行う（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
-  出力を開いた後に新しいヘルパーが必要な編集は、まだワーカーで起動を待つ。診断は [デバッグ手順](debugging.md#ui描画入力履歴mcp) を参照する。
+  開いた出力の置換ヘルパーもワーカー外で準備する（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+  素材と保存済み状態の読込み、初回導入時の差分による追加と終了時の初期化待ちは残る。
+  診断は [デバッグ手順](debugging.md#ui描画入力履歴mcp) を参照する。
 
 ## 実装へ進む時の受入と基盤の保守
 

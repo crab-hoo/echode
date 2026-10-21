@@ -64,6 +64,17 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(contract["test"], "contract_preparing_a_graph_keeps_current_audio_running_under_rtsan")
         self.assertIn("return Ok(())", contract["negative_control"]["new"])
 
+    def test_background_graph_uses_held_real_helpers_and_audio_checks(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "background-graph")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-plugin-host", ["--test", "hosted_playback"]))
+        self.assertTrue(contract["test"].startswith("background_graph::contract_"))
+        self.assertIn("self.background = false", contract["negative_control"]["new"])
+        for path in ("crates/echode-engine/src/playback_preparation.rs",
+                     "crates/echode-engine/src/playback_preparation_tests.rs",
+                     "crates/echode-plugin-host/tests/hosted_playback/background_graph.rs"):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+
     def test_stop_contract_checks_an_oscillating_waveform_and_cancellation_at_both_gates(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         self.assertEqual(contracts["transport-declick"]["test"], "stream::tests::contract_stop_preserves_waveform_while_fading_under_rtsan")
@@ -151,6 +162,17 @@ class PolicyTests(unittest.TestCase):
         for path in ("swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceDeviceView.swift",
                      "swift/EchodeApp/Tests/EchodeAppTests/DeviceParameterRetryTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+
+    def test_device_preparation_keeps_status_and_native_column_checks(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "device-preparation-ui")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "DevicePreparationTests"))
+        self.assertIn("outputOpening: outputOpening", contract["negative_control"]["old"])
+        for path in ("swift/EchodeBridge/Sources/EchodeBridge/Audio.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceDeviceView.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/DevicePreparationTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
 
@@ -414,7 +436,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "fx-header-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
-                          "device-list-retry-ui", "output-opening", "output-opening-worker"})
+                          "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]

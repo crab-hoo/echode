@@ -2,6 +2,8 @@ use super::*;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[path = "playback_preparation_tests.rs"]
+mod background;
 fn placed(track: u128, start: i64, value: f32, frames: usize) -> LoadedClip {
     LoadedClip {
         track,

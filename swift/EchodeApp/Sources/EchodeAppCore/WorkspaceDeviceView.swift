@@ -24,7 +24,7 @@ struct WorkspaceDeviceView: View {
                 })
                 VStack(spacing: 0) {
                     DeviceStripCanvas(controller: controller, devices: devices, track: track, document: document,
-                                      states: states, busy: controller.busy, locked: controller.historyBusy,
+                                      states: states, busy: controller.busy, locked: controller.historyBusy, outputOpening: controller.outputOpening,
                                       collapsed: controller.collapsedDevices,
                                       changes: devices.map { states[$0.id].map(DeviceListChange.init) }, add: add)
                     Text(text("FX chain gesture help")).font(.caption).foregroundStyle(.secondary).padding(6)
@@ -66,6 +66,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
     let states: [UUID: DeviceParameterState]
     let busy: Bool
     let locked: Bool
+    let outputOpening: Bool
     let collapsed: Set<UUID>
     let changes: [DeviceListChange?]
     let add: () -> Void
@@ -95,7 +96,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         strip.onStep = { device, id, value in Task { await controller.setParameter(id, device: device, value: value) } }
         strip.onPin = { device, id, pinned in Task { await controller.setPinned(id, device: device, pinned: pinned, documentID: document) } }
         strip.onRetry = { device in controller.retryParameters(device, documentID: document) }
-        strip.configure(devices: devices, track: track, document: document, busy: busy, locked: locked, states: states, collapsed: collapsed)
+        strip.configure(devices: devices, track: track, document: document, busy: busy, locked: locked, states: states, outputOpening: outputOpening, collapsed: collapsed)
         view.needsLayout = true
     }
 }
@@ -158,7 +159,7 @@ final class DeviceStripView: NSView {
 
     /// Keeps the column of a device that stays, with its list and scroll position.
     func configure(devices: [TrackDevice], track: UUID, document: UUID, busy: Bool,
-                   locked: Bool = false, states: [UUID: DeviceParameterState] = [:], collapsed: Set<UUID> = []) {
+                   locked: Bool = false, states: [UUID: DeviceParameterState] = [:], outputOpening: Bool = false, collapsed: Set<UUID> = []) {
         if self.document != document { cache = [:] }
         self.devices = devices; self.track = track; self.document = document; self.busy = busy
         addButton.isEnabled = !busy
@@ -192,7 +193,7 @@ final class DeviceStripView: NSView {
             column.list.onPin = { [weak self] id, pinned in self?.onPin?(device.id, id, pinned) }
             column.onRetry = { [weak self] in self?.onRetry?(device.id) }
             column.configure(device: device, first: index == 0, last: index + 1 == devices.count,
-                             busy: busy, locked: locked, collapsed: collapsed.contains(device.id), state: states[device.id])
+                             busy: busy, locked: locked, outputOpening: outputOpening, collapsed: collapsed.contains(device.id), state: states[device.id])
             next.append(column)
         }
         let kept = Set(next.map(ObjectIdentifier.init))
@@ -270,6 +271,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     var onLeft: (() -> Void)?, onRight: (() -> Void)?, onCopy: (() -> Void)?
     /// A click on the name, without a drag, opens the plugin's own window.
     var onOpenWindow: (() -> Void)?
+    private var outputOpening = false
     var onCollapse: ((Bool) -> Void)?
     var onRetry: (() -> Void)?
     override var isFlipped: Bool { true }
@@ -321,10 +323,11 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(device: TrackDevice, first: Bool, last: Bool, busy: Bool, locked: Bool, collapsed: Bool = false, state: DeviceParameterState?) {
+    func configure(device: TrackDevice, first: Bool, last: Bool, busy: Bool, locked: Bool, outputOpening: Bool = false, collapsed: Bool = false, state: DeviceParameterState?) {
         self.device = device
         self.state = state
         self.locked = locked
+        self.outputOpening = outputOpening
         self.first = first; self.last = last
         disclosure.isEnabled = !busy
         if collapsed, let window, let responder = window.firstResponder as? NSView,
@@ -368,13 +371,14 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         } else if let state, let error = state.error {
             error
         } else if state == nil || state?.loading == true {
-            text("Loading parameters")
+            text(outputOpening ? "Preparing audio output" : "Loading parameters")
         } else if state?.parameters.isEmpty == true {
             text("No editable parameters")
         } else {
             nil
         }
         message.stringValue = note ?? ""
+        message.setAccessibilityLabel(note.map { $0 + " " + device.title })
         retry.isHidden = isCollapsed || device.offline || state?.error == nil || state?.loading == true
         retry.isEnabled = !busy && !retry.isHidden
         retry.setAccessibilityLabel(text("Retry parameters") + " " + device.title)
@@ -411,7 +415,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     @objc private func toggleDisclosure() {
         guard dragEnabled else { return }
         configure(device: device, first: first, last: last,
-                  busy: false, locked: locked, collapsed: !isCollapsed, state: state)
+                  busy: false, locked: locked, outputOpening: outputOpening, collapsed: !isCollapsed, state: state)
         onCollapse?(isCollapsed)
     }
 

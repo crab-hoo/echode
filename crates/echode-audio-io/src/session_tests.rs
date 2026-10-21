@@ -256,7 +256,7 @@ fn audio_tracks_sound(session: &mut Session) {
 
 fn until_opened(session: &mut Session) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while session.opening() {
+    while session.state().opening {
         assert!(
             std::time::Instant::now() < deadline,
             "the output never opened"
@@ -408,5 +408,65 @@ fn a_failed_opening_reports_its_error_and_is_not_retried_by_service() {
         session.service();
     }
     assert!(!session.opening() && session.stream.is_none());
+    assert_eq!(output.prepared(), 1);
+}
+
+#[test]
+fn retained_output_replacements_wait_for_new_devices_without_reopening() {
+    let (base, track) = Project::new().add_track("audio");
+    let mut session = Session::new(Arc::new(base.clone()));
+    audio_tracks_sound(&mut session);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    session.perform(AudioCommand::Play).unwrap();
+    until_opened(&mut session);
+    assert!(pumped_peak(&mut session, 8) > 0.1);
+    // This route has no plugin and can never load this executable. It only
+    // selects graph preparation when sanitizer builds have no helper binary.
+    session
+        .stream
+        .as_mut()
+        .unwrap()
+        .set_test_plugin_routes(&std::env::current_exe().unwrap(), &[]);
+    let device = echode_model::Id::generate();
+    let changed = base
+        .add_clap_device(track, device, "org.example.fx")
+        .unwrap();
+    session.update(Arc::new(changed));
+    assert!(
+        session.opening(),
+        "replacement preparation was not asynchronous"
+    );
+    assert!(
+        !session.state().opening,
+        "an open output is not opening again"
+    );
+    assert!(session.state().pending_plan);
+    assert!(matches!(
+        session.device_control(device),
+        Ok(DeviceAccess::Opening)
+    ));
+    // Undo and loop changes coalesce while a bank is being prepared.
+    session.update(Arc::new(base));
+    session
+        .perform(AudioCommand::Loop {
+            start: Some(0),
+            end: Some(705_600),
+        })
+        .unwrap();
+    session.perform(AudioCommand::Stop).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while session.opening() || session.state().pending_plan {
+        pumped_peak(&mut session, 1);
+        assert!(
+            session.state().error.is_none(),
+            "{:?}",
+            session.state().error
+        );
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(!session.state().playing);
+    assert!(session.opened_device_control(device).is_err());
     assert_eq!(output.prepared(), 1);
 }

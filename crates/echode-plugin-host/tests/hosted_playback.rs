@@ -9,6 +9,8 @@ use echode_sandbox::{PluginHost, PluginNotice, SessionLayout, SpawnOptions};
 use echode_engine::{LoadedClip, PlaybackCommand, PluginRoute, tick_to_sample};
 use echode_model::{AudioRef, Id, NoteDraft, NoteGeometry, Project, Tick};
 
+#[path = "hosted_playback/background_graph.rs"]
+mod background_graph;
 #[path = "hosted_playback/device_offline.rs"]
 mod device_offline;
 #[path = "hosted_playback/device_params.rs"]

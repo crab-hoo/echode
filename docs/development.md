@@ -112,6 +112,8 @@ FFI は `crates/echode-ffi/src/device.rs`（検査・往復・記録）と `lane
 FFI の入口を `echode_document_audition`、画面の選択の扱いを `SampleAudition.swift` に置く。
 最初の出力準備は `crates/echode-audio-io/src/opening.rs`（`Outputs`・`Opening`・`HeadlessOutput`）と `session.rs` の `install`、
 準備を待つデバイス要求の順序は `crates/echode-ffi/src/queue.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
+開いた出力の置換グラフの準備スレッドと回収は `crates/echode-engine/src/playback_preparation.rs`、
+要求の集約と公開は `playback.rs` の `publish_pending` に置く（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
 
 ### ビルド対象の CPU・OS 基準
 

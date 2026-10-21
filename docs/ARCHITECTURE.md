@@ -174,6 +174,7 @@ I/O スレッド、Audio Workgroup 参加ワーカー、先読みワーカー、
 ### 7.2 グラフ
 
 ロックフリーキューによる実行計画差し替え（[ADR 0036](decisions/0036-audio-handoff.md)）と音声スレッドの排他所有（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）を行う。
+開いた出力の置換ヘルパーは文書ワーカー外で準備する（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
 
 ### 7.3 レイテンシ補正（PDC）
 
@@ -257,6 +258,7 @@ CLAP（`clack-host`）、VST3、AU の共通インターフェース（AUv3 は�
 列の開閉は文書内の表示設定として保持し、音・保存・Undo を変えない（[ADR 0137](decisions/0137-device-disclosure.md)）。
 独自ウィンドウの寿命は活動の編集時の状態と分け、デバイス列・インスペクターの名前の横へ窓アイコンで表示する（[ADR 0138](decisions/0138-plugin-window-status.md)）。
 ヘッダは先頭名と残りのチェインのメニューから独自 GUI を開き、FX 追加ボタンとは入口を分ける（[ADR 0139](decisions/0139-track-header-fx-names.md)）。
+初回の出力準備と一覧の応答待ちの表示は [ADR 0141](decisions/0141-device-output-preparation-status.md) で区別する。
 
 ### 9.6 スキャンとプラグインブラウザ
 

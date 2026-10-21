@@ -42,7 +42,7 @@ struct TransportRequestTests {
             #expect(!controller.playbackRequested)
             #expect(controller.audioBusy) // the old load is still in flight
             let latePlay = try JSONDecoder().decode(AudioState.self, from: Data("""
-                {"playing":true,"running":true,"tick":123,"devices":[],"metronome":false}
+                {"playing":true,"running":true,"opening":false,"tick":123,"devices":[],"metronome":false}
                 """.utf8))
             await reply.finish(latePlay)
             await play.value

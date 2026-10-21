@@ -16,7 +16,7 @@ struct PluginWindowTests {
             sent.continuation.yield(command)
             let playing = if case .play = command { true } else { false }
             return try JSONDecoder().decode(AudioState.self, from: Data("""
-                {"playing":\(playing),"running":true,"tick":0,"devices":[],"metronome":false}
+                {"playing":\(playing),"running":true,"opening":false,"tick":0,"devices":[],"metronome":false}
                 """.utf8))
         })
         defer { try? FileManager.default.removeItem(at: url) }

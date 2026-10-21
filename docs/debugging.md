@@ -135,16 +135,25 @@ make debug-report
   `ProjectController.busy` の完了時の値だけでは短い暗転を見落とす。`device-edit-enabled-ui` で操作中の全遷移を観測する。
   `EditTurn.busy` は編集待ち行列の状態、画面の `busy` は作成・交換・終了の明示的な排他だけである。
   排他の既定値を通常編集へ広げていないか、各ビューが個別の `historyBusy` と全体の `busy` を取り違えていないか確認する。
-  出力を開いた後の FX 追加で新しいヘルパーの起動を待つ制約とは別の経路である（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+  FX 追加での素材・保存済み状態の読込みや、同一ヘルパーの状態復元を待つ経路とは別である（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - **プラグイン付きトラックの選択が止まる・パラメーター画面が重い**:
   2026-10-20 のユーザー報告は「選択のたび」と「汎用パラメーター画面」の 2 症状であり、独自プラグイン GUI の問題ではない。
   機器なしで、旧欄の全行一括生成（800 個で約 0.68 秒）と再選択での作り直し、文書ワーカー上の応答待ちを再現し、対応した
   （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
   再発時は、プラグイン名・版・パラメータ数、再生状態、下部の表示、初回と再選択、停止時間、入力全体が固まるか操作が無効表示になるかを区別する。
   初回だけ一覧が遅いなら、音声状態の `opening` を見る。真の間に編集・Undo が終わるなら、出力の準備（ヘルパー起動・素材）の時間である。
+  未取得の列の「音声出力を準備中」は同じ `opening` の表示であり、個別プラグインの進捗率ではない。
+  出力の準備が終わっても一覧が来なければ「パラメーターを読み込み中」へ戻る。失敗とオフラインは待機表示より優先する。
+  状態と列の表示が食い違う場合は `device-preparation-ui` と `DevicePreparationTests` を使う（[ADR 0141](decisions/0141-device-output-preparation-status.md)）。
   `opening` の間に編集も終わらないなら、ワーカーが準備を待っている。`output-opening-worker` を実行して手番を確かめる。
   導入後に位置・ループ・追加したトラックが反映されないなら `output-opening` で導入時の差分を確かめる（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
-  FX の追加・オフライン解除で止まるなら、開いた出力への `replace` がワーカー上で新しいヘルパーを起動する待ちである（残る制約）。
+  開いた出力で FX を追加した時は `pending_plan` を見る。新しいヘルパーの初期化と共有領域の準備は `echode-graph-prepare` が待つ。
+  その間の編集と停止は `background-graph`、導入後のデバイス要求の待ちは Session の機器なし回帰で区別する。
+  状態の復元やループ変更の後で既存ヘルパーが再生成されるなら、投入時の状態一致の保持と次の `Pending` の経路を確認する。
+  `opening` が偽でも `pending_plan` は真になり得る。置換専用の列の表示は未接続である。
+  素材・保存済み状態の読込みや初回導入時の差分は同期のままなので、ヘルパー初期化の待ちと分ける
+  （[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+  機器なしの出力は計画の採用に検査側の `pump` が必要である。初回の準備だけを待つ時に `Session.opening()` の全置換待ちを使わない。
   毎回止まるなら、`DeviceParameterListView.visibleRows` の数と `table.numberOfRows` を比べ、全行を作っていないかを確認する。
   列が作り直されているなら `DeviceStripView` の列の保持（文書の切替でだけ捨てる）を確認する。
   値の往復で止まるなら、`device-lane-held` を実行し、背景保存の確認と適用済み状態の読取りが通信中の制御端点を待っていないか確かめる。
