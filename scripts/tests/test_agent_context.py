@@ -131,7 +131,10 @@ class ContextTests(unittest.TestCase):
         policy = context.verify.load_policy(ROOT)
         self.assertEqual(set(context.AREA_GUIDES), set(policy["areas"]))
         automatic = {check["id"] for check in policy["checks"] if check["mode"] == "automatic"}
-        self.assertTrue(automatic.issubset(context.verify.select_checks(policy, ["scripts/agent_context.py"])))
+        self.assertTrue(automatic.issubset(context.verify.select_checks(policy, ["scripts/verify.py"])))
+        # The context tool is tested by check-verification; it does not change any check's evidence.
+        always = {check["id"] for check in policy["checks"] if check.get("always")}
+        self.assertEqual(set(context.verify.select_checks(policy, ["scripts/agent_context.py"])), always)
         for name in set(context.COMMON_GUIDES) | {name for paths in context.AREA_GUIDES.values() for name in paths}:
             self.assertTrue((ROOT / name).is_file(), name)
 

@@ -278,6 +278,17 @@ impl OutputStream {
     pub(crate) fn preparing_graph(&self) -> bool {
         self.control.preparing_graph()
     }
+
+    /// While `enabled`, a replacement needing new media decodes and converts it
+    /// on another thread (ADR 0147). The session enables it while stopped.
+    pub(crate) fn load_media_in_background(&mut self, enabled: bool) {
+        self.control.load_media_in_background(enabled);
+    }
+
+    /// The newest replacement's media has not reached the callback's queue.
+    pub(crate) fn loading_media(&self) -> bool {
+        self.control.loading_media()
+    }
     /// The stream with its callback built but not registered with HAL.
     pub(crate) fn assemble(claim: Claim, prepared: Prepared, start: Start) -> Self {
         let Claim {

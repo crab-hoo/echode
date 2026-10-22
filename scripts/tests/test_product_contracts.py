@@ -1,10 +1,16 @@
 """A green process exit must also prove the required regression ran."""
 
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import errno
+import io
+import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -14,36 +20,332 @@ contracts = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(contracts)
 
 
+def git_repository(root):
+    # Untracked, non-ignored files are sources too; the fixture needs no commit.
+    subprocess.run(["git", "init", "--quiet"], cwd=root, check=True)
+    (root / ".gitignore").write_text("/target\n")
+
+
 class ContractEvidenceTests(unittest.TestCase):
-    def test_source_copy_retries_metadata_created_during_cleanup(self):
+    def test_removal_retries_metadata_created_during_cleanup(self):
         remove = contracts.shutil.rmtree
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "target").mkdir()
+            folder = Path(directory) / "copy"
+            folder.mkdir()
             def metadata_race(path):
                 if not (path / ".DS_Store").exists():
                     (path / ".DS_Store").write_bytes(b"metadata")
                     raise OSError(errno.ENOTEMPTY, "Directory not empty", str(path))
                 remove(path)
             with patch.object(contracts.shutil, "rmtree", side_effect=metadata_race) as cleanup:
-                with contracts.source_copy(root) as checkout:
-                    self.assertTrue(checkout.is_relative_to(root / "target"))
-                    self.assertTrue(checkout.name.startswith(".product-contracts-"))
-                self.assertEqual(cleanup.call_count, 2)
-                self.assertFalse(checkout.exists())
+                contracts.remove_path(folder)
+            self.assertEqual(cleanup.call_count, 2)
+            self.assertFalse(folder.exists())
 
-    def test_source_copy_does_not_hide_cleanup_failures(self):
+    def test_removal_does_not_hide_cleanup_failures(self):
         for code, attempts in ((errno.ENOTEMPTY, 3), (errno.EACCES, 1)):
             with self.subTest(errno=code), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                (root / "target").mkdir()
+                folder = Path(directory) / "copy"
+                folder.mkdir()
                 error = OSError(code, "cleanup failed")
                 with patch.object(contracts.shutil, "rmtree", side_effect=error) as cleanup:
                     with self.assertRaises(OSError) as raised:
-                        with contracts.source_copy(root):
-                            pass
+                        contracts.remove_path(folder)
                     self.assertIs(raised.exception, error)
                     self.assertEqual(cleanup.call_count, attempts)
+
+    def test_persistent_copy_keeps_unchanged_times_and_renews_every_changed_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            (root / "src/nested").mkdir(parents=True)
+            git_repository(root)
+            (root / "src/a.rs").write_text("a\n")
+            (root / "src/b.swift").write_text("b\n")
+            (root / "src/nested/c.txt").write_text("c\n")
+            (root / "src/link.rs").symlink_to("a.rs")
+            (root / contracts.HEADER).parent.mkdir(parents=True)
+            (root / contracts.HEADER).write_text("header\n")
+            (root / "target/debug").mkdir(parents=True)
+            checkout = Path(directory) / "checkouts/0"
+            contracts.sync_checkout(root, checkout)
+            self.assertEqual((checkout / "src/a.rs").read_text(), "a\n")
+            self.assertEqual(os.readlink(checkout / "src/link.rs"), "a.rs")
+            self.assertEqual((checkout / contracts.HEADER).read_text(), "header\n")
+            self.assertEqual(Path(os.readlink(checkout / "target/debug")), root / "target/debug")
+            for name in ("src/a.rs", "src/b.swift"):
+                os.utime(checkout / name, ns=(10**18, 10**18))
+            # An edit carrying an older time (a restore, cp -p, an archive) must
+            # still look newer than any build made from the previous contents.
+            (root / "src/a.rs").write_text("edited\n")
+            os.utime(root / "src/a.rs", ns=(10**9, 10**9))
+            (root / "src/nested/c.txt").unlink()
+            (checkout / "target/scratch").mkdir()
+            contracts.sync_checkout(root, checkout)
+            self.assertEqual((checkout / "src/a.rs").read_text(), "edited\n")
+            self.assertGreater((checkout / "src/a.rs").stat().st_mtime_ns, 10**18)
+            self.assertEqual((checkout / "src/b.swift").stat().st_mtime_ns, 10**18)
+            self.assertFalse((checkout / "src/nested").exists())
+            self.assertTrue((checkout / "target/scratch").is_dir())
+            # A counterexample left behind by an interrupted run is replaced.
+            (checkout / "src/b.swift").write_text("mutated\n")
+            contracts.sync_checkout(root, checkout)
+            self.assertEqual((checkout / "src/b.swift").read_text(), "b\n")
+            # Unknown contents could hold stale sources, so they are removed; builds stay.
+            (checkout / "src/stray.swift").write_text("stale\n")
+            checkout.with_name("0.json").write_text("not json")
+            contracts.sync_checkout(root, checkout)
+            self.assertFalse((checkout / "src/stray.swift").exists())
+            self.assertTrue((checkout / "target/scratch").is_dir())
+            self.assertEqual((checkout / "src/b.swift").read_text(), "b\n")
+
+    def test_a_restored_counterexample_is_newer_than_its_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            (checkout / "src").mkdir()
+            source = checkout / "src/lib.rs"
+            source.write_text("fn value() -> u8 { 1 }\n")
+            contract = {"id": "fixture", "negative_control": {"file": "src/lib.rs", "old": "{ 1 }", "new": "{ 2 }"}}
+            with contracts.mutated(checkout, contract):
+                self.assertIn("{ 2 }", source.read_text())
+                built = time.time_ns()
+                os.utime(source, ns=(built - 10**9, built - 10**9))
+            self.assertEqual(source.read_text(), "fn value() -> u8 { 1 }\n")
+            self.assertGreater(source.stat().st_mtime_ns, built - 10**9)
+            stale = dict(contract, negative_control={"file": "src/lib.rs", "old": "missing", "new": "x"})
+            with self.assertRaises(ValueError):
+                with contracts.mutated(checkout, stale):
+                    pass
+
+    def test_rust_counterexamples_change_dependencies_first_and_group_each_crate(self):
+        def case(name, path, package="echode-ffi"):
+            return {"id": name, "runner": "rust", "package": package, "target": ["--lib"],
+                    "negative_control": {"file": path}}
+        ordered = contracts.mutation_order(ROOT, [
+            case("ffi", "crates/echode-ffi/src/queue.rs"),
+            case("model", "crates/echode-model/src/lib.rs", "echode-history"),
+            case("engine-a", "crates/echode-engine/src/lib.rs", "echode-engine"),
+            case("model-again", "crates/echode-model/src/lib.rs", "echode-history"),
+            case("engine-b", "crates/echode-engine/src/lib.rs", "echode-engine"),
+        ])
+        self.assertEqual([item["id"] for item in ordered], ["model", "model-again", "engine-a", "engine-b", "ffi"])
+
+    def test_swift_counterexamples_build_together_and_test_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkouts = [Path(directory) / str(index) for index in range(3)]
+            for checkout in checkouts:
+                (checkout / "Sources").mkdir(parents=True)
+                (checkout / "Sources/View.swift").write_text("let a = 1\nlet b = 1\nlet c = 1\nlet d = 1\n")
+            cases = [{"id": f"case-{name}", "runner": "swift", "package_path": "App", "suite": "Suite",
+                      "test": f"contract{name}", "timeout": 30,
+                      "negative_control": {"file": "Sources/View.swift", "old": f"let {name} = 1", "new": f"let {name} = 2"}}
+                     for name in "abcd"]
+            lock = threading.Lock()
+            state = {"building": 0, "most": 0, "tests": []}
+            def fake(args, *, cwd, capture_output, text, timeout, env=None):
+                if args[:2] == ["swift", "build"]:
+                    with lock:
+                        state["building"] += 1
+                        state["most"] = max(state["most"], state["building"])
+                    time.sleep(0.05)
+                    with lock:
+                        state["building"] -= 1
+                    return subprocess.CompletedProcess(args, 0, "Build complete!", "")
+                self.assertIn("--skip-build", args)
+                self.assertEqual(state["building"], 0)
+                name = args[-1].split("/")[1]
+                self.assertIn(name[-1] + " = 2", (Path(cwd) / "Sources/View.swift").read_text())
+                state["tests"].append(name)
+                output = f"Expectation failed\nTest {name}() failed\nTest run with 1 test in 1 suite failed"
+                return subprocess.CompletedProcess(args, 1, output, "")
+            results = []
+            with patch.object(contracts, "run_process", side_effect=fake):
+                contracts.swift_controls(checkouts, cases, {}, Path(directory), results.append)
+            self.assertEqual(state["most"], 3)
+            self.assertEqual(state["tests"], ["contracta", "contractb", "contractc", "contractd"])
+            self.assertEqual([result["status"] for result in results], ["passed"] * 4)
+            for checkout in checkouts:
+                self.assertEqual((checkout / "Sources/View.swift").read_text(),
+                                 "let a = 1\nlet b = 1\nlet c = 1\nlet d = 1\n")
+
+    def test_a_counterexample_that_does_not_compile_is_not_detection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory) / "0"
+            (checkout / "Sources").mkdir(parents=True)
+            (checkout / "Sources/View.swift").write_text("let a = 1\n")
+            case = {"id": "case", "runner": "swift", "package_path": "App", "suite": "Suite", "test": "contract",
+                    "timeout": 30, "negative_control": {"file": "Sources/View.swift", "old": "= 1", "new": "= ("}}
+            calls = []
+            def fake(args, **kwargs):
+                calls.append(args)
+                return subprocess.CompletedProcess(args, 1, "error: expected expression", "")
+            results = []
+            with patch.object(contracts, "run_process", side_effect=fake), \
+                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                contracts.swift_controls([checkout], [case], {}, Path(directory), results.append)
+            self.assertEqual(results[0]["status"], "failed")
+            self.assertEqual(len(calls), 1)
+
+    def test_swift_tests_share_one_build_but_each_runs_in_its_own_process(self):
+        cases = [{"id": "rust-case", "runner": "rust", "package": "p", "target": ["--lib"], "test": "contract",
+                  "timeout": 5, "purpose": "fixture"}]
+        cases += [{"id": f"swift-{name}", "runner": "swift", "package_path": "App", "suite": "Suite",
+                   "test": f"contract{name}", "timeout": 5, "purpose": "fixture"} for name in "ab"]
+        def good(args, **kwargs):
+            if args[:2] == ["swift", "build"]:
+                return subprocess.CompletedProcess(args, 0, "Build complete!", "")
+            if args[0] == "cargo":
+                return subprocess.CompletedProcess(args, 0, "test contract ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", "")
+            name = args[-1].split("/")[1]
+            return subprocess.CompletedProcess(args, 0, f"Test {name}() passed\nTest run with 1 test in 1 suite passed", "")
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            results, invoked = [], []
+            def record(args, **kwargs):
+                invoked.append(args)
+                return good(args, **kwargs)
+            contracts.run_tests(ROOT, cases, record, {}, evidence, results.append)
+            self.assertEqual([result["status"] for result in results], ["passed"] * 3)
+            self.assertEqual(sum(args[:2] == ["swift", "build"] for args in invoked), 1)
+            swift_tests = [args for args in invoked if args[:2] == ["swift", "test"]]
+            self.assertEqual(len(swift_tests), 2)
+            for args in swift_tests:
+                self.assertIn("--skip-build", args)
+                self.assertEqual(args.count("--filter"), 1)
+            results, invoked = [], []
+            def broken(args, **kwargs):
+                invoked.append(args)
+                if args[:2] == ["swift", "build"]:
+                    return subprocess.CompletedProcess(args, 1, "error: compile failure", "")
+                return good(args, **kwargs)
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                contracts.run_tests(ROOT, cases, broken, {}, evidence, results.append)
+            self.assertEqual([result["status"] for result in results], ["passed", "failed", "failed"])
+            self.assertFalse([args for args in invoked if args[:2] == ["swift", "test"]])
+            self.assertIn("compile failure", (evidence / "swift-a.log").read_text())
+
+    def test_reuse_needs_a_pass_and_a_rejected_counterexample_for_the_same_inputs(self):
+        test = {"id": "a", "status": "passed", "fingerprint": "one"}
+        control = {"id": "a", "status": "passed", "fingerprint": "one"}
+        self.assertIn("a", contracts.reusable_results({"tests": [test], "negative_controls": [control]}, {"a": "one"}))
+        for tests, controls, stamps in (([test], [control], {"a": "two"}), ([test], [], {"a": "one"}),
+                                        ([test], [dict(control, status="failed")], {"a": "one"}),
+                                        ([dict(test, status="failed")], [control], {"a": "one"}),
+                                        ([test], [dict(control, fingerprint="two")], {"a": "one"}),
+                                        ([dict(test, fingerprint=None)], [dict(control, fingerprint=None)], {"a": None})):
+            with self.subTest(tests=tests, controls=controls, stamps=stamps):
+                self.assertEqual(contracts.reusable_results({"tests": tests, "negative_controls": controls}, stamps), {})
+        self.assertEqual(contracts.reusable_results({"tests": "corrupt"}, {"a": "one"}), {})
+
+    def test_unchanged_contracts_are_reused_and_force_reruns_them(self):
+        cases = [{"id": name, "runner": "rust", "package": "p", "target": ["--lib"], "test": name,
+                  "timeout": 5, "purpose": "fixture", "negative_control": {"file": "src/lib.rs"}} for name in ("a", "b")]
+        invoked, controlled = [], []
+        def good(args, **kwargs):
+            invoked.append(args[-6])
+            return subprocess.CompletedProcess(args, 0, f"test {args[-6]} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", "")
+        def controls(root, pending, fingerprints, evidence, record):
+            for contract in pending:
+                controlled.append(contract["id"])
+                record(contracts.control_result(contract, fingerprints[contract["id"]], True, evidence / "x.log", 0))
+        stamps = {"a": "one", "b": "two"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: dict(stamps)), \
+                 patch.object(contracts.verify, "tool_identity", return_value={}), \
+                 patch.object(contracts, "negative_controls", side_effect=controls), \
+                 redirect_stdout(io.StringIO()):
+                for change, fresh, expected in ((None, False, ["a", "b"]), (None, False, []),
+                                                ("b", False, ["b"]), (None, True, ["a", "b"])):
+                    invoked.clear()
+                    controlled.clear()
+                    if change:
+                        stamps[change] += "-edited"
+                    self.assertEqual(contracts.run(root, cases, good, policy={}, fresh=fresh), 0)
+                    self.assertEqual((invoked, controlled), (expected, expected))
+                    report = json.loads((root / "target/verification/product-contracts.json").read_text())
+                    self.assertEqual(report["status"], "passed")
+                    self.assertEqual(report["reused"], 2 - len(expected))
+                    self.assertEqual(len(report["tests"]), 2)
+
+    def test_an_edit_during_the_run_leaves_no_reusable_result(self):
+        case = {"id": "a", "runner": "rust", "package": "p", "target": ["--lib"], "test": "a", "timeout": 5,
+                "purpose": "fixture", "negative_control": {"file": "src/lib.rs"}}
+        stamps = iter([{"a": "before"}, {"a": "edited"}])
+        def good(args, **kwargs):
+            return subprocess.CompletedProcess(args, 0, "test a ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", "")
+        def controls(root, pending, fingerprints, evidence, record):
+            record(contracts.control_result(pending[0], fingerprints["a"], True, evidence / "x.log", 0))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: next(stamps)), \
+                 patch.object(contracts.verify, "tool_identity", return_value={}), \
+                 patch.object(contracts, "negative_controls", side_effect=controls), \
+                 redirect_stderr(io.StringIO()):
+                self.assertEqual(contracts.run(root, [case], good, policy={}), 1)
+            report = json.loads((root / "target/verification/product-contracts.json").read_text())
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual([(item["status"], item["fingerprint"]) for item in report["tests"] + report["negative_controls"]],
+                             [("stale", None), ("stale", None)])
+            self.assertEqual(contracts.reusable_results(report, {"a": "before"}), {})
+
+    def test_contract_identities_follow_only_their_own_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git_repository(root)
+            (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n')
+            for name, dependencies in (("a", ""), ("b", 'a = { path = "../a" }\n')):
+                (root / f"crates/{name}/src").mkdir(parents=True)
+                (root / f"crates/{name}/Cargo.toml").write_text(
+                    f'[package]\nname = "{name}"\nversion = "0.1.0"\n\n[dependencies]\n{dependencies}')
+                (root / f"crates/{name}/src/lib.rs").write_text("// fixture\n")
+            (root / "swift/App").mkdir(parents=True)
+            (root / "swift/App/View.swift").write_text("// fixture\n")
+            (root / "docs").mkdir()
+            (root / "docs/notes.md").write_text("fixture\n")
+            (root / "Makefile").write_text("check-product-contracts:\n\tpython3 run.py\n")
+            def control(path):
+                return {"file": path, "old": "fixture", "new": "changed"}
+            cases = [
+                {"id": "rust-a", "runner": "rust", "package": "a", "target": ["--lib"], "test": "t", "timeout": 5,
+                 "negative_control": control("crates/a/src/lib.rs")},
+                {"id": "rust-b", "runner": "rust", "package": "b", "target": ["--lib"], "test": "t", "timeout": 5,
+                 "negative_control": control("crates/b/src/lib.rs")},
+                {"id": "swift", "runner": "swift", "package_path": "swift/App", "suite": "S", "test": "t", "timeout": 5,
+                 "negative_control": control("swift/App/View.swift")}]
+            policy = {"version": 1, "global_inputs": ["Cargo.toml"], "infrastructure": [], "evidence_inputs": [],
+                      "areas": {}, "product_contracts": cases,
+                      "product_contract_inputs": {"common": {"inputs": [], "packages": []},
+                                                  "rust": {"inputs": [], "packages": []},
+                                                  "swift": {"inputs": ["swift/**"], "packages": ["b"]}},
+                      "checks": [{"id": "check-product-contracts", "mode": "automatic", "areas": [], "timeout": 5,
+                                  "inputs": ["swift/**"], "packages": ["b"],
+                                  "policy_inputs": ["product_contracts", "product_contract_inputs"]}]}
+            def stamps(tools=None):
+                return contracts.contract_fingerprints(root, policy, cases, tools or {"rustc": "v1"})
+            def changed(before, after):
+                return {name for name in before if before[name] != after[name]}
+            initial = stamps()
+            (root / "docs/notes.md").write_text("edited\n")
+            self.assertEqual(changed(initial, stamps()), set())
+            (root / "crates/b/src/lib.rs").write_text("// edited\n")
+            after_b = stamps()
+            self.assertEqual(changed(initial, after_b), {"rust-b", "swift"})
+            (root / "swift/App/View.swift").write_text("// edited\n")
+            after_swift = stamps()
+            self.assertEqual(changed(after_b, after_swift), {"swift"})
+            (root / "crates/a/src/lib.rs").write_text("// edited\n")
+            self.assertEqual(changed(after_swift, stamps()), {"rust-a", "rust-b", "swift"})
+            current = stamps()
+            cases[0]["timeout"] = 6
+            self.assertEqual(changed(current, stamps()), {"rust-a"})
+            self.assertEqual(changed(current, stamps({"rustc": "v2"})), {"rust-a", "rust-b", "swift"})
+            (root / "Makefile").write_text("# A comment does not change the recipe.\n" + (root / "Makefile").read_text())
+            current = stamps()
+            (root / "Makefile").write_text("check-product-contracts:\n\tpython3 other.py\n")
+            self.assertEqual(changed(current, stamps()), {"rust-a", "rust-b", "swift"})
+            cases[0]["negative_control"] = control("docs/notes.md")
+            with self.assertRaises(ValueError):
+                stamps()
 
     def test_child_processes_stay_in_the_outer_verification_group(self):
         process = Mock(returncode=0)

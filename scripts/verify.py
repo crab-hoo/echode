@@ -76,6 +76,11 @@ def load_policy(root):
             raise ValueError("unknown verification policy input")
         if check.get("extended") and check["mode"] != "manual":
             raise ValueError("extended checks must be manual")
+    for group in policy.get("product_contract_inputs", {}).values():
+        for field in ("inputs", "packages"):
+            values = group.get(field) if isinstance(group, dict) else None
+            if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+                raise ValueError("invalid product contract " + field)
     return policy
 
 
@@ -83,18 +88,111 @@ def matches(changed, patterns):
     return [path for path in changed if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)]
 
 
-def select_checks(policy, changed, all_checks=False):
+RULE = re.compile(r"^([A-Za-z0-9_.-]+)[ \t]*:(.*)$")
+
+
+def makefile_rules(text):
+    """Split a Makefile into rule blocks and the lines that can affect every rule."""
+    rules, shared, phony = {}, [], set()
+    current, nested = None, 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if nested or re.match(r"^\s*define\b", line):
+            # A multi-line variable can expand into any recipe.
+            nested += 1 if re.match(r"^\s*define\b", line) else -1 if stripped == "endef" else 0
+            shared.append(line)
+            current = None
+            continue
+        if line.startswith("\t") and current is not None:
+            rules[current].append(line)
+            continue
+        if not stripped or (line.startswith("#")):
+            # Make ignores comments and blank lines, including those between recipe lines.
+            continue
+        match = RULE.match(line)
+        if match and match[1] == ".PHONY":
+            phony.update(match[2].split())
+            current = None
+        elif match and not match[2].startswith((":", "=")) and "=" not in match[2] and match[1] not in rules:
+            current = match[1]
+            rules[current] = [line]
+        else:
+            # Variables, directives, conditionals, and unusual rules affect every check.
+            shared.append(line)
+            current = None
+    return rules, shared, phony
+
+
+def makefile_identity(parsed, target):
+    rules, shared, phony = parsed
+    pending, seen, missing = [target], {}, set()
+    while pending:
+        name = pending.pop()
+        if name in seen or name in missing:
+            continue
+        if name not in rules:
+            missing.add(name)
+            continue
+        seen[name] = rules[name]
+        body = "\n".join(rules[name][1:])
+        pending += RULE.match(rules[name][0])[2].split()
+        pending += re.findall(r"\$\(MAKE\)(?:\s+-\S+)*\s+([A-Za-z0-9_.-]+)", body)
+    return {"shared": shared, "rules": seen, "missing": sorted(missing), "phony": sorted(phony & set(seen))}
+
+
+def definition_identities(policy, makefile):
+    """The policy and Makefile text each check depends on; unrelated edits leave it unchanged."""
+    parsed = makefile_rules(makefile)
+    common = {key: policy.get(key) for key in ("version", "global_inputs", "infrastructure", "evidence_inputs")}
+    return {check["id"]: json.dumps([common, check, {key: policy.get(key) for key in check.get("policy_inputs", [])},
+                                     makefile_identity(parsed, check.get("make_target", check["id"]))],
+                                    sort_keys=True)
+            for check in policy["checks"]}
+
+
+def current_definitions(root, policy):
+    makefile = root / "Makefile"
+    return definition_identities(policy, makefile.read_text() if makefile.is_file() else "")
+
+
+def redefined_checks(root, policy, base=None):
+    """Checks whose policy entry or make recipe differs from the diff base; None when it cannot be read."""
+    try:
+        reference = base or "HEAD"
+        previous = json.loads(git(root, "show", f"{reference}:{POLICY.as_posix()}"))
+        makefile = git(root, "show", f"{reference}:Makefile").decode()
+        before = definition_identities(previous, makefile)
+    except (subprocess.CalledProcessError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return {name for name, identity in current_definitions(root, policy).items() if before.get(name) != identity}
+
+
+def select_checks(policy, changed, all_checks=False, redefined=None):
     selected = {}
     global_hits = matches(changed, policy["global_inputs"])
-    infrastructure = matches(changed, policy["infrastructure"])
+    # Evidence inputs are part of every check's identity, so they select every automatic check.
+    infrastructure = matches(changed, policy["infrastructure"] + policy.get("evidence_inputs", []))
+    # The policy and Makefile select only the checks whose definition changed.
+    # Without the diff base (redefined=None), every automatic check is selected.
+    definitions = matches(changed, [POLICY.as_posix(), "Makefile"])
     for check in policy["checks"]:
         hits = sorted(set(path for area in check["areas"] for path in matches(changed, policy["areas"][area])))
         reasons = hits
         if check["mode"] == "automatic":
             reasons += global_hits + infrastructure
+            # Explicit inputs (including the check's own helper scripts) select it.
+            reasons += matches(changed, check.get("inputs", []) + check.get("tool_inputs", []))
+            if definitions and (redefined is None or check["id"] in redefined):
+                reasons += definitions
         if all_checks or (not check.get("extended") and (reasons or (changed and check.get("always")))):
             selected[check["id"]] = sorted(set(reasons)) or ["all checks" if all_checks else "every change"]
     return selected
+
+
+def plan_checks(root, policy, changed, base=None, all_checks=False):
+    """The selection shared by verify, doctor, and agent-context."""
+    redefined = redefined_checks(root, policy, base) if matches(changed, [POLICY.as_posix(), "Makefile"]) else set()
+    return select_checks(policy, changed, all_checks, redefined)
 
 
 def toolchain_paths():
@@ -109,8 +207,10 @@ def make_flags_identity(value):
     # GNU make escapes whitespace with backslashes; quotes are literal here.
     # Selection/deferral arguments cannot affect a build and must not invalidate
     # evidence when the next invocation is plain `make verify` or `make doctor`.
+    # A jobserver handle names a per-invocation pipe; the -j value stays recorded.
     tokens = [re.sub(r"\\(.)", r"\1", token) for token in re.findall(r"(?:\\.|[^\s\\])+", value)]
-    return [token for token in tokens if token != "--" and not token.startswith("VERIFY_ARGS=")]
+    return [token for token in tokens if token != "--" and not token.startswith("VERIFY_ARGS=")
+            and not token.startswith(("--jobserver-auth=", "--jobserver-fds="))]
 
 
 def tool_identity(root):
@@ -148,32 +248,51 @@ def tool_identity(root):
     return identity
 
 
+CONTENT_DIGESTS = {}
+
+
+def content_digest(path):
+    """Hash a regular file's mode and bytes, rehashing whenever its inode or times change.
+
+    Every write updates ctime, so this per-process memo cannot hide an edit made
+    while a check runs; a new process (the next verification) always rereads.
+    """
+    status = path.stat()
+    key = (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns,
+           status.st_mode)
+    if key not in CONTENT_DIGESTS:
+        value = hashlib.sha256(str(status.st_mode).encode() + b"\0")
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                value.update(block)
+        CONTENT_DIGESTS[key] = value.digest()
+    return CONTENT_DIGESTS[key]
+
+
+def source_files(root):
+    return sorted(set(paths(git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"))))
+
+
 def fingerprint(root, changed, base, tools):
     digest = hashlib.sha256()
     digest.update(json.dumps([changed, base, tools], sort_keys=True).encode())
     # Hash the whole non-ignored tree, including unchanged dependencies and fixtures.
     # Status/mtime alone cannot invalidate a result after another edit of the same file.
-    files = paths(git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"))
-    for relative in sorted(set(files)):
+    for relative in source_files(root):
         path = root / relative
         digest.update(os.fsencode(relative) + b"\0")
         if path.is_symlink():
             digest.update(b"link:" + os.fsencode(os.readlink(path)))
         elif path.is_file():
-            digest.update(str(path.stat().st_mode).encode() + b"\0")
-            with path.open("rb") as source:
-                for block in iter(lambda: source.read(1024 * 1024), b""):
-                    digest.update(block)
+            digest.update(content_digest(path))
         else:
             digest.update(b"missing")
         digest.update(b"\0")
     return digest.hexdigest()
 
 
-def package_directories(root, names):
-    """Include local dependencies for all features/targets, including test/build dependencies."""
-    if not names:
-        return set()
+def workspace_members(root):
+    """Map each workspace package name to its folder."""
     workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
     manifests = {}
     for pattern in workspace["members"]:
@@ -183,6 +302,15 @@ def package_directories(root, names):
                 continue
             manifest = tomllib.loads((folder / "Cargo.toml").read_text())
             manifests[manifest["package"]["name"]] = folder
+    return manifests
+
+
+def package_directories(root, names, kinds=("dependencies", "dev-dependencies", "build-dependencies")):
+    """Include local dependencies for all features/targets, including test/build dependencies."""
+    if not names:
+        return set()
+    workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
+    manifests = workspace_members(root)
     requested = set(manifests) if names == ["*"] else set(names)
     if requested - manifests.keys():
         raise ValueError("unknown verification package: " + ", ".join(sorted(requested - manifests.keys())))
@@ -198,7 +326,7 @@ def package_directories(root, names):
         manifest = tomllib.loads((folder / "Cargo.toml").read_text())
         sections = [manifest, *manifest.get("target", {}).values()]
         for section in sections:
-            for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
+            for kind in kinds:
                 for alias, dependency in section.get(kind, {}).items():
                     base = folder
                     if isinstance(dependency, dict) and dependency.get("workspace"):
@@ -234,42 +362,42 @@ def external_contexts(policy):
     return {"audio-output": audio_output_identity()} if any(c.get("device_context") for c in policy["checks"]) else {}
 
 
+def input_digest(root, relative):
+    path = root / relative
+    value = hashlib.sha256()
+    if path.is_symlink():
+        value.update(b"link:" + os.fsencode(os.readlink(path)))
+        path = path.resolve()
+        if not path.is_relative_to(root.resolve()) or not path.is_file():
+            raise ValueError("verification input symlinks must resolve to files inside the repository")
+    value.update(content_digest(path) if path.is_file() else b"missing")
+    return value.digest()
+
+
+def scoped_digest(root, files, configuration, patterns, folders=(), tool_inputs=()):
+    """Hash a configuration plus every file selected by patterns, package folders, or exact tool inputs."""
+    digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
+    tool_inputs = set(tool_inputs)
+    for relative in sorted(set(files) | tool_inputs):
+        if (relative in tool_inputs or matches([relative], patterns)
+                or any(relative.startswith(folder + "/") for folder in folders)):
+            digest.update(os.fsencode(relative) + b"\0" + input_digest(root, relative))
+    return digest.hexdigest()
+
+
 def check_fingerprints(root, policy, tools, contexts=None):
     if contexts is None:
         contexts = external_contexts(policy)
-    files = sorted(set(paths(git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"))))
-    common = policy["global_inputs"] + policy.get("evidence_inputs", ["Makefile", "scripts/verify.py", ".cargo/**"])
-    contents = {}
+    files = source_files(root)
+    common = policy["global_inputs"] + policy.get("evidence_inputs", ["scripts/verify.py", ".cargo/**"])
+    definitions = current_definitions(root, policy)
     stamps = {}
     for check in policy["checks"]:
-        patterns = common + check.get("inputs", [])
-        folders = package_directories(root, check.get("packages", []))
-        configuration = [check, common, tools, contexts if check.get("device_context") else {},
-                         {key: policy[key] for key in check.get("policy_inputs", [])}]
-        digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
-        tool_inputs = set(check.get("tool_inputs", []))
-        for relative in sorted(set(files) | tool_inputs):
-            if not (relative in tool_inputs or matches([relative], patterns)
-                    or any(relative.startswith(folder + "/") for folder in folders)):
-                continue
-            if relative not in contents:
-                path = root / relative
-                value = hashlib.sha256()
-                if path.is_symlink():
-                    value.update(b"link:" + os.fsencode(os.readlink(path)))
-                    path = path.resolve()
-                    if not path.is_relative_to(root.resolve()) or not path.is_file():
-                        raise ValueError("verification input symlinks must resolve to files inside the repository")
-                if path.is_file():
-                    value.update(str(path.stat().st_mode).encode() + b"\0")
-                    with path.open("rb") as source:
-                        for block in iter(lambda: source.read(1024 * 1024), b""):
-                            value.update(block)
-                else:
-                    value.update(b"missing")
-                contents[relative] = value.digest()
-            digest.update(os.fsencode(relative) + b"\0" + contents[relative])
-        stamps[check["id"]] = digest.hexdigest()
+        # The definition covers this check's policy entry and make recipe, not the whole Makefile.
+        configuration = [definitions[check["id"]], common, tools, contexts if check.get("device_context") else {}]
+        stamps[check["id"]] = scoped_digest(root, files, configuration, common + check.get("inputs", []),
+                                            package_directories(root, check.get("packages", [])),
+                                            check.get("tool_inputs", []))
     return stamps
 
 
@@ -376,8 +504,14 @@ def save_report(directory, report, policy, selected):
     temporary.replace(directory / "report.md")
 
 
-def run_check(root, check, log):
+def run_check(root, check, log, force=False):
     started = time.monotonic()
+    # --force also bypasses evidence that a check keeps for its own parts. Only
+    # this run's option decides it; an inherited value (e.g. a forced outer run) does not.
+    env = {key: value for key, value in os.environ.items() if key != "ECHODE_VERIFY_FORCE"}
+    env.update({"PYTHONDONTWRITEBYTECODE": "1", "ECHODE_VERIFY_GROUP": "1"})
+    if force:
+        env["ECHODE_VERIFY_FORCE"] = "1"
     with log.open("w") as output:
         target = check.get("make_target", check["id"])
         output.write(f"Command: make {target}\nTimeout: {check['timeout']} s\n\n")
@@ -385,7 +519,7 @@ def run_check(root, check, log):
         try:
             process = subprocess.Popen(
                 ["make", target], cwd=root, stdout=output, stderr=subprocess.STDOUT,
-                start_new_session=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "ECHODE_VERIFY_GROUP": "1"},
+                start_new_session=True, env=env,
             )
         except OSError as error:
             output.write(str(error) + "\n")
@@ -408,7 +542,7 @@ def run_check(root, check, log):
 def verify(root, args):
     policy = load_policy(root)
     changed = changed_paths(root, args.base)
-    selected = select_checks(policy, changed, args.all)
+    selected = plan_checks(root, policy, changed, args.base, args.all)
     checks = {check["id"]: check for check in policy["checks"]}
     for name in args.run:
         if name in checks and checks[name].get("extended"):
@@ -467,7 +601,7 @@ def verify(root, args):
             print(f"{name}: 実行中", flush=True)
             report["results"][name] = {"status": "running", "fingerprint": stamps[name]}
             save_report(directory, report, policy, selected)
-            result = run_check(root, check, directory / f"{name}.log")
+            result = run_check(root, check, directory / f"{name}.log", args.force)
             if result["status"] == "passed" and check.get("device_context") and contexts.get("audio-output") is None:
                 result.update({"status": "failed", "error": "audio device metadata unavailable; cannot attest this measurement"})
             result["fingerprint"] = stamps[name]

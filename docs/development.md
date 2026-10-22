@@ -37,6 +37,8 @@
   実行中は完了をまとめて待ち、短い間隔の進捗確認や成功ログの読み直しを避ける。
   ユーザーへの報告は [AGENTS.md](../AGENTS.md#進捗と結果の報告) に従う。
 - 一括実行でも検査の排他と必須契約の負の対照ごとの隔離を維持する。
+  反例は 1 件ずつ入れ、ビルドを並列にしてもテストは他の作業がない状態で 1 件ずつ実行する（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
+  検査同士は並列にしない。負荷でテストの期限が外れると、失敗が反例の検出と区別できない。
   実機・計測の実行条件と未実施理由の記録は [検査手順](verification.md) に従う。
 
 ## 基盤の保守を同じ作業で行う
@@ -58,7 +60,7 @@
 - 新しいアクションには `crates/echode-history/tests/properties.rs`、音を作る処理には `crates/echode-engine/tests/block_size.rs` の回帰を追加する。
 - 製品ソースファイル内の単体テストが大きくなった場合（目安 100 行以上）は、`#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;` で同ディレクトリの別ファイルへ分離し、製品コードの閲覧コストを抑える。
 - モジュール・依存・ツールチェーン・実行入口が変わったら、`scripts/verification.json`、`Makefile`、CI、実行手順を照合する。選択条件は `scripts/verification.json` だけに置く。
-- 必須契約（`product_contracts`）は、正しいソースで実テストが 1 件通過し、誤りを戻した一時コピーでは期待値で失敗することを確認する。
+- 必須契約（`product_contracts`）は、正しいソースで実テストが 1 件通過し、誤りを戻したソースのコピーでは期待値で失敗することを確認する。
 
 ### デバッグ基盤
 
@@ -115,6 +117,9 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 準備を待つデバイス要求の順序は `crates/echode-ffi/src/queue.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
 開いた出力の置換グラフの準備スレッドと回収は `crates/echode-engine/src/playback_preparation.rs`、
 要求の集約と公開は `playback.rs` の `publish_pending` に置く（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+停止中の置換の素材読込みスレッドと `MediaInputs` は `crates/echode-engine/src/playback_media.rs`、
+再生の保留と `audio.prepare` は `crates/echode-audio-io/src/session.rs`、開いた時の送信は `ProjectController.preparesOutput` に置く
+（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
 
 描画面の左上固定と drawable サイズの主スレッド更新は `CanvasSurface.swift`、対応する製品 View の回帰は `CanvasResizeTests.swift` に置く
 （[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。

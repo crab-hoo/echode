@@ -16,6 +16,7 @@ struct ProjectWindow: View {
     @State private var controller: ProjectController = {
         let controller = ProjectController()
         controller.keepAuditionLog()
+        controller.preparesOutput = true
         return controller
     }()
     @State private var pendingOpen: URL?

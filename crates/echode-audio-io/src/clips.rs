@@ -11,36 +11,23 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use echode_engine::{ClipLoader, LoadedClip, PlaybackError, resample_into, tick_to_sample};
-use echode_history::{DecodedPcm, read_pcm};
-use echode_model::{
-    AudioRef, Id, Placement, Project, TempoMap, Tick, clip_gain_allowed, fade_frames,
-    placement_media_lead,
+use echode_engine::{
+    ClipLoader, LoadedClip, MediaInputs, PlaybackError, resample_into, tick_to_sample,
 };
+use echode_history::{DecodedPcm, read_pcm};
+use echode_model::{AudioRef, Project, Tick, clip_gain_allowed, fade_frames, placement_media_lead};
 
 #[derive(PartialEq, Eq)]
 struct MediaKey {
     rate: u32,
-    tempo: TempoMap,
-    placements: Vec<(Id, Placement, AudioRef)>,
+    inputs: MediaInputs,
 }
 
 impl MediaKey {
     fn new(project: &Project, rate: u32) -> Self {
-        let placements = project
-            .tracks()
-            .iter()
-            .flat_map(|track| {
-                track.clips.iter().filter_map(|clip| {
-                    let audio = project.content(clip.content)?.audio.as_ref()?;
-                    Some((track.id, clip.clone(), audio.clone()))
-                })
-            })
-            .collect();
         Self {
             rate,
-            tempo: project.tempo().clone(),
-            placements,
+            inputs: MediaInputs::of(project),
         }
     }
 }

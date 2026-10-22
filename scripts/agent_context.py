@@ -120,7 +120,7 @@ def collect(root, requested_areas=()):
         records.append({**source, "headings": headings(text)})
     checks = {check["id"]: check for check in policy["checks"]}
     selection = {name: {"purpose": checks[name]["purpose"], "reasons": reasons}
-                 for name, reasons in verify.select_checks(policy, changed).items()}
+                 for name, reasons in verify.plan_checks(root, policy, changed, data["base"]).items()}
     if (data["verification"]["freshness"] == "changed_during_collection"
             or diagnose.source_stamp(root) != data["source"]):
         raise ValueError("source changed during context collection; collect again")

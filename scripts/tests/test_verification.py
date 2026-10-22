@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -30,6 +31,10 @@ def module(name, filename):
 
 
 verify = module("verify", "verify.py")
+
+
+def load_contracts():
+    return module("check_product_contracts", "check_product_contracts.py")
 hook = module("check_on_stop", "check_on_stop.py")
 wait_for_verify = module("wait_for_verify", "wait_for_verify.py")
 
@@ -270,6 +275,26 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
 
+    def test_output_prewarm_keeps_the_session_worker_and_controller_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name in ("output-prewarm", "output-prewarm-play"):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["package"], contract["target"]), ("rust", "echode-audio-io", ["--lib"]))
+            self.assertTrue(contract["test"].startswith("session::tests::contract_") and contract["test"].endswith("_under_rtsan"))
+            self.assertEqual(contract["negative_control"]["file"], "crates/echode-audio-io/src/session.rs")
+        self.assertNotEqual(contracts["output-prewarm"]["negative_control"], contracts["output-prewarm-play"]["negative_control"])
+        worker = contracts["output-prepare-worker"]
+        self.assertEqual((worker["runner"], worker["package"]), ("rust", "echode-ffi"))
+        self.assertTrue(worker["test"].startswith("opening_tests::contract_"))
+        controller = contracts["output-prepare-on-open"]
+        self.assertEqual((controller["runner"], controller["suite"]), ("swift", "TransportRequestTests"))
+        self.assertTrue(controller["negative_control"]["file"].endswith("ProjectController.swift"))
+        for path in ("crates/echode-engine/src/playback_media.rs", "crates/echode-engine/src/playback.rs",
+                     "crates/echode-audio-io/src/session.rs", "crates/echode-audio-io/src/clips.rs"):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+        self.assertTrue({"check", "check-product-contracts"}
+                        <= self.selected("swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift"))
+
     def test_bundled_instrument_selects_audio_isolation_and_export_regressions(self):
         for path in ("crates/echode-sine-pad/src/lib.rs", "crates/echode-sine-pad/Cargo.toml"):
             self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-isolation", "spike-render"}
@@ -406,9 +431,63 @@ class PolicyTests(unittest.TestCase):
 
     def test_infrastructure_runs_all_portable_checks_without_opening_windows(self):
         expected = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
-        for path in ("scripts/verify.py", ".cursor/hooks.json", ".codex/hooks.json", ".github/workflows/check.yml", "Makefile"):
+        for path in ("scripts/verify.py", ".cursor/hooks.json", ".codex/hooks.json", ".github/workflows/check.yml",
+                     "scripts/build-platform.env", ".cargo/config.toml"):
+            self.assertEqual(self.selected(path), expected)
+        # Without the diff base the policy and Makefile cannot be compared, so every automatic check runs.
+        for path in ("Makefile", "scripts/verification.json"):
             self.assertEqual(self.selected(path), expected)
         self.assertEqual(self.selected("docs/PLAN.md"), {"check-verification", "check", "check-product-contracts"})
+
+    def test_a_helper_script_selects_only_the_checks_that_run_it(self):
+        always = {"check-verification", "check", "check-product-contracts"}
+        self.assertEqual(self.selected("scripts/check-bridge-address.sh"),
+                         always | {"check-bridge-asan", "check-bridge-tsan"})
+        self.assertEqual(self.selected("scripts/check-bridge-miri.sh"), always | {"check-bridge-miri"})
+        self.assertEqual(self.selected("scripts/diagnose.py"), always)
+        self.assertIn("rtsan", self.selected("Packaging/EchodeSinePad-Info.plist"))
+        self.assertNotIn("check-bridge-miri", self.selected("scripts/check-bridge-address.sh"))
+
+    def test_policy_and_makefile_edits_select_only_the_redefined_checks(self):
+        makefile = (ROOT / "Makefile").read_text()
+        before = verify.definition_identities(self.policy, makefile)
+        def redefined(policy=None, text=None):
+            after = verify.definition_identities(policy or self.policy, makefile if text is None else text)
+            return {name for name in after if after[name] != before.get(name)}
+        self.assertEqual(redefined(text="# Only a comment.\n" + makefile.replace("\n\n", "\n\n# note\n\n")), set())
+        rtsan = makefile.replace("RTSAN_ENABLE=1 cargo test -q -p echode-engine", "RTSAN_ENABLE=1 cargo test -p echode-engine")
+        self.assertEqual(redefined(text=rtsan), {"rtsan"})
+        # A shared sub-make target belongs to every check that calls it.
+        plugins = makefile.replace("bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh",
+                                   "bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh debug")
+        self.assertEqual(redefined(text=plugins), {"check", "check-product-contracts", "rtsan"})
+        policy = json.loads(json.dumps(self.policy))
+        policy["product_contracts"].append(dict(policy["product_contracts"][0], id="another-contract"))
+        self.assertEqual(redefined(policy), {"check-product-contracts"})
+        policy = json.loads(json.dumps(self.policy))
+        next(check for check in policy["checks"] if check["id"] == "rtsan")["timeout"] += 1
+        self.assertEqual(redefined(policy), {"rtsan"})
+        policy = json.loads(json.dumps(self.policy))
+        policy["areas"]["audio"].append("docs/**")
+        self.assertEqual(redefined(policy), set())
+        policy["global_inputs"].append("extra.toml")
+        self.assertEqual(redefined(policy), {check["id"] for check in self.policy["checks"]})
+        always = {"check-verification", "check", "check-product-contracts"}
+        self.assertEqual(set(verify.select_checks(self.policy, ["Makefile"], redefined=set())), always)
+        self.assertEqual(set(verify.select_checks(self.policy, ["Makefile"], redefined={"rtsan", "spike-audio"})),
+                         always | {"rtsan"})
+
+    def test_every_contract_depends_on_a_subset_of_the_gate_inputs(self):
+        contracts = load_contracts()
+        check = next(c for c in self.policy["checks"] if c["id"] == "check-product-contracts")
+        folders = verify.package_directories(ROOT, check["packages"])
+        patterns = self.policy["global_inputs"] + self.policy["evidence_inputs"] + check["inputs"]
+        self.assertIn("product_contract_inputs", check["policy_inputs"])
+        for contract in self.policy["product_contracts"]:
+            with self.subTest(contract=contract["id"]):
+                own_patterns, own_folders = contracts.contract_inputs(ROOT, self.policy, contract)
+                self.assertTrue(set(own_patterns) <= set(patterns))
+                self.assertTrue(own_folders <= folders)
 
     def test_long_engine_measurement_is_explicit_and_the_short_probe_is_separate(self):
         checks = self.selected("crates/echode-engine/src/playback.rs")
@@ -433,16 +512,17 @@ class PolicyTests(unittest.TestCase):
                                 or any(path.startswith(folder + "/") for folder in folders))
 
     def test_shell_entry_points_and_their_helpers_are_declared_inputs(self):
-        makefile = (ROOT / "Makefile").read_text()
+        parsed = verify.makefile_rules((ROOT / "Makefile").read_text())
         for check in self.policy["checks"]:
-            target = check.get("make_target", check["id"])
-            recipe = makefile.split(target + ":\n", 1)[1].split("\n\n", 1)[0]
-            pending = [recipe]
+            identity = verify.makefile_identity(parsed, check.get("make_target", check["id"]))
+            self.assertEqual(identity["missing"], [])
+            # Every sub-make target the check calls counts as part of its recipe.
+            pending = ["\n".join(line for block in identity["rules"].values() for line in block)]
             visited = set()
             patterns = self.policy["global_inputs"] + self.policy["evidence_inputs"] + check.get("inputs", [])
             while pending:
                 text = "\n".join(line for line in pending.pop().splitlines() if not line.lstrip().startswith("#"))
-                for helper in re.findall(r"scripts/[A-Za-z0-9_./-]+\.(?:py|sh|env)\b", text):
+                for helper in re.findall(r"scripts/[A-Za-z0-9_./-]+\.(?:py|sh|env|txt)\b", text):
                     if helper in visited or not (ROOT / helper).is_file():
                         continue
                     visited.add(helper)
@@ -475,7 +555,8 @@ class PolicyTests(unittest.TestCase):
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "fx-header-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
-                          "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui"})
+                          "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
+                          "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:
             self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
@@ -588,6 +669,11 @@ class PolicyTests(unittest.TestCase):
                 self.assertEqual(result.stdout.count("python3 -m unittest discover"), count)
         check = next(check for check in self.policy["checks"] if check["id"] == "check")
         self.assertEqual(check["make_target"], "check-base")
+
+    def test_a_jobserver_handle_does_not_change_the_toolchain_identity(self):
+        self.assertEqual(verify.make_flags_identity("-j4 --jobserver-auth=fifo:/tmp/GMfifo1 -- VERIFY_ARGS=--plan"),
+                         ["-j4"])
+        self.assertEqual(verify.make_flags_identity("-j4 --jobserver-fds=3,4"), ["-j4"])
 
     def test_selection_arguments_do_not_invalidate_evidence_but_build_flags_do(self):
         result = subprocess.CompletedProcess([], 0, stdout=b"fixture-v1", stderr=b"")
@@ -744,6 +830,54 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
         self.assertEqual(self.report()["version"], 2)
 
+    def test_a_makefile_comment_keeps_evidence_and_a_recipe_edit_expires_only_its_check(self):
+        tools = {"rust": "fixture-v1"}
+        policy = verify.load_policy(self.root)
+        policy["checks"][1]["mode"] = "automatic"
+        (self.root / verify.POLICY).write_text(json.dumps(policy))
+        self.git("add", ".")
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "base")
+        initial = verify.check_fingerprints(self.root, policy, tools)
+        makefile = self.root / "Makefile"
+        makefile.write_text("# Explain the checks.\n" + makefile.read_text())
+        # "check" hashes every file (inputs: **); "measure" depends only on its recipe.
+        self.assertEqual(verify.check_fingerprints(self.root, policy, tools)["measure"], initial["measure"])
+        self.assertEqual(verify.redefined_checks(self.root, policy), set())
+        self.assertEqual(set(verify.plan_checks(self.root, policy, ["Makefile"])), {"check"})
+        makefile.write_text(makefile.read_text().replace("@echo measure", "@echo measured"))
+        self.assertNotEqual(verify.check_fingerprints(self.root, policy, tools)["measure"], initial["measure"])
+        self.assertEqual(verify.redefined_checks(self.root, policy), {"measure"})
+        self.assertEqual(set(verify.plan_checks(self.root, policy, ["Makefile"])), {"check", "measure"})
+        # A base that cannot be read selects every automatic check.
+        self.assertIsNone(verify.redefined_checks(self.root, policy, "no-such-ref"))
+        self.assertEqual(set(verify.plan_checks(self.root, policy, ["Makefile"], "no-such-ref")), {"check", "measure"})
+
+    def test_content_digests_are_reused_only_while_the_file_is_unchanged(self):
+        path = self.root / "src/example.rs"
+        first = verify.content_digest(path)
+        before = len(verify.CONTENT_DIGESTS)
+        self.assertEqual(verify.content_digest(path), first)
+        self.assertEqual(len(verify.CONTENT_DIGESTS), before)
+        status = path.stat()
+        # Same size and restored mtime: ctime still changes, so the edit is seen.
+        path.write_text("first EDIT\n")
+        os.utime(path, ns=(status.st_atime_ns, status.st_mtime_ns))
+        self.assertNotEqual(verify.content_digest(path), first)
+
+    def test_force_also_reaches_evidence_kept_inside_a_check(self):
+        process = unittest.mock.Mock(pid=1)
+        process.wait.return_value = 0
+        check = {"id": "check", "timeout": 10}
+        # A value inherited from a forced outer run must not force this run's contracts.
+        plain = {key: value for key, value in os.environ.items() if key != "ECHODE_VERIFY_FORCE"}
+        for inherited in ({}, {"ECHODE_VERIFY_FORCE": "1"}):
+            for force, expected in ((False, None), (True, "1")):
+                with self.subTest(inherited=inherited, force=force), \
+                     patch.dict(os.environ, {**plain, **inherited}, clear=True), \
+                     patch.object(verify.subprocess, "Popen", return_value=process) as popen:
+                    verify.run_check(self.root, check, self.root / "check.log", force)
+                    self.assertEqual(popen.call_args.kwargs["env"].get("ECHODE_VERIFY_FORCE"), expected)
+
     def test_a_changed_check_definition_does_not_expire_another_checks_evidence(self):
         path = self.root / verify.POLICY
         policy = json.loads(path.read_text())
@@ -814,7 +948,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.report()["results"]["measure"]["status"], "stale")
 
     def test_a_failed_measurement_is_not_hidden_by_an_unrelated_edit(self):
-        def fail_measurement(root, check, log):
+        def fail_measurement(root, check, log, force=False):
             return {"status": "failed" if check["id"] == "measure" else "passed"}
         self.assertEqual(self.run_verify(arguments(run=["measure"]), fail_measurement), (1, 2))
         (self.root / "README.md").write_text("unrelated edit")
@@ -881,7 +1015,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_verify(arguments(only=["measure"])), (1, 0))
         self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
         self.assertEqual(self.report()["results"]["measure"]["status"], "passed")
-        def fail_measurement(root, check, log):
+        def fail_measurement(root, check, log, force=False):
             return {"status": "failed" if check["id"] == "measure" else "passed"}
         self.assertEqual(self.run_verify(arguments(run=["measure"], force=True), fail_measurement), (1, 2))
         response = hook.respond({"status": "completed"}, lambda: self.run_verify(arguments())[0])

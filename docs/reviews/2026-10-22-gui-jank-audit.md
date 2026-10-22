@@ -174,7 +174,7 @@ Swift の指摘なので `make known-bugs`（Rust の `audit_` テスト）の�
 ### 共通の手順
 
 - ADR: 単位 1 は [ADR 0144](../decisions/0144-unscaled-canvas-resizing.md) の「左上固定」の実装を変える。
-  新しい ADR（次の番号は 0147）に書き、ADR 0144 の「状態」に置き換えた範囲を 1 行で記す（ADR 0131 → 0146 と同じ書き方）。
+  新しい ADR（次の番号は 0148。0147 は出力の事前準備で使用済み）に書き、ADR 0144 の「状態」に置き換えた範囲を 1 行で記す（ADR 0131 → 0146 と同じ書き方）。
   単位 2 以降も同じ作業で行うなら、同じ ADR の節に加えてよい。
 - 必須契約を足す・変える時は、`scripts/verification.json` の `product_contracts`（`negative_control` 付き）、
   `scripts/tests/test_verification.py` の契約一覧と選択のテスト、`Makefile` の `check-product-contracts` の注記をそろえて更新する

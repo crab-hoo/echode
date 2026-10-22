@@ -175,6 +175,7 @@ I/O スレッド、Audio Workgroup 参加ワーカー、先読みワーカー、
 
 ロックフリーキューによる実行計画差し替え（[ADR 0036](decisions/0036-audio-handoff.md)）と音声スレッドの排他所有（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）を行う。
 開いた出力の置換ヘルパーは文書ワーカー外で準備する（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+停止中の置換で新しく要る素材は別スレッドで読む（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
 
 ### 7.3 レイテンシ補正（PDC）
 

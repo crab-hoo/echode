@@ -29,6 +29,10 @@ pub enum AudioCommand {
     Refresh,
     #[serde(rename = "audio.status")]
     Status,
+    /// Opens the output stopped, helpers and media included, so the first play
+    /// need not wait for them. The app sends it when a project opens (ADR 0147).
+    #[serde(rename = "audio.prepare")]
+    Prepare,
     #[serde(rename = "audio.preview_fader")]
     PreviewFader {
         track: echode_model::Id,
@@ -80,7 +84,8 @@ pub enum DeviceAccess {
 }
 
 /// One foreground project. No hardware is queried until the app asks for the
-/// output list or starts playback; package editing stays fully headless.
+/// output list, prepares the output or starts playback; package editing stays
+/// fully headless.
 pub struct Session {
     project: Arc<Project>,
     stream: Option<OutputStream>,
@@ -107,9 +112,12 @@ pub struct Session {
     error: Option<String>,
     fader_preview: Option<(u128, f32, f32)>,
     activity: Option<crate::activity::UserActivity>,
-    /// A device view asked for running plugins. The output stays open while
-    /// stopped, as it does after playback.
+    /// A device view asked for running plugins, or the app prepared the output.
+    /// The output stays open while stopped, as it does after playback.
     engine_held: bool,
+    /// Play waits for media a stopped edit is loading: the plan it replaces
+    /// must not sound in its place.
+    resume_held: bool,
     /// Follows this session's output choice. Its requests do not come here.
     audition: Option<crate::Audition>,
 }
@@ -140,6 +148,7 @@ impl Session {
             fader_preview: None,
             activity: None,
             engine_held: false,
+            resume_held: false,
             audition: None,
         }
     }
@@ -232,8 +241,7 @@ impl Session {
                 // An opening output starts at install, from the revision then current.
                 if self.playing
                     && !already_playing
-                    && let Some(stream) = &mut self.stream
-                    && let Err(error) = stream.resume(revision)
+                    && let Err(error) = self.resume()
                 {
                     self.cancellation.request(&AudioCommand::Stop);
                     self.playing = false;
@@ -247,6 +255,7 @@ impl Session {
                 // stopped the score without waiting for this queue; plugin
                 // releases and autonomous output keep running in the callback.
                 self.playing = false;
+                self.resume_held = false;
                 if let Some(stream) = &mut self.stream {
                     self.tick = stream.status().tick;
                     stream.pause()?;
@@ -275,6 +284,18 @@ impl Session {
                 self.reconcile()?;
             }
             AudioCommand::Status => {}
+            AudioCommand::Prepare => {
+                self.engine_held = true;
+                if self.stream.is_none() && self.opening.is_none() {
+                    if !self.refreshed
+                        || self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
+                    {
+                        self.refresh()?;
+                    }
+                    self.error = None;
+                    self.reconcile()?;
+                }
+            }
             AudioCommand::Loop { start, end } => self.set_loop(start, end)?,
             AudioCommand::Metronome { enabled } => {
                 self.metronome = enabled;
@@ -285,6 +306,20 @@ impl Session {
         }
         self.sync_activity();
         Ok(())
+    }
+
+    /// Starts the open output's transport at `play_revision`, or holds the
+    /// start until media for a stopped edit is queued. An opening output
+    /// starts when it is installed.
+    fn resume(&mut self) -> Result<(), String> {
+        let Some(stream) = &mut self.stream else {
+            return Ok(());
+        };
+        self.resume_held = stream.loading_media();
+        if self.resume_held {
+            return Ok(());
+        }
+        stream.resume(self.play_revision)
     }
 
     fn sync_activity(&mut self) {
@@ -357,7 +392,11 @@ impl Session {
             .map_or(self.tick, |stream| stream.status().tick);
         let changed_tempo = self.project.tempo() != project.tempo();
         self.project = project;
+        // Stopped, new media decodes on another thread and the next Play waits
+        // for it. Playing, the edit keeps the synchronous order with its locate.
+        let running = self.playing && self.cancellation.is_current(self.play_revision);
         let mut replaced = if let Some(stream) = &mut self.stream {
+            stream.load_media_in_background(!running);
             stream.replace(&self.project).and_then(|_| {
                 if changed_tempo {
                     stream.locate(&self.project, tick)
@@ -524,6 +563,7 @@ impl Session {
         if let Some(stream) = &mut self.stream
             && let Err(error) = stream.service()
         {
+            self.resume_held = false;
             // Recheck format even when a driver changed it before its listener
             // notification arrived. A valid reconfiguration resumes at the beat.
             let old = stream.device.clone();
@@ -541,6 +581,20 @@ impl Session {
                     self.error = Some(error);
                 }
             }
+        }
+        if self.resume_held
+            && self
+                .stream
+                .as_ref()
+                .is_some_and(|stream| !stream.loading_media())
+            && self.playing
+            && self.cancellation.is_current(self.play_revision)
+            && let Err(error) = self.resume()
+        {
+            self.cancellation.request(&AudioCommand::Stop);
+            self.playing = false;
+            self.sync_activity();
+            self.error = Some(error);
         }
     }
 
@@ -713,6 +767,8 @@ impl Session {
     }
 
     fn park(&mut self) {
+        // A reopened output starts at install instead.
+        self.resume_held = false;
         if let Some(mut stream) = self.stream.take() {
             let status = stream.close();
             self.tick = status.tick;

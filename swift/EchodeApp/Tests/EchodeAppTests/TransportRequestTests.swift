@@ -1,5 +1,6 @@
 import EchodeBridge
 import Foundation
+import Synchronization
 import Testing
 @testable import EchodeAppCore
 
@@ -48,6 +49,32 @@ struct TransportRequestTests {
             await play.value
             #expect(!controller.audioBusy && !controller.audio.playing)
             #expect(!controller.playbackRequested && controller.audio.tick == 0)
+            await controller.close()
+        }
+    }
+
+    /// The app prepares the output when a project opens, so the first play does
+    /// not wait (ADR 0147). Tests and probes leave it off and never reach HAL.
+    @Test func contractTheAppPreparesTheOutputWhenAProjectOpens() async throws {
+        for prepares in [true, false] {
+            let prepared = Mutex(0)
+            let controller = ProjectController { document, command in
+                // The bridge would open the output; no HAL device is needed here.
+                if case .prepare = command { prepared.withLock { $0 += 1 }; return AudioState() }
+                return try await document.audio(command)
+            }
+            controller.preparesOutput = prepares
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-prepare-\(UUID()).echode")
+            defer { try? FileManager.default.removeItem(at: url) }
+            await controller.open(url, creating: true)
+            #expect(!controller.busy && controller.snapshot != nil)
+            let deadline = ContinuousClock.now + .seconds(5)
+            while prepares, prepared.withLock({ $0 }) == 0, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            for _ in 0..<20 { await Task.yield() }
+            #expect(prepared.withLock { $0 } == (prepares ? 1 : 0))
+            #expect(!controller.audio.playing && controller.pendingPlayback == nil)
             await controller.close()
         }
     }

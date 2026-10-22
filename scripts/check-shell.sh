@@ -13,13 +13,17 @@ include=swift/EchodeBridge/CEchodeFfi/include
 mkdir -p "$include"
 cp "$header" "$include/echode.h"
 
+# One build covers every product, executable and test target; the tests then
+# run without a second build plan.
 run_swift_tests() {
     local pkg="$1"
     local scratch="$2"
     local log="$scratch/swift-test.log"
     mkdir -p "$scratch"
-    if swift test -q --package-path "$pkg" --scratch-path "$scratch" \
-        -Xswiftc -warnings-as-errors >"$log" 2>&1; then
+    if swift build -q --build-tests --package-path "$pkg" --scratch-path "$scratch" \
+        -Xswiftc -warnings-as-errors >"$log" 2>&1 &&
+        swift test -q --skip-build --package-path "$pkg" --scratch-path "$scratch" \
+        -Xswiftc -warnings-as-errors >>"$log" 2>&1; then
         local summary
         summary="$(grep -E 'Test run with [0-9]+ tests? .* passed' "$log" | tail -n 1 || true)"
         echo "$pkg: ${summary:-passed}"
@@ -31,5 +35,3 @@ run_swift_tests() {
 
 run_swift_tests swift/EchodeBridge target/echode-bridge-tests
 run_swift_tests swift/EchodeApp target/echode-app-tests
-swift build -q --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
-    -Xswiftc -warnings-as-errors

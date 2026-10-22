@@ -28,6 +28,8 @@
   容量変更は新領域の準備と音声側の採用を分ける（[ADR 0102](../decisions/0102-exclusive-audio-graph.md)）
 - 開いた出力の置換ヘルパー・共有領域は準備スレッドで作り、文書ワーカーは編集とトランスポートを続ける。
   制御用カタログの受渡し・後続編集の集約・既存状態の保持は [ADR 0142](../decisions/0142-background-plugin-graph-preparation.md) を参照する。
+- 停止中の置換で `MediaInputs`（テンポと音声配置）が前回の読込みと異なる時は、素材の読込み・SRC を `echode-media-prepare` で行う。
+  読込み中の置換とループ変更は集約し、再生中の編集は同期で読む（[ADR 0147](../decisions/0147-output-prewarm-and-background-media.md)）。
 - `PlaybackControl::set_cached_tracks` で停止中に準備した平面を次の計画へ載せ、トラックのデバイス処理の代わりに読む。
   供給側の失効・レンダリング本体・再生中の切替は Phase 3（§7.8、[ADR 0108](../decisions/0108-phase1-loop-readiness.md)）
 - スケジューラはノードごとの依存カウンタで動き、残りのノードがどれも実行中のときだけ待つ
@@ -92,6 +94,8 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
   デバイスビューの要求では、再生指令を入れずに出力とヘルパーを開いて同じく保持する（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）。
   最初に開く時は、機器の確認と Workgroup の取得を制御スレッド、ヘルパー起動と素材の準備を準備スレッドで行い、
   準備中の変更を送ってから IOProc を登録する（[ADR 0136](../decisions/0136-output-opening-off-worker.md)）。
+  製品アプリはプロジェクトを開いた時に `audio.prepare` で同じ準備を停止のまま始める。
+  停止中の編集の素材を読込み中の再生は、素材を載せた計画の公開まで保留する（[ADR 0147](../decisions/0147-output-prewarm-and-background-media.md)）。
   開いた後のヘルパーとの往復はデバイスレーンが待ち、制御側の背景保存とグラフ交換は通信中の制御端点を待たない
   （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
   ライブ停止・一時停止は時計を保持して現在のノートを解放し、配置音声とキャッシュの素材だけを最大 5 ms で減衰する。

@@ -46,7 +46,13 @@ make verify
 - `check` (`check-base`): Rust / Swift のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
-  さらに一時コピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする（コンパイル失敗は検出の証拠にしない）。
+  さらにソースのコピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする。
+  コンパイル失敗は検出の証拠にしない。
+  コピーは `target/product-contract-mutations/checkouts/` に残し、変わったファイルだけを新しい時刻で書き換える（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
+  Rust の反例は変えるクレートの依存の浅い順にまとめ、Swift の反例は 3 コピーで同時にビルドしてからテストを 1 件ずつ実行する。
+  通常の実行は 1 契約 1 プロセスのままで、Swift は 1 回のビルドの後に各契約を `--skip-build` で実行する。
+  契約ごとの識別値（`product_contract_inputs` の範囲、契約の定義、レシピ、ツール）が前回と同じなら、その契約は再実行しない。
+  再利用するのは、同じ識別値でテストと反例の両方が合格した記録だけである。
   各契約の ID・対象テスト・目的・負の対照は `scripts/verification.json` を正本とし、本書へ重複記載しない（[ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
 - `rtsan`: 同梱 Sine Pad の隔離処理・領域拡張、テスト用 DSP、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作（ロック、確保、ブロックするシステムコール）を検出する。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
@@ -93,6 +99,11 @@ make verify
 - `deferred`: 理由付きの未実行。合格ではない。
 
 検査ごとの `inputs` と `packages`（Cargo のローカル path 依存を再帰的に含む）、共通設定、ツールの版と解決パスをハッシュ化して識別する。
+Makefile はファイル全体ではなく、その検査のレシピ（`$(MAKE)` で呼ぶ対象を含む）と、変数などの全体に効く行だけを識別に含める。コメントの編集では失効しない。
+`scripts/verification.json` と Makefile の変更は、差分の基準と比べて定義・レシピが変わった検査だけを選ぶ。基準を読めない時は全自動検査を選ぶ。
+`infrastructure`（選択・記録・フック・CI の実装）と `evidence_inputs` の変更は全自動検査を選ぶ。
+自動検査は自身の `inputs` に一致する変更でも選ばれ、補助スクリプトの変更はそれを実行する検査を選ぶ。
+`--force` は検査内の契約ごとの再利用も行わず、全契約と反例を実行する。
 `tool_inputs` に指定した検査専用ランタイムは、Git の対象外でも実バイトをハッシュ化する。
 文書だけの変更は製品コードの検査結果を失効させない。
 `device_context` を持つ実機計測は、`system_profiler` で読み取った既定出力デバイスのメタデータのハッシュも識別に含める。

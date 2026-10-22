@@ -226,3 +226,73 @@ fn closing_while_the_output_opens_refuses_the_waiting_requests() {
     assert_eq!(message.as_deref(), Some("document thread stopped"));
     let _ = std::fs::remove_dir_all(path);
 }
+
+fn status(
+    document: *mut Document,
+    sender: &Sender<(&'static str, i32, Option<String>, *mut Snapshot)>,
+    incoming: &Completions,
+) -> serde_json::Value {
+    send(
+        echode_document_audio,
+        document,
+        r#"{"type":"audio.status"}"#,
+        "status",
+        sender,
+    );
+    audio(ok(incoming, "status"))
+}
+
+/// The app prepares the output when a project opens (ADR 0147). The request
+/// returns at once, edits keep their turns, and the first play reuses it.
+#[test]
+fn contract_prepare_opens_the_output_without_holding_edits_and_play_reuses_it() {
+    let path = package(Id::from_raw(0xE3));
+    let output = HeadlessOutput::default();
+    output.hold();
+    let release = Release(output.clone());
+    let document = Box::into_raw(Box::new(
+        Document::open_headless(&path, output.clone()).unwrap(),
+    ));
+    let (sender, incoming) = mpsc::channel();
+    send(
+        echode_document_audio,
+        document,
+        r#"{"type":"audio.prepare"}"#,
+        "prepare",
+        &sender,
+    );
+    let state = audio(ok(&incoming, "prepare"));
+    assert_eq!(state["opening"], true, "{state}");
+    assert_eq!(state["playing"], false);
+    until_waiting(&output);
+    send(
+        echode_document_submit,
+        document,
+        r#"{"type":"track.add","name":"while preparing"}"#,
+        "edit",
+        &sender,
+    );
+    let edited = ok(&incoming, "edit");
+    assert_eq!(unsafe { echode_snapshot_track_count(edited) }, 2);
+    unsafe { echode_snapshot_free(edited) };
+    drop(release);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while status(document, &sender, &incoming)["opening"] == true {
+        assert!(Instant::now() < deadline, "the output never opened");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    send(
+        echode_document_audio,
+        document,
+        r#"{"type":"transport.play"}"#,
+        "play",
+        &sender,
+    );
+    let state = audio(ok(&incoming, "play"));
+    assert_eq!(state["opening"], false, "{state}");
+    assert_eq!(state["playing"], true);
+    assert!(state["error"].is_null(), "{state}");
+    assert_eq!(output.prepared(), 1, "play reused the prepared output");
+    unsafe { echode_document_close(document) };
+    let _ = std::fs::remove_dir_all(path);
+}

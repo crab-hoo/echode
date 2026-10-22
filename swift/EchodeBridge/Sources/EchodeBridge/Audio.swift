@@ -97,6 +97,8 @@ public struct AuditionEntry: Codable, Sendable, Equatable {
 
 public enum AudioCommand: Encodable, Sendable {
     case play, pause, stop, locate(tick: Int64), output(uid: String?), refresh, status
+    /// Opens the output stopped, helpers and media included, so the first play does not wait.
+    case prepare
     /// Both ticks set the loop. Both nil clear it.
     case loop(start: Int64?, end: Int64?)
     case metronome(enabled: Bool)
@@ -114,6 +116,7 @@ public enum AudioCommand: Encodable, Sendable {
         case .output(let uid): type = "audio.output"; try container.encode(uid, forKey: .uid)
         case .refresh: type = "audio.refresh"
         case .status: type = "audio.status"
+        case .prepare: type = "audio.prepare"
         case .loop(let start, let end):
             type = "transport.loop"
             try container.encode(start, forKey: .start)

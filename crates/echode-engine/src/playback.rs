@@ -27,6 +27,10 @@ use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
 use crate::{PlaybackError, PlaybackIds, PlayedSpan, TrackFader};
 
+#[path = "playback_media.rs"]
+mod media;
+pub use media::MediaInputs;
+use media::MediaPreparation;
 #[path = "playback_preparation.rs"]
 mod preparation;
 use preparation::GraphPreparation;
@@ -1130,6 +1134,17 @@ pub struct PlaybackControl {
     background: bool,
     preparing: Option<GraphPreparation>,
     preparation_error: Option<PlaybackError>,
+    /// Replacements needing media not yet loaded load it on another thread.
+    background_media: bool,
+    media: Option<MediaPreparation>,
+    /// What the clips most recently loaded were read from.
+    media_inputs: Option<MediaInputs>,
+    /// The replacement waiting for `media` restores recorded plugin states.
+    media_restore_states: bool,
+    /// The first plan with media loaded by `media`, until it is published.
+    media_plan: Option<u64>,
+    /// Counts project replacements, so loaded media knows whether it is newest.
+    replacements: u64,
     published_plan: u64,
     chain: Vec<TrackChain>,
     routes: Vec<PluginRoute>,
@@ -1317,6 +1332,12 @@ pub fn playback_with_clock(
         background: false,
         preparing: None,
         preparation_error: None,
+        background_media: false,
+        media: None,
+        media_inputs: None,
+        media_restore_states: false,
+        media_plan: None,
+        replacements: 0,
         published_plan: 0,
         chain: Vec::new(),
         routes: Vec::new(),
@@ -1388,9 +1409,26 @@ impl PlaybackControl {
         self.background = true;
     }
 
-    /// A replacement's helper catalog is being prepared, or waiting to publish.
+    /// While `enabled`, a replacement whose media is not loaded yet loads it on
+    /// another thread and publishes once it arrives (ADR 0147). A load in
+    /// progress takes later replacements with it either way.
+    pub fn load_media_in_background(&mut self, enabled: bool) {
+        self.background_media = enabled;
+    }
+
+    /// Media for the newest replacement is loading on another thread, or the
+    /// plan carrying it has not been published yet.
+    pub fn loading_media(&self) -> bool {
+        self.media.is_some()
+            || self.media_plan.is_some_and(|revision| {
+                // Sequence arithmetic, as for the transport's revisions.
+                self.published_plan.wrapping_sub(revision) > u64::MAX / 2
+            })
+    }
+
+    /// A replacement's media or helper catalog is being prepared, or waiting to publish.
     pub fn preparing_graph(&self) -> bool {
-        self.preparing.is_some() || self.held.is_some()
+        self.preparing.is_some() || self.held.is_some() || self.media.is_some()
     }
 
     /// Declared finite device tails summed through each chain, before the fader.
@@ -1527,6 +1565,7 @@ impl PlaybackControl {
 
     pub fn replace(&mut self, project: &Project) -> Result<(), PlaybackError> {
         let previous = std::mem::replace(&mut self.project, project.clone());
+        self.replacements = self.replacements.wrapping_add(1);
         let result = self.reprepare(true);
         if result.is_err() {
             self.project = previous;
@@ -1539,14 +1578,84 @@ impl PlaybackControl {
         if let Some(error) = self.take_preparation_error() {
             return Err(error);
         }
+        let inputs = MediaInputs::of(&self.project);
+        // Calling the loader beside a load in progress would wait on its files.
+        if self.media.is_some()
+            || (self.background_media && self.media_inputs.as_ref() != Some(&inputs))
+        {
+            return self.defer_media(inputs, restore_states);
+        }
         let loaded = (self.clip_loader)(&self.project, self.rate)?;
+        self.media_inputs = Some(inputs);
+        self.prepare_plan(&loaded, restore_states)
+    }
+
+    fn defer_media(
+        &mut self,
+        inputs: MediaInputs,
+        restore_states: bool,
+    ) -> Result<(), PlaybackError> {
+        if self.media.is_none() {
+            self.media = Some(MediaPreparation::begin(
+                Arc::clone(&self.clip_loader),
+                self.project.clone(),
+                inputs,
+                self.rate,
+                self.replacements,
+            )?);
+        }
+        self.media_restore_states |= restore_states;
+        // Reported as a pending plan. A fader preview this edit commits holds
+        // until the plan that carries its media.
+        self.status.requested_plan.fetch_add(1, Ordering::AcqRel);
+        Ok(())
+    }
+
+    /// Prepares the newest project once the media it needs has loaded.
+    fn adopt_media(&mut self) -> Result<(), PlaybackError> {
+        let Some(result) = self.media.as_mut().and_then(MediaPreparation::poll) else {
+            return Ok(());
+        };
+        self.media = None;
+        let restore_states = std::mem::take(&mut self.media_restore_states);
+        let adopted = result.and_then(|loaded| {
+            let clips = loaded.clips?;
+            self.media_inputs = Some(loaded.inputs);
+            let inputs = MediaInputs::of(&self.project);
+            if self.media_inputs.as_ref() != Some(&inputs) {
+                // Edited again meanwhile. The next load reuses this one's planes.
+                return self.defer_media(inputs, restore_states);
+            }
+            let clips = if loaded.replacement == self.replacements {
+                clips
+            } else {
+                // Other edits came meanwhile; the same media is the loader's to reuse.
+                (self.clip_loader)(&self.project, self.rate)?
+            };
+            self.prepare_plan(&clips, restore_states)?;
+            self.media_plan = Some(self.status.requested_plan.load(Ordering::Acquire));
+            Ok(())
+        });
+        if adopted.is_err() {
+            self.status
+                .requested_plan
+                .store(self.published_plan, Ordering::Release);
+        }
+        adopted
+    }
+
+    fn prepare_plan(
+        &mut self,
+        loaded: &[LoadedClip],
+        restore_states: bool,
+    ) -> Result<(), PlaybackError> {
         let prepared = Prepared::new(
             &self.project,
             self.rate,
             self.frames,
             &mut self.ids,
             PreparedSources {
-                clips: &loaded,
+                clips: loaded,
                 caches: &self.caches,
             },
             self.loop_bounds,
@@ -1674,7 +1783,7 @@ impl PlaybackControl {
                 self.plugin_saves.push((*device, bytes));
             }
         }
-        if let Err(error) = self.publish_pending() {
+        if let Err(error) = self.adopt_media().and_then(|()| self.publish_pending()) {
             self.preparation_error = Some(error);
         }
     }

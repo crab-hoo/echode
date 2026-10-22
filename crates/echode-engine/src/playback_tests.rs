@@ -4,6 +4,8 @@ use std::time::Instant;
 
 #[path = "playback_preparation_tests.rs"]
 mod background;
+#[path = "playback_media_tests.rs"]
+mod media_loading;
 fn placed(track: u128, start: i64, value: f32, frames: usize) -> LoadedClip {
     LoadedClip {
         track,

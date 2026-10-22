@@ -69,6 +69,10 @@ public final class ProjectController {
     @ObservationIgnored private(set) var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
     @ObservationIgnored private let sendAudio: @Sendable (Document, AudioCommand) async throws -> AudioState
+    /// Opens the output stopped when a project opens, so the first play does not
+    /// wait for helpers and media (ADR 0147). The app turns it on; tests and
+    /// probes keep their documents off the audio hardware.
+    @ObservationIgnored public var preparesOutput = false
     /// Parameter lists the device view has shown in this document, by device.
     /// Values change inside each state; this map changes only when a list is
     /// added or a device leaves the document.
@@ -148,8 +152,16 @@ public final class ProjectController {
                 self.startPluginActivity(opened, documentID: self.documentID!)
                 self.publish(initial)
                 if let previous { await Task.detached { previous.shutdown() }.value }
+                if self.preparesOutput { self.prepareOutput(opened) }
             } catch { self.report(error) }
         }
+    }
+
+    /// Outside the edit turn: the worker answers at once and prepares on its own
+    /// thread. A failure appears in the polled audio state, as for a play.
+    private func prepareOutput(_ document: Document) {
+        let send = sendAudio
+        Task { _ = try? await send(document, .prepare) }
     }
 
     @discardableResult
@@ -566,7 +578,7 @@ extension AudioCommand {
     var requestsPlayheadFrame: Bool {
         switch self {
         case .play, .pause, .stop, .locate: true
-        case .output, .refresh, .status, .loop, .metronome, .previewFader, .clearFaderPreview: false
+        case .output, .refresh, .status, .prepare, .loop, .metronome, .previewFader, .clearFaderPreview: false
         }
     }
 }

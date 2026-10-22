@@ -46,9 +46,15 @@ make debug-report
   `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
   最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
   `check-product-contracts` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
-  前者では `product-contracts/*-negative.log` の更新時刻で進んでいた契約を確認し、既存の古いログを今回の完了証拠にしない。
-  一時コピーの初回ビルドも含む一括予算は 1800 秒で、各契約の期限と期待値は別に保つ。
-  一時コピー削除時の `.DS_Store` 競合は自動リトライされるが、権限エラー等の継続失敗は合格にしない。
+  前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
+  `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
+  コピーの初回ビルドも含む一括予算は 1800 秒で、各契約の期限と期待値は別に保つ。
+  反例のコピーは `target/product-contract-mutations/checkouts/<N>` に残り、`<N>.json` が置いたファイルの一覧である。
+  一覧が壊れていればコピーのソースを作り直す。コピーを疑う時は `checkouts/` を消せば次回に作り直す（初回ビルドの分だけ遅い）。
+  Rust の反例のビルドは `target/product-contract-mutations/cargo` に置き、この検査以外から書き込まない。
+  別の書き手の時刻が混じると、反例で作ったクレートを現在のソースのビルドと誤認しうる（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
+  別の実行が `target/product-contract-mutations/.lock` を持つ時は 30 秒で失敗する。`make verify` を並行して動かさない。
+  コピー内のディレクトリ削除時の `.DS_Store` 競合は自動リトライされるが、権限エラー等の継続失敗は合格にしない。
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
   一時パッケージを作る `scratch()` は使用前に同じパスを削除する。
@@ -166,6 +172,11 @@ make debug-report
   素材・保存済み状態の読込みや初回導入時の差分は同期のままなので、ヘルパー初期化の待ちと分ける
   （[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
   機器なしの出力は計画の採用に検査側の `pump` が必要である。初回の準備だけを待つ時に `Session.opening()` の全置換待ちを使わない。
+  製品アプリでは開いた直後の `opening` は事前準備（`audio.prepare`）である。最初の再生がまだ待つなら、押した時点の状態を分ける。
+  `opening` が真なら事前準備の途中、偽で `pending_plan` が真なら停止中の編集の素材読込み（`echode-media-prepare`）の残りである。
+  `playing` が真で `running` が偽のまま止まるなら、読込みの失敗か保留の解除を `output-prewarm-play` で確かめる。
+  開いても `opening` にならないなら、`output-prepare-on-open` で controller の送信、`output-prepare-worker` で C ABI を確かめる
+  （[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
   毎回止まるなら、`DeviceParameterListView.visibleRows` の数と `table.numberOfRows` を比べ、全行を作っていないかを確認する。
   列が作り直されているなら `DeviceStripView` の列の保持（文書の切替でだけ捨てる）を確認する。
   値の往復で止まるなら、`device-lane-held` を実行し、背景保存の確認と適用済み状態の読取りが通信中の制御端点を待っていないか確かめる。

@@ -470,3 +470,170 @@ fn retained_output_replacements_wait_for_new_devices_without_reopening() {
     assert!(session.opened_device_control(device).is_err());
     assert_eq!(output.prepared(), 1);
 }
+
+/// Holds the media loader while held. It fails after five seconds, so a load
+/// on the test thread, which stands in for the worker, ends instead of hanging.
+#[derive(Clone, Default)]
+struct MediaGate(Arc<(std::sync::Mutex<bool>, std::sync::Condvar, AtomicU64)>);
+
+impl MediaGate {
+    fn hold(&self) {
+        *self.0.0.lock().unwrap() = true;
+    }
+
+    fn release(&self) {
+        *self.0.0.lock().unwrap() = false;
+        self.0.1.notify_all();
+    }
+
+    fn pass(&self) -> Result<(), echode_engine::PlaybackError> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut held = self.0.0.lock().unwrap();
+        self.0.2.fetch_add(1, Ordering::AcqRel);
+        while *held {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                self.0.2.fetch_sub(1, Ordering::AcqRel);
+                return Err(echode_engine::PlaybackError::Media);
+            }
+            held = self.0.1.wait_timeout(held, left).unwrap().0;
+        }
+        self.0.2.fetch_sub(1, Ordering::AcqRel);
+        Ok(())
+    }
+
+    fn until_waiting(&self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while self.0.2.load(Ordering::Acquire) == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the media load never started"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
+
+/// Audio placements sound a constant 0.25 at their gain from the project
+/// start, about 0.18 per channel at gain 1 after the centre pan. The clip
+/// length covers these fixtures only.
+fn gated_media(session: &mut Session, gate: &MediaGate) {
+    let gate = gate.clone();
+    session.clips = Arc::new(move |project, rate| {
+        gate.pass()?;
+        Ok(project
+            .tracks()
+            .iter()
+            .flat_map(|track| {
+                track
+                    .clips
+                    .iter()
+                    .filter(|clip| {
+                        project
+                            .content(clip.content)
+                            .is_some_and(|content| content.audio.is_some())
+                    })
+                    .map(move |clip| echode_engine::LoadedClip {
+                        track: track.id.raw(),
+                        start_sample: 0,
+                        samples: vec![0.25 * clip.gain; rate as usize * 4].into(),
+                        right: None,
+                        fade_in: 0,
+                        fade_out: 0,
+                    })
+            })
+            .collect())
+    });
+}
+
+#[test]
+fn contract_a_prepared_output_plays_at_once_and_loads_stopped_edits_off_the_worker_under_rtsan() {
+    let (base, track) = Project::new().add_track("audio");
+    let clip = echode_model::Id::from_raw(0x61);
+    let project = base
+        .place_audio(
+            track,
+            clip,
+            echode_model::Id::from_raw(0x62),
+            echode_model::Tick::new(0),
+            echode_model::AudioRef::try_new("c".repeat(64), 48_000, 1, 192_000).unwrap(),
+        )
+        .unwrap();
+    let mut session = Session::new(Arc::new(project.clone()));
+    let gate = MediaGate::default();
+    gated_media(&mut session, &gate);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    // Opening the project prepares helpers, media and the output, stopped.
+    session.perform(AudioCommand::Prepare).unwrap();
+    let state = session.state();
+    assert!(state.opening && !state.playing, "{state:?}");
+    until_opened(&mut session);
+    assert!(
+        session.state().error.is_none(),
+        "{:?}",
+        session.state().error
+    );
+    assert_eq!(
+        pumped_peak(&mut session, 4),
+        0.0,
+        "a prepared output is stopped"
+    );
+    // A stopped edit needing new media returns while that media loads.
+    gate.hold();
+    let quieter = project.set_clip_gain(clip, 0.5).unwrap();
+    session.update(Arc::new(quieter));
+    gate.until_waiting();
+    let state = session.state();
+    assert!(session.opening() && state.pending_plan && !state.opening);
+    assert!(state.error.is_none(), "{:?}", state.error);
+    // Play waits for it instead of sounding the plan it replaces.
+    session.perform(AudioCommand::Play).unwrap();
+    let state = session.state();
+    assert!(state.playing && !state.running);
+    assert_eq!(
+        pumped_peak(&mut session, 8),
+        0.0,
+        "the old plan stayed silent"
+    );
+    gate.release();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut peak = 0.0f32;
+    while !session.state().running {
+        assert!(std::time::Instant::now() < deadline, "play never started");
+        peak = peak.max(pumped_peak(&mut session, 1));
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    peak = peak.max(pumped_peak(&mut session, 8));
+    // Half the gain: about 0.09 per channel. The old plan would give 0.18.
+    assert!(peak > 0.05 && peak < 0.1, "{peak}");
+    assert!(
+        session.state().error.is_none(),
+        "{:?}",
+        session.state().error
+    );
+    assert_eq!(output.prepared(), 1, "the prepared output was kept");
+}
+
+#[test]
+fn prepare_without_a_running_plugin_opens_once_and_a_later_play_reuses_it() {
+    let (project, _) = Project::new().add_track("audio");
+    let mut session = Session::new(Arc::new(project));
+    audio_tracks_sound(&mut session);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    output.hold();
+    session.perform(AudioCommand::Prepare).unwrap();
+    until_waiting(&output);
+    // Asking again while it opens does not prepare twice.
+    session.perform(AudioCommand::Prepare).unwrap();
+    output.release();
+    until_opened(&mut session);
+    session.perform(AudioCommand::Prepare).unwrap();
+    assert_eq!(output.prepared(), 1);
+    assert!(!session.state().opening && !session.state().running);
+    session.perform(AudioCommand::Play).unwrap();
+    assert!(pumped_peak(&mut session, 8) > 0.1);
+    assert!(session.state().running);
+    assert_eq!(output.prepared(), 1);
+}
