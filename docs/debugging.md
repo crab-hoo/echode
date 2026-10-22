@@ -218,6 +218,13 @@ make debug-report
   配置は `AudioImportRequest` の文書セッション・トラック・tick を使う。
   定期更新の `audio.tick` とライブの `playback.position.tick` を区別し、非同期待機後の選択へ付け替えない。
   `SampleBrowserTests` と必須契約の検索・配置ログを確認する（[ADR 0122](decisions/0122-sample-library-search-and-placement.md)）。
+- **音声をドロップできない・別の行や位置へ入る・トラックだけ残る**:
+  対応音声のファイル URL 1 つと copy 操作だけを受ける。MIDI・複数 URL・ヘッダ・分割線・領域外は拒否する。
+  `sample-browser-content-ui` は表示と URL の書出し、`sample-drop-entry-ui` は AppKit の入口と文書交換を切り分ける。
+  `sample-drop-ui` で現在のヘッダ幅・カメラ・折りたたみ後の行・Shift を確認する。ダブルクリックの再生位置配置とは別の経路である。
+  受理後の失敗は文書のエラーを確認し、復号・消失した対象・同トラックの配置重複を区別する。
+  トラックだけが残る場合は `audio-import-transaction` と `DocumentHost::apply` の失敗した要素の番号を調べる。
+  PCM と索引の残存は従来の仕様で、モデルの部分更新とは別である（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
 - **サンプルの試聴が鳴らない・古い素材が鳴る・止まらない**:
   スナップショットの音声状態 `audition` の `request`・`handled`・`phase`・`error`・`sample_rate` を見る。
   `handled` が `request` に届かなければ試聴スレッドが処理前、`failed` は復号か出力準備の失敗、`sample_rate` が空なら出力は閉じている。

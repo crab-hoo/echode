@@ -58,6 +58,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0135](../decisions/0135-sample-audition.md)）。
   一覧は AppKit の表（`FileListTable`）で、押した時点で選択しフォーカスを取り、2 回目のクリックと Return で開く。
   試聴を変えるのは利用者のクリックとキーだけで、ブラウザ自身の選択の付け替えは鳴らさない（[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）。
+  制作向けの表示・検索と音声ファイル URL の位置指定ドロップは [ADR 0145](../decisions/0145-sample-browser-file-drops.md) に従う。
+  表示行と現在のカメラから対象を確定し、最終行の下では `track.add` と取込みを 1 回の履歴にする。
 - **P2 のアレンジ・ミックス編集**: 右ドラッグでクリップ選択、空白左ドラッグで編集区間選択、リージョン作成、複数選択ミキサー操作に対応する
   （[ADR 0117](../decisions/0117-workflow-interactions.md)、[ミックスの要件](../interaction-design.md#ミキサーの複数選択)）
 

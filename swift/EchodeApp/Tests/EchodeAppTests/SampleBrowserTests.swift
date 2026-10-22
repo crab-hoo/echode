@@ -49,7 +49,7 @@ struct SampleBrowserTests {
         #expect(restored.filtered.map(\.url) == [expected[0]])
         try FileManager.default.removeItem(at: nested)
         await restored.refreshLibrary()
-        #expect(restored.libraryError != nil && restored.libraryFiles.isEmpty && !restored.indexing)
+        #expect(restored.libraryError != nil && restored.libraryFiles.map(\.url.lastPathComponent) == ["Song.echode"] && !restored.indexing)
         await restored.register(root.appendingPathComponent("missing"))
         #expect(restored.roots.count == 2 && restored.error != nil)
     }
@@ -105,7 +105,7 @@ struct SampleBrowserTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let folder = root.appendingPathComponent("samples")
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
-        for name in ["kick.wav", "snare.aif", "notes.txt"] {
+        for name in ["kick.wav", "snare.aif", "melody.mid"] {
             try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name))
         }
         let requests = Mutex<[URL?]>([])
@@ -122,7 +122,7 @@ struct SampleBrowserTests {
         // The request is synchronous; it is not an edit and never waits for one.
         #expect(session.auditionSelection(kick) == kick)
         #expect(session.auditionSelection(snare) == snare)
-        let loops = try #require(rows["loops"]), notes = try #require(rows["notes.txt"])
+        let loops = try #require(rows["loops"]), notes = try #require(rows["melody.mid"])
         #expect(session.auditionSelection(loops) == nil)
         #expect(session.auditionSelection(notes) == nil)
         #expect(session.auditionSelection(nil) == nil)

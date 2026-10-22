@@ -20,6 +20,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     [照合の「修正の進め方」](reviews/2026-10-21-ui-feedback-audit.md#修正の進め方) に置く。
     1 番目のブラウザのクリック経路と試聴の診断を接続した（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
     2 番目のペインのリサイズで前のフレームを伸縮しない配置と、指定ヘッダ幅の保持を接続した（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
+    3 番目の制作向けファイルの表示と音声の位置指定ドロップを、単一 Undo・保存・失敗時の巻戻しへ接続した（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
     UIF-08 は P2-02 の下部の切替を置き換え、UIF-03 は P2-07 のアレンジ編集を先に接続する。
 - **操作要件の正本**:
   コード→メロディ→ドラム→ベース→構成→編曲→ミックス・オートメーション→書出しまでの操作要件は [制作ワークフローとインタラクション](interaction-design.md)、既存設計との置換範囲は [ADR 0117](decisions/0117-workflow-interactions.md) に置く。
@@ -50,6 +51,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 - **共通サンプルブラウザの検索・配置（[ADR 0122](decisions/0122-sample-library-search-and-placement.md)）**:
   フォルダ登録・解除と設定保持、登録素材全体の名前検索、操作時のライブ位置と対象を保持する配置を接続した。
   検索・配置の必須契約で、重複・リンク・パッケージ除外、保存・Undo / Redo と古い文書の拒否を確認する。
+  一覧・登録検索の制作向けファイルへの絞込み、未対応 MIDI の表示、音声 1 ファイルの位置指定ドロップも接続した。
+  拍グリッド・Shift 解除・末尾トラックの単一 Undo と、取込み失敗時の巻戻しを持つ（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
 - **全選択トラックへの一括追加（[ADR 0124](decisions/0124-selected-track-fx-batches.md)）**:
   ヘッダの Command / Shift 選択と候補の右メニューを接続した。
   操作時の対象を保持し、別デバイス ID の生成・単一 Undo / Redo・保存再読込を必須契約で確認する。

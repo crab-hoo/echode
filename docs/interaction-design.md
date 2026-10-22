@@ -381,6 +381,7 @@ GUI の応答性と編集継続は P2 のデバイス表示・読込みから守
 - トラック FX チェインの並べ替え・複製・別トラックへのコピーと非モーダル候補パネルは P2-02 の最初の接続（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）で実装済み。
   ホストバイパスも保存・Undo・再生・書出しへ接続した（[ADR 0120](decisions/0120-device-bypass.md)）。
   共通サンプルブラウザの登録素材検索・位置を保持する配置は接続済みである。
+  制作向けファイルの表示・検索と、ブラウザ・Finder の音声の位置指定ドロップも接続した（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
   全選択トラックへの FX 一括追加は [ADR 0124](decisions/0124-selected-track-fx-batches.md) で接続した。
   トラックの通常複製は部分木単位で接続し、オートメーションとルーティングの引き継ぎは P2-03 / P2-04 で決める（[ADR 0129](decisions/0129-track-duplication.md)）。
   CLAP の汎用パラメーター欄は接続した（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。

@@ -29,11 +29,12 @@ struct SampleLibraryScan: Sendable {
                     // Directory enumeration may return /private/var for a
                     // registered /var URL. Use one spelling for overlap checks.
                     let normalized = url.resolvingSymlinksInPath().standardizedFileURL
-                    if values.isDirectory == true {
-                        if values.isPackage != true, url.pathExtension.lowercased() != "echode" { pending.append(normalized) }
-                    } else if values.isRegularFile == true {
-                        let file = BrowserFile(url: normalized, directory: false)
-                        if file.audio { files[normalized] = file }
+                    let file = BrowserFile(url: normalized, directory: values.isDirectory == true, package: values.isPackage == true)
+                    if file.project { files[normalized] = file }
+                    else if values.isDirectory == true {
+                        if values.isPackage != true { pending.append(normalized) }
+                    } else if values.isRegularFile == true, file.visible {
+                        files[normalized] = file
                     }
                 }
             } catch is CancellationError { throw CancellationError() }

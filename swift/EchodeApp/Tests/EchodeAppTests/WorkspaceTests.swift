@@ -230,7 +230,7 @@ struct WorkspaceTests {
         while !started { await Task.yield() }
         await browser.load(second)
         await older.value
-        #expect(browser.folder == second && !browser.loading && browser.files.map(\.url.lastPathComponent) == ["Song.echode", "notes.txt"])
+        #expect(browser.folder == second && !browser.loading && browser.files.map(\.url.lastPathComponent) == ["Song.echode"])
         #expect(browser.canOpenParent && !FileBrowserState.canOpenParent(of: URL(fileURLWithPath: "/")))
         browser.selection = browser.files.last?.url
         browser.query = "song"

@@ -222,6 +222,20 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
 
+    def test_sample_file_drops_keep_native_url_and_atomic_import_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        self.assertEqual(contracts["sample-browser-content-ui"]["suite"], "SampleBrowserContentTests")
+        self.assertEqual(contracts["sample-drop-ui"]["suite"], "SampleAudioDropTests")
+        self.assertIn(".shift", contracts["sample-drop-ui"]["negative_control"]["old"])
+        self.assertEqual(contracts["sample-drop-entry-ui"]["negative_control"]["file"],
+                         "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift")
+        self.assertEqual(contracts["audio-import-transaction"]["package"], "echode-history")
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/ArrangeAudioDrop.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/FileBrowserState.swift",
+                     "crates/echode-history/src/host.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+
     def test_sample_audition_keeps_the_raw_fade_and_selection_contracts(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         engine = contracts["sample-audition"]
@@ -443,7 +457,7 @@ class PolicyTests(unittest.TestCase):
                           "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui",
                           "fx-bypass-ui", "fx-batch-ui", "fx-offline-ui", "plugin-offline", "offline-export",
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
-                          "sample-audition", "sample-audition-ui", "sample-browser-click-ui",
+                          "sample-audition", "sample-audition-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",

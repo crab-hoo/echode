@@ -461,6 +461,10 @@ public final class ProjectController {
         await performEdit({ fields() }, documentID: documentID)
     }
 
+    func editTransaction(_ actions: @escaping @MainActor () -> [[String: Any]]?, documentID: UUID, selectingAddedTrack: Bool = false) async -> Bool {
+        await performEdit({ actions() }, documentID: documentID, selectingAddedTrack: selectingAddedTrack)
+    }
+
     private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false, selectingAddedTrack: Bool = false) async -> Bool {
         guard faderPreview == nil || finishingPreview else { return false }
         return await edits.run {

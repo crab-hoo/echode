@@ -47,6 +47,10 @@ final class FileListView: NSScrollView, NSTableViewDataSource, NSTableViewDelega
             guard let self, self.files.indices.contains(row) else { return }
             self.onOpen(self.files[row])
         }
+        table.dragURL = { [weak self] row in
+            guard let self, self.files.indices.contains(row), self.files[row].audio else { return nil }
+            return self.files[row].url
+        }
         documentView = table
         hasVerticalScroller = true
         autohidesScrollers = true
@@ -102,6 +106,10 @@ final class FileListTable: NSTableView {
     /// The click or key being handled, which a selection change reports.
     fileprivate(set) var input: AuditionOrigin?
     var onOpen: (Int) -> Void = { _ in }
+    var dragURL: (Int) -> URL? = { _ in nil }
+    private var dragDown: (NSEvent, any NSPasteboardWriting)?
+
+    func pasteboardWriter(for row: Int) -> NSPasteboardWriting? { dragURL(row).map { $0 as NSURL } }
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -110,10 +118,23 @@ final class FileListTable: NSTableView {
         let row = row(at: convert(event.locationInWindow, from: nil))
         input = AuditionOrigin(input: .click, delayMicroseconds: Self.delay(event))
         defer { input = nil }
-        guard row >= 0 else { deselectAll(nil); return }
+        guard row >= 0 else { dragDown = nil; deselectAll(nil); return }
         if selectedRow != row { selectRowIndexes([row], byExtendingSelection: false) }
         if event.clickCount == 2 { onOpen(row) }
+        dragDown = event.clickCount == 1 ? pasteboardWriter(for: row).map { (event, $0) } : nil
     }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let (down, writer) = dragDown,
+              hypot(event.locationInWindow.x - down.locationInWindow.x, event.locationInWindow.y - down.locationInWindow.y) >= 4 else { return }
+        dragDown = nil
+        let item = NSDraggingItem(pasteboardWriter: writer)
+        item.setDraggingFrame(CGRect(origin: convert(event.locationInWindow, from: nil), size: CGSize(width: 120, height: rowHeight)), contents: NSImage(systemSymbolName: "waveform", accessibilityDescription: nil))
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+
+    override func mouseUp(with event: NSEvent) { dragDown = nil }
+    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
 
     override func keyDown(with event: NSEvent) {
         // Return and keypad Enter open the row, as a double click does.
@@ -168,7 +189,8 @@ final class FileRowView: NSTableCellView {
 
     func configure(_ file: BrowserFile, showingFolder: Bool) {
         icon.image = NSImage(systemSymbolName: file.icon, accessibilityDescription: nil)
-        name.stringValue = file.url.lastPathComponent
+        name.stringValue = file.url.lastPathComponent + (file.midi ? " — " + text("MIDI import not available yet") : "")
+        name.textColor = file.midi ? .secondaryLabelColor : .labelColor
         folder.stringValue = file.url.deletingLastPathComponent().path
         folder.isHidden = !showingFolder
         toolTip = file.url.path

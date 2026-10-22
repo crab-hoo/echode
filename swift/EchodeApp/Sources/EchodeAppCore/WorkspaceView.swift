@@ -101,7 +101,7 @@ public struct WorkspaceView: View {
                 Text(text("Scroll to move · Pinch to zoom")).font(.caption).foregroundStyle(.secondary)
             }.padding(10)
             Divider()
-            if let snapshot = controller.snapshot, !controller.tracks.isEmpty {
+            if let snapshot = controller.snapshot {
                 ArrangeCanvas(snapshot: snapshot, selection: $controller.selection,
                               playback: controller.playback, transportGeneration: controller.transportGeneration,
                               navigation: state.navigation, documentID: controller.documentID,
@@ -114,7 +114,7 @@ public struct WorkspaceView: View {
                               }, onDuplicateTracks: { _ = session.duplicateTracks() }, onOpenPlugin: { _, device in
                                   guard let document = controller.documentID else { return }
                                   Task { _ = await controller.openPluginWindow(device, documentID: document) }
-                              }, pluginNames: controller.pluginNames).id(controller.documentID)
+                              }, pluginNames: controller.pluginNames, onDropAudio: { session.importDroppedAudio($0) != nil }).id(controller.documentID)
                 Divider()
                 HStack {
                     Button { session.addTrack(atEnd: true) } label: {

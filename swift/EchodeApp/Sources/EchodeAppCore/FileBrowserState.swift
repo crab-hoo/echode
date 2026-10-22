@@ -9,7 +9,10 @@ struct BrowserFile: Identifiable, Sendable {
     var audio: Bool {
         !directory && ["wav", "aiff", "aif", "caf", "mp3", "m4a", "aac", "flac"].contains(url.pathExtension.lowercased())
     }
-    var icon: String { project || audio ? "waveform" : directory ? "folder" : "doc" }
+    var midi: Bool { !directory && ["mid", "midi"].contains(url.pathExtension.lowercased()) }
+    var package = false
+    var visible: Bool { project || (!package && (directory || audio || midi)) }
+    var icon: String { project || audio ? "waveform" : directory ? "folder" : midi ? "pianokeys" : "doc" }
 }
 
 @MainActor @Observable
@@ -109,8 +112,14 @@ final class FileBrowserState {
         loading = true; error = nil
         do {
             let files = try await Task.detached {
-                try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
-                    .map { url in BrowserFile(url: url, directory: try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true) }
+                let keys: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .isRegularFileKey]
+                return try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])
+                    .compactMap { url -> BrowserFile? in
+                        let values = try url.resourceValues(forKeys: keys)
+                        guard values.isSymbolicLink != true, values.isDirectory == true || values.isRegularFile == true else { return nil }
+                        let file = BrowserFile(url: url, directory: values.isDirectory == true, package: values.isPackage == true)
+                        return file.visible ? file : nil
+                    }
                     .sorted { left, right in
                         if left.directory != right.directory { return left.directory }
                         return left.url.lastPathComponent.localizedStandardCompare(right.url.lastPathComponent) == .orderedAscending

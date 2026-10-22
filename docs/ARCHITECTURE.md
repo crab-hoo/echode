@@ -287,6 +287,8 @@ P2 の共通サンプルブラウザ（[interaction-design.md](interaction-desig
 
 単一 drawable でヘッダ・タイムライン・ミックス操作子を描く `ArrangePaneView`（[ADR 0050](decisions/0050-arrange-viewport.md)、[ADR 0051](decisions/0051-arrange-presentation.md)、[ADR 0107](decisions/0107-mix-controls.md)）、ペイン境界クリップ（[ADR 0098](decisions/0098-pane-render-boundaries.md)）、ワークスペース状態分離（[ADR 0053](decisions/0053-workspace-ui-foundation.md)）。
 
+制作向けのファイル一覧と、標準ファイル URL の位置指定ドロップ・末尾追加の単一 Undo は [ADR 0145](decisions/0145-sample-browser-file-drops.md) に従う。
+
 ### 13.2 Metal のレンダラー
 
 専用スレッドの `CAMetalDisplayLink` と 3 枠バッファ再利用（[ADR 0091](decisions/0091-playhead-wake.md)、[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)）、単一可視列（[ADR 0045](decisions/0045-visible-elements.md)）、`CanvasGeometryCache`（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。

@@ -24,9 +24,10 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var collapsedTracks: Set<UUID> = []
     public var onFolderDisclosure: ((UUID, Bool) -> Void)?
     public var onDuplicateTracks: (() -> Void)?
+    public var onDropAudio: ((AudioFileDrop) -> Bool)?
 
     public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
-                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:]) {
+                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
@@ -43,6 +44,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.onDuplicateTracks = onDuplicateTracks
         self.onOpenPlugin = onOpenPlugin
         self.pluginNames = pluginNames
+        self.onDropAudio = onDropAudio
     }
 
     public func makeNSView(context: Context) -> ArrangePaneView {
@@ -62,6 +64,8 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.onDropFX = onDropFX
         view.onFolderDisclosure = onFolderDisclosure
         view.onDuplicateTracks = onDuplicateTracks
+        view.timeline.audioDocument = documentID
+        view.timeline.onDropAudio = onDropAudio
         view.headers.documentID = documentID
         view.setControlSelection(clip: selectedClip, preview: faderPreview)
         view.setSnapshot(snapshot, selected: selection, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks)
@@ -96,10 +100,14 @@ public final class ArrangeView: NSView {
     var onSelect: ((UUID) -> Void)?
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
+    var audioDocument: UUID? { didSet { if oldValue != audioDocument { audioDragDocument = nil } } }
+    var onDropAudio: ((AudioFileDrop) -> Bool)?
+    private var audioDragDocument: UUID?
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
         clipsToBounds = true
+        registerForDraggedTypes([.fileURL])
         CanvasSurface.configure(self, layer: metalLayer)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
@@ -173,7 +181,7 @@ public final class ArrangeView: NSView {
     public override func layout() { super.layout(); refresh() }
     public override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); refresh() }
 
-    public func stop() { feedback.invalidate(); renderer?.stop(); renderer = nil; elements = []; accessibleElements = [:]; clipDraft = nil }
+    public func stop() { feedback.invalidate(); renderer?.stop(); renderer = nil; elements = []; accessibleElements = [:]; clipDraft = nil; audioDragDocument = nil }
 
     // Explicit, hardware-only probe; the app never enables continuous redraw
     // or blocks MainActor during normal editing.
@@ -181,6 +189,25 @@ public final class ArrangeView: NSView {
     public func markMainBusy(_ busy: Bool) { renderer?.markMainBusy(busy) }
     public var measurement: ArrangeMeasurement { renderer?.measurement ?? ArrangeMeasurement() }
     public var rendererAvailable: Bool { renderer != nil }
+
+    public override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        audioDragDocument = audioDocument
+        return draggingUpdated(sender)
+    }
+    public override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingSourceOperationMask.contains(.copy), let document = audioDragDocument,
+              audioDrop(sender.draggingPasteboard, at: convert(sender.draggingLocation, from: nil),
+                        flags: NSEvent.modifierFlags, document: document) != nil else { return [] }
+        return .copy
+    }
+    public override func draggingExited(_ sender: (any NSDraggingInfo)?) { audioDragDocument = nil }
+    public override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool { draggingUpdated(sender) == .copy }
+    public override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        defer { audioDragDocument = nil }
+        guard sender.draggingSourceOperationMask.contains(.copy), let document = audioDragDocument else { return false }
+        return acceptAudio(sender.draggingPasteboard, at: convert(sender.draggingLocation, from: nil),
+                           flags: NSEvent.modifierFlags, document: document)
+    }
 
     public override func scrollWheel(with event: NSEvent) {
         let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),

@@ -420,7 +420,7 @@ fn worker(
             }
             Request::Apply { actions, reply } => {
                 let parked = session.park_redo();
-                let result = match apply_transaction(&mut session, actions) {
+                let result = match apply_transaction(&mut session, &directory, actions) {
                     Ok(applied) if applied.is_empty() => {
                         session.unpark_redo(parked);
                         Ok(applied)
@@ -680,7 +680,11 @@ fn publish(
     Ok(())
 }
 
-fn apply_transaction(session: &mut Session, actions: Vec<Value>) -> Result<Vec<Action>, HostError> {
+fn apply_transaction(
+    session: &mut Session,
+    directory: &Path,
+    actions: Vec<Value>,
+) -> Result<Vec<Action>, HostError> {
     let mut applied = Vec::with_capacity(actions.len());
     let mut prior = Vec::with_capacity(actions.len());
     let mut failure: Option<HostError> = None;
@@ -706,6 +710,19 @@ fn apply_transaction(session: &mut Session, actions: Vec<Value>) -> Result<Vec<A
                     return Err(ActionError::CorruptJournal);
                 }
             };
+            // Import external media on the document thread, then commit only a
+            // durable PCM reference. A failure rolls back the whole edit group.
+            let command = match import_command(directory, command) {
+                Ok(command) => command,
+                Err(error) => {
+                    failure = Some(HostError::Element {
+                        index,
+                        parameters: false,
+                        message: error.to_string(),
+                    });
+                    return Err(ActionError::NotApplied);
+                }
+            };
             match transaction.perform(command) {
                 Ok(action) => {
                     prior.push(serde_json::to_value(&action).expect("a committed action is json"));
@@ -726,6 +743,22 @@ fn apply_transaction(session: &mut Session, actions: Vec<Value>) -> Result<Vec<A
     match result {
         Ok(()) => Ok(applied),
         Err(_) => Err(failure.expect("a failed transaction records the element")),
+    }
+}
+
+fn import_command(directory: &Path, command: Command) -> Result<Command, PackageError> {
+    if let Command::ImportAudio { track, start, path } = command {
+        let stored = crate::media::import_audio(directory, Path::new(&path))?;
+        Ok(Command::PlaceAudio {
+            track,
+            start,
+            hash: stored.hash,
+            sample_rate: stored.sample_rate,
+            channels: stored.channels,
+            frames: stored.frames,
+        })
+    } else {
+        Ok(command)
     }
 }
 

@@ -1801,6 +1801,12 @@
         }
       }
     },
+    "MIDI import not available yet": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "MIDI import not available yet" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "MIDI の読込みは未対応" } }
+      }
+    },
     "Import Audio": {
       "localizations": {
         "en": {
