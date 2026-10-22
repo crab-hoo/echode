@@ -28,11 +28,12 @@ public struct WorkspaceView: View {
             ToolbarItemGroup(placement: .navigation) { command(.newProject); command(.openProject) }
             ToolbarItemGroup { command(.undo); command(.redo); command(.history); command(.addTrack) }
             ToolbarItemGroup(placement: .primaryAction) {
-                command(.output); command(.plugins); command(.devices); command(.inspector); command(.editor); command(.browser); command(.palette)
+                command(.output); command(.plugins); command(.devices); command(.inspector); command(.editor); command(.maximizeEditors); command(.browser); command(.palette)
             }
         }
         .focusedSceneValue(\.workspaceActions, WorkspaceActions(perform: session.perform,
-            enabled: Set(WorkspaceCommand.allCases.filter { session.enabled($0) })))
+            enabled: Set(WorkspaceCommand.allCases.filter { session.enabled($0) }),
+            selected: Set(WorkspaceCommand.allCases.filter { session.isSelected($0) })))
         .sheet(item: $state.presentation) { presentation in
             switch presentation {
             case .palette: WorkspacePalette(session: session)
@@ -65,26 +66,10 @@ public struct WorkspaceView: View {
                     WorkspaceInspectorView(controller: controller).frame(width: sizes.inspector)
                     splitter(.inspector, value: sizes.inspector, size: geometry.size)
                 }
-                VStack(spacing: 0) {
-                    arrange.frame(height: sizes.arrange).clipped()
-                    if state.layout.editor {
-                        splitter(.editor, value: sizes.editor, size: geometry.size)
-                        VStack(spacing: 0) {
-                            Picker(text("Editor"), selection: $state.bottom) {
-                                Text(text("Piano Roll")).tag(BottomView.editor)
-                                Text(text("Devices")).tag(BottomView.devices)
-                                Text(text("Piano Roll and Devices")).tag(BottomView.both)
-                            }.pickerStyle(.segmented).fixedSize().padding(6)
-                            if state.showsEditor {
-                                WorkspaceNoteEditorView(controller: controller, state: state)
-                            }
-                            if state.bottom == .both { Divider() }
-                            if state.showsDevices {
-                                WorkspaceDeviceView(controller: controller, add: { session.openPlugins() })
-                            }
-                        }.frame(height: sizes.editor).clipped()
-                    }
-                }.frame(maxWidth: .infinity)
+                WorkspaceCenterStack(layout: state.layout, sizes: sizes,
+                    resize: { state.layout.resize(.editor, to: $0, in: geometry.size) }, finish: state.saveLayout,
+                    arrange: { arrange }, editor: { WorkspaceNoteEditorView(controller: controller, state: state) },
+                    devices: { WorkspaceDeviceView(controller: controller, add: { session.openPlugins() }) })
                 if state.layout.browser {
                     splitter(.browser, value: sizes.browser, size: geometry.size)
                     WorkspaceFileBrowser(session: session).frame(width: sizes.browser)
@@ -163,9 +148,16 @@ public struct WorkspaceView: View {
                 .disabled(controller.busy || state.choosingFile)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private func command(_ command: WorkspaceCommand) -> some View {
-        Button { session.perform(command) } label: { Label(command.title, systemImage: command.icon) }
-            .labelStyle(.iconOnly).help(command.title).disabled(!session.enabled(command))
+    @ViewBuilder private func command(_ command: WorkspaceCommand) -> some View {
+        if command.isLayoutToggle {
+            Toggle(isOn: Binding(get: { session.isSelected(command) }, set: { _ in session.perform(command) })) {
+                Label(command.title, systemImage: command.icon)
+            }.toggleStyle(.button).labelStyle(.iconOnly).help(command.title)
+                .disabled(!session.enabled(command)).accessibilityIdentifier("workspace.\(command.rawValue)")
+        } else {
+            Button { session.perform(command) } label: { Label(command.title, systemImage: command.icon) }
+                .labelStyle(.iconOnly).help(command.title).disabled(!session.enabled(command))
+        }
     }
     private func splitter(_ pane: WorkspacePane, value: Double, size: CGSize) -> some View {
         WorkspaceDivider(pane: pane, value: value, resize: { state.layout.resize(pane, to: $0, in: size) }, finish: state.saveLayout)

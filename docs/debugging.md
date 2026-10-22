@@ -45,6 +45,9 @@ make debug-report
 - **自動検査・製品契約の失敗**:
   `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
   最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
+  `check-product-contracts` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
+  前者では `product-contracts/*-negative.log` の更新時刻で進んでいた契約を確認し、既存の古いログを今回の完了証拠にしない。
+  一時コピーの初回ビルドも含む一括予算は 1800 秒で、各契約の期限と期待値は別に保つ。
   一時コピー削除時の `.DS_Store` 競合は自動リトライされるが、権限エラー等の継続失敗は合格にしない。
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
@@ -114,6 +117,14 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **下部を開くと別のエディタが消える・高さが戻らない**:
+  ⌥⌘3・4 は各エディタ、⌥⌘5 はアレンジ非表示の独立した切替である。
+  `workspace.layout.v2` の `editor`・`devices`・`editorsMaximized` と `editorHeight` を分けて確認する。
+  v1 の切替は保存されていないため、移行時にデバイスの開閉を推測しない。
+  壊れた v2 は既定値へ戻すので、古い v1 の削除を初手の対処にしない。
+  `workspace-layout-ui` は共通コマンドと設定復元、`workspace-stack-ui` は画面なしの製品の枠・順序を検査する。
+  両方開いた通常表示の最小高は 870 pt、最大化は 645 pt で、最小高の変化を高さ設定の喪失と混同しない
+  （[ADR 0146](decisions/0146-independent-editor-stack.md)）。
 - **ヘッダの名前が出ない・名前で候補が開く・違う窓が開く**:
   名前は行高 52 pt 以上かつ幅と字下げに余裕がある時に表示する。先頭以外は「…」のメニューで選ぶ。
   `TrackFXNamesLayout` の矩形とカタログ名、スナップショットのチェイン順を確認する。

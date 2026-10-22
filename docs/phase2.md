@@ -21,6 +21,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     1 番目のブラウザのクリック経路と試聴の診断を接続した（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
     2 番目のペインのリサイズで前のフレームを伸縮しない配置と、指定ヘッダ幅の保持を接続した（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
     3 番目の制作向けファイルの表示と音声の位置指定ドロップを、単一 Undo・保存・失敗時の巻戻しへ接続した（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
+    5 番目の下部の個別開閉・固定高のデバイス・アレンジ非表示と旧設定の移行を接続した（[ADR 0146](decisions/0146-independent-editor-stack.md)）。
+    4 番目の試聴の先読み・波形・出力の常駐は未着手のままである。
     UIF-08 は P2-02 の下部の切替を置き換え、UIF-03 は P2-07 のアレンジ編集を先に接続する。
 - **操作要件の正本**:
   コード→メロディ→ドラム→ベース→構成→編曲→ミックス・オートメーション→書出しまでの操作要件は [制作ワークフローとインタラクション](interaction-design.md)、既存設計との置換範囲は [ADR 0117](decisions/0117-workflow-interactions.md) に置く。
@@ -73,7 +75,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 - **横並びのデバイスビューと応答性（[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）**:
   選択トラックのデバイスを横に並べ、各列に操作・検索欄・全パラメーターの一覧を置いた。一覧は画面内の行だけを作る。
   ピン留めはデバイスごとに保存形式 6 へ記録し、最上部に固定する。単一 Undo・複製時の継承・検索中の表示を持つ。
-  下部は「ピアノロール」「デバイス」「両方（上下）」で切り替える。
+  下部は [ADR 0146](decisions/0146-independent-editor-stack.md) で個別開閉へ改め、デバイスを固定高でピアノロールの下へ積む。
+  ⌥⌘3・4 は各エディタの開閉、⌥⌘5 は開閉と独立したアレンジ非表示。v1 のウィンドウ設定を v2 へ引き継ぐ。
   一覧・値の往復はデバイスレーンで待ち、選択・無関係な編集・Undo・停止は応答を待たない。
   必須契約 `device-lane-held`・`device-view-slow-ui`・`device-view-long-ui` で確認する。
 - **サンプルの単発試聴（[ADR 0135](decisions/0135-sample-audition.md)）**:

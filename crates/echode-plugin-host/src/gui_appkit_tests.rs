@@ -30,6 +30,16 @@ fn contract_plugin_key_events_keep_typing_and_forward_workspace_shortcuts() {
             Some(PluginCommand::Redo),
         ),
         (47, NSEventModifierFlags::Command, Some(PluginCommand::Stop)),
+        (
+            21,
+            NSEventModifierFlags::Command | NSEventModifierFlags::Option,
+            Some(PluginCommand::Devices),
+        ),
+        (
+            23,
+            NSEventModifierFlags::Command | NSEventModifierFlags::Option,
+            Some(PluginCommand::MaximizeEditors),
+        ),
         (49, NSEventModifierFlags::Shift, None),
         (0, NSEventModifierFlags::empty(), None),
     ] {

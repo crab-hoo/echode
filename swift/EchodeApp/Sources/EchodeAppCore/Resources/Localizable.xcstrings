@@ -7,6 +7,18 @@
         "ja": { "stringUnit": { "state": "translated", "value": "デバイス" } }
       }
     },
+    "Maximize Editors": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Maximize Editors" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アレンジの表示を切替" } }
+      }
+    },
+    "Open Note Editor or Devices": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Open Note Editor or Devices" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ノートエディタかデバイスを開いてください" } }
+      }
+    },
     "Piano Roll and Devices": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Both" } },

@@ -4,10 +4,16 @@ import UniformTypeIdentifiers
 
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track", duplicateTrack = "Duplicate Track"
-    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Devices"
+    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Devices", maximizeEditors = "Maximize Editors"
     case playback = "Play / Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
     public var id: Self { self }
     public var title: String { text(rawValue) }
+    public var isLayoutToggle: Bool {
+        switch self {
+        case .inspector, .browser, .editor, .devices, .maximizeEditors: true
+        default: false
+        }
+    }
     public var icon: String {
         switch self {
         case .newProject: "doc.badge.plus"
@@ -21,6 +27,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .browser: "sidebar.right"
         case .editor: "pianokeys"
         case .devices: "slider.horizontal.3"
+        case .maximizeEditors: "arrow.up.left.and.arrow.down.right"
         case .playback: "playpause"
         case .stop: "stop.fill"
         case .loop: "repeat"
@@ -40,6 +47,8 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .inspector: KeyboardShortcut("1", modifiers: [.command, .option])
         case .browser: KeyboardShortcut("2", modifiers: [.command, .option])
         case .editor: KeyboardShortcut("3", modifiers: [.command, .option])
+        case .devices: KeyboardShortcut("4", modifiers: [.command, .option])
+        case .maximizeEditors: KeyboardShortcut("5", modifiers: [.command, .option])
         case .playback: KeyboardShortcut(.space, modifiers: [])
         case .stop: KeyboardShortcut(".")
         case .palette: KeyboardShortcut("p", modifiers: [.command, .shift])
@@ -56,6 +65,8 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .inspector: "⌥⌘1"
         case .browser: "⌥⌘2"
         case .editor: "⌥⌘3"
+        case .devices: "⌥⌘4"
+        case .maximizeEditors: "⌥⌘5"
         case .playback: text("Space")
         case .stop: "⌘."
         case .palette: "⇧⌘P"
@@ -81,10 +92,22 @@ final class WorkspaceSession {
         case .redo: return editable && controller.redoCount > 0
         case .history: return editable
         case .addTrack: return editable
-        case .duplicateTrack, .plugins, .devices: return editable && controller.selection != nil
+        case .duplicateTrack, .plugins: return editable && controller.selection != nil
+        case .devices, .editor, .maximizeEditors: return controller.snapshot != nil
         case .playback, .stop: return editable
         case .loop, .metronome, .output: return editable && !controller.audioBusy
         default: return true
+        }
+    }
+
+    func isSelected(_ command: WorkspaceCommand) -> Bool {
+        switch command {
+        case .inspector: state.layout.inspector
+        case .browser: state.layout.browser
+        case .editor: state.layout.editor
+        case .devices: state.layout.devices
+        case .maximizeEditors: state.layout.editorsMaximized
+        default: false
         }
     }
 
@@ -106,7 +129,8 @@ final class WorkspaceSession {
         case .inspector: state.toggle(.inspector)
         case .browser: state.toggle(.browser)
         case .editor: state.toggle(.editor)
-        case .devices: state.showDevices()
+        case .devices: state.toggle(.devices)
+        case .maximizeEditors: state.toggleEditorsMaximized()
         case .plugins: openPlugins()
         case .output: state.presentation = .output
         case .palette: state.presentation = .palette
@@ -164,6 +188,7 @@ final class WorkspaceSession {
 public struct WorkspaceActions {
     public let perform: (WorkspaceCommand) -> Void
     public let enabled: Set<WorkspaceCommand>
+    public let selected: Set<WorkspaceCommand>
 }
 private struct WorkspaceActionsKey: FocusedValueKey { typealias Value = WorkspaceActions }
 private struct WorkspaceTextEntryKey: FocusedValueKey { typealias Value = Bool }

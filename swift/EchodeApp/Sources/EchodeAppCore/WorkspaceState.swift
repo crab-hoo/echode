@@ -2,56 +2,6 @@ import EchodeBridge
 import Foundation
 import Observation
 
-enum WorkspacePane: String, Sendable { case inspector, browser, editor }
-
-/// What the bottom pane shows. Each view keeps its own target: the piano
-/// roll its notes, the device view the selected track's chain.
-enum BottomView: String, Sendable, CaseIterable { case editor, devices, both }
-
-struct WorkspaceLayout: Codable, Equatable {
-    var inspector = true
-    var browser = true
-    var editor = true
-    var inspectorWidth = 210.0
-    var browserWidth = 220.0
-    var editorHeight = 300.0
-
-    var minimumWidth: Double { max(740, 520 + (inspector ? 185 : 0) + (browser ? 185 : 0)) }
-    var minimumHeight: Double { editor ? 580 : 360 }
-
-    func dimensions(in size: CGSize) -> WorkspaceDimensions {
-        let sideBudget = max(0, size.width - 520 - (inspector ? 5 : 0) - (browser ? 5 : 0))
-        let left = inspector ? min(320, max(180, inspectorWidth)) : 0
-        let right = browser ? min(340, max(180, browserWidth)) : 0
-        let count = (inspector ? 1.0 : 0) + (browser ? 1.0 : 0)
-        let minimum = count > 0 ? min(180, sideBudget / count) : 0
-        let extra = max(0, sideBudget - minimum * count)
-        let desiredExtra = max(0, left - minimum) + max(0, right - minimum)
-        let ratio = desiredExtra > 0 ? min(1, extra / desiredExtra) : 1
-        let fittedLeft = inspector ? minimum + (left - minimum) * ratio : 0
-        let fittedRight = browser ? minimum + (right - minimum) * ratio : 0
-        let bottom = editor ? min(max(260, editorHeight), max(0, size.height - 225)) : 0
-        return WorkspaceDimensions(inspector: fittedLeft, browser: fittedRight,
-                                   editor: bottom, arrange: max(0, size.height - bottom - (editor ? 5 : 0)))
-    }
-
-    mutating func resize(_ pane: WorkspacePane, to value: Double, in size: CGSize) {
-        guard value.isFinite else { return }
-        let actual = dimensions(in: size)
-        switch pane {
-        case .inspector: inspectorWidth = min(max(180, value), max(180, min(320, size.width - 530 - actual.browser)))
-        case .browser: browserWidth = min(max(180, value), max(180, min(340, size.width - 530 - actual.inspector)))
-        case .editor: editorHeight = min(max(260, value), max(260, size.height - 225))
-        }
-    }
-
-    mutating func toggle(_ pane: WorkspacePane) {
-        switch pane { case .inspector: inspector.toggle(); case .browser: browser.toggle(); case .editor: editor.toggle() }
-    }
-}
-
-struct WorkspaceDimensions: Equatable { let inspector: Double; let browser: Double; let editor: Double; let arrange: Double }
-
 enum WorkspacePresentation: Identifiable, Equatable {
     case palette, output, history
     var id: String {
@@ -70,16 +20,12 @@ public final class WorkspaceState {
     var displayKey = DisplayKey()
     var presentation: WorkspacePresentation?
     var pluginBrowserDocument: UUID?
-    var bottom = BottomView.editor
-    var showsDevices: Bool { bottom != .editor }
-    var showsEditor: Bool { bottom != .devices }
+    var showsDevices: Bool { layout.devices }
+    var showsEditor: Bool { layout.editor }
 
-    /// Brings the device view up without hiding a piano roll shown beside it.
-    func showDevices() {
-        if bottom == .editor { bottom = .devices }
-        layout.editor = true
-        saveLayout()
-    }
+    /// Candidate entry points reveal devices, without closing the piano roll.
+    func showDevices() { layout.devices = true; saveLayout() }
+    func toggleEditorsMaximized() { layout.editorsMaximized.toggle(); saveLayout() }
     var collapsedTracks: Set<UUID> = []
     @ObservationIgnored private var folderDocument: UUID?
     @ObservationIgnored private var projectionSource: Snapshot?
@@ -90,14 +36,16 @@ public final class WorkspaceState {
     let browser: FileBrowserState
     @ObservationIgnored let navigation = CanvasNavigationState()
     @ObservationIgnored private let defaults: UserDefaults
-    private static let layoutKey = "workspace.layout.v1"
+    private static let layoutKey = "workspace.layout.v2"
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         browser = FileBrowserState(defaults: defaults)
-        layout = defaults.data(forKey: Self.layoutKey).flatMap { try? JSONDecoder().decode(WorkspaceLayout.self, from: $0) } ?? WorkspaceLayout()
+        let saved = defaults.data(forKey: Self.layoutKey) ?? defaults.data(forKey: "workspace.layout.v1")
+        layout = saved.flatMap { try? JSONDecoder().decode(WorkspaceLayout.self, from: $0) } ?? WorkspaceLayout()
         // Invalid saved values cannot affect frame sizes or native controls.
-        if !layout.inspectorWidth.isFinite || !layout.browserWidth.isFinite || !layout.editorHeight.isFinite { layout = WorkspaceLayout() }
+        if !layout.isValid { layout = WorkspaceLayout() }
+        saveLayout()
     }
 
     func toggle(_ pane: WorkspacePane) { layout.toggle(pane); saveLayout() }

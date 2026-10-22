@@ -15,6 +15,8 @@ pub enum PluginCommand {
     Browser,
     Editor,
     Palette,
+    Devices,
+    MaximizeEditors,
 }
 
 impl PluginCommand {
@@ -31,6 +33,8 @@ impl PluginCommand {
             Self::Browser => "Toggle Files",
             Self::Editor => "Toggle Note Editor",
             Self::Palette => "Command Palette",
+            Self::Devices => "Devices",
+            Self::MaximizeEditors => "Maximize Editors",
         }
     }
 
@@ -47,6 +51,8 @@ impl PluginCommand {
             8 => Self::Browser,
             9 => Self::Editor,
             10 => Self::Palette,
+            11 => Self::Devices,
+            12 => Self::MaximizeEditors,
             _ => return None,
         })
     }
@@ -68,6 +74,8 @@ impl PluginCommand {
             (18, 5) => Self::Inspector,
             (19, 5) => Self::Browser,
             (20, 5) => Self::Editor,
+            (21, 5) => Self::Devices,
+            (23, 5) => Self::MaximizeEditors,
             (35, 3) => Self::Palette,
             _ => return None,
         })
@@ -87,11 +95,19 @@ mod tests {
             PluginCommand::from_key(6, 3, false),
             Some(PluginCommand::Redo)
         );
-        for command in 0..=10 {
+        assert_eq!(
+            PluginCommand::from_key(21, 5, false),
+            Some(PluginCommand::Devices)
+        );
+        assert_eq!(
+            PluginCommand::from_key(23, 5, false),
+            Some(PluginCommand::MaximizeEditors)
+        );
+        for command in 0..=12 {
             assert_eq!(PluginCommand::decode(command).unwrap() as u8, command);
         }
-        assert_eq!(PluginCommand::decode(11), None);
-        for code in [49, 6, 45, 31, 17, 18, 19, 20, 35] {
+        assert_eq!(PluginCommand::decode(13), None);
+        for code in [49, 6, 45, 31, 17, 18, 19, 20, 21, 23, 35] {
             for modifiers in 0..16 {
                 assert_eq!(PluginCommand::from_key(code, modifiers, true), None);
             }

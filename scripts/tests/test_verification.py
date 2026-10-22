@@ -343,6 +343,17 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("spike-app", self.selected("crates/echode-engine/src/voice.rs"))
         self.assertNotIn("spike-playhead", self.selected("crates/echode-engine/src/voice.rs"))
 
+    def test_workspace_layout_keeps_command_and_native_stack_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, source in (("workspace-layout-ui", "WorkspaceCommand.swift"),
+                             ("workspace-stack-ui", "WorkspaceCenterStack.swift")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"]), ("swift", "WorkspaceLayoutTests"))
+            self.assertTrue(contract["negative_control"]["file"].endswith(source))
+        for name in ("WorkspaceLayout.swift", "WorkspaceCenterStack.swift", "WorkspaceState.swift", "WorkspaceCommand.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
+                             "spike-app", "spike-playhead"} <= self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + name))
+
     def test_canvas_resize_keeps_surface_and_header_regressions_in_the_product_gate(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for name, source in (("canvas-resize-ui", "CanvasSurface.swift"), ("header-width-ui", "ArrangePaneView.swift")):
@@ -450,7 +461,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
-                          "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "header-width-ui", "pending-transport",
+                          "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "header-width-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",

@@ -22,7 +22,10 @@ struct PluginWindowTests {
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(await controller.insertPlugin("dev.echode.test-params", on: tracks[0], documentID: document))
         let device = try #require(controller.deviceRows(on: tracks[0]).first).id
-        let state = WorkspaceState(defaults: .init())
+        let suite = "echode-plugin-keys-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let state = WorkspaceState(defaults: defaults)
         let session = WorkspaceSession(controller: controller, state: state)
         var received: [WorkspaceCommand] = []
         controller.pluginCommand = { command in received.append(command); session.perform(command) }
@@ -31,6 +34,11 @@ struct PluginWindowTests {
         controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: ["Toggle Inspector"])], documentID: document)
         try #require(received == [.inspector])
         #expect(state.layout.inspector != before)
+        controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true,
+            commands: ["Devices", "Maximize Editors"])], documentID: document)
+        #expect(state.showsDevices && state.layout.editorsMaximized)
+        #expect(received.suffix(2) == [.devices, .maximizeEditors])
+        received.removeLast(2)
         // Modal capability checks still apply to forwarded shortcuts.
         state.presentation = .palette
         controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: ["Toggle Inspector"])], documentID: document)

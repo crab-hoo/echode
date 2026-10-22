@@ -119,6 +119,10 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 描画面の左上固定と drawable サイズの主スレッド更新は `CanvasSurface.swift`、対応する製品 View の回帰は `CanvasResizeTests.swift` に置く
 （[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
 
+下部の寸法と積み方は `WorkspaceLayout.swift` と製品の `WorkspaceCenterStack.swift`、
+開閉・移行とコマンドは `WorkspaceState.swift`・`WorkspaceCommand.swift` に置く。
+回帰は `WorkspaceLayoutTests.swift`（[ADR 0146](decisions/0146-independent-editor-stack.md)）。
+
 音声のドラッグ元は `WorkspaceFileList.swift`、ファイル URL の位置指定と要求保持は `ArrangeAudioDrop.swift`、
 AppKit の受け口は `ArrangeView.swift`、トランザクション内の取込み解決は `crates/echode-history/src/host.rs` に置く
 （[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。

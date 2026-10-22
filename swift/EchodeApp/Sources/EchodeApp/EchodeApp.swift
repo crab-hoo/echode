@@ -58,17 +58,24 @@ struct WorkspaceCommands: Commands {
         CommandGroup(replacing: .undoRedo) { item(.undo); item(.redo); item(.history) }
         CommandMenu(text("Track")) { item(.addTrack); item(.duplicateTrack); item(.plugins) }
         CommandMenu(text("Playback")) { item(.playback); item(.stop); item(.loop); item(.metronome); item(.output) }
-        CommandGroup(after: .sidebar) { item(.inspector); item(.browser); item(.editor); item(.palette) }
+        CommandGroup(after: .sidebar) { item(.inspector); item(.browser); item(.editor); item(.devices); item(.maximizeEditors); item(.palette) }
     }
+    @ViewBuilder
     private func item(_ command: WorkspaceCommand) -> some View {
-        Button(command.title) {
-            if textEntry == true, command == .undo { NSApp.keyWindow?.firstResponder?.undoManager?.undo() }
-            else if textEntry == true, command == .redo { NSApp.keyWindow?.firstResponder?.undoManager?.redo() }
-            else { actions?.perform(command) }
+        if command.isLayoutToggle {
+            Toggle(command.title, isOn: Binding(get: { actions?.selected.contains(command) == true },
+                set: { _ in actions?.perform(command) }))
+                .keyboardShortcut(command.shortcut).disabled(actions?.enabled.contains(command) != true)
+        } else {
+            Button(command.title) {
+                if textEntry == true, command == .undo { NSApp.keyWindow?.firstResponder?.undoManager?.undo() }
+                else if textEntry == true, command == .redo { NSApp.keyWindow?.firstResponder?.undoManager?.redo() }
+                else { actions?.perform(command) }
+            }
+                .keyboardShortcut(command.shortcut)
+                // Text editing owns Space and its local undo stack.
+                .disabled(textEntry == true && (command == .undo || command == .redo) ? false :
+                    actions?.enabled.contains(command) != true || (command == .playback && textEntry == true))
         }
-            .keyboardShortcut(command.shortcut)
-            // Text editing owns Space and its local undo stack.
-            .disabled(textEntry == true && (command == .undo || command == .redo) ? false :
-                actions?.enabled.contains(command) != true || (command == .playback && textEntry == true))
     }
 }

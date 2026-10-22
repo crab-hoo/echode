@@ -64,6 +64,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 ### 4. UI・Metal 描画・入力・Swift 橋渡し
 
+- 下部の個別開閉・固定高のデバイス・アレンジ非表示と旧設定の移行: [ADR 0146](decisions/0146-independent-editor-stack.md)。
 - 操作の要望の照合（リサイズ時の伸縮、ブラウザ・クリップの D&D、既定値と値入力のクリック、試聴、下部の積み方）: [2026-10-21 操作の要望の照合](reviews/2026-10-21-ui-feedback-audit.md)。
 - 制作向けファイルの一覧と音声の位置指定ドロップ・トラック追加を伴う取込みの単一履歴: [ADR 0145](decisions/0145-sample-browser-file-drops.md)。
 - デバイス列での初回出力準備と一覧の応答待ちの区別: [ADR 0141](decisions/0141-device-output-preparation-status.md)。

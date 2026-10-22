@@ -31,8 +31,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   指定ヘッダ幅と現在の表示幅を分け、狭い layout を往復しても指定を失わない（[ADR 0144](../decisions/0144-unscaled-canvas-resizing.md)）。
 - **デバイスビュー**:
   下部は選択トラックのデバイスを横に並べ、各列が画面内の行だけを作る全パラメーター一覧・検索・ピン留めを持つ。
-  切替は「ピアノロール」「デバイス」「両方（上下）」。列と一覧はデバイスごとに文書を開いている間保持する
-  （[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
+  ピアノロールとデバイスは個別に開閉し、アレンジ・ピアノロール・固定高のデバイスの順に積む。
+  アレンジ非表示の切替は各開閉と独立し、希望高と旧設定を保持する（[ADR 0146](../decisions/0146-independent-editor-stack.md)）。
+  列と一覧はデバイスごとに文書を開いている間保持する（[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
   FX 追加ボタンは最後の列の右側に置き、空のチェインでも同じ位置から候補を開く。
   列とインスペクターの名前クリックで独自 GUI を開く（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。
   開いている窓は名前の横のアイコンで示し、一時非表示と閉鎖を区別する。表示は文書内だけに保ち、保存・Undo に含めない
