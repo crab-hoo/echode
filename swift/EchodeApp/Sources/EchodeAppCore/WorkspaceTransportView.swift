@@ -16,9 +16,7 @@ struct WorkspaceTransportView: View {
     }
     var body: some View {
         HStack(spacing: 12) {
-            Button { Task { await controller.togglePlayback() } } label: {
-                Label(text(controller.playbackRequested ? "Pause" : "Play"), systemImage: controller.playbackRequested ? "pause.fill" : "play.fill")
-            }
+            WorkspacePlayButton(paused: controller.playbackRequested) { Task { await controller.togglePlayback() } }
             Button { Task { await controller.stopPlayback() } } label: { Label(text("Stop"), systemImage: "stop.fill") }
             Button { Task { await controller.toggleMetronome() } } label: {
                 Label(text("Metronome"), systemImage: controller.audio.metronome ? "metronome.fill" : "metronome")
@@ -67,6 +65,21 @@ struct WorkspaceTransportView: View {
         guard let start = PianoCamera.ticks(controller.loopStartBeat), let end = PianoCamera.ticks(controller.loopEndBeat),
               LoopCommit.needsSend(soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd, start: start, end: end) else { return }
         Task { await controller.setLoop(enabled: true) }
+    }
+}
+
+/// The play control keeps one width while its label switches to pause.
+struct WorkspacePlayButton: View {
+    let paused: Bool
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            // Both labels share the slot so the transport never shifts sideways.
+            ZStack {
+                Label(text("Play"), systemImage: "play.fill").opacity(paused ? 0 : 1)
+                Label(text("Pause"), systemImage: "pause.fill").opacity(paused ? 1 : 0)
+            }.accessibilityHidden(true)
+        }.accessibilityLabel(text(paused ? "Pause" : "Play"))
     }
 }
 

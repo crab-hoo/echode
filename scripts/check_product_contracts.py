@@ -105,6 +105,11 @@ def rejected_behavior(contract, returncode, output):
                 and "Expectation failed" in output)
 
 
+def negative_control_mutations(contract):
+    """A contract may carry one mutation or several independent counterexamples."""
+    return contract.get("negative_controls") or [contract["negative_control"]]
+
+
 def contract_inputs(root, policy, contract):
     """Patterns and package folders one contract can depend on; a subset of the check's inputs."""
     groups = policy["product_contract_inputs"]
@@ -116,9 +121,10 @@ def contract_inputs(root, policy, contract):
     if contract["runner"] == "rust":
         packages.append(contract["package"])
     folders = verify.package_directories(root, sorted(set(packages)))
-    path = contract["negative_control"]["file"]
-    if not (verify.matches([path], patterns) or any(path.startswith(folder + "/") for folder in folders)):
-        raise ValueError("negative control is outside its contract's inputs: " + contract["id"])
+    for fault in negative_control_mutations(contract):
+        path = fault["file"]
+        if not (verify.matches([path], patterns) or any(path.startswith(folder + "/") for folder in folders)):
+            raise ValueError("negative control is outside its contract's inputs: " + contract["id"])
     return patterns, folders
 
 
@@ -244,8 +250,7 @@ def mutation_path(checkout, filename):
 
 
 @contextmanager
-def mutated(checkout, contract):
-    fault = contract["negative_control"]
+def mutated(checkout, contract, fault):
     path = mutation_path(checkout, fault["file"])
     original = path.read_text()
     if original.count(fault["old"]) != 1:
@@ -290,7 +295,7 @@ def mutation_order(root, contracts):
              for name in members}
 
     def owner(contract):
-        path = contract["negative_control"]["file"]
+        path = negative_control_mutations(contract)[0]["file"]
         names = [name for name, folder in members.items() if path.startswith(folder + "/")]
         return max(names, key=lambda name: len(members[name])) if names else ""
 
@@ -318,14 +323,20 @@ def rust_controls(checkout, contracts, fingerprints, cargo_target, evidence, rec
     env = dict(os.environ, CARGO_TARGET_DIR=str(cargo_target))
     for contract in contracts:
         started = time.monotonic()
-        try:
-            with mutated(checkout, contract):
-                completed = run_process(command(contract), cwd=checkout, capture_output=True, text=True,
-                                        timeout=contract["timeout"], env=env)
-            output = completed.stdout + completed.stderr
-            caught = rejected_behavior(contract, completed.returncode, output)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            output, caught = str(error), False
+        output = ""
+        caught = True
+        for index, fault in enumerate(negative_control_mutations(contract), 1):
+            try:
+                with mutated(checkout, contract, fault):
+                    completed = run_process(command(contract), cwd=checkout, capture_output=True, text=True,
+                                            timeout=contract["timeout"], env=env)
+                run_output = completed.stdout + completed.stderr
+                rejected = rejected_behavior(contract, completed.returncode, run_output)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                run_output, rejected = str(error), False
+            output += f"mutation {index}/{len(negative_control_mutations(contract))}: " \
+                      f"{'rejected' if rejected else 'NOT rejected'}\n" + run_output
+            caught = caught and rejected
         write_control(evidence, contract, fingerprints.get(contract["id"]), output, caught, started, record)
 
 
@@ -339,29 +350,40 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
         except (OSError, subprocess.TimeoutExpired) as error:
             return None, str(error), time.monotonic() - started
 
-    for start in range(0, len(contracts), len(checkouts)):
-        group = list(zip(checkouts, contracts[start:start + len(checkouts)]))
-        with ExitStack() as restore:
-            for checkout, contract in group:
-                restore.enter_context(mutated(checkout, contract))
-            with ThreadPoolExecutor(len(group)) as pool:
-                builds = list(pool.map(lambda pair: build(*pair), group))
-            # Tests run one at a time after every build has finished, so no build loads a test.
-            for (checkout, contract), (code, output, seconds) in zip(group, builds):
-                started = time.monotonic() - seconds
-                caught = False
-                remaining = contract["timeout"] - seconds
-                if code == 0 and remaining > 0:
-                    try:
-                        completed = run_process(command(contract, skip_build=True), cwd=checkout,
-                                                capture_output=True, text=True, timeout=remaining)
-                        output += completed.stdout + completed.stderr
-                        caught = rejected_behavior(contract, completed.returncode, output)
-                    except (OSError, subprocess.TimeoutExpired) as error:
-                        output += str(error)
-                elif code == 0:
-                    output += "\nthe counterexample build used the whole contract timeout\n"
-                write_control(evidence, contract, fingerprints.get(contract["id"]), output, caught, started, record)
+    state = {contract["id"]: {"started": time.monotonic(), "output": "", "caught": True} for contract in contracts}
+    count = max((len(negative_control_mutations(contract)) for contract in contracts), default=0)
+    # Each mutation is a separate build. Builds for a phase finish before its
+    # tests run, so no build loads a test while another process runs one.
+    for index in range(count):
+        active = [contract for contract in contracts if index < len(negative_control_mutations(contract))]
+        for start in range(0, len(active), len(checkouts)):
+            group = list(zip(checkouts, active[start:start + len(checkouts)]))
+            with ExitStack() as restore:
+                for checkout, contract in group:
+                    restore.enter_context(mutated(checkout, contract, negative_control_mutations(contract)[index]))
+                with ThreadPoolExecutor(len(group)) as pool:
+                    builds = list(pool.map(lambda pair: build(*pair), group))
+                for (checkout, contract), (code, output, seconds) in zip(group, builds):
+                    rejected = False
+                    remaining = contract["timeout"] - seconds
+                    if code == 0 and remaining > 0:
+                        try:
+                            completed = run_process(command(contract, skip_build=True), cwd=checkout,
+                                                    capture_output=True, text=True, timeout=remaining)
+                            output += completed.stdout + completed.stderr
+                            rejected = rejected_behavior(contract, completed.returncode, output)
+                        except (OSError, subprocess.TimeoutExpired) as error:
+                            output += str(error)
+                    elif code == 0:
+                        output += "\nthe counterexample build used the whole contract timeout\n"
+                    entry = state[contract["id"]]
+                    entry["output"] += f"mutation {index + 1}/{len(negative_control_mutations(contract))}: " \
+                                       f"{'rejected' if rejected else 'NOT rejected'}\n" + output
+                    entry["caught"] = entry["caught"] and rejected
+    for contract in contracts:
+        entry = state[contract["id"]]
+        write_control(evidence, contract, fingerprints.get(contract["id"]), entry["output"], entry["caught"],
+                      entry["started"], record)
 
 
 def negative_controls(root, contracts, fingerprints, evidence, record):

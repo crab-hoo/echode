@@ -16,13 +16,8 @@ public struct WorkspaceView: View {
             Divider()
             if controller.snapshot != nil { panes } else { welcome }
             Divider()
-            HStack {
-                Text(controller.projectURL?.lastPathComponent ?? text("No project")).lineLimit(1)
-                Spacer()
-                if controller.busy || controller.pendingPlayback == true { ProgressView().controlSize(.small) }
-                Text(text(controller.pendingPlayback == true ? "Preparing Playback" : controller.busy ? "Applying Changes" : controller.snapshot == nil ? "Create or open a project to start" : "Changes recorded automatically"))
-                    .foregroundStyle(.secondary)
-            }.font(.caption).padding(8)
+            WorkspaceStatusBar(projectName: controller.projectURL?.lastPathComponent, busy: controller.busy,
+                               pendingPlayback: controller.pendingPlayback, hasProject: controller.snapshot != nil)
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) { command(.newProject); command(.openProject) }
@@ -168,6 +163,31 @@ public struct WorkspaceView: View {
             note: controller.noteFocus, geometry: controller.noteFocus.flatMap { controller.snapshot?.pianoNote($0).map(NoteGeometry.init) }, snapshot: controller.snapshot)
     }
 }
+/// The status row must not change height when preparation starts or ends.
+struct WorkspaceStatusBar: View {
+    let projectName: String?
+    let busy: Bool
+    let pendingPlayback: Bool?
+    let hasProject: Bool
+
+    private var preparing: Bool { busy || pendingPlayback == true }
+    private var message: String {
+        if pendingPlayback == true { return text("Preparing Playback") }
+        if busy { return text("Applying Changes") }
+        return text(hasProject ? "Changes recorded automatically" : "Create or open a project to start")
+    }
+
+    var body: some View {
+        HStack {
+            Text(projectName ?? text("No project")).lineLimit(1)
+            Spacer()
+            // Reserve the indicator's space so starting preparation never resizes the panes.
+            ProgressView().controlSize(.small).opacity(preparing ? 1 : 0).accessibilityHidden(!preparing)
+            Text(message).foregroundStyle(.secondary)
+        }.font(.caption).padding(8)
+    }
+}
+
 private struct WorkspaceSelectionContext: Equatable {
     let document: UUID?
     let tracks: [UUID]

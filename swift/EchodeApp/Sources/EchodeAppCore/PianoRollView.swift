@@ -68,6 +68,10 @@ final class PianoGridView: NSView {
     private var busy = false
     private var elements: [PianoNote] = []
     private var accessible: [PianoNote.ID: PianoAccessibleNote] = [:]
+    private var accessibleVersion: [PianoNote.ID: UInt64] = [:]
+    private var submittedVersion: UInt64 = 0
+    /// Elements are built only for accessibility queries and focus changes.
+    private(set) var accessibilityBuilds = 0
     private var gesture: PianoGesture?
     private var preview: PianoPreview?
     /// Geometry already sent for a note whose snapshot has not caught up.
@@ -111,16 +115,7 @@ final class PianoGridView: NSView {
                     onElements: { _ in }, onPiano: { [weak self] frame in
                         guard let self, self.snapshot === frame.input.snapshot, self.track == frame.piano.track,
                               self.feedback.accept(generation, revision: frame.revision) else { return }
-                        self.submittedFrame = frame
-                        self.elements = frame.notes
-                        NSAccessibility.post(element: self, notification: .layoutChanged)
-                        _ = self.accessibilityChildren()
-                        if self.focus != self.announcedFocus {
-                            if let focus = self.focus, let child = self.accessible[focus] {
-                                NSAccessibility.post(element: child, notification: .focusedUIElementChanged)
-                            }
-                            self.announcedFocus = self.focus
-                        }
+                        self.present(frame)
                     })
             } catch {
                 NSLog("Echode piano renderer: %@", String(describing: error))
@@ -130,7 +125,7 @@ final class PianoGridView: NSView {
         }
         refresh()
     }
-    func stop() { feedback.invalidate(); renderer?.stop(); renderer = nil; submittedFrame = nil; elements = []; accessible = [:]; cancelGesture() }
+    func stop() { feedback.invalidate(); renderer?.stop(); renderer = nil; submittedFrame = nil; elements = []; accessible = [:]; accessibleVersion = [:]; announcedFocus = nil; accessibilityBuilds = 0; cancelGesture() }
     func beginMeasurement() { renderer?.beginMeasurement() }
     func markMainBusy(_ busy: Bool) { renderer?.markMainBusy(busy) }
     var measurement: ArrangeMeasurement { renderer?.measurement ?? ArrangeMeasurement() }
@@ -312,48 +307,98 @@ final class PianoGridView: NSView {
             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
     }
 
-    override func accessibilityChildren() -> [Any]? {
-        guard let window else { return [] }
-        guard !elements.isEmpty, let submittedFrame else { return [] }
-        var shown: [PianoNote.ID: PianoAccessibleNote] = [:]
-        let children = elements.map { note in
-            let child = accessible[note.id] ?? PianoAccessibleNote(actions: PianoAccessibilityActions())
-            let rect = submittedFrame.layout.paneRect(NSRect(x: Double(note.x), y: Double(note.y), width: max(2, Double(note.width)), height: Double(note.height)))
-            child.setAccessibilityElement(true); child.setAccessibilityRole(.button)
-            child.setAccessibilityParent(self)
-            child.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil)))
-            child.setAccessibilityIdentifier("\(note.id.track)/\(note.id.placement)/\(note.id.note)")
-            let degree = submittedFrame.piano.key.degreeLabel(note.pitch).map { ", \(text("Scale degree")) \($0)" } ?? ""
-            child.setAccessibilityLabel("\(noteName(note.pitch))\(degree), \(text("Start beat")) \(Double(note.start) / 705_600), \(text("Length in beats")) \(Double(note.length) / 705_600)")
-            child.setAccessibilityValue(note.id == focus ? text("Selected") : "")
-            child.setAccessibilityFocused(note.id == focus)
-            child.actions.press = { [weak self] in self?.select(note); return true }
-            child.actions.increment = { [weak self] in self?.select(note); self?.change(pitch: 1); return true }
-            child.actions.decrement = { [weak self] in self?.select(note); self?.change(pitch: -1); return true }
-            child.setAccessibilityCustomActions([
-                NSAccessibilityCustomAction(name: text("Delete Note")) { [weak self] in guard let self, !self.busy, self.track == note.id.track, self.snapshot?.pianoNote(note.id) != nil else { return false }; self.onDelete?(note.id); return true },
-                NSAccessibilityCustomAction(name: text("Move Earlier")) { [weak self] in self?.select(note); if let self { self.change(time: -self.camera.grid) }; return true },
-                NSAccessibilityCustomAction(name: text("Move Later")) { [weak self] in self?.select(note); if let self { self.change(time: self.camera.grid) }; return true },
-                NSAccessibilityCustomAction(name: text("Shorten Note")) { [weak self] in self?.select(note); if let self { self.change(time: -self.camera.grid, resize: true) }; return true },
-                NSAccessibilityCustomAction(name: text("Lengthen Note")) { [weak self] in self?.select(note); if let self { self.change(time: self.camera.grid, resize: true) }; return true },
-            ])
-            shown[note.id] = child; return child
+    /// Called for each accepted render frame. Layout changes are announced,
+    /// but elements are not built until accessibility asks for them.
+    func present(_ frame: PianoFrame) {
+        submittedFrame = frame
+        elements = frame.notes
+        submittedVersion &+= 1
+        NSAccessibility.post(element: self, notification: .layoutChanged)
+        if focus != announcedFocus {
+            if let focus, let note = elements.first(where: { $0.id == focus }) {
+                NSAccessibility.post(element: element(for: note, in: frame, convert: screenRect),
+                                     notification: .focusedUIElementChanged)
+            }
+            announcedFocus = focus
         }
-        accessible = shown
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        guard window != nil else { return [] }
+        return buildAccessibilityChildren(convert: screenRect)
+    }
+
+    /// Builds (or reuses) the visible elements. Exposed without a window so the
+    /// labels, actions, frames, and build count can be checked.
+    func buildAccessibilityChildren(convert: (NSRect) -> NSRect) -> [Any] {
+        guard !elements.isEmpty, let submittedFrame else { return [] }
+        let children = elements.map { element(for: $0, in: submittedFrame, convert: convert) }
+        let visible = Set(elements.map(\.id))
+        accessible = accessible.filter { visible.contains($0.key) }
+        accessibleVersion = accessibleVersion.filter { visible.contains($0.key) }
         return children
+    }
+
+    private func screenRect(_ rect: NSRect) -> NSRect {
+        guard let window else { return rect }
+        return window.convertToScreen(convert(rect, to: nil))
+    }
+
+    private func element(for note: PianoNote, in frame: PianoFrame, convert: (NSRect) -> NSRect) -> PianoAccessibleNote {
+        if let existing = accessible[note.id], accessibleVersion[note.id] == submittedVersion {
+            // Reuse the element but refresh the frame and focus-dependent state:
+            // a window move or selection change does not advance the draw version.
+            applyAccessibility(existing, note: note, frame: frame, convert: convert)
+            return existing
+        }
+        let child = buildAccessibilityElement(note, frame: frame, existing: accessible[note.id], convert: convert)
+        accessible[note.id] = child
+        accessibleVersion[note.id] = submittedVersion
+        return child
+    }
+
+    private func applyAccessibility(_ child: PianoAccessibleNote, note: PianoNote, frame: PianoFrame,
+                                    convert: (NSRect) -> NSRect) {
+        let rect = frame.layout.paneRect(NSRect(x: Double(note.x), y: Double(note.y), width: max(2, Double(note.width)), height: Double(note.height)))
+        child.setAccessibilityFrame(convert(rect))
+        child.setAccessibilityValue(note.id == focus ? text("Selected") : "")
+        child.setAccessibilityFocused(note.id == focus)
+    }
+
+    func buildAccessibilityElement(_ note: PianoNote, frame: PianoFrame, existing: PianoAccessibleNote? = nil,
+                                   convert: (NSRect) -> NSRect) -> PianoAccessibleNote {
+        accessibilityBuilds += 1
+        let child = existing ?? PianoAccessibleNote(actions: PianoAccessibilityActions())
+        child.setAccessibilityElement(true); child.setAccessibilityRole(.button)
+        child.setAccessibilityParent(self)
+        child.setAccessibilityIdentifier("\(note.id.track)/\(note.id.placement)/\(note.id.note)")
+        let degree = frame.piano.key.degreeLabel(note.pitch).map { ", \(text("Scale degree")) \($0)" } ?? ""
+        child.setAccessibilityLabel("\(noteName(note.pitch))\(degree), \(text("Start beat")) \(Double(note.start) / 705_600), \(text("Length in beats")) \(Double(note.length) / 705_600)")
+        applyAccessibility(child, note: note, frame: frame, convert: convert)
+        child.actions.press = { [weak self] in self?.select(note); return true }
+        child.actions.increment = { [weak self] in self?.select(note); self?.change(pitch: 1); return true }
+        child.actions.decrement = { [weak self] in self?.select(note); self?.change(pitch: -1); return true }
+        child.setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: text("Delete Note")) { [weak self] in guard let self, !self.busy, self.track == note.id.track, self.snapshot?.pianoNote(note.id) != nil else { return false }; self.onDelete?(note.id); return true },
+            NSAccessibilityCustomAction(name: text("Move Earlier")) { [weak self] in self?.select(note); if let self { self.change(time: -self.camera.grid) }; return true },
+            NSAccessibilityCustomAction(name: text("Move Later")) { [weak self] in self?.select(note); if let self { self.change(time: self.camera.grid) }; return true },
+            NSAccessibilityCustomAction(name: text("Shorten Note")) { [weak self] in self?.select(note); if let self { self.change(time: -self.camera.grid, resize: true) }; return true },
+            NSAccessibilityCustomAction(name: text("Lengthen Note")) { [weak self] in self?.select(note); if let self { self.change(time: self.camera.grid, resize: true) }; return true },
+        ])
+        return child
     }
 
 }
 
 @MainActor
-private final class PianoAccessibilityActions {
+final class PianoAccessibilityActions {
     var press: (() -> Bool)?
     var increment: (() -> Bool)?
     var decrement: (() -> Bool)?
 }
 
 @MainActor
-private final class PianoAccessibleNote: NSAccessibilityElement {
+final class PianoAccessibleNote: NSAccessibilityElement {
     nonisolated let actions: PianoAccessibilityActions
     init(actions: PianoAccessibilityActions) { self.actions = actions; super.init() }
     // Only the immutable, Sendable action holder crosses the Objective-C

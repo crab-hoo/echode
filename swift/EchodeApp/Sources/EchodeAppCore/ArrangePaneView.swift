@@ -97,7 +97,12 @@ public final class ArrangePaneView: NSView {
         self.selectedTracks = selectedTracks
         if changedSelection, !restoring, let selected,
            let index = (0..<displaySnapshot.trackCount).first(where: { displaySnapshot.trackID(at: $0) == selected }) {
-            camera.reveal(track: index, trackCount: displaySnapshot.trackCount, height: Double(bounds.height))
+            // Reveal from what is shown. Selecting an already visible track
+            // must not clamp a taller pane's remembered origin.
+            var display = displayCamera
+            let before = display.originTrack
+            display.reveal(track: index, trackCount: displaySnapshot.trackCount, height: Double(bounds.height))
+            if display.originTrack != before { camera.originTrack = display.originTrack }
         }
         restoring = false
         headers.setSnapshot(displaySnapshot, selected: selected, selectedTracks: selectedTracks, collapsedTracks: collapsed)
@@ -131,19 +136,50 @@ public final class ArrangePaneView: NSView {
         setSnapshot(snapshot, selected: id)
         onSelect?(id)
     }
+    private var displayCamera: ArrangeCamera {
+        var display = camera
+        display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+        return display
+    }
     private func scroll(x: Double, y: Double) {
-        camera.scroll(x: x, y: y, trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+        guard x.isFinite, y.isFinite else { return }
+        camera.originBeat -= x / camera.pixelsPerBeat
+        if y != 0 {
+            // Start from the displayed rows so a taller pane does not create a
+            // dead zone between the remembered and visible origin.
+            var display = displayCamera
+            display.originTrack -= y / display.pixelsPerTrack
+            display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+            camera.originTrack = display.originTrack
+        }
         updateViewport()
     }
     private func zoom(factor: Double, flags: NSEvent.ModifierFlags, anchor: CGPoint) {
-        camera.zoom(factor: factor, horizontal: !flags.contains(.option) || flags.contains(.shift),
-                    vertical: flags.contains(.option) || flags.contains(.shift),
-                    anchor: anchor, trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+        guard factor.isFinite, factor > 0 else { return }
+        let horizontal = !flags.contains(.option) || flags.contains(.shift)
+        let vertical = flags.contains(.option) || flags.contains(.shift)
+        if horizontal {
+            let beat = camera.originBeat + Double(anchor.x) / camera.pixelsPerBeat
+            camera.pixelsPerBeat = min(1200, max(8, camera.pixelsPerBeat * factor))
+            camera.originBeat = beat - Double(anchor.x) / camera.pixelsPerBeat
+        }
+        if vertical {
+            var display = displayCamera
+            let track = display.originTrack + Double(anchor.y) / display.pixelsPerTrack
+            camera.pixelsPerTrack = min(240, max(16, display.pixelsPerTrack * factor))
+            display.pixelsPerTrack = camera.pixelsPerTrack
+            display.originTrack = track - Double(anchor.y) / display.pixelsPerTrack
+            display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+            camera.originTrack = display.originTrack
+        }
         updateViewport()
     }
     private func updateViewport() {
-        camera.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
-        headers.setCamera(camera)
+        // The requested origin survives height changes; only the display copy
+        // is clamped. See ADR 0149 (JNK-07).
+        camera.sanitize()
+        let display = displayCamera
+        headers.setCamera(display)
         var palette = ArrangeHeaderPalette()
         effectiveAppearance.performAsCurrentDrawingAppearance {
             palette.background = rgba(.controlBackgroundColor)
@@ -152,7 +188,7 @@ public final class ArrangePaneView: NSView {
             palette.selectedForeground = rgba(.alternateSelectedControlTextColor)
             palette.separator = rgba(.separatorColor)
         }
-        timeline.setViewport(camera, header: ArrangeHeaderInput(width: constrainedHeaderWidth(headerWidth), palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames))
+        timeline.setViewport(display, header: ArrangeHeaderInput(width: constrainedHeaderWidth(headerWidth), palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames))
         if bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument) == true {
             navigation?.arrange = camera; navigation?.headerWidth = headerWidth
         }

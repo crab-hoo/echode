@@ -78,6 +78,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - Computer Use 監査と再調査: [Computer Use 監査](reviews/2026-10-14-computer-use.md)、[取得エラー再調査](reviews/2026-10-14-computer-use-reinvestigation.md)、[同一デスクトップ再監査](reviews/2026-10-14-computer-use-same-desktop.md)。
 - ペイン境界・ミックス UI・高リフレッシュ描画・可視列キャッシュ: [ADR 0098](decisions/0098-pane-render-boundaries.md)、[ADR 0107](decisions/0107-mix-controls.md)、[2026-10-17 Apple Silicon 監査](reviews/2026-10-17-apple-silicon-audit.md)、[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)、[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)。
 - ペインのリサイズ中の伸縮とヘッダ幅の保持: [ADR 0144](decisions/0144-unscaled-canvas-resizing.md)。
+- 反転した表示面の固定位置と状態行・再生ボタンの寸法: [ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)。
 - 再生開始・ピアノロールの表示・ペインのリサイズ時のがくつき（上下の固定位置の誤り、状態行の高さ、作り直しの負荷）:
   [2026-10-22 GUI のがくつきの監査](reviews/2026-10-22-gui-jank-audit.md)。
 

@@ -12,9 +12,10 @@ func canvasDrawableSize(width: Double, height: Double, scale: Double) -> CGSize 
 enum CanvasSurface {
     static func configure(_ view: NSView, layer: CAMetalLayer) {
         view.layerContentsRedrawPolicy = .never
+        // AppKit converts this to the visual top-left; flipped views need
+        // `bottomLeft` because CA's `top` points at the visual bottom.
         view.layerContentsPlacement = .topLeft
         view.wantsLayer = true
-        layer.contentsGravity = .topLeft
         resize(layer, size: canvasDrawableSize(width: view.bounds.width, height: view.bounds.height, scale: 1), scale: 1)
     }
 

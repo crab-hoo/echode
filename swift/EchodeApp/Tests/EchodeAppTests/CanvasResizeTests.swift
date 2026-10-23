@@ -53,7 +53,10 @@ struct CanvasResizeTests {
         for view in [arrange as NSView, piano as NSView] {
             let layer = try #require(view.layer as? CAMetalLayer)
             #expect(view.layerContentsPlacement == .topLeft)
-            #expect(layer.contentsGravity == .topLeft)
+            // A flipped view anchors the old frame at the visual top-left. CA's
+            // `top` is the visual bottom, so AppKit converts the placement.
+            #expect(layer.contentsAreFlipped())
+            #expect(layer.contentsGravity == .bottomLeft)
             #expect(view.layerContentsRedrawPolicy == .never)
             for size in [NSSize(width: 380, height: 180), .zero, NSSize(width: 900, height: 700),
                          NSSize(width: 640.25, height: 211.75)] {
@@ -61,14 +64,96 @@ struct CanvasResizeTests {
                 // Inspect before child layout or a render-thread run-loop turn.
                 #expect(layer.contentsScale == 1)
                 #expect(layer.drawableSize == NSSize(width: max(1, ceil(size.width)), height: max(1, ceil(size.height))))
-                #expect(layer.contentsGravity == .topLeft)
+                #expect(layer.contentsGravity == (layer.contentsAreFlipped() ? .bottomLeft : .topLeft))
                 #expect(view.layerContentsPlacement == .topLeft)
                 view.layout()
                 #expect(layer.drawableSize == NSSize(width: max(1, ceil(size.width)), height: max(1, ceil(size.height))))
             }
             #expect(view.window == nil)
         }
+        // The same conversion holds inside the production flipped hierarchy.
+        let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
+        pane.layout()
+        let roll = PianoRollView(frame: NSRect(x: 0, y: 0, width: 900, height: 330))
+        roll.layout()
+        for surface in [pane.timeline, roll.grid] {
+            let layer = try #require(surface.layer as? CAMetalLayer)
+            #expect(surface.window == nil && surface.superview != nil)
+            #expect(layer.contentsAreFlipped())
+            #expect(layer.contentsGravity == .bottomLeft)
+        }
         #expect(!arrange.rendererAvailable && !piano.rendererAvailable)
+    }
+
+    @Test func contractArrangeCameraKeepsRequestedVerticalPosition() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-camera-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        for index in 0..<10 { await controller.addTrack(name: "t\(index)") }
+        let snapshot = try #require(controller.snapshot)
+        let navigation = CanvasNavigationState()
+        let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 320))
+        pane.setNavigation(navigation)
+        pane.setSnapshot(snapshot, selected: nil)
+        pane.layout()
+        // Scroll to the last track at a short height, then grow the pane.
+        pane.timeline.onScroll?(0, -100_000)
+        let requested = pane.viewport.originTrack
+        #expect(requested > 0)
+        #expect(pane.timeline.renderInput.camera.originTrack == requested)
+        pane.setFrameSize(NSSize(width: 900, height: 700))
+        pane.layout()
+        #expect(pane.viewport.originTrack == requested)
+        #expect(pane.timeline.renderInput.camera.originTrack < requested)
+        // Horizontal input and selecting a visible track leave the remembered origin alone.
+        pane.timeline.onScroll?(-120, 0)
+        #expect(pane.viewport.originTrack == requested)
+        pane.timeline.onZoom?(1.2, [], CGPoint(x: 100, y: 100))
+        #expect(pane.viewport.originTrack == requested)
+        pane.setSnapshot(snapshot, selected: snapshot.trackID(at: 0))
+        #expect(pane.viewport.originTrack == requested)
+        // Growing clamped the display only; shrinking returns to the requested origin.
+        for height in [0.0, 320.0] {
+            pane.setFrameSize(NSSize(width: 900, height: height))
+            pane.layout()
+            #expect(pane.viewport.originTrack == requested)
+            #expect(pane.timeline.renderInput.camera.originTrack == requested, "height \(height)")
+        }
+        await controller.close()
+    }
+
+    @Test func contractArrangeCameraUsesDisplayedRowsForVerticalInput() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-camera-input-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        for index in 0..<20 { await controller.addTrack(name: "t\(index)") }
+        let snapshot = try #require(controller.snapshot)
+        func pane() -> ArrangePaneView {
+            let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 320))
+            pane.setNavigation(CanvasNavigationState())
+            pane.setSnapshot(snapshot, selected: nil)
+            pane.layout()
+            pane.timeline.onScroll?(0, -100_000)
+            pane.setFrameSize(NSSize(width: 900, height: 500))
+            pane.layout()
+            return pane
+        }
+        // Scrolling down starts from the displayed rows, not the remembered 5.
+        let scroller = pane()
+        let shown = scroller.timeline.renderInput.camera.originTrack
+        #expect(abs(shown - 12.1875) < 0.001)
+        scroller.timeline.onScroll?(0, 64)
+        let moved = scroller.timeline.renderInput.camera.originTrack
+        #expect(abs(moved - (shown - 1)) < 0.001)
+        #expect(abs(scroller.viewport.originTrack - moved) < 0.001)
+        // A vertical zoom anchors on the displayed rows as well.
+        let zoomer = pane()
+        let beforeZoom = zoomer.timeline.renderInput.camera.originTrack
+        zoomer.timeline.onZoom?(2, [.option], CGPoint(x: 100, y: 0))
+        #expect(abs(zoomer.viewport.originTrack - beforeZoom) < 0.001)
+        await controller.close()
     }
 
     @Test func backingScaleAndFractionalSizesRejectOldDrawableExtents() {

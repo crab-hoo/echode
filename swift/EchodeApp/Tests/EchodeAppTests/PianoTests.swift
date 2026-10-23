@@ -172,6 +172,79 @@ struct PianoTests {
         await controller.close()
     }
 
+    @Test func contractPianoAccessibilityBuildsOnlyOnQueryAndReusesElements() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-ax-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "keys")
+        let track = try #require(controller.selection)
+        await controller.insertNote(pitch: 60, beat: 0, length: 1)
+        await controller.insertNote(pitch: 64, beat: 1, length: 1)
+        let snapshot = try #require(controller.snapshot)
+        let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
+        let camera = PianoCamera()
+        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+        #expect(!frame.notes.isEmpty)
+        grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
+        // Rendering and layout notifications alone must not assemble elements.
+        grid.present(frame)
+        grid.present(frame)
+        #expect(grid.accessibilityBuilds == 0)
+        let children = grid.buildAccessibilityChildren(convert: { $0 })
+        #expect(children.count == frame.notes.count && grid.accessibilityBuilds == frame.notes.count)
+        let builds = grid.accessibilityBuilds
+        _ = grid.buildAccessibilityChildren(convert: { $0 })
+        #expect(grid.accessibilityBuilds == builds)
+        let note = try #require(frame.notes.first)
+        let element = try #require(children.first as? PianoAccessibleNote)
+        let label = try #require(element.accessibilityLabel())
+        #expect(label.contains(noteName(note.pitch)) && label.contains(text("Start beat")))
+        #expect(element.accessibilityCustomActions()?.count == 5)
+        let initialFrame = element.accessibilityFrame()
+        #expect(initialFrame == frame.layout.paneRect(NSRect(x: Double(note.x), y: Double(note.y),
+            width: max(2, Double(note.width)), height: Double(note.height))))
+        #expect(element.accessibilityValue() as? String == "")
+        // Moving the window without a redraw refreshes the cached frame only.
+        let moved = grid.buildAccessibilityChildren(convert: { $0.offsetBy(dx: 10, dy: 20) })
+        let movedElement = try #require(moved.first as? PianoAccessibleNote)
+        #expect(movedElement === element)
+        #expect(movedElement.accessibilityFrame() == initialFrame.offsetBy(dx: 10, dy: 20))
+        #expect(grid.accessibilityBuilds == builds)
+        // A new accepted frame rebuilds the focused element for its notification,
+        // then the visible set on query, while keeping the element identity.
+        grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
+        grid.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: note.id, camera: camera, key: DisplayKey(), preview: nil), revision: 1))
+        #expect(grid.accessibilityBuilds == builds + 1)
+        let updated = grid.buildAccessibilityChildren(convert: { $0 })
+        // The focused element was already rebuilt for its notification.
+        #expect(grid.accessibilityBuilds == builds + frame.notes.count)
+        let firstBefore = try #require(children.first as? PianoAccessibleNote)
+        let firstAfter = try #require(updated.first as? PianoAccessibleNote)
+        #expect(firstBefore === firstAfter)
+        let accessible = updated.compactMap { element -> PianoAccessibleNote? in element as? PianoAccessibleNote }
+        #expect(accessible.contains { ($0.accessibilityValue() as? String) == text("Selected") })
+        // A focus change on the same draw version updates the reused elements.
+        let other = try #require(frame.notes.dropFirst().first)
+        let focusedBuilds = grid.accessibilityBuilds
+        grid.setSnapshot(snapshot, track: track, focus: other.id, key: DisplayKey(), busy: false)
+        let sameVersion = grid.buildAccessibilityChildren(convert: { $0 })
+        #expect(grid.accessibilityBuilds == focusedBuilds)
+        let selected = sameVersion.compactMap { $0 as? PianoAccessibleNote }.filter {
+            ($0.accessibilityValue() as? String) == text("Selected")
+        }
+        #expect(selected.count == 1)
+        #expect(selected.first?.accessibilityIdentifier() == "\(other.id.track)/\(other.id.placement)/\(other.id.note)")
+        // Stopping clears the announced focus so reopening notifies again.
+        grid.stop()
+        #expect(grid.accessibilityBuilds == 0)
+        grid.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: other.id, camera: camera,
+            key: DisplayKey(), preview: nil), revision: 2))
+        #expect(grid.accessibilityBuilds == 1)
+        await controller.close()
+    }
+
     @Test func repeatedArrowKeysMoveFromTheStepAlreadySent() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-steps-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }

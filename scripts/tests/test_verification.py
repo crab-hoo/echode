@@ -381,14 +381,40 @@ class PolicyTests(unittest.TestCase):
 
     def test_canvas_resize_keeps_surface_and_header_regressions_in_the_product_gate(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
-        for name, source in (("canvas-resize-ui", "CanvasSurface.swift"), ("header-width-ui", "ArrangePaneView.swift")):
+        for name, source in (("canvas-resize-ui", "CanvasSurface.swift"), ("header-width-ui", "ArrangePaneView.swift"),
+                             ("arrange-camera-ui", "ArrangePaneView.swift"),
+                             ("arrange-camera-input-ui", "ArrangePaneView.swift")):
             contract = contracts[name]
             self.assertEqual((contract["runner"], contract["suite"]), ("swift", "CanvasResizeTests"))
-            self.assertTrue(contract["negative_control"]["file"].endswith(source))
+            faults = contract.get("negative_controls") or [contract["negative_control"]]
+            self.assertTrue(all(fault["file"].endswith(source) for fault in faults))
+        canvas_faults = contracts["canvas-resize-ui"]["negative_controls"]
+        self.assertIn("scaleAxesIndependently", canvas_faults[0]["new"])
+        self.assertIn("contentsGravity", canvas_faults[1]["new"])
+        self.assertIn("camera.constrain", contracts["arrange-camera-ui"]["negative_control"]["new"])
+        self.assertIn("camera.originTrack", contracts["arrange-camera-input-ui"]["negative_control"]["new"])
         for name in ("CanvasSurface.swift", "CanvasRenderer.swift", "ArrangePaneView.swift", "ArrangeView.swift", "PianoRollView.swift"):
             checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + name)
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
                              "spike-arrange-frame", "spike-piano-frame", "spike-playhead"} <= checks)
+
+    def test_piano_accessibility_builds_only_on_query(self):
+        contract = next(item for item in self.policy["product_contracts"] if item["id"] == "piano-accessibility-ui")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "PianoTests"))
+        self.assertEqual(contract["test"], "contractPianoAccessibilityBuildsOnlyOnQueryAndReusesElements")
+        self.assertTrue(contract["negative_control"]["file"].endswith("PianoRollView.swift"))
+        self.assertIn("buildAccessibilityChildren", contract["negative_control"]["new"])
+
+    def test_chrome_layout_keeps_status_row_and_play_button_sizes(self):
+        contract = next(item for item in self.policy["product_contracts"] if item["id"] == "transport-layout-ui")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "WorkspaceChromeTests"))
+        self.assertEqual(contract["test"], "contractStatusRowAndPlayButtonKeepTheirSizeWhilePreparing")
+        self.assertTrue(contract["negative_control"]["file"].endswith("WorkspaceView.swift"))
+        self.assertIn("opacity(preparing ? 1 : 0)", contract["negative_control"]["old"])
+        self.assertIn("if preparing", contract["negative_control"]["new"])
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/WorkspaceView.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceTransportView.swift"):
+            self.assertIn("check-product-contracts", self.selected(path))
 
     def test_playhead_window_regression_is_an_explicit_spike(self):
         self.assertIn("spike-playhead", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PlayheadTests.swift"))
@@ -506,10 +532,12 @@ class PolicyTests(unittest.TestCase):
         check = next(c for c in self.policy["checks"] if c["id"] == "check-product-contracts")
         folders = verify.package_directories(ROOT, check["packages"])
         for contract in self.policy["product_contracts"]:
-            path = contract["negative_control"]["file"]
-            with self.subTest(contract=contract["id"]):
-                self.assertTrue(verify.matches([path], check["inputs"])
-                                or any(path.startswith(folder + "/") for folder in folders))
+            faults = contract.get("negative_controls") or [contract["negative_control"]]
+            for fault in faults:
+                path = fault["file"]
+                with self.subTest(contract=contract["id"]):
+                    self.assertTrue(verify.matches([path], check["inputs"])
+                                    or any(path.startswith(folder + "/") for folder in folders))
 
     def test_shell_entry_points_and_their_helpers_are_declared_inputs(self):
         parsed = verify.makefile_rules((ROOT / "Makefile").read_text())
@@ -541,7 +569,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
-                          "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "header-width-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
+                          "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",
@@ -558,7 +586,8 @@ class PolicyTests(unittest.TestCase):
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
                           "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:
-            self.assertTrue((ROOT / contract["negative_control"]["file"]).is_file())
+            faults = contract.get("negative_controls") or [contract["negative_control"]]
+            self.assertTrue(all((ROOT / fault["file"]).is_file() for fault in faults))
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("check_product_contracts.py", recipe)
         self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", recipe)

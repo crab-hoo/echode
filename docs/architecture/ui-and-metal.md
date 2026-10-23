@@ -27,7 +27,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 - **ペイン構成**: 左ペイン（インスペクター）、中央（アレンジ画面）、中央下部（MIDI エディタ・オーディオエディタ・デバイスビュー）、右ペイン（ブラウザ・マスター）。
   ペインの親が先に縮んでも隣の領域へはみ出さないよう AppKit の親・表示面で明示的に切る
   （[ADR 0098](../decisions/0098-pane-render-boundaries.md)）
-  リサイズでは前のフレームを左上に等倍で保ち、主スレッドで drawable のサイズも更新する。
+  リサイズでは前のフレームを見た目の左上に等倍で保ち、主スレッドで drawable のサイズも更新する。
+  反転した View の固定位置は AppKit の変換に任せ、`contentsGravity` を上書きしない
+  （[ADR 0144](../decisions/0144-unscaled-canvas-resizing.md)、[ADR 0149](../decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
   指定ヘッダ幅と現在の表示幅を分け、狭い layout を往復しても指定を失わない（[ADR 0144](../decisions/0144-unscaled-canvas-resizing.md)）。
 - **デバイスビュー**:
   下部は選択トラックのデバイスを横に並べ、各列が画面内の行だけを作る全パラメーター一覧・検索・ピン留めを持つ。
@@ -47,6 +49,15 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0050](../decisions/0050-arrange-viewport.md)、[ADR 0051](../decisions/0051-arrange-presentation.md)、[ADR 0107](../decisions/0107-mix-controls.md)）
 - **状態分離**: 文書・選択・確定編集を `ProjectController`、配置・表示設定・下書きを `WorkspaceState`、画面操作を `WorkspaceSession` に分け、共通の `WorkspaceCommand` を使う
   （[ADR 0053](../decisions/0053-workspace-ui-foundation.md)）
+- **固定した画面寸法**: 状態行は準備中だけ表示器を見せるが、その場所を常に確保する。
+  再生ボタンは Play と Pause の広い方の幅を保つ。準備の開始と終了でペインの寸法を変えない
+  （[ADR 0149](../decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
+- **縦位置と表示の制限**: アレンジの `originTrack` は利用者の指定値とし、高さで制限したコピーだけを描画へ渡す。
+  ペインの高さを戻すと指定位置へ戻る。`CanvasNavigationState.arrange` にも指定値を記憶する
+  （[ADR 0149](../decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
+- **ピアノロールのアクセシビリティ**: 描画の通知では要素を作らず、問い合わせ時に同じ描画版の要素を再利用する。
+  フォーカスの通知に必要な要素だけを先に作る
+  （[ADR 0149](../decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
 - **編集順序と操作の排他**: `EditTurn` は編集を直列にするが、通常編集では画面全体を無効にしない。
   `ProjectController.busy` は文書の作成・交換・終了だけを表し、Undo 等の状態読込中のパラメータードラッグは `historyBusy` で制限する
   （[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。

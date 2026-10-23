@@ -105,7 +105,7 @@ class ContractEvidenceTests(unittest.TestCase):
             source = checkout / "src/lib.rs"
             source.write_text("fn value() -> u8 { 1 }\n")
             contract = {"id": "fixture", "negative_control": {"file": "src/lib.rs", "old": "{ 1 }", "new": "{ 2 }"}}
-            with contracts.mutated(checkout, contract):
+            with contracts.mutated(checkout, contract, contract["negative_control"]):
                 self.assertIn("{ 2 }", source.read_text())
                 built = time.time_ns()
                 os.utime(source, ns=(built - 10**9, built - 10**9))
@@ -113,7 +113,7 @@ class ContractEvidenceTests(unittest.TestCase):
             self.assertGreater(source.stat().st_mtime_ns, built - 10**9)
             stale = dict(contract, negative_control={"file": "src/lib.rs", "old": "missing", "new": "x"})
             with self.assertRaises(ValueError):
-                with contracts.mutated(checkout, stale):
+                with contracts.mutated(checkout, stale, stale["negative_control"]):
                     pass
 
     def test_rust_counterexamples_change_dependencies_first_and_group_each_crate(self):
@@ -166,6 +166,44 @@ class ContractEvidenceTests(unittest.TestCase):
             for checkout in checkouts:
                 self.assertEqual((checkout / "Sources/View.swift").read_text(),
                                  "let a = 1\nlet b = 1\nlet c = 1\nlet d = 1\n")
+
+    def test_multiple_counterexamples_are_each_built_and_all_must_be_rejected(self):
+        def run(second_rejected):
+            with tempfile.TemporaryDirectory() as directory:
+                checkout = Path(directory) / "0"
+                (checkout / "Sources").mkdir(parents=True)
+                source = checkout / "Sources/View.swift"
+                source.write_text("let a = 1\nlet b = 1\n")
+                case = {"id": "case", "runner": "swift", "package_path": "App", "suite": "Suite",
+                        "test": "contract", "timeout": 30,
+                        "negative_controls": [
+                            {"file": "Sources/View.swift", "old": "let a = 1", "new": "let a = 2"},
+                            {"file": "Sources/View.swift", "old": "let b = 1", "new": "let b = 2"},
+                        ]}
+                builds, tests = [], []
+                def fake(args, **kwargs):
+                    if args[:2] == ["swift", "build"]:
+                        builds.append(source.read_text())
+                        return subprocess.CompletedProcess(args, 0, "Build complete!", "")
+                    text = source.read_text()
+                    tests.append(text)
+                    if not second_rejected and "let b = 2" in text:
+                        return subprocess.CompletedProcess(args, 0, "Test contract() passed\nTest run with 1 test in 1 suite passed", "")
+                    output = "Expectation failed\nTest contract() failed\nTest run with 1 test in 1 suite failed"
+                    return subprocess.CompletedProcess(args, 1, output, "")
+                results = []
+                with patch.object(contracts, "run_process", side_effect=fake):
+                    contracts.swift_controls([checkout], [case], {}, Path(directory), results.append)
+                self.assertEqual(len(builds), 2)
+                self.assertEqual(len(tests), 2)
+                self.assertIn("let a = 2", builds[0])
+                self.assertIn("let b = 1", builds[0])
+                self.assertIn("let b = 2", builds[1])
+                self.assertIn("let a = 1", builds[1])
+                self.assertEqual(source.read_text(), "let a = 1\nlet b = 1\n")
+                return results[0]["status"]
+        self.assertEqual(run(True), "passed")
+        self.assertEqual(run(False), "failed")
 
     def test_a_counterexample_that_does_not_compile_is_not_detection(self):
         with tempfile.TemporaryDirectory() as directory:

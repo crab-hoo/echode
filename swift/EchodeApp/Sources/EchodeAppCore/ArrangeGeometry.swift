@@ -8,12 +8,21 @@ struct ArrangeCamera: Sendable, Equatable {
     var pixelsPerBeat = 72.0
     var pixelsPerTrack = 64.0
 
-    mutating func constrain(trackCount: Int, height: Double) {
+    /// Keep the user's requested position finite and non-negative without
+    /// limiting it to the current pane height.
+    mutating func sanitize() {
         if !originBeat.isFinite { originBeat = 0 }
         if !originTrack.isFinite { originTrack = 0 }
         originBeat = max(0, originBeat)
+        originTrack = max(0, originTrack)
+    }
+
+    /// Constrain a display copy. The pane keeps the requested vertical origin
+    /// so shrinking and growing the pane does not move the track list.
+    mutating func constrain(trackCount: Int, height: Double) {
+        sanitize()
         let visible = max(0, height) / pixelsPerTrack
-        originTrack = min(max(0, originTrack), max(0, Double(trackCount) - visible))
+        originTrack = min(originTrack, max(0, Double(trackCount) - visible))
     }
 
     mutating func scroll(x: Double, y: Double, trackCount: Int, height: Double) {
