@@ -46,7 +46,8 @@ struct CanvasSubmissionTests {
             renderer.update(input)
             let firstRevision = renderer.measurement.revision
             let matching = try submit(renderer, size: input.drawableSize, device: device)
-            #expect(matching.pixels == reference.pixels)
+            #expect(matching.width == reference.width && matching.height == reference.height)
+            expectPixels(matching, reference: reference)
             #expect(renderer.measurement.drawnRevision == firstRevision)
             #expect(renderer.measurement.displayLinkPaused)
 
@@ -69,7 +70,8 @@ struct CanvasSubmissionTests {
             }
             #expect(renderer.measurement.sizeMismatches == 5)
             let corrected = try submit(renderer, size: input.drawableSize, device: device)
-            #expect(corrected.pixels == reference.pixels)
+            #expect(corrected.width == reference.width && corrected.height == reference.height)
+            expectPixels(corrected, reference: reference)
             #expect(renderer.measurement.drawnRevision == nextRevision)
             #expect(renderer.measurement.displayLinkPaused)
 
@@ -88,6 +90,8 @@ struct CanvasSubmissionTests {
     }
 
     private func expectPixels(_ image: CanvasReadback, reference: CanvasReadback) {
+        // Report mismatch counts instead of expanding entire pixel arrays in
+        // expected negative-control failures.
         var overlap = 0, margin = 0
         for y in 0..<image.height {
             for x in 0..<image.width {
