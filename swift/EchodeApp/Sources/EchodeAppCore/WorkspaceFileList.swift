@@ -11,10 +11,12 @@ struct SampleFileList: NSViewRepresentable {
     let selection: URL?
     let onSelect: (URL?, AuditionOrigin) -> Void
     let onOpen: (BrowserFile) -> Void
+    var onAudition: (AuditionOrigin) -> Void = { _ in }
     func makeNSView(context: Context) -> FileListView { FileListView() }
     func updateNSView(_ view: FileListView, context: Context) {
         view.onSelect = onSelect
         view.onOpen = onOpen
+        view.onAudition = onAudition
         view.show(files, searching: searching, selection: selection)
     }
 }
@@ -28,6 +30,7 @@ final class FileListView: NSScrollView, NSTableViewDataSource, NSTableViewDelega
     private var applying = false
     var onSelect: (URL?, AuditionOrigin) -> Void = { _, _ in }
     var onOpen: (BrowserFile) -> Void = { _ in }
+    var onAudition: (AuditionOrigin) -> Void = { _ in }
 
     init() {
         super.init(frame: .zero)
@@ -47,6 +50,7 @@ final class FileListView: NSScrollView, NSTableViewDataSource, NSTableViewDelega
             guard let self, self.files.indices.contains(row) else { return }
             self.onOpen(self.files[row])
         }
+        table.onAudition = { [weak self] origin in self?.onAudition(origin) }
         table.dragURL = { [weak self] row in
             guard let self, self.files.indices.contains(row), self.files[row].audio else { return nil }
             return self.files[row].url
@@ -106,6 +110,7 @@ final class FileListTable: NSTableView {
     /// The click or key being handled, which a selection change reports.
     fileprivate(set) var input: AuditionOrigin?
     var onOpen: (Int) -> Void = { _ in }
+    var onAudition: (AuditionOrigin) -> Void = { _ in }
     var dragURL: (Int) -> URL? = { _ in nil }
     private var dragDown: (NSEvent, any NSPasteboardWriting)?
 
@@ -137,6 +142,10 @@ final class FileListTable: NSTableView {
     override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
 
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 124, event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
+            if !event.isARepeat { onAudition(AuditionOrigin(input: .key, delayMicroseconds: Self.delay(event))) }
+            return
+        }
         // Return and keypad Enter open the row, as a double click does.
         if [36, 76].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
             if selectedRow >= 0 { onOpen(selectedRow) }

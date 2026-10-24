@@ -67,6 +67,7 @@ struct Probe {
     /// While set, `prepare` waits after noting `held`.
     hold: Arc<AtomicBool>,
     held: Arc<AtomicBool>,
+    fail_open: Arc<AtomicBool>,
 }
 
 struct TestOutputs {
@@ -77,6 +78,9 @@ struct TestOutputs {
 
 impl AuditionOutputs for TestOutputs {
     fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), String> {
+        if self.probe.fail_open.load(Ordering::Acquire) {
+            return Err("output unavailable".into());
+        }
         lock(&self.probe.asked).push(uid.map(str::to_owned));
         while self.probe.hold.load(Ordering::Acquire) {
             self.probe.held.store(true, Ordering::Release);
@@ -192,6 +196,90 @@ fn close(heard: [f32; 2], expected: [f32; 2], what: &str) {
             "{what}: {heard:?} != {expected:?}"
         );
     }
+}
+
+#[test]
+fn contract_a_long_audition_is_handed_over_before_the_file_finishes_decoding_under_rtsan() {
+    let fixture = fixture("streaming");
+    let sample = fixture.0.join("long.wav");
+    // This fixture exceeds the audition's bounded read-ahead, without opening a device.
+    std::fs::write(
+        &sample,
+        wav(RATE, 2, &tone(RATE as usize * 4, 2, 0.021, 0.5)),
+    )
+    .unwrap();
+    let (audition, probe) = audition(RATE);
+    let request = audition.play(sample);
+    let report = wait(&audition, |report| report.phase == AuditionPhase::Sounding);
+    let entry = report.history.back().unwrap();
+    assert_eq!(entry.request, request);
+    assert!(entry.handed_us.is_some());
+    assert!(
+        entry.decoded_us.is_none(),
+        "the whole file delayed the first sound"
+    );
+    let waveform = report.waveform.as_ref().unwrap();
+    assert_eq!(
+        (waveform.frames, waveform.sample_rate),
+        (u64::from(RATE) * 4, RATE)
+    );
+    assert!(!waveform.complete && waveform.loaded_frames < waveform.frames);
+    assert!(!waveform.peaks.is_empty() && waveform.peaks.len() <= 512);
+    assert!(
+        waveform
+            .peaks
+            .iter()
+            .any(|peak| peak[0] < 0.0 && peak[1] > 0.0)
+    );
+    let callback = callback(&probe, 128);
+    assert!(hear(&callback, 256, 128).iter().any(|pair| pair[0] != 0.0));
+    let stopped = audition.stop();
+    wait(&audition, |report| report.handled == stopped);
+    assert!(
+        hear(&callback, 512, 128)
+            .iter()
+            .skip(FADE)
+            .all(|pair| *pair == [0.0; 2])
+    );
+    assert!(audition.report().waveform.is_none());
+
+    // A replacement clears the old overview before any decoding can finish.
+    let missing = audition.play(fixture.0.join("missing.wav"));
+    let report = wait(&audition, |report| report.handled == missing);
+    assert_eq!(report.phase, AuditionPhase::Failed);
+    assert!(report.waveform.is_none());
+}
+
+#[test]
+#[ignore = "measures audition startup without an audio device"]
+fn measure_streaming_audition_startup_without_a_device() {
+    let fixture = fixture("startup-measurement");
+    let mut rows = Vec::new();
+    // These durations compare startup on this machine only; they do not limit files.
+    for seconds in [4, 60] {
+        let sample = fixture.0.join(format!("{seconds}s.wav"));
+        std::fs::write(
+            &sample,
+            wav(RATE, 2, &tone(RATE as usize * seconds, 2, 0.021, 0.5)),
+        )
+        .unwrap();
+        let (audition, probe) = audition(RATE);
+        let request = audition.play(sample);
+        wait(&audition, |report| report.phase == AuditionPhase::Sounding);
+        let callback = callback(&probe, 128);
+        hear(&callback, 128, 128);
+        wait(&audition, |report| {
+            report.history.back().unwrap().heard_us.is_some()
+        });
+        let measured = entry(&audition, request);
+        assert!(measured.decoded_us.is_none());
+        rows.push(serde_json::json!({"seconds": seconds, "stages": measured}));
+        let stopped = audition.stop();
+        wait(&audition, |report| report.handled == stopped);
+    }
+    let target =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/spike-audition.json");
+    std::fs::write(target, serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
 }
 
 #[test]
@@ -352,8 +440,8 @@ fn the_history_times_each_stage_and_keeps_the_input_that_asked() {
     assert!(timed.opened_output && timed.requested_at_ms > 0);
     let stages = [
         timed.picked_us,
-        timed.decoded_us,
         timed.output_us,
+        timed.first_decoded_us,
         timed.converted_us,
         timed.handed_us,
         timed.heard_us,
@@ -378,7 +466,11 @@ fn the_history_times_each_stage_and_keeps_the_input_that_asked() {
     });
     let passed = entry(&audition, held);
     assert_eq!(passed.phase, AuditionPhase::Superseded, "{passed:?}");
-    assert!(passed.decoded_us.is_some() && passed.handed_us.is_none());
+    assert!(
+        passed.output_us.is_some()
+            && passed.first_decoded_us.is_none()
+            && passed.handed_us.is_none()
+    );
     let kept = entry(&audition, newest);
     assert_eq!(kept.input, AuditionInput::Key);
     // The output was still open from the first request.
@@ -510,4 +602,213 @@ fn a_silent_audition_opens_the_system_output_and_ends() {
     });
     assert_eq!(report.phase, AuditionPhase::Ended, "{report:?}");
     assert!(report.sample_rate.is_some());
+}
+
+#[test]
+fn contract_loading_is_not_an_idle_output_but_stopping_allows_idle_close() {
+    let shared = Shared::default();
+    lock(&shared.report).phase = AuditionPhase::Loading;
+    let mut outputs = TestOutputs {
+        probe: Probe::default(),
+        rate: RATE,
+        control: None,
+    };
+    outputs.prepare(None).unwrap();
+    let mut sounding = None;
+    // Inject an expired idle clock; this is a state boundary, not a timing measurement.
+    let expired = Instant::now() - KEEP_OPEN - Duration::from_secs(1);
+    let mut idle_since = Some(expired);
+    service(&shared, &mut outputs, &mut sounding, &mut idle_since);
+    assert!(outputs.is_open(), "loading must not expire the idle output");
+    assert!(idle_since.is_none());
+    lock(&shared.report).phase = AuditionPhase::Stopped;
+    idle_since = Some(expired);
+    service(&shared, &mut outputs, &mut sounding, &mut idle_since);
+    assert!(!outputs.is_open());
+}
+
+#[test]
+fn contract_a_visible_browser_keeps_its_silent_output_until_hidden() {
+    let shared = Shared::default();
+    lock(&shared.report).settings.visible = true;
+    let mut outputs = TestOutputs {
+        probe: Probe::default(),
+        rate: RATE,
+        control: None,
+    };
+    outputs.prepare(None).unwrap();
+    let mut sounding = None;
+    // Expired state exercises idle expiry without measuring elapsed time.
+    let expired = Instant::now() - KEEP_OPEN - Duration::from_secs(1);
+    let mut idle_since = Some(expired);
+    service(&shared, &mut outputs, &mut sounding, &mut idle_since);
+    assert!(
+        outputs.is_open(),
+        "a visible browser must retain its silent output"
+    );
+    lock(&shared.report).settings.visible = false;
+    idle_since = Some(expired);
+    service(&shared, &mut outputs, &mut sounding, &mut idle_since);
+    assert!(!outputs.is_open());
+}
+
+#[test]
+fn browser_visibility_prepares_silence_without_a_play_and_settings_do_not_cancel_loading_under_rtsan()
+ {
+    let (audition, probe) = audition(RATE);
+    audition.configure(true, 0.25).unwrap();
+    let report = wait(&audition, |report| report.sample_rate == Some(RATE));
+    assert_eq!((report.request, report.phase), (0, AuditionPhase::Idle));
+    assert!(report.history.is_empty() && report.output_error.is_none());
+    let callback = callback(&probe, 64);
+    assert!(hear(&callback, 64, 64).iter().all(|pair| *pair == [0.0; 2]));
+    let fixture = fixture("settings");
+    let sample = fixture.0.join("long.wav");
+    std::fs::write(&sample, wav(RATE, 1, &vec![8192; RATE as usize * 2])).unwrap();
+    let request = audition.play(sample);
+    wait(&audition, |report| {
+        report.request == request && report.phase == AuditionPhase::Sounding
+    });
+    assert_eq!(hear(&callback, 1, 1)[0], [0.0625; 2]);
+    audition.configure(true, 0.0).unwrap();
+    // Wait for the control setting, without consuming the whole read-ahead.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let silent = hear(&callback, 64, 64);
+        if silent.last() == Some(&[0.0; 2]) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "audition gain was not applied");
+        std::thread::sleep(SERVICE);
+    }
+    let report = audition.report();
+    assert_eq!(report.request, request);
+    assert_eq!(probe.opens.load(Ordering::Acquire), 1);
+    assert_eq!(report.settings.gain, 0.0);
+    for invalid in [f32::NAN, f32::INFINITY, -1.0, 1.1] {
+        assert!(audition.configure(false, invalid).is_err());
+    }
+    assert!(audition.report().settings.visible);
+    audition.stop();
+    audition.hide();
+}
+
+#[test]
+fn contract_sample_position_and_volume_reach_the_product_callback_under_rtsan() {
+    let fixture = fixture("position");
+    let sample = fixture.0.join("offset.wav");
+    // The source and blocks cover this seek/EOF fixture only.
+    let source = tone(1631, 2, 0.021, 0.5);
+    std::fs::write(&sample, wav(44_100, 2, &source)).unwrap();
+    for rate in [44_100, 48_000] {
+        for requested_start in [137u64, 1600, u64::MAX] {
+            let start = requested_start.min(1630);
+            let suffix = echode_history::DecodedPcm {
+                sample_rate: 44_100,
+                channels: 2,
+                frames: 1631 - start,
+                samples: source[start as usize * 2..]
+                    .iter()
+                    .map(|s| f32::from(*s) / 32768.0)
+                    .collect(),
+            };
+            let expected = crate::clips::device_planes(&suffix, rate).unwrap();
+            for block in [1, 17, 256] {
+                let (audition, probe) = audition(rate);
+                audition.configure(false, 0.25).unwrap();
+                let request =
+                    audition.play_from(sample.clone(), requested_start, AuditionOrigin::default());
+                let report = wait(&audition, |r| {
+                    r.request == request && r.phase == AuditionPhase::Sounding
+                });
+                let waveform = report.waveform.unwrap();
+                assert_eq!(
+                    (
+                        waveform.frames,
+                        waveform.first_frame,
+                        waveform.loaded_frames
+                    ),
+                    (1631, start, 1631)
+                );
+                assert_eq!(report.history.back().unwrap().start_frame, start);
+                let callback = callback(&probe, block);
+                let heard = hear(&callback, expected.left.len() + 1, block);
+                for (index, frame) in heard.iter().take(expected.left.len()).enumerate() {
+                    close(
+                        *frame,
+                        [
+                            expected.left[index] * 0.25,
+                            expected.right.as_ref().unwrap()[index] * 0.25,
+                        ],
+                        "seek and volume",
+                    );
+                }
+                assert_eq!(heard.last(), Some(&[0.0; 2]));
+            }
+        }
+    }
+    // Seeking at EOF is legal; seeking beyond it is rejected by the decoder.
+    let mut reader = echode_history::AudioFileReader::open(&sample).unwrap();
+    reader.seek(1631).unwrap();
+    assert_eq!(reader.read(17).unwrap().frames, 0);
+    assert!(reader.seek(1632).is_err());
+    assert!(reader.seek(u64::MAX).is_err());
+    reader.seek(137).unwrap();
+    assert_eq!(
+        reader.read(1).unwrap().samples[0],
+        f32::from(source[274]) / 32768.0
+    );
+}
+
+#[test]
+fn silent_output_errors_are_reported_and_visibility_can_retry_without_playing() {
+    let probe = Probe::default();
+    probe.fail_open.store(true, Ordering::Release);
+    let outputs = probe.clone();
+    let audition = Audition::spawn(move || {
+        Box::new(TestOutputs {
+            probe: outputs,
+            rate: RATE,
+            control: None,
+        })
+    })
+    .unwrap();
+    audition.configure(true, 0.5).unwrap();
+    let report = wait(&audition, |r| r.output_error.is_some());
+    assert_eq!(
+        (report.request, report.phase, report.sample_rate),
+        (0, AuditionPhase::Idle, None)
+    );
+    probe.fail_open.store(false, Ordering::Release);
+    audition.configure(true, 0.5).unwrap();
+    wait(&audition, |r| {
+        r.sample_rate.is_some() && r.output_error.is_none()
+    });
+    probe.broken.store(true, Ordering::Release);
+    wait(&audition, |r| {
+        r.sample_rate.is_some() && probe.opens.load(Ordering::Acquire) == 2
+    });
+    assert_eq!(audition.report().request, 0);
+    audition.follow_output(Some("external".into()));
+    wait(&audition, |r| {
+        r.sample_rate.is_some() && probe.opens.load(Ordering::Acquire) == 3
+    });
+    assert_eq!(
+        lock(&probe.asked).last().cloned(),
+        Some(Some("external".into()))
+    );
+    audition.hide();
+}
+
+#[test]
+fn a_seek_to_a_suffix_shorter_than_a_device_frame_ends_normally() {
+    let fixture = fixture("tiny-suffix");
+    let sample = fixture.0.join("high-rate.wav");
+    std::fs::write(&sample, wav(192_000, 1, &[8192; 100])).unwrap();
+    let (audition, _) = audition(RATE);
+    let request = audition.play_from(sample, u64::MAX, AuditionOrigin::default());
+    let report = wait(&audition, |r| r.handled == request);
+    assert_eq!(report.phase, AuditionPhase::Ended);
+    assert!(report.error.is_none());
+    assert_eq!(report.history.back().unwrap().start_frame, 99);
 }

@@ -5,6 +5,9 @@
   UIF-05 の①・UIF-09・UIF-10 の対応（[照合](../reviews/2026-10-21-ui-feedback-audit.md#修正の進め方)）。実画面の操作感と聴感はユーザー確認待ち
 - 範囲: 共通サンプルブラウザの一覧の入力、選択の変化と試聴の要求、試聴の要求ごとの記録と `make debug-report`
 
+全体の復号と最初の塊の時刻の区別、最新要求のログの確定条件は
+[ADR 0151](0151-streaming-sample-audition.md) で改めた。
+
 ## 背景と再現
 
 ユーザーの報告は次の 3 つである（[照合](../reviews/2026-10-21-ui-feedback-audit.md)）。

@@ -45,6 +45,9 @@ class DiagnosticTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(diagnose.verify, "tool_identity", return_value=self.tools).start()
         patch.object(diagnose.shutil, "which", return_value="/fixture/tool").start()
+        self.runtime = self.root / "target/toolchains/tsan"
+        patch.object(diagnose.tsan_runtime, "CACHE", self.runtime).start()
+        self.runtime_context = patch.object(diagnose.tsan_runtime, "context", return_value={"clang": "fixture"}).start()
 
     def save_report(self, status="passed"):
         directory = self.root / "target/verification"
@@ -99,6 +102,27 @@ class DiagnosticTests(unittest.TestCase):
         data = diagnose.collect(self.root)
         self.assertEqual(data["environment"]["missing_tools"], [])
         self.assertIn("rustc +nightly-fixture -vV", data["environment"]["tool_errors"])
+
+    def test_missing_or_outdated_tsan_runtime_asks_for_bridge_setup(self):
+        # The cache can disappear while every tool is installed; then the TSan
+        # checks show stale with no hint unless the doctor names the setup.
+        self.assertEqual(diagnose.collect(self.root)["environment"]["setup_needed"], ["setup-bridge"])
+        libraries = {}
+        for variant in ("baseline", "fixed"):
+            library = self.runtime / variant / diagnose.tsan_runtime.LIBRARY
+            library.parent.mkdir(parents=True)
+            library.write_bytes(variant.encode())
+            libraries[variant] = diagnose.tsan_runtime.sha256(library)
+        (self.runtime / "manifest.json").write_text(json.dumps({"context": {"clang": "fixture"}, "libraries": libraries}))
+        data = diagnose.collect(self.root)
+        self.assertEqual(data["environment"]["setup_needed"], [])
+        self.assertIn("準備のやり直し: なし", diagnose.render(data))
+        self.runtime_context.return_value = {"clang": "updated Xcode"}
+        data = diagnose.collect(self.root)
+        self.assertEqual(data["environment"]["setup_needed"], ["setup-bridge"])
+        self.assertIn("make setup-bridge", diagnose.render(data))
+        self.runtime_context.side_effect = FileNotFoundError("cmake")
+        self.assertEqual(diagnose.collect(self.root)["environment"]["setup_needed"], ["setup-bridge"])
 
     def test_explicit_base_is_resolved_in_the_repository_being_diagnosed(self):
         reference = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()

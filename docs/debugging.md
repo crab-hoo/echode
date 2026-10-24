@@ -27,6 +27,8 @@ make debug-report
   `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 - **ツール不足・ビルド失敗**:
   `doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`、動的検査は `make setup-bridge`。
+  ツールがそろっていても、`setup_needed` に `setup-bridge` があれば TSan の検査専用ランタイムが未準備か、
+  Xcode・CMake・Ninja の版と合わない。この時 TSan の検査はソースの変更がなくても `stale` になる。
   `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、`swift build --build-tests` で診断を取得する。
   同じ `--package-path`・`--scratch-path` と `-Xswiftc -warnings-as-errors` を指定し、`target/` のログで `error:` 周辺を読む。
   Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
@@ -262,7 +264,21 @@ make debug-report
   `input_delay_us` は入力イベントから要求まで（画面の待ち）、`picked_us` から `handed_us` は試聴スレッドの各段、
   `heard_us` はその音を採用したブロックの出力時刻である。`opened_output` が真なら出力を開き直している。
   `input` が `other` の要求、同じパスの繰り返し、`superseded` の多さで、利用者の操作以外の要求や連続した選択を区別する。
+  `first_decoded_us` と `converted_us` は最初の塊、`decoded_us` は全体の復号であり、長い素材では受渡しより後になる。
+  `waveform.loaded_frames` が止まり先読みが埋まっている間は正常な待ちである。
+  初回の読込み中に出力が閉じた場合は、機器変更・失敗とアイドル終了を区別する。
+  `sample-audition-loading` は読込み中のアイドル終了を拒否し、停止後の閉鎖も確認する。
+  `starved_frames` の増加は読込みが再生に追い付かなかった出力フレーム数で、素材の無音や EOF とは異なる。
+  必須契約 `sample-audition-stream` と機器なしの `spike-audition` で先頭の受渡しを切り分ける。
+  波形のパスが選択と違う場合は `SamplePreviewView` のパス照合、波形の末尾は `complete` と元の `frames_per_peak` を調べる
+  （[ADR 0151](decisions/0151-streaming-sample-audition.md)）。
   クリックの選択とフォーカスは必須契約 `sample-browser-click-ui` で確認する。
+  `settings.visible` が真なら無音でも出力を保持し、`output_error` は素材の要求前の準備失敗を示す。
+  `settings.gain` が 0 なら試聴だけが無音になる。自動試聴の設定は `workspace.audition.v1` を見る。
+  履歴の `start_frame` は元サンプル位置、波形の `first_frame` と `loaded_frames` は読んだ範囲の先頭と末尾である。
+  先頭以外からの `complete`・`decoded_us` は EOF までの読込み完了であり、未読の先頭部分の波形は含まない。
+  表示保持・音量・位置と実操作子は必須契約 `sample-audition-resident`・`sample-audition-gain`・
+  `sample-audition-position`・`sample-audition-controls-ui` で切り分ける（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
   ブラウザ自身の選択の付け替えは要求を出さない（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。

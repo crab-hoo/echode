@@ -575,16 +575,38 @@ fn an_audition_returns_without_the_worker_and_reports_an_unreadable_file() {
     let document = open();
     let (sender, incoming) = mpsc::channel();
     let reply = Reply { sender };
+    assert_eq!(
+        unsafe { echode_document_audition_configure(document, 0, 0.25) },
+        ECHODE_OK
+    );
+    for gain in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+        assert_eq!(
+            unsafe { echode_document_audition_configure(document, 0, gain) },
+            ECHODE_ERR
+        );
+    }
+    assert_eq!(
+        unsafe { echode_document_audition_configure(document, 2, 0.5) },
+        ECHODE_ERR
+    );
+    assert_eq!(
+        unsafe { echode_document_audition_configure(std::ptr::null(), 0, 0.5) },
+        ECHODE_ERR
+    );
+    let settings = audio_state(document, &reply, &incoming)["audition"]["settings"].clone();
+    assert_eq!(settings["gain"], 0.25);
+    assert_eq!(settings["visible"], false);
     // Decoding fails before any output device is asked for.
     let missing =
         std::env::temp_dir().join(format!("echode-ffi-missing-{}.wav", std::process::id()));
     let path = missing.to_str().unwrap();
     assert_eq!(
         unsafe {
-            echode_document_audition(
+            echode_document_audition_at(
                 document,
                 path.as_ptr(),
                 path.len(),
+                137,
                 ECHODE_AUDITION_INPUT_CLICK,
                 2_500,
             )
@@ -612,6 +634,7 @@ fn an_audition_returns_without_the_worker_and_reports_an_unreadable_file() {
     assert_eq!(failed["input"], "click");
     assert_eq!(failed["input_delay_us"], 2_500);
     assert_eq!(failed["phase"], "failed");
+    assert_eq!(failed["start_frame"], 137);
     assert!(failed["picked_us"].is_u64() && failed["handed_us"].is_null());
     let request = audition["request"].as_u64().unwrap();
     assert_eq!(

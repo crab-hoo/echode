@@ -50,7 +50,34 @@ public struct AuditionStatus: Decodable, Sendable, Equatable {
     public let sampleRate: UInt32?
     /// The latest requests, oldest first, with the time each stage finished.
     public let history: [AuditionEntry]
-    enum CodingKeys: String, CodingKey { case request, handled, path, phase, error, history, sampleRate = "sample_rate" }
+    public let waveform: AuditionWaveform?
+    public let settings: AuditionSettings?
+    public let outputError: String?
+    enum CodingKeys: String, CodingKey {
+        case request, handled, path, phase, error, history, waveform, settings, sampleRate = "sample_rate", outputError = "output_error"
+    }
+}
+
+public struct AuditionSettings: Decodable, Sendable, Equatable {
+    public let visible: Bool
+    public let gain: Float
+}
+
+/// Progressive source peaks from the audition decoder, shared with its sound.
+public struct AuditionWaveform: Decodable, Sendable, Equatable {
+    public let frames: UInt64
+    public let loadedFrames: UInt64
+    /// Earlier buckets have not been read by a request starting inside the file.
+    public let firstFrame: UInt64?
+    public let sampleRate: UInt32
+    public let framesPerPeak: UInt64
+    public let complete: Bool
+    /// Minimum and maximum across the source channels for each time bucket.
+    public let peaks: [[Float]]
+    enum CodingKeys: String, CodingKey {
+        case frames, complete, peaks, loadedFrames = "loaded_frames", sampleRate = "sample_rate", framesPerPeak = "frames_per_peak"
+        case firstFrame = "first_frame"
+    }
 }
 
 /// What made the UI ask for an audition. It is recorded, never acted on.
@@ -77,21 +104,27 @@ public struct AuditionEntry: Codable, Sendable, Equatable {
     public let phase: AuditionStatus.Phase
     public let error: String?
     public let pickedUs: UInt64?
+    public let firstDecodedUs: UInt64?
     public let decodedUs: UInt64?
     public let sourceFrames: UInt64?
     public let sourceRate: UInt32?
+    public let startFrame: UInt64?
     public let outputUs: UInt64?
     public let openedOutput: Bool
     public let convertedUs: UInt64?
     public let handedUs: UInt64?
     public let heardUs: UInt64?
-    /// Nothing more will be recorded for it: it was heard, or it ended without sound.
-    public var settled: Bool { heardUs != nil || ![.loading, .sounding].contains(phase) }
+    public let starvedFrames: UInt64?
+    /// Startup stages are settled after hearing and complete decoding, or a terminal phase.
+    public var settled: Bool { (heardUs != nil && decodedUs != nil) || ![.loading, .sounding].contains(phase) }
     enum CodingKeys: String, CodingKey {
         case request, path, input, phase, error
         case inputDelayUs = "input_delay_us", requestedAtMs = "requested_at_ms", pickedUs = "picked_us", decodedUs = "decoded_us"
+        case firstDecodedUs = "first_decoded_us"
         case sourceFrames = "source_frames", sourceRate = "source_rate", outputUs = "output_us", openedOutput = "opened_output"
+        case startFrame = "start_frame"
         case convertedUs = "converted_us", handedUs = "handed_us", heardUs = "heard_us"
+        case starvedFrames = "starved_frames"
     }
 }
 

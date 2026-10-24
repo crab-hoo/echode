@@ -42,14 +42,17 @@ public struct WorkspaceView: View {
         )) { Button(text("OK")) { controller.errorMessage = nil } } message: { Text(controller.errorMessage ?? "") }
         .frame(minWidth: state.layout.minimumWidth, minHeight: state.layout.minimumHeight)
         .onChange(of: context) { _, _ in state.synchronize(controller) }
+        .onChange(of: controller.documentID) { _, _ in session.synchronizeAuditionOutput() }
+        .onChange(of: state.layout.browser) { _, _ in session.synchronizeAuditionOutput() }
         .onAppear { [controller, state] in
             state.synchronize(controller)
+            session.synchronizeAuditionOutput()
             controller.pluginCommand = { [weak controller, state] command in
                 guard let controller else { return }
                 WorkspaceSession(controller: controller, state: state).perform(command)
             }
         }
-        .onDisappear { controller.pluginCommand = nil }
+        .onDisappear { controller.pluginCommand = nil; session.synchronizeAuditionOutput(visible: false) }
         .task { await controller.observeAudio() }
     }
 

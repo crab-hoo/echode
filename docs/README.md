@@ -43,6 +43,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 停止中のプラグイン処理・自然な余韻・編集時の全体暗転の解消: [ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)。
 - 実機計測の完走条件: [ADR 0096](decisions/0096-measurement-completion.md)。
 - 文書ワーカーから独立したサンプルの単発試聴・専用 IOProc: [ADR 0135](decisions/0135-sample-audition.md)。
+  有限の先読み・連続 SRC と同じ読込みからの部分波形: [ADR 0151](decisions/0151-streaming-sample-audition.md)。
+  表示中の出力保持・音量・自動試聴の切替と手動の開始位置: [ADR 0152](decisions/0152-browser-audition-controls.md)。
   一覧を押した時点の選択、利用者の操作だけで変わる試聴、要求ごとの各段の時刻: [ADR 0143](decisions/0143-browser-click-and-audition-timing.md)。
 - 出力とヘルパーの準備を文書ワーカーの外で行う・機器なしの検査用出力: [ADR 0136](decisions/0136-output-opening-off-worker.md)。
 - 開いた出力の置換ヘルパー・共有領域の準備と後続編集の集約: [ADR 0142](decisions/0142-background-plugin-graph-preparation.md)。

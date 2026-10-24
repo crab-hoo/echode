@@ -332,3 +332,26 @@ Swift の指摘は `make known-bugs`（Rust の `audit_` テスト）の対象�
   必須契約 `workspace-layout-ui`・`workspace-stack-ui` は負の対照を持つ。プラグイン側の新しいキーも既存の回帰へ追加した。
 - 診断: 設定の v1／v2 と最大化・開閉・希望高を区別する手順を追加した。ログ形式と音声経路は変更していない。
 - 未確認: 実画面の最小高の変化・開閉・境界のドラッグ、キー・メニューの使い心地と VoiceOver はユーザー確認とする。
+
+## 対応（2026-10-24）
+
+### 4. 試聴の先読みと波形
+
+- [ADR 0151](../decisions/0151-streaming-sample-audition.md) で、有限の先読み・連続 SRC と同じ読込みからの部分波形を接続した。
+  出力の常駐と試聴の音量・開始位置等は残る。
+- 機器なしの製品経路で全復号を待つことを先に失敗させ、全復号前の発音と部分波形・読込み中の停止を回帰へ追加した。
+  元の失敗の証拠は `target/audition-stream-repro.log` に保持する。
+- 必須契約 `sample-audition-stream`・`sample-preview-ui`、SRC の全体変換との比較、ブロック長比較と RTSan の対象を追加した。
+  読込み中の出力をアイドル扱いで閉じる経路も再現し、`sample-audition-loading` で保持と停止後の閉鎖を確認する。
+  開始時間は通常の合否へ混ぜず `make spike-audition` で別途記録する。
+- 実機の待ち時間・聴感、ブラウザの波形と読込み状態の見え方・VoiceOver はユーザー確認とする。
+
+### 4. 試聴出力の常駐と操作の続き
+
+- [ADR 0152](../decisions/0152-browser-audition-controls.md) で、ブラウザ表示中の無音出力の保持・
+  試聴音量の 5 ms 補間・自動試聴の切替・右矢印と再生／停止ボタン・波形クリックの元サンプル位置からの試聴を接続した。
+- 先に期限を過ぎた時刻で出力が閉じる失敗を再現し、`target/audition-resident-repro.log` に保持した。
+  実機の開始時間の計測と区別する。
+- `sample-audition-resident`・`sample-audition-position`・`sample-audition-gain`・`sample-audition-controls-ui` と、
+  ブロック長・RTSan・C ABI / Swift の往復へ回帰を追加した。診断は設定・無音の準備失敗・元サンプル位置を区別する。
+- 実画面の見え方・VoiceOver、機器切替・曲との加算・聴感はユーザー確認とする。

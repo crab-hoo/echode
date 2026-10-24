@@ -151,6 +151,12 @@ P2 のトラック追加位置・フォルダ展開／折りたたみ時の挿�
 - **サンプルの試聴**: 文書ごとの試聴スレッドが復号・SRC・専用 IOProc を持ち、文書ワーカーとプロジェクトの出力ストリームを通らない。
   `AuditionAudio` は等倍の素材を先頭から加算し、置換・停止は 5 ms で消す。HAL がプロジェクトの IOProc と加算する
   （[ADR 0135](../decisions/0135-sample-audition.md)）。
+  復号・SRC は少しずつ進め、長い素材は有限の先読みリングから全復号前に鳴らす。
+  同じ読込みから部分波形を作り、音声側は不足と EOF を区別する
+  （[ADR 0151](../decisions/0151-streaming-sample-audition.md)）。
+  ブラウザ表示中は無音でも出力を保持し、音量は試聴だけに 5 ms の補間で適用する。
+  元のサンプル位置からの要求は制御側で seek して有限の先読みと同じ SRC を通す
+  （[ADR 0152](../decisions/0152-browser-audition-controls.md)）。
   直近の要求ごとに操作の種類と、受付・復号・出力の準備・変換・受渡し・発音（HAL の出力時刻）の経過を記録する
   （[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）
 - **デコードと書き出し**: AudioToolbox（WAV、AIFF、CAF、MP3、AAC、ALAC、FLAC 等）と Symphonia（Ogg Vorbis 等）を組み合わせる

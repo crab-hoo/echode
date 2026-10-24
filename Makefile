@@ -1,4 +1,4 @@
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio check check-base check-product-contracts verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-base check-product-contracts verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -65,6 +65,7 @@ check-base:
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
+# Audition streaming/EOF, resident output, volume and manual preview contracts use this entry too.
 # Named behavioral tests (including independent workspace panes/stacking, canvas resizing/header width/stale drawable extents and margins, fixed transport chrome sizes, output prewarm/background media, background graph startup, device preparation/disclosure/drop targets, plugin window lifetimes/status/keys, tracks, FX, and file-URL sample drops) must run; ignored/deleted tests cannot pass.
 check-product-contracts:
 	$(MAKE) bundled-plugins
@@ -200,6 +201,10 @@ rtsan:
 	RTSAN_ENABLE=1 cargo test -q -p echode-engine --features rtsan under_rtsan
 	RTSAN_ENABLE=1 cargo test -q -p echode-audio-io --features rtsan under_rtsan
 	RTSAN_ENABLE=1 cargo test -q -p echode-plugin-host --features rtsan under_rtsan
+
+# Device-free release measurement; never part of normal correctness tests.
+spike-audition:
+	cargo test -q --release -p echode-audio-io --lib audition::tests::measure_streaming_audition_startup_without_a_device -- --ignored --exact
 
 # Product HAL callback/lifecycle probe. Writes silence and never opens a window.
 spike-audio:

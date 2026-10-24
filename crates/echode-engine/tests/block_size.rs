@@ -1847,3 +1847,84 @@ fn sample_audition_replacement_and_stop_do_not_depend_on_the_block_size_under_rt
         out
     });
 }
+
+#[test]
+fn streamed_audition_chunks_and_eof_do_not_depend_on_the_block_size_under_rtsan() {
+    use echode_engine::{AuditionSound, audition_pair};
+    assert_block_independent(|block| {
+        // The ring and chunk lengths exercise wrapping within this fixture only.
+        let (mut writer, sound) = AuditionSound::streaming(1024).unwrap();
+        let mut sound = Some(sound);
+        let (mut control, mut audio) = audition_pair(RATE).unwrap();
+        let mut out = Vec::new();
+        for start in (0..4096).step_by(512) {
+            for sample in start..start + 512 {
+                let value = (sample as f32 * 0.021).sin() * 0.4;
+                assert!(writer.push([value, -value * 0.5]).unwrap());
+            }
+            if start == 0 {
+                control.play(sound.take().unwrap());
+            }
+            let mut offset = 0;
+            while offset < 512 {
+                let count = (block as usize).min(512 - offset);
+                let (mut l, mut r) = (vec![0.0; count], vec![0.0; count]);
+                audio.mix(&mut l, &mut r);
+                out.extend(l.into_iter().zip(r).flat_map(|(l, r)| [l, r]));
+                offset += count;
+            }
+            control.service();
+        }
+        drop(writer);
+        let (mut l, mut r) = ([0.0; 32], [0.0; 32]);
+        audio.mix(&mut l, &mut r);
+        out.extend(l.into_iter().zip(r).flat_map(|(l, r)| [l, r]));
+        control.service();
+        assert!(control.idle());
+        out
+    });
+}
+
+#[test]
+fn audition_gain_and_selected_source_position_are_block_independent_under_rtsan() {
+    use echode_engine::{AuditionSound, audition_pair};
+    assert_block_independent(|block| {
+        let (mut control, mut audio) = audition_pair(RATE).unwrap();
+        control.set_gain(0.5).unwrap();
+        // This fixture begins at source frame 137 and wraps the handoff ring.
+        let (mut writer, sound) = AuditionSound::streaming(1024).unwrap();
+        let mut sound = Some(sound);
+        let mut out = Vec::new();
+        for start in (0..4096).step_by(512) {
+            if start == 512 {
+                control.set_gain(0.0).unwrap();
+            }
+            if start == 1024 {
+                control.set_gain(0.8).unwrap();
+            }
+            if start == 1536 {
+                control.stop();
+            }
+            for sample in start + 137..start + 137 + 512 {
+                let value = (sample as f32 * 0.021).sin() * 0.4;
+                assert!(writer.push([value, -value * 0.5]).unwrap());
+            }
+            if start == 0 {
+                control.play(sound.take().unwrap());
+            }
+            let mut offset = 0;
+            while offset < 512 {
+                let count = (block as usize).min(512 - offset);
+                let (mut l, mut r) = (vec![0.125; count], vec![-0.125; count]);
+                audio.mix(&mut l, &mut r);
+                out.extend(l.into_iter().zip(r).flat_map(|(l, r)| [l, r]));
+                offset += count;
+            }
+            control.service();
+            if start == 1536 {
+                break;
+            }
+        }
+        out
+    });
+}

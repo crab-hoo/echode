@@ -22,7 +22,10 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     2 番目のペインのリサイズで前のフレームを伸縮しない配置と、指定ヘッダ幅の保持を接続した（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
     3 番目の制作向けファイルの表示と音声の位置指定ドロップを、単一 Undo・保存・失敗時の巻戻しへ接続した（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
     5 番目の下部の個別開閉・固定高のデバイス・アレンジ非表示と旧設定の移行を接続した（[ADR 0146](decisions/0146-independent-editor-stack.md)）。
-    4 番目の試聴の先読み・波形・出力の常駐は未着手のままである。
+    4 番目のうち、少しずつの復号・SRC と同じ読込みからの部分波形を接続した
+    （[ADR 0151](decisions/0151-streaming-sample-audition.md)）。
+    表示中の出力保持・音量・自動試聴の切替・右矢印と波形クリックの手動試聴も接続した
+    （[ADR 0152](decisions/0152-browser-audition-controls.md)）。実機の操作感と聴感はユーザー確認待ちである。
     UIF-08 は P2-02 の下部の切替を置き換え、UIF-03 は P2-07 のアレンジ編集を先に接続する。
   - **GUI のがくつき（JNK-01〜07）**: 2026-10-22 の監査で原因を分けた。
     単位 1（反転した表示面の固定位置）、単位 2（状態行・再生ボタンの寸法）、
@@ -94,6 +97,12 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   ブロック長比較と RTSan の回帰を持つ。2 つの IOProc の加算と聴感はユーザー確認とする。
   一覧は押した時点で選択し、試聴は利用者のクリックとキーだけで変わる。要求ごとの各段の時刻を記録する
   （[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)、必須契約 `sample-browser-click-ui`）。
+  長い素材は有限の先読みリングで全復号前に鳴らし、同じ読込みの波形・長さ・読込み状態を一覧の下へ表示する。
+  選択変更後の古い波形の拒否、読込み中の停止、不足からの再開と EOF を回帰で確認する
+  （[ADR 0151](decisions/0151-streaming-sample-audition.md)、必須契約 `sample-audition-stream`・`sample-preview-ui`）。
+  表示中は無音の出力を保持し、試聴だけの音量を 5 ms で補間する。
+  自動試聴の切替・右矢印・再生／停止ボタン・波形クリックの元サンプル位置からの試聴を接続した。
+  設定はプロジェクトの履歴から独立する（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
 - **ヘルパー所有のプラグインウィンドウ（[ADR 0132](decisions/0132-helper-plugin-windows.md)）**:
   列の名前・インスペクターの名前のクリックと候補からの単体追加で開き、一括追加・コピー・トラック複製では開かない。
   開く・前面化はフォーカスを取らず、Echode が非アクティブの間は隠す。

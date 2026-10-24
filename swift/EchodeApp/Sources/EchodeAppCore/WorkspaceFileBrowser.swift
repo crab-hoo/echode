@@ -49,7 +49,19 @@ struct WorkspaceFileBrowser: View {
                 Spacer()
             } else {
                 SampleFileList(files: browser.filtered, searching: browser.searchingLibrary, selection: browser.selection,
-                               onSelect: { session.chooseInBrowser($0, origin: $1) }, onOpen: open)
+                               onSelect: { session.chooseInBrowser($0, origin: $1) }, onOpen: open,
+                               onAudition: { session.auditionSelected(origin: $0) })
+                if let selected, selected.audio {
+                    SamplePreview(url: selected.url, status: session.controller.audio.audition,
+                                  onSeek: { frame, origin in session.auditionSelected(origin: origin, from: frame, expected: selected.url) })
+                }
+                SampleAuditionControls(preferences: session.state.auditionPreferences,
+                    canPlay: selected?.audio == true && session.controller.document != nil,
+                    onAutomatic: session.setAutomaticAudition, onGain: session.setAuditionGain,
+                    onPlay: { session.auditionSelected() }, onStop: { session.controller.audition(nil) })
+                if let error = session.controller.audio.audition?.outputError {
+                    Text(text("Sample output unavailable")).font(.caption).foregroundStyle(.secondary).help(error)
+                }
                 HStack {
                     Button(text("Open"), action: openSelected).disabled(!canOpenSelection)
                     Button(text("Import Audio"), action: importSelected).disabled(!canImportSelection)

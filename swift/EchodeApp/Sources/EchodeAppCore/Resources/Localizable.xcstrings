@@ -1,6 +1,72 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Audition Selected Sample": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Audition Selected Sample" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "選択したサンプルを試聴" } }
+      }
+    },
+    "Audition Volume": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Audition Volume" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "試聴音量" } }
+      }
+    },
+    "Auto Audition": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Auto Audition" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "自動試聴" } }
+      }
+    },
+    "Click waveform to audition from here": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Click waveform to audition from here" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "波形をクリックしてその位置から試聴" } }
+      }
+    },
+    "Loading sample": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Loading sample" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サンプルを読込み中" } }
+      }
+    },
+    "Partial waveform": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Partial waveform" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "波形は一部分です" } }
+      }
+    },
+    "Preview not loaded": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Preview not loaded" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プレビュー未読込み" } }
+      }
+    },
+    "Sample output unavailable": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Sample output unavailable" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "試聴出力を準備できません" } }
+      }
+    },
+    "Sample preview unavailable": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Sample preview unavailable" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サンプルをプレビューできません" } }
+      }
+    },
+    "Sample waveform": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Sample waveform" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "サンプルの波形" } }
+      }
+    },
+    "Stop Audition": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Stop Audition" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "試聴を停止" } }
+      }
+    },
     "Devices": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Devices" } },

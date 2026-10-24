@@ -24,6 +24,7 @@ mod plugins;
 mod realtime;
 mod render;
 mod resample;
+mod resample_stream;
 mod sequence;
 
 pub mod spike;
@@ -32,7 +33,7 @@ mod transport;
 mod voice;
 mod wait;
 
-pub use audition::{AuditionAudio, AuditionControl, AuditionSound, audition_pair};
+pub use audition::{AuditionAudio, AuditionControl, AuditionSound, AuditionWriter, audition_pair};
 pub use builtin::Device;
 pub use bypass::copy_bypassed_audio;
 pub use clock::{sample_to_tick, tick_to_sample};
@@ -66,6 +67,7 @@ pub use render::{
 pub use resample::{
     CONVERTER_ID, CONVERTER_VERSION, ConverterMode, default_converter, resample_into, resample_with,
 };
+pub use resample_stream::ResampleStream;
 pub use sequence::{render_metronome, schedule};
 pub use synth::{
     SAMPLER_INTERPOLATION, SamplerInterpolation, SamplerVoice, SynthVoice, TEST_SAMPLER_ID,

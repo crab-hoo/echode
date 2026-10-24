@@ -14,6 +14,7 @@ import tempfile
 import time
 
 sys.dont_write_bytecode = True
+import tsan_runtime
 import verify
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -78,6 +79,19 @@ def record_build(root, expected_source):
     temporary.replace(path)
 
 
+def setup_needed():
+    """Make targets whose prepared tools no longer match this machine.
+
+    It is the judgment the TSan checks make before running, so a missing or
+    outdated runtime is told apart from a source change that only needs make verify.
+    """
+    try:
+        bridge_ready = tsan_runtime.prepared(tsan_runtime.context())
+    except (OSError, subprocess.CalledProcessError):
+        bridge_ready = False
+    return [] if bridge_ready else ["setup-bridge"]
+
+
 def build_status(root, stamp):
     record, error = read_json(root / "target/Echode.build.json")
     if error:
@@ -133,7 +147,8 @@ def collect(root, *, use_report_base=True):
             "source": stamp, "changed_paths": changed, "base": base,
             "environment": {"system": list(os.uname()), "versions": versions,
                             "tool_errors": [key for key, value in versions.items() if not value.startswith("0:")],
-                            "missing_tools": [name for name in tools_needed if not shutil.which(name)]},
+                            "missing_tools": [name for name in tools_needed if not shutil.which(name)],
+                            "setup_needed": setup_needed()},
             "build": build_status(root, stamp),
             "verification": {"freshness": freshness,
                              "running": busy, "error": error, "checks": checks,
@@ -150,10 +165,14 @@ def render(data):
     verification = data["verification"]
     missing = data["environment"]["missing_tools"]
     errors = data["environment"]["tool_errors"]
+    setup = data["environment"]["setup_needed"]
     lines = ["# Echode の診断", "", f"取得: {data['collected_at']}",
              f"ソース: `{data['source']}`", "",
              f"必要なツールの不足: {', '.join(missing) if missing else 'なし'}",
              f"ツールの起動エラー: {', '.join(errors) if errors else 'なし'}",
+             f"準備のやり直し: {', '.join('make ' + target for target in setup) if setup else 'なし'}"
+             + ("（TSan の検査専用ランタイムが未準備か、Xcode・CMake・Ninja の版と合わない）"
+                if "setup-bridge" in setup else ""),
              f"開発用アプリ: {data['build']['status']}（ソースと実行ファイルの照合）",
              f"検査結果: {verification['freshness']} / 実行中: {verification['running']}", ""]
     for check in verification["checks"]:

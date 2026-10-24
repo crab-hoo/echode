@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
 use echode_engine::{AuditionAudio, AuditionControl, AuditionSound, ForbidAlloc, audition_pair};
@@ -87,6 +87,8 @@ pub struct AuditionEntry {
     pub request: u64,
     /// `None` for a stop.
     pub path: Option<String>,
+    /// Requested source frame; clamped to the file's last frame when opened.
+    pub start_frame: u64,
     pub input: AuditionInput,
     /// From the input event to the request, measured by the UI.
     pub input_delay_us: Option<u64>,
@@ -100,26 +102,30 @@ pub struct AuditionEntry {
     /// The audition thread took the request. Queued older requests are
     /// skipped, so they never have this.
     pub picked_us: Option<u64>,
-    /// The whole file was decoded.
+    /// The first bounded source read completed.
+    pub first_decoded_us: Option<u64>,
+    /// The requested source range reached EOF; may be later than `handed_us`.
     pub decoded_us: Option<u64>,
     pub source_frames: Option<u64>,
     pub source_rate: Option<u32>,
     /// The output was ready. `opened_output` says whether it had to open.
     pub output_us: Option<u64>,
     pub opened_output: bool,
-    /// Device-rate planes were ready, after any rate conversion.
+    /// The first device-rate chunk was ready, after any rate conversion.
     pub converted_us: Option<u64>,
     /// The sound was handed to the callback.
     pub handed_us: Option<u64>,
     /// When the first block with the sound was due at the output.
     pub heard_us: Option<u64>,
+    /// Device frames silenced because the streaming decoder had not supplied them.
+    pub starved_frames: u64,
     /// Host nanoseconds of the request.
     #[serde(skip)]
     requested: u64,
 }
 
 /// The newest request and what became of it, for the snapshot and diagnostics.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AuditionReport {
     /// No earlier request sounds once this one is made.
     pub request: u64,
@@ -133,6 +139,40 @@ pub struct AuditionReport {
     pub sample_rate: Option<u32>,
     /// The latest requests, oldest first.
     pub history: VecDeque<AuditionEntry>,
+    pub waveform: Option<AuditionWaveform>,
+    pub settings: AuditionSettings,
+    /// Preparing a silent output may fail before any sample was requested.
+    pub output_error: Option<String>,
+}
+
+/// Browser preferences, independent of the project and its undo history.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct AuditionSettings {
+    pub visible: bool,
+    pub gain: f32,
+}
+
+impl Default for AuditionSettings {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            gain: 1.0,
+        }
+    }
+}
+
+/// One progressive overview from the same source reads that feed the sound.
+/// Peak resolution bounds display storage only, never the file duration.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct AuditionWaveform {
+    pub frames: u64,
+    pub loaded_frames: u64,
+    /// First source frame read for this request. Earlier buckets are unknown.
+    pub first_frame: u64,
+    pub sample_rate: u32,
+    pub frames_per_peak: u64,
+    pub complete: bool,
+    pub peaks: Vec<[f32; 2]>,
 }
 
 impl AuditionReport {
@@ -209,8 +249,15 @@ impl Shared {
 }
 
 enum Request {
-    Play { request: u64, path: PathBuf },
-    Stop { request: u64 },
+    Play {
+        request: u64,
+        path: PathBuf,
+        start_frame: u64,
+    },
+    Stop {
+        request: u64,
+    },
+    Refresh,
 }
 
 /// A handle to one document's audition thread. Clones share it; the thread
@@ -219,10 +266,11 @@ enum Request {
 pub struct Audition {
     shared: Arc<Shared>,
     requests: Sender<Request>,
+    _lifetime: Arc<()>,
 }
 
 impl Audition {
-    /// Starts the thread. No device opens until a requested file has decoded.
+    /// Starts the thread. A request opens its file before preparing the output.
     pub fn start() -> Result<Self, String> {
         Self::spawn(|| Box::new(HalOutputs::default()))
     }
@@ -233,35 +281,62 @@ impl Audition {
         let (requests, incoming) = mpsc::channel();
         let shared = Arc::new(Shared::default());
         let worker = Arc::clone(&shared);
+        let lifetime = Arc::new(());
+        let alive = Arc::downgrade(&lifetime);
         std::thread::Builder::new()
             .name("echode-audition".into())
-            .spawn(move || run(&worker, &incoming, outputs()))
+            .spawn(move || run(&worker, &incoming, outputs(), &alive))
             .map_err(|error| error.to_string())?;
-        Ok(Self { shared, requests })
+        Ok(Self {
+            shared,
+            requests,
+            _lifetime: lifetime,
+        })
     }
 
     /// Replaces any heard or loading sound with the file at `path`, played
     /// once from its first sample. Returns the request number.
     pub fn play(&self, path: PathBuf) -> u64 {
-        self.request(Some(path), AuditionOrigin::default())
+        self.play_from(path, 0, AuditionOrigin::default())
     }
 
     /// [`Audition::play`], recording the input that asked for it.
     pub fn play_with(&self, path: PathBuf, origin: AuditionOrigin) -> u64 {
-        self.request(Some(path), origin)
+        self.play_from(path, 0, origin)
+    }
+
+    /// Plays once from a source sample position, without importing the file.
+    pub fn play_from(&self, path: PathBuf, start_frame: u64, origin: AuditionOrigin) -> u64 {
+        self.request(Some(path), start_frame, origin)
     }
 
     /// Fades out the heard sound and cancels one still loading.
     pub fn stop(&self) -> u64 {
-        self.request(None, AuditionOrigin::default())
+        self.request(None, 0, AuditionOrigin::default())
     }
 
     /// [`Audition::stop`], recording the input that asked for it.
     pub fn stop_with(&self, origin: AuditionOrigin) -> u64 {
-        self.request(None, origin)
+        self.request(None, 0, origin)
     }
 
-    fn request(&self, path: Option<PathBuf>, origin: AuditionOrigin) -> u64 {
+    /// Keeps the silent output while the browser is visible. Does not start a
+    /// sound, change the request generation, or wait for an output to open.
+    pub fn configure(&self, visible: bool, gain: f32) -> Result<(), String> {
+        if !gain.is_finite() || !(0.0..=1.0).contains(&gain) {
+            return Err("audition gain must be between zero and one".into());
+        }
+        lock(&self.shared.report).settings = AuditionSettings { visible, gain };
+        let _ = self.requests.send(Request::Refresh);
+        Ok(())
+    }
+
+    pub fn hide(&self) {
+        lock(&self.shared.report).settings.visible = false;
+        let _ = self.requests.send(Request::Refresh);
+    }
+
+    fn request(&self, path: Option<PathBuf>, start_frame: u64, origin: AuditionOrigin) -> u64 {
         let requested = host_now();
         let requested_at_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -284,6 +359,7 @@ impl Audition {
         report.path.clone_from(&shown);
         report.phase = phase;
         report.error = None;
+        report.waveform = None;
         // Nothing older that is still loading can sound now.
         for entry in &mut report.history {
             if entry.phase == AuditionPhase::Loading {
@@ -296,6 +372,7 @@ impl Audition {
         report.history.push_back(AuditionEntry {
             request,
             path: shown,
+            start_frame,
             input: origin.input,
             input_delay_us: origin.delay_us,
             requested_at_ms,
@@ -305,7 +382,11 @@ impl Audition {
         });
         drop(report);
         let message = match path {
-            Some(path) => Request::Play { request, path },
+            Some(path) => Request::Play {
+                request,
+                path,
+                start_frame,
+            },
             None => Request::Stop { request },
         };
         // A thread that already exited has nothing left to sound.
@@ -316,7 +397,14 @@ impl Audition {
     /// The output the project uses: its UID, or `None` for the system output.
     /// The next request opens there.
     pub fn follow_output(&self, uid: Option<String>) {
-        *lock(&self.shared.output) = uid;
+        let mut output = lock(&self.shared.output);
+        if *output == uid {
+            return;
+        }
+        *output = uid;
+        drop(output);
+        self.stop();
+        let _ = self.requests.send(Request::Refresh);
     }
 
     pub fn report(&self) -> AuditionReport {
@@ -383,7 +471,12 @@ impl HeardNotes {
     }
 }
 
-fn run(shared: &Shared, requests: &Receiver<Request>, mut outputs: Box<dyn AuditionOutputs>) {
+fn run(
+    shared: &Shared,
+    requests: &Receiver<Request>,
+    mut outputs: Box<dyn AuditionOutputs>,
+    alive: &Weak<()>,
+) {
     let mut sounding: Option<(u64, u64)> = None;
     let mut idle_since: Option<Instant> = None;
     loop {
@@ -397,14 +490,31 @@ fn run(shared: &Shared, requests: &Receiver<Request>, mut outputs: Box<dyn Audit
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => break,
         };
+        let mut refresh = matches!(next, Some(Request::Refresh));
+        if refresh {
+            next = None;
+        }
         // Only the newest queued request can still sound.
         while let Ok(request) = requests.try_recv() {
-            next = Some(request);
+            if matches!(request, Request::Refresh) {
+                refresh = true;
+            } else {
+                next = Some(request);
+            }
+        }
+        if refresh {
+            prepare_visible(shared, outputs.as_mut());
         }
         match next {
-            Some(Request::Play { request, path }) => {
+            Some(Request::Play {
+                request,
+                path,
+                start_frame,
+            }) => {
                 shared.stage(request, |entry, at| entry.picked_us = Some(at));
-                if let Some(id) = start(shared, outputs.as_mut(), request, &path) {
+                if let Some(id) =
+                    loading::start(shared, outputs.as_mut(), request, &path, start_frame, alive)
+                {
                     sounding = Some((request, id));
                 }
                 shared.handled(request);
@@ -418,73 +528,36 @@ fn run(shared: &Shared, requests: &Receiver<Request>, mut outputs: Box<dyn Audit
                 shared.update(request, AuditionPhase::Stopped, None);
                 shared.handled(request);
             }
-            None => {}
+            None | Some(Request::Refresh) => {}
         }
         service(shared, outputs.as_mut(), &mut sounding, &mut idle_since);
+        if !outputs.is_open() && !refresh {
+            prepare_visible(shared, outputs.as_mut());
+        }
     }
     outputs.close();
 }
 
-/// Decodes, opens the output and hands the sound over, unless a newer request
-/// arrives first. Returns the sound's id in the output.
-fn start(
-    shared: &Shared,
-    outputs: &mut dyn AuditionOutputs,
-    request: u64,
-    path: &std::path::Path,
-) -> Option<u64> {
-    if !shared.current(request) {
-        return None;
-    }
-    let fail = |error: String| {
-        shared.update(request, AuditionPhase::Failed, Some(error));
-        None
-    };
-    let pcm = match echode_history::decode_audio_file(path, &|| shared.current(request)) {
-        Ok(pcm) => pcm,
-        Err(_) if !shared.current(request) => return None,
-        Err(error) => return fail(error.to_string()),
-    };
-    shared.stage(request, |entry, at| {
-        entry.decoded_us = Some(at);
-        entry.source_frames = Some(pcm.frames);
-        entry.source_rate = Some(pcm.sample_rate);
-    });
-    if !shared.current(request) {
-        return None;
+#[path = "audition_load.rs"]
+mod loading;
+
+fn prepare_visible(shared: &Shared, outputs: &mut dyn AuditionOutputs) {
+    if !lock(&shared.report).settings.visible {
+        return;
     }
     let uid = lock(&shared.output).clone();
-    let rate = match outputs.prepare(uid.as_deref()) {
-        Ok((rate, opened)) => {
-            shared.stage(request, |entry, at| {
-                entry.output_us = Some(at);
-                entry.opened_output = opened;
-            });
-            rate
+    match outputs.prepare(uid.as_deref()) {
+        Ok((rate, _)) => {
+            let mut report = lock(&shared.report);
+            report.sample_rate = Some(rate);
+            report.output_error = None;
         }
         Err(error) => {
-            shared.set_rate(None);
-            return fail(error);
+            let mut report = lock(&shared.report);
+            report.sample_rate = None;
+            report.output_error = Some(error);
         }
-    };
-    shared.set_rate(Some(rate));
-    let sound = crate::clips::device_planes(&pcm, rate)
-        .and_then(|planes| AuditionSound::new(planes.left, planes.right));
-    let sound = match sound {
-        Ok(sound) => sound,
-        Err(error) => return fail(error.to_string()),
-    };
-    shared.stage(request, |entry, at| entry.converted_us = Some(at));
-    if !shared.current(request) {
-        return None;
     }
-    let Some(control) = outputs.control() else {
-        return fail("no audition output is open".into());
-    };
-    let id = control.play(sound);
-    shared.stage(request, |entry, at| entry.handed_us = Some(at));
-    shared.update(request, AuditionPhase::Sounding, None);
-    Some(id)
 }
 
 fn service(
@@ -519,7 +592,16 @@ fn service(
     let Some(control) = outputs.control() else {
         return;
     };
+    let settings = lock(&shared.report).settings;
+    let _ = control.set_gain(settings.gain);
     control.service();
+    if let Some((request, id)) = *sounding
+        && (control.heard() == Some(id) || control.ended() == id)
+    {
+        shared.stage(request, |entry, _| {
+            entry.starved_frames = control.starved_frames()
+        });
+    }
     if let Some((request, id)) = *sounding
         && control.heard() != Some(id)
         && control.ended() >= id
@@ -527,7 +609,8 @@ fn service(
         shared.update(request, AuditionPhase::Ended, None);
         *sounding = None;
     }
-    if control.idle() && sounding.is_none() {
+    let loading = lock(&shared.report).phase == AuditionPhase::Loading;
+    if control.idle() && sounding.is_none() && !loading && !settings.visible {
         let since = *idle_since.get_or_insert_with(Instant::now);
         if since.elapsed() >= KEEP_OPEN {
             outputs.close();

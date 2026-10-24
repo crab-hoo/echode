@@ -89,6 +89,8 @@ public final class ProjectController {
     @ObservationIgnored let sendDevice: @Sendable (Document, DeviceCommand) async throws -> DeviceResult
     /// Starts or stops the browser's sample audition. It skips the edit queue.
     @ObservationIgnored let sendAudition: @Sendable (Document, URL?, AuditionOrigin) -> Void
+    @ObservationIgnored var sendAuditionAt: @Sendable (Document, URL, UInt64, AuditionOrigin) -> Void = { $0.audition($1, from: $2, origin: $3) }
+    @ObservationIgnored var sendAuditionSettings: @Sendable (Document, Bool, Float) -> Void = { _ = $0.configureAudition(visible: $1, gain: $2) }
     @ObservationIgnored let auditionLog = AuditionLog()
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()

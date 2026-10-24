@@ -259,6 +259,35 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
 
+    def test_streaming_audition_selects_audio_and_bridge_checks(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        stream = contracts["sample-audition-stream"]
+        self.assertEqual((stream["runner"], stream["package"]), ("rust", "echode-audio-io"))
+        self.assertEqual(stream["negative_control"]["file"], "crates/echode-audio-io/src/audition_load.rs")
+        self.assertEqual(contracts["sample-preview-ui"]["suite"], "SamplePreviewTests")
+        self.assertEqual(contracts["sample-audition-loading"]["package"], "echode-audio-io")
+        self.assertIn("spike-audition", self.selected("crates/echode-audio-io/src/audition_load.rs"))
+        for path in ("crates/echode-audio-io/src/audition_load.rs", "crates/echode-engine/src/resample_stream.rs"):
+            self.assertTrue({"check", "check-product-contracts", "rtsan", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+        self.assertTrue({"check", "check-product-contracts", "rtsan", "check-bridge-asan", "check-bridge-tsan"}
+                        <= self.selected("crates/echode-history/src/media.rs"))
+        self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                        <= self.selected("swift/EchodeApp/Sources/EchodeAppCore/WorkspaceSamplePreview.swift"))
+
+    def test_audition_controls_keep_residency_position_and_gain_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        self.assertEqual(contracts["sample-audition-resident"]["package"], "echode-audio-io")
+        self.assertTrue(contracts["sample-audition-position"]["test"].endswith("_under_rtsan"))
+        self.assertEqual(contracts["sample-audition-gain"]["package"], "echode-engine")
+        self.assertEqual(contracts["sample-audition-controls-ui"]["suite"], "SampleAuditionControlTests")
+        for path in ("crates/echode-audio-io/src/audition_load.rs", "crates/echode-engine/src/audition.rs"):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/WorkspaceAuditionControls.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceSamplePreview.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(path))
+
     def test_output_opening_keeps_the_session_and_worker_contracts(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         session = contracts["output-opening"]
@@ -587,7 +616,7 @@ class PolicyTests(unittest.TestCase):
                           "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui",
                           "fx-bypass-ui", "fx-batch-ui", "fx-offline-ui", "plugin-offline", "offline-export",
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
-                          "sample-audition", "sample-audition-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
+                          "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "plugin-params", "fx-params-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",

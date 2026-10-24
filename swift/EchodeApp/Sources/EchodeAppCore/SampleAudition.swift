@@ -1,6 +1,12 @@
 import EchodeBridge
 import Foundation
 
+struct SampleAuditionPreferences: Codable {
+    var automatic = true
+    var gain: Float = 1
+    var isValid: Bool { gain.isFinite && (0...1).contains(gain) }
+}
+
 /// The browser plays a selected sample once, over the project and without its
 /// FX or faders (ADR 0135). A newer selection replaces the sound, which fades
 /// out; selecting something that is not audio stops it. Only the user's own
@@ -13,6 +19,10 @@ extension WorkspaceSession {
     func chooseInBrowser(_ url: URL?, origin: AuditionOrigin) -> URL? {
         guard state.browser.selection != url else { return nil }
         state.browser.selection = url
+        guard state.auditionPreferences.automatic else {
+            controller.audition(nil, origin: origin)
+            return nil
+        }
         return auditionSelection(url, origin: origin)
     }
 
@@ -24,6 +34,34 @@ extension WorkspaceSession {
         let sample = file.flatMap { $0.audio ? $0.url : nil }
         return controller.audition(sample, origin: origin) ? sample : nil
     }
+
+    /// Manual audition always works, including when automatic audition is off.
+    @discardableResult
+    func auditionSelected(origin: AuditionOrigin = .other, from frame: UInt64 = 0, expected: URL? = nil) -> URL? {
+        guard expected == nil || expected == state.browser.selection else { return nil }
+        guard let selected = state.browser.filtered.first(where: { $0.url == state.browser.selection }), selected.audio else { return nil }
+        return controller.audition(selected.url, from: frame, origin: origin) ? selected.url : nil
+    }
+
+    func setAutomaticAudition(_ enabled: Bool) {
+        guard state.auditionPreferences.automatic != enabled else { return }
+        state.auditionPreferences.automatic = enabled
+        state.saveAuditionPreferences()
+        if !enabled { controller.audition(nil) }
+    }
+
+    func setAuditionGain(_ gain: Float) {
+        guard gain.isFinite, (0...1).contains(gain) else { return }
+        state.auditionPreferences.gain = gain
+        state.saveAuditionPreferences()
+        synchronizeAuditionOutput()
+    }
+
+    /// Called by workspace visibility and document changes, never by audio polling.
+    func synchronizeAuditionOutput(visible: Bool? = nil) {
+        guard let document = controller.document else { return }
+        controller.sendAuditionSettings(document, visible ?? state.layout.browser, state.auditionPreferences.gain)
+    }
 }
 
 extension ProjectController {
@@ -31,15 +69,16 @@ extension ProjectController {
     /// straight to the document's audition thread, so a queued edit or a
     /// plugin reply does not delay it. False when no document is open.
     @discardableResult
-    func audition(_ url: URL?, origin: AuditionOrigin = .other) -> Bool {
+    func audition(_ url: URL?, from frame: UInt64 = 0, origin: AuditionOrigin = .other) -> Bool {
         guard let document else { return false }
-        sendAudition(document, url, origin)
+        if let url, frame > 0 { sendAuditionAt(document, url, frame, origin) }
+        else { sendAudition(document, url, origin) }
         return true
     }
 }
 
-/// Writes each audition request once, when nothing more will be recorded
-/// for it, so `make debug-report` can show where a sound waited after the
+/// Writes each audition request once its startup stages settle or a newer
+/// request replaces it, so `make debug-report` shows where a sound waited after the
 /// snapshot's short history has moved on. Nothing is written until the app
 /// chooses a file (ADR 0143).
 @MainActor

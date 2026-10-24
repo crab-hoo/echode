@@ -10,8 +10,9 @@ use std::path::Path;
 
 use objc2_audio_toolbox::{
     ExtAudioFileDispose, ExtAudioFileGetProperty, ExtAudioFileOpenURL, ExtAudioFileRead,
-    ExtAudioFileRef, ExtAudioFileSetProperty, kExtAudioFileProperty_ClientDataFormat,
-    kExtAudioFileProperty_FileDataFormat, kExtAudioFileProperty_FileLengthFrames,
+    ExtAudioFileRef, ExtAudioFileSeek, ExtAudioFileSetProperty,
+    kExtAudioFileProperty_ClientDataFormat, kExtAudioFileProperty_FileDataFormat,
+    kExtAudioFileProperty_FileLengthFrames,
 };
 use objc2_core_audio_types::{
     AudioBuffer, AudioBufferList, AudioStreamBasicDescription, kAudioFormatFlagsNativeFloatPacked,
@@ -137,6 +138,121 @@ pub fn decode_audio_file(
     keep_going: &dyn Fn() -> bool,
 ) -> Result<DecodedPcm, PackageError> {
     decode_file(source, keep_going)
+}
+
+/// A control-thread decoder with bounded reads. It owns the AudioToolbox file
+/// and must stay on the thread that opened it. No project or cache is written.
+pub struct AudioFileReader {
+    file: OpenAudio,
+    sample_rate: u32,
+    channels: u16,
+    /// The file's reported length; reads still stop at the actual EOF.
+    frames: u64,
+}
+
+impl AudioFileReader {
+    /// The next read begins at this source sample, including inside a packet.
+    /// EOF is a valid seek; a position beyond the file is refused.
+    pub fn seek(&mut self, frame: u64) -> Result<(), PackageError> {
+        let offset =
+            i64::try_from(frame).map_err(|_| PackageError::new("audio seek overflowed"))?;
+        if frame > self.frames {
+            return Err(PackageError::new("audio seek exceeds the file"));
+        }
+        // SAFETY: this reader owns the valid file, on the opening thread.
+        let status = unsafe { ExtAudioFileSeek(self.file.0, offset) };
+        if status != 0 {
+            return Err(PackageError::new(format!(
+                "could not seek audio ({status})"
+            )));
+        }
+        Ok(())
+    }
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+    pub fn frames(&self) -> u64 {
+        self.frames
+    }
+
+    pub fn open(source: &Path) -> Result<Self, PackageError> {
+        let file = open_audio(source)?;
+        let format = audio_property::<AudioStreamBasicDescription>(
+            file.0,
+            kExtAudioFileProperty_FileDataFormat,
+        )?;
+        if !matches!(format.mChannelsPerFrame, 1 | 2) {
+            return Err(PackageError::new(
+                "only mono and stereo audio can be imported",
+            ));
+        }
+        let sample_rate = integer_rate(format.mSampleRate)?;
+        let frames = audio_property::<i64>(file.0, kExtAudioFileProperty_FileLengthFrames)?;
+        if frames <= 0 {
+            return Err(PackageError::new("audio file has no samples"));
+        }
+        set_audio_property(
+            file.0,
+            kExtAudioFileProperty_ClientDataFormat,
+            &client_format(format.mSampleRate, format.mChannelsPerFrame),
+        )?;
+        Ok(Self {
+            file,
+            sample_rate,
+            channels: format.mChannelsPerFrame as u16,
+            frames: frames as u64,
+        })
+    }
+
+    /// Reads at most `frames` frames at the source rate. An empty result is EOF.
+    pub fn read(&mut self, frames: u32) -> Result<DecodedPcm, PackageError> {
+        if frames == 0 {
+            return Err(PackageError::new("audio read must request frames"));
+        }
+        let bytes = frames
+            .checked_mul(u32::from(self.channels))
+            .and_then(|n| n.checked_mul(4))
+            .ok_or_else(|| PackageError::new("audio read is too large"))?;
+        let mut samples = vec![0.0f32; bytes as usize / 4];
+        let mut got = frames;
+        let mut list = AudioBufferList {
+            mNumberBuffers: 1,
+            mBuffers: [AudioBuffer {
+                mNumberChannels: u32::from(self.channels),
+                mDataByteSize: bytes,
+                mData: samples.as_mut_ptr().cast(),
+            }],
+        };
+        // SAFETY: the buffer holds the requested number of interleaved frames.
+        let status = unsafe {
+            ExtAudioFileRead(
+                self.file.0,
+                core::ptr::NonNull::from(&mut got),
+                core::ptr::NonNull::from(&mut list),
+            )
+        };
+        if status != 0 {
+            return Err(PackageError::new(format!(
+                "could not read audio ({status})"
+            )));
+        }
+        if got > frames {
+            return Err(PackageError::new("audio decoder exceeded its buffer"));
+        }
+        samples.truncate(got as usize * usize::from(self.channels));
+        if samples.iter().any(|sample| !sample.is_finite()) {
+            return Err(PackageError::new("audio contains a non-finite sample"));
+        }
+        Ok(DecodedPcm {
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            frames: u64::from(got),
+            samples,
+        })
+    }
 }
 
 fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPcm, PackageError> {

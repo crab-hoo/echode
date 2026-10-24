@@ -244,6 +244,25 @@ pub unsafe extern "C" fn echode_document_audition(
     input: u32,
     input_delay_us: u64,
 ) -> c_int {
+    unsafe { echode_document_audition_at(document, path, path_len, 0, input, input_delay_us) }
+}
+
+/// Like `echode_document_audition`, starting at `start_frame` in the source
+/// file's sample rate. Positions at or beyond EOF clamp to its last sample.
+/// A null or empty path stops, irrespective of the position.
+///
+/// # Safety
+/// `document` is null or open. `path` points to `path_len` readable bytes,
+/// or is null only when `path_len` is zero.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_document_audition_at(
+    document: *const Document,
+    path: *const u8,
+    path_len: usize,
+    start_frame: u64,
+    input: u32,
+    input_delay_us: u64,
+) -> c_int {
     let Some(document) = (unsafe { document.as_ref() }) else {
         return ECHODE_ERR;
     };
@@ -261,14 +280,36 @@ pub unsafe extern "C" fn echode_document_audition(
         delay_us: (input != echode_audio_io::AuditionInput::Other).then_some(input_delay_us),
     };
     if path_len == 0 {
-        document.audition(None, origin);
+        document.audition(None, origin, 0);
         return ECHODE_OK;
     }
     let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
     let Ok(text) = std::str::from_utf8(bytes) else {
         return ECHODE_ERR;
     };
-    document.audition(Some(std::path::PathBuf::from(text)), origin);
+    document.audition(Some(std::path::PathBuf::from(text)), origin, start_frame);
+    ECHODE_OK
+}
+
+/// Keeps a silent audition output while the browser is visible and sets its
+/// linear gain (0..=1). Returns immediately without the document worker.
+/// This changes no project data and starts no sound. Other `visible` values,
+/// non-finite gains and gains outside the range are refused without changes.
+///
+/// # Safety
+/// `document` is null or open.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_document_audition_configure(
+    document: *const Document,
+    visible: u32,
+    gain: f32,
+) -> c_int {
+    let Some(document) = (unsafe { document.as_ref() }) else {
+        return ECHODE_ERR;
+    };
+    if visible > 1 || !document.configure_audition(visible == 1, gain) {
+        return ECHODE_ERR;
+    }
     ECHODE_OK
 }
 

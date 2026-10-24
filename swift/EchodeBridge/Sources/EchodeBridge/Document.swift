@@ -426,12 +426,12 @@ public final class Document: @unchecked Sendable {
         return try snapshot.audioState()
     }
 
-    /// Plays the audio file at `url` once over the project, from its first
-    /// sample and without the project's FX or faders, replacing any earlier
+    /// Plays the audio file at `url` once over the project, from source `frame`
+    /// (zero by default), without the project's FX or faders, replacing any earlier
     /// audition. `nil` fades the audition out. Returns at once: the request
     /// does not wait behind queued edits. `origin` is only recorded in the
     /// audition's history.
-    public func audition(_ url: URL?, origin: AuditionOrigin = .other) {
+    public func audition(_ url: URL?, from frame: UInt64 = 0, origin: AuditionOrigin = .other) {
         let bytes = Array((url?.path ?? "").utf8)
         let input = switch origin.input {
         case .other: UInt32(ECHODE_AUDITION_INPUT_OTHER)
@@ -439,8 +439,15 @@ public final class Document: @unchecked Sendable {
         case .key: UInt32(ECHODE_AUDITION_INPUT_KEY)
         }
         bytes.withUnsafeBufferPointer { buffer in
-            _ = echode_document_audition(handle, buffer.baseAddress, buffer.count, input, origin.delayMicroseconds)
+            _ = echode_document_audition_at(handle, buffer.baseAddress, buffer.count, frame, input, origin.delayMicroseconds)
         }
+    }
+
+    /// Prepares and holds a silent audition output while visible. Gain is a
+    /// linear attenuation (0...1). Neither operation edits the project.
+    @discardableResult
+    public func configureAudition(visible: Bool, gain: Float) -> Bool {
+        echode_document_audition_configure(handle, visible ? 1 : 0, gain) == ECHODE_OK
     }
 
     public func history(_ command: HistoryCommand) async throws -> Snapshot {

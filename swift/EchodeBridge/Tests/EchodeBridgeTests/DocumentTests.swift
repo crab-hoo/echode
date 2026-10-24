@@ -45,8 +45,10 @@ final class DocumentTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let document = try Document(creating: directory.path)
         // Decoding fails before any output device is asked for.
+        XCTAssertTrue(document.configureAudition(visible: false, gain: 0.25))
+        XCTAssertFalse(document.configureAudition(visible: false, gain: .nan))
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("echode-missing-\(UUID()).wav")
-        document.audition(missing, origin: AuditionOrigin(input: .key, delayMicroseconds: 900))
+        document.audition(missing, from: 137, origin: AuditionOrigin(input: .key, delayMicroseconds: 900))
         var status: AuditionStatus?
         for _ in 0..<1000 {
             status = try await document.audio(.status).audition
@@ -62,6 +64,9 @@ final class DocumentTests: XCTestCase {
         XCTAssertEqual(failed.request, status?.request)
         XCTAssertEqual(failed.input, .key)
         XCTAssertEqual(failed.inputDelayUs, 900)
+        XCTAssertEqual(failed.startFrame, 137)
+        XCTAssertEqual(status?.settings?.gain, 0.25)
+        XCTAssertEqual(status?.settings?.visible, false)
         XCTAssertEqual(failed.phase, .failed)
         XCTAssertTrue(failed.settled)
         XCTAssertNotNil(failed.pickedUs)

@@ -54,7 +54,8 @@ make verify
   契約ごとの識別値（`product_contract_inputs` の範囲、契約の定義、レシピ、ツール）が前回と同じなら、その契約は再実行しない。
   再利用するのは、同じ識別値でテストと反例の両方が合格した記録だけである。
   各契約の ID・対象テスト・目的・負の対照は `scripts/verification.json` を正本とし、本書へ重複記載しない（[ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
-- `rtsan`: 同梱 Sine Pad の隔離処理・領域拡張、テスト用 DSP、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作（ロック、確保、ブロックするシステムコール）を検出する。
+- `rtsan`: 同梱 Sine Pad の隔離処理・領域拡張、テスト用 DSP、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作を検出する。
+  試聴の有限の先読み・音量補間・指定位置からのコールバックも対象とする。禁止操作はロック、確保、ブロックするシステムコールである。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-tsan-runtime`: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
@@ -81,6 +82,9 @@ make verify
 - `spike-input`: 確認ウィンドウでピンチ・触覚・感圧を実機確認する（[S5](spikes/S5-input.md)）。
 - `spike-engine-smoke`: 現在の音声機器のレートで 1,000 ノードの処理を 10 秒確認する（`target/spike-s2-smoke.txt`）。
 - `spike-engine`: 明示実行用の 10 分計測（600 秒）と逆順イベント整列の release 計測（[S2](spikes/S2-engine.md)、[ADR 0096](decisions/0096-measurement-completion.md)）。途中停止・機器変更・中断は不合格とする。
+- `spike-audition`: 機器を開かず製品の試聴スレッドとコールバックで、4 秒・60 秒の素材の開始を release 計測する。
+  最初の読込み・変換・受渡し・発音の時刻と、全復号前に発音したことを `target/spike-audition.json` へ記録する。
+  実機の出力待ちと聴感の計測とは区別する。
 - `spike-audio`: 製品の CoreAudio 出力を無音で開き、コールバック、停止・再起動、機器一覧と通知登録、再生中の計画更新・位置移動を確認する。
 - `spike-bridge`: スナップショットと配列の受け渡しの release 計測。
 - `spike-render`: WAV の一括書き出しの release 計測。

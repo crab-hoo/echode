@@ -48,6 +48,9 @@ class ContextTests(unittest.TestCase):
         tools = patch.object(context.diagnose.verify, "tool_identity", return_value={"RUSTFLAGS": "PRIVATE_VALUE"})
         self.tool_identity = tools.start()
         self.addCleanup(tools.stop)
+        setup = patch.object(context.diagnose, "setup_needed", return_value=[])
+        setup.start()
+        self.addCleanup(setup.stop)
 
     def test_collection_uses_one_diagnosis_and_the_existing_selection(self):
         data = context.collect(self.root)
@@ -116,7 +119,8 @@ class ContextTests(unittest.TestCase):
                              ("manual-three", "Different reason"), ("manual-invalid", "")):
             checks.append({"id": name, "mode": "manual", "status": "deferred", "fresh": True, "reason": reason})
         data["diagnosis"]["verification"].update(checks=checks, error="corrupt report", running=True)
-        data["diagnosis"]["environment"].update(missing_tools=["cargo"], tool_errors=["rustc -vV"])
+        data["diagnosis"]["environment"].update(missing_tools=["cargo"], tool_errors=["rustc -vV"],
+                                                setup_needed=["setup-bridge"])
         output = context.render(data)
         for check in checks:
             self.assertIn(check["id"], output)
@@ -124,7 +128,8 @@ class ContextTests(unittest.TestCase):
                 self.assertIn(check["log"], output)
         self.assertIn("1/8 current passes", output)
         self.assertEqual(output.count("User owns hardware"), 1)
-        for signal in ("corrupt report", "cargo", "rustc -vV", "BUSY", "INVALID deferral", "make verify"):
+        for signal in ("corrupt report", "cargo", "rustc -vV", "make setup-bridge", "BUSY", "INVALID deferral",
+                       "make verify"):
             self.assertIn(signal, output)
 
     def test_live_documentation_index_covers_every_verification_area(self):

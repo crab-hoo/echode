@@ -139,11 +139,16 @@ impl Document {
         &self,
         path: Option<std::path::PathBuf>,
         origin: echode_audio_io::AuditionOrigin,
+        start_frame: u64,
     ) -> u64 {
         match path {
-            Some(path) => self.audition.play_with(path, origin),
+            Some(path) => self.audition.play_from(path, start_frame, origin),
             None => self.audition.stop_with(origin),
         }
+    }
+
+    pub(crate) fn configure_audition(&self, visible: bool, gain: f32) -> bool {
+        self.audition.configure(visible, gain).is_ok()
     }
 
     /// Plugin activity after `after`, waiting up to `timeout`. Never waits for
@@ -183,6 +188,7 @@ impl Document {
         // Cancels a decode in progress. The thread closes its output and exits
         // once the last handle is dropped with this document.
         self.audition.stop();
+        self.audition.hide();
         {
             let mut queue = self
                 .queue

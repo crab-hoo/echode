@@ -15,6 +15,7 @@ mod workgroup;
 pub use activity::UserActivity;
 pub use audition::{
     Audition, AuditionEntry, AuditionInput, AuditionOrigin, AuditionPhase, AuditionReport,
+    AuditionSettings, AuditionWaveform,
 };
 pub use clips::load_placed_clips;
 pub use echode_engine::{

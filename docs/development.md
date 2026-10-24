@@ -113,6 +113,11 @@ FFI は `crates/echode-ffi/src/device.rs`（検査・往復・記録）と `lane
 サンプルの試聴は、ボイスを `crates/echode-engine/src/audition.rs`、試聴スレッドと専用 IOProc を `crates/echode-audio-io/src/audition.rs`、
 FFI の入口を `echode_document_audition`、画面の選択の扱いと要求の記録（`AuditionLog`）を `SampleAudition.swift`、
 ブラウザの一覧の入力を `WorkspaceFileList.swift` に置く（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
+試聴の部分読込みは `crates/echode-history/src/media.rs` の `AudioFileReader`、連続 SRC は
+`crates/echode-engine/src/resample_stream.rs`、先読みと波形の集約は `crates/echode-audio-io/src/audition_load.rs` に置く。
+ブラウザの部分波形は `WorkspaceSamplePreview.swift`、機器なしの開始計測は `make spike-audition` を使う。
+試聴の設定・手動要求は `SampleAudition.swift`、実操作子は `WorkspaceAuditionControls.swift`、
+表示寿命の通知は `WorkspaceView.swift`、元サンプル位置の seek は `AudioFileReader` に置く（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
 最初の出力準備は `crates/echode-audio-io/src/opening.rs`（`Outputs`・`Opening`・`HeadlessOutput`）と `session.rs` の `install`、
 準備を待つデバイス要求の順序は `crates/echode-ffi/src/queue.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
 開いた出力の置換グラフの準備スレッドと回収は `crates/echode-engine/src/playback_preparation.rs`、

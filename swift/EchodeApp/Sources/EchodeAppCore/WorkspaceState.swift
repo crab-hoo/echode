@@ -32,6 +32,7 @@ public final class WorkspaceState {
     @ObservationIgnored private var projectionCollapsed: Set<UUID> = []
     @ObservationIgnored private var projectedOrder: [UUID] = []
     var choosingFile = false
+    var auditionPreferences: SampleAuditionPreferences
     var draft = NoteDraft()
     let browser: FileBrowserState
     @ObservationIgnored let navigation = CanvasNavigationState()
@@ -41,6 +42,9 @@ public final class WorkspaceState {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         browser = FileBrowserState(defaults: defaults)
+        let savedAudition = defaults.data(forKey: "workspace.audition.v1")
+            .flatMap { try? JSONDecoder().decode(SampleAuditionPreferences.self, from: $0) } ?? SampleAuditionPreferences()
+        auditionPreferences = savedAudition.isValid ? savedAudition : SampleAuditionPreferences()
         let saved = defaults.data(forKey: Self.layoutKey) ?? defaults.data(forKey: "workspace.layout.v1")
         layout = saved.flatMap { try? JSONDecoder().decode(WorkspaceLayout.self, from: $0) } ?? WorkspaceLayout()
         // Invalid saved values cannot affect frame sizes or native controls.
@@ -50,6 +54,9 @@ public final class WorkspaceState {
 
     func toggle(_ pane: WorkspacePane) { layout.toggle(pane); saveLayout() }
     func saveLayout() { if let data = try? JSONEncoder().encode(layout) { defaults.set(data, forKey: Self.layoutKey) } }
+    func saveAuditionPreferences() {
+        if let data = try? JSONEncoder().encode(auditionPreferences) { defaults.set(data, forKey: "workspace.audition.v1") }
+    }
 
     func synchronize(_ controller: ProjectController) {
         if folderDocument != controller.documentID { collapsedTracks = []; folderDocument = controller.documentID }
