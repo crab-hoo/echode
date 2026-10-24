@@ -361,7 +361,7 @@ class PolicyTests(unittest.TestCase):
                      "ArrangeHeaderView.swift", "ArrangePaneView.swift", "ArrangeFrame.swift",
                      "MixControls.swift", "MixInspectorView.swift",
                      "ArrangeLabels.swift", "ArrangePainter.swift", "ArrangeOffscreenProbe.swift", "WorkspaceView.swift",
-                     "WorkspaceState.swift", "WorkspaceDivider.swift", "WorkspaceNoteEditorView.swift", "CanvasRenderer.swift", "CanvasSurface.swift", "FrameFeedbackGate.swift"):
+                     "WorkspaceState.swift", "WorkspaceDivider.swift", "WorkspaceNoteEditorView.swift", "CanvasRenderer.swift", "CanvasSurface.swift", "CanvasBackground.swift", "FrameFeedbackGate.swift"):
             with self.subTest(file=file):
                 checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + file)
                 self.assertTrue({"spike-app", "spike-playhead", "spike-arrange-frame", "spike-piano-frame", "spike-draw", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= checks)
@@ -393,7 +393,15 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("contentsGravity", canvas_faults[1]["new"])
         self.assertIn("camera.constrain", contracts["arrange-camera-ui"]["negative_control"]["new"])
         self.assertIn("camera.originTrack", contracts["arrange-camera-input-ui"]["negative_control"]["new"])
-        for name in ("CanvasSurface.swift", "CanvasRenderer.swift", "ArrangePaneView.swift", "ArrangeView.swift", "PianoRollView.swift"):
+        mismatch = contracts["drawable-mismatch-ui"]
+        self.assertEqual((mismatch["runner"], mismatch["suite"], mismatch["test"]),
+                         ("swift", "ArrangeTests", "contractMismatchedDrawableKeepsTopLeftPixels"))
+        self.assertTrue(mismatch["negative_controls"][0]["file"].endswith("CanvasRenderer.swift"))
+        self.assertIn("draws: !mismatched", mismatch["negative_controls"][0]["new"])
+        self.assertTrue(mismatch["negative_controls"][1]["file"].endswith("ArrangeOffscreenProbe.swift"))
+        self.assertTrue(mismatch["negative_controls"][2]["file"].endswith("ArrangePainter.swift"))
+        self.assertIn("intersection(bounds)", mismatch["negative_controls"][2]["old"])
+        for name in ("CanvasSurface.swift", "CanvasBackground.swift", "CanvasRenderer.swift", "ArrangePaneView.swift", "ArrangeView.swift", "PianoRollView.swift"):
             checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + name)
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
                              "spike-arrange-frame", "spike-piano-frame", "spike-playhead"} <= checks)
@@ -569,7 +577,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
-                          "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
+                          "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",

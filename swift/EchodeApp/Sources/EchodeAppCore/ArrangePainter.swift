@@ -50,8 +50,11 @@ final class ArrangePainter {
         encoder.setVertexBuffer(buffer, offset: 0, index: 0)
         encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
         if let frame {
+            // A drawable can be larger than the input during a resize. Clip to
+            // the input's extent so rows beyond the viewport stay background.
             if let rect = scissor(x: frame.timelineOrigin * frame.input.scale, y: 0,
-                                  width: frame.timelineWidth * frame.input.scale, height: Double(texture.height), texture: texture) {
+                                  width: frame.timelineWidth * frame.input.scale,
+                                  height: frame.input.height * frame.input.scale, texture: texture) {
                 encoder.setScissorRect(rect)
                 let split = min(frame.foregroundStart, timelineCount)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: split)
@@ -64,7 +67,7 @@ final class ArrangePainter {
                 }
             }
             if let rect = scissor(x: 0, y: 0, width: frame.timelineOrigin * frame.input.scale,
-                                  height: Double(texture.height), texture: texture) {
+                                  height: frame.input.height * frame.input.scale, texture: texture) {
                 encoder.setScissorRect(rect)
                 encoder.setRenderPipelineState(pipeline)
                 encoder.setVertexBuffer(buffer, offset: 0, index: 0)
@@ -88,7 +91,8 @@ final class ArrangePainter {
                 encoder.setScissorRect(clip)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: rulerCount, baseInstance: timelineCount + sidebarCount)
             }
-            encodeLabels(piano.labels, scale: scale, encoder: encoder, texture: texture)
+            encodeLabels(piano.labels, scale: scale, encoder: encoder, texture: texture,
+                         bounds: CGRect(x: 0, y: 0, width: piano.input.width, height: piano.input.height))
         } else {
             encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: texture.width, height: texture.height))
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: timelineCount)
@@ -134,6 +138,7 @@ final class ArrangePainter {
     private func encodeLabels(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {
         guard let header = frame.input.header else { return }
         let scale = frame.input.scale
+        let bounds = CGRect(x: 0, y: 0, width: frame.input.width, height: frame.input.height)
         let text = frame.headers.flatMap { row -> [CanvasLabel] in
             let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: header.width, height: Double(row.height)))
             let fx = TrackFXLayout(row: layout.row)
@@ -166,24 +171,29 @@ final class ArrangePainter {
                         clip: SIMD4(Float(folder.titleX), row.y, Float(folder.titleWidth), max(0, row.height - 1)),
                         color: color)] + fxLabels + folderLabels + nameLabels
         }
-        encodeLabels(text, scale: scale, encoder: encoder, texture: texture)
+        encodeLabels(text, scale: scale, encoder: encoder, texture: texture, bounds: bounds)
         if let layout = frame.clipControlLayout, let id = frame.input.selectedClip, let clip = frame.input.snapshot?.clipMix(id) {
             let gain = frame.input.clipDraft?.gain ?? clip.gain
             let rect = SIMD4(Float(layout.gain.midX - 35), Float(layout.gain.maxY + 2), 80, 18)
             encodeLabels([CanvasLabel(text: MixScale.label(gain), rect: rect,
                 clip: SIMD4(Float(max(frame.timelineOrigin, layout.rect.minX)), Float(layout.rect.minY),
                             Float(max(0, min(frame.input.width, layout.rect.maxX) - max(frame.timelineOrigin, layout.rect.minX))), Float(layout.rect.height)),
-                color: SIMD4(1, 1, 1, 1))], scale: scale, encoder: encoder, texture: texture)
+                color: SIMD4(1, 1, 1, 1))], scale: scale, encoder: encoder, texture: texture, bounds: bounds)
         }
     }
 
-    private func encodeLabels(_ text: [CanvasLabel], scale: Double, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {
+    private func encodeLabels(_ text: [CanvasLabel], scale: Double, encoder: any MTLRenderCommandEncoder,
+                              texture: any MTLTexture, bounds: CGRect) {
         let textures = labels.prepare(labels: text, scale: scale, device: device)
         encoder.setRenderPipelineState(labelPipeline)
         for item in text {
-            guard let label = textures[item.key(scale: scale)],
-                  let clip = scissor(x: Double(item.clip.x) * scale, y: Double(item.clip.y) * scale,
-                                     width: Double(item.clip.z) * scale, height: Double(item.clip.w) * scale, texture: texture) else { continue }
+            let labelClip = CGRect(x: Double(item.clip.x), y: Double(item.clip.y),
+                                   width: Double(item.clip.z), height: Double(item.clip.w))
+            let clipped = labelClip.intersection(bounds)
+            guard !clipped.isNull, !clipped.isEmpty,
+                  let label = textures[item.key(scale: scale)],
+                  let clip = scissor(x: clipped.minX * scale, y: clipped.minY * scale,
+                                     width: clipped.width * scale, height: clipped.height * scale, texture: texture) else { continue }
             var quad = Instance(rect: item.rect * Float(scale), color: item.color)
             encoder.setScissorRect(clip)
             encoder.setVertexBytes(&quad, length: MemoryLayout<Instance>.stride, index: 0)

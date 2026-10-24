@@ -25,6 +25,27 @@ struct CanvasInput: Sendable {
     func acceptsDrawable(size: CGSize) -> Bool { width > 0 && height > 0 && size == drawableSize }
 }
 
+/// A resize can overtake an acquired drawable. The current input is still
+/// drawn at the same pixel positions; only the revision stays pending so a
+/// later callback redraws at the corrected extent.
+struct CanvasDrawablePolicy: Equatable {
+    let mismatched: Bool
+    let draws: Bool
+    let consumesRevision: Bool
+
+    static func resolve(input: CanvasInput, drawableSize: CGSize) -> Self {
+        let mismatched = !input.acceptsDrawable(size: drawableSize)
+        return Self(mismatched: mismatched, draws: true, consumesRevision: !mismatched)
+    }
+}
+
+/// Pure pause decision for the display link. A stale drawable keeps the link
+/// awake so the next callback can retry at the corrected extent.
+func canvasLinkPaused(ready: Bool, continuous: Bool, metersActive: Bool, playing: Bool,
+                      revisionDrawn: Bool, staleDrawable: Bool) -> Bool {
+    !ready || (!continuous && !metersActive && !playing && revisionDrawn && !staleDrawable)
+}
+
 /// Matches the S1 spike: at least 60 Hz when the display can, otherwise the
 /// display's own maximum, and never above that maximum.
 public func displayFrameRateRange(maximumFramesPerSecond: Double) -> CAFrameRateRange {
@@ -48,7 +69,7 @@ public struct ArrangeMeasurement: Sendable, Codable {
     public var frames = 0
     public var framesOffMain = 0
     public var framesWhileMainBusy = 0
-    /// Old drawable extents cleared during resize without consuming a revision.
+    /// Frames drawn at a stale drawable extent without consuming a revision.
     public var sizeMismatches = 0
     public var unavailableSlots = 0
     public var maxCPUSeconds = 0.0
@@ -113,6 +134,8 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private var buffers: [(any MTLBuffer)?] = [nil, nil, nil]
     private var appliedFrameRate: Double = 0
     private var drawnRevision: UInt64?
+    private var publishedRevision: UInt64?
+    private var staleDrawable = false
     private var metersActive = false
     private var meterHold = MeterLinkHold()
     private var geometry = CanvasGeometryCache()
@@ -198,7 +221,10 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private func publishLinkState() -> Bool {
         state.withLock { value in
             let ready = value.input.map { $0.width > 0 && $0.height > 0 } ?? false
-            let paused = !ready || (!value.continuous && !metersActive && value.input?.playback?.position.playing != true && drawnRevision == value.revision)
+            let paused = canvasLinkPaused(ready: ready, continuous: value.continuous, metersActive: metersActive,
+                                          playing: value.input?.playback?.position.playing == true,
+                                          revisionDrawn: drawnRevision == value.revision,
+                                          staleDrawable: staleDrawable)
             let wasPaused = value.measurement.displayLinkPaused
             value.measurement.displayLinkPaused = paused
             value.measurement.continuous = value.continuous
@@ -244,10 +270,12 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
             applyLinkPause(link)
             return
         }
-        // A resize can overtake an already acquired drawable. Clear that old
-        // extent without consuming the revision; the next callback retries it.
-        guard input.acceptsDrawable(size: CGSize(width: update.drawable.texture.width, height: update.drawable.texture.height)) else {
-            state.withLock { $0.measurement.sizeMismatches += 1 }
+        // Draw a stale extent at the input's pixel positions and leave the
+        // revision pending; the next callback retries at the corrected size.
+        let submission = CanvasDrawablePolicy.resolve(input: input,
+            drawableSize: CGSize(width: update.drawable.texture.width, height: update.drawable.texture.height))
+        staleDrawable = submission.mismatched
+        guard submission.draws else {
             present(update.drawable)
             applyLinkPause(link)
             return
@@ -290,7 +318,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         pass.colorAttachments[0].texture = update.drawable.texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
+        pass.colorAttachments[0].clearColor = CanvasBackground.clearColor
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
             present(update.drawable)
             return
@@ -303,9 +331,11 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         command.present(update.drawable)
         command.commit()
         committed = true
-        let feedbackChanged = continuous || drawnRevision != revision
-        drawnRevision = revision
+        let feedbackChanged = continuous || publishedRevision != revision
+        publishedRevision = revision
+        if submission.consumesRevision { drawnRevision = revision }
         state.withLock { value in
+            if submission.mismatched { value.measurement.sizeMismatches += 1 }
             value.measurement.frames += 1
             if !Thread.isMainThread { value.measurement.framesOffMain += 1 }
             if value.mainBusy { value.measurement.framesWhileMainBusy += 1 }
@@ -343,7 +373,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
+        pass.colorAttachments[0].clearColor = CanvasBackground.clearColor
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.endEncoding()
         command.present(drawable)

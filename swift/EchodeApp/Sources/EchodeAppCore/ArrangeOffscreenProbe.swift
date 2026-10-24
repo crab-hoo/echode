@@ -9,6 +9,8 @@ private struct OffscreenArrangeReport: Codable {
     let mismatchedScanlines: Int
     let laneMismatches: Int
     let clippedHeaderMismatches: Int
+    let staleOverlapPixels: Int
+    let staleMarginPixels: Int
     let headerProbeXPoints: Double
     let labelPixels: Int
     let device: String
@@ -29,7 +31,7 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
     // Project size and event count are scoped to this regression only.
     for index in 0..<20 { await controller.addTrack(name: index == 0 ? "ピアノ 🎹" : "Track \(index)") }
     guard let snapshot = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
-    var frames = 0, scanlines = 0, laneMismatches = 0, clippedHeaderMismatches = 0, labelPixels = 0
+    var frames = 0, scanlines = 0, laneMismatches = 0, clippedHeaderMismatches = 0, staleOverlapPixels = 0, staleMarginPixels = 0, labelPixels = 0
     // This probe samples reserved left padding, outside labels, icons and mixer
     // controls. Its coordinates and scene sizes are scoped to this regression.
     let headerProbeXPoints = 2.0
@@ -86,24 +88,54 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
         if image.pixel(x: headerX, y: y) != background { clippedHeaderMismatches += 1 }
     }
     frames += 1
+    // A drawable that lags the input still receives the frame at the input's
+    // pixel positions. Only the newly exposed margin stays background.
+    let staleInput = CanvasInput(snapshot: notes, selected: nil, camera: ArrangeCamera(originBeat: 3, pixelsPerBeat: 72, pixelsPerTrack: 64),
+                                 width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()))
+    let staleFrame = ArrangeFrame(input: staleInput)
+    let exact = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue)
+    let stale = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue,
+                                    size: CGSize(width: exact.width + 37, height: exact.height + 23))
+    let staleBackground = CanvasReadback.Pixel.canvasBackground
+    for y in 0..<stale.height {
+        for x in 0..<stale.width {
+            let pixel = stale.pixel(x: x, y: y)
+            if x < exact.width, y < exact.height {
+                if pixel != exact.pixel(x: x, y: y) { staleOverlapPixels += 1 }
+            } else if pixel != staleBackground {
+                staleMarginPixels += 1
+            }
+        }
+    }
+    frames += 2
     await controller.close()
     let mismatches = laneMismatches + clippedHeaderMismatches
     let report = OffscreenArrangeReport(frames: frames, comparedScanlines: scanlines, mismatchedScanlines: mismatches,
                                         laneMismatches: laneMismatches, clippedHeaderMismatches: clippedHeaderMismatches,
+                                        staleOverlapPixels: staleOverlapPixels, staleMarginPixels: staleMarginPixels,
                                         headerProbeXPoints: headerProbeXPoints,
                                         labelPixels: labelPixels, device: device.name)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
-    print("offscreen arrange: \(frames) frames, \(scanlines) compared scanlines, \(mismatches) mismatches, \(labelPixels) text pixels, \(device.name)")
-    guard mismatches == 0, labelPixels > 0 else { throw CocoaError(.coderInvalidValue) }
+    print("offscreen arrange: \(frames) frames, \(scanlines) compared scanlines, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(labelPixels) text pixels, \(device.name)")
+    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, labelPixels > 0 else { throw CocoaError(.coderInvalidValue) }
 }
 
 struct CanvasReadback {
     let width: Int
     let height: Int
     let pixels: [UInt8]
-    struct Pixel: Equatable { let b: UInt8; let g: UInt8; let r: UInt8; let a: UInt8 }
+    struct Pixel: Equatable {
+        let b: UInt8; let g: UInt8; let r: UInt8; let a: UInt8
+        /// The clear color rounded to the 8-bit attachment. Probes compare
+        /// margins against the same value the renderer clears to.
+        static var canvasBackground: Pixel {
+            let color = CanvasBackground.clearColor
+            return Pixel(b: UInt8((color.blue * 255).rounded()), g: UInt8((color.green * 255).rounded()),
+                         r: UInt8((color.red * 255).rounded()), a: UInt8((color.alpha * 255).rounded()))
+        }
+    }
     func pixel(x: Int, y: Int) -> Pixel {
         let index = (y * width + x) * 4
         return Pixel(b: pixels[index], g: pixels[index + 1], r: pixels[index + 2], a: pixels[index + 3])
@@ -123,21 +155,23 @@ struct CanvasReadback {
 }
 
 func renderOffscreen(_ frame: ArrangeFrame, painter: ArrangePainter, device: any MTLDevice,
-                     queue: any MTLCommandQueue) throws -> CanvasReadback {
+                     queue: any MTLCommandQueue, size: CGSize? = nil) throws -> CanvasReadback {
     try renderOffscreen(input: frame.input, timeline: frame.timelineInstances, headers: frame.headerInstances,
-                        frame: frame, piano: nil, painter: painter, device: device, queue: queue)
+                        frame: frame, piano: nil, painter: painter, device: device, queue: queue, size: size)
 }
 
 func renderOffscreen(_ frame: PianoFrame, painter: ArrangePainter, device: any MTLDevice,
-                     queue: any MTLCommandQueue) throws -> CanvasReadback {
+                     queue: any MTLCommandQueue, size: CGSize? = nil) throws -> CanvasReadback {
     try renderOffscreen(input: frame.input, timeline: frame.gridInstances, headers: frame.degreeInstances + frame.keyboardInstances + frame.rulerInstances,
-                        frame: nil, piano: frame, painter: painter, device: device, queue: queue)
+                        frame: nil, piano: frame, painter: painter, device: device, queue: queue, size: size)
 }
 
 private func renderOffscreen(input: CanvasInput, timeline: [Instance], headers: [Instance], frame: ArrangeFrame?, piano: PianoFrame?,
-                             painter: ArrangePainter, device: any MTLDevice, queue: any MTLCommandQueue) throws -> CanvasReadback {
+                             painter: ArrangePainter, device: any MTLDevice, queue: any MTLCommandQueue,
+                             size: CGSize? = nil) throws -> CanvasReadback {
+    let extent = size ?? CGSize(width: max(1, Int(input.width * input.scale)), height: max(1, Int(input.height * input.scale)))
     let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
-        width: max(1, Int(input.width * input.scale)), height: max(1, Int(input.height * input.scale)), mipmapped: false)
+        width: max(1, Int(extent.width)), height: max(1, Int(extent.height)), mipmapped: false)
     descriptor.storageMode = .shared
     descriptor.usage = .renderTarget
     let instances = timeline + headers
@@ -152,7 +186,7 @@ private func renderOffscreen(input: CanvasInput, timeline: [Instance], headers: 
     pass.colorAttachments[0].texture = texture
     pass.colorAttachments[0].loadAction = .clear
     pass.colorAttachments[0].storeAction = .store
-    pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
+    pass.colorAttachments[0].clearColor = CanvasBackground.clearColor
     guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw CocoaError(.featureUnsupported) }
     painter.encode(encoder: encoder, texture: texture, buffer: buffer, timelineCount: timeline.count, headerCount: headers.count, frame: frame, piano: piano)
     encoder.endEncoding()

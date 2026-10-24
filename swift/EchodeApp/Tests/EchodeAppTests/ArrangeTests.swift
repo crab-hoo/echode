@@ -16,6 +16,23 @@ struct ArrangeTests {
         #expect(slow.minimum == 40 && slow.maximum == 40 && slow.preferred == 40)
     }
 
+    @Test func linkPauseKeepsRetryingAStaleDrawable() {
+        #expect(canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
+                                 revisionDrawn: true, staleDrawable: false))
+        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
+                                  revisionDrawn: true, staleDrawable: true))
+        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: true,
+                                  revisionDrawn: true, staleDrawable: false))
+        #expect(!canvasLinkPaused(ready: true, continuous: true, metersActive: false, playing: false,
+                                  revisionDrawn: true, staleDrawable: false))
+        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: true, playing: false,
+                                  revisionDrawn: true, staleDrawable: false))
+        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
+                                  revisionDrawn: false, staleDrawable: false))
+        #expect(canvasLinkPaused(ready: false, continuous: false, metersActive: false, playing: false,
+                                 revisionDrawn: true, staleDrawable: false))
+    }
+
     @Test func fractionalRowsHaveNoIndependentInsetAndHitHalfOpenBoundaries() {
         let camera = ArrangeCamera(originTrack: 2.25)
         let rows = camera.rows(trackCount: 20, height: 128)
@@ -227,6 +244,92 @@ struct ArrangeTests {
                 #expect(raster.pixels.count == raster.width * raster.height)
             }
         }
+    }
+
+    @Test func contractMismatchedDrawableKeepsTopLeftPixels() async throws {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
+            throw CocoaError(.featureUnsupported)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mismatch-\(UUID()).echode")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = ProjectController()
+        await controller.open(url, creating: true)
+        for index in 0..<3 { await controller.addTrack(name: "Track \(index)") }
+        let snapshot = try #require(controller.snapshot)
+        let selected = try #require(snapshot.trackID(at: 0))
+        // Sizes and the integer scale are scoped to this regression: they keep
+        // the reference and stale attachments on the same pixel grid.
+        let input = CanvasInput(snapshot: snapshot, selected: selected,
+                                camera: ArrangeCamera(originBeat: 2, pixelsPerBeat: 72, pixelsPerTrack: 64),
+                                width: 320, height: 160, scale: 2,
+                                header: ArrangeHeaderInput(width: 120, palette: ArrangeHeaderPalette()))
+        // 160pt with 64pt rows leaves the last row partially visible; its
+        // mute/solo labels cross the bottom edge, so a stale taller drawable
+        // must clip them at the input height.
+        let frame = ArrangeFrame(input: input)
+        let painter = try ArrangePainter(device: device)
+        let reference = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
+        #expect(reference.width == 640 && reference.height == 320)
+        let background = CanvasReadback.Pixel.canvasBackground
+        var painted = 0
+        for y in 0..<reference.height {
+            for x in 0..<reference.width where reference.pixel(x: x, y: y) != background { painted += 1 }
+        }
+        #expect(painted > 1_000)
+        for size in [CGSize(width: 700, height: 380), CGSize(width: 600, height: 280)] {
+            let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue, size: size)
+            #expect(image.width == Int(size.width) && image.height == Int(size.height))
+            var differing = 0
+            for y in 0..<min(reference.height, image.height) {
+                for x in 0..<min(reference.width, image.width) where image.pixel(x: x, y: y) != reference.pixel(x: x, y: y) {
+                    differing += 1
+                }
+            }
+            #expect(differing == 0, "stale \(size) differs in \(differing) overlapping pixels")
+            if image.width > reference.width || image.height > reference.height {
+                var marginDiffering = 0
+                var firstMargin: String?
+                for y in 0..<image.height {
+                    for x in 0..<image.width where x >= reference.width || y >= reference.height {
+                        if image.pixel(x: x, y: y) != background {
+                            marginDiffering += 1
+                            firstMargin = firstMargin ?? "\(x),\(y)"
+                        }
+                    }
+                }
+                #expect(marginDiffering == 0, "stale \(size) margin differs at \(firstMargin ?? "none")")
+            }
+        }
+        let piano = PianoFrame(input: input, piano: PianoRenderInput(track: selected, focus: nil, camera: PianoCamera(),
+                                                                     key: DisplayKey(), preview: nil))
+        let pianoReference = try renderOffscreen(piano, painter: painter, device: device, queue: queue)
+        let pianoStale = try renderOffscreen(piano, painter: painter, device: device, queue: queue,
+                                             size: CGSize(width: 700, height: 380))
+        var pianoDiffering = 0
+        for y in 0..<pianoReference.height {
+            for x in 0..<pianoReference.width where pianoStale.pixel(x: x, y: y) != pianoReference.pixel(x: x, y: y) {
+                pianoDiffering += 1
+            }
+        }
+        #expect(pianoDiffering == 0)
+        var pianoMarginDiffering = 0
+        var firstPianoMargin: String?
+        for y in 0..<pianoStale.height {
+            for x in 0..<pianoStale.width where x >= pianoReference.width || y >= pianoReference.height {
+                if pianoStale.pixel(x: x, y: y) != background {
+                    pianoMarginDiffering += 1
+                    firstPianoMargin = firstPianoMargin ?? "\(x),\(y)"
+                }
+            }
+        }
+        #expect(pianoMarginDiffering == 0, "piano margin differs at \(firstPianoMargin ?? "none")")
+        let matching = CanvasDrawablePolicy.resolve(input: input, drawableSize: input.drawableSize)
+        #expect(!matching.mismatched && matching.draws && matching.consumesRevision)
+        let stale = CanvasDrawablePolicy.resolve(input: input, drawableSize: CGSize(width: 600, height: 280))
+        #expect(stale.mismatched && stale.draws && !stale.consumesRevision)
+        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
+                                  revisionDrawn: true, staleDrawable: stale.mismatched))
+        await controller.close()
     }
 
     @Test func anAudioClipDrawsItsPeaksInsideTheLane() async throws {

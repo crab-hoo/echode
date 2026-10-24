@@ -80,8 +80,10 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 - **専用描画スレッドと `CAMetalDisplayLink`**: `CanvasRenderer` がアレンジとピアノロールを共用し、専用 run loop 上で 3 つのフレーム枠（インスタンス用・波形用 Metal バッファ）を回す。
   停止中からの再開・一時停止・位置移動は世代を増やして 1 枚描いてから休止する
   （[ADR 0091](../decisions/0091-playhead-wake.md)、[ADR 0092](../decisions/0092-playhead-spike.md)、[ADR 0110](../decisions/0110-apple-silicon-draw-and-peaks.md)）
-  レイヤーのサイズは主スレッドが所有する。入力と大きさの違う drawable はクリアし、その入力の版を消費せずに再試行する
-  （[ADR 0144](../decisions/0144-unscaled-canvas-resizing.md)）。
+  レイヤーのサイズは主スレッドが所有する。入力と大きさの違う drawable にも同じ画素位置で現在の入力を描き、
+  入力の外を背景に保ち（行ラベルも入力境界でクリップする）、その入力の版を消費せずに次のコールバックで正しい大きさへ描き直す
+  （[ADR 0144](../decisions/0144-unscaled-canvas-resizing.md)、[ADR 0150](../decisions/0150-stale-drawable-frame.md)）。
+  レイヤーの背景色も同じ表示面の背景色にそろえ、広がった余白を透明にしない。
 - **可視要素とキャッシュ**: 見えているトラック・配置・ノートを単一の可視列として問い合わせ、描画・ヒットテスト・VoiceOver で共用する
   （[ADR 0045](../decisions/0045-visible-elements.md)）。
   入力の版とカメラが変わらない間は `CanvasGeometryCache` で再利用し、再生位置とピークだけを毎フレーム読む

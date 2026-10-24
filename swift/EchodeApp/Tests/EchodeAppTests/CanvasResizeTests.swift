@@ -58,6 +58,8 @@ struct CanvasResizeTests {
             #expect(layer.contentsAreFlipped())
             #expect(layer.contentsGravity == .bottomLeft)
             #expect(view.layerContentsRedrawPolicy == .never)
+            // A drawable that has not caught up exposes this opaque layer.
+            #expect(layer.backgroundColor == CanvasBackground.layerColor)
             for size in [NSSize(width: 380, height: 180), .zero, NSSize(width: 900, height: 700),
                          NSSize(width: 640.25, height: 211.75)] {
                 view.setFrameSize(size)

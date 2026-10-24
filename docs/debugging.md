@@ -267,8 +267,12 @@ make debug-report
   `canvas-resize-ui` は両表示面の見た目の左上固定（反転した階層では AppKit が `.bottomLeft` を選ぶ）と即時の drawable サイズ、
   `header-width-ui` は幅 0・狭い幅の往復と表示記憶、`transport-layout-ui` は状態行と再生ボタンの寸法の不変を確認する。
   `CanvasSurface` がレイヤーのサイズを主スレッドで更新し、描画スレッドが後から古いサイズを書いていないか調べる。
-  `ArrangeMeasurement.sizeMismatches` は入力と異なるサイズの drawable をクリアした数で、リサイズ中の一時的な増加は正常である。
+  `ArrangeMeasurement.sizeMismatches` は入力と異なるサイズの drawable に現在の入力を描いた数で、リサイズ中の一時的な増加は正常である。
   安定後も増える場合は入力の幅・高さ・倍率と drawable のサイズを照合する。
+  大きさの違う drawable は入力と同じ画素位置で描き、入力の外は `CanvasBackground` の背景色に保つ。
+  行ラベルも入力の境界でクリップするため、下端の部分表示行が余白へ文字を出さない。
+  リサイズ中に暗い面や透明な余白が見える場合は、描画スレッドが古い大きさの入力で描いていないか、
+  `CAMetalLayer.backgroundColor` が背景色と一致しているかを確認する（[ADR 0150](decisions/0150-stale-drawable-frame.md)）。
   `ArrangePaneView.headerWidth` と `CanvasNavigationState.headerWidth` は指定幅、描画入力の `header.width` は現在の制限値である。
   自動回帰は設定と幾何の確認であり、ドラッグ中の見え方は実画面のユーザー確認とする（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
   絵が上下にずれる場合は、表示面の `layer.contentsAreFlipped()` と `contentsGravity` を照合する。

@@ -8,6 +8,8 @@ private struct OffscreenPianoReport: Codable {
     let checkedPitchRows: Int
     let checkedDegreeRows: Int
     let mismatches: Int
+    let staleOverlapPixels: Int
+    let staleMarginPixels: Int
     let degreePixels: Int
     let device: String
 }
@@ -99,12 +101,35 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
             }
         }
     }
+    // The shared encoder draws a stale extent at the input's pixel positions.
+    let staleInput = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
+                                 width: 640, height: 331, scale: 2)
+    let staleFrame = PianoFrame(input: staleInput, piano: PianoRenderInput(track: track, focus: nil, camera: PianoCamera(),
+                                                                           key: DisplayKey(), preview: nil))
+    let exact = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue)
+    let stale = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue,
+                                    size: CGSize(width: exact.width + 29, height: exact.height + 17))
+    let staleBackground = CanvasReadback.Pixel.canvasBackground
+    var staleOverlapPixels = 0, staleMarginPixels = 0
+    for y in 0..<stale.height {
+        for x in 0..<stale.width {
+            let pixel = stale.pixel(x: x, y: y)
+            if x < exact.width, y < exact.height {
+                if pixel != exact.pixel(x: x, y: y) { staleOverlapPixels += 1 }
+            } else if pixel != staleBackground {
+                staleMarginPixels += 1
+            }
+        }
+    }
+    frames += 2
     await controller.close()
     let report = OffscreenPianoReport(frames: frames, comparedPixels: compared, checkedPitchRows: checkedRows,
-                                      checkedDegreeRows: checkedDegrees, mismatches: mismatches, degreePixels: degreePixels, device: device.name)
+                                      checkedDegreeRows: checkedDegrees, mismatches: mismatches,
+                                      staleOverlapPixels: staleOverlapPixels, staleMarginPixels: staleMarginPixels,
+                                      degreePixels: degreePixels, device: device.name)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
-    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(mismatches) mismatches, \(degreePixels) degree pixels, \(device.name)")
-    guard mismatches == 0, degreePixels > 0 else { throw CocoaError(.coderInvalidValue) }
+    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(degreePixels) degree pixels, \(device.name)")
+    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, degreePixels > 0 else { throw CocoaError(.coderInvalidValue) }
 }

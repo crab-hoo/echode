@@ -16,6 +16,7 @@ enum CanvasSurface {
         // `bottomLeft` because CA's `top` points at the visual bottom.
         view.layerContentsPlacement = .topLeft
         view.wantsLayer = true
+        layer.backgroundColor = CanvasBackground.layerColor
         resize(layer, size: canvasDrawableSize(width: view.bounds.width, height: view.bounds.height, scale: 1), scale: 1)
     }
 
