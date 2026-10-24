@@ -240,6 +240,13 @@ make debug-report
   複製の ID は `seed` から導出した UUIDv8 で、元と同じ中身 ID の配置が複製先に残っていれば独立化の不具合である。
   `TrackDuplicationTests` と履歴・CLI の `track_duplication` で、位置・選択・中身の独立・書出しの 2 倍一致を確認する
   （[ADR 0129](decisions/0129-track-duplication.md)）。
+- **クリップが違う位置・トラックへ移る・重なった配置が消える・複製の編集が元へ伝わる**:
+  `ClipMove` の文書・配置・トラック・開始・`copy` と、ジャーナルの `clip.move` / `clip.duplicate` の `seed` を区別する。
+  開始は押下時のポインターの拍からの移動量で決まり、四分音符へ吸着、Shift で解除、Command は離した時点の値を使う。
+  重なる配置の削除・切詰め・分割は置き換えの仕様で、分割の右側は `seed` から導出した ID を持つ。
+  複製の配置が元と同じ中身 ID なら独立化の不具合である。
+  `ClipMoveTests` と履歴・CLI の `clip_move` で、吸着・選択・置き換え・書出しの一致を確認する
+  （[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
 - **フォルダ開閉後に行・ミックス値・FX の対象がずれる**:
   元スナップショットと表示用ハンドルの行数・ID、`TrackTreeInfo` と `row_map` を区別する。
   ヘッダ、可視矩形、ミキサーとデバイスが同じ表示行から元トラックを参照することを

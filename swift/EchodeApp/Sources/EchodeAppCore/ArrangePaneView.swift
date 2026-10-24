@@ -36,6 +36,7 @@ public final class ArrangePaneView: NSView {
     var onDuplicateTracks: (() -> Void)? { didSet { headers.onDuplicateTracks = onDuplicateTracks } }
     var onFolderDisclosure: ((UUID, Bool) -> Void)?
     var onClipEdit: ((ClipMixEdit) -> Void)? { didSet { timeline.onClipEdit = onClipEdit } }
+    var onClipMove: ((ClipMove) -> Void)? { didSet { timeline.onClipMove = onClipMove } }
     func setControlSelection(clip: UUID?, preview: FaderPreview?) { timeline.setControlSelection(clip: clip, preview: preview) }
     public override var isFlipped: Bool { true }
 

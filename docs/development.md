@@ -132,6 +132,10 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 プラグインの文字の変換は、通信の `ParseParam`（`crates/echode-sandbox/src/params.rs`）、ヘルパーの `param_from_text`、
 FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
 
+クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
+画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
+回帰は `clip_move_tests.rs`、履歴と CLI の `clip_move`、`ClipMoveTests.swift`（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
+
 描画面の左上固定と drawable サイズの主スレッド更新は `CanvasSurface.swift`、対応する製品 View の回帰は `CanvasResizeTests.swift` に置く
 （[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
 

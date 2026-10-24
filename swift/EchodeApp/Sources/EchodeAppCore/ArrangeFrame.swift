@@ -115,6 +115,7 @@ struct ArrangeFrame: Sendable {
         instances.append(contentsOf: clips.map(instance))
         instances.append(contentsOf: notes.map(instance))
         instances.append(contentsOf: clipControlInstances)
+        instances.append(contentsOf: clipMoveInstances)
         if let position = input.playback?.position {
             let x = (Double(position.tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
             if x >= 0, x < timelineWidth {

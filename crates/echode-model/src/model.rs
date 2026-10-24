@@ -1042,22 +1042,7 @@ impl Project {
         if start.get().checked_add(source.length.get()).is_none() || source.length.get() <= 0 {
             return Err(ModelError::InvalidClip);
         }
-        if let Some(content) = self.content(source.content) {
-            for note in &content.notes {
-                let absolute = origin
-                    .checked_add(note.start.get())
-                    .ok_or(ModelError::InvalidClip)?;
-                if note
-                    .length
-                    .get()
-                    .checked_sub(1)
-                    .and_then(|span| absolute.checked_add(span))
-                    .is_none()
-                {
-                    return Err(ModelError::InvalidClip);
-                }
-            }
-        }
+        self.notes_fit(source.content, origin)?;
         let index = self.track_index(track_id)?;
         let mut track = (*self.tracks[index]).clone();
         track.clips.push(Placement {
@@ -1082,6 +1067,28 @@ impl Project {
             return Err(ModelError::Overlap);
         }
         Ok(self.write_track(index, track))
+    }
+
+    /// Rejects an origin at which a note of `content` would end past the time range.
+    pub(crate) fn notes_fit(&self, content: Id, origin: i64) -> Result<(), ModelError> {
+        let Some(content) = self.content(content) else {
+            return Ok(());
+        };
+        for note in &content.notes {
+            let absolute = origin
+                .checked_add(note.start.get())
+                .ok_or(ModelError::InvalidClip)?;
+            if note
+                .length
+                .get()
+                .checked_sub(1)
+                .and_then(|span| absolute.checked_add(span))
+                .is_none()
+            {
+                return Err(ModelError::InvalidClip);
+            }
+        }
+        Ok(())
     }
 
     pub fn set_clip_gain(&self, clip_id: Id, gain: f32) -> Result<Self, ModelError> {

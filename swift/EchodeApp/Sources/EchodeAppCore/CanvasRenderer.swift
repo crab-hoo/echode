@@ -17,6 +17,7 @@ struct CanvasInput: Sendable {
     var selectedClip: UUID? = nil
     var faderPreview: FaderPreview? = nil
     var clipDraft: ClipDraft? = nil
+    var clipMove: ClipMovePreview? = nil
     /// Screen refresh in frames per second. The display link follows this
     /// instead of a fixed 60 Hz cap. 60 is the value before a window exists.
     var displayFramesPerSecond: Double = 60

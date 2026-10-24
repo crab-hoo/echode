@@ -97,7 +97,8 @@ public struct WorkspaceView: View {
                               }, onDuplicateTracks: { _ = session.duplicateTracks() }, onOpenPlugin: { _, device in
                                   guard let document = controller.documentID else { return }
                                   Task { _ = await controller.openPluginWindow(device, documentID: document) }
-                              }, pluginNames: controller.pluginNames, onDropAudio: { session.importDroppedAudio($0) != nil }).id(controller.documentID)
+                              }, pluginNames: controller.pluginNames, onDropAudio: { session.importDroppedAudio($0) != nil },
+                              onMoveClip: { _ = session.moveClip($0) }).id(controller.documentID)
                 Divider()
                 HStack {
                     Button { session.addTrack(atEnd: true) } label: {

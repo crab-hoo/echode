@@ -36,6 +36,7 @@
 //!   fractional indexes.
 
 mod changeset;
+mod clip_move;
 mod device;
 mod duplicate;
 mod id;

@@ -10,11 +10,18 @@ use crate::model::{Content, ModelError, Project, Track, arrange_tracks, sort_not
 const COPY_CONTEXT: &str = "echode 2026-10-20 track.duplicate object id";
 
 /// Id of the copy of `original` made by the duplicate edit named `seed`.
+fn copy_id(seed: Id, original: Id) -> Id {
+    derived_id(COPY_CONTEXT, seed, original)
+}
+
+/// Id derived from an edit's `seed` and an `original` id under `context`.
 ///
 /// BLAKE3 in key-derivation mode keeps the result a function of both ids, so
 /// replaying the action rebuilds the same ids. The digest becomes a UUIDv8.
-fn copy_id(seed: Id, original: Id) -> Id {
-    let mut hasher = blake3::Hasher::new_derive_key(COPY_CONTEXT);
+/// Each kind of derived object uses its own context, so two derivations from
+/// one seed and one original never meet.
+pub(crate) fn derived_id(context: &str, seed: Id, original: Id) -> Id {
+    let mut hasher = blake3::Hasher::new_derive_key(context);
     hasher.update(&seed.raw().to_be_bytes());
     hasher.update(&original.raw().to_be_bytes());
     let mut bytes = [0; 16];
@@ -103,7 +110,7 @@ impl Project {
     }
 
     /// Every id the snapshot holds, including content takes.
-    fn used_ids(&self) -> HashSet<Id> {
+    pub(crate) fn used_ids(&self) -> HashSet<Id> {
         let mut used = HashSet::new();
         for content in self.contents() {
             used.insert(content.id);

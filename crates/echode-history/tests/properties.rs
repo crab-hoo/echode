@@ -77,6 +77,13 @@ enum Step {
         dest: usize,
         start: i64,
     },
+    MoveClip {
+        source_track: usize,
+        source_clip: usize,
+        dest: usize,
+        start: i64,
+        copy: bool,
+    },
     SetClipGain {
         track: usize,
         clip: usize,
@@ -184,6 +191,17 @@ fn step() -> impl Strategy<Value = Step> {
                 source_clip,
                 dest,
                 start,
+            }
+        ),
+        // Eighths straddle bar lines, so auto clips both keep and lose their kind,
+        // and landings both trim and split what they cover.
+        2 => (any::<usize>(), any::<usize>(), any::<usize>(), -2i64..96, any::<bool>()).prop_map(
+            |(source_track, source_clip, dest, start, copy)| Step::MoveClip {
+                source_track,
+                source_clip,
+                dest,
+                start,
+                copy,
             }
         ),
         1 => (any::<usize>(), any::<usize>(), prop_oneof![Just(0.0f32), Just(1.0), Just(0.25), Just(-1.0), Just(CLIP_GAIN_MAX), Just(f32::MAX)])
@@ -356,6 +374,30 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 source: pick(&clips, *source_clip)?,
                 track: track(*dest)?,
                 start: Tick::new(start * EIGHTH),
+            }
+        }
+        Step::MoveClip {
+            source_track,
+            source_clip,
+            dest,
+            start,
+            copy,
+        } => {
+            let source_track = track(*source_track)?;
+            let owner = project
+                .tracks()
+                .iter()
+                .find(|track| track.id == source_track)?;
+            let clips: Vec<Id> = owner.clips.iter().map(|clip| clip.id).collect();
+            let (clip, track, start) = (
+                pick(&clips, *source_clip)?,
+                track(*dest)?,
+                Tick::new(start * EIGHTH),
+            );
+            if *copy {
+                Command::DuplicateClip { clip, track, start }
+            } else {
+                Command::MoveClip { clip, track, start }
             }
         }
         Step::SetClipGain {

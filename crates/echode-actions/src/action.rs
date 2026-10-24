@@ -527,6 +527,52 @@ define_actions! {
                 .map_err(Into::into)
         }
     }
+    MoveClip {
+        id: "clip.move",
+        name_ja: "クリップを移動",
+        name_en: "Move a clip",
+        description_ja: "配置を別のトラックや開始位置へ移す。移動先で重なる配置の区間は置き換える",
+        description_en: "Move a placement to a track and start tick. It replaces what it overlaps on that track",
+        command {
+            clip: Id,
+            track: Id,
+            start: Tick,
+        }
+        action {
+            clip: Id,
+            track: Id,
+            start: Tick,
+            /// The right piece of a split placement takes an id derived from this.
+            seed: Id,
+        }
+        commit { Action::MoveClip { clip, track, start, seed: Id::generate() } }
+        edit |project: &Project| {
+            project.move_clip(*clip, *track, *start, *seed).map_err(Into::into)
+        }
+    }
+    DuplicateClip {
+        id: "clip.duplicate",
+        name_ja: "クリップを複製して移動",
+        name_en: "Duplicate a clip",
+        description_ja: "配置を中身ごと複製して指定位置へ置く。複製の中身は元と独立し、移動先で重なる区間は置き換える",
+        description_en: "Copy a placement with its own content to a track and start tick. It replaces what it overlaps there",
+        command {
+            clip: Id,
+            track: Id,
+            start: Tick,
+        }
+        action {
+            clip: Id,
+            track: Id,
+            start: Tick,
+            /// The copy's ids, and a split piece's id, are derived from this.
+            seed: Id,
+        }
+        commit { Action::DuplicateClip { clip, track, start, seed: Id::generate() } }
+        edit |project: &Project| {
+            project.duplicate_clip(*clip, *track, *start, *seed).map_err(Into::into)
+        }
+    }
     SetClipGain {
         id: "clip.set_gain",
         name_ja: "クリップのゲインを変える",

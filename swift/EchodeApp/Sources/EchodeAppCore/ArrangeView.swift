@@ -25,9 +25,10 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var onFolderDisclosure: ((UUID, Bool) -> Void)?
     public var onDuplicateTracks: (() -> Void)?
     public var onDropAudio: ((AudioFileDrop) -> Bool)?
+    public var onMoveClip: ((ClipMove) -> Void)?
 
     public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
-                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil) {
+                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil, onMoveClip: ((ClipMove) -> Void)? = nil) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
@@ -45,6 +46,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.onOpenPlugin = onOpenPlugin
         self.pluginNames = pluginNames
         self.onDropAudio = onDropAudio
+        self.onMoveClip = onMoveClip
     }
 
     public func makeNSView(context: Context) -> ArrangePaneView {
@@ -66,6 +68,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.onDuplicateTracks = onDuplicateTracks
         view.timeline.audioDocument = documentID
         view.timeline.onDropAudio = onDropAudio
+        view.onClipMove = onMoveClip
         view.headers.documentID = documentID
         view.setControlSelection(clip: selectedClip, preview: faderPreview)
         view.setSnapshot(snapshot, selected: selection, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks)
@@ -81,7 +84,7 @@ public final class ArrangeView: NSView {
     private let metalLayer = CAMetalLayer()
     private var renderer: CanvasRenderer?
     private var feedback = FrameFeedbackGate()
-    private var snapshot: Snapshot?
+    private(set) var snapshot: Snapshot?
     private var selected: UUID?
     private var elements: [ArrangeElement] = []
     // AppKit requires the view to retain virtual elements while they are shown.
@@ -108,6 +111,9 @@ public final class ArrangeView: NSView {
     var audioDocument: UUID? { didSet { if oldValue != audioDocument { audioDragDocument = nil } } }
     var onDropAudio: ((AudioFileDrop) -> Bool)?
     private var audioDragDocument: UUID?
+    /// A press on a clip body and, once it travels, where the clip would land (ADR 0154).
+    var movePress: ClipMovePress?
+    var onClipMove: ((ClipMove) -> Void)?
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -172,6 +178,7 @@ public final class ArrangeView: NSView {
         guard self.snapshot !== snapshot || self.selected != selected else { return }
         self.snapshot = snapshot
         clipDraft = nil
+        movePress = nil
         self.selected = selected
         refresh()
     }
@@ -208,7 +215,7 @@ public final class ArrangeView: NSView {
 
     public func stop() {
         clicks.cancel(); entry?.cancel()
-        feedback.invalidate(); renderer?.stop(); renderer = nil; elements = []; accessibleElements = [:]; clipDraft = nil; audioDragDocument = nil
+        feedback.invalidate(); renderer?.stop(); renderer = nil; elements = []; accessibleElements = [:]; clipDraft = nil; audioDragDocument = nil; movePress = nil
     }
 
     // Explicit, hardware-only probe; the app never enables continuous redraw
@@ -282,13 +289,28 @@ public final class ArrangeView: NSView {
                     return
                 }
             }
+            // The clip body moves the clip; its handles keep their own gestures.
+            if onClipMove != nil, let id = clip?.id.placement, let mix = snapshot.clipMix(id) {
+                clicks.settle()
+                pressClip(mix, at: point)
+                return
+            }
         }
         clicks.settle()
     }
-    public override func mouseDragged(with event: NSEvent) { clicks.dragged(to: convert(event.locationInWindow, from: nil)) }
-    public override func mouseUp(with event: NSEvent) { clicks.up(at: convert(event.locationInWindow, from: nil)) }
-    public override func mouseCancelled(with event: NSEvent) { clicks.cancel() }
+    public override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if movePress != nil { dragClip(to: point, flags: event.modifierFlags); return }
+        clicks.dragged(to: point)
+    }
+    public override func mouseUp(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if movePress != nil { finishClipMove(at: point, flags: event.modifierFlags); return }
+        clicks.up(at: point)
+    }
+    public override func mouseCancelled(with event: NSEvent) { finishClipMove(at: nil, flags: []); clicks.cancel() }
     public override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53, movePress != nil { finishClipMove(at: nil, flags: []); return }
         if event.keyCode == 53, clicks.active { clicks.cancel(); return }
         clicks.settle()
         super.keyDown(with: event)
@@ -392,10 +414,10 @@ public final class ArrangeView: NSView {
         let scale = window?.backingScaleFactor ?? 1
         return CanvasInput(snapshot: snapshot, selected: selected, camera: camera,
                             width: Double(bounds.width), height: Double(bounds.height), scale: Double(scale), playback: playback, header: header,
-                            selectedClip: selectedClip, faderPreview: faderPreview, clipDraft: clipDraft,
+                            selectedClip: selectedClip, faderPreview: faderPreview, clipDraft: clipDraft, clipMove: movePress?.preview,
                             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60))
     }
-    private func refresh() {
+    func refresh() {
         let input = renderInput
         CanvasSurface.resize(metalLayer, size: input.drawableSize, scale: input.scale)
         renderer?.update(input)
