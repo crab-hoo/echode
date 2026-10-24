@@ -80,6 +80,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - ペインのリサイズ中の伸縮とヘッダ幅の保持: [ADR 0144](decisions/0144-unscaled-canvas-resizing.md)。
 - 反転した表示面の固定位置と状態行・再生ボタンの寸法: [ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)。
 - 入力と大きさの違う drawable への描画と、広がった余白の背景: [ADR 0150](decisions/0150-stale-drawable-frame.md)。
+- 別作業ツリーのサイズ不一致 drawable 修正の評価: [2026-10-24 omp-dual の実装監査](reviews/2026-10-24-omp-dual-audit.md)。
 - 再生開始・ピアノロールの表示・ペインのリサイズ時のがくつき（上下の固定位置の誤り、状態行の高さ、作り直しの負荷）:
   [2026-10-22 GUI のがくつきの監査](reviews/2026-10-22-gui-jank-audit.md)。
 

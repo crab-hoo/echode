@@ -395,12 +395,15 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("camera.originTrack", contracts["arrange-camera-input-ui"]["negative_control"]["new"])
         mismatch = contracts["drawable-mismatch-ui"]
         self.assertEqual((mismatch["runner"], mismatch["suite"], mismatch["test"]),
-                         ("swift", "ArrangeTests", "contractMismatchedDrawableKeepsTopLeftPixels"))
+                         ("swift", "CanvasSubmissionTests", "contractStaleDrawableSubmissionDrawsAndRetries"))
         self.assertTrue(mismatch["negative_controls"][0]["file"].endswith("CanvasRenderer.swift"))
-        self.assertIn("draws: !mismatched", mismatch["negative_controls"][0]["new"])
-        self.assertTrue(mismatch["negative_controls"][1]["file"].endswith("ArrangeOffscreenProbe.swift"))
-        self.assertTrue(mismatch["negative_controls"][2]["file"].endswith("ArrangePainter.swift"))
-        self.assertIn("intersection(bounds)", mismatch["negative_controls"][2]["old"])
+        self.assertIn("if submission.mismatched", mismatch["negative_controls"][0]["new"])
+        self.assertIn("presentBackground", mismatch["negative_controls"][0]["new"])
+        self.assertIn("drawnRevision = revision", mismatch["negative_controls"][1]["new"])
+        self.assertIn("staleDrawable: false", mismatch["negative_controls"][2]["new"])
+        self.assertTrue(mismatch["negative_controls"][3]["file"].endswith("ArrangeOffscreenProbe.swift"))
+        self.assertTrue(mismatch["negative_controls"][4]["file"].endswith("ArrangePainter.swift"))
+        self.assertIn("intersection(bounds)", mismatch["negative_controls"][4]["old"])
         for name in ("CanvasSurface.swift", "CanvasBackground.swift", "CanvasRenderer.swift", "ArrangePaneView.swift", "ArrangeView.swift", "PianoRollView.swift"):
             checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + name)
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",

@@ -54,6 +54,10 @@ make debug-report
   Rust の反例のビルドは `target/product-contract-mutations/cargo` に置き、この検査以外から書き込まない。
   別の書き手の時刻が混じると、反例で作ったクレートを現在のソースのビルドと誤認しうる（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
   別の実行が `target/product-contract-mutations/.lock` を持つ時は 30 秒で失敗する。`make verify` を並行して動かさない。
+  `negative control must stay inside its source copy` は、期待値の不一致ではなく反例用コピーの検証エラーである。
+  対象ファイルの欠落と、シンボリックリンクによるコピー外への逸脱を区別する。
+  `target/` の整理と検査が競合すると、コピーが実行中に消えて同じエラーになる。
+  整理の完了と検査のロック解除を確認してから再実行し、コピーの欠落を製品不具合の検出と扱わない。
   コピー内のディレクトリ削除時の `.DS_Store` 競合は自動リトライされるが、権限エラー等の継続失敗は合格にしない。
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
@@ -271,6 +275,9 @@ make debug-report
   安定後も増える場合は入力の幅・高さ・倍率と drawable のサイズを照合する。
   大きさの違う drawable は入力と同じ画素位置で描き、入力の外は `CanvasBackground` の背景色に保つ。
   行ラベルも入力の境界でクリップするため、下端の部分表示行が余白へ文字を出さない。
+  `drawable-mismatch-ui` は製品と同じ `CanvasRenderer.submit` を使い、画素・描画済みの版・休止状態を確認する。
+  不一致後に描き直されない時は、版を消費する条件と `publishLinkState` へ渡す不一致の状態を調べる。
+  描画部品だけのオフスクリーン比較を、この制御経路の確認の代わりにしない。
   リサイズ中に暗い面や透明な余白が見える場合は、描画スレッドが古い大きさの入力で描いていないか、
   `CAMetalLayer.backgroundColor` が背景色と一致しているかを確認する（[ADR 0150](decisions/0150-stale-drawable-frame.md)）。
   `ArrangePaneView.headerWidth` と `CanvasNavigationState.headerWidth` は指定幅、描画入力の `header.width` は現在の制限値である。

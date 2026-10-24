@@ -124,6 +124,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private let state = Mutex(RenderState())
     private let slots = FrameSlots()
     private let stopped = DispatchSemaphore(value: 0)
+    private let drivesDisplayLink: Bool
     private let onElements: @MainActor @Sendable ([ArrangeElement]) -> Void
     private let onPiano: (@MainActor @Sendable (PianoFrame) -> Void)?
     private let onArrange: (@MainActor @Sendable (ArrangeFrame) -> Void)?
@@ -136,13 +137,15 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private var drawnRevision: UInt64?
     private var publishedRevision: UInt64?
     private var staleDrawable = false
+    private var submittedPause = true
     private var metersActive = false
     private var meterHold = MeterLinkHold()
     private var geometry = CanvasGeometryCache()
 
     init(layer: CAMetalLayer, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
          onPiano: (@MainActor @Sendable (PianoFrame) -> Void)? = nil,
-         onArrange: (@MainActor @Sendable (ArrangeFrame) -> Void)? = nil) throws {
+         onArrange: (@MainActor @Sendable (ArrangeFrame) -> Void)? = nil,
+         startsDisplayLink: Bool = true) throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw CocoaError(.featureUnsupported)
         }
@@ -153,14 +156,17 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         self.onElements = onElements
         self.onPiano = onPiano
         self.onArrange = onArrange
+        self.drivesDisplayLink = startsDisplayLink
         layer.device = device
         layer.pixelFormat = .bgra8Unorm
         layer.framebufferOnly = true
         layer.maximumDrawableCount = 3
         super.init()
-        let thread = Thread { [self] in run() }
-        thread.name = "echode-metal"
-        thread.start()
+        if startsDisplayLink {
+            let thread = Thread { [self] in run() }
+            thread.name = "echode-metal"
+            thread.start()
+        }
     }
 
     func update(_ input: CanvasInput) {
@@ -173,7 +179,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
 
     func stop() {
         state.withLock { $0.stopping = true; wake($0.loop) }
-        stopped.wait()
+        if drivesDisplayLink { stopped.wait() }
     }
 
     func beginMeasurement() { state.withLock { $0.continuous = true; $0.measurement = ArrangeMeasurement(); wake($0.loop) } }
@@ -211,7 +217,10 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     /// Writes pause only when it changes. Assigning the same value from the
     /// callback or the run-loop turn drops the next vsync.
     private func applyLinkPause(_ link: CAMetalDisplayLink) {
-        let paused = publishLinkState()
+        setLinkPause(link, paused: publishLinkState())
+    }
+
+    private func setLinkPause(_ link: CAMetalDisplayLink, paused: Bool) {
         if link.isPaused != paused { link.isPaused = paused }
     }
 
@@ -258,6 +267,20 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
 
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
         applyFrameRate(link)
+        submit(texture: update.drawable.texture) { $0.present(update.drawable) }
+        setLinkPause(link, paused: submittedPause)
+    }
+
+    /// The display callback and offscreen regressions use this entire submission
+    /// path. Only drawable presentation and display-link scheduling are omitted
+    /// offscreen; encoding, revision consumption and pause publication are shared.
+    /// Call on the renderer's owning thread; GPU completion never blocks here.
+    @discardableResult
+    func submit(texture: any MTLTexture, present: ((any MTLCommandBuffer) -> Void)? = nil) -> (any MTLCommandBuffer)? {
+        // Publish once and apply that same decision to the real display link.
+        // Reconsidering here could count an unpaused link as resumed if a new
+        // input arrived between the two decisions.
+        defer { submittedPause = publishLinkState() }
         state.withLock { $0.measurement.callbacks += 1 }
         let (input, revision, stopping, continuous, frame) = state.withLock {
             ($0.input, $0.revision, $0.stopping, $0.continuous, $0.measurement.frames)
@@ -266,24 +289,19 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         // callbacks, including the next play or locate. Clear skipped frames:
         // a drawable from the pool does not contain the previous picture.
         guard !stopping, let input, input.width > 0, input.height > 0 else {
-            present(update.drawable)
-            applyLinkPause(link)
-            return
+            return presentBackground(texture: texture, present: present)
         }
         // Draw a stale extent at the input's pixel positions and leave the
         // revision pending; the next callback retries at the corrected size.
         let submission = CanvasDrawablePolicy.resolve(input: input,
-            drawableSize: CGSize(width: update.drawable.texture.width, height: update.drawable.texture.height))
+            drawableSize: CGSize(width: texture.width, height: texture.height))
         staleDrawable = submission.mismatched
         guard submission.draws else {
-            present(update.drawable)
-            applyLinkPause(link)
-            return
+            return presentBackground(texture: texture, present: present)
         }
         guard let slot = slots.acquire() else {
             state.withLock { $0.measurement.unavailableSlots += 1 }
-            present(update.drawable)
-            return
+            return presentBackground(texture: texture, present: present)
         }
         let started = CACurrentMediaTime()
         var committed = false
@@ -308,27 +326,25 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         let length = max(1, instances.count) * MemoryLayout<Instance>.stride
         if (buffers[slot]?.length ?? 0) < length { buffers[slot] = device.makeBuffer(length: length, options: .storageModeShared) }
         guard let buffer = buffers[slot], let command = queue.makeCommandBuffer() else {
-            present(update.drawable)
-            return
+            return presentBackground(texture: texture, present: present)
         }
         instances.withUnsafeBytes { bytes in
             if let source = bytes.baseAddress { buffer.contents().copyMemory(from: source, byteCount: bytes.count) }
         }
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = update.drawable.texture
+        pass.colorAttachments[0].texture = texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = CanvasBackground.clearColor
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
-            present(update.drawable)
-            return
+            return presentBackground(texture: texture, present: present)
         }
-        painter.encode(encoder: encoder, texture: update.drawable.texture, buffer: buffer,
+        painter.encode(encoder: encoder, texture: texture, buffer: buffer,
                        timelineCount: timelineCount, headerCount: headerInstances.count, frame: arranged, piano: piano, slot: slot)
         encoder.endEncoding()
         let slots = slots
         command.addCompletedHandler { _ in slots.release(slot) }
-        command.present(update.drawable)
+        present?(command)
         command.commit()
         committed = true
         let feedbackChanged = continuous || publishedRevision != revision
@@ -351,33 +367,34 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 }
             }
         }
-        // A stopped frame has consumed this revision. Pause on this run loop
-        // so the next play or locate is what wakes the link, not a poll.
-        applyLinkPause(link)
         // A moving playhead does not change hit regions or accessibility.
         // Publish geometry only when inputs change (or the explicit probe moves it).
-        guard feedbackChanged else { return }
-        Task { @MainActor [onElements, onPiano, onArrange] in
-            if let piano { onPiano?(piano) }
-            else if let arranged {
-                if let onArrange { onArrange(arranged) } else { onElements(arranged.elements) }
+        if feedbackChanged {
+            Task { @MainActor [onElements, onPiano, onArrange] in
+                if let piano { onPiano?(piano) }
+                else if let arranged {
+                    if let onArrange { onArrange(arranged) } else { onElements(arranged.elements) }
+                }
             }
         }
+        return command
     }
 
     /// Returns a defined background, including during zero-size layout and
     /// shutdown. An unrendered drawable can contain stale pool contents.
-    private func present(_ drawable: any CAMetalDrawable) {
-        guard let command = queue.makeCommandBuffer() else { return }
+    private func presentBackground(texture: any MTLTexture,
+                                   present: ((any MTLCommandBuffer) -> Void)?) -> (any MTLCommandBuffer)? {
+        guard let command = queue.makeCommandBuffer() else { return nil }
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = drawable.texture
+        pass.colorAttachments[0].texture = texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = CanvasBackground.clearColor
-        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return nil }
         encoder.endEncoding()
-        command.present(drawable)
+        present?(command)
         command.commit()
+        return command
     }
 }
 

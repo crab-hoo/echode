@@ -1,0 +1,184 @@
+{
+  "date": "2026-10-24",
+  "head": "b8713d36d46f62efc0c319775a76446309a1da88",
+  "scope": "Echode-omp-dual のブランチ test の未コミット変更。製品コールバックの接続を監査した。",
+  "audited_files": {
+    "Makefile": "3aee8dac4b842891de99bcbe567a189d9b1b6124ac7696c34c33e016e8a24cc9",
+    "docs/README.md": "f9a3c514b8f235cbe0434bade2632df27d1dd0a19bd861d44280a2bfa58b2e4f",
+    "docs/architecture/ui-and-metal.md": "23025e620b38bf326b15c427150c9b5a406ca2ab81ce0cb5b3cb5d9a4cfd1303",
+    "docs/debugging.md": "a564d96d3905b5a9658fd97cec47b62689edb61cbd2753be10ced309ed282af9",
+    "docs/decisions/0144-unscaled-canvas-resizing.md": "3a6b85114eb57b61d911e9be976706eb5b35d954744e81d6ee5a9a9aa4e9d54a",
+    "docs/decisions/0150-stale-drawable-frame.md": "64eccf774e96a09d38e7a4eec4341a8e6439fa1e0a69dafbdc3aac4902e8bed8",
+    "docs/phase2.md": "66cb59d654e141b8a9007c71f404e246ed16c1b98248b994a10c8843e705cf8a",
+    "docs/status.md": "47a701c17b58b4cd9d11f9d5caf14b9445931b5a0cbaaff0b01ad53797c22749",
+    "docs/verification.md": "85acf3d2ec8ed60ca7b171b883b305b9453c79094f3f0fb0caebc125e006fdd6",
+    "scripts/tests/test_verification.py": "09268350723e51474f33ecb3af839a2331e0e9c1ec7d66556b0babc666b3366f",
+    "scripts/verification.json": "c20135284de54a2631f7c5bd32541ed5b26a6e3ebd117c5678cd73d1c9eb2a7b",
+    "swift/EchodeApp/Sources/EchodeAppCore/ArrangeOffscreenProbe.swift": "5a556e7275998bc8caac311f3fc25f61e544e5c35364866da06b51942bacfffa",
+    "swift/EchodeApp/Sources/EchodeAppCore/ArrangePainter.swift": "cbbe77eeb34ab4e7e65a8979a8836832958d82bfb0a1641d26461198a499b680",
+    "swift/EchodeApp/Sources/EchodeAppCore/CanvasBackground.swift": "1b83eaa0f1dfb4f00c89ecd8cdc95e1d99ad62834da2e910d1567fa380017ab5",
+    "swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift": "1066c6b86893095102fcaaa9fb8a04fec6df27a3dc24b626ab9f4d11fc32c328",
+    "swift/EchodeApp/Sources/EchodeAppCore/CanvasSurface.swift": "33bf433ab8ce94658691b1fa3f126794c2304ae1a107f92e933fefa08d18fe04",
+    "swift/EchodeApp/Sources/EchodeAppCore/PianoOffscreenProbe.swift": "0321605d200a6480c1ae53da6eb4a18a83e87d261df21da198b17c4f01b3c866",
+    "swift/EchodeApp/Tests/EchodeAppTests/ArrangeTests.swift": "b56d9afed00d7906bb9937bad7d851baf3284d69e58a8168c0ffe65a16740e98",
+    "swift/EchodeApp/Tests/EchodeAppTests/CanvasResizeTests.swift": "e1e44abd84240c463f26f3a9a158a4bdc849458bde1f2ca9aff3d5e51580ffd6"
+  },
+  "finding": {
+    "id": "OMP-01",
+    "priority": "P2",
+    "status": "open",
+    "location": "swift/EchodeApp/Tests/EchodeAppTests/ArrangeTests.swift:326-331",
+    "classification": "製品動作の欠陥ではなく回帰テストの不足",
+    "filter": "ArrangeTests/contractMismatchedDrawableKeepsTopLeftPixels|ArrangeTests/linkPauseKeepsRetryingAStaleDrawable|CanvasResizeTests/",
+    "baseline_exit_code": 0,
+    "mutations": [
+      {
+        "id": "skip-stale-at-callback",
+        "file": "swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift",
+        "old": "staleDrawable = submission.mismatched",
+        "new": "staleDrawable = submission.mismatched\n        if submission.mismatched {\n            present(update.drawable)\n            applyLinkPause(link)\n            return\n        }",
+        "observed_exit_code": 0,
+        "result": "unexpected_survival"
+      },
+      {
+        "id": "consume-stale-revision-at-callback",
+        "file": "swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift",
+        "old": "if submission.consumesRevision { drawnRevision = revision }",
+        "new": "drawnRevision = revision",
+        "observed_exit_code": 0,
+        "result": "unexpected_survival"
+      },
+      {
+        "id": "ignore-stale-in-pause-caller",
+        "file": "swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift",
+        "old": "staleDrawable: staleDrawable)",
+        "new": "staleDrawable: false)",
+        "observed_exit_code": 0,
+        "result": "unexpected_survival"
+      }
+    ],
+    "steps": [
+      "監査対象ファイルの SHA-256 が一致する作業ツリーを用意する。",
+      "swift/ を別フォルダーへコピーし、以降の変更はコピーだけに入れる。",
+      "元のツリーの target/debug/libechode_ffi.a と生成済み CEchodeFfi/include/echode.h を用意する。",
+      "ECHODE_RUST_LIBRARY_DIR を元の target/debug の絶対パスに設定する。",
+      "swift test -q --package-path COPY/swift/EchodeApp --scratch-path COPY/target/audit-build -Xswiftc -warnings-as-errors --filter FILTER を実行する。COPY と FILTER は上記のコピーと filter の値に置き換える。",
+      "mutations を一つずつ適用し、同じコマンドで再ビルド・再実行する。変更は各回で元に戻す。",
+      "コンパイル失敗や対象テストが 0 件の実行を、故障の検出・見逃しの証拠にしない。",
+      "修正後は、特に skip-stale-at-callback により必須契約の期待値が失敗することを確認する。"
+    ]
+  },
+  "independent_pixel_audit": {
+    "surfaces": [
+      "arrange",
+      "piano"
+    ],
+    "scales": [
+      1,
+      2
+    ],
+    "input_sizes_points": [
+      [
+        320,
+        160
+      ],
+      [
+        320.25,
+        160.25
+      ],
+      [
+        10,
+        10
+      ],
+      [
+        80,
+        24
+      ],
+      [
+        122,
+        65
+      ],
+      [
+        640.25,
+        211.75
+      ],
+      [
+        320,
+        0.25
+      ]
+    ],
+    "drawable_size_rule": "各入力寸法に倍率を掛け、端数を切り上げ、最小 1 画素とする。",
+    "drawable_deltas_pixels": [
+      [
+        37,
+        23
+      ],
+      [
+        -17,
+        -13
+      ],
+      [
+        37,
+        -13
+      ],
+      [
+        -17,
+        23
+      ]
+    ],
+    "scene": "4 トラックを製品 ProjectController から作り、先頭トラックへ pitch=60, beat=0, length=2 のノートを挿入する。",
+    "arrange_camera": {
+      "originBeat": 0.125,
+      "originTrack": 0.25,
+      "pixelsPerBeat": 72,
+      "pixelsPerTrack": 64
+    },
+    "header_width_points": 120,
+    "assertions": [
+      "重なる全画素が一致サイズの参照画像と等しい。",
+      "余白の全画素が CanvasBackground の背景色と等しい。"
+    ],
+    "scope_limit": "ArrangePainter の検査であり、CAMetalDisplayLink と製品コールバックの結合は対象外。"
+  },
+  "verification": {
+    "target_tree": "make verify の既存結果を入力・ツールの一致により再利用。対象ツリーの target/verification/report.md が記録。",
+    "device_checks": "spike-app, spike-playhead, spike-draw, spike-bridge は既存の理由付き見送りを保持。",
+    "main_tree": "容量不足と target 整理との競合を解消し、make verify を再実行して完了。一時ビルドの整理後も検査記録を保持する。"
+  },
+  "artifacts": "main の target/audits/omp-dual/ に保存した一時ログと専用コピーは、検査と競合したユーザーの target 整理で削除された。この JSON は削除前に保存した観測結果と再現条件を保持する。",
+  "cleanup": {
+    "requested_by_user": true,
+    "target": "/Users/someone/Echode-omp-dual/target",
+    "before": "約 21 GiB",
+    "after": "247 MiB",
+    "retained": [
+      "verification",
+      "toolchains",
+      "agent-context.json",
+      "spike-arrange-frame.json",
+      "spike-arrange-frame.png",
+      "spike-piano-frame.json",
+      "spike-piano-frame.png"
+    ],
+    "source_files_changed": false
+  },
+  "resolution": {
+    "date": "2026-10-24",
+    "status": "fixed",
+    "implementation": "CanvasRenderer.submit を製品コールバックと手動提出の製品回帰で共有。表示リンクと画面への提出のみ検査では省く。",
+    "contract": {
+      "id": "drawable-mismatch-ui",
+      "suite": "CanvasSubmissionTests",
+      "test": "contractStaleDrawableSubmissionDrawsAndRetries"
+    },
+    "verified_mutations": [
+      "製品の提出処理で不一致サイズを背景だけに戻す",
+      "描画済みの版を無条件に進める",
+      "休止判断へ不一致を渡さない",
+      "参照用の描画を背景だけにする",
+      "ラベルの入力境界のクリップを外す"
+    ],
+    "evidence": "target/verification/report.md と product-contracts.json が修正後の正本。開発中の単独確認は target/verification/development/drawable-submission/。",
+    "historical_records": "finding と mutations は修正前の監査の観測として保持する。"
+  }
+}
