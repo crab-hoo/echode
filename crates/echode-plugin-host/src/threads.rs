@@ -39,7 +39,7 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
     CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn,
-    GuiReport, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamValue,
+    GuiReport, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue,
     RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
@@ -47,7 +47,7 @@ use objc2_core_foundation::{
 };
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
 use std::ptr;
@@ -65,6 +65,7 @@ const PARAM_READ: u8 = 5;
 const PARAM_RELAY: u8 = 6;
 const GUI_SHOW: u8 = 7;
 const GUI_CLOSE: u8 = 8;
+const PARAM_PARSE: u8 = 9;
 
 /// Creating a plugin's view can load large resources the first time.
 const WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
@@ -1566,6 +1567,15 @@ fn handle_control(
                 .send(&reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
+        ControlMessage::ParseParam { id, text } => {
+            let reply = match parse_param(bridge, id, &text) {
+                Ok(parsed) => ControlMessage::ParamParsed(parsed),
+                Err(error) => ControlMessage::ParamsRejected(error),
+            };
+            socket
+                .send(&reply)
+                .map_err(|error| HostError::Plugin(error.to_string()))?;
+        }
         ControlMessage::GuiShow(title) => {
             let reply = match call_plugin_operation_within(
                 bridge,
@@ -1991,7 +2001,7 @@ fn perform_plugin_state(bridge: &Bridge, kind: u8) -> Result<Vec<u8>, String> {
                 );
                 prepare_event_capacity(instance, capacity)?;
             }
-            PARAM_LIST | PARAM_READ | PARAM_RELAY => {
+            PARAM_LIST | PARAM_READ | PARAM_RELAY | PARAM_PARSE => {
                 let read = read_on_main(bridge, instance, kind, &bytes);
                 *bridge
                     .param_read
@@ -2021,6 +2031,7 @@ struct ParamBatch {
 enum ParamRead {
     Infos(Vec<ParamInfo>),
     Values(Vec<ParamValue>),
+    Parsed(ParamText),
 }
 
 fn params_extension(instance: &PluginInstance<EchodeHost>) -> *mut clap_plugin_params {
@@ -2110,7 +2121,18 @@ fn read_params(bridge: &Bridge) -> Result<Vec<ParamInfo>, String> {
     call_plugin_operation(bridge, PARAM_LIST, Vec::new())?;
     match take_param_read(bridge) {
         ParamRead::Infos(infos) => Ok(infos),
-        ParamRead::Values(_) => Err("parameter read returned values".to_string()),
+        _ => Err("parameter read returned values".to_string()),
+    }
+}
+
+/// Typed text for one parameter, read by the plugin on its main thread.
+fn parse_param(bridge: &Bridge, id: u32, text: &str) -> Result<ParamText, String> {
+    let mut input = id.to_le_bytes().to_vec();
+    input.extend_from_slice(text.as_bytes());
+    call_plugin_operation(bridge, PARAM_PARSE, input)?;
+    match take_param_read(bridge) {
+        ParamRead::Parsed(parsed) => Ok(parsed),
+        _ => Err("parameter text read returned values".to_string()),
     }
 }
 
@@ -2186,7 +2208,7 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
     call_plugin_operation(bridge, PARAM_READ, bytes)?;
     match take_param_read(bridge) {
         ParamRead::Values(values) => Ok(values),
-        ParamRead::Infos(_) => Err("parameter read returned descriptions".to_string()),
+        _ => Err("parameter read returned descriptions".to_string()),
     }
 }
 
@@ -2202,14 +2224,17 @@ fn read_on_main(
     let params = bridge.params.load(Ordering::Acquire);
     // SAFETY: the extension table lives as long as the plugin instance.
     let Some(params) = (unsafe { params.as_ref() }) else {
-        return if kind == PARAM_LIST {
-            ParamRead::Infos(Vec::new())
-        } else {
-            ParamRead::Values(Vec::new())
+        return match kind {
+            PARAM_LIST => ParamRead::Infos(Vec::new()),
+            PARAM_PARSE => ParamRead::Parsed(ParamText::Unsupported),
+            _ => ParamRead::Values(Vec::new()),
         };
     };
     if kind == PARAM_LIST {
         return ParamRead::Infos(param_infos(plugin, params));
+    }
+    if kind == PARAM_PARSE {
+        return ParamRead::Parsed(param_from_text(plugin, params, input));
     }
     // A relay leaves out ids the plugin does not describe and read-only
     // parameters, which report output such as meters rather than an edit.
@@ -2408,6 +2433,29 @@ fn param_text(plugin: &clap_plugin, params: &clap_plugin_params, id: u32, value:
         return String::new();
     }
     c_text(&buffer)
+}
+
+/// `input` is the id, then the UTF-8 text. Text with a NUL cannot reach the
+/// plugin and counts as refused, like a value the plugin reports as non-finite.
+fn param_from_text(plugin: &clap_plugin, params: &clap_plugin_params, input: &[u8]) -> ParamText {
+    let Some(to_value) = params.text_to_value else {
+        return ParamText::Unsupported;
+    };
+    let Some((id, text)) = input.split_first_chunk::<4>() else {
+        return ParamText::Refused;
+    };
+    let Ok(text) = CString::new(text) else {
+        return ParamText::Refused;
+    };
+    let mut value = f64::NAN;
+    // SAFETY: main thread; the text is NUL-terminated and `value` is writable.
+    if unsafe { to_value(plugin, u32::from_le_bytes(*id), text.as_ptr(), &mut value) }
+        && value.is_finite()
+    {
+        ParamText::Value(value)
+    } else {
+        ParamText::Refused
+    }
 }
 
 /// Text up to the first NUL, or the whole array when the plugin left none.

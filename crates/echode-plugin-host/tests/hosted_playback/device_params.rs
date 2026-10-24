@@ -1,5 +1,5 @@
 use super::*;
-use echode_sandbox::{ParamChange, ParamValue};
+use echode_sandbox::{ParamChange, ParamText, ParamValue};
 
 fn process_level(host: &mut PluginHost, input: f32) -> (f32, f32) {
     // One short block per check; this fixture length is not a host limit.
@@ -102,6 +102,38 @@ fn helper_lists_applies_and_saves_clap_parameters_under_rtsan() {
         .set_parameters(&[ParamChange { id: 1, value: 1.0 }])
         .expect_err("no params extension");
     assert!(refused.to_string().contains("parameter"), "{refused}");
+}
+
+/// Typed text reaches the plugin's `text_to_value` on its main thread
+/// (ADR 0153). Reading text changes nothing; a plugin without a converter
+/// says so, and the host then reads a plain number.
+#[test]
+fn contract_typed_text_reads_the_plugin_units_under_rtsan() {
+    let host = spawn_declared("dev.echode.test-params").expect("params plugin");
+    let control = host.control_handle();
+    assert_eq!(
+        control.parse_parameter(1, "0.75x").unwrap(),
+        ParamText::Value(0.75)
+    );
+    assert_eq!(
+        control.parse_parameter(2, "Mute").unwrap(),
+        ParamText::Value(2.0)
+    );
+    for refused in ["loud", "1.0\0x", ""] {
+        assert_eq!(
+            control.parse_parameter(1, refused).unwrap(),
+            ParamText::Refused,
+            "{refused:?}"
+        );
+    }
+    let infos = control.parameters().unwrap();
+    assert_eq!((infos[0].value, infos[1].value), (1.0, 0.0));
+
+    let gain = spawn_declared("dev.echode.test-gain").expect("gain");
+    assert_eq!(
+        gain.control_handle().parse_parameter(1, "1.0").unwrap(),
+        ParamText::Unsupported
+    );
 }
 
 pub(super) fn params_route(state: Option<Vec<u8>>) -> PluginRoute {

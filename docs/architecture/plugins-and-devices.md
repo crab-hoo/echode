@@ -86,6 +86,9 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
   ジェスチャーの終了時に状態を取り込み、`device.set_state` として 1 回の Undo に記録する。
   状態だけの Undo / Redo は同じヘルパーへ記録済みのバイトを読み込み、既定や読込拒否はヘルパーを作り直す
   （[ADR 0130](../decisions/0130-clap-parameter-editing.md)）
+- 欄の数値入力は、プラグインの表示単位の文字をヘルパーのメインスレッドで `text_to_value` に渡して読む（`ParseParam`）。
+  値・拒否・変換なしを区別し、変換なしのプラグインには数値で入力する。読むだけで値は変えない
+  （[ADR 0153](../decisions/0153-value-control-clicks-and-typed-entry.md)）
 - トラック CLAP のホストバイパスは FX 行から保存・Undo・再生・書出しへ接続済み。
   FX はドライ音を通し、音源は発音を止めて配置音声を保つ。ヘルパーを保持し、再有効化はリセットと現在のノート追跡を通す。
   バイパスの詳細は [ADR 0120](../decisions/0120-device-bypass.md) を参照する。

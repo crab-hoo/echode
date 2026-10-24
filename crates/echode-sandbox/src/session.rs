@@ -7,7 +7,7 @@
 
 use crate::control::{ControlMessage, Socket};
 use crate::gui::{GuiReport, PluginActivity};
-use crate::params::{ParamChange, ParamInfo, ParamValue};
+use crate::params::{ParamChange, ParamInfo, ParamText, ParamValue};
 use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
 use crate::workgroup::spawn_helper;
@@ -215,6 +215,12 @@ impl PluginControl {
     /// Applies `changes` in order and returns those parameters as read back.
     pub fn set_parameters(&self, changes: &[ParamChange]) -> Result<Vec<ParamValue>, SessionError> {
         self.lock().set_parameters(changes)
+    }
+
+    /// Reads typed text for one parameter with the plugin's `text_to_value`.
+    /// The plugin's value does not change.
+    pub fn parse_parameter(&self, id: u32, text: &str) -> Result<ParamText, SessionError> {
+        self.lock().parse_parameter(id, text)
     }
 
     /// Saves after every change already sent on this socket has been applied.
@@ -446,6 +452,25 @@ impl ControlState {
             ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
             _ => Err(SessionError::Protocol(
                 "helper did not apply parameters".to_string(),
+            )),
+        }
+    }
+
+    pub fn parse_parameter(&mut self, id: u32, text: &str) -> Result<ParamText, SessionError> {
+        self.control.send(&ControlMessage::ParseParam {
+            id,
+            text: text.to_string(),
+        })?;
+        match self.wait_message(PARAMETER_REPLY, |message| {
+            matches!(
+                message,
+                ControlMessage::ParamParsed(_) | ControlMessage::ParamsRejected(_)
+            )
+        })? {
+            ControlMessage::ParamParsed(parsed) => Ok(parsed),
+            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
+            _ => Err(SessionError::Protocol(
+                "helper did not read the parameter text".to_string(),
             )),
         }
     }

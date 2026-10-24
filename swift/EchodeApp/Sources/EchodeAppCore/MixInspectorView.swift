@@ -59,16 +59,16 @@ struct ClipMixInspector: View {
                 let document = controller.documentID
                 Task { await controller.setClipGain(clip.id, gain: gain, documentID: document) }
             }
-            ControlNumberField(title: text("Fade In"), value: Double(clip.fadeIn) / 705_600, unit: "ms", minimum: 0,
-                maximum: Double(UInt32.max) / 768_000 * 1000) { setFade($0, entering: true) }
-            ControlNumberField(title: text("Fade Out"), value: Double(clip.fadeOut) / 705_600, unit: "ms", minimum: 0,
-                maximum: Double(UInt32.max) / 768_000 * 1000) { setFade($0, entering: false) }
+            ControlNumberField(title: text("Fade In"), value: Double(clip.fadeIn) / ClipEntry.flicksPerMillisecond, unit: "ms", minimum: 0,
+                maximum: ClipEntry.maximumFadeMilliseconds) { setFade($0, entering: true) }
+            ControlNumberField(title: text("Fade Out"), value: Double(clip.fadeOut) / ClipEntry.flicksPerMillisecond, unit: "ms", minimum: 0,
+                maximum: ClipEntry.maximumFadeMilliseconds) { setFade($0, entering: false) }
             Text(text("Drag the clip corners to change fades. Drag its gain handle vertically."))
                 .font(.caption).foregroundStyle(.secondary)
         }.disabled(controller.busy || controller.faderPreview != nil)
     }
     private func setFade(_ milliseconds: Double, entering: Bool) {
-        let flicks = Int64((milliseconds * 705_600).rounded())
+        let flicks = Int64((milliseconds * ClipEntry.flicksPerMillisecond).rounded())
         let document = controller.documentID
         Task { await controller.setClipFades(clip.id, fadeIn: entering ? flicks : clip.fadeIn,
             fadeOut: entering ? clip.fadeOut : flicks, documentID: document) }

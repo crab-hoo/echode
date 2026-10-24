@@ -60,18 +60,26 @@ struct MixControlTests {
             set: { id, field, value in completion = Task { await controller.setMixer(id, field: field, value: value) } })
         let layout = TrackControlLayout(row: header.bounds)
         #expect(layout.visible)
+        // A click away from the knob position does not jump there (ADR 0153).
         let down = CGPoint(x: layout.gain.minX + 1, y: layout.gain.midY)
         header.mouseDown(with: try event(.leftMouseDown, down))
+        header.mouseUp(with: try event(.leftMouseUp, down))
+        await completion?.value
+        #expect(controller.faderPreview == nil)
+        #expect(controller.mixer(track)?.gain.value == 1)
+        #expect(controller.undoCount == before)
+        header.mouseDown(with: try event(.leftMouseDown, down))
         for step in 1...20 {
-            header.mouseDragged(with: try event(.leftMouseDragged, CGPoint(x: layout.gain.minX + layout.gain.width * Double(step) / 25, y: down.y)))
+            header.mouseDragged(with: try event(.leftMouseDragged, CGPoint(x: down.x + layout.gain.width * 0.2 * Double(step) / 25, y: down.y)))
         }
         #expect(controller.mixer(track)?.gain.value == 1)
         #expect(controller.undoCount == before)
-        let up = CGPoint(x: layout.gain.minX + layout.gain.width * 0.8, y: down.y)
+        let up = CGPoint(x: down.x + layout.gain.width * 0.2, y: down.y)
         header.mouseUp(with: try event(.leftMouseUp, up))
         await completion?.value
         #expect(controller.errorMessage == nil)
-        let expected = MixScale.gain(0.8)
+        let expected = MixScale.dragged(.gain, from: 1, by: 0.2)
+        #expect(expected > 1)
         #expect(abs(try #require(controller.mixer(track)).gain.value - expected) < 0.00001)
         #expect(controller.undoCount == before + 1)
         await controller.undo()
@@ -90,6 +98,11 @@ struct MixControlTests {
         let pan = CGPoint(x: layout.pan.minX + layout.pan.width * 0.75, y: layout.pan.midY)
         header.mouseDown(with: try event(.leftMouseDown, pan))
         header.mouseUp(with: try event(.leftMouseUp, pan))
+        await completion?.value
+        #expect(controller.mixer(track)?.pan.value == 0)
+        header.mouseDown(with: try event(.leftMouseDown, pan))
+        header.mouseDragged(with: try event(.leftMouseDragged, CGPoint(x: pan.x + layout.pan.width * 0.25, y: pan.y)))
+        header.mouseUp(with: try event(.leftMouseUp, CGPoint(x: pan.x + layout.pan.width * 0.25, y: pan.y)))
         await completion?.value
         #expect(abs(try #require(controller.mixer(track)).pan.value - 0.5) < 0.0001)
 

@@ -24,6 +24,12 @@ public struct MixActions {
     }
 }
 
+/// One header fader or pan, the target of a click or drag.
+struct MixTarget: Equatable {
+    let track: UUID
+    let field: MixerField
+}
+
 /// Shared drawing/hit geometry for the compact track controls.
 struct TrackControlLayout: Sendable {
     let row: CGRect
@@ -45,6 +51,14 @@ enum MixScale {
     static func decibels(_ gain: Float) -> Double { gain > 0 ? 20 * log10(Double(gain)) : -.infinity }
     static func gain(_ position: Double) -> Float { position <= 0 ? 0 : Float(pow(10, (-60 + min(1, position) * (60 + 20 * log10(4.0))) / 20)) }
     static func position(_ gain: Float) -> Double { gain > 0 ? min(1, max(0, (decibels(gain) + 60) / (60 + 20 * log10(4.0)))) : 0 }
+    /// Unity gain and the center.
+    static func defaultValue(_ field: MixerField) -> Float { field == .gain ? 1 : 0 }
+    /// A header drag. `fraction` is the pointer's travel over the control's
+    /// width, so a press without movement keeps the value.
+    static func dragged(_ field: MixerField, from original: Float, by fraction: Double) -> Float {
+        if field == .gain { return gain(min(1, max(0, position(original) + fraction))) }
+        return Float(min(1, max(-1, Double(original) + fraction * 2)))
+    }
     /// Linear amplitude at -60 dB. Matches `DISPLAY_FLOOR` in the engine meter.
     /// The header bar and the inspector both treat this and anything quieter as silence.
     static let meterSilence: Float = 0.001
@@ -134,6 +148,28 @@ enum MixEntry {
         guard let value = Double(normalized), value.isFinite else { return nil }
         return value
     }
+
+    /// The header field's first text: the inspector's numbers without the unit.
+    static func text(_ field: MixerField, _ value: Float) -> String {
+        if field == .gain { return value > 0 ? String(format: "%.1f", MixScale.decibels(value)) : "−∞" }
+        return String(format: "%.1f", Double(value) * 100)
+    }
+
+    /// A typed header value, in the inspector's range, or nil.
+    static func value(_ field: MixerField, _ text: String) -> Float? {
+        switch field {
+        case .gain:
+            guard let db = number(text, unit: "dB", silence: true) else { return nil }
+            if db == -.infinity { return 0 }
+            guard db >= -120, db <= 20 * log10(4.0) else { return nil }
+            return min(4, Float(pow(10, db / 20)))
+        case .pan:
+            guard let percent = number(text, unit: "%", silence: false), (-100...100).contains(percent) else { return nil }
+            return Float(percent / 100)
+        case .mute, .solo:
+            return nil
+        }
+    }
 }
 
 /// Whether the inspector should keep reading the post-fader peak.
@@ -149,6 +185,48 @@ public enum ClipMixEdit: Sendable {
 }
 
 enum ClipHandle: Sendable, Equatable { case gain, fadeIn, fadeOut }
+
+/// One clip handle, the target of a click or drag.
+struct ClipTarget: Equatable {
+    let clip: UUID
+    let handle: ClipHandle
+}
+
+/// Typed clip values in the inspector's units and range.
+enum ClipEntry {
+    /// The inspector's fade limit: the longest fade the model accepts at 768 kHz.
+    static let maximumFadeMilliseconds = Double(UInt32.max) / 768_000 * 1000
+    static let flicksPerMillisecond = 705_600.0
+
+    static func text(_ handle: ClipHandle, _ mix: ClipMix) -> String {
+        switch handle {
+        case .gain: mix.gain > 0 ? String(format: "%.1f", MixScale.decibels(mix.gain)) : "−∞"
+        case .fadeIn: String(format: "%.1f", Double(mix.fadeIn) / flicksPerMillisecond)
+        case .fadeOut: String(format: "%.1f", Double(mix.fadeOut) / flicksPerMillisecond)
+        }
+    }
+
+    static func edit(_ handle: ClipHandle, _ mix: ClipMix, _ typed: String) -> ClipMixEdit? {
+        switch handle {
+        case .gain:
+            guard let db = MixEntry.number(typed, unit: "dB", silence: true) else { return nil }
+            if db == -.infinity { return .gain(mix.id, 0) }
+            guard db >= -120, db <= 20 * log10(Double(MixScale.clipGainMax)) else { return nil }
+            return .gain(mix.id, min(MixScale.clipGainMax, Float(pow(10, db / 20))))
+        case .fadeIn, .fadeOut:
+            guard let ms = MixEntry.number(typed, unit: "ms", silence: false), ms >= 0, ms <= maximumFadeMilliseconds else { return nil }
+            let flicks = Int64((ms * flicksPerMillisecond).rounded())
+            return handle == .fadeIn ? .fades(mix.id, flicks, mix.fadeOut) : .fades(mix.id, mix.fadeIn, flicks)
+        }
+    }
+
+    static func changes(_ edit: ClipMixEdit, _ mix: ClipMix) -> Bool {
+        switch edit {
+        case .gain(_, let gain): gain != mix.gain
+        case .fades(_, let entering, let leaving): entering != mix.fadeIn || leaving != mix.fadeOut
+        }
+    }
+}
 
 struct ClipControlLayout: Sendable {
     let rect: CGRect
@@ -181,6 +259,5 @@ struct ClipDraft: Sendable {
     var fadeInTicks: Int64
     var fadeOutTicks: Int64
     let handle: ClipHandle
-    let down: CGPoint
     let layout: ClipControlLayout
 }

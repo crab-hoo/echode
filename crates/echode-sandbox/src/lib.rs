@@ -24,7 +24,7 @@ pub use control::{ControlMessage, Socket};
 pub use gui::{GuiReport, ParamEvent, ParamEventKind, ParamRelay, PluginActivity};
 pub use params::{
     PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,
-    PARAM_STEPPED, ParamChange, ParamInfo, ParamValue,
+    PARAM_STEPPED, ParamChange, ParamInfo, ParamText, ParamValue,
 };
 pub use region::{
     Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout,

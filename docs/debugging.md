@@ -155,6 +155,16 @@ make debug-report
   `device-disclosure-ui` で可変幅の列の中央前後と送り先 ID を確認し、配置・挿入先に固定の列幅を使っていないか調べる。
   トラック切替・エディタ再生成で開閉が戻るなら `collapsedDevices`、文書交換後も残るなら `forgetParameters` を確認する。
   見えない検索欄がキーを消費する時は折りたたみ時のフォーカス解除を確認する（[ADR 0137](decisions/0137-device-disclosure.md)）。
+- **値の操作子のクリックで値が跳ぶ・ダブルクリックが記録されない・入力欄が閉じない**:
+  規則は `ValueClicks` の段階（押下・ドラッグ・既定値の表示中・3 回目待ち）で決まる。単クリックで値が変わるなら、
+  NSSlider の追跡や絶対位置の計算が戻っていないかを `track-mix-ui`・`fx-params-clicks-ui` で確認する。
+  既定値が記録されないなら、待ち時間（`NSEvent.doubleClickInterval`）の前に文書が変わって下書きが消えたか、
+  プレビューの開始（`beginFader`・`beginParameter`）が拒否されたかを区別する。3 回目で既定値が残るなら `mix-clicks-ui` を使う。
+  入力欄が赤いまま閉じないのは、範囲外・単位違い・プラグインの拒否（`converts` が真で `value` が空）である。
+  変換を持たないプラグイン（`converts` が偽）は数値だけを受ける。`helper did not read the parameter text` は通信の失敗で、
+  `plugin-text-parse` で実ヘルパーの `text_to_value` を切り分ける。
+  入力中の Space で再生が始まる時は、欄の `performKeyEquivalent` が先に受けているか、欄が最初のレスポンダーかを確認する
+  （[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
 - **パラメーター・バイパス・オフライン操作で全ボタンが一瞬暗転する**:
   `ProjectController.busy` の完了時の値だけでは短い暗転を見落とす。`device-edit-enabled-ui` で操作中の全遷移を観測する。
   `EditTurn.busy` は編集待ち行列の状態、画面の `busy` は作成・交換・終了の明示的な排他だけである。

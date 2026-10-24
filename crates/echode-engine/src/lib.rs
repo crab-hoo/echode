@@ -44,8 +44,8 @@ pub use handoff::{Audio, Control, Cycle, pair};
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 mod meter;
 pub use echode_sandbox::{
-    GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamValue,
-    PluginActivity, PluginCommand, PluginControl, RetainedWorkgroup,
+    GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText,
+    ParamValue, PluginActivity, PluginCommand, PluginControl, RetainedWorkgroup,
 };
 pub use meter::TrackMeter;
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};

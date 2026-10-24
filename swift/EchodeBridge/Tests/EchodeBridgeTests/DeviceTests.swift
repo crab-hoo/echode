@@ -95,5 +95,15 @@ final class DeviceTests: XCTestCase {
         XCTAssertTrue(mode.stepped && mode.hidden && mode.isEnum && !mode.readOnly)
         XCTAssertEqual(mode.defaultValue, 0)
         XCTAssertEqual(mode.text, "Half")
+        for (json, parsed) in [(#"{"parsed":{"id":2,"value":1.5,"converts":true}}"#, DeviceParameterParse(id: 2, value: 1.5, converts: true)),
+                               (#"{"parsed":{"id":2,"value":null,"converts":false}}"#, DeviceParameterParse(id: 2, value: nil, converts: false))] {
+            XCTAssertEqual(try JSONDecoder().decode(DeviceReport.self, from: Data(json.utf8)).parsed, parsed)
+        }
+        let device = UUID(uuidString: "00000000-0000-0000-0000-0000000000D0")!
+        let encoded = try JSONEncoder().encode(DeviceCommand.parse(device: device, id: 2, text: "Mute"))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(object["type"] as? String, "device.parameter.parse")
+        XCTAssertEqual(object["id"] as? Int, 2)
+        XCTAssertEqual(object["text"] as? String, "Mute")
     }
 }

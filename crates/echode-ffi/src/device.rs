@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 
 use echode_actions::Command;
 use echode_audio_io::{
-    DeviceAccess, GuiReport, ParamChange, ParamInfo, ParamValue, PluginActivity, PluginControl,
-    Session,
+    DeviceAccess, GuiReport, ParamChange, ParamInfo, ParamText, ParamValue, PluginActivity,
+    PluginControl, Session,
 };
 use echode_history::DocumentHost;
 use echode_model::Id;
@@ -34,6 +34,9 @@ enum DeviceCommand {
     /// Records the helper's state, once, if it differs from the project.
     #[serde(rename = "device.parameter.commit")]
     Commit { device: Id },
+    /// Reads typed text with the plugin's `text_to_value`. Nothing changes.
+    #[serde(rename = "device.parameter.parse")]
+    Parse { device: Id, id: u32, text: String },
     /// Opens the plugin's own window in its helper, or raises it. The window
     /// does not take keyboard focus. `title` names a new window.
     #[serde(rename = "device.gui.show")]
@@ -76,6 +79,7 @@ pub(crate) enum Request {
     Set(Vec<ParamChange>),
     /// The helper's bytes, which the worker records with [`commit`].
     Capture,
+    Parse(u32, String),
     ShowGui(String),
     CloseGui,
 }
@@ -134,6 +138,7 @@ pub(crate) fn dispatch(
             (device, Request::Set(changes))
         }
         DeviceCommand::Commit { device } => (device, Request::Capture),
+        DeviceCommand::Parse { device, id, text } => (device, Request::Parse(id, text)),
         DeviceCommand::ShowGui { device, title } => (device, Request::ShowGui(title)),
         DeviceCommand::CloseGui { device } => (device, Request::CloseGui),
     };
@@ -207,6 +212,19 @@ pub(crate) fn round_trip(
             serde_json::json!({ "values": values.iter().map(value).collect::<Vec<_>>() })
         }
         Request::Capture => return control.capture_state().map_err(|error| error.to_string()),
+        Request::Parse(id, text) => {
+            // `converts` is false when the plugin has no `text_to_value`;
+            // the host then reads a plain number in the plugin's units.
+            let (value, converts) = match control
+                .parse_parameter(*id, text)
+                .map_err(|error| error.to_string())?
+            {
+                ParamText::Value(value) => (Some(value), true),
+                ParamText::Refused => (None, true),
+                ParamText::Unsupported => (None, false),
+            };
+            serde_json::json!({ "parsed": { "id": id, "value": value, "converts": converts } })
+        }
         Request::ShowGui(title) => {
             let GuiReport {
                 created,
@@ -369,6 +387,14 @@ mod tests {
         assert!(error.contains("mixer"), "{error}");
         let empty = format!(r#"{{"type":"device.parameter.set","device":"{mixer}","changes":[]}}"#);
         assert!(dispatch(&host, &mut audio, &mut editing, empty.as_bytes(), false).is_err());
+        let parse =
+            format!(r#"{{"type":"device.parameter.parse","device":"{mixer}","id":1,"text":"1"}}"#);
+        let Err(error) = dispatch(&host, &mut audio, &mut editing, parse.as_bytes(), false) else {
+            panic!("the mixer has no plugin text");
+        };
+        assert!(error.contains("mixer"), "{error}");
+        let untyped = format!(r#"{{"type":"device.parameter.parse","device":"{mixer}","id":1}}"#);
+        assert!(dispatch(&host, &mut audio, &mut editing, untyped.as_bytes(), false).is_err());
         let window = format!(r#"{{"type":"device.gui.show","device":"{mixer}","title":"Mix"}}"#);
         let Err(error) = dispatch(&host, &mut audio, &mut editing, window.as_bytes(), false) else {
             panic!("the mixer has no plugin window");

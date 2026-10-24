@@ -6,8 +6,9 @@
 
 use crate::gui::{GuiReport, ParamRelay, read_relay, read_report, write_relay, write_report};
 use crate::params::{
-    ParamChange, ParamInfo, ParamValue, read_changes, read_infos, read_values, write_changes,
-    write_infos, write_values,
+    ParamChange, ParamInfo, ParamText, ParamValue, read_changes, read_infos, read_parsed,
+    read_text_request, read_values, write_changes, write_infos, write_parsed, write_text_request,
+    write_values,
 };
 use crate::region::SessionLayout;
 use std::io::{self, ErrorKind};
@@ -48,6 +49,8 @@ const GUI_REJECTED: u32 = 29;
 const GUI_CLOSED: u32 = 30;
 const PARAM_RELAY: u32 = 31;
 const GUI_COMMAND: u32 = 32;
+const PARSE_PARAM: u32 = 33;
+const PARAM_PARSED: u32 = 34;
 
 #[derive(Debug)]
 pub enum ControlMessage {
@@ -97,6 +100,13 @@ pub enum ControlMessage {
     ParamsApplied(Vec<ParamValue>),
     /// A parameter request did not reach the plugin. The bytes are the reason.
     ParamsRejected(String),
+    /// Asks the plugin to read typed text for one parameter. Changes nothing.
+    ParseParam {
+        id: u32,
+        text: String,
+    },
+    /// The plugin's reading of the text, or that it has no converter.
+    ParamParsed(ParamText),
     /// Opens the plugin window, or raises it when it is open. Never takes focus.
     /// The bytes are the window title.
     GuiShow(String),
@@ -332,6 +342,8 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         ControlMessage::SetParams(changes) => (SET_PARAMS, write_changes(changes)),
         ControlMessage::ParamsApplied(values) => (PARAMS_APPLIED, write_values(values)),
         ControlMessage::ParamsRejected(reason) => (PARAMS_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::ParseParam { id, text } => (PARSE_PARAM, write_text_request(*id, text)),
+        ControlMessage::ParamParsed(parsed) => (PARAM_PARSED, write_parsed(*parsed)),
         ControlMessage::GuiShow(title) => (GUI_SHOW, title.as_bytes().to_vec()),
         ControlMessage::GuiShown(report) => (GUI_SHOWN, write_report(*report)),
         ControlMessage::GuiClose => (GUI_CLOSE, Vec::new()),
@@ -418,6 +430,11 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
                 io::Error::new(ErrorKind::InvalidData, "parameter refusal is not text")
             })?)
         }
+        PARSE_PARAM => {
+            let (id, text) = read_text_request(body)?;
+            ControlMessage::ParseParam { id, text }
+        }
+        PARAM_PARSED => ControlMessage::ParamParsed(read_parsed(body)?),
         GUI_SHOW => ControlMessage::GuiShow(
             String::from_utf8(body.to_vec())
                 .map_err(|_| io::Error::new(ErrorKind::InvalidData, "window title is not text"))?,
@@ -817,6 +834,23 @@ mod tests {
             .expect("params");
         let reply = parent.recv_timeout(Duration::from_secs(2)).expect("reply");
         assert!(matches!(reply, ControlMessage::Params(infos) if infos == [info]));
+        parent
+            .send(&ControlMessage::ParseParam {
+                id: 3,
+                text: "40 %".into(),
+            })
+            .expect("parse");
+        assert!(matches!(
+            child.recv_timeout(Duration::from_secs(2)).expect("recv"),
+            ControlMessage::ParseParam { id: 3, text } if text == "40 %"
+        ));
+        child
+            .send(&ControlMessage::ParamParsed(ParamText::Value(0.4)))
+            .expect("parsed");
+        assert!(matches!(
+            parent.recv_timeout(Duration::from_secs(2)).expect("reply"),
+            ControlMessage::ParamParsed(ParamText::Value(value)) if value == 0.4
+        ));
         let (kind, _) = encode(&ControlMessage::ParamsRequest).unwrap();
         let mut payload = kind.to_le_bytes().to_vec();
         payload.push(1);

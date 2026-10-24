@@ -26,6 +26,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     （[ADR 0151](decisions/0151-streaming-sample-audition.md)）。
     表示中の出力保持・音量・自動試聴の切替・右矢印と波形クリックの手動試聴も接続した
     （[ADR 0152](decisions/0152-browser-audition-controls.md)）。実機の操作感と聴感はユーザー確認待ちである。
+    6 番目の値の操作子は、相対ドラッグ・ダブルクリックの既定値・トリプルクリックの入力欄と、CLAP の `text_to_value` による表示単位の入力を接続した
+    （[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
     UIF-08 は P2-02 の下部の切替を置き換え、UIF-03 は P2-07 のアレンジ編集を先に接続する。
   - **GUI のがくつき（JNK-01〜07）**: 2026-10-22 の監査で原因を分けた。
     単位 1（反転した表示面の固定位置）、単位 2（状態行・再生ボタンの寸法）、
@@ -83,6 +85,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 - **CLAP のパラメーター編集（[ADR 0130](decisions/0130-clap-parameter-editing.md)）**:
   FX 行の汎用パラメーター欄から一覧・ドラッグ中の試聴・終了時の単一 Undo を接続した。値はプラグイン状態として記録し、Undo / Redo は同じヘルパーへ戻す。
   必須契約 `plugin-params` は製品エンジンと実ヘルパー、`fx-params-ui` は実スライダーと履歴を確認する。
+  欄の単クリックは値を変えず、ダブルクリックで既定値、トリプルクリックでプラグインの表示単位の入力欄を開く
+  （[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)、必須契約 `fx-params-clicks-ui`・`plugin-text-parse`）。
 - **横並びのデバイスビューと応答性（[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）**:
   選択トラックのデバイスを横に並べ、各列に操作・検索欄・全パラメーターの一覧を置いた。一覧は画面内の行だけを作る。
   ピン留めはデバイスごとに保存形式 6 へ記録し、最上部に固定する。単一 Undo・複製時の継承・検索中の表示を持つ。

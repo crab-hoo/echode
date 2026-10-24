@@ -18,8 +18,9 @@ final class DeviceParameterListView: NSView, NSTableViewDataSource, NSTableViewD
     private var locked = false
     var onBegin: ((UInt32) -> Bool)?
     var onChange: ((Double) -> Void)?
-    var onEnd: (() -> Void)?
+    var onEnd: ((Bool) -> Void)?
     var onStep: ((UInt32, Double) -> Void)?
+    var onEnter: ((UInt32, String) async -> Bool)?
     var onPin: ((UInt32, Bool) -> Void)?
     private static let rowID = NSUserInterfaceItemIdentifier("parameter")
 
@@ -104,8 +105,9 @@ final class DeviceParameterListView: NSView, NSTableViewDataSource, NSTableViewD
             made.identifier = Self.rowID
             made.onBegin = { [weak self] id in self?.onBegin?(id) ?? false }
             made.onChange = { [weak self] value in self?.onChange?(value) }
-            made.onEnd = { [weak self] in self?.onEnd?() }
+            made.onEnd = { [weak self] commit in self?.onEnd?(commit) }
             made.onStep = { [weak self] id, value in self?.onStep?(id, value) }
+            made.onEnter = { [weak self] id, text in await self?.onEnter?(id, text) ?? false }
             made.onPin = { [weak self] id, value in self?.onPin?(id, value) }
             return made
         }()
@@ -128,23 +130,47 @@ final class ParameterScrollView: NSScrollView {
     }
 }
 
-/// Reports the start and end of a pointer drag around AppKit's tracking loop.
+/// A parameter slider with the shared value-control clicks (ADR 0153): a
+/// click does not jump to the pointer, a drag moves from the pressed value,
+/// a double click shows the default and a third click opens a text field.
+/// Keyboard and VoiceOver steps keep NSSlider's own handling.
 @MainActor
 final class ParameterSlider: NSSlider {
     var onBegin: (() -> Bool)?
-    var onEnd: (() -> Void)?
+    var onEnd: ((Bool) -> Void)?
     private(set) var dragging = false
+    let clicks = ValueClicks<UInt32>()
+    /// The parameter this reused slider shows now.
+    var parameter: UInt32 = 0
     override func mouseDown(with event: NSEvent) {
-        beginDrag()
-        super.mouseDown(with: event)
-        endDrag()
+        guard isEnabled else { return }
+        if acceptsFirstResponder { window?.makeFirstResponder(self) }
+        clicks.down(parameter, at: convert(event.locationInWindow, from: nil), clicks: event.clickCount)
+    }
+    override func mouseDragged(with event: NSEvent) { clicks.dragged(to: convert(event.locationInWindow, from: nil)) }
+    override func mouseUp(with event: NSEvent) { clicks.up(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseCancelled(with event: NSEvent) { clicks.cancel() }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53, clicks.active { clicks.cancel(); return }
+        clicks.settle()
+        super.keyDown(with: event)
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { clicks.cancel() }
     }
     /// Actions sent between these calls are drag values, not single steps.
     func beginDrag() { dragging = onBegin?() ?? false }
-    func endDrag() {
+    func endDrag(commit: Bool = true) {
         guard dragging else { return }
         dragging = false
-        onEnd?()
+        onEnd?(commit)
+    }
+    /// The value a drag reaches: the pointer's travel over the track sets the
+    /// share of the range. NSSlider snaps it to tick marks when it has them.
+    func dragged(from original: Double, by offset: Double) -> Double {
+        let track = max(1, Double(bounds.width) - knobThickness)
+        return min(maxValue, max(minValue, original + offset / track * (maxValue - minValue)))
     }
 }
 
@@ -159,9 +185,13 @@ final class DeviceParameterRow: NSView {
     let value = NSTextField(labelWithString: "")
     var onBegin: ((UInt32) -> Bool)?
     var onChange: ((Double) -> Void)?
-    var onEnd: (() -> Void)?
+    var onEnd: ((Bool) -> Void)?
     var onStep: ((UInt32, Double) -> Void)?
+    var onEnter: ((UInt32, String) async -> Bool)?
     var onPin: ((UInt32, Bool) -> Void)?
+    private(set) var entry: ValueEntryField?
+    /// The slider's value when the press began, which a drag moves from.
+    private var pressed = 0.0
     override var isFlipped: Bool { true }
 
     init(parameter: DeviceParameter) {
@@ -181,7 +211,26 @@ final class DeviceParameterRow: NSView {
             guard let self else { return false }
             return self.onBegin?(self.parameter.id) ?? false
         }
-        slider.onEnd = { [weak self] in self?.onEnd?() }
+        slider.onEnd = { [weak self] commit in self?.onEnd?(commit) }
+        let clicks = slider.clicks
+        clicks.begin = { [weak self] id in
+            guard let self, id == self.parameter.id else { return false }
+            self.pressed = self.slider.doubleValue
+            self.slider.beginDrag()
+            return self.slider.dragging
+        }
+        clicks.drag = { [weak self] _, offset in
+            guard let self else { return }
+            self.slider.doubleValue = self.slider.dragged(from: self.pressed, by: Double(offset.width))
+            self.onChange?(self.slider.doubleValue)
+        }
+        clicks.reset = { [weak self] _ in
+            guard let self else { return }
+            self.slider.doubleValue = self.parameter.defaultValue
+            self.onChange?(self.parameter.defaultValue)
+        }
+        clicks.finish = { [weak self] commit in self?.slider.endDrag(commit: commit) }
+        clicks.type = { [weak self] id in self?.openEntry(id) }
         value.alignment = .right
         value.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         value.lineBreakMode = .byTruncatingTail
@@ -194,7 +243,9 @@ final class DeviceParameterRow: NSView {
 
     func configure(_ parameter: DeviceParameter, pinned: Bool, locked: Bool) {
         let same = parameter.id == self.parameter.id
+        if !same { slider.clicks.cancel(); entry?.cancel() }
         self.parameter = parameter
+        slider.parameter = parameter.id
         if !same || name.stringValue.isEmpty {
             name.stringValue = parameter.name
             name.toolTip = parameter.module.isEmpty ? parameter.name : parameter.module + " / " + parameter.name
@@ -240,4 +291,15 @@ final class DeviceParameterRow: NSView {
     }
 
     @objc private func togglePin() { onPin?(parameter.id, pin.state == .on) }
+
+    /// The third click's field over the slider, with the plugin's display text.
+    /// The plugin reads it in its own units; one without a converter gets a number.
+    private func openEntry(_ id: UInt32) {
+        guard id == parameter.id, !parameter.readOnly else { return }
+        entry?.cancel()
+        let shown = parameter.text.isEmpty ? String(format: "%.4g", parameter.value) : parameter.text
+        entry = ValueEntryField.open(in: self, over: slider.frame, text: shown, label: parameter.name,
+            commit: { [weak self] typed in await self?.onEnter?(id, typed) ?? false },
+            onClose: { [weak self] in self?.entry = nil })
+    }
 }

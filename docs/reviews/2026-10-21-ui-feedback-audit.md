@@ -355,3 +355,14 @@ Swift の指摘は `make known-bugs`（Rust の `audit_` テスト）の対象�
 - `sample-audition-resident`・`sample-audition-position`・`sample-audition-gain`・`sample-audition-controls-ui` と、
   ブロック長・RTSan・C ABI / Swift の往復へ回帰を追加した。診断は設定・無音の準備失敗・元サンプル位置を区別する。
 - 実画面の見え方・VoiceOver、機器切替・曲との加算・聴感はユーザー確認とする。
+
+### 6. 値の操作子
+
+- [ADR 0153](../decisions/0153-value-control-clicks-and-typed-entry.md) で、ヘッダの音量・パン、クリップのゲインとフェード、パラメーター欄に共通のクリック規則を接続した。
+  単クリックは値を変えず、ドラッグは相対量、ダブルクリックは既定値を仮に表示して間隔後に 1 回記録し、3 回目は元の値へ戻して入力欄を開く。
+- プラグインの値は CLAP の `text_to_value` をヘルパー・通信・FFI へ足し、表示単位で入力する。変換を持たないプラグインは数値で入力する。
+- 再現: 修正前の必須契約 `track-mix-ui` はパンの単クリックで値が変わることを合格条件にしており、新しい規則でその 3 か所が失敗した。
+  NSSlider の押した位置への跳びは所見どおりソースで確認した。
+- 回帰: `mix-clicks-ui`・`clip-clicks-ui`・`fx-params-clicks-ui`・`plugin-text-parse` を負の対照付きで追加し、`track-mix-ui` を相対ドラッグへ改めた。
+- 決めたこと: 入力欄の外へフォーカスが移った時は使える値を確定し、使えない値は破棄する。範囲外の入力は丸めずに拒否する。
+- 未確認: 実画面のクリック間隔・欄の見た目・VoiceOver、入力中の Space が再生へ漏れないこと、第三者プラグインの文字変換はユーザー確認とする。

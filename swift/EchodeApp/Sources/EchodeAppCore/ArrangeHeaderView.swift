@@ -31,7 +31,11 @@ final class ArrangeHeaderView: NSView {
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var mixActions: MixActions?
-    private var drag: (track: UUID, field: MixerField, rect: CGRect)?
+    /// Fader and pan clicks, drags and typing (ADR 0153).
+    let clicks = ValueClicks<MixTarget>()
+    /// The control and value under the last press, which a drag moves from.
+    private var press: (target: MixTarget, rect: CGRect, original: Float)?
+    private(set) var entry: ValueEntryField?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -39,6 +43,17 @@ final class ArrangeHeaderView: NSView {
         setAccessibilityRole(.list)
         setAccessibilityLabel(text("Track"))
         registerForDraggedTypes([FXDrag.deviceType, FXDrag.pluginType])
+        clicks.begin = { [weak self] target in
+            guard let self, self.press?.target == target, let mixActions = self.mixActions else { return false }
+            return mixActions.begin(target.track, target.field)
+        }
+        clicks.drag = { [weak self] target, offset in
+            guard let press = self?.press, press.target == target else { return }
+            self?.mixActions?.change(MixScale.dragged(target.field, from: press.original, by: Double(offset.width) / max(1, Double(press.rect.width))))
+        }
+        clicks.reset = { [weak self] target in self?.mixActions?.change(MixScale.defaultValue(target.field)) }
+        clicks.finish = { [weak self] commit in self?.mixActions?.finish(commit) }
+        clicks.type = { [weak self] target in self?.openEntry(target) }
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -69,7 +84,10 @@ final class ArrangeHeaderView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        guard let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) else { return }
+        guard let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) else { clicks.settle(); return }
+        if TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width))).hit(point).map({ $0 == .gain || $0 == .pan }) != true {
+            clicks.settle()
+        }
         if let tree = snapshot?.trackHierarchy(at: index), tree.hasChildren,
            TrackFolderLayout(row: rows.rect(at: index, width: bounds.width), depth: tree.depth, folder: true).disclosure.contains(point) {
             onToggleFolder?(id); return
@@ -91,19 +109,22 @@ final class ArrangeHeaderView: NSView {
         else {
             select(id, change: event.modifierFlags.contains(.command) ? .toggle : event.modifierFlags.contains(.shift) ? .extend : .replace)
         }
-        guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else { return }
+        guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else { clicks.settle(); return }
         if field == .mute || field == .solo {
+            clicks.settle()
             mixActions.set(id, field, mix[field].value == 0 ? 1 : 0)
-        } else if mixActions.begin(id, field) {
-            drag = (id, field, controls.rect(field))
-            updateDrag(point)
+        } else {
+            let target = MixTarget(track: id, field: field)
+            if case .waiting(target) = clicks.phase {} else { press = (target, controls.rect(field), mix[field].value) }
+            clicks.down(target, at: point, clicks: event.clickCount)
         }
     }
-    override func mouseDragged(with event: NSEvent) { updateDrag(convert(event.locationInWindow, from: nil)) }
+    override func mouseDragged(with event: NSEvent) { clicks.dragged(to: convert(event.locationInWindow, from: nil)) }
     /// A right click on a selected row keeps the selection; on another row it selects that row.
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard drag == nil, onDuplicateTracks != nil, let index = rows.index(at: Double(point.y)),
+        clicks.settle()
+        guard onDuplicateTracks != nil, let index = rows.index(at: Double(point.y)),
               let id = snapshot?.trackID(at: index) else { return nil }
         select(id, change: .focus)
         let menu = NSMenu()
@@ -138,22 +159,26 @@ final class ArrangeHeaderView: NSView {
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         acceptFX(sender.draggingPasteboard, at: convert(sender.draggingLocation, from: nil), copying: NSEvent.modifierFlags.contains(.command))
     }
-    override func mouseUp(with event: NSEvent) {
-        guard drag != nil else { return }
-        updateDrag(convert(event.locationInWindow, from: nil)); drag = nil; mixActions?.finish(true)
-    }
-    override func mouseCancelled(with event: NSEvent) {
-        guard drag != nil else { return }
-        drag = nil; mixActions?.finish(false)
-    }
+    override func mouseUp(with event: NSEvent) { clicks.up(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseCancelled(with event: NSEvent) { clicks.cancel() }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil, drag != nil { drag = nil; mixActions?.finish(false) }
+        if window == nil { clicks.cancel(); entry?.cancel() }
     }
-    private func updateDrag(_ point: CGPoint) {
-        guard let drag else { return }
-        let position = min(1, max(0, (point.x - drag.rect.minX) / drag.rect.width))
-        mixActions?.change(drag.field == .gain ? MixScale.gain(position) : Float(position * 2 - 1))
+
+    /// The third click's field, in the inspector's units: dB with −∞, and percent.
+    private func openEntry(_ target: MixTarget) {
+        guard let snapshot, let index = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == target.track }),
+              let mix = snapshot.mixer(onTrack: index), let name = snapshot.trackName(at: index) else { return }
+        entry?.cancel()
+        let layout = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
+        let title = text(target.field == .gain ? "Volume" : "Pan") + " " + name
+        entry = ValueEntryField.open(in: self, over: layout.rect(target.field), text: MixEntry.text(target.field, mix[target.field].value),
+            label: title, commit: { [weak self] typed in
+                guard let value = MixEntry.value(target.field, typed) else { return false }
+                if value != mix[target.field].value { self?.mixActions?.set(target.track, target.field, value) }
+                return true
+            }, onClose: { [weak self] in self?.entry = nil })
     }
     override func scrollWheel(with event: NSEvent) {
         let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
@@ -166,7 +191,8 @@ final class ArrangeHeaderView: NSView {
         onZoom?(max(0.1, 1 + Double(event.magnification)), event.modifierFlags, CGPoint(x: 0, y: point.y))
     }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == kVK_Escape, drag != nil { drag = nil; mixActions?.finish(false); return }
+        if event.keyCode == kVK_Escape, clicks.active { clicks.cancel(); return }
+        clicks.settle()
         guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
         switch Int(event.keyCode) {
         case kVK_LeftArrow, kVK_RightArrow:

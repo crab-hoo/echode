@@ -91,6 +91,11 @@ public final class ArrangeView: NSView {
     private var presentedTimelineOrigin = 0.0
     private var presentedCamera = ArrangeCamera()
     private var clipDraft: ClipDraft?
+    /// Clip gain and fade clicks, drags and typing (ADR 0153).
+    let clicks = ValueClicks<ClipTarget>()
+    /// The handle under the last press and its clip as recorded.
+    private var press: (target: ClipTarget, mix: ClipMix, layout: ClipControlLayout)?
+    private(set) var entry: ValueEntryField?
     var onClipEdit: ((ClipMixEdit) -> Void)?
     private var playback: PlaybackFeed?
     private var transportGeneration: UInt64 = 0
@@ -112,6 +117,26 @@ public final class ArrangeView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(text("Arrange"))
+        clicks.begin = { [weak self] target in
+            guard let self, let press = self.press, press.target == target else { return false }
+            let mix = press.mix
+            self.clipDraft = ClipDraft(original: mix, gain: mix.gain, fadeIn: mix.fadeIn, fadeOut: mix.fadeOut,
+                fadeInTicks: mix.fadeInTicks, fadeOutTicks: mix.fadeOutTicks, handle: target.handle, layout: press.layout)
+            self.refresh()
+            return true
+        }
+        clicks.drag = { [weak self] _, offset in self?.dragClip(by: offset) }
+        clicks.reset = { [weak self] _ in
+            guard let self, var draft = self.clipDraft else { return }
+            switch draft.handle {
+            case .gain: draft.gain = 1
+            case .fadeIn: draft.fadeIn = 0; draft.fadeInTicks = 0
+            case .fadeOut: draft.fadeOut = 0; draft.fadeOutTicks = 0
+            }
+            self.clipDraft = draft; self.refresh()
+        }
+        clicks.finish = { [weak self] commit in self?.finishClip(commit: commit) }
+        clicks.type = { [weak self] target in self?.openEntry(target) }
     }
 
     @available(*, unavailable)
@@ -181,7 +206,10 @@ public final class ArrangeView: NSView {
     public override func layout() { super.layout(); refresh() }
     public override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); refresh() }
 
-    public func stop() { feedback.invalidate(); renderer?.stop(); renderer = nil; elements = []; accessibleElements = [:]; clipDraft = nil; audioDragDocument = nil }
+    public func stop() {
+        clicks.cancel(); entry?.cancel()
+        feedback.invalidate(); renderer?.stop(); renderer = nil; elements = []; accessibleElements = [:]; clipDraft = nil; audioDragDocument = nil
+    }
 
     // Explicit, hardware-only probe; the app never enables continuous redraw
     // or blocks MainActor during normal editing.
@@ -232,6 +260,8 @@ public final class ArrangeView: NSView {
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
+        // A shown default is recorded before this press can change the selection.
+        if event.clickCount < 3 { clicks.settle() }
         // Track selection uses current shared geometry, even before the next
         // GPU frame replaces the previous frame's accessible elements.
         if let snapshot,
@@ -246,55 +276,84 @@ public final class ArrangeView: NSView {
                 let layout = ClipControlLayout.make(mix, camera: presentedCamera, origin: presentedTimelineOrigin,
                     y: Double(element.y), height: Double(element.height))
                 if let handle = layout.hit(point) {
-                    clipDraft = ClipDraft(original: mix, gain: mix.gain, fadeIn: mix.fadeIn, fadeOut: mix.fadeOut,
-                        fadeInTicks: mix.fadeInTicks, fadeOutTicks: mix.fadeOutTicks, handle: handle, down: point, layout: layout)
+                    let target = ClipTarget(clip: id, handle: handle)
+                    if case .waiting(target) = clicks.phase {} else { press = (target, mix, layout) }
+                    clicks.down(target, at: point, clicks: event.clickCount)
+                    return
                 }
             }
         }
+        clicks.settle()
     }
-    public override func mouseDragged(with event: NSEvent) {
+    public override func mouseDragged(with event: NSEvent) { clicks.dragged(to: convert(event.locationInWindow, from: nil)) }
+    public override func mouseUp(with event: NSEvent) { clicks.up(at: convert(event.locationInWindow, from: nil)) }
+    public override func mouseCancelled(with event: NSEvent) { clicks.cancel() }
+    public override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53, clicks.active { clicks.cancel(); return }
+        clicks.settle()
+        super.keyDown(with: event)
+    }
+
+    /// Gain follows the vertical travel; a fade handle follows the horizontal
+    /// travel from where it was, so a press without movement keeps the value.
+    private func dragClip(by offset: CGSize) {
         guard var draft = clipDraft, let snapshot else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        let unchanged = draft.handle == .gain ? point.y == draft.down.y : point.x == draft.down.x
-        if unchanged {
-            draft.gain = draft.original.gain
-            draft.fadeIn = draft.original.fadeIn; draft.fadeOut = draft.original.fadeOut
-            draft.fadeInTicks = draft.original.fadeInTicks; draft.fadeOutTicks = draft.original.fadeOutTicks
+        let original = draft.original
+        if draft.handle == .gain ? offset.height == 0 : offset.width == 0 {
+            draft.gain = original.gain
+            draft.fadeIn = original.fadeIn; draft.fadeOut = original.fadeOut
+            draft.fadeInTicks = original.fadeInTicks; draft.fadeOutTicks = original.fadeOutTicks
             clipDraft = draft
             refresh(); return
         }
         switch draft.handle {
         case .gain:
-            let movement = Double(point.y - draft.down.y)
-            let initial = draft.original.gain > 0 ? MixScale.decibels(draft.original.gain) : -60
-            let db = initial - movement * 0.25
+            let initial = original.gain > 0 ? MixScale.decibels(original.gain) : -60
+            let db = initial - Double(offset.height) * 0.25
             draft.gain = db <= min(-60, initial) ? 0 : min(MixScale.clipGainMax,
                 Float(pow(10, min(max(24, initial), db) / 20)))
         case .fadeIn, .fadeOut:
-            let fraction = min(1, max(0, (point.x - draft.layout.rect.minX) / max(1, draft.layout.rect.width)))
-            let offset = fraction >= 1 ? draft.original.length : Int64((Double(draft.original.length) * fraction).rounded(.down))
-            let tick = draft.original.start + offset
-            guard let at = snapshot.flicks(at: tick), let first = snapshot.flicks(at: draft.original.start),
-                  let last = snapshot.flicks(at: draft.original.start + draft.original.length) else { return }
-            if draft.handle == .fadeIn { draft.fadeIn = max(0, at - first); draft.fadeInTicks = offset }
-            else { draft.fadeOut = max(0, last - at); draft.fadeOutTicks = draft.original.length - offset }
+            let rect = draft.layout.rect
+            let handle = draft.handle == .fadeIn ? rect.minX + draft.layout.fadeIn : rect.maxX - draft.layout.fadeOut
+            let fraction = min(1, max(0, (handle + offset.width - rect.minX) / max(1, rect.width)))
+            let ticks = fraction >= 1 ? original.length : Int64((Double(original.length) * fraction).rounded(.down))
+            guard let at = snapshot.flicks(at: original.start + ticks), let first = snapshot.flicks(at: original.start),
+                  let last = snapshot.flicks(at: original.start + original.length) else { return }
+            if draft.handle == .fadeIn { draft.fadeIn = max(0, at - first); draft.fadeInTicks = ticks }
+            else { draft.fadeOut = max(0, last - at); draft.fadeOutTicks = original.length - ticks }
         }
         clipDraft = draft; refresh()
     }
-    public override func mouseUp(with event: NSEvent) {
-        guard clipDraft != nil else { return }
-        mouseDragged(with: event)
+
+    /// A commit sends the shown value as one edit; a cancel drops the draft.
+    private func finishClip(commit: Bool) {
         guard let draft = clipDraft else { return }
         clipDraft = nil; refresh()
+        guard commit else { return }
         switch draft.handle {
         case .gain: onClipEdit?(.gain(draft.original.id, draft.gain))
         case .fadeIn, .fadeOut: onClipEdit?(.fades(draft.original.id, draft.fadeIn, draft.fadeOut))
         }
     }
-    public override func mouseCancelled(with event: NSEvent) { clipDraft = nil; refresh() }
-    public override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53, clipDraft != nil { clipDraft = nil; refresh(); return }
-        super.keyDown(with: event)
+
+    /// The third click's field, in the inspector's units: dB for gain and
+    /// milliseconds for a fade.
+    private func openEntry(_ target: ClipTarget) {
+        guard let press, press.target == target, let mix = snapshot?.clipMix(target.clip) else { return }
+        entry?.cancel()
+        let rect: CGRect
+        let title: String
+        switch target.handle {
+        case .gain: rect = press.layout.gain; title = text("Clip Gain")
+        case .fadeIn: rect = press.layout.entering; title = text("Fade In")
+        case .fadeOut: rect = press.layout.leaving; title = text("Fade Out")
+        }
+        entry = ValueEntryField.open(in: self, over: rect, text: ClipEntry.text(target.handle, mix), label: title,
+            commit: { [weak self] typed in
+                guard let edit = ClipEntry.edit(target.handle, mix, typed) else { return false }
+                if ClipEntry.changes(edit, mix) { self?.onClipEdit?(edit) }
+                return true
+            }, onClose: { [weak self] in self?.entry = nil })
     }
 
     public override func accessibilityChildren() -> [Any]? {

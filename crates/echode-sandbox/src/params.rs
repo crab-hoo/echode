@@ -69,6 +69,63 @@ pub struct ParamValue {
     pub text: String,
 }
 
+/// How the plugin read typed text for one parameter (`text_to_value`).
+/// Reading text changes nothing in the plugin.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ParamText {
+    /// A finite value in the plugin's own units. The range is not checked here.
+    Value(f64),
+    /// The plugin converts text and refused this text.
+    Refused,
+    /// The plugin has no `text_to_value`. The host reads a plain number instead.
+    Unsupported,
+}
+
+pub(crate) fn write_text_request(id: u32, text: &str) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4 + text.len());
+    body.extend_from_slice(&id.to_le_bytes());
+    body.extend_from_slice(text.as_bytes());
+    body
+}
+
+pub(crate) fn read_text_request(body: &[u8]) -> io::Result<(u32, String)> {
+    let mut cursor = Cursor::new(body);
+    let id = cursor.u32()?;
+    let text = String::from_utf8(cursor.take(cursor.remaining())?.to_vec())
+        .map_err(|_| invalid("parameter text is not UTF-8"))?;
+    Ok((id, text))
+}
+
+pub(crate) fn write_parsed(parsed: ParamText) -> Vec<u8> {
+    match parsed {
+        ParamText::Value(value) => {
+            let mut body = vec![0];
+            body.extend_from_slice(&value.to_bits().to_le_bytes());
+            body
+        }
+        ParamText::Refused => vec![1],
+        ParamText::Unsupported => vec![2],
+    }
+}
+
+pub(crate) fn read_parsed(body: &[u8]) -> io::Result<ParamText> {
+    let mut cursor = Cursor::new(body);
+    let parsed = match cursor.u8()? {
+        0 => {
+            let value = cursor.f64()?;
+            if !value.is_finite() {
+                return Err(invalid("parameter value is not finite"));
+            }
+            ParamText::Value(value)
+        }
+        1 => ParamText::Refused,
+        2 => ParamText::Unsupported,
+        _ => return Err(invalid("unknown parameter text reply")),
+    };
+    cursor.finish()?;
+    Ok(parsed)
+}
+
 pub(crate) fn write_infos(infos: &[ParamInfo]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&len32(infos.len()).to_le_bytes());
@@ -307,6 +364,29 @@ mod tests {
         assert_eq!(read_values(&write_values(&values)).unwrap(), values);
         let body = write_values(&values);
         assert!(read_values(&body[..body.len() - 2]).is_err());
+    }
+
+    #[test]
+    fn typed_text_round_trips_and_rejects_bad_replies() {
+        let request = write_text_request(9, "−3 dB");
+        assert_eq!(read_text_request(&request).unwrap(), (9, "−3 dB".into()));
+        assert_eq!(
+            read_text_request(&9u32.to_le_bytes()).unwrap(),
+            (9, String::new())
+        );
+        assert!(read_text_request(&[1, 0]).is_err());
+        assert!(read_text_request(&[9, 0, 0, 0, 0xff]).is_err());
+        for parsed in [
+            ParamText::Value(-0.5),
+            ParamText::Refused,
+            ParamText::Unsupported,
+        ] {
+            assert_eq!(read_parsed(&write_parsed(parsed)).unwrap(), parsed);
+        }
+        assert!(read_parsed(&write_parsed(ParamText::Value(f64::NAN))).is_err());
+        assert!(read_parsed(&[3]).is_err());
+        assert!(read_parsed(&[1, 0]).is_err());
+        assert!(read_parsed(&[0, 0]).is_err());
     }
 
     #[test]

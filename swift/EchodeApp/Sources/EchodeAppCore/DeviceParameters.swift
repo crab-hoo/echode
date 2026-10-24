@@ -255,6 +255,31 @@ extension ProjectController {
         return undoCount == before + 1
     }
 
+    /// Typed text for one parameter, applied and recorded as one Undo step
+    /// (ADR 0153). The plugin reads its own units with `text_to_value`; a
+    /// plugin without that reads a plain number. False means the text is not
+    /// a value in range, so the field stays open. An unchanged value is
+    /// accepted and records nothing.
+    public func enterParameter(_ text: String, id: UInt32, device: UUID) async -> Bool {
+        guard let document, let documentID, let parameter = parameterState(device)?.parameter(id),
+              !parameter.readOnly else { return false }
+        let value: Double?
+        do {
+            let result = try await sendDevice(document, .parse(device: device, id: id, text: text))
+            guard let parsed = result.report.parsed, parsed.id == id else { return false }
+            value = parsed.converts ? parsed.value : MixEntry.number(text, unit: "", silence: false)
+        } catch {
+            if documentID == self.documentID { report(error) }
+            return false
+        }
+        guard self.documentID == documentID, let value, let current = parameterState(device)?.parameter(id),
+              value >= current.min, value <= current.max else { return false }
+        // A default shown by the double click before is put back first.
+        if parameterGesture != nil { await finishParameter(commit: false) }
+        await setParameter(id, device: device, value: value)
+        return true
+    }
+
     /// Pins a parameter to the top of its device's list, or releases it, as
     /// one Undo step. The id is a CLAP parameter id, not a row number.
     @discardableResult

@@ -92,8 +92,9 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         strip.onAdd = add
         strip.onBegin = { controller.beginParameter($0, device: $1) }
         strip.onChange = { controller.changeParameter($0) }
-        strip.onEnd = { Task { await controller.finishParameter(commit: true) } }
+        strip.onEnd = { commit in Task { await controller.finishParameter(commit: commit) } }
         strip.onStep = { device, id, value in Task { await controller.setParameter(id, device: device, value: value) } }
+        strip.onEnter = { device, id, text in await controller.enterParameter(text, id: id, device: device) }
         strip.onPin = { device, id, pinned in Task { await controller.setPinned(id, device: device, pinned: pinned, documentID: document) } }
         strip.onRetry = { device in controller.retryParameters(device, documentID: document) }
         strip.configure(devices: devices, track: track, document: document, busy: busy, locked: locked, states: states, outputOpening: outputOpening, collapsed: collapsed)
@@ -137,8 +138,10 @@ final class DeviceStripView: NSView {
     var onCollapse: ((UUID, Bool) -> Void)?
     var onBegin: ((UInt32, UUID) -> Bool)?
     var onChange: ((Double) -> Void)?
-    var onEnd: (() -> Void)?
+    var onEnd: ((Bool) -> Void)?
     var onStep: ((UUID, UInt32, Double) -> Void)?
+    /// Typed text for a parameter. False keeps the field open.
+    var onEnter: ((UUID, UInt32, String) async -> Bool)?
     var onPin: ((UUID, UInt32, Bool) -> Void)?
     var onRetry: ((UUID) -> Void)?
     var contentWidth: Double { columns.reduce(Self.trailingWidth) { $0 + $1.preferredWidth } }
@@ -188,7 +191,8 @@ final class DeviceStripView: NSView {
             }
             column.list.onBegin = { [weak self] id in self?.onBegin?(id, device.id) ?? false }
             column.list.onChange = { [weak self] value in self?.onChange?(value) }
-            column.list.onEnd = { [weak self] in self?.onEnd?() }
+            column.list.onEnd = { [weak self] commit in self?.onEnd?(commit) }
+            column.list.onEnter = { [weak self] id, text in await self?.onEnter?(device.id, id, text) ?? false }
             column.list.onStep = { [weak self] id, value in self?.onStep?(device.id, id, value) }
             column.list.onPin = { [weak self] id, pinned in self?.onPin?(device.id, id, pinned) }
             column.onRetry = { [weak self] in self?.onRetry?(device.id) }

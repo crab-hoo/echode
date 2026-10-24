@@ -126,6 +126,12 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 再生の保留と `audio.prepare` は `crates/echode-audio-io/src/session.rs`、開いた時の送信は `ProjectController.preparesOutput` に置く
 （[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
 
+値の操作子のクリック規則と重ねる入力欄は `ValueControl.swift`（`ValueClicks`・`ValueEntryField`）、
+単位と範囲は `MixControls.swift`（`MixEntry`・`ClipEntry`）、各操作子の接続は `ArrangeHeaderView.swift`・`ArrangeView.swift`・
+`WorkspaceParameterView.swift`、回帰は `ValueControlTests.swift` に置く。
+プラグインの文字の変換は、通信の `ParseParam`（`crates/echode-sandbox/src/params.rs`）、ヘルパーの `param_from_text`、
+FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
+
 描画面の左上固定と drawable サイズの主スレッド更新は `CanvasSurface.swift`、対応する製品 View の回帰は `CanvasResizeTests.swift` に置く
 （[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
 

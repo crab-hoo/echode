@@ -118,7 +118,10 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   （[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
   5 番目の下部の独立した開閉・固定高のデバイス・アレンジ非表示を接続した（[ADR 0146](decisions/0146-independent-editor-stack.md)）。
   4 番目の出力の常駐・試聴の操作も接続した（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
-  試聴のループ（UIF-10）は再現しておらず、原因は未確定である。6・7 番目は未着手（[照合](reviews/2026-10-21-ui-feedback-audit.md)）。
+  6 番目の値の操作子（UIF-04）は、単クリックで値を変えない相対ドラッグ、ダブルクリックの既定値、トリプルクリックの入力欄を
+  ヘッダの音量・パン、クリップのハンドル、パラメーター欄へ接続した。プラグインの値は `text_to_value` で表示単位のまま入力する
+  （[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。実画面の操作感・VoiceOver・第三者プラグインの変換はユーザー確認待ちである。
+  試聴のループ（UIF-10）は再現しておらず、原因は未確定である。7 番目は未着手（[照合](reviews/2026-10-21-ui-feedback-audit.md)）。
   音声の複数ファイル同時ドロップ・自動スクロール・配置予定の波形と、同トラックの配置重複は未接続である。
   ドラッグの実操作・見え方・VoiceOver はユーザー確認待ちである。
 - **サンプルの試聴**: 長い素材を少しずつ復号・SRC し、有限の先読みリングから全復号前に鳴らす。

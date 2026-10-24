@@ -36,6 +36,17 @@ public struct DeviceParameterValue: Decodable, Sendable, Equatable {
     public init(id: UInt32, value: Double, text: String) { self.id = id; self.value = value; self.text = text }
 }
 
+/// How the plugin read typed text for one parameter. Nothing changed in it.
+public struct DeviceParameterParse: Decodable, Sendable, Equatable {
+    public let id: UInt32
+    /// The value in the plugin's units. Nil when the plugin refused the text
+    /// or has no converter.
+    public let value: Double?
+    /// False when the plugin has no `text_to_value`: read a plain number.
+    public let converts: Bool
+    public init(id: UInt32, value: Double?, converts: Bool) { self.id = id; self.value = value; self.converts = converts }
+}
+
 public struct DeviceParameterChange: Encodable, Sendable, Equatable {
     public let id: UInt32
     public let value: Double
@@ -64,10 +75,11 @@ public struct DeviceReport: Decodable, Sendable, Equatable {
     public let window: DeviceWindowReport?
     /// A close request finished; there is no window now.
     public let closed: Bool?
+    public let parsed: DeviceParameterParse?
     public init(parameters: [DeviceParameter]? = nil, values: [DeviceParameterValue]? = nil, changed: Bool? = nil,
-                window: DeviceWindowReport? = nil, closed: Bool? = nil) {
+                window: DeviceWindowReport? = nil, closed: Bool? = nil, parsed: DeviceParameterParse? = nil) {
         self.parameters = parameters; self.values = values; self.changed = changed
-        self.window = window; self.closed = closed
+        self.window = window; self.closed = closed; self.parsed = parsed
     }
 }
 
@@ -78,12 +90,14 @@ public enum DeviceCommand: Encodable, Sendable, Equatable {
     case set(device: UUID, changes: [DeviceParameterChange])
     /// Records the plugin's current bytes when they differ from the project.
     case commit(device: UUID)
+    /// Reads typed text in the plugin's units. Nothing changes.
+    case parse(device: UUID, id: UInt32, text: String)
     /// Opens the plugin's own window, or raises it, without taking focus.
     case showWindow(device: UUID, title: String)
     /// Closes the plugin's own window. Never starts a helper to do it.
     case closeWindow(device: UUID)
 
-    enum CodingKeys: String, CodingKey { case type, device, changes, title }
+    enum CodingKeys: String, CodingKey { case type, device, changes, title, id, text }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -98,6 +112,11 @@ public enum DeviceCommand: Encodable, Sendable, Equatable {
         case .commit(let device):
             try container.encode("device.parameter.commit", forKey: .type)
             try container.encode(device, forKey: .device)
+        case .parse(let device, let id, let text):
+            try container.encode("device.parameter.parse", forKey: .type)
+            try container.encode(device, forKey: .device)
+            try container.encode(id, forKey: .id)
+            try container.encode(text, forKey: .text)
         case .showWindow(let device, let title):
             try container.encode("device.gui.show", forKey: .type)
             try container.encode(device, forKey: .device)

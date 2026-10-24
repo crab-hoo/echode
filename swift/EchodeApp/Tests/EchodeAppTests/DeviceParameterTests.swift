@@ -28,8 +28,11 @@ actor FakeParameterPlugin {
     private var holds: Set<UUID> = []
     private var waiting: [UUID: [CheckedContinuation<Void, Never>]] = [:]
     private var failures: Set<UUID> = []
+    /// False acts like a plugin without `text_to_value`.
+    private let converts: Bool
+    private(set) var parsed: [String] = []
 
-    init(extra: Int = 0) { self.extra = extra }
+    init(extra: Int = 0, converts: Bool = true) { self.extra = extra; self.converts = converts }
 
     static func level(_ index: Int) -> UInt32 { UInt32(100 + index) }
     static func hash(gain: Double, mode: Double) -> String {
@@ -90,6 +93,13 @@ actor FakeParameterPlugin {
             let created = openWindows.insert(device).inserted
             return DeviceResult(report: DeviceReport(window: DeviceWindowReport(created: created, visible: true, key: false)),
                                 snapshot: try await document.snapshot())
+        case .parse(_, let id, let text):
+            parsed.append(text)
+            // The fixture's own units: "1.25x" and the mode names. Reading text changes nothing.
+            let value: Double? = id == 2 ? ["Clean", "Half", "Mute"].firstIndex(of: text).map(Double.init)
+                : Double(text.hasSuffix("x") ? String(text.dropLast()) : text)
+            return DeviceResult(report: DeviceReport(parsed: DeviceParameterParse(id: id, value: converts ? value : nil, converts: converts)),
+                                snapshot: try await document.snapshot())
         case .closeWindow(let device):
             openWindows.remove(device)
             return DeviceResult(report: DeviceReport(closed: true), snapshot: try await document.snapshot())
@@ -124,7 +134,8 @@ struct DeviceParameterTests {
             strip.onEdit = { [unowned self] edit in self.pending = Task { _ = await controller.editDeviceChain(edit, documentID: document) } }
             strip.onBegin = { controller.beginParameter($0, device: $1) }
             strip.onChange = { controller.changeParameter($0) }
-            strip.onEnd = { [unowned self] in self.pending = Task { await controller.finishParameter(commit: true) } }
+            strip.onEnd = { [unowned self] commit in self.pending = Task { await controller.finishParameter(commit: commit) } }
+            strip.onEnter = { device, id, text in await controller.enterParameter(text, id: id, device: device) }
             strip.onStep = { [unowned self] device, id, value in
                 self.pending = Task { _ = await controller.setParameter(id, device: device, value: value) }
             }
@@ -236,6 +247,113 @@ struct DeviceParameterTests {
         #expect(column.list.isHidden && !column.message.isHidden && !column.search.isEnabled)
         await controller.close()
         #expect(controller.parameterStates.isEmpty)
+    }
+
+    private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView, clicks: Int = 1) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+            windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 1, clickCount: clicks, pressure: 1))
+    }
+
+    private func key(_ characters: String, code: UInt16, in window: NSWindow) throws -> NSEvent {
+        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: characters,
+            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+    }
+
+    /// Clicks one to `count` times; the third press opens the field and is not released.
+    private func click(_ view: NSView, at point: CGPoint, count: Int) throws {
+        for clicks in 1...count {
+            view.mouseDown(with: try mouse(.leftMouseDown, point, in: view, clicks: clicks))
+            if clicks < 3 { view.mouseUp(with: try mouse(.leftMouseUp, point, in: view, clicks: clicks)) }
+        }
+    }
+
+    /// Replaces the field's text and presses Return through its key routing.
+    private func type(_ text: String, into field: ValueEntryField) async throws {
+        let window = try #require(field.window)
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.selectAll(nil)
+        editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(field.performKeyEquivalent(with: try key("\r", code: 36, in: window)))
+        await field.pending?.value
+    }
+
+    /// The shared value-control clicks on a real parameter row (ADR 0153). A
+    /// plugin with `text_to_value` reads its own units; one without reads numbers.
+    @Test func contractParameterClicksResetTypeInPluginUnitsAndRecordOnce() async throws {
+        for converts in [true, false] {
+            let plugin = FakeParameterPlugin(converts: converts)
+            let (controller, document, track, url) = try await project("value-clicks", plugin: plugin)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let device = try #require(controller.deviceRows(on: track).first)
+            await controller.showDevices(on: track).value
+            let state = try #require(controller.parameterState(device.id))
+            let harness = Harness(controller, track: track, document: document)
+            let list = try #require(harness.strip.columns.first?.list)
+            let gain = try #require(list.visibleRows.first)
+            let slider = gain.slider
+            slider.clicks.interval = 0.01
+            let before = controller.undoCount
+            let travel = Double(slider.bounds.width) - slider.knobThickness
+            let near = CGPoint(x: slider.bounds.maxX - 4, y: slider.bounds.midY)
+
+            // A click away from the knob does not jump there.
+            try click(slider, at: near, count: 1)
+            await harness.settle()
+            #expect(await plugin.sentGains.isEmpty)
+            #expect(state.parameter(1)?.value == 1 && controller.undoCount == before)
+
+            // A drag moves from the pressed value: a quarter of the travel is a quarter of 0...2.
+            slider.mouseDown(with: try mouse(.leftMouseDown, near, in: slider))
+            let left = CGPoint(x: near.x - travel / 4, y: near.y)
+            slider.mouseDragged(with: try mouse(.leftMouseDragged, left, in: slider))
+            slider.mouseUp(with: try mouse(.leftMouseUp, left, in: slider))
+            await harness.settle()
+            #expect(abs(try #require(state.parameter(1)).value - 0.5) < 0.0001)
+            #expect(controller.undoCount == before + 1)
+
+            // The third click puts the value back and opens the plugin's text.
+            try click(slider, at: near, count: 3)
+            await harness.settle()
+            #expect(await plugin.sentGains.suffix(2) == [1, try #require(state.parameter(1)).value])
+            #expect(controller.undoCount == before + 1)
+            let field = try #require(gain.entry)
+            #expect(field.stringValue == "0.50x")
+            try await type(converts ? "0.25x" : "0.25", into: field)
+            #expect(field.closed && gain.entry == nil)
+            #expect(await plugin.parsed.last == (converts ? "0.25x" : "0.25"))
+            #expect(state.parameter(1)?.value == 0.25)
+            #expect(controller.undoCount == before + 2)
+
+            // A double click shows the plugin's default, then records it once.
+            try click(slider, at: near, count: 2)
+            #expect(state.parameter(1)?.value == 1 && controller.undoCount == before + 2)
+            try await Task.sleep(for: .milliseconds(100))
+            await harness.settle()
+            #expect(await plugin.sentGains.last == 1)
+            #expect(controller.undoCount == before + 3)
+
+            let mode = try #require(list.visibleRows.dropFirst().first)
+            try click(mode.slider, at: CGPoint(x: mode.slider.bounds.midX, y: mode.slider.bounds.midY), count: 3)
+            await harness.settle()
+            let modeField = try #require(mode.entry)
+            #expect(modeField.stringValue == "Clean")
+            if converts {
+                try await type("Mute", into: modeField)
+                #expect(state.parameter(2)?.text == "Mute" && controller.undoCount == before + 4)
+            } else {
+                // Without a converter the plugin's words are not numbers, and 5 is out of range.
+                for refused in ["Mute", "5"] {
+                    try await type(refused, into: modeField)
+                    #expect(modeField.invalid && !modeField.closed)
+                }
+                #expect(modeField.performKeyEquivalent(with: try key("\u{1b}", code: 53, in: harness.window)))
+                #expect(modeField.closed && state.parameter(2)?.value == 0 && controller.undoCount == before + 3)
+            }
+            await controller.undo()
+            #expect(controller.undoCount == before + (converts ? 3 : 2))
+            await controller.close()
+        }
     }
 
     /// Device edits keep the workspace enabled for their entire edit turn,

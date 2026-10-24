@@ -110,7 +110,8 @@ pub unsafe extern "C" fn echode_document_history(
 }
 
 /// Queues a device command (`device.parameters`, `device.parameter.set`,
-/// `device.parameter.commit`, `device.gui.show` or `device.gui.close`). Only a
+/// `device.parameter.commit`, `device.parameter.parse`, `device.gui.show` or
+/// `device.gui.close`). Only a
 /// commit that records new plugin bytes enters Undo. The completed snapshot
 /// carries the JSON report.
 ///
