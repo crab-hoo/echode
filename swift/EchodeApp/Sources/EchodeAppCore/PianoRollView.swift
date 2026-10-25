@@ -15,6 +15,8 @@ struct PianoCanvas: NSViewRepresentable {
     let delete: (PianoNote.ID) -> Void
     var start: Int64? = nil
     var setStart: (Int64) -> Void = { _ in }
+    var loop: RulerLoop? = nil
+    var setLoop: (LoopRange) -> Void = { _ in }
     var playback: PlaybackFeed? = nil
     var transportGeneration: UInt64 = 0
     var navigation: CanvasNavigationState? = nil
@@ -29,6 +31,8 @@ struct PianoCanvas: NSViewRepresentable {
         view.grid.onDelete = delete
         view.grid.onSetStart = setStart
         view.grid.setStart(start)
+        view.grid.onSetLoop = setLoop
+        view.grid.setLoop(loop)
         view.grid.setSnapshot(snapshot, track: track, focus: focus, key: key, busy: busy)
         view.grid.setPlayback(playback)
         view.grid.noteTransport(transportGeneration)
@@ -83,6 +87,8 @@ final class PianoGridView: NSView {
     private var caretTick: Int64 = 0
     private var caretPitch = 60
     private var start: Int64?
+    private var loop: RulerLoop?
+    private var rulerPress: PianoRulerPress?
     private(set) var camera = PianoCamera()
     private(set) var key = DisplayKey()
     var pianoLayout: PianoLayout { PianoLayout(width: bounds.width, height: bounds.height) }
@@ -91,6 +97,7 @@ final class PianoGridView: NSView {
     var onEdit: ((PianoNote.ID, NoteGeometry) -> Void)?
     var onDelete: ((PianoNote.ID) -> Void)?
     var onSetStart: ((Int64) -> Void)?
+    var onSetLoop: ((LoopRange) -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -110,6 +117,7 @@ final class PianoGridView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    override func resignFirstResponder() -> Bool { cancelGesture(); return super.resignFirstResponder() }
     override func makeBackingLayer() -> CALayer { metalLayer }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -150,7 +158,7 @@ final class PianoGridView: NSView {
         let restoredFocus = memory != nil && memory?.focus == focus && memory?.geometry == focus.flatMap { snapshot.pianoNote($0).map(NoteGeometry.init) }
         if trackChanged { camera = memory?.camera ?? PianoCamera(); caretTick = 0; caretPitch = 60 }
         let changed = self.snapshot !== snapshot || self.track != track
-        if changed || busy { gesture = nil; preview = nil; revealOnLayout = false }
+        if changed || busy { gesture = nil; preview = nil; rulerPress = nil; revealOnLayout = false }
         if self.track != track { accessible = [:] }
         if changed { elements = []; submittedFrame = nil }
         let needsRefresh = changed || self.focus != focus || self.key != key || self.busy != busy
@@ -169,8 +177,14 @@ final class PianoGridView: NSView {
             refresh()
         }
     }
-    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); refresh() }
-    override func setBoundsSize(_ newSize: NSSize) { super.setBoundsSize(newSize); refresh() }
+    override func setFrameSize(_ newSize: NSSize) {
+        if bounds.size != newSize { rulerPress = nil }
+        super.setFrameSize(newSize); refresh()
+    }
+    override func setBoundsSize(_ newSize: NSSize) {
+        if bounds.size != newSize { rulerPress = nil }
+        super.setBoundsSize(newSize); refresh()
+    }
     override func layout() {
         super.layout()
         if revealOnLayout, pianoLayout.grid.width > 0, pianoLayout.grid.height > 0,
@@ -206,10 +220,9 @@ final class PianoGridView: NSView {
               submittedFrame.piano.track == track, submittedFrame.piano.preview == nil else { return }
         let panePoint = convert(event.locationInWindow, from: nil)
         if pianoLayout.ruler.contains(panePoint) {
-            // The ruler sets the remembered start; a playing transport seeks.
+            // Defer the click until release so a loop drag never seeks.
             cancelGesture()
-            let x = pianoLayout.gridPoint(panePoint).x
-            if let tick = camera.rulerTick(at: x, snapping: !event.modifierFlags.contains(.shift)) { onSetStart?(tick) }
+            rulerPress = PianoRulerPress(x: pianoLayout.gridPoint(panePoint).x, camera: camera)
             return
         }
         guard pianoLayout.grid.contains(panePoint) else { return }
@@ -228,12 +241,30 @@ final class PianoGridView: NSView {
         }
     }
     override func mouseDragged(with event: NSEvent) {
+        if var press = rulerPress {
+            guard !busy else { cancelGesture(); return }
+            press.update(x: pianoLayout.gridPoint(convert(event.locationInWindow, from: nil)).x,
+                         snapping: !event.modifierFlags.contains(.shift))
+            rulerPress = press; refresh(); return
+        }
         guard let gesture, !busy else { return }
         let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
         preview = gesture.preview(x: point.x, y: point.y, camera: camera).map { PianoPreview(id: gesture.id, geometry: $0) }
         refresh()
     }
     override func mouseUp(with event: NSEvent) {
+        if var press = rulerPress {
+            press.update(x: pianoLayout.gridPoint(convert(event.locationInWindow, from: nil)).x,
+                         snapping: !event.modifierFlags.contains(.shift))
+            cancelGesture()
+            guard !busy, press.camera == camera else { return }
+            if press.dragged {
+                if let range = press.range { onSetLoop?(range) }
+            } else if let tick = camera.rulerTick(at: press.x, snapping: !event.modifierFlags.contains(.shift)) {
+                onSetStart?(tick)
+            }
+            return
+        }
         let finished = preview
         let original = gesture?.original
         cancelGesture()
@@ -243,7 +274,7 @@ final class PianoGridView: NSView {
         guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
         let shift = event.modifierFlags.contains(.shift)
         switch Int(event.keyCode) {
-        case kVK_Escape: if gesture != nil || preview != nil { cancelGesture() } else { super.keyDown(with: event) }
+        case kVK_Escape: if gesture != nil || preview != nil || rulerPress != nil { cancelGesture() } else { super.keyDown(with: event) }
         case kVK_Tab: if !navigate(backwards: shift) { super.keyDown(with: event) }
         case kVK_Return, kVK_ANSI_KeypadEnter: _ = insertAtCaret()
         case kVK_Delete, kVK_ForwardDelete: if !busy, let focus { onDelete?(focus) }
@@ -294,9 +325,14 @@ final class PianoGridView: NSView {
             return NoteGeometry(note) != geometry
         }
     }
-    private func cancelGesture() { gesture = nil; preview = nil; refresh() }
+    private func cancelGesture() { gesture = nil; preview = nil; rulerPress = nil; refresh() }
     /// The remembered start drawn on the ruler. Redraws only when it changes.
     func setStart(_ start: Int64?) { guard self.start != start else { return }; self.start = start; refresh() }
+    func setLoop(_ loop: RulerLoop?) { guard self.loop != loop else { return }; self.loop = loop; refresh() }
+    var displayedLoop: RulerLoop? {
+        if let range = rulerPress?.range { return RulerLoop(range: range, enabled: loop?.enabled ?? false) }
+        return loop
+    }
     /// Replaces the live feed. Equality is the document, not the playhead.
     func setPlayback(_ playback: PlaybackFeed?) { guard self.playback != playback else { return }; self.playback = playback; refresh() }
 
@@ -318,7 +354,7 @@ final class PianoGridView: NSView {
         guard let track else { return }
         renderer?.update(CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
             width: bounds.width, height: bounds.height, scale: scale,
-            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview, start: start), playback: playback,
+            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview, start: start, loop: displayedLoop), playback: playback,
             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
     }
 

@@ -91,6 +91,12 @@ make debug-report
   停止は `Rewind` で時計だけを戻す。余韻が切れるなら停止の経路が `Locate`（リセットあり）になっていないかを `stop-return-tails` と `playback-start` で切り分ける。
   開始位置はパッケージ直下の `transport.json` にあり、履歴・Undo・復帰の対象外である。
   壊れた・新しい版・リンクのファイルは 0 として読むので、開始位置が 0 に戻る時はこのファイルの中身と種類を確認する。
+- **ループ範囲のドラッグで再生位置が動く・終端以降から勝手に戻る**:
+  押下では開始位置を送らず、離した時のクリックだけが `transport.set_start` を送る。
+  ドラッグの範囲はオフ中は下書きだけ、オン中は `transport.loop` を 1 回送る（[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
+  `piano-ruler-loop-ui` で入力と取消、`loop-entry` で製品バッファの位置と全サンプルを切り分ける。
+  `audio.status` のループがオンでも、終端以降へ置いた再生は通常進行する。
+  ブロック処理で終端に着いた場合は次のブロックで戻るため、同じ値の `tick` でも位置移動と混同しない。
 - **音源なしのノート・Sine Pad が鳴らない**:
   音源のないトラックは無音である。デバイス一覧に `dev.echode.sine-pad` があるかを確認する。
   一覧にない時は `make bundled-plugins` とヘルパー隣の `plugins/`、アプリ内の `Contents/PlugIns/`、同梱用走査キャッシュを確認する。

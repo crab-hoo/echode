@@ -445,6 +445,19 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(contract["negative_control"]["file"].endswith("PianoRollView.swift"))
         self.assertIn("buildAccessibilityChildren", contract["negative_control"]["new"])
 
+    def test_ruler_loop_editing_keeps_native_input_and_rt_block_comparisons(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        ui = contracts["piano-ruler-loop-ui"]
+        self.assertEqual((ui["runner"], ui["suite"]), ("swift", "RulerLoopTests"))
+        self.assertIn("onSetLoop", ui["negative_control"]["old"])
+        engine = contracts["loop-entry"]
+        self.assertEqual((engine["package"], engine["target"]), ("echode-engine", ["--test", "block_size"]))
+        self.assertTrue(engine["test"].endswith("_under_rtsan"))
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/RulerLoop.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-tsan"} <= self.selected(path))
+        self.assertTrue({"rtsan", "check-product-contracts"} <= self.selected("crates/echode-engine/src/playback.rs"))
+
     def test_chrome_layout_keeps_status_row_and_play_button_sizes(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "transport-layout-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "WorkspaceChromeTests"))
@@ -624,7 +637,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "fx-header-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
-                          "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui",
+                          "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "loop-entry",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
                           "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:

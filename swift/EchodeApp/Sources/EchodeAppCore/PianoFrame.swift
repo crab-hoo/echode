@@ -116,6 +116,13 @@ struct PianoFrame: Sendable {
     var rulerInstances: [Instance] {
         var instances = [instance(SIMD4(0, 0, Float(input.width), Float(layout.rulerHeight)), color: SIMD4(0.12, 0.13, 0.16, 1)),
                          instance(SIMD4(0, Float(layout.rulerHeight - 1), Float(input.width), 1), color: SIMD4(0.27, 0.29, 0.33, 1))]
+        if let rect = loopRect {
+            let enabled = piano.loop?.enabled == true
+            instances.append(instance(SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)),
+                                      color: enabled ? SIMD4(0.22, 0.34, 0.30, 1) : SIMD4(0.20, 0.22, 0.25, 1)))
+            instances.append(instance(SIMD4(Float(rect.minX), 0, Float(rect.width), Float(min(3, layout.rulerHeight))),
+                                      color: enabled ? SIMD4(0.40, 0.84, 0.56, 1) : SIMD4(0.45, 0.48, 0.53, 1)))
+        }
         if let x = startX {
             // A stem with a flag at its top: stop returns here.
             let color = SIMD4<Float>(0.40, 0.84, 0.56, 1)
@@ -124,6 +131,16 @@ struct PianoFrame: Sendable {
             instances.append(instance(SIMD4(Float(x), 0, flag, Float(min(6, layout.rulerHeight))), color: color))
         }
         return instances
+    }
+
+    /// The visible part of the loop band, never the keyboard headings or note grid.
+    var loopRect: CGRect? {
+        guard let range = piano.loop?.range else { return nil }
+        let left = layout.gridOrigin.x + (Double(range.start) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        let right = layout.gridOrigin.x + (Double(range.end) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        let rect = CGRect(x: max(layout.ruler.minX, left), y: 0,
+                          width: max(0, min(layout.ruler.maxX, right) - max(layout.ruler.minX, left)), height: layout.rulerHeight)
+        return rect.isEmpty ? nil : rect
     }
 
     /// Start marker x in points. Nil when it falls outside the ruler.

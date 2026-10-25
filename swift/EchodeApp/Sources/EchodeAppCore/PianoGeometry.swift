@@ -155,4 +155,5 @@ struct PianoRenderInput: Sendable {
     let preview: PianoPreview?
     /// The remembered playback start, marked on the ruler (ADR 0155).
     var start: Int64? = nil
+    var loop: RulerLoop? = nil
 }

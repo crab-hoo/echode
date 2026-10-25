@@ -72,6 +72,8 @@ pub struct Transport<C: ClockSource = InternalClock> {
     loop_end: Option<Tick>,
     /// Set once the playhead has jumped back to the loop start.
     has_wrapped: bool,
+    /// False after locating at/after the end; reaching the end from before wraps.
+    loop_armed: bool,
 }
 
 impl Transport<InternalClock> {
@@ -93,6 +95,7 @@ impl<C: ClockSource> Transport<C> {
             loop_start: None,
             loop_end: None,
             has_wrapped: false,
+            loop_armed: false,
         })
     }
 
@@ -159,6 +162,7 @@ impl<C: ClockSource> Transport<C> {
     pub fn locate(&mut self, tick: Tick) -> Result<(), PlaybackError> {
         self.clock.locate(self.sample_at(tick)?);
         self.has_wrapped = false;
+        self.arm_loop()?;
         Ok(())
     }
 
@@ -181,6 +185,7 @@ impl<C: ClockSource> Transport<C> {
             self.loop_end = None;
         }
         self.has_wrapped = false;
+        self.arm_loop()?;
         Ok(())
     }
 
@@ -232,7 +237,7 @@ impl<C: ClockSource> Transport<C> {
             return Ok(None);
         }
         let mut release_at = None;
-        if let Some((loop_start, loop_end)) = self.loop_samples()?
+        if let Some((loop_start, loop_end)) = self.active_loop_samples()?
             && self.clock.position() >= loop_end
         {
             release_at = Some(loop_end);
@@ -245,7 +250,7 @@ impl<C: ClockSource> Transport<C> {
             return Err(PlaybackError::InvalidLoop);
         }
         let start = self.clock.position();
-        let (loop_end, wrap_from) = match self.loop_samples()? {
+        let (loop_end, wrap_from) = match self.active_loop_samples()? {
             Some((loop_start, loop_end)) => {
                 (Some(loop_end), self.has_wrapped.then_some(loop_start))
             }
@@ -264,7 +269,7 @@ impl<C: ClockSource> Transport<C> {
     }
 
     fn frames_until_loop_end(&self) -> Result<u32, PlaybackError> {
-        let Some((_, loop_end)) = self.loop_samples()? else {
+        let Some((_, loop_end)) = self.active_loop_samples()? else {
             return Ok(u32::MAX);
         };
         let room = loop_end.saturating_sub(self.clock.position());
@@ -272,6 +277,21 @@ impl<C: ClockSource> Transport<C> {
             return Err(PlaybackError::InvalidLoop);
         }
         Ok(u32::try_from(room).unwrap_or(u32::MAX))
+    }
+
+    fn arm_loop(&mut self) -> Result<(), PlaybackError> {
+        self.loop_armed = self
+            .loop_samples()?
+            .is_some_and(|(_, end)| self.clock.position() < end);
+        Ok(())
+    }
+
+    fn active_loop_samples(&self) -> Result<Option<(i64, i64)>, PlaybackError> {
+        if self.loop_armed {
+            self.loop_samples()
+        } else {
+            Ok(None)
+        }
     }
 
     fn loop_samples(&self) -> Result<Option<(i64, i64)>, PlaybackError> {

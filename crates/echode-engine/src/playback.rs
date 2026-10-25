@@ -1192,6 +1192,8 @@ pub struct PlaybackAudio {
     failed: bool,
     loop_start: Option<i64>,
     loop_end: Option<i64>,
+    /// A locate at/after the end bypasses the loop until another locate or range change.
+    loop_armed: bool,
     metronome: bool,
     /// One slot per prepared frame. A one-sample loop can fill every slot.
     spans: Vec<Span>,
@@ -1379,6 +1381,7 @@ pub fn playback_with_clock(
         failed: false,
         loop_start: None,
         loop_end: None,
+        loop_armed: false,
         metronome: false,
         spans: vec![
             Span {
@@ -1985,6 +1988,7 @@ impl PlaybackAudio {
         // possibly to the remembered start; keep that position.
         if self.playing {
             self.clock.locate(sample);
+            self.arm_loop();
         }
         self.playing = false;
         self.stop_tail = None;
@@ -2141,8 +2145,11 @@ impl PlaybackAudio {
             }
             carried?;
         }
-        self.loop_start = self.current.loop_start;
-        self.loop_end = self.current.loop_end;
+        if (self.loop_start, self.loop_end) != (self.current.loop_start, self.current.loop_end) {
+            self.loop_start = self.current.loop_start;
+            self.loop_end = self.current.loop_end;
+            self.arm_loop();
+        }
         while let Ok((revision, command)) = self.commands.pop() {
             match command {
                 PlaybackCommand::Play => {
@@ -2168,6 +2175,7 @@ impl PlaybackAudio {
                     // A stop tail renders from its own position, so moving
                     // the clock does not cut it or reset any plugin.
                     self.clock.locate(sample);
+                    self.arm_loop();
                     self.current.place(sample, true)?;
                 }
                 PlaybackCommand::Locate(sample) => {
@@ -2176,16 +2184,19 @@ impl PlaybackAudio {
                     }
                     self.output_revision = self.output_revision.wrapping_add(1);
                     self.clock.locate(sample);
+                    self.arm_loop();
                     self.current.place(sample, true)?;
                     self.reset_plugins = true;
                 }
                 PlaybackCommand::SetLoop { start, end } if end > start => {
                     self.loop_start = Some(start);
                     self.loop_end = Some(end);
+                    self.arm_loop();
                 }
                 PlaybackCommand::SetLoop { .. } | PlaybackCommand::ClearLoop => {
                     self.loop_start = None;
                     self.loop_end = None;
+                    self.loop_armed = false;
                 }
                 PlaybackCommand::SetMetronome(enabled) => self.metronome = enabled,
                 PlaybackCommand::PreviewFader { track, gain, pan } => {
@@ -2252,6 +2263,7 @@ impl PlaybackAudio {
                 self.output_revision = self.output_revision.wrapping_add(1);
             }
         }
+        let loop_bounds = self.active_loop();
         if !self.playing {
             if live {
                 self.current.render(
@@ -2261,7 +2273,7 @@ impl PlaybackAudio {
                     &mut self.hosts,
                     deadline,
                     RenderRange {
-                        loop_bounds: (self.loop_start, self.loop_end),
+                        loop_bounds,
                         started_before: Some(self.clock.position()),
                         source_fade: None,
                         meter_release,
@@ -2283,11 +2295,12 @@ impl PlaybackAudio {
             }
             return Ok(());
         }
+        let (loop_start, loop_end) = loop_bounds;
         let (span_count, end) = split_loop(
             self.clock.position(),
             left.len(),
-            self.loop_start,
-            self.loop_end,
+            loop_start,
+            loop_end,
             &mut self.spans,
         )?;
         let spans = self
@@ -2301,7 +2314,7 @@ impl PlaybackAudio {
             &mut self.hosts,
             deadline,
             RenderRange {
-                loop_bounds: (self.loop_start, self.loop_end),
+                loop_bounds,
                 started_before: None,
                 source_fade: None,
                 meter_release,
@@ -2320,6 +2333,18 @@ impl PlaybackAudio {
         Ok(())
     }
 
+    fn arm_loop(&mut self) {
+        self.loop_armed = self.loop_end.is_some_and(|end| self.clock.position() < end);
+    }
+
+    fn active_loop(&self) -> (Option<i64>, Option<i64>) {
+        if self.loop_armed {
+            (self.loop_start, self.loop_end)
+        } else {
+            (None, None)
+        }
+    }
+
     fn begin_stop(&mut self, live: bool) -> Result<(), PlaybackError> {
         if live
             && self.live_output
@@ -2332,7 +2357,7 @@ impl PlaybackAudio {
                 position: self.clock.position(),
                 cutoff: self.clock.position(),
                 remaining: (self.current.sample_rate / 200).max(2),
-                loop_bounds: (self.loop_start, self.loop_end),
+                loop_bounds: self.active_loop(),
             });
         }
         if live {
@@ -2467,6 +2492,7 @@ fn mix_metronome(
     right: &mut [f32],
     cutoff: Option<i64>,
 ) -> Result<(), PlaybackError> {
+    let (loop_start, loop_end) = audio.active_loop();
     for index in 0..span_count {
         let span = *audio
             .spans
@@ -2481,8 +2507,8 @@ fn mix_metronome(
             frames: span.frames,
             block_offset: span.block_offset,
             release_at: span.release_at,
-            loop_end: audio.loop_end,
-            wrap_from: span.release_at.and(audio.loop_start),
+            loop_end,
+            wrap_from: span.release_at.and(loop_start),
         };
     }
     audio

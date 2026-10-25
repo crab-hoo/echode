@@ -22,6 +22,74 @@ fn the_downbeat_transport_is_playing_at_120() {
     assert_eq!(event.signature_numerator, 4);
 }
 
+#[test]
+fn loops_enter_from_before_but_locates_at_or_after_the_end_bypass_them() {
+    let mut transport = transport();
+    transport
+        .set_loop(Some((
+            Tick::quarters(1).unwrap(),
+            Tick::quarters(2).unwrap(),
+        )))
+        .unwrap();
+    let empty = PlayedSpan {
+        start_sample: 0,
+        frames: 0,
+        block_offset: 0,
+        release_at: None,
+        loop_end: None,
+        wrap_from: None,
+    };
+    // These slots cover this call's two spans only; they are not a transport limit.
+    let mut spans = [empty; 2];
+    transport.play();
+    assert_eq!(transport.pull(48_001, &mut spans).unwrap(), 2);
+    assert_eq!(spans[0].start_sample, 0);
+    assert_eq!(spans[0].frames, 48_000);
+    assert_eq!(spans[1].start_sample, 24_000);
+    assert_eq!(transport.position_sample(), 24_001);
+    for beat in [2, 3] {
+        transport.locate(Tick::quarters(beat).unwrap()).unwrap();
+        assert_eq!(transport.pull(512, &mut spans).unwrap(), 1);
+        assert_eq!(transport.position_sample(), beat * 24_000 + 512);
+        assert_eq!(spans[0].loop_end, None);
+        assert_eq!(spans[0].release_at, None);
+    }
+}
+
+#[test]
+fn pausing_at_the_loop_end_preserves_the_crossing_but_locating_there_bypasses_it() {
+    let mut transport = transport();
+    transport
+        .set_loop(Some((
+            Tick::quarters(1).unwrap(),
+            Tick::quarters(2).unwrap(),
+        )))
+        .unwrap();
+    transport.locate(Tick::quarters(1).unwrap()).unwrap();
+    // A single span suffices for each boundary probe below.
+    let mut spans = [PlayedSpan {
+        start_sample: 0,
+        frames: 0,
+        block_offset: 0,
+        release_at: None,
+        loop_end: None,
+        wrap_from: None,
+    }; 1];
+    transport.play();
+    transport.pull(24_000, &mut spans).unwrap();
+    assert_eq!(transport.position_sample(), 48_000);
+    transport.stop();
+    assert_eq!(transport.pull(64, &mut spans).unwrap(), 0);
+    transport.play();
+    transport.pull(1, &mut spans).unwrap();
+    assert_eq!(transport.position_sample(), 24_001);
+    assert_eq!(spans[0].release_at, Some(48_000));
+    transport.locate(Tick::quarters(2).unwrap()).unwrap();
+    transport.pull(1, &mut spans).unwrap();
+    assert_eq!(transport.position_sample(), 48_001);
+    assert_eq!(spans[0].release_at, None);
+}
+
 fn transport() -> Transport {
     Transport::new(
         48_000,

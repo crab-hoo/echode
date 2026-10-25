@@ -138,8 +138,12 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 
 記憶した再生開始位置と停止での復帰は、セッションの `transport.set_start` と停止（`crates/echode-audio-io/src/session.rs`）、
 余韻を切らないエンジンの `PlaybackCommand::Rewind`（`playback.rs`）、パッケージの `transport.json`（`crates/echode-history/src/transport.rs`）に置く。
-画面はピアノロールのルーラーの押下と印（`PianoRollView.swift`・`PianoFrame.swift`）、Space と一時停止の振り分け（`ProjectController.swift`）、
+画面はピアノロールのルーラーのクリックと印（`PianoRollView.swift`・`PianoFrame.swift`）、Space と一時停止の振り分け（`ProjectController.swift`）、
 回帰は `PlaybackStartTests.swift` と `stopped_processing.rs`（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
+
+ルーラーの範囲とドラッグ状態は `RulerLoop.swift`、仮表示と確定は `PianoRollView.swift`、帯は `PianoFrame.swift` に置く。
+製品と検証用のループへの進入判定は `PlaybackAudio::arm_loop` と `Transport::arm_loop`、回帰は `RulerLoopTests.swift` と
+`block_size.rs` の `contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan`（[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
 
 描画面の左上固定と drawable サイズの主スレッド更新は `CanvasSurface.swift`、対応する製品 View の回帰は `CanvasResizeTests.swift` に置く
 （[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。

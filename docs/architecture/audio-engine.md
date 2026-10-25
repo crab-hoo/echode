@@ -89,6 +89,8 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
 - **HAL と時計**: `echode-audio-io` で公開 HAL API の `objc2` 型を使い、制御スレッドが機器一覧・通知・開閉を担当する。
   時計は `ClockSource`（現在は `InternalClock`）で進める（[ADR 0047](../decisions/0047-product-audio.md)）。
   ループとメトロノームはモデルの Undo・ジャーナルから独立させる（[ADR 0055](../decisions/0055-loop-metronome.md)）
+- **ループへの進入**: 終端より前から再生した場合だけ終端で戻り、終端ちょうど・以降への開始／シークは通常進行する。
+  処理で終端へ到達した場合の折返しは、一時停止と同範囲の計画交換でも保つ（[ADR 0156](../decisions/0156-ruler-loop-range-and-entry.md)）。
 - **準備中の取消と保持**: 準備中の取消世代を投入時に共有し、停止後の素材・ヘルパー・出力を再利用する
   （[ADR 0097](../decisions/0097-cancellable-retained-transport.md)）。
   デバイスビューの要求では、再生指令を入れずに出力とヘルパーを開いて同じく保持する（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）。

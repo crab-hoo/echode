@@ -204,6 +204,7 @@ I/O スレッド、Audio Workgroup 参加ワーカー、先読みワーカー、
 ### 7.9 出力デバイス
 
 公開 HAL API（`objc2`）による機器管理・システム出力追従（[ADR 0015](decisions/0015-output-device-follow.md)、[ADR 0047](decisions/0047-product-audio.md)）、ループ・メトロノーム（[ADR 0055](decisions/0055-loop-metronome.md)）、準備中取消と CLAP 状態リセット（[ADR 0097](decisions/0097-cancellable-retained-transport.md)、[ADR 0099](decisions/0099-transport-plugin-state.md)）、P2 の開始位置記憶（[interaction-design.md](interaction-design.md#再生の開始位置)）を行う。
+P2 のループ範囲のルーラー操作と、終端以降からの通常進行は [ADR 0156](decisions/0156-ruler-loop-range-and-entry.md) を参照する。
 
 ## 8. ルーティング
 

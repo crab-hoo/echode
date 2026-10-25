@@ -9,8 +9,8 @@ import Testing
 struct PlaybackStartTests {
     private let beat: Int64 = 705_600
 
-    private func mouse(_ point: CGPoint, in view: NSView, flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: view.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
+    private func mouse(_ point: CGPoint, in view: NSView, flags: NSEvent.ModifierFlags = [], type: NSEvent.EventType = .leftMouseDown) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
             windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
     }
 
@@ -67,7 +67,7 @@ struct PlaybackStartTests {
         await controller.close()
     }
 
-    /// A ruler press sets the start on the note grid; Shift releases the grid.
+    /// A ruler click sets the start on the note grid; Shift releases the grid.
     /// The marker is drawn inside the ruler only.
     @Test func contractPianoRulerSetsTheStartOnTheGridAndDrawsItsMarker() async throws {
         let controller = ProjectController()
@@ -90,8 +90,10 @@ struct PlaybackStartTests {
 
         // 1.3 beats is nearest the 1.25 sixteenth.
         grid.mouseDown(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid))
+        grid.mouseUp(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, type: .leftMouseUp))
         #expect(requests == [beat * 5 / 4])
         grid.mouseDown(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, flags: .shift))
+        grid.mouseUp(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, flags: .shift, type: .leftMouseUp))
         #expect(requests.last == PianoCamera.ticks(1.3))
         // The keyboard header and the note grid never move the start.
         grid.mouseDown(with: try mouse(CGPoint(x: layout.degreeWidth + 4, y: layout.rulerHeight / 2), in: grid))

@@ -92,6 +92,98 @@ fn offline_devices_keep_stereo_clips_independent_of_block_size_under_rtsan() {
         }
     }
 }
+#[test]
+fn contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan() {
+    use echode_engine::{LoadedClip, PlaybackCommand, playback_pair};
+    let (project, track) = Project::new().add_track("loop source");
+    // The duration and loop bounds exercise this regression only, not engine limits.
+    let source: Arc<[f32]> = (0..4096).map(|index| index as f32 / 8192.0).collect();
+    let (start, end, duration) = (200i64, 640i64, 1500usize);
+    for rate in [48_000, 96_000] {
+        for initial in [0, end - 1, end, end + 100] {
+            let mut reference = None;
+            for block in BLOCKS {
+                let (mut control, mut audio) =
+                    playback_pair(&project, rate, block as usize).unwrap();
+                let samples = Arc::clone(&source);
+                control.set_clip_loader(Arc::new(move |_, _| {
+                    Ok(vec![LoadedClip {
+                        track: track.raw(),
+                        start_sample: 0,
+                        samples: Arc::clone(&samples),
+                        right: Some(Arc::clone(&samples)),
+                        fade_in: 0,
+                        fade_out: 0,
+                    }])
+                }));
+                control
+                    .command(PlaybackCommand::SetLoop { start, end })
+                    .unwrap();
+                control.command(PlaybackCommand::Locate(initial)).unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                let mut left = vec![0.0; block as usize];
+                let mut right = left.clone();
+                let mut heard = Vec::new();
+                for offset in (0..duration).step_by(block as usize) {
+                    let count = (block as usize).min(duration - offset);
+                    audio.render(&mut left[..count], &mut right[..count]);
+                    assert_eq!(&left[..count], &right[..count]);
+                    heard.extend_from_slice(&left[..count]);
+                }
+                let linear_end = initial + duration as i64;
+                let expected = if initial >= end {
+                    linear_end
+                } else {
+                    start + (linear_end - end) % (end - start)
+                };
+                assert!(!control.status().failed);
+                assert_eq!(
+                    control.status().sample,
+                    expected,
+                    "initial {initial}, block {block}"
+                );
+                if initial >= end {
+                    assert!(heard.as_slice() == &source[initial as usize..linear_end as usize]);
+                } else if initial == 0 {
+                    assert_eq!(
+                        &heard[..50],
+                        &source[..50],
+                        "play the lead-in, not the loop head"
+                    );
+                }
+                if let Some(reference) = &reference {
+                    assert!(&heard == reference, "initial {initial}, block {block}");
+                } else {
+                    reference = Some(heard);
+                }
+                // A seek out of an already active loop must bypass it too.
+                control.command(PlaybackCommand::Locate(end + 100)).unwrap();
+                audio.render(&mut left, &mut right);
+                assert_eq!(control.status().sample, end + 100 + i64::from(block));
+                assert!(
+                    left.as_slice()
+                        == &source[(end + 100) as usize..(end + 100) as usize + block as usize]
+                );
+                // Arriving exactly at the end is different from locating there.
+                control.command(PlaybackCommand::Locate(end - 1)).unwrap();
+                audio.render(&mut left[..1], &mut right[..1]);
+                assert_eq!(control.status().sample, end);
+                control.command(PlaybackCommand::Pause).unwrap();
+                audio.render(&mut left, &mut right);
+                control.service();
+                control.replace(&project).unwrap();
+                audio.render(&mut left, &mut right);
+                control.command(PlaybackCommand::Play).unwrap();
+                audio.render(&mut left[..1], &mut right[..1]);
+                assert_eq!(control.status().sample, start + 1);
+                control.command(PlaybackCommand::Rewind(end)).unwrap();
+                control.command(PlaybackCommand::Play).unwrap();
+                audio.render(&mut left[..1], &mut right[..1]);
+                assert_eq!(control.status().sample, end + 1);
+            }
+        }
+    }
+}
 
 #[test]
 fn bypass_copies_each_plane_without_partition_or_gain_changes() {

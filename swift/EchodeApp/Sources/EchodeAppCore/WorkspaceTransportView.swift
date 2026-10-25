@@ -49,7 +49,7 @@ struct WorkspaceTransportView: View {
             .padding(.horizontal, 12).padding(.vertical, 8)
             .onChange(of: loopStart) { _, _ in storeLoopDraft() }
             .onChange(of: loopEnd) { _, _ in storeLoopDraft() }
-            .onChange(of: loopField) { previous, _ in if previous != nil { commitLoop() } }
+            .onChange(of: loopField) { previous, _ in if previous != nil { commitLoop(); if loopField == nil { showLoop() } } }
             .onChange(of: controller.documentID) { _, _ in
                 loopStart = "0"
                 loopEnd = "4"
@@ -57,10 +57,16 @@ struct WorkspaceTransportView: View {
             }
             // The rulers change the start too. A draft being typed is kept.
             .onChange(of: controller.playbackStart, initial: true) { _, _ in if !startField { showStart() } }
+            .onChange(of: controller.loopStartBeat, initial: true) { _, _ in if loopField == nil { showLoop() } }
+            .onChange(of: controller.loopEndBeat) { _, _ in if loopField == nil { showLoop() } }
             .onChange(of: startField) { _, focused in if !focused { showStart() } }
     }
     private func setStart() { if let beat = seekBeat { Task { await controller.setPlaybackStart(beat: beat) } } }
     private func showStart() { seek = NoteDraft.format(Double(controller.playbackStart) / 705_600) }
+    private func showLoop() {
+        loopStart = NoteDraft.format(controller.loopStartBeat)
+        loopEnd = NoteDraft.format(controller.loopEndBeat)
+    }
     private func storeLoopDraft() {
         guard let beats = loopBeats else { return }
         controller.loopStartBeat = beats.0
