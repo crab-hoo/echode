@@ -71,7 +71,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0139](decisions/0139-track-header-fx-names.md)）。狭い幅・低い行・深い字下げで名前を隠す場合は、下部とインスペクターで全チェインを扱う。
     FX 候補の一覧を AppKit の表にし、押した時点で選択して行のどこでも 2 回目のクリックで追加する。再走査中も表示中の候補を追加できる
     （[ADR 0162](decisions/0162-plugin-candidate-table.md)）。
-    インスペクターの FX 追加ボタンは要件にした（P2-02 の次の接続、[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。未接続である。
+    インスペクターの一覧末尾にも FX 追加ボタンを接続した。空のチェインでも、そのトラックを入力先に既存の候補を開く
+    （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。実画面と VoiceOver はユーザー確認待ちである。
   - **P2-07（マーカー・録音・ピアノロール）**: 着手中。
     クリップ本体の移動・Command の複製移動を置き換えとして接続した（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
     記憶した再生開始位置を接続した。停止は開始位置へ戻り、一時停止はその場から再開し、Space は再生／停止とした。

@@ -42,6 +42,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0138](../decisions/0138-plugin-window-status.md)）。
   ヘッダも名前から独自 GUI を開く。先頭名と残りのチェインのメニューを FX 追加ボタンと分け、狭い表示では名前を隠す
   （[ADR 0139](../decisions/0139-track-header-fx-names.md)）。
+  インスペクターの一覧末尾にも FX 追加を置き、空のチェインでも表示する。文書交換・終了中だけ無効にし、既存の候補へつなぐ
+  （[ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
   列の開閉は文書内だけでデバイス ID ごとに保持し、保存・Undo・プラグイン通信を変更しない（[ADR 0137](../decisions/0137-device-disclosure.md)）。
   可変幅の累積を配置とドロップ判定に共有する。複数選択時の対象は未決である
   （[操作要件](../interaction-design.md#デバイスビューと-fx-一覧の役割)）。

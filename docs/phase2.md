@@ -150,9 +150,10 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 - **FX 候補の一覧（[ADR 0162](decisions/0162-plugin-candidate-table.md)）**:
   AppKit の表で押した時点で選択し、行のどこでも 2 回目のクリックで追加する。再走査中も表示中の候補を追加できる。
   必須契約 `plugin-list-ui` で確認する。
-- **次の接続: インスペクターの FX 追加（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）**:
-  インスペクターのプラグインの一覧の末尾に FX 追加ボタンを置き、そのトラックを入力先に既存の候補パネルを開く。空のチェインでも表示する。
-  受入: 実 View のボタンから候補パネルの文書と入力先が決まることを、トラックヘッダの FX ボタンと同じ形の必須契約で確認する。
+- **インスペクターの FX 追加（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）**:
+  プラグインの一覧末尾の FX 追加ボタンから、そのトラックを入力先に既存の候補パネルを開く。空のチェインでも表示する。
+  必須契約 `fx-inspector-ui` は実 View のボタンから文書と入力先、履歴不変・旧文書の拒否・無効なボタンを確認する。
+  実画面と VoiceOver はユーザー確認待ちである。
 - **残る範囲（[操作要件](interaction-design.md#fx-候補とチェインの操作)）**:
   - 複数選択時の表示対象。マクロの実装時期は既存の Phase 3 と区別する。
   - サムネイル。

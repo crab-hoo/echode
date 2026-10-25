@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkspaceInspectorView: View {
     let controller: ProjectController
+    let add: (UUID) -> Void
     var body: some View {
         let document = controller.documentID
         return ScrollView {
@@ -49,6 +50,10 @@ struct WorkspaceInspectorView: View {
                             Button { Task { await controller.removeDevice(device.id, documentID: document) } } label: { Image(systemName: "minus.circle") }
                                 .help(text("Remove")).accessibilityLabel(text("Remove") + " " + device.title).disabled(controller.busy)
                         }
+                    }
+                    InspectorAddFX(enabled: !controller.busy) {
+                        guard controller.documentID == document, !controller.busy else { return }
+                        add(track.id)
                     }
                 } else { Text(text("Select a track")).foregroundStyle(.secondary) }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(12)

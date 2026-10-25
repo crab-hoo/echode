@@ -61,7 +61,7 @@ public struct WorkspaceView: View {
             let sizes = state.layout.dimensions(in: geometry.size)
             HStack(spacing: 0) {
                 if state.layout.inspector {
-                    WorkspaceInspectorView(controller: controller).frame(width: sizes.inspector)
+                    WorkspaceInspectorView(controller: controller, add: { session.openPlugins(on: $0) }).frame(width: sizes.inspector)
                     splitter(.inspector, value: sizes.inspector, size: geometry.size)
                 }
                 WorkspaceCenterStack(layout: state.layout, sizes: sizes,

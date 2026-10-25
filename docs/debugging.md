@@ -308,6 +308,8 @@ make debug-report
   `doctor` でアプリが `stale` / `unknown` なら `make app` を実行し、`target/Echode.app` を開き直す。
 - **FX が違うトラックへ入る・並びが変わらない**:
   候補を開いた文書セッション、追加操作時の選択トラック、ドロップ先トラックを区別し、`device.reorder` / `device.copy` と状態ハッシュの引き継ぎを `fx-chain-ui` で確認する（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
+  インスペクターは `WorkspaceInspectorView` → `InspectorAddFX` → `openPlugins(on:)` の順で、表示した文書とトラックを保持する。
+  `fx-inspector-ui` は実ボタンから空のチェイン・対象の選択変更・旧文書を確認する。名前クリックによる独自 GUI の入口とは別である。
 - **トラックが違う位置へ追加される・追加後の選択が違う**:
   `TrackInsertionRequest` の文書セッションと `after`、ジャーナルの `track.add` / `track.insert` と `into_folder` を区別する。
   展開フォルダは最後の子、折りたたみ中は部分木の外側、末尾ボタンは最上位末尾へ追加する。

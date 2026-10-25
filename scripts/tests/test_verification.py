@@ -144,6 +144,8 @@ class PolicyTests(unittest.TestCase):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         self.assertEqual(contracts["fx-chain-ui"]["suite"], "DeviceChainTests")
         self.assertIn("track != target", contracts["fx-chain-ui"]["negative_control"]["old"])
+        self.assertEqual(contracts["fx-inspector-ui"]["suite"], "InspectorFXTests")
+        self.assertEqual(contracts["fx-inspector-ui"]["negative_control"]["old"], "add(track.id)")
         self.assertEqual(contracts["fx-bypass-ui"]["suite"], "DeviceChainTests")
         self.assertEqual(contracts["fx-batch-ui"]["suite"], "PluginBatchTests")
         self.assertIn("selectedTracks", contracts["fx-batch-ui"]["negative_control"]["old"])
@@ -154,7 +156,9 @@ class PolicyTests(unittest.TestCase):
         for path in ("swift/EchodeApp/Sources/EchodeAppCore/DeviceChain.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/TrackSelection.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/PluginInsertion.swift",
-                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceDeviceView.swift"):
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceDeviceView.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceInspectorView.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/InspectorAddFX.swift"):
             self.assertTrue({"check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
         self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-isolation"}
@@ -651,7 +655,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
-                          "fx-header-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
+                          "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
                           "playhead-follow-ui", "playhead-follow-state-ui",

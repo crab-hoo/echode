@@ -66,6 +66,8 @@
 - アレンジのノートはレーンの高さの帯で、音高を使っていなかった。
 - 両者の要件・時期は [ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md) と
   [操作要件](../interaction-design.md) に置き、[Phase 2 の進め方](../phase2.md) の P2-02 と P2-07 へ加えた。
+- FB-07 対応: インスペクターの一覧末尾へ FX 追加を接続した。空のチェインと挿入済みの両方を実 View で通す必須契約は `fx-inspector-ui`。
+  実画面と VoiceOver はユーザー確認待ちである。FB-08 の音高表示は未実装のままである。
 
 ## ユーザー確認が必要なこと
 
