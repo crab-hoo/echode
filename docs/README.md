@@ -55,6 +55,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 記憶した再生開始位置・余韻を保つ停止での復帰・一時停止・`transport.json`・ピアノロールのルーラー: [ADR 0155](decisions/0155-remembered-playback-start.md)。
 - ピアノロールのルーラードラッグの範囲指定・クリックとの分離と、ループ前からの進入・終端以降の通常進行:
   [ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)。
+- アレンジのルーラー・両エディタの開始位置と範囲共有・行領域の上端: [ADR 0157](decisions/0157-arrange-ruler.md)。
 
 ### 3. プラグイン隔離・サンドボックス・Workgroup
 

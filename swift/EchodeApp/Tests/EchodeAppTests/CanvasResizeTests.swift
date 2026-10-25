@@ -145,7 +145,7 @@ struct CanvasResizeTests {
         // Scrolling down starts from the displayed rows, not the remembered 5.
         let scroller = pane()
         let shown = scroller.timeline.renderInput.camera.originTrack
-        #expect(abs(shown - 12.1875) < 0.001)
+        #expect(abs(shown - 12.5625) < 0.001)
         scroller.timeline.onScroll?(0, 64)
         let moved = scroller.timeline.renderInput.camera.originTrack
         #expect(abs(moved - (shown - 1)) < 0.001)

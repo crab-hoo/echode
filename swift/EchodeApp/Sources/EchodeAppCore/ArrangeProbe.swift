@@ -55,8 +55,8 @@ public func runArrangeProbe(reportPath: String) {
                     let pianoChildren = piano.grid.accessibilityChildren() as? [NSAccessibilityElement] ?? []
                     let pianoAgain = piano.grid.accessibilityChildren() as? [NSAccessibilityElement] ?? []
                     let pianoAccessible = pianoChildren.count == 1 && pianoAgain.count == 1 && pianoChildren[0] === pianoAgain[0] && pianoChildren[0].isAccessibilityElement()
-                    let aligned = pane.headers.camera == view.camera && pane.headers.frame.minY == view.frame.minY &&
-                        pane.headers.bounds.height == view.bounds.height && measured.headerFrames == measured.frames && measured.maxHeaderLaneError == 0
+                    let aligned = pane.headers.camera == view.camera && pane.headers.frame.minY == view.frame.minY + view.renderInput.arrangeTop &&
+                        pane.headers.bounds.height == view.renderInput.arrangeHeight && measured.headerFrames == measured.frames && measured.maxHeaderLaneError == 0
                     let passed = aligned && headersAccessible && measured.frames > 10 && measured.framesOffMain == measured.frames && measured.framesWhileMainBusy > 5 && accessible &&
                         pianoMeasured.frames > 10 && pianoMeasured.framesOffMain == pianoMeasured.frames && pianoMeasured.framesWhileMainBusy > 5 && pianoAccessible
                     let display = DisplayFacts(window: window)

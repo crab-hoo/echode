@@ -88,7 +88,7 @@ final class PianoGridView: NSView {
     private var caretPitch = 60
     private var start: Int64?
     private var loop: RulerLoop?
-    private var rulerPress: PianoRulerPress?
+    private var rulerPress: RulerPress?
     private(set) var camera = PianoCamera()
     private(set) var key = DisplayKey()
     var pianoLayout: PianoLayout { PianoLayout(width: bounds.width, height: bounds.height) }
@@ -222,7 +222,8 @@ final class PianoGridView: NSView {
         if pianoLayout.ruler.contains(panePoint) {
             // Defer the click until release so a loop drag never seeks.
             cancelGesture()
-            rulerPress = PianoRulerPress(x: pianoLayout.gridPoint(panePoint).x, camera: camera)
+            rulerPress = RulerPress(x: pianoLayout.gridPoint(panePoint).x, originBeat: camera.originBeat,
+                                    pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid)
             return
         }
         guard pianoLayout.grid.contains(panePoint) else { return }
@@ -257,7 +258,7 @@ final class PianoGridView: NSView {
             press.update(x: pianoLayout.gridPoint(convert(event.locationInWindow, from: nil)).x,
                          snapping: !event.modifierFlags.contains(.shift))
             cancelGesture()
-            guard !busy, press.camera == camera else { return }
+            guard !busy, press.originBeat == camera.originBeat, press.pixelsPerBeat == camera.pixelsPerBeat, press.grid == camera.grid else { return }
             if press.dragged {
                 if let range = press.range { onSetLoop?(range) }
             } else if let tick = camera.rulerTick(at: press.x, snapping: !event.modifierFlags.contains(.shift)) {

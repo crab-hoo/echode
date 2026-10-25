@@ -9,6 +9,7 @@ private struct OffscreenArrangeReport: Codable {
     let mismatchedScanlines: Int
     let laneMismatches: Int
     let clippedHeaderMismatches: Int
+    let rulerMismatches: Int
     let staleOverlapPixels: Int
     let staleMarginPixels: Int
     let headerProbeXPoints: Double
@@ -32,6 +33,7 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
     for index in 0..<20 { await controller.addTrack(name: index == 0 ? "ピアノ 🎹" : "Track \(index)") }
     guard let snapshot = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
     var frames = 0, scanlines = 0, laneMismatches = 0, clippedHeaderMismatches = 0, staleOverlapPixels = 0, staleMarginPixels = 0, labelPixels = 0
+    var rulerMismatches = 0
     // This probe samples reserved left padding, outside labels, icons and mixer
     // controls. Its coordinates and scene sizes are scoped to this regression.
     let headerProbeXPoints = 2.0
@@ -45,7 +47,8 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
             let selected = snapshot.trackID(at: Int(camera.originTrack) + 1)
             let input = CanvasInput(snapshot: snapshot, selected: selected, camera: camera,
                                      width: event % 2 == 0 ? 640 : 720, height: 211, scale: scale,
-                                     header: ArrangeHeaderInput(width: event % 2 == 0 ? 160 : 200, palette: palette))
+                                     header: ArrangeHeaderInput(width: event % 2 == 0 ? 160 : 200, palette: palette),
+                                     arrangeRuler: ArrangeRulerInput(start: nil, loop: nil))
             let frame = ArrangeFrame(input: input)
             let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
             if scale == 2, event == 1 {
@@ -57,7 +60,7 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
                 let beatX = (camera.originBeat + Double(x) / camera.pixelsPerBeat).truncatingRemainder(dividingBy: 1) * camera.pixelsPerBeat
                 return beatX > 3 && beatX < camera.pixelsPerBeat - 3
             }!
-            for y in 0..<image.height {
+            for y in Int(input.arrangeTop * scale)..<image.height {
                 let a = image.pixel(x: Int(headerProbeXPoints * scale), y: y)
                 let b = image.pixel(x: Int((frame.timelineOrigin + Double(timelineX)) * scale), y: y)
                 scanlines += 1
@@ -91,7 +94,8 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
     // A drawable that lags the input still receives the frame at the input's
     // pixel positions. Only the newly exposed margin stays background.
     let staleInput = CanvasInput(snapshot: notes, selected: nil, camera: ArrangeCamera(originBeat: 3, pixelsPerBeat: 72, pixelsPerTrack: 64),
-                                 width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()))
+                                 width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()),
+                                 arrangeRuler: ArrangeRulerInput(start: 3 * 705_600, loop: RulerLoop(range: LoopRange(start: 705_600, end: 5 * 705_600)!, enabled: true)))
     let staleFrame = ArrangeFrame(input: staleInput)
     let exact = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue)
     let stale = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue,
@@ -108,10 +112,31 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
         }
     }
     frames += 2
+    // Ruler colors, clipping and the start flag use the same attachment as the rows.
+    for scale in [1.0, 2.0] {
+        for enabled in [false, true] {
+            let input = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(originBeat: 2),
+                width: 640, height: 211, scale: scale, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()),
+                arrangeRuler: ArrangeRulerInput(start: 3 * 705_600,
+                    loop: RulerLoop(range: LoopRange(start: 705_600, end: 4 * 705_600)!, enabled: enabled)))
+            let frame = ArrangeFrame(input: input)
+            let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
+            let stripe = enabled ? SIMD4<Float>(0.40, 0.84, 0.56, 1) : SIMD4<Float>(0.45, 0.48, 0.53, 1)
+            let band = enabled ? SIMD4<Float>(0.22, 0.34, 0.30, 1) : SIMD4<Float>(0.20, 0.22, 0.25, 1)
+            let background = SIMD4<Float>(0.12, 0.13, 0.16, 1)
+            for (x, y, color) in [(191.0, 1.0, stripe), (191, 22, band), (2, 1, background),
+                                   (310, 22, background), (233, 10, SIMD4<Float>(0.40, 0.84, 0.56, 1))] {
+                let expected = CanvasReadback.Pixel(b: UInt8((color.z * 255).rounded()), g: UInt8((color.y * 255).rounded()),
+                                                    r: UInt8((color.x * 255).rounded()), a: 255)
+                if image.pixel(x: Int(x * scale), y: Int(y * scale)) != expected { rulerMismatches += 1 }
+            }
+            frames += 1
+        }
+    }
     await controller.close()
-    let mismatches = laneMismatches + clippedHeaderMismatches
+    let mismatches = laneMismatches + clippedHeaderMismatches + rulerMismatches
     let report = OffscreenArrangeReport(frames: frames, comparedScanlines: scanlines, mismatchedScanlines: mismatches,
-                                        laneMismatches: laneMismatches, clippedHeaderMismatches: clippedHeaderMismatches,
+                                        laneMismatches: laneMismatches, clippedHeaderMismatches: clippedHeaderMismatches, rulerMismatches: rulerMismatches,
                                         staleOverlapPixels: staleOverlapPixels, staleMarginPixels: staleMarginPixels,
                                         headerProbeXPoints: headerProbeXPoints,
                                         labelPixels: labelPixels, device: device.name)

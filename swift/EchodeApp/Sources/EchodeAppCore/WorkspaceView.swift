@@ -98,7 +98,9 @@ public struct WorkspaceView: View {
                                   guard let document = controller.documentID else { return }
                                   Task { _ = await controller.openPluginWindow(device, documentID: document) }
                               }, pluginNames: controller.pluginNames, onDropAudio: { session.importDroppedAudio($0) != nil },
-                              onMoveClip: { _ = session.moveClip($0) }).id(controller.documentID)
+                              onMoveClip: { _ = session.moveClip($0) },
+                              start: controller.playbackStart, loop: controller.rulerLoop, busy: controller.busy || controller.audioBusy,
+                              onSetStart: setStart, onSetLoop: setLoop).id(controller.documentID)
                 Divider()
                 HStack {
                     Button { session.addTrack(atEnd: true) } label: {
@@ -113,6 +115,20 @@ public struct WorkspaceView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+    private var setStart: (Int64) -> Void {
+        let document = controller.documentID
+        return { tick in Task {
+            guard let document, controller.documentID == document else { return }
+            await controller.setPlaybackStart(tick: tick)
+        } }
+    }
+    private var setLoop: (LoopRange) -> Void {
+        let document = controller.documentID
+        return { range in Task {
+            guard let document else { return }
+            await controller.setLoopRange(range, documentID: document)
+        } }
     }
     private var clipEdit: (ClipMixEdit) -> Void {
         let document = controller.documentID

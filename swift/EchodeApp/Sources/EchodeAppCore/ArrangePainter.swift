@@ -52,9 +52,9 @@ final class ArrangePainter {
         if let frame {
             // A drawable can be larger than the input during a resize. Clip to
             // the input's extent so rows beyond the viewport stay background.
-            if let rect = scissor(x: frame.timelineOrigin * frame.input.scale, y: 0,
+            if let rect = scissor(x: frame.timelineOrigin * frame.input.scale, y: frame.input.arrangeTop * frame.input.scale,
                                   width: frame.timelineWidth * frame.input.scale,
-                                  height: frame.input.height * frame.input.scale, texture: texture) {
+                                  height: frame.input.arrangeHeight * frame.input.scale, texture: texture) {
                 encoder.setScissorRect(rect)
                 let split = min(frame.foregroundStart, timelineCount)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: split)
@@ -66,14 +66,26 @@ final class ArrangePainter {
                     encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: timelineCount - split, baseInstance: split)
                 }
             }
-            if let rect = scissor(x: 0, y: 0, width: frame.timelineOrigin * frame.input.scale,
-                                  height: frame.input.height * frame.input.scale, texture: texture) {
+            if let rect = scissor(x: 0, y: frame.input.arrangeTop * frame.input.scale, width: frame.timelineOrigin * frame.input.scale,
+                                  height: frame.input.arrangeHeight * frame.input.scale, texture: texture) {
                 encoder.setScissorRect(rect)
                 encoder.setRenderPipelineState(pipeline)
                 encoder.setVertexBuffer(buffer, offset: 0, index: 0)
                 encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: headerCount, baseInstance: timelineCount)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: headerCount - frame.rulerInstances.count, baseInstance: timelineCount)
             }
+            let rulerCount = frame.rulerInstances.count
+            if rulerCount > 0, let rect = scissor(CGRect(x: 0, y: 0, width: frame.input.width, height: frame.input.arrangeTop),
+                                                  scale: frame.input.scale, texture: texture) {
+                encoder.setScissorRect(rect)
+                encoder.setRenderPipelineState(pipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: rulerCount,
+                                       baseInstance: timelineCount + headerCount - rulerCount)
+            }
+            encodeLabels(frame.rulerLabels, scale: frame.input.scale, encoder: encoder, texture: texture,
+                         bounds: CGRect(x: 0, y: 0, width: frame.input.width, height: frame.input.arrangeTop))
             encodeLabels(frame, encoder: encoder, texture: texture)
         } else if let piano {
             let scale = piano.input.scale
@@ -138,7 +150,7 @@ final class ArrangePainter {
     private func encodeLabels(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {
         guard let header = frame.input.header else { return }
         let scale = frame.input.scale
-        let bounds = CGRect(x: 0, y: 0, width: frame.input.width, height: frame.input.height)
+        let bounds = CGRect(x: 0, y: frame.input.arrangeTop, width: frame.input.width, height: frame.input.arrangeHeight)
         let text = frame.headers.flatMap { row -> [CanvasLabel] in
             let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: header.width, height: Double(row.height)))
             let fx = TrackFXLayout(row: layout.row)

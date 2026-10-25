@@ -61,8 +61,8 @@ extension ArrangeView {
     func dragClip(to point: CGPoint, flags: NSEvent.ModifierFlags) {
         guard var press = movePress, let snapshot else { return }
         if press.preview == nil, hypot(point.x - press.point.x, point.y - press.point.y) < ClipMoveTarget.threshold { return }
-        let rows = camera.rows(trackCount: snapshot.trackCount, height: Double(bounds.height))
-        guard let row = rows.clampedIndex(at: Double(point.y)), let track = snapshot.trackID(at: row),
+        let rows = camera.rows(trackCount: snapshot.trackCount, height: renderInput.arrangeHeight)
+        guard let row = rows.clampedIndex(at: Double(point.y) - renderInput.arrangeTop), let track = snapshot.trackID(at: row),
               let start = ClipMoveTarget.start(from: press.clip.start, beats: timelineBeat(at: point) - press.beat,
                                                free: flags.contains(.shift)) else { return }
         press.preview = ClipMovePreview(row: row, track: track, start: start, length: press.clip.length, copy: flags.contains(.command))
@@ -93,9 +93,9 @@ extension ArrangeFrame {
     /// The dragged clip where it would land. A copy and a move use different colors.
     var clipMoveRect: CGRect? {
         guard let move = input.clipMove, let snapshot = input.snapshot else { return nil }
-        let row = camera.rows(trackCount: snapshot.trackCount, height: input.height).rect(at: move.row, width: 0)
+        let row = camera.rows(trackCount: snapshot.trackCount, height: input.arrangeHeight).rect(at: move.row, width: 0)
         return CGRect(x: timelineOrigin + (Double(move.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat,
-                      y: row.minY, width: Double(move.length) * camera.pixelsPerBeat / 705_600, height: max(1, row.height - 1))
+                      y: input.arrangeTop + row.minY, width: Double(move.length) * camera.pixelsPerBeat / 705_600, height: max(1, row.height - 1))
     }
 
     var clipMoveInstances: [Instance] {

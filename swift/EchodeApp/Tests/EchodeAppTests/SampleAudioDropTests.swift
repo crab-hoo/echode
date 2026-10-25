@@ -37,7 +37,7 @@ struct SampleAudioDropTests {
         #expect(board.types?.contains(.fileURL) == true)
         pane.headers.onScroll?(-72, 0)
         // Header gutter + scroll + camera scale, not the live playhead or selection.
-        let point = CGPoint(x: 161 + 72 * 1.3, y: 70)
+        let point = CGPoint(x: 161 + 72 * 1.3, y: 24 + 70)
         let drop = try #require(view.audioDrop(board, at: point, flags: [], document: document))
         #expect(drop.track == second && drop.tick == 2 * 705_600)
         let unsnapped = try #require(view.audioDrop(board, at: point, flags: .shift, document: document))
@@ -57,7 +57,7 @@ struct SampleAudioDropTests {
         await controller.redo()
         #expect(controller.snapshot?.clipMix(clip)?.start == drop.tick)
         // Below all visible rows appends at top level, regardless of focus.
-        #expect(view.acceptAudio(board, at: CGPoint(x: point.x, y: 150), flags: .shift, document: document))
+        #expect(view.acceptAudio(board, at: CGPoint(x: point.x, y: 24 + 150), flags: .shift, document: document))
         #expect(await (try #require(pending)).value)
         let appended = try #require(controller.tracks.last?.id)
         #expect(controller.tracks.map(\.id) == [first, second, appended])
@@ -92,19 +92,20 @@ struct SampleAudioDropTests {
         let wav = root.appendingPathComponent("missing.wav")
         for name in ["notes.mid", "notes.txt", "Song.echode", "plugin.clap"] {
             write([root.appendingPathComponent(name)])
-            #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: document) == nil)
+            #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 34), flags: [], document: document) == nil)
         }
         write([wav, wav])
         #expect(AudioFileDrop.audioURL(from: board) == nil)
         write([try #require(URL(string: "https://example.invalid/tone.wav"))])
         #expect(AudioFileDrop.audioURL(from: board) == nil)
         write([wav])
-        for point in [CGPoint(x: 160, y: 10), CGPoint(x: 640, y: 10), CGPoint(x: 220, y: -1), CGPoint(x: 220, y: 300), CGPoint(x: CGFloat.infinity, y: 0)] {
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: document) == nil) // Ruler, not a lane.
+        for point in [CGPoint(x: 160, y: 34), CGPoint(x: 640, y: 34), CGPoint(x: 220, y: -1), CGPoint(x: 220, y: 300), CGPoint(x: CGFloat.infinity, y: 0)] {
             #expect(view.audioDrop(board, at: point, flags: [], document: document) == nil)
         }
         #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: UUID()) == nil)
         // Empty projects are drop targets too. A decode error must not leave a track.
-        let empty = try #require(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: document))
+        let empty = try #require(view.audioDrop(board, at: CGPoint(x: 220, y: 34), flags: [], document: document))
         #expect(empty.track == nil)
         #expect(!(await controller.importDroppedAudio(empty)))
         #expect(controller.tracks.isEmpty && controller.undoCount == 0)
@@ -148,17 +149,17 @@ struct SampleAudioDropTests {
         board.writeObjects([root.appendingPathComponent("tone.wav") as NSURL])
         pane.headers.onScroll?(0, -16)
         #expect(view.camera.originTrack == 0.25)
-        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 47), flags: [], document: document)?.track == folder)
-        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 48), flags: [], document: document)?.track == tail)
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 24 + 47), flags: [], document: document)?.track == folder)
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 24 + 48), flags: [], document: document)?.track == tail)
         pane.timeline.onZoom?(1.5, .option, CGPoint(x: 0, y: 0))
-        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 71), flags: [], document: document)?.track == folder)
-        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 72), flags: [], document: document)?.track == tail)
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 24 + 71), flags: [], document: document)?.track == folder)
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 24 + 72), flags: [], document: document)?.track == tail)
         pane.resizeHeader(to: 200)
         let origin = 201.0
-        #expect(view.audioDrop(board, at: CGPoint(x: origin + 72 * 1.2, y: 10), flags: [], document: document)?.tick == 705_600)
+        #expect(view.audioDrop(board, at: CGPoint(x: origin + 72 * 1.2, y: 34), flags: [], document: document)?.tick == 705_600)
         pane.timeline.onZoom?(2, [], .zero)
-        #expect(view.audioDrop(board, at: CGPoint(x: origin + 144 * 1.2, y: 10), flags: [], document: document)?.tick == 705_600)
-        #expect(view.audioDrop(board, at: CGPoint(x: 200, y: 10), flags: [], document: document) == nil)
+        #expect(view.audioDrop(board, at: CGPoint(x: origin + 144 * 1.2, y: 34), flags: [], document: document)?.tick == 705_600)
+        #expect(view.audioDrop(board, at: CGPoint(x: 200, y: 34), flags: [], document: document) == nil)
         await controller.close()
     }
 

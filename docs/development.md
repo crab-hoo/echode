@@ -141,7 +141,10 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 画面はピアノロールのルーラーのクリックと印（`PianoRollView.swift`・`PianoFrame.swift`）、Space と一時停止の振り分け（`ProjectController.swift`）、
 回帰は `PlaybackStartTests.swift` と `stopped_processing.rs`（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
 
-ルーラーの範囲とドラッグ状態は `RulerLoop.swift`、仮表示と確定は `PianoRollView.swift`、帯は `PianoFrame.swift` に置く。
+ルーラーの範囲とドラッグ状態は `RulerLoop.swift`（`RulerPress`）に置く。
+アレンジは `ArrangeRuler.swift`（入力・帯・印・数字）と `ArrangeFrame.swift`・`ArrangePainter.swift`（共通上端とクリップ）、
+ピアノロールの仮表示と確定は `PianoRollView.swift`、帯は `PianoFrame.swift` に置く。
+アレンジの回帰は `ArrangeRulerTests.swift`（[ADR 0157](decisions/0157-arrange-ruler.md)）。
 製品と検証用のループへの進入判定は `PlaybackAudio::arm_loop` と `Transport::arm_loop`、回帰は `RulerLoopTests.swift` と
 `block_size.rs` の `contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan`（[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
 

@@ -20,6 +20,8 @@ public final class ArrangePaneView: NSView {
     private var navigationDocument: UUID?
     private var restoring = false
     var viewport: ArrangeCamera { camera }
+    // Selection can arrive before the timeline receives its first child layout.
+    private var trackHeight: Double { max(0, Double(bounds.height) - ArrangeRulerInput.height) }
     var onSelect: ((UUID) -> Void)?
     var onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? { didSet { headers.onSelectTrack = onSelectTrack } }
     var onSelectClip: ((UUID?) -> Void)? { didSet { timeline.onSelectClip = onSelectClip } }
@@ -43,6 +45,7 @@ public final class ArrangePaneView: NSView {
     public override init(frame: NSRect) {
         super.init(frame: frame)
         clipsToBounds = true
+        timeline.setRuler(start: nil, loop: nil, busy: false)
         addSubview(timeline)
         addSubview(headers)
         addSubview(divider)
@@ -62,7 +65,9 @@ public final class ArrangePaneView: NSView {
         super.layout()
         let headerWidth = constrainedHeaderWidth(headerWidth)
         timeline.frame = bounds
-        headers.frame = NSRect(x: 0, y: 0, width: headerWidth, height: bounds.height)
+        let top = timeline.renderInput.arrangeTop
+        let height = trackHeight
+        headers.frame = NSRect(x: 0, y: top, width: headerWidth, height: height)
         divider.frame = NSRect(x: max(0, headerWidth - 3), y: 0, width: 7, height: bounds.height)
         divider.position = headerWidth
         updateViewport()
@@ -102,7 +107,7 @@ public final class ArrangePaneView: NSView {
             // must not clamp a taller pane's remembered origin.
             var display = displayCamera
             let before = display.originTrack
-            display.reveal(track: index, trackCount: displaySnapshot.trackCount, height: Double(bounds.height))
+            display.reveal(track: index, trackCount: displaySnapshot.trackCount, height: trackHeight)
             if display.originTrack != before { camera.originTrack = display.originTrack }
         }
         restoring = false
@@ -139,7 +144,7 @@ public final class ArrangePaneView: NSView {
     }
     private var displayCamera: ArrangeCamera {
         var display = camera
-        display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+        display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: trackHeight)
         return display
     }
     private func scroll(x: Double, y: Double) {
@@ -150,7 +155,7 @@ public final class ArrangePaneView: NSView {
             // dead zone between the remembered and visible origin.
             var display = displayCamera
             display.originTrack -= y / display.pixelsPerTrack
-            display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+            display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: trackHeight)
             camera.originTrack = display.originTrack
         }
         updateViewport()
@@ -170,7 +175,7 @@ public final class ArrangePaneView: NSView {
             camera.pixelsPerTrack = min(240, max(16, display.pixelsPerTrack * factor))
             display.pixelsPerTrack = camera.pixelsPerTrack
             display.originTrack = track - Double(anchor.y) / display.pixelsPerTrack
-            display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: Double(bounds.height))
+            display.constrain(trackCount: displaySnapshot?.trackCount ?? 0, height: trackHeight)
             camera.originTrack = display.originTrack
         }
         updateViewport()

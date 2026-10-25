@@ -18,6 +18,9 @@ struct CanvasInput: Sendable {
     var faderPreview: FaderPreview? = nil
     var clipDraft: ClipDraft? = nil
     var clipMove: ClipMovePreview? = nil
+    var arrangeRuler: ArrangeRulerInput? = nil
+    var arrangeTop: Double { arrangeRuler == nil ? 0 : min(ArrangeRulerInput.height, max(0, height)) }
+    var arrangeHeight: Double { max(0, height - arrangeTop) }
     /// Screen refresh in frames per second. The display link follows this
     /// instead of a fixed 60 Hz cap. 60 is the value before a window exists.
     var displayFramesPerSecond: Double = 60
@@ -364,7 +367,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 value.measurement.headerFrames += 1
                 let lanes = arranged.elements.filter { $0.role == .track }
                 for (header, lane) in zip(arranged.headers, lanes) {
-                    value.measurement.maxHeaderLaneError = max(value.measurement.maxHeaderLaneError, Double(abs(header.y - lane.y)))
+                    value.measurement.maxHeaderLaneError = max(value.measurement.maxHeaderLaneError, Double(abs(header.y - (Float(input.arrangeTop) + lane.y))))
                 }
             }
         }

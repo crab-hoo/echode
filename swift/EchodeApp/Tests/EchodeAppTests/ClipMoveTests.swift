@@ -60,7 +60,7 @@ struct ClipMoveTests {
         func body(_ clip: UUID) throws -> CGPoint {
             let mix = try #require(controller.snapshot?.clipMix(clip))
             let row = try #require((0..<2).first { controller.snapshot?.trackID(at: $0) == mix.track })
-            return CGPoint(x: origin + Double(mix.start) / Double(beat) * perBeat + 30, y: Double(row) * 64 + 52)
+            return CGPoint(x: origin + Double(mix.start) / Double(beat) * perBeat + 30, y: 24 + Double(row) * 64 + 52)
         }
         func drag(_ clip: UUID, by offset: CGSize, flags: NSEvent.ModifierFlags = []) async throws {
             try present()
@@ -82,7 +82,7 @@ struct ClipMoveTests {
         let preview = try #require(pane.timeline.renderInput.clipMove)
         #expect(preview == ClipMovePreview(row: 1, track: second, start: beat, length: 2 * beat, copy: false))
         let ghost = try #require(ArrangeFrame(input: pane.timeline.renderInput).clipMoveRect)
-        #expect(ghost == CGRect(x: origin + perBeat, y: 64, width: 2 * perBeat, height: 63))
+        #expect(ghost == CGRect(x: origin + perBeat, y: 24 + 64, width: 2 * perBeat, height: 63))
         #expect(controller.snapshot?.clipMix(id)?.track == first, "a drag only previews")
         let before = controller.undoCount
         pane.timeline.mouseUp(with: try mouse(.leftMouseUp, over, in: pane.timeline))

@@ -59,16 +59,16 @@ struct ArrangeFrame: Sendable {
         elements = input.snapshot?.visibleElements(
             originTick: Int64((camera.originBeat * 705_600).rounded()),
             widthTicks: Int64((max(1, timelineWidth) / camera.pixelsPerBeat * 705_600).rounded(.up)),
-            originTrack: camera.originTrack, heightTracks: input.height / camera.pixelsPerTrack,
+            originTrack: camera.originTrack, heightTracks: input.arrangeHeight / camera.pixelsPerTrack,
             pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerTrack: camera.pixelsPerTrack
         ).elements ?? []
         waveforms = Self.waveforms(elements: elements, input: input, camera: camera, origin: timelineOrigin)
         guard input.header != nil, let snapshot = input.snapshot else { headers = []; return }
-        let rows = camera.rows(trackCount: snapshot.trackCount, height: input.height)
+        let rows = camera.rows(trackCount: snapshot.trackCount, height: input.arrangeHeight)
         headers = zip(rows.visible, elements.filter { $0.role == .track }).compactMap { index, lane in
             guard let name = snapshot.trackName(at: index) else { return nil }
             let hierarchy = snapshot.trackHierarchy(at: index)
-            return ArrangeHeaderRow(id: lane.id.track, name: name, y: lane.y, height: lane.height,
+            return ArrangeHeaderRow(id: lane.id.track, name: name, y: Float(input.arrangeTop) + lane.y, height: lane.height,
                                     mix: snapshot.mixer(onTrack: index), peak: input.playback?.peak(track: lane.id.track) ?? 0,
                                     depth: hierarchy?.depth ?? 0, folder: hierarchy?.hasChildren ?? false,
                                     collapsed: input.header?.collapsedTracks.contains(lane.id.track) == true, devices: snapshot.devices(onTrack: index))
@@ -109,7 +109,7 @@ struct ArrangeFrame: Sendable {
         let lastBeat = Int((camera.originBeat + timelineWidth / camera.pixelsPerBeat).rounded(.up))
         for beat in firstBeat...max(firstBeat, lastBeat) {
             let x = (timelineOrigin + (Double(beat) - camera.originBeat) * camera.pixelsPerBeat) * input.scale
-            instances.append(Instance(rect: SIMD4(Float(x), 0, Float(input.scale), Float(input.height * input.scale)),
+            instances.append(Instance(rect: SIMD4(Float(x), Float(input.arrangeTop * input.scale), Float(input.scale), Float(input.arrangeHeight * input.scale)),
                                       color: beat % 4 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) : SIMD4(0.18, 0.20, 0.23, 1)))
         }
         instances.append(contentsOf: clips.map(instance))
@@ -131,7 +131,7 @@ struct ArrangeFrame: Sendable {
     }
 
     var headerInstances: [Instance] {
-        guard let header = input.header else { return [] }
+        guard let header = input.header else { return rulerInstances }
         let width = Float(header.width)
         let palette = header.palette
         var instances = [Instance(rect: SIMD4(0, 0, Float(timelineOrigin), Float(input.height)) * Float(input.scale), color: palette.background)]
@@ -173,7 +173,7 @@ struct ArrangeFrame: Sendable {
             }
         }
         instances.append(Instance(rect: SIMD4(width, 0, 1, Float(input.height)) * Float(input.scale), color: palette.separator))
-        return instances
+        return instances + rulerInstances
     }
 
     var clipControlLayout: ClipControlLayout? {
@@ -181,7 +181,7 @@ struct ArrangeFrame: Sendable {
               let element = elements.first(where: { $0.role == .clip && $0.id.placement == id }) else { return nil }
         let draft = input.clipDraft.flatMap { $0.original.id == id ? $0 : nil }
         return ClipControlLayout.make(clip, camera: camera, origin: timelineOrigin,
-            y: Double(element.y), height: Double(element.height), fadeInTicks: draft?.fadeInTicks, fadeOutTicks: draft?.fadeOutTicks)
+            y: input.arrangeTop + Double(element.y), height: Double(element.height), fadeInTicks: draft?.fadeInTicks, fadeOutTicks: draft?.fadeOutTicks)
     }
 
     private var clipControlInstances: [Instance] {
@@ -212,7 +212,7 @@ struct ArrangeFrame: Sendable {
         case .clip: color = element.id.placement == input.selectedClip ? SIMD4(0.28, 0.54, 0.66, 1) : SIMD4(0.18, 0.36, 0.47, 1)
         case .note: color = SIMD4(0.52, 0.83, 0.88, 1)
         }
-        return Instance(rect: SIMD4(Float(timelineOrigin) + element.x, element.y, element.width, max(1, element.height - 1)) * Float(input.scale), color: color)
+        return Instance(rect: SIMD4(Float(timelineOrigin) + element.x, Float(input.arrangeTop) + element.y, element.width, max(1, element.height - 1)) * Float(input.scale), color: color)
     }
 
     private static func waveforms(elements: [ArrangeElement], input: CanvasInput, camera: ArrangeCamera, origin: Double) -> [WaveformDraw] {
@@ -228,7 +228,7 @@ struct ArrangeFrame: Sendable {
             let end = originTick + Int64((Double(element.x + element.width) / pixelsPerTick).rounded())
             let samples = snapshot.waveform(placement: placement, startTick: start, endTick: max(start + 1, end), columns: columns)
             guard !samples.isEmpty else { return nil }
-            let rect = SIMD4(Float(origin) + element.x, element.y, element.width, max(1, element.height - 1)) * Float(input.scale)
+            let rect = SIMD4(Float(origin) + element.x, Float(input.arrangeTop) + element.y, element.width, max(1, element.height - 1)) * Float(input.scale)
             return WaveformDraw(rect: rect, color: color, columns: samples)
         }
     }

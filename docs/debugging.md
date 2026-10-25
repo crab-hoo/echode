@@ -101,7 +101,9 @@ make debug-report
 - **ループ範囲のドラッグで再生位置が動く・終端以降から勝手に戻る**:
   押下では開始位置を送らず、離した時のクリックだけが `transport.set_start` を送る。
   ドラッグの範囲はオフ中は下書きだけ、オン中は `transport.loop` を 1 回送る（[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
-  `piano-ruler-loop-ui` で入力と取消、`loop-entry` で製品バッファの位置と全サンプルを切り分ける。
+  `piano-ruler-loop-ui`・`arrange-ruler-ui`・`arrange-ruler-cancel-ui` で入力と取消、`loop-entry` で音声側を切り分ける。
+  アレンジの行だけがずれる場合は `arrangeTop` を描画とヒットから二重に足したり除いたりしていないかを確認する。
+  `spike-arrange-frame` の `rulerMismatches` は帯と印の画素不一致、`maxHeaderLaneError` は上端補正後の左右の誤差である。
   `audio.status` のループがオンでも、終端以降へ置いた再生は通常進行する。
   ブロック処理で終端に着いた場合は次のブロックで戻るため、同じ値の `tick` でも位置移動と混同しない。
 - **音源なしのノート・Sine Pad が鳴らない**:
