@@ -457,6 +457,19 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
                              "spike-arrange-frame", "spike-piano-frame", "spike-playhead"} <= checks)
 
+    def test_piano_note_drag_contract_covers_modifiers_release_and_subgrid_lengths(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        contract = contracts["piano-note-drag-ui"]
+        self.assertEqual((contract["runner"], contract["suite"], contract["test"]),
+                         ("swift", "PianoDragTests", "contractShiftNoteDragsReleaseTheGridAndCommitOnce"))
+        self.assertEqual(len(contract["negative_controls"]), 3)
+        for fault in contract["negative_controls"]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("PianoRollView.swift", "PianoGeometry.swift"):
+            checks = self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + source)
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= checks)
+        self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PianoDragTests.swift"))
+
     def test_piano_accessibility_builds_only_on_query(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "piano-accessibility-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "PianoTests"))
@@ -673,7 +686,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
-                          "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
+                          "piano-note-drag-ui", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",

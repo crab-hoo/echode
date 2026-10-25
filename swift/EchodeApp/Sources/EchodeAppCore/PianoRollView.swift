@@ -263,9 +263,8 @@ final class PianoGridView: NSView {
                          snapping: !event.modifierFlags.contains(.shift))
             rulerPress = press; refresh(); return
         }
-        guard let gesture, !busy else { return }
-        let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
-        preview = gesture.preview(x: point.x, y: point.y, camera: camera).map { PianoPreview(id: gesture.id, geometry: $0) }
+        guard gesture != nil, !busy else { return }
+        preview = notePreview(with: event)
         refresh()
     }
     override func mouseUp(with event: NSEvent) {
@@ -281,10 +280,19 @@ final class PianoGridView: NSView {
             }
             return
         }
-        let finished = preview
+        // A click alone must not quantize an off-grid note. After a drag, use
+        // the release position and modifiers rather than the last drawn preview.
+        let finished = preview == nil ? nil : notePreview(with: event)
         let original = gesture?.original
         cancelGesture()
         if let finished, finished.geometry != original, !busy { onEdit?(finished.id, finished.geometry) }
+    }
+    private func notePreview(with event: NSEvent) -> PianoPreview? {
+        guard let gesture else { return nil }
+        let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
+        return gesture.preview(x: point.x, y: point.y, camera: camera,
+                               snapping: !event.modifierFlags.contains(.shift))
+            .map { PianoPreview(id: gesture.id, geometry: $0) }
     }
     override func keyDown(with event: NSEvent) {
         guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }

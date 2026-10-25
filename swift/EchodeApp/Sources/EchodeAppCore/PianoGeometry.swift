@@ -115,27 +115,37 @@ struct PianoGesture: Sendable {
         return .move
     }
 
-    func preview(x: Double, y: Double, camera: PianoCamera) -> NoteGeometry? {
-        guard let delta = PianoCamera.ticks((x - self.x) / camera.pixelsPerBeat) else { return nil }
+    func preview(x: Double, y: Double, camera: PianoCamera, snapping: Bool = true) -> NoteGeometry? {
+        guard original.isValid, camera.grid > 0,
+              camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
+              camera.pixelsPerPitch.isFinite, camera.pixelsPerPitch > 0,
+              x.isFinite, y.isFinite, self.x.isFinite, self.y.isFinite,
+              let delta = PianoCamera.ticks((x - self.x) / camera.pixelsPerBeat) else { return nil }
+        let minimumLength: Int64 = snapping ? camera.grid : 1
         var value = original
         switch mode {
         case .move:
             let start = original.start.addingReportingOverflow(delta)
             guard !start.overflow else { return nil }
-            value.start = max(0, camera.snapped(start.partialValue))
-            value.pitch = min(127, max(0, original.pitch + Int(((self.y - y) / camera.pixelsPerPitch).rounded())))
+            // Snap the absolute start, not the displacement, so off-grid notes align.
+            value.start = max(0, snapping ? camera.snapped(start.partialValue) : start.partialValue)
+            let pitch = Double(original.pitch) + ((self.y - y) / camera.pixelsPerPitch).rounded()
+            guard pitch.isFinite else { return nil }
+            value.pitch = Int(min(127, max(0, pitch)))
         case .rightEdge:
             let end = original.start.addingReportingOverflow(original.length)
             let moved = end.partialValue.addingReportingOverflow(delta)
             guard !end.overflow, !moved.overflow else { return nil }
-            let length = camera.snapped(moved.partialValue).subtractingReportingOverflow(original.start)
+            let target = snapping ? camera.snapped(moved.partialValue) : moved.partialValue
+            let length = target.subtractingReportingOverflow(original.start)
             guard !length.overflow else { return nil }
-            value.length = max(camera.grid, length.partialValue)
+            value.length = max(minimumLength, length.partialValue)
         case .leftEdge:
             let moved = original.start.addingReportingOverflow(delta)
             let end = original.start.addingReportingOverflow(original.length)
             guard !moved.overflow, !end.overflow else { return nil }
-            value.start = min(end.partialValue - min(camera.grid, original.length), max(0, camera.snapped(moved.partialValue)))
+            let target = snapping ? camera.snapped(moved.partialValue) : moved.partialValue
+            value.start = min(end.partialValue - min(minimumLength, original.length), max(0, target))
             value.length = end.partialValue - value.start
         }
         return value.isValid ? value : nil

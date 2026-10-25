@@ -154,6 +154,10 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 ページ送りと手動スクロールでの解除は `ArrangePaneView.swift` と `PianoRollView.swift`、値は `WorkspaceState.followsPlayhead` に置く。
 回帰は `PlayheadFollowTests.swift`（[ADR 0159](decisions/0159-playhead-follow.md)）。
 
+単一ノートのドラッグの吸着・Shift と最短長は `PianoGeometry.swift` の `PianoGesture.preview`、
+入力・解放時の計算と単一送信は `PianoRollView.swift` の `notePreview`・`mouseUp` に置く。
+回帰は `PianoDragTests.swift`（[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
+
 アレンジの音高表示の音域と縦変換は `crates/echode-draw/src/query.rs` の `PitchRange`・`PitchLayout` に置く。
 製品フレームと VoiceOver 用矩形の回帰は `ArrangePitchTests.swift`、可視列は `tests/arrange_pitch.rs` を使う。
 問い合わせだけの計測は `make spike-arrange-query`（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。

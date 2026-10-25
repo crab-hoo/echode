@@ -177,6 +177,13 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **ピアノロールのノートが Shift でも吸着する・短くできない・離すと位置がずれる**:
+  `PianoGridView.notePreview` が各ドラッグと解放の Shift を `PianoGesture.preview` へ渡しているかを確認する。
+  最短長は通常グリッド幅、Shift では 1 tick。左右端の固定側と、移動の長さは変えない。
+  `piano-note-drag-ui` は実 View の入力・単一 Undo・保存を、`PianoDragTests` の境界回帰は幾何を切り分ける。
+  解放時だけ変わる場合は、最後のプレビューをそのまま確定せず、解放時の座標・修飾キーで計算し直しているかを見る
+  （[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。実画面の操作感はユーザー確認とする。
+
 - **アレンジのノートが帯のまま・音高が逆・VoiceOver と高さが違う**:
   中身の `PitchRange` は表示中のノートでなく全ノートから求める。スクロールやトリムしたリンク配置で縮尺が変わるなら索引の範囲を確認する。
   `arrange-note-pitch` は音域と 1 pt 下限、`arrange-note-pitch-ui` は製品の Metal と VoiceOver 用の局所矩形を切り分ける。
