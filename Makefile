@@ -1,4 +1,9 @@
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-base check-product-contracts verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
+# Propagate every recipe/pipeline failure, including multi-command recipes.
+# Apple's GNU make 3.81 does not support .SHELLFLAGS; pass options in SHELL.
+SHELL := /bin/bash -euo pipefail
+.PHONY: spike-verification-failures
+
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-format check-base check-product-contracts verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -47,16 +52,19 @@ spike-piano-frame:
 
 # Portable checks include required product regressions, once each.
 check:
+	$(MAKE) check-format
 	$(MAKE) check-verification
 	$(MAKE) check-base
 	$(MAKE) check-product-contracts
+
+check-format:
+	cargo fmt --all --check
 
 # The verifier records this part and product contracts as separate checks.
 check-base:
 	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
 	cargo build -q --workspace
-	cargo fmt --check
 	cargo clippy -q --workspace --all-targets -- -D warnings
 	cargo test -q --workspace
 	scripts/check-ffi.sh
@@ -206,6 +214,11 @@ rtsan:
 # Device-free release measurement; never part of normal correctness tests.
 spike-audition:
 	cargo test -q --release -p echode-audio-io --lib audition::tests::measure_streaming_audition_startup_without_a_device -- --ignored --exact
+
+# Synthetic failure latency comparison through the existing verifier; no product/device work.
+spike-verification-failures:
+	python3 -B scripts/measure_verification_failures.py
+
 
 # Product HAL callback/lifecycle probe. Writes silence and never opens a window.
 spike-audio:

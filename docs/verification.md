@@ -33,16 +33,54 @@ make verify
 無関係な検査を追加実行する時は `python3 scripts/verify.py --all --only ID`、手動検査ならさらに `--run ID` を付ける。
 自動検査の失敗は見送れない。手動検査の見送りも合格ではなく、最終報告に名前と理由を残す。
 
+## 事前確認と実行順序
+
+`make verify` は選択と合格再利用の判定後、実行予定の検査が宣言した `preflight` を重複なく実行する。
+ツールチェーン、オフライン依存、固定 nightly の rust-src / Miri、TSan の準備状態を軽量に確認する。
+対象外・合格再利用・理由付き見送りの検査には準備を要求せず、取得・ビルド・機器操作もしない。
+失敗時は長い検査を開始せず、`report.md` と `preflight-<ID>.log` に環境エラーと復旧案内を残す。
+事前確認は製品検査の合格ではなく、既存の `check-tsan-runtime` 等も省略しない。
+
+検査は JSON の `priority` と `after` に従う安定した順序で実行する。
+フォーマット、ポリシー整合、TSan ランタイムの対照、選択された ASan を高コストな製品契約より先に確認する。
+`after` は対象集合内の先行関係だけを指定し、検査の追加選択・省略・並列実行はしない。
+開始から最初の失敗までの時間と対象は `report.json` の `execution.first_failure` に記録する。
+
+`make spike-verification-failures` は同じ集合へ失敗を注入する比較計測で、結果は `target/verification/failure-latency.json`。
+通常候補には含めず、`--run spike-verification-failures` で明示できる。
+製品コード・機器を動かさない模擬計測であり、実際の ASan ビルド時間や過去セッションの再現とは区別する。
+監査と制約は [ADR 0166](decisions/0166-verification-failure-detection.md) を参照する。
+
+## 作業中の個別コマンド
+
+単独の検査は直接実行して終了コードを保つ。
+独立した複数検査を全件実行し、出力をログへ抑える場合は次を使う。
+
+```sh
+python3 -B scripts/checked_commands.py --log-dir target/focused-checks \
+  --command 'cargo fmt --all --check' \
+  --command 'cargo test -q -p echode-model'
+```
+
+`--command` は引用した argv でありシェル構文ではない。`|`、`;`、リダイレクト、`bash -c` で包まない。
+一つでも失敗すれば全体も非ゼロで終了し、完全ログと `commands.json` に各終了コード・時間を残す。
+ログの絞込みは実行後に別の読込みで行い、検査の成否を表示コマンドの成否へ置き換えない。
+TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--expect-failure` を両方指定する。
+後者はその回帰固有のアサーションの正規表現とし、単なる `failed` やビルドエラーを条件にしない。
+時間切れ・起動不能・シグナル・別の終了コードは期待した red にならない。
+これはログ用の補助で、検査の選択・キャッシュ・完了判定は引き続き `make verify` だけが担当する。
+
 未コミットの変更が複数の作業にまたがっていても、各検査の依存入力が前回と同じなら結果を再利用する。
 候補を一律に `--run` せず、今回の影響・過去の有効な結果・検査の目的を確認する。
 
 ## 自動検査
 
-通常の `make check` は `check-verification`、`check-base`、`check-product-contracts` を順に 1 回ずつ実行する。
+通常の `make check` は `check-format`、`check-verification`、`check-base`、`check-product-contracts` を順に 1 回ずつ実行する。
 `scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、基盤と製品契約は別の結果として記録する。
 
 - `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク（`target/` の手元の証拠は除く）、macOS 27 / M4 のビルド基準と生成物の検査（[ADR 0114](decisions/0114-m4-build-baseline.md)）。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
   エージェント入口の選択の一致・失敗情報の保持・原文読込と鮮度の境界も既存の検査内で確認する（[手順](agent-workflow.md)）。
+- `check-format`: 従来 `check-base` のビルド後に行っていた Rust フォーマットを独立して先に検査する。
 - `check` (`check-base`): Rust / Swift のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。

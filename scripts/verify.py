@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -21,6 +20,9 @@ import tomllib
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 POLICY = Path("scripts/verification.json")
+
+sys.path.insert(0, str(ROOT / "scripts"))
+from checked_commands import run_logged
 
 
 def git(root, *arguments):
@@ -81,7 +83,80 @@ def load_policy(root):
             values = group.get(field) if isinstance(group, dict) else None
             if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
                 raise ValueError("invalid product contract " + field)
+    validate_execution(policy)
     return policy
+
+
+def execution_order(policy, requested):
+    """Stable priority order within the requested set, respecting selected predecessor edges."""
+    pending = [check for check in policy["checks"] if check["id"] in requested]
+    ordered = []
+    while pending:
+        names = {check["id"] for check in pending}
+        ready = [check for check in pending if not names.intersection(check.get("after", []))]
+        if not ready:
+            raise ValueError("cyclic verification execution dependencies")
+        check = min(ready, key=lambda item: item.get("priority", 100))
+        pending.remove(check)
+        ordered.append(check)
+    return ordered
+
+
+def validate_execution(policy):
+    checks = policy["checks"]
+    names = {check["id"] for check in checks}
+    preflights = policy.get("preflights", {})
+    if not isinstance(preflights, dict):
+        raise ValueError("invalid verification preflights")
+    for name, entry in preflights.items():
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", name) or not isinstance(entry, dict):
+            raise ValueError("invalid verification preflight")
+        command = entry.get("command")
+        timeout = entry.get("timeout", 0)
+        if (not isinstance(command, list) or not command or not all(isinstance(arg, str) and arg for arg in command)
+                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 60
+                or not isinstance(entry.get("remedy"), str) or not entry["remedy"].strip()):
+            raise ValueError("invalid preflight command/timeout/remedy")
+        inputs = entry.get("inputs", [])
+        if not isinstance(inputs, list) or not all(isinstance(value, str) and value for value in inputs):
+            raise ValueError("invalid preflight inputs")
+    for check in checks:
+        if type(check.get("priority", 100)) is not int:
+            raise ValueError("invalid verification priority")
+        for field, allowed in (("after", names), ("preflight", preflights)):
+            values = check.get(field, [])
+            if (not isinstance(values, list) or not all(isinstance(value, str) for value in values)
+                    or len(values) != len(set(values)) or not set(values).issubset(allowed)):
+                raise ValueError("invalid verification " + field)
+    execution_order(policy, names)
+
+
+def preflight_inputs(policy, check):
+    patterns = []
+    for name in check.get("preflight", []):
+        entry = policy["preflights"][name]
+        patterns += entry.get("inputs", [])
+        patterns += [arg for arg in entry["command"] if arg.startswith("scripts/")]
+    return patterns
+
+
+def run_preflights(root, policy, scheduled, directory):
+    """No installs, builds, or device access: run each declared prerequisite once."""
+    results = {}
+    for check in scheduled:
+        for name in check.get("preflight", []):
+            if name in results:
+                continue
+            entry = policy["preflights"][name]
+            result = run_logged(root, entry["command"], directory / f"preflight-{name}.log", entry["timeout"],
+                                {**os.environ, "RUSTUP_AUTO_INSTALL": "0", "PYTHONDONTWRITEBYTECODE": "1"})
+            result["remedy"] = entry["remedy"]
+            results[name] = result
+            if result["status"] != "passed":
+                break
+        if any(result["status"] != "passed" for result in results.values()):
+            break
+    return results
 
 
 def matches(changed, patterns):
@@ -145,7 +220,8 @@ def definition_identities(policy, makefile):
     parsed = makefile_rules(makefile)
     common = {key: policy.get(key) for key in ("version", "global_inputs", "infrastructure", "evidence_inputs")}
     return {check["id"]: json.dumps([common, check, {key: policy.get(key) for key in check.get("policy_inputs", [])},
-                                     makefile_identity(parsed, check.get("make_target", check["id"]))],
+                                     makefile_identity(parsed, check.get("make_target", check["id"])),
+                                     {name: policy.get("preflights", {})[name] for name in check.get("preflight", [])}],
                                     sort_keys=True)
             for check in policy["checks"]}
 
@@ -181,7 +257,8 @@ def select_checks(policy, changed, all_checks=False, redefined=None):
         if check["mode"] == "automatic":
             reasons += global_hits + infrastructure
             # Explicit inputs (including the check's own helper scripts) select it.
-            reasons += matches(changed, check.get("inputs", []) + check.get("tool_inputs", []))
+            reasons += matches(changed, check.get("inputs", []) + check.get("tool_inputs", [])
+                               + preflight_inputs(policy, check))
             if definitions and (redefined is None or check["id"] in redefined):
                 reasons += definitions
         if all_checks or (not check.get("extended") and (reasons or (changed and check.get("always")))):
@@ -395,7 +472,8 @@ def check_fingerprints(root, policy, tools, contexts=None):
     for check in policy["checks"]:
         # The definition covers this check's policy entry and make recipe, not the whole Makefile.
         configuration = [definitions[check["id"]], common, tools, contexts if check.get("device_context") else {}]
-        stamps[check["id"]] = scoped_digest(root, files, configuration, common + check.get("inputs", []),
+        stamps[check["id"]] = scoped_digest(root, files, configuration,
+                                            common + check.get("inputs", []) + preflight_inputs(policy, check),
                                             package_directories(root, check.get("packages", [])),
                                             check.get("tool_inputs", []))
     return stamps
@@ -476,7 +554,19 @@ def save_report(directory, report, policy, selected):
     temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     temporary.replace(directory / "report.json")
     lines = ["# 変更に対する検査", "", f"更新: {report['updated_at']}",
-             f"ソースの識別値: `{report['fingerprint']}`", "", "## 選ばれた検査", ""]
+             f"ソースの識別値: `{report['fingerprint']}`", ""]
+    execution = report.get("execution", {})
+    if execution:
+        lines += ["## 今回の実行", "", "実行順（再利用を除く）: " + ", ".join(execution["order"]), ""]
+        failure = execution.get("first_failure")
+        if failure:
+            lines += [f"最初の失敗: `{failure['kind']}:{failure['id']}` — 開始から {failure['seconds']} 秒", ""]
+    for name, result in report.get("preflight", {}).items():
+        lines.append(f"- 事前確認 `{name}`: **{result['status']}** ({result['seconds']} 秒)")
+        if result["status"] != "passed":
+            lines.append(f"  - 復旧: `{result['remedy']}`")
+        lines.append(f"  - ログ: [preflight-{name}](preflight-{name}.log)")
+    lines += ["", "## 検査結果", ""]
     for check in policy["checks"]:
         name = check["id"]
         additional = check.get("extended") and name in report["results"]
@@ -505,41 +595,19 @@ def save_report(directory, report, policy, selected):
 
 
 def run_check(root, check, log, force=False):
-    started = time.monotonic()
-    # --force also bypasses evidence that a check keeps for its own parts. Only
-    # this run's option decides it; an inherited value (e.g. a forced outer run) does not.
+    # Each recipe shell fails on an earlier command or pipeline stage, even in
+    # fixture/third-party Makefiles without the repository's strict defaults.
     env = {key: value for key, value in os.environ.items() if key != "ECHODE_VERIFY_FORCE"}
-    env.update({"PYTHONDONTWRITEBYTECODE": "1", "ECHODE_VERIFY_GROUP": "1"})
+    env.update({"PYTHONDONTWRITEBYTECODE": "1", "ECHODE_VERIFY_GROUP": "1", "RUSTUP_AUTO_INSTALL": "0"})
     if force:
         env["ECHODE_VERIFY_FORCE"] = "1"
-    with log.open("w") as output:
-        target = check.get("make_target", check["id"])
-        output.write(f"Command: make {target}\nTimeout: {check['timeout']} s\n\n")
-        output.flush()
-        try:
-            process = subprocess.Popen(
-                ["make", target], cwd=root, stdout=output, stderr=subprocess.STDOUT,
-                start_new_session=True, env=env,
-            )
-        except OSError as error:
-            output.write(str(error) + "\n")
-            return {"status": "failed", "log": str(log), "error": str(error)}
-        try:
-            code = process.wait(timeout=check["timeout"])
-        except subprocess.TimeoutExpired:
-            # Stop Cargo's test children too; a hung process must not keep holding locks.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-            output.write("\nVERIFICATION TIMEOUT\n")
-            return {"status": "failed", "log": str(log), "error": "timeout"}
-    return {"status": "passed" if code == 0 else "failed", "exit_code": code,
-            "seconds": round(time.monotonic() - started, 3), "log": str(log)}
+    target = check.get("make_target", check["id"])
+    return run_logged(root, ["make", target, "SHELL=/bin/bash -euo pipefail"],
+                      log, check["timeout"], env)
 
 
 def verify(root, args):
+    started = time.monotonic()
     policy = load_policy(root)
     changed = changed_paths(root, args.base)
     selected = plan_checks(root, policy, changed, args.base, args.all)
@@ -563,7 +631,9 @@ def verify(root, args):
     if args.plan:
         if changed:
             print(f"対象の変更 ({len(changed)} 件): " + summarize_reasons(changed, limit=8))
-        for name, reasons in selected.items():
+        for check in execution_order(policy, selected):
+            name = check["id"]
+            reasons = selected[name]
             kind = "自動検査" if checks[name]["mode"] == "automatic" else "追加の長時間検査" if checks[name].get("extended") else "計測などの候補"
             print(f"{name} [{kind}]: {checks[name]['purpose']} (根拠: {summarize_reasons(reasons)})")
         if not selected:
@@ -587,11 +657,27 @@ def verify(root, args):
                 report["results"][name] = {"status": status, "fingerprint": stamps[name]}
         for name in args.defer:
             report["results"][name] = {"status": "deferred", "reason": args.reason.strip(), "fingerprint": stamps[name]}
+        ordered = execution_order(policy, requested)
+        scheduled = [check for check in ordered
+                     if (args.force or report["results"][check["id"]]["status"] != "passed")
+                     and (check["mode"] == "automatic" or check["id"] in args.run)]
+        report["execution"] = {"order": [check["id"] for check in scheduled], "first_failure": None}
+        report["preflight"] = {}
         save_report(directory, report, policy, selected)
-        for check in policy["checks"]:
+        report["preflight"] = run_preflights(root, policy, scheduled, directory)
+        failed_preflight = next((name for name, result in report["preflight"].items()
+                                 if result["status"] != "passed"), None)
+        if failed_preflight:
+            result = report["preflight"][failed_preflight]
+            report["execution"]["first_failure"] = {
+                "kind": "preflight", "id": failed_preflight, "seconds": round(time.monotonic() - started, 3)}
+            save_report(directory, report, policy, selected)
+            print(f"事前確認 {failed_preflight}: failed; 復旧: {result['remedy']}\n"
+                  + failure_excerpt(result["log"]), file=sys.stderr)
+            return 1
+        save_report(directory, report, policy, selected)
+        for check in ordered:
             name = check["id"]
-            if name not in requested:
-                continue
             previous = report["results"].get(name, {}).get("status")
             if not args.force and previous == "passed":
                 print(f"{name}: passed (検査の入力・ツールが同じため前回の結果を使用)", flush=True)
@@ -606,6 +692,9 @@ def verify(root, args):
                 result.update({"status": "failed", "error": "audio device metadata unavailable; cannot attest this measurement"})
             result["fingerprint"] = stamps[name]
             report["results"][name] = result
+            if result["status"] != "passed":
+                report["execution"]["first_failure"] = {
+                    "kind": "check", "id": name, "seconds": round(time.monotonic() - started, 3)}
             # Concurrent edits may occur while an agent or CI runs a long check.
             current_tools = tool_identity(root)
             if (changed_paths(root, args.base) != changed
@@ -613,6 +702,8 @@ def verify(root, args):
                     or check_fingerprints(root, policy, current_tools)[name] != stamps[name]):
                 result["status"] = "stale"
                 result["error"] = "source or toolchain changed during verification"
+                report["execution"]["first_failure"] = {
+                    "kind": "stale", "id": name, "seconds": round(time.monotonic() - started, 3)}
                 save_report(directory, report, policy, selected)
                 print(f"{name}: 検査中に変更がありました。再実行が必要です。", file=sys.stderr)
                 return 1

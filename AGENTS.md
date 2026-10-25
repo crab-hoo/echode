@@ -71,6 +71,9 @@ Phase 0 は確定済み、Phase 1 の完了範囲は [現在の制約](docs/stat
 ## 確認
 
 検査は [まとめて進める方針](docs/development.md#検査をまとめて進める) に従い、範囲・合否基準を維持したまま重複実行と読み込む出力を抑えます。
+検査を `grep` / `head` へ直接パイプせず、`;` や最後の `echo` で途中の失敗を隠さない。
+独立した複数の個別検査は [安全なコマンド実行](docs/verification.md#作業中の個別コマンド) で終了コードを集約する。
+意図した red は期待終了コードと回帰固有のアサーションも照合する。
 
 着手時に `make agent-context` または `make verify-plan`、変更を終えたら `make verify` を実行します。
 変更箇所と追加検査の対応は `scripts/verification.json` だけに置きます。

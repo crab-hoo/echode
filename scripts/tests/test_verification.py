@@ -508,7 +508,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_input_has_both_headless_tests_and_an_explicit_hardware_check(self):
         self.assertEqual(self.selected("spikes/input/Sources/EchodeInputCore/Gesture.swift"),
-                         {"check-verification", "check", "check-product-contracts", "check-input", "spike-input"})
+                         {"check-format", "check-verification", "check", "check-product-contracts", "check-input", "spike-input"})
 
     def test_isolation_and_dependency_changes_select_their_extra_checks(self):
         checks = self.selected("crates/echode-sandbox/src/lib.rs")
@@ -532,10 +532,10 @@ class PolicyTests(unittest.TestCase):
         # Without the diff base the policy and Makefile cannot be compared, so every automatic check runs.
         for path in ("Makefile", "scripts/verification.json"):
             self.assertEqual(self.selected(path), expected)
-        self.assertEqual(self.selected("docs/PLAN.md"), {"check-verification", "check", "check-product-contracts"})
+        self.assertEqual(self.selected("docs/PLAN.md"), {"check-format", "check-verification", "check", "check-product-contracts"})
 
     def test_a_helper_script_selects_only_the_checks_that_run_it(self):
-        always = {"check-verification", "check", "check-product-contracts"}
+        always = {"check-format", "check-verification", "check", "check-product-contracts"}
         self.assertEqual(self.selected("scripts/check-bridge-address.sh"),
                          always | {"check-bridge-asan", "check-bridge-tsan"})
         self.assertEqual(self.selected("scripts/check-bridge-miri.sh"), always | {"check-bridge-miri"})
@@ -567,7 +567,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(redefined(policy), set())
         policy["global_inputs"].append("extra.toml")
         self.assertEqual(redefined(policy), {check["id"] for check in self.policy["checks"]})
-        always = {"check-verification", "check", "check-product-contracts"}
+        always = {"check-format", "check-verification", "check", "check-product-contracts"}
         self.assertEqual(set(verify.select_checks(self.policy, ["Makefile"], redefined=set())), always)
         self.assertEqual(set(verify.select_checks(self.policy, ["Makefile"], redefined={"rtsan", "spike-audio"})),
                          always | {"rtsan"})

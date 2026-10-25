@@ -187,6 +187,31 @@ class DiagnosticTests(unittest.TestCase):
         embedded.write_text("Changed embedded help")
         self.assertEqual(diagnose.build_status(self.root, diagnose.source_stamp(self.root))["status"], "stale")
 
+    def test_bundle_collects_declared_preflight_logs_but_not_arbitrary_command_output(self):
+        path = self.root / "scripts/verification.json"
+        policy = json.loads(path.read_text())
+        policy["preflights"] = {name: {"command": ["true"], "timeout": 5, "remedy": "prepare fixture"}
+                                for name in ("ready", "external")}
+        path.write_text(json.dumps(policy))
+        self.save_report()
+        directory = self.root / "target/verification"
+        (directory / "preflight-ready.log").write_text("missing runtime")
+        (directory / "failure-latency.json").write_text('{"synthetic":true}')
+        outside = self.root / "private-document"
+        outside.write_text("DO_NOT_COLLECT")
+        (directory / "preflight-external.log").symlink_to(outside)
+        (directory / "preflight-unknown.log").write_text("DO_NOT_COLLECT")
+        focused = directory / "focused"
+        focused.mkdir()
+        (focused / "1.log").write_text("DO_NOT_COLLECT")
+        with patch.object(diagnose, "APP_LOG_DIR", self.root / "missing-app-logs"):
+            output = diagnose.bundle(self.root, diagnose.collect(self.root))
+        self.assertEqual((output / "verification/preflight-ready.log").read_text(), "missing runtime")
+        self.assertTrue((output / "verification/failure-latency.json").is_file())
+        self.assertFalse((output / "verification/preflight-external.log").exists())
+        self.assertFalse((output / "verification/preflight-unknown.log").exists())
+        self.assertFalse((output / "verification/focused").exists())
+
     def test_bundle_is_bounded_keeps_originals_and_does_not_follow_external_links(self):
         self.save_report()
         log = self.root / "target/verification/check.log"

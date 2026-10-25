@@ -44,6 +44,18 @@ make debug-report
   `shm_open: Operation not permitted` や `SecKeychainCreate` の失敗はサンドボックス制限によるため、許可された環境で再実行する。
   Swift のマニフェスト読込時に `ModuleCache: Operation not permitted` と標準ライブラリ読込失敗が続く場合も、先にキャッシュの書込権限を確認する。
   文書だけの検査でもビルド設定と一時署名の検査を含むため、これらの環境エラーを製品の型エラーや設計資料の不整合と混同しない。
+- **長時間検査の前の準備不足**:
+  `make verify` の `事前確認 ... failed` は製品テストをまだ実行していない環境エラーである。
+  `target/verification/preflight-<ID>.log`、`report.md` の復旧案内を確認する。
+  `make debug-report` は登録済みの事前確認ログと失敗注入の計測 JSON も収集する。
+  任意の個別コマンドの出力は私的な内容を含み得るため、自動収集せず必要なログを選んで添付する。
+  `tsan-runtime` は既存の準備確認で、古い文脈・マニフェスト不正・両 dylib の変更を拒否する。復旧は `make setup-bridge`。
+  `bridge-nightly` / `bridge-miri` は固定 nightly・rust-src・Miri、`cargo-offline` はローカルの依存不足を切り分ける。
+  事前確認を飛ばして合格にせず、復旧後に同じ `make verify` を再実行する。
+- **コマンドは成功扱いなのにログに失敗がある**:
+  `echo`、`;`、`grep` / `head` のパイプによる終了コードの置換を調べる。
+  [個別コマンドの記録](verification.md#作業中の個別コマンド) の `commands.json` と完全ログを使い、成功表示だけを証拠にしない。
+  macOS 標準 make 3.81 は `.SHELLFLAGS` を無視する。厳密なレシピ実行は Makefile の `SHELL` のオプションで行う。
 - **自動検査・製品契約の失敗**:
   `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
   最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。

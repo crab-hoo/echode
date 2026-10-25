@@ -114,4 +114,5 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 検査基盤とトークン効率化: [ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0094](decisions/0094-agent-development-foundation.md)、[ADR 0100](decisions/0100-scoped-verification.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)。
 - 一括開始診断と根拠付きの節・行の読込: [ADR 0126](decisions/0126-agent-context-and-source-reading.md)。
 - 検査の実行時間（反例のコピーの保持・契約ごとの再利用・定義単位の選択）: [ADR 0148](decisions/0148-verification-pipeline-speed.md)。
+- 終了コードの保証・実行予定だけの環境事前確認・依存順序と失敗検出遅延: [ADR 0166](decisions/0166-verification-failure-detection.md)。
 - 起動復旧の終了待ち・Darwin errno の検査ランタイム修正: [ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)。
