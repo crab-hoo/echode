@@ -72,6 +72,14 @@ struct ContentIndex {
     ends: MaxEnd,
     pitches: Vec<PitchIndex>,
     by_id: BTreeMap<Id, usize>,
+    range: PitchRange,
+}
+
+/// Content-wide pitch cells, computed once and shared by every placement.
+#[derive(Clone, Copy, Debug)]
+struct PitchRange {
+    center: f64,
+    span: f64,
 }
 
 #[derive(Debug)]
@@ -508,6 +516,12 @@ impl ContentIndex {
         for (index, note) in content.notes.iter().enumerate() {
             by_pitch.entry(note.pitch).or_default().push(index);
         }
+        let low = f64::from(*by_pitch.keys().next().unwrap_or(&60));
+        let high = f64::from(*by_pitch.keys().next_back().unwrap_or(&60));
+        let range = PitchRange {
+            center: (low + high) / 2.0,
+            span: (high - low + 1.0).max(12.0),
+        };
         let pitches = by_pitch
             .into_iter()
             .map(|(pitch, notes)| {
@@ -533,6 +547,7 @@ impl ContentIndex {
             ends: MaxEnd::build(&ends),
             pitches,
             by_id,
+            range,
         }
     }
 
@@ -630,6 +645,7 @@ impl NoteQuery<'_> {
         else {
             return;
         };
+        let layout = PitchLayout::new(index.range, self.view.pixels_per_track);
         let ends = &index.ends;
         let notes = &index.content.notes;
         ends.visit(
@@ -646,10 +662,10 @@ impl NoteQuery<'_> {
                 emit(note_element(
                     self.track,
                     self.clip.id,
-                    note.id,
+                    note,
                     self.track_index,
-                    start,
-                    end,
+                    layout,
+                    (start, end),
                     self.view,
                 ));
             },
@@ -753,27 +769,57 @@ fn clip_element(
     }
 }
 
+/// Reuse the row transform for all visible notes in a placement.
+#[derive(Clone, Copy)]
+struct PitchLayout {
+    top: f64,
+    last: f64,
+    center: f64,
+    step: f64,
+    height: f64,
+}
+
+impl PitchLayout {
+    fn new(range: PitchRange, row_height: f64) -> Self {
+        let top = row_height * NOTE_INSET;
+        let available = row_height * NOTE_HEIGHT;
+        // At sub-point row sizes containment wins over the one-point minimum.
+        let height = (available / range.span).max(1.0).min(available);
+        let step = available / range.span;
+        Self {
+            top,
+            last: (top + available - height).max(top),
+            center: top + available / 2.0 + range.center * step - height / 2.0,
+            step,
+            height,
+        }
+    }
+}
+
 fn note_element(
     track: Id,
     placement: Id,
-    note: Id,
+    note: &Note,
     index: usize,
-    start: i64,
-    end: i64,
+    layout: PitchLayout,
+    window: (i64, i64),
     view: &ArrangeView,
 ) -> Element {
     let y = (index as f64 - view.origin_track) * view.pixels_per_track;
+    let (start, end) = window;
+    let offset =
+        (layout.center - f64::from(note.pitch) * layout.step).clamp(layout.top, layout.last);
     Element {
         id: ElementId {
             role: Role::Note,
             track,
             placement: Some(placement),
-            note: Some(note),
+            note: Some(note.id),
         },
         x: tick_x(start, view) as f32,
-        y: (y + view.pixels_per_track * NOTE_INSET) as f32,
+        y: (y + offset) as f32,
         w: ((end - start) as f64 * view.pixels_per_tick) as f32,
-        h: (view.pixels_per_track * NOTE_HEIGHT) as f32,
+        h: layout.height as f32,
     }
 }
 

@@ -211,7 +211,7 @@ struct ArrangeFrame: Sendable {
         case .clip: color = element.id.placement == input.selectedClip ? SIMD4(0.28, 0.54, 0.66, 1) : SIMD4(0.18, 0.36, 0.47, 1)
         case .note: color = SIMD4(0.52, 0.83, 0.88, 1)
         }
-        return Instance(rect: SIMD4(Float(timelineOrigin) + element.x, Float(input.arrangeTop) + element.y, element.width, max(1, element.height - 1)) * Float(input.scale), color: color)
+        return Instance(rect: SIMD4(Float(timelineOrigin) + element.x, Float(input.arrangeTop) + element.y, element.width, element.role == .note ? element.height : max(1, element.height - 1)) * Float(input.scale), color: color)
     }
 
     private static func waveforms(elements: [ArrangeElement], input: CanvasInput, camera: ArrangeCamera, origin: Double) -> [WaveformDraw] {

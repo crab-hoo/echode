@@ -388,6 +388,21 @@ class PolicyTests(unittest.TestCase):
                 if path.startswith("crates/echode-audio-io"):
                     self.assertIn("check-bridge-asan", self.selected(path))
 
+    def test_arrange_pitch_contracts_and_headless_query_measurement_are_selected(self):
+        for path in ("crates/echode-draw/src/query.rs", "crates/echode-model/src/model.rs",
+                     "swift/EchodeApp/Sources/EchodeAppCore/ArrangeFrame.swift"):
+            self.assertIn("spike-arrange-query", self.selected(path))
+        self.assertNotIn("spike-arrange-query", self.selected("crates/echode-engine/src/mix.rs"))
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        self.assertEqual(contracts["arrange-note-pitch"]["package"], "echode-draw")
+        self.assertEqual(contracts["arrange-note-pitch-ui"]["suite"], "ArrangePitchTests")
+        self.assertEqual(len(contracts["arrange-note-pitch-ui"]["negative_controls"]), 2)
+        for name in ("arrange-note-pitch", "arrange-note-pitch-ui"):
+            contract = contracts[name]
+            faults = contract.get("negative_controls") or [contract["negative_control"]]
+            for fault in faults:
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+
     def test_product_drawing_has_a_separate_real_display_probe(self):
         self.assertIn("spike-app", self.selected("swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift"))
         for file in ("PianoRollView.swift", "PianoGeometry.swift", "PianoFrame.swift", "PianoOffscreenProbe.swift", "ArrangeGeometry.swift",
@@ -658,7 +673,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
-                          "playhead-follow-ui", "playhead-follow-state-ui",
+                          "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",

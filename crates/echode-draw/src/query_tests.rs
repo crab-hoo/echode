@@ -136,7 +136,7 @@ fn a_short_buffer_counts_the_overflow_and_a_hit_prefers_the_note() {
         .insert_note(
             track,
             NoteDraft {
-                pitch: 72,
+                pitch: 60,
                 ..quarter(0, 1)
             },
         )

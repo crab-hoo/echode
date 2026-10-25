@@ -91,8 +91,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     開始位置・ループ・メトロノーム等の送信中もボタン・ルーラー・コマンドを無効にせず、要求を順に送る
     （[ADR 0160](decisions/0160-ordered-transport-requests.md)）。
     ノートの終端ちょうどからの再生で、そのノートを追いかけて鳴らさない（[ADR 0164](decisions/0164-note-end-chase.md)）。
-    アレンジの MIDI クリップのノートの音高表示はアレンジ編集の最初の項目として要件にした。未接続である
-    （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
+    アレンジの MIDI クリップの音高表示も接続した。中身ごとの音域で高い音ほど上へ置き、狭い音域は中央寄せにする
+    （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。実画面と VoiceOver はユーザー確認待ちである。
 
 ## 利用時に残る制約
 

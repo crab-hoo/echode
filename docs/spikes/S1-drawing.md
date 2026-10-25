@@ -38,3 +38,27 @@ make spike-draw
 ```
 
 ウィンドウが開き、計測が終わると閉じる。結果は標準出力と `target/spike-s1.txt` に出る。`--bench` を付けずに `spikes/draw` で `swift run -c release` すると、スクロールとピンチを手で確認できる。
+
+## 製品アレンジの問い合わせ音高表示
+
+2026-10-25、[ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md) の音高表示に合わせ、
+`make spike-arrange-query` を追加した。
+上記 S1 の専用シーンとは別に、製品の `ArrangeIndex` を同じ 1,000 トラック・100,000 ノートで測る。
+ウィンドウ・GPU・音声機器は使わず、音域の索引作成と出力バッファの確保も計測区間に含めない。
+全体表示と、13 行の一部・8 拍を表示する部分表示をそれぞれ 120 回問い合わせ、最初の 20 回を除く。
+件数・繰返し数はこの計測の条件であり、製品の上限ではない。
+
+Apple M4、release、同じ入力での開発中の比較:
+
+| 問い合わせ | 旧版の中央値 / p99 | 音高表示の中央値 / p99 |
+|---|---|---|
+| 全体 | 753.542 / 828.416 µs | 766.958 / 805.125 µs |
+| 部分 | 1.708 / 1.792 µs | 1.708 / 1.750 µs |
+
+全体の中央値は約 13 µs 増えたが、p99 と部分表示は同等以下だった。
+時間増加が厳密にゼロとは判定せず、この入力の問い合わせ時間とする。
+当初のノートごとの除算を、配置ごとに準備した縦変換へ移してから測った。
+手元の比較ログは `target/arrange-query-before/1.log`、`target/spike-arrange-query.txt` にあり、
+正式な再実行は `scripts/verify.py --run spike-arrange-query` から行う。
+結果の鮮度は `target/verification/report.md` と `spike-arrange-query.log` で確認する。
+実画面への提出・GPU の負荷を含む S1 の再計測は未実施で、上記の過去の S1 数値を今回の合格とはしない。

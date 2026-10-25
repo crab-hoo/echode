@@ -67,7 +67,9 @@
 - 両者の要件・時期は [ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md) と
   [操作要件](../interaction-design.md) に置き、[Phase 2 の進め方](../phase2.md) の P2-02 と P2-07 へ加えた。
 - FB-07 対応: インスペクターの一覧末尾へ FX 追加を接続した。空のチェインと挿入済みの両方を実 View で通す必須契約は `fx-inspector-ui`。
-  実画面と VoiceOver はユーザー確認待ちである。FB-08 の音高表示は未実装のままである。
+  実画面と VoiceOver はユーザー確認待ちである。
+- FB-08 対応: 中身の音域に基づく音高表示を接続した。可視列の境界は `arrange-note-pitch`、製品の Metal と VoiceOver 用の局所矩形は `arrange-note-pitch-ui` で確認する。
+  実画面・読み上げと S1 の実ウィンドウの再計測はユーザー担当である。
 
 ## ユーザー確認が必要なこと
 

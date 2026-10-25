@@ -415,8 +415,9 @@ GUI の応答性と編集継続は P2 のデバイス表示・読込みから守
   再生ヘッドへの追従も接続した（[ADR 0159](decisions/0159-playhead-follow.md)）。Return の一時停止は未接続である。
 - アレンジのクリップ本体の移動と Command の複製移動は、重ねるモードの切替の前に「置き換える」として接続した（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
   枠選択・編集区間・⌘D・貼付け・トリム・自動クロスフェードは未接続である。
-  アレンジの MIDI クリップのノートは音高を使わずレーンの高さの帯で描いており、音高表示は未接続である（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
-- インスペクターの FX 追加ボタンは未接続である。トラックヘッダとデバイスビューの追加ボタンは接続済みである。
+  アレンジの MIDI クリップの音高表示を接続した。中身ごとの音域で描き、実画面と VoiceOver はユーザー確認待ちである
+  （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
+- インスペクターの FX 追加も接続済みである（同 ADR）。トラックヘッダとデバイスビューの入口も残す。
 - トラック FX チェインの並べ替え・複製・別トラックへのコピーと非モーダル候補パネルは P2-02 の最初の接続（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）で実装済み。
   ホストバイパスも保存・Undo・再生・書出しへ接続した（[ADR 0120](decisions/0120-device-bypass.md)）。
   共通サンプルブラウザの登録素材検索・位置を保持する配置は接続済みである。

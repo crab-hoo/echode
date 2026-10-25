@@ -426,14 +426,19 @@ public final class ArrangeView: NSView {
             }, onClose: { [weak self] in self?.entry = nil })
     }
 
+    /// Local VoiceOver geometry from the last presented frame, not the live camera.
+    func accessibilityRect(for element: ArrangeElement) -> CGRect {
+        CGRect(x: presentedTimelineOrigin + Double(element.x), y: presentedTimelineTop + Double(element.y),
+               width: Double(element.width), height: Double(element.height))
+            .intersection(CGRect(x: presentedTimelineOrigin, y: presentedTimelineTop,
+                width: max(0, bounds.width - presentedTimelineOrigin), height: max(0, bounds.height - presentedTimelineTop)))
+    }
+
     public override func accessibilityChildren() -> [Any]? {
         guard let window else { accessibleElements = [:]; return [] }
         var visible: [ArrangeElement.ID: AccessibleArrangeElement] = [:]
         let children = elements.compactMap { element -> AccessibleArrangeElement? in
-            let local = NSRect(x: presentedTimelineOrigin + Double(element.x), y: presentedTimelineTop + CGFloat(element.y),
-                               width: CGFloat(element.width), height: CGFloat(element.height))
-                .intersection(CGRect(x: presentedTimelineOrigin, y: presentedTimelineTop,
-                    width: max(0, bounds.width - presentedTimelineOrigin), height: max(0, bounds.height - presentedTimelineTop)))
+            let local = accessibilityRect(for: element)
             guard !local.isEmpty, !local.isNull else { return nil }
             let screen = window.convertToScreen(convert(local, to: nil))
             let label: String

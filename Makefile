@@ -145,6 +145,11 @@ spike-draw:
 	cargo test -q --release -p echode-draw
 	cd spikes/draw && swift run -c release EchodeDraw --bench --report ../../target/spike-s1.txt
 
+# Product arrange query measurement, without a window or audio device.
+.PHONY: spike-arrange-query
+spike-arrange-query:
+	cargo test -q --release -p echode-draw --test arrange_pitch measure_product_arrange_query -- --ignored --exact --nocapture
+
 # Plain-text project history. See docs/spikes/S4-history.md.
 spike-history:
 	cargo test -q --release -p echode-history --test roundtrip -- --include-ignored --test-threads=1

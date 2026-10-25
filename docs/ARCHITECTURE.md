@@ -295,6 +295,8 @@ P2 の共通サンプルブラウザ（[interaction-design.md](interaction-desig
 ### 13.2 Metal のレンダラー
 
 専用スレッドの `CAMetalDisplayLink` と 3 枠バッファ再利用（[ADR 0091](decisions/0091-playhead-wake.md)、[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)）、単一可視列（[ADR 0045](decisions/0045-visible-elements.md)）、`CanvasGeometryCache`（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
+アレンジの MIDI ノートは中身ごとの音域で縦に置き、可視列の矩形を Metal と VoiceOver 用の位置へ共用する
+（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
 リサイズ時の左上固定・描画サイズの主スレッド所有と、指定ヘッダ幅の保持は [ADR 0144](decisions/0144-unscaled-canvas-resizing.md) に従う。
 
 ### 13.3 Rust と Swift の橋渡し

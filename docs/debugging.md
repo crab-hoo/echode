@@ -177,6 +177,12 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **アレンジのノートが帯のまま・音高が逆・VoiceOver と高さが違う**:
+  中身の `PitchRange` は表示中のノートでなく全ノートから求める。スクロールやトリムしたリンク配置で縮尺が変わるなら索引の範囲を確認する。
+  `arrange-note-pitch` は音域と 1 pt 下限、`arrange-note-pitch-ui` は製品の Metal と VoiceOver 用の局所矩形を切り分ける。
+  `ArrangeFrame.instance` でノートの高さから行区切りの 1 pt を引いていないか、`accessibilityRect(for:)` が最後に提出したフレームを使うかを見る。
+  問い合わせだけの時間は `spike-arrange-query`、実画面の提出・見え方は S1 とユーザー確認で区別する。
+  `make debug-report` は検査の `target/verification/spike-arrange-query.log` も収集する。
 - **開始位置の変更・ループ・メトロノームで、ボタンやルーラーが一瞬暗転する**:
   トランスポートの欄・ルーラー・コマンドは `ProjectController.transportLocked`（文書なし、または `busy`）だけで無効になる。
   `audioBusy` は応答待ちの有無であり、操作子の有効状態に使っていないかを確認する。

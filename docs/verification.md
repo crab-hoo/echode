@@ -112,6 +112,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `spike-isolation`: 隔離の release 計測と製品 CLAP の実時間ブロック期限。明示的な依頼がある時に実行し、[S3](spikes/S3-plugin-isolation.md) の数値を更新する。
 - `spike-draw`: Metal の大規模シーンと可視判定の実機計測（[S1](spikes/S1-drawing.md)）。
 - `spike-arrange-frame`: 画面を開かず製品の Metal 描画を読み戻し、倍率 1・2、ズーム・スクロール、幅、文字、行境界、ヘッダへのはみ出しと、入力と違う大きさへ描いた重なり画素・余白画素を比較する（`target/spike-arrange-frame.json`）。
+- `spike-arrange-query`: S1 と同じ件数で製品の `ArrangeIndex` の全体・部分問い合わせを release 計測する。
+  ウィンドウ・機器・GPU は使わず、`target/verification/spike-arrange-query.log` に結果を記録する（[S1](spikes/S1-drawing.md)）。
 - `spike-piano-frame`: 画面を開かず製品の Metal 描画を読み戻し、鍵盤・ノートの音高行、調に依存しない白黒、ディグリー表示と、入力と違う大きさへ描いた重なり画素・余白画素を比較する（`target/spike-piano-frame.json`）。
   両フレーム検査は描画部品の比較であり、提出・版の消費・休止・再試行は通常の必須契約で製品と同じ提出経路を検査する。
 - `spike-app`: 製品のアレンジとピアノロールを実表示し、メインスレッドの 0.5 秒の負荷中も描画することとアクセシビリティ ID を確認する（`target/spike-app.json`）。
