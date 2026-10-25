@@ -59,7 +59,12 @@ public final class ProjectController {
     /// The remembered start in ticks, observed apart from position polls so
     /// the rulers redraw only when it changes (ADR 0155).
     public private(set) var playbackStart: Int64 = 0
+    /// An audio command is in flight. It never disables controls: commands
+    /// keep their order instead (ADR 0160).
     public private(set) var audioBusy = false
+    /// The transport bar, both rulers and the transport commands share this.
+    /// Only replacing or closing the document locks them.
+    public var transportLocked: Bool { snapshot == nil || busy }
     /// Loop bounds in beats. Transport state, not part of the project.
     public var loopStartBeat = 0.0
     public var loopEndBeat = 4.0
@@ -69,6 +74,8 @@ public final class ProjectController {
     public private(set) var pendingPlayback: Bool?
     public var playbackRequested: Bool { pendingPlayback ?? audio.playing }
     @ObservationIgnored private var audioRequests = 0
+    /// The last audio command sent or waiting. Ordered commands start after it.
+    @ObservationIgnored private var audioTail: Task<Void, Never>?
     @ObservationIgnored private var audioRevision: UInt64 = 0
     @ObservationIgnored private(set) var document: Document?
     @ObservationIgnored private var reportedAudioError: String?
@@ -410,13 +417,13 @@ public final class ProjectController {
     /// Moves the playhead without changing the remembered start.
     public func locate(beat: Double) async {
         guard let tick = PianoCamera.ticks(beat), tick >= 0 else { return }
-        await audioCommand(.locate(tick: tick))
+        await orderedAudioCommand { .locate(tick: tick) }
     }
 
     /// Rulers and the transport field. Playing, it seeks and keeps playing.
     public func setPlaybackStart(tick: Int64) async {
         guard tick >= 0 else { return }
-        await audioCommand(.setStart(tick: tick))
+        await orderedAudioCommand { .setStart(tick: tick) }
     }
 
     public func setPlaybackStart(beat: Double) async {
@@ -424,26 +431,39 @@ public final class ProjectController {
         await setPlaybackStart(tick: tick)
     }
 
+    /// Reads the loop state on its turn, so a quick second toggle undoes the first.
     public func toggleLoop() async {
-        await setLoop(enabled: audio.loopStart == nil)
+        await setLoop { $0.loopStart == nil }
     }
 
     public func setLoop(enabled: Bool) async {
-        guard enabled else {
-            await audioCommand(.loop(start: nil, end: nil))
-            return
+        await setLoop { _ in enabled }
+    }
+
+    /// Sends the current bounds when the loop is on at this command's turn.
+    /// A draft never turns an inactive loop on.
+    func updateLoopBounds() async {
+        await setLoop { $0.loopStart != nil ? true : nil }
+    }
+
+    /// `enabled` runs on the command's turn, after earlier commands answered:
+    /// true sends the bounds then current, false turns the loop off, nil sends nothing.
+    private func setLoop(_ enabled: @escaping @MainActor (AudioState) -> Bool?) async {
+        await orderedAudioCommand { [self] in
+            guard let on = enabled(audio) else { return nil }
+            guard on else { return .loop(start: nil, end: nil) }
+            guard let start = PianoCamera.ticks(loopStartBeat), let end = PianoCamera.ticks(loopEndBeat),
+                  start >= 0, end > start else { return nil }
+            return .loop(start: start, end: end)
         }
-        guard let start = PianoCamera.ticks(loopStartBeat), let end = PianoCamera.ticks(loopEndBeat),
-              start >= 0, end > start else { return }
-        await audioCommand(.loop(start: start, end: end))
     }
 
     public func toggleMetronome() async {
-        await audioCommand(.metronome(enabled: !audio.metronome))
+        await orderedAudioCommand { [self] in .metronome(enabled: !audio.metronome) }
     }
 
-    public func selectOutput(uid: String?) async { await audioCommand(.output(uid: uid)) }
-    public func refreshOutputs() async { await audioCommand(.refresh) }
+    public func selectOutput(uid: String?) async { await orderedAudioCommand { .output(uid: uid) } }
+    public func refreshOutputs() async { await orderedAudioCommand { .refresh } }
 
     /// Runs only while the workspace is visible. The renderer reads the live
     /// feed independently; this loop updates native controls and error text.
@@ -465,8 +485,36 @@ public final class ProjectController {
         }
     }
 
+    /// Play, pause and stop go at once: the bridge cancels a loading play
+    /// without waiting behind it (ADR 0097). Later ordered commands still
+    /// start after them.
     private func audioCommand(_ command: AudioCommand) async {
-        guard !busy, !audioBusy || command.playbackIntent != nil, let document else { return }
+        guard !busy, let document else { return }
+        let previous = audioTail
+        let sent = Task { @MainActor in await self.send(command, to: document) }
+        audioTail = Task { @MainActor in
+            await previous?.value
+            await sent.value
+        }
+        await sent.value
+    }
+
+    /// Every other command waits for the one before it instead of disabling
+    /// the controls (ADR 0160). `make` runs on the command's turn, so a toggle
+    /// reads the state the earlier command left; `nil` sends nothing.
+    private func orderedAudioCommand(_ make: @escaping @MainActor () -> AudioCommand?) async {
+        guard !busy, let document else { return }
+        let previous = audioTail
+        let turn = Task { @MainActor in
+            await previous?.value
+            guard self.document === document, !self.busy, let command = make() else { return }
+            await self.send(command, to: document)
+        }
+        audioTail = turn
+        await turn.value
+    }
+
+    private func send(_ command: AudioCommand, to document: Document) async {
         audioRevision &+= 1
         let revision = audioRevision
         if let intent = command.playbackIntent { pendingPlayback = intent }

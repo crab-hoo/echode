@@ -92,7 +92,7 @@ final class WorkspaceSession {
         guard !state.choosingFile, state.presentation == nil || (fromPalette && state.presentation == .palette) else { return false }
         let editable = controller.snapshot != nil && !controller.busy
         switch command {
-        case .newProject, .openProject: return !controller.busy && !controller.audioBusy
+        case .newProject, .openProject: return !controller.busy
         case .undo: return editable && controller.undoCount > 0
         case .redo: return editable && controller.redoCount > 0
         case .history: return editable
@@ -100,7 +100,7 @@ final class WorkspaceSession {
         case .duplicateTrack, .plugins: return editable && controller.selection != nil
         case .devices, .editor, .maximizeEditors, .followPlayhead: return controller.snapshot != nil
         case .playback, .pause, .stop: return editable
-        case .loop, .metronome, .output: return editable && !controller.audioBusy
+        case .loop, .metronome, .output: return !controller.transportLocked
         default: return true
         }
     }

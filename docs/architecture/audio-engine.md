@@ -59,7 +59,9 @@ Phase 2 のクリップ FX も経路に含め、バイパス・オフライン�
   `r8brain-free-src`、`soxr`、`zita-resampler`、`libsamplerate`、`AudioConverter` は測って選択肢に加える
   （[ADR 0014](../decisions/0014-existing-implementations-as-options.md)）
 - **MIDI**: 制御スレッドがノートをサンプル位置に落とし、オーディオスレッドはカーソルを進めるだけにする
-  （[ADR 0035](../decisions/0035-playback-plan.md)、[ADR 0037](../decisions/0037-clap-events.md)、[ADR 0010](../decisions/0010-playback-samples.md)）
+  （[ADR 0035](../decisions/0035-playback-plan.md)、[ADR 0037](../decisions/0037-clap-events.md)、[ADR 0010](../decisions/0010-playback-samples.md)）。
+  開始・位置移動で途中のノートを追いかけて鳴らす時、終端ちょうどのノートは鳴らさずノートオフだけを出す
+  （[ADR 0164](../decisions/0164-note-end-chase.md)）
 - **クリップ FX（Phase 2）**: 配置ごとのチェインに通してからトラックへ合流させる。終端では素材の入力とノートを止め、テールの範囲は処理を続ける
 - **ループの継ぎ目とフェーダー**: 継ぎ目の前後に 5 ms のフェードをかける（[ADR 0011](../decisions/0011-preview-cache.md)）。
   フェーダーはキャッシュの後ろに置き、モノは等電力パン、ステレオはバランスパンとする。
@@ -162,7 +164,9 @@ P2 のトラック追加位置・フォルダ展開／折りたたみ時の挿�
   元のサンプル位置からの要求は制御側で seek して有限の先読みと同じ SRC を通す
   （[ADR 0152](../decisions/0152-browser-audition-controls.md)）。
   直近の要求ごとに操作の種類と、受付・復号・出力の準備・変換・受渡し・発音（HAL の出力時刻）の経過を記録する
-  （[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）
+  （[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）。
+  ブラウザの一覧の下の波形は、試聴と別に `sample_overview` が素材の全体を読み、出力も文書も使わない。
+  同じブラウザの新しい要求が古い読込みを止め、別のウィンドウのブラウザは止めない（[ADR 0163](../decisions/0163-sample-overview.md)）
 - **デコードと書き出し**: AudioToolbox（WAV、AIFF、CAF、MP3、AAC、ALAC、FLAC 等）と Symphonia（Ogg Vorbis 等）を組み合わせる
   正準 PCM の読込みはサンプル数・バイト数・ヘッダ加算を checked 演算で求め、実際の長さと一致する時だけ確保する。
 - **波形のピーク**: 正準 PCM から CPU で最小・最大のピラミッド（1 段目 64 サンプル）を作り、`cache/peaks/` に置く。

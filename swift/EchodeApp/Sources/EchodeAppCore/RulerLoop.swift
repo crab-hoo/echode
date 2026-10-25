@@ -82,10 +82,10 @@ extension ProjectController {
     }
 
     func setLoopRange(_ range: LoopRange, documentID: UUID) async {
-        guard self.documentID == documentID, !busy, !audioBusy else { return }
+        guard self.documentID == documentID, !busy else { return }
         loopStartBeat = Double(range.start) / 705_600
         loopEndBeat = Double(range.end) / 705_600
         // Changing the draft must not turn an inactive loop on.
-        if audio.loopStart != nil { await setLoop(enabled: true) }
+        await updateLoopBounds()
     }
 }

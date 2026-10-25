@@ -46,6 +46,14 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     行ラベルを含む入力境界のクリップ・版を消費しない再試行・レイヤー背景色を接続した（[ADR 0150](decisions/0150-stale-drawable-frame.md)）。
     実画面のちらつきの有無はユーザー確認待ちである。単位 6（分割線ドラッグの計測）は未着手である
     （[監査](reviews/2026-10-22-gui-jank-audit.md)）。
+  - **2026-10-25 の報告（FB-01〜08）**: [照合](reviews/2026-10-25-user-feedback.md) に再現と原因を置く。
+    開始位置の送信中の暗転とサンプル一覧の Space（[ADR 0160](decisions/0160-ordered-transport-requests.md)）、
+    置いた音声の自動フェード（[ADR 0161](decisions/0161-placed-audio-without-fades.md)）、
+    FX 候補の一覧の重さとダブルクリック（[ADR 0162](decisions/0162-plugin-candidate-table.md)）、
+    ブラウザの全体の波形（[ADR 0163](decisions/0163-sample-overview.md)）、
+    ノートの終端からの再生で鳴り続ける音（[ADR 0164](decisions/0164-note-end-chase.md)）を修正した。
+    追加の要望 2 件は、インスペクターの FX 追加を P2-02、アレンジの MIDI クリップの音高表示を P2-07 の要件にした
+    （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。実画面・聴感はユーザー確認待ちである。
 - **操作要件の正本**:
   コード→メロディ→ドラム→ベース→構成→編曲→ミックス・オートメーション→書出しまでの操作要件は [制作ワークフローとインタラクション](interaction-design.md)、既存設計との置換範囲は [ADR 0117](decisions/0117-workflow-interactions.md) に置く。
   ループ素材の BPM 推定・テンポ追従・ストレッチ方式切替は後続 Phase の範囲とする。
@@ -116,6 +124,10 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   表示中は無音の出力を保持し、試聴だけの音量を 5 ms で補間する。
   自動試聴の切替・右矢印・再生／停止ボタン・波形クリックの元サンプル位置からの試聴を接続した。
   設定はプロジェクトの履歴から独立する（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
+  一覧の下の波形は、選択で素材の全体を試聴と別に読み、停止後も保ち、直近の素材は読み直さない
+  （[ADR 0163](decisions/0163-sample-overview.md)、必須契約 `sample-overview`・`sample-overview-ui`）。
+  一覧にフォーカスがある時の Space は曲の再生／停止である（[ADR 0160](decisions/0160-ordered-transport-requests.md)、必須契約 `sample-list-space-ui`）。
+  置いた音声には自動のフェードを付けない（[ADR 0161](decisions/0161-placed-audio-without-fades.md)、必須契約 `journal-place-fades`）。
 - **ヘルパー所有のプラグインウィンドウ（[ADR 0132](decisions/0132-helper-plugin-windows.md)）**:
   列の名前・インスペクターの名前のクリックと候補からの単体追加で開き、一括追加・コピー・トラック複製では開かない。
   開く・前面化はフォーカスを取らず、Echode が非アクティブの間は隠す。
@@ -135,6 +147,12 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 - **トラックヘッダの FX の名前（[ADR 0139](decisions/0139-track-header-fx-names.md)）**:
   先頭の挿入済み名前から独自 GUI を開き、右の「…」で残りのチェインを選ぶ。FX 追加ボタンは従来の候補を開く。
   必須契約 `fx-header-ui` は名前・追加入口の分離、メニュー・アクセシビリティと古い対象の拒否を確認する。
+- **FX 候補の一覧（[ADR 0162](decisions/0162-plugin-candidate-table.md)）**:
+  AppKit の表で押した時点で選択し、行のどこでも 2 回目のクリックで追加する。再走査中も表示中の候補を追加できる。
+  必須契約 `plugin-list-ui` で確認する。
+- **次の接続: インスペクターの FX 追加（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）**:
+  インスペクターのプラグインの一覧の末尾に FX 追加ボタンを置き、そのトラックを入力先に既存の候補パネルを開く。空のチェインでも表示する。
+  受入: 実 View のボタンから候補パネルの文書と入力先が決まることを、トラックヘッダの FX ボタンと同じ形の必須契約で確認する。
 - **残る範囲（[操作要件](interaction-design.md#fx-候補とチェインの操作)）**:
   - 複数選択時の表示対象。マクロの実装時期は既存の Phase 3 と区別する。
   - サムネイル。
@@ -202,6 +220,9 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 
 - テンポ・拍子・キーのグローバルマーカーとリージョン、MIDI / QWERTY / 外部 MIDI の録音、ループ重ね録り、単一テイクのオーディオ録音、クオンタイズ、MIDI 割当を実装する。
 - **アレンジ編集（[アレンジの選択と編集](interaction-design.md#アレンジの選択と編集)）**:
+  最初に MIDI クリップのノートの音高表示を接続する（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
+  中身ごとの最低音〜最高音（12 半音未満は中央寄せ）で縦に置き、表示だけを変える。
+  受入: `echode-draw` の可視列で縦位置・下限・帯の回避、オフスクリーンのフレームで描画とアクセシビリティ要素の一致、S1 の描画計測で問い合わせ時間を確認する。
   右ドラッグの枠選択、空白左ドラッグの時間・トラック区間選択、部分コピー・空白を残す削除・現在位置と選択トラック起点の貼付け・複製、素材終端で止まる通常トリム、同トラック配置の重なりと自動クロスフェード、ループ区間からのリージョン作成とオートメーション追従を接続する（[オーディオクリップとテンポ](interaction-design.md#オーディオクリップとテンポ)、[次に詰める点](interaction-design.md#次に詰める点)）。
   クリップ本体の移動・Command の複製移動は、置き換えとして先に接続した（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)、必須契約 `clip-move-ui`・`clip-move-model`）。
   重ねるモードの切替を接続する時に、置き換えの判定を同じ経路へ組み込む。
@@ -222,6 +243,10 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   - 接続済み（[ADR 0159](decisions/0159-playhead-follow.md)）: 両エディタの再生ヘッドへのページ送り、横方向の手動スクロールでの解除、
     トランスポート・再生メニュー・パレットからの再オン、押下中の保留。値は保存せず、文書を開くたびにオンで始める。
     必須契約 `playhead-follow-ui`・`playhead-follow-state-ui` で確認する。
+  - 接続済み（[ADR 0160](decisions/0160-ordered-transport-requests.md)）: 開始位置・ループ・メトロノーム等の送信中も操作子を無効にせず、
+    要求を捨てずに順に送る。必須契約 `transport-order-ui` で確認する。
+  - 接続済み（[ADR 0164](decisions/0164-note-end-chase.md)）: ノートの終端ちょうどからの再生で、そのノートを追いかけて鳴らさない。
+    必須契約 `note-end-start` で実ヘルパーと複数のブロック長を確認する。
   - 残る条件: Return の割当。
 - **ピアノロールとノート編集**:
   - トラックセレクター：単一トラック入力を基本とし、複数選択の一括移動・伸縮では入力先トラックを切り替えない（[トラックセレクター](interaction-design.md#トラックセレクター)）。

@@ -37,7 +37,8 @@ struct TransportRequestTests {
             for await _ in started.stream { break }
             #expect(controller.audioBusy && controller.playbackRequested)
             #expect(session.enabled(.playback) && session.enabled(.stop))
-            #expect(!session.enabled(.output))
+            // Other commands stay enabled and wait behind the load (ADR 0160).
+            #expect(session.enabled(.output) && session.enabled(.loop) && session.enabled(.metronome))
             if useSpace { await controller.togglePlayback() }
             else { await controller.stopPlayback() }
             #expect(!controller.playbackRequested)

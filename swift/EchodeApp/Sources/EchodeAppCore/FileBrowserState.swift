@@ -31,7 +31,18 @@ final class FileBrowserState {
             selection = preservedSelection(selection, in: filtered.map(\.url))
         }
     }
-    var selection: URL?
+    /// Any selected sample shows its whole shape, sounded or not (ADR 0163).
+    var selection: URL? {
+        didSet {
+            guard selection != oldValue, let url = selection, filtered.contains(where: { $0.url == url && $0.audio }) else { return }
+            let overviews = overviews
+            overviewTask = Task { await overviews.load(url) }
+        }
+    }
+    /// Whole-file waveforms of selected samples.
+    @ObservationIgnored let overviews: SampleOverviews
+    /// The newest overview request, for callers that wait for it.
+    @ObservationIgnored private(set) var overviewTask: Task<Void, Never>?
     var canOpenParent: Bool { folder.map { Self.canOpenParent(of: $0) } ?? false }
     static func canOpenParent(of folder: URL) -> Bool {
         let current = folder.standardizedFileURL
@@ -47,8 +58,9 @@ final class FileBrowserState {
         (searchingLibrary ? libraryFiles : files).filter { query.isEmpty || $0.url.lastPathComponent.localizedStandardContains(query) }
     }
 
-    init(defaults: UserDefaults? = nil) {
+    init(defaults: UserDefaults? = nil, overviews: SampleOverviews = SampleOverviews()) {
         self.defaults = defaults
+        self.overviews = overviews
         var seen = Set<URL>()
         roots = (defaults?.stringArray(forKey: Self.rootsKey) ?? []).compactMap {
             let url = URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL

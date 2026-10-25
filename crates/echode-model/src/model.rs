@@ -872,7 +872,8 @@ impl Project {
         Ok(self.with_parts(contents, tracks))
     }
 
-    /// Places a fixed clip whose content is one audio file. Notes are not added.
+    /// Places a fixed clip whose content is one audio file, with the default
+    /// 5 ms edge fades. Notes are not added.
     pub fn place_audio(
         &self,
         track_id: Id,
@@ -881,8 +882,35 @@ impl Project {
         start: Tick,
         audio: AudioRef,
     ) -> Result<Self, ModelError> {
+        self.place_audio_with_fades(
+            track_id,
+            clip_id,
+            content_id,
+            start,
+            audio,
+            DEFAULT_FADE_FLICKS,
+            DEFAULT_FADE_FLICKS,
+        )
+    }
+
+    /// Places a fixed clip whose content is one audio file. Fades are in
+    /// flicks; zero leaves that edge as recorded. Notes are not added.
+    #[allow(clippy::too_many_arguments)]
+    pub fn place_audio_with_fades(
+        &self,
+        track_id: Id,
+        clip_id: Id,
+        content_id: Id,
+        start: Tick,
+        audio: AudioRef,
+        fade_in: i64,
+        fade_out: i64,
+    ) -> Result<Self, ModelError> {
         audio.check()?;
         if start.get() < 0 || clip_id == content_id {
+            return Err(ModelError::InvalidClip);
+        }
+        if !fade_allowed(fade_in) || !fade_allowed(fade_out) {
             return Err(ModelError::InvalidClip);
         }
         if self.id_in_use(clip_id) || self.id_in_use(content_id) {
@@ -903,8 +931,8 @@ impl Project {
             offset: Tick::new(0),
             kind: ClipKind::Fixed,
             gain: 1.0,
-            fade_in: DEFAULT_FADE_FLICKS,
-            fade_out: DEFAULT_FADE_FLICKS,
+            fade_in,
+            fade_out,
         });
         sort_clips(&mut track.clips);
         let mut contents = self.contents.clone();

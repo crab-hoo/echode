@@ -15,6 +15,8 @@ mod background_graph;
 mod device_offline;
 #[path = "hosted_playback/device_params.rs"]
 mod device_params;
+#[path = "hosted_playback/note_edges.rs"]
+mod note_edges;
 #[path = "hosted_playback/plugin_gui.rs"]
 mod plugin_gui;
 #[path = "hosted_playback/stopped_processing.rs"]

@@ -22,13 +22,13 @@ struct WorkspaceTransportView: View {
             Button { Task { await controller.stopPlayback() } } label: { Label(text("Stop"), systemImage: "stop.fill") }
             Button { Task { await controller.toggleMetronome() } } label: {
                 Label(text("Metronome"), systemImage: controller.audio.metronome ? "metronome.fill" : "metronome")
-            }.disabled(controller.audioBusy)
+            }
             LabeledContent(text("Position (beats)"), value: (Double(controller.audio.tick) / 705_600).formatted(.number.precision(.fractionLength(2))))
                 .monospacedDigit()
             TextField(text("Start beat"), text: $seek).frame(width: 80)
                 .focused($startField).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Playback start beat")).onSubmit(setStart)
-            Button(text("Go"), action: setStart).disabled(seekBeat == nil || controller.audioBusy)
+            Button(text("Go"), action: setStart).disabled(seekBeat == nil)
             TextField(text("Loop start (beats)"), text: $loopStart).frame(width: 64)
                 .focused($loopField, equals: .start).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Loop start (beats)")).onSubmit(commitLoop)
@@ -43,14 +43,14 @@ struct WorkspaceTransportView: View {
                 Task { await controller.toggleLoop() }
             } label: {
                 Label(text("Loop"), systemImage: controller.audio.loopStart == nil ? "repeat" : "repeat.circle.fill")
-            }.disabled(controller.audioBusy || (controller.audio.loopStart == nil && loopBeats == nil))
+            }.disabled(controller.audio.loopStart == nil && loopBeats == nil)
             // A manual time scroll turns this off; it stays off until turned on here (ADR 0159).
             Toggle(isOn: $followsPlayhead) {
                 Label(WorkspaceCommand.followPlayhead.title, systemImage: WorkspaceCommand.followPlayhead.icon)
             }.toggleStyle(.button).accessibilityIdentifier("transport.follow")
             Spacer()
             Text(controller.audio.activeDevice?.name ?? text("System Output")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        }.disabled(controller.snapshot == nil || controller.busy)
+        }.disabled(controller.transportLocked)
             .padding(.horizontal, 12).padding(.vertical, 8)
             .onChange(of: loopStart) { _, _ in storeLoopDraft() }
             .onChange(of: loopEnd) { _, _ in storeLoopDraft() }
@@ -81,7 +81,7 @@ struct WorkspaceTransportView: View {
         storeLoopDraft()
         guard let start = PianoCamera.ticks(controller.loopStartBeat), let end = PianoCamera.ticks(controller.loopEndBeat),
               LoopCommit.needsSend(soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd, start: start, end: end) else { return }
-        Task { await controller.setLoop(enabled: true) }
+        Task { await controller.updateLoopBounds() }
     }
 }
 
@@ -123,7 +123,7 @@ struct WorkspaceOutputView: View {
                 if let uid = controller.audio.selectedUID, !controller.audio.devices.contains(where: { $0.uid == uid }) {
                     Text(text("Selected Device Unavailable")).tag(uid)
                 }
-            }.disabled(controller.snapshot == nil || controller.busy || controller.audioBusy)
+            }.disabled(controller.transportLocked)
             if let device = controller.audio.activeDevice {
                 LabeledContent(text("Current Output"), value: device.name)
                 LabeledContent(text("Sample Rate"), value: "\(device.sampleRate.formatted()) Hz")
@@ -135,7 +135,7 @@ struct WorkspaceOutputView: View {
             Text(text("Audio Playback Help")).font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button(text("Refresh Devices")) { Task { await controller.refreshOutputs() } }
-                    .disabled(controller.snapshot == nil || controller.busy || controller.audioBusy)
+                    .disabled(controller.transportLocked)
                 Spacer()
                 Button(text("Close"), action: close).keyboardShortcut(.cancelAction)
             }

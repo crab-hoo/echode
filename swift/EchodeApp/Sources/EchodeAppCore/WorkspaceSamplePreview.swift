@@ -3,15 +3,18 @@ import EchodeBridge
 import SwiftUI
 
 /// The selected file's overview; a late status for another file stays hidden.
+/// The whole-file overview comes first; the audition's progressive peaks fill
+/// in only while it is still being read (ADR 0163).
 struct SamplePreview: NSViewRepresentable {
     let url: URL
     let status: AuditionStatus?
+    var overview: SampleOverviews.Entry?
     var onSeek: (UInt64, AuditionOrigin) -> Void = { _, _ in }
 
     func makeNSView(context: Context) -> SamplePreviewView { SamplePreviewView() }
     func updateNSView(_ view: SamplePreviewView, context: Context) {
         view.onSeek = onSeek
-        view.show(url: url, status: status)
+        view.show(url: url, status: status, overview: overview)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SamplePreviewView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 200, height: 86)
@@ -46,12 +49,15 @@ final class SamplePreviewView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    func show(url: URL, status: AuditionStatus?) {
+    func show(url: URL, status: AuditionStatus?, overview: SampleOverviews.Entry? = nil) {
         let current = status?.path == url.path ? status : nil
-        waveform = current?.waveform
+        if case .ready(let whole) = overview { waveform = whole } else { waveform = current?.waveform }
         startFrame = current?.history.last?.startFrame ?? 0
         label.stringValue = url.lastPathComponent
-        if let error = current?.error {
+        if case .failed(let error) = overview, waveform == nil {
+            detail.stringValue = text("Sample preview unavailable")
+            toolTip = error
+        } else if let error = current?.error, waveform == nil {
             detail.stringValue = text("Sample preview unavailable")
             toolTip = error
         } else if let waveform, waveform.sampleRate > 0 {
@@ -61,7 +67,7 @@ final class SamplePreviewView: NSView {
                 : (waveform.firstFrame ?? 0) > 0 ? "\(duration) · \(text("Partial waveform"))" : duration
             toolTip = nil
         } else {
-            detail.stringValue = text(current?.phase == .loading ? "Loading sample" : "Preview not loaded")
+            detail.stringValue = text(current?.phase == .loading || overview == .loading ? "Loading sample" : "Preview not loaded")
             toolTip = nil
         }
         setAccessibilityValue("\(label.stringValue), \(detail.stringValue)")

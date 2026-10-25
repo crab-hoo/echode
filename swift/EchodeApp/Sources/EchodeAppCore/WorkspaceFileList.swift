@@ -12,11 +12,13 @@ struct SampleFileList: NSViewRepresentable {
     let onSelect: (URL?, AuditionOrigin) -> Void
     let onOpen: (BrowserFile) -> Void
     var onAudition: (AuditionOrigin) -> Void = { _ in }
+    var onPlayback: () -> Void = {}
     func makeNSView(context: Context) -> FileListView { FileListView() }
     func updateNSView(_ view: FileListView, context: Context) {
         view.onSelect = onSelect
         view.onOpen = onOpen
         view.onAudition = onAudition
+        view.table.onPlayback = onPlayback
         view.show(files, searching: searching, selection: selection)
     }
 }
@@ -111,6 +113,8 @@ final class FileListTable: NSTableView {
     fileprivate(set) var input: AuditionOrigin?
     var onOpen: (Int) -> Void = { _ in }
     var onAudition: (AuditionOrigin) -> Void = { _ in }
+    /// The workspace's Play / Stop.
+    var onPlayback: () -> Void = {}
     var dragURL: (Int) -> URL? = { _ in nil }
     private var dragDown: (NSEvent, any NSPasteboardWriting)?
 
@@ -142,6 +146,13 @@ final class FileListTable: NSTableView {
     override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
 
     override func keyDown(with event: NSEvent) {
+        // Space plays and stops the song, as everywhere else in the workspace.
+        // A focused row did not reach the menu's shortcut, so the list calls
+        // the command itself; it never selects or auditions (ADR 0160).
+        if event.keyCode == 49, event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
+            if !event.isARepeat { onPlayback() }
+            return
+        }
         if event.keyCode == 124, event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
             if !event.isARepeat { onAudition(AuditionOrigin(input: .key, delayMicroseconds: Self.delay(event))) }
             return

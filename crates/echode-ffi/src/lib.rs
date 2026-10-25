@@ -8,6 +8,7 @@ mod activity;
 mod catalog;
 mod controls;
 mod device;
+mod overview;
 mod piano;
 mod projection;
 mod queue;
@@ -814,6 +815,62 @@ pub unsafe extern "C" fn echode_plugin_catalog(
         std::ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
     }
     0
+}
+
+/// Reads the whole audio file at `path` (UTF-8) and writes its overview as
+/// UTF-8 JSON: `{"waveform": ...}` with the audition's peak fields,
+/// `{"error": "..."}`, or `{"cancelled": true}` when a call on the same
+/// `channel` with a larger `request` started meanwhile, or the channel ended.
+/// Each browser uses its own channel. Blocks while it reads, so call it off
+/// the main thread. It opens no audio output and touches no document.
+///
+/// Returns 0 when `out` holds the document. Returns 1 when `capacity` is too
+/// small and `written` is the required size; the next call reads again.
+/// Returns `-1` for an invalid path argument.
+///
+/// # Safety
+/// `written` is writable. `path` points to `path_len` readable bytes.
+/// `out` is null or has room for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_sample_overview(
+    path: *const u8,
+    path_len: usize,
+    channel: u64,
+    request: u64,
+    out: *mut u8,
+    capacity: usize,
+    written: *mut usize,
+) -> c_int {
+    if written.is_null() || path.is_null() || path_len == 0 || path_len > isize::MAX as usize {
+        return -1;
+    }
+    unsafe {
+        *written = 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return -1;
+    };
+    let json = overview::overview_json(std::path::Path::new(text), channel, request);
+    unsafe {
+        *written = json.len();
+    }
+    if out.is_null() || capacity < json.len() {
+        return 1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
+    }
+    0
+}
+
+/// Stops the reads of an overview channel whose browser went away.
+///
+/// # Safety
+/// There are no pointer arguments.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_sample_overview_end(channel: u64) {
+    overview::end(channel);
 }
 
 /// Starts the background CLAP folder watch. A second call does nothing.

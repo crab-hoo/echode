@@ -50,9 +50,11 @@ struct WorkspaceFileBrowser: View {
             } else {
                 SampleFileList(files: browser.filtered, searching: browser.searchingLibrary, selection: browser.selection,
                                onSelect: { session.chooseInBrowser($0, origin: $1) }, onOpen: open,
-                               onAudition: { session.auditionSelected(origin: $0) })
+                               onAudition: { session.auditionSelected(origin: $0) },
+                               onPlayback: { session.perform(.playback) })
                 if let selected, selected.audio {
                     SamplePreview(url: selected.url, status: session.controller.audio.audition,
+                                  overview: browser.overviews.entry(for: selected.url),
                                   onSeek: { frame, origin in session.auditionSelected(origin: origin, from: frame, expected: selected.url) })
                 }
                 SampleAuditionControls(preferences: session.state.auditionPreferences,

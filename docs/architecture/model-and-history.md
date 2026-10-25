@@ -123,6 +123,8 @@ Phase 2 で配置ごとの非破壊デバイスチェインを追加する（[AD
   連続ドラッグは 1 つの Undo 単位にまとめる（[ADR 0008](../decisions/0008-actions-undo-journal.md)）
   外部音声の取込みもトランザクション内で PCM 保存と `audio.place` へ解決し、トラック追加と 1 回の Undo にできる
   （[ADR 0145](../decisions/0145-sample-browser-file-drops.md)）。
+  記録する `audio.place` は両端のフェードを持ち、新しい配置は 0 を書く。欄のない以前のジャーナルは 5 ms で再生する
+  （[ADR 0161](../decisions/0161-placed-audio-without-fades.md)）。
 - **ジャーナル**: 採番した ID を含めた操作を 1 行ずつ追記し、Undo した操作は先端から外す。クラッシュ後は最後の自動コミットに再生して復旧する
 - **キーマップ・マウスコマンド・コマンドパレット**: 画面ごとの TOML キーマップ（Space＝再生／停止、Return＝一時停止／再開等）、
   修飾キー×対象のマウスコマンド表、`nucleo` によるあいまい検索パレットを提供する

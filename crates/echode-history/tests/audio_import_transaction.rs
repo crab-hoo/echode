@@ -1,4 +1,4 @@
-use echode_actions::Action;
+use echode_actions::{Action, JournalEntry};
 use echode_history::{DocumentHost, HostError, write_package};
 use echode_model::{Id, Project};
 use serde_json::json;
@@ -28,6 +28,9 @@ fn contract_audio_import_transaction_adds_a_track_atomically_and_reopens() {
     let imported = host.snapshot();
     imported.check_invariants().unwrap();
     assert_eq!(imported.tracks().len(), 1);
+    // Imported audio keeps its recorded edges (ADR 0161).
+    let placed = &imported.tracks()[0].clips[0];
+    assert_eq!((placed.fade_in, placed.fade_out), (0, 0));
     host.undo().unwrap();
     assert!(host.snapshot().tracks().is_empty());
     host.redo().unwrap();
@@ -91,4 +94,42 @@ fn wav() -> Vec<u8> {
         bytes.extend_from_slice(&sample.to_le_bytes());
     }
     bytes
+}
+
+/// Journals written before ADR 0161 have no fade fields on `audio.place`.
+/// They replay the 5 ms edges they were recorded with; new entries say zero.
+#[test]
+fn contract_a_journal_place_without_fades_replays_the_old_edges() {
+    let (project, track) = Project::new().add_track("audio");
+    let mut legacy = json!({
+        "type": "audio.place", "track": track, "clip": Id::generate(), "content": Id::generate(),
+        "start": 0, "hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "sample_rate": 48_000, "channels": 1, "frames": 4_800,
+    });
+    let replay = |action: Action| {
+        echode_actions::replay(
+            &project,
+            &[JournalEntry {
+                actions: vec![action],
+                changes: None,
+            }],
+        )
+        .unwrap()
+    };
+    let replayed = replay(serde_json::from_value(legacy.clone()).unwrap());
+    let clip = &replayed.tracks()[0].clips[0];
+    assert_eq!(
+        (clip.fade_in, clip.fade_out),
+        (
+            echode_model::DEFAULT_FADE_FLICKS,
+            echode_model::DEFAULT_FADE_FLICKS
+        )
+    );
+    legacy["fade_in"] = json!(0);
+    legacy["fade_out"] = json!(0);
+    let current: Action = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&current).unwrap(), legacy);
+    let current = replay(current);
+    let clip = &current.tracks()[0].clips[0];
+    assert_eq!((clip.fade_in, clip.fade_out), (0, 0));
 }

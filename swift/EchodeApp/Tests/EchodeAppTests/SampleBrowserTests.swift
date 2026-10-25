@@ -80,6 +80,8 @@ struct SampleBrowserTests {
             originTrack: 0, heightTracks: 4, pixelsPerTick: 0.001, pixelsPerTrack: 40).elements.first { $0.role == .clip })
         let placement = try #require(clip.id.placement)
         #expect(clip.id.track == first && controller.snapshot?.clipMix(placement)?.start == tick)
+        // A placed sample keeps its recorded edges; there is no automatic fade (ADR 0161).
+        #expect(controller.snapshot?.clipMix(placement)?.fadeIn == 0 && controller.snapshot?.clipMix(placement)?.fadeOut == 0)
         await controller.undo()
         #expect(controller.snapshot?.clipMix(placement) == nil)
         await controller.redo()
@@ -88,6 +90,7 @@ struct SampleBrowserTests {
         await controller.close(); await controller.open(project)
         #expect(controller.snapshot?.clipMix(placement)?.track == first)
         #expect(controller.snapshot?.clipMix(placement)?.start == tick)
+        #expect(controller.snapshot?.clipMix(placement)?.fadeIn == 0 && controller.snapshot?.clipMix(placement)?.fadeOut == 0)
         #expect(!(await controller.importAudio(stale)))
         // Reopening has no undo history; a newly added target can be removed by undo.
         await controller.addTrack(name: "temporary")

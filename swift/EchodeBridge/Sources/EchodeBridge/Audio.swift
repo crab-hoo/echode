@@ -102,6 +102,51 @@ public struct AuditionWaveform: Decodable, Sendable, Equatable {
     }
 }
 
+/// The whole file's peaks for the browser, read apart from any audition so a
+/// selection shows its shape at once and keeps it after the sound stops
+/// (ADR 0163). It opens no output and touches no document.
+public enum SampleOverview: Sendable, Equatable {
+    case waveform(AuditionWaveform)
+    case failed(String)
+    /// A read with a larger request number started before this one finished.
+    case cancelled
+
+    private struct Reply: Decodable {
+        let waveform: AuditionWaveform?
+        let error: String?
+        let cancelled: Bool?
+    }
+
+    /// Blocks while it reads the file; call it off the main actor. A larger
+    /// `request` on the same `channel` stops this read; other channels do not.
+    public static func read(_ url: URL, channel: UInt64, request: UInt64) -> SampleOverview {
+        let path = Array(url.path.utf8)
+        // 512 peak pairs fit well inside this; a larger reply asks once more.
+        var capacity = 65_536
+        for _ in 0..<2 {
+            var data = Data(count: capacity)
+            var written = 0
+            let code = path.withUnsafeBufferPointer { path in
+                data.withUnsafeMutableBytes { raw in
+                    echode_sample_overview(path.baseAddress, path.count, channel, request,
+                                           raw.baseAddress?.assumingMemoryBound(to: UInt8.self), capacity, &written)
+                }
+            }
+            if code == 1 { capacity = written; continue }
+            guard code == 0, let reply = try? JSONDecoder().decode(Reply.self, from: data.prefix(written)) else {
+                return .failed("sample overview failed")
+            }
+            if let waveform = reply.waveform { return .waveform(waveform) }
+            if reply.cancelled == true { return .cancelled }
+            return .failed(reply.error ?? "sample overview failed")
+        }
+        return .failed("sample overview did not fit")
+    }
+
+    /// Stops the channel's reads once its browser is gone.
+    public static func end(channel: UInt64) { echode_sample_overview_end(channel) }
+}
+
 /// What made the UI ask for an audition. It is recorded, never acted on.
 public enum AuditionInput: String, Codable, Sendable { case other, click, key }
 

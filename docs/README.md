@@ -78,6 +78,10 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 - 下部の個別開閉・固定高のデバイス・アレンジ非表示と旧設定の移行: [ADR 0146](decisions/0146-independent-editor-stack.md)。
 - 操作の要望の照合（リサイズ時の伸縮、ブラウザ・クリップの D&D、既定値と値入力のクリック、試聴、下部の積み方）: [2026-10-21 操作の要望の照合](reviews/2026-10-21-ui-feedback-audit.md)。
+- 2026-10-25 の操作の報告（開始位置の変更時の暗転、一覧の Space、ブラウザの波形、置いた音声のフェード、FX 候補、ノートの終端からの再生）と追加の要望:
+  [2026-10-25 操作の報告の照合](reviews/2026-10-25-user-feedback.md)。
+  対応は [ADR 0160](decisions/0160-ordered-transport-requests.md)〜[ADR 0164](decisions/0164-note-end-chase.md)、
+  インスペクターの FX 追加とアレンジの音高表示の要件は [ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)。
 - 制作向けファイルの一覧と音声の位置指定ドロップ・トラック追加を伴う取込みの単一履歴: [ADR 0145](decisions/0145-sample-browser-file-drops.md)。
 - デバイス列での初回出力準備と一覧の応答待ちの区別: [ADR 0141](decisions/0141-device-output-preparation-status.md)。
 - パラメーター一覧の失敗からの列内の再試行・連打の集約: [ADR 0140](decisions/0140-device-parameter-list-retry.md)。

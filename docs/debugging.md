@@ -71,6 +71,12 @@ make debug-report
 
 ### オーディオ・トランスポート・プラグイン
 
+- **ノートの端から再生すると、その音が鳴り続ける**:
+  開始位置がノートの終端ちょうどかを確認する。追いかけ（`Cursor::chase_events`）は終端ちょうどのノートを鳴らさず、
+  その時刻のノートオフだけを出す（[ADR 0164](decisions/0164-note-end-chase.md)）。
+  同じ時刻ではノートオフがノートオンより先に並ぶため、追いかけのノートオンがあると鳴り続ける。
+  必須契約 `note-end-start` は実ヘルパーで位置移動と停止の復帰を確認する。計画の交換中の場合は `release_replaced` を別に調べる。
+
 - **壊れた素材を読むと `attempt to multiply with overflow` / `capacity overflow` で文書が使えなくなる**:
   `media.rs::decode_pcm` のヘッダ長の計算を確認する。
   BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
@@ -158,6 +164,20 @@ make debug-report
   処理期限超過（`late`）と HAL 呼出欠落（`gaps`、`pmset -g log` の Sleep / Wake や `/usr/bin/log show` の coreaudiod デバイス変更）を区別する（[ADR 0096](decisions/0096-measurement-completion.md)）。短時間確認は `--native-rate` を使う。
 
 ### UI・描画・入力・履歴・MCP
+
+- **開始位置の変更・ループ・メトロノームで、ボタンやルーラーが一瞬暗転する**:
+  トランスポートの欄・ルーラー・コマンドは `ProjectController.transportLocked`（文書なし、または `busy`）だけで無効になる。
+  `audioBusy` は応答待ちの有無であり、操作子の有効状態に使っていないかを確認する。
+  続けた操作が反映されない時は、`orderedAudioCommand` の順番待ちと、トグルが番の来た時の状態を読んでいるかを見る
+  （[ADR 0160](decisions/0160-ordered-transport-requests.md)、必須契約 `transport-order-ui`）。
+- **FX 候補のダブルクリックで追加されない・一覧が重い**:
+  一覧は `PluginListTable` で、`mouseDown` の `clickCount == 2` が行のどこでも追加する。
+  追加されない時は、入力先トラック（`capturePluginInsertion` が nil）と文書の交換中（`busy`）を区別する。再走査中は追加を止めない
+  （[ADR 0162](decisions/0162-plugin-candidate-table.md)、必須契約 `plugin-list-ui`）。
+- **置いた音声の頭や終わりでクリック音がする・フェードのハンドルが押せない**:
+  取込みはフェード 0 で置く（[ADR 0161](decisions/0161-placed-audio-without-fades.md)）。素材の端の不連続であり、再生の不具合ではない。
+  ハンドルはクリップの端から 4 pt 内側に表示する。押せない時は `ClipControlLayout.entering` / `leaving` とクリップの矩形を比べる。
+  以前のジャーナルの `audio.place` は 5 ms で再生する（必須契約 `journal-place-fades`）。
 
 - **素材の終端後に波形が続く・テンポ変更で波形の位置がずれる**:
   音の変化と波形だけの誤表示を区別し、`Waveforms::fill` の問い合わせ範囲・素材フレーム数・テンポ点を残す。
@@ -340,6 +360,17 @@ make debug-report
   `settings.gain` が 0 なら試聴だけが無音になる。自動試聴の設定は `workspace.audition.v1` を見る。
   履歴の `start_frame` は元サンプル位置、波形の `first_frame` と `loaded_frames` は読んだ範囲の先頭と末尾である。
   先頭以外からの `complete`・`decoded_us` は EOF までの読込み完了であり、未読の先頭部分の波形は含まない。
+- **ブラウザの波形が出ない・停止で消える・古い形のまま**:
+  一覧の下の波形は試聴の報告ではなく `SampleOverviews` の全体の読込みを先に使う（[ADR 0163](decisions/0163-sample-overview.md)）。
+  選択の変化で `FileBrowserState.overviewTask` が始まったか、項目が `loading` / `ready` / `failed` のどれかを確認する。
+  `loading` のまま戻らない時は、より新しい要求で `cancelled` になった読込みを同じファイルの選択で読み直しているかを見る。
+  取消はブラウザごとのチャンネル（`SampleOverviews.channel`）の中だけで起こる。別のブラウザやテストが止めている場合はチャンネルの共有を疑う。
+  更新したファイルが古い形のままなら、サイズと更新日時（`FileStamp`）が変わったかを確かめる。`URL.resourceValues` の値は URL ごとに残るため使わない。
+  Rust 側は必須契約 `sample-overview`、表示と保持は `sample-overview-ui` で切り分ける。
+- **サンプル一覧にフォーカスがある時に Space で再生しない**:
+  一覧の `FileListTable.keyDown` が `onPlayback`（ワークスペースの「再生／停止」）を呼ぶかを、必須契約 `sample-list-space-ui` で確認する。
+  呼んでも鳴らない時は `WorkspaceSession.enabled(.playback)`（シート表示中・文書交換中）と出力の状態を見る。
+  メニュー側の `workspaceTextEntry` が一覧のフォーカスで残るかは未確認である（[照合](reviews/2026-10-25-user-feedback.md#fb-02-サンプル一覧での-space)）。
   表示保持・音量・位置と実操作子は必須契約 `sample-audition-resident`・`sample-audition-gain`・
   `sample-audition-position`・`sample-audition-controls-ui` で切り分ける（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
   ブラウザ自身の選択の付け替えは要求を出さない（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。

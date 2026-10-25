@@ -61,6 +61,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 - **編集順序と操作の排他**: `EditTurn` は編集を直列にするが、通常編集では画面全体を無効にしない。
   `ProjectController.busy` は文書の作成・交換・終了だけを表し、Undo 等の状態読込中のパラメータードラッグは `historyBusy` で制限する
   （[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+  再生・停止以外のトランスポートの要求は順番待ちで送り、操作子は `transportLocked`（文書なし・`busy`）だけで無効にする
+  （[ADR 0160](../decisions/0160-ordered-transport-requests.md)）。
 - **値の操作子**: ヘッダの音量・パン、クリップのハンドル、パラメーター欄は `ValueClicks` の同じ規則で押下を受ける。
   単クリックは値を変えず、ドラッグは押した値からの相対量、ダブルクリックは既定値の仮表示と間隔後の記録、3 回目は入力欄を開く。
   入力欄（`ValueEntryField`）は編集中のキーを先に受け、メニューの Space や文書の Undo へ渡さない
@@ -74,8 +76,10 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0135](../decisions/0135-sample-audition.md)）。
   一覧は AppKit の表（`FileListTable`）で、押した時点で選択しフォーカスを取り、2 回目のクリックと Return で開く。
   試聴を変えるのは利用者のクリックとキーだけで、ブラウザ自身の選択の付け替えは鳴らさない（[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）。
-  一覧の下には試聴した音声素材の部分波形・長さ・読込み状態を 1 つ表示し、選択と違うパスの報告は使わない
-  （[ADR 0151](../decisions/0151-streaming-sample-audition.md)）。
+  一覧の下には選択した音声素材の全体の波形・長さを 1 つ表示する。全体は `SampleOverviews` が選択で読み、直近のものを保持する。
+  読込み中だけ試聴の部分波形を使い、選択と違うパスの報告は使わない
+  （[ADR 0151](../decisions/0151-streaming-sample-audition.md)、[ADR 0163](../decisions/0163-sample-overview.md)）。
+  一覧にフォーカスがある時の Space は、一覧がワークスペースの「再生／停止」を呼ぶ（[ADR 0160](../decisions/0160-ordered-transport-requests.md)）。
   自動試聴のオン／オフと音量はウィンドウ設定に保持し、右矢印・ボタン・波形クリックの手動試聴は設定と独立して使える。
   ブラウザの表示・文書の交換で無音の出力を準備し、表示中は保持する（[ADR 0152](../decisions/0152-browser-audition-controls.md)）。
   制作向けの表示・検索と音声ファイル URL の位置指定ドロップは [ADR 0145](../decisions/0145-sample-browser-file-drops.md) に従う。
@@ -96,6 +100,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   検査で省くのは表示リンクの起動と画面への提出だけで、GPU 完了待ちは検査の読み戻し側に限定する。
 - **可視要素とキャッシュ**: 見えているトラック・配置・ノートを単一の可視列として問い合わせ、描画・ヒットテスト・VoiceOver で共用する
   （[ADR 0045](../decisions/0045-visible-elements.md)）。
+  アレンジのノートは現在レーンの高さの帯で、音高を使わない。中身ごとの音域で縦に置く表示は P2-07 で接続する
+  （[ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
   入力の版とカメラが変わらない間は `CanvasGeometryCache` で再利用し、再生位置とピークだけを毎フレーム読む
   （[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）
 

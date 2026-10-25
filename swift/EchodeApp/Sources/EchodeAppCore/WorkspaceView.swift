@@ -99,7 +99,7 @@ public struct WorkspaceView: View {
                                   Task { _ = await controller.openPluginWindow(device, documentID: document) }
                               }, pluginNames: controller.pluginNames, onDropAudio: { session.importDroppedAudio($0) != nil },
                               onMoveClip: { _ = session.moveClip($0) },
-                              start: controller.playbackStart, loop: controller.rulerLoop, busy: controller.busy || controller.audioBusy,
+                              start: controller.playbackStart, loop: controller.rulerLoop, busy: controller.transportLocked,
                               onSetStart: setStart, onSetLoop: setLoop,
                               followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
                     .id(controller.documentID)

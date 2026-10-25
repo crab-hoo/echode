@@ -812,3 +812,59 @@ fn a_seek_to_a_suffix_shorter_than_a_device_frame_ends_normally() {
     assert!(report.error.is_none());
     assert_eq!(report.history.back().unwrap().start_frame, 99);
 }
+
+/// The browser's overview reads the whole file without an output, matches the
+/// peaks a finished audition reports, and stops between reads once a newer
+/// selection asks (ADR 0163). Three reads' worth of frames cross read edges.
+#[test]
+fn contract_a_sample_overview_reads_the_whole_file_without_an_audition() {
+    let dir = fixture("overview");
+    let frames = 65_536 * 2 + 1_234;
+    let path = dir.0.join("long.wav");
+    std::fs::write(&path, wav(RATE, 2, &tone(frames, 2, 0.003, 0.8))).unwrap();
+    let overview = sample_overview(&path, &|| true).unwrap().unwrap();
+    assert!(overview.complete);
+    assert_eq!(overview.frames, frames as u64);
+    assert_eq!(overview.loaded_frames, frames as u64);
+    assert_eq!(overview.first_frame, 0);
+    assert_eq!(overview.sample_rate, RATE);
+    assert_eq!(
+        overview.peaks.len() as u64,
+        overview.frames.div_ceil(overview.frames_per_peak)
+    );
+    assert!(overview.peaks.len() <= 512);
+    // Left peaks near +0.8, right near -0.4 at its lowest: both channels count.
+    let high = overview
+        .peaks
+        .iter()
+        .map(|peak| peak[1])
+        .fold(f32::MIN, f32::max);
+    let low = overview
+        .peaks
+        .iter()
+        .map(|peak| peak[0])
+        .fold(f32::MAX, f32::min);
+    assert!(high > 0.79 && high <= 0.8001, "{high}");
+    assert!(low < -0.79, "{low}");
+
+    // A short file, which an audition reads to the end before it sounds,
+    // gets the same overview from both.
+    let short = dir.0.join("short.wav");
+    std::fs::write(&short, wav(RATE, 2, &tone(12_000, 2, 0.01, 0.5))).unwrap();
+    let (audition, _probe) = audition(RATE);
+    audition.play(short.clone());
+    let report = wait(&audition, |report| {
+        report
+            .waveform
+            .as_ref()
+            .is_some_and(|waveform| waveform.complete)
+    });
+    assert_eq!(report.waveform, sample_overview(&short, &|| true).unwrap());
+
+    // A newer request stops this one before the next read.
+    let reads = AtomicUsize::new(0);
+    let stopped = sample_overview(&path, &|| reads.fetch_add(1, Ordering::SeqCst) < 1).unwrap();
+    assert!(stopped.is_none());
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    assert!(sample_overview(&dir.0.join("missing.wav"), &|| true).is_err());
+}

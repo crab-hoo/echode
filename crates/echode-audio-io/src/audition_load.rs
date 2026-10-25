@@ -195,6 +195,39 @@ fn hand_over(
     Ok(())
 }
 
+/// Frames per overview read. A read size, not a limit on the file.
+const OVERVIEW_READ: u32 = 65_536;
+
+/// The whole file's peaks for the browser, read apart from any audition so a
+/// selection shows its shape before and after it sounds (ADR 0163). No SRC
+/// and no output. Returns `None` when `live` turns false between reads.
+pub fn sample_overview(
+    path: &std::path::Path,
+    live: &dyn Fn() -> bool,
+) -> Result<Option<AuditionWaveform>, String> {
+    let mut reader = AudioFileReader::open(path).map_err(|error| error.to_string())?;
+    let mut waveform = AuditionWaveform {
+        frames: reader.frames(),
+        sample_rate: reader.sample_rate(),
+        frames_per_peak: reader.frames().div_ceil(PEAKS).max(1),
+        ..AuditionWaveform::default()
+    };
+    loop {
+        if !live() {
+            return Ok(None);
+        }
+        let pcm = reader
+            .read(OVERVIEW_READ)
+            .map_err(|error| error.to_string())?;
+        add_peaks(&mut waveform, &pcm);
+        if pcm.frames < u64::from(OVERVIEW_READ) {
+            waveform.frames = waveform.loaded_frames;
+            waveform.complete = true;
+            return Ok(Some(waveform));
+        }
+    }
+}
+
 fn add_peaks(waveform: &mut AuditionWaveform, pcm: &echode_history::DecodedPcm) {
     for samples in pcm.samples.chunks_exact(usize::from(pcm.channels)) {
         let at = (waveform.loaded_frames / waveform.frames_per_peak).min(PEAKS - 1) as usize;

@@ -655,6 +655,8 @@ class PolicyTests(unittest.TestCase):
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
                           "playhead-follow-ui", "playhead-follow-state-ui",
+                          "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
+                          "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
                           "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:

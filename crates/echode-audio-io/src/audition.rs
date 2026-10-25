@@ -541,6 +541,8 @@ fn run(
 #[path = "audition_load.rs"]
 mod loading;
 
+pub use loading::sample_overview;
+
 fn prepare_visible(shared: &Shared, outputs: &mut dyn AuditionOutputs) {
     if !lock(&shared.report).settings.visible {
         return;

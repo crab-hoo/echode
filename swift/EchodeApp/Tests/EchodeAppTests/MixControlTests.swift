@@ -183,7 +183,10 @@ struct MixControlTests {
             let layout = try #require(frame.clipControlLayout)
             let handle = entering ? layout.entering : layout.leaving
             let down = CGPoint(x: handle.midX, y: handle.midY)
-            let up = CGPoint(x: layout.rect.minX + layout.rect.width * (entering ? 0.2 : 0.7), y: down.y)
+            // Placed audio starts without fades; the handle sits just inside
+            // the edge and the drag moves the fade by the pointer's distance.
+            let edge = entering ? layout.rect.minX + layout.fadeIn : layout.rect.maxX - layout.fadeOut
+            let up = CGPoint(x: down.x + layout.rect.minX + layout.rect.width * (entering ? 0.2 : 0.7) - edge, y: down.y)
             pane.timeline.mouseDown(with: try event(.leftMouseDown, down))
             pane.timeline.mouseDragged(with: try event(.leftMouseDragged, up))
             pane.timeline.mouseUp(with: try event(.leftMouseUp, up))
@@ -195,7 +198,7 @@ struct MixControlTests {
         #expect(controller.undoCount == before + 3)
         let saved = try #require(controller.snapshot?.clipMix(id))
         await controller.undo()
-        #expect(controller.snapshot?.clipMix(id)?.fadeOut == 3_528_000)
+        #expect(controller.snapshot?.clipMix(id)?.fadeOut == 0)
         await controller.redo()
         #expect(controller.snapshot?.clipMix(id) == saved)
         let cancelLayout = try #require(present().clipControlLayout)

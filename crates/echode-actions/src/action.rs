@@ -849,6 +849,12 @@ define_actions! {
             sample_rate: u32,
             channels: u16,
             frames: u64,
+            /// Placed audio starts without edge fades (ADR 0161). Journals
+            /// written before that have no field and replay the old 5 ms.
+            #[serde(default = "legacy_place_fade")]
+            fade_in: i64,
+            #[serde(default = "legacy_place_fade")]
+            fade_out: i64,
         }
         commit {
             Action::PlaceAudio {
@@ -860,12 +866,14 @@ define_actions! {
                 sample_rate,
                 channels,
                 frames,
+                fade_in: 0,
+                fade_out: 0,
             }
         }
         edit |project: &Project| {
             let audio = AudioRef::try_new(hash.clone(), *sample_rate, *channels, *frames)?;
             project
-                .place_audio(*track, *clip, *content, *start, audio)
+                .place_audio_with_fades(*track, *clip, *content, *start, audio, *fade_in, *fade_out)
                 .map_err(Into::into)
         }
     }
@@ -893,6 +901,10 @@ define_actions! {
             Err(ActionError::NotApplied)
         }
     }
+}
+
+fn legacy_place_fade() -> i64 {
+    echode_model::DEFAULT_FADE_FLICKS
 }
 
 impl Action {

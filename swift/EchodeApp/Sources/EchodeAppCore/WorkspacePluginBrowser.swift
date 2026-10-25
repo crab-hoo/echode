@@ -14,8 +14,10 @@ struct WorkspacePluginBrowser: View {
     @FocusState private var searching: Bool
     private var filtered: [PluginListing] { plugins.filter { fuzzyMatch(query, in: "\($0.name) \($0.vendor) \($0.id)") } }
     private var targetExists: Bool { controller.documentID == document && controller.tracks.contains { $0.id == controller.selection } }
-    private var canInsert: Bool { targetExists && !controller.busy && selected != nil && !loading }
+    /// A rescan does not block inserting a plugin that is listed (ADR 0162).
+    private var canInsert: Bool { targetExists && !controller.busy && selected != nil }
     var body: some View {
+        let filtered = self.filtered
         VStack(alignment: .leading, spacing: 12) {
             Text(text("Plugin Browser")).font(.headline)
             LabeledContent(text("Track"), value: controller.tracks.first { $0.id == controller.selection }?.name ?? text("Select a track"))
@@ -23,25 +25,11 @@ struct WorkspacePluginBrowser: View {
                 .onSubmit { insert(closeAfter: false) }.onKeyPress(.downArrow) { move(1); return .handled }.onKeyPress(.upArrow) { move(-1); return .handled }
             if loading { ProgressView().controlSize(.small) }
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
-            List(selection: $selected) {
-                ForEach(filtered) { plugin in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(plugin.name)
-                            if plugin.fresh { Text(text("New plugin")).font(.caption).foregroundStyle(.secondary) }
-                        }
-                        Text([plugin.vendor, plugin.id].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }.tag(plugin.id).contentShape(Rectangle()).onTapGesture(count: 2) { selected = plugin.id; insert(closeAfter: true) }
-                        .onDrag { FXDrag(document: document, track: nil, device: nil, plugin: plugin.id).provider() }
-                        .contextMenu {
-                            Button(text("Insert on selected tracks")) {
-                                insert(plugin.id, allSelected: true, closeAfter: false)
-                            }.disabled(controller.documentID != document || controller.selectedTracks.isEmpty || controller.busy || loading)
-                        }
-                }
-            }.onMoveCommand { if $0 == .down { move(1) }; if $0 == .up { move(-1) } }
-                .onKeyPress(.return) { insert(closeAfter: false); return .handled }
+            PluginCandidateList(plugins: filtered, selection: selected, document: document,
+                                onSelect: { selected = $0 },
+                                onInsert: { plugin, closeAfter in selected = plugin; insert(plugin, allSelected: false, closeAfter: closeAfter) },
+                                onInsertOnSelected: { insert($0, allSelected: true, closeAfter: false) },
+                                canInsertOnSelected: controller.documentID == document && !controller.selectedTracks.isEmpty && !controller.busy)
             HStack {
                 Button(text("Refresh")) { Task { await reload() } }.disabled(loading || controller.busy)
                 Spacer()
@@ -70,7 +58,7 @@ struct WorkspacePluginBrowser: View {
         insert(selected, allSelected: false, closeAfter: closeAfter)
     }
     private func insert(_ plugin: String, allSelected: Bool, closeAfter: Bool) {
-        guard !loading, filtered.contains(where: { $0.id == plugin }),
+        guard filtered.contains(where: { $0.id == plugin }),
               let request = controller.capturePluginInsertion(plugin, allSelected: allSelected, document: document) else { return }
         Task {
             if await controller.insertPlugin(request) {

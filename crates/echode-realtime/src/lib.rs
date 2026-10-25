@@ -281,6 +281,10 @@ impl Cursor {
     }
 
     /// Note-ons for the chased set, for an instrument starting in mid-note.
+    ///
+    /// A note that ends exactly at the landing stays in the set so its off
+    /// still leaves with the next block, but it is not struck: that note-on
+    /// would sort after its own off at the same sample and hold the note.
     pub fn chase_events(&self, plan: &Plan, out: &mut [Event]) -> Result<usize, PlayError> {
         let mut count = 0;
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
@@ -288,6 +292,9 @@ impl Cursor {
                 let Some(note) = track.notes.get(*index as usize) else {
                     continue;
                 };
+                if self.position.is_some_and(|landing| note.off <= landing) {
+                    continue;
+                }
                 push_event(
                     out,
                     &mut count,
@@ -693,5 +700,34 @@ mod key_tests {
         assert!(events[0].is_note_off());
         assert_eq!(events[0].key(), Some(60));
         assert_eq!(events[0].note_id(), Some(3));
+    }
+
+    #[test]
+    fn a_note_ending_at_the_landing_is_not_struck() {
+        let plan = plan(60);
+        let mut events = [Event::note_off(0, 0, 0, 0); 4];
+        let mut order = [0usize; 4];
+        let mut scratch = [Event::note_off(0, 0, 0, 0); 4];
+        for (landing, struck) in [(999, 1), (1_000, 0)] {
+            let mut cursor = plan.cursor();
+            cursor.catch_up(&plan, landing);
+            let chased = cursor.chase_events(&plan, &mut events).unwrap();
+            assert_eq!(chased, struck, "landing at {landing}");
+            assert!(events[..chased].iter().all(|event| event.is_note_on()));
+            // Either way the off still leaves at the note's end, after any
+            // chased note-on, so nothing is left sounding.
+            let span = Span {
+                start: landing,
+                frames: 64,
+                block_offset: 0,
+                release_at: None,
+            };
+            let count = cursor
+                .play(&plan, &[span], &mut events, &mut order, &mut scratch)
+                .unwrap();
+            assert_eq!(count, 1);
+            assert!(events[0].is_note_off());
+            assert_eq!(i64::from(events[0].time()), 1_000 - landing);
+        }
     }
 }

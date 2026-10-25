@@ -241,8 +241,10 @@ struct ClipControlLayout: Sendable {
                     fadeOut: Double(fadeOutTicks ?? clip.fadeOutTicks) * scale)
     }
     var gain: CGRect { CGRect(x: rect.midX - 12, y: rect.minY + 14, width: 24, height: 10) }
-    var entering: CGRect { CGRect(x: min(rect.maxX - 4, rect.minX + fadeIn) - 4, y: rect.minY + 3, width: 8, height: 8) }
-    var leaving: CGRect { CGRect(x: max(rect.minX + 4, rect.maxX - fadeOut) - 4, y: rect.minY + 3, width: 8, height: 8) }
+    // Both handles stay inside the clip, so a zero fade, which placed audio
+    // starts with, can still be grabbed. Drags are relative (ADR 0161).
+    var entering: CGRect { CGRect(x: min(rect.maxX - 4, max(rect.minX + 4, rect.minX + fadeIn)) - 4, y: rect.minY + 3, width: 8, height: 8) }
+    var leaving: CGRect { CGRect(x: max(rect.minX + 4, min(rect.maxX - 4, rect.maxX - fadeOut)) - 4, y: rect.minY + 3, width: 8, height: 8) }
     func hit(_ point: CGPoint) -> ClipHandle? {
         if entering.insetBy(dx: -3, dy: -3).contains(point), point.x <= rect.midX { return .fadeIn }
         if leaving.insetBy(dx: -3, dy: -3).contains(point) { return .fadeOut }

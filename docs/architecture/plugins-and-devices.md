@@ -67,7 +67,10 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
   停止時はノートオフを使い、位置移動・準備取消の DSP リセットと区別する
   （[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - P2-02 の最初の接続では、ヘッダの FX ボタン、候補の非モーダルパネル、`device.reorder` / `device.copy` を追加した。
-  ヘルパー GUI はこの時点では未接続だった（[ADR 0118](../decisions/0118-track-fx-chain-editing.md)）
+  ヘルパー GUI はこの時点では未接続だった（[ADR 0118](../decisions/0118-track-fx-chain-editing.md)）。
+  候補の一覧は AppKit の表（`PluginListTable`）で、押した時点で選択し、行のどこでも 2 回目のクリックで追加する
+  （[ADR 0162](../decisions/0162-plugin-candidate-table.md)）。インスペクターの一覧の末尾の FX 追加ボタンは要件化のみで未接続である
+  （[ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）
 - 下部のデバイスビューは選択トラックのデバイスを処理順に横へ並べ、各列に操作・検索欄・全パラメーターの一覧を持つ。
   一覧は画面内の行だけを作り、ピン留めした ID を最上部に固定する。ピン留めはデバイスの設定として保存・Undo・複製する。
   一覧・値の往復は文書ごとのデバイスレーンで待ち、取り込んだ状態の記録だけを文書ワーカーへ戻す
