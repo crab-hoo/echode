@@ -16,8 +16,8 @@ use crate::rpc::ApiSession;
 /// One request line. This bounds a single JSON-RPC message, not the project.
 pub(crate) const MAX_REQUEST_LINE: usize = 1024 * 1024;
 
-/// How long one connection may sit without sending a byte. A silent client
-/// must not hold the accept loop forever.
+/// How long a connection may wait for incoming bytes or writable reply space.
+/// A silent client or unread reply must not hold the accept loop forever.
 pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Why the socket stopped.
@@ -68,6 +68,9 @@ fn serve_connection_limited(
     stream
         .set_read_timeout(Some(timeout))
         .map_err(|error| ApiError::new(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| ApiError::new(error.to_string()))?;
     let mut writer = stream
         .try_clone()
         .map_err(|error| ApiError::new(error.to_string()))?;
@@ -93,7 +96,10 @@ fn serve_connection_limited(
             Err(error) => return Err(ApiError::new(error.to_string())),
         }
         if let Some(response) = session.reply(&line) {
-            writeln!(writer, "{response}").map_err(|error| ApiError::new(error.to_string()))?;
+            // An edit may already be committed. Close on write failure without
+            // replaying the request, even if only part of the reply was sent.
+            writeln!(writer, "{response}")
+                .map_err(|error| ApiError::new(format!("could not write API reply: {error}")))?;
         }
     }
 }

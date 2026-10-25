@@ -128,46 +128,25 @@ impl Waveforms {
         if right <= left || columns.is_empty() {
             return 0;
         }
-        let Some(origin) = clip_start.checked_sub(offset) else {
-            return 0;
+        let source = SourceSpan {
+            start: clip_start,
+            length: clip_length,
+            offset,
+            rate,
+            frames,
         };
-        columns.fill(PeakColumn { min: 0.0, max: 0.0 });
-        let sound_left = left.max(origin);
-        if right <= sound_left {
-            // The visible window is inside the clip and before the file.
-            return columns.len();
+        let count = columns.len();
+        // Columns are uniform in timeline ticks, not in source frames. Convert
+        // each boundary independently so tempo changes and EOF keep their place.
+        for (index, column) in columns.iter_mut().enumerate() {
+            let left = column_tick(start_tick, end_tick, index, count);
+            let right = column_tick(start_tick, end_tick, index + 1, count)
+                .max(left.saturating_add(1))
+                .min(end_tick);
+            *column = source_span(project.tempo(), source, left, right)
+                .map(|(first, last)| reduce(peaks, first, last))
+                .unwrap_or(PeakColumn { min: 0.0, max: 0.0 });
         }
-        let Some((first, last)) = source_span(
-            project.tempo(),
-            SourceSpan {
-                start: clip_start,
-                length: clip_length,
-                offset,
-                rate,
-                frames,
-            },
-            sound_left,
-            right,
-        ) else {
-            return columns.len();
-        };
-        if first >= frames {
-            return columns.len();
-        }
-        let span = end_tick.saturating_sub(start_tick);
-        if span <= 0 {
-            return columns.len();
-        }
-        let from = column_at(sound_left, start_tick, span, columns.len());
-        let mut to = column_at(right, start_tick, span, columns.len());
-        if to <= from {
-            to = (from + 1).min(columns.len());
-        }
-        let to = to.min(columns.len());
-        if from >= to {
-            return columns.len();
-        }
-        fill_columns(peaks, first, last.min(frames), &mut columns[from..to]);
         columns.len()
     }
 }
@@ -264,54 +243,20 @@ fn source_span(
     }
     let first = media_sample_at(origin_tick, sound_left, tempo, source.rate)?;
     let last = media_sample_at(origin_tick, right, tempo, source.rate)?;
-    if last <= first || first < 0 {
+    if first < 0 {
         return None;
     }
     let first = u64::try_from(first).ok()?;
-    let last = u64::try_from(last).ok()?;
-    (last > first).then_some((first, last))
+    // At high zoom a nonempty tick column may be narrower than one sample.
+    let last = u64::try_from(last).ok()?.max(first.checked_add(1)?);
+    (first < source.frames).then_some((first, last.min(source.frames)))
 }
 
-fn column_at(tick: i64, start: i64, span: i64, columns: usize) -> usize {
-    if columns == 0 || tick <= start || span <= 0 {
-        return 0;
-    }
-    if tick >= start.saturating_add(span) {
-        return columns;
-    }
-    let index = i128::from(tick - start) * i128::from(u64::try_from(columns).unwrap_or(u64::MAX))
-        / i128::from(span);
-    usize::try_from(index).unwrap_or(columns).min(columns)
-}
-
-fn fill_columns(peaks: &Peaks, start: u64, end: u64, columns: &mut [PeakColumn]) -> usize {
-    if columns.is_empty() || end <= start {
-        return 0;
-    }
-    let count = u64::try_from(columns.len()).unwrap_or(u64::MAX);
-    let span = end - start;
-    for (index, column) in columns.iter_mut().enumerate() {
-        let index = u64::try_from(index).unwrap_or(count);
-        let mut left = start + mul_div(span, index, count);
-        let mut right = start + mul_div(span, index.saturating_add(1), count);
-        if right <= left {
-            right = left.saturating_add(1).min(end);
-        }
-        if right <= left {
-            left = end.saturating_sub(1);
-            right = end;
-        }
-        *column = reduce(peaks, left, right);
-    }
-    columns.len()
-}
-
-fn mul_div(value: u64, numerator: u64, denominator: u64) -> u64 {
-    if denominator == 0 {
-        return 0;
-    }
-    u64::try_from(u128::from(value) * u128::from(numerator) / u128::from(denominator))
-        .unwrap_or(value)
+fn column_tick(start: i64, end: i64, index: usize, count: usize) -> i64 {
+    // i128 keeps the full signed tick range and the column multiplication exact.
+    let span = i128::from(end) - i128::from(start);
+    let tick = i128::from(start) + span * index as i128 / count as i128;
+    i64::try_from(tick).expect("column boundary is inside the tick range")
 }
 
 fn reduce(peaks: &Peaks, start: u64, end: u64) -> PeakColumn {

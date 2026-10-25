@@ -71,6 +71,13 @@ make debug-report
 
 ### オーディオ・トランスポート・プラグイン
 
+- **壊れた素材を読むと `attempt to multiply with overflow` / `capacity overflow` で文書が使えなくなる**:
+  `media.rs::decode_pcm` のヘッダ長の計算を確認する。
+  BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
+  `audit_cur01_malformed_pcm_length_returns_an_error_without_panicking` が、24 バイトの不正ヘッダで再現する。
+  現行の回帰は debug / release の両方で、サンプル数・バイト数・ヘッダ加算の桁あふれをエラーとして拒否する。
+  当時の panic の位置は [CUR-01](reviews/2026-10-25-code-audit.md#cur-01-pcm-のバイト長計算が桁あふれする) を参照する。
+
 - **S2 / S3 は通るのに製品だけ負荷に弱い**:
   選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。
 - **再生開始が遅い・準備中に停止できない**:
@@ -139,6 +146,19 @@ make debug-report
   処理期限超過（`late`）と HAL 呼出欠落（`gaps`、`pmset -g log` の Sleep / Wake や `/usr/bin/log show` の coreaudiod デバイス変更）を区別する（[ADR 0096](decisions/0096-measurement-completion.md)）。短時間確認は `--native-rate` を使う。
 
 ### UI・描画・入力・履歴・MCP
+
+- **素材の終端後に波形が続く・テンポ変更で波形の位置がずれる**:
+  音の変化と波形だけの誤表示を区別し、`Waveforms::fill` の問い合わせ範囲・素材フレーム数・テンポ点を残す。
+  `audit_cur02_waveform_keeps_silence_after_the_source_ends` と
+  `audit_cur03_waveform_maps_each_column_through_the_tempo_map` が、列ごとの時間対応を通常回帰で検査する。
+  `waveform_partial_views_keep_multiple_tempo_changes_and_trim_offsets` で全幅・部分幅・キャッシュ再読込みを比較する。
+  EOF 超過と途中のテンポ変化は独立した条件である（[CUR-02 / 03](reviews/2026-10-25-code-audit.md)）。
+- **API / MCP の呼出しが返らず、後続クライアントも止まる**:
+  ソケットの読込み待ちだけでなく、応答の書込み待ちを確認する。
+  `serve_connection_limited` は読書きの無進行を 30 秒で打ち切る。
+  `could not write API reply` は応答送信の失敗であり、編集そのものの失敗とは限らない。
+  `audit_cur04_an_unread_reply_releases_the_connection` は送信バッファを満たし、後続接続と編集の単一実行を通常回帰で確認する。
+  編集が既に記録された可能性があるので、同じ編集を無条件に再送しない（[CUR-04](reviews/2026-10-25-code-audit.md#cur-04-api-の書込みにはタイムアウトがない)）。
 
 - **下部を開くと別のエディタが消える・高さが戻らない**:
   ⌥⌘3・4 は各エディタ、⌥⌘5 はアレンジ非表示の独立した切替である。

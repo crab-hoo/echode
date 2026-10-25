@@ -31,6 +31,9 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 ### 1. 全体横断・Phase 1 最終照合
 
+- [2026-10-25 現行コード監査](reviews/2026-10-25-code-audit.md): CUR-01〜04。
+  不正 PCM の panic、素材終端・テンポ変化での波形誤表示、API 応答の書込み待ちを再現し、後日対応を追記した。
+
 - [2026-10-08 初期監査](reviews/2026-10-08-audit.md): HIS / MOD / ENG / PLG / API / UI / DEV の一覧と未着手項目（`audit_*` テスト）。
 - [2026-10-13 境界監査](reviews/2026-10-13-audit.md)、[Phase 1 専門監査](reviews/2026-10-13-phase1-pro-audit.md): AUD-01〜13、PRO-01〜17。
 - [修正指示](reviews/2026-10-14-phase1-fix-instructions.md)、[修正後監査](reviews/2026-10-14-phase1-fix-reaudit.md): 修正条件と再現結果。

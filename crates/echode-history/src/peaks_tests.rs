@@ -46,8 +46,7 @@ fn a_constant_and_an_impulse_keep_their_columns() {
     assert_eq!(peaks.levels.last().unwrap().len(), 1);
     assert_eq!(peaks.levels.last().unwrap()[0].min, -0.5);
     assert_eq!(peaks.levels.last().unwrap()[0].max, 0.8);
-    let mut columns = vec![PeakColumn { min: 0.0, max: 0.0 }; 2];
-    assert_eq!(fill_columns(&peaks, 0, 128, &mut columns), 2);
+    let columns = [reduce(&peaks, 0, 64), reduce(&peaks, 64, 128)];
     assert_eq!(
         columns[0],
         PeakColumn {
@@ -98,6 +97,14 @@ fn a_tick_window_maps_onto_frames() {
     let (first, last) = source_span(&tempo, span, quarter / 2, quarter).unwrap();
     assert_eq!((first, last), (12_000, 24_000));
     assert!(source_span(&tempo, span, quarter, quarter + 1).is_none());
+}
+
+#[test]
+fn column_boundaries_preserve_large_signed_ticks() {
+    assert_eq!(column_tick(i64::MIN, i64::MAX, 0, 2), i64::MIN);
+    assert_eq!(column_tick(i64::MIN, i64::MAX, 1, 2), -1);
+    assert_eq!(column_tick(i64::MIN, i64::MAX, 2, 2), i64::MAX);
+    assert_eq!(column_tick(i64::MAX - 10, i64::MAX, 1, 2), i64::MAX - 5);
 }
 
 #[test]

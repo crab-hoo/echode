@@ -164,8 +164,11 @@ P2 のトラック追加位置・フォルダ展開／折りたたみ時の挿�
   直近の要求ごとに操作の種類と、受付・復号・出力の準備・変換・受渡し・発音（HAL の出力時刻）の経過を記録する
   （[ADR 0143](../decisions/0143-browser-click-and-audition-timing.md)）
 - **デコードと書き出し**: AudioToolbox（WAV、AIFF、CAF、MP3、AAC、ALAC、FLAC 等）と Symphonia（Ogg Vorbis 等）を組み合わせる
+  正準 PCM の読込みはサンプル数・バイト数・ヘッダ加算を checked 演算で求め、実際の長さと一致する時だけ確保する。
 - **波形のピーク**: 正準 PCM から CPU で最小・最大のピラミッド（1 段目 64 サンプル）を作り、`cache/peaks/` に置く。
   キャッシュ一致時は正準 PCM を全読込せず、端と 64 サンプル未満の列だけを読み取り専用マップから読む
   （[ADR 0058](../decisions/0058-waveform-peaks.md)、[ADR 0110](../decisions/0110-apple-silicon-draw-and-peaks.md)）
+  表示列ごとの tick 境界を再生と同じ `media_sample_at` へ通し、テンポ変化・配置オフセットと EOF 後の無音を保つ。
+  1 サンプル未満の列は対応サンプルを参照し、波形を全幅のフレーム等分へ引き伸ばさない。
 - **タイムストレッチと解析（後続 Phase）**: Signalsmith Stretch（MIT）、Bungee（MPL-2.0）、Rubber Band（GPL-2.0-or-later）を候補とし、テンポ推定・追従は後続 Phase で扱う
   （[後続 Phase の操作要件](../interaction-design.md#オーディオクリップとテンポ)）

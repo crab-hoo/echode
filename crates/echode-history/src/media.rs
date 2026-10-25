@@ -113,10 +113,14 @@ fn decode_pcm(bytes: &[u8]) -> Result<DecodedPcm, PackageError> {
         .checked_mul(u64::from(channels))
         .ok_or_else(|| PackageError::new("audio frame count overflowed"))?;
     let count = usize::try_from(count).map_err(|_| PackageError::new("audio is too large"))?;
-    let payload = &bytes[HEADER..];
-    if payload.len() != count * 4 {
+    let expected = count
+        .checked_mul(4)
+        .and_then(|payload| HEADER.checked_add(payload))
+        .ok_or_else(|| PackageError::new("audio byte count overflowed"))?;
+    if bytes.len() != expected {
         return Err(PackageError::new("audio object length does not match"));
     }
+    let payload = &bytes[HEADER..];
     let mut samples = Vec::with_capacity(count);
     for chunk in payload.chunks_exact(4) {
         samples.push(f32::from_le_bytes(

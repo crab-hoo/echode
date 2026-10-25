@@ -117,3 +117,83 @@ fn a_request_line_past_the_cap_is_refused() {
     assert!(error.unwrap_err().contains("too long"));
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn audit_cur04_an_unread_reply_releases_the_connection() {
+    use std::io::ErrorKind;
+    use std::sync::mpsc;
+
+    let directory = std::env::temp_dir().join(format!(
+        "echode-api-backpressure-{}",
+        echode_model::Id::generate()
+    ));
+    echode_history::write_package(&directory, &Project::new()).unwrap();
+    let session = ApiSession::open(&directory).unwrap();
+    let path = socket_path();
+    let listener = bind_socket(&path).unwrap();
+    let mut client = UnixStream::connect(&path).unwrap();
+    let mut server = listener.accept().unwrap().0;
+    // Simulate earlier replies that this client left unread. This buffer only
+    // bounds the probe's writes; it is not a message or project size limit.
+    server.set_nonblocking(true).unwrap();
+    loop {
+        match server.write(&[b' '; 4096]) {
+            Ok(0) => panic!("socket unexpectedly closed"),
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+            Err(error) => panic!("could not fill reply buffer: {error}"),
+        }
+    }
+    server.set_nonblocking(false).unwrap();
+    writeln!(
+        client,
+        r#"{{"jsonrpc":"2.0","method":"actions.perform","params":{{"type":"track.add","name":"once"}},"id":1}}"#
+    )
+    .unwrap();
+    let (done, arrived) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let result = serve_connection_limited(
+            &session,
+            server,
+            Duration::from_millis(100),
+            MAX_REQUEST_LINE,
+        );
+        let _ = done.send(result);
+        // Use the same sequential accept/serve path as the production server.
+        let next = listener.accept().unwrap().0;
+        let result = serve_connection(&session, next);
+        drop(session);
+        result.unwrap();
+    });
+    let mut next = UnixStream::connect(&path).unwrap();
+    next.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    writeln!(
+        next,
+        r#"{{"jsonrpc":"2.0","method":"project.summary","id":2}}"#
+    )
+    .unwrap();
+    let released = arrived.recv_timeout(Duration::from_secs(1));
+    let mut reader = BufReader::new(next);
+    let mut reply = String::new();
+    let read = reader.read_line(&mut reply);
+    // Always unblock and join before asserting, even on the unfixed source.
+    drop(client);
+    drop(reader);
+    worker.join().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    std::fs::remove_file(path).unwrap();
+    let result = released.expect("an unread reply must release the sequential accept loop");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("could not write API reply")
+    );
+    read.expect("the next client must receive a reply");
+    let response: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    assert_eq!(response["id"], 2);
+    // The first edit was committed before its reply failed. Never replay it.
+    let tracks = response["result"]["tracks"].as_array().unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0]["name"], "once");
+}

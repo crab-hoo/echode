@@ -115,7 +115,7 @@ bless:
 	mkdir -p crates/echode-cli/tests/fixtures
 	printf '%s %s\n' "$$(date +%Y-%m-%d)" "$(REASON)" >> crates/echode-cli/tests/fixtures/bless.log
 
-# Ignored tests named audit_* reproduce open items in docs/reviews/2026-10-08-audit.md.
+# Ignored audit_* tests reproduce open items in docs/reviews/.
 # Each one fails until its item is fixed; then remove its #[ignore].
 known-bugs:
 	cargo test --workspace --no-fail-fast -- --ignored audit_
