@@ -454,10 +454,15 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual((arrange["runner"], arrange["suite"]), ("swift", "ArrangeRulerTests"))
         self.assertEqual(len(arrange["negative_controls"]), 2)
         self.assertIn("arrange-ruler-cancel-ui", contracts)
+        handles = contracts["loop-handles-ui"]
+        self.assertEqual((handles["runner"], handles["suite"]), ("swift", "RulerHandleTests"))
+        self.assertEqual(len(handles["negative_controls"]), 3)
+        self.assertEqual(len(contracts["loop-handles-cancel-ui"]["negative_controls"]), 2)
         engine = contracts["loop-entry"]
         self.assertEqual((engine["package"], engine["target"]), ("echode-engine", ["--test", "block_size"]))
         self.assertTrue(engine["test"].endswith("_under_rtsan"))
         for path in ("swift/EchodeApp/Sources/EchodeAppCore/RulerLoop.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/RulerHandles.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/ArrangeRuler.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/ArrangeFrame.swift"):
@@ -643,7 +648,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "fx-header-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
-                          "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-entry",
+                          "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
                           "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:

@@ -79,7 +79,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
     アレンジにも開始位置と範囲のルーラーを接続した。両エディタとトランスポートで値を共有する
     （[ADR 0157](decisions/0157-arrange-ruler.md)）。
-    既存ループ端のハンドルと Return の一時停止は未接続である。
+    両ルーラーの既存ループ端も、反対端を固定したドラッグ・吸着と Shift・取消・単一送信へ接続した
+    （[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。Return の一時停止は未接続である。
 
 ## 利用時に残る制約
 

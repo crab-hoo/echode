@@ -123,6 +123,7 @@ struct PianoFrame: Sendable {
             instances.append(instance(SIMD4(Float(rect.minX), 0, Float(rect.width), Float(min(3, layout.rulerHeight))),
                                       color: enabled ? SIMD4(0.40, 0.84, 0.56, 1) : SIMD4(0.45, 0.48, 0.53, 1)))
         }
+        instances += loopHandles.instances(enabled: piano.loop?.enabled == true, scale: input.scale)
         if let x = startX {
             // A stem with a flag at its top: stop returns here.
             let color = SIMD4<Float>(0.40, 0.84, 0.56, 1)
@@ -131,6 +132,11 @@ struct PianoFrame: Sendable {
             instances.append(instance(SIMD4(Float(x), 0, flag, Float(min(6, layout.rulerHeight))), color: color))
         }
         return instances
+    }
+
+    var loopHandles: RulerHandles {
+        RulerHandles(range: piano.loop?.range, ruler: layout.ruler,
+                     originBeat: piano.camera.originBeat, pixelsPerBeat: piano.camera.pixelsPerBeat)
     }
 
     /// The visible part of the loop band, never the keyboard headings or note grid.

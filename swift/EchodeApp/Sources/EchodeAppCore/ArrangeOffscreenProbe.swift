@@ -123,9 +123,11 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
             let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
             let stripe = enabled ? SIMD4<Float>(0.40, 0.84, 0.56, 1) : SIMD4<Float>(0.45, 0.48, 0.53, 1)
             let band = enabled ? SIMD4<Float>(0.22, 0.34, 0.30, 1) : SIMD4<Float>(0.20, 0.22, 0.25, 1)
+            let grip = enabled ? SIMD4<Float>(0.55, 0.94, 0.67, 1) : SIMD4<Float>(0.65, 0.68, 0.73, 1)
             let background = SIMD4<Float>(0.12, 0.13, 0.16, 1)
             for (x, y, color) in [(191.0, 1.0, stripe), (191, 22, band), (2, 1, background),
-                                   (310, 22, background), (233, 10, SIMD4<Float>(0.40, 0.84, 0.56, 1))] {
+                                   (310, 22, background), (233, 10, SIMD4<Float>(0.40, 0.84, 0.56, 1)),
+                                   (161, 6, band), (304, 6, grip), (303, 1, grip)] {
                 let expected = CanvasReadback.Pixel(b: UInt8((color.z * 255).rounded()), g: UInt8((color.y * 255).rounded()),
                                                     r: UInt8((color.x * 255).rounded()), a: 255)
                 if image.pixel(x: Int(x * scale), y: Int(y * scale)) != expected { rulerMismatches += 1 }

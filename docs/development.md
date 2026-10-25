@@ -145,6 +145,8 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 アレンジは `ArrangeRuler.swift`（入力・帯・印・数字）と `ArrangeFrame.swift`・`ArrangePainter.swift`（共通上端とクリップ）、
 ピアノロールの仮表示と確定は `PianoRollView.swift`、帯は `PianoFrame.swift` に置く。
 アレンジの回帰は `ArrangeRulerTests.swift`（[ADR 0157](decisions/0157-arrange-ruler.md)）。
+既存端のグリップの共通幾何と描画は `RulerHandles.swift`、片端だけの調整は `RulerPress.resize`、
+入力・取消と範囲の共有の回帰は `RulerHandleTests.swift` に置く（[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。
 製品と検証用のループへの進入判定は `PlaybackAudio::arm_loop` と `Transport::arm_loop`、回帰は `RulerLoopTests.swift` と
 `block_size.rs` の `contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan`（[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
 

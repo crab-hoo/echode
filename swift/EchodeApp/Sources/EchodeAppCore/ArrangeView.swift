@@ -344,6 +344,9 @@ public final class ArrangeView: NSView {
         clicks.up(at: point)
     }
     public override func mouseCancelled(with event: NSEvent) { cancelRuler(); finishClipMove(at: nil, flags: []); clicks.cancel() }
+    public override func resetCursorRects() {
+        for handle in rulerHandles.handles { addCursorRect(handle.hitRect, cursor: .resizeLeftRight) }
+    }
     public override func keyDown(with event: NSEvent) {
         if event.keyCode == 53, rulerPress != nil { cancelRuler(); return }
         if event.keyCode == 53, movePress != nil { finishClipMove(at: nil, flags: []); return }
@@ -458,6 +461,7 @@ public final class ArrangeView: NSView {
                             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60))
     }
     func refresh() {
+        window?.invalidateCursorRects(for: self)
         let input = renderInput
         CanvasSurface.resize(metalLayer, size: input.drawableSize, scale: input.scale)
         renderer?.update(input)

@@ -119,7 +119,7 @@ struct RulerLoopTests {
         let inactive = frame(false)
         #expect(active.loopRect == CGRect(x: 80, y: 0, width: 144, height: 24))
         #expect(active.loopRect == inactive.loopRect)
-        #expect(active.rulerInstances.count == 4 && inactive.rulerInstances.count == 4)
+        #expect(active.rulerInstances.count == 6 && inactive.rulerInstances.count == 6)
         #expect(active.rulerInstances[2].color != inactive.rulerInstances[2].color)
         camera.originBeat = 4
         #expect(frame(true).loopRect == nil)

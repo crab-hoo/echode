@@ -223,7 +223,8 @@ final class PianoGridView: NSView {
             // Defer the click until release so a loop drag never seeks.
             cancelGesture()
             rulerPress = RulerPress(x: pianoLayout.gridPoint(panePoint).x, originBeat: camera.originBeat,
-                                    pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid)
+                                    pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid,
+                                    edge: rulerHandles.hit(at: panePoint), originalRange: loop?.range)
             return
         }
         guard pianoLayout.grid.contains(panePoint) else { return }
@@ -261,7 +262,7 @@ final class PianoGridView: NSView {
             guard !busy, press.originBeat == camera.originBeat, press.pixelsPerBeat == camera.pixelsPerBeat, press.grid == camera.grid else { return }
             if press.dragged {
                 if let range = press.range { onSetLoop?(range) }
-            } else if let tick = camera.rulerTick(at: press.x, snapping: !event.modifierFlags.contains(.shift)) {
+            } else if press.edge == nil, let tick = camera.rulerTick(at: press.x, snapping: !event.modifierFlags.contains(.shift)) {
                 onSetStart?(tick)
             }
             return
@@ -329,7 +330,18 @@ final class PianoGridView: NSView {
     private func cancelGesture() { gesture = nil; preview = nil; rulerPress = nil; refresh() }
     /// The remembered start drawn on the ruler. Redraws only when it changes.
     func setStart(_ start: Int64?) { guard self.start != start else { return }; self.start = start; refresh() }
-    func setLoop(_ loop: RulerLoop?) { guard self.loop != loop else { return }; self.loop = loop; refresh() }
+    func setLoop(_ loop: RulerLoop?) {
+        guard self.loop != loop else { return }
+        rulerPress = nil; self.loop = loop; refresh()
+    }
+    var rulerHandles: RulerHandles {
+        RulerHandles(range: displayedLoop?.range, ruler: pianoLayout.ruler,
+                     originBeat: camera.originBeat, pixelsPerBeat: camera.pixelsPerBeat)
+    }
+    override func mouseCancelled(with event: NSEvent) { cancelGesture() }
+    override func resetCursorRects() {
+        for handle in rulerHandles.handles { addCursorRect(handle.hitRect, cursor: .resizeLeftRight) }
+    }
     var displayedLoop: RulerLoop? {
         if let range = rulerPress?.range { return RulerLoop(range: range, enabled: loop?.enabled ?? false) }
         return loop
@@ -349,6 +361,7 @@ final class PianoGridView: NSView {
             geometry: focus.flatMap { noteBasis($0) })
     }
     private func refresh() {
+        window?.invalidateCursorRects(for: self)
         let scale = Double(window?.backingScaleFactor ?? 1)
         CanvasSurface.resize(metalLayer, size: canvasDrawableSize(width: bounds.width, height: bounds.height, scale: scale), scale: scale)
         rememberViewport()

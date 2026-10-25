@@ -56,6 +56,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - ピアノロールのルーラードラッグの範囲指定・クリックとの分離と、ループ前からの進入・終端以降の通常進行:
   [ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)。
 - アレンジのルーラー・両エディタの開始位置と範囲共有・行領域の上端: [ADR 0157](decisions/0157-arrange-ruler.md)。
+- 両ルーラーの既存端の調整・つかむ位置と反対端の保持・外部変更による取消: [ADR 0158](decisions/0158-ruler-loop-edge-handles.md)。
 
 ### 3. プラグイン隔離・サンドボックス・Workgroup
 

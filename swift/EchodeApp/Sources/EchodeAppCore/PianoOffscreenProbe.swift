@@ -101,6 +101,25 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
             }
         }
     }
+    // The real endpoint has a grip; a clipped band edge must not acquire one.
+    for scale in [1.0, 2.0] {
+        for enabled in [false, true] {
+            let input = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 640, height: 200, scale: scale)
+            let loop = RulerLoop(range: LoopRange(start: 705_600, end: 4 * 705_600)!, enabled: enabled)
+            let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil,
+                camera: PianoCamera(originBeat: 2), key: DisplayKey(), preview: nil, loop: loop))
+            let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
+            let grip = enabled ? SIMD4<Float>(0.55, 0.94, 0.67, 1) : SIMD4<Float>(0.65, 0.68, 0.73, 1)
+            let band = enabled ? SIMD4<Float>(0.22, 0.34, 0.30, 1) : SIMD4<Float>(0.20, 0.22, 0.25, 1)
+            for (x, y, color) in [(223.0, 6.0, grip), (222, 1, grip), (80, 6, band)] {
+                let expected = CanvasReadback.Pixel(b: UInt8((color.z * 255).rounded()), g: UInt8((color.y * 255).rounded()),
+                                                    r: UInt8((color.x * 255).rounded()), a: 255)
+                compared += 1
+                if image.pixel(x: Int(x * scale), y: Int(y * scale)) != expected { mismatches += 1 }
+            }
+            frames += 1
+        }
+    }
     // The shared encoder draws a stale extent at the input's pixel positions.
     let staleInput = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
                                  width: 640, height: 331, scale: 2)

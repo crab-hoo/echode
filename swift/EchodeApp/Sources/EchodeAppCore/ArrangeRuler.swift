@@ -11,6 +11,7 @@ extension ArrangeView {
     func setRuler(start: Int64?, loop: RulerLoop?, busy: Bool) {
         let next = ArrangeRulerInput(start: start, loop: loop)
         guard ruler != next || rulerBusy != busy else { return }
+        if ruler?.loop != next.loop { rulerPress = nil }
         ruler = next; rulerBusy = busy
         if busy { rulerPress = nil }
         refresh()
@@ -19,6 +20,14 @@ extension ArrangeView {
     var displayedLoop: RulerLoop? {
         if let range = rulerPress?.range { return RulerLoop(range: range, enabled: ruler?.loop?.enabled ?? false) }
         return ruler?.loop
+    }
+
+    var rulerHandles: RulerHandles {
+        let input = renderInput
+        let origin = input.header.map { $0.width + 1 } ?? 0
+        return RulerHandles(range: displayedLoop?.range,
+            ruler: CGRect(x: origin, y: 0, width: max(0, input.width - origin), height: input.arrangeTop),
+            originBeat: camera.originBeat, pixelsPerBeat: camera.pixelsPerBeat)
     }
 
     func cancelRuler() {
@@ -35,7 +44,8 @@ extension ArrangeView {
         cancelRuler()
         guard !rulerBusy, snapshot != nil, rect.contains(point) else { return true }
         rulerPress = RulerPress(x: point.x - origin, originBeat: camera.originBeat,
-                                pixelsPerBeat: camera.pixelsPerBeat, grid: 705_600)
+                                pixelsPerBeat: camera.pixelsPerBeat, grid: 705_600,
+                                edge: rulerHandles.hit(at: point), originalRange: ruler?.loop?.range)
         return true
     }
 
@@ -53,7 +63,7 @@ extension ArrangeView {
         guard !rulerBusy else { return }
         if press.dragged {
             if let range = press.range { onSetLoop?(range) }
-        } else if let tick = press.tick(at: press.x, snapping: !flags.contains(.shift)) {
+        } else if press.edge == nil, let tick = press.tick(at: press.x, snapping: !flags.contains(.shift)) {
             onSetStart?(tick)
         }
     }
@@ -79,6 +89,11 @@ extension ArrangeFrame {
         return x >= 0 && x < timelineWidth ? timelineOrigin + x : nil
     }
 
+    var loopHandles: RulerHandles {
+        RulerHandles(range: input.arrangeRuler?.loop?.range, ruler: rulerRect,
+                     originBeat: camera.originBeat, pixelsPerBeat: camera.pixelsPerBeat)
+    }
+
     var rulerInstances: [Instance] {
         guard input.arrangeRuler != nil else { return [] }
         func instance(_ rect: SIMD4<Float>, _ color: SIMD4<Float>) -> Instance {
@@ -94,6 +109,7 @@ extension ArrangeFrame {
             result.append(instance(SIMD4(Float(rect.minX), 0, Float(rect.width), min(3, height)),
                                    enabled ? SIMD4(0.40, 0.84, 0.56, 1) : SIMD4(0.45, 0.48, 0.53, 1)))
         }
+        result += loopHandles.instances(enabled: input.arrangeRuler?.loop?.enabled == true, scale: input.scale)
         if let x = startX {
             let color = SIMD4<Float>(0.40, 0.84, 0.56, 1)
             result.append(instance(SIMD4(Float(x), 0, Float(min(2, input.width - x)), height), color))
