@@ -114,8 +114,24 @@ struct PianoFrame: Sendable {
     }
 
     var rulerInstances: [Instance] {
-        [instance(SIMD4(0, 0, Float(input.width), Float(layout.rulerHeight)), color: SIMD4(0.12, 0.13, 0.16, 1)),
-         instance(SIMD4(0, Float(layout.rulerHeight - 1), Float(input.width), 1), color: SIMD4(0.27, 0.29, 0.33, 1))]
+        var instances = [instance(SIMD4(0, 0, Float(input.width), Float(layout.rulerHeight)), color: SIMD4(0.12, 0.13, 0.16, 1)),
+                         instance(SIMD4(0, Float(layout.rulerHeight - 1), Float(input.width), 1), color: SIMD4(0.27, 0.29, 0.33, 1))]
+        if let x = startX {
+            // A stem with a flag at its top: stop returns here.
+            let color = SIMD4<Float>(0.40, 0.84, 0.56, 1)
+            let flag = Float(min(8, layout.ruler.maxX - x))
+            instances.append(instance(SIMD4(Float(x), 0, 2, Float(layout.rulerHeight)), color: color))
+            instances.append(instance(SIMD4(Float(x), 0, flag, Float(min(6, layout.rulerHeight))), color: color))
+        }
+        return instances
+    }
+
+    /// Start marker x in points. Nil when it falls outside the ruler.
+    var startX: Double? {
+        guard let start = piano.start else { return nil }
+        let x = (Double(start) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        guard x >= 0, x < layout.grid.width else { return nil }
+        return layout.gridOrigin.x + x
     }
 
     var labels: [CanvasLabel] {

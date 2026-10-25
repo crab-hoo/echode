@@ -69,6 +69,10 @@ pub enum PlaybackCommand {
     Pause,
     Stop,
     Locate(i64),
+    /// Stops and moves the clock to a device sample without resetting
+    /// plugins. A stop that returns to the remembered start keeps tails and
+    /// autonomous output, as a pause does (ADR 0155). Seeks use `Locate`.
+    Rewind(i64),
     /// Loop bounds in device samples. `end` is exclusive and must be after `start`.
     SetLoop {
         start: i64,
@@ -1977,7 +1981,11 @@ impl PlaybackAudio {
 
     /// A start cancelled before any device block was heard cannot emit a tail.
     pub fn cancel_unheard_start(&mut self, sample: i64) {
-        self.clock.locate(sample);
+        // A stop that already reached this block returned the clock itself,
+        // possibly to the remembered start; keep that position.
+        if self.playing {
+            self.clock.locate(sample);
+        }
         self.playing = false;
         self.stop_tail = None;
         self.stop_fade_offset = None;
@@ -2149,6 +2157,18 @@ impl PlaybackAudio {
                         self.output_revision = self.output_revision.wrapping_add(1);
                     }
                     self.begin_stop(live)?;
+                }
+                PlaybackCommand::Rewind(sample) => {
+                    if self.playing {
+                        if !live {
+                            self.output_revision = self.output_revision.wrapping_add(1);
+                        }
+                        self.begin_stop(live)?;
+                    }
+                    // A stop tail renders from its own position, so moving
+                    // the clock does not cut it or reset any plugin.
+                    self.clock.locate(sample);
+                    self.current.place(sample, true)?;
                 }
                 PlaybackCommand::Locate(sample) => {
                     if self.stop_tail.is_some() {

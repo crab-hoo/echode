@@ -6,6 +6,7 @@ struct WorkspaceTransportView: View {
     @State private var loopStart = "0"
     @State private var loopEnd = "4"
     @FocusState private var loopField: LoopField?
+    @FocusState private var startField: Bool
     private enum LoopField: Hashable { case start, end }
     private var seekBeat: Double? { NoteDraft.number(seek).flatMap { $0 >= 0 && PianoCamera.ticks($0) != nil ? $0 : nil } }
     private var loopBeats: (Double, Double)? {
@@ -16,7 +17,7 @@ struct WorkspaceTransportView: View {
     }
     var body: some View {
         HStack(spacing: 12) {
-            WorkspacePlayButton(paused: controller.playbackRequested) { Task { await controller.togglePlayback() } }
+            WorkspacePlayButton(paused: controller.playbackRequested) { Task { await controller.togglePause() } }
             Button { Task { await controller.stopPlayback() } } label: { Label(text("Stop"), systemImage: "stop.fill") }
             Button { Task { await controller.toggleMetronome() } } label: {
                 Label(text("Metronome"), systemImage: controller.audio.metronome ? "metronome.fill" : "metronome")
@@ -24,9 +25,9 @@ struct WorkspaceTransportView: View {
             LabeledContent(text("Position (beats)"), value: (Double(controller.audio.tick) / 705_600).formatted(.number.precision(.fractionLength(2))))
                 .monospacedDigit()
             TextField(text("Start beat"), text: $seek).frame(width: 80)
-                .focusedValue(\.workspaceTextEntry, true)
-                .accessibilityLabel(text("Playback start beat")).onSubmit(locate)
-            Button(text("Go"), action: locate).disabled(seekBeat == nil || controller.audioBusy)
+                .focused($startField).focusedValue(\.workspaceTextEntry, true)
+                .accessibilityLabel(text("Playback start beat")).onSubmit(setStart)
+            Button(text("Go"), action: setStart).disabled(seekBeat == nil || controller.audioBusy)
             TextField(text("Loop start (beats)"), text: $loopStart).frame(width: 64)
                 .focused($loopField, equals: .start).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Loop start (beats)")).onSubmit(commitLoop)
@@ -52,9 +53,14 @@ struct WorkspaceTransportView: View {
             .onChange(of: controller.documentID) { _, _ in
                 loopStart = "0"
                 loopEnd = "4"
+                showStart()
             }
+            // The rulers change the start too. A draft being typed is kept.
+            .onChange(of: controller.playbackStart, initial: true) { _, _ in if !startField { showStart() } }
+            .onChange(of: startField) { _, focused in if !focused { showStart() } }
     }
-    private func locate() { if let beat = seekBeat { Task { await controller.locate(beat: beat) } } }
+    private func setStart() { if let beat = seekBeat { Task { await controller.setPlaybackStart(beat: beat) } } }
+    private func showStart() { seek = NoteDraft.format(Double(controller.playbackStart) / 705_600) }
     private func storeLoopDraft() {
         guard let beats = loopBeats else { return }
         controller.loopStartBeat = beats.0

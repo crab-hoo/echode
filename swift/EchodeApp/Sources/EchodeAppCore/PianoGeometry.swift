@@ -65,6 +65,11 @@ struct PianoCamera: Sendable, Equatable {
     var grid: Int64 = 176_400 // A sixteenth note; time units are quarter-note ticks.
 
     func tick(at x: Double) -> Int64? { Self.ticks(originBeat + x / pixelsPerBeat).map(snapped) }
+    /// A ruler press snaps to the grid like note edits; Shift releases it.
+    func rulerTick(at x: Double, snapping: Bool) -> Int64? {
+        let tick = snapping ? tick(at: x) : Self.ticks(originBeat + x / pixelsPerBeat)
+        return tick.map { max(0, $0) }
+    }
     func pitch(at y: Double) -> Int { min(127, max(0, Int((topPitch - y / pixelsPerPitch).rounded(.up)))) }
     func snapped(_ tick: Int64) -> Int64 { Self.ticks((Double(tick) / Double(grid)).rounded() * Double(grid) / 705_600) ?? tick }
     static func ticks(_ beat: Double) -> Int64? { Int64(exactly: (beat * 705_600).rounded()) }
@@ -148,4 +153,6 @@ struct PianoRenderInput: Sendable {
     let camera: PianoCamera
     let key: DisplayKey
     let preview: PianoPreview?
+    /// The remembered playback start, marked on the ruler (ADR 0155).
+    var start: Int64? = nil
 }

@@ -16,6 +16,7 @@ mod peaks;
 mod project;
 mod store;
 mod thin;
+mod transport;
 
 pub mod spike;
 
@@ -35,3 +36,4 @@ pub use thin::{
     DAY, HOUR, HOURLY_SPAN, RECENT, SavePoint, StoreSize, git_store_size, kept_indexes,
     pack_and_thin, seed_autosaves, tip_text, write_bundle,
 };
+pub use transport::{TransportSettings, read_transport_settings, write_transport_settings};

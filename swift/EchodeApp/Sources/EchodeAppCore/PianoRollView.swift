@@ -13,6 +13,8 @@ struct PianoCanvas: NSViewRepresentable {
     let insert: (Int, Double, Double) -> Void
     let edit: (PianoNote.ID, NoteGeometry) -> Void
     let delete: (PianoNote.ID) -> Void
+    var start: Int64? = nil
+    var setStart: (Int64) -> Void = { _ in }
     var playback: PlaybackFeed? = nil
     var transportGeneration: UInt64 = 0
     var navigation: CanvasNavigationState? = nil
@@ -25,6 +27,8 @@ struct PianoCanvas: NSViewRepresentable {
         view.grid.onInsert = insert
         view.grid.onEdit = edit
         view.grid.onDelete = delete
+        view.grid.onSetStart = setStart
+        view.grid.setStart(start)
         view.grid.setSnapshot(snapshot, track: track, focus: focus, key: key, busy: busy)
         view.grid.setPlayback(playback)
         view.grid.noteTransport(transportGeneration)
@@ -78,6 +82,7 @@ final class PianoGridView: NSView {
     private var stepped: [PianoNote.ID: NoteGeometry] = [:]
     private var caretTick: Int64 = 0
     private var caretPitch = 60
+    private var start: Int64?
     private(set) var camera = PianoCamera()
     private(set) var key = DisplayKey()
     var pianoLayout: PianoLayout { PianoLayout(width: bounds.width, height: bounds.height) }
@@ -85,6 +90,7 @@ final class PianoGridView: NSView {
     var onInsert: ((Int, Double, Double) -> Void)?
     var onEdit: ((PianoNote.ID, NoteGeometry) -> Void)?
     var onDelete: ((PianoNote.ID) -> Void)?
+    var onSetStart: ((Int64) -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -199,6 +205,13 @@ final class PianoGridView: NSView {
               submittedFrame.layout == pianoLayout, submittedFrame.input.snapshot === snapshot,
               submittedFrame.piano.track == track, submittedFrame.piano.preview == nil else { return }
         let panePoint = convert(event.locationInWindow, from: nil)
+        if pianoLayout.ruler.contains(panePoint) {
+            // The ruler sets the remembered start; a playing transport seeks.
+            cancelGesture()
+            let x = pianoLayout.gridPoint(panePoint).x
+            if let tick = camera.rulerTick(at: x, snapping: !event.modifierFlags.contains(.shift)) { onSetStart?(tick) }
+            return
+        }
         guard pianoLayout.grid.contains(panePoint) else { return }
         stepped = [:]
         let point = pianoLayout.gridPoint(panePoint)
@@ -282,6 +295,8 @@ final class PianoGridView: NSView {
         }
     }
     private func cancelGesture() { gesture = nil; preview = nil; refresh() }
+    /// The remembered start drawn on the ruler. Redraws only when it changes.
+    func setStart(_ start: Int64?) { guard self.start != start else { return }; self.start = start; refresh() }
     /// Replaces the live feed. Equality is the document, not the playhead.
     func setPlayback(_ playback: PlaybackFeed?) { guard self.playback != playback else { return }; self.playback = playback; refresh() }
 
@@ -303,7 +318,7 @@ final class PianoGridView: NSView {
         guard let track else { return }
         renderer?.update(CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
             width: bounds.width, height: bounds.height, scale: scale,
-            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview), playback: playback,
+            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview, start: start), playback: playback,
             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
     }
 

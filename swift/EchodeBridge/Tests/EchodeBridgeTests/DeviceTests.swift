@@ -14,13 +14,13 @@ final class DeviceTests: XCTestCase {
         let page = try JSONDecoder().decode(PluginActivityPage.self, from: Data(#"""
             {"next":3,"closed":false,"entries":[{"device":"00000000-0000-0000-0000-0000000000d0",
             "events":[{"id":1,"kind":"begin"},{"id":1,"kind":"end"}],"values":[{"id":1,"value":1.5,"text":"1.50x"}],
-            "commands":["Play / Pause","Undo"],"rescan":false,"lost":false,"dirty":false,"closed":false,"window":true}]}
+            "commands":["Play / Stop","Undo"],"rescan":false,"lost":false,"dirty":false,"closed":false,"window":true}]}
             """#.utf8))
         XCTAssertEqual(page.next, 3)
         XCTAssertEqual(page.entries.first?.device, device)
         XCTAssertEqual(page.entries.first?.events.map(\.kind), [.begin, .end])
         XCTAssertEqual(page.entries.first?.windowOpen, true)
-        XCTAssertEqual(page.entries.first?.commands, ["Play / Pause", "Undo"])
+        XCTAssertEqual(page.entries.first?.commands, ["Play / Stop", "Undo"])
         XCTAssertNil(page.entries.first?.windowState, "an older page has no lifetime change")
         let lifetime = try JSONDecoder().decode(PluginActivityPage.self, from: Data(#"""
             {"next":4,"closed":false,"entries":[{"device":"00000000-0000-0000-0000-0000000000d0",

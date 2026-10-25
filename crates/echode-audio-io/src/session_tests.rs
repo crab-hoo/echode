@@ -48,10 +48,35 @@ fn transport_status_stop_and_seek_do_not_query_hardware_or_edit_the_project() {
         .perform(AudioCommand::Locate { tick: 705600 })
         .unwrap();
     session.perform(AudioCommand::Pause).unwrap();
+    // Pausing a stopped transport holds nothing.
     assert_eq!(session.state().tick, 705600);
+    assert!(!session.state().paused);
     session.perform(AudioCommand::Stop).unwrap();
-    assert_eq!(session.state().tick, 705600);
+    assert_eq!(
+        session.state().tick,
+        0,
+        "stop returns to the remembered start"
+    );
+    session
+        .perform(AudioCommand::SetStart { tick: 352_800 })
+        .unwrap();
+    assert_eq!(
+        (session.state().start, session.state().tick),
+        (352_800, 352_800)
+    );
+    session
+        .perform(AudioCommand::Locate { tick: 705600 })
+        .unwrap();
+    assert_eq!(session.state().start, 352_800, "a locate keeps the start");
+    session.perform(AudioCommand::Stop).unwrap();
+    assert_eq!(session.state().tick, 352_800);
     assert!(session.perform(AudioCommand::Locate { tick: -1 }).is_err());
+    assert!(
+        session
+            .perform(AudioCommand::SetStart { tick: -1 })
+            .is_err()
+    );
+    assert_eq!(session.state().start, 352_800);
     session
         .perform(AudioCommand::Metronome { enabled: true })
         .unwrap();
@@ -349,6 +374,65 @@ fn contract_a_first_device_view_opens_the_output_without_holding_edits_or_transp
     assert!(!error.is_empty());
     session.perform(AudioCommand::Stop).unwrap();
     assert!(!session.state().playing);
+}
+
+#[test]
+fn contract_stop_returns_to_the_remembered_start_and_pause_holds_under_rtsan() {
+    let directory =
+        std::env::temp_dir().join(format!("echode-session-start-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    let package = directory.join("song.echode");
+    let (project, _) = Project::new().add_track("audio");
+    echode_history::write_package(&package, &project).unwrap();
+    let mut session = Session::with_media(Arc::new(project.clone()), &package);
+    audio_tracks_sound(&mut session);
+    session.use_headless_output(crate::HeadlessOutput::default());
+    let beat = echode_model::TICKS_PER_QUARTER;
+    session
+        .perform(AudioCommand::SetStart { tick: beat })
+        .unwrap();
+    session.perform(AudioCommand::Play).unwrap();
+    until_opened(&mut session);
+    assert!(pumped_peak(&mut session, 8) > 0.1);
+    // Pause holds the playhead, and play resumes from there.
+    session.perform(AudioCommand::Pause).unwrap();
+    pumped_peak(&mut session, 8);
+    let held = session.state();
+    assert!(held.paused && !held.playing, "{held:?}");
+    assert!(held.tick > beat);
+    session.perform(AudioCommand::Play).unwrap();
+    assert!(pumped_peak(&mut session, 8) > 0.1);
+    let resumed = session.state();
+    assert!(resumed.tick > held.tick && !resumed.paused);
+    // Stop returns to the start at once. The media still fades out from
+    // where it stopped instead of being cut by a seek.
+    session.perform(AudioCommand::Stop).unwrap();
+    assert_eq!(session.state().tick, beat);
+    assert!(pumped_peak(&mut session, 1) > 0.0, "stop cut the fade");
+    pumped_peak(&mut session, 8);
+    let stopped = session.state();
+    assert_eq!(stopped.tick, beat);
+    assert!(!stopped.paused && !stopped.playing && stopped.error.is_none());
+    session.perform(AudioCommand::Play).unwrap();
+    assert!(pumped_peak(&mut session, 2) > 0.1);
+    assert!(session.state().tick > beat);
+    // A new start while playing seeks and keeps playing.
+    session
+        .perform(AudioCommand::SetStart { tick: beat * 2 })
+        .unwrap();
+    assert_eq!(session.state().tick, beat * 2);
+    assert!(pumped_peak(&mut session, 2) > 0.1);
+    assert!(session.state().running && session.state().tick > beat * 2);
+    session.perform(AudioCommand::Stop).unwrap();
+    assert_eq!(session.state().tick, beat * 2);
+    // The start is the package's, read when it opens again.
+    drop(session);
+    let reopened = Session::with_media(Arc::new(project), &package);
+    assert_eq!(
+        (reopened.state().start, reopened.state().tick),
+        (beat * 2, beat * 2)
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
 }
 
 #[test]

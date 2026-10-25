@@ -36,7 +36,7 @@ fn gui_commands_reach_the_activity_json_in_order() {
     let received = page(&hub.read(0, Duration::ZERO));
     assert_eq!(
         received["entries"][0]["commands"],
-        serde_json::json!(["Play / Pause", "Undo"])
+        serde_json::json!(["Play / Stop", "Undo"])
     );
     assert_eq!(received["entries"][0]["window"], true);
     assert!(

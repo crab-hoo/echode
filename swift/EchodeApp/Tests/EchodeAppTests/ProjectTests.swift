@@ -37,8 +37,9 @@ struct ProjectTests {
         #expect(controller.undoCount == 1)
         await controller.locate(beat: .infinity)
         #expect(controller.audio.tick == 705_600 * 3)
+        // Stop returns to the remembered start, which a locate does not move (ADR 0155).
         await controller.stopPlayback()
-        #expect(controller.audio.tick == 705_600 * 3)
+        #expect(controller.audio.tick == 0 && controller.playbackStart == 0)
         await controller.toggleMetronome()
         #expect(controller.audio.metronome)
         await controller.toggleLoop()

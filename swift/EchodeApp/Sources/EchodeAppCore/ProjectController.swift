@@ -50,11 +50,15 @@ public final class ProjectController {
     public private(set) var audio = AudioState() {
         didSet {
             if outputOpening != audio.opening { outputOpening = audio.opening }
+            if playbackStart != audio.start { playbackStart = audio.start }
             if audio.audition != oldValue.audition { auditionLog.record(audio.audition) }
         }
     }
     /// Observed separately so position polls do not rebuild the device strip.
     public private(set) var outputOpening = false
+    /// The remembered start in ticks, observed apart from position polls so
+    /// the rulers redraw only when it changes (ADR 0155).
+    public private(set) var playbackStart: Int64 = 0
     public private(set) var audioBusy = false
     /// Loop bounds in beats. Transport state, not part of the project.
     public var loopStartBeat = 0.0
@@ -389,15 +393,35 @@ public final class ProjectController {
         }
     }
 
+    /// Space: playing stops at the remembered start; otherwise plays from
+    /// the playhead, which is the start after a stop and the held position
+    /// after a pause (ADR 0117, ADR 0155).
     public func togglePlayback() async {
+        await audioCommand(playbackRequested ? .stop : .play)
+    }
+
+    /// The play button: pauses in place, or resumes.
+    public func togglePause() async {
         await audioCommand(playbackRequested ? .pause : .play)
     }
 
     public func stopPlayback() async { await audioCommand(.stop) }
 
+    /// Moves the playhead without changing the remembered start.
     public func locate(beat: Double) async {
         guard let tick = PianoCamera.ticks(beat), tick >= 0 else { return }
         await audioCommand(.locate(tick: tick))
+    }
+
+    /// Rulers and the transport field. Playing, it seeks and keeps playing.
+    public func setPlaybackStart(tick: Int64) async {
+        guard tick >= 0 else { return }
+        await audioCommand(.setStart(tick: tick))
+    }
+
+    public func setPlaybackStart(beat: Double) async {
+        guard let tick = PianoCamera.ticks(beat) else { return }
+        await setPlaybackStart(tick: tick)
     }
 
     public func toggleLoop() async {
@@ -579,7 +603,7 @@ extension AudioCommand {
     /// Playhead frames are requested from the control side. Status polling is not.
     var requestsPlayheadFrame: Bool {
         switch self {
-        case .play, .pause, .stop, .locate: true
+        case .play, .pause, .stop, .locate, .setStart: true
         case .output, .refresh, .status, .prepare, .loop, .metronome, .previewFader, .clearFaderPreview: false
         }
     }

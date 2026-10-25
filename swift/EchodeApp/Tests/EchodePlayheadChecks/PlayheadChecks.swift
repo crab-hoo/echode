@@ -79,7 +79,8 @@ public struct PlayheadChecks {
             try #require(shown.arrange.timeline.measurement.callbacks > callbacks + 2)
             try #require(shown.piano.grid.measurement.callbacks > pianoCallbacks + 2)
 
-            await shown.controller.togglePlayback()
+            // The play button pauses in place; Space would return to the start.
+            await shown.controller.togglePause()
             let stopped = await waitUntil { !shown.feed.position.playing }
             try #require(stopped)
             shown.noteTransport()

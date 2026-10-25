@@ -867,6 +867,74 @@ fn a_fader_edit_while_paused_is_settled_before_playback_resumes() {
 }
 
 #[test]
+fn a_stop_returning_to_the_start_replays_the_same_audio_for_every_block_size() {
+    use echode_engine::{LoadedClip, PlaybackCommand};
+    let project = project();
+    let track = project.tracks()[0].id.raw();
+    let start = 12_000;
+    // A multiple of every block length, so each stop lands on the same sample.
+    let frames = 3_584;
+    let clip: Arc<[f32]> = (0..96_000)
+        .map(|index| (index as f32 * 0.013).sin() * 0.25)
+        .collect::<Vec<_>>()
+        .into();
+    let live = |audio: &mut echode_engine::PlaybackAudio, block: usize| {
+        let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+        let mut output = Vec::with_capacity(frames * 2);
+        for _ in 0..frames / block {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            audio.render_live_gated_until(&mut left, &mut right, deadline, true);
+            for (left, right) in left.iter().zip(&right) {
+                output.extend([*left, *right]);
+            }
+        }
+        output
+    };
+    let render = |block: usize| {
+        let (mut control, mut audio) = echode_engine::playback_pair(&project, RATE, block).unwrap();
+        let samples = Arc::clone(&clip);
+        control.set_clip_loader(Arc::new(move |_, _| {
+            Ok(vec![LoadedClip {
+                track,
+                start_sample: 0,
+                samples: Arc::clone(&samples),
+                right: None,
+                fade_in: 0,
+                fade_out: 0,
+            }])
+        }));
+        control.replace(&project).unwrap();
+        control.command(PlaybackCommand::Locate(start)).unwrap();
+        let mut passes = Vec::new();
+        for _ in 0..2 {
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut output = live(&mut audio, block);
+            control.command(PlaybackCommand::Pause).unwrap();
+            control.command(PlaybackCommand::Rewind(start)).unwrap();
+            // The stop fade, then silence at the start.
+            output.extend(live(&mut audio, block));
+            assert_eq!(control.status().sample, start);
+            assert!(!control.status().failed);
+            passes.push(output);
+        }
+        assert_eq!(
+            passes[0], passes[1],
+            "the return replayed differently: {block}"
+        );
+        passes.swap_remove(0)
+    };
+    let reference = render(512);
+    assert!(reference[..frames * 2].iter().any(|sample| *sample != 0.0));
+    assert!(
+        reference[frames * 2..].iter().any(|sample| *sample != 0.0),
+        "no stop fade"
+    );
+    for block in BLOCKS {
+        assert_eq!(render(block as usize), reference, "block {block}");
+    }
+}
+
+#[test]
 fn an_initial_position_matches_a_queued_locate_for_every_block_size() {
     let project = project();
     let sample = 24_000;

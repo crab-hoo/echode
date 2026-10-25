@@ -1528,7 +1528,7 @@ fn canonical_track_ids(ids: Vec<String>) -> Result<Vec<String>, PackageError> {
         .collect()
 }
 
-fn io_error(path: &Path, error: std::io::Error) -> PackageError {
+pub(crate) fn io_error(path: &Path, error: std::io::Error) -> PackageError {
     PackageError::new(format!("{}: {error}", path.display()))
 }
 

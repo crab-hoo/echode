@@ -51,6 +51,54 @@ fn contract_stopped_plugins_release_notes_and_keep_tails_under_rtsan() {
 }
 
 #[test]
+fn contract_a_stop_that_returns_to_the_start_keeps_tails_under_rtsan() {
+    let path = plugin_dylib();
+    // These block lengths and chains bound the regression, not the engine.
+    for frames in [7, 64, 512] {
+        for chain in 0..3 {
+            let (_, _, _, mut control, mut audio) = tail_player(&path, frames, chain, "tail");
+            let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
+            control.command(PlaybackCommand::Play).unwrap();
+            for _ in 0..1024usize.div_ceil(frames) {
+                live(&mut audio, &mut left, &mut right);
+            }
+            assert!(left.iter().any(|value| *value != 0.0));
+            assert!(control.status().sample > 0);
+            // The session's stop: pause, then return to the remembered start.
+            control.command(PlaybackCommand::Pause).unwrap();
+            control.command(PlaybackCommand::Rewind(0)).unwrap();
+            for _ in 0..512usize.div_ceil(frames) {
+                live(&mut audio, &mut left, &mut right);
+                assert_eq!(control.status().sample, 0, "stop did not return");
+                assert!(!control.status().playing);
+                assert!(!audio.cleanup_pending(), "the return reset a live plugin");
+                assert!(
+                    left.iter().any(|value| *value != 0.0),
+                    "the return cut the tail: {frames}/{chain}"
+                );
+            }
+            let drain = 8192usize + control.tail_samples() as usize;
+            for _ in 0..drain.div_ceil(frames) {
+                live(&mut audio, &mut left, &mut right);
+            }
+            assert!(
+                left.iter().chain(&right).all(|value| *value == 0.0),
+                "held note survived the return: {frames}/{chain}"
+            );
+            // Playing again starts at the start and sounds its note once more.
+            control.command(PlaybackCommand::Play).unwrap();
+            live(&mut audio, &mut left, &mut right);
+            assert!(
+                left.iter().any(|value| *value != 0.0),
+                "the start did not sound again: {frames}/{chain}"
+            );
+            assert_eq!(control.status().sample, frames as i64);
+            assert_eq!(control.status().plugin_missed_blocks, 0);
+        }
+    }
+}
+
+#[test]
 fn contract_stopped_graph_outputs_autonomous_plugins_under_rtsan() {
     // The state fixture produces a constant without notes or audio input,
     // like a plugin's own keyboard. Its downstream effect must also process.

@@ -411,6 +411,18 @@ impl OutputStream {
         Ok(())
     }
 
+    /// Stops at `tick` without resetting plugins, for a stop that returns to
+    /// the remembered start. Tails continue from where playback stopped.
+    pub(crate) fn rewind(&mut self, project: &Project, tick: i64) -> Result<(), String> {
+        let sample = tick_to_sample(Tick::new(tick), project.tempo(), self.device.sample_rate)
+            .ok_or("playback time overflow")?;
+        self.control
+            .command(PlaybackCommand::Rewind(sample))
+            .map_err(|error| error.to_string())?;
+        self.pending_locate = Some((self.control.command_revision(), tick, sample));
+        Ok(())
+    }
+
     pub fn take_plugin_saves(&mut self) -> Vec<(u128, Vec<u8>)> {
         self.control.take_plugin_saves()
     }

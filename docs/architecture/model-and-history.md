@@ -139,6 +139,7 @@ MySong.echode/
   media/index.json      メディアの一覧（ハッシュ → 元の名前、形式、長さ）
   media/objects/...     音声とプラグインの状態（BLAKE3 で命名し、書き換えない）。Git の外で管理する
   cache/                波形のピーク、解析結果、ストレッチのキャッシュ（履歴に入れない）
+  transport.json        記憶した再生開始位置（履歴・Undo に入れない。ADR 0155）
   .git/                 履歴（ユーザーには見せない）
 ```
 

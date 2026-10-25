@@ -15,6 +15,10 @@ public struct AudioState: Decodable, Sendable, Equatable {
     public let playing: Bool
     public let running: Bool
     public let tick: Int64
+    /// The remembered playback start. Stop returns here (ADR 0155).
+    public let start: Int64
+    /// A pause holds the playhead away from the start until play or stop.
+    public let paused: Bool
     /// Helpers and media are being prepared for the shared audio output.
     /// Independent of transport intent and of each device's parameter reply.
     public let opening: Bool
@@ -28,11 +32,29 @@ public struct AudioState: Decodable, Sendable, Equatable {
     /// The sample audition beside the project output, when one was ever requested.
     public let audition: AuditionStatus?
     public init() {
-        playing = false; running = false; opening = false; tick = 0; selectedUID = nil; activeDevice = nil; devices = []; error = nil
+        playing = false; running = false; opening = false; tick = 0; start = 0; paused = false; selectedUID = nil; activeDevice = nil; devices = []; error = nil
         loopStart = nil; loopEnd = nil; metronome = false; audition = nil
     }
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        playing = try container.decode(Bool.self, forKey: .playing)
+        running = try container.decode(Bool.self, forKey: .running)
+        tick = try container.decode(Int64.self, forKey: .tick)
+        // Stand-in replies written before the start was reported omit these.
+        start = try container.decodeIfPresent(Int64.self, forKey: .start) ?? 0
+        paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        opening = try container.decode(Bool.self, forKey: .opening)
+        selectedUID = try container.decodeIfPresent(String.self, forKey: .selectedUID)
+        activeDevice = try container.decodeIfPresent(OutputDevice.self, forKey: .activeDevice)
+        devices = try container.decode([OutputDevice].self, forKey: .devices)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        loopStart = try container.decodeIfPresent(Int64.self, forKey: .loopStart)
+        loopEnd = try container.decodeIfPresent(Int64.self, forKey: .loopEnd)
+        metronome = try container.decode(Bool.self, forKey: .metronome)
+        audition = try container.decodeIfPresent(AuditionStatus.self, forKey: .audition)
+    }
     enum CodingKeys: String, CodingKey {
-        case playing, running, opening, tick, devices, error, metronome, audition, selectedUID = "selected_uid", activeDevice = "active_device"
+        case playing, running, opening, tick, start, paused, devices, error, metronome, audition, selectedUID = "selected_uid", activeDevice = "active_device"
         case loopStart = "loop_start", loopEnd = "loop_end"
     }
 }
@@ -130,6 +152,8 @@ public struct AuditionEntry: Codable, Sendable, Equatable {
 
 public enum AudioCommand: Encodable, Sendable {
     case play, pause, stop, locate(tick: Int64), output(uid: String?), refresh, status
+    /// Remembers where playback starts and stop returns, saved with the package.
+    case setStart(tick: Int64)
     /// Opens the output stopped, helpers and media included, so the first play does not wait.
     case prepare
     /// Both ticks set the loop. Both nil clear it.
@@ -146,6 +170,7 @@ public enum AudioCommand: Encodable, Sendable {
         case .pause: type = "transport.pause"
         case .stop: type = "transport.stop"
         case .locate(let tick): type = "transport.locate"; try container.encode(tick, forKey: .tick)
+        case .setStart(let tick): type = "transport.set_start"; try container.encode(tick, forKey: .tick)
         case .output(let uid): type = "audio.output"; try container.encode(uid, forKey: .uid)
         case .refresh: type = "audio.refresh"
         case .status: type = "audio.status"

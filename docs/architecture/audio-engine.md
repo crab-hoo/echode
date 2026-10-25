@@ -105,7 +105,9 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
   ライブの破棄する後片付けは完了を待たず、保留中の停止で素材の継続処理を始めない
   （[ADR 0099](../decisions/0099-transport-plugin-state.md)、[ADR 0105](../decisions/0105-nonblocking-stop-cleanup.md)）
 - **P2 の開始位置**: プロジェクトに保存する再生開始位置と進行中の位置を分け、停止は開始位置へ戻し、一時停止はその場から再開する
-  （[操作要件](../interaction-design.md#再生の開始位置)、[ADR 0117](../decisions/0117-workflow-interactions.md)）
+  （[操作要件](../interaction-design.md#再生の開始位置)、[ADR 0117](../decisions/0117-workflow-interactions.md)）。
+  セッションが開始位置を持ち、停止は `Rewind` で時計だけを戻してプラグインのリセットと余韻の打ち切りをしない。
+  開始位置はパッケージの `transport.json` に保存する（[ADR 0155](../decisions/0155-remembered-playback-start.md)）
 - **出力デバイス追従**: 既定はシステム出力に追従し、明示選択したデバイスが抜けたときはシステム出力へフォールバックし、戻ったら復帰する
   （[ADR 0015](../decisions/0015-output-device-follow.md)）
 

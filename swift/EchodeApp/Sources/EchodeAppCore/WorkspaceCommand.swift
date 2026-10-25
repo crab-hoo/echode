@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track", duplicateTrack = "Duplicate Track"
     case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Devices", maximizeEditors = "Maximize Editors"
-    case playback = "Play / Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
+    case playback = "Play / Stop", pause = "Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
     public var id: Self { self }
     public var title: String { text(rawValue) }
     public var isLayoutToggle: Bool {
@@ -28,7 +28,8 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .editor: "pianokeys"
         case .devices: "slider.horizontal.3"
         case .maximizeEditors: "arrow.up.left.and.arrow.down.right"
-        case .playback: "playpause"
+        case .playback: "play.fill"
+        case .pause: "pause.fill"
         case .stop: "stop.fill"
         case .loop: "repeat"
         case .metronome: "metronome"
@@ -94,7 +95,7 @@ final class WorkspaceSession {
         case .addTrack: return editable
         case .duplicateTrack, .plugins: return editable && controller.selection != nil
         case .devices, .editor, .maximizeEditors: return controller.snapshot != nil
-        case .playback, .stop: return editable
+        case .playback, .pause, .stop: return editable
         case .loop, .metronome, .output: return editable && !controller.audioBusy
         default: return true
         }
@@ -123,6 +124,7 @@ final class WorkspaceSession {
         case .redo: Task { await controller.redo() }
         case .history: state.presentation = .history
         case .playback: Task { await controller.togglePlayback() }
+        case .pause: Task { await controller.togglePause() }
         case .stop: Task { await controller.stopPlayback() }
         case .loop: Task { await controller.toggleLoop() }
         case .metronome: Task { await controller.toggleMetronome() }

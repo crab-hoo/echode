@@ -22,7 +22,7 @@ pub enum PluginCommand {
 impl PluginCommand {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Playback => "Play / Pause",
+            Self::Playback => "Play / Stop",
             Self::Stop => "Stop",
             Self::Undo => "Undo",
             Self::Redo => "Redo",

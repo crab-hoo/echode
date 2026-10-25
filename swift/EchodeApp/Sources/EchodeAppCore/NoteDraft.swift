@@ -44,7 +44,7 @@ struct NoteDraft {
         guard let number = scanner.scanDouble(), scanner.isAtEnd, number.isFinite else { return nil }
         return number
     }
-    private static func format(_ value: Double) -> String {
+    static func format(_ value: Double) -> String {
         value.formatted(.number.grouping(.never).precision(.fractionLength(0...9)))
     }
 }

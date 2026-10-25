@@ -29,6 +29,8 @@ struct WorkspaceNoteEditorView: View {
                     },
                     edit: { id, geometry in Task { await controller.editNote(id, geometry: geometry, documentID: document) } },
                     delete: { id in Task { await controller.deleteNote(id, documentID: document) } },
+                    start: controller.playbackStart,
+                    setStart: { tick in Task { await controller.setPlaybackStart(tick: tick) } },
                     playback: controller.playback, transportGeneration: controller.transportGeneration,
                     navigation: state.navigation, documentID: document)
                     .id(controller.documentID)

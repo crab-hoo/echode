@@ -23,6 +23,11 @@ pub enum AudioCommand {
     Stop,
     #[serde(rename = "transport.locate")]
     Locate { tick: i64 },
+    /// Remembers `tick` as where playback starts and stop returns, saves it
+    /// with the package and moves the playhead there. A running transport
+    /// seeks and keeps playing (ADR 0155).
+    #[serde(rename = "transport.set_start")]
+    SetStart { tick: i64 },
     #[serde(rename = "audio.output")]
     Output { uid: Option<String> },
     #[serde(rename = "audio.refresh")]
@@ -56,6 +61,11 @@ pub struct AudioState {
     pub playing: bool,
     pub running: bool,
     pub tick: i64,
+    /// The remembered start. Stop returns here; it persists with the package.
+    pub start: i64,
+    /// A pause holds the playhead; play resumes from it. Stop and a new
+    /// start clear it.
+    pub paused: bool,
     pub selected_uid: Option<String>,
     pub active_device: Option<OutputDevice>,
     pub devices: Vec<OutputDevice>,
@@ -102,6 +112,9 @@ pub struct Session {
     inventory: Inventory,
     selected_uid: Option<String>,
     tick: i64,
+    /// Where stop returns, in project ticks. Saved in the package, not the model.
+    start: i64,
+    paused: bool,
     playing: bool,
     cancellation: TransportCancellation,
     play_revision: u64,
@@ -137,6 +150,8 @@ impl Session {
             inventory: Inventory::default(),
             selected_uid: None,
             tick: 0,
+            start: 0,
+            paused: false,
             playing: false,
             cancellation: TransportCancellation::default(),
             play_revision: 0,
@@ -165,11 +180,14 @@ impl Session {
         self.outputs = Arc::new(output);
     }
 
-    /// Playback reads audio objects from `package`.
+    /// Playback reads audio objects from `package` and starts at its
+    /// remembered start.
     pub fn with_media(project: Arc<Project>, package: &Path) -> Self {
         let mut session = Self::new(project);
         session.clips = crate::clips::media_loader(package.to_path_buf());
         session.package = Some(package.to_path_buf());
+        session.start = echode_history::read_transport_settings(package).start;
+        session.tick = session.start;
         session
     }
 
@@ -231,6 +249,7 @@ impl Session {
                 }
                 self.play_revision = revision;
                 self.playing = true;
+                self.paused = false;
                 if let Err(error) = self.reconcile() {
                     self.playing = false;
                     self.sync_activity();
@@ -254,17 +273,44 @@ impl Session {
                 // Retain prepared media, helpers and HAL. Cancellation already
                 // stopped the score without waiting for this queue; plugin
                 // releases and autonomous output keep running in the callback.
+                let stop = matches!(command, AudioCommand::Stop);
+                self.paused = !stop && (self.playing || self.paused);
                 self.playing = false;
                 self.resume_held = false;
                 if let Some(stream) = &mut self.stream {
                     self.tick = stream.status().tick;
                     stream.pause()?;
+                    if stop {
+                        // Only the clock returns. Tails keep sounding.
+                        stream.rewind(&self.project, self.start)?;
+                    }
+                }
+                if stop {
+                    self.tick = self.start;
                 }
             }
             AudioCommand::Locate { tick } => {
                 if tick < 0 {
                     return Err("playback position must not be negative".into());
                 }
+                if let Some(stream) = &mut self.stream {
+                    stream.locate(&self.project, tick)?;
+                }
+                self.tick = tick;
+            }
+            AudioCommand::SetStart { tick } => {
+                if tick < 0 {
+                    return Err("playback start must not be negative".into());
+                }
+                if let Some(package) = &self.package {
+                    echode_history::write_transport_settings(
+                        package,
+                        echode_history::TransportSettings { start: tick },
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                self.start = tick;
+                self.paused = false;
                 if let Some(stream) = &mut self.stream {
                     stream.locate(&self.project, tick)?;
                 }
@@ -606,6 +652,8 @@ impl Session {
                 && self.cancellation.is_current(self.play_revision)
                 && status.is_some_and(|status| status.playing && !status.failed),
             tick: status.map_or(self.tick, |status| status.tick),
+            start: self.start,
+            paused: self.paused,
             selected_uid: self.selected_uid.clone(),
             active_device: desired(&self.inventory, self.selected_uid.as_deref()).cloned(),
             devices: self.inventory.devices.clone(),

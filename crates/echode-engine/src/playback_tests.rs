@@ -61,6 +61,34 @@ fn stereo_clips_loop_and_fader_replacements_run_under_rtsan() {
 }
 
 #[test]
+fn an_unheard_start_cancelled_after_a_stop_returned_keeps_the_start() {
+    let (project, track) = Project::new().add_track("audio");
+    let block = 64; // Scratch for this test, not a playback limit.
+    let (mut control, mut audio) = playback_pair(&project, 48_000, block).unwrap();
+    control.set_clip_loader(Arc::new(move |_, _| {
+        Ok(vec![placed(track.raw(), 0, 0.25, 96_000)])
+    }));
+    control.replace(&project).unwrap();
+    let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+    // Paused away from the start, then a play that is stopped before it is heard.
+    control.command(PlaybackCommand::Locate(24_000)).unwrap();
+    audio.render_live_gated_until(&mut left, &mut right, Instant::now(), true);
+    control.command(PlaybackCommand::Play).unwrap();
+    control.command(PlaybackCommand::Pause).unwrap();
+    control.command(PlaybackCommand::Rewind(0)).unwrap();
+    audio.render_live_gated_until(&mut left, &mut right, Instant::now(), true);
+    audio.cancel_unheard_start(24_000);
+    assert_eq!(control.status().sample, 0, "the cancel undid the return");
+    assert!(!control.status().playing);
+    // A start cancelled while still playing goes back to where it began.
+    control.command(PlaybackCommand::Play).unwrap();
+    audio.render_live_gated_until(&mut left, &mut right, Instant::now(), true);
+    assert_eq!(control.status().sample, block as i64);
+    audio.cancel_unheard_start(0);
+    assert_eq!(control.status().sample, 0);
+}
+
+#[test]
 fn state_polling_does_not_change_the_current_plan() {
     let (mut control, mut audio) = playback_pair(&Project::new(), 48000, 64).unwrap();
     control.command(PlaybackCommand::Play).unwrap();

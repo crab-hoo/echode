@@ -51,7 +51,10 @@ struct PluginWindowTests {
         controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: ["unknown"])], documentID: document)
         #expect(received.count == 2)
         var commands = sent.stream.makeAsyncIterator()
-        for (name, expected) in [("Play / Pause", "transport.play"), ("Play / Pause", "transport.pause"), ("Stop", "transport.stop")] {
+        // Space plays and stops at the remembered start, as in the workspace (ADR 0155).
+        for (name, expected) in [("Play / Stop", "transport.play"), ("Play / Stop", "transport.stop"), ("Stop", "transport.stop")] {
+            // An unknown name sends nothing; fail here instead of waiting forever below.
+            try #require(WorkspaceCommand(rawValue: name) != nil, "the helper relays \(name), which no command handles")
             controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: [name])], documentID: document)
             let command = try #require(await commands.next())
             let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(command)) as? [String: Any]
