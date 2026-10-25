@@ -36,7 +36,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     ピアノロールのルーラードラッグによる範囲指定と、ループ前からの進入・終端以降からの通常進行も接続した
     （[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
     アレンジのルーラーも接続し、開始位置と範囲を共有する（[ADR 0157](decisions/0157-arrange-ruler.md)）。
-    既存ループ端の調整も両エディタへ接続した（[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。Return の一時停止は残る。
+    既存ループ端の調整も両エディタへ接続した（[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。
+    再生ヘッドへの追従と手動スクロールでの解除も接続した（[ADR 0159](decisions/0159-playhead-follow.md)）。Return の一時停止は残る。
   - **GUI のがくつき（JNK-01〜07）**: 2026-10-22 の監査で原因を分けた。
     単位 1（反転した表示面の固定位置）、単位 2（状態行・再生ボタンの寸法）、
     単位 3（ピアノロールのアクセシビリティ要素）、単位 5（アレンジの指定縦位置）を接続した
@@ -218,7 +219,10 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   - 接続済み（[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）: 両ルーラーの既存端のグリップ。
     反対端とつかむ位置の保持、交差の制限、吸着・Shift、外部変更での取消、開始位置と履歴の不変を
     必須契約 `loop-handles-ui`・`loop-handles-cancel-ui` で確認する。
-  - 残る条件: Return の割当、自動スクロール。
+  - 接続済み（[ADR 0159](decisions/0159-playhead-follow.md)）: 両エディタの再生ヘッドへのページ送り、横方向の手動スクロールでの解除、
+    トランスポート・再生メニュー・パレットからの再オン、押下中の保留。値は保存せず、文書を開くたびにオンで始める。
+    必須契約 `playhead-follow-ui`・`playhead-follow-state-ui` で確認する。
+  - 残る条件: Return の割当。
 - **ピアノロールとノート編集**:
   - トラックセレクター：単一トラック入力を基本とし、複数選択の一括移動・伸縮では入力先トラックを切り替えない（[トラックセレクター](interaction-design.md#トラックセレクター)）。
   - ノート入力・伸縮・移動：プロジェクト内で共通の入力長記憶（Undo 対象、再オープン時は現在のグリッド幅）、左ドラッグでの開始位置固定・右伸縮・上下音高変更、Shift によるグリッド吸着一時解除、右クリックメニューの対象選択、ポインター基準のピンチズームと自動／固定グリッド（[ノートの入力](interaction-design.md#ノートの入力)、[ノートの選択](interaction-design.md#ノートの選択)）。

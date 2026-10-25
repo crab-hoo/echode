@@ -12,7 +12,7 @@ public struct WorkspaceView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            WorkspaceTransportView(controller: controller)
+            WorkspaceTransportView(controller: controller, followsPlayhead: $state.followsPlayhead)
             Divider()
             if controller.snapshot != nil { panes } else { welcome }
             Divider()
@@ -100,7 +100,9 @@ public struct WorkspaceView: View {
                               }, pluginNames: controller.pluginNames, onDropAudio: { session.importDroppedAudio($0) != nil },
                               onMoveClip: { _ = session.moveClip($0) },
                               start: controller.playbackStart, loop: controller.rulerLoop, busy: controller.busy || controller.audioBusy,
-                              onSetStart: setStart, onSetLoop: setLoop).id(controller.documentID)
+                              onSetStart: setStart, onSetLoop: setLoop,
+                              followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
+                    .id(controller.documentID)
                 Divider()
                 HStack {
                     Button { session.addTrack(atEnd: true) } label: {
@@ -164,7 +166,7 @@ public struct WorkspaceView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     @ViewBuilder private func command(_ command: WorkspaceCommand) -> some View {
-        if command.isLayoutToggle {
+        if command.isToggle {
             Toggle(isOn: Binding(get: { session.isSelected(command) }, set: { _ in session.perform(command) })) {
                 Label(command.title, systemImage: command.icon)
             }.toggleStyle(.button).labelStyle(.iconOnly).help(command.title)

@@ -21,6 +21,8 @@ struct PianoCanvas: NSViewRepresentable {
     var transportGeneration: UInt64 = 0
     var navigation: CanvasNavigationState? = nil
     var documentID: UUID? = nil
+    var followsPlayhead = false
+    var onManualScroll: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> PianoRollView { PianoRollView(frame: .zero) }
     func updateNSView(_ view: PianoRollView, context: Context) {
@@ -35,6 +37,8 @@ struct PianoCanvas: NSViewRepresentable {
         view.grid.setLoop(loop)
         view.grid.setSnapshot(snapshot, track: track, focus: focus, key: key, busy: busy)
         view.grid.setPlayback(playback)
+        view.grid.onManualScroll = onManualScroll
+        view.grid.follower.setFollowing(followsPlayhead)
         view.grid.noteTransport(transportGeneration)
     }
     static func dismantleNSView(_ view: PianoRollView, coordinator: ()) { view.grid.stop() }
@@ -98,10 +102,14 @@ final class PianoGridView: NSView {
     var onDelete: ((PianoNote.ID) -> Void)?
     var onSetStart: ((Int64) -> Void)?
     var onSetLoop: ((LoopRange) -> Void)?
+    let follower = PlayheadFollower()
+    /// A time scroll turns following off (ADR 0159).
+    var onManualScroll: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         clipsToBounds = true
+        follower.show = { [weak self] in self?.followPlayhead($0) }
         CanvasSurface.configure(self, layer: metalLayer)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
@@ -122,6 +130,7 @@ final class PianoGridView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { stop(); return }
+        follower.attach(to: self)
         if renderer == nil {
             do {
                 let generation = feedback.restart()
@@ -139,7 +148,7 @@ final class PianoGridView: NSView {
         }
         refresh()
     }
-    func stop() { feedback.invalidate(); renderer?.stop(); renderer = nil; submittedFrame = nil; elements = []; accessible = [:]; accessibleVersion = [:]; announcedFocus = nil; accessibilityBuilds = 0; cancelGesture() }
+    func stop() { follower.detach(); feedback.invalidate(); renderer?.stop(); renderer = nil; submittedFrame = nil; elements = []; accessible = [:]; accessibleVersion = [:]; announcedFocus = nil; accessibilityBuilds = 0; cancelGesture() }
     func beginMeasurement() { renderer?.beginMeasurement() }
     func markMainBusy(_ busy: Bool) { renderer?.markMainBusy(busy) }
     var measurement: ArrangeMeasurement { renderer?.measurement ?? ArrangeMeasurement() }
@@ -200,6 +209,11 @@ final class PianoGridView: NSView {
         cancelGesture()
         let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
             precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerPitch)
+        if PlayheadFollow.isTimeScroll(x: delta.x, y: delta.y) {
+            // Released here first so the next frame does not page back.
+            follower.setFollowing(false)
+            onManualScroll?()
+        }
         camera.originBeat = max(0, camera.originBeat - delta.x / camera.pixelsPerBeat)
         camera.topPitch = min(127, max(0, camera.topPitch + delta.y / camera.pixelsPerPitch))
         refresh()
@@ -347,12 +361,26 @@ final class PianoGridView: NSView {
         return loop
     }
     /// Replaces the live feed. Equality is the document, not the playhead.
-    func setPlayback(_ playback: PlaybackFeed?) { guard self.playback != playback else { return }; self.playback = playback; refresh() }
+    func setPlayback(_ playback: PlaybackFeed?) {
+        follower.feed = playback
+        guard self.playback != playback else { return }; self.playback = playback; refresh()
+    }
 
     /// One frame after play, pause, stop, or a stopped locate. Does not rebuild on position polls.
     func noteTransport(_ generation: UInt64) {
         guard transportGeneration != generation else { return }
         transportGeneration = generation
+        follower.noteTransport()
+        refresh()
+    }
+
+    /// Pages the time origin so a moving playhead stays shown (ADR 0159).
+    /// A note or ruler press keeps its view; the first frame after it pages.
+    private func followPlayhead(_ tick: Int64) {
+        guard gesture == nil, rulerPress == nil else { return }
+        let span = pianoLayout.grid.width / camera.pixelsPerBeat
+        guard let origin = PlayheadFollow.origin(showing: tick, from: camera.originBeat, span: span) else { return }
+        camera.originBeat = origin
         refresh()
     }
     private func rememberViewport() {

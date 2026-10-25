@@ -1,6 +1,12 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Follow Playhead": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Follow Playhead" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "再生ヘッドに追従" } }
+      }
+    },
     "Audition Selected Sample": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Audition Selected Sample" } },

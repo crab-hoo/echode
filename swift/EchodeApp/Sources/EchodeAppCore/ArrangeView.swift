@@ -31,11 +31,14 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var busy: Bool
     public var onSetStart: ((Int64) -> Void)?
     public var onSetLoop: ((LoopRange) -> Void)?
+    public var followsPlayhead = false
+    public var onManualScroll: (() -> Void)?
 
     public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
                 collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil, onMoveClip: ((ClipMove) -> Void)? = nil,
                 start: Int64? = nil, loop: RulerLoop? = nil, busy: Bool = false,
-                onSetStart: ((Int64) -> Void)? = nil, onSetLoop: ((LoopRange) -> Void)? = nil) {
+                onSetStart: ((Int64) -> Void)? = nil, onSetLoop: ((LoopRange) -> Void)? = nil,
+                followsPlayhead: Bool = false, onManualScroll: (() -> Void)? = nil) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
@@ -56,6 +59,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.onMoveClip = onMoveClip
         self.start = start; self.loop = loop; self.busy = busy
         self.onSetStart = onSetStart; self.onSetLoop = onSetLoop
+        self.followsPlayhead = followsPlayhead; self.onManualScroll = onManualScroll
     }
 
     public func makeNSView(context: Context) -> ArrangePaneView {
@@ -85,6 +89,8 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.setControlSelection(clip: selectedClip, preview: faderPreview)
         view.setSnapshot(snapshot, selected: selection, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks)
         view.setPlayback(playback)
+        view.onManualScroll = onManualScroll
+        view.setFollowing(followsPlayhead)
         view.noteTransport(transportGeneration)
     }
 
@@ -215,10 +221,13 @@ public final class ArrangeView: NSView {
     public func setPlayback(_ playback: PlaybackFeed?) { guard self.playback != playback else { return }; self.playback = playback; refresh() }
 
     /// One frame after play, pause, stop, or a stopped locate. Does not rebuild on position polls.
-    public func noteTransport(_ generation: UInt64) {
-        guard transportGeneration != generation else { return }
+    /// Returns whether the generation was new.
+    @discardableResult
+    public func noteTransport(_ generation: UInt64) -> Bool {
+        guard transportGeneration != generation else { return false }
         transportGeneration = generation
         refresh()
+        return true
     }
 
     func setViewport(_ camera: ArrangeCamera, header: ArrangeHeaderInput?) {
@@ -451,6 +460,10 @@ public final class ArrangeView: NSView {
         accessibleElements = visible
         return children
     }
+
+    /// A press, drag, typed value or file drop placed against the current view.
+    /// Following the playhead waits until it ends (ADR 0159).
+    var holdsViewport: Bool { rulerPress != nil || movePress != nil || clicks.active || entry != nil || audioDragDocument != nil }
 
     var renderInput: CanvasInput {
         let scale = window?.backingScaleFactor ?? 1

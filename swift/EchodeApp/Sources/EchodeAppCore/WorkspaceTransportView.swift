@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkspaceTransportView: View {
     let controller: ProjectController
+    @Binding var followsPlayhead: Bool
     @State private var seek = "0"
     @State private var loopStart = "0"
     @State private var loopEnd = "4"
@@ -43,6 +44,10 @@ struct WorkspaceTransportView: View {
             } label: {
                 Label(text("Loop"), systemImage: controller.audio.loopStart == nil ? "repeat" : "repeat.circle.fill")
             }.disabled(controller.audioBusy || (controller.audio.loopStart == nil && loopBeats == nil))
+            // A manual time scroll turns this off; it stays off until turned on here (ADR 0159).
+            Toggle(isOn: $followsPlayhead) {
+                Label(WorkspaceCommand.followPlayhead.title, systemImage: WorkspaceCommand.followPlayhead.icon)
+            }.toggleStyle(.button).accessibilityIdentifier("transport.follow")
             Spacer()
             Text(controller.audio.activeDevice?.name ?? text("System Output")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }.disabled(controller.snapshot == nil || controller.busy)

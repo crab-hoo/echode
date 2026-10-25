@@ -53,8 +53,7 @@ struct ArrangeFrame: Sendable {
         self.input = input
         let camera = camera ?? input.camera
         self.camera = camera
-        let headerWidth = min(input.width, max(0, input.header?.width ?? 0))
-        timelineOrigin = input.header == nil ? 0 : min(input.width, headerWidth + 1)
+        timelineOrigin = input.timelineOrigin
         timelineWidth = max(0, input.width - timelineOrigin)
         elements = input.snapshot?.visibleElements(
             originTick: Int64((camera.originBeat * 705_600).rounded()),

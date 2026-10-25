@@ -27,6 +27,9 @@ public final class WorkspaceState {
     func showDevices() { layout.devices = true; saveLayout() }
     func toggleEditorsMaximized() { layout.editorsMaximized.toggle(); saveLayout() }
     var collapsedTracks: Set<UUID> = []
+    /// Editors page to the playhead until a manual time scroll. Not saved;
+    /// each opened document starts following (ADR 0159).
+    var followsPlayhead = true
     @ObservationIgnored private var folderDocument: UUID?
     @ObservationIgnored private var projectionSource: Snapshot?
     @ObservationIgnored private var projectionCollapsed: Set<UUID> = []
@@ -59,7 +62,9 @@ public final class WorkspaceState {
     }
 
     func synchronize(_ controller: ProjectController) {
-        if folderDocument != controller.documentID { collapsedTracks = []; folderDocument = controller.documentID }
+        if folderDocument != controller.documentID {
+            collapsedTracks = []; followsPlayhead = true; folderDocument = controller.documentID
+        }
         if let snapshot = controller.snapshot {
             let folders = Set((0..<snapshot.trackCount).compactMap { index in
                 snapshot.trackHierarchy(at: index)?.hasChildren == true ? snapshot.trackID(at: index) : nil

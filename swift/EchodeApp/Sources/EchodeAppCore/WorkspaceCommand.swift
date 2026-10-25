@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track", duplicateTrack = "Duplicate Track"
     case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Devices", maximizeEditors = "Maximize Editors"
-    case playback = "Play / Stop", pause = "Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
+    case playback = "Play / Stop", pause = "Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", followPlayhead = "Follow Playhead"
+    case plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
     public var id: Self { self }
     public var title: String { text(rawValue) }
     public var isLayoutToggle: Bool {
@@ -14,6 +15,8 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         default: false
         }
     }
+    /// Menus show these with a check mark for their current state.
+    public var isToggle: Bool { isLayoutToggle || self == .followPlayhead }
     public var icon: String {
         switch self {
         case .newProject: "doc.badge.plus"
@@ -33,6 +36,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .stop: "stop.fill"
         case .loop: "repeat"
         case .metronome: "metronome"
+        case .followPlayhead: "arrow.right.to.line"
         case .plugins: "puzzlepiece.extension"
         case .output: "speaker.wave.2"
         case .palette: "command"
@@ -94,7 +98,7 @@ final class WorkspaceSession {
         case .history: return editable
         case .addTrack: return editable
         case .duplicateTrack, .plugins: return editable && controller.selection != nil
-        case .devices, .editor, .maximizeEditors: return controller.snapshot != nil
+        case .devices, .editor, .maximizeEditors, .followPlayhead: return controller.snapshot != nil
         case .playback, .pause, .stop: return editable
         case .loop, .metronome, .output: return editable && !controller.audioBusy
         default: return true
@@ -108,6 +112,7 @@ final class WorkspaceSession {
         case .editor: state.layout.editor
         case .devices: state.layout.devices
         case .maximizeEditors: state.layout.editorsMaximized
+        case .followPlayhead: state.followsPlayhead
         default: false
         }
     }
@@ -128,6 +133,7 @@ final class WorkspaceSession {
         case .stop: Task { await controller.stopPlayback() }
         case .loop: Task { await controller.toggleLoop() }
         case .metronome: Task { await controller.toggleMetronome() }
+        case .followPlayhead: state.followsPlayhead.toggle()
         case .inspector: state.toggle(.inspector)
         case .browser: state.toggle(.browser)
         case .editor: state.toggle(.editor)

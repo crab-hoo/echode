@@ -21,6 +21,8 @@ struct CanvasInput: Sendable {
     var arrangeRuler: ArrangeRulerInput? = nil
     var arrangeTop: Double { arrangeRuler == nil ? 0 : min(ArrangeRulerInput.height, max(0, height)) }
     var arrangeHeight: Double { max(0, height - arrangeTop) }
+    /// Where arrange time begins: right of the header gutter when headers are drawn.
+    var timelineOrigin: Double { header.map { min(width, min(width, max(0, $0.width)) + 1) } ?? 0 }
     /// Screen refresh in frames per second. The display link follows this
     /// instead of a fixed 60 Hz cap. 60 is the value before a window exists.
     var displayFramesPerSecond: Double = 60

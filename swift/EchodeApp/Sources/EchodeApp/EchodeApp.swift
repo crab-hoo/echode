@@ -58,12 +58,12 @@ struct WorkspaceCommands: Commands {
         CommandGroup(replacing: .newItem) { item(.newProject); item(.openProject) }
         CommandGroup(replacing: .undoRedo) { item(.undo); item(.redo); item(.history) }
         CommandMenu(text("Track")) { item(.addTrack); item(.duplicateTrack); item(.plugins) }
-        CommandMenu(text("Playback")) { item(.playback); item(.pause); item(.stop); item(.loop); item(.metronome); item(.output) }
+        CommandMenu(text("Playback")) { item(.playback); item(.pause); item(.stop); item(.loop); item(.metronome); item(.followPlayhead); item(.output) }
         CommandGroup(after: .sidebar) { item(.inspector); item(.browser); item(.editor); item(.devices); item(.maximizeEditors); item(.palette) }
     }
     @ViewBuilder
     private func item(_ command: WorkspaceCommand) -> some View {
-        if command.isLayoutToggle {
+        if command.isToggle {
             Toggle(command.title, isOn: Binding(get: { actions?.selected.contains(command) == true },
                 set: { _ in actions?.perform(command) }))
                 .keyboardShortcut(command.shortcut).disabled(actions?.enabled.contains(command) != true)

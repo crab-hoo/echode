@@ -110,6 +110,12 @@ make debug-report
   `spike-arrange-frame` の `rulerMismatches` は帯と印の画素不一致、`maxHeaderLaneError` は上端補正後の左右の誤差である。
   `audio.status` のループがオンでも、終端以降へ置いた再生は通常進行する。
   ブロック処理で終端に着いた場合は次のブロックで戻るため、同じ値の `tick` でも位置移動と混同しない。
+- **再生ヘッドに表示が追従しない・勝手に戻る**:
+  まずトランスポートの「再生ヘッドに追従」がオンかを見る。横方向が優勢なスクロールは正常にオフにする（[ADR 0159](decisions/0159-playhead-follow.md)）。
+  オンでも動かない時は、ルーラー・ノート・クリップの押下や数値入力欄、音声ファイルのドラッグによる保留中かを確認する。
+  停止中のズームで範囲外へ出た再生ヘッドは、次の再生・停止・位置移動まで表示しないのが仕様である。
+  再生中に止まる場合は `PlayheadFollower.awake` と、`PlaybackFeed` の `playing`・`tick` が進んでいるかを分けて見る。
+  `playhead-follow-ui` は判定・保留・解除、`playhead-follow-state-ui` は文書ごとの値を切り分ける。
 - **音源なしのノート・Sine Pad が鳴らない**:
   音源のないトラックは無音である。デバイス一覧に `dev.echode.sine-pad` があるかを確認する。
   一覧にない時は `make bundled-plugins` とヘルパー隣の `plugins/`、アプリ内の `Contents/PlugIns/`、同梱用走査キャッシュを確認する。
@@ -383,6 +389,11 @@ make debug-report
   2. 終了済みと新規のスレッドの `errno` 誤検出は、C のみでも再現し、検査ランタイムの寿命処理を修正した（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
      `target/bridge/thread/errno/` の baseline・fixed・real-race の対照と、同じランタイムのロード証拠を確認する。
      準備が古い時は `make setup-bridge` を使う。取得済みソースの再ビルドには `python3 scripts/tsan_runtime.py --prepare` も使える。
+  3. 2026-10-25 の `check-bridge-tsan` で 1 回だけ、文書ワーカーの完了コールバックの `Snapshot.init(taking:)` の書込みと、
+     `Document.audio` の継続の後の `Snapshot.audioState()` の読取りが競合と報告された。同じ入力の再実行では再現していない。
+     継続が `await` の前に再開されると、Swift ランタイムの即時再開の経路で TSan が前後関係を見ない可能性がある（未確定）。
+     失敗した実行のログは `target/bridge/<sanitizer>/product/swift-tests.failed.log` に残り、再実行で消えない。
+     抜粋には dyld の行ではなく `WARNING`〜`SUMMARY` の報告を出す。
   いずれも抑制（suppression）や不要なロックで隠さず、スタックと対象アドレスを確認して製品データの競合と区別する。
 
 ## 再現と引き継ぎに残す情報

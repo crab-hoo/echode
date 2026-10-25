@@ -16,6 +16,14 @@ parser.add_argument("--site")
 parser.add_argument("--timeout", type=int, default=120)
 parser.add_argument("--tsan-runtime", type=Path)
 parser.add_argument("command", nargs=argparse.REMAINDER)
+
+
+def sanitizer_reports(text):
+    """Each sanitizer report, without the loader lines printed around it."""
+    return re.findall(r"^(?:WARNING|ERROR): \w*Sanitizer\b.*?^SUMMARY: \w*Sanitizer\b[^\n]*",
+                      text, re.MULTILINE | re.DOTALL)
+
+
 args = parser.parse_args()
 if not args.command:
     parser.error("a command is required")
@@ -66,6 +74,10 @@ if args.expect:
     print("PASS sanitizer positive control: " + args.log.stem)
 else:
     if process.returncode != 0:
-        print(output[-8000:], file=sys.stderr)
-        sys.exit("bridge validation failed: " + str(args.log))
+        # A rerun rewrites the log. Keep this one so an intermittent report survives.
+        kept = args.log.with_name(args.log.stem + ".failed" + args.log.suffix)
+        kept.write_text(output)
+        reports = sanitizer_reports(output)
+        print("\n".join(reports)[-8000:] if reports else output[-8000:], file=sys.stderr)
+        sys.exit("bridge validation failed: " + str(args.log) + "; kept as " + str(kept))
     print(stdout, end="")

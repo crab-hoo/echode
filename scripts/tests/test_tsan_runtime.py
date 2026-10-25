@@ -80,6 +80,28 @@ class RuntimeTests(unittest.TestCase):
                 ], capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
+    def test_a_failed_run_keeps_its_log_and_shows_the_report_not_loader_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "swift-tests.log"
+            report = ("WARNING: ThreadSanitizer: data race (pid=1)\n  Read of size 8 by thread T8:\n"
+                      "SUMMARY: ThreadSanitizer: data race Document.swift:59 in fixture\n")
+            noise = "dyld[1]: <fixture> /usr/lib/fixture.dylib\n" * 2000
+            program = f"import sys; sys.stderr.write({(noise + report + noise)!r}); sys.exit(6)"
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/run-bridge-validation.py"),
+                                     "--log", str(log), sys.executable, "-c", program],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("SUMMARY: ThreadSanitizer: data race Document.swift:59", result.stderr)
+            self.assertNotIn("fixture.dylib", result.stderr)
+            kept = root / "swift-tests.failed.log"
+            self.assertIn(str(kept), result.stderr)
+            # A passing rerun rewrites the log but leaves the failing evidence.
+            subprocess.run([sys.executable, str(ROOT / "scripts/run-bridge-validation.py"),
+                            "--log", str(log), sys.executable, "-c", "print('ok')"], check=True, timeout=10)
+            self.assertEqual(log.read_text(), "ok\n")
+            self.assertIn(report, kept.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

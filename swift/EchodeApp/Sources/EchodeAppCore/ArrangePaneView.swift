@@ -19,6 +19,9 @@ public final class ArrangePaneView: NSView {
     private var navigation: CanvasNavigationState?
     private var navigationDocument: UUID?
     private var restoring = false
+    let follower = PlayheadFollower()
+    /// A time scroll in the headers or the timeline turns following off (ADR 0159).
+    var onManualScroll: (() -> Void)?
     var viewport: ArrangeCamera { camera }
     // Selection can arrive before the timeline receives its first child layout.
     private var trackHeight: Double { max(0, Double(bounds.height) - ArrangeRulerInput.height) }
@@ -57,6 +60,7 @@ public final class ArrangePaneView: NSView {
         timeline.onScroll = { [weak self] in self?.scroll(x: $0, y: $1) }
         headers.onZoom = { [weak self] in self?.zoom(factor: $0, flags: $1, anchor: $2) }
         timeline.onZoom = { [weak self] in self?.zoom(factor: $0, flags: $1, anchor: $2) }
+        follower.show = { [weak self] in self?.followPlayhead($0) }
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -115,9 +119,25 @@ public final class ArrangePaneView: NSView {
         timeline.setSnapshot(displaySnapshot, selected: selected)
         updateViewport()
     }
-    public func setPlayback(_ playback: PlaybackFeed?) { timeline.setPlayback(playback) }
-    public func noteTransport(_ generation: UInt64) { timeline.noteTransport(generation) }
-    public func stop() { timeline.stop() }
+    public func setPlayback(_ playback: PlaybackFeed?) { timeline.setPlayback(playback); follower.feed = playback }
+    public func noteTransport(_ generation: UInt64) {
+        if timeline.noteTransport(generation) { follower.noteTransport() }
+    }
+    func setFollowing(_ following: Bool) { follower.setFollowing(following) }
+    public func stop() { follower.detach(); timeline.stop() }
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { follower.attach(to: self) } else { follower.detach() }
+    }
+
+    /// Pages the requested origin so a moving playhead stays shown (ADR 0159).
+    private func followPlayhead(_ tick: Int64) {
+        guard !timeline.holdsViewport else { return }
+        let span = max(0, Double(bounds.width) - timeline.renderInput.timelineOrigin) / camera.pixelsPerBeat
+        guard let origin = PlayheadFollow.origin(showing: tick, from: camera.originBeat, span: span) else { return }
+        camera.originBeat = origin
+        updateViewport()
+    }
 
     private func toggleFolder(_ id: UUID) {
         guard let snapshot,
@@ -149,6 +169,11 @@ public final class ArrangePaneView: NSView {
     }
     private func scroll(x: Double, y: Double) {
         guard x.isFinite, y.isFinite else { return }
+        if PlayheadFollow.isTimeScroll(x: x, y: y) {
+            // Released here first so the next frame does not page back.
+            follower.setFollowing(false)
+            onManualScroll?()
+        }
         camera.originBeat -= x / camera.pixelsPerBeat
         if y != 0 {
             // Start from the displayed rows so a taller pane does not create a
