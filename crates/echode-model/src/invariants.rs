@@ -180,10 +180,14 @@ impl Project {
                     let Some(span) = note.length.get().checked_sub(1) else {
                         return broken(format!("note {} ends past the time range", note.id));
                     };
-                    let Some(last) = absolute.checked_add(span) else {
+                    let Some(_) = absolute.checked_add(span) else {
                         return broken(format!("note {} ends past the time range", note.id));
                     };
-                    let (first_bar, last_bar) = (absolute.div_euclid(bar), last.div_euclid(bar));
+                    let local_last = note.start.get().checked_add(span).ok_or_else(|| {
+                        InvariantError(format!("note {} ends past the content time range", note.id))
+                    })?;
+                    let (first_bar, last_bar) =
+                        (note.start.get().div_euclid(bar), local_last.div_euclid(bar));
                     bars = Some(match bars {
                         Some((low, high)) => (low.min(first_bar), high.max(last_bar)),
                         None => (first_bar, last_bar),
@@ -193,11 +197,16 @@ impl Project {
                     let Some((low, high)) = bars else {
                         return broken(format!("auto clip {} has no notes", clip.id));
                     };
-                    let Some(covered_start) = low.checked_mul(bar) else {
+                    let Some(covered_start) = low
+                        .checked_mul(bar)
+                        .and_then(|local| origin.checked_add(local))
+                    else {
                         return broken(format!("auto clip {} starts past the time range", clip.id));
                     };
-                    let Some(covered_end) =
-                        high.checked_add(1).and_then(|next| next.checked_mul(bar))
+                    let Some(covered_end) = high
+                        .checked_add(1)
+                        .and_then(|next| next.checked_mul(bar))
+                        .and_then(|local| origin.checked_add(local))
                     else {
                         return broken(format!("auto clip {} ends past the time range", clip.id));
                     };

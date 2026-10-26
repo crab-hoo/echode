@@ -27,7 +27,7 @@
 //!   content exists, and its origin (`start - offset`) does not overflow.
 //!   A negative offset is silence before the media, not an invalid clip.
 //! - A content has at most one auto placement, and that placement spans
-//!   exactly the bars of its sounding notes.
+//!   exactly the bars of its notes counted from its content origin.
 //! - An audio reference names a BLAKE3-256 hash and a mono or stereo file with a
 //!   positive rate and length.
 //! - Every content has at least one placement.

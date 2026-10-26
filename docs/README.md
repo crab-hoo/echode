@@ -97,7 +97,9 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   [ADR 0167](decisions/0167-piano-note-drag-snapping.md)。
 - ノートの音価・位置の編集で固定クリップも全長まで広げ、確定表示と履歴へ反映する:
   [ADR 0168](decisions/0168-note-edit-clip-growth.md)。
-- ノートの所属を位置で決め、固定クリップも伸ばし、隣のクリップを壁にする見直し案（草案・未採用）:
+- 自動配置の中身の小節基準と、小節未満の移動・複製での自動状態の保持:
+  [ADR 0170](decisions/0170-content-relative-auto-bars.md)。
+  ノートの所属替え・固定窓の小節拡張・隣のクリップを壁にする残りの見直し案（草案・未採用）:
   [ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md)。
 - ペインのリサイズ中の伸縮とヘッダ幅の保持: [ADR 0144](decisions/0144-unscaled-canvas-resizing.md)。
 - 反転した表示面の固定位置と状態行・再生ボタンの寸法: [ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)。

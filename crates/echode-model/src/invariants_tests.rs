@@ -133,6 +133,24 @@ fn assemble(contents: Vec<Content>, tracks: Vec<Track>) -> Result<Project, Model
 }
 
 #[test]
+fn assembly_checks_auto_bars_from_content_zero_not_timeline_zero() {
+    let beat = crate::time::TICKS_PER_QUARTER;
+    for origin in [beat / 3, -beat / 3, beat * 9 + 1] {
+        let (content, mut placement) = clip(2, ClipKind::Auto, 0, 1);
+        placement.start = Tick::new(origin);
+        assemble(vec![content.clone()], vec![track(1, None, vec![placement])]).unwrap();
+
+        // This would match the old timeline grid but not this content's bars.
+        let (_, mut wrong) = clip(2, ClipKind::Auto, 0, 1);
+        wrong.offset = Tick::new(-origin);
+        assert!(matches!(
+            assemble(vec![content], vec![track(1, None, vec![wrong])]),
+            Err(ModelError::Invariant(message)) if message.contains("auto clip")
+        ));
+    }
+}
+
+#[test]
 fn assembly_rejects_a_window_a_reversed_pair_an_overflow_and_a_self_take() {
     let (content, placement) = clip(2, ClipKind::Auto, 0, 2);
     let error = assemble(vec![content], vec![track(1, None, vec![placement])]).unwrap_err();

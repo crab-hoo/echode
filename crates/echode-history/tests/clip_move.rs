@@ -80,7 +80,7 @@ fn moves_and_copies_survive_history_journal_and_reopen() {
         shape,
         [
             (BAR * 2, landing - BAR * 2, 0, ClipKind::Fixed),
-            (landing, BAR, 0, ClipKind::Fixed),
+            (landing, BAR, 0, ClipKind::Auto),
             (resume, BAR * 5 - resume, resume - BAR * 2, ClipKind::Fixed),
         ]
     );

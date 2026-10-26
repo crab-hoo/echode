@@ -257,6 +257,10 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     （[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
     必須契約 `piano-note-drag-ui` は実 View と製品ブリッジで、単一 Undo / Redo・保存再読込、ID とベロシティ保持を確認する。
     複数ノートの編集・記憶する入力長・新規ドラッグ追加は残り、実画面はユーザー確認待ちである。
+  - 自動配置は、小節未満の移動・複製でも `auto` を保ち、中身の原点から数えた小節で伸縮する
+    （[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。
+    必須契約 `clip-content-bars`・`journal-clip-bar-basis` と、実 View のノート編集で履歴・旧ジャーナル・保存を確認する。
+    所属替えと壁での制限は [ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md) の草案に残る。
   - トラックセレクター：単一トラック入力を基本とし、複数選択の一括移動・伸縮では入力先トラックを切り替えない（[トラックセレクター](interaction-design.md#トラックセレクター)）。
   - ノート入力・伸縮・移動：プロジェクト内で共通の入力長記憶（Undo 対象、再オープン時は現在のグリッド幅）、左ドラッグでの開始位置固定・右伸縮・上下音高変更、Shift によるグリッド吸着一時解除、右クリックメニューの対象選択、ポインター基準のピンチズームと自動／固定グリッド（[ノートの入力](interaction-design.md#ノートの入力)、[ノートの選択](interaction-design.md#ノートの選択)）。
   - ベロシティ：ノート上の Option＋上下ドラッグと下部レーンの両方から編集し、複数選択は同じ差分で相対関係を保つ（[ベロシティの編集](interaction-design.md#ベロシティの編集)）。

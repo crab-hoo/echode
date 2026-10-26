@@ -72,7 +72,8 @@ struct PianoDragTests {
     }
 
     @Test func contractNoteDragsGrowClipWindowsAndKeepTheWholeNoteVisible() async throws {
-        for fixed in [false, true] {
+        for variant in 0..<3 {
+            let fixed = variant == 2
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-bounds-\(UUID()).echode")
             defer { try? FileManager.default.removeItem(at: url) }
             let controller = ProjectController()
@@ -81,10 +82,15 @@ struct PianoDragTests {
             await controller.insertNote(pitch: 60, beat: 1, length: 1)
             let track = try #require(controller.selection)
             let initial = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-            if fixed {
-                // A one-beat arrange move makes an auto clip fixed, even without a manual trim.
+            if variant > 0 {
+                // A sub-bar move now keeps auto; a manual trim still fixes the window.
+                let movedStart = ticks(variant == 1 ? 5 : 1)
                 #expect(await controller.moveClip(ClipMove(document: try #require(controller.documentID), clip: initial.id.placement,
-                                                         track: track, start: ticks(1), copy: false)))
+                                                         track: track, start: movedStart, copy: false)))
+                if fixed {
+                    #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString,
+                                                   "clip": initial.id.placement.uuidString, "start": movedStart, "length": ticks(4)]))
+                }
             }
             let snapshot = try #require(controller.snapshot)
             let note = try #require(snapshot.pianoNote(initial.id))
@@ -111,8 +117,10 @@ struct PianoDragTests {
                 let end = mode == .leftEdge ? note.start + note.length : note.start + note.length + ticks(delta)
                 #expect(edited.start == start && edited.length == end - start)
                 #expect(edited.id == note.id && edited.velocity == note.velocity)
-                let windowStart = fixed ? min(clip.start, start) : (start / ticks(4)) * ticks(4)
-                let windowEnd = fixed ? max(clip.start + clip.length, end) : ((end - 1) / ticks(4) + 1) * ticks(4)
+                let bar = ticks(4), origin = clip.start
+                // floor, not integer truncation, also covers a note left of content zero.
+                let windowStart = fixed ? min(clip.start, start) : origin + Int64(floor(Double(start - origin) / Double(bar))) * bar
+                let windowEnd = fixed ? max(clip.start + clip.length, end) : origin + (Int64(floor(Double(end - 1 - origin) / Double(bar))) + 1) * bar
                 #expect(edited.windowStart == windowStart && edited.windowEnd == windowEnd,
                         "note drags must grow the edited clip window to include the whole note")
                 let mix = try #require(controller.snapshot?.clipMix(note.id.placement))

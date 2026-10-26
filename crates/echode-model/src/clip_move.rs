@@ -21,9 +21,8 @@ impl Project {
     /// window length, offset, gain, and fades, so sounding times shift with it.
     ///
     /// The landing window replaces what it covers on the target track (see
-    /// [`land`]). An auto placement stays auto only when it moves by whole
-    /// bars, because its window must keep matching its notes' bars. Any other
-    /// shift makes it fixed.
+    /// [`land`]). Moving the origin moves the content's bar grid with it, so an
+    /// auto placement keeps its kind even when the shift is less than a bar.
     pub fn move_clip(
         &self,
         clip: Id,
@@ -31,8 +30,31 @@ impl Project {
         start: Tick,
         seed: Id,
     ) -> Result<Self, ModelError> {
+        self.move_clip_with_rule(clip, track, start, seed, true)
+    }
+
+    /// Replays the pre-content-bar move rule for an unmarked journal action.
+    #[doc(hidden)]
+    pub fn move_clip_legacy(
+        &self,
+        clip: Id,
+        track: Id,
+        start: Tick,
+        seed: Id,
+    ) -> Result<Self, ModelError> {
+        self.move_clip_with_rule(clip, track, start, seed, false)
+    }
+
+    fn move_clip_with_rule(
+        &self,
+        clip: Id,
+        track: Id,
+        start: Tick,
+        seed: Id,
+        content_bars: bool,
+    ) -> Result<Self, ModelError> {
         let (source, placement) = self.locate_clip(clip)?;
-        let landed = self.landing(placement, start)?;
+        let landed = self.landing(placement, start, content_bars)?;
         let target = self.track_index(track)?;
         let mut used = self.used_ids();
         let mut tracks = self.tracks().to_vec();
@@ -57,8 +79,31 @@ impl Project {
         start: Tick,
         seed: Id,
     ) -> Result<Self, ModelError> {
+        self.duplicate_clip_with_rule(clip, track, start, seed, true)
+    }
+
+    /// Replays the pre-content-bar copy rule for an unmarked journal action.
+    #[doc(hidden)]
+    pub fn duplicate_clip_legacy(
+        &self,
+        clip: Id,
+        track: Id,
+        start: Tick,
+        seed: Id,
+    ) -> Result<Self, ModelError> {
+        self.duplicate_clip_with_rule(clip, track, start, seed, false)
+    }
+
+    fn duplicate_clip_with_rule(
+        &self,
+        clip: Id,
+        track: Id,
+        start: Tick,
+        seed: Id,
+        content_bars: bool,
+    ) -> Result<Self, ModelError> {
         let (_, placement) = self.locate_clip(clip)?;
-        let mut landed = self.landing(placement, start)?;
+        let mut landed = self.landing(placement, start, content_bars)?;
         let target = self.track_index(track)?;
         let original = self
             .content(placement.content)
@@ -107,7 +152,12 @@ impl Project {
     }
 
     /// `placement` at `start`, or why it cannot sit there.
-    fn landing(&self, placement: &Placement, start: Tick) -> Result<Placement, ModelError> {
+    fn landing(
+        &self,
+        placement: &Placement,
+        start: Tick,
+        content_bars: bool,
+    ) -> Result<Placement, ModelError> {
         let bar = self
             .meter()
             .bar_ticks()
@@ -127,7 +177,7 @@ impl Project {
             .ok_or(ModelError::InvalidClip)?;
         let mut landed = placement.clone();
         landed.start = start;
-        if shift.rem_euclid(bar) != 0 {
+        if !content_bars && shift.rem_euclid(bar) != 0 {
             landed.kind = ClipKind::Fixed;
         }
         Ok(landed)

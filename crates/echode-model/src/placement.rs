@@ -533,18 +533,19 @@ fn refit_one(
     let mut min_bar = i64::MAX;
     let mut max_bar = i64::MIN;
     for note in &found {
-        let absolute = origin
-            .checked_add(note.start.get())
+        let (start_bar, end_bar) = occupied_bars(note.start.get(), note.length.get(), bar)
             .ok_or(ModelError::InvalidNote)?;
-        let (start_bar, end_bar) =
-            occupied_bars(absolute, note.length.get(), bar).ok_or(ModelError::InvalidNote)?;
         min_bar = min_bar.min(start_bar);
         max_bar = max_bar.max(end_bar);
     }
-    let new_start = min_bar.checked_mul(bar).ok_or(ModelError::InvalidNote)?;
+    let new_start = min_bar
+        .checked_mul(bar)
+        .and_then(|local| origin.checked_add(local))
+        .ok_or(ModelError::InvalidNote)?;
     let new_end = max_bar
         .checked_add(1)
         .and_then(|index| index.checked_mul(bar))
+        .and_then(|local| origin.checked_add(local))
         .ok_or(ModelError::InvalidNote)?;
     clips[index].offset = Tick::new(
         new_start

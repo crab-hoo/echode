@@ -262,7 +262,7 @@ fn a_move_on_its_own_track_may_overlap_where_it_was() {
 }
 
 #[test]
-fn an_auto_clip_stays_auto_only_on_whole_bar_moves() {
+fn an_auto_clip_stays_auto_on_sub_bar_moves_too() {
     let (project, first, second) = two_tracks();
     let (project, _) = project
         .insert_note(first, note(TICKS_PER_QUARTER, TICKS_PER_QUARTER))
@@ -291,7 +291,7 @@ fn an_auto_clip_stays_auto_only_on_whole_bar_moves() {
         .unwrap();
     beat.check_invariants().unwrap();
     let moved = &clips(&beat, first)[0];
-    assert_eq!(moved.kind, ClipKind::Fixed);
+    assert_eq!(moved.kind, ClipKind::Auto);
     assert_eq!(moved.start.get(), TICKS_PER_QUARTER);
     // The note sounds one quarter later, with the clip.
     let note = &beat.content(moved.content).unwrap().notes[0];
@@ -299,6 +299,36 @@ fn an_auto_clip_stays_auto_only_on_whole_bar_moves() {
         moved.sounding_start(note).unwrap().get(),
         TICKS_PER_QUARTER * 2
     );
+}
+
+#[test]
+fn a_shifted_auto_refit_refuses_overflow_without_mutating_the_source() {
+    let (project, first, second) = two_tracks();
+    let (project, note_id) = project
+        .insert_note(first, note(TICKS_PER_QUARTER, TICKS_PER_QUARTER))
+        .unwrap();
+    let clip = clips(&project, first)[0].id;
+    let start = i64::MAX - BAR - TICKS_PER_QUARTER / 2;
+    let shifted = project
+        .move_clip(clip, second, Tick::new(start), Id::from_raw(90))
+        .unwrap();
+    let before = shifted.clone();
+    // The note itself fits, but rounding its end to a content bar does not.
+    assert_eq!(
+        shifted.edit_note(
+            second,
+            clip,
+            note_id,
+            NoteGeometry {
+                pitch: 60,
+                start: Tick::new(start + TICKS_PER_QUARTER * 3),
+                length: Tick::new(TICKS_PER_QUARTER + 1),
+            },
+        ),
+        Err(ModelError::InvalidNote)
+    );
+    assert_eq!(shifted, before);
+    shifted.check_invariants().unwrap();
 }
 
 #[test]
@@ -358,7 +388,7 @@ fn a_duplicate_owns_new_content_and_notes() {
         (after[0].id, after[0].length.get(), after[0].kind),
         (source.id, TICKS_PER_QUARTER * 2, ClipKind::Fixed)
     );
-    assert_eq!(after[1].kind, ClipKind::Fixed);
+    assert_eq!(after[1].kind, ClipKind::Auto);
 }
 
 #[test]

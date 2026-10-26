@@ -488,6 +488,21 @@ class PolicyTests(unittest.TestCase):
                        "swift/EchodeApp/Tests/EchodeAppTests/PianoDragTests.swift"):
             self.assertIn("check-product-contracts", self.selected(source))
 
+    def test_content_bar_moves_and_legacy_journals_have_native_contracts(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, count in (("clip-content-bars", 3), ("journal-clip-bar-basis", 2)):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                             ("rust", "echode-history", ["--test", "clip_bar_basis"]))
+            self.assertEqual(len(contract["negative_controls"]), count)
+            for fault in contract["negative_controls"]:
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("crates/echode-model/src/clip_move.rs", "crates/echode-model/src/placement.rs",
+                       "crates/echode-model/src/invariants.rs", "crates/echode-actions/src/action.rs",
+                       "crates/echode-history/tests/clip_bar_basis.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
+                             "check-bridge-tsan", "check-bridge-miri"} <= self.selected(source))
+
     def test_piano_accessibility_builds_only_on_query(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "piano-accessibility-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "PianoTests"))
@@ -697,7 +712,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
-                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "plugin-params", "fx-params-ui",
+                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
                           "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",

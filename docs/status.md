@@ -95,8 +95,11 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。実画面と VoiceOver はユーザー確認待ちである。
     単一ノートの移動・左右端の伸縮は Shift で吸着を解除し、解放時の座標・修飾キーで 1 回確定する。
     最短 1 tick の伸縮と既存の Undo・保存へ接続した（[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
-    移動後の固定クリップでも、ノートの時刻編集で窓を越す時はノート全体を含むまで対象の窓を広げる。
+    自動クリップは、小節未満の移動・複製でも自動のまま、中身の原点から数えた小節でノートを覆う範囲へ伸縮する。
+    旧ジャーナルの移動・複製は従来の固定化を保つ（[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。
+    手動で端を決めた固定クリップは、ノートの時刻編集で窓を越す時はノート全体を含むまで対象の窓を広げる。
     単一 Undo / Redo・保存と確定フレームへ接続した（[ADR 0168](decisions/0168-note-edit-clip-growth.md)）。
+    所属替えと隣のクリップで止める処理は未接続で、[ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md) の草案に残る。
     複数ノートの一括編集・記憶する入力長・空白ドラッグ追加は未接続で、実画面の操作感はユーザー確認待ちである。
 
 ## 利用時に残る制約

@@ -65,10 +65,11 @@ enum Step {
         length: i64,
         pitch: u8,
     },
-    GrowFixedNote {
+    GrowNote {
         track: usize,
         clip: usize,
         left: bool,
+        auto: bool,
     },
     ResizeClip {
         track: usize,
@@ -182,8 +183,8 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (any::<usize>(), any::<usize>()).prop_map(|(track, note)| Step::DeleteNote { track, note }),
         4 => (any::<usize>(), any::<usize>(), any::<usize>(), -16i64..96, 1i64..24, 0u8..=127)
             .prop_map(|(track, clip, note, start, length, pitch)| Step::EditNote { track, clip, note, start, length, pitch }),
-        2 => (any::<usize>(), any::<usize>(), any::<bool>())
-            .prop_map(|(track, clip, left)| Step::GrowFixedNote { track, clip, left }),
+        2 => (any::<usize>(), any::<usize>(), any::<bool>(), any::<bool>())
+            .prop_map(|(track, clip, left, auto)| Step::GrowNote { track, clip, left, auto }),
         2 => (any::<usize>(), any::<usize>(), -16i64..96, 1i64..48).prop_map(
             |(track, clip, start, length)| Step::ResizeClip {
                 track,
@@ -200,8 +201,7 @@ fn step() -> impl Strategy<Value = Step> {
                 start,
             }
         ),
-        // Eighths straddle bar lines, so auto clips both keep and lose their kind,
-        // and landings both trim and split what they cover.
+        // Sub-bar moves preserve auto; landings still trim and split other windows.
         2 => (any::<usize>(), any::<usize>(), any::<usize>(), -2i64..96, any::<bool>()).prop_map(
             |(source_track, source_clip, dest, start, copy)| Step::MoveClip {
                 source_track,
@@ -349,19 +349,25 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 length: Tick::new(length * EIGHTH),
             }
         }
-        Step::GrowFixedNote {
+        Step::GrowNote {
             track: index,
             clip,
             left,
+            auto,
         } => {
             let id = track(*index)?;
             let owner = project.tracks().iter().find(|track| track.id == id)?;
-            let fixed: Vec<_> = owner
+            let kind = if *auto {
+                echode_model::ClipKind::Auto
+            } else {
+                echode_model::ClipKind::Fixed
+            };
+            let candidates: Vec<_> = owner
                 .clips
                 .iter()
-                .filter(|clip| clip.kind == echode_model::ClipKind::Fixed)
+                .filter(|clip| clip.kind == kind)
                 .collect();
-            let placement = fixed.get(*clip % fixed.len().max(1))?;
+            let placement = candidates.get(*clip % candidates.len().max(1))?;
             let note = project.content(placement.content)?.notes.first()?;
             let old_start = placement.sounding_start(note)?.get();
             let old_end = old_start.checked_add(note.length.get())?;

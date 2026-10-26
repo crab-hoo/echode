@@ -181,8 +181,11 @@ make debug-report
 
 - **ピアノロールで延ばしたノートがクリップ端で切れる・移動すると消える**:
   ノート自体の `start` / `length` と配置の `start` / `length` / `offset` / `kind` を分けて確認する。
-  小節の整数倍でないクリップ移動は固定配置に変わるため、新規の自動配置だけで再現を判定しない。
+  小節未満の移動・複製だけでは自動配置を固定にしない。手動トリムと旧ジャーナルの移動後は固定なので区別する。
   `piano-note-clip-bounds-ui` は実 View・controller・ABI・確定フレームと Undo / Redo・保存を通す。
+  自動窓は `origin = start - offset` から数えた中身の小節に合わせる（[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。
+  移動後にタイムラインの小節へ戻る場合は `placement.rs::refit_one` と `check_invariants` の基準を照合する。
+  `clip-content-bars` は編集・挿入・削除と履歴・保存、`journal-clip-bar-basis` は印のない旧操作の固定化を切り分ける。
   固定窓の時刻編集での拡張は `placement.rs::grow_edited_window`、自動窓の結合は `refit_auto` を見る。
   左側だけずれる場合は、共有内容の結合による参照先更新より後に開始とオフセットを一緒に動かしているかを確認する。
   他の固定リンクの窓を保つこと、重複する拡張を編集全体で拒否することは仕様である

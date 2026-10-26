@@ -544,10 +544,17 @@ define_actions! {
             start: Tick,
             /// The right piece of a split placement takes an id derived from this.
             seed: Id,
+            /// Absent in older journals, whose sub-bar moves became fixed.
+            #[serde(default)]
+            content_bars: bool,
         }
-        commit { Action::MoveClip { clip, track, start, seed: Id::generate() } }
+        commit { Action::MoveClip { clip, track, start, seed: Id::generate(), content_bars: true } }
         edit |project: &Project| {
-            project.move_clip(*clip, *track, *start, *seed).map_err(Into::into)
+            if *content_bars {
+                project.move_clip(*clip, *track, *start, *seed)
+            } else {
+                project.move_clip_legacy(*clip, *track, *start, *seed)
+            }.map_err(Into::into)
         }
     }
     DuplicateClip {
@@ -567,10 +574,17 @@ define_actions! {
             start: Tick,
             /// The copy's ids, and a split piece's id, are derived from this.
             seed: Id,
+            /// Absent in older journals, whose sub-bar copies became fixed.
+            #[serde(default)]
+            content_bars: bool,
         }
-        commit { Action::DuplicateClip { clip, track, start, seed: Id::generate() } }
+        commit { Action::DuplicateClip { clip, track, start, seed: Id::generate(), content_bars: true } }
         edit |project: &Project| {
-            project.duplicate_clip(*clip, *track, *start, *seed).map_err(Into::into)
+            if *content_bars {
+                project.duplicate_clip(*clip, *track, *start, *seed)
+            } else {
+                project.duplicate_clip_legacy(*clip, *track, *start, *seed)
+            }.map_err(Into::into)
         }
     }
     SetClipGain {
