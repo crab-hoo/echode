@@ -166,4 +166,6 @@ struct PianoRenderInput: Sendable {
     /// The remembered playback start, marked on the ruler (ADR 0155).
     var start: Int64? = nil
     var loop: RulerLoop? = nil
+    /// A new note has no model ID until its release is committed.
+    var insertion: NoteGeometry? = nil
 }

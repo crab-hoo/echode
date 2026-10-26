@@ -59,8 +59,7 @@ struct PianoFrame: Sendable {
                                             max(2, note.width), max(2, note.height - 2)),
                                       color: note.id == piano.focus ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
         }
-        if let preview = piano.preview {
-            let g = preview.geometry
+        for g in [piano.preview?.geometry, piano.insertion].compactMap({ $0 }) {
             let rect = SIMD4(Float(origin.x + (Double(g.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat),
                              Float(origin.y + (camera.topPitch - Double(g.pitch)) * camera.pixelsPerPitch + 1),
                              Float(Double(g.length) / 705_600 * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))

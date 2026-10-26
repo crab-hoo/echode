@@ -86,6 +86,8 @@ final class PianoGridView: NSView {
     private(set) var accessibilityBuilds = 0
     private var gesture: PianoGesture?
     private var preview: PianoPreview?
+    private var insertion: PianoInsertion?
+    var displayedInsertion: NoteGeometry? { insertion?.shouldInsert == true ? insertion?.geometry : nil }
     /// Geometry already sent for a note whose snapshot has not caught up.
     private var stepped: [PianoNote.ID: NoteGeometry] = [:]
     private var caretTick: Int64 = 0
@@ -167,7 +169,7 @@ final class PianoGridView: NSView {
         let restoredFocus = memory != nil && memory?.focus == focus && memory?.geometry == focus.flatMap { snapshot.pianoNote($0).map(NoteGeometry.init) }
         if trackChanged { camera = memory?.camera ?? PianoCamera(); caretTick = 0; caretPitch = 60 }
         let changed = self.snapshot !== snapshot || self.track != track
-        if changed || busy { gesture = nil; preview = nil; rulerPress = nil; revealOnLayout = false }
+        if changed || busy { gesture = nil; preview = nil; insertion = nil; rulerPress = nil; revealOnLayout = false }
         if self.track != track { accessible = [:] }
         if changed { elements = []; submittedFrame = nil }
         let needsRefresh = changed || self.focus != focus || self.key != key || self.busy != busy
@@ -187,11 +189,11 @@ final class PianoGridView: NSView {
         }
     }
     override func setFrameSize(_ newSize: NSSize) {
-        if bounds.size != newSize { rulerPress = nil }
+        if bounds.size != newSize { rulerPress = nil; insertion = nil }
         super.setFrameSize(newSize); refresh()
     }
     override func setBoundsSize(_ newSize: NSSize) {
-        if bounds.size != newSize { rulerPress = nil }
+        if bounds.size != newSize { rulerPress = nil; insertion = nil }
         super.setBoundsSize(newSize); refresh()
     }
     override func layout() {
@@ -231,7 +233,7 @@ final class PianoGridView: NSView {
         window?.makeFirstResponder(self)
         guard !busy, let submittedFrame, submittedFrame.piano.camera == camera,
               submittedFrame.layout == pianoLayout, submittedFrame.input.snapshot === snapshot,
-              submittedFrame.piano.track == track, submittedFrame.piano.preview == nil else { return }
+              submittedFrame.piano.track == track, submittedFrame.piano.preview == nil, submittedFrame.piano.insertion == nil else { return }
         let panePoint = convert(event.locationInWindow, from: nil)
         if pianoLayout.ruler.contains(panePoint) {
             // Defer the click until release so a loop drag never seeks.
@@ -253,7 +255,9 @@ final class PianoGridView: NSView {
             gesture = PianoGesture(id: hit.id, original: NoteGeometry(hit), mode: mode, x: point.x, y: point.y)
         } else {
             focus = nil; onSelect?(nil); cancelGesture()
-            if event.clickCount >= 2 { _ = insertAtCaret() }
+            insertion = PianoInsertion(x: point.x, y: point.y, camera: camera,
+                                       snapping: !event.modifierFlags.contains(.shift), insertsOnClick: event.clickCount >= 2)
+            refresh()
         }
     }
     override func mouseDragged(with event: NSEvent) {
@@ -262,6 +266,12 @@ final class PianoGridView: NSView {
             press.update(x: pianoLayout.gridPoint(convert(event.locationInWindow, from: nil)).x,
                          snapping: !event.modifierFlags.contains(.shift))
             rulerPress = press; refresh(); return
+        }
+        if var insertion {
+            guard !busy else { cancelGesture(); return }
+            let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
+            insertion.update(x: point.x, y: point.y, snapping: !event.modifierFlags.contains(.shift))
+            self.insertion = insertion; refresh(); return
         }
         guard gesture != nil, !busy else { return }
         preview = notePreview(with: event)
@@ -277,6 +287,16 @@ final class PianoGridView: NSView {
                 if let range = press.range { onSetLoop?(range) }
             } else if press.edge == nil, let tick = camera.rulerTick(at: press.x, snapping: !event.modifierFlags.contains(.shift)) {
                 onSetStart?(tick)
+            }
+            return
+        }
+        if var insertion {
+            let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
+            insertion.update(x: point.x, y: point.y, snapping: !event.modifierFlags.contains(.shift))
+            cancelGesture()
+            if insertion.shouldInsert, let geometry = insertion.geometry, !busy {
+                caretTick = geometry.start; caretPitch = geometry.pitch
+                onInsert?(geometry.pitch, Double(geometry.start) / 705_600, Double(geometry.length) / 705_600)
             }
             return
         }
@@ -298,7 +318,7 @@ final class PianoGridView: NSView {
         guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
         let shift = event.modifierFlags.contains(.shift)
         switch Int(event.keyCode) {
-        case kVK_Escape: if gesture != nil || preview != nil || rulerPress != nil { cancelGesture() } else { super.keyDown(with: event) }
+        case kVK_Escape: if gesture != nil || preview != nil || insertion != nil || rulerPress != nil { cancelGesture() } else { super.keyDown(with: event) }
         case kVK_Tab: if !navigate(backwards: shift) { super.keyDown(with: event) }
         case kVK_Return, kVK_ANSI_KeypadEnter: _ = insertAtCaret()
         case kVK_Delete, kVK_ForwardDelete: if !busy, let focus { onDelete?(focus) }
@@ -349,7 +369,7 @@ final class PianoGridView: NSView {
             return NoteGeometry(note) != geometry
         }
     }
-    private func cancelGesture() { gesture = nil; preview = nil; rulerPress = nil; refresh() }
+    private func cancelGesture() { gesture = nil; preview = nil; insertion = nil; rulerPress = nil; refresh() }
     /// The remembered start drawn on the ruler. Redraws only when it changes.
     func setStart(_ start: Int64?) { guard self.start != start else { return }; self.start = start; refresh() }
     func setLoop(_ loop: RulerLoop?) {
@@ -385,7 +405,7 @@ final class PianoGridView: NSView {
     /// Pages the time origin so a moving playhead stays shown (ADR 0159).
     /// A note or ruler press keeps its view; the first frame after it pages.
     private func followPlayhead(_ tick: Int64) {
-        guard gesture == nil, rulerPress == nil else { return }
+        guard gesture == nil, insertion == nil, rulerPress == nil else { return }
         let span = pianoLayout.grid.width / camera.pixelsPerBeat
         guard let origin = PlayheadFollow.origin(showing: tick, from: camera.originBeat, span: span) else { return }
         camera.originBeat = origin
@@ -404,7 +424,7 @@ final class PianoGridView: NSView {
         guard let track else { return }
         renderer?.update(CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
             width: bounds.width, height: bounds.height, scale: scale,
-            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview, start: start, loop: displayedLoop), playback: playback,
+            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: preview, start: start, loop: displayedLoop, insertion: displayedInsertion), playback: playback,
             displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
     }
 

@@ -470,6 +470,20 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= checks)
         self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PianoDragTests.swift"))
 
+    def test_piano_note_insertion_contract_covers_release_cancellation_and_model_history(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        insert, cancel = contracts["piano-note-insert-ui"], contracts["piano-note-insert-cancel-ui"]
+        self.assertEqual((insert["runner"], insert["suite"], insert["test"]),
+                         ("swift", "PianoInsertionTests", "contractBlankDragsInsertOnReleaseAndKeepUndoAndSave"))
+        self.assertEqual((cancel["runner"], cancel["suite"], cancel["test"]),
+                         ("swift", "PianoInsertionTests", "blankPressCancellationNeverInsertsOrLeavesAPreview"))
+        self.assertEqual(len(insert["negative_controls"]), 3)
+        for fault in insert["negative_controls"] + [cancel["negative_control"]]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("swift/EchodeApp/Sources/EchodeAppCore/PianoInsertion.swift",
+                       "swift/EchodeApp/Tests/EchodeAppTests/PianoInsertionTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(source))
+
     def test_piano_note_bounds_contract_covers_model_and_product_frame(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         ui, model = contracts["piano-note-clip-bounds-ui"], contracts["piano-note-clip-bounds"]
@@ -526,6 +540,8 @@ class PolicyTests(unittest.TestCase):
         follow = contracts["playhead-follow-ui"]
         self.assertEqual((follow["runner"], follow["suite"]), ("swift", "PlayheadFollowTests"))
         self.assertEqual(len(follow["negative_controls"]), 3)
+        for fault in follow["negative_controls"]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
         self.assertTrue(contracts["playhead-follow-state-ui"]["negative_control"]["file"].endswith("WorkspaceState.swift"))
         engine = contracts["loop-entry"]
         self.assertEqual((engine["package"], engine["target"]), ("echode-engine", ["--test", "block_size"]))
@@ -719,7 +735,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
-                          "piano-note-drag-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
+                          "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
