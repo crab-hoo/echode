@@ -78,6 +78,7 @@ check-base:
 # Arrange/piano ruler clicks, loop drags/edge handles, cancellation and shared row geometry and loop entry/bypass run through the same native/RT contract gate.
 # Content-relative auto moves/copies, subsequent refits, and unmarked legacy journals share this gate.
 # Blank piano-grid clicks/drags, remembered input length with Undo/Redo, release geometry and cancellation share the native UI gate.
+# Shared piano viewports across track switches and document-lifetime guards use this native UI gate too.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

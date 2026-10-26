@@ -138,6 +138,13 @@ make debug-report
   `spike-arrange-frame` の `rulerMismatches` は帯と印の画素不一致、`maxHeaderLaneError` は上端補正後の左右の誤差である。
   `audio.status` のループがオンでも、終端以降へ置いた再生は通常進行する。
   ブロック処理で終端に着いた場合は次のブロックで戻るため、同じ値の `tick` でも位置移動と混同しない。
+- **トラック切替でピアノロールの表示範囲が変わる**:
+  文書内の共通カメラは `CanvasNavigationState.pianoCamera` で、トラック別の復元は行わない。
+  切替先の既存選択への自動表示と、切替後の Tab・編集・再生ヘッド追従による移動を区別する。
+  `piano-shared-viewport-ui` は切替・再生成・空トラック集合・旧文書の書戻し拒否と別文書の初期化を確認する。
+  別文書で位置が残る場合は `setNavigation` の文書 ID と `prepare` の初期化、書戻しの `permits` を見る
+  （[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
+
 - **再生ヘッドに表示が追従しない・勝手に戻る**:
   まずトランスポートの「再生ヘッドに追従」がオンかを見る。横方向が優勢なスクロールは正常にオフにする（[ADR 0159](decisions/0159-playhead-follow.md)）。
   オンでも動かない時は、ルーラー・ノート・クリップの押下や数値入力欄、音声ファイルのドラッグによる保留中かを確認する。

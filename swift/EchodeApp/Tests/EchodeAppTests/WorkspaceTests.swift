@@ -298,7 +298,7 @@ struct WorkspaceTests {
         recreated.setNavigation(navigation); recreated.setSnapshot(snapshot, selected: track); recreated.layout()
         #expect(recreated.viewport == saved && recreated.headers.bounds.width == 200)
         let piano = PianoCamera(originBeat: 12, topPitch: 90.5, pixelsPerBeat: 120, pixelsPerPitch: 28)
-        navigation.pianos[track] = PianoViewportMemory(camera: piano, focus: note.id, geometry: NoteGeometry(note))
+        navigation.pianoCamera = piano
         let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 650, height: 180))
         grid.setNavigation(navigation); grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
         #expect(grid.camera == piano && grid.window == nil && !grid.rendererAvailable)
@@ -309,10 +309,10 @@ struct WorkspaceTests {
         #expect(grid.camera == piano)
         navigation.prepare(document: controller.documentID, tracks: [])
         grid.stop()
-        #expect(navigation.pianos.isEmpty)
+        #expect(navigation.pianoCamera == piano)
         navigation.prepare(document: UUID(), tracks: [track])
         grid.stop(); pane.layout()
-        #expect(navigation.arrange == nil && navigation.headerWidth == 160 && navigation.pianos.isEmpty)
+        #expect(navigation.arrange == nil && navigation.headerWidth == 160 && navigation.pianoCamera == nil)
         await controller.close()
     }
 

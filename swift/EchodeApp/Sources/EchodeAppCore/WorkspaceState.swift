@@ -110,7 +110,7 @@ public final class WorkspaceState {
 public final class CanvasNavigationState {
     var arrange: ArrangeCamera?
     var headerWidth = 160.0
-    var pianos: [UUID: PianoViewportMemory] = [:]
+    var pianoCamera: PianoCamera?
     private(set) var document: UUID?
     private var tracks: Set<UUID> = []
     public init() {}
@@ -120,14 +120,7 @@ public final class CanvasNavigationState {
     }
 
     func prepare(document: UUID?, tracks: Set<UUID>) {
-        if self.document != document { self.document = document; arrange = nil; headerWidth = 160; pianos = [:] }
+        if self.document != document { self.document = document; arrange = nil; headerWidth = 160; pianoCamera = nil }
         self.tracks = tracks
-        pianos = pianos.filter { tracks.contains($0.key) }
     }
-}
-
-struct PianoViewportMemory {
-    let camera: PianoCamera
-    let focus: PianoNote.ID?
-    let geometry: NoteGeometry?
 }

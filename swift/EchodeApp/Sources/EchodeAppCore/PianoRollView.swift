@@ -165,7 +165,12 @@ final class PianoGridView: NSView {
     var measurement: ArrangeMeasurement { renderer?.measurement ?? ArrangeMeasurement() }
     var rendererAvailable: Bool { renderer != nil }
     func setNavigation(_ navigation: CanvasNavigationState?, documentID: UUID? = nil) {
-        self.navigation = navigation; navigationDocument = documentID ?? navigation?.document
+        let document = documentID ?? navigation?.document
+        if self.navigation !== navigation || navigationDocument != document {
+            // Never write the departing document's viewport into its replacement.
+            cancelGesture(); track = nil; camera = PianoCamera()
+        }
+        self.navigation = navigation; navigationDocument = document
     }
     func setSnapshot(_ snapshot: Snapshot, track: UUID, focus: PianoNote.ID?, key: DisplayKey, busy: Bool) {
         let trackChanged = self.track != track
@@ -174,9 +179,10 @@ final class PianoGridView: NSView {
         let needsReveal = trackChanged || (self.snapshot !== snapshot && oldGeometry != newGeometry) ||
             (self.focus != focus && !elements.contains(where: { $0.id == focus }))
         if trackChanged { rememberViewport(); stepped = [:] }
-        let memory = trackChanged && navigation?.permits(document: navigationDocument, track: track) == true ? navigation?.pianos[track] : nil
-        let restoredFocus = memory != nil && memory?.focus == focus && memory?.geometry == focus.flatMap { snapshot.pianoNote($0).map(NoteGeometry.init) }
-        if trackChanged { camera = memory?.camera ?? PianoCamera(); caretTick = 0; caretPitch = 60 }
+        let canRestore = navigation?.permits(document: navigationDocument, track: track) == true
+        let sharedCamera = canRestore ? navigation?.pianoCamera : nil
+        let restoredFocus = trackChanged && sharedCamera != nil
+        if trackChanged { camera = sharedCamera ?? PianoCamera(); caretTick = 0; caretPitch = 60 }
         let changed = self.snapshot !== snapshot || self.track != track
         if changed || busy { velocityGesture = nil; velocityPreview = nil; gesture = nil; preview = nil; insertion = nil; rulerPress = nil; revealOnLayout = false }
         if self.track != track { accessible = [:] }
@@ -441,8 +447,7 @@ final class PianoGridView: NSView {
     }
     private func rememberViewport() {
         guard let track, bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument, track: track) == true else { return }
-        navigation?.pianos[track] = PianoViewportMemory(camera: camera, focus: focus,
-            geometry: focus.flatMap { noteBasis($0) })
+        navigation?.pianoCamera = camera
     }
     private func refresh() {
         window?.invalidateCursorRects(for: self)
