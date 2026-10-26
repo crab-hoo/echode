@@ -35,10 +35,12 @@ public final class ProjectController {
     }
     /// Shared by all piano tracks; never serialized into the project.
     var noteInput = NoteInputLength()
+    var noteVelocity = NoteInputVelocity()
     public var noteFocus: PianoNote.ID? {
         didSet {
             if let noteFocus, noteFocus.track != selection || snapshot?.pianoNote(noteFocus) == nil { self.noteFocus = nil }
             if let noteFocus, let note = snapshot?.pianoNote(noteFocus) { noteInput.remember(note.length) }
+            if let noteFocus, let note = snapshot?.pianoNote(noteFocus) { noteVelocity.remember(Int(note.velocity >> 9)) }
         }
     }
     public var errorMessage: String?
@@ -162,6 +164,7 @@ public final class ProjectController {
                 self.undoCount = 0
                 self.redoCount = 0
                 self.noteInput = NoteInputLength()
+                self.noteVelocity = NoteInputVelocity()
                 self.selection = nil
                 self.noteFocus = nil
                 self.forgetParameters()
@@ -313,10 +316,21 @@ public final class ProjectController {
         guard let target = track ?? selection, tracks.contains(where: { $0.id == target }),
               let start = PianoCamera.ticks(beat), let duration = PianoCamera.ticks(length),
               NoteGeometry(start: start, length: duration, pitch: pitch).isValid else { return false }
+        let velocity = noteVelocity.value
         return await performEdit({ [
             "type": "note.insert", "track": target.uuidString,
-            "pitch": pitch, "velocity": 100, "start": start, "length": duration,
+            "pitch": pitch, "velocity": velocity, "start": start, "length": duration,
         ] }, documentID: documentID, rememberingLength: { duration })
+    }
+
+    @discardableResult
+    public func setNoteVelocity(_ id: PianoNote.ID, velocity: Int, documentID: UUID? = nil) async -> Bool {
+        guard (0...127).contains(velocity) else { return false }
+        return await performEdit({ [self] in
+            guard let before = snapshot?.pianoNote(id), Int(before.velocity >> 9) != velocity else { return nil }
+            return ["type": "note.velocity", "track": id.track.uuidString, "clip": id.placement.uuidString,
+                    "note": id.note.uuidString, "velocity": velocity]
+        }, documentID: documentID, rememberingVelocity: { velocity })
     }
 
     @discardableResult
@@ -411,6 +425,7 @@ public final class ProjectController {
             self.undoCount = 0
             self.redoCount = 0
             self.noteInput = NoteInputLength()
+            self.noteVelocity = NoteInputVelocity()
             self.audio = AudioState()
             self.reportedAudioError = nil
             self.loopStartBeat = 0
@@ -570,18 +585,21 @@ public final class ProjectController {
     }
 
     private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false,
-                             selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil }) async -> Bool {
+                             selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil },
+                             rememberingVelocity: @escaping @MainActor () -> Int? = { nil }) async -> Bool {
         guard faderPreview == nil || finishingPreview else { return false }
         return await edits.run {
             guard let document = self.document,
                   documentID == nil || documentID == self.documentID, let fields = fields() else { return false }
             do {
                 let inputLength = self.noteInput.change(to: rememberingLength())
+                let velocity = rememberingVelocity(), velocityGeneration = self.noteVelocity.generation
                 let previousTracks = selectingAddedTrack ? Set(self.tracks.map(\.id)) : []
                 let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
                 self.publish(try await document.perform(String(decoding: bytes, as: UTF8.self)))
                 if selectingAddedTrack { self.selectAddedRoots(previous: previousTracks) }
                 self.recordEdit(inputLength: inputLength)
+                self.noteVelocity.finish(velocity, generation: velocityGeneration)
                 return true
             } catch { self.report(error); return false }
         }

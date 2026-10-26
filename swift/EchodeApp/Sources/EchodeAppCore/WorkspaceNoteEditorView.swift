@@ -36,7 +36,8 @@ struct WorkspaceNoteEditorView: View {
                     playback: controller.playback, transportGeneration: controller.transportGeneration,
                     navigation: state.navigation, documentID: document,
                     followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false },
-                    inputLength: { controller.noteInput.length })
+                    inputLength: { controller.noteInput.length },
+                    velocity: { id, value in Task { await controller.setNoteVelocity(id, velocity: value, documentID: document) } })
                     .id(controller.documentID)
                 Divider()
                 fields

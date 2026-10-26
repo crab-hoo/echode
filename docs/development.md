@@ -169,6 +169,11 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 `ProjectController.recordEdit` が全モデル編集の枠をそろえ、ノート選択・追加・長さ変更だけが長さを更新する。
 回帰は `NoteInputLengthTests.swift`・`NoteInputHistoryTests.swift`（[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
 
+ベロシティの専用モデルは `crates/echode-model/src/note_velocity.rs`、製品アクションは `note.velocity`、
+画面の相対ドラッグと共通入力値は `NoteVelocity.swift`、仮表示は `PianoFrame.swift` に置く。
+回帰は `NoteVelocityTests.swift`・履歴の `note_velocity.rs` と `block_size.rs`
+（[ADR 0173](decisions/0173-piano-note-velocity.md)）。
+
 アレンジの音高表示の音域と縦変換は `crates/echode-draw/src/query.rs` の `PitchRange`・`PitchLayout` に置く。
 製品フレームと VoiceOver 用矩形の回帰は `ArrangePitchTests.swift`、可視列は `tests/arrange_pitch.rs` を使う。
 問い合わせだけの計測は `make spike-arrange-query`（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。

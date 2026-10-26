@@ -58,6 +58,10 @@ struct PianoFrame: Sendable {
             instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
                                             max(2, note.width), max(2, note.height - 2)),
                                       color: note.id == piano.focus ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
+            let velocity = velocity(for: note)
+            instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + note.height - 3,
+                                            max(0, note.width) * Float(velocity) / 127, 2),
+                                      color: SIMD4(0.18, 0.25, 0.29, 1)))
         }
         for g in [piano.preview?.geometry, piano.insertion].compactMap({ $0 }) {
             let rect = SIMD4(Float(origin.x + (Double(g.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat),
@@ -180,7 +184,16 @@ struct PianoFrame: Sendable {
             labels.append(label(String(beat), x: x, y: (layout.rulerHeight - ArrangeLabelRaster.height) / 2,
                                 width: min(48, max(0, piano.camera.pixelsPerBeat - 4)), clip: layout.ruler, color: foreground))
         }
+        if let preview = piano.velocity, let note = notes.first(where: { $0.id == preview.id }) {
+            labels.append(label("\(text("Velocity")) \(preview.value)",
+                                x: layout.gridOrigin.x + Double(note.x), y: layout.gridOrigin.y + Double(note.y),
+                                width: 100, clip: layout.grid, color: SIMD4(1, 1, 1, 1)))
+        }
         return labels
+    }
+
+    func velocity(for note: PianoNote) -> Int {
+        piano.velocity.flatMap { $0.id == note.id ? $0.value : nil } ?? Int(note.velocity >> 9)
     }
 
     private var beats: ClosedRange<Int> {

@@ -372,6 +372,19 @@ define_actions! {
             }).map_err(Into::into)
         }
     }
+    SetNoteVelocity {
+        id: "note.velocity",
+        name_ja: "ノートのベロシティを変える",
+        name_en: "Set note velocity",
+        description_ja: "発音ベロシティだけを変える。時刻・配置・ID と表現は保つ",
+        description_en: "Change attack velocity only, preserving timing, placement, identity, and expression",
+        command { track: Id, clip: Id, note: Id, velocity: u8 }
+        action { track: Id, clip: Id, note: Id, velocity: u8 }
+        commit { Action::SetNoteVelocity { track, clip, note, velocity } }
+        edit |project: &Project| {
+            project.set_note_velocity(*track, *clip, *note, *velocity).map_err(Into::into)
+        }
+    }
     DeleteNote {
         id: "note.delete",
         name_ja: "ノートを消す",

@@ -499,6 +499,24 @@ class PolicyTests(unittest.TestCase):
                        "swift/EchodeApp/Tests/EchodeAppTests/NoteInputHistoryTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(source))
 
+    def test_note_velocity_contracts_cover_release_memory_cancellation_and_native_model(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        ui = contracts["piano-note-velocity-ui"]
+        cancel = contracts["piano-note-velocity-cancel-ui"]
+        model = contracts["note-velocity-model"]
+        self.assertEqual((ui["runner"], ui["suite"], ui["test"]),
+                         ("swift", "NoteVelocityTests", "contractOptionDragChangesVelocityWithoutMovingTheNote"))
+        self.assertEqual(cancel["test"], "cancelledVelocityDragsNeverCommit")
+        self.assertEqual((model["runner"], model["package"], model["target"]),
+                         ("rust", "echode-history", ["--test", "note_velocity"]))
+        self.assertEqual(len(ui["negative_controls"]), 5)
+        for fault in ui["negative_controls"] + [cancel["negative_control"], model["negative_control"]]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("swift/EchodeApp/Sources/EchodeAppCore/NoteVelocity.swift",
+                       "swift/EchodeApp/Tests/EchodeAppTests/NoteVelocityTests.swift",
+                       "crates/echode-model/src/note_velocity.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(source))
+
     def test_piano_note_bounds_contract_covers_model_and_product_frame(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         ui, model = contracts["piano-note-clip-bounds-ui"], contracts["piano-note-clip-bounds"]
@@ -750,7 +768,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
-                          "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
+                          "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",

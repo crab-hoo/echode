@@ -174,7 +174,7 @@ spike-render:
 check-bridge:
 	bash scripts/spike-bridge.sh
 
-# Product Swift wrapper over echode-ffi. No timing assertions.
+# Product Swift wrapper, piano gestures and note velocity/history. No timing assertions.
 check-shell:
 	bash scripts/check-shell.sh
 

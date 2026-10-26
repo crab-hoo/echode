@@ -1359,6 +1359,34 @@ fn assert_block_independent(render: impl Fn(u32) -> Vec<f32>) {
 }
 
 #[test]
+fn edited_note_velocities_keep_block_independent_sound_and_silence() {
+    let (base, track) = Project::new().add_track("velocity");
+    let (base, id) = base.insert_note(track, note(0.0, 0.5, 60)).unwrap();
+    let clip = base.tracks()[0].clips[0].id;
+    // This render duration bounds only the regression, not project note lengths.
+    let mut peaks = Vec::new();
+    for velocity in [0, 1, 64, 127] {
+        let project = base.set_note_velocity(track, clip, id, velocity).unwrap();
+        let reference = render_synth(&project, 24_000, BLOCKS[0], None);
+        for block in &BLOCKS[1..] {
+            assert_same(
+                &reference,
+                &render_synth(&project, 24_000, *block, None),
+                *block,
+            );
+        }
+        peaks.push(
+            reference
+                .iter()
+                .map(|sample| sample.abs())
+                .fold(0.0, f32::max),
+        );
+    }
+    assert_eq!(peaks[0], 0.0);
+    assert!(peaks.windows(2).all(|pair| pair[0] < pair[1]));
+}
+
+#[test]
 fn a_clipped_note_does_not_depend_on_the_block_size() {
     let (project, track) = Project::new().add_track("piano");
     let (project, _) = project.insert_note(track, note(0.0, 4.0, 60)).unwrap();

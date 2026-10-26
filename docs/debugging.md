@@ -78,11 +78,14 @@ make debug-report
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
   一時パッケージを作る `scratch()` は使用前に同じパスを削除する。
-- **ASan の Swift 検査で `Status did not arrive`**:
+- **ASan / TSan の Swift 検査で `Status did not arrive`**:
   2026-10-26 に `DevicePreparationTests` の状態待ちが 1 回期限切れとなり、同じバイナリの個別・全体再実行では再現しなかった。
   原因は未確定で、ASan のメモリ診断とは区別する。`target/bridge/address/product/swift-tests.failed.log` を保持する。
   第 2 デバイスの一覧、初期の出力状態、準備後の出力状態のどの待ちかを切り分け、タスクの取消と主スレッドの競合を調べる。
   権限警告だけを原因と決めず、期限の延長や検査の無効化で合格にしない。個別確認後も正式な `make verify` を再実行する。
+  同日の TSan 全体検査でも同じテストが 1 回期限切れとなり、データ競合の診断はなかった。
+  当該テストだけの再実行と正式な `make verify` の再実行では再現せず、原因は未確定のままである。
+  TSan の失敗記録は `target/bridge/thread/product/swift-tests.failed.log`、個別の記録は `preparation-focused.log` に残る。
 - **基準コミット（`VERIFY_BASE`）エラー**:
   一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
 - **終了フック直後の不要な再実行**:
@@ -183,6 +186,15 @@ make debug-report
   処理期限超過（`late`）と HAL 呼出欠落（`gaps`、`pmset -g log` の Sleep / Wake や `/usr/bin/log show` の coreaudiod デバイス変更）を区別する（[ADR 0096](decisions/0096-measurement-completion.md)）。短時間確認は `--native-rate` を使う。
 
 ### UI・描画・入力・履歴・MCP
+
+- **Option ドラッグで音高が動く・ベロシティが引き継がれない**:
+  押下時の `PianoVelocityGesture` と通常の `PianoGesture` を分ける。横移動・グリッド・Shift はベロシティへ影響しない。
+  `piano-note-velocity-ui` は解放位置と単一記録、`piano-note-velocity-cancel-ui` は取消後の遅れた解放を検査する。
+  `note-velocity-model` は共有内容と配置窓を確認する。0 は無音であり、音源なしの無音と区別する。
+  記憶は `ProjectController.noteVelocity` の 7 bit 値で、Undo で戻さず再オープン時に 100 へ戻すのが仕様である。
+  実際のノートの保存値は 16 bit なので、表示との比較には上位 7 bit を使う。
+  応答後だけ値が古くなる時は、記憶の `generation` と選択の順序を確認する
+  （[ADR 0173](decisions/0173-piano-note-velocity.md)）。
 
 - **ピアノロールの空白ドラッグで追加されない・開始位置が動く・取消後に追加される**:
   `PianoInsertion` の押下時の開始・カメラと、解放時の終端・音高を区別する。

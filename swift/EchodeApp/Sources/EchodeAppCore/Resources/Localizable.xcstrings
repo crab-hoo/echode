@@ -7,6 +7,12 @@
         "ja": { "stringUnit": { "state": "translated", "value": "再生ヘッドに追従" } }
       }
     },
+    "Velocity": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Velocity" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ベロシティ" } }
+      }
+    },
     "Audition Selected Sample": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Audition Selected Sample" } },
@@ -1282,13 +1288,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Click to insert with remembered length · Drag empty space to draw a note · Drag notes to move · Drag edges to resize"
+            "value": "Click to insert with remembered length · Drag empty space to draw a note · Drag notes to move · Drag edges to resize · Option-drag vertically for velocity"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · ノートをドラッグして移動 · 端をドラッグして長さ変更"
+            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · ノートをドラッグして移動 · 端をドラッグして長さ変更 · Option＋上下ドラッグでベロシティ変更"
           }
         }
       }

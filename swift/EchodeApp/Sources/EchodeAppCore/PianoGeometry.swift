@@ -168,4 +168,5 @@ struct PianoRenderInput: Sendable {
     var loop: RulerLoop? = nil
     /// A new note has no model ID until its release is committed.
     var insertion: NoteGeometry? = nil
+    var velocity: PianoVelocityPreview? = nil
 }
