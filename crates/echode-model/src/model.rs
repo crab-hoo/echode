@@ -966,7 +966,8 @@ impl Project {
     }
 
     /// Edits shared content without replacing the note id or its expression data.
-    /// Auto placements follow the result; fixed windows keep their boundaries.
+    /// Auto placements refit to bars; time edits grow the edited fixed window
+    /// just enough to include the note, leaving other fixed links unchanged.
     pub fn edit_note(
         &self,
         track_id: Id,

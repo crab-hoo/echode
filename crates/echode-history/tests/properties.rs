@@ -65,6 +65,11 @@ enum Step {
         length: i64,
         pitch: u8,
     },
+    GrowFixedNote {
+        track: usize,
+        clip: usize,
+        left: bool,
+    },
     ResizeClip {
         track: usize,
         clip: usize,
@@ -177,6 +182,8 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (any::<usize>(), any::<usize>()).prop_map(|(track, note)| Step::DeleteNote { track, note }),
         4 => (any::<usize>(), any::<usize>(), any::<usize>(), -16i64..96, 1i64..24, 0u8..=127)
             .prop_map(|(track, clip, note, start, length, pitch)| Step::EditNote { track, clip, note, start, length, pitch }),
+        2 => (any::<usize>(), any::<usize>(), any::<bool>())
+            .prop_map(|(track, clip, left)| Step::GrowFixedNote { track, clip, left }),
         2 => (any::<usize>(), any::<usize>(), -16i64..96, 1i64..48).prop_map(
             |(track, clip, start, length)| Step::ResizeClip {
                 track,
@@ -340,6 +347,44 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 pitch: *pitch,
                 start: Tick::new(start * EIGHTH),
                 length: Tick::new(length * EIGHTH),
+            }
+        }
+        Step::GrowFixedNote {
+            track: index,
+            clip,
+            left,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let fixed: Vec<_> = owner
+                .clips
+                .iter()
+                .filter(|clip| clip.kind == echode_model::ClipKind::Fixed)
+                .collect();
+            let placement = fixed.get(*clip % fixed.len().max(1))?;
+            let note = project.content(placement.content)?.notes.first()?;
+            let old_start = placement.sounding_start(note)?.get();
+            let old_end = old_start.checked_add(note.length.get())?;
+            let (start, end) = if *left {
+                (placement.start.get().checked_sub(1)?, old_end)
+            } else {
+                (
+                    old_start,
+                    placement
+                        .start
+                        .get()
+                        .checked_add(placement.length.get())?
+                        .max(old_end)
+                        .checked_add(1)?,
+                )
+            };
+            Command::EditNote {
+                track: id,
+                clip: placement.id,
+                note: note.id,
+                pitch: note.pitch,
+                start: Tick::new(start),
+                length: Tick::new(end.checked_sub(start)?.max(1)),
             }
         }
         Step::ResizeClip {

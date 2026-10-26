@@ -122,6 +122,7 @@ pub(super) fn edit(
         .iter()
         .find(|clip| clip.id == clip_id)
         .ok_or(ModelError::MissingClip)?;
+    let grow_window = clip.kind == ClipKind::Fixed;
     let owner = clip.content;
     let local = content_local(clip, geometry.start.get())?;
     local
@@ -133,17 +134,67 @@ pub(super) fn edit(
         .iter_mut()
         .find(|note| note.id == note_id)
         .ok_or(ModelError::MissingNote)?;
+    let time_changed = note.start.get() != local || note.length != geometry.length;
     note.pitch = geometry.pitch;
     note.start = Tick::new(local);
     note.length = geometry.length;
     crate::model::sort_notes(&mut content.notes);
     refit_auto(contents, tracks, track, owner, bar)?;
+    if time_changed && grow_window {
+        grow_edited_window(&mut track.clips, clip_id, geometry)?;
+    }
     check_shared_notes(
         contents,
         tracks,
         track,
         content_of_note(contents, note_id).unwrap_or(owner),
     )
+}
+
+/// A time edit explicitly requests that the whole note sound in this window.
+/// Grow only the edited fixed placement, not its other linked windows. Auto
+/// placements still refit to bars; shortening a note never trims a fixed window.
+fn grow_edited_window(
+    clips: &mut [Placement],
+    clip_id: Id,
+    geometry: NoteGeometry,
+) -> Result<(), ModelError> {
+    let index = clips
+        .iter()
+        .position(|clip| clip.id == clip_id)
+        .ok_or(ModelError::MissingClip)?;
+    let clip = &mut clips[index];
+    if clip.kind != ClipKind::Fixed {
+        return Ok(());
+    }
+    let old_start = clip.start.get();
+    let old_end = old_start
+        .checked_add(clip.length.get())
+        .ok_or(ModelError::InvalidClip)?;
+    let note_end = geometry
+        .start
+        .get()
+        .checked_add(geometry.length.get())
+        .ok_or(ModelError::InvalidNote)?;
+    let start = old_start.min(geometry.start.get());
+    let end = old_end.max(note_end);
+    // Keep content time zero, and therefore every other note's sounding time.
+    clip.offset = Tick::new(
+        clip.offset
+            .get()
+            .checked_add(
+                start
+                    .checked_sub(old_start)
+                    .ok_or(ModelError::InvalidClip)?,
+            )
+            .ok_or(ModelError::InvalidClip)?,
+    );
+    clip.start = Tick::new(start);
+    clip.length = Tick::new(end.checked_sub(start).ok_or(ModelError::InvalidClip)?);
+    if overlaps_others(clips, index) {
+        return Err(ModelError::Overlap);
+    }
+    Ok(())
 }
 
 fn content_of_note(contents: &[Arc<Content>], note: Id) -> Option<Id> {

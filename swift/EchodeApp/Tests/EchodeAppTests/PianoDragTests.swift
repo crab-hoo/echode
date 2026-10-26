@@ -71,6 +71,79 @@ struct PianoDragTests {
         await controller.close()
     }
 
+    @Test func contractNoteDragsGrowClipWindowsAndKeepTheWholeNoteVisible() async throws {
+        for fixed in [false, true] {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-bounds-\(UUID()).echode")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let controller = ProjectController()
+            await controller.open(url, creating: true)
+            await controller.addTrack(name: "keys")
+            await controller.insertNote(pitch: 60, beat: 1, length: 1)
+            let track = try #require(controller.selection)
+            let initial = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
+            if fixed {
+                // A one-beat arrange move makes an auto clip fixed, even without a manual trim.
+                #expect(await controller.moveClip(ClipMove(document: try #require(controller.documentID), clip: initial.id.placement,
+                                                         track: track, start: ticks(1), copy: false)))
+            }
+            let snapshot = try #require(controller.snapshot)
+            let note = try #require(snapshot.pianoNote(initial.id))
+            let clip = try #require(snapshot.clipMix(note.id.placement))
+            let undo = controller.undoCount, document = controller.documentID
+            for mode in [PianoGesture.Mode.rightEdge, .leftEdge, .move] {
+                let harness = PianoDragHarness(snapshot: snapshot, note: note)
+                defer { harness.view.stop() }
+                var writes: [Task<Bool, Never>] = []
+                harness.view.onEdit = { id, geometry in
+                    writes.append(Task { await controller.editNote(id, geometry: geometry, documentID: document) })
+                }
+                let down = harness.point(for: mode)
+                let delta = mode == .leftEdge ? -1.5 : 3.75
+                let target = down.applying(CGAffineTransform(translationX: delta * harness.view.camera.pixelsPerBeat, y: 0))
+                try harness.send(.leftMouseDown, at: down)
+                try harness.send(.leftMouseDragged, at: target, flags: .shift)
+                #expect(writes.isEmpty && controller.undoCount == undo)
+                try harness.send(.leftMouseUp, at: target, flags: .shift)
+                #expect(writes.count == 1)
+                for write in writes { #expect(await write.value) }
+                let edited = try #require(controller.snapshot?.pianoNote(note.id), "a moved note must remain visible outside the old clip")
+                let start = mode == .rightEdge ? note.start : max(0, note.start + ticks(delta))
+                let end = mode == .leftEdge ? note.start + note.length : note.start + note.length + ticks(delta)
+                #expect(edited.start == start && edited.length == end - start)
+                #expect(edited.id == note.id && edited.velocity == note.velocity)
+                let windowStart = fixed ? min(clip.start, start) : (start / ticks(4)) * ticks(4)
+                let windowEnd = fixed ? max(clip.start + clip.length, end) : ((end - 1) / ticks(4) + 1) * ticks(4)
+                #expect(edited.windowStart == windowStart && edited.windowEnd == windowEnd,
+                        "note drags must grow the edited clip window to include the whole note")
+                let mix = try #require(controller.snapshot?.clipMix(note.id.placement))
+                #expect(mix.start == windowStart && mix.length == windowEnd - windowStart)
+                let input = CanvasInput(snapshot: controller.snapshot, selected: track, camera: ArrangeCamera(), width: 900, height: 400, scale: 1)
+                let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: note.id,
+                    camera: harness.view.camera, key: DisplayKey(), preview: nil))
+                let shown = try #require(frame.notes.first { $0.id == note.id })
+                #expect(abs(Double(shown.width) - Double(edited.length) / 705_600 * harness.view.camera.pixelsPerBeat) < 0.001,
+                        "the committed piano frame must not cut off the extended note")
+                #expect(controller.undoCount == undo + 1 && controller.errorMessage == nil)
+                #expect(snapshot.clipMix(note.id.placement) == clip)
+                await controller.undo()
+                #expect(controller.snapshot?.pianoNote(note.id).map(NoteGeometry.init) == NoteGeometry(note))
+                #expect(controller.snapshot?.clipMix(note.id.placement) == clip && controller.undoCount == undo)
+                await controller.redo()
+                #expect(controller.snapshot?.clipMix(note.id.placement) == mix)
+                #expect(controller.snapshot?.pianoNote(note.id).map(NoteGeometry.init) == NoteGeometry(edited))
+                if mode == .move {
+                    await controller.close()
+                    await controller.open(url)
+                    #expect(controller.snapshot?.clipMix(note.id.placement) == mix)
+                    #expect(controller.snapshot?.pianoNote(note.id).map(NoteGeometry.init) == NoteGeometry(edited))
+                } else {
+                    await controller.undo()
+                }
+            }
+            await controller.close()
+        }
+    }
+
     @Test func cancelledOrUnmovedNotePressesNeverEdit() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-cancel-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }

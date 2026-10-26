@@ -470,6 +470,24 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= checks)
         self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PianoDragTests.swift"))
 
+    def test_piano_note_bounds_contract_covers_model_and_product_frame(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        ui, model = contracts["piano-note-clip-bounds-ui"], contracts["piano-note-clip-bounds"]
+        self.assertEqual((ui["runner"], ui["suite"], ui["test"]),
+                         ("swift", "PianoDragTests", "contractNoteDragsGrowClipWindowsAndKeepTheWholeNoteVisible"))
+        self.assertEqual((model["runner"], model["package"], model["target"]),
+                         ("rust", "echode-model", ["--test", "note_edit"]))
+        self.assertEqual(model["test"], "time_edits_grow_only_the_target_fixed_window_and_keep_content_origin")
+        # Each runner must rebuild the language it mutates, not link an unchanged ABI.
+        self.assertTrue(ui["negative_control"]["file"].endswith(".swift"))
+        self.assertEqual(model["negative_control"]["file"], "crates/echode-model/src/placement.rs")
+        for contract in (ui, model):
+            fault = contract["negative_control"]
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in (model["negative_control"]["file"], "crates/echode-model/tests/note_edit.rs",
+                       "swift/EchodeApp/Tests/EchodeAppTests/PianoDragTests.swift"):
+            self.assertIn("check-product-contracts", self.selected(source))
+
     def test_piano_accessibility_builds_only_on_query(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "piano-accessibility-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "PianoTests"))
@@ -686,7 +704,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
-                          "piano-note-drag-ui", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
+                          "piano-note-drag-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",

@@ -59,6 +59,8 @@ make debug-report
 - **自動検査・製品契約の失敗**:
   `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
   最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
+  Swift の反例ビルドは Rust ABI を作り直さない。Rust の差分を Swift 契約へ直接登録すると、
+  未変更の ABI へリンクして反例を検出できない。モデルの反例は Rust 契約、UI の反例は Swift 契約に分ける。
   `check-product-contracts` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
   前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
   `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
@@ -176,6 +178,15 @@ make debug-report
   処理期限超過（`late`）と HAL 呼出欠落（`gaps`、`pmset -g log` の Sleep / Wake や `/usr/bin/log show` の coreaudiod デバイス変更）を区別する（[ADR 0096](decisions/0096-measurement-completion.md)）。短時間確認は `--native-rate` を使う。
 
 ### UI・描画・入力・履歴・MCP
+
+- **ピアノロールで延ばしたノートがクリップ端で切れる・移動すると消える**:
+  ノート自体の `start` / `length` と配置の `start` / `length` / `offset` / `kind` を分けて確認する。
+  小節の整数倍でないクリップ移動は固定配置に変わるため、新規の自動配置だけで再現を判定しない。
+  `piano-note-clip-bounds-ui` は実 View・controller・ABI・確定フレームと Undo / Redo・保存を通す。
+  固定窓の時刻編集での拡張は `placement.rs::grow_edited_window`、自動窓の結合は `refit_auto` を見る。
+  左側だけずれる場合は、共有内容の結合による参照先更新より後に開始とオフセットを一緒に動かしているかを確認する。
+  他の固定リンクの窓を保つこと、重複する拡張を編集全体で拒否することは仕様である
+  （[ADR 0168](decisions/0168-note-edit-clip-growth.md)）。実画面の見え方・聴感はユーザー確認とする。
 
 - **ピアノロールのノートが Shift でも吸着する・短くできない・離すと位置がずれる**:
   `PianoGridView.notePreview` が各ドラッグと解放の Shift を `PianoGesture.preview` へ渡しているかを確認する。

@@ -95,6 +95,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 値の操作子のクリック規則・入力欄・`text_to_value` の文字入力: [ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)。
 - ピアノロールの単一ノートのドラッグでの Shift 吸着解除・最短 1 tick と解放時の確定:
   [ADR 0167](decisions/0167-piano-note-drag-snapping.md)。
+- ノートの音価・位置の編集で固定クリップも全長まで広げ、確定表示と履歴へ反映する:
+  [ADR 0168](decisions/0168-note-edit-clip-growth.md)。
 - ペインのリサイズ中の伸縮とヘッダ幅の保持: [ADR 0144](decisions/0144-unscaled-canvas-resizing.md)。
 - 反転した表示面の固定位置と状態行・再生ボタンの寸法: [ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)。
 - 入力と大きさの違う drawable への描画と、広がった余白の背景: [ADR 0150](decisions/0150-stale-drawable-frame.md)。
