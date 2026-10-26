@@ -23,12 +23,14 @@ struct PianoCanvas: NSViewRepresentable {
     var documentID: UUID? = nil
     var followsPlayhead = false
     var onManualScroll: (() -> Void)? = nil
+    var inputLength: () -> Int64? = { nil }
 
     func makeNSView(context: Context) -> PianoRollView { PianoRollView(frame: .zero) }
     func updateNSView(_ view: PianoRollView, context: Context) {
         view.grid.setNavigation(navigation, documentID: documentID)
         view.grid.onSelect = { focus = $0 }
         view.grid.onInsert = insert
+        view.grid.inputLength = inputLength
         view.grid.onEdit = edit
         view.grid.onDelete = delete
         view.grid.onSetStart = setStart
@@ -87,7 +89,7 @@ final class PianoGridView: NSView {
     private var gesture: PianoGesture?
     private var preview: PianoPreview?
     private var insertion: PianoInsertion?
-    var displayedInsertion: NoteGeometry? { insertion?.shouldInsert == true ? insertion?.geometry : nil }
+    var displayedInsertion: NoteGeometry? { insertion?.geometry }
     /// Geometry already sent for a note whose snapshot has not caught up.
     private var stepped: [PianoNote.ID: NoteGeometry] = [:]
     private var caretTick: Int64 = 0
@@ -107,6 +109,8 @@ final class PianoGridView: NSView {
     let follower = PlayheadFollower()
     /// A time scroll turns following off (ADR 0159).
     var onManualScroll: (() -> Void)?
+    /// Read at press time, so selection and pending edits cannot leave a stale copy.
+    var inputLength: () -> Int64? = { nil }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -254,9 +258,12 @@ final class PianoGridView: NSView {
             let mode = PianoGesture.mode(at: point.x, start: start, end: end)
             gesture = PianoGesture(id: hit.id, original: NoteGeometry(hit), mode: mode, x: point.x, y: point.y)
         } else {
+            // The first release already inserts. A double click must not add
+            // another note while the new model frame is still in flight.
+            guard event.clickCount == 1 else { return }
             focus = nil; onSelect?(nil); cancelGesture()
             insertion = PianoInsertion(x: point.x, y: point.y, camera: camera,
-                                       snapping: !event.modifierFlags.contains(.shift), insertsOnClick: event.clickCount >= 2)
+                                       snapping: !event.modifierFlags.contains(.shift), length: inputLength())
             refresh()
         }
     }
@@ -294,7 +301,7 @@ final class PianoGridView: NSView {
             let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
             insertion.update(x: point.x, y: point.y, snapping: !event.modifierFlags.contains(.shift))
             cancelGesture()
-            if insertion.shouldInsert, let geometry = insertion.geometry, !busy {
+            if let geometry = insertion.geometry, !busy {
                 caretTick = geometry.start; caretPitch = geometry.pitch
                 onInsert?(geometry.pitch, Double(geometry.start) / 705_600, Double(geometry.length) / 705_600)
             }
@@ -343,7 +350,7 @@ final class PianoGridView: NSView {
     }
     private func insertAtCaret() -> Bool {
         guard !busy, track != nil else { return false }
-        onInsert?(caretPitch, Double(caretTick) / 705_600, Double(camera.grid) / 705_600)
+        onInsert?(caretPitch, Double(caretTick) / 705_600, Double(inputLength() ?? camera.grid) / 705_600)
         return true
     }
     private func change(pitch: Int = 0, time: Int64 = 0, resize: Bool = false) {

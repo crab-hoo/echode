@@ -256,11 +256,14 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   - 単一ノートの移動・左右端の伸縮は Shift で吸着を解除する。解放時の座標・修飾キーで確定し、最短長は 1 tick とする
     （[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
     必須契約 `piano-note-drag-ui` は実 View と製品ブリッジで、単一 Undo / Redo・保存再読込、ID とベロシティ保持を確認する。
-    複数ノートの編集と記憶する入力長は残り、実画面はユーザー確認待ちである。
+    複数ノートの編集は残り、実画面はユーザー確認待ちである。
   - 空白の左ドラッグは、開始位置を固定して横に長さ・縦に音高を調整し、解放時に `note.insert` を 1 回送る。
-    Shift は開始・終端の吸着を外すが、新規の最短長は現在のグリッド幅とする。
-    単クリックはカーソル移動、ダブルクリックと Return は従来のグリッド幅の挿入を保つ
-    （[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
+    Shift は開始・終端の吸着を外すが、新規ドラッグの最短長は現在のグリッド幅とする。
+    単クリックも解放時に記憶長で追加し、ダブルクリックの 2 回目は追加を重ねない。
+    入力長は全トラックで共有し、選択・追加・単一ノートの長さ変更で記憶する。
+    追加・長さ変更の Undo / Redo で戻し、無関係な編集の Undo では維持する。再オープン時は初期化する
+    （[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
+    必須契約 `piano-note-click-ui`・`piano-note-input-length-ui` は実 View と製品ブリッジで確認する。
     必須契約 `piano-note-insert-ui`・`piano-note-insert-cancel-ui` と通常回帰で、取消・仮表示・単一 Undo / Redo・保存を確認する。
   - 自動配置は、小節未満の移動・複製でも `auto` を保ち、中身の原点から数えた小節で伸縮する
     （[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。

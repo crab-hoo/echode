@@ -102,7 +102,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     所属替えと隣のクリップで止める処理は未接続で、[ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md) の草案に残る。
     空白の左ドラッグも、開始位置の保持・横の長さと縦の音高・Shift の吸着解除・解放時の単一追加へ接続した。
     新規の最短長はグリッド幅とし、取消・Undo / Redo・保存を持つ（[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
-    複数ノートの一括編集と記憶する入力長は未接続で、実画面の操作感はユーザー確認待ちである。
+    単クリックの記憶長入力も接続した。長さは全トラックで共有し、追加・長さ変更の Undo / Redo で戻り、再オープン時に初期化する
+    （[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。複数ノートの一括編集は未接続で、実画面の操作感はユーザー確認待ちである。
 
 ## 利用時に残る制約
 

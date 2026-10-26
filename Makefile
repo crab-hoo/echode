@@ -77,7 +77,7 @@ check-base:
 # Named behavioral tests (including independent workspace panes/stacking, canvas resizing/header width/stale drawable extents and margins, fixed transport chrome sizes, the remembered playback start and stop return, output prewarm/background media, background graph startup, device preparation/disclosure/drop targets, plugin window lifetimes/status/keys, tracks, FX, and file-URL sample drops) must run; ignored/deleted tests cannot pass.
 # Arrange/piano ruler clicks, loop drags/edge handles, cancellation and shared row geometry and loop entry/bypass run through the same native/RT contract gate.
 # Content-relative auto moves/copies, subsequent refits, and unmarked legacy journals share this gate.
-# Blank piano-grid insertion drags, release geometry and cancellation share the native UI gate.
+# Blank piano-grid clicks/drags, remembered input length with Undo/Redo, release geometry and cancellation share the native UI gate.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

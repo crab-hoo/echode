@@ -35,7 +35,8 @@ struct WorkspaceNoteEditorView: View {
                     setLoop: { range in if let document { Task { await controller.setLoopRange(range, documentID: document) } } },
                     playback: controller.playback, transportGeneration: controller.transportGeneration,
                     navigation: state.navigation, documentID: document,
-                    followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
+                    followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false },
+                    inputLength: { controller.noteInput.length })
                     .id(controller.documentID)
                 Divider()
                 fields

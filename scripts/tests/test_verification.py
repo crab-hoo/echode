@@ -484,6 +484,21 @@ class PolicyTests(unittest.TestCase):
                        "swift/EchodeApp/Tests/EchodeAppTests/PianoInsertionTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(source))
 
+    def test_note_input_length_contracts_cover_clicks_and_shared_ephemeral_history(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        click, memory = contracts["piano-note-click-ui"], contracts["piano-note-input-length-ui"]
+        self.assertEqual((click["runner"], click["suite"], click["test"]),
+                         ("swift", "NoteInputLengthTests", "contractSingleClickInsertsOnceAndKeepsThePressedPosition"))
+        self.assertEqual((memory["runner"], memory["suite"], memory["test"]),
+                         ("swift", "NoteInputLengthTests", "contractInputLengthFollowsSelectionResizeAndHistoryAcrossTracks"))
+        self.assertEqual(len(memory["negative_controls"]), 5)
+        for fault in [click["negative_control"]] + memory["negative_controls"]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("swift/EchodeApp/Sources/EchodeAppCore/NoteInputLength.swift",
+                       "swift/EchodeApp/Tests/EchodeAppTests/NoteInputLengthTests.swift",
+                       "swift/EchodeApp/Tests/EchodeAppTests/NoteInputHistoryTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(source))
+
     def test_piano_note_bounds_contract_covers_model_and_product_frame(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         ui, model = contracts["piano-note-clip-bounds-ui"], contracts["piano-note-clip-bounds"]
@@ -735,7 +750,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
-                          "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
+                          "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",

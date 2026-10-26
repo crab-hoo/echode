@@ -1282,13 +1282,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag empty space to draw a note · Double-click to insert · Drag notes to move · Drag edges to resize"
+            "value": "Click to insert with remembered length · Drag empty space to draw a note · Drag notes to move · Drag edges to resize"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "空白をドラッグしてノート追加 · ダブルクリックで挿入 · ノートをドラッグして移動 · 端をドラッグして長さ変更"
+            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · ノートをドラッグして移動 · 端をドラッグして長さ変更"
           }
         }
       }

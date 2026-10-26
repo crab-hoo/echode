@@ -318,8 +318,7 @@ extension ProjectController {
                 let result = try await self.sendDevice(document, .commit(device: device))
                 guard result.report.changed == true else { return false }
                 self.publish(result.snapshot)
-                self.undoCount += 1
-                self.redoCount = 0
+                self.recordEdit()
                 return true
             } catch {
                 self.report(error)

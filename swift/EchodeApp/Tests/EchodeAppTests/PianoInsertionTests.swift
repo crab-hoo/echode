@@ -101,7 +101,7 @@ struct PianoInsertionTests {
         await controller.close()
     }
 
-    @Test func blankPressKeepsClickAndDoubleClickSeparateAndDrawsTheInsertion() async throws {
+    @Test func blankClicksInsertOnceAndDrawTheInsertion() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-insert-click-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }
         let controller = ProjectController()
@@ -117,9 +117,9 @@ struct PianoInsertionTests {
         let down = harness.point(beat: 1, pitch: 60)
         try harness.send(.leftMouseDown, at: down)
         try harness.send(.leftMouseUp, at: CGPoint(x: down.x + 1, y: down.y + 1))
-        #expect(sent.isEmpty && harness.view.displayedInsertion == nil)
+        #expect(sent == [NoteGeometry(start: ticks(1), length: ticks(0.25), pitch: 60)] && harness.view.displayedInsertion == nil)
         try harness.send(.leftMouseDown, at: down, clicks: 2)
-        #expect(sent.isEmpty)
+        #expect(sent.count == 1)
         try harness.send(.leftMouseUp, at: down, clicks: 2)
         #expect(sent == [NoteGeometry(start: ticks(1), length: ticks(0.25), pitch: 60)])
         try harness.send(.leftMouseDown, at: down)
@@ -152,7 +152,7 @@ struct PianoInsertionTests {
     @Test func insertionGeometryKeepsItsStartAndGridMinimumAndRejectsInvalidInputs() throws {
         for pixels in [18.0, 72.0, 477.0] {
             let camera = PianoCamera(originBeat: 0.5, pixelsPerBeat: pixels)
-            var drag = try #require(PianoInsertion(x: pixels * 0.6, y: 90, camera: camera, snapping: false, insertsOnClick: false))
+            var drag = try #require(PianoInsertion(x: pixels * 0.6, y: 90, camera: camera, snapping: false))
             #expect(drag.original == NoteGeometry(start: ticks(1.1), length: camera.grid, pitch: 60))
             drag.update(x: pixels * 2, y: 50, snapping: false)
             #expect(drag.geometry == NoteGeometry(start: ticks(1.1), length: ticks(1.4), pitch: 62))
@@ -169,9 +169,9 @@ struct PianoInsertionTests {
         }
         for camera in [PianoCamera(grid: 0), PianoCamera(pixelsPerBeat: 0), PianoCamera(pixelsPerPitch: .nan),
                        PianoCamera(originBeat: .infinity), PianoCamera(originBeat: Double(Int64.max) / 705_600)] {
-            #expect(PianoInsertion(x: 0, y: 0, camera: camera, snapping: false, insertsOnClick: false) == nil)
+            #expect(PianoInsertion(x: 0, y: 0, camera: camera, snapping: false) == nil)
         }
-        #expect(PianoInsertion(x: .nan, y: 0, camera: PianoCamera(), snapping: true, insertsOnClick: false) == nil)
+        #expect(PianoInsertion(x: .nan, y: 0, camera: PianoCamera(), snapping: true) == nil)
     }
 
     private func ticks(_ beat: Double) -> Int64 { PianoCamera.ticks(beat)! }

@@ -33,9 +33,12 @@ public final class ProjectController {
             if selection != previous { noteFocus = nil; clipFocus = nil }
         }
     }
+    /// Shared by all piano tracks; never serialized into the project.
+    var noteInput = NoteInputLength()
     public var noteFocus: PianoNote.ID? {
         didSet {
             if let noteFocus, noteFocus.track != selection || snapshot?.pianoNote(noteFocus) == nil { self.noteFocus = nil }
+            if let noteFocus, let note = snapshot?.pianoNote(noteFocus) { noteInput.remember(note.length) }
         }
     }
     public var errorMessage: String?
@@ -158,6 +161,7 @@ public final class ProjectController {
                 self.projectURL = url
                 self.undoCount = 0
                 self.redoCount = 0
+                self.noteInput = NoteInputLength()
                 self.selection = nil
                 self.noteFocus = nil
                 self.forgetParameters()
@@ -309,20 +313,23 @@ public final class ProjectController {
         guard let target = track ?? selection, tracks.contains(where: { $0.id == target }),
               let start = PianoCamera.ticks(beat), let duration = PianoCamera.ticks(length),
               NoteGeometry(start: start, length: duration, pitch: pitch).isValid else { return false }
-        return await edit([
+        return await performEdit({ [
             "type": "note.insert", "track": target.uuidString,
             "pitch": pitch, "velocity": 100, "start": start, "length": duration,
-        ], documentID: documentID)
+        ] }, documentID: documentID, rememberingLength: { duration })
     }
 
     @discardableResult
     public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry, documentID: UUID? = nil) async -> Bool {
-        await edit({ [self] in
+        await performEdit({ [self] in
             guard let before = snapshot?.pianoNote(id), geometry.isValid,
                   before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch else { return nil }
             return ["type": "note.edit", "track": id.track.uuidString, "clip": before.id.placement.uuidString,
                     "note": id.note.uuidString, "pitch": geometry.pitch, "start": geometry.start, "length": geometry.length]
-        }, documentID: documentID)
+        }, documentID: documentID, rememberingLength: { [self] in
+            guard let before = snapshot?.pianoNote(id), before.length != geometry.length else { return nil }
+            return geometry.length
+        })
     }
 
     @discardableResult
@@ -339,7 +346,12 @@ public final class ProjectController {
             guard self.documentID == target, self.undoCount > 0, let document = self.document else { return false }
             self.historyBusy = true
             defer { self.historyBusy = false }
-            do { self.publish(try await document.undo()); self.undoCount -= 1; self.redoCount += 1; return true }
+            do {
+                self.publish(try await document.undo())
+                self.noteInput.undo()
+                self.undoCount -= 1; self.redoCount += 1
+                return true
+            }
             catch { self.report(error); return false }
         }
         // Values are read after the turn, so a slow plugin does not hold later edits.
@@ -354,7 +366,12 @@ public final class ProjectController {
             guard self.documentID == target, self.redoCount > 0, let document = self.document else { return false }
             self.historyBusy = true
             defer { self.historyBusy = false }
-            do { self.publish(try await document.redo()); self.redoCount -= 1; self.undoCount += 1; return true }
+            do {
+                self.publish(try await document.redo())
+                self.noteInput.redo()
+                self.redoCount -= 1; self.undoCount += 1
+                return true
+            }
             catch { self.report(error); return false }
         }
         if changed { await reloadParameters() }
@@ -393,6 +410,7 @@ public final class ProjectController {
             self.forgetParameters()
             self.undoCount = 0
             self.redoCount = 0
+            self.noteInput = NoteInputLength()
             self.audio = AudioState()
             self.reportedAudioError = nil
             self.loopStartBeat = 0
@@ -551,18 +569,19 @@ public final class ProjectController {
         await performEdit({ actions() }, documentID: documentID, selectingAddedTrack: selectingAddedTrack)
     }
 
-    private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false, selectingAddedTrack: Bool = false) async -> Bool {
+    private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false,
+                             selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil }) async -> Bool {
         guard faderPreview == nil || finishingPreview else { return false }
         return await edits.run {
             guard let document = self.document,
                   documentID == nil || documentID == self.documentID, let fields = fields() else { return false }
             do {
+                let inputLength = self.noteInput.change(to: rememberingLength())
                 let previousTracks = selectingAddedTrack ? Set(self.tracks.map(\.id)) : []
                 let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
                 self.publish(try await document.perform(String(decoding: bytes, as: UTF8.self)))
                 if selectingAddedTrack { self.selectAddedRoots(previous: previousTracks) }
-                self.undoCount += 1
-                self.redoCount = 0
+                self.recordEdit(inputLength: inputLength)
                 return true
             } catch { self.report(error); return false }
         }
@@ -595,8 +614,7 @@ public final class ProjectController {
                 let report = try snapshot.historyReport()
                 if report.changed {
                     self.publish(snapshot)
-                    self.undoCount += 1
-                    self.redoCount = 0
+                    self.recordEdit()
                 }
                 return report
             } catch {
@@ -617,7 +635,7 @@ public final class ProjectController {
         let previous = selection
         trackSelection.reconcile(order: tracks.map(\.id))
         if selection != previous { noteFocus = nil; clipFocus = nil }
-        if let noteFocus { self.noteFocus = snapshot.pianoNote(noteFocus)?.id }
+        if let noteFocus, snapshot.pianoNote(noteFocus) == nil { self.noteFocus = nil }
         if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
         if !parameterStates.isEmpty || !openPluginWindows.isEmpty {
             // A removed or offline device has no running plugin to list.

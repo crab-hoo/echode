@@ -78,6 +78,11 @@ make debug-report
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
   一時パッケージを作る `scratch()` は使用前に同じパスを削除する。
+- **ASan の Swift 検査で `Status did not arrive`**:
+  2026-10-26 に `DevicePreparationTests` の状態待ちが 1 回期限切れとなり、同じバイナリの個別・全体再実行では再現しなかった。
+  原因は未確定で、ASan のメモリ診断とは区別する。`target/bridge/address/product/swift-tests.failed.log` を保持する。
+  第 2 デバイスの一覧、初期の出力状態、準備後の出力状態のどの待ちかを切り分け、タスクの取消と主スレッドの競合を調べる。
+  権限警告だけを原因と決めず、期限の延長や検査の無効化で合格にしない。個別確認後も正式な `make verify` を再実行する。
 - **基準コミット（`VERIFY_BASE`）エラー**:
   一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
 - **終了フック直後の不要な再実行**:
@@ -181,12 +186,19 @@ make debug-report
 
 - **ピアノロールの空白ドラッグで追加されない・開始位置が動く・取消後に追加される**:
   `PianoInsertion` の押下時の開始・カメラと、解放時の終端・音高を区別する。
-  開始の吸着は押下時、終端の吸着は解放時の Shift を使い、最短長は新規だけグリッド幅である。
-  単クリックはまだ追加しない。ダブルクリックの追加も解放時の確定へ揃えた。
+  開始の吸着は押下時、終端の吸着は解放時の Shift を使い、最短長は新規ドラッグだけグリッド幅である。
+  単クリックも記憶長で追加し、ダブルクリックの 2 回目は重ねない。3 pt 未満の移動は押下時の値を保つ。
   `piano-note-insert-ui` は実 View・製品ブリッジ・単一 Undo と保存、`piano-note-insert-cancel-ui` は下書きの破棄を切り分ける。
   仮表示はモデル ID のない `PianoRenderInput.insertion` であり、確定ノートや VoiceOver 要素へ混ぜない。
   古い描画・異なる配置での押下は受けず、文書・トラック・カメラの変更と終了後の解放も追加しない
   （[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
+
+- **入力長が別トラックへ伝わらない・Undo で変わらない・再読込後に変わる**:
+  `ProjectController.noteInput.length` が未指定なら現在のグリッド幅を使う。再オープンで未指定へ戻るのは正常である。
+  記憶後のクリックは短い長さも丸めず、ドラッグだけ新規のグリッド最短長を使う。
+  `piano-note-input-length-ui` で選択・伸縮・別トラック入力と Undo / Redo、`NoteInputHistoryTests` で履歴枠と応答順を区別する。
+  ノート以外の編集の記録も `recordEdit` を経由し、選択や背景保存では枠を増やしていないか確認する
+  （[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
 
 - **ピアノロールで延ばしたノートがクリップ端で切れる・移動すると消える**:
   ノート自体の `start` / `length` と配置の `start` / `length` / `offset` / `kind` を分けて確認する。
