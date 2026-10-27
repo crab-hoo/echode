@@ -862,6 +862,7 @@ class PolicyTests(unittest.TestCase):
                           "piano-note-selection-ui", "piano-note-selection-cancel-ui", "piano-note-selection-delete-ui", "piano-note-linked-delete-ui", "piano-velocity-lane-ui", "piano-velocity-lane-frame-ui", "piano-velocity-lane-cancel-ui", "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
+                          "journal-invariants", "journal-confirmed-edits",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
                           "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:
@@ -870,6 +871,21 @@ class PolicyTests(unittest.TestCase):
         recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("check_product_contracts.py", recipe)
         self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", recipe)
+
+    def test_journal_invariants_use_the_product_recovery_boundary(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        for name in ("journal-invariants", "journal-confirmed-edits"):
+            with self.subTest(contract=name):
+                contract = contracts[name]
+                self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                                 ("rust", "echode-history", ["--test", "audit_recovery"]))
+                self.assertTrue(contract["test"].startswith("audit_adv01_"))
+                fault = contract["negative_control"]
+                self.assertEqual(fault["file"], "crates/echode-history/src/document.rs")
+                self.assertIn("project.check_invariants()", fault["old"])
+        for path in ("crates/echode-history/src/document.rs",
+                     "crates/echode-history/tests/audit_recovery.rs"):
+            self.assertIn("check-product-contracts", self.selected(path))
 
     def test_parameter_contracts_cover_the_real_helper_and_the_panel(self):
         contracts = {c["id"]: c for c in self.policy["product_contracts"]}

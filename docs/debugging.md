@@ -317,9 +317,11 @@ make debug-report
 - **開き直すと確定済みの編集が消えている・古い状態で開く・開けない**:
   `DocumentHost::recovered_label` の基点のコミットと `refs/echode/autosave/main` の先端を比べ、親へ後退したかを確認する。
   先端が読めない原因は、オブジェクトの破損と、不変条件を破ったモデルのコミット（読込みで拒否される）を区別する。
-  後者は `journal.jsonl` の行の変更集合が `check_invariants` なしで再生された時に生じる。開いた直後のスナップショットの不変条件を残す。
-  debug ビルドでは最初の編集が `invariants.rs` の panic で文書スレッドを止める。
-  再現は `audit_adv01_*`（`make known-bugs`）、通知の欠如は ADV-02（[敵対的監査](reviews/2026-10-27-adversarial-audit.md)）。
+  破損ジャーナルは `journal seq <連番> violates model invariants: <理由>` でオープンを拒否する（[ADR 0180](decisions/0180-journal-replay-invariants.md)）。
+  `audit_adv01_*` は通常回帰で、先端なし・ありと、明示修復後に確定した編集の保持を検査する。
+  原本をコピーして保全し、連番・不変条件の理由・基点と先端を記録する。自動で行を削除したり、繰り返し保存して直そうとしない。
+  旧版では不正な状態をコミットし、debug では最初の編集が panic する経路もあった。
+  既に壊れたコミットの後退通知は未対応の ADV-02 である（[敵対的監査](reviews/2026-10-27-adversarial-audit.md)）。
 
 - **下部を開くと別のエディタが消える・高さが戻らない**:
   ⌥⌘3・4 は各エディタ、⌥⌘5 はアレンジ非表示の独立した切替である。

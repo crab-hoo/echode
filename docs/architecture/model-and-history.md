@@ -180,6 +180,8 @@ MySong.echode/
 - **自動保存**: `refs/echode/autosave/<オルタネイト>`（Phase 1 は `refs/echode/autosave/main`）。
   先端コミットの連番より後のジャーナル行を再生し、先端が無いパッケージは編集前に同期コミットする
   （[ADR 0009](../decisions/0009-package-autosave.md)、[ADR 0033](../decisions/0033-journal-log.md)、[ADR 0057](../decisions/0057-crash-recovery.md)）
+  再生する各行の適用後にモデルの不変条件を検査し、不成立なら連番と理由を返してオープンを拒否する。
+  完結した行を黙って切り捨てず、不正な状態を公開・自動保存しない（[ADR 0180](../decisions/0180-journal-replay-invariants.md)）。
   Git の初期化失敗中も終了要求を受け付ける。初回保存を拒否した後の破棄で待ち続けず、開く処理へエラーを返してパッケージのロックを解放する。
 - **Cmd+S と間引き**: `refs/heads/<オルタネイト>` の保存ポイントは間引かず、自動保存だけを `gix-pack` で間引く
   （[ADR 0046](../decisions/0046-history-thin.md)）

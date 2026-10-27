@@ -303,6 +303,7 @@ pub(crate) struct Recovered {
 }
 
 /// Loads the newest readable commit, then replays the contiguous journal suffix.
+/// Refuses recovery if any replayed transaction breaks the model invariants.
 pub fn recover(directory: &Path) -> Result<Project, PackageError> {
     Ok(recover_labeled(directory)?.project)
 }
@@ -1468,6 +1469,14 @@ fn replay_suffix(
         project = project
             .apply_changeset(&changes)
             .map_err(|error| PackageError::new(error.to_string()))?;
+        // A journal is external input, not a trusted in-memory undo step.
+        // Check each complete transaction before accepting any later line.
+        project.check_invariants().map_err(|error| {
+            PackageError::new(format!(
+                "journal seq {} violates model invariants: {error}",
+                line.seq
+            ))
+        })?;
     }
     Ok(project)
 }
