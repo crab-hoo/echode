@@ -314,6 +314,12 @@ make debug-report
   `could not write API reply` は応答送信の失敗であり、編集そのものの失敗とは限らない。
   `audit_cur04_an_unread_reply_releases_the_connection` は送信バッファを満たし、後続接続と編集の単一実行を通常回帰で確認する。
   編集が既に記録された可能性があるので、同じ編集を無条件に再送しない（[CUR-04](reviews/2026-10-25-code-audit.md#cur-04-api-の書込みにはタイムアウトがない)）。
+- **開き直すと確定済みの編集が消えている・古い状態で開く・開けない**:
+  `DocumentHost::recovered_label` の基点のコミットと `refs/echode/autosave/main` の先端を比べ、親へ後退したかを確認する。
+  先端が読めない原因は、オブジェクトの破損と、不変条件を破ったモデルのコミット（読込みで拒否される）を区別する。
+  後者は `journal.jsonl` の行の変更集合が `check_invariants` なしで再生された時に生じる。開いた直後のスナップショットの不変条件を残す。
+  debug ビルドでは最初の編集が `invariants.rs` の panic で文書スレッドを止める。
+  再現は `audit_adv01_*`（`make known-bugs`）、通知の欠如は ADV-02（[敵対的監査](reviews/2026-10-27-adversarial-audit.md)）。
 
 - **下部を開くと別のエディタが消える・高さが戻らない**:
   ⌥⌘3・4 は各エディタ、⌥⌘5 はアレンジ非表示の独立した切替である。
