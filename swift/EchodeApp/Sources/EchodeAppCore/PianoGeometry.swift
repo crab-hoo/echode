@@ -171,4 +171,8 @@ struct PianoRenderInput: Sendable {
     /// A new note has no model ID until its release is committed.
     var insertion: NoteGeometry? = nil
     var velocity: PianoVelocityPreview? = nil
+    var selection: Set<PianoNote.ID>? = nil
+    var marquee: CGRect? = nil
+
+    func isSelected(_ id: PianoNote.ID) -> Bool { selection?.contains(id) ?? (id == focus) }
 }

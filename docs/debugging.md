@@ -142,6 +142,14 @@ make debug-report
   `spike-arrange-frame` の `rulerMismatches` は帯と印の画素不一致、`maxHeaderLaneError` は上端補正後の左右の誤差である。
   `audio.status` のループがオンでも、終端以降へ置いた再生は通常進行する。
   ブロック処理で終端に着いた場合は次のブロックで戻るため、同じ値の `tick` でも位置移動と混同しない。
+- **ピアノロールの枠選択・削除が想定と違う**:
+  右ドラッグはノートグリッド内から始める。下部の棒・鍵盤・ルーラーからは始めず、枠は発音窓内の可視ノートとの部分交差を使う。
+  `PianoGridView.selectionPress` が仮の枠、`ProjectController.noteSelection` が確定選択である。
+  複数選択の時の `noteFocus == nil` は正常で、単一ノート欄や記憶値へ任意の代表を流さないための区別である。
+  Delete は `deleteNotes` の待機列の手番で全 ID を検証する。リンク配置の二重削除と、古いメニュー・旧文書の拒否を分けて調べる。
+  `piano-note-selection-ui`・`piano-note-selection-cancel-ui`・`piano-note-selection-delete-ui`・`piano-note-linked-delete-ui` を使う。
+  一括移動・伸縮・ベロシティ編集は未接続で、左押下が単一選択へ戻るのは現段階の制約である。
+  実画面の枠とメニュー、VoiceOver の操作感はユーザー確認とする（[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
 - **トラック切替でピアノロールの表示範囲が変わる**:
   文書内の共通カメラは `CanvasNavigationState.pianoCamera` で、トラック別の復元は行わない。
   切替先の既存選択への自動表示と、切替後の Tab・編集・再生ヘッド追従による移動を区別する。

@@ -201,7 +201,7 @@ struct PianoTests {
         let element = try #require(children.first as? PianoAccessibleNote)
         let label = try #require(element.accessibilityLabel())
         #expect(label.contains(noteName(note.pitch)) && label.contains(text("Start beat")))
-        #expect(element.accessibilityCustomActions()?.count == 5)
+        #expect(element.accessibilityCustomActions()?.count == 6)
         let initialFrame = element.accessibilityFrame()
         #expect(initialFrame == frame.layout.paneRect(NSRect(x: Double(note.x), y: Double(note.y),
             width: max(2, Double(note.width)), height: Double(note.height))))

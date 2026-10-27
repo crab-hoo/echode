@@ -182,7 +182,12 @@ Swift も `AudioState.opening` を受け取り、未取得のデバイス列は�
   - **移動・伸縮・右クリックメニュー**: 時間グリッド吸着（Shift で解除）、複数選択の相対移動と一括削除
     （[ノートの選択](../interaction-design.md#ノートの選択)）。
     単一ノートのドラッグは接続済み。Shift の吸着解除・最短 1 tick と、解放時の座標・修飾キーによる単一確定を使う
-    （[ADR 0167](../decisions/0167-piano-note-drag-snapping.md)）。複数選択と右クリックメニューは残る。
+    （[ADR 0167](../decisions/0167-piano-note-drag-snapping.md)）。
+    単一トラックの右ドラッグ枠選択・Command＋クリックの追加と解除・右クリック削除メニューを接続した。
+    選択集合は controller が保持し、複数選択の単一ノート欄・入力記憶への誤反映を防ぐ。
+    Delete は既存の削除をトランザクションへまとめ、リンクした同じノートを重複削除しない
+    （[ADR 0176](../decisions/0176-piano-note-selection-and-deletion.md)）。
+    一括移動・伸縮・複製移動は残り、通常の左押下は単一選択へ置き換えて既存の編集へ送る。
     ノートの時刻編集による固定窓の拡張は、描画側で窓を無視せずモデルへ反映する
     （[スマートクリップ](model-and-history.md#45-スマートクリップ)、[ADR 0168](../decisions/0168-note-edit-clip-growth.md)）。
   - **ベロシティ編集**: ノート上の Option＋上下ドラッグと下部ベロシティ欄の双方向接続、複数選択の同量増減

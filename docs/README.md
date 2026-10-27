@@ -100,6 +100,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - ピアノロールの空白ドラッグによる追加・解放時の単一確定・取消と新規の最短長:
   [ADR 0171](decisions/0171-piano-blank-drag-insertion.md)。
   単クリックの入力・共有する入力長・Undo / Redo と再オープン時の初期化: [ADR 0172](decisions/0172-piano-click-and-input-length.md)。
+- ピアノロールの右ドラッグ枠選択・Command の追加と解除・右メニューと一括削除:
+  [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)。
 - 単一ノートの Option＋上下ドラッグ・幾何を保つベロシティ専用アクションと全トラック共通の入力値:
   [ADR 0173](decisions/0173-piano-note-velocity.md)。
   下部の棒と全音高の時刻内表示・共通仮表示・単一確定・読み上げの操作: [ADR 0175](decisions/0175-piano-velocity-lane.md)。

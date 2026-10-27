@@ -64,7 +64,7 @@ struct PianoFrame: Sendable {
         for note in notes {
             instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
                                             max(2, note.width), max(2, note.height - 2)),
-                                      color: note.id == piano.focus ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
+                                      color: piano.isSelected(note.id) ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
             let velocity = velocity(for: note)
             instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + note.height - 3,
                                             max(0, note.width) * Float(velocity) / 127, 2),
@@ -75,6 +75,18 @@ struct PianoFrame: Sendable {
                              Float(origin.y + (camera.topPitch - Double(g.pitch)) * camera.pixelsPerPitch + 1),
                              Float(Double(g.length) / 705_600 * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))
             instances.append(instance(rect, color: SIMD4(0.96, 0.87, 0.54, 1)))
+        }
+        if let marquee = piano.marquee {
+            let r = marquee.intersection(layout.grid)
+            if !r.isNull, !r.isEmpty {
+                let color = SIMD4<Float>(0.70, 0.84, 1, 1)
+                for edge in [CGRect(x: r.minX, y: r.minY, width: r.width, height: 1),
+                             CGRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1),
+                             CGRect(x: r.minX, y: r.minY, width: 1, height: r.height),
+                             CGRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height)] {
+                    instances.append(instance(SIMD4(Float(edge.minX), Float(edge.minY), Float(edge.width), Float(edge.height)), color: color))
+                }
+            }
         }
         if let x = playheadX {
             instances.append(instance(SIMD4(Float(x), Float(origin.y), 2, Float(layout.grid.height)),
@@ -92,11 +104,11 @@ struct PianoFrame: Sendable {
         let bars = velocityBars
         // Paint every stem before the caps so chord tones remain distinguishable.
         for cap in [false, true] {
-            for bar in bars.filter({ $0.note.id != piano.focus }) + bars.filter({ $0.note.id == piano.focus }) {
+            for bar in bars.filter({ !piano.isSelected($0.note.id) }) + bars.filter({ piano.isSelected($0.note.id) }) {
                 let r = (cap ? bar.cap : bar.stem).intersection(rect)
                 guard !r.isNull, !r.isEmpty else { continue }
                 result.append(instance(SIMD4(Float(r.minX), Float(r.minY), Float(r.width), Float(r.height)),
-                                       color: bar.note.id == piano.focus ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
+                                       color: piano.isSelected(bar.note.id) ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
             }
         }
         return result

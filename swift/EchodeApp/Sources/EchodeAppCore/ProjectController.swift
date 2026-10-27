@@ -36,11 +36,17 @@ public final class ProjectController {
     /// Shared by all piano tracks; never serialized into the project.
     var noteInput = NoteInputLength()
     var noteVelocity = NoteInputVelocity()
+    private(set) var noteSelection: Set<PianoNote.ID> = []
     public var noteFocus: PianoNote.ID? {
-        didSet {
-            if let noteFocus, noteFocus.track != selection || snapshot?.pianoNote(noteFocus) == nil { self.noteFocus = nil }
-            if let noteFocus, let note = snapshot?.pianoNote(noteFocus) { noteInput.remember(note.length) }
-            if let noteFocus, let note = snapshot?.pianoNote(noteFocus) { noteVelocity.remember(Int(note.velocity >> 9)) }
+        get { noteSelection.count == 1 ? noteSelection.first : nil }
+        set { selectNotes(Set(newValue.map { [$0] } ?? [])) }
+    }
+
+    func selectNotes(_ ids: Set<PianoNote.ID>) {
+        noteSelection = ids.filter { $0.track == selection && snapshot?.pianoNote($0) != nil }
+        if let noteFocus, let note = snapshot?.pianoNote(noteFocus) {
+            noteInput.remember(note.length)
+            noteVelocity.remember(Int(note.velocity >> 9))
         }
     }
     public var errorMessage: String?
@@ -348,8 +354,21 @@ public final class ProjectController {
 
     @discardableResult
     public func deleteNote(_ id: PianoNote.ID, documentID: UUID? = nil) async -> Bool {
-        guard snapshot?.pianoNote(id) != nil else { return false }
-        return await edit(["type": "note.delete", "track": id.track.uuidString, "note": id.note.uuidString], documentID: documentID)
+        await deleteNotes([id], documentID: documentID)
+    }
+
+    @discardableResult
+    func deleteNotes(_ ids: Set<PianoNote.ID>, documentID: UUID? = nil) async -> Bool {
+        await performEdit({ [self] in
+            guard !ids.isEmpty, ids.allSatisfy({ snapshot?.pianoNote($0) != nil }) else { return nil }
+            // Linked placements can expose the same content note more than once.
+            // note.delete addresses the content note, not its placement window.
+            var seen: Set<UUID> = []
+            return ids.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id -> [String: Any]? in
+                guard seen.insert(id.note).inserted else { return nil }
+                return ["type": "note.delete", "track": id.track.uuidString, "note": id.note.uuidString]
+            }
+        }, documentID: documentID)
     }
 
     public func undo() async {
@@ -653,7 +672,7 @@ public final class ProjectController {
         let previous = selection
         trackSelection.reconcile(order: tracks.map(\.id))
         if selection != previous { noteFocus = nil; clipFocus = nil }
-        if let noteFocus, snapshot.pianoNote(noteFocus) == nil { self.noteFocus = nil }
+        noteSelection = noteSelection.filter { $0.track == selection && snapshot.pianoNote($0) != nil }
         if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
         if !parameterStates.isEmpty || !openPluginWindows.isEmpty {
             // A removed or offline device has no running plugin to list.

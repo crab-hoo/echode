@@ -179,6 +179,11 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 ピアノロールの共通カメラは `CanvasNavigationState.pianoCamera`、復元と文書の所有確認は `PianoGridView` に置く。
 切替・再生成・旧文書の拒否の回帰は `PianoViewportTests.swift`（[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
 
+複数選択の集合は `ProjectController.noteSelection`、右ドラッグの交差判定は `PianoSelection.swift` に置く。
+入力・右メニュー・取消は `PianoGridView`、一括削除は `ProjectController.deleteNotes` の単一トランザクションを通す。
+回帰は `PianoSelectionTests.swift`・`PianoSelectionDeletionTests.swift`
+（[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
+
 アレンジの音高表示の音域と縦変換は `crates/echode-draw/src/query.rs` の `PitchRange`・`PitchLayout` に置く。
 製品フレームと VoiceOver 用矩形の回帰は `ArrangePitchTests.swift`、可視列は `tests/arrange_pitch.rs` を使う。
 問い合わせだけの計測は `make spike-arrange-query`（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。

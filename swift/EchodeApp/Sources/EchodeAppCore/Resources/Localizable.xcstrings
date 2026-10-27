@@ -7,6 +7,18 @@
         "ja": { "stringUnit": { "state": "translated", "value": "再生ヘッドに追従" } }
       }
     },
+    "Toggle Note Selection": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Toggle Note Selection" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ノートの選択を追加・解除" } }
+      }
+    },
+    "Delete Notes": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Delete Notes" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "選択ノートを削除" } }
+      }
+    },
     "Velocity": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Velocity" } },
@@ -1288,13 +1300,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Click to insert with remembered length · Drag empty space to draw a note · Drag notes to move · Drag edges to resize · Drag lower lane bars or Option-drag notes vertically for velocity"
+            "value": "Click to insert with remembered length · Drag empty space to draw a note · Right-drag to select notes · Command-click to toggle selection · Delete to remove selection · Drag a note to select and move it · Drag edges to resize · Drag lower lane bars or Option-drag notes vertically for velocity"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · ノートをドラッグして移動 · 端をドラッグして長さ変更 · 下部の棒またはノートの Option＋上下ドラッグでベロシティ変更"
+            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · 右ドラッグで枠選択 · Command＋クリックで選択切替 · Delete で選択全体を削除 · ノートをドラッグして単一選択・移動 · 端をドラッグして長さ変更 · 下部の棒またはノートの Option＋上下ドラッグでベロシティ変更"
           }
         }
       }
@@ -1304,13 +1316,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tab / Shift-Tab: next / previous note. Arrows: pitch / time. Shift + left / right: length. Return: insert. Delete: remove. Escape: cancel drag."
+            "value": "Tab / Shift-Tab: next / previous note. Arrows: pitch / time. Shift + left / right: length. Return: insert. Delete: remove selected notes. Escape: cancel drag."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tab / Shift-Tab: 次 / 前のノート。矢印: 音高 / 時間を変更。Shift と左右: 長さ変更。Return: 挿入。Delete: 削除。Escape: ドラッグをキャンセル。"
+            "value": "Tab / Shift-Tab: 次 / 前のノート。矢印: 音高 / 時間を変更。Shift と左右: 長さ変更。Return: 挿入。Delete: 選択ノートを一括削除。Escape: ドラッグをキャンセル。"
           }
         }
       }
