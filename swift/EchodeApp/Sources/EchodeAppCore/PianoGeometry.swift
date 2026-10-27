@@ -173,6 +173,7 @@ struct PianoRenderInput: Sendable {
     var velocity: PianoVelocityPreview? = nil
     var selection: Set<PianoNote.ID>? = nil
     var marquee: CGRect? = nil
+    var move: PianoMovePreview? = nil
 
     func isSelected(_ id: PianoNote.ID) -> Bool { selection?.contains(id) ?? (id == focus) }
 }

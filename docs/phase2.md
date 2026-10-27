@@ -256,7 +256,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   - 単一ノートの移動・左右端の伸縮は Shift で吸着を解除する。解放時の座標・修飾キーで確定し、最短長は 1 tick とする
     （[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
     必須契約 `piano-note-drag-ui` は実 View と製品ブリッジで、単一 Undo / Redo・保存再読込、ID とベロシティ保持を確認する。
-    複数ノートの編集は残り、実画面はユーザー確認待ちである。
+    複数ノートの一括伸縮は残り、実画面はユーザー確認待ちである。
   - 空白の左ドラッグは、開始位置を固定して横に長さ・縦に音高を調整し、解放時に `note.insert` を 1 回送る。
     Shift は開始・終端の吸着を外すが、新規ドラッグの最短長は現在のグリッド幅とする。
     単クリックも解放時に記憶長で追加し、ダブルクリックの 2 回目は追加を重ねない。
@@ -285,8 +285,11 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     実画面・VoiceOver・聴感はユーザー確認待ちである。
   - 単一トラックの右ドラッグ枠選択と Command＋クリックの追加・解除、選択を保持する右メニューと一括削除を接続した。
     `piano-note-selection-ui`・`piano-note-selection-cancel-ui`・`piano-note-selection-delete-ui`・`piano-note-linked-delete-ui` で確認する。
-    一括移動・伸縮・複製移動は残る。ベロシティ以外の通常の左押下は単一選択へ戻して既存の編集を行う
-    （[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。実画面と VoiceOver はユーザー確認待ちである。
+    選択済みの本体ドラッグは選択全体の移動へ接続した（[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
+    共通の時刻差・音程差・上下限制限、解放時の吸着と Shift、入力記憶の保持と単一 Undo を持つ。
+    `piano-note-move-batch-ui`・`piano-note-move-batch-targets-ui`・`piano-note-move-batch-cancel-ui` で確認する。
+    一括伸縮・複製移動・矢印の一括移動は残る。端の左押下は単一選択へ戻して既存の伸縮を行う。
+    選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)。実画面と VoiceOver はユーザー確認待ちである。
   - ドラム入力：音色名の行から親フォルダの MIDI へ入力し、通常のパターン複製ではノートの中身を独立させる。
 
 ### P2-08: 書出しとプロジェクト管理

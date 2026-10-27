@@ -186,6 +186,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 一括ベロシティの対象検証とアクション生成は `NoteVelocityBatch.swift`、共通差分と仮表示は `NoteVelocity.swift` に置く。
 回帰は `NoteVelocityBatchTests.swift`・`NoteVelocityBatchBoundaryTests.swift`
 （[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
+一括移動の対象検証と共通差分・仮表示は `PianoMoveBatch.swift`、確定は `ProjectController.moveNotes` に置く。
+回帰は `PianoMoveBatchTests.swift`・`PianoMoveBatchBoundaryTests.swift`・`PianoMoveBatchCancellationTests.swift`
+（[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
 
 アレンジの音高表示の音域と縦変換は `crates/echode-draw/src/query.rs` の `PitchRange`・`PitchLayout` に置く。
 製品フレームと VoiceOver 用矩形の回帰は `ArrangePitchTests.swift`、可視列は `tests/arrange_pitch.rs` を使う。

@@ -80,6 +80,7 @@ check-base:
 # Blank piano-grid clicks/drags, remembered input length with Undo/Redo, release geometry and cancellation share the native UI gate.
 # Shared piano viewports across track switches and document-lifetime guards use this native UI gate too.
 # Right-drag note selection, Command toggles, atomic deletion and linked-content deduplication also use this gate.
+# Group note movement, common bounds, linked-content writes and gesture cancellation share this gate.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

@@ -111,6 +111,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   [ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md)。
 - 選択済みノートと下部の棒のベロシティ一括調整・共通上下限・共有内容の重複排除と単一 Undo:
   [ADR 0177](decisions/0177-piano-batch-note-velocity.md)。
+- 選択済みノート本体の一括移動・共通時刻差と音程差・画面外を含む上下限制限・共有内容の単一編集と取消:
+  [ADR 0178](decisions/0178-piano-batch-note-movement.md)。
 - ピアノロールのトラック切替・再生成で共有する時間・音域・倍率と、別文書での初期化:
   [ADR 0174](decisions/0174-shared-piano-viewport.md)。
 - ペインのリサイズ中の伸縮とヘッダ幅の保持: [ADR 0144](decisions/0144-unscaled-canvas-resizing.md)。

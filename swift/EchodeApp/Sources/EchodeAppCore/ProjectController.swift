@@ -349,6 +349,11 @@ public final class ProjectController {
     }
 
     @discardableResult
+    func moveNotes(_ change: PianoMoveChange, documentID: UUID? = nil) async -> Bool {
+        await performEdit({ [self] in change.actions(in: snapshot) }, documentID: documentID)
+    }
+
+    @discardableResult
     public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry, documentID: UUID? = nil) async -> Bool {
         await performEdit({ [self] in
             guard let before = snapshot?.pianoNote(id), geometry.isValid,
