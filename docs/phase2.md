@@ -279,10 +279,13 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     `piano-note-velocity-ui`・`piano-note-velocity-cancel-ui` と `note-velocity-model` が実入力・取消・履歴・共有内容と保存を検査する。
     下部の棒は同じ編集へ接続した（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
     `piano-velocity-lane-ui`・`piano-velocity-lane-frame-ui`・`piano-velocity-lane-cancel-ui` と GPU 読戻しで確認する。
-    複数ノートの一括変更は未接続で、実画面・VoiceOver・聴感はユーザー確認待ちである。
+    選択全体の同量増減も、両入口から共通の上下限制限・単一 Undo・入力値の記憶へ接続した
+    （[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
+    `piano-velocity-batch-ui`・`piano-velocity-batch-targets-ui`・`piano-velocity-batch-cancel-ui` で検査する。
+    実画面・VoiceOver・聴感はユーザー確認待ちである。
   - 単一トラックの右ドラッグ枠選択と Command＋クリックの追加・解除、選択を保持する右メニューと一括削除を接続した。
     `piano-note-selection-ui`・`piano-note-selection-cancel-ui`・`piano-note-selection-delete-ui`・`piano-note-linked-delete-ui` で確認する。
-    一括移動・伸縮・複製移動・ベロシティ変更は残る。通常の左押下は単一選択へ戻して既存の編集を行う
+    一括移動・伸縮・複製移動は残る。ベロシティ以外の通常の左押下は単一選択へ戻して既存の編集を行う
     （[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。実画面と VoiceOver はユーザー確認待ちである。
   - ドラム入力：音色名の行から親フォルダの MIDI へ入力し、通常のパターン複製ではノートの中身を独立させる。
 

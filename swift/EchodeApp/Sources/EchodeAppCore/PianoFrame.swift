@@ -238,7 +238,7 @@ struct PianoFrame: Sendable {
     }
 
     func velocity(for note: PianoNote) -> Int {
-        piano.velocity.flatMap { $0.id == note.id ? $0.value : nil } ?? Int(note.velocity >> 9)
+        piano.velocity?.value(for: note) ?? Int(note.velocity >> 9)
     }
 
     private var beats: ClosedRange<Int> {

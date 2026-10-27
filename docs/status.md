@@ -107,14 +107,14 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     単一ノートの Option＋上下ドラッグも、幾何を変えないベロシティ専用編集・仮表示・解放時の単一確定へ接続した。
     単一選択と調整の値を全トラックの次回入力へ引き継ぎ、Undo / Redo・保存を持つ。
     下部の棒も同じ値と仮表示・単一確定へ接続した（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
-    複数ノートの一括変更は残り、実画面・VoiceOver・聴感はユーザー確認待ちである
-    （[ADR 0173](decisions/0173-piano-note-velocity.md)）。
+    選択した複数ノートも、同量増減・強弱差を保つ上下限・単一 Undo・つかんだ音の入力値記憶へ接続した
+    （[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。実画面・VoiceOver・聴感はユーザー確認待ちである。
     編集トラックの切替とエディタの再生成では、時間・音域・両軸の倍率を文書内で共有する。
     切替先の選択ノートへ自動移動せず、別文書では初期化する（[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
     実画面と VoiceOver はユーザー確認待ちである。
     単一トラック内の右ドラッグ枠選択・Command＋クリックの追加と解除・右クリックの削除メニューも接続した。
     Delete は選択全体を単一 Undo で削除し、リンク配置の中身を重複して削除しない。
-    複数選択の移動・伸縮・ベロシティ変更は残り、実画面と VoiceOver はユーザー確認待ちである
+    複数選択の移動・伸縮は残り、実画面と VoiceOver はユーザー確認待ちである
     （[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
 
 ## 利用時に残る制約

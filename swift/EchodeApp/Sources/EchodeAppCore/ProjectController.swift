@@ -43,11 +43,13 @@ public final class ProjectController {
     }
 
     func selectNotes(_ ids: Set<PianoNote.ID>) {
+        let previous = noteSelection
         noteSelection = ids.filter { $0.track == selection && snapshot?.pianoNote($0) != nil }
         if let noteFocus, let note = snapshot?.pianoNote(noteFocus) {
             noteInput.remember(note.length)
             noteVelocity.remember(Int(note.velocity >> 9))
         }
+        if noteSelection != previous, noteFocus == nil { noteVelocity.invalidate() }
     }
     public var errorMessage: String?
     public var clipFocus: UUID? {
@@ -337,6 +339,13 @@ public final class ProjectController {
             return ["type": "note.velocity", "track": id.track.uuidString, "clip": id.placement.uuidString,
                     "note": id.note.uuidString, "velocity": velocity]
         }, documentID: documentID, rememberingVelocity: { velocity })
+    }
+
+    @discardableResult
+    func setNoteVelocities(_ change: PianoVelocityChange, documentID: UUID? = nil) async -> Bool {
+        await performEdit({ [self] in
+            change.actions(in: snapshot)
+        }, documentID: documentID, rememberingVelocity: { change.anchorValue })
     }
 
     @discardableResult

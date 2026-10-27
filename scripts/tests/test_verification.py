@@ -559,6 +559,21 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_batch_velocity_contracts_cover_group_limits_targets_memory_and_cancellation(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, suite, test in (
+                ("piano-velocity-batch-ui", "NoteVelocityBatchTests", "contractSelectedVelocityDragsPreserveDifferencesAndHistory"),
+                ("piano-velocity-batch-targets-ui", "NoteVelocityBatchBoundaryTests", "contractLinkedVelocityBatchesValidateAllTargetsAndAccessibility"),
+                ("piano-velocity-batch-cancel-ui", "NoteVelocityBatchBoundaryTests", "contractBatchVelocityGesturesCancelOnSelectionChanges")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"], contract["test"]), ("swift", suite, test))
+            for fault in contract.get("negative_controls", [contract.get("negative_control")]):
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("Sources/EchodeAppCore/NoteVelocityBatch.swift", "Tests/EchodeAppTests/NoteVelocityBatchTests.swift",
+                       "Tests/EchodeAppTests/NoteVelocityBatchBoundaryTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected("swift/EchodeApp/" + source))
+
     def test_piano_note_bounds_contract_covers_model_and_product_frame(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         ui, model = contracts["piano-note-clip-bounds-ui"], contracts["piano-note-clip-bounds"]
@@ -810,6 +825,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
+                          "piano-velocity-batch-ui", "piano-velocity-batch-targets-ui", "piano-velocity-batch-cancel-ui",
                           "piano-note-selection-ui", "piano-note-selection-cancel-ui", "piano-note-selection-delete-ui", "piano-note-linked-delete-ui", "piano-velocity-lane-ui", "piano-velocity-lane-frame-ui", "piano-velocity-lane-cancel-ui", "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",

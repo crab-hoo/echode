@@ -176,7 +176,7 @@ spike-render:
 check-bridge:
 	bash scripts/spike-bridge.sh
 
-# Product Swift wrapper, piano gestures and note/lower-lane velocity/history, note selection and batch deletion. No timing assertions.
+# Product Swift wrapper, piano gestures, single/batch velocity, note selection and batch deletion. No timing assertions.
 check-shell:
 	bash scripts/check-shell.sh
 

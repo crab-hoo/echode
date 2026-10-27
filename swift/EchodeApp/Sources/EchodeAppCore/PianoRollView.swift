@@ -25,6 +25,7 @@ struct PianoCanvas: NSViewRepresentable {
     var onManualScroll: (() -> Void)? = nil
     var inputLength: () -> Int64? = { nil }
     var velocity: (PianoNote.ID, Int) -> Void = { _, _ in }
+    var velocities: ((PianoVelocityChange) -> Void)? = nil
     var selection: Set<PianoNote.ID>? = nil
     var selectNotes: ((Set<PianoNote.ID>) -> Void)? = nil
     var deleteNotes: ((Set<PianoNote.ID>) -> Void)? = nil
@@ -39,6 +40,7 @@ struct PianoCanvas: NSViewRepresentable {
         view.grid.inputLength = inputLength
         view.grid.onEdit = edit
         view.grid.onVelocity = velocity
+        view.grid.onVelocities = velocities
         view.grid.onDelete = delete
         view.grid.onSetStart = setStart
         view.grid.setStart(start)
@@ -120,6 +122,7 @@ final class PianoGridView: NSView {
     var onInsert: ((Int, Double, Double) -> Void)?
     var onEdit: ((PianoNote.ID, NoteGeometry) -> Void)?
     var onVelocity: ((PianoNote.ID, Int) -> Void)?
+    var onVelocities: ((PianoVelocityChange) -> Void)?
     var onDelete: ((PianoNote.ID) -> Void)?
     var onSelection: ((Set<PianoNote.ID>) -> Void)?
     var onDeleteNotes: ((Set<PianoNote.ID>) -> Void)?
@@ -202,6 +205,7 @@ final class PianoGridView: NSView {
         if self.track != track { accessible = [:]; velocityAccessibility.clear() }
         if changed { elements = []; submittedFrame = nil }
         let selected = (selection ?? Set(focus.map { [$0] } ?? [])).filter { $0.track == track && snapshot.pianoNote($0) != nil }
+        if selectedNotes != selected { velocityGesture = nil; velocityPreview = nil }
         let needsRefresh = changed || selectedNotes != selected || self.focus != focus || self.key != key || self.busy != busy
         self.snapshot = snapshot; self.track = track; self.key = key; self.busy = busy
         selectedNotes = selected
@@ -278,9 +282,7 @@ final class PianoGridView: NSView {
             cancelGesture()
             if let hit = submittedFrame.velocityLane.hit(at: panePoint, bars: submittedFrame.velocityBars, focus: focus) {
                 if event.modifierFlags.contains(.command) { toggleSelection(hit); return }
-                select(hit)
-                velocityGesture = PianoVelocityGesture(id: hit.id, original: Int(hit.velocity >> 9),
-                    y: pianoLayout.gridPoint(panePoint).y, pointsPerStep: submittedFrame.velocityLane.span / 127)
+                beginVelocity(hit, y: pianoLayout.gridPoint(panePoint).y, pointsPerStep: submittedFrame.velocityLane.span / 127)
             }
             return
         }
@@ -290,12 +292,12 @@ final class PianoGridView: NSView {
         caretTick = max(0, camera.tick(at: point.x) ?? 0); caretPitch = camera.pitch(at: point.y)
         if let hit = elements.last(where: { NSRect(x: Double($0.x), y: Double($0.y), width: max(2, Double($0.width)), height: Double($0.height)).contains(point) }) {
             if event.modifierFlags.contains(.command) { cancelGesture(); toggleSelection(hit); return }
-            select(hit)
             if event.modifierFlags.contains(.option), !event.modifierFlags.contains(.command) {
                 gesture = nil; preview = nil
-                velocityGesture = PianoVelocityGesture(id: hit.id, original: Int(hit.velocity >> 9), y: point.y)
+                beginVelocity(hit, y: point.y)
                 return
             }
+            select(hit)
             let start = (Double(hit.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
             let end = start + Double(hit.length) / 705_600 * camera.pixelsPerBeat
             let mode = PianoGesture.mode(at: point.x, start: start, end: end)
@@ -337,7 +339,7 @@ final class PianoGridView: NSView {
         if let velocityGesture {
             let finished = velocityPreview == nil ? nil : velocityGesture.preview(y: pianoLayout.gridPoint(convert(event.locationInWindow, from: nil)).y)
             cancelGesture()
-            if let finished, finished.value != velocityGesture.original, !busy { onVelocity?(finished.id, finished.value) }
+            if let finished { _ = commitVelocity(finished, gesture: velocityGesture) }
             return
         }
         if var press = rulerPress {
@@ -369,6 +371,32 @@ final class PianoGridView: NSView {
         cancelGesture()
         if let finished, finished.geometry != original, !busy { onEdit?(finished.id, finished.geometry) }
     }
+    private func beginVelocity(_ note: PianoNote, y: Double, pointsPerStep: Double = 1) {
+        let grouped = selectedNotes.count > 1 && selectedNotes.contains(note.id)
+        if !grouped { select(note) }
+        var originals: [PianoNote.ID: UInt32] = [:]
+        if grouped {
+            for id in selectedNotes {
+                guard let current = snapshot?.pianoNote(id) else { return }
+                originals[id] = current.velocity
+            }
+        }
+        velocityGesture = PianoVelocityGesture(id: note.id, original: Int(note.velocity >> 9), y: y,
+                                               pointsPerStep: pointsPerStep, originals: originals)
+    }
+    @discardableResult
+    private func commitVelocity(_ finished: PianoVelocityPreview, gesture: PianoVelocityGesture) -> Bool {
+        guard !busy, finished.value != gesture.original else { return false }
+        if gesture.originals.isEmpty {
+            guard let onVelocity else { return false }
+            onVelocity(finished.id, finished.value)
+        } else {
+            guard let onVelocities else { return false }
+            onVelocities(PianoVelocityChange(anchor: finished.id, originals: gesture.originals,
+                                             delta: finished.value - gesture.original))
+        }
+        return true
+    }
     private func notePreview(with event: NSEvent) -> PianoPreview? {
         guard let gesture else { return nil }
         let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
@@ -399,6 +427,7 @@ final class PianoGridView: NSView {
         return true
     }
     private func replaceSelection(_ ids: Set<PianoNote.ID>) {
+        if ids != selectedNotes { velocityGesture = nil; velocityPreview = nil }
         selectedNotes = ids.filter { $0.track == track && snapshot?.pianoNote($0) != nil }
         focus = selectedNotes.count == 1 ? selectedNotes.first : nil
         if let onSelection { onSelection(selectedNotes) } else { onSelect?(focus) }
@@ -602,7 +631,11 @@ final class PianoGridView: NSView {
                 guard let self, !self.busy, self.snapshot === submittedFrame.input.snapshot,
                       self.track == id.track, let note = self.snapshot?.pianoNote(id),
                       Int(note.velocity >> 9) != value else { return false }
-                self.select(note); self.onVelocity?(id, value); return true
+                self.beginVelocity(note, y: 0)
+                guard let gesture = self.velocityGesture else { return false }
+                let finished = gesture.preview(y: Double(gesture.original - value))
+                self.cancelGesture()
+                return finished.map { self.commitVelocity($0, gesture: gesture) } ?? false
             })
         return children + [lane]
     }

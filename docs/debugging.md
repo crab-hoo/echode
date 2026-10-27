@@ -148,8 +148,15 @@ make debug-report
   複数選択の時の `noteFocus == nil` は正常で、単一ノート欄や記憶値へ任意の代表を流さないための区別である。
   Delete は `deleteNotes` の待機列の手番で全 ID を検証する。リンク配置の二重削除と、古いメニュー・旧文書の拒否を分けて調べる。
   `piano-note-selection-ui`・`piano-note-selection-cancel-ui`・`piano-note-selection-delete-ui`・`piano-note-linked-delete-ui` を使う。
-  一括移動・伸縮・ベロシティ編集は未接続で、左押下が単一選択へ戻るのは現段階の制約である。
+  一括移動・伸縮は未接続で、ベロシティ以外の通常の左押下が単一選択へ戻るのは現段階の制約である。
   実画面の枠とメニュー、VoiceOver の操作感はユーザー確認とする（[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
+- **複数選択のベロシティが動かない・強弱差が変わる**:
+  選択済みのノートを Option ドラッグ、または選択済みの棒をドラッグする。未選択の押下は単一選択になる。
+  差分は選択全体の最小・最大値で制限し、どれかが 0／127 に達したら全体が止まる。両端の値を含む時は動かないのが正常である。
+  `PianoVelocityGesture.originals` は押下時の全対象、`PianoVelocityPreview.values` は共有ノート ID ごとの仮の値である。
+  `PianoVelocityChange.actions` は待機列の手番で存在と元の保存値を検証し、1 つでも古ければ全体を拒否する。
+  取消と古い対象の拒否、共通上下限、入力値だけの応答の世代を `piano-velocity-batch-ui`・`piano-velocity-batch-targets-ui`・`piano-velocity-batch-cancel-ui` で区別する。
+  入力長は変えず、入力ベロシティだけがつかんだ音の変更後の値になる（[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
 - **トラック切替でピアノロールの表示範囲が変わる**:
   文書内の共通カメラは `CanvasNavigationState.pianoCamera` で、トラック別の復元は行わない。
   切替先の既存選択への自動表示と、切替後の Tab・編集・再生ヘッド追従による移動を区別する。
