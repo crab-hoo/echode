@@ -106,7 +106,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。複数ノートの一括編集は未接続で、実画面の操作感はユーザー確認待ちである。
     単一ノートの Option＋上下ドラッグも、幾何を変えないベロシティ専用編集・仮表示・解放時の単一確定へ接続した。
     単一選択と調整の値を全トラックの次回入力へ引き継ぎ、Undo / Redo・保存を持つ。
-    下部レーンと複数ノートの一括変更は残り、実画面・VoiceOver・聴感はユーザー確認待ちである
+    下部の棒も同じ値と仮表示・単一確定へ接続した（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
+    複数ノートの一括変更は残り、実画面・VoiceOver・聴感はユーザー確認待ちである
     （[ADR 0173](decisions/0173-piano-note-velocity.md)）。
     編集トラックの切替とエディタの再生成では、時間・音域・両軸の倍率を文書内で共有する。
     切替先の選択ノートへ自動移動せず、別文書では初期化する（[ADR 0174](decisions/0174-shared-piano-viewport.md)）。

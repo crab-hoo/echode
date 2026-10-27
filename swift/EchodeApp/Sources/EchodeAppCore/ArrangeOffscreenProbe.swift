@@ -189,7 +189,7 @@ func renderOffscreen(_ frame: ArrangeFrame, painter: ArrangePainter, device: any
 
 func renderOffscreen(_ frame: PianoFrame, painter: ArrangePainter, device: any MTLDevice,
                      queue: any MTLCommandQueue, size: CGSize? = nil) throws -> CanvasReadback {
-    try renderOffscreen(input: frame.input, timeline: frame.gridInstances, headers: frame.degreeInstances + frame.keyboardInstances + frame.rulerInstances,
+    try renderOffscreen(input: frame.input, timeline: frame.gridInstances, headers: frame.degreeInstances + frame.keyboardInstances + frame.rulerInstances + frame.velocityInstances,
                         frame: nil, piano: frame, painter: painter, device: device, queue: queue, size: size)
 }
 

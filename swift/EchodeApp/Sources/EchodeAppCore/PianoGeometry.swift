@@ -37,7 +37,9 @@ struct PianoLayout: Sendable, Equatable {
     var keyboardWidth: Double { min(44, max(0, width - degreeWidth)) }
     var rulerHeight: Double { min(24, height) }
     var gridOrigin: CGPoint { CGPoint(x: degreeWidth + keyboardWidth, y: rulerHeight) }
-    var grid: CGRect { CGRect(origin: gridOrigin, size: CGSize(width: max(0, width - gridOrigin.x), height: max(0, height - rulerHeight))) }
+    var velocityHeight: Double { min(72, max(0, height - rulerHeight) / 3) }
+    var grid: CGRect { CGRect(origin: gridOrigin, size: CGSize(width: max(0, width - gridOrigin.x), height: max(0, height - rulerHeight - velocityHeight))) }
+    var velocity: CGRect { CGRect(x: gridOrigin.x, y: grid.maxY, width: grid.width, height: velocityHeight) }
     var keyboard: CGRect { CGRect(x: degreeWidth, y: rulerHeight, width: keyboardWidth, height: grid.height) }
     var degrees: CGRect { CGRect(x: 0, y: rulerHeight, width: degreeWidth, height: grid.height) }
     var ruler: CGRect { CGRect(x: gridOrigin.x, y: 0, width: grid.width, height: rulerHeight) }

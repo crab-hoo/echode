@@ -1288,13 +1288,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Click to insert with remembered length · Drag empty space to draw a note · Drag notes to move · Drag edges to resize · Option-drag vertically for velocity"
+            "value": "Click to insert with remembered length · Drag empty space to draw a note · Drag notes to move · Drag edges to resize · Drag lower lane bars or Option-drag notes vertically for velocity"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · ノートをドラッグして移動 · 端をドラッグして長さ変更 · Option＋上下ドラッグでベロシティ変更"
+            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · ノートをドラッグして移動 · 端をドラッグして長さ変更 · 下部の棒またはノートの Option＋上下ドラッグでベロシティ変更"
           }
         }
       }

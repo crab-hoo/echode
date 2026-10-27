@@ -277,7 +277,9 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   - ベロシティ：ノート上の Option＋上下ドラッグと下部レーンの両方から編集し、複数選択は同じ差分で相対関係を保つ（[ベロシティの編集](interaction-design.md#ベロシティの編集)）。
     単一ノート上の Option＋上下ドラッグと入力値の共有は接続した（[ADR 0173](decisions/0173-piano-note-velocity.md)）。
     `piano-note-velocity-ui`・`piano-note-velocity-cancel-ui` と `note-velocity-model` が実入力・取消・履歴・共有内容と保存を検査する。
-    下部レーン・複数ノートの一括変更は未接続で、実画面・VoiceOver・聴感はユーザー確認待ちである。
+    下部の棒は同じ編集へ接続した（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
+    `piano-velocity-lane-ui`・`piano-velocity-lane-frame-ui`・`piano-velocity-lane-cancel-ui` と GPU 読戻しで確認する。
+    複数ノートの一括変更は未接続で、実画面・VoiceOver・聴感はユーザー確認待ちである。
   - ドラム入力：音色名の行から親フォルダの MIDI へ入力し、通常のパターン複製ではノートの中身を独立させる。
 
 ### P2-08: 書出しとプロジェクト管理

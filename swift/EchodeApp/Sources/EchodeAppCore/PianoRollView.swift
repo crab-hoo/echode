@@ -84,6 +84,7 @@ final class PianoGridView: NSView {
     private var busy = false
     private var elements: [PianoNote] = []
     private var accessible: [PianoNote.ID: PianoAccessibleNote] = [:]
+    private let velocityAccessibility = PianoVelocityAccessibility()
     private var accessibleVersion: [PianoNote.ID: UInt64] = [:]
     private var submittedVersion: UInt64 = 0
     /// Elements are built only for accessibility queries and focus changes.
@@ -159,7 +160,7 @@ final class PianoGridView: NSView {
         }
         refresh()
     }
-    func stop() { follower.detach(); feedback.invalidate(); renderer?.stop(); renderer = nil; submittedFrame = nil; elements = []; accessible = [:]; accessibleVersion = [:]; announcedFocus = nil; accessibilityBuilds = 0; cancelGesture() }
+    func stop() { velocityAccessibility.clear(); follower.detach(); feedback.invalidate(); renderer?.stop(); renderer = nil; submittedFrame = nil; elements = []; accessible = [:]; accessibleVersion = [:]; announcedFocus = nil; accessibilityBuilds = 0; cancelGesture() }
     func beginMeasurement() { renderer?.beginMeasurement() }
     func markMainBusy(_ busy: Bool) { renderer?.markMainBusy(busy) }
     var measurement: ArrangeMeasurement { renderer?.measurement ?? ArrangeMeasurement() }
@@ -185,7 +186,7 @@ final class PianoGridView: NSView {
         if trackChanged { camera = sharedCamera ?? PianoCamera(); caretTick = 0; caretPitch = 60 }
         let changed = self.snapshot !== snapshot || self.track != track
         if changed || busy { velocityGesture = nil; velocityPreview = nil; gesture = nil; preview = nil; insertion = nil; rulerPress = nil; revealOnLayout = false }
-        if self.track != track { accessible = [:] }
+        if self.track != track { accessible = [:]; velocityAccessibility.clear() }
         if changed { elements = []; submittedFrame = nil }
         let needsRefresh = changed || self.focus != focus || self.key != key || self.busy != busy
         self.snapshot = snapshot; self.track = track; self.key = key; self.busy = busy
@@ -256,6 +257,15 @@ final class PianoGridView: NSView {
             rulerPress = RulerPress(x: pianoLayout.gridPoint(panePoint).x, originBeat: camera.originBeat,
                                     pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid,
                                     edge: rulerHandles.hit(at: panePoint), originalRange: loop?.range)
+            return
+        }
+        if pianoLayout.velocity.contains(panePoint) {
+            cancelGesture()
+            if let hit = submittedFrame.velocityLane.hit(at: panePoint, bars: submittedFrame.velocityBars, focus: focus) {
+                select(hit)
+                velocityGesture = PianoVelocityGesture(id: hit.id, original: Int(hit.velocity >> 9),
+                    y: pianoLayout.gridPoint(panePoint).y, pointsPerStep: submittedFrame.velocityLane.span / 127)
+            }
             return
         }
         guard pianoLayout.grid.contains(panePoint) else { return }
@@ -485,12 +495,22 @@ final class PianoGridView: NSView {
     /// Builds (or reuses) the visible elements. Exposed without a window so the
     /// labels, actions, frames, and build count can be checked.
     func buildAccessibilityChildren(convert: (NSRect) -> NSRect) -> [Any] {
-        guard !elements.isEmpty, let submittedFrame else { return [] }
+        guard let submittedFrame else { return [] }
         let children = elements.map { element(for: $0, in: submittedFrame, convert: convert) }
         let visible = Set(elements.map(\.id))
         accessible = accessible.filter { visible.contains($0.key) }
         accessibleVersion = accessibleVersion.filter { visible.contains($0.key) }
-        return children
+        let lane = velocityAccessibility.element(frame: submittedFrame, focus: focus, parent: self, convert: convert,
+            select: { [weak self] note in
+                guard let self, self.snapshot === submittedFrame.input.snapshot else { return }
+                self.select(note)
+            }, change: { [weak self] id, value in
+                guard let self, !self.busy, self.snapshot === submittedFrame.input.snapshot,
+                      self.track == id.track, let note = self.snapshot?.pianoNote(id),
+                      Int(note.velocity >> 9) != value else { return false }
+                self.select(note); self.onVelocity?(id, value); return true
+            })
+        return children + [lane]
     }
 
     private func screenRect(_ rect: NSRect) -> NSRect {

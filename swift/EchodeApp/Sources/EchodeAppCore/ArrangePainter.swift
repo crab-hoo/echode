@@ -90,7 +90,8 @@ final class ArrangePainter {
         } else if let piano {
             let scale = piano.input.scale
             let rulerCount = piano.rulerInstances.count
-            let sidebarCount = headerCount - rulerCount
+            let velocityCount = piano.velocityInstances.count
+            let sidebarCount = headerCount - rulerCount - velocityCount
             if let clip = scissor(piano.layout.grid, scale: scale, texture: texture) {
                 encoder.setScissorRect(clip)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: timelineCount)
@@ -102,6 +103,11 @@ final class ArrangePainter {
             if let clip = scissor(CGRect(x: 0, y: 0, width: piano.input.width, height: piano.layout.rulerHeight), scale: scale, texture: texture) {
                 encoder.setScissorRect(clip)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: rulerCount, baseInstance: timelineCount + sidebarCount)
+            }
+            if let clip = scissor(CGRect(x: 0, y: piano.layout.velocity.minY, width: piano.input.width, height: piano.layout.velocity.height), scale: scale, texture: texture) {
+                encoder.setScissorRect(clip)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: velocityCount,
+                                       baseInstance: timelineCount + sidebarCount + rulerCount)
             }
             encodeLabels(piano.labels, scale: scale, encoder: encoder, texture: texture,
                          bounds: CGRect(x: 0, y: 0, width: piano.input.width, height: piano.input.height))

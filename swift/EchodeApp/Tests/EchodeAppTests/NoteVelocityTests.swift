@@ -33,6 +33,7 @@ struct NoteVelocityTests {
         view.onVelocity = { id, value in writes.append(Task { await controller.setNoteVelocity(id, velocity: value, documentID: document) }) }
         let point = CGPoint(x: view.pianoLayout.gridOrigin.x + 1.5 * view.camera.pixelsPerBeat,
                             y: view.pianoLayout.gridOrigin.y + (view.camera.topPitch - 60 + 0.5) * view.camera.pixelsPerPitch)
+        // Option edits and lane edits share the same preview value in one frame.
         try send(.leftMouseDown, to: view, at: point, flags: .option)
         try send(.leftMouseDragged, to: view, at: CGPoint(x: point.x + 40, y: point.y - 20), flags: .option)
         #expect(writes.isEmpty && controller.undoCount == undo)
@@ -41,6 +42,9 @@ struct NoteVelocityTests {
         let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
         let preview = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: note.id,
             camera: view.camera, key: DisplayKey(), preview: nil, velocity: view.velocityPreview))
+        #expect(preview.velocityBars.first { $0.note.id == note.id }?.cap.midY != PianoFrame(input: input,
+            piano: PianoRenderInput(track: track, focus: note.id, camera: view.camera, key: DisplayKey(), preview: nil))
+            .velocityBars.first { $0.note.id == note.id }?.cap.midY)
         #expect(preview.velocity(for: note) == 120 && preview.labels.contains { $0.text.hasSuffix("120") })
         #expect(preview.gridInstances.map(\.rect) != PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: note.id,
             camera: view.camera, key: DisplayKey(), preview: nil)).gridInstances.map(\.rect))

@@ -58,7 +58,7 @@ struct PianoTests {
         let camera = PianoCamera(topPitch: 72)
         let input = CanvasInput(snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 2)
         let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
-        let column = frame.labels.filter { $0.clip.x == 0 }.map(\.text)
+        let column = frame.labels.filter { $0.clip.x == 0 && Double($0.clip.y) < frame.layout.velocity.minY }.map(\.text)
         let numerals = ["I", "II", "III", "IV", "V", "VI", "VII"]
         #expect(column.contains("I–VII"))
         #expect(numerals.allSatisfy(column.contains))
@@ -193,7 +193,7 @@ struct PianoTests {
         grid.present(frame)
         #expect(grid.accessibilityBuilds == 0)
         let children = grid.buildAccessibilityChildren(convert: { $0 })
-        #expect(children.count == frame.notes.count && grid.accessibilityBuilds == frame.notes.count)
+        #expect(children.count == frame.notes.count + 1 && grid.accessibilityBuilds == frame.notes.count)
         let builds = grid.accessibilityBuilds
         _ = grid.buildAccessibilityChildren(convert: { $0 })
         #expect(grid.accessibilityBuilds == builds)

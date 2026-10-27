@@ -529,6 +529,20 @@ class PolicyTests(unittest.TestCase):
                        "crates/echode-model/src/note_velocity.rs"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(source))
 
+    def test_velocity_lane_contracts_cover_input_frames_and_cancellation(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, test in (("piano-velocity-lane-ui", "contractLaneDragSharesVelocityHistoryAndPreservesGeometry"),
+                           ("piano-velocity-lane-frame-ui", "contractLaneShowsAllPitchesAndSynchronizesPreviewAndAccessibility"),
+                           ("piano-velocity-lane-cancel-ui", "laneGesturesCancelAndBlankClicksNeverInsert")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"], contract["test"]), ("swift", "NoteVelocityLaneTests", test))
+            for fault in contract.get("negative_controls", [contract.get("negative_control")]):
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for name in ("PianoVelocityLane.swift", "PianoVelocityAccessibility.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
+                             "spike-piano-frame"} <= self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + name))
+        self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/NoteVelocityLaneTests.swift"))
+
     def test_piano_note_bounds_contract_covers_model_and_product_frame(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         ui, model = contracts["piano-note-clip-bounds-ui"], contracts["piano-note-clip-bounds"]
@@ -780,7 +794,7 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
-                          "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
+                          "piano-velocity-lane-ui", "piano-velocity-lane-frame-ui", "piano-velocity-lane-cancel-ui", "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",

@@ -86,6 +86,10 @@ make debug-report
   同日の TSan 全体検査でも同じテストが 1 回期限切れとなり、データ競合の診断はなかった。
   当該テストだけの再実行と正式な `make verify` の再実行では再現せず、原因は未確定のままである。
   TSan の失敗記録は `target/bridge/thread/product/swift-tests.failed.log`、個別の記録は `preparation-focused.log` に残る。
+  2026-10-27 のベロシティレーンの検査でも TSan の全体実行で同じ期限切れが再発し、競合診断はなかった。
+  同じバイナリの `DevicePreparationTests` 単独では再現せず、原因は未確定である。
+  失敗は同じ `swift-tests.failed.log`、単独の記録は `velocity-lane-preparation-focused.log`、
+  正式な再実行の合否は検査レポートで確認する。期限と対象テストは変更しない。
 - **基準コミット（`VERIFY_BASE`）エラー**:
   一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
 - **終了フック直後の不要な再実行**:
@@ -202,6 +206,15 @@ make debug-report
   実際のノートの保存値は 16 bit なので、表示との比較には上位 7 bit を使う。
   応答後だけ値が古くなる時は、記憶の `generation` と選択の順序を確認する
   （[ADR 0173](decisions/0173-piano-note-velocity.md)）。
+
+- **下部の棒がノート追加になる・音域外で消える・値が食い違う**:
+  棒は `PianoLayout.velocity`、ノートは `grid` と入力・描画の境界を分ける。
+  `PianoFrame.velocityNotes` は時刻内の全音高を取り、開始が左端より前の継続音には棒を作らない。
+  頭と棒の矩形は `PianoVelocityLane` を描画・ヒット・アクセシビリティで共有する。
+  `piano-velocity-lane-ui` は実入力と履歴・保存、`piano-velocity-lane-frame-ui` は問い合わせ・仮表示・読み上げの値、
+  `piano-velocity-lane-cancel-ui` は取消後の解放と空白クリックを切り分ける。
+  `spike-piano-frame` の `checkedVelocityBars` と `mismatches` は倍率 1・2 の 0・64・127 の GPU 画素を含む。
+  実画面と聴感はユーザー確認とする（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
 
 - **ピアノロールの空白ドラッグで追加されない・開始位置が動く・取消後に追加される**:
   `PianoInsertion` の押下時の開始・カメラと、解放時の終端・音高を区別する。

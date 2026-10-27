@@ -27,10 +27,12 @@ struct PianoVelocityGesture {
     let original: Int
     let y: Double
 
+    /// Lane drags span the full MIDI range; note drags keep one point per step.
+    var pointsPerStep = 1.0
     func preview(y: Double) -> PianoVelocityPreview? {
-        guard y.isFinite, self.y.isFinite else { return nil }
-        // One point per MIDI step, independent of pitch zoom and time grid.
-        let value = min(127, max(0, Double(original) + (self.y - y).rounded()))
+        guard y.isFinite, self.y.isFinite, pointsPerStep.isFinite, pointsPerStep > 0 else { return nil }
+        // Relative motion preserves the grabbed value and offset, independent of pitch zoom and time grid.
+        let value = min(127, max(0, Double(original) + ((self.y - y) / pointsPerStep).rounded()))
         return PianoVelocityPreview(id: id, value: Int(value))
     }
 }

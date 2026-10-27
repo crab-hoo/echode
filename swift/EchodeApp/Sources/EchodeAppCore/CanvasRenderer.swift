@@ -327,7 +327,7 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         metersActive = peaksLive || meterHold.holding(now: now)
         var instances = piano?.gridInstances ?? arranged?.timelineInstances ?? []
         let timelineCount = instances.count
-        let headerInstances = piano.map { $0.degreeInstances + $0.keyboardInstances + $0.rulerInstances } ?? arranged?.headerInstances ?? []
+        let headerInstances = piano.map { $0.degreeInstances + $0.keyboardInstances + $0.rulerInstances + $0.velocityInstances } ?? arranged?.headerInstances ?? []
         instances.append(contentsOf: headerInstances)
         let length = max(1, instances.count) * MemoryLayout<Instance>.stride
         if (buffers[slot]?.length ?? 0) < length { buffers[slot] = device.makeBuffer(length: length, options: .storageModeShared) }

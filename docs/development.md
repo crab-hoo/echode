@@ -173,6 +173,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 画面の相対ドラッグと共通入力値は `NoteVelocity.swift`、仮表示は `PianoFrame.swift` に置く。
 回帰は `NoteVelocityTests.swift`・履歴の `note_velocity.rs` と `block_size.rs`
 （[ADR 0173](decisions/0173-piano-note-velocity.md)）。
+下部の棒の共通幾何とヒットは `PianoVelocityLane.swift`、遅延生成するスライダーは `PianoVelocityAccessibility.swift`、
+回帰は `NoteVelocityLaneTests.swift` と `PianoOffscreenProbe.swift` に置く
+（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
 ピアノロールの共通カメラは `CanvasNavigationState.pianoCamera`、復元と文書の所有確認は `PianoGridView` に置く。
 切替・再生成・旧文書の拒否の回帰は `PianoViewportTests.swift`（[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
 
