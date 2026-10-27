@@ -192,7 +192,9 @@ Swift も `AudioState.opening` を受け取り、未取得のデバイス列は�
     `PianoMovePreview` の全対象を仮表示し、解放時の Shift と座標で再計算する。
     `PianoMoveChange.actions` が待機列の手番で全幾何を検証し、同じ内容のノートを一度だけ単一トランザクションへ送る。
     選択と両入力記憶を保ち、選択変更でも取り消す（[ADR 0178](../decisions/0178-piano-batch-note-movement.md)）。
-    一括伸縮・複製移動・矢印の一括移動は残り、端の通常の左押下は単一選択へ置き換える。
+    選択済みの端ドラッグは `PianoResizeGesture` の共通の端の差分で伸縮し、最短長・時刻 0・整数上端で全体を制限する。
+    `PianoResizePreview` を仮表示し、`PianoResizeChange.actions` が全幾何を手番で検証・重複排除して単一トランザクションへ送る。
+    反対端・音高・選択と両入力記憶を保つ（[ADR 0179](../decisions/0179-piano-batch-note-resizing.md)）。複製移動・矢印の一括移動は残る。
     ノートの時刻編集による固定窓の拡張は、描画側で窓を無視せずモデルへ反映する
     （[スマートクリップ](model-and-history.md#45-スマートクリップ)、[ADR 0168](../decisions/0168-note-edit-clip-growth.md)）。
   - **ベロシティ編集**: ノート上の Option＋上下ドラッグと下部ベロシティ欄の双方向接続、複数選択の同量増減

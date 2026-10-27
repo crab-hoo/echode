@@ -70,7 +70,7 @@ struct PianoFrame: Sendable {
                                             max(0, note.width) * Float(velocity) / 127, 2),
                                       color: SIMD4(0.18, 0.25, 0.29, 1)))
         }
-        for g in [piano.preview?.geometry, piano.insertion].compactMap({ $0 }) + (piano.move?.geometries(in: notes) ?? []) {
+        for g in [piano.preview?.geometry, piano.insertion].compactMap({ $0 }) + (piano.move?.geometries(in: notes) ?? []) + (piano.resize?.geometries(in: notes) ?? []) {
             let rect = SIMD4(Float(origin.x + (Double(g.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat),
                              Float(origin.y + (camera.topPitch - Double(g.pitch)) * camera.pixelsPerPitch + 1),
                              Float(Double(g.length) / 705_600 * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))

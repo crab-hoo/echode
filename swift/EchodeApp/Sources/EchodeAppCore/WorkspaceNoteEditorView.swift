@@ -40,6 +40,7 @@ struct WorkspaceNoteEditorView: View {
                     velocity: { id, value in Task { await controller.setNoteVelocity(id, velocity: value, documentID: document) } },
                     velocities: { change in Task { await controller.setNoteVelocities(change, documentID: document) } },
                     moves: { change in Task { await controller.moveNotes(change, documentID: document) } },
+                    resizes: { change in Task { await controller.resizeNotes(change, documentID: document) } },
                     selection: controller.noteSelection, selectNotes: { if controller.documentID == document { controller.selectNotes($0) } },
                     deleteNotes: { ids in Task { await controller.deleteNotes(ids, documentID: document) } })
                     .id(controller.documentID)

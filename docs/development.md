@@ -190,6 +190,10 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 回帰は `PianoMoveBatchTests.swift`・`PianoMoveBatchBoundaryTests.swift`・`PianoMoveBatchCancellationTests.swift`
 （[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
 
+一括伸縮の対象検証・共通の端の差分と仮表示は `PianoResizeBatch.swift`、確定は `ProjectController.resizeNotes` に置く。
+回帰は `PianoResizeBatchTests.swift`・`PianoResizeBatchBoundaryTests.swift`・`PianoResizeBatchCancellationTests.swift`
+（[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
+
 アレンジの音高表示の音域と縦変換は `crates/echode-draw/src/query.rs` の `PitchRange`・`PitchLayout` に置く。
 製品フレームと VoiceOver 用矩形の回帰は `ArrangePitchTests.swift`、可視列は `tests/arrange_pitch.rs` を使う。
 問い合わせだけの計測は `make spike-arrange-query`（[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。

@@ -103,7 +103,7 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     空白の左ドラッグも、開始位置の保持・横の長さと縦の音高・Shift の吸着解除・解放時の単一追加へ接続した。
     新規の最短長はグリッド幅とし、取消・Undo / Redo・保存を持つ（[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
     単クリックの記憶長入力も接続した。長さは全トラックで共有し、追加・長さ変更の Undo / Redo で戻り、再オープン時に初期化する
-    （[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。複数ノートの一括伸縮は未接続で、実画面の操作感はユーザー確認待ちである。
+    （[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。実画面の操作感はユーザー確認待ちである。
     単一ノートの Option＋上下ドラッグも、幾何を変えないベロシティ専用編集・仮表示・解放時の単一確定へ接続した。
     単一選択と調整の値を全トラックの次回入力へ引き継ぎ、Undo / Redo・保存を持つ。
     下部の棒も同じ値と仮表示・単一確定へ接続した（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
@@ -116,7 +116,9 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     Delete は選択全体を単一 Undo で削除し、リンク配置の中身を重複して削除しない。
     選択済みノートの本体ドラッグによる一括移動も、共通の時刻差・半音差と上下限、単一 Undo / Redo・保存へ接続した。
     入力長と入力ベロシティを変えず、リンクした同じノートは一度だけ編集する（[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
-    一括伸縮・複製移動・矢印の一括移動は残り、実画面と VoiceOver はユーザー確認待ちである
+    選択済みノートの端ドラッグによる一括伸縮も、共通の端の差分・最短 1 tick・反対端の保持と単一 Undo へ接続した。
+    入力長と入力ベロシティを変えず、画面外とリンクを含む全対象を検証する（[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
+    複製移動・矢印の一括移動は残り、実画面と VoiceOver はユーザー確認待ちである
     （選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
 
 ## 利用時に残る制約

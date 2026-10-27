@@ -81,6 +81,7 @@ check-base:
 # Shared piano viewports across track switches and document-lifetime guards use this native UI gate too.
 # Right-drag note selection, Command toggles, atomic deletion and linked-content deduplication also use this gate.
 # Group note movement, common bounds, linked-content writes and gesture cancellation share this gate.
+# Group edge resizing shares common one-tick/time bounds, previews and atomic history through this gate.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
@@ -177,7 +178,7 @@ spike-render:
 check-bridge:
 	bash scripts/spike-bridge.sh
 
-# Product Swift wrapper, piano gestures, single/batch velocity, note selection and batch deletion. No timing assertions.
+# Product Swift wrapper, piano gestures, single/batch velocity, note selection, batch deletion/movement/resizing. No timing assertions.
 check-shell:
 	bash scripts/check-shell.sh
 

@@ -148,7 +148,7 @@ make debug-report
   複数選択の時の `noteFocus == nil` は正常で、単一ノート欄や記憶値へ任意の代表を流さないための区別である。
   Delete は `deleteNotes` の待機列の手番で全 ID を検証する。リンク配置の二重削除と、古いメニュー・旧文書の拒否を分けて調べる。
   `piano-note-selection-ui`・`piano-note-selection-cancel-ui`・`piano-note-selection-delete-ui`・`piano-note-linked-delete-ui` を使う。
-  選択済み本体のドラッグは一括移動するが、一括伸縮と複製移動は未接続で、端の押下は単一選択へ戻る。
+  選択済み本体は一括移動、端は一括伸縮する。未選択ノートの押下は単一選択へ戻り、複製移動は未接続である。
   実画面の枠とメニュー、VoiceOver の操作感はユーザー確認とする（[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
 - **複数選択の移動で間隔が崩れる・一部だけ動く・確定されない**:
   選択済みノートの本体を通常ドラッグする。3 pt 未満の微動とクリックでは編集せず、端と Command は別操作である。
@@ -159,6 +159,13 @@ make debug-report
   クリップ同士の重なりはまだモデルが全体を拒否する。他の固定リンクのトリムは保つため、共有内容の変更と窓の拡張を混同しない。
   重なり拒否の再現では配置を固定して分ける。隣接小節へ順に入力するだけでは自動配置が結合し、壁を持つ別配置にはならない。
   入力長・入力ベロシティは変えない。実画面と VoiceOver はユーザー担当である（[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
+- **複数選択の伸縮で長さの差が変わる・一部だけ伸びる**:
+  選択済みノートの左右端を通常ドラッグする。3 pt の横移動までは確定せず、縦移動は音高を変えない。
+  `PianoResizeGesture` はつかんだ端の絶対吸着から共通差分を求め、画面外も含む最短長・最小開始・最大終端で制限する。
+  最短 1 tick は Shift の有無にかかわらず共通制限する。長さの比率を保つ処理ではない。
+  `PianoResizeChange.actions` の全幾何検証・リンクの重複排除と、固定窓の拡張・重なり拒否を分けて調べる。
+  `piano-note-resize-batch-ui`・`piano-note-resize-batch-targets-ui`・`piano-note-resize-batch-cancel-ui` を使う。
+  入力長と入力ベロシティを保ち、解放時に 1 回だけ記録する（[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
 - **複数選択のベロシティが動かない・強弱差が変わる**:
   選択済みのノートを Option ドラッグ、または選択済みの棒をドラッグする。未選択の押下は単一選択になる。
   差分は選択全体の最小・最大値で制限し、どれかが 0／127 に達したら全体が止まる。両端の値を含む時は動かないのが正常である。
