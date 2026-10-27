@@ -30,9 +30,14 @@ public final class ProjectController {
         set {
             let previous = selection
             trackSelection.replace(newValue.flatMap { id in tracks.contains(where: { $0.id == id }) ? id : nil })
-            if selection != previous { noteFocus = nil; clipFocus = nil }
+            if selection != previous { clipFocus = nil }
         }
     }
+    /// The piano input target is independent of arrange/device selection.
+    public internal(set) var pianoTrack: UUID?
+    internal var pianoLocation: PianoLocation?
+    /// Hidden reference tracks for this document; new tracks start visible.
+    internal var hiddenPianoTracks: Set<UUID> = []
     /// Shared by all piano tracks; never serialized into the project.
     var noteInput = NoteInputLength()
     var noteVelocity = NoteInputVelocity()
@@ -44,7 +49,7 @@ public final class ProjectController {
 
     func selectNotes(_ ids: Set<PianoNote.ID>) {
         let previous = noteSelection
-        noteSelection = ids.filter { $0.track == selection && snapshot?.pianoNote($0) != nil }
+        noteSelection = ids.filter { $0.track == pianoTrack && snapshot?.pianoNote($0) != nil }
         if let noteFocus, let note = snapshot?.pianoNote(noteFocus) {
             noteInput.remember(note.length)
             noteVelocity.remember(Int(note.velocity >> 9))
@@ -118,6 +123,7 @@ public final class ProjectController {
     @ObservationIgnored let auditionLog = AuditionLog()
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()
+    @ObservationIgnored private var pianoStepTail: Task<Bool, Never>?
     /// Reads plugin windows' activity for the open document (ADR 0132).
     @ObservationIgnored var pluginActivity: PluginActivityReader?
     @ObservationIgnored var pluginCommand: ((WorkspaceCommand) -> Void)?
@@ -173,6 +179,10 @@ public final class ProjectController {
                 self.redoCount = 0
                 self.noteInput = NoteInputLength()
                 self.noteVelocity = NoteInputVelocity()
+                self.pianoTrack = nil
+                self.pianoLocation = nil
+                self.hiddenPianoTracks = []
+                self.pianoStepTail = nil
                 self.selection = nil
                 self.noteFocus = nil
                 self.forgetParameters()
@@ -230,7 +240,7 @@ public final class ProjectController {
             return visible.filter { existing.contains($0) }
         } ?? tracks.map(\.id)
         trackSelection.select(id, change: change, order: order)
-        if selection != previous { noteFocus = nil; clipFocus = nil }
+        if selection != previous { clipFocus = nil }
     }
 
     func deviceRows(on track: UUID) -> [TrackDevice] {
@@ -358,6 +368,26 @@ public final class ProjectController {
         await performEdit({ [self] in change.actions(in: snapshot) }, documentID: documentID)
     }
 
+    /// Capture native event order synchronously, before the new tasks can run.
+    func enqueuePianoStep(_ step: PianoStep, documentID: UUID) -> Task<Bool, Never> {
+        let previous = pianoStepTail
+        let task = Task { [weak self] in
+            _ = await previous?.value
+            return await self?.stepNotes(step, documentID: documentID) ?? false
+        }
+        pianoStepTail = task
+        return task
+    }
+
+    @discardableResult
+    func stepNotes(_ step: PianoStep, documentID: UUID) async -> Bool {
+        await performEdit({ [self] in step.actions(in: snapshot) }, documentID: documentID,
+            rememberingLength: { [self] in
+                guard step.resize, step.ids.count == 1 else { return nil }
+                return step.geometries(in: snapshot)?.values.first?.length
+            })
+    }
+
     @discardableResult
     public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry, documentID: UUID? = nil) async -> Bool {
         await performEdit({ [self] in
@@ -464,6 +494,10 @@ public final class ProjectController {
             self.redoCount = 0
             self.noteInput = NoteInputLength()
             self.noteVelocity = NoteInputVelocity()
+            self.pianoTrack = nil
+            self.pianoLocation = nil
+            self.hiddenPianoTracks = []
+            self.pianoStepTail = nil
             self.audio = AudioState()
             self.reportedAudioError = nil
             self.loopStartBeat = 0
@@ -478,7 +512,7 @@ public final class ProjectController {
         await audioCommand(playbackRequested ? .stop : .play)
     }
 
-    /// The play button: pauses in place, or resumes.
+    /// The play button and Return: pause in place, or resume.
     public func togglePause() async {
         await audioCommand(playbackRequested ? .pause : .play)
     }
@@ -690,8 +724,10 @@ public final class ProjectController {
         }
         let previous = selection
         trackSelection.reconcile(order: tracks.map(\.id))
-        if selection != previous { noteFocus = nil; clipFocus = nil }
-        noteSelection = noteSelection.filter { $0.track == selection && snapshot.pianoNote($0) != nil }
+        if selection != previous { clipFocus = nil }
+        if !tracks.contains(where: { $0.id == pianoTrack }) { pianoTrack = selection }
+        hiddenPianoTracks.formIntersection(Set(tracks.map(\.id)))
+        noteSelection = noteSelection.filter { $0.track == pianoTrack && snapshot.pianoNote($0) != nil }
         if let clipFocus, snapshot.clipMix(clipFocus) == nil { self.clipFocus = nil }
         if !parameterStates.isEmpty || !openPluginWindows.isEmpty {
             // A removed or offline device has no running plugin to list.

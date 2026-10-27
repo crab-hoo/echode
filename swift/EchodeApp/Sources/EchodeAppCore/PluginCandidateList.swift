@@ -135,6 +135,15 @@ final class PluginListTable: NSTableView {
     override func mouseUp(with event: NSEvent) { dragDown = nil }
     override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, [36, 76].contains(event.keyCode),
+           event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
+            keyDown(with: event)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         // Return and keypad Enter insert and keep the panel open.
         if [36, 76].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {

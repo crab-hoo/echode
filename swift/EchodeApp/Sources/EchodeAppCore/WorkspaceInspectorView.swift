@@ -20,13 +20,13 @@ struct WorkspaceInspectorView: View {
                         Divider()
                         ClipMixInspector(controller: controller, clip: clip).id(clip.id)
                     }
-                    if let id = controller.noteFocus, let note = snapshot.pianoNote(id) {
+                    if let id = controller.noteFocus, id.track == track.id, let note = snapshot.pianoNote(id) {
                         Divider()
                         Text(text("Selected Note")).font(.subheadline)
                         LabeledContent(text("MIDI pitch"), value: noteName(note.pitch))
                         LabeledContent(text("Start beat"), value: (Double(note.start) / 705_600).formatted())
                         LabeledContent(text("Length in beats"), value: (Double(note.length) / 705_600).formatted())
-                    } else if InspectorNotes.showsPrompt(noteFocused: false, audioClipFocused: audioClip) {
+                    } else if controller.pianoTrack == track.id, InspectorNotes.showsPrompt(noteFocused: false, audioClipFocused: audioClip) {
                         Text(text("Select a note to inspect it")).font(.caption).foregroundStyle(.secondary)
                     }
                     Divider()

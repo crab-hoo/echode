@@ -574,6 +574,27 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_piano_workflow_contracts_cover_targets_references_keys_and_document_lifetimes(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, suite, test in (
+                ("piano-target-ui", "PianoWorkflowTests", "contractTrackSelectionKeepsThePianoTargetAndNoteSelection"),
+                ("piano-arrange-open-ui", "PianoWorkflowTests", "contractArrangeDoubleClickOpensAnIndependentPianoLocation"),
+                ("piano-reference-ui", "PianoReferenceTests", "contractReferenceNotesRenderBehindTheInputAndNeverOwnEdits"),
+                ("piano-track-selector-ui", "PianoReferenceTests", "contractTrackSelectorSeparatesReferenceEditAndMixerState"),
+                ("piano-key-step-ui", "PianoStepTests", "contractArrowRepeatsEditTheWholeSelectionOnTheirTurn"),
+                ("piano-key-step-bounds-ui", "PianoStepTests", "contractKeyboardBoundsAndLinkedNotesStayAtomic"),
+                ("piano-return-ui", "PianoWorkflowTests", "contractReturnLeavesPianoInsertionToExplicitActions"),
+                ("browser-return-ui", "PianoWorkflowTests", "contractBrowserListsOwnReturnBeforeTheWorkspaceShortcut")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"], contract["test"]), ("swift", suite, test))
+            for fault in contract.get("negative_controls", [contract.get("negative_control")]):
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("Sources/EchodeAppCore/PianoTracks.swift", "Sources/EchodeAppCore/PianoTrackSelector.swift",
+                       "Sources/EchodeAppCore/PianoStep.swift", "Tests/EchodeAppTests/PianoWorkflowTests.swift",
+                       "Tests/EchodeAppTests/PianoReferenceTests.swift", "Tests/EchodeAppTests/PianoStepTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected("swift/EchodeApp/" + source))
+
     def test_batch_note_moves_cover_relative_geometry_targets_and_cancellation(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for name, suite, test in (
@@ -856,6 +877,8 @@ class PolicyTests(unittest.TestCase):
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
                           "plugin-key-events", "plugin-key-socket", "plugin-key-ui", "fx-add-trailing-ui", "device-edit-enabled-ui", "stopped-plugin-tails", "stopped-plugin-output",
                           "stop-return-tails", "playback-start", "playback-start-ui", "piano-ruler-start-ui", "piano-ruler-loop-ui", "arrange-ruler-ui", "arrange-ruler-cancel-ui", "loop-handles-ui", "loop-handles-cancel-ui", "loop-entry",
+                          "piano-target-ui", "piano-arrange-open-ui", "piano-reference-ui", "piano-track-selector-ui",
+                          "piano-key-step-ui", "piano-key-step-bounds-ui", "piano-return-ui", "browser-return-ui",
                           "piano-velocity-batch-ui", "piano-velocity-batch-targets-ui", "piano-velocity-batch-cancel-ui",
                           "piano-note-move-batch-ui", "piano-note-move-batch-targets-ui", "piano-note-move-batch-cancel-ui",
                           "piano-note-resize-batch-ui", "piano-note-resize-batch-targets-ui", "piano-note-resize-batch-cancel-ui",

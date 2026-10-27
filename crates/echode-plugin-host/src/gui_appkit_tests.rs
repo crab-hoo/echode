@@ -23,6 +23,17 @@ fn contract_plugin_key_events_keep_typing_and_forward_workspace_shortcuts() {
             NSEventModifierFlags::empty(),
             Some(PluginCommand::Playback),
         ),
+        (
+            36,
+            NSEventModifierFlags::empty(),
+            Some(PluginCommand::Pause),
+        ),
+        (
+            76,
+            NSEventModifierFlags::empty(),
+            Some(PluginCommand::Pause),
+        ),
+        (36, NSEventModifierFlags::Command, None),
         (6, NSEventModifierFlags::Command, Some(PluginCommand::Undo)),
         (
             6,

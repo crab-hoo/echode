@@ -86,7 +86,7 @@ public final class WorkspaceState {
         if pluginBrowserDocument != controller.documentID { pluginBrowserDocument = nil }
         if case .history = presentation, controller.snapshot == nil { presentation = nil }
         navigation.prepare(document: controller.documentID, tracks: Set(controller.tracks.map(\.id)))
-        draft.synchronize(document: controller.documentID, track: controller.selection,
+        draft.synchronize(document: controller.documentID, track: controller.pianoTrack,
                           note: controller.noteFocus.flatMap { controller.snapshot?.pianoNote($0) })
     }
 
@@ -111,6 +111,7 @@ public final class CanvasNavigationState {
     var arrange: ArrangeCamera?
     var headerWidth = 160.0
     var pianoCamera: PianoCamera?
+    var pianoLocationID: UUID?
     private(set) var document: UUID?
     private var tracks: Set<UUID> = []
     public init() {}
@@ -120,7 +121,7 @@ public final class CanvasNavigationState {
     }
 
     func prepare(document: UUID?, tracks: Set<UUID>) {
-        if self.document != document { self.document = document; arrange = nil; headerWidth = 160; pianoCamera = nil }
+        if self.document != document { self.document = document; arrange = nil; headerWidth = 160; pianoCamera = nil; pianoLocationID = nil }
         self.tracks = tracks
     }
 }

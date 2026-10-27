@@ -112,9 +112,9 @@ struct WorkspaceTests {
         let note = try #require(controller.snapshot?.pianoNeighbor(track: first, current: nil, backwards: false))
         controller.noteFocus = note.id
         await controller.addTrack(name: "second"); let second = try #require(controller.selection)
-        #expect(controller.noteFocus == nil)
+        #expect(controller.pianoTrack == first && controller.noteFocus == note.id)
         controller.noteFocus = note.id
-        #expect(controller.noteFocus == nil)
+        #expect(controller.noteFocus == note.id)
         #expect(await controller.insertPlugin("dev.echode.test-gain", on: first))
         #expect(controller.selection == second && controller.snapshot?.devicePlugin(onTrack: 0, at: 0) == "dev.echode.test-gain")
         #expect(controller.snapshot?.deviceCount(onTrack: 1) == 1)

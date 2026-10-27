@@ -55,6 +55,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .devices: KeyboardShortcut("4", modifiers: [.command, .option])
         case .maximizeEditors: KeyboardShortcut("5", modifiers: [.command, .option])
         case .playback: KeyboardShortcut(.space, modifiers: [])
+        case .pause: KeyboardShortcut(.return, modifiers: [])
         case .stop: KeyboardShortcut(".")
         case .palette: KeyboardShortcut("p", modifiers: [.command, .shift])
         default: nil
@@ -73,6 +74,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         case .devices: "⌥⌘4"
         case .maximizeEditors: "⌥⌘5"
         case .playback: text("Space")
+        case .pause: text("Return")
         case .stop: "⌘."
         case .palette: "⇧⌘P"
         default: ""

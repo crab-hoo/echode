@@ -5,6 +5,7 @@ enum PianoPalette {
     static let whiteRow = SIMD4<Float>(0.14, 0.15, 0.17, 1)
     static let blackRow = SIMD4<Float>(0.09, 0.10, 0.12, 1)
     static let separator = SIMD4<Float>(0.27, 0.29, 0.33, 1)
+    static let reference = SIMD4<Float>(0.28, 0.34, 0.38, 1)
 }
 
 struct PianoRow: Sendable {
@@ -23,6 +24,7 @@ struct PianoFrame: Sendable {
     let notes: [PianoNote]
     let rows: [PianoRow]
     let velocityNotes: [PianoNote]
+    let referenceNotes: [PianoNote]
 
     init(input: CanvasInput, piano: PianoRenderInput, revision: UInt64 = 0) {
         self.revision = revision
@@ -36,6 +38,13 @@ struct PianoFrame: Sendable {
             widthTicks: max(1, PianoCamera.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
             topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,
             pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerPitch: camera.pixelsPerPitch) ?? []
+        referenceNotes = piano.references.filter { $0 != piano.track }.flatMap { track in
+            input.snapshot?.pianoNotes(track: track,
+                originTick: PianoCamera.ticks(camera.originBeat) ?? 0,
+                widthTicks: max(1, PianoCamera.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
+                topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,
+                pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerPitch: camera.pixelsPerPitch) ?? []
+        }
         // The lane shows all MIDI pitches, but only the horizontally visible intervals.
         velocityNotes = input.snapshot?.pianoNotes(track: piano.track,
             originTick: PianoCamera.ticks(camera.originBeat) ?? 0,
@@ -60,6 +69,11 @@ struct PianoFrame: Sendable {
             let x = origin.x + (Double(beat) - camera.originBeat) * camera.pixelsPerBeat
             instances.append(instance(SIMD4(Float(x), Float(origin.y), 1, Float(layout.grid.height)),
                                       color: beat % 4 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) : SIMD4(0.18, 0.20, 0.23, 1)))
+        }
+        for note in referenceNotes {
+            instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
+                                            max(2, note.width), max(2, note.height - 2)),
+                                      color: PianoPalette.reference))
         }
         for note in notes {
             instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + 1,

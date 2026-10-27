@@ -1,6 +1,42 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Piano Tracks": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Piano Tracks" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ピアノロールのトラック" } }
+      }
+    },
+    "Show": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Show" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "表示" } }
+      }
+    },
+    "Edit": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Edit" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "編集" } }
+      }
+    },
+    "Return": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Return" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "Return" } }
+      }
+    },
+    "Show reference notes help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Show this track as reference notes when editing another track. Editable notes stay visible." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "別トラックの編集中に参照ノートを表示します。編集対象のノートは常に表示します。" } }
+      }
+    },
+    "Edit piano track help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Use this track as the single piano input target without changing arrange or device selection." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アレンジやデバイスの選択を変えず、このトラックをピアノロールの入力先にします。" } }
+      }
+    },
     "Follow Playhead": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Follow Playhead" } },
@@ -1300,13 +1336,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Click to insert with remembered length · Drag empty space to draw a note · Right-drag to select notes · Command-click to toggle selection · Delete to remove selection · Drag a note to select and move it · Drag edges to resize · Drag lower lane bars or Option-drag notes vertically for velocity"
+            "value": "Click to insert with remembered length · Drag empty space to draw a note · Right-drag to select notes · Command-click to toggle selection · Delete to remove selection · Drag selected notes to move them together · Drag edges to resize · Drag lower lane bars or Option-drag notes vertically for velocity"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · 右ドラッグで枠選択 · Command＋クリックで選択切替 · Delete で選択全体を削除 · ノートをドラッグして単一選択・移動 · 端をドラッグして長さ変更 · 下部の棒またはノートの Option＋上下ドラッグでベロシティ変更"
+            "value": "クリックで記憶した長さを入力 · 空白をドラッグしてノート追加 · 右ドラッグで枠選択 · Command＋クリックで選択切替 · Delete で選択全体を削除 · 選択済みノートのドラッグで一括移動 · 端をドラッグして長さ変更 · 下部の棒またはノートの Option＋上下ドラッグでベロシティ変更"
           }
         }
       }
@@ -1316,13 +1352,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tab / Shift-Tab: next / previous note. Arrows: pitch / time. Shift + left / right: length. Return: insert. Delete: remove selected notes. Escape: cancel drag."
+            "value": "Tab / Shift-Tab: next / previous note. Arrows: pitch / time. Shift + left / right: length. Return: pause / resume. Delete: remove selected notes. Escape: cancel drag."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tab / Shift-Tab: 次 / 前のノート。矢印: 音高 / 時間を変更。Shift と左右: 長さ変更。Return: 挿入。Delete: 選択ノートを一括削除。Escape: ドラッグをキャンセル。"
+            "value": "Tab / Shift-Tab: 次 / 前のノート。矢印: 音高 / 時間を変更。Shift と左右: 長さ変更。Return: 一時停止・再開。Delete: 選択ノートを一括削除。Escape: ドラッグをキャンセル。"
           }
         }
       }

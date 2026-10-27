@@ -39,12 +39,12 @@ struct DevicePreparationTests {
         let device = devices[0].id
         await plugin.hold(device)
         let listing = controller.showDevices(on: track)
-        try await wait { controller.parameterState(devices[1].id)?.loading == false }
+        try await wait("the unheld device parameter reply") { controller.parameterState(devices[1].id)?.loading == false }
         let state = try #require(controller.parameterState(device))
         state.query = "gain"
         let observing = Task { await controller.observeAudio() }
         defer { observing.cancel() }
-        try await wait { controller.audio.tick == 1 }
+        try await wait("the initial audio status") { controller.audio.tick == 1 }
 
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 900, height: 400))
         func refresh() {
@@ -68,7 +68,7 @@ struct DevicePreparationTests {
 
         // Output status changes independently of the still-held parameter reply.
         await audio.prepared()
-        try await wait { controller.audio.tick == 2 }
+        try await wait("the prepared audio status") { controller.audio.tick == 2 }
         refresh()
         #expect(column.message.stringValue == text("Loading parameters"))
         #expect(state.loading && state.query == "gain")
@@ -142,11 +142,13 @@ struct DevicePreparationTests {
         #expect(!column.list.isHidden, "Refreshing a cached list must not hide its controls")
     }
 
-    private func wait(_ ready: () -> Bool) async throws {
+    private func wait(_ phase: String, _ ready: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
+        var polls = 0
         while !ready() {
-            try #require(ContinuousClock.now < deadline, "Status did not arrive")
+            try #require(ContinuousClock.now < deadline, "Status did not arrive: \(phase), \(polls) yielded polls")
             try await Task.sleep(for: .milliseconds(5))
+            polls += 1
         }
     }
 }

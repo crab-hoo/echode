@@ -37,7 +37,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     （[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
     アレンジのルーラーも接続し、開始位置と範囲を共有する（[ADR 0157](decisions/0157-arrange-ruler.md)）。
     既存ループ端の調整も両エディタへ接続した（[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。
-    再生ヘッドへの追従と手動スクロールでの解除も接続した（[ADR 0159](decisions/0159-playhead-follow.md)）。Return の一時停止は残る。
+    再生ヘッドへの追従と手動スクロールでの解除も接続した（[ADR 0159](decisions/0159-playhead-follow.md)）。Return の一時停止／再開も接続した（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
     単一ノートのドラッグは Shift の吸着解除・グリッド未満の伸縮と解放時の単一確定を接続した
     （[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
   - **GUI のがくつき（JNK-01〜07）**: 2026-10-22 の監査で原因を分けた。
@@ -251,7 +251,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     要求を捨てずに順に送る。必須契約 `transport-order-ui` で確認する。
   - 接続済み（[ADR 0164](decisions/0164-note-end-chase.md)）: ノートの終端ちょうどからの再生で、そのノートを追いかけて鳴らさない。
     必須契約 `note-end-start` で実ヘルパーと複数のブロック長を確認する。
-  - 残る条件: Return の割当。
+  - 接続済み（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）: Return の一時停止／再開とプラグイン窓からの転送。
+    入力欄・サンプルと FX の一覧の Return はローカル操作を優先し、`piano-return-ui`・`browser-return-ui` と既存のプラグインキー契約で確認する。
 - **ピアノロールとノート編集**:
   - 単一ノートの移動・左右端の伸縮は Shift で吸着を解除する。解放時の座標・修飾キーで確定し、最短長は 1 tick とする
     （[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
@@ -271,8 +272,12 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     所属替えと壁での制限は [ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md) の草案に残る。
   - 編集トラックの切替とエディタの再生成で、時間・音域・倍率を共有する（[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
     必須契約 `piano-shared-viewport-ui` は旧文書の書戻し拒否と文書ごとの初期化も確認する。
-    ゴーストノート・編集対象の分離は残り、実画面と VoiceOver はユーザー確認待ちである。
-  - トラックセレクター：単一トラック入力を基本とし、複数選択の一括移動・伸縮では入力先トラックを切り替えない（[トラックセレクター](interaction-design.md#トラックセレクター)）。
+    アレンジ選択とは独立した単一入力先と、ダブルクリックでその位置を明示的に開く経路も接続した。
+    他トラックのノートを背面へ表示し、参照だけのクリックは現在の入力先へ追加する。編集ノートとの重なりでは編集ノートを優先する。
+    右側のトラックセレクターは表示・入力先と Solo/Mute を分離し、表示は文書内の一時状態、Solo/Mute は保存・Undo の対象とする
+    （[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
+    `piano-target-ui`・`piano-arrange-open-ui`・`piano-reference-ui`・`piano-track-selector-ui` とオフスクリーン GPU 読戻しで確認する。
+    複数トラックの同時編集は残し、実画面と VoiceOver はユーザー確認待ちである（[トラックセレクター](interaction-design.md#トラックセレクター)）。
   - ノート入力・伸縮・移動：プロジェクト内で共通の入力長記憶（Undo 対象、再オープン時は現在のグリッド幅）、左ドラッグでの開始位置固定・右伸縮・上下音高変更、Shift によるグリッド吸着一時解除、右クリックメニューの対象選択、ポインター基準のピンチズームと自動／固定グリッド（[ノートの入力](interaction-design.md#ノートの入力)、[ノートの選択](interaction-design.md#ノートの選択)）。
   - ベロシティ：ノート上の Option＋上下ドラッグと下部レーンの両方から編集し、複数選択は同じ差分で相対関係を保つ（[ベロシティの編集](interaction-design.md#ベロシティの編集)）。
     単一ノート上の Option＋上下ドラッグと入力値の共有は接続した（[ADR 0173](decisions/0173-piano-note-velocity.md)）。
@@ -291,7 +296,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     選択済み両端の一括伸縮も、反対端保持・共通の時刻差と最短長・入力記憶不変・単一 Undo へ接続した
     （[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
     `piano-note-resize-batch-ui`・`piano-note-resize-batch-targets-ui`・`piano-note-resize-batch-cancel-ui` で確認する。
-    複製移動・矢印の一括移動は残る。
+    矢印の選択全体の移動・移調・右端伸縮も、ネイティブ入力順と現行幾何の相対差分で接続した（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
+    `piano-key-step-ui`・`piano-key-step-bounds-ui` で履歴・リンク・共通制限と連続入力を確認する。複製移動は残る。
     選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)。実画面と VoiceOver はユーザー確認待ちである。
   - ドラム入力：音色名の行から親フォルダの MIDI へ入力し、通常のパターン複製ではノートの中身を独立させる。
 

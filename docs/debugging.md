@@ -142,6 +142,22 @@ make debug-report
   `spike-arrange-frame` の `rulerMismatches` は帯と印の画素不一致、`maxHeaderLaneError` は上端補正後の左右の誤差である。
   `audio.status` のループがオンでも、終端以降へ置いた再生は通常進行する。
   ブロック処理で終端に着いた場合は次のブロックで戻るため、同じ値の `tick` でも位置移動と混同しない。
+- **ピアノの入力先・参照表示とアレンジ選択が一致しない**:
+  通常のアレンジ選択は入力先を変えない。右の「編集」かアレンジの空白・MIDI クリップのダブルクリックで明示的に開く。
+  `pianoTrack` と `selection`、操作時の `PianoTrackTarget.document`、公開スナップショットの現存トラックを分けて調べる。
+  参照は `PianoRenderInput.references` と同じフレームの一覧を照合し、ヒット判定・ベロシティ・読み上げに混ざっていないか確認する。
+  `piano-target-ui`・`piano-arrange-open-ui`・`piano-reference-ui`・`piano-track-selector-ui` で切り分ける。
+  ダブルクリック後の再生成で位置が戻る時は `pianoLocationID` の消費を見る。通常の切替では共有カメラを保つ。
+  `spike-piano-frame` の `checkedReferenceNotes` と `mismatches` は倍率 1・2 の参照色・編集優先とレーンへの非混入を含む。
+- **矢印の連続入力で一部だけ動く・前の状態へ戻る**:
+  `enqueuePianoStep` のイベント順と `PianoStep` の相対差分、待機列の手番での全 ID 検証を確認する。
+  ドラッグとは異なり、押下時の絶対幾何を再使用しない。共通上下限とリンク中身の重複排除は同じである。
+  `piano-key-step-ui`・`piano-key-step-bounds-ui` で保存・履歴・境界と旧文書の拒否を確認する。
+- **Return が挿入する・一時停止しない・一覧や入力欄から再生へ漏れる**:
+  ピアノは Return とテンキー Enter をレスポンダーへ渡し、メニューの共通 Pause に送る。
+  サンプル・FX 一覧のフォーカス時は `performKeyEquivalent` が配置を先に受け、入力欄ではメニューを無効にする。
+  `piano-return-ui`・`browser-return-ui` と `plugin-key-events`・`plugin-key-socket`・`plugin-key-ui` で経路を分ける。
+  実画面のメニュー・IME・VoiceOver・キーリピートと聴感はユーザー確認に残す（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
 - **ピアノロールの枠選択・削除が想定と違う**:
   右ドラッグはノートグリッド内から始める。下部の棒・鍵盤・ルーラーからは始めず、枠は発音窓内の可視ノートとの部分交差を使う。
   `PianoGridView.selectionPress` が仮の枠、`ProjectController.noteSelection` が確定選択である。
@@ -373,6 +389,8 @@ make debug-report
   未取得の列の「音声出力を準備中」は同じ `opening` の表示であり、個別プラグインの進捗率ではない。
   出力の準備が終わっても一覧が来なければ「パラメーターを読み込み中」へ戻る。失敗とオフラインは待機表示より優先する。
   状態と列の表示が食い違う場合は `device-preparation-ui` と `DevicePreparationTests` を使う（[ADR 0141](decisions/0141-device-output-preparation-status.md)）。
+  同テストの期限失敗は、未保留デバイスの返答・初回の音声状態・準備後の音声状態のどの待ちかをメッセージで区別する。
+  サニタイザーの失敗ログを保持して単独実行と全体実行を比べ、期限だけを延長して製品不良や並行実行の影響を隠さない。
   `opening` の間に編集も終わらないなら、ワーカーが準備を待っている。`output-opening-worker` を実行して手番を確かめる。
   導入後に位置・ループ・追加したトラックが反映されないなら `output-opening` で導入時の差分を確かめる（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
   開いた出力で FX を追加した時は `pending_plan` を見る。新しいヘルパーの初期化と共有領域の準備は `echode-graph-prepare` が待つ。

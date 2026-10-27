@@ -87,7 +87,7 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。
     両エディタの再生ヘッドへの追従を接続した。範囲外へ出るとページ送りし、横方向の手動スクロールで止まる。
     トランスポートのトグル・再生メニュー・パレットで再びオンにし、文書を開くたびにオンで始まる
-    （[ADR 0159](decisions/0159-playhead-follow.md)）。Return の一時停止は未接続である。
+    （[ADR 0159](decisions/0159-playhead-follow.md)）。Return の一時停止／再開も接続した（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
     開始位置・ループ・メトロノーム等の送信中もボタン・ルーラー・コマンドを無効にせず、要求を順に送る
     （[ADR 0160](decisions/0160-ordered-transport-requests.md)）。
     ノートの終端ちょうどからの再生で、そのノートを追いかけて鳴らさない（[ADR 0164](decisions/0164-note-end-chase.md)）。
@@ -118,8 +118,11 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     入力長と入力ベロシティを変えず、リンクした同じノートは一度だけ編集する（[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
     選択済みノートの端ドラッグによる一括伸縮も、共通の端の差分・最短 1 tick・反対端の保持と単一 Undo へ接続した。
     入力長と入力ベロシティを変えず、画面外とリンクを含む全対象を検証する（[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
-    複製移動・矢印の一括移動は残り、実画面と VoiceOver はユーザー確認待ちである
-    （選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
+    矢印とキーリピートも、手番の現行幾何から選択全体を同じ差分で移動・移調・右端伸縮し、共通境界と単一 Undo を保つ。
+    アレンジ選択から独立したピアノ入力先、ダブルクリックでの明示オープンと位置、他トラックの参照ノート、右側の表示・編集・Solo/Mute を接続した
+    （[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
+    複数トラックの同時編集・複製移動・試聴・ドラム入力は残り、実画面と VoiceOver はユーザー確認待ちである。
+    選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md) を参照する。
 
 ## 利用時に残る制約
 
@@ -213,7 +216,7 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
 - **トランスポートと状態保持**:
   - 再生開始時の位置巻き戻り（CU-04）とトラックヘッダの Space 転送（CU-05）は必須契約で回帰検査している。
   - 停止は記憶した開始位置へ戻り、一時停止はその場に保つ。開始位置はルーラーと「開始拍」欄で変え、パッケージに保存する。
-    Return の割当は未決で、メニューの「一時停止」と再生ボタンで一時停止する。
+    Return もメニューの「一時停止」と同じその場での一時停止／再開へ接続し、入力欄とブラウザ一覧の確定・配置を優先する。
     実画面の操作感と、停止で戻る時の聴感はユーザー確認待ちである（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
   - 再生ヘッドの追従は保存しない表示状態で、キーの割当はない。停止中のズームで範囲外になった再生ヘッドは、次の再生・停止・位置移動まで表示しない。
     実画面のページ送りの見え方・トグルの VoiceOver はユーザー確認待ちである（[ADR 0159](decisions/0159-playhead-follow.md)）。

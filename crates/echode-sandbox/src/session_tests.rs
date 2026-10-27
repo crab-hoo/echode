@@ -123,6 +123,7 @@ fn contract_plugin_shortcuts_cross_the_control_socket_once() {
         .unwrap();
     for command in [
         crate::PluginCommand::Playback,
+        crate::PluginCommand::Pause,
         crate::PluginCommand::Undo,
         crate::PluginCommand::Redo,
     ] {
@@ -135,6 +136,7 @@ fn contract_plugin_shortcuts_cross_the_control_socket_once() {
         activity.commands,
         [
             crate::PluginCommand::Playback,
+            crate::PluginCommand::Pause,
             crate::PluginCommand::Undo,
             crate::PluginCommand::Redo
         ]

@@ -175,6 +175,8 @@ struct PianoRenderInput: Sendable {
     var marquee: CGRect? = nil
     var move: PianoMovePreview? = nil
     var resize: PianoResizePreview? = nil
+    /// Reference tracks are rendered behind editable notes and never hit-tested.
+    var references: [UUID] = []
 
     func isSelected(_ id: PianoNote.ID) -> Bool { selection?.contains(id) ?? (id == focus) }
 }

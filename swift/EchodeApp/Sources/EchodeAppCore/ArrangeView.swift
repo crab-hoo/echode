@@ -15,6 +15,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var mixActions: MixActions?
     public var onSelectClip: ((UUID?) -> Void)?
     public var onClipEdit: ((ClipMixEdit) -> Void)?
+    public var onOpenPiano: ((UUID, Int64) -> Void)?
     public var onOpenFX: ((UUID) -> Void)?
     public var onOpenPlugin: ((UUID, UUID) -> Void)?
     public var pluginNames: [String: String] = [:]
@@ -38,7 +39,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
                 collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil, onMoveClip: ((ClipMove) -> Void)? = nil,
                 start: Int64? = nil, loop: RulerLoop? = nil, busy: Bool = false,
                 onSetStart: ((Int64) -> Void)? = nil, onSetLoop: ((LoopRange) -> Void)? = nil,
-                followsPlayhead: Bool = false, onManualScroll: (() -> Void)? = nil) {
+                followsPlayhead: Bool = false, onManualScroll: (() -> Void)? = nil, onOpenPiano: ((UUID, Int64) -> Void)? = nil) {
         self.snapshot = snapshot
         _selection = selection
         self.playback = playback
@@ -46,6 +47,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.navigation = navigation
         self.documentID = documentID
         self.selectedClip = selectedClip; self.faderPreview = faderPreview; self.mixActions = mixActions; self.onSelectClip = onSelectClip; self.onClipEdit = onClipEdit
+        self.onOpenPiano = onOpenPiano
         self.onOpenFX = onOpenFX
         self.onDropFX = onDropFX
         self.selectedTracks = selectedTracks
@@ -73,6 +75,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.onSelectClip = onSelectClip
         view.mixActions = mixActions
         view.onClipEdit = onClipEdit
+        view.timeline.onOpenPiano = onOpenPiano
         view.onOpenFX = onOpenFX
         view.onOpenPlugin = onOpenPlugin
         view.pluginNames = pluginNames
@@ -111,12 +114,14 @@ public final class ArrangeView: NSView {
     private var header: ArrangeHeaderInput?
     private var presentedTimelineOrigin = 0.0
     private var presentedCamera = ArrangeCamera()
+    private var presentedSnapshot: Snapshot?
     private var clipDraft: ClipDraft?
     /// Clip gain and fade clicks, drags and typing (ADR 0153).
     let clicks = ValueClicks<ClipTarget>()
     /// The handle under the last press and its clip as recorded.
     private var press: (target: ClipTarget, mix: ClipMix, layout: ClipControlLayout)?
     private(set) var entry: ValueEntryField?
+    var onOpenPiano: ((UUID, Int64) -> Void)?
     var onClipEdit: ((ClipMixEdit) -> Void)?
     private var playback: PlaybackFeed?
     private var transportGeneration: UInt64 = 0
@@ -209,6 +214,7 @@ public final class ArrangeView: NSView {
     }
     func present(_ frame: ArrangeFrame) {
         guard snapshot === frame.input.snapshot else { return }
+        presentedSnapshot = frame.input.snapshot
         elements = frame.elements; presentedTimelineOrigin = frame.timelineOrigin; presentedCamera = frame.camera
         presentedTimelineTop = frame.input.arrangeTop
     }
@@ -320,6 +326,13 @@ public final class ArrangeView: NSView {
             let clip = elements.last { $0.role == .clip && $0.id.track == id &&
                 CGRect(x: presentedTimelineOrigin + Double($0.x), y: presentedTimelineTop + Double($0.y), width: Double($0.width), height: Double($0.height)).contains(point) }
             onSelectClip?(clip?.id.placement)
+            let isAudio = clip?.id.placement.flatMap { snapshot.clipMix($0)?.isAudio } ?? false
+            if event.clickCount == 2, !rulerBusy, !isAudio, let onOpenPiano,
+               presentedSnapshot === snapshot, presentedCamera == camera,
+               event.modifierFlags.isDisjoint(with: [.command, .option, .control]),
+               let tick = PianoCamera.ticks(camera.originBeat + (point.x - renderInput.timelineOrigin) / camera.pixelsPerBeat), tick >= 0 {
+                finishClipMove(at: nil, flags: []); onOpenPiano(id, tick); return
+            }
             if let element = clip, let id = element.id.placement, selectedClip == id,
                let mix = snapshot.clipMix(id), mix.isAudio {
                 let layout = ClipControlLayout.make(mix, camera: presentedCamera, origin: presentedTimelineOrigin,

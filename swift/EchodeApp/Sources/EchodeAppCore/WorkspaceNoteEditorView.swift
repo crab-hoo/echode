@@ -9,7 +9,7 @@ struct WorkspaceNoteEditorView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(text("Piano Roll")).font(.headline)
-                    Text(controller.tracks.first { $0.id == controller.selection }?.name ?? text("Select a track"))
+                    Text(controller.tracks.first { $0.id == controller.pianoTrack }?.name ?? text("Select a track"))
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
@@ -21,8 +21,9 @@ struct WorkspaceNoteEditorView: View {
                 }.fixedSize()
             }.padding(10)
             Divider()
-            if let snapshot = controller.snapshot, let track = controller.selection {
+            if let snapshot = controller.snapshot, let track = controller.pianoTrack {
                 let document = controller.documentID
+                HStack(spacing: 0) {
                 PianoCanvas(snapshot: snapshot, track: track, focus: $controller.noteFocus, key: state.displayKey, busy: controller.busy,
                     insert: { pitch, beat, length in
                         Task { await controller.insertNote(pitch: pitch, beat: beat, length: length, on: track, documentID: document) }
@@ -41,9 +42,14 @@ struct WorkspaceNoteEditorView: View {
                     velocities: { change in Task { await controller.setNoteVelocities(change, documentID: document) } },
                     moves: { change in Task { await controller.moveNotes(change, documentID: document) } },
                     resizes: { change in Task { await controller.resizeNotes(change, documentID: document) } },
+                    steps: { step in if let document { _ = controller.enqueuePianoStep(step, documentID: document) } },
+                    references: controller.pianoReferences, location: controller.pianoLocation,
                     selection: controller.noteSelection, selectNotes: { if controller.documentID == document { controller.selectNotes($0) } },
                     deleteNotes: { ids in Task { await controller.deleteNotes(ids, documentID: document) } })
                     .id(controller.documentID)
+                    Divider()
+                    PianoTrackSelector(controller: controller, rows: controller.pianoTrackRows).frame(width: 210)
+                }
                 Divider()
                 fields
             } else { Text(text("Select a track")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }

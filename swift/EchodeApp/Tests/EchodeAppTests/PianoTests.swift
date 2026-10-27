@@ -268,7 +268,7 @@ struct PianoTests {
         let up = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
             windowNumber: 0, context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: true, keyCode: UInt16(kVK_UpArrow)))
         grid.keyDown(with: up)
-        grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: true)
+        grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
         grid.keyDown(with: up)
         #expect(sent == [61, 62])
         var applied: [Bool] = []

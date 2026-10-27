@@ -74,9 +74,9 @@ struct WorkspaceCommands: Commands {
                 else { actions?.perform(command) }
             }
                 .keyboardShortcut(command.shortcut)
-                // Text editing owns Space and its local undo stack.
+                // Text editing owns Space, Return and its local undo stack.
                 .disabled(textEntry == true && (command == .undo || command == .redo) ? false :
-                    actions?.enabled.contains(command) != true || (command == .playback && textEntry == true))
+                    actions?.enabled.contains(command) != true || ((command == .playback || command == .pause) && textEntry == true))
         }
     }
 }

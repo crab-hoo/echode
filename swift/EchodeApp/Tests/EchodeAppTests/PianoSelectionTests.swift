@@ -73,7 +73,7 @@ struct PianoSelectionTests {
         #expect(action.handler?() == true && view.selectedNotes.count == 1)
         #expect(action.handler?() == true && view.selectedNotes.count == 2)
         controller.selection = nil
-        #expect(controller.noteSelection.isEmpty)
+        #expect(controller.noteSelection == view.selectedNotes, "clearing arrange selection must preserve piano selection")
         await controller.close()
     }
 

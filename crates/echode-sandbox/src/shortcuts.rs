@@ -17,6 +17,7 @@ pub enum PluginCommand {
     Palette,
     Devices,
     MaximizeEditors,
+    Pause,
 }
 
 impl PluginCommand {
@@ -35,6 +36,7 @@ impl PluginCommand {
             Self::Palette => "Command Palette",
             Self::Devices => "Devices",
             Self::MaximizeEditors => "Maximize Editors",
+            Self::Pause => "Pause",
         }
     }
 
@@ -53,6 +55,7 @@ impl PluginCommand {
             10 => Self::Palette,
             11 => Self::Devices,
             12 => Self::MaximizeEditors,
+            13 => Self::Pause,
             _ => return None,
         })
     }
@@ -65,6 +68,7 @@ impl PluginCommand {
         }
         Some(match (code, modifiers) {
             (49, 0) => Self::Playback,
+            (36 | 76, 0) => Self::Pause,
             (47, 1) => Self::Stop,
             (6, 1) => Self::Undo,
             (6, 3) => Self::Redo,
@@ -103,11 +107,11 @@ mod tests {
             PluginCommand::from_key(23, 5, false),
             Some(PluginCommand::MaximizeEditors)
         );
-        for command in 0..=12 {
+        for command in 0..=13 {
             assert_eq!(PluginCommand::decode(command).unwrap() as u8, command);
         }
-        assert_eq!(PluginCommand::decode(13), None);
-        for code in [49, 6, 45, 31, 17, 18, 19, 20, 21, 23, 35] {
+        assert_eq!(PluginCommand::decode(14), None);
+        for code in [36, 76, 49, 6, 45, 31, 17, 18, 19, 20, 21, 23, 35] {
             for modifiers in 0..16 {
                 assert_eq!(PluginCommand::from_key(code, modifiers, true), None);
             }

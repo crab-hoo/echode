@@ -101,7 +101,7 @@ public struct WorkspaceView: View {
                               onMoveClip: { _ = session.moveClip($0) },
                               start: controller.playbackStart, loop: controller.rulerLoop, busy: controller.transportLocked,
                               onSetStart: setStart, onSetLoop: setLoop,
-                              followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
+                              followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false }, onOpenPiano: openPiano)
                     .id(controller.documentID)
                 Divider()
                 HStack {
@@ -116,6 +116,13 @@ public struct WorkspaceView: View {
                     Button(WorkspaceCommand.addTrack.title) { session.perform(.addTrack) }.disabled(!session.enabled(.addTrack))
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+    }
+    private var openPiano: (UUID, Int64) -> Void {
+        let document = controller.documentID
+        return { track, tick in
+            guard let document else { return }
+            session.openPiano(PianoTrackTarget(document: document, track: track), tick: tick)
         }
     }
     private var setStart: (Int64) -> Void {
@@ -181,7 +188,7 @@ public struct WorkspaceView: View {
             .frame(width: pane == .editor ? nil : 5, height: pane == .editor ? 5 : nil)
     }
     private var context: WorkspaceSelectionContext {
-        WorkspaceSelectionContext(document: controller.documentID, tracks: controller.tracks.map(\.id), track: controller.selection,
+        WorkspaceSelectionContext(document: controller.documentID, tracks: controller.tracks.map(\.id), track: controller.selection, pianoTrack: controller.pianoTrack,
             note: controller.noteFocus, geometry: controller.noteFocus.flatMap { controller.snapshot?.pianoNote($0).map(NoteGeometry.init) }, snapshot: controller.snapshot)
     }
 }
@@ -214,10 +221,11 @@ private struct WorkspaceSelectionContext: Equatable {
     let document: UUID?
     let tracks: [UUID]
     let track: UUID?
+    let pianoTrack: UUID?
     let note: PianoNote.ID?
     let geometry: NoteGeometry?
     let snapshot: Snapshot?
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.document == rhs.document && lhs.tracks == rhs.tracks && lhs.track == rhs.track && lhs.note == rhs.note && lhs.geometry == rhs.geometry && lhs.snapshot === rhs.snapshot
+        lhs.document == rhs.document && lhs.tracks == rhs.tracks && lhs.track == rhs.track && lhs.pianoTrack == rhs.pianoTrack && lhs.note == rhs.note && lhs.geometry == rhs.geometry && lhs.snapshot === rhs.snapshot
     }
 }

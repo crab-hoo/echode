@@ -8,6 +8,7 @@ private struct OffscreenPianoReport: Codable {
     let checkedPitchRows: Int
     let checkedDegreeRows: Int
     let checkedVelocityBars: Int
+    let checkedReferenceNotes: Int
     let mismatches: Int
     let staleOverlapPixels: Int
     let staleMarginPixels: Int
@@ -139,6 +140,37 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
             frames += 1
         }
     }
+    // Reference notes share the product encoder, but never the velocity or keyboard planes.
+    await controller.addTrack(name: "Reference")
+    guard let referenceTrack = controller.selection else { throw CocoaError(.coderValueNotFound) }
+    await controller.insertNote(pitch: 62, beat: 4, length: 1, on: referenceTrack)
+    await controller.insertNote(pitch: 62, beat: 0.25, length: 0.75, on: referenceTrack)
+    guard let references = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
+    var checkedReferenceNotes = 0
+    for scale in [1.0, 2.0] {
+        let input = CanvasInput(snapshot: references, selected: track, camera: ArrangeCamera(), width: 640, height: 331, scale: scale)
+        let camera = PianoCamera()
+        let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera,
+            key: DisplayKey(), preview: nil, references: [referenceTrack]))
+        let plainFrame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+        let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
+        let plain = try renderOffscreen(plainFrame, painter: painter, device: device, queue: queue)
+        for (beat, color) in [(4.5, PianoPalette.reference), (0.6, SIMD4<Float>(0.42, 0.76, 0.85, 1))] {
+            let point = CGPoint(x: frame.layout.gridOrigin.x + beat * camera.pixelsPerBeat,
+                y: frame.layout.gridOrigin.y + (camera.topPitch - 62 + 0.5) * camera.pixelsPerPitch)
+            let expected = CanvasReadback.Pixel(b: UInt8((color.z * 255).rounded()), g: UInt8((color.y * 255).rounded()),
+                r: UInt8((color.x * 255).rounded()), a: 255)
+            if image.pixel(x: Int(point.x * scale), y: Int(point.y * scale)) != expected { mismatches += 1 }
+            checkedReferenceNotes += 1
+        }
+        for y in 0..<image.height {
+            for x in 0..<image.width where y >= Int(frame.layout.velocity.minY * scale) || x < Int(frame.layout.grid.minX * scale) {
+                compared += 1
+                if image.pixel(x: x, y: y) != plain.pixel(x: x, y: y) { mismatches += 1 }
+            }
+        }
+        frames += 2
+    }
     // The shared encoder draws a stale extent at the input's pixel positions.
     let staleInput = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
                                  width: 640, height: 331, scale: 2)
@@ -162,12 +194,12 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     frames += 2
     await controller.close()
     let report = OffscreenPianoReport(frames: frames, comparedPixels: compared, checkedPitchRows: checkedRows,
-                                      checkedDegreeRows: checkedDegrees, checkedVelocityBars: checkedVelocityBars, mismatches: mismatches,
+                                      checkedDegreeRows: checkedDegrees, checkedVelocityBars: checkedVelocityBars, checkedReferenceNotes: checkedReferenceNotes, mismatches: mismatches,
                                       staleOverlapPixels: staleOverlapPixels, staleMarginPixels: staleMarginPixels,
                                       degreePixels: degreePixels, device: device.name)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
-    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(checkedVelocityBars) velocity bars, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(degreePixels) degree pixels, \(device.name)")
-    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, degreePixels > 0, checkedVelocityBars == 6 else { throw CocoaError(.coderInvalidValue) }
+    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(checkedVelocityBars) velocity bars, \(checkedReferenceNotes) reference notes, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(degreePixels) degree pixels, \(device.name)")
+    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, degreePixels > 0, checkedVelocityBars == 6, checkedReferenceNotes == 4 else { throw CocoaError(.coderInvalidValue) }
 }
