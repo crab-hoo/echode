@@ -721,7 +721,17 @@ fn worker(
                 _ => {
                     apply(&host, &job.operation)?;
                     audio.update(host.snapshot());
-                    None
+                    if matches!(&job.operation, Operation::Perform(_)) {
+                        let changed = !Arc::ptr_eq(&before_doc, &host.snapshot());
+                        Some(
+                            serde_json::to_vec(&serde_json::json!({
+                                "revisions": [], "changed": changed
+                            }))
+                            .map_err(|error| error.to_string())?,
+                        )
+                    } else {
+                        None
+                    }
                 }
             };
             publish(&host, &audio, previous.as_ref(), history, None)

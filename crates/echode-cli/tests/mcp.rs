@@ -294,6 +294,70 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn contract_mcp_noop_edits_succeed_without_consuming_history_or_redo() {
+    let mut fixture = Fixture::new();
+    let edited = fixture.tool(
+        "echode.actions.transaction",
+        json!({"actions":[
+            {"type":"track.add", "name":"No-op regression"},
+            {"type":"note.insert", "track":{"ref":0,"field":"id"},
+             "pitch":60, "velocity":100, "start":0, "length":705600}
+        ]}),
+    );
+    assert_eq!(edited["result"]["isError"], false, "{edited}");
+    let note = &edited["result"]["structuredContent"]["result"][1];
+    let arguments = json!({"track":note["track"], "clip":note["clip"],
+                          "note":note["note"], "velocity":100});
+    let no_op = fixture.tool("echode.note.velocity", arguments.clone());
+    assert_eq!(no_op["result"]["isError"], false, "{no_op}");
+    let accepted = &no_op["result"]["structuredContent"]["result"];
+    assert_eq!(accepted["note"], note["note"]);
+    assert_eq!(accepted["velocity"], 100);
+    let text: Value =
+        serde_json::from_str(no_op["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(text, no_op["result"]["structuredContent"]);
+    let mut action = arguments.clone();
+    action["type"] = json!("note.velocity");
+    let group = fixture.tool("echode.actions.transaction", json!({"actions":[action]}));
+    assert_eq!(group["result"]["isError"], false, "{group}");
+    assert_eq!(
+        group["result"]["structuredContent"]["result"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        fixture.tool("echode.edit.undo", json!({}))["result"]["isError"],
+        false
+    );
+    let summary = fixture.tool("echode.project.summary", json!({}));
+    assert_eq!(
+        summary["result"]["structuredContent"]["result"]["tracks"],
+        json!([]),
+        "no-op MCP requests must not consume undo"
+    );
+    // Even a nonempty transaction that cancels itself must preserve redo.
+    let cancelled = fixture.tool(
+        "echode.actions.transaction",
+        json!({"actions":[
+            {"type":"project.set_meter", "numerator":3, "denominator":4},
+            {"type":"project.set_meter", "numerator":4, "denominator":4}
+        ]}),
+    );
+    assert_eq!(cancelled["result"]["isError"], false, "{cancelled}");
+    assert_eq!(
+        fixture.tool("echode.edit.redo", json!({}))["result"]["isError"],
+        false
+    );
+    fixture.close_mcp();
+    fixture.server.take();
+    let host = DocumentHost::open(&fixture.directory).unwrap();
+    assert_eq!(host.snapshot().tracks().len(), 1);
+    assert_eq!(host.snapshot().contents()[0].notes.len(), 1);
+}
+
+#[test]
 fn contract_mcp_stdio_edits_share_one_durable_session() {
     let mut fixture = Fixture::new();
     let discover = fixture.call("server/discover", json!({}));

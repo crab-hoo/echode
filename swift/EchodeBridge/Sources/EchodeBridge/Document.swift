@@ -63,6 +63,7 @@ public final class Snapshot: @unchecked Sendable {
         }
     }
 
+    /// History list/restore details, or the changed flag of a perform completion.
     public func historyReport() throws -> HistoryReport {
         try withExtendedLifetime(self) {
             var count = 0

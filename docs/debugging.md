@@ -90,6 +90,14 @@ make debug-report
   同じバイナリの `DevicePreparationTests` 単独では再現せず、原因は未確定である。
   失敗は同じ `swift-tests.failed.log`、単独の記録は `velocity-lane-preparation-focused.log`、
   正式な再実行の合否は検査レポートで確認する。期限と対象テストは変更しない。
+- **中断後に `running` が残る・全結果が一度に `stale` になる**:
+  呼出し元の時間切れは検査自身の終了コードではない。ロックが空いていても、自分が起動した make / cargo / テストの子が残る場合がある。
+  `ps` と保存ログで所有関係と終了を確認し、残った検査と次の検査を重ねない。既存アプリや他の作業のプロセスは終了しない。
+  子のログが後から成功しても、親が完了を記録していなければ合格へ手で移し替えず、`make verify` を再実行する。
+  検査識別には `os.uname()` も含むため、ネットワーク移動などでホスト名が変わると、ソースとコンパイラーが同じでも全結果が失効する。
+  2026-10-28 の ADV-04 検査でこの組合せを観測した。現行環境で取り直し、手元のログと有効な検査記録を区別する。
+  Swift の負の対照を同じ位置まで何度もやり直す場合は、契約ごとの完了記録が増えているかも確認する。
+  各契約の全反例が終わった時点で保存する。一部の反例だけが終わった契約は合格ではない（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
 - **基準コミット（`VERIFY_BASE`）エラー**:
   一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
 - **終了フック直後の不要な再実行**:
@@ -324,6 +332,12 @@ make debug-report
   `audit_cur03_waveform_maps_each_column_through_the_tempo_map` が、列ごとの時間対応を通常回帰で検査する。
   `waveform_partial_views_keep_multiple_tempo_changes_and_trim_offsets` で全幅・部分幅・キャッシュ再読込みを比較する。
   EOF 超過と途中のテンポ変化は独立した条件である（[CUR-02 / 03](reviews/2026-10-25-code-audit.md)）。
+- **API / MCP の同値設定で Undo が何も戻さない・Redo が消える**:
+  無変更は成功として Action／配列を返すが、新しい Undo を意味しない（[ADR 0182](decisions/0182-noop-edits.md)）。
+  `Session` の空差分判定と束の正味の変更、`DocumentHost` のジャーナルの増加判定を確認する。
+  `noop_edits.rs` と MCP の `contract_mcp_noop_edits_succeed_without_consuming_history_or_redo` で切り分ける。
+  画面だけ件数が増える時は、perform 完了の `historyReport.changed` と `recordEdit` の条件を照合する。
+  旧版の `changes: []` の行は自動削除しない。同値の依頼・前後の連番・Redo の有無を記録し、原本を保持する。
 - **API / MCP の呼出しが返らず、後続クライアントも止まる**:
   ソケットの読込み待ちだけでなく、応答の書込み待ちを確認する。
   `serve_connection_limited` は読書きの無進行を 30 秒で打ち切る。

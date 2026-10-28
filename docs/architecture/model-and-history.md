@@ -137,6 +137,9 @@ Phase 2 で配置ごとの非破壊デバイスチェインを追加する（[AD
   （[ADR 0145](../decisions/0145-sample-browser-file-drops.md)）。
   記録する `audio.place` は両端のフェードを持ち、新しい配置は 0 を書く。欄のない以前のジャーナルは 5 ms で再生する
   （[ADR 0161](../decisions/0161-placed-audio-without-fades.md)）。
+  無変更の単一編集と、正味の変更が残らない束は成功として返し、Undo・Redo・公開・ジャーナル・自動保存を変えない
+  （[ADR 0182](../decisions/0182-noop-edits.md)）。
+  C ABI の perform 完了も `historyReport.changed` を返し、Swift の件数と入力長の履歴枠は真の時だけ増やす。
 - **ジャーナル**: 採番した ID を含めた操作を 1 行ずつ追記し、Undo した操作は先端から外す。クラッシュ後は最後の自動コミットに再生して復旧する
 - **キーマップ・マウスコマンド・コマンドパレット**: 画面ごとの TOML キーマップ（Space＝再生／停止、Return＝一時停止／再開等）、
   修飾キー×対象のマウスコマンド表、`nucleo` によるあいまい検索パレットを提供する

@@ -61,9 +61,13 @@ impl Session {
         &self.journal
     }
 
+    /// A command with an empty changeset succeeds without recording history.
     pub fn perform(&mut self, command: Command) -> Result<Action, ActionError> {
         let action = Action::from_command(command);
         let (next, changes) = action.apply(&self.current)?;
+        if changes.is_empty() {
+            return Ok(action);
+        }
         self.undo.push(std::mem::replace(&mut self.current, next));
         self.redo.clear();
         self.journal_redo.clear();
@@ -75,14 +79,12 @@ impl Session {
     }
 
     /// Runs several commands as one undo step. A failure puts the session back.
+    /// A group with no net change succeeds without touching history or redo.
     pub fn transaction<T>(
         &mut self,
         body: impl FnOnce(&mut Transaction<'_>) -> Result<T, ActionError>,
     ) -> Result<T, ActionError> {
         let checkpoint = self.current.clone();
-        let undo_len = self.undo.len();
-        let redo = self.redo.clone();
-        let journal_redo = self.journal_redo.clone();
         let mut actions = Vec::new();
         let mut changes = ChangeSet::new();
         let result = {
@@ -95,19 +97,23 @@ impl Session {
         };
         match result {
             Ok(value) => {
-                if !actions.is_empty() {
+                if !changes.is_empty() && self.current != checkpoint {
+                    self.undo.push(checkpoint);
+                    self.redo.clear();
+                    self.journal_redo.clear();
                     self.journal.push(JournalEntry {
                         actions,
                         changes: Some(changes),
                     });
+                } else {
+                    // Keep the original sharing and redo branch when the group
+                    // cancels itself out or every command is already satisfied.
+                    self.current = checkpoint;
                 }
                 Ok(value)
             }
             Err(error) => {
                 self.current = checkpoint;
-                self.undo.truncate(undo_len);
-                self.redo = redo;
-                self.journal_redo = journal_redo;
                 Err(error)
             }
         }
@@ -246,10 +252,8 @@ impl Transaction<'_> {
     pub fn perform(&mut self, command: Command) -> Result<Action, ActionError> {
         let action = Action::from_command(command);
         let (next, changes) = action.apply(&self.session.current)?;
-        if self.actions.is_empty() {
-            self.session.undo.push(self.session.current.clone());
-            self.session.redo.clear();
-            self.session.journal_redo.clear();
+        if changes.is_empty() {
+            return Ok(action);
         }
         self.session.current = next;
         self.changes.append(changes);

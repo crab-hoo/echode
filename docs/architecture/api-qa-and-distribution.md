@@ -10,6 +10,8 @@
 - **JSON-RPC**: ユーザー本人だけが読み書きできる Unix ドメインソケットで 1 行 1 件の JSON-RPC 2.0 を提供する。
   `actions.list`、`actions.perform`、`actions.transaction`、`edit.undo`、`edit.redo`、`project.summary`、`protocol.version` を受ける
   （[ADR 0020](../decisions/0020-json-rpc.md)、[ADR 0034](../decisions/0034-api-transaction.md)）
+  無変更も成功として Action／配列を返すが、履歴は増やさない。配列の受理順と参照位置を保つ
+  （[ADR 0182](../decisions/0182-noop-edits.md)）。
   接続は直列に処理し、読込み・応答書込みの無進行をそれぞれ 30 秒で打ち切る。
   送信失敗はその接続だけを閉じ、既に成立した編集を再実行しない（[ADR 0073](../decisions/0073-socket-path.md)）。
 - **CLI とヘッドレス**: `echode render`（ステレオ float WAV 書き出し、[ADR 0019](../decisions/0019-offline-wav.md)、[ADR 0057](../decisions/0057-crash-recovery.md)）、

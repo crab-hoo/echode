@@ -167,6 +167,40 @@ class ContractEvidenceTests(unittest.TestCase):
                 self.assertEqual((checkout / "Sources/View.swift").read_text(),
                                  "let a = 1\nlet b = 1\nlet c = 1\nlet d = 1\n")
 
+    def test_interrupted_swift_controls_keep_completed_contracts_but_not_partial_mutations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory) / "0"
+            (checkout / "Sources").mkdir(parents=True)
+            source = checkout / "Sources/View.swift"
+            original = "let a = 1\nlet b = 1\n"
+            source.write_text(original)
+            fault_a = {"file": "Sources/View.swift", "old": "let a = 1", "new": "let a = 2"}
+            fault_b = {"file": "Sources/View.swift", "old": "let b = 1", "new": "let b = 2"}
+            cases = [{"id": name, "runner": "swift", "package_path": "App", "suite": "Suite",
+                      "test": f"contract{name}", "timeout": 30, "negative_controls": faults}
+                     for name, faults in [("single", [fault_a]), ("multiple", [fault_a, fault_b])]]
+            fingerprints = {case["id"]: "stamp-" + case["id"] for case in cases}
+            def fake(args, **kwargs):
+                if args[:2] == ["swift", "build"]:
+                    if "let b = 2" in source.read_text():
+                        raise KeyboardInterrupt("interrupt during the next mutation")
+                    return subprocess.CompletedProcess(args, 0, "Build complete!", "")
+                name = args[-1].split("/")[1]
+                output = f"Expectation failed\nTest {name}() failed\nTest run with 1 test in 1 suite failed"
+                return subprocess.CompletedProcess(args, 1, output, "")
+            results = []
+            with patch.object(contracts, "run_process", side_effect=fake), self.assertRaises(KeyboardInterrupt):
+                contracts.swift_controls([checkout], cases, fingerprints, Path(directory), results.append)
+            self.assertEqual([result["id"] for result in results], ["single"],
+                             "a completed Swift contract must survive a later interruption")
+            self.assertEqual(results[0]["status"], "passed")
+            self.assertIn("mutation 1/1: rejected", (Path(directory) / "single-negative.log").read_text())
+            self.assertEqual(source.read_text(), original)
+            tests = [{"id": name, "status": "passed", "fingerprint": stamp}
+                     for name, stamp in fingerprints.items()]
+            reusable = contracts.reusable_results({"tests": tests, "negative_controls": results}, fingerprints)
+            self.assertEqual(set(reusable), {"single"}, "a partial multi-mutation contract is never reusable")
+
     def test_multiple_counterexamples_are_each_built_and_all_must_be_rejected(self):
         def run(second_rejected):
             with tempfile.TemporaryDirectory() as directory:

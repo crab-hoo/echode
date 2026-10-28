@@ -83,6 +83,7 @@ check-base:
 # Group note movement, common bounds, linked-content writes and gesture cancellation share this gate.
 # Group edge resizing shares common one-tick/time bounds, previews and atomic history through this gate.
 # Independent piano targets, reference-only notes, track controls and ordered arrow/Return routing share this gate too.
+# No-op commands/groups preserve history, durable publication and MCP acknowledgements through this gate.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

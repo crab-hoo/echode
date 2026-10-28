@@ -119,3 +119,5 @@ Enter ならブラウザを開いたまま挿入します。同梱の Sine Pad �
 既存の `.echode` パッケージを指定して、別のターミナルで `target/release/echode serve PACKAGE SOCKET` を起動します。実行ファイルは `cargo build --release -p echode-cli` で作れます。MCP クライアントには、その実行ファイルの絶対パスを command、`["mcp", "SOCKETの絶対パス"]` を args として指定します。
 
 同じビルドの serve と mcp を使います。MCP は登録済みアクションのツール、まとめた編集、Undo / Redo、概要とトラックの読み取りを提供します。編集は既存のジャーナルへ記録されます。起動中の GUI アプリへの接続と再生・機器操作は初版の対象外です。GUI で開いている同じパッケージを serve で開き直さないでください。接続範囲と検査は [ADR 0115](docs/decisions/0115-phase2-mcp.md) を参照してください。
+同じ値の設定や、全体として元に戻る一括編集も成功しますが、Undo・Redo・ジャーナル・自動保存は変えません。
+成功時の Action／配列は依頼を受理した結果であり、新しい Undo の段を作ったことを意味しません（[ADR 0182](docs/decisions/0182-noop-edits.md)）。

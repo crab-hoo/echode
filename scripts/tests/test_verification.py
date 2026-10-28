@@ -351,6 +351,27 @@ class PolicyTests(unittest.TestCase):
                          "check-bridge-asan", "check-bridge-tsan"}
                         <= self.selected("crates/echode-history/src/autosave.rs"))
 
+    def test_noop_edits_cover_the_session_host_and_real_mcp_entry(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        self.assertEqual((contracts["noop-edits"]["package"], contracts["noop-edits"]["target"]),
+                         ("echode-history", ["--test", "noop_edits"]))
+        self.assertEqual((contracts["mcp-noop-edits"]["package"], contracts["mcp-noop-edits"]["target"]),
+                         ("echode-cli", ["--test", "mcp"]))
+        self.assertEqual(len(contracts["noop-edits"]["negative_controls"]), 2)
+        self.assertEqual((contracts["noop-edits-ui"]["runner"], contracts["noop-edits-ui"]["suite"]),
+                         ("swift", "NoopEditTests"))
+        for name in ("noop-edits", "mcp-noop-edits"):
+            contract = contracts[name]
+            faults = contract.get("negative_controls") or [contract["negative_control"]]
+            self.assertTrue(all(f["file"] == "crates/echode-actions/src/session.rs" for f in faults))
+        for path in ("crates/echode-actions/src/session.rs", "crates/echode-history/tests/noop_edits.rs",
+                     "crates/echode-cli/tests/mcp.rs"):
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+        for path in ("crates/echode-ffi/src/queue.rs",
+                     "swift/EchodeApp/Tests/EchodeAppTests/NoopEditTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
+                             "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
+
     def test_tsan_runtime_is_checked_with_its_negative_control_and_pinned_binaries(self):
         checks = {check["id"]: check for check in self.policy["checks"]}
         self.assertIn("check-tsan-runtime", self.selected("spikes/bridge/sanitizers/Errno.c"))
@@ -885,7 +906,7 @@ class PolicyTests(unittest.TestCase):
                           "piano-note-selection-ui", "piano-note-selection-cancel-ui", "piano-note-selection-delete-ui", "piano-note-linked-delete-ui", "piano-velocity-lane-ui", "piano-velocity-lane-frame-ui", "piano-velocity-lane-cancel-ui", "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
-                          "journal-invariants", "journal-confirmed-edits",
+                          "journal-invariants", "journal-confirmed-edits", "noop-edits", "mcp-noop-edits", "noop-edits-ui",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
                           "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:

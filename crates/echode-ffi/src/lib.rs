@@ -354,9 +354,10 @@ pub unsafe extern "C" fn echode_snapshot_audio(
     bytes.as_ptr()
 }
 
-/// UTF-8 JSON `{revisions, changed}` from the snapshot that completed a history
-/// command. Other snapshots carry an empty list. The pointer is valid until
-/// the snapshot is freed.
+/// UTF-8 JSON `{revisions, changed}` from a history or perform completion.
+/// Perform completions report whether they recorded an edit, with no revisions.
+/// Other snapshots carry an empty list and `changed: false`. The pointer is valid
+/// until the snapshot is freed.
 ///
 /// # Safety
 /// `snapshot` is null or an owned handle that has not been freed. `len` is

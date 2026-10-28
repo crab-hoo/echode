@@ -14,6 +14,42 @@ fn quarter(start: i64) -> NoteDraft {
 }
 
 #[test]
+fn no_op_commands_and_cancelled_groups_preserve_session_history() {
+    let mut session = Session::open(Project::new());
+    session
+        .perform(Command::AddTrack { name: "a".into() })
+        .unwrap();
+    session.undo().unwrap();
+    let base = session.project().clone();
+    let meter = base.meter();
+    session.perform(Command::SetMeter { meter }).unwrap();
+    session
+        .transaction(|tx| {
+            tx.perform(Command::SetMeter { meter })?;
+            Ok(())
+        })
+        .unwrap();
+    session
+        .transaction(|tx| {
+            tx.perform(Command::SetMeter {
+                meter: Meter::try_new(3, 4).unwrap(),
+            })?;
+            tx.perform(Command::SetMeter { meter })?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(session.project(), &base);
+    assert!(session.journal().is_empty(), "no-op session journal");
+    assert_eq!(session.undo().unwrap_err(), ActionError::NothingToUndo);
+    session
+        .redo()
+        .expect("no-op session edits must preserve redo");
+    assert_eq!(session.project().tracks()[0].name, "a");
+    session.undo().unwrap();
+    assert_eq!(session.project(), &base);
+}
+
+#[test]
 fn undo_and_redo_roundtrip_a_note() {
     let base = Project::new();
     let mut session = Session::open(base.clone());

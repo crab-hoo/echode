@@ -668,9 +668,12 @@ public final class ProjectController {
                 let velocity = rememberingVelocity(), velocityGeneration = self.noteVelocity.generation
                 let previousTracks = selectingAddedTrack ? Set(self.tracks.map(\.id)) : []
                 let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
-                self.publish(try await document.perform(String(decoding: bytes, as: UTF8.self)))
+                let edited = try await document.perform(String(decoding: bytes, as: UTF8.self))
+                self.publish(edited)
                 if selectingAddedTrack { self.selectAddedRoots(previous: previousTracks) }
-                self.recordEdit(inputLength: inputLength)
+                if try edited.historyReport().changed {
+                    self.recordEdit(inputLength: inputLength)
+                }
                 self.noteVelocity.finish(velocity, generation: velocityGeneration)
                 return true
             } catch { self.report(error); return false }

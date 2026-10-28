@@ -1,6 +1,6 @@
 //! Reproductions from the 2026-10-27 adversarial audit (ADV-01, ADV-04).
 //!
-//! ADV-01 runs as a normal regression; ADV-04 remains ignored until fixed.
+//! Both findings run as normal regressions.
 //! See docs/reviews/2026-10-27-adversarial-audit.md.
 
 use std::path::PathBuf;
@@ -300,7 +300,6 @@ fn journal_rejects_out_of_range_and_missing_mixer_parameters() {
 }
 
 #[test]
-#[ignore = "ADV-04: an edit that changes nothing still records an undo step"]
 fn audit_adv04_an_edit_that_changes_nothing_adds_no_undo_step() {
     let directory = scratch("no-op");
     write_package(&directory, &Project::new()).unwrap();
@@ -322,12 +321,13 @@ fn audit_adv04_an_edit_that_changes_nothing_adds_no_undo_step() {
     let placement = &project.tracks()[0].clips[0];
     let note = project.content(placement.content).unwrap().notes[0].id;
     // The same velocity, as an API or MCP client might resend it.
-    let _ = host.perform(Command::SetNoteVelocity {
+    host.perform(Command::SetNoteVelocity {
         track,
         clip: placement.id,
         note,
         velocity: 100,
-    });
+    })
+    .unwrap();
     host.undo().unwrap();
     let notes: usize = host
         .snapshot()

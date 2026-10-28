@@ -723,6 +723,7 @@ proptest! {
         let mut session = Session::open(base.clone());
         for step in &steps {
             let before = session.project().clone();
+            let journal_len = session.journal().len();
             let result = match step {
                 Step::Undo => session.undo().map(|_| ()),
                 Step::Redo => session.redo().map(|_| ()),
@@ -735,6 +736,10 @@ proptest! {
                 Ok(()) => {
                     if !matches!(step, Step::Undo | Step::Redo) {
                         let changes = before.diff(session.project());
+                        if changes.is_empty() {
+                            prop_assert_eq!(session.journal().len(), journal_len,
+                                            "a no-op {:?} recorded history", step);
+                        }
                         let forward = before.apply_changeset(&changes).unwrap();
                         let backward = session.project().apply_changeset(&changes.invert()).unwrap();
                         prop_assert_eq!(&forward, session.project(), "changeset for {:?}", step);

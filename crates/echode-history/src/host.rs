@@ -240,7 +240,8 @@ impl DocumentHost {
             .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
     }
 
-    /// Applies `command` on the document thread and returns after the journal is written.
+    /// Applies `command`, writing any nonempty edit to the journal before returning.
+    /// A no-op succeeds without publishing or discarding redo.
     pub fn perform(&self, command: Command) -> Result<Action, HostError> {
         let (reply, incoming) = mpsc::channel();
         self.request
@@ -252,6 +253,7 @@ impl DocumentHost {
     }
 
     /// Applies every action as one undo step. References are resolved in order.
+    /// A group with no net change returns all accepted actions without recording a step.
     pub fn apply(&self, actions: Vec<Value>) -> Result<Vec<Action>, HostError> {
         let (reply, incoming) = mpsc::channel();
         self.request
@@ -396,8 +398,13 @@ fn worker(
                         }
                     }
                     command => {
+                        let journal_len = session.journal().len();
                         let parked = session.park_redo();
                         match session.perform(command) {
+                            Ok(action) if session.journal().len() == journal_len => {
+                                session.unpark_redo(parked);
+                                Ok(action)
+                            }
                             Ok(action) => {
                                 let saved = publish_edit(&mut Publish {
                                     directory: &directory,
@@ -419,9 +426,10 @@ fn worker(
                 let _ = reply.send(result);
             }
             Request::Apply { actions, reply } => {
+                let journal_len = session.journal().len();
                 let parked = session.park_redo();
                 let result = match apply_transaction(&mut session, &directory, actions) {
-                    Ok(applied) if applied.is_empty() => {
+                    Ok(applied) if session.journal().len() == journal_len => {
                         session.unpark_redo(parked);
                         Ok(applied)
                     }

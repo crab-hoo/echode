@@ -347,14 +347,17 @@ fn tools() -> Vec<Value> {
             tool(
                 &format!("echode.{}", spec.id),
                 spec.name_en,
-                spec.description_en,
+                &format!(
+                    "{}. An already satisfied edit succeeds without adding Undo history.",
+                    spec.description_en
+                ),
                 schema,
                 false,
             )
         })
         .collect();
     tools.extend([
-        tool("echode.actions.transaction", "Edit together", "Apply an actions array atomically as one Undo. Earlier result IDs may be referenced with {ref: index, field: name}.",
+        tool("echode.actions.transaction", "Edit together", "Apply an actions array atomically as one Undo when the project changes. A group with no net change succeeds without adding Undo history. Earlier result IDs may be referenced with {ref: index, field: name}.",
              json!({"type":"object","properties":{"actions":{"type":"array","items":{"type":"object"}}},"required":["actions"],"additionalProperties":false}), false),
         tool("echode.edit.undo", "Undo", "Undo the last edit in the configured session.", empty.clone(), false),
         tool("echode.edit.redo", "Redo", "Redo the last undone edit in the configured session.", empty.clone(), false),

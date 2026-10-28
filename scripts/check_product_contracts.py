@@ -380,10 +380,10 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
                     entry["output"] += f"mutation {index + 1}/{len(negative_control_mutations(contract))}: " \
                                        f"{'rejected' if rejected else 'NOT rejected'}\n" + output
                     entry["caught"] = entry["caught"] and rejected
-    for contract in contracts:
-        entry = state[contract["id"]]
-        write_control(evidence, contract, fingerprints.get(contract["id"]), entry["output"], entry["caught"],
-                      entry["started"], record)
+                    if index + 1 == len(negative_control_mutations(contract)):
+                        # Preserve each complete contract even if a later build is interrupted.
+                        write_control(evidence, contract, fingerprints.get(contract["id"]), entry["output"],
+                                      entry["caught"], entry["started"], record)
 
 
 def negative_controls(root, contracts, fingerprints, evidence, record):
