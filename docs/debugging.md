@@ -90,6 +90,14 @@ make debug-report
   同じバイナリの `DevicePreparationTests` 単独では再現せず、原因は未確定である。
   失敗は同じ `swift-tests.failed.log`、単独の記録は `velocity-lane-preparation-focused.log`、
   正式な再実行の合否は検査レポートで確認する。期限と対象テストは変更しない。
+  2026-10-28 のグリッド変更の ASan 全体検査では、`RecoveryConsentTests` の警告待ちも 2 回期限切れとなった。
+  同じバイナリの当該スイート単独では再現せず、ASan のメモリ診断はなかった。5 秒の期限は変更しない。
+  記録は `target/bridge/address/product/swift-tests.failed.log` と `target/focused-checks/piano-grid-recovery-asan/`。
+  初回か取消後の再オープンか、`busy`・`errorMessage`・公開中の文書とトラックを期限切れの診断へ追加した。
+  同じ入力の全体再実行では再現しない場合もあり、待機期限は維持する。
+  TSan の全体検査でも最初のオープン中に同じ期限切れを観測した。`busy=true`、エラーなしで、旧文書は未交換だった。
+  原因は未確定だが、sanitizer では復旧同意のスイートを別プロセスで実行して、他の同時テストの負荷から分ける。
+  対象と期限を保ち、0 件実行も拒否する。分離後のログは各 `product/recovery-swift-tests.log` と失敗時の `.failed.log` に残す。
 - **中断後に `running` が残る・全結果が一度に `stale` になる**:
   呼出し元の時間切れは検査自身の終了コードではない。ロックが空いていても、自分が起動した make / cargo / テストの子が残る場合がある。
   `ps` と保存ログで所有関係と終了を確認し、残った検査と次の検査を重ねない。既存アプリや他の作業のプロセスは終了しない。
@@ -286,6 +294,15 @@ make debug-report
   仮表示はモデル ID のない `PianoRenderInput.insertion` であり、確定ノートや VoiceOver 要素へ混ぜない。
   古い描画・異なる配置での押下は受けず、文書・トラック・カメラの変更と終了後の解放も追加しない
   （[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
+
+- **ズームでノートの吸着幅が変わる・固定幅が変わる・線と吸着が一致しない**:
+  `PianoCamera.gridMode` と実効 `grid` を区別する。自動は横倍率で変わり、固定は音価を保つ。
+  細かい固定幅の線は 4 pt 未満で間引くが、吸着幅と記憶済み入力長は変えない。
+  `piano-auto-grid-ui`・`piano-fixed-grid-ui` で実入力・旧押下の取消・文書所有確認を分けて調べる。
+  トラック切替と再生成でモードが戻る場合は共通カメラと `onGridChange` の操作子反映を確認する。
+  `spike-piano-frame` の `checkedGridLines` と `mismatches` は倍率 1・2 の細分線の GPU 画素を含む
+  （[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。実画面の密度と VoiceOver はユーザー確認とする。
+  `grid pixel mismatch` は倍率・tick・採取 x・実際と期待の色を示す。採取は描画と同じ Float 座標の被覆ピクセル中心で行う。
 
 - **入力長が別トラックへ伝わらない・Undo で変わらない・再読込後に変わる**:
   `ProjectController.noteInput.length` が未指定なら現在のグリッド幅を使う。再オープンで未指定へ戻るのは正常である。

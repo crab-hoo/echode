@@ -1149,6 +1149,24 @@
         }
       }
     },
+    "Automatic Grid": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Automatic Grid" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "自動グリッド" } }
+      }
+    },
+    "Note Grid": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Note Grid" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ノートグリッド" } }
+      }
+    },
+    "Note grid help": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Automatic follows horizontal zoom. Fixed note values keep their width in beats. Shift releases snapping." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "自動は横ズームに追従し、固定音価は拍の幅を保ちます。Shift で吸着を解除します。" } }
+      }
+    },
     "Display Key": {
       "localizations": {
         "en": {

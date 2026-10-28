@@ -502,6 +502,19 @@ class PolicyTests(unittest.TestCase):
                             self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + source))
         self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PianoViewportTests.swift"))
 
+    def test_piano_grid_contracts_cover_zoom_native_controls_and_viewport_ownership(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, suite, test in (
+                ("piano-auto-grid-ui", "PianoGridTests", "contractAutomaticGridFollowsZoomAndDrivesNoteInput"),
+                ("piano-fixed-grid-ui", "PianoGridControlTests", "contractFixedGridControlSharesStateCancelsPressesAndKeepsInputMemory")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"], contract["test"]), ("swift", suite, test))
+            self.assertEqual(len(contract["negative_controls"]), 3)
+        for source in ("Sources/EchodeAppCore/PianoGrid.swift", "Sources/EchodeAppCore/PianoGeometry.swift",
+                       "Sources/EchodeAppCore/PianoFrame.swift", "Tests/EchodeAppTests/PianoGridControlTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected("swift/EchodeApp/" + source))
+
     def test_piano_note_drag_contract_covers_modifiers_release_and_subgrid_lengths(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         contract = contracts["piano-note-drag-ui"]
@@ -935,6 +948,7 @@ class PolicyTests(unittest.TestCase):
                           "piano-key-step-ui", "piano-key-step-bounds-ui", "piano-return-ui", "browser-return-ui",
                           "piano-velocity-batch-ui", "piano-velocity-batch-targets-ui", "piano-velocity-batch-cancel-ui",
                           "note-duplicate-model", "piano-note-duplicate-ui", "piano-note-duplicate-targets-ui", "piano-note-duplicate-cancel-ui",
+                          "piano-auto-grid-ui", "piano-fixed-grid-ui",
                           "piano-note-move-batch-ui", "piano-note-move-batch-targets-ui", "piano-note-move-batch-cancel-ui",
                           "piano-note-resize-batch-ui", "piano-note-resize-batch-targets-ui", "piano-note-resize-batch-cancel-ui",
                           "piano-note-selection-ui", "piano-note-selection-cancel-ui", "piano-note-selection-delete-ui", "piano-note-linked-delete-ui", "piano-velocity-lane-ui", "piano-velocity-lane-frame-ui", "piano-velocity-lane-cancel-ui", "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",

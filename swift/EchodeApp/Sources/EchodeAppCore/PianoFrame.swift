@@ -65,10 +65,11 @@ struct PianoFrame: Sendable {
             instance(SIMD4(Float(origin.x), row.y, Float(layout.grid.width), max(0, row.height - 1)),
                      color: row.black ? PianoPalette.blackRow : PianoPalette.whiteRow)
         }
-        for beat in beats {
-            let x = origin.x + (Double(beat) - camera.originBeat) * camera.pixelsPerBeat
-            instances.append(instance(SIMD4(Float(x), Float(origin.y), 1, Float(layout.grid.height)),
-                                      color: beat % 4 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) : SIMD4(0.18, 0.20, 0.23, 1)))
+        for tick in gridTicks {
+            let x = origin.x + (Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+            let color: SIMD4<Float> = tick % 2_822_400 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
+                (tick % 705_600 == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
+            instances.append(instance(SIMD4(Float(x), Float(origin.y), 1, Float(layout.grid.height)), color: color))
         }
         for note in referenceNotes {
             instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
@@ -253,6 +254,31 @@ struct PianoFrame: Sendable {
 
     func velocity(for note: PianoNote) -> Int {
         piano.velocity?.value(for: note) ?? Int(note.velocity >> 9)
+    }
+
+    /// Dense fixed grids keep their snap width, but skip lines closer than 4pt.
+    /// Work and storage are bounded by the viewport, not the project duration.
+    var gridTicks: [Int64] {
+        let camera = piano.camera
+        guard camera.grid > 0, camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
+              camera.originBeat.isFinite, camera.originBeat >= 0, layout.grid.width.isFinite else { return [] }
+        var step = camera.grid
+        while Double(step) / 705_600 * camera.pixelsPerBeat < 4 {
+            let doubled = step.multipliedReportingOverflow(by: 2)
+            guard !doubled.overflow else { return [] }
+            step = doubled.partialValue
+        }
+        let first = ceil(camera.originBeat * 705_600 / Double(step)) * Double(step)
+        guard var tick = Int64(exactly: first) else { return [] }
+        let end = (camera.originBeat + layout.grid.width / camera.pixelsPerBeat) * 705_600
+        var result: [Int64] = []
+        while Double(tick) <= end {
+            result.append(tick)
+            let next = tick.addingReportingOverflow(step)
+            if next.overflow { break }
+            tick = next.partialValue
+        }
+        return result
     }
 
     private var beats: ClosedRange<Int> {

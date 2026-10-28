@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 source scripts/bridge-toolchain.env
 product_sanitizer="${1:?usage: check-product-bridge.sh address|thread}"
 product_output="$PWD/target/bridge/$product_sanitizer/product"
-product_validation=(python3 scripts/run-bridge-validation.py --timeout 600 --log "$product_output/swift-tests.log")
+product_validation=(python3 scripts/run-bridge-validation.py --timeout 600)
 product_swift=swift
 mkdir -p "$product_output"
 case "$product_sanitizer" in
@@ -44,6 +44,15 @@ print(max(headers, key=lambda path: path.stat().st_mtime_ns))
 PY
 )"
 cp "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h
-"${product_validation[@]}" "$product_swift" test -q \
+# Keep every test and the recovery suite's 5s readiness deadline. A separate
+# process keeps unrelated concurrent fixtures out of the recovery readiness check.
+"${product_validation[@]}" --log "$product_output/swift-tests.log" "$product_swift" test -q \
     --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
-    --sanitize "$product_sanitizer" -Xswiftc -warnings-as-errors
+    --sanitize "$product_sanitizer" -Xswiftc -warnings-as-errors --skip RecoveryConsentTests
+"${product_validation[@]}" --log "$product_output/recovery-swift-tests.log" "$product_swift" test -q --skip-build \
+    --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
+    --sanitize "$product_sanitizer" -Xswiftc -warnings-as-errors --filter RecoveryConsentTests
+if ! grep -Eq 'Test run with [1-9][0-9]* tests? .*passed' "$product_output/recovery-swift-tests.log"; then
+    echo "product bridge: recovery suite must execute at least one test" >&2
+    exit 1
+fi

@@ -123,6 +123,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
     Command＋ドラッグの複製移動も、元を残す単一／複数の複製・複製側の選択・単一 Undo と保存へ接続した。
     長さと 16 bit の強弱を保ち、共有内容の同じノートは一度だけ複製する（[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
+    自動グリッドと固定音価の切替も、共通の吸着幅・細分線・押下の取消と表示状態の共有へ接続した
+    （[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。三連符・付点は未対応である。
     複数トラックの同時編集・試聴・ドラム入力は残り、実画面と VoiceOver はユーザー確認待ちである。
     選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md) を参照する。
 

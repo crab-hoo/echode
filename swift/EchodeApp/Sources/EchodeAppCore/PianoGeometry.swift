@@ -64,7 +64,8 @@ struct PianoCamera: Sendable, Equatable {
     var topPitch = 64.0
     var pixelsPerBeat = 72.0
     var pixelsPerPitch = 20.0
-    var grid: Int64 = 176_400 // A sixteenth note; time units are quarter-note ticks.
+    var gridMode = PianoGrid.automatic
+    var grid: Int64 { gridMode.ticks(pixelsPerBeat: pixelsPerBeat) }
 
     func tick(at x: Double) -> Int64? { Self.ticks(originBeat + x / pixelsPerBeat).map(snapped) }
     /// A ruler press snaps to the grid like note edits; Shift releases it.

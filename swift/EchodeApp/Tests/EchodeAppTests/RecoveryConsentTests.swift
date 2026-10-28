@@ -21,7 +21,7 @@ struct RecoveryConsentTests {
         let journal = try Data(contentsOf: fixture.url.appendingPathComponent("journal.jsonl"))
 
         let opening = Task { await controller.open(fixture.url) }
-        try await waitForPrompt(controller, opening: opening)
+        try await waitForPrompt(controller, opening: opening, phase: "first open")
         let prompt = try #require(controller.recoveryPrompt)
         #expect(prompt.notice.tip == fixture.tip && prompt.notice.base == fixture.base)
         #expect(prompt.message.contains(fixture.tip) && prompt.message.contains(fixture.base))
@@ -38,7 +38,7 @@ struct RecoveryConsentTests {
         #expect(try tip(fixture.url) == fixture.tip)
 
         let accepted = Task { await controller.open(fixture.url) }
-        try await waitForPrompt(controller, opening: accepted)
+        try await waitForPrompt(controller, opening: accepted, phase: "reopen after cancel")
         controller.respondToRecovery(prompt, accept: true)
         #expect(controller.recoveryPrompt != nil && controller.busy, "a stale alert must not accept another open")
         controller.respondToRecovery(accept: true)
@@ -84,12 +84,12 @@ struct RecoveryConsentTests {
 
     private struct MissingWarning: Error {}
 
-    private func waitForPrompt(_ controller: ProjectController, opening: Task<Void, Never>) async throws {
+    private func waitForPrompt(_ controller: ProjectController, opening: Task<Void, Never>, phase: String = "cancelled open") async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while controller.recoveryPrompt == nil {
             guard ContinuousClock.now < deadline else {
                 opening.cancel()
-                Issue.record("recovery warning did not precede document publication")
+                Issue.record("recovery warning did not precede document publication (\(phase)): busy=\(controller.busy), error=\(controller.errorMessage ?? "none"), tracks=\(controller.tracks.map(\.name)), document=\(controller.projectURL?.lastPathComponent ?? "none")")
                 throw MissingWarning()
             }
             try await Task.sleep(for: .milliseconds(5))

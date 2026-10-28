@@ -210,7 +210,7 @@ struct PianoDragTests {
         #expect(move.preview(x: -1_000, y: -1_000_000, camera: camera, snapping: false) == NoteGeometry(start: 0, length: note.length, pitch: 127))
         #expect(move.preview(x: 0, y: 1_000_000, camera: camera, snapping: false)?.pitch == 0)
         for pixels in [18.0, 72.0, 477.0] {
-            let zoomed = PianoCamera(originBeat: 0.5, pixelsPerBeat: pixels)
+            let zoomed = PianoCamera(originBeat: 0.5, pixelsPerBeat: pixels, gridMode: .fixed(176_400))
             #expect(move.preview(x: pixels * 0.1, y: 0, camera: zoomed)?.start == ticks(1.25))
             #expect(move.preview(x: pixels * 0.1, y: 0, camera: zoomed, snapping: false)?.start == ticks(1.2))
         }

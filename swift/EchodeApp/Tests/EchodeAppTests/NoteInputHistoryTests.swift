@@ -37,7 +37,7 @@ struct NoteInputHistoryTests {
     @Test func clicksKeepRememberedLengthWhileDragsUseTheirGridMinimum() throws {
         for grid: Int64 in [1, 176_400, 705_600] {
             for pixels in [18.0, 72.0, 477.0] {
-                let camera = PianoCamera(pixelsPerBeat: pixels, grid: grid)
+                let camera = PianoCamera(pixelsPerBeat: pixels, gridMode: .fixed(grid))
                 for length: Int64 in [1, 70_560, 585_648] {
                     var press = try #require(PianoInsertion(x: pixels, y: 90, camera: camera, snapping: true, length: length))
                     press.update(x: pixels + 1, y: 91, snapping: false)

@@ -85,6 +85,8 @@ check-base:
 # Independent piano targets, reference-only notes, track controls and ordered arrow/Return routing share this gate too.
 # No-op commands/groups preserve history, durable publication and MCP acknowledgements through this gate.
 # Command note copies preserve full-resolution attributes, linked identity, selection and atomic history through this gate.
+# Piano automatic/fixed grid controls, zoom anchoring, snap subdivisions and press cancellation share this gate.
+# Sanitizer entry points also run recovery consent separately, retaining its tests and readiness deadline.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
@@ -181,7 +183,7 @@ spike-render:
 check-bridge:
 	bash scripts/spike-bridge.sh
 
-# Product Swift wrapper, piano gestures, single/batch velocity, note selection, batch deletion/movement/resizing/copying. No timing assertions.
+# Product Swift wrapper, piano gestures/grids, single/batch velocity, note selection, batch deletion/movement/resizing/copying. No timing assertions.
 check-shell:
 	bash scripts/check-shell.sh
 

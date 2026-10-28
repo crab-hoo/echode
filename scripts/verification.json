@@ -63,6 +63,26 @@
   ],
   "product_contracts": [
     {
+      "id": "piano-auto-grid-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "PianoGridTests", "test": "contractAutomaticGridFollowsZoomAndDrivesNoteInput", "timeout": 180,
+      "purpose": "実ピンチの時刻固定・自動グリッドの細分化・描画線とクリックの吸着と入力長・単一Undo/Redo・保存を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGeometry.swift", "old": "gridMode.ticks(pixelsPerBeat: pixelsPerBeat)", "new": "176_400"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGeometry.swift", "old": "let beat = originBeat + anchor.x / pixelsPerBeat", "new": "let beat = originBeat"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "for tick in gridTicks {", "new": "for tick in gridTicks where tick % 705_600 == 0 {"}
+      ]
+    },
+    {
+      "id": "piano-fixed-grid-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "PianoGridControlTests", "test": "contractFixedGridControlSharesStateCancelsPressesAndKeepsInputMemory", "timeout": 180,
+      "purpose": "実操作子の固定幅・ズームとShift・入力長保持・矢印とルーラー・旧グリッドの取消・共有と旧文書拒否を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "old": "camera.gridMode = mode", "new": "camera.gridMode = .automatic"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "old": "cancelGesture()\n        camera.gridMode = mode", "new": "camera.gridMode = mode"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "old": "navigation == nil || navigation?.permits(document: navigationDocument, track: track) == true else {", "new": "navigation == nil || navigation?.permits(document: navigation?.document, track: track) == true else {"}
+      ]
+    },
+    {
       "id": "note-duplicate-model", "runner": "rust", "package": "echode-history", "target": ["--test", "note_duplicate"],
       "test": "contract_note_copies_preserve_sources_attributes_and_history", "timeout": 180,
       "purpose": "共有内容のノート複製で元・16bit強弱・長さとリンク時刻を保ち、不正ID拒否・Undo/Redo・ジャーナル復旧・保存を確認",

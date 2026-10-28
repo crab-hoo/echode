@@ -167,6 +167,11 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 入力・解放時の計算と単一送信は `PianoRollView.swift` の `notePreview`・`mouseUp` に置く。
 回帰は `PianoDragTests.swift`（[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
 
+自動／固定グリッドは `PianoGrid.swift`（音価と実効幅・ネイティブ操作子）と `PianoCamera.gridMode` に置く。
+`PianoGridView.setGridMode` が押下の取消と所有確認、`PianoFrame.gridTicks` が表示幅内の縦線を扱う。
+回帰は `PianoGridTests.swift`・`PianoGridControlTests.swift`、GPU の細分線は `PianoOffscreenProbe.swift` に置く
+（[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。
+
 空白の左ドラッグ追加は `PianoInsertion.swift` の押下時の開始・カメラと解放時の幾何を使い、
 `PianoGridView` の `mouseUp` から既存の挿入へ送る。仮表示は `PianoRenderInput.insertion` と `PianoFrame`、
 回帰は `PianoInsertionTests.swift` に置く（[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。

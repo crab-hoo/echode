@@ -9,6 +9,7 @@ private struct OffscreenPianoReport: Codable {
     let checkedDegreeRows: Int
     let checkedVelocityBars: Int
     let checkedReferenceNotes: Int
+    let checkedGridLines: Int
     let mismatches: Int
     let staleOverlapPixels: Int
     let staleMarginPixels: Int
@@ -30,6 +31,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     for pitch in 60...73 { await controller.insertNote(pitch: pitch, beat: Double(pitch - 60) / 8, length: 0.75) }
     guard let snapshot = controller.snapshot, let track = controller.selection else { throw CocoaError(.coderValueNotFound) }
     var frames = 0, compared = 0, checkedRows = 0, checkedDegrees = 0, mismatches = 0, degreePixels = 0
+    var checkedGridLines = 0
     for scale in [1.0, 2.0] {
         for event in 0..<24 {
             let camera = PianoCamera(originBeat: Double(event % 5) / 7, topPitch: 74 + Double(event % 8) / 8,
@@ -75,10 +77,11 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
                 }
                 frames += 1
             }
-            // Choose a background column past the notes, clear of beat lines.
+            // Choose a background column past the notes, clear of grid lines.
             let gridX = (Int(referenceFrame.layout.grid.width - 24)..<Int(referenceFrame.layout.grid.width - 3)).first { x in
-                let beatX = (camera.originBeat + Double(x) / camera.pixelsPerBeat).truncatingRemainder(dividingBy: 1) * camera.pixelsPerBeat
-                return beatX > 3 && beatX < camera.pixelsPerBeat - 3
+                referenceFrame.gridTicks.allSatisfy { tick in
+                    abs((Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat - Double(x)) > 3
+                }
             }!
             for row in referenceFrame.rows {
                 let y = Double(row.y) + Double(row.height) / 2
@@ -93,6 +96,26 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
                 if row.black, backY >= referenceFrame.layout.rulerHeight, backY < referenceFrame.layout.grid.maxY {
                     let back = reference.pixel(x: Int((referenceFrame.layout.degreeWidth + 4) * scale), y: Int(backY * scale))
                     if back != CanvasReadback.Pixel(b: 232, g: 227, r: 224, a: 255) { mismatches += 1 }
+                }
+            }
+            // Check subdivision pixels beyond the notes using the product encoder.
+            for tick in referenceFrame.gridTicks {
+                let x = (Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+                guard x > referenceFrame.layout.grid.width - 150, x < referenceFrame.layout.grid.width - 3,
+                      let row = referenceFrame.rows.first else { continue }
+                let y = Double(row.y) + Double(row.height) / 2
+                guard y >= referenceFrame.layout.rulerHeight, y < referenceFrame.layout.grid.maxY else { continue }
+                let color: SIMD4<Float> = tick % 2_822_400 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
+                    (tick % 705_600 == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
+                let expected = CanvasReadback.Pixel(b: UInt8((color.z * 255).rounded()), g: UInt8((color.y * 255).rounded()),
+                                                    r: UInt8((color.x * 255).rounded()), a: 255)
+                checkedGridLines += 1
+                // Sample a covered pixel center, using the encoder's Float coordinates.
+                let pixelX = Int(ceil(Double(Float(referenceFrame.layout.gridOrigin.x + x) * Float(scale)) - 0.5))
+                let actual = reference.pixel(x: pixelX, y: Int(y * scale))
+                if actual != expected {
+                    mismatches += 1
+                    print("grid pixel mismatch: scale=\(scale), tick=\(tick), x=\(pixelX), actual=\(actual), expected=\(expected)")
                 }
             }
             for y in Int(referenceFrame.layout.rulerHeight * scale)..<reference.height {
@@ -194,12 +217,12 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     frames += 2
     await controller.close()
     let report = OffscreenPianoReport(frames: frames, comparedPixels: compared, checkedPitchRows: checkedRows,
-                                      checkedDegreeRows: checkedDegrees, checkedVelocityBars: checkedVelocityBars, checkedReferenceNotes: checkedReferenceNotes, mismatches: mismatches,
+                                      checkedDegreeRows: checkedDegrees, checkedVelocityBars: checkedVelocityBars, checkedReferenceNotes: checkedReferenceNotes, checkedGridLines: checkedGridLines, mismatches: mismatches,
                                       staleOverlapPixels: staleOverlapPixels, staleMarginPixels: staleMarginPixels,
                                       degreePixels: degreePixels, device: device.name)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
-    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(checkedVelocityBars) velocity bars, \(checkedReferenceNotes) reference notes, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(degreePixels) degree pixels, \(device.name)")
-    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, degreePixels > 0, checkedVelocityBars == 6, checkedReferenceNotes == 4 else { throw CocoaError(.coderInvalidValue) }
+    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(checkedVelocityBars) velocity bars, \(checkedReferenceNotes) reference notes, \(checkedGridLines) grid lines, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(degreePixels) degree pixels, \(device.name)")
+    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, degreePixels > 0, checkedVelocityBars == 6, checkedReferenceNotes == 4, checkedGridLines > 0 else { throw CocoaError(.coderInvalidValue) }
 }

@@ -167,7 +167,7 @@ struct PianoInsertionTests {
             drag.update(x: .greatestFiniteMagnitude, y: 0, snapping: false)
             #expect(drag.geometry == nil)
         }
-        for camera in [PianoCamera(grid: 0), PianoCamera(pixelsPerBeat: 0), PianoCamera(pixelsPerPitch: .nan),
+        for camera in [PianoCamera(gridMode: .fixed(0)), PianoCamera(pixelsPerBeat: 0), PianoCamera(pixelsPerPitch: .nan),
                        PianoCamera(originBeat: .infinity), PianoCamera(originBeat: Double(Int64.max) / 705_600)] {
             #expect(PianoInsertion(x: 0, y: 0, camera: camera, snapping: false) == nil)
         }

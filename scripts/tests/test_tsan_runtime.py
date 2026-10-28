@@ -34,7 +34,11 @@ class RuntimeTests(unittest.TestCase):
             tools = root / "tools"
             tools.mkdir()
             (tools / "cargo").write_text("#!/bin/sh\nexit 0\n")
-            (tools / "swift").write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$ECHODE_TEST_COMMAND_LOG"\n')
+            (tools / "swift").write_text(
+                '#!/bin/sh\nprintf "%s\\n" __SWIFT_CALL__ "$@" >> "$ECHODE_TEST_COMMAND_LOG"\n'
+                'case "$*" in *"--filter RecoveryConsentTests"*) '
+                'if [ "${ECHODE_TEST_FAIL_RECOVERY:-}" = 1 ]; then exit 7; fi;; esac\n'
+                'echo "Test run with ${ECHODE_TEST_COUNT:-2} tests in 1 suite passed after 0.001 seconds."\n')
             for tool in tools.iterdir():
                 tool.chmod(0o755)
             log = root / "swift-arguments.log"
@@ -44,9 +48,28 @@ class RuntimeTests(unittest.TestCase):
                                         "ECHODE_TEST_COMMAND_LOG": str(log),
                                     })
             self.assertEqual(result.returncode, 0, result.stderr)
-            arguments = log.read_text().splitlines()
-            self.assertEqual(arguments[0], "test")
-            self.assertEqual(arguments[arguments.index("--sanitize") + 1], "address")
+            calls = [call.splitlines() for call in log.read_text().split("__SWIFT_CALL__\n")[1:]]
+            self.assertEqual(len(calls), 2)
+            for arguments in calls:
+                self.assertEqual(arguments[0], "test")
+                self.assertEqual(arguments[arguments.index("--sanitize") + 1], "address")
+            self.assertEqual(calls[0][calls[0].index("--skip") + 1], "RecoveryConsentTests")
+            self.assertEqual(calls[1][calls[1].index("--filter") + 1], "RecoveryConsentTests")
+            self.assertIn("--skip-build", calls[1])
+            failed = subprocess.run(["/bin/bash", str(scripts / "check-product-bridge.sh"), "address"],
+                                    capture_output=True, text=True, timeout=10, env={
+                                        **os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
+                                        "ECHODE_TEST_COMMAND_LOG": str(log), "ECHODE_TEST_FAIL_RECOVERY": "1",
+                                    })
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("recovery-swift-tests.failed.log", failed.stderr)
+            empty = subprocess.run(["/bin/bash", str(scripts / "check-product-bridge.sh"), "address"],
+                                   capture_output=True, text=True, timeout=10, env={
+                                       **os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
+                                       "ECHODE_TEST_COMMAND_LOG": str(log), "ECHODE_TEST_COUNT": "0",
+                                   })
+            self.assertNotEqual(empty.returncode, 0)
+            self.assertIn("recovery suite must execute at least one test", empty.stderr)
 
     def test_both_runtime_artifacts_and_the_build_context_must_match(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(runtime, "CACHE", Path(directory)):

@@ -68,18 +68,24 @@ struct PianoCanvas: NSViewRepresentable {
 @MainActor
 final class PianoRollView: NSView {
     let grid = PianoGridView(frame: .zero)
+    let gridBar = PianoGridBar(frame: .zero)
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         clipsToBounds = true
         addSubview(grid)
+        addSubview(gridBar)
+        grid.onGridChange = { [weak self] camera in self?.gridBar.show(camera) }
+        gridBar.onChange = { [weak self] mode in self?.grid.setGridMode(mode) }
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func layout() {
         super.layout()
-        grid.frame = bounds
+        let height = min(PianoGridBar.height, bounds.height)
+        gridBar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
+        grid.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height))
     }
 }
 
@@ -132,6 +138,18 @@ final class PianoGridView: NSView {
     private var loop: RulerLoop?
     private var rulerPress: RulerPress?
     private(set) var camera = PianoCamera()
+    var onGridChange: ((PianoCamera) -> Void)?
+
+    func setGridMode(_ mode: PianoGrid) {
+        guard PianoGrid.choices.contains(mode), let track,
+              navigation == nil || navigation?.permits(document: navigationDocument, track: track) == true else {
+            onGridChange?(camera); return
+        }
+        guard camera.gridMode != mode else { return }
+        cancelGesture()
+        camera.gridMode = mode
+        refresh()
+    }
     private(set) var key = DisplayKey()
     var pianoLayout: PianoLayout { PianoLayout(width: bounds.width, height: bounds.height) }
     var onSelect: ((PianoNote.ID?) -> Void)?
@@ -696,6 +714,7 @@ final class PianoGridView: NSView {
         let scale = Double(window?.backingScaleFactor ?? 1)
         CanvasSurface.resize(metalLayer, size: canvasDrawableSize(width: bounds.width, height: bounds.height, scale: scale), scale: scale)
         rememberViewport()
+        onGridChange?(camera)
         guard let track else { return }
         renderer?.update(CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
             width: bounds.width, height: bounds.height, scale: scale,
