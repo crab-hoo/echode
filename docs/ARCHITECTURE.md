@@ -327,6 +327,7 @@ OKLab の知覚色差に基づく系統別の自動色分け。
 ディグリー・鍵盤・ノートを単一 Metal フレームに描き（[ADR 0052](decisions/0052-piano-keyboard.md)）、P2 のノート入力・記憶長・移動伸縮・ベロシティ・トラックセレクター・ドラム入力は [interaction-design.md](interaction-design.md#ノートの入力) に従う。
 自動／固定グリッドと共通吸着幅は [ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md) を参照。
 固定の三連符・付点も同じ幅と表示へ接続する（[ADR 0186](decisions/0186-piano-triplet-and-dotted-grids.md)）。
+拍・4 拍の目印は吸着幅と独立して残す（[ADR 0187](decisions/0187-piano-independent-time-guides.md)）。
 
 ## 15. 外部制御・API・AI
 

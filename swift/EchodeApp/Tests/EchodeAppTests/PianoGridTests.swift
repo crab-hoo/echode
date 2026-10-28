@@ -34,7 +34,7 @@ struct PianoGridTests {
         let frame = gridFrame(view, snapshot: snapshot, track: track)
         view.present(frame)
         #expect(frame.gridTicks.prefix(3).map { $0 } == [3_528_000, 3_616_200, 3_704_400])
-        #expect(frame.gridInstances.count == frame.rows.count + frame.gridTicks.count,
+        #expect(frame.gridInstances.count == frame.rows.count + frame.gridLineTicks.count,
                 "The rendered note grid must include the snapping subdivisions")
         let undo = controller.undoCount, document = controller.documentID
         var writes: [Task<Void, Never>] = []

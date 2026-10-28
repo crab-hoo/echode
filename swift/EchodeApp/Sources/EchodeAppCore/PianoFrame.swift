@@ -65,7 +65,7 @@ struct PianoFrame: Sendable {
             instance(SIMD4(Float(origin.x), row.y, Float(layout.grid.width), max(0, row.height - 1)),
                      color: row.black ? PianoPalette.blackRow : PianoPalette.whiteRow)
         }
-        for tick in gridTicks {
+        for tick in gridLineTicks {
             let x = origin.x + (Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
             let color: SIMD4<Float> = tick % 2_822_400 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
                 (tick % 705_600 == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
@@ -256,13 +256,25 @@ struct PianoFrame: Sendable {
         piano.velocity?.value(for: note) ?? Int(note.velocity >> 9)
     }
 
+    /// Paint subdivisions, beats, then four-quarter guides. Coincident ticks draw once.
+    /// Time guides are visual references, independent of the chosen snap width.
+    var gridLineTicks: [Int64] {
+        let subdivisions = gridTicks.filter { $0 % 705_600 != 0 }
+        let guides = visibleGridTicks(every: 705_600)
+        let beats = guides.filter { $0 % 2_822_400 != 0 }
+        let bars = guides.filter { $0 % 2_822_400 == 0 }
+        return subdivisions + beats + bars
+    }
+
     /// Dense fixed grids keep their snap width, but skip lines closer than 4pt.
+    var gridTicks: [Int64] { visibleGridTicks(every: piano.camera.grid) }
+
     /// Work and storage are bounded by the viewport, not the project duration.
-    var gridTicks: [Int64] {
+    private func visibleGridTicks(every initialStep: Int64) -> [Int64] {
         let camera = piano.camera
-        guard camera.grid > 0, camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
+        guard initialStep > 0, camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
               camera.originBeat.isFinite, camera.originBeat >= 0, layout.grid.width.isFinite else { return [] }
-        var step = camera.grid
+        var step = initialStep
         while Double(step) / 705_600 * camera.pixelsPerBeat < 4 {
             let doubled = step.multipliedReportingOverflow(by: 2)
             guard !doubled.overflow else { return [] }

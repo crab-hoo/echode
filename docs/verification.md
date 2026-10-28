@@ -124,6 +124,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `spike-piano-frame`: 画面を開かず製品の Metal 描画を読み戻し、鍵盤・ノートの音高行、調に依存しない白黒、ディグリー表示と、入力と違う大きさへの描画を比較する。
   参照ノートの背面色・編集ノートの優先と、鍵盤・ベロシティへの非混入も倍率 1・2 で確認する（`target/spike-piano-frame.json`）。
   自動と固定の三連符・付点グリッドの細分線の画素も同じ倍率で比較し、`checkedGridLines` に採取数を記録する。
+  吸着幅と独立した拍・4 拍の目印も、粗い幅と最小倍率で読み戻し、`checkedIndependentGuides` に採取数を記録する。
   両フレーム検査は描画部品の比較であり、提出・版の消費・休止・再試行は通常の必須契約で製品と同じ提出経路を検査する。
 - `spike-app`: 製品のアレンジとピアノロールを実表示し、メインスレッドの 0.5 秒の負荷中も描画することとアクセシビリティ ID を確認する（`target/spike-app.json`）。
 - `spike-playhead`: 専用 AppKit プローブ（`EchodePlayheadProbe`）で実ウィンドウのプレイヘッド移動・再生・一時停止・休止・破棄・文書交換を確認する（`target/spike-playhead.json`）。

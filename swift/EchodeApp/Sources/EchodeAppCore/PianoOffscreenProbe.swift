@@ -10,6 +10,7 @@ private struct OffscreenPianoReport: Codable {
     let checkedVelocityBars: Int
     let checkedReferenceNotes: Int
     let checkedGridLines: Int
+    let checkedIndependentGuides: Int
     let mismatches: Int
     let staleOverlapPixels: Int
     let staleMarginPixels: Int
@@ -31,12 +32,13 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     for pitch in 60...73 { await controller.insertNote(pitch: pitch, beat: Double(pitch - 60) / 8, length: 0.75) }
     guard let snapshot = controller.snapshot, let track = controller.selection else { throw CocoaError(.coderValueNotFound) }
     var frames = 0, compared = 0, checkedRows = 0, checkedDegrees = 0, mismatches = 0, degreePixels = 0
-    var checkedGridLines = 0
+    var checkedGridLines = 0, checkedIndependentGuides = 0
     for scale in [1.0, 2.0] {
-        for event in 0..<32 {
+        for event in 0..<40 {
             let camera = PianoCamera(originBeat: Double(event % 5) / 7, topPitch: 74 + Double(event % 8) / 8,
-                                     pixelsPerBeat: [24.0, 72.0, 144.0][event % 3], pixelsPerPitch: [12.0, 20.0, 48.0][(event / 3) % 3],
-                                     gridMode: event < 24 ? .automatic : .fixed(event % 2 == 0 ? 235_200 : 529_200))
+                                     pixelsPerBeat: (event < 32 ? [24.0, 72.0, 144.0] : [8.0, 24.0, 72.0])[event % 3], pixelsPerPitch: [12.0, 20.0, 48.0][(event / 3) % 3],
+                                     gridMode: event < 24 ? .automatic : .fixed(event < 32 ? (event % 2 == 0 ? 235_200 : 529_200) :
+                                        [2_822_400, 1_881_600, 4_233_600, 33_075][event % 4]))
             let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
                                      width: event % 2 == 0 ? 640 : 720, height: 331, scale: scale)
             let referenceFrame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
@@ -80,8 +82,8 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
             }
             // Choose a background column past the notes, clear of grid lines.
             let gridX = (Int(referenceFrame.layout.grid.width - 24)..<Int(referenceFrame.layout.grid.width - 3)).first { x in
-                referenceFrame.gridTicks.allSatisfy { tick in
-                    abs((Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat - Double(x)) > 3
+                referenceFrame.gridLineTicks.allSatisfy { tick in
+                    abs((Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat - Double(x)) > 1.5
                 }
             }!
             for row in referenceFrame.rows {
@@ -100,7 +102,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
                 }
             }
             // Check subdivision pixels beyond the notes using the product encoder.
-            for tick in referenceFrame.gridTicks {
+            for tick in referenceFrame.gridLineTicks {
                 let x = (Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
                 guard x > referenceFrame.layout.grid.width - 150, x < referenceFrame.layout.grid.width - 3,
                       let row = referenceFrame.rows.first else { continue }
@@ -111,6 +113,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
                 let expected = CanvasReadback.Pixel(b: UInt8((color.z * 255).rounded()), g: UInt8((color.y * 255).rounded()),
                                                     r: UInt8((color.x * 255).rounded()), a: 255)
                 checkedGridLines += 1
+                if tick % 705_600 == 0, !referenceFrame.gridTicks.contains(tick) { checkedIndependentGuides += 1 }
                 // Sample a covered pixel center, using the encoder's Float coordinates.
                 let pixelX = Int(ceil(Double(Float(referenceFrame.layout.gridOrigin.x + x) * Float(scale)) - 0.5))
                 let actual = reference.pixel(x: pixelX, y: Int(y * scale))
@@ -218,12 +221,12 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     frames += 2
     await controller.close()
     let report = OffscreenPianoReport(frames: frames, comparedPixels: compared, checkedPitchRows: checkedRows,
-                                      checkedDegreeRows: checkedDegrees, checkedVelocityBars: checkedVelocityBars, checkedReferenceNotes: checkedReferenceNotes, checkedGridLines: checkedGridLines, mismatches: mismatches,
+                                      checkedDegreeRows: checkedDegrees, checkedVelocityBars: checkedVelocityBars, checkedReferenceNotes: checkedReferenceNotes, checkedGridLines: checkedGridLines, checkedIndependentGuides: checkedIndependentGuides, mismatches: mismatches,
                                       staleOverlapPixels: staleOverlapPixels, staleMarginPixels: staleMarginPixels,
                                       degreePixels: degreePixels, device: device.name)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
-    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(checkedVelocityBars) velocity bars, \(checkedReferenceNotes) reference notes, \(checkedGridLines) grid lines, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(degreePixels) degree pixels, \(device.name)")
-    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, degreePixels > 0, checkedVelocityBars == 6, checkedReferenceNotes == 4, checkedGridLines > 0 else { throw CocoaError(.coderInvalidValue) }
+    print("offscreen piano: \(frames) frames, \(compared) compared pixels, \(checkedRows) pitch rows, \(checkedVelocityBars) velocity bars, \(checkedReferenceNotes) reference notes, \(checkedGridLines) grid lines, \(checkedIndependentGuides) independent guides, \(mismatches) mismatches, \(staleOverlapPixels) stale overlap pixels, \(staleMarginPixels) stale margin pixels, \(degreePixels) degree pixels, \(device.name)")
+    guard mismatches == 0, staleOverlapPixels == 0, staleMarginPixels == 0, degreePixels > 0, checkedVelocityBars == 6, checkedReferenceNotes == 4, checkedGridLines > 0, checkedIndependentGuides > 0 else { throw CocoaError(.coderInvalidValue) }
 }

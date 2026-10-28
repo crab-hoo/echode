@@ -45,7 +45,7 @@ struct PianoRhythmicGridTests {
         #expect(controller.noteInput.length == nil && controller.undoCount == undo)
         let frame = gridFrame(view, snapshot: snapshot, track: track)
         #expect(Array(frame.gridTicks.prefix(3)) == [0, ticks, 2 * ticks])
-        #expect(frame.gridInstances.count == frame.rows.count + frame.gridTicks.count)
+        #expect(frame.gridInstances.count == frame.rows.count + frame.gridLineTicks.count)
         view.present(frame)
         // At 0.45 beats, eighth triplets snap to 1/3; dotted eighths snap to 3/4.
         let point = CGPoint(x: view.pianoLayout.gridOrigin.x + 0.45 * 72, y: view.pianoLayout.gridOrigin.y + 90)

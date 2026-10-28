@@ -126,6 +126,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     自動グリッドと固定音価の切替も、共通の吸着幅・細分線・押下の取消と表示状態の共有へ接続した
     （[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。固定の三連符・付点も同じ入力と表示へ接続した
     （[ADR 0186](decisions/0186-piano-triplet-and-dotted-grids.md)）。
+    拍・4 拍ごとの目印は吸着幅と独立させ、粗い固定幅と縮小時も保つ
+    （[ADR 0187](decisions/0187-piano-independent-time-guides.md)）。
     複数トラックの同時編集・試聴・ドラム入力は残り、実画面と VoiceOver はユーザー確認待ちである。
     選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md) を参照する。
 

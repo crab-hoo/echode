@@ -90,6 +90,10 @@ make debug-report
   同じバイナリの `DevicePreparationTests` 単独では再現せず、原因は未確定である。
   失敗は同じ `swift-tests.failed.log`、単独の記録は `velocity-lane-preparation-focused.log`、
   正式な再実行の合否は検査レポートで確認する。期限と対象テストは変更しない。
+  2026-10-28 の時間目印変更でも、TSan 全体で同じテストの未保留デバイスの応答待ちが期限切れとなり、競合診断はなかった。
+  診断は `1 yielded polls` で、同じバイナリの `DevicePreparationTests` 単独では再現しなかった。原因は未確定である。
+  失敗は `target/bridge/thread/product/swift-tests.failed.log`、単独実行は `time-guides-preparation-focused.log` に残す。
+  既存の 5 秒と検査対象を変えず、正式な全体再実行の結果と区別する。
   2026-10-28 のグリッド変更の ASan 全体検査では、`RecoveryConsentTests` の警告待ちも 2 回期限切れとなった。
   同じバイナリの当該スイート単独では再現せず、ASan のメモリ診断はなかった。5 秒の期限は変更しない。
   記録は `target/bridge/address/product/swift-tests.failed.log` と `target/focused-checks/piano-grid-recovery-asan/`。
@@ -298,6 +302,9 @@ make debug-report
 - **ズームでノートの吸着幅が変わる・固定幅が変わる・線と吸着が一致しない**:
   `PianoCamera.gridMode` と実効 `grid` を区別する。自動は横倍率で変わり、固定は音価を保つ。
   細かい固定幅の線は 4 pt 未満で間引くが、吸着幅と記憶済み入力長は変えない。
+  `PianoFrame.gridTicks` は吸着由来の間引いた細分線、`gridLineTicks` は独立した拍・4 拍の目印を含む描画順の列である。
+  目印の位置へ吸着しないのは正常。粗い幅で目印が欠ける場合は `piano-time-guides-ui`、
+  GPU の実画素は `checkedIndependentGuides` と `mismatches` で分ける（[ADR 0187](decisions/0187-piano-independent-time-guides.md)）。
   `piano-auto-grid-ui`・`piano-fixed-grid-ui` で実入力・旧押下の取消・文書所有確認を分けて調べる。
   三連符・付点は `piano-rhythmic-grid-ui` で候補・音価表示と共通幅を検査する。
   8 分三連符は 235,200 tick、付点 8 分は 529,200 tick。表示名を tick の逆数で作ると誤った分母になる。

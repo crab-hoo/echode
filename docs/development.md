@@ -174,6 +174,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 三連符・付点の候補と表示名も `PianoGrid.swift` に置き、実操作子・入力と履歴は `PianoRhythmicGridTests.swift`、
 全音価と表示幅の境界は `PianoRhythmicGridBoundaryTests.swift` で検査する
 （[ADR 0186](decisions/0186-piano-triplet-and-dotted-grids.md)）。
+描画の時間目印は `PianoFrame.gridLineTicks`、通常回帰は `PianoTimeGuideTests.swift` に置く。
+吸着由来の `gridTicks` と分け、GPU の独立した目印の採取数は `checkedIndependentGuides` へ記録する
+（[ADR 0187](decisions/0187-piano-independent-time-guides.md)）。
 
 空白の左ドラッグ追加は `PianoInsertion.swift` の押下時の開始・カメラと解放時の幾何を使い、
 `PianoGridView` の `mouseUp` から既存の挿入へ送る。仮表示は `PianoRenderInput.insertion` と `PianoFrame`、

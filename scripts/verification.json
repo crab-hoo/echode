@@ -63,6 +63,16 @@
   ],
   "product_contracts": [
     {
+      "id": "piano-time-guides-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "PianoTimeGuideTests", "test": "contractBeatAndBarGuidesSurviveCoarseAndThinnedRhythmicGrids", "timeout": 180,
+      "purpose": "製品描画フレームで固定・三連符・付点と縮小時の拍・4拍の目印、強線の優先・同位置の重複排除・吸着幅の不変を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "let guides = visibleGridTicks(every: 705_600)", "new": "let guides = gridTicks.filter { $0 % 705_600 == 0 }"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "let subdivisions = gridTicks.filter { $0 % 705_600 != 0 }", "new": "let subdivisions = gridTicks"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "return subdivisions + beats + bars", "new": "return beats + bars + subdivisions"}
+      ]
+    },
+    {
       "id": "piano-rhythmic-grid-ui", "runner": "swift", "package_path": "swift/EchodeApp",
       "suite": "PianoRhythmicGridTests", "test": "contractTripletAndDottedControlsDriveInputLinesAndHistory", "timeout": 180,
       "purpose": "三連符・付点の実操作子と音価表示、縦線・クリック・矢印・ルーラーの共通幅、入力長保持・取消・単一Undo/Redo・保存を確認",
@@ -79,7 +89,7 @@
       "negative_controls": [
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGeometry.swift", "old": "gridMode.ticks(pixelsPerBeat: pixelsPerBeat)", "new": "176_400"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGeometry.swift", "old": "let beat = originBeat + anchor.x / pixelsPerBeat", "new": "let beat = originBeat"},
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "for tick in gridTicks {", "new": "for tick in gridTicks where tick % 705_600 == 0 {"}
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "for tick in gridLineTicks {", "new": "for tick in gridLineTicks where tick % 705_600 == 0 {"}
       ]
     },
     {
