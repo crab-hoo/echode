@@ -126,6 +126,7 @@ public final class ProjectController {
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()
     @ObservationIgnored private var pianoStepTail: Task<Bool, Never>?
+    @ObservationIgnored var mixerSwitchTail: Task<Bool, Never>?
     /// Reads plugin windows' activity for the open document (ADR 0132).
     @ObservationIgnored var pluginActivity: PluginActivityReader?
     @ObservationIgnored var pluginCommand: ((WorkspaceCommand) -> Void)?
@@ -215,6 +216,7 @@ public final class ProjectController {
                 self.pianoLocation = nil
                 self.hiddenPianoTracks = []
                 self.pianoStepTail = nil
+                self.mixerSwitchTail = nil
                 self.selection = nil
                 self.noteFocus = nil
                 self.forgetParameters()
@@ -533,6 +535,7 @@ public final class ProjectController {
             self.pianoLocation = nil
             self.hiddenPianoTracks = []
             self.pianoStepTail = nil
+            self.mixerSwitchTail = nil
             self.audio = AudioState()
             self.reportedAudioError = nil
             self.loopStartBeat = 0

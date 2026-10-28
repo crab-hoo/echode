@@ -293,10 +293,22 @@ pub fn scan_with_budget(
     while stdout_open || stderr_open {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
+            let status = child
+                .try_wait()
+                .map(|status| {
+                    status.map_or_else(|| "running".to_string(), |status| status.to_string())
+                })
+                .unwrap_or_else(|error| format!("wait error: {error}"));
             drop(stdout_pipe);
             drop(stderr_pipe);
             stop_scan(&mut child);
-            return Err(format!("plugin scan timed out ({})", bundle.display()));
+            return Err(format!(
+                "plugin scan timed out ({}) [child {}: {status}; stdout: {} bytes, open={stdout_open}; stderr: {} bytes, open={stderr_open}]",
+                bundle.display(),
+                child.id(),
+                stdout.len(),
+                stderr.len()
+            ));
         }
         let mut polls = [libc::pollfd {
             fd: -1,

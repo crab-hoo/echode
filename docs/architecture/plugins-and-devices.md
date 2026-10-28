@@ -104,6 +104,9 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
 
 - **検知とスキャン**: `/Library/Audio/Plug-Ins/`、`~/Library/Audio/Plug-Ins/`、`CLAP_PATH` を FSEvents で監視し、変更停止 2 秒後に `echode-plugin-host --scan` で差分スキャンする。
   本体プロセスはバンドルを読み込まない（[ADR 0016](../decisions/0016-plugin-scan-is-outside.md)、[ADR 0060](../decisions/0060-plugin-folder-watch.md)）
+  子と両パイプは同じ期限で回収し、期限切れは子の状態・各出力の byte 数と開閉を診断へ残す。
+  子孫保持等の回帰には、製品へ同梱しない `echode-scan-test-helper` を使い、出力済み・直接の子の終了も確認する
+  （[ADR 0190](../decisions/0190-native-scan-deadline-fixtures.md)）。
 - **キャッシュと除外**: バンドルパス・`CFBundleVersion`・実行ファイル更新日時とサイズをキーに JSON Lines でキャッシュし、クラッシュ・タイムアウトしたプラグインは除外リストへ記録する
 - **ブラウザとチェイン操作（P2）**: ダブルクリック追加時のみ自動で閉じ、ドラッグや Return 追加時は開いたままにする。
   候補の右メニューから選択中の全トラックへ、単一トランザクションで追加する。

@@ -42,7 +42,7 @@ struct TrackMixInspector: View {
     }
     private func set(_ field: MixerField, _ value: Float) {
         let document = controller.documentID
-        Task { await controller.setMixer(track, field: field, value: value, documentID: document) }
+        controller.arrangeMixActions(document: document).set(track, field, value)
     }
 }
 

@@ -6,6 +6,13 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 description = "Helper process that runs CLAP plugins outside the DAW"
+default-run = "echode-plugin-host"
+
+[[bin]]
+name = "echode-scan-test-helper"
+path = "tests/support/scan_helper.rs"
+test = false
+bench = false
 
 [dependencies]
 clack-host = { workspace = true }

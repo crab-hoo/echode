@@ -112,7 +112,8 @@ final class ArrangeHeaderView: NSView {
         guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else { clicks.settle(); return }
         if field == .mute || field == .solo {
             clicks.settle()
-            mixActions.set(id, field, mix[field].value == 0 ? 1 : 0)
+            if let toggle = mixActions.toggle { toggle(id, field) }
+            else { mixActions.set(id, field, mix[field].value == 0 ? 1 : 0) }
         } else {
             let target = MixTarget(track: id, field: field)
             if case .waiting(target) = clicks.phase {} else { press = (target, controls.rect(field), mix[field].value) }
@@ -264,7 +265,8 @@ final class ArrangeHeaderView: NSView {
                         if let spoken = MixScale.spokenValue(field, next) {
                             control.setAccessibilityValueDescription(spoken)
                         }
-                        self.mixActions?.set(id, field, next)
+                        if (field == .mute || field == .solo), let toggle = self.mixActions?.toggle { toggle(id, field) }
+                        else { self.mixActions?.set(id, field, next) }
                     }
                     retainedControls[key] = control
                     return control

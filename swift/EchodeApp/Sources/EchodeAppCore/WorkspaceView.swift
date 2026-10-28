@@ -162,13 +162,7 @@ public struct WorkspaceView: View {
         } }
     }
     private var mixActions: MixActions {
-        let document = controller.documentID
-        return MixActions(begin: { controller.beginFader($0, field: $1) }, change: { controller.changeFader($0) },
-            finish: { commit in Task { await controller.finishFader(commit: commit) } },
-            set: { track, field, value in Task {
-                if controller.faderPreview != nil { await controller.finishFader(commit: true) }
-                await controller.setMixer(track, field: field, value: value, documentID: document)
-            } })
+        controller.arrangeMixActions(document: controller.documentID)
     }
     private var welcome: some View {
         VStack(spacing: 16) {

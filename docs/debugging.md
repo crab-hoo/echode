@@ -243,6 +243,10 @@ make debug-report
   2026-10-28 の ⌘D 変更の通常検査では、`audit_rea08_descendant_pipe_does_not_extend_deadline` の最初の JSON 出力が 2 秒の期限切れとなった。
   失敗は子孫のパイプ保持ケースではなく、最初の短い shell の起動・完了待ちで、単独実行では再現しなかった。原因は未確定である。
   個別のログは `target/focused-checks/clip-duplicate-scan/`。期限・対象を変更せず、正式な `make verify` の結果と区別する。
+  ミュート／ソロの一括操作の検査で再発し、期限切れの子は `running`・両出力 0 byte で、採取では `_dyld_start` にとどまっていた。
+  さらに、従来の子孫保持ケースが shell の起動待ちだけで合格し得たため、専用のネイティブ検査ヘルパーへ変更した。
+  製品の期限は維持し、出力済み・直接の子の終了も検査する。期限切れの PID・終了状態・byte 数・パイプの開閉で、起動前と保持を区別する
+  （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。OS 側の起動遅延の根因は未確定である。
 - **バイパスの表示と音が一致しない・解除後に古い音が鳴る**:
   文書のデバイス ID と `bypassed`、計画の要求・適用版、プラグイン失敗、ドライ／ウェットの平面数を確認する。
   バイパスした音源ではノートが無音でも同じトラックの配置音声は鳴る。解除時のリセットと現在のノート追跡を確認する（[ADR 0120](decisions/0120-device-bypass.md)）。
@@ -583,6 +587,12 @@ make debug-report
   表示保持・音量・位置と実操作子は必須契約 `sample-audition-resident`・`sample-audition-gain`・
   `sample-audition-position`・`sample-audition-controls-ui` で切り分ける（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
   ブラウザ自身の選択の付け替えは要求を出さない（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
+- **選択トラックのミュート・ソロが部分適用される／連打で戻らない**:
+  `MixerSwitchBatch` の文書・捕捉 ID 群・anchor・反転／絶対値を、操作後に変わった現在の選択と区別する。
+  `mixerSwitchTail` と `EditTurn` の手番で反転元の現行値を確認し、`param.set` 配列を 1 回送っていることを追う。
+  欠けた対象と旧文書は全体を拒否し、同じ絶対値は Redo を消さない。ピアノ右側の行ボタンと音量・パンが単一対象なのは現時点の仕様である。
+  切分けは `MixerSwitch*Tests` と必須契約 `mixer-switch-batch-ui`・`mixer-switch-order-ui`
+  （[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。

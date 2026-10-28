@@ -99,6 +99,10 @@
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
+プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
+JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
+（[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。
+
 フォルダ表示の製品 ABI は `crates/echode-ffi/src/projection.rs`、Swift の保持と階層取得は
 `swift/EchodeBridge/Sources/EchodeBridge/TrackHierarchy.swift` に置く。
 ヘッダの開閉と表示行の共有は `ArrangePaneView.swift`、追加位置の保持は `TrackInsertion.swift` を使う。
@@ -140,6 +144,11 @@ Swift の警告と開く要求の取消は `RecoveryConsent.swift`、公開前�
 `WorkspaceParameterView.swift`、回帰は `ValueControlTests.swift` に置く。
 プラグインの文字の変換は、通信の `ParseParam`（`crates/echode-sandbox/src/params.rs`）、ヘルパーの `param_from_text`、
 FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
+
+選択トラックのミュート・ソロは `MixerSwitchBatch.swift` の対象捕捉・順序待ち列・アクション配列を通す。
+`WorkspaceView` と `MixInspectorView` は同じ `arrangeMixActions` を使い、ピアノ行の単一対象と区別する。
+回帰は `MixerSwitchBatchTests.swift`・`MixerSwitchBoundaryTests.swift`・`MixerSwitchValidationTests.swift`
+（[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
 
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。

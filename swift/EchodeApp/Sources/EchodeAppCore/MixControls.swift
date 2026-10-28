@@ -18,9 +18,11 @@ public struct MixActions {
     public var change: (Float) -> Void
     public var finish: (Bool) -> Void
     public var set: (UUID, MixerField, Float) -> Void
+    public var toggle: ((UUID, MixerField) -> Void)?
     public init(begin: @escaping (UUID, MixerField) -> Bool, change: @escaping (Float) -> Void,
-                finish: @escaping (Bool) -> Void, set: @escaping (UUID, MixerField, Float) -> Void) {
+                finish: @escaping (Bool) -> Void, set: @escaping (UUID, MixerField, Float) -> Void, toggle: ((UUID, MixerField) -> Void)? = nil) {
         self.begin = begin; self.change = change; self.finish = finish; self.set = set
+        self.toggle = toggle
     }
 }
 

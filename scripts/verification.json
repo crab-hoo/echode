@@ -158,6 +158,33 @@
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "!rulerBusy, rulerPress == nil, movePress == nil, !clicks.active, entry == nil,", "new": "true,"}
       ]
     },
+    {
+      "id": "scan-deadline", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "scan"],
+      "test": "audit_rea08_descendant_pipe_does_not_extend_deadline", "timeout": 180,
+      "purpose": "ネイティブ検査ヘルパーで正常JSON・標準エラー排出・出力済みかつ直接子終了後の子孫パイプ保持・ハング・不正UTF-8・終了失敗を走査の期限内で区別",
+      "negative_controls": [
+        {"file": "crates/echode-plugin-host/src/scan.rs", "old": "let deadline = Instant::now() + budget;", "new": "let deadline = Instant::now() + budget * 20;"},
+        {"file": "crates/echode-plugin-host/src/scan.rs", "old": "let mut stderr_open = true;", "new": "let mut stderr_open = false;"}
+      ]
+    },
+    {
+      "id": "mixer-switch-batch-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "MixerSwitchBatchTests", "test": "contractHeaderSwitchesSetTheCapturedSelectionAtomicallyAndPreserveOtherSolos", "timeout": 180,
+      "purpose": "実ヘッダから操作時の選択全体のミュート／ソロを同じ値へそろえ、非選択ソロ・混在値・選択変更との分離・単一Undo/Redo・保存を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerSwitchBatch.swift", "old": "tracks.map(\\.id).filter { selectedTracks.contains($0) }", "new": "[track]"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerSwitchBatch.swift", "old": "return actions.isEmpty ? nil : actions", "new": "return actions.first.map { [$0] }"}
+      ]
+    },
+    {
+      "id": "mixer-switch-order-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "MixerSwitchBoundaryTests", "test": "contractQueuedSwitchesUseCurrentStateAndNoOpsKeepRedoAndPianoScope", "timeout": 180,
+      "purpose": "表示更新前の連打を現行値から順に反転し、操作ごとの単一Undo、インスペクターの絶対値とno-op、ピアノ行の単一対象、文書交換の拒否を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerSwitchBatch.swift", "old": "anchor[request.field].value == 0 ? 1 : 0", "new": "anchor[request.field].value >= 0 ? 1 : 0"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerSwitchBatch.swift", "old": "}, documentID: request.document)", "new": "}, documentID: self.documentID ?? request.document)"}
+      ]
+    },
     {"id": "clip-move-ui", "runner": "swift", "package_path": "swift/EchodeApp", "suite": "ClipMoveTests", "test": "contractBodyDragMovesAndCommandDragCopiesClipsAsOneUndoAndReopen", "timeout": 180, "purpose": "実アレンジのクリップ本体ドラッグで別トラック・四分吸着・Shift解除の移動、Command複製、しきい値・Escape・取消での無編集、単一Undo/Redo・保存再読込を確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeClipMove.swift", "old": "start: preview.start, copy: flags.contains(.command)))", "new": "start: preview.start, copy: false))"}},
     {"id": "clip-move-model", "runner": "rust", "package": "echode-history", "target": ["--test", "clip_move"], "test": "moves_and_copies_survive_history_journal_and_reopen", "timeout": 180, "purpose": "別トラックへの移動で重なる配置の削除・切詰め・分割と既定の切り口フェード、複製の独立した中身、Undo/Redo・ジャーナル再生・保存を確認", "negative_control": {"file": "crates/echode-model/src/clip_move.rs", "old": ".checked_add(end - clip_start)", "new": ".checked_add(0)"}},
     {"id": "clip-content-bars", "runner": "rust", "package": "echode-history", "target": ["--test", "clip_bar_basis"], "test": "contract_shifted_auto_clips_use_content_bars_through_edits_history_and_reopen", "timeout": 180, "purpose": "小節未満の移動・複製でautoを保ち、中身の小節でのノート編集・挿入・削除、単一Undo/Redo・ジャーナル・保存再読込を確認", "negative_controls": [{"file": "crates/echode-model/src/clip_move.rs", "old": "self.move_clip_with_rule(clip, track, start, seed, true)", "new": "self.move_clip_with_rule(clip, track, start, seed, false)"}, {"file": "crates/echode-model/src/clip_move.rs", "old": "self.duplicate_clip_with_rule(clip, track, start, seed, true)", "new": "self.duplicate_clip_with_rule(clip, track, start, seed, false)"}, {"file": "crates/echode-model/src/placement.rs", "old": "let new_start = min_bar\n        .checked_mul(bar)\n        .and_then(|local| origin.checked_add(local))", "new": "let new_start = min_bar\n        .checked_mul(bar)\n        .and_then(|local| local.checked_add(0))"}]},
