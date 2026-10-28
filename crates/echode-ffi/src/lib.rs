@@ -1038,6 +1038,8 @@ mod tests;
 #[cfg(test)]
 mod opening_tests;
 
+#[cfg(test)]
+mod recovery_tests;
 // Pure snapshot tests also run under Miri. No package IO, UUID randomness, or OS
 // threads are needed to check borrowed names, retained ownership and capacities.
 #[cfg(test)]

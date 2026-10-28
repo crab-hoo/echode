@@ -129,6 +129,12 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 再生の保留と `audio.prepare` は `crates/echode-audio-io/src/session.rs`、開いた時の送信は `ProjectController.preparesOutput` に置く
 （[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
 
+古い保存版への復旧通知と書込み禁止は `DocumentHost::recovery_notice`・`accept_recovery`、
+C ABI の受渡しは `queue.rs` の `historyReport.recovery` と `history.accept_recovery` に置く。
+Swift の警告と開く要求の取消は `RecoveryConsent.swift`、公開前の確認は `ProjectController.open`、
+画面の選択肢は `WorkspaceView.swift`、回帰は `recovery_tests.rs`・`RecoveryConsentTests.swift` に置く
+（[ADR 0183](decisions/0183-recovery-consent.md)）。
+
 値の操作子のクリック規則と重ねる入力欄は `ValueControl.swift`（`ValueClicks`・`ValueEntryField`）、
 単位と範囲は `MixControls.swift`（`MixEntry`・`ClipEntry`）、各操作子の接続は `ArrangeHeaderView.swift`・`ArrangeView.swift`・
 `WorkspaceParameterView.swift`、回帰は `ValueControlTests.swift` に置く。

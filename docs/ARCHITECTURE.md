@@ -150,6 +150,8 @@ Phase 2 で配置ごとの非破壊デバイスチェインと内容時刻ベー
 ### 6.4 保存とコミット
 
 自動保存は `refs/echode/autosave/main` とジャーナル再生で復旧し（[ADR 0009](decisions/0009-package-autosave.md)、[ADR 0033](decisions/0033-journal-log.md)、[ADR 0057](decisions/0057-crash-recovery.md)）、`gix-pack` で間引く（[ADR 0046](decisions/0046-history-thin.md)）。
+古いコミットへ後退した復旧は先端・基点・連番を通知し、編集前の明示同意と復旧状態の同期保存を要求する
+（[ADR 0183](decisions/0183-recovery-consent.md)）。
 
 ### 6.5 変更内容の自動要約
 

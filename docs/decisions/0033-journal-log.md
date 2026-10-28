@@ -4,6 +4,7 @@
 - 状態: 採用
 - 項目: HIS-2
 - 追補: 復旧する各行の不変条件検査と違反時のオープン拒否は [ADR 0180](0180-journal-replay-invariants.md)。
+- 追補: 祖先への後退の通知・編集前の同意と保存点は [ADR 0183](0183-recovery-consent.md)。
 
 ## 背景
 

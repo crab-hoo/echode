@@ -698,6 +698,8 @@ fn worker(
         let performed = catch_unwind(AssertUnwindSafe(|| {
             let history = match &job.operation {
                 Operation::Audio(bytes) => {
+                    host.require_recovery_confirmation()
+                        .map_err(|error| error.to_string())?;
                     let command: AudioCommand =
                         serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
                     audio.perform_requested(command, job.transport_revision)?;
@@ -709,6 +711,8 @@ fn worker(
                     Some(report)
                 }
                 Operation::Device(bytes) => {
+                    host.require_recovery_confirmation()
+                        .map_err(|error| error.to_string())?;
                     dispatched = Some(crate::device::dispatch(
                         &host,
                         &mut audio,
@@ -842,7 +846,13 @@ fn publish(
     };
     snapshot.audio =
         Arc::new(serde_json::to_vec(&audio.state()).map_err(|error| error.to_string())?);
-    snapshot.history = Arc::new(history.unwrap_or_else(empty_history));
+    snapshot.history = Arc::new(match history {
+        Some(report) => report,
+        None => serde_json::to_vec(&serde_json::json!({
+            "revisions": [], "changed": false, "recovery": host.recovery_notice()
+        }))
+        .map_err(|error| error.to_string())?,
+    });
     snapshot.device = Arc::new(device.unwrap_or_else(empty_device));
     Ok(snapshot)
 }
@@ -899,6 +909,19 @@ fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> 
     let before = host.snapshot();
     match kind {
         "history.list" if object.len() == 1 => {}
+        "history.accept_recovery" if object.len() == 3 => {
+            let tip = object
+                .get("tip")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "recovery tip is missing".to_string())?;
+            let base = object
+                .get("base")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "recovery base is missing".to_string())?;
+            host.accept_recovery(tip, base)
+                .map_err(|error| error.to_string())?;
+            return Ok(empty_history());
+        }
         "history.restore" if object.len() == 2 => {
             let revision = object
                 .get("revision")
@@ -917,6 +940,7 @@ fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> 
     serde_json::to_vec(&serde_json::json!({
         "revisions": revisions,
         "changed": changed,
+        "recovery": host.recovery_notice(),
     }))
     .map_err(|error| error.to_string())
 }

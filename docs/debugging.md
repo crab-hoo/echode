@@ -345,13 +345,17 @@ make debug-report
   `audit_cur04_an_unread_reply_releases_the_connection` は送信バッファを満たし、後続接続と編集の単一実行を通常回帰で確認する。
   編集が既に記録された可能性があるので、同じ編集を無条件に再送しない（[CUR-04](reviews/2026-10-25-code-audit.md#cur-04-api-の書込みにはタイムアウトがない)）。
 - **開き直すと確定済みの編集が消えている・古い状態で開く・開けない**:
-  `DocumentHost::recovered_label` の基点のコミットと `refs/echode/autosave/main` の先端を比べ、親へ後退したかを確認する。
+  警告または C ABI の `historyReport.recovery` の `tip`・`base`・`applied_seq` で、先端からの後退を確認する。
+  `DocumentHost::recovered_label` は従来どおり、オープン時の基点と復旧済み連番を返す。
   先端が読めない原因は、オブジェクトの破損と、不変条件を破ったモデルのコミット（読込みで拒否される）を区別する。
   破損ジャーナルは `journal seq <連番> violates model invariants: <理由>` でオープンを拒否する（[ADR 0180](decisions/0180-journal-replay-invariants.md)）。
   `audit_adv01_*` は通常回帰で、先端なし・ありと、明示修復後に確定した編集の保持を検査する。
   原本をコピーして保全し、連番・不変条件の理由・基点と先端を記録する。自動で行を削除したり、繰り返し保存して直そうとしない。
   旧版では不正な状態をコミットし、debug では最初の編集が panic する経路もあった。
-  既に壊れたコミットの後退通知は未対応の ADV-02 である（[敵対的監査](reviews/2026-10-27-adversarial-audit.md)）。
+  後退したホストは `recovery confirmation required` で書込みを拒否する（[ADR 0183](decisions/0183-recovery-consent.md)）。
+  警告でいったんキャンセルし、原本のコピーを保全する。「続行」は復旧状態の同期保存であり、失われた編集の復元ではない。
+  確認時の保存に失敗した場合は編集を解放しない。CLI / MCP には同意の入口がないため、アプリで確認する。
+  確認の取消後も開く処理が残る場合は、要求の UUID と `RecoveryOpenRequest` の取消・`recoveryReply` の解放を調べる。
 
 - **下部を開くと別のエディタが消える・高さが戻らない**:
   ⌥⌘3・4 は各エディタ、⌥⌘5 はアレンジ非表示の独立した切替である。

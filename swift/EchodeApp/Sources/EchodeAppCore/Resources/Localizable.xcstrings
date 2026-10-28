@@ -1,6 +1,48 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "The latest saved version could not be read": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "The latest saved version could not be read" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "最新の保存版を読み込めませんでした" } }
+      }
+    },
+    "An older version was recovered. Recent edits may be missing. Cancel and preserve a copy of the project before continuing. Continuing saves the recovered version as a new checkpoint.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "An older version was recovered. Recent edits may be missing. Cancel and preserve a copy of the project before continuing. Continuing saves the recovered version as a new checkpoint." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "古い保存版から復旧しました。最近の編集が失われている可能性があります。いったんキャンセルして、続行する前にプロジェクトのコピーを保全してください。続行すると復旧した状態を新しい保存点として保存します。" } }
+      }
+    },
+    "Continue from recovered version": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Continue from recovered version" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "復旧した版から続行" } }
+      }
+    },
+    "Cancel": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Cancel" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "キャンセル" } }
+      }
+    },
+    "Unreadable version": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Unreadable version" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "読み込めない保存版" } }
+      }
+    },
+    "Recovered version": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Recovered version" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "復旧元の保存版" } }
+      }
+    },
+    "Applied journal sequence": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Applied journal sequence" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "復旧済みジャーナル連番" } }
+      }
+    },
     "Piano Tracks": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Piano Tracks" } },

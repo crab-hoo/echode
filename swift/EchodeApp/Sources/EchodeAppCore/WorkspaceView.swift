@@ -37,9 +37,15 @@ public struct WorkspaceView: View {
             }
         }
         .background(WorkspacePluginPanel(controller: controller, document: state.pluginBrowserDocument) { state.pluginBrowserDocument = nil })
-        .alert(text("Could not complete the operation"), isPresented: Binding(
-            get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } }
-        )) { Button(text("OK")) { controller.errorMessage = nil } } message: { Text(controller.errorMessage ?? "") }
+        .alert(controller.recoveryPrompt?.title ?? text("Could not complete the operation"), isPresented: Binding(
+            get: { controller.recoveryPrompt != nil || controller.errorMessage != nil },
+            set: { if !$0, controller.recoveryPrompt == nil { controller.errorMessage = nil } }
+        )) {
+            if let prompt = controller.recoveryPrompt {
+                Button(text("Continue from recovered version"), role: .destructive) { controller.respondToRecovery(prompt, accept: true) }
+                Button(text("Cancel"), role: .cancel) { controller.respondToRecovery(prompt, accept: false) }
+            } else { Button(text("OK")) { controller.errorMessage = nil } }
+        } message: { Text(controller.recoveryPrompt?.message ?? controller.errorMessage ?? "") }
         .frame(minWidth: state.layout.minimumWidth, minHeight: state.layout.minimumHeight)
         .onChange(of: context) { _, _ in state.synchronize(controller) }
         .onChange(of: controller.documentID) { _, _ in session.synchronizeAuditionOutput() }
@@ -52,7 +58,7 @@ public struct WorkspaceView: View {
                 WorkspaceSession(controller: controller, state: state).perform(command)
             }
         }
-        .onDisappear { controller.pluginCommand = nil; session.synchronizeAuditionOutput(visible: false) }
+        .onDisappear { controller.respondToRecovery(accept: false); controller.pluginCommand = nil; session.synchronizeAuditionOutput(visible: false) }
         .task { await controller.observeAudio() }
     }
 

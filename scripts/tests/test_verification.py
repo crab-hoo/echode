@@ -351,6 +351,18 @@ class PolicyTests(unittest.TestCase):
                          "check-bridge-asan", "check-bridge-tsan"}
                         <= self.selected("crates/echode-history/src/autosave.rs"))
 
+    def test_recovery_consent_keeps_the_host_ffi_and_ui_boundaries_selected(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        rust = contracts["recovery-consent"]
+        self.assertEqual((rust["package"], rust["target"]), ("echode-ffi", ["--lib"]))
+        self.assertEqual(len(rust["negative_controls"]), 2)
+        self.assertEqual(contracts["recovery-consent-ui"]["suite"], "RecoveryConsentTests")
+        for path in ("crates/echode-history/src/host.rs", "crates/echode-ffi/src/recovery_tests.rs",
+                     "swift/EchodeBridge/Sources/EchodeBridge/History.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/RecoveryConsent.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
+                             "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
+
     def test_noop_edits_cover_the_session_host_and_real_mcp_entry(self):
         contracts = {c["id"]: c for c in self.policy["product_contracts"]}
         self.assertEqual((contracts["noop-edits"]["package"], contracts["noop-edits"]["target"]),
@@ -906,7 +918,7 @@ class PolicyTests(unittest.TestCase):
                           "piano-note-selection-ui", "piano-note-selection-cancel-ui", "piano-note-selection-delete-ui", "piano-note-linked-delete-ui", "piano-velocity-lane-ui", "piano-velocity-lane-frame-ui", "piano-velocity-lane-cancel-ui", "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
                           "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
-                          "journal-invariants", "journal-confirmed-edits", "noop-edits", "mcp-noop-edits", "noop-edits-ui",
+                          "recovery-consent", "recovery-consent-ui", "journal-invariants", "journal-confirmed-edits", "noop-edits", "mcp-noop-edits", "noop-edits-ui",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",
                           "output-prewarm", "output-prewarm-play", "output-prepare-worker", "output-prepare-on-open"})
         for contract in contracts:

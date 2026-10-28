@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
@@ -49,6 +50,14 @@ impl std::fmt::Display for HostError {
 
 impl std::error::Error for HostError {}
 
+/// A readable ancestor was used instead of the autosave tip. Editing requires consent.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct RecoveryNotice {
+    pub tip: String,
+    pub base: String,
+    pub applied_seq: u64,
+}
+
 enum Request {
     Perform {
         command: Command,
@@ -73,6 +82,9 @@ enum Request {
     Revisions {
         reply: Sender<Result<Vec<SavedRevision>, HostError>>,
     },
+    AcceptRecovery {
+        reply: Sender<Result<(), HostError>>,
+    },
     Shutdown,
 }
 
@@ -85,6 +97,8 @@ pub struct DocumentHost {
     /// Commit recovery read, and the last journal line included in that project.
     base_revision: String,
     applied_seq: u64,
+    recovery: Option<RecoveryNotice>,
+    recovery_pending: Arc<AtomicBool>,
 }
 
 /// Exclusive ownership of one package, in this process and across processes.
@@ -166,6 +180,15 @@ impl DocumentHost {
         let directory = lock.path().to_path_buf();
         repair_journal(&directory)?;
         let recovered = crate::document::recover_labeled(&directory)?;
+        let recovery = recovered
+            .tip_revision
+            .filter(|tip| *tip != recovered.base_revision)
+            .map(|tip| RecoveryNotice {
+                tip,
+                base: recovered.base_revision.clone(),
+                applied_seq: recovered.applied_seq,
+            });
+        let recovery_pending = Arc::new(AtomicBool::new(recovery.is_some()));
         let mut base_revision = recovered.base_revision;
         let applied_seq = recovered.applied_seq;
         let project = recovered.project;
@@ -184,9 +207,20 @@ impl DocumentHost {
         let (request, incoming) = mpsc::channel();
         let published = Arc::clone(&snapshot);
         let owned = directory.clone();
+        let pending = Arc::clone(&recovery_pending);
         let thread = thread::Builder::new()
             .name("echode-document".to_string())
-            .spawn(move || worker(owned, project, autosave, published, incoming))
+            .spawn(move || {
+                worker(
+                    owned,
+                    project,
+                    autosave,
+                    published,
+                    incoming,
+                    pending,
+                    applied_seq,
+                )
+            })
             .map_err(|error| PackageError::new(error.to_string()))?;
         Ok(Self {
             request,
@@ -195,6 +229,8 @@ impl DocumentHost {
             lock,
             base_revision,
             applied_seq,
+            recovery,
+            recovery_pending,
         })
     }
 
@@ -219,6 +255,8 @@ impl DocumentHost {
     /// `Ok(false)` means the device is gone and the bytes must not be applied.
     /// `Err` means the object or the journal did not finish; the caller keeps the bytes.
     pub fn commit_plugin_state(&self, device: Id, bytes: &[u8]) -> Result<bool, HostError> {
+        self.require_recovery_confirmation()
+            .map_err(HostError::Package)?;
         let hash = crate::write_object(self.directory(), bytes).map_err(HostError::Package)?;
         let project = self.snapshot();
         let Some(current) = device_state(&project, device) else {
@@ -243,6 +281,8 @@ impl DocumentHost {
     /// Applies `command`, writing any nonempty edit to the journal before returning.
     /// A no-op succeeds without publishing or discarding redo.
     pub fn perform(&self, command: Command) -> Result<Action, HostError> {
+        self.require_recovery_confirmation()
+            .map_err(HostError::Package)?;
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Perform { command, reply })
@@ -255,6 +295,8 @@ impl DocumentHost {
     /// Applies every action as one undo step. References are resolved in order.
     /// A group with no net change returns all accepted actions without recording a step.
     pub fn apply(&self, actions: Vec<Value>) -> Result<Vec<Action>, HostError> {
+        self.require_recovery_confirmation()
+            .map_err(HostError::Package)?;
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Apply { actions, reply })
@@ -266,9 +308,50 @@ impl DocumentHost {
 
     /// Undoes the newest undo step and appends an `undo` journal line.
     pub fn undo(&self) -> Result<(), HostError> {
+        self.require_recovery_confirmation()
+            .map_err(HostError::Package)?;
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Undo { reply })
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+        incoming
+            .recv()
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+    }
+
+    /// Pending consent is not an edit and never creates an Undo step.
+    pub fn recovery_notice(&self) -> Option<&RecoveryNotice> {
+        self.recovery
+            .as_ref()
+            .filter(|_| self.recovery_pending.load(Ordering::Acquire))
+    }
+
+    /// Every writer must check this before changing project or session state.
+    pub fn require_recovery_confirmation(&self) -> Result<(), PackageError> {
+        if let Some(notice) = self.recovery_notice() {
+            return Err(PackageError::new(format!(
+                "recovery confirmation required: unreadable tip {}; recovered base {}; applied journal seq {}. Preserve a copy before continuing",
+                notice.tip, notice.base, notice.applied_seq
+            )));
+        }
+        Ok(())
+    }
+
+    /// Accepts only the exact warning shown to the caller. Checkpoints the chosen
+    /// snapshot before enabling edits, so a crash cannot replay them onto the bad tip.
+    pub fn accept_recovery(&self, tip: &str, base: &str) -> Result<(), HostError> {
+        if !self
+            .recovery
+            .as_ref()
+            .is_some_and(|notice| notice.tip == tip && notice.base == base)
+        {
+            return Err(HostError::Package(PackageError::new(
+                "recovery confirmation does not match this document",
+            )));
+        }
+        let (reply, incoming) = mpsc::channel();
+        self.request
+            .send(Request::AcceptRecovery { reply })
             .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
         incoming
             .recv()
@@ -298,6 +381,8 @@ impl DocumentHost {
 
     /// Redoes the newest undone step and appends a `redo` journal line.
     pub fn redo(&self) -> Result<(), HostError> {
+        self.require_recovery_confirmation()
+            .map_err(HostError::Package)?;
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Redo { reply })
@@ -323,9 +408,13 @@ fn worker(
     autosave: Autosave,
     snapshot: Arc<Mutex<Arc<Project>>>,
     incoming: Receiver<Request>,
+    recovery_pending: Arc<AtomicBool>,
+    applied_seq: u64,
 ) {
     let mut session = Session::open(project);
-    let mut next_seq = next_journal_seq(&directory).unwrap_or(1);
+    let mut next_seq = next_journal_seq(&directory)
+        .unwrap_or(1)
+        .max(applied_seq.saturating_add(1));
     let mut inflight: Vec<(u64, PendingAutosave)> = Vec::new();
     let mut halted: Option<String> = None;
     while let Ok(request) = incoming.recv() {
@@ -336,6 +425,20 @@ fn worker(
         }
         match request {
             Request::Shutdown => break,
+            Request::AcceptRecovery { reply } => {
+                let result = if recovery_pending.load(Ordering::Acquire) {
+                    let seq = next_seq.saturating_sub(1);
+                    autosave
+                        .save(Arc::new(session.project().clone()), seq)
+                        .and_then(|pending| pending.wait())
+                        .and_then(|_| compact_journal(&directory, seq))
+                        .map(|()| recovery_pending.store(false, Ordering::Release))
+                        .map_err(HostError::Package)
+                } else {
+                    Ok(())
+                };
+                let _ = reply.send(result);
+            }
             Request::Perform { command, reply } => {
                 let result = match command {
                     Command::Restore { revision } => {
@@ -635,6 +738,9 @@ fn reply_halted(request: Request, halted: &Option<String>) {
             let _ = reply.send(Err(error));
         }
         Request::Revisions { reply } => {
+            let _ = reply.send(Err(error));
+        }
+        Request::AcceptRecovery { reply } => {
             let _ = reply.send(Err(error));
         }
         Request::Shutdown => {}

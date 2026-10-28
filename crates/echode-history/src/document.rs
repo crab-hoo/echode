@@ -300,6 +300,7 @@ pub(crate) struct Recovered {
     pub project: Project,
     pub base_revision: String,
     pub applied_seq: u64,
+    pub tip_revision: Option<String>,
 }
 
 /// Loads the newest readable commit, then replays the contiguous journal suffix.
@@ -327,6 +328,7 @@ pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageErro
             project,
             base_revision: commit.to_string(),
             applied_seq: applied,
+            tip_revision: Some(id.to_string()),
         });
     }
     if pending {
@@ -344,6 +346,7 @@ pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageErro
         project,
         base_revision: String::new(),
         applied_seq: applied,
+        tip_revision: None,
     })
 }
 

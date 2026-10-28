@@ -26,7 +26,7 @@ pub use document::{
     recover, write_package,
 };
 pub use gix::ObjectId;
-pub use host::{DocumentHost, HostError};
+pub use host::{DocumentHost, HostError, RecoveryNotice};
 pub use media::{
     AudioFileReader, DecodedPcm, StoredAudio, decode_audio_file, import_audio, read_pcm,
 };

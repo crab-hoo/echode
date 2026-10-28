@@ -123,6 +123,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 （[ADR 0124](../decisions/0124-selected-track-fx-batches.md)）。
 命令は制御スレッドへ送ってすぐ戻り、ロックを保持したまま Swift を呼ばない。
 配列を借りる同期クロージャーの間はハンドルを保持し、ポインタを外へ出さず `await` しない。
+古い保存版へ後退した復旧はスナップショットの `historyReport.recovery` で通知する。
+Swift は文書公開と出力準備の前に確認し、取消なら元の文書を保持する
+（[ADR 0183](../decisions/0183-recovery-consent.md)）。
 
 GUI 応答性の追加要件は [処理中も作業を続ける](../interaction-design.md#処理中も作業を続ける)を参照する。
 非同期の C ABI があることだけで、後続の編集が長いプラグイン待ちを追い越せるとは判断しない。

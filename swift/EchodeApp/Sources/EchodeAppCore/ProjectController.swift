@@ -57,6 +57,8 @@ public final class ProjectController {
         if noteSelection != previous, noteFocus == nil { noteVelocity.invalidate() }
     }
     public var errorMessage: String?
+    public internal(set) var recoveryPrompt: RecoveryPrompt?
+    @ObservationIgnored var recoveryReply: CheckedContinuation<Bool, Never>?
     public var clipFocus: UUID? {
         didSet { if let clipFocus, snapshot?.clipMix(clipFocus)?.track != selection { self.clipFocus = nil } }
     }
@@ -154,14 +156,44 @@ public final class ProjectController {
     }
 
     public func open(_ url: URL, creating: Bool = false) async {
+        let request = RecoveryOpenRequest()
+        await withTaskCancellationHandler {
+            await open(url, creating: creating, request: request)
+        } onCancel: {
+            request.cancel()
+            Task { @MainActor [weak self] in
+                guard let self, self.recoveryPrompt?.id == request.id else { return }
+                self.respondToRecovery(accept: false)
+            }
+        }
+    }
+
+    private func open(_ url: URL, creating: Bool, request: RecoveryOpenRequest) async {
         if faderPreview != nil { await finishFader(commit: false) }
         await edits.run(exclusive: true) {
+            guard !request.isCancelled else { return }
             if !creating, self.projectURL?.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() { return }
             do {
                 let opened = try await Task.detached {
                     try creating ? Document(creating: url.path) : Document(opening: url.path)
                 }.value
-                let initial = try await opened.snapshot()
+                guard !request.isCancelled else {
+                    await Task.detached { opened.shutdown() }.value
+                    return
+                }
+                var initial = try await opened.snapshot()
+                if let notice = try initial.historyReport().recovery {
+                    let accepted = await self.confirmRecovery(RecoveryPrompt(url: url, id: request.id, notice: notice), request: request)
+                    guard accepted, !request.isCancelled else {
+                        await Task.detached { opened.shutdown() }.value
+                        return
+                    }
+                    do { initial = try await opened.history(.acceptRecovery(notice)) }
+                    catch {
+                        await Task.detached { opened.shutdown() }.value
+                        throw error
+                    }
+                }
                 let initialAudio = try initial.audioState()
                 let previous = self.document
                 self.document = opened

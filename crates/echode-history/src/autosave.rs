@@ -197,7 +197,7 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
                         let _ = reply.send(read_commit(&repo, revision));
                     }
                     Some(Request::Revisions { reply }) => {
-                        let _ = reply.send(list_revisions(&repo));
+                        let _ = reply.send(list_revisions(&repo, &directory));
                     }
                     Some(Request::Save { .. }) => {
                         unreachable!("coalesce consumes every queued save")
@@ -210,22 +210,30 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
                 let _ = reply.send(result);
             }
             Request::Revisions { reply } => {
-                let _ = reply.send(list_revisions(&repo));
+                let _ = reply.send(list_revisions(&repo, &directory));
             }
         }
     }
 }
 
-fn list_revisions(repo: &Repository) -> Result<Vec<SavedRevision>, PackageError> {
+fn list_revisions(repo: &Repository, directory: &Path) -> Result<Vec<SavedRevision>, PackageError> {
     let Some(mut current) = tip(repo) else {
         return Ok(Vec::new());
     };
     let mut seen = HashSet::new();
     let mut revisions = Vec::new();
     while seen.insert(current) {
-        let commit = repo
-            .find_commit(current)
-            .map_err(|error| PackageError::new(error.to_string()))?;
+        let commit = match repo.find_commit(current) {
+            Ok(commit) => commit,
+            Err(_) => {
+                // The original broken tip remains in history after recovery consent.
+                let Some(parent) = crate::document::commit_parent(directory, current) else {
+                    break;
+                };
+                current = parent;
+                continue;
+            }
+        };
         let time = commit
             .time()
             .map_err(|error| PackageError::new(error.to_string()))?
