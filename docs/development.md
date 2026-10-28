@@ -171,6 +171,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 `PianoGridView.setGridMode` が押下の取消と所有確認、`PianoFrame.gridTicks` が表示幅内の縦線を扱う。
 回帰は `PianoGridTests.swift`・`PianoGridControlTests.swift`、GPU の細分線は `PianoOffscreenProbe.swift` に置く
 （[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。
+三連符・付点の候補と表示名も `PianoGrid.swift` に置き、実操作子・入力と履歴は `PianoRhythmicGridTests.swift`、
+全音価と表示幅の境界は `PianoRhythmicGridBoundaryTests.swift` で検査する
+（[ADR 0186](decisions/0186-piano-triplet-and-dotted-grids.md)）。
 
 空白の左ドラッグ追加は `PianoInsertion.swift` の押下時の開始・カメラと解放時の幾何を使い、
 `PianoGridView` の `mouseUp` から既存の挿入へ送る。仮表示は `PianoRenderInput.insertion` と `PianoFrame`、

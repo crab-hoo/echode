@@ -1155,6 +1155,18 @@
         "ja": { "stringUnit": { "state": "translated", "value": "自動グリッド" } }
       }
     },
+    "Triplet": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Triplet" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "三連符" } }
+      }
+    },
+    "Dotted": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Dotted" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "付点" } }
+      }
+    },
     "Note Grid": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Note Grid" } },
@@ -1163,8 +1175,8 @@
     },
     "Note grid help": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Automatic follows horizontal zoom. Fixed note values keep their width in beats. Shift releases snapping." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "自動は横ズームに追従し、固定音価は拍の幅を保ちます。Shift で吸着を解除します。" } }
+        "en": { "stringUnit": { "state": "translated", "value": "Automatic follows horizontal zoom. Fixed straight, triplet and dotted note values keep their width in beats. Shift releases snapping." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "自動は横ズームに追従し、固定の通常音価・三連符・付点は拍の幅を保ちます。Shift で吸着を解除します。" } }
       }
     },
     "Display Key": {

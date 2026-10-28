@@ -1,13 +1,15 @@
 import AppKit
 
-/// Straight note values, in quarter-note ticks. Grid choice is viewport state,
+/// Note values, in quarter-note ticks. Grid choice is viewport state,
 /// not a quantization of existing notes or of the remembered input length.
 enum PianoGrid: Sendable, Equatable {
     case automatic
     case fixed(Int64)
 
     static let divisions: [Int64] = [2_822_400, 1_411_200, 705_600, 352_800, 176_400, 88_200, 44_100, 22_050]
-    static let choices: [PianoGrid] = [.automatic] + divisions.map { .fixed($0) }
+    static let triplets = divisions.map { $0 * 2 / 3 }
+    static let dotted = divisions.map { $0 * 3 / 2 }
+    static let choices: [PianoGrid] = [.automatic] + (divisions + triplets + dotted).map { .fixed($0) }
 
     func ticks(pixelsPerBeat: Double) -> Int64 {
         switch self {
@@ -26,7 +28,15 @@ enum PianoGrid: Sendable, Equatable {
         }
     }
 
-    static func noteValue(_ ticks: Int64) -> String { "1/\(2_822_400 / max(1, ticks))" }
+    static func noteValue(_ ticks: Int64) -> String {
+        for (values, suffix) in [(divisions, ""), (triplets, "Triplet"), (dotted, "Dotted")] {
+            if let index = values.firstIndex(of: ticks) {
+                let base = "1/\(1 << index)"
+                return suffix.isEmpty ? base : "\(base) \(text(suffix))"
+            }
+        }
+        return "\(ticks) ticks"
+    }
 }
 
 /// Native keyboard/VoiceOver-accessible controls, outside the Metal surface.

@@ -33,9 +33,10 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     var frames = 0, compared = 0, checkedRows = 0, checkedDegrees = 0, mismatches = 0, degreePixels = 0
     var checkedGridLines = 0
     for scale in [1.0, 2.0] {
-        for event in 0..<24 {
+        for event in 0..<32 {
             let camera = PianoCamera(originBeat: Double(event % 5) / 7, topPitch: 74 + Double(event % 8) / 8,
-                                     pixelsPerBeat: [24.0, 72.0, 144.0][event % 3], pixelsPerPitch: [12.0, 20.0, 48.0][(event / 3) % 3])
+                                     pixelsPerBeat: [24.0, 72.0, 144.0][event % 3], pixelsPerPitch: [12.0, 20.0, 48.0][(event / 3) % 3],
+                                     gridMode: event < 24 ? .automatic : .fixed(event % 2 == 0 ? 235_200 : 529_200))
             let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
                                      width: event % 2 == 0 ? 640 : 720, height: 331, scale: scale)
             let referenceFrame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
@@ -115,7 +116,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
                 let actual = reference.pixel(x: pixelX, y: Int(y * scale))
                 if actual != expected {
                     mismatches += 1
-                    print("grid pixel mismatch: scale=\(scale), tick=\(tick), x=\(pixelX), actual=\(actual), expected=\(expected)")
+                    print("grid pixel mismatch: scale=\(scale), grid=\(camera.gridMode), tick=\(tick), x=\(pixelX), actual=\(actual), expected=\(expected)")
                 }
             }
             for y in Int(referenceFrame.layout.rulerHeight * scale)..<reference.height {

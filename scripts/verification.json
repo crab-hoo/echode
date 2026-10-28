@@ -63,6 +63,16 @@
   ],
   "product_contracts": [
     {
+      "id": "piano-rhythmic-grid-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "PianoRhythmicGridTests", "test": "contractTripletAndDottedControlsDriveInputLinesAndHistory", "timeout": 180,
+      "purpose": "三連符・付点の実操作子と音価表示、縦線・クリック・矢印・ルーラーの共通幅、入力長保持・取消・単一Undo/Redo・保存を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGrid.swift", "old": "divisions + triplets + dotted", "new": "divisions + dotted"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGrid.swift", "old": "divisions + triplets + dotted", "new": "divisions + triplets"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGrid.swift", "old": "return suffix.isEmpty ? base : \"\\(base) \\(text(suffix))\"", "new": "return suffix.isEmpty ? base : base"}
+      ]
+    },
+    {
       "id": "piano-auto-grid-ui", "runner": "swift", "package_path": "swift/EchodeApp",
       "suite": "PianoGridTests", "test": "contractAutomaticGridFollowsZoomAndDrivesNoteInput", "timeout": 180,
       "purpose": "実ピンチの時刻固定・自動グリッドの細分化・描画線とクリックの吸着と入力長・単一Undo/Redo・保存を確認",

@@ -299,10 +299,12 @@ make debug-report
   `PianoCamera.gridMode` と実効 `grid` を区別する。自動は横倍率で変わり、固定は音価を保つ。
   細かい固定幅の線は 4 pt 未満で間引くが、吸着幅と記憶済み入力長は変えない。
   `piano-auto-grid-ui`・`piano-fixed-grid-ui` で実入力・旧押下の取消・文書所有確認を分けて調べる。
+  三連符・付点は `piano-rhythmic-grid-ui` で候補・音価表示と共通幅を検査する。
+  8 分三連符は 235,200 tick、付点 8 分は 529,200 tick。表示名を tick の逆数で作ると誤った分母になる。
   トラック切替と再生成でモードが戻る場合は共通カメラと `onGridChange` の操作子反映を確認する。
-  `spike-piano-frame` の `checkedGridLines` と `mismatches` は倍率 1・2 の細分線の GPU 画素を含む
+  `spike-piano-frame` の `checkedGridLines` と `mismatches` は倍率 1・2 の通常・三連符・付点の細分線の GPU 画素を含む
   （[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。実画面の密度と VoiceOver はユーザー確認とする。
-  `grid pixel mismatch` は倍率・tick・採取 x・実際と期待の色を示す。採取は描画と同じ Float 座標の被覆ピクセル中心で行う。
+  `grid pixel mismatch` は倍率・グリッド種別・tick・採取 x・実際と期待の色を示す。採取は描画と同じ Float 座標の被覆ピクセル中心で行う。
 
 - **入力長が別トラックへ伝わらない・Undo で変わらない・再読込後に変わる**:
   `ProjectController.noteInput.length` が未指定なら現在のグリッド幅を使う。再オープンで未指定へ戻るのは正常である。

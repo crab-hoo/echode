@@ -303,6 +303,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     元と強弱の保持・複製側の選択・リンクの重複排除・解放時の吸着・取消・単一 Undo と保存を確認する。
     自動／固定グリッドの操作子と共有幅も接続した（[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。
     `piano-auto-grid-ui`・`piano-fixed-grid-ui` と GPU 読戻しで、ズーム・吸着・入力長保持・取消・再生成を確認する。
+    三連符・付点の固定幅も同じ経路へ接続した（[ADR 0186](decisions/0186-piano-triplet-and-dotted-grids.md)）。
+    `piano-rhythmic-grid-ui` は実操作子・音価表示・入力と線・矢印とルーラー・入力長保持・取消・Undo / Redo・保存を確認する。
     選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)。実画面と VoiceOver はユーザー確認待ちである。
   - ドラム入力：音色名の行から親フォルダの MIDI へ入力し、通常のパターン複製ではノートの中身を独立させる。
 

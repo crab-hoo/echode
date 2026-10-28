@@ -85,7 +85,7 @@ check-base:
 # Independent piano targets, reference-only notes, track controls and ordered arrow/Return routing share this gate too.
 # No-op commands/groups preserve history, durable publication and MCP acknowledgements through this gate.
 # Command note copies preserve full-resolution attributes, linked identity, selection and atomic history through this gate.
-# Piano automatic/fixed grid controls, zoom anchoring, snap subdivisions and press cancellation share this gate.
+# Piano automatic/fixed straight/triplet/dotted grid controls, zoom anchoring, snap subdivisions and press cancellation share this gate.
 # Sanitizer entry points also run recovery consent separately, retaining its tests and readiness deadline.
 check-product-contracts:
 	$(MAKE) bundled-plugins

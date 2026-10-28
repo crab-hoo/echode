@@ -127,6 +127,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - ピアノロールのトラック切替・再生成で共有する時間・音域・倍率と、別文書での初期化:
   [ADR 0174](decisions/0174-shared-piano-viewport.md)。
 - ピアノロールの自動／固定グリッドと共通吸着幅・表示線・旧押下の取消: [ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)。
+  固定音価の三連符・付点と種類別の表示名: [ADR 0186](decisions/0186-piano-triplet-and-dotted-grids.md)。
 - ペインのリサイズ中の伸縮とヘッダ幅の保持: [ADR 0144](decisions/0144-unscaled-canvas-resizing.md)。
 - 反転した表示面の固定位置と状態行・再生ボタンの寸法: [ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)。
 - 入力と大きさの違う drawable への描画と、広がった余白の背景: [ADR 0150](decisions/0150-stale-drawable-frame.md)。
