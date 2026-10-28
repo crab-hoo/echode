@@ -78,7 +78,10 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 通常の `make check` は `check-format`、`check-verification`、`check-base`、`check-product-contracts` を順に 1 回ずつ実行する。
 `scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、基盤と製品契約は別の結果として記録する。
 
-- `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク（`target/` の手元の証拠は除く）、macOS 27 / M4 のビルド基準と生成物の検査（[ADR 0114](decisions/0114-m4-build-baseline.md)）。文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
+- `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク。
+  既存のローカル証拠は文書・宛先の例外一覧と注意書きを要求し、新しい `target/` リンクは拒否する（[証拠の保全](evidence/README.md)）。
+  macOS 27 / M4 のビルド基準と生成物も検査する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。
+  文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
   エージェント入口の選択の一致・失敗情報の保持・原文読込と鮮度の境界も既存の検査内で確認する（[手順](agent-workflow.md)）。
 - `check-format`: 従来 `check-base` のビルド後に行っていた Rust フォーマットを独立して先に検査する。
 - `check` (`check-base`): Rust / Swift のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。

@@ -1,0 +1,57 @@
+{
+  "docs/reviews/2026-10-13-audit.md": [
+    "target/verification/audit-2026-10-13-baseline.md",
+    "target/verification/report.md"
+  ],
+  "docs/reviews/2026-10-13-phase1-pro-audit.md": [
+    "target/verification/phase1-pro-audit-baseline.md",
+    "target/verification/report.md"
+  ],
+  "docs/reviews/2026-10-14-computer-use-reinvestigation.md": [
+    "target/verification/reinvestigation-20261014/evidence.json",
+    "target/verification/reinvestigation-20261014/capture-helper-crash-summary.json",
+    "target/verification/reinvestigation-20261014/locate-two.png",
+    "target/verification/reinvestigation-20261014/playing.png",
+    "target/verification/reinvestigation-20261014/paused-visible.png",
+    "target/verification/reinvestigation-20261014/audio-import.png",
+    "target/verification/reinvestigation-20261014/history-restored.png",
+    "target/verification/reinvestigation-20261014/history-undo.png",
+    "target/verification/reinvestigation-20261014/wave-trim.png",
+    "target/verification/reinvestigation-20261014/after-normal-restart.png",
+    "target/verification/reinvestigation-20261014/spike-app-first.json",
+    "target/verification/report.md"
+  ],
+  "docs/reviews/2026-10-14-computer-use-same-desktop.md": [
+    "target/verification/computer-use-same-desktop-20261014/evidence.json",
+    "target/verification/computer-use-same-desktop-20261014/locate-two.png",
+    "target/verification/computer-use-same-desktop-20261014/playing.png",
+    "target/verification/computer-use-same-desktop-20261014/paused.png",
+    "target/verification/computer-use-same-desktop-20261014/note-moved.png",
+    "target/verification/computer-use-same-desktop-20261014/left-edge-resized.png",
+    "target/verification/computer-use-same-desktop-20261014/import-track-four.png",
+    "target/verification/computer-use-same-desktop-20261014/history-restored.png",
+    "target/verification/computer-use-same-desktop-20261014/history-undo.png",
+    "target/verification/computer-use-same-desktop-20261014/trimmed-wave.png",
+    "target/verification/computer-use-same-desktop-20261014/after-restart.png",
+    "target/verification/computer-use-same-desktop-20261014/window-watch.json",
+    "target/verification/computer-use-same-desktop-20261014/launch-diagnostic.json",
+    "target/verification/computer-use-same-desktop-20261014/runloop-diagnostic.log",
+    "target/verification/report.md"
+  ],
+  "docs/reviews/2026-10-14-computer-use.md": [
+    "target/verification/computer-use-20261014/evidence.json",
+    "target/verification/computer-use-20261014/stopped-locate-after-restart.png",
+    "target/verification/computer-use-20261014/playing-after-restart.png",
+    "target/verification/computer-use-20261014/after-crash.png",
+    "target/verification/computer-use-20261014/spike-app-attempt-1.json",
+    "target/verification/computer-use-20261014/spike-app-attempt-2.json",
+    "target/verification/report.md"
+  ],
+  "docs/reviews/2026-10-14-phase1-fix-instructions.md": [
+    "target/verification/phase1-fix-reaudit-note-ports.json"
+  ],
+  "docs/reviews/2026-10-14-phase1-fix-reaudit.md": [
+    "target/verification/report.md",
+    "target/verification/phase1-fix-reaudit-note-ports.json"
+  ]
+}

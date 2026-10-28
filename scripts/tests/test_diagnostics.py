@@ -18,6 +18,7 @@ with patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
     spec = importlib.util.spec_from_file_location("diagnose", ROOT / "scripts/diagnose.py")
     diagnose = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(diagnose)
+    from documentation import local_link_errors
 
 
 class DiagnosticTests(unittest.TestCase):
@@ -256,6 +257,45 @@ class DiagnosticTests(unittest.TestCase):
 
 
 class DeveloperDocumentationTests(unittest.TestCase):
+    def test_new_target_links_are_rejected_even_when_the_file_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "docs/review.md"
+            (root / "target").mkdir()
+            (root / "target/evidence.log").touch()
+            links = (
+                "[proof](../target/evidence.log)",
+                "[proof](../%74arget/evidence.log#result)",
+                "[proof](<../target/evidence.log>)",
+                "[proof][record]\n[record]: ../target/evidence.log",
+                "<../target/evidence.log>",
+            )
+            for link in links:
+                with self.subTest(link=link):
+                    errors = local_link_errors(root, path, link, {})
+                    self.assertTrue(errors, "new target evidence link must be rejected")
+
+    def test_legacy_links_require_both_a_notice_and_document_scoped_allowance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "docs/review.md"
+            link = "[old](../target/missing.log)"
+            legacy = {"docs/review.md": ["target/missing.log"]}
+            notice = "当時のローカル記録\n"
+            self.assertEqual(local_link_errors(root, path, notice + link, legacy), [])
+            self.assertTrue(local_link_errors(root, path, link, legacy))
+            self.assertTrue(local_link_errors(root, root / "docs/new.md", notice + link, legacy))
+            self.assertTrue(local_link_errors(root, path, notice + "[new](../target/new.log)", legacy))
+
+    def test_durable_links_are_checked_and_external_links_are_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "docs/review.md"
+            root.joinpath("proof.txt").touch()
+            self.assertEqual(local_link_errors(root, path, "[proof](../proof.txt#result)", {}), [])
+            self.assertTrue(local_link_errors(root, path, "[proof](../missing.txt)", {}))
+            self.assertEqual(local_link_errors(root, path, "[web](https://example.org) [here](#title)", {}), [])
+
     def test_maintained_guides_link_to_existing_local_files_and_make_targets(self):
         guides = [
             "AGENTS.md",
@@ -298,16 +338,11 @@ class DeveloperDocumentationTests(unittest.TestCase):
                     self.assertIn(target, targets, "unknown make target")
 
     def test_records_link_to_existing_files_except_local_evidence(self):
-        # Reviews cite evidence under target/, which stays on the machine that ran the audit.
-        for path in sorted((ROOT / "docs").rglob("*.md")):
-            for destination in re.findall(r"\]\(([^)]+)\)", path.read_text()):
-                if "://" in destination or destination.startswith("#"):
-                    continue
-                relative = unquote(destination.split("#", 1)[0])
-                if (path.parent / relative).resolve().is_relative_to(ROOT / "target"):
-                    continue
-                with self.subTest(document=str(path.relative_to(ROOT)), link=relative):
-                    self.assertTrue((path.parent / relative).exists(), "broken local link")
+        legacy = json.loads((ROOT / "docs/evidence/legacy-local-links.json").read_text())
+        paths = sorted((ROOT / "docs").rglob("*.md")) + [ROOT / "README.md", ROOT / "AGENTS.md"]
+        for path in paths:
+            with self.subTest(document=str(path.relative_to(ROOT))):
+                self.assertEqual(local_link_errors(ROOT, path, path.read_text(), legacy), [])
 
 
 if __name__ == "__main__":
