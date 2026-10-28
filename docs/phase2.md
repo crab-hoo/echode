@@ -229,6 +229,9 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   実画面・VoiceOver と S1 の実ウィンドウの再計測はユーザー担当である。
   右ドラッグの枠選択、空白左ドラッグの時間・トラック区間選択、部分コピー・空白を残す削除・現在位置と選択トラック起点の貼付け・複製、素材終端で止まる通常トリム、同トラック配置の重なりと自動クロスフェード、ループ区間からのリージョン作成とオートメーション追従を接続する（[オーディオクリップとテンポ](interaction-design.md#オーディオクリップとテンポ)、[次に詰める点](interaction-design.md#次に詰める点)）。
   クリップ本体の移動・Command の複製移動は、置き換えとして先に接続した（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)、必須契約 `clip-move-ui`・`clip-move-model`）。
+  単一クリップの ⌘D も、拍へ丸めない現在の窓の直後への複製・独立した中身・複製側の選択・単一 Undo と保存へ接続した
+  （[ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)）。
+  `clip-duplicate-key-ui`・`clip-duplicate-key-guards-ui` は実 View の入力・履歴とフォーカス・未確定操作の拒否を確認する。
   重ねるモードの切替を接続する時に、置き換えの判定を同じ経路へ組み込む。
 - **トランスポートとループ（[再生の開始位置](interaction-design.md#再生の開始位置)、[ループ再生](interaction-design.md#ループ再生)）**:
   記憶した開始位置（停止で戻る、再読込で保持、両ルーラーのクリックで変更・再生中は即時シーク）と進行中位置（一時停止でその場再開）を分ける。

@@ -369,10 +369,31 @@ public final class ArrangeView: NSView {
     public override func resetCursorRects() {
         for handle in rulerHandles.handles { addCursorRect(handle.hitRect, cursor: .resizeLeftRight) }
     }
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // A local arrange shortcut must never capture a text field, piano editor or another pane's keys.
+        if window?.firstResponder === self, duplicateClip(with: event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func duplicateClip(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
+              event.charactersIgnoringModifiers?.lowercased() == "d",
+              window == nil || window?.firstResponder === self else { return false }
+        // Holding the shortcut must not keep replacing the previous copy before a new frame arrives.
+        if event.isARepeat { return true }
+        guard !rulerBusy, rulerPress == nil, movePress == nil, !clicks.active, entry == nil,
+              let document = audioDocument, let selectedClip, let clip = snapshot?.clipMix(selectedClip),
+              clip.track == selected, let start = ClipMoveTarget.adjacentStart(start: clip.start, length: clip.length),
+              let onClipMove else { return false }
+        onClipMove(ClipMove(document: document, clip: clip.id, track: clip.track, start: start, copy: true))
+        return true
+    }
+
     public override func keyDown(with event: NSEvent) {
         if event.keyCode == 53, rulerPress != nil { cancelRuler(); return }
         if event.keyCode == 53, movePress != nil { finishClipMove(at: nil, flags: []); return }
         if event.keyCode == 53, clicks.active { clicks.cancel(); return }
+        if duplicateClip(with: event) { return }
         clicks.settle()
         super.keyDown(with: event)
     }

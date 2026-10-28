@@ -77,6 +77,7 @@ check-base:
 # Named behavioral tests (including independent workspace panes/stacking, canvas resizing/header width/stale drawable extents and margins, fixed transport chrome sizes, the remembered playback start and stop return, output prewarm/background media, background graph startup, device preparation/disclosure/drop targets, plugin window lifetimes/status/keys, tracks, FX, and file-URL sample drops) must run; ignored/deleted tests cannot pass.
 # Arrange/piano ruler clicks, loop drags/edge handles, cancellation and shared row geometry and loop entry/bypass run through the same native/RT contract gate.
 # Content-relative auto moves/copies, subsequent refits, and unmarked legacy journals share this gate.
+# Arrange-local Command-D repeats the exact current clip window with independent content and atomic history.
 # Blank piano-grid clicks/drags, remembered input length with Undo/Redo, release geometry and cancellation share the native UI gate.
 # Shared piano viewports across track switches and document-lifetime guards use this native UI gate too.
 # Right-drag note selection, Command toggles, atomic deletion and linked-content deduplication also use this gate.

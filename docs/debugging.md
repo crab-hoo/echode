@@ -240,6 +240,9 @@ make debug-report
   検知を外さず、未発音の新しいヘルパーで最初の処理も検査する。
 - **CLAP が鳴らない・走査失敗**:
   プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。
+  2026-10-28 の ⌘D 変更の通常検査では、`audit_rea08_descendant_pipe_does_not_extend_deadline` の最初の JSON 出力が 2 秒の期限切れとなった。
+  失敗は子孫のパイプ保持ケースではなく、最初の短い shell の起動・完了待ちで、単独実行では再現しなかった。原因は未確定である。
+  個別のログは `target/focused-checks/clip-duplicate-scan/`。期限・対象を変更せず、正式な `make verify` の結果と区別する。
 - **バイパスの表示と音が一致しない・解除後に古い音が鳴る**:
   文書のデバイス ID と `bypassed`、計画の要求・適用版、プラグイン失敗、ドライ／ウェットの平面数を確認する。
   バイパスした音源ではノートが無音でも同じトラックの配置音声は鳴る。解除時のリセットと現在のノート追跡を確認する（[ADR 0120](decisions/0120-device-bypass.md)）。
@@ -515,6 +518,10 @@ make debug-report
   複製の配置が元と同じ中身 ID なら独立化の不具合である。
   `ClipMoveTests` と履歴・CLI の `clip_move` で、吸着・選択・置き換え・書出しの一致を確認する
   （[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
+  単一クリップの ⌘D は `ClipDuplicationTests`・`ClipDuplicationBoundaryTests` で、現在の窓の終端・整数上端・文書・入力フォーカスを区別する。
+  文字入力中・別ペイン・未確定ジェスチャー・キーの押し続けで複製しないのは仕様である。
+  `ArrangeView.performKeyEquivalent` と `keyDown`、`ClipMoveTarget.adjacentStart`、送信後の `clipFocus` を確認する
+  （[ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)）。
 - **フォルダ開閉後に行・ミックス値・FX の対象がずれる**:
   元スナップショットと表示用ハンドルの行数・ID、`TrackTreeInfo` と `row_map` を区別する。
   ヘッダ、可視矩形、ミキサーとデバイスが同じ表示行から元トラックを参照することを

@@ -144,6 +144,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
 回帰は `clip_move_tests.rs`、履歴と CLI の `clip_move`、`ClipMoveTests.swift`（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
+単一クリップの ⌘D は `ArrangeView` のローカルなキー入力と `ClipMoveTarget.adjacentStart` を通す。
+回帰は `ClipDuplicationTests.swift`・`ClipDuplicationBoundaryTests.swift`
+（[ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)）。
 自動配置の中身の小節と移動後の合わせ直しは `placement.rs::refit_one` と `invariants.rs`、
 旧ジャーナルの種類の互換と保存は `crates/echode-history/tests/clip_bar_basis.rs` で検査する
 （[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。

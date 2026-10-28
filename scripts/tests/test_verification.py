@@ -502,6 +502,20 @@ class PolicyTests(unittest.TestCase):
                             self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + source))
         self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/PianoViewportTests.swift"))
 
+    def test_clip_duplicate_key_contracts_cover_native_input_window_and_local_ownership(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, suite in (("clip-duplicate-key-ui", "ClipDuplicationTests"),
+                            ("clip-duplicate-key-guards-ui", "ClipDuplicationBoundaryTests")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"]), ("swift", suite))
+            self.assertEqual(len(contract["negative_controls"]), 2)
+            for fault in contract["negative_controls"]:
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("Sources/EchodeAppCore/ArrangeView.swift", "Sources/EchodeAppCore/ArrangeClipMove.swift",
+                       "Tests/EchodeAppTests/ClipDuplicationTests.swift", "Tests/EchodeAppTests/ClipDuplicationBoundaryTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected("swift/EchodeApp/" + source))
+
     def test_piano_time_guides_contract_covers_independent_lines_deduplication_and_priority(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "piano-time-guides-ui")
         self.assertEqual((contract["runner"], contract["suite"], contract["test"]),
@@ -957,7 +971,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
-                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
+                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-duplicate-key-ui", "clip-duplicate-key-guards-ui", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
                           "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",

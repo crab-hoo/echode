@@ -1,13 +1,13 @@
 import AppKit
 import EchodeBridge
 
-/// One clip drag, captured at release before any document work starts (ADR 0154).
+/// One clip move or copy, captured by the arrange before document work starts (ADRs 0154, 0188).
 public struct ClipMove: Sendable, Equatable {
     let document: UUID
     let clip: UUID
     let track: UUID
     let start: Int64
-    /// Command at release: a copy with its own content instead of a move.
+    /// A copy has independent content instead of moving the source.
     let copy: Bool
 }
 
@@ -32,6 +32,14 @@ struct ClipMovePress {
 enum ClipMoveTarget {
     /// Pointer travel before a press on a clip moves it. A click only selects.
     static let threshold = 3.0
+
+    /// Repeat the current window exactly, including off-grid starts and manual trims.
+    static func adjacentStart(start: Int64, length: Int64) -> Int64? {
+        guard start >= 0, length > 0 else { return nil }
+        let (next, overflow) = start.addingReportingOverflow(length)
+        guard !overflow, !next.addingReportingOverflow(length).overflow else { return nil }
+        return next
+    }
 
     /// New start after `beats` of travel from `start`. The arrange grid draws
     /// quarter-note lines and the start snaps to the nearest one; Shift keeps

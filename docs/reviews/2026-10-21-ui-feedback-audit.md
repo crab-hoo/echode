@@ -381,3 +381,10 @@ Swift の指摘は `make known-bugs`（Rust の `audit_` テスト）の対象�
   必須契約 `clip-move-ui`・`clip-move-model` を負の対照付きで登録した。
 - 未接続: 重ねるモードと自動クロスフェード、⌘D の直後への複製、複数クリップ、端での自動スクロール、VoiceOver からの移動、トリム。
 - 未確認: 実画面のドラッグの操作感・影の見え方・VoiceOver はユーザー確認とする。
+
+## 追加対応（2026-10-28）
+
+- 当時未接続だった単一クリップの ⌘D だけを、現在の窓の直後への独立した複製・単一 Undo・保存へ接続した
+  （[ADR 0188](../decisions/0188-arrange-adjacent-clip-duplication.md)）。
+  `ClipDuplicationTests`・`ClipDuplicationBoundaryTests` と負の対照付きの製品契約を追加した。
+  複数クリップ・重ねるモード・トリム等の残りと、実画面のユーザー確認は引き継ぐ。

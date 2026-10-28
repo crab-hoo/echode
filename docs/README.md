@@ -143,6 +143,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 選択位置へのトラック挿入と末尾追加: [ADR 0127](decisions/0127-positioned-track-insertion.md)。
 - トラックの通常複製と導出 ID: [ADR 0129](decisions/0129-track-duplication.md)。
 - クリップの移動・複製移動と置き換えでの着地（削除・切詰め・分割）: [ADR 0154](decisions/0154-clip-move-and-duplicate.md)。
+- アレンジ自身の ⌘D・現在の窓の直後への独立した複製・単一 Undo と保存:
+  [ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)。
 
 ### 6. ビルド・対象プラットフォーム・検査基盤
 

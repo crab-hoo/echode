@@ -140,6 +140,24 @@
     {"id": "folder-projection-ownership", "runner": "rust", "package": "echode-ffi", "target": ["--lib"], "test": "snapshot_ownership::contract_arrange_projection_retains_hierarchy_rows_and_controls_after_source_release", "timeout": 180, "purpose": "製品ABIの表示用スナップショットで元ハンドル解放後の階層・行・ミックス値・容量境界と再展開を確認", "negative_control": {"file": "crates/echode-ffi/src/queue.rs", "old": ".visit_visible_rows(&self.project, view, rows, emit);", "new": ".visit_visible(&self.project, view, { let _ = rows; emit });"}},
     {"id": "track-duplicate-ui", "runner": "swift", "package_path": "swift/EchodeApp", "suite": "TrackDuplicationTests", "test": "contractHeaderMenuDuplicatesSelectedSubtreesAsOneUndoAndReopen", "timeout": 180, "purpose": "実ヘッダの右メニューから選択部分木を各元の直後へ複製し、子孫の二重複製なし・音源とノートの独立・単一Undo/Redo・保存再読込を確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/TrackDuplication.swift", "old": "if selectedTracks.contains(current) { return false }", "new": "if selectedTracks.contains(current) { return true }"}},
     {"id": "track-duplicate-model", "runner": "rust", "package": "echode-history", "target": ["--test", "track_duplication"], "test": "folder_copy_keeps_its_subtree_chain_and_clips_and_survives_history_and_reopen", "timeout": 180, "purpose": "フォルダ部分木の複製で順序・親子・FX状態・ミキサー値・独立した中身と内部リンクを保ち、Undo/Redo・ジャーナル・保存を確認", "negative_control": {"file": "crates/echode-model/src/duplicate.rs", "old": "clip.content = match copied_contents.get(&clip.content) {", "new": "clip.content = match Some(&clip.content) {"}},
+    {
+      "id": "clip-duplicate-key-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "ClipDuplicationTests", "test": "contractCommandDDuplicatesTheCurrentWindowWithIndependentContentAndHistory", "timeout": 180,
+      "purpose": "実アレンジのCommand-Dで現在の窓の直後へ独立した中身を複製し、端数時刻・入力先保持・複製側の選択・単一Undo/Redo・保存再読込を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeClipMove.swift", "old": "return next", "new": "return start"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "start: start, copy: true))", "new": "start: start, copy: false))"}
+      ]
+    },
+    {
+      "id": "clip-duplicate-key-guards-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "ClipDuplicationBoundaryTests", "test": "contractCommandDStaysLocalAndRejectsUnavailableOrUncommittedTargets", "timeout": 180,
+      "purpose": "実Viewのキー等価でアレンジ自身のフォーカス・文字入力優先・修飾キー・押し続け・文書交換中と未確定ドラッグの拒否を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "window == nil || window?.firstResponder === self", "new": "true"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "!rulerBusy, rulerPress == nil, movePress == nil, !clicks.active, entry == nil,", "new": "true,"}
+      ]
+    },
     {"id": "clip-move-ui", "runner": "swift", "package_path": "swift/EchodeApp", "suite": "ClipMoveTests", "test": "contractBodyDragMovesAndCommandDragCopiesClipsAsOneUndoAndReopen", "timeout": 180, "purpose": "実アレンジのクリップ本体ドラッグで別トラック・四分吸着・Shift解除の移動、Command複製、しきい値・Escape・取消での無編集、単一Undo/Redo・保存再読込を確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeClipMove.swift", "old": "start: preview.start, copy: flags.contains(.command)))", "new": "start: preview.start, copy: false))"}},
     {"id": "clip-move-model", "runner": "rust", "package": "echode-history", "target": ["--test", "clip_move"], "test": "moves_and_copies_survive_history_journal_and_reopen", "timeout": 180, "purpose": "別トラックへの移動で重なる配置の削除・切詰め・分割と既定の切り口フェード、複製の独立した中身、Undo/Redo・ジャーナル再生・保存を確認", "negative_control": {"file": "crates/echode-model/src/clip_move.rs", "old": ".checked_add(end - clip_start)", "new": ".checked_add(0)"}},
     {"id": "clip-content-bars", "runner": "rust", "package": "echode-history", "target": ["--test", "clip_bar_basis"], "test": "contract_shifted_auto_clips_use_content_bars_through_edits_history_and_reopen", "timeout": 180, "purpose": "小節未満の移動・複製でautoを保ち、中身の小節でのノート編集・挿入・削除、単一Undo/Redo・ジャーナル・保存再読込を確認", "negative_controls": [{"file": "crates/echode-model/src/clip_move.rs", "old": "self.move_clip_with_rule(clip, track, start, seed, true)", "new": "self.move_clip_with_rule(clip, track, start, seed, false)"}, {"file": "crates/echode-model/src/clip_move.rs", "old": "self.duplicate_clip_with_rule(clip, track, start, seed, true)", "new": "self.duplicate_clip_with_rule(clip, track, start, seed, false)"}, {"file": "crates/echode-model/src/placement.rs", "old": "let new_start = min_bar\n        .checked_mul(bar)\n        .and_then(|local| origin.checked_add(local))", "new": "let new_start = min_bar\n        .checked_mul(bar)\n        .and_then(|local| local.checked_add(0))"}]},
