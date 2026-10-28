@@ -62,6 +62,36 @@
     {"id": "spike-verification-failures", "mode": "manual", "extended": true, "areas": [], "timeout": 120, "purpose": "同じ選択集合へ失敗を注入し、旧配置と優先順・事前確認の検出遅延を比較。製品の実行時間とは区別", "inputs": ["scripts/measure_verification_failures.py", "scripts/verification.json", "scripts/checked_commands.py"]}
   ],
   "product_contracts": [
+    {
+      "id": "note-duplicate-model", "runner": "rust", "package": "echode-history", "target": ["--test", "note_duplicate"],
+      "test": "contract_note_copies_preserve_sources_attributes_and_history", "timeout": 180,
+      "purpose": "共有内容のノート複製で元・16bit強弱・長さとリンク時刻を保ち、不正ID拒否・Undo/Redo・ジャーナル復旧・保存を確認",
+      "negative_control": {"file": "crates/echode-model/src/model.rs", "old": "copied.id = copy;", "new": "copied.id = copy; copied.velocity = 0;"}
+    },
+    {
+      "id": "piano-note-duplicate-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "PianoDuplicateTests", "test": "contractCommandDragCopiesSelectionAndRoundTripsHistory", "timeout": 180,
+      "purpose": "実Commandドラッグの複数複製・仮表示・解放時Shiftと位置・元と入力記憶の保持・複製側の選択・単一Undoと保存を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "pitch: pitch, copies: copies)", "new": "pitch: pitch)"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": "if let selectingNotes { self.noteSelection = selectingNotes.filter { $0.track == self.pianoTrack && edited.pianoNote($0) != nil } }", "new": "_ = selectingNotes"}
+      ]
+    },
+    {
+      "id": "piano-note-duplicate-targets-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "PianoDuplicateBoundaryTests", "test": "contractCopiesShareBoundsDeduplicateLinksAndRejectStaleTargets", "timeout": 180,
+      "purpose": "画面外とリンクの共通境界・共有内容の重複排除・古い対象と旧文書拒否・未選択と端からの単音複製を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "originals.allSatisfy({ snapshot?.pianoNote($0.key).map(NoteGeometry.init) == $0.value })", "new": "true"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "guard seen.insert(id.note).inserted, let value", "new": "guard seen.insert(id.note).inserted || true, let value"}
+      ]
+    },
+    {
+      "id": "piano-note-duplicate-cancel-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "PianoDuplicateCancellationTests", "test": "contractCopyClicksAndCancelledDragsNeverWrite", "timeout": 180,
+      "purpose": "クリックと微動は解放時の選択切替のみ、Commandを保持したEscapeと各取消は無編集、ゼロ差分のドラッグは複製として確認",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "old": " || Int(event.keyCode) == kVK_Escape", "new": ""}
+    },
     {"id": "arrange-note-pitch", "runner": "rust", "package": "echode-draw", "target": ["--test", "arrange_pitch"], "test": "contract_arrange_notes_use_content_pitch_range_and_keep_reserved_bands", "timeout": 180, "purpose": "アレンジの中身ごとの音域・12半音の中央寄せ・1pt下限・上下の予約帯を可視列で確認", "negative_control": {"file": "crates/echode-draw/src/query.rs", "old": "center: (low + high) / 2.0", "new": "center: 60.0"}},
     {"id": "arrange-note-pitch-ui", "runner": "swift", "package_path": "swift/EchodeApp", "suite": "ArrangePitchTests", "test": "contractPitchPreviewMatchesRenderedAndAccessibleRects", "timeout": 180, "purpose": "製品の可視列・Metalフレームの音高と1pt下限・VoiceOver用の局所矩形を倍率1・2と縦ズームで比較。ウィンドウと音声機器は使わない", "negative_controls": [{"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeFrame.swift", "old": "element.role == .note ? element.height :", "new": "element.role == .note ? max(1, element.height - 1) :"}, {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "width: Double(element.width), height: Double(element.height))", "new": "width: Double(element.width), height: Double(element.height) + 1)"}]},
     {"id": "workspace-layout-ui", "runner": "swift", "package_path": "swift/EchodeApp", "suite": "WorkspaceLayoutTests", "test": "contractEditorAndDevicesToggleIndependentlyWithoutEditingTheProject", "timeout": 180, "purpose": "共通コマンドからピアノロールとデバイスを独立開閉し、アレンジ非表示・設定復元・選択と履歴の保持を機器なしで確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceCommand.swift", "old": "case .devices: state.toggle(.devices)", "new": "case .devices: state.showDevices()"}},

@@ -31,6 +31,9 @@
 - `note.velocity` は配置から共有内容を解決し、ノートの発音ベロシティだけを変更する。
   時刻・音高・リリース・表情・配置窓は保持し、既存の 7 bit 入力から 16 bit への変換を使う
   （[ADR 0173](../decisions/0173-piano-note-velocity.md)）。
+- `note.duplicate` は指定配置の共有内容へ新 ID のノートを追加し、元の長さ・16 bit の強弱・表情を保つ。
+  時刻と音高だけを指定し、配置の拡張は `note.edit` と同じ経路を使う。ID は省略時に生成し、ジャーナルへ確定値を記録する
+  （[ADR 0184](../decisions/0184-piano-note-duplicate-drag.md)）。
 
 ### 4.2 不変スナップショット
 

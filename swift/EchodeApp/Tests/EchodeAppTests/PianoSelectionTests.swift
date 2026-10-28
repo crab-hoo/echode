@@ -50,7 +50,7 @@ struct PianoSelectionTests {
         // Command toggles without inserting, moving, resizing, or changing velocity.
         let third = CGPoint(x: 400, y: 34)
         try send(.leftMouseDown, to: view, at: third, flags: .command)
-        try send(.leftMouseDragged, to: view, at: CGPoint(x: 420, y: 54), flags: .command)
+        try send(.leftMouseDragged, to: view, at: CGPoint(x: 401, y: 34), flags: .command)
         try send(.leftMouseUp, to: view, at: third, flags: .command)
         #expect(view.selectedNotes.count == 3 && controller.noteSelection.count == 3)
         try send(.leftMouseDown, to: view, at: third, flags: .command)

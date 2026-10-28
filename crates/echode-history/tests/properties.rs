@@ -65,6 +65,13 @@ enum Step {
         length: i64,
         pitch: u8,
     },
+    DuplicateNote {
+        track: usize,
+        clip: usize,
+        note: usize,
+        start: i64,
+        pitch: u8,
+    },
     SetNoteVelocity {
         track: usize,
         clip: usize,
@@ -189,6 +196,8 @@ fn step() -> impl Strategy<Value = Step> {
         2 => (any::<usize>(), any::<usize>()).prop_map(|(track, note)| Step::DeleteNote { track, note }),
         4 => (any::<usize>(), any::<usize>(), any::<usize>(), -16i64..96, 1i64..24, 0u8..=127)
             .prop_map(|(track, clip, note, start, length, pitch)| Step::EditNote { track, clip, note, start, length, pitch }),
+        3 => (any::<usize>(), any::<usize>(), any::<usize>(), -16i64..96, any::<u8>())
+            .prop_map(|(track, clip, note, start, pitch)| Step::DuplicateNote { track, clip, note, start, pitch }),
         3 => (any::<usize>(), any::<usize>(), any::<usize>(), any::<u8>())
             .prop_map(|(track, clip, note, velocity)| Step::SetNoteVelocity { track, clip, note, velocity }),
         2 => (any::<usize>(), any::<usize>(), any::<bool>(), any::<bool>())
@@ -355,6 +364,27 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 pitch: *pitch,
                 start: Tick::new(start * EIGHTH),
                 length: Tick::new(length * EIGHTH),
+            }
+        }
+        Step::DuplicateNote {
+            track: index,
+            clip,
+            note,
+            start,
+            pitch,
+        } => {
+            let id = track(*index)?;
+            let owner = project.tracks().iter().find(|track| track.id == id)?;
+            let placement = owner.clips.get(*clip % owner.clips.len().max(1))?;
+            let content = project.content(placement.content)?;
+            let target = content.notes.get(*note % content.notes.len().max(1))?;
+            Command::DuplicateNote {
+                track: id,
+                clip: placement.id,
+                note: target.id,
+                copy: None,
+                pitch: *pitch,
+                start: Tick::new(start * EIGHTH),
             }
         }
         Step::SetNoteVelocity {

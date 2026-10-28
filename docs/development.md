@@ -196,6 +196,10 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 回帰は `PianoMoveBatchTests.swift`・`PianoMoveBatchBoundaryTests.swift`・`PianoMoveBatchCancellationTests.swift`
 （[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
 
+Command 複製移動は `PianoMoveGesture.copies` と `PianoMoveChange.actions`、成功後の選択は `ProjectController.moveNotes` に置く。
+共有内容の複製は `Project::duplicate_note` と `note.duplicate`、回帰は `PianoDuplicate*Tests.swift` と履歴の `note_duplicate.rs` に置く
+（[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
+
 一括伸縮の対象検証・共通の端の差分と仮表示は `PianoResizeBatch.swift`、確定は `ProjectController.resizeNotes` に置く。
 回帰は `PianoResizeBatchTests.swift`・`PianoResizeBatchBoundaryTests.swift`・`PianoResizeBatchCancellationTests.swift`
 （[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。

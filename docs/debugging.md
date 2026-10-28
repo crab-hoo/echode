@@ -172,8 +172,15 @@ make debug-report
   複数選択の時の `noteFocus == nil` は正常で、単一ノート欄や記憶値へ任意の代表を流さないための区別である。
   Delete は `deleteNotes` の待機列の手番で全 ID を検証する。リンク配置の二重削除と、古いメニュー・旧文書の拒否を分けて調べる。
   `piano-note-selection-ui`・`piano-note-selection-cancel-ui`・`piano-note-selection-delete-ui`・`piano-note-linked-delete-ui` を使う。
-  選択済み本体は一括移動、端は一括伸縮する。未選択ノートの押下は単一選択へ戻り、複製移動は未接続である。
+  選択済み本体は一括移動、端は一括伸縮する。未選択ノートの通常押下は単一選択へ戻る。
   実画面の枠とメニュー、VoiceOver の操作感はユーザー確認とする（[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
+- **Command ドラッグが元を動かす・選択が消える・強弱が変わる**:
+  押下時の `PianoMoveGesture.copies` と解放時の `PianoMoveChange` を確認する。Command は押下で保持し、Shift と位置は解放時を使う。
+  クリックだけなら解放時に選択切替、ドラッグなら端からでも複製し、成功後の `selectingNotes` で複製側を選ぶ。
+  `note.duplicate` は共有内容の元を複製するため、リンクの同一ノート ID は一度だけ送る。強弱を 7 bit の `note.insert` で作り直さない。
+  `note-duplicate-model`・`piano-note-duplicate-ui`・`piano-note-duplicate-targets-ui`・`piano-note-duplicate-cancel-ui` で切り分ける。
+  固定窓を広げた時の重なりは従来どおり全体を拒否する。実画面・VoiceOver・聴感はユーザー確認とする
+  （[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
 - **複数選択の移動で間隔が崩れる・一部だけ動く・確定されない**:
   選択済みノートの本体を通常ドラッグする。3 pt 未満の微動とクリックでは編集せず、端と Command は別操作である。
   `PianoMoveGesture.originals` が画面外も含む押下時の全対象、`PianoMovePreview` がモデルを変えない全対象の仮表示である。

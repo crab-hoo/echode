@@ -156,7 +156,10 @@
   選択済みの端ドラッグも一括伸縮へ接続した。反対端を保ち、最短 1 tick・時刻 0・整数上端で全体を止める。
   入力長と入力ベロシティを保つ（[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
   矢印も選択全体を同じ差分で移動・移調・右端伸縮し、画面外を含む共通境界で止める。
-  キーリピートを順番に処理し、各入力を単一 Undo にする（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。複製移動は別途接続する。
+  キーリピートを順番に処理し、各入力を単一 Undo にする（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
+  Command の押下では選択を変えず、3 pt 以上のドラッグなら押下時の対象を複製し、クリックなら解放時に選択を切り替える。
+  複製は通常の一括移動と同じ共通差分と境界を使い、端からでも伸縮せず、単一 Undo と保存へつなぐ
+  （[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
 
 ### 初期の操作図と残る案
 
@@ -454,7 +457,8 @@ GUI の応答性と編集継続は P2 のデバイス表示・読込みから守
   選択したノートのベロシティの同量増減も、両入口・単一 Undo・入力値の記憶へ接続した
   （[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
   一括移動・伸縮・矢印、単一の編集入力先・ゴーストノートとトラックセレクターも接続した
-  （[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。複製移動・複数トラックの同時編集・試聴は残り、実画面の操作感はユーザー確認待ちである。
+  （[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。Command 複製移動も接続した（[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
+  複数トラックの同時編集・試聴は残り、実画面の操作感はユーザー確認待ちである。
 - 記憶した開始位置と停止／一時停止の分離、Space の再生／停止、ピアノロールのルーラーのクリックと開始位置の保存は接続した
   （[ADR 0155](decisions/0155-remembered-playback-start.md)）。
   両ルーラーの範囲指定と既存端の調整も接続した（[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。

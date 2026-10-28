@@ -229,6 +229,9 @@ public struct PianoNote: Sendable, Identifiable {
         public let track: UUID
         public let placement: UUID
         public let note: UUID
+        public init(track: UUID, placement: UUID, note: UUID) {
+            self.track = track; self.placement = placement; self.note = note
+        }
     }
     public let id: ID
     public let start: Int64

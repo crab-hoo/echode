@@ -314,7 +314,18 @@ final class PianoGridView: NSView {
         let point = pianoLayout.gridPoint(panePoint)
         caretTick = max(0, camera.tick(at: point.x) ?? 0); caretPitch = camera.pitch(at: point.y)
         if let hit = elements.last(where: { NSRect(x: Double($0.x), y: Double($0.y), width: max(2, Double($0.width)), height: Double($0.height)).contains(point) }) {
-            if event.modifierFlags.contains(.command) { cancelGesture(); toggleSelection(hit); return }
+            if event.modifierFlags.contains(.command) {
+                cancelGesture()
+                let ids = selectedNotes.contains(hit.id) ? selectedNotes : [hit.id]
+                var originals: [PianoNote.ID: NoteGeometry] = [:]
+                for id in ids {
+                    guard let note = snapshot?.pianoNote(id) else { return }
+                    originals[id] = NoteGeometry(note)
+                }
+                let copies = Dictionary(uniqueKeysWithValues: Set(ids.map(\.note)).map { ($0, UUID()) })
+                moveGesture = PianoMoveGesture(anchor: hit.id, originals: originals, point: point, camera: camera, copies: copies)
+                return
+            }
             if event.modifierFlags.contains(.option), !event.modifierFlags.contains(.command) {
                 gesture = nil; preview = nil
                 beginVelocity(hit, y: point.y)
@@ -398,8 +409,11 @@ final class PianoGridView: NSView {
         if let moveGesture {
             let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
             let finished = movePreview == nil ? nil : moveGesture.preview(at: point, snapping: !event.modifierFlags.contains(.shift))
+            let click = movePreview == nil && !moveGesture.copies.isEmpty ? snapshot?.pianoNote(moveGesture.anchor) : nil
             cancelGesture()
-            if let finished, !busy, finished.change.time != 0 || finished.change.pitch != 0 { onMoves?(finished.change) }
+            if let finished, !busy, !finished.change.copies.isEmpty || finished.change.time != 0 || finished.change.pitch != 0 {
+                onMoves?(finished.change)
+            } else if let click, !busy { toggleSelection(click) }
             return
         }
         if let resizeGesture {
@@ -478,7 +492,7 @@ final class PianoGridView: NSView {
             .map { PianoPreview(id: gesture.id, geometry: $0) }
     }
     override func keyDown(with event: NSEvent) {
-        guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
+        guard !event.modifierFlags.contains(.command) || Int(event.keyCode) == kVK_Escape else { super.keyDown(with: event); return }
         let shift = event.modifierFlags.contains(.shift)
         switch Int(event.keyCode) {
         case kVK_Escape: if moveGesture != nil || resizeGesture != nil || selectionPress != nil || velocityGesture != nil || gesture != nil || preview != nil || insertion != nil || rulerPress != nil { cancelGesture() } else { super.keyDown(with: event) }

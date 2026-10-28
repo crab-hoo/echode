@@ -965,6 +965,60 @@ impl Project {
         Ok(self.with_parts(contents, tracks))
     }
 
+    /// Copies a note inside its shared content, preserving full-resolution
+    /// velocities and expression data. The selected window grows like an edit.
+    pub fn duplicate_note(
+        &self,
+        track: Id,
+        clip: Id,
+        note: Id,
+        copy: Id,
+        pitch: u8,
+        start: Tick,
+    ) -> Result<Self, ModelError> {
+        if self.id_in_use(copy) {
+            return Err(ModelError::DuplicateId);
+        }
+        let owner = &self.tracks[self.track_index(track)?];
+        let placement = owner
+            .clips
+            .iter()
+            .find(|item| item.id == clip)
+            .ok_or(ModelError::MissingClip)?;
+        let mut contents = self.contents.clone();
+        let content = contents
+            .iter_mut()
+            .find(|item| item.id == placement.content)
+            .ok_or(ModelError::MissingClip)?;
+        let mut copied = content
+            .notes
+            .iter()
+            .find(|item| item.id == note)
+            .ok_or(ModelError::MissingNote)?
+            .clone();
+        copied.id = copy;
+        let geometry = NoteGeometry {
+            pitch,
+            start,
+            length: copied.length,
+        };
+        let expressions: Vec<_> = content
+            .expressions
+            .iter()
+            .filter(|item| item.note == note)
+            .cloned()
+            .map(|mut item| {
+                item.note = copy;
+                item
+            })
+            .collect();
+        let content = Arc::make_mut(content);
+        content.notes.push(copied);
+        content.expressions.extend(expressions);
+        self.with_parts(contents, self.tracks.clone())
+            .edit_note(track, clip, copy, geometry)
+    }
+
     /// Edits shared content without replacing the note id or its expression data.
     /// Auto placements refit to bars; time edits grow the edited fixed window
     /// just enough to include the note, leaving other fixed links unchanged.

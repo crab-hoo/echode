@@ -357,6 +357,23 @@ define_actions! {
                 .map_err(Into::into)
         }
     }
+    DuplicateNote {
+        id: "note.duplicate",
+        name_ja: "ノートを複製して移動",
+        name_en: "Duplicate a note",
+        description_ja: "元を残し、同じ中身へ新しい ID で複製する。長さと強弱・表情を保つ",
+        description_en: "Copy a note within shared content, preserving length, velocities, and expression",
+        command {
+            track: Id, clip: Id, note: Id, pitch: u8, start: Tick,
+            #[serde(default)]
+            copy: Option<Id>,
+        }
+        action { track: Id, clip: Id, note: Id, copy: Id, pitch: u8, start: Tick }
+        commit { Action::DuplicateNote { track, clip, note, copy: copy.unwrap_or_else(Id::generate), pitch, start } }
+        edit |project: &Project| {
+            project.duplicate_note(*track, *clip, *note, *copy, *pitch, *start).map_err(Into::into)
+        }
+    }
     EditNote {
         id: "note.edit",
         name_ja: "ノートを編集する",

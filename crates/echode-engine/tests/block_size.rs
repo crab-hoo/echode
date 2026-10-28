@@ -1359,6 +1359,30 @@ fn assert_block_independent(render: impl Fn(u32) -> Vec<f32>) {
 }
 
 #[test]
+fn duplicated_notes_match_explicit_notes_across_blocks() {
+    let (base, track) = Project::new().add_track("copies");
+    let (base, source) = base.insert_note(track, note(0.1, 0.3, 60)).unwrap();
+    let clip = base.tracks()[0].clips[0].id;
+    let copied = base
+        .duplicate_note(track, clip, source, Id::generate(), 64, quarters(0.65))
+        .unwrap();
+    let expected = base.insert_note(track, note(0.65, 0.3, 64)).unwrap().0;
+    copied.check_invariants().unwrap();
+    // The render duration bounds this regression only, not project note counts or lengths.
+    let reference = render_synth(&expected, 48_000, BLOCKS[0], None);
+    for block in BLOCKS {
+        assert_same(
+            &reference,
+            &render_synth(&copied, 48_000, block, None),
+            block,
+        );
+    }
+    assert_block_independent(|block| {
+        render_synth(&copied, 48_000, block, Some((quarters(0.0), quarters(1.0))))
+    });
+}
+
+#[test]
 fn edited_note_velocities_keep_block_independent_sound_and_silence() {
     let (base, track) = Project::new().add_track("velocity");
     let (base, id) = base.insert_note(track, note(0.0, 0.5, 60)).unwrap();

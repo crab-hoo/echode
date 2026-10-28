@@ -120,6 +120,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   [ADR 0177](decisions/0177-piano-batch-note-velocity.md)。
 - 選択済みノート本体の一括移動・共通時刻差と音程差・画面外を含む上下限制限・共有内容の単一編集と取消:
   [ADR 0178](decisions/0178-piano-batch-note-movement.md)。
+- ノートの Command 複製移動・クリックとの分離・元と強弱の保持・共有内容の重複排除と複製側の選択:
+  [ADR 0184](decisions/0184-piano-note-duplicate-drag.md)。
 - 選択済みノートの左右端の一括伸縮・共通の最短長と時刻制限・反対端と入力記憶の保持:
   [ADR 0179](decisions/0179-piano-batch-note-resizing.md)。
 - ピアノロールのトラック切替・再生成で共有する時間・音域・倍率と、別文書での初期化:

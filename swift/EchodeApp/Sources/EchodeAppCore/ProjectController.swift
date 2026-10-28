@@ -397,7 +397,10 @@ public final class ProjectController {
 
     @discardableResult
     func moveNotes(_ change: PianoMoveChange, documentID: UUID? = nil) async -> Bool {
-        await performEdit({ [self] in change.actions(in: snapshot) }, documentID: documentID)
+        await performEdit({ [self] in change.actions(in: snapshot) }, documentID: documentID,
+            selectingNotes: change.copies.isEmpty ? nil : Set(change.originals.keys.compactMap { id in
+                change.copies[id.note].map { PianoNote.ID(track: id.track, placement: id.placement, note: $0) }
+            }))
     }
 
     /// Capture native event order synchronously, before the new tasks can run.
@@ -690,7 +693,7 @@ public final class ProjectController {
 
     private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false,
                              selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil },
-                             rememberingVelocity: @escaping @MainActor () -> Int? = { nil }) async -> Bool {
+                             rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
         guard faderPreview == nil || finishingPreview else { return false }
         return await edits.run {
             guard let document = self.document,
@@ -703,6 +706,7 @@ public final class ProjectController {
                 let edited = try await document.perform(String(decoding: bytes, as: UTF8.self))
                 self.publish(edited)
                 if selectingAddedTrack { self.selectAddedRoots(previous: previousTracks) }
+                if let selectingNotes { self.noteSelection = selectingNotes.filter { $0.track == self.pianoTrack && edited.pianoNote($0) != nil } }
                 if try edited.historyReport().changed {
                     self.recordEdit(inputLength: inputLength)
                 }

@@ -202,7 +202,10 @@ Swift も `AudioState.opening` を受け取り、未取得のデバイス列は�
     選択と両入力記憶を保ち、選択変更でも取り消す（[ADR 0178](../decisions/0178-piano-batch-note-movement.md)）。
     選択済みの端ドラッグは `PianoResizeGesture` の共通の端の差分で伸縮し、最短長・時刻 0・整数上端で全体を制限する。
     `PianoResizePreview` を仮表示し、`PianoResizeChange.actions` が全幾何を手番で検証・重複排除して単一トランザクションへ送る。
-    反対端・音高・選択と両入力記憶を保つ（[ADR 0179](../decisions/0179-piano-batch-note-resizing.md)）。複製移動は残る。
+    反対端・音高・選択と両入力記憶を保つ（[ADR 0179](../decisions/0179-piano-batch-note-resizing.md)）。Command 複製移動も同じ幾何を使う。
+    Command 押下では選択切替を保留し、クリックの解放と複製ドラッグを分ける。`PianoMoveGesture.copies` が新 ID を保持する。
+    `PianoMoveChange.actions` は同じ元ノートを一度だけ `note.duplicate` へ送り、成功後だけ複製側を選択する。
+    元と両入力記憶を保ち、同じ取消と共通境界を使う（[ADR 0184](../decisions/0184-piano-note-duplicate-drag.md)）。
     矢印は `PianoStep` の対象 ID と相対差分だけを保持する。`enqueuePianoStep` がイベント順を捕捉し、手番の現行幾何で全対象を検証する。
     共通境界とリンクの重複排除を通して 1 回のトランザクションにし、キーリピートも絶対幾何の上書きにしない
     （[ADR 0181](../decisions/0181-piano-reference-workflow-and-keys.md)）。
