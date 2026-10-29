@@ -89,6 +89,7 @@ check-base:
 # Piano automatic/fixed straight/triplet/dotted grid controls, zoom anchoring, snap subdivisions and press cancellation share this gate.
 # Piano time guides retain beat/four-quarter references independently of snap subdivisions and thinning.
 # Selected-track mute/solo switches capture event targets, serialize current-state toggles and share atomic history through this gate.
+# Selected-track numeric entries and native accessibility steps share common limits, current-state ordering and atomic history.
 # Native scan fixtures prove the direct child has emitted its report and exited before the held-pipe deadline.
 # Sanitizer entry points also run recovery consent separately, retaining its tests and readiness deadline.
 check-product-contracts:

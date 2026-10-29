@@ -1,13 +1,15 @@
 import EchodeBridge
 import Foundation
 
-/// Numeric entries capture IDs on submission, then resolve values on their edit turn.
+/// Discrete entries and steps capture IDs on submission, then resolve values on their edit turn.
 struct MixerValueBatch: Sendable {
     let document: UUID
     let tracks: [UUID]
     let anchor: UUID
     let field: MixerField
     let value: Float
+    /// When present, resolve one relative step instead of the numeric value.
+    var direction: Double? = nil
 
     /// All members share a multiplier (a dB difference) or a pan difference.
     /// Clamp the difference, not each result, to preserve the group's balance.
@@ -17,8 +19,20 @@ struct MixerValueBatch: Sendable {
               field == .gain || field == .pan else { return nil }
         let range: ClosedRange<Float> = field == .gain ? 0...4 : -1...1
         guard range.contains(value), originals.allSatisfy({ $0.isFinite && range.contains($0) }) else { return nil }
-        if tracks.count == 1 { return [value] }
         let basis = originals[index]
+        let value: Float
+        if let direction {
+            guard direction == -1 || direction == 1 else { return nil }
+            if tracks.count == 1 { return [MixScale.adjusted(field, value: basis, direction: direction)] }
+            if field == .gain {
+                // Group steps remain finite dB offsets, including below the single-slider floor.
+                guard basis > 0 else { return direction < 0 ? originals : nil }
+                value = Float(min(4, max(Double(Float.leastNonzeroMagnitude), Double(basis) * pow(10, direction / 20))))
+            } else {
+                value = MixScale.adjusted(.pan, value: basis, direction: direction)
+            }
+        } else { value = self.value }
+        if tracks.count == 1 { return [value] }
         if basis == value { return originals }
         if field == .pan {
             let lower = Double(originals.min()!), upper = Double(originals.max()!)
@@ -46,10 +60,17 @@ extension ProjectController {
         return MixerValueBatch(document: document, tracks: targets, anchor: track, field: field, value: value)
     }
 
+    func captureMixerStep(_ track: UUID, field: MixerField, direction: Double, document: UUID?) -> MixerValueBatch? {
+        guard direction == -1 || direction == 1,
+              var request = captureMixerValue(track, field: field, value: 0, document: document) else { return nil }
+        request.direction = direction
+        return request
+    }
+
     @discardableResult
     func enqueueMixerValue(_ request: MixerValueBatch) -> Task<Bool, Never>? {
         guard !busy, documentID == request.document else { return nil }
-        // Discrete numeric entries and switches share one event-order queue.
+        // Discrete numeric entries, steps and switches share one event-order queue.
         let previous = mixerSwitchTail
         let task = Task { [self] in
             _ = await previous?.value
@@ -68,7 +89,7 @@ extension ProjectController {
             guard mixes.count == request.tracks.count else { return nil }
             let originals = mixes.map { $0[request.field].value }
             guard let values = request.values(from: originals) else {
-                if request.field == .gain, request.value > 0, request.tracks.count > 1,
+                if request.field == .gain, (request.direction == 1 || request.direction == nil && request.value > 0), request.tracks.count > 1,
                    let index = request.tracks.firstIndex(of: request.anchor), originals[index] == 0 {
                     errorMessage = text("Select a non-silent track to adjust the group's relative volume, or select this track alone.")
                 }

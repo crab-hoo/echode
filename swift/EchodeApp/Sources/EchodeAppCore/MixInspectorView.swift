@@ -24,7 +24,7 @@ struct TrackMixInspector: View {
                     Toggle(text("Solo"), isOn: Binding(get: { mix.solo.value != 0 }, set: { set(document, .solo, $0 ? 1 : 0) }))
                 }.toggleStyle(.button)
                 if controller.selectedTracks.contains(track), controller.selectedTracks.count > 1 {
-                    Text(text("Numeric entries adjust selected tracks relatively. Drags and accessibility steps affect one track."))
+                    Text(text("Numeric entries and header accessibility steps adjust selected tracks relatively. Drags affect one track."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.disabled(controller.busy || controller.faderPreview != nil)

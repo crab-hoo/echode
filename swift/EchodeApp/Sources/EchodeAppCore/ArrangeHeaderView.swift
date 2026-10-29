@@ -27,7 +27,9 @@ final class ArrangeHeaderView: NSView {
     var onToggleFolder: ((UUID) -> Void)?
     var onDropFX: ((UUID, TrackFXDrop) -> Void)?
     var onDuplicateTracks: (() -> Void)?
-    var documentID: UUID?
+    var documentID: UUID? {
+        didSet { if oldValue != documentID { controlElements = [:] } }
+    }
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var mixActions: MixActions?
@@ -260,14 +262,20 @@ final class ArrangeHeaderView: NSView {
                     control.setAccessibilityParent(child)
                     control.setAccessibilityIdentifier(key)
                     control.setAccessibilityFrame(window.convertToScreen(convert(layout.rect(field).intersection(bounds), to: nil)))
+                    let actions = mixActions
                     control.actions.adjust = { [weak self, weak control] direction in
-                        guard let self, let control, let next = control.actions.step.advance(field, direction: direction) else { return }
+                        guard let self, self.documentID == document, let control else { return }
+                        if (field == .gain || field == .pan), let adjust = actions?.adjust {
+                            adjust(id, field, direction)
+                            return
+                        }
+                        guard let next = control.actions.step.advance(field, direction: direction) else { return }
                         control.setAccessibilityValue(NSNumber(value: next))
                         if let spoken = MixScale.spokenValue(field, next) {
                             control.setAccessibilityValueDescription(spoken)
                         }
-                        if (field == .mute || field == .solo), let toggle = self.mixActions?.toggle { toggle(id, field) }
-                        else { self.mixActions?.set(id, field, next) }
+                        if (field == .mute || field == .solo), let toggle = actions?.toggle { toggle(id, field) }
+                        else { actions?.set(id, field, next) }
                     }
                     retainedControls[key] = control
                     return control
@@ -354,9 +362,16 @@ private final class MixAccessibilityActions {
 private final class AccessibleMixControl: NSAccessibilityElement {
     nonisolated let actions: MixAccessibilityActions
     init(actions: MixAccessibilityActions) { self.actions = actions; super.init() }
-    override func accessibilityPerformIncrement() -> Bool { Task { @MainActor [actions] in actions.adjust?(1) }; return true }
-    override func accessibilityPerformDecrement() -> Bool { Task { @MainActor [actions] in actions.adjust?(-1) }; return true }
-    override func accessibilityPerformPress() -> Bool { Task { @MainActor [actions] in actions.adjust?(1) }; return true }
+    override func accessibilityPerformIncrement() -> Bool { adjust(1) }
+    override func accessibilityPerformDecrement() -> Bool { adjust(-1) }
+    override func accessibilityPerformPress() -> Bool { adjust(1) }
+    private nonisolated func adjust(_ direction: Double) -> Bool {
+        // AppKit's normal main-thread callback captures targets before returning.
+        // An off-main accessibility client must first enter the UI actor.
+        if Thread.isMainThread { MainActor.assumeIsolated { [actions] in actions.adjust?(direction) } }
+        else { Task { @MainActor [actions] in actions.adjust?(direction) } }
+        return true
+    }
 }
 
 @MainActor

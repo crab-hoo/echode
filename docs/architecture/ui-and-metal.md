@@ -96,8 +96,12 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   ピアノ行は単一対象を保つ（[ADR 0189](../decisions/0189-selected-track-mute-and-solo.md)）。
 - **選択トラックの音量・パンの数値入力**: `MixActions.enter` をヘッダとインスペクターが共有し、`MixerValueBatch` が入力時の対象を保持する。
   手番の現行値から共通の音量倍率・パン差を求め、全対象の上下限で制限して既存の `param.set` 配列を 1 回送る。
-  旧文書・欠けた対象は全体を拒否し、変更がなければ履歴を増やさない。ドラッグ・既定値リセット・読み上げの増減は単一対象を保つ
+  旧文書・欠けた対象は全体を拒否し、変更がなければ履歴を増やさない
   （[ADR 0191](../decisions/0191-selected-track-numeric-mix.md)）。
+- **ヘッダの読み上げの音量・パン増減**: `MixActions.adjust` が操作時の対象と方向を捕捉し、同じ待ち列と `MixerValueBatch` を使う。
+  現行値から 1 dB・5% の共通差分を計算し、単一対象の無音への段と複数対象の有限の dB 差を分ける。
+  主スレッドの callback は同期捕捉し、別スレッドからは UI actor に渡す。読上げ値は確定値を使い、文書交換で要素を再生成する。
+  ドラッグ・既定値リセットは単一対象を保つ（[ADR 0192](../decisions/0192-selected-track-accessibility-steps.md)）。
 - **P2 のアレンジ・ミックス編集**: 右ドラッグでクリップ選択、空白左ドラッグで編集区間選択、リージョン作成、相対音量・パンの一括操作に対応する
   （[ADR 0117](../decisions/0117-workflow-interactions.md)、[ミックスの要件](../interaction-design.md#ミキサーの複数選択)）
 

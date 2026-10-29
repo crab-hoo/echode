@@ -219,8 +219,11 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   先行分として、ヘッダ・インスペクターのミュート／ソロの一括操作と、連打の順序・単一 Undo・保存を接続した。
   ピアノロールの行操作は単一対象を保つ（[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
   音量・パンの数値入力も、対象捕捉・現行値からの共通差分・上下限・単一 Undo・保存へ接続した。
-  一括ドラッグ・既定値リセット・読み上げの増減とコンソール表示は未接続である
-  （[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
+  数値入力は [ADR 0191](decisions/0191-selected-track-numeric-mix.md) に定める。
+  ヘッダの読み上げの増減も、現行値からの共通差分・限界・単一 Undo・保存へ接続した。
+  `mixer-step-ui`・`mixer-step-bounds-ui` で連打・対象捕捉・確定値と旧文書の要素の拒否を確認する
+  （[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
+  一括ドラッグ・既定値リセットとコンソール表示は未接続である。
 - ドラムラックの子で使う内蔵サンプラー（ゲート再生＋音量 ADSR とワンショットの切替、再発音時の旧音リリースと新音の独立加算）と子・親のミックスを接続する（[ドラムの入力とミックス](interaction-design.md#ドラムの入力とミックス)）。
 - 受入: バイパス、係数・状態更新、ステレオ、遅延、測定信号、ブロック長と RT の契約、実 View からの 1 回の Undo と保存・復旧を確認する。
 

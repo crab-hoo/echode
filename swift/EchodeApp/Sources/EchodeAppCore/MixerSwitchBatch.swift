@@ -51,7 +51,7 @@ extension ProjectController {
         }, documentID: request.document)
     }
 
-    /// Switches and numeric entries capture groups; live previews remain single-track.
+    /// Switches, numeric entries and relative steps capture groups; live previews remain single-track.
     func arrangeMixActions(document: UUID?) -> MixActions {
         MixActions(begin: { [self] track, field in
             guard let document, documentID == document else { return false }
@@ -80,6 +80,8 @@ extension ProjectController {
             if let request = captureMixerSwitch(track, field: field, document: document) { enqueueMixerSwitch(request) }
         }, enter: { [self] track, field, value in
             if let request = captureMixerValue(track, field: field, value: value, document: document) { enqueueMixerValue(request) }
+        }, adjust: { [self] track, field, direction in
+            if let request = captureMixerStep(track, field: field, direction: direction, document: document) { enqueueMixerValue(request) }
         })
     }
 }

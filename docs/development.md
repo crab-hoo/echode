@@ -154,6 +154,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 回帰は `MixerValueBatchTests.swift`・`MixerValueBoundaryTests.swift`・`MixerValueOrderTests.swift` に置く。
 離散的な入力は `mixerSwitchTail` を共有し、既存の単一フェーダーの終了後に手番の現行値を使う
 （[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
+ヘッダの読み上げ増減は `MixActions.adjust`・`captureMixerStep` と `MixerValueBatch.direction` を通す。
+回帰は `MixerStepTests.swift`・`MixerStepBoundaryTests.swift`・`MixerStepOrderTests.swift` に置く
+（[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
 
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。

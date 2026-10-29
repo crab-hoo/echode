@@ -99,9 +99,10 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - デバイス列の開閉・文書内の表示状態・可変幅の FX ドロップ: [ADR 0137](decisions/0137-device-disclosure.md)。
 - Computer Use 監査と再調査: [Computer Use 監査](reviews/2026-10-14-computer-use.md)、[取得エラー再調査](reviews/2026-10-14-computer-use-reinvestigation.md)、[同一デスクトップ再監査](reviews/2026-10-14-computer-use-same-desktop.md)。
 - ペイン境界・ミックス UI・高リフレッシュ描画・可視列キャッシュ: [ADR 0098](decisions/0098-pane-render-boundaries.md)、[ADR 0107](decisions/0107-mix-controls.md)、[2026-10-17 Apple Silicon 監査](reviews/2026-10-17-apple-silicon-audit.md)、[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)、[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)。
-- 選択トラックのミュート・ソロと音量・パンの数値入力:
-  [ADR 0189](decisions/0189-selected-track-mute-and-solo.md)、[ADR 0191](decisions/0191-selected-track-numeric-mix.md)。
-  数値入力は共通差分と限界を保ち、ドラッグ・既定値リセット・読み上げの増減は単一対象を保つ。
+- 選択トラックのミュート・ソロ、音量・パンの数値入力とヘッダの読み上げ増減:
+  [ADR 0189](decisions/0189-selected-track-mute-and-solo.md)、[ADR 0191](decisions/0191-selected-track-numeric-mix.md)、
+  [ADR 0192](decisions/0192-selected-track-accessibility-steps.md)。
+  数値入力とヘッダの読み上げ増減は共通差分と限界を保ち、ドラッグ・既定値リセットは単一対象を保つ。
 - 値の操作子のクリック規則・入力欄・`text_to_value` の文字入力: [ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)。
 - ピアノロールの単一ノートのドラッグでの Shift 吸着解除・最短 1 tick と解放時の確定:
   [ADR 0167](decisions/0167-piano-note-drag-snapping.md)。

@@ -595,11 +595,19 @@ make debug-report
   （[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
 - **音量・パンの数値入力で選択全体が変わらない／入力値まで動かない**:
   `MixActions.enter` と `MixerValueBatch` の捕捉 ID 群・基準 ID・要求値を確認する。
-  数値入力だけが相対一括変更で、ドラッグ・既定値リセット・読み上げの増減は単一対象を保つ。
+  数値入力とヘッダの読み上げ増減が相対一括変更で、ドラッグ・既定値リセットは単一対象を保つ。
   `mixerSwitchTail` の手番で現行値を読み、最大音量 4・パン ±1 を最初に踏む対象で共通差分を止める。
   無音の基準からの音量増加は比が決まらないため理由を表示し、他の無音は有限倍率でも無音を保つ。
   古い文書・欠けた ID の全体拒否と no-op による Redo の保持を、`MixerValue*Tests` と
   `mixer-value-batch-ui`・`mixer-value-bounds-ui` で切り分ける（[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
+- **ヘッダの読み上げ増減で選択全体が動かない・段数が違う・読み上げ値が先走る**:
+  `MixActions.adjust` と `captureMixerStep` の捕捉 ID 群・方向（±1）、`mixerSwitchTail` の手番の現行値を確認する。
+  AppKit の主スレッドの呼出しは同期捕捉、別スレッドからは UI actor に渡す。木の更新前の絶対値を繰り返し送らない。
+  共通限界で止まる値を `MixerStepBoundaryTests` で読み戻し、未確定の予測値を読上げ値に使っていないかを見る。
+  複数対象の無音からの増加拒否と、有限差分では −60 dB 未満を保つ規則を、単一スライダーの無音への段と区別する。
+  再オープン後の誤編集は `documentID` 変更時の `controlElements` の破棄と旧要素の文書照合を追う。
+  切分けは `mixer-step-ui`・`mixer-step-bounds-ui` と `MixerStepOrderTests`
+  （[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。

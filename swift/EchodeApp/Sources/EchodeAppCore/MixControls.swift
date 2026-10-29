@@ -19,14 +19,16 @@ public struct MixActions {
     public var finish: (Bool) -> Void
     public var set: (UUID, MixerField, Float) -> Void
     public var toggle: ((UUID, MixerField) -> Void)?
-    /// Numeric submission is distinct from live single-track drags and accessibility steps.
+    /// Numeric submission and relative steps are distinct from live single-track drags.
     public var enter: ((UUID, MixerField, Float) -> Void)?
+    public var adjust: ((UUID, MixerField, Double) -> Void)?
     public init(begin: @escaping (UUID, MixerField) -> Bool, change: @escaping (Float) -> Void,
                 finish: @escaping (Bool) -> Void, set: @escaping (UUID, MixerField, Float) -> Void, toggle: ((UUID, MixerField) -> Void)? = nil,
-                enter: ((UUID, MixerField, Float) -> Void)? = nil) {
+                enter: ((UUID, MixerField, Float) -> Void)? = nil, adjust: ((UUID, MixerField, Double) -> Void)? = nil) {
         self.begin = begin; self.change = change; self.finish = finish; self.set = set
         self.toggle = toggle
         self.enter = enter
+        self.adjust = adjust
     }
 }
 

@@ -562,6 +562,22 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_mixer_step_contracts_cover_native_capture_common_limits_and_old_controls(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, suite, faults in (("mixer-step-ui", "MixerStepTests", 2),
+                                    ("mixer-step-bounds-ui", "MixerStepBoundaryTests", 3)):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"]), ("swift", suite))
+            self.assertEqual(len(contract["negative_controls"]), faults)
+            for fault in contract["negative_controls"]:
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("Sources/EchodeAppCore/MixerValueBatch.swift", "Sources/EchodeAppCore/MixControls.swift",
+                       "Sources/EchodeAppCore/ArrangeHeaderView.swift", "Sources/EchodeAppCore/MixerSwitchBatch.swift",
+                       "Tests/EchodeAppTests/MixerStepTests.swift", "Tests/EchodeAppTests/MixerStepBoundaryTests.swift",
+                       "Tests/EchodeAppTests/MixerStepOrderTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected("swift/EchodeApp/" + source))
+
     def test_piano_time_guides_contract_covers_independent_lines_deduplication_and_priority(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "piano-time-guides-ui")
         self.assertEqual((contract["runner"], contract["suite"], contract["test"]),
@@ -1017,7 +1033,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
-                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-duplicate-key-ui", "clip-duplicate-key-guards-ui", "mixer-switch-batch-ui", "mixer-switch-order-ui", "mixer-value-batch-ui", "mixer-value-bounds-ui", "scan-deadline", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
+                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-duplicate-key-ui", "clip-duplicate-key-guards-ui", "mixer-switch-batch-ui", "mixer-switch-order-ui", "mixer-value-batch-ui", "mixer-value-bounds-ui", "mixer-step-ui", "mixer-step-bounds-ui", "scan-deadline", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
                           "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",

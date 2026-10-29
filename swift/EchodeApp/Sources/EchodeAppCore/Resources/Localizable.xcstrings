@@ -7,10 +7,10 @@
         "ja": { "stringUnit": { "state": "translated", "value": "相対音量の調整は無音でないトラックを基準にするか、このトラックだけを選択してください。" } }
       }
     },
-    "Numeric entries adjust selected tracks relatively. Drags and accessibility steps affect one track.": {
+    "Numeric entries and header accessibility steps adjust selected tracks relatively. Drags affect one track.": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Numeric entries adjust selected tracks relatively. Drags and accessibility steps affect one track." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "数値入力は選択トラックを相対調整します。ドラッグと読み上げの増減は単一トラックです。" } }
+        "en": { "stringUnit": { "state": "translated", "value": "Numeric entries and header accessibility steps adjust selected tracks relatively. Drags affect one track." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "数値入力とヘッダの読み上げの増減は選択トラックを相対調整します。ドラッグは単一トラックです。" } }
       }
     },
     "The latest saved version could not be read": {
