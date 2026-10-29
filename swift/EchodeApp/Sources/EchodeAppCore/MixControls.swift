@@ -64,6 +64,8 @@ enum MixScale {
     /// A header drag. `fraction` is the pointer's travel over the control's
     /// width, so a press without movement keeps the value.
     static func dragged(_ field: MixerField, from original: Float, by fraction: Double) -> Float {
+        // Display positions clip quiet gains; zero travel must not round-trip through that scale.
+        if fraction == 0 { return original }
         if field == .gain { return gain(min(1, max(0, position(original) + fraction))) }
         return Float(min(1, max(-1, Double(original) + fraction * 2)))
     }

@@ -63,6 +63,12 @@
   ],
   "product_contracts": [
     {
+      "id": "mixer-drag-identity-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "MixerDragIdentityTests", "test": "contractZeroHorizontalHeaderDragsPreserveQuietGainAndRedo", "timeout": 180,
+      "purpose": "実ヘッダの縦ドラッグと解放時の原点復帰で、表示下限未満を含む音量の完全保持・Undo/Redo不変・保存再読込を確認",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixControls.swift", "old": "        if fraction == 0 { return original }\n", "new": ""}
+    },
+    {
       "id": "mixer-gesture-document-ui", "runner": "swift", "package_path": "swift/EchodeApp",
       "suite": "MixerGestureDocumentTests", "test": "contractOldHeaderPressCannotStartADragInTheReopenedDocument", "timeout": 180,
       "purpose": "実ヘッダの押下後に同じプロジェクトを再オープンし、旧ドラッグが新文書の試聴・履歴・保存へ漏れないことを確認",

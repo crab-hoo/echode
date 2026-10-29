@@ -82,6 +82,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     複数対象は表示下端で無音にせず、旧文書の要素を拒否する（[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
     ヘッダの押下・リセット待ち・数値欄は文書交換で取り消す。旧操作が新文書の試聴・履歴を変更しないよう、押下時のコールバックを保持する
     （[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
+    ヘッダの横移動がゼロのドラッグは、表示下限未満の音量も元の Float をそのまま保ち、Undo / Redo を変えない
+    （[ADR 0153 の後続修正](decisions/0153-value-control-clicks-and-typed-entry.md)）。
     ドラッグ・既定値リセットの一括化とコンソール表示は未接続である。実画面・VoiceOver・聴感はユーザー確認待ち。
   - **P2-07（マーカー・録音・ピアノロール）**: 着手中。
     クリップ本体の移動・Command の複製移動を置き換えとして接続した（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。

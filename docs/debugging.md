@@ -613,6 +613,10 @@ make debug-report
   `mixActions` の更新は文書 ID より先に来るため、終了は押下時の `gestureActions` を使い、新文書の別の試聴へ送らない。
   同文書の更新では押下を維持する。`mixer-gesture-document-ui`・`mixer-reset-document-ui` と
   `MixerGestureDocumentTests` で保存・履歴・callback の所有者を区別する（[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
+- **縦だけのヘッダドラッグや原点での解放で音量が無音になる**:
+  押下時の音量と横移動量を確認する。`MixScale.position` は −60 dB 未満を位置 0 へ切り詰めるため、
+  横移動ゼロでは表示スケールを往復せず元の Float を返す。`mixer-drag-identity-ui` で試聴・Undo / Redo・再読込を確認する。
+  非ゼロ移動の下限到達と区別する（[ADR 0153 の後続修正](decisions/0153-value-control-clicks-and-typed-entry.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。

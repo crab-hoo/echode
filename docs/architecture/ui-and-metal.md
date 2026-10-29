@@ -71,6 +71,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0153](../decisions/0153-value-control-clicks-and-typed-entry.md)）。
   ヘッダの文書交換時は押下・リセット待ち・数値欄を取り消す。操作中は押下時のコールバックを保持し、新文書の試聴を触らない
   （[ADR 0193](../decisions/0193-header-mix-gesture-document-scope.md)）。
+  ヘッダの横移動量ゼロは表示位置を経由せず元の Float を保ち、縦ドラッグと解放時の原点復帰を no-op にする。
+  表示下限未満の正の音量を無音へ変えない（[ADR 0153 の後続修正](../decisions/0153-value-control-clicks-and-typed-entry.md)）。
 - **フォルダの開閉**: 元のプロジェクト・索引を共有する表示用スナップショットを作り、同じ行対応をヘッダ・タイムライン・選択・ミックス・FX ドロップへ使う。
   開閉は表示設定とし、再生・保存・Undo を変えない（[ADR 0128](../decisions/0128-folder-disclosure-and-row-projection.md)）。
 - **共通サンプルブラウザ**: 登録フォルダはウィンドウ設定に保持し、素材一覧は非同期で作る。
