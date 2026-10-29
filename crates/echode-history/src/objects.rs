@@ -67,11 +67,12 @@ pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageErro
         let current = root
             .read_text(".gitignore")
             .map_err(|error| io_error(&path, error))?;
-        if current.contains("/media/objects/") && current.contains("/cache/") {
+        let has_rule = |rule: &str| current.lines().any(|line| line == rule);
+        let has_objects = has_rule("/media/objects/");
+        let has_cache = has_rule("/cache/");
+        if has_objects && has_cache {
             return Ok(());
         }
-        let has_objects = current.contains("/media/objects/");
-        let has_cache = current.contains("/cache/");
         let mut next = current;
         if !next.ends_with('\n') {
             next.push('\n');

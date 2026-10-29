@@ -182,6 +182,10 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 `crates/echode-history/tests/audio_import_validation.rs` に置く。
 IEEE float WAV の異常値・有限値のビット保持・原本とパッケージの保持・一括編集の巻戻しと再オープンを通す。
 
+保管庫とキャッシュの Git 除外は `objects.rs::ensure_store_gitignore`、回帰は履歴の `tests/store_gitignore.rs` に置く。
+公開取込みとホスト開始で、コメント・似たパスの誤認拒否、CRLF・既存テキストの保持と二重実行を通す
+（[ADR 0031 の後続修正](decisions/0031-content-addressed-store.md#除外規則の行単位の照合-2026-10-29)）。
+
 波形キャッシュの構造・バイト長・列の検証は `peaks.rs::read_cache`、公開読込みと再生成の回帰は
 `crates/echode-history/tests/peak_cache_validation.rs` に置く（[ADR 0058](decisions/0058-waveform-peaks.md)）。
 有限ステレオの平均とキャッシュの版は `stereo_waveform.rs` で検査する。
