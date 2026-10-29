@@ -87,6 +87,10 @@ fn serve_connection_limited(
             Ok(_) if line.len() > max_line => {
                 return Err(ApiError::new("request line is too long"));
             }
+            Ok(_) if !line.ends_with('\n') => {
+                // EOF is not a frame delimiter, even for syntactically valid JSON.
+                return Err(ApiError::new("request line ended without a newline"));
+            }
             Ok(_) => {}
             Err(error)
                 if error.kind() == ErrorKind::TimedOut || error.kind() == ErrorKind::WouldBlock =>

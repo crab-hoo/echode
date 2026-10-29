@@ -65,6 +65,18 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
             self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
 
+    def test_rpc_framing_contract_rejects_eof_before_dispatch(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "rpc-request-framing")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-api", ["--test", "request_framing"]))
+        self.assertEqual(contract["test"], "contract_unterminated_socket_frames_preserve_edits_history_and_recovery")
+        self.assertEqual(contract["negative_control"]["file"], "crates/echode-api/src/serve.rs")
+        self.assertIn("!line.ends_with", contract["negative_control"]["old"])
+        for path in ("crates/echode-api/src/serve.rs", "crates/echode-api/src/serve_tests.rs",
+                     "crates/echode-api/tests/request_framing.rs"):
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+            self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
+
     def test_platform_configuration_selects_all_automatic_checks_and_product_workgroup_contracts(self):
         automatic = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
         for path in (".cargo/config.toml", "scripts/build-platform.env"):
@@ -1187,7 +1199,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "rpc-request-envelope", "rpc-notification-boundary",
+                          "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",

@@ -104,6 +104,11 @@ JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` �
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する
 （[ADR 0020 の後続修正](decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
 
+ソケットの改行完了は `serve.rs::serve_connection_limited` が検証する。
+`tests/request_framing.rs` は EOF の部分行で編集・通知・Undo / Redo を実行しないことと、
+完了済みの前方の編集・ジャーナル・既存の履歴・再オープン、CRLF と分割受信を検査する
+（[ADR 0073 の改行境界](decisions/0073-socket-path.md#改行前の切断の拒否-2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

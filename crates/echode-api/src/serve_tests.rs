@@ -197,3 +197,53 @@ fn audit_cur04_an_unread_reply_releases_the_connection() {
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0]["name"], "once");
 }
+
+#[test]
+fn framing_keeps_the_line_limit_inclusive_of_the_delimiter() {
+    let request = r#"{"jsonrpc":"2.0","id":1,"method":"actions.perform","params":{"type":"track.add","name":"bounded"}}"#;
+    // This bound covers only this framing probe, not project or track counts.
+    let max_line = request.len() + 1;
+    for (suffix, expected_error) in [
+        ("\n", None),
+        ("", Some("without a newline")),
+        (" ", Some("without a newline")),
+        (" \n", Some("too long")),
+    ] {
+        let directory = std::env::temp_dir().join(format!(
+            "echode-api-framing-limit-{}",
+            echode_model::Id::generate()
+        ));
+        echode_history::write_package(&directory, &Project::new()).unwrap();
+        let session = ApiSession::open(&directory).unwrap();
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let worker = thread::spawn(move || {
+            let result = serve_connection_limited(&session, server, READ_TIMEOUT, max_line);
+            (session, result)
+        });
+        write!(client, "{request}{suffix}").unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut replies = String::new();
+        let read = std::io::Read::read_to_string(&mut client, &mut replies);
+        drop(client);
+        let (session, result) = worker.join().unwrap();
+        read.unwrap();
+        let response = session
+            .reply(r#"{"jsonrpc":"2.0","id":2,"method":"project.summary"}"#)
+            .unwrap();
+        let summary: serde_json::Value = serde_json::from_str(&response).unwrap();
+        if let Some(message) = expected_error {
+            assert!(result.unwrap_err().to_string().contains(message));
+            assert!(replies.is_empty());
+            assert_eq!(summary["result"]["tracks"], serde_json::json!([]));
+        } else {
+            result.unwrap();
+            assert_eq!(replies.lines().count(), 1);
+            assert_eq!(summary["result"]["tracks"][0]["name"], "bounded");
+        }
+        drop(session);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}

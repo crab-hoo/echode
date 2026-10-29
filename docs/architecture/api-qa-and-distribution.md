@@ -17,6 +17,9 @@
   （[ADR 0182](../decisions/0182-noop-edits.md)）。
   接続は直列に処理し、読込み・応答書込みの無進行をそれぞれ 30 秒で打ち切る。
   送信失敗はその接続だけを閉じ、既に成立した編集を再実行しない（[ADR 0073](../decisions/0073-socket-path.md)）。
+  改行前に EOF となった要求は、その接続だけをエラーで閉じて編集へ渡さない。
+  完了済みの前方の要求は保持し、CRLF・分割受信・改行込みの行上限は変えない
+  （[ADR 0073 の改行境界](../decisions/0073-socket-path.md#改行前の切断の拒否-2026-10-29)）。
 - **CLI とヘッドレス**: `echode render`（ステレオ float WAV 書き出し、[ADR 0019](../decisions/0019-offline-wav.md)、[ADR 0057](../decisions/0057-crash-recovery.md)）、
   `echode apply`（アクション列の実行）、`echode serve`（ヘッドレスサーバー）、`echode mcp`（MCP サーバー）
 - **MCP**: アクション登録簿から MCP ツールを自動生成し、プロジェクト概要やトラック一覧をリソースとして公開する。

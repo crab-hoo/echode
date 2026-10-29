@@ -330,6 +330,13 @@ make debug-report
   `request_validation.rs` の公開 API と実ソケットの回帰で、拒否時のジャーナルと Undo / Redo 保持、
   後続要求の応答を確認する（[ADR 0020](decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
 
+- **API が `request line ended without a newline` で接続を閉じる**:
+  EOF の前に LF が届いていない。JSON 自体が正しくても、この部分行は編集・通知・Undo / Redo へ渡さない。
+  `ApiSession::reply` の直接呼出しと、`serve_connection` の通信境界を区別する。
+  完了済みの前方の要求は成立している場合があるので、接続全体を未実行と決めて再送しない。
+  `request_framing.rs` と `rpc-request-framing`、`serve_tests.rs` の行上限の境界で再現する
+  （[ADR 0073](decisions/0073-socket-path.md#改行前の切断の拒否-2026-10-29)）。
+
 - **素材やキャッシュが Git の除外対象にならない**:
   パッケージ直下の `.gitignore` に `/media/objects/` と `/cache/` の正確な規則行があるかを確認する。
   コメントや似たパスを部分文字列で照合すると、取込みとホスト開始で不足規則の追加を省略してしまう。

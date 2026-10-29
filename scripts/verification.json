@@ -63,6 +63,12 @@
   ],
   "product_contracts": [
     {
+      "id": "rpc-request-framing", "runner": "rust", "package": "echode-api", "target": ["--test", "request_framing"],
+      "test": "contract_unterminated_socket_frames_preserve_edits_history_and_recovery", "timeout": 180,
+      "purpose": "実ソケットで改行前に切断した編集・通知・Undo/Redoを拒否し、ジャーナルと既存の履歴・Redo・完結した前方の編集・再オープンを保つ",
+      "negative_control": {"file": "crates/echode-api/src/serve.rs", "old": "Ok(_) if !line.ends_with('\\n') => {", "new": "Ok(_) if false => {"}
+    },
+    {
       "id": "rpc-request-envelope", "runner": "rust", "package": "echode-api", "target": ["--test", "request_validation"],
       "test": "contract_invalid_rpc_envelopes_preserve_edits_history_and_recovery", "timeout": 180,
       "purpose": "不正なJSON-RPCのid・版・paramsを編集前に拒否し、単一編集・一括編集・Undo/Redoのジャーナルと再オープン時の状態を保つ",
