@@ -24,6 +24,8 @@ POLICY = Path("scripts/verification.json")
 sys.path.insert(0, str(ROOT / "scripts"))
 from checked_commands import run_logged
 
+from verification_metrics import contract_summary, inventory, record_execution, resource_snapshot
+
 
 def git(root, *arguments):
     return subprocess.check_output(["git", *arguments], cwd=root, stderr=subprocess.PIPE)
@@ -302,7 +304,9 @@ def tool_identity(root):
     identity["MAKEFLAGS"] = make_flags_identity(identity["MAKEFLAGS"])
     identity["toolchain"] = toolchain_paths()
     identity["python"] = sys.version + ":" + sys.executable
-    identity["system"] = list(os.uname())
+    system = os.uname()
+    # A network-assigned hostname cannot affect a build. OS/kernel/architecture still can.
+    identity["system"] = [system.sysname, system.release, system.version, system.machine]
     cargo_config = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")))
     for filename in ("config", "config.toml"):
         path = cargo_config / filename
@@ -558,6 +562,12 @@ def save_report(directory, report, policy, selected):
     execution = report.get("execution", {})
     if execution:
         lines += ["## 今回の実行", "", "実行順（再利用を除く）: " + ", ".join(execution["order"]), ""]
+        if "seconds" in execution:
+            lines += [f"今回の所要時間: {execution['seconds']} 秒（{execution.get('status', 'running')}）", ""]
+        for name, timing in execution.get("checks", {}).items():
+            lines.append(f"- `{name}`: {timing.get('seconds', 0)} 秒（今回実行）")
+        if execution.get("reused"):
+            lines += ["", "再利用（今回の実行時間には加算しない）: " + ", ".join(execution["reused"]), ""]
         failure = execution.get("first_failure")
         if failure:
             lines += [f"最初の失敗: `{failure['kind']}:{failure['id']}` — 開始から {failure['seconds']} 秒", ""]
@@ -648,6 +658,7 @@ def verify(root, args):
         report = load_report(directory)
         report.update({"fingerprint": stamp, "input_fingerprints": stamps, "changed_paths": changed,
                        "base": args.base, "selected": selected, "tools": tools})
+        previous_results = dict(report["results"])
         for name in selected:
             status = "pending" if checks[name]["mode"] == "automatic" else "not_run"
             previous = report["results"].get(name, {})
@@ -661,8 +672,23 @@ def verify(root, args):
         scheduled = [check for check in ordered
                      if (args.force or report["results"][check["id"]]["status"] != "passed")
                      and (check["mode"] == "automatic" or check["id"] in args.run)]
-        report["execution"] = {"order": [check["id"] for check in scheduled], "first_failure": None}
+        report["tools_fingerprint"] = hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest()
+        report["execution"] = {"order": [check["id"] for check in scheduled], "first_failure": None,
+                               "checks": {}, "reused": [], "status": "running", "resources_start": resource_snapshot(root)}
         report["preflight"] = {}
+
+        def finish(code):
+            report["execution"]["resources_end"] = resource_snapshot(root)
+            report["execution"]["contract_inventory"] = inventory(policy)
+            report["execution"]["preflight_seconds"] = round(sum(r.get("seconds", 0) for r in report["preflight"].values()), 3)
+            if "check-product-contracts" in report["execution"]["checks"]:
+                report["execution"]["contracts"] = contract_summary(directory)
+            report["execution"].update(seconds=round(time.monotonic() - started, 3),
+                                       status="passed" if code == 0 else "failed")
+            save_report(directory, report, policy, selected)
+            record_execution(directory, report)
+            return code
+
         save_report(directory, report, policy, selected)
         report["preflight"] = run_preflights(root, policy, scheduled, directory)
         failed_preflight = next((name for name, result in report["preflight"].items()
@@ -674,17 +700,19 @@ def verify(root, args):
             save_report(directory, report, policy, selected)
             print(f"事前確認 {failed_preflight}: failed; 復旧: {result['remedy']}\n"
                   + failure_excerpt(result["log"]), file=sys.stderr)
-            return 1
+            return finish(1)
         save_report(directory, report, policy, selected)
         for check in ordered:
             name = check["id"]
             previous = report["results"].get(name, {}).get("status")
             if not args.force and previous == "passed":
+                report["execution"]["reused"].append(name)
                 print(f"{name}: passed (検査の入力・ツールが同じため前回の結果を使用)", flush=True)
                 continue
             if check["mode"] == "manual" and name not in args.run:
                 continue
             print(f"{name}: 実行中", flush=True)
+            previous_result = previous_results.get(name, {})
             report["results"][name] = {"status": "running", "fingerprint": stamps[name]}
             save_report(directory, report, policy, selected)
             result = run_check(root, check, directory / f"{name}.log", args.force)
@@ -692,6 +720,10 @@ def verify(root, args):
                 result.update({"status": "failed", "error": "audio device metadata unavailable; cannot attest this measurement"})
             result["fingerprint"] = stamps[name]
             report["results"][name] = result
+            result["timeout"] = check["timeout"]
+            report["execution"]["checks"][name] = result
+            result["previous_seconds"] = previous_result.get("seconds")
+            result["previous_fingerprint"] = previous_result.get("fingerprint")
             if result["status"] != "passed":
                 report["execution"]["first_failure"] = {
                     "kind": "check", "id": name, "seconds": round(time.monotonic() - started, 3)}
@@ -706,20 +738,20 @@ def verify(root, args):
                     "kind": "stale", "id": name, "seconds": round(time.monotonic() - started, 3)}
                 save_report(directory, report, policy, selected)
                 print(f"{name}: 検査中に変更がありました。再実行が必要です。", file=sys.stderr)
-                return 1
+                return finish(1)
             save_report(directory, report, policy, selected)
             print(f"{name}: {result['status']} ({name}.log)", flush=True)
             if result["status"] != "passed":
                 excerpt = failure_excerpt(directory / f"{name}.log")
                 if excerpt:
                     print(f"--- {name} 失敗箇所の抜粋 ({name}.log) ---\n{excerpt}\n---", file=sys.stderr)
-                return 1
+                return finish(1)
         current_tools = tool_identity(root)
         current_stamps = check_fingerprints(root, policy, current_tools)
         if (changed_paths(root, args.base) != changed or fingerprint(root, changed, args.base, current_tools) != stamp
                 or any(current_stamps[name] != stamps[name] for name in selected)):
             print("検査の確認中に変更がありました。make verify を再実行してください。", file=sys.stderr)
-            return 1
+            return finish(1)
         # Never open hardware automatically. Every selected manual check needs
         # either explicit execution or an explanation attached to this source.
         pending = [name for name in requested
@@ -728,8 +760,8 @@ def verify(root, args):
         if pending:
             print("完了していない検査: " + ", ".join(sorted(pending)), file=sys.stderr)
             print("失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID --reason 理由を使います。", file=sys.stderr)
-            return 1
-        return 0
+            return finish(1)
+        return finish(0)
 
 
 def main():

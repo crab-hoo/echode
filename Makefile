@@ -110,6 +110,11 @@ verify:
 verify-plan:
 	python3 scripts/verify.py --plan $(VERIFY_ARGS)
 
+# Diagnostics only: no test execution and no pass-cache writes.
+.PHONY: verification-profile
+verification-profile:
+	python3 -B scripts/verification_metrics.py
+
 check-verification:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 

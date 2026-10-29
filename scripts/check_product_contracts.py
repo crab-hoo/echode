@@ -76,7 +76,8 @@ def command(contract, skip_build=False):
 
 def swift_build(contract):
     # Same package, scratch path and flags as `swift test`; tests then run with --skip-build.
-    return ["swift", "build", "--build-tests", *swift_package(contract)]
+    selection = ["--product", contract["build_product"]] if contract.get("build_product") else ["--build-tests"]
+    return ["swift", "build", *selection, *swift_package(contract)]
 
 
 def passed(contract, returncode, output):
@@ -136,7 +137,8 @@ def contract_fingerprints(root, policy, contracts, tools):
     # The check's entry and recipe, but not the other contracts listed in the policy.
     recipe = verify.makefile_identity(verify.makefile_rules(makefile.read_text() if makefile.is_file() else ""),
                                       check.get("make_target", check["id"]))
-    shared = [check, recipe, policy["product_contract_inputs"], policy["global_inputs"], policy["evidence_inputs"]]
+    # The wrapper's scheduling/overall budget is not an input to individual test processes.
+    shared = [recipe, policy["product_contract_inputs"], policy["global_inputs"], policy["evidence_inputs"]]
     stamps = {}
     for contract in contracts:
         patterns, folders = contract_inputs(root, policy, contract)
@@ -340,8 +342,20 @@ def rust_controls(checkout, contracts, fingerprints, cargo_target, evidence, rec
         write_control(evidence, contract, fingerprints.get(contract["id"]), output, caught, started, record)
 
 
+def swift_mutation_jobs(contracts):
+    """Identical source + package + build selector can share a build, never a test process."""
+    jobs = {}
+    for contract in contracts:
+        for index, fault in enumerate(negative_control_mutations(contract)):
+            key = (contract["package_path"], contract.get("build_product"), fault["file"], fault["old"], fault["new"])
+            jobs.setdefault(key, []).append((contract, index, fault))
+    # Keep changes to the same file together to avoid rebuilding restored, unrelated files.
+    return sorted(jobs.values(), key=lambda job: (job[0][0]["package_path"], job[0][2]["file"]))
+
+
 def swift_controls(checkouts, contracts, fingerprints, evidence, record):
-    def build(checkout, contract):
+    def build(checkout, job):
+        contract = min((item[0] for item in job), key=lambda item: item["timeout"])
         started = time.monotonic()
         try:
             completed = run_process(swift_build(contract), cwd=checkout, capture_output=True, text=True,
@@ -350,22 +364,26 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
         except (OSError, subprocess.TimeoutExpired) as error:
             return None, str(error), time.monotonic() - started
 
-    state = {contract["id"]: {"started": time.monotonic(), "output": "", "caught": True} for contract in contracts}
-    count = max((len(negative_control_mutations(contract)) for contract in contracts), default=0)
-    # Each mutation is a separate build. Builds for a phase finish before its
-    # tests run, so no build loads a test while another process runs one.
-    for index in range(count):
-        active = [contract for contract in contracts if index < len(negative_control_mutations(contract))]
-        for start in range(0, len(active), len(checkouts)):
-            group = list(zip(checkouts, active[start:start + len(checkouts)]))
-            with ExitStack() as restore:
-                for checkout, contract in group:
-                    restore.enter_context(mutated(checkout, contract, negative_control_mutations(contract)[index]))
-                with ThreadPoolExecutor(len(group)) as pool:
-                    builds = list(pool.map(lambda pair: build(*pair), group))
-                for (checkout, contract), (code, output, seconds) in zip(group, builds):
-                    rejected = False
+    state = {c["id"]: {"output": "", "caught": True, "done": 0, "seconds": 0.0} for c in contracts}
+    jobs = swift_mutation_jobs(contracts)
+    timings = {"builds": len(jobs), "mutations": sum(len(job) for job in jobs),
+               "build_work_seconds": 0.0, "test_seconds": 0.0}
+    started = time.monotonic()
+    for start in range(0, len(jobs), len(checkouts)):
+        group = list(zip(checkouts, jobs[start:start + len(checkouts)]))
+        with ExitStack() as restore:
+            for checkout, job in group:
+                contract, _, fault = job[0]
+                restore.enter_context(mutated(checkout, contract, fault))
+            with ThreadPoolExecutor(len(group)) as pool:
+                builds = list(pool.map(lambda pair: build(*pair), group))
+            # All builds finish before any test starts. Each test has its own process and deadline.
+            for (checkout, job), (code, build_output, seconds) in zip(group, builds):
+                timings["build_work_seconds"] += seconds
+                for contract, index, _ in job:
+                    output, rejected = build_output, False
                     remaining = contract["timeout"] - seconds
+                    test_started = time.monotonic()
                     if code == 0 and remaining > 0:
                         try:
                             completed = run_process(command(contract, skip_build=True), cwd=checkout,
@@ -376,17 +394,28 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
                             output += str(error)
                     elif code == 0:
                         output += "\nthe counterexample build used the whole contract timeout\n"
+                    test_seconds = time.monotonic() - test_started
+                    timings["test_seconds"] += test_seconds
                     entry = state[contract["id"]]
+                    entry["seconds"] += seconds + test_seconds
                     entry["output"] += f"mutation {index + 1}/{len(negative_control_mutations(contract))}: " \
                                        f"{'rejected' if rejected else 'NOT rejected'}\n" + output
                     entry["caught"] = entry["caught"] and rejected
-                    if index + 1 == len(negative_control_mutations(contract)):
-                        # Preserve each complete contract even if a later build is interrupted.
-                        write_control(evidence, contract, fingerprints.get(contract["id"]), entry["output"],
-                                      entry["caught"], entry["started"], record)
+                    entry["done"] += 1
+                    if entry["done"] == len(negative_control_mutations(contract)):
+                        # Duration is this contract's work, not time spent queued behind earlier contracts.
+                        log = evidence / (contract["id"] + "-negative.log")
+                        log.write_text(entry["output"])
+                        record(control_result(contract, fingerprints.get(contract["id"]), entry["caught"],
+                                              log, entry["seconds"]))
+                        if not entry["caught"]:
+                            print(f"{contract['id']} negative control: FAILED", flush=True)
+                            print(entry["output"][-5000:], file=sys.stderr)
+    return {**timings, "seconds": round(time.monotonic() - started, 3)}
 
 
 def negative_controls(root, contracts, fingerprints, evidence, record):
+    started = time.monotonic()
     with mutation_lock(root) as directory:
         # Only this runner builds here; another writer's times could make a
         # counterexample build look current (the pre-ADR-0148 copies used "rust").
@@ -401,13 +430,19 @@ def negative_controls(root, contracts, fingerprints, evidence, record):
         checkouts = [directory / "checkouts" / str(index) for index in range(count)]
         for checkout in checkouts:
             sync_checkout(root, checkout)
+        sync_seconds = time.monotonic() - started
+        rust_started = time.monotonic()
         rust_controls(checkouts[0], rust, fingerprints, cargo_target, evidence, record)
-        swift_controls(checkouts, swift, fingerprints, evidence, record)
+        rust_seconds = time.monotonic() - rust_started
+        swift = swift_controls(checkouts, swift, fingerprints, evidence, record)
+        return {"sync_seconds": round(sync_seconds, 3), "rust_seconds": round(rust_seconds, 3), "swift": swift}
 
 
 def build_swift_package(root, contracts, contract, invoke):
     # One build serves every test of the package; each test still runs in its own process.
-    timeout = max(item["timeout"] for item in contracts if item.get("package_path") == contract["package_path"])
+    timeout = max(item["timeout"] for item in contracts
+                  if (item.get("package_path"), item.get("build_product"))
+                  == (contract["package_path"], contract.get("build_product")))
     try:
         built = invoke(swift_build(contract), cwd=root, capture_output=True, text=True, timeout=timeout)
         return built.returncode == 0, built.stdout + built.stderr
@@ -427,13 +462,14 @@ def run_tests(root, contracts, invoke, fingerprints, evidence, record):
         built = True
         if contract["runner"] == "swift":
             package = contract["package_path"]
-            first = package not in builds
+            key = (package, contract.get("build_product"))
+            first = key not in builds
             if first:
-                builds[package] = build_swift_package(root, contracts, contract, invoke)
-            built, output = builds[package]
+                builds[key] = build_swift_package(root, contracts, contract, invoke)
+            built, output = builds[key]
             ok, code = False, None
             if not built and not first:
-                output = f"swift build --build-tests failed for {package}; see the first Swift contract log\n"
+                output = f"Swift test-product build failed for {package}; see the first Swift contract log\n"
         if built:
             try:
                 completed = invoke(args, cwd=root, capture_output=True, text=True, timeout=contract["timeout"])
@@ -452,6 +488,8 @@ def run_tests(root, contracts, invoke, fingerprints, evidence, record):
 
 
 def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=None):
+    started = time.monotonic()
+    execution = {}
     if not contracts or len({c["id"] for c in contracts}) != len(contracts):
         raise ValueError("required product contracts must be nonempty and unique")
     directory = (evidence or root / "target/verification") / "product-contracts"
@@ -472,6 +510,7 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
         # Written after every result, so an interrupted run keeps the evidence it finished.
         order = [contract["id"] for contract in contracts]
         report.write_text(json.dumps({"status": status, "reused": len(reused),
+                                      "execution": {**execution, "seconds": round(time.monotonic() - started, 3)},
                                       "tests": [tests[name] for name in order if name in tests],
                                       "negative_controls": [controls[name] for name in order if name in controls]},
                                      indent=2) + "\n")
@@ -482,12 +521,23 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
 
     def record_control(result):
         controls[result["id"]] = result
+        execution["negative_progress"] = {
+            "seconds": round(time.monotonic() - control_started, 3),
+            "completed": {runner: sum(c["id"] in controls and c["id"] not in reused
+                                      for c in contracts if c["runner"] == runner)
+                          for runner in ("rust", "swift")}}
         save("running")
 
+    execution["identity_seconds"] = round(time.monotonic() - started, 3)
+    execution["pending"] = len(pending)
     save("running")
+    normal_started = time.monotonic()
     run_tests(root, pending, invoke, fingerprints, directory, record_test)
+    execution["normal_seconds"] = round(time.monotonic() - normal_started, 3)
     if pending and all(tests[contract["id"]]["status"] == "passed" for contract in pending):
-        negative_controls(root, pending, fingerprints, directory, record_control)
+        control_started = time.monotonic()
+        execution["negative"] = negative_controls(root, pending, fingerprints, directory, record_control)
+        execution["negative_seconds"] = round(time.monotonic() - control_started, 3)
     if policy is not None and pending:
         # A result is tied to the inputs it ran on: an edit during the run makes it stale, never reusable.
         after = contract_fingerprints(root, policy, contracts, verify.tool_identity(root))

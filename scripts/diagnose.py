@@ -197,6 +197,7 @@ def bundle(root, data):
     candidates += [Path(f"target/verification/{check['id']}.log") for check in policy["checks"]]
     candidates += [Path(f"target/verification/preflight-{name}.log") for name in policy.get("preflights", {})]
     candidates += [Path("target/verification/failure-latency.json")]
+    candidates += [Path("target/verification/timing-history.jsonl")]
     candidates += [Path(f"target/verification/product-contracts/{contract['id']}{suffix}.log")
                    for contract in policy.get("product_contracts", []) for suffix in ("", "-negative")]
     candidates += sorted(path.relative_to(root) for path in (root / "target").glob("spike-*.json"))

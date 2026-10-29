@@ -198,6 +198,7 @@ class DiagnosticTests(unittest.TestCase):
         directory = self.root / "target/verification"
         (directory / "preflight-ready.log").write_text("missing runtime")
         (directory / "failure-latency.json").write_text('{"synthetic":true}')
+        (directory / "timing-history.jsonl").write_text('{"execution":{"seconds":12}}\n')
         outside = self.root / "private-document"
         outside.write_text("DO_NOT_COLLECT")
         (directory / "preflight-external.log").symlink_to(outside)
@@ -209,6 +210,7 @@ class DiagnosticTests(unittest.TestCase):
             output = diagnose.bundle(self.root, diagnose.collect(self.root))
         self.assertEqual((output / "verification/preflight-ready.log").read_text(), "missing runtime")
         self.assertTrue((output / "verification/failure-latency.json").is_file())
+        self.assertEqual((output / "verification/timing-history.jsonl").read_text(), '{"execution":{"seconds":12}}\n')
         self.assertFalse((output / "verification/preflight-external.log").exists())
         self.assertFalse((output / "verification/preflight-unknown.log").exists())
         self.assertFalse((output / "verification/focused").exists())

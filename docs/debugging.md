@@ -23,6 +23,13 @@ make debug-report
 
 ### ビルド・環境・検査基盤
 
+- **`make verify` の所要時間の増加**:
+  `make verification-profile` で今回の実行・再利用と履歴、契約数・反例数を確認する。
+  旧レポートの最後の合格時間を、今回再利用した検査の実行時間へ足さない。
+  製品契約の `execution` は通常実行と反例、同期、ビルド作業秒と直列テスト秒を分ける。
+  契約の秒数は自身の処理時間であり、並列の作業秒の和は全体の実測ではない。
+  履歴は `target/verification/timing-history.jsonl` にあり、`make debug-report` にも収集する。
+  同じ条件での再計測と、件数・失効集合の変化は [時間の保守](verification.md#実行時間の保守) に従って分ける。
 - **空き容量不足（`No space left on device` / `Errno 28`）**:
   `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 - **ツール不足・ビルド失敗**:
@@ -64,7 +71,8 @@ make debug-report
   `check-product-contracts` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
   前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
   `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
-  コピーの初回ビルドも含む一括予算は 1800 秒で、各契約の期限と期待値は別に保つ。
+  コピーの初回ビルドを含む一括予算は `scripts/verification.json` の `check-product-contracts.timeout`、各契約の期限は別の値である。
+  2026-10-29 に旧 1800 秒で全件失効時の上限到達を観測し、件数と実測に合わせて一括予算を見直した（[ADR 0195](decisions/0195-verification-cost-observability.md)）。
   反例のコピーは `target/product-contract-mutations/checkouts/<N>` に残り、`<N>.json` が置いたファイルの一覧である。
   一覧が壊れていればコピーのソースを作り直す。コピーを疑う時は `checkouts/` を消せば次回に作り直す（初回ビルドの分だけ遅い）。
   Rust の反例のビルドは `target/product-contract-mutations/cargo` に置き、この検査以外から書き込まない。
@@ -94,6 +102,9 @@ make debug-report
   診断は `1 yielded polls` で、同じバイナリの `DevicePreparationTests` 単独では再現しなかった。原因は未確定である。
   失敗は `target/bridge/thread/product/swift-tests.failed.log`、単独実行は `time-guides-preparation-focused.log` に残す。
   既存の 5 秒と検査対象を変えず、正式な全体再実行の結果と区別する。
+  2026-10-29 の検査時間基盤の変更でも同じ未保留デバイスの応答待ちが `1 yielded polls` で期限切れとなった。
+  同じバイナリの `DevicePreparationTests` 単独では再現せず、競合診断はなかった。
+  単独実行は `target/bridge/thread/product/verification-preparation-focused.log` に残す。原因解明や期限変更は行っていない。
   2026-10-28 のグリッド変更の ASan 全体検査では、`RecoveryConsentTests` の警告待ちも 2 回期限切れとなった。
   同じバイナリの当該スイート単独では再現せず、ASan のメモリ診断はなかった。5 秒の期限は変更しない。
   記録は `target/bridge/address/product/swift-tests.failed.log` と `target/focused-checks/piano-grid-recovery-asan/`。
@@ -106,8 +117,10 @@ make debug-report
   呼出し元の時間切れは検査自身の終了コードではない。ロックが空いていても、自分が起動した make / cargo / テストの子が残る場合がある。
   `ps` と保存ログで所有関係と終了を確認し、残った検査と次の検査を重ねない。既存アプリや他の作業のプロセスは終了しない。
   子のログが後から成功しても、親が完了を記録していなければ合格へ手で移し替えず、`make verify` を再実行する。
-  検査識別には `os.uname()` も含むため、ネットワーク移動などでホスト名が変わると、ソースとコンパイラーが同じでも全結果が失効する。
-  2026-10-28 の ADV-04 検査でこの組合せを観測した。現行環境で取り直し、手元のログと有効な検査記録を区別する。
+  検査の OS 識別はホスト名を除外するため、ネットワークによる名前変更だけでは失効しない。
+  OS・カーネル・アーキテクチャやツールの変更は引き続き失効させる（[ADR 0195](decisions/0195-verification-cost-observability.md)）。
+  2026-10-28 の ADV-04 検査では、旧実装のホスト名による全件失効と中断の組合せを観測した。
+  当時のログと、現在の入力に結び付いた有効な検査記録を区別する。
   Swift の負の対照を同じ位置まで何度もやり直す場合は、契約ごとの完了記録が増えているかも確認する。
   各契約の全反例が終わった時点で保存する。一部の反例だけが終わった契約は合格ではない（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
 - **基準コミット（`VERIFY_BASE`）エラー**:

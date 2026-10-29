@@ -334,6 +334,7 @@ class ContractEvidenceTests(unittest.TestCase):
                         stamps[change] += "-edited"
                     self.assertEqual(contracts.run(root, cases, good, policy={}, fresh=fresh), 0)
                     self.assertEqual((invoked, controlled), (expected, expected))
+                    self.assertIn("normal_seconds", json.loads((root / "target/verification/product-contracts.json").read_text())["execution"])
                     report = json.loads((root / "target/verification/product-contracts.json").read_text())
                     self.assertEqual(report["status"], "passed")
                     self.assertEqual(report["reused"], 2 - len(expected))
@@ -407,6 +408,9 @@ class ContractEvidenceTests(unittest.TestCase):
             self.assertEqual(changed(after_b, after_swift), {"swift"})
             (root / "crates/a/src/lib.rs").write_text("// edited\n")
             self.assertEqual(changed(after_swift, stamps()), {"rust-a", "rust-b", "swift"})
+            current = stamps()
+            policy["checks"][0]["timeout"] += 10
+            self.assertEqual(changed(current, stamps()), set(), "a wrapper budget does not change contract evidence")
             current = stamps()
             cases[0]["timeout"] = 6
             self.assertEqual(changed(current, stamps()), {"rust-a"})
