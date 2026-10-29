@@ -95,7 +95,7 @@
     {
       "id": "package-float-roundtrip", "runner": "rust", "package": "echode-history", "target": ["--test", "float_roundtrip"],
       "test": "contract_package_floats_preserve_quiet_gains_and_pan_bits", "timeout": 180,
-      "purpose": "製品アクション・Undo/Redo・ジャーナルからパッケージ保存へ通し、極小ゲインとパンの全ビット・再保存の安定性を確認",
+      "purpose": "製品アクション・直接保存・DocumentHostの自動保存と履歴復帰を通し、極小ゲインとパンの全ビット・無関係な編集後のバイト安定性・コミットからの再オープンを確認",
       "negative_control": {"file": "crates/echode-history/src/document.rs", "old": "if text.parse::<f32>() == Ok(gain) {", "new": "if true {"}
     },
     {

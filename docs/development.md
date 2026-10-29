@@ -173,7 +173,7 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 クリップの直交ドラッグと解放時の原点復帰は `ClipDragIdentityTests.swift` で検査する。
 非正規化数・端数 flick・長いフェード、Redo と実パッケージの再オープンを通す。
 保存の浮動小数点表記は `document.rs::format_gain`、独立した保存回帰は履歴の `tests/float_roundtrip.rs` に置く
-（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
+（[ADR 0196](decisions/0196-lossless-package-floats.md)）。同じ回帰で `DocumentHost` の増分保存・コミットからの再オープン・履歴復帰と Undo / Redo も通す。
 
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。

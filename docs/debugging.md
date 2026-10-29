@@ -296,6 +296,8 @@ make debug-report
   編集直後の値と、`tracks/<id>.json` の数値、再読込後の Float のビットを比較する。
   旧 formatter の小数点以下 9 桁への丸めが原因なら、ジャーナルでは値を保持してもパッケージで失われる。
   `package-float-roundtrip` でゲインと負のパン、`clip-drag-identity-ui` で直交ドラッグ・原点復帰と保存を切り分ける。
+  前者の `autosave`・`incremental autosave` は保存直後、`commit recovery` は作業ファイルを古くした後のコミット読出し、
+  `history restore`・`restore undo`・`restore redo` は履歴復帰の各境界を示す。失敗名から formatter・増分キャッシュ・復帰を分けて調べる。
   正確な旧表記は維持し、損失がある時だけ往復可能な表記へ変える。既に丸められた値は復元しない
   （[ADR 0196](decisions/0196-lossless-package-floats.md)）。
 

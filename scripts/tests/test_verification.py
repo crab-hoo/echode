@@ -616,6 +616,7 @@ class PolicyTests(unittest.TestCase):
         for fault in [disk["negative_control"], *native["negative_controls"]]:
             self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
         for source in ("crates/echode-history/src/document.rs", "crates/echode-history/tests/float_roundtrip.rs",
+                       "crates/echode-history/src/host.rs", "crates/echode-history/src/autosave.rs",
                        "swift/EchodeApp/Tests/EchodeAppTests/ClipDragIdentityTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(source))
