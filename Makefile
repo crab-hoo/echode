@@ -107,6 +107,7 @@ check-base:
 # Malformed MCP backend error objects report uncertain outcomes without replaying committed edits (mcp-backend-errors).
 # MCP backend version gating blocks incompatible edits without consuming history (mcp-backend-version).
 # MCP response envelopes reject wrong IDs/versions and ambiguous outcomes before and after edits.
+# MCP invalid IDs and edit-like notifications never connect or consume durable history (mcp-request-identity).
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

@@ -746,6 +746,14 @@ make debug-report
   テストで既存パッケージの JSON だけを上書きしても保存済み履歴は置き換わらない。文書の編集経路を使うか、別の入力は新しいパッケージへ書く。
   MCP（`echode mcp SOCKET`）は接続先の `echode serve PACKAGE SOCKET` と同じビルド・絶対ソケットパス・API 版 1 を確認し、stdout へログを混ぜない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
 
+- **MCP が `request id must be a string or integer` を返す・通知の応答が来ない**:
+  `mcp.rs::McpSession::reply` の ID 検証と通知の早期 return を確認する。
+  MCP は null・真偽値・配列・オブジェクト・小数の ID を拒否する。null が正当な JSON-RPC API とは異なる。
+  ID の省略は通知として応答せず、`tools/call` を装っても接続・編集しない。
+  `mcp_requests.rs` と必須契約 `mcp-request-identity` は単一／一括編集・Undo / Redo の未送信と履歴保持を検査する。
+  正当な文字列・整数 ID まで拒否される場合は、元の型と旧・新 MCP の初期化・メタデータを分けて照合する
+  （[ADR 0115 の入力回帰](decisions/0115-phase2-mcp.md#要求-id-と通知の回帰補強2026-10-29)）。
+
 - **MCP が `unsupported Echode session protocol` を返す**:
   MCP 自体のプロトコル版ではなく、接続先 API の `protocol.version` が返す整数の版 1 を確認する。
   この段階での拒否では編集をまだ送っていない。編集後の応答破損や切断による結果不明と区別する。

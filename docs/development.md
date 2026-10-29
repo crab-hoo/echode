@@ -135,6 +135,12 @@ MCP の接続先の JSON-RPC 版・ID・result/error 排他は、同じ `mcp.rs:
 正当な追加フィールド・旧／新 MCP・単一 Undo / Redo・再オープンも通す
 （[ADR 0115 の外枠回帰](decisions/0115-phase2-mcp.md#接続先の応答外枠の回帰補強2026-10-29)）。
 
+MCP の要求 ID と通知は `McpSession::reply` が接続前に振り分ける。
+`tests/mcp_requests.rs` は旧・新 MCP の単一／一括編集・Undo / Redo で不正 ID と通知を拒否し、
+接続なし・ジャーナル・既存 Redo・再オープンと、正当な文字列／整数 ID の型と実編集を検査する。
+実バックエンドは改行回帰と `tests/support/mcp_session.rs` を共有する
+（[ADR 0115 の入力回帰](decisions/0115-phase2-mcp.md#要求-id-と通知の回帰補強2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

@@ -117,3 +117,23 @@ MCP が `structuredContent.error:null` の通常の実行エラーとして返�
 
 API 版の値の対応可否、改行の完了、error の内容の妥当性は既存の別の回帰として保つ。
 音声・保存形式・外部 MCP クライアントの設定・実アプリは変更しない。
+
+## 要求 ID と通知の回帰補強（2026-10-29）
+
+`1d75d6c` でも、不正な MCP 要求 ID と通知は編集を実行しない。
+今回は製品挙動を変えず、トラック追加に限っていた回帰を公開 `serve_mcp` と実ソケットで補強する。
+
+- `tests/mcp_requests.rs` は旧・新 MCP で単一／一括編集・Undo / Redo を検査する。
+  null・真偽値・配列・オブジェクト・小数の ID は `-32600` と null ID、ID 省略の通知は応答なしとする。
+  JSON-RPC API では正当な null ID も、MCP では許可しない既存の境界を保つ。
+- 拒否時は接続自体が生じず、モデル・ジャーナル・既存の Redo と再オープン後の状態を保つ。
+  後続の ping の応答を照合し、不正入力の応答や通知が出力列へ混ざらないことも検査する。
+- 空文字列・Unicode の文字列、符号付き／符号なし整数の端は元の型で返し、実編集・単一 Undo / Redo・再オープンへ通す。
+  正当な追加フィールドも拒否しない。実バックエンドの fixture は改行回帰と `support/mcp_session.rs` で共有する。
+- 必須契約 `mcp-request-identity` は ID 検証を外す反例と、通知を dispatcher へ渡す反例をそれぞれ独立に検査する。
+  作業中の各 red は終了コード 101 と `invalid MCP IDs and notifications must not reach the backend` で照合した。
+  作業時の記録は `target/focused-checks/mcp-request-id-red/`・`mcp-notification-red/` に残す。
+
+通常検査・必須契約の入口と選択の回帰を更新し、診断手順に API と MCP の ID 境界の違いを追記する。
+ログは既存の契約ログとして収集できるため、新しい収集先・製品ログは不要である。
+音声・保存形式・実アプリ・外部 MCP クライアントの設定は変更せず、実機の確認範囲へ広げない。
