@@ -85,6 +85,7 @@ check-base:
 # Group edge resizing shares common one-tick/time bounds, previews and atomic history through this gate.
 # Independent piano targets, reference-only notes, track controls and ordered arrow/Return routing share this gate too.
 # No-op commands/groups preserve history, durable publication and MCP acknowledgements through this gate.
+# JSON-RPC envelopes reject invalid IDs/params before edits; only valid notifications suppress socket replies.
 # Command note copies preserve full-resolution attributes, linked identity, selection and atomic history through this gate.
 # Piano automatic/fixed straight/triplet/dotted grid controls, zoom anchoring, snap subdivisions and press cancellation share this gate.
 # Piano time guides retain beat/four-quarter references independently of snap subdivisions and thinning.

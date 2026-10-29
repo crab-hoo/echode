@@ -52,6 +52,19 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_rpc_envelope_contracts_keep_public_entry_points_and_negative_controls(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name in ("rpc-request-envelope", "rpc-notification-boundary"):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                             ("rust", "echode-api", ["--test", "request_validation"]))
+            self.assertEqual(len(contract["negative_controls"]), 2)
+            for mutation in contract["negative_controls"]:
+                self.assertEqual(mutation["file"], "crates/echode-api/src/rpc.rs")
+        for path in ("crates/echode-api/src/rpc.rs", "crates/echode-api/tests/request_validation.rs"):
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+            self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
+
     def test_platform_configuration_selects_all_automatic_checks_and_product_workgroup_contracts(self):
         automatic = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
         for path in (".cargo/config.toml", "scripts/build-platform.env"):
@@ -1174,6 +1187,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                          "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",

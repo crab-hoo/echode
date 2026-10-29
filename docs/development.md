@@ -99,6 +99,11 @@
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
+JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
+公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
+通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する
+（[ADR 0020 の後続修正](decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

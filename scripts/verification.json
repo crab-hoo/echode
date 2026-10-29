@@ -63,6 +63,24 @@
   ],
   "product_contracts": [
     {
+      "id": "rpc-request-envelope", "runner": "rust", "package": "echode-api", "target": ["--test", "request_validation"],
+      "test": "contract_invalid_rpc_envelopes_preserve_edits_history_and_recovery", "timeout": 180,
+      "purpose": "不正なJSON-RPCのid・版・paramsを編集前に拒否し、単一編集・一括編集・Undo/Redoのジャーナルと再オープン時の状態を保つ",
+      "negative_controls": [
+        {"file": "crates/echode-api/src/rpc.rs", "old": "if !id.is_null() && !id.is_string() && !id.is_number() {", "new": "if false {"},
+        {"file": "crates/echode-api/src/rpc.rs", "old": ".is_some_and(|params| !params.is_object() && !params.is_array())", "new": ".is_some_and(|_| false)"}
+      ]
+    },
+    {
+      "id": "rpc-notification-boundary", "runner": "rust", "package": "echode-api", "target": ["--test", "request_validation"],
+      "test": "contract_socket_requests_distinguish_invalid_envelopes_from_notifications", "timeout": 180,
+      "purpose": "実ソケットでidなしの不正要求にもエラーを返し、正常な通知だけ応答を省略する。後続要求・nullを含む正当なidとメソッド引数エラーも区別する",
+      "negative_controls": [
+        {"file": "crates/echode-api/src/rpc.rs", "old": "if object.get(\"jsonrpc\").and_then(Value::as_str) != Some(\"2.0\") {\n            return Some(error_response(Some(&id), -32600, \"invalid request\", None));", "new": "if object.get(\"jsonrpc\").and_then(Value::as_str) != Some(\"2.0\") {\n            return respond(has_id, error_response(Some(&id), -32600, \"invalid request\", None));"},
+        {"file": "crates/echode-api/src/rpc.rs", "old": "let Some(method) = object.get(\"method\").and_then(Value::as_str) else {\n            return Some(error_response(Some(&id), -32600, \"invalid request\", None));", "new": "let Some(method) = object.get(\"method\").and_then(Value::as_str) else {\n            return respond(has_id, error_response(Some(&id), -32600, \"invalid request\", None));"}
+      ]
+    },
+    {
       "id": "store-gitignore", "runner": "rust", "package": "echode-history", "target": ["--test", "store_gitignore"],
       "test": "contract_import_and_autosave_keep_exact_store_ignore_rules", "timeout": 180,
       "purpose": "音声取込みとホスト開始でGit除外規則を行単位に照合し、コメント・似たパス・否定規則を誤認せず、既存テキスト・CRLF・再実行時のバイトを保持する",

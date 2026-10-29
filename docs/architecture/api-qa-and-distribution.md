@@ -10,6 +10,9 @@
 - **JSON-RPC**: ユーザー本人だけが読み書きできる Unix ドメインソケットで 1 行 1 件の JSON-RPC 2.0 を提供する。
   `actions.list`、`actions.perform`、`actions.transaction`、`edit.undo`、`edit.redo`、`project.summary`、`protocol.version` を受ける
   （[ADR 0020](../decisions/0020-json-rpc.md)、[ADR 0034](../decisions/0034-api-transaction.md)）
+  要求の版・メソッド・ID・params の外枠を編集前に検証し、不正なら ID の省略時も `-32600` を返す。
+  正しい通知だけ応答を省略し、不正な型の ID は null として返す
+  （[ADR 0020 の後続修正](../decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
   無変更も成功として Action／配列を返すが、履歴は増やさない。配列の受理順と参照位置を保つ
   （[ADR 0182](../decisions/0182-noop-edits.md)）。
   接続は直列に処理し、読込み・応答書込みの無進行をそれぞれ 30 秒で打ち切る。

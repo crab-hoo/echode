@@ -32,18 +32,23 @@ impl ApiSession {
         };
         let has_id = object.contains_key("id");
         let id = object.get("id").cloned().unwrap_or(Value::Null);
+        // An invalid envelope is not a notification. Validate it before dispatch,
+        // even when a malformed caller omitted its id.
+        if !id.is_null() && !id.is_string() && !id.is_number() {
+            return Some(error_response(None, -32600, "invalid request", None));
+        }
         if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-            return respond(
-                has_id,
-                error_response(Some(&id), -32600, "invalid request", None),
-            );
+            return Some(error_response(Some(&id), -32600, "invalid request", None));
         }
         let Some(method) = object.get("method").and_then(Value::as_str) else {
-            return respond(
-                has_id,
-                error_response(Some(&id), -32600, "invalid request", None),
-            );
+            return Some(error_response(Some(&id), -32600, "invalid request", None));
         };
+        if object
+            .get("params")
+            .is_some_and(|params| !params.is_object() && !params.is_array())
+        {
+            return Some(error_response(Some(&id), -32600, "invalid request", None));
+        }
         let params = object.get("params").cloned().unwrap_or(Value::Null);
         let body = match method {
             "actions.list" => ok_response(&id, action_catalog()),
