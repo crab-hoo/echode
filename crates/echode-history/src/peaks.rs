@@ -19,7 +19,7 @@ use crate::document::PackageError;
 use crate::media::read_pcm;
 use crate::objects::is_content_hash;
 
-const MAGIC: &[u8; 8] = b"ECHDPK01";
+const MAGIC: &[u8; 8] = b"ECHDPK02";
 /// Samples in one level-0 column. Coarser levels pair those columns.
 const BUCKET: u32 = 64;
 
@@ -432,7 +432,8 @@ impl MappedPcm {
             let Some(bytes) = map.get(offset..offset.saturating_add(width)) else {
                 break;
             };
-            let mut sum = 0.0f32;
+            // Widen before summing: finite stereo samples can overflow an f32 sum.
+            let mut sum = 0.0f64;
             let mut finite = true;
             for channel in 0..usize::from(self.channels) {
                 let sample = f32::from_le_bytes(
@@ -444,12 +445,12 @@ impl MappedPcm {
                     finite = false;
                     break;
                 }
-                sum += sample;
+                sum += f64::from(sample);
             }
             if !finite {
                 continue;
             }
-            let sample = sum / f32::from(self.channels);
+            let sample = (sum / f64::from(self.channels)) as f32;
             min = min.min(sample);
             max = max.max(sample);
         }
@@ -516,10 +517,14 @@ fn fold_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();
     }
+    // Divide in f64 too, so tiny stereo averages are rounded only once.
     let width = usize::from(channels);
     interleaved
         .chunks(width)
-        .map(|frame| frame.iter().sum::<f32>() / f32::from(channels))
+        .map(|frame| {
+            (frame.iter().map(|sample| f64::from(*sample)).sum::<f64>() / f64::from(channels))
+                as f32
+        })
         .collect()
 }
 

@@ -94,6 +94,7 @@ check-base:
 # Clip identity drags preserve exact gain/fade values and Redo; package floats retain every nonzero bit across disk saves.
 # Canonical PCM rejects non-finite samples before trimmed clip preparation or SRC, without rewriting stored objects.
 # Peak cache allocations stay within file data; invalid pyramid shapes or columns rebuild from canonical PCM.
+# Stereo waveform averages widen before summing; V1 caches rebuild so overflow cannot remain cached silence.
 # Pending resets keep press state only for the matching header control or clip handle; cross-target edits retain separate history.
 # Native scan fixtures prove the direct child has emitted its report and exited before the held-pipe deadline.
 # Sanitizer entry points also run recovery consent separately, retaining its tests and readiness deadline.

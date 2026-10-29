@@ -603,6 +603,19 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_stereo_waveform_contract_covers_both_averages_and_cache_version(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "stereo-waveform-average")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-history", ["--test", "stereo_waveform"]))
+        self.assertEqual(contract["test"], "contract_stereo_waveforms_preserve_finite_averages_and_rebuild_legacy_caches")
+        self.assertEqual(len(contract["negative_controls"]), 3)
+        for fault in contract["negative_controls"]:
+            self.assertEqual(fault["file"], "crates/echode-history/src/peaks.rs")
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("crates/echode-history/src/peaks.rs", "crates/echode-history/tests/stereo_waveform.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(source))
+
     def test_peak_cache_validation_contract_covers_public_waveform_loading(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "peak-cache-validation")
         self.assertEqual((contract["runner"], contract["package"], contract["target"]),
@@ -1123,7 +1136,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "canonical-pcm-validation", "peak-cache-validation", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
+                          "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",

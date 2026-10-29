@@ -63,6 +63,16 @@
   ],
   "product_contracts": [
     {
+      "id": "stereo-waveform-average", "runner": "rust", "package": "echode-history", "target": ["--test", "stereo_waveform"],
+      "test": "contract_stereo_waveforms_preserve_finite_averages_and_rebuild_legacy_caches", "timeout": 180,
+      "purpose": "有限ステレオの極大値・非正規化数を全幅・部分幅・キャッシュとマップで平均し、旧版キャッシュの再生成と原本保持を確認",
+      "negative_controls": [
+        {"file": "crates/echode-history/src/peaks.rs", "old": "frame.iter().map(|sample| f64::from(*sample)).sum::<f64>() / f64::from(channels)", "new": "f64::from(frame.iter().sum::<f32>() / f32::from(channels))"},
+        {"file": "crates/echode-history/src/peaks.rs", "old": "sum += f64::from(sample);", "new": "sum = f64::from(sum as f32 + sample);"},
+        {"file": "crates/echode-history/src/peaks.rs", "old": "b\"ECHDPK02\"", "new": "b\"ECHDPK01\""}
+      ]
+    },
+    {
       "id": "peak-cache-validation", "runner": "rust", "package": "echode-history", "target": ["--test", "peak_cache_validation"],
       "test": "contract_malformed_peak_caches_rebuild_from_unchanged_pcm", "timeout": 180,
       "purpose": "壊れた波形キャッシュの段構成・件数・非有限値・逆転範囲を公開読込みで拒否し、元PCMを保って全幅・部分幅・細かい列を再生成する",

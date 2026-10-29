@@ -61,6 +61,19 @@
 - 単体回帰で準備失敗が一度だけ返ること、未反映が解消され、後続の正常な置換が可能なことを確認する。
   DSP は変えないためブロック長の比較は既存の製品回帰を維持し、実ヘルパーの新契約も RTSan の対象にする。
 
+### 検査用の初期化待ちソケット（2026-10-29）
+
+波形平均の修正中の `make verify` で、既存の `background-graph` が約 0.09 秒で `WouldBlock` を返した。
+5 秒の読込み期限に達した失敗ではなく、Darwin の `accept` がリスナーの `O_NONBLOCK` を受け継ぐ条件だった。
+既存の `set_read_timeout` だけではこのフラグは解除されない。
+
+初期化待ちの各回帰は、accept 後に共通の `initializer_peer` でブロッキングへ戻し、従来の 5 秒を設定する。
+`accepted_initializer_peer_is_blocking_before_the_handshake_arrives` は、相手がまだ 1 バイトも送らない状態の記述子を検査する。
+修正前は終了コード 101 と `initializer peer must block for the handshake instead of returning WouldBlock` で失敗した。
+作業時の記録は `target/focused-checks/initializer-peer-red/` に保存した。
+最初の製品契約の失敗ログは `target/focused-checks/initializer-peer-verify-failure.log` に保持する。
+製品の IPC・処理順序・受入条件・待機期限は変えない。実機の隔離性能の証拠にも置き換えない。
+
 ## 残る範囲
 
 - `reprepare` の素材読込み・計画生成と、`OutputStream.replace` の保存済み状態の読込みは文書ワーカーに残る。

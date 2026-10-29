@@ -10,6 +10,37 @@ impl Drop for Release {
     }
 }
 
+pub(super) fn initializer_peer(
+    peer: std::os::unix::net::UnixStream,
+) -> std::os::unix::net::UnixStream {
+    // Darwin inherits O_NONBLOCK from the listener; a read timeout does not clear it.
+    peer.set_nonblocking(false).unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    peer
+}
+
+#[test]
+fn accepted_initializer_peer_is_blocking_before_the_handshake_arrives() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::{UnixListener, UnixStream};
+
+    let socket = Path::new("/private/tmp").join(format!("ep-{}.sock", Id::generate().raw()));
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let _client = UnixStream::connect(&socket).unwrap();
+    let (peer, _) = listener.accept().unwrap();
+    let peer = initializer_peer(peer);
+    std::fs::remove_file(socket).unwrap();
+    // SAFETY: the stream owns a live descriptor; F_GETFL takes no extra argument.
+    let flags = unsafe { libc::fcntl(peer.as_raw_fd(), libc::F_GETFL) };
+    assert_ne!(flags, -1);
+    assert_eq!(
+        flags & libc::O_NONBLOCK,
+        0,
+        "initializer peer must block for the handshake instead of returning WouldBlock"
+    );
+}
+
 #[test]
 fn contract_background_graph_keeps_control_turns_and_audio_under_rtsan() {
     // These buffers bound this fixture only, not supported project geometry.
@@ -63,7 +94,7 @@ fn contract_background_graph_keeps_control_turns_and_audio_under_rtsan() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut peer = loop {
         match listener.accept() {
-            Ok((peer, _)) => break peer,
+            Ok((peer, _)) => break initializer_peer(peer),
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
@@ -72,7 +103,6 @@ fn contract_background_graph_keeps_control_turns_and_audio_under_rtsan() {
             Err(error) => panic!("initializer handshake: {error}"),
         }
     };
-    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let mut reached = [0];
     peer.read_exact(&mut reached).unwrap();
     let release = Release(peer);
@@ -167,7 +197,7 @@ fn state_undo_during_startup_keeps_the_existing_helper_and_latest_recorded_bytes
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut peer = loop {
         match listener.accept() {
-            Ok((peer, _)) => break peer,
+            Ok((peer, _)) => break initializer_peer(peer),
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
@@ -176,7 +206,6 @@ fn state_undo_during_startup_keeps_the_existing_helper_and_latest_recorded_bytes
             Err(error) => panic!("initializer handshake: {error}"),
         }
     };
-    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     peer.read_exact(&mut [0]).unwrap();
     let release = Release(peer);
     // The old parameter helper is after the held initializer in the new chain.

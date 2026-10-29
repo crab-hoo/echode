@@ -83,6 +83,9 @@ make debug-report
   Rust の反例のビルドは `target/product-contract-mutations/cargo` に置き、この検査以外から書き込まない。
   別の書き手の時刻が混じると、反例で作ったクレートを現在のソースのビルドと誤認しうる（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
   別の実行が `target/product-contract-mutations/.lock` を持つ時は 30 秒で失敗する。`make verify` を並行して動かさない。
+  `background-graph` の初期化待ちが 5 秒未満で `WouldBlock` を返す時は、accept 後の `O_NONBLOCK` を調べる。
+  Darwin は非ブロッキングのリスナーのフラグを受け継ぐため、読込み期限の設定だけでは待機に戻らない。
+  検査用の `initializer_peer` と、送信前のフラグを確認する通常回帰を使う（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
   `negative control must stay inside its source copy` は、期待値の不一致ではなく反例用コピーの検証エラーである。
   対象ファイルの欠落と、シンボリックリンクによるコピー外への逸脱を区別する。
   `target/` の整理と検査が競合すると、コピーが実行中に消えて同じエラーになる。
@@ -158,6 +161,10 @@ make debug-report
   不正なら `Waveforms::load` が正準 PCM から作り直す。再生成できなければ波形なしにするが、原本は変更しない。
   `peak-cache-validation` は公開読込みと再生成、`peak_cache_validation.rs` の通常回帰は PCM なしの正常なキャッシュも確認する。
   正常なキャッシュで粗い列だけを描けても、PCM の全体が読める証拠にはならない（[ADR 0058](decisions/0058-waveform-peaks.md)）。
+  有限の大きなステレオ素材だけが無音の波形になる時は、平均の加算が `f32` へ戻っていないかを確認する。
+  構築とマップの両方が対象で、`stereo-waveform-average` が極大値・非正規化数と旧キャッシュの再生成を区別する。
+  `ECHDPK01` は再利用せず PCM から `ECHDPK02` を作るため、素材がない旧キャッシュは波形を出さない。
+  素材の自動修復や再生音の変更ではない（[ADR 0058 の後続修正](decisions/0058-waveform-peaks.md)）。
 
 - **S2 / S3 は通るのに製品だけ負荷に弱い**:
   選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。

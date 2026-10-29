@@ -183,6 +183,8 @@ MySong.echode/
 音声とプラグイン状態は BLAKE3-256 小文字 16 進で `media/objects/` に不変保存し、トラック JSON の `state` から参照する
 （[ADR 0031](../decisions/0031-content-addressed-store.md)、[ADR 0056](../decisions/0056-audio-import.md)）。
 波形ピークは `cache/peaks/<hash>` に置き、履歴には入れない（[ADR 0058](../decisions/0058-waveform-peaks.md)）。
+現行の識別子は `ECHDPK02`。有限ステレオの平均は構築・マップとも `f64` で加算・除算してから `f32` へ戻す。
+旧版の誤った無音を残さないよう、`ECHDPK01` は PCM から再生成する。PCM がなければ波形なしとし、原本を変更しない。
 
 ### 6.4 保存とコミット
 

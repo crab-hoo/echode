@@ -2231,7 +2231,7 @@ fn contract_preparing_a_graph_keeps_current_audio_running_under_rtsan() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut peer = loop {
         match listener.accept() {
-            Ok((peer, _)) => break peer,
+            Ok((peer, _)) => break background_graph::initializer_peer(peer),
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
@@ -2240,7 +2240,6 @@ fn contract_preparing_a_graph_keeps_current_audio_running_under_rtsan() {
             Err(error) => panic!("initializer handshake: {error}"),
         }
     };
-    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let mut reached = [0];
     peer.read_exact(&mut reached).unwrap();
     let expected = 0.25 * std::f32::consts::FRAC_1_SQRT_2;

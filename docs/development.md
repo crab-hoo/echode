@@ -180,6 +180,8 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 
 波形キャッシュの構造・バイト長・列の検証は `peaks.rs::read_cache`、公開読込みと再生成の回帰は
 `crates/echode-history/tests/peak_cache_validation.rs` に置く（[ADR 0058](decisions/0058-waveform-peaks.md)）。
+有限ステレオの平均とキャッシュの版は `stereo_waveform.rs` で検査する。
+構築・マップの極大値と非正規化数、旧キャッシュの再生成と PCM の保持を製品の公開波形経路へ通す。
 
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
