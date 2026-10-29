@@ -63,6 +63,18 @@
   ],
   "product_contracts": [
     {
+      "id": "mcp-stdio-framing", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_framing"],
+      "test": "contract_unterminated_mcp_input_preserves_edits_history_and_recovery", "timeout": 180,
+      "purpose": "公開MCP入口と実ソケットで旧・新プロトコルの部分行を編集前に拒否し、ジャーナル・Undo/Redo・完結した前方の編集・再オープンを保つ",
+      "negative_control": {"file": "crates/echode-api/src/mcp.rs", "old": "if !line.ends_with('\\n') {", "new": "if false {"}
+    },
+    {
+      "id": "mcp-backend-framing", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_framing"],
+      "test": "contract_unterminated_backend_frames_do_not_authorize_or_acknowledge_edits", "timeout": 180,
+      "purpose": "実ソケットで改行前に切断したAPI版応答では編集を送らず、編集応答の部分行を成功扱いせず再送もしない。結果不明の案内を保つ",
+      "negative_control": {"file": "crates/echode-api/src/mcp.rs", "old": "if !line.ends_with('\\n') {", "new": "if false {"}
+    },
+    {
       "id": "rpc-json-whitespace", "runner": "rust", "package": "echode-api", "target": ["--test", "request_whitespace"],
       "test": "contract_non_json_whitespace_preserves_edits_history_and_recovery", "timeout": 180,
       "purpose": "公開APIと実ソケットでJSON外の空白を伴う編集・通知・Undo/Redoをparse errorとして拒否し、ジャーナル・既存のRedo・再オープン時の状態を保つ",

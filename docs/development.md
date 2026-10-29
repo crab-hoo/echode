@@ -114,6 +114,11 @@ JSON の構文上の空白は `ApiSession::reply` の `trim_matches` と既存�
 完了済みの前方の編集・ジャーナル・既存の履歴・再オープン、CRLF と分割受信を検査する
 （[ADR 0073 の改行境界](decisions/0073-socket-path.md#改行前の切断の拒否-2026-10-29)）。
 
+MCP の改行完了は `crates/echode-api/src/mcp.rs::read_line` が stdio と接続先 API の応答の両方で検査する。
+公開入口と実ソケットの `tests/mcp_framing.rs` は、部分行の拒否・前方の編集・履歴と再オープン、
+版応答による編集の許可と編集応答の結果不明・再送禁止、LF / CRLF 込みの行上限を区別する
+（[ADR 0115 の回帰補強](decisions/0115-phase2-mcp.md#改行境界の回帰補強2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

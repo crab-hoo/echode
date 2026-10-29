@@ -746,6 +746,14 @@ make debug-report
   テストで既存パッケージの JSON だけを上書きしても保存済み履歴は置き換わらない。文書の編集経路を使うか、別の入力は新しいパッケージへ書く。
   MCP（`echode mcp SOCKET`）は接続先の `echode serve PACKAGE SOCKET` と同じビルド・絶対ソケットパス・API 版 1 を確認し、stdout へログを混ぜない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
 
+- **MCP が `MCP message ended without a newline` を返す**:
+  stdio 入力と接続先 API の応答は同じ `mcp.rs::read_line` を通るため、どちらの EOF かを切り分ける。
+  stdio の部分行は編集前に拒否し、完了済みの前方の要求だけを保持する。CR だけの終端では完了しない。
+  版応答の部分行では編集を送らないが、編集応答の部分行では編集が既に成立している可能性がある。
+  `isError` と結果不明の案内を確認し、概要を調べずに再送しない。
+  `mcp_framing.rs` と必須契約 `mcp-stdio-framing`・`mcp-backend-framing` が両境界を実ソケットで区別する
+  （[ADR 0115 の回帰補強](decisions/0115-phase2-mcp.md#改行境界の回帰補強2026-10-29)）。
+
 ### サニタイザー（TSan / ASan / RTSan）
 
 - **TSan の既知の環境要因と製品不具合の切り分け**:
