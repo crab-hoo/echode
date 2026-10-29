@@ -75,8 +75,11 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。実画面と VoiceOver はユーザー確認待ちである。
   - **P2-06（ミックス）**: 先行分として、ヘッダとインスペクターのミュート・ソロを全選択トラックへ一括適用した。
     入力時の対象を保持し、連打は現行値から順に反転し、単一 Undo / Redo・保存へ接続した。選択外のソロは解除しない。
-    ピアノロールの行ボタンは単一トラックのまま。音量・パンの相対一括変更とコンソール表示は未接続である
-    （[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。実画面・VoiceOver・聴感はユーザー確認待ち。
+    ピアノロールの行ボタンは単一トラックのまま（[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
+    音量・パンの数値入力も、入力時の対象保持・共通差分と上下限・単一 Undo / Redo・保存へ接続した。
+    無音からの音量比が決まらない場合は理由を示し、有限の変更は他の無音を保つ。
+    ドラッグ・既定値リセット・読み上げの増減の一括化とコンソール表示は未接続である
+    （[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。実画面・VoiceOver・聴感はユーザー確認待ち。
   - **P2-07（マーカー・録音・ピアノロール）**: 着手中。
     クリップ本体の移動・Command の複製移動を置き換えとして接続した（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
     記憶した再生開始位置を接続した。停止は開始位置へ戻り、一時停止はその場から再開し、Space は再生／停止とした。

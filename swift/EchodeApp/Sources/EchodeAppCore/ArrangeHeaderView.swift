@@ -170,14 +170,15 @@ final class ArrangeHeaderView: NSView {
     /// The third click's field, in the inspector's units: dB with −∞, and percent.
     private func openEntry(_ target: MixTarget) {
         guard let snapshot, let index = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == target.track }),
-              let mix = snapshot.mixer(onTrack: index), let name = snapshot.trackName(at: index) else { return }
+              let mix = snapshot.mixer(onTrack: index), let name = snapshot.trackName(at: index), let actions = mixActions else { return }
         entry?.cancel()
         let layout = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
         let title = text(target.field == .gain ? "Volume" : "Pan") + " " + name
         entry = ValueEntryField.open(in: self, over: layout.rect(target.field), text: MixEntry.text(target.field, mix[target.field].value),
-            label: title, commit: { [weak self] typed in
+            label: title, submit: { typed in
                 guard let value = MixEntry.value(target.field, typed) else { return false }
-                if value != mix[target.field].value { self?.mixActions?.set(target.track, target.field, value) }
+                if let enter = actions.enter { enter(target.track, target.field, value) }
+                else if value != mix[target.field].value { actions.set(target.track, target.field, value) }
                 return true
             }, onClose: { [weak self] in self?.entry = nil })
     }

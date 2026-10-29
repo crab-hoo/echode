@@ -1,6 +1,18 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Select a non-silent track to adjust the group's relative volume, or select this track alone.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Select a non-silent track to adjust the group's relative volume, or select this track alone." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "相対音量の調整は無音でないトラックを基準にするか、このトラックだけを選択してください。" } }
+      }
+    },
+    "Numeric entries adjust selected tracks relatively. Drags and accessibility steps affect one track.": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Numeric entries adjust selected tracks relatively. Drags and accessibility steps affect one track." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "数値入力は選択トラックを相対調整します。ドラッグと読み上げの増減は単一トラックです。" } }
+      }
+    },
     "The latest saved version could not be read": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "The latest saved version could not be read" } },

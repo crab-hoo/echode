@@ -590,9 +590,16 @@ make debug-report
 - **選択トラックのミュート・ソロが部分適用される／連打で戻らない**:
   `MixerSwitchBatch` の文書・捕捉 ID 群・anchor・反転／絶対値を、操作後に変わった現在の選択と区別する。
   `mixerSwitchTail` と `EditTurn` の手番で反転元の現行値を確認し、`param.set` 配列を 1 回送っていることを追う。
-  欠けた対象と旧文書は全体を拒否し、同じ絶対値は Redo を消さない。ピアノ右側の行ボタンと音量・パンが単一対象なのは現時点の仕様である。
+  欠けた対象と旧文書は全体を拒否し、同じ絶対値は Redo を消さない。ピアノ右側の行ボタンは単一対象を保つ。
   切分けは `MixerSwitch*Tests` と必須契約 `mixer-switch-batch-ui`・`mixer-switch-order-ui`
   （[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
+- **音量・パンの数値入力で選択全体が変わらない／入力値まで動かない**:
+  `MixActions.enter` と `MixerValueBatch` の捕捉 ID 群・基準 ID・要求値を確認する。
+  数値入力だけが相対一括変更で、ドラッグ・既定値リセット・読み上げの増減は単一対象を保つ。
+  `mixerSwitchTail` の手番で現行値を読み、最大音量 4・パン ±1 を最初に踏む対象で共通差分を止める。
+  無音の基準からの音量増加は比が決まらないため理由を表示し、他の無音は有限倍率でも無音を保つ。
+  古い文書・欠けた ID の全体拒否と no-op による Redo の保持を、`MixerValue*Tests` と
+  `mixer-value-batch-ui`・`mixer-value-bounds-ui` で切り分ける（[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。

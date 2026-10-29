@@ -9,19 +9,24 @@ struct TrackMixInspector: View {
     @State private var meterPaused = false
     var body: some View {
         let transport = controller.playbackRequested
+        let document = controller.documentID
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(text("Track Controls")).font(.subheadline)
                 ControlNumberField(title: text("Volume"), value: MixScale.decibels(mix.gain.value), unit: "dB", minimum: -120,
                     maximum: 20 * log10(4), silence: true) { value in
                     let gain: Float = value == -.infinity ? 0 : Float(pow(10, value / 20))
-                    set(.gain, gain)
+                    set(document, .gain, gain)
                 }
-                ControlNumberField(title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%", minimum: -100, maximum: 100) { set(.pan, Float($0 / 100)) }
+                ControlNumberField(title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%", minimum: -100, maximum: 100) { set(document, .pan, Float($0 / 100)) }
                 HStack {
-                    Toggle(text("Mute"), isOn: Binding(get: { mix.mute.value != 0 }, set: { set(.mute, $0 ? 1 : 0) }))
-                    Toggle(text("Solo"), isOn: Binding(get: { mix.solo.value != 0 }, set: { set(.solo, $0 ? 1 : 0) }))
+                    Toggle(text("Mute"), isOn: Binding(get: { mix.mute.value != 0 }, set: { set(document, .mute, $0 ? 1 : 0) }))
+                    Toggle(text("Solo"), isOn: Binding(get: { mix.solo.value != 0 }, set: { set(document, .solo, $0 ? 1 : 0) }))
                 }.toggleStyle(.button)
+                if controller.selectedTracks.contains(track), controller.selectedTracks.count > 1 {
+                    Text(text("Numeric entries adjust selected tracks relatively. Drags and accessibility steps affect one track."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }.disabled(controller.busy || controller.faderPreview != nil)
             TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: meterPaused && !transport)) { timeline in
                 let peak = controller.playback?.peak(track: track) ?? 0
@@ -40,9 +45,10 @@ struct TrackMixInspector: View {
             }
         }
     }
-    private func set(_ field: MixerField, _ value: Float) {
-        let document = controller.documentID
-        controller.arrangeMixActions(document: document).set(track, field, value)
+    private func set(_ document: UUID?, _ field: MixerField, _ value: Float) {
+        let actions = controller.arrangeMixActions(document: document)
+        if field == .gain || field == .pan { (actions.enter ?? actions.set)(track, field, value) }
+        else { actions.set(track, field, value) }
     }
 }
 

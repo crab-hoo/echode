@@ -51,7 +51,7 @@ extension ProjectController {
         }, documentID: request.document)
     }
 
-    /// The arrange and inspector share captured group switches; continuous controls remain single-track.
+    /// Switches and numeric entries capture groups; live previews remain single-track.
     func arrangeMixActions(document: UUID?) -> MixActions {
         MixActions(begin: { [self] track, field in
             guard let document, documentID == document else { return false }
@@ -78,6 +78,8 @@ extension ProjectController {
             }
         }, toggle: { [self] track, field in
             if let request = captureMixerSwitch(track, field: field, document: document) { enqueueMixerSwitch(request) }
+        }, enter: { [self] track, field, value in
+            if let request = captureMixerValue(track, field: field, value: value, document: document) { enqueueMixerValue(request) }
         })
     }
 }

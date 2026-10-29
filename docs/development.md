@@ -150,6 +150,11 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 回帰は `MixerSwitchBatchTests.swift`・`MixerSwitchBoundaryTests.swift`・`MixerSwitchValidationTests.swift`
 （[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
 
+音量・パンの数値入力の対象・共通倍率／差分・上下限は `MixerValueBatch.swift`、入力の振分けは `MixActions.enter` を使う。
+回帰は `MixerValueBatchTests.swift`・`MixerValueBoundaryTests.swift`・`MixerValueOrderTests.swift` に置く。
+離散的な入力は `mixerSwitchTail` を共有し、既存の単一フェーダーの終了後に手番の現行値を使う
+（[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
+
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
 回帰は `clip_move_tests.rs`、履歴と CLI の `clip_move`、`ClipMoveTests.swift`（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。

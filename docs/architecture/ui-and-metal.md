@@ -93,7 +93,11 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 - **選択トラックのミュート・ソロ**: ヘッダとインスペクターは `arrangeMixActions` を共有し、操作時の文書・トラック ID 群を捕捉する。
   ヘッダの反転は待ち列で順序を保ち、編集の手番の現行値から決める。インスペクターの絶対値は no-op で履歴を変えない。
   `MixerSwitchBatch` が既存の `param.set` 配列を単一 Undo・保存へ渡し、選択外のソロを保つ。
-  ピアノ行は単一対象を保ち、相対音量・パンは未接続である（[ADR 0189](../decisions/0189-selected-track-mute-and-solo.md)）。
+  ピアノ行は単一対象を保つ（[ADR 0189](../decisions/0189-selected-track-mute-and-solo.md)）。
+- **選択トラックの音量・パンの数値入力**: `MixActions.enter` をヘッダとインスペクターが共有し、`MixerValueBatch` が入力時の対象を保持する。
+  手番の現行値から共通の音量倍率・パン差を求め、全対象の上下限で制限して既存の `param.set` 配列を 1 回送る。
+  旧文書・欠けた対象は全体を拒否し、変更がなければ履歴を増やさない。ドラッグ・既定値リセット・読み上げの増減は単一対象を保つ
+  （[ADR 0191](../decisions/0191-selected-track-numeric-mix.md)）。
 - **P2 のアレンジ・ミックス編集**: 右ドラッグでクリップ選択、空白左ドラッグで編集区間選択、リージョン作成、相対音量・パンの一括操作に対応する
   （[ADR 0117](../decisions/0117-workflow-interactions.md)、[ミックスの要件](../interaction-design.md#ミキサーの複数選択)）
 

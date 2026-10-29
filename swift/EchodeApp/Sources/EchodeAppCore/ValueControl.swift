@@ -120,6 +120,7 @@ final class ValueClicks<Target: Equatable> {
 @MainActor
 final class ValueEntryField: NSTextField, NSTextFieldDelegate {
     private var commit: ((String) async -> Bool)?
+    private var synchronousCommit: ((String) -> Bool)?
     private var onClose: (() -> Void)?
     private weak var host: NSView?
     private(set) var closed = false
@@ -151,6 +152,15 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
         return field
     }
 
+    /// Captures a discrete edit inside the input event, before asynchronous publication.
+    /// Field closure still waits until the event returns to avoid reentrant focus changes.
+    static func open(in host: NSView, over rect: CGRect, text: String, label: String,
+                     submit: @escaping (String) -> Bool, onClose: @escaping () -> Void = {}) -> ValueEntryField {
+        let field = open(in: host, over: rect, text: text, label: label, commit: { _ in true }, onClose: onClose)
+        field.synchronousCommit = submit
+        return field
+    }
+
     /// At least 72 by 22 points, centered on the control and kept inside the host.
     static func frame(for rect: CGRect, in bounds: CGRect) -> CGRect {
         let width = max(72, rect.width)
@@ -170,8 +180,11 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
     private func submit(leaving: Bool) {
         guard !closed, pending == nil, let commit else { return }
         let entry = stringValue
+        let immediate = synchronousCommit?(entry)
         pending = Task { [weak self] in
-            let accepted = await commit(entry)
+            let accepted: Bool
+            if let immediate { accepted = immediate }
+            else { accepted = await commit(entry) }
             guard let self else { return }
             self.pending = nil
             if accepted || leaving { self.close() } else { self.mark(invalid: true) }
@@ -183,6 +196,7 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
         closed = true
         commit = nil
         let focused = currentEditor() != nil
+        synchronousCommit = nil
         abortEditing()
         if focused, let host, host.window != nil { host.window?.makeFirstResponder(host) }
         removeFromSuperview()
