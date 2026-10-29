@@ -608,6 +608,11 @@ make debug-report
   再オープン後の誤編集は `documentID` 変更時の `controlElements` の破棄と旧要素の文書照合を追う。
   切分けは `mixer-step-ui`・`mixer-step-bounds-ui` と `MixerStepOrderTests`
   （[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
+- **文書を開き直した後に古いヘッダ操作で値が変わる／数値欄が残る**:
+  `ArrangeHeaderView.documentID` の変更で `ValueClicks.cancel`・押下の破棄・欄の取消が走るかを確認する。
+  `mixActions` の更新は文書 ID より先に来るため、終了は押下時の `gestureActions` を使い、新文書の別の試聴へ送らない。
+  同文書の更新では押下を維持する。`mixer-gesture-document-ui`・`mixer-reset-document-ui` と
+  `MixerGestureDocumentTests` で保存・履歴・callback の所有者を区別する（[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
 - **画面のミックス値・メーターと音が一致しない**:
   確定スナップショットと一時的な `faderPreview`、`requested_plan` / `applied_plan` を確認する。
   メーターはフェーダー後の左右最大ピーク（停止中は 24 dB/s 減衰、−60 dB 以下で 0、無音表示は `−∞`）。VoiceOver の増減段数や数値欄の `−` 解釈は `MixControlTests` で確認する（[ADR 0107](decisions/0107-mix-controls.md)）。
@@ -651,6 +656,9 @@ make debug-report
 
 - **TSan の既知の環境要因と製品不具合の切り分け**:
   1. UI テストは機器なしの応答差し替え口を使い、実 HAL を開かない（`target/macos27-audit/tsan-hal-before.log`）。
+     単体候補の追加は `opensWindow` からデバイス要求も送るため、再生なし・`preparesOutput = false` でも実 HAL へ到達し得る。
+     `PluginBatchTests.invalidTargetsDoNotPartiallyInsertOrClearRedo` は `FakeParameterPlugin` を注入し、窓要求を待って対象も照合する。
+     実 HAL の `write_planes` と別スレッドの過去の書込みが競合した場合も、まずこの未分離の経路を調べる。警告自体は抑制しない。
   2. 終了済みと新規のスレッドの `errno` 誤検出は、C のみでも再現し、検査ランタイムの寿命処理を修正した（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
      `target/bridge/thread/errno/` の baseline・fixed・real-race の対照と、同じランタイムのロード証拠を確認する。
      準備が古い時は `make setup-bridge` を使う。取得済みソースの再ビルドには `python3 scripts/tsan_runtime.py --prepare` も使える。

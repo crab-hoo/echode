@@ -75,7 +75,9 @@ struct PluginBatchTests {
     @Test func invalidTargetsDoNotPartiallyInsertOrClearRedo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-batch-invalid-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }
-        let controller = ProjectController()
+        let plugin = FakeParameterPlugin()
+        // A single candidate also opens its GUI; keep that request off real HAL.
+        let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
         await controller.addTrack(name: "first")
@@ -100,6 +102,8 @@ struct PluginBatchTests {
         #expect(await controller.insertPlugin(single))
         #expect(controller.deviceRows(on: first).isEmpty)
         #expect(controller.deviceRows(on: removed).count == 1)
+        await controller.pluginWindowTask?.value
+        #expect(await plugin.windowRequests() == [try #require(controller.deviceRows(on: removed).first).id])
         await controller.close()
         #expect(controller.selectedTracks.isEmpty && controller.selection == nil)
     }

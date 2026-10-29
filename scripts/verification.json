@@ -63,6 +63,21 @@
   ],
   "product_contracts": [
     {
+      "id": "mixer-gesture-document-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "MixerGestureDocumentTests", "test": "contractOldHeaderPressCannotStartADragInTheReopenedDocument", "timeout": 180,
+      "purpose": "実ヘッダの押下後に同じプロジェクトを再オープンし、旧ドラッグが新文書の試聴・履歴・保存へ漏れないことを確認",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "            clicks.cancel()\n            press = nil\n            entry?.cancel()\n", "new": ""}
+    },
+    {
+      "id": "mixer-reset-document-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "MixerGestureDocumentTests", "test": "contractOldResetAndEntryCannotFinishANewDocumentsPreview", "timeout": 180,
+      "purpose": "リセット待ち・数値欄を文書交換で取り消し、callback更新後も旧操作が新文書の別プレビューを確定・取消しないことを確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "            actions?.finish(commit)", "new": "            (self?.mixActions ?? actions)?.finish(commit)"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "            entry?.cancel()\n            controlElements = [:]", "new": "            controlElements = [:]"}
+      ]
+    },
+    {
       "id": "mixer-step-ui", "runner": "swift", "package_path": "swift/EchodeApp",
       "suite": "MixerStepTests", "test": "contractAccessibleStepsPreserveCapturedGroupOffsetsAndHistory", "timeout": 180,
       "purpose": "実ヘッダのアクセシビリティ増減から操作時の対象を保持し、連続1dB・5%変更、共通差分、単一Undo/Redo・保存再読込を確認",
@@ -78,7 +93,7 @@
       "negative_controls": [
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let factor = min(upper, max(lower, Double(value) / Double(basis)))", "new": "let factor = max(lower, Double(value) / Double(basis)) + upper * 0"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let delta = min(1 - upper, max(-1 - lower, Double(value) - Double(basis)))", "new": "let delta = Double(value) - Double(basis) + (lower + upper) * 0"},
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "didSet { if oldValue != documentID { controlElements = [:] } }", "new": "didSet { if oldValue != documentID { controlElements = controlElements.filter { _ in true } } }"}
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "controlElements = [:]", "new": "controlElements = controlElements.filter { _ in true }"}
       ]
     },
     {

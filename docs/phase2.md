@@ -223,6 +223,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   ヘッダの読み上げの増減も、現行値からの共通差分・限界・単一 Undo・保存へ接続した。
   `mixer-step-ui`・`mixer-step-bounds-ui` で連打・対象捕捉・確定値と旧文書の要素の拒否を確認する
   （[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
+  文書交換時のヘッダ操作の取消も接続した。`mixer-gesture-document-ui`・`mixer-reset-document-ui` は旧押下・リセット待ち・数値欄が新文書へ漏れないことを確認する
+  （[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
   一括ドラッグ・既定値リセットとコンソール表示は未接続である。
 - ドラムラックの子で使う内蔵サンプラー（ゲート再生＋音量 ADSR とワンショットの切替、再発音時の旧音リリースと新音の独立加算）と子・親のミックスを接続する（[ドラムの入力とミックス](interaction-design.md#ドラムの入力とミックス)）。
 - 受入: バイパス、係数・状態更新、ステレオ、遅延、測定信号、ブロック長と RT の契約、実 View からの 1 回の Undo と保存・復旧を確認する。

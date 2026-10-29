@@ -158,6 +158,10 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 回帰は `MixerStepTests.swift`・`MixerStepBoundaryTests.swift`・`MixerStepOrderTests.swift` に置く
 （[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
 
+ヘッダのマウス操作の文書境界は `ArrangeHeaderView` の `documentID`・`press`・`gestureActions` に置く。
+回帰は `MixerGestureDocumentTests.swift`。文書交換で押下・リセット待ち・数値欄を取り消し、同文書の更新では押下時のコールバックを保持する
+（[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
+
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
 回帰は `clip_move_tests.rs`、履歴と CLI の `clip_move`、`ClipMoveTests.swift`（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。

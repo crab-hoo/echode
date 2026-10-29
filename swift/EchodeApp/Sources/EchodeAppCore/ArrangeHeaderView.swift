@@ -28,7 +28,13 @@ final class ArrangeHeaderView: NSView {
     var onDropFX: ((UUID, TrackFXDrop) -> Void)?
     var onDuplicateTracks: (() -> Void)?
     var documentID: UUID? {
-        didSet { if oldValue != documentID { controlElements = [:] } }
+        didSet {
+            guard oldValue != documentID else { return }
+            clicks.cancel()
+            press = nil
+            entry?.cancel()
+            controlElements = [:]
+        }
     }
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
@@ -36,7 +42,9 @@ final class ArrangeHeaderView: NSView {
     /// Fader and pan clicks, drags and typing (ADR 0153).
     let clicks = ValueClicks<MixTarget>()
     /// The control and value under the last press, which a drag moves from.
-    private var press: (target: MixTarget, rect: CGRect, original: Float)?
+    private var press: (target: MixTarget, rect: CGRect, original: Float, document: UUID?, actions: MixActions)?
+    /// A view update must not lend new callbacks to a gesture already in progress.
+    private var gestureActions: MixActions?
     private(set) var entry: ValueEntryField?
 
     override init(frame: NSRect) {
@@ -46,15 +54,21 @@ final class ArrangeHeaderView: NSView {
         setAccessibilityLabel(text("Track"))
         registerForDraggedTypes([FXDrag.deviceType, FXDrag.pluginType])
         clicks.begin = { [weak self] target in
-            guard let self, self.press?.target == target, let mixActions = self.mixActions else { return false }
-            return mixActions.begin(target.track, target.field)
+            guard let self, let press = self.press, press.target == target, press.document == self.documentID,
+                  press.actions.begin(target.track, target.field) else { return false }
+            self.gestureActions = press.actions
+            return true
         }
         clicks.drag = { [weak self] target, offset in
             guard let press = self?.press, press.target == target else { return }
-            self?.mixActions?.change(MixScale.dragged(target.field, from: press.original, by: Double(offset.width) / max(1, Double(press.rect.width))))
+            self?.gestureActions?.change(MixScale.dragged(target.field, from: press.original, by: Double(offset.width) / max(1, Double(press.rect.width))))
         }
-        clicks.reset = { [weak self] target in self?.mixActions?.change(MixScale.defaultValue(target.field)) }
-        clicks.finish = { [weak self] commit in self?.mixActions?.finish(commit) }
+        clicks.reset = { [weak self] target in self?.gestureActions?.change(MixScale.defaultValue(target.field)) }
+        clicks.finish = { [weak self] commit in
+            let actions = self?.gestureActions
+            self?.gestureActions = nil
+            actions?.finish(commit)
+        }
         clicks.type = { [weak self] target in self?.openEntry(target) }
     }
     @available(*, unavailable)
@@ -118,7 +132,7 @@ final class ArrangeHeaderView: NSView {
             else { mixActions.set(id, field, mix[field].value == 0 ? 1 : 0) }
         } else {
             let target = MixTarget(track: id, field: field)
-            if case .waiting(target) = clicks.phase {} else { press = (target, controls.rect(field), mix[field].value) }
+            if case .waiting(target) = clicks.phase {} else { press = (target, controls.rect(field), mix[field].value, documentID, mixActions) }
             clicks.down(target, at: point, clicks: event.clickCount)
         }
     }

@@ -103,6 +103,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   [ADR 0189](decisions/0189-selected-track-mute-and-solo.md)、[ADR 0191](decisions/0191-selected-track-numeric-mix.md)、
   [ADR 0192](decisions/0192-selected-track-accessibility-steps.md)。
   数値入力とヘッダの読み上げ増減は共通差分と限界を保ち、ドラッグ・既定値リセットは単一対象を保つ。
+- ヘッダの値操作の文書切替境界: [ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)。
+  押下・リセット待ち・数値欄を文書交換で取り消し、旧操作へ新文書のコールバックを貸さない。
 - 値の操作子のクリック規則・入力欄・`text_to_value` の文字入力: [ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)。
 - ピアノロールの単一ノートのドラッグでの Shift 吸着解除・最短 1 tick と解放時の確定:
   [ADR 0167](decisions/0167-piano-note-drag-snapping.md)。
