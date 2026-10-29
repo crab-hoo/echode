@@ -428,6 +428,9 @@ make debug-report
   NSSlider の追跡や絶対位置の計算が戻っていないかを `track-mix-ui`・`fx-params-clicks-ui` で確認する。
   既定値が記録されないなら、待ち時間（`NSEvent.doubleClickInterval`）の前に文書が変わって下書きが消えたか、
   プレビューの開始（`beginFader`・`beginParameter`）が拒否されたかを区別する。3 回目で既定値が残るなら `mix-clicks-ui` を使う。
+  別の操作子へ移ると拒否される場合は、待ち対象と次の押下対象、先行プレビューの終了を区別する。
+  `if case .waiting(target)` は既存の対象値を照合している。全待ち状態へ広げて旧押下を流用しない。
+  `mixer-reset-target-ui`・`clip-reset-target-ui` は対象切替と個別の履歴・保存を検査するが、編集完了前の連続入力や実機のクリック間隔の保証ではない。
   入力欄が赤いまま閉じないのは、範囲外・単位違い・プラグインの拒否（`converts` が真で `value` が空）である。
   変換を持たないプラグイン（`converts` が偽）は数値だけを受ける。`helper did not read the parameter text` は通信の失敗で、
   `plugin-text-parse` で実ヘルパーの `text_to_value` を切り分ける。

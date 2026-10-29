@@ -142,6 +142,9 @@ Swift の警告と開く要求の取消は `RecoveryConsent.swift`、公開前�
 値の操作子のクリック規則と重ねる入力欄は `ValueControl.swift`（`ValueClicks`・`ValueEntryField`）、
 単位と範囲は `MixControls.swift`（`MixEntry`・`ClipEntry`）、各操作子の接続は `ArrangeHeaderView.swift`・`ArrangeView.swift`・
 `WorkspaceParameterView.swift`、回帰は `ValueControlTests.swift` に置く。
+リセット待ちから別の操作子へ移る対象境界は `ValueControlTargetTests.swift` に置く。
+ヘッダの別フィールド・別トラックと、クリップの別ハンドルの数値欄を製品入力から検査する
+（[ADR 0153 の回帰補強](decisions/0153-value-control-clicks-and-typed-entry.md#回帰の補強-リセット待ちから別の操作子へ移る)）。
 プラグインの文字の変換は、通信の `ParseParam`（`crates/echode-sandbox/src/params.rs`）、ヘルパーの `param_from_text`、
 FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
 

@@ -603,6 +603,23 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_reset_target_contracts_cover_both_native_views_and_select_dynamic_checks(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, test, source in (
+                ("mixer-reset-target-ui", "contractHeaderResetWaitDoesNotBorrowTheNextControlsPress", "ArrangeHeaderView.swift"),
+                ("clip-reset-target-ui", "contractClipResetWaitKeepsOnlyTheMatchingHandlesPress", "ArrangeView.swift")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"], contract["test"]), ("swift", "ValueControlTargetTests", test))
+            fault = contract["negative_control"]
+            self.assertTrue(fault["file"].endswith("/" + source))
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+            self.assertIn(".waiting(target)", fault["old"])
+            self.assertIn(".waiting =", fault["new"])
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + source))
+        self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                        <= self.selected("swift/EchodeApp/Tests/EchodeAppTests/ValueControlTargetTests.swift"))
+
     def test_piano_time_guides_contract_covers_independent_lines_deduplication_and_priority(self):
         contract = next(item for item in self.policy["product_contracts"] if item["id"] == "piano-time-guides-ui")
         self.assertEqual((contract["runner"], contract["suite"], contract["test"]),
@@ -1059,7 +1076,7 @@ class PolicyTests(unittest.TestCase):
                           "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-duplicate-key-ui", "clip-duplicate-key-guards-ui", "mixer-switch-batch-ui", "mixer-switch-order-ui", "mixer-value-batch-ui", "mixer-value-bounds-ui", "mixer-step-ui", "mixer-step-bounds-ui", "mixer-drag-identity-ui", "mixer-gesture-document-ui", "mixer-reset-document-ui", "scan-deadline", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
-                          "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui",
+                          "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui", "mixer-reset-target-ui", "clip-reset-target-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",
