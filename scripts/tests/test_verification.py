@@ -654,6 +654,19 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan", "rtsan"}
                             <= self.selected(source))
 
+    def test_audio_import_validation_rejects_external_samples_before_package_writes(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "audio-import-validation")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-history", ["--test", "audio_import_validation"]))
+        self.assertEqual(contract["test"], "contract_audio_import_rejects_nonfinite_before_writing_and_preserves_history")
+        fault = contract["negative_control"]
+        self.assertEqual(fault["file"], "crates/echode-history/src/media.rs")
+        self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in (fault["file"], "crates/echode-history/tests/audio_import_validation.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(source))
+        self.assertIn("rtsan", self.selected(fault["file"]))
+
     def test_clip_identity_and_float_roundtrip_contracts_preserve_disk_and_input_boundaries(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         disk = contracts["package-float-roundtrip"]
@@ -1148,7 +1161,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
+                          "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",

@@ -178,6 +178,10 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 保存済み音声の有限性は `crates/echode-history/src/media.rs::decode_pcm`、公開読込みとトリム後の素材準備の回帰は
 `crates/echode-audio-io/tests/pcm_validation.rs` に置く（[ADR 0056 の後続修正](decisions/0056-audio-import.md)）。
 
+外部音声の取込み前の有限性は `media.rs::decode_file`、公開復号・取込みと履歴の回帰は
+`crates/echode-history/tests/audio_import_validation.rs` に置く。
+IEEE float WAV の異常値・有限値のビット保持・原本とパッケージの保持・一括編集の巻戻しと再オープンを通す。
+
 波形キャッシュの構造・バイト長・列の検証は `peaks.rs::read_cache`、公開読込みと再生成の回帰は
 `crates/echode-history/tests/peak_cache_validation.rs` に置く（[ADR 0058](decisions/0058-waveform-peaks.md)）。
 有限ステレオの平均とキャッシュの版は `stereo_waveform.rs` で検査する。

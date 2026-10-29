@@ -286,7 +286,7 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
         .checked_mul(channels_usize as u64)
         .ok_or_else(|| PackageError::new("audio frame count overflowed"))?;
     let count = usize::try_from(count).map_err(|_| PackageError::new("audio is too large"))?;
-    let mut samples = vec![0.0; count];
+    let mut samples = vec![0.0f32; count];
     let mut written = 0u64;
     while written < frames {
         if !keep_going() {
@@ -330,6 +330,9 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
     let frames = written;
     let count = usize::try_from(frames).unwrap_or(0) * channels_usize;
     samples.truncate(count);
+    if samples.iter().any(|sample| !sample.is_finite()) {
+        return Err(PackageError::new("audio contains a non-finite sample"));
+    }
     Ok(DecodedPcm {
         sample_rate,
         channels: u16::try_from(channels).expect("channels are 1 or 2"),

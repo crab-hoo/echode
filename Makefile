@@ -92,6 +92,7 @@ check-base:
 # Selected-track numeric entries and native accessibility steps share common limits, current-state ordering and atomic history.
 # Zero-horizontal-travel header drags preserve exact gains below the display floor and leave Undo/Redo untouched.
 # Clip identity drags preserve exact gain/fade values and Redo; package floats retain every nonzero bit across disk saves.
+# External audio imports reject non-finite samples before package writes and preserve history on failure.
 # Canonical PCM rejects non-finite samples before trimmed clip preparation or SRC, without rewriting stored objects.
 # Peak cache allocations stay within file data; invalid pyramid shapes or columns rebuild from canonical PCM.
 # Stereo waveform averages widen before summing; V1 caches rebuild so overflow cannot remain cached silence.

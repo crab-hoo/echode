@@ -124,6 +124,12 @@
       "negative_control": {"file": "crates/echode-history/src/media.rs", "old": "if !sample.is_finite() {", "new": "if false {"}
     },
     {
+      "id": "audio-import-validation", "runner": "rust", "package": "echode-history", "target": ["--test", "audio_import_validation"],
+      "test": "contract_audio_import_rejects_nonfinite_before_writing_and_preserves_history", "timeout": 180,
+      "purpose": "外部WAVのNaN・無限大を一括復号と取込みで保存前に拒否し、有限値のビット保持・原本とパッケージの無変更・失敗時のUndo/Redoと再オープンを確認",
+      "negative_control": {"file": "crates/echode-history/src/media.rs", "old": "samples.truncate(count);\n    if samples.iter().any(|sample| !sample.is_finite()) {\n        return Err(PackageError::new(\"audio contains a non-finite sample\"));\n    }", "new": "samples.truncate(count);"}
+    },
+    {
       "id": "package-float-roundtrip", "runner": "rust", "package": "echode-history", "target": ["--test", "float_roundtrip"],
       "test": "contract_package_floats_preserve_quiet_gains_and_pan_bits", "timeout": 180,
       "purpose": "製品アクション・直接保存・DocumentHostの自動保存と履歴復帰を通し、極小ゲインとパンの全ビット・無関係な編集後のバイト安定性・コミットからの再オープンを確認",
