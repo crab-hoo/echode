@@ -165,6 +165,9 @@ make debug-report
   構築とマップの両方が対象で、`stereo-waveform-average` が極大値・非正規化数と旧キャッシュの再生成を区別する。
   `ECHDPK01` は再利用せず PCM から `ECHDPK02` を作るため、素材がない旧キャッシュは波形を出さない。
   素材の自動修復や再生音の変更ではない（[ADR 0058 の後続修正](decisions/0058-waveform-peaks.md)）。
+  境界が 1 列の途中にある時だけ包絡が違う場合は、`source_span` の素材範囲と `includes_silence` を調べる。
+  素材前・EOF 後・配置窓の外側を切り詰めても、その無音は列の最小・最大へ含める必要がある。
+  `waveform-boundary-silence` は正負の包絡・粗い列とマップの端・テンポ変化・キャッシュ再利用を区別する。
 
 - **S2 / S3 は通るのに製品だけ負荷に弱い**:
   選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。

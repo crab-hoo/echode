@@ -92,10 +92,12 @@ fn a_tick_window_maps_onto_frames() {
         rate: 48_000,
         frames: 48_000,
     };
-    let (first, last) = source_span(&tempo, span, 0, quarter).unwrap();
-    assert_eq!((first, last), (0, 24_000));
-    let (first, last) = source_span(&tempo, span, quarter / 2, quarter).unwrap();
-    assert_eq!((first, last), (12_000, 24_000));
+    let window = source_span(&tempo, span, 0, quarter).unwrap();
+    assert_eq!(window.frames, 0..24_000);
+    assert!(!window.includes_silence);
+    let window = source_span(&tempo, span, quarter / 2, quarter).unwrap();
+    assert_eq!(window.frames, 12_000..24_000);
+    assert!(!window.includes_silence);
     assert!(source_span(&tempo, span, quarter, quarter + 1).is_none());
 }
 

@@ -144,7 +144,14 @@ impl Waveforms {
                 .max(left.saturating_add(1))
                 .min(end_tick);
             *column = source_span(project.tempo(), source, left, right)
-                .map(|(first, last)| reduce(peaks, first, last))
+                .map(|span| {
+                    let mut column = reduce(peaks, span.frames.start, span.frames.end);
+                    if span.includes_silence {
+                        column.min = column.min.min(0.0);
+                        column.max = column.max.max(0.0);
+                    }
+                    column
+                })
                 .unwrap_or(PeakColumn { min: 0.0, max: 0.0 });
         }
         columns.len()
@@ -220,13 +227,18 @@ struct SourceSpan {
     frames: u64,
 }
 
+struct SourceWindow {
+    frames: std::ops::Range<u64>,
+    includes_silence: bool,
+}
+
 /// File frames playback reads for the visible part of a placement.
 fn source_span(
     tempo: &echode_model::TempoMap,
     source: SourceSpan,
     start_tick: i64,
     end_tick: i64,
-) -> Option<(u64, u64)> {
+) -> Option<SourceWindow> {
     if source.length <= 0 || source.frames == 0 || end_tick <= start_tick || source.rate == 0 {
         return None;
     }
@@ -249,7 +261,12 @@ fn source_span(
     let first = u64::try_from(first).ok()?;
     // At high zoom a nonempty tick column may be narrower than one sample.
     let last = u64::try_from(last).ok()?.max(first.checked_add(1)?);
-    (first < source.frames).then_some((first, last.min(source.frames)))
+    (first < source.frames).then_some(SourceWindow {
+        frames: first..last.min(source.frames),
+        // Clipping the sample range must not discard the silent part of a
+        // display column that straddles the source or placement boundary.
+        includes_silence: start_tick < sound_left || end_tick > right || last > source.frames,
+    })
 }
 
 fn column_tick(start: i64, end: i64, index: usize, count: usize) -> i64 {

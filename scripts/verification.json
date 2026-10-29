@@ -63,6 +63,12 @@
   ],
   "product_contracts": [
     {
+      "id": "waveform-boundary-silence", "runner": "rust", "package": "echode-history", "target": ["--test", "waveform_silence"],
+      "test": "contract_waveform_columns_include_silence_across_source_and_placement_boundaries", "timeout": 180,
+      "purpose": "素材前・EOF後と配置外の無音をまたぐ波形列の包絡を、正負・モノ/ステレオ・テンポ変化・キャッシュ/マップで保持する",
+      "negative_control": {"file": "crates/echode-history/src/peaks.rs", "old": "if span.includes_silence {", "new": "if false {"}
+    },
+    {
       "id": "stereo-waveform-average", "runner": "rust", "package": "echode-history", "target": ["--test", "stereo_waveform"],
       "test": "contract_stereo_waveforms_preserve_finite_averages_and_rebuild_legacy_caches", "timeout": 180,
       "purpose": "有限ステレオの極大値・非正規化数を全幅・部分幅・キャッシュとマップで平均し、旧版キャッシュの再生成と原本保持を確認",

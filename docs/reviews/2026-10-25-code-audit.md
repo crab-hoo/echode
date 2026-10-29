@@ -133,3 +133,10 @@ cargo test -q -p echode-api --lib audit_cur04 -- --ignored --nocapture
 CUR-01 の release 回帰ログは `target/code-audit-fixes-20261025/after-pcm-release.log` に置く。
 設計の正本と ADR 0058 / 0073、デバッグ手順を更新し、通常検査と見送りの現在の結果は `target/verification/report.md` に記録する。
 実機音声・聴感・実画面はユーザー担当のままで、今回アプリ・機器・ウィンドウは開かない。
+
+### 境界列の追加修正（2026-10-29）
+
+`caf4f61` では、音と無音を同時に含む 1 列が、切り詰めた素材範囲の最小・最大だけを返すことを再現した。
+素材前・EOF 後・配置窓の外側の無音も包絡へ含めるように修正した。
+当時の CUR-02 の証拠は保持し、追加の再現と仕様は [ADR 0058](../decisions/0058-waveform-peaks.md) に置く。
+公開経路の `waveform_silence.rs` と、負の対照付きの `waveform-boundary-silence` で混在列の欠落を防ぐ。
