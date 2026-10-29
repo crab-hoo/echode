@@ -119,6 +119,11 @@ MCP の改行完了は `crates/echode-api/src/mcp.rs::read_line` が stdio と�
 版応答による編集の許可と編集応答の結果不明・再送禁止、LF / CRLF 込みの行上限を区別する
 （[ADR 0115 の回帰補強](decisions/0115-phase2-mcp.md#改行境界の回帰補強2026-10-29)）。
 
+MCP の接続先の error の形は `mcp.rs::exchange` で検証する。
+`tests/mcp_responses.rs` は公開入口と実ソケットで、不正な応答の結果不明の案内・再送禁止と、
+記録済み編集の Undo / Redo・再オープン、正当な error / result の保持を検査する
+（[ADR 0115 の応答検証](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

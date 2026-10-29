@@ -247,7 +247,11 @@ fn contract_unterminated_backend_frames_do_not_authorize_or_acknowledge_edits() 
                 write!(stream.get_mut(), "{response}{suffix}").unwrap();
                 stream.get_mut().shutdown(Shutdown::Write).unwrap();
                 let mut following = String::new();
-                stream.read_to_string(&mut following).unwrap();
+                stream.read_to_string(&mut following).unwrap_or_else(|error| {
+                    panic!(
+                        "backend EOF wait (handshake={handshake}, suffix={suffix:?}) after partial reply: {error}; following={following:?}"
+                    )
+                });
                 following
             });
             let input = format!(

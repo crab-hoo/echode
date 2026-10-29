@@ -746,6 +746,14 @@ make debug-report
   テストで既存パッケージの JSON だけを上書きしても保存済み履歴は置き換わらない。文書の編集経路を使うか、別の入力は新しいパッケージへ書く。
   MCP（`echode mcp SOCKET`）は接続先の `echode serve PACKAGE SOCKET` と同じビルド・絶対ソケットパス・API 版 1 を確認し、stdout へログを混ぜない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
 
+- **MCP が `invalid session response` と結果不明を返す**:
+  接続先の版・ID・result/error の排他と、error の整数 code・文字列 message を照合する。
+  `error:null` やフィールドの欠落・型違いは通常の実行エラーではなく不正な応答である。
+  編集が既に記録済みの可能性があるため、概要を確認せずに再送しない。原本の編集を自動で巻き戻さない。
+  `mcp_responses.rs` と必須契約 `mcp-backend-errors` は、実際の編集後に応答だけを壊し、
+  結果不明の案内・再送禁止・単一 Undo / Redo と再オープンを検査する
+  （[ADR 0115 の応答検証](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
+
 - **MCP が `MCP message ended without a newline` を返す**:
   stdio 入力と接続先 API の応答は同じ `mcp.rs::read_line` を通るため、どちらの EOF かを切り分ける。
   stdio の部分行は編集前に拒否し、完了済みの前方の要求だけを保持する。CR だけの終端では完了しない。
@@ -753,6 +761,12 @@ make debug-report
   `isError` と結果不明の案内を確認し、概要を調べずに再送しない。
   `mcp_framing.rs` と必須契約 `mcp-stdio-framing`・`mcp-backend-framing` が両境界を実ソケットで区別する
   （[ADR 0115 の回帰補強](decisions/0115-phase2-mcp.md#改行境界の回帰補強2026-10-29)）。
+  2026-10-29 のエラー応答検証では、通常の `mcp-backend-framing` が部分応答後の EOF 待ちで 2 回期限切れとなった。
+  `read_to_string` が 5 秒後に `WouldBlock`（Darwin errno 35）を返したもので、応答形のアサーション失敗ではない。
+  追加した診断では初回の版応答（`handshake=true, suffix=""`）後で、受信済みの `following` は空だった。
+  単独実行と正式な再実行では再現しない場合もあり、原因は未確定である。期限や対象は変更しない。
+  次回も診断の `handshake`・`suffix`・受信済みの `following` で版応答と編集応答を切り分ける。
+  単独の記録は `target/focused-checks/mcp-framing-timeout/`、正式な再実行は検査レポートで確認する。
 
 ### サニタイザー（TSan / ASan / RTSan）
 

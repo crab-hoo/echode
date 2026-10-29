@@ -449,6 +449,11 @@ fn exchange(
     if response["jsonrpc"] != "2.0"
         || response["id"] != id
         || (response.get("result").is_some() == response.get("error").is_some())
+        || response.get("error").is_some_and(|error| {
+            !error.is_object()
+                || !(error["code"].is_i64() || error["code"].is_u64())
+                || !error["message"].is_string()
+        })
     {
         return Err(ApiError::new("invalid session response"));
     }

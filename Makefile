@@ -104,6 +104,7 @@ check-base:
 # Socket framing rejects EOF before a newline without consuming edits or Undo/Redo (rpc-request-framing).
 # JSON-only whitespace trimming rejects malformed edits and preserves history (rpc-json-whitespace).
 # MCP partial stdio/backend lines retain edits/history and never authorize, acknowledge or replay an edit.
+# Malformed MCP backend error objects report uncertain outcomes without replaying committed edits (mcp-backend-errors).
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

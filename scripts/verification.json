@@ -63,6 +63,12 @@
   ],
   "product_contracts": [
     {
+      "id": "mcp-backend-errors", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_responses"],
+      "test": "contract_malformed_backend_errors_preserve_uncertain_edits_without_retrying", "timeout": 180,
+      "purpose": "不正なAPIエラー応答をMCPで結果不明として案内し、編集を再送せず確定済みの編集・単一Undo/Redo・再オープンを保つ",
+      "negative_control": {"file": "crates/echode-api/src/mcp.rs", "old": "response.get(\"error\").is_some_and(|error| {\n            !error.is_object()\n                || !(error[\"code\"].is_i64() || error[\"code\"].is_u64())\n                || !error[\"message\"].is_string()\n        })", "new": "response.get(\"error\").is_some_and(|_| false)"}
+    },
+    {
       "id": "mcp-stdio-framing", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_framing"],
       "test": "contract_unterminated_mcp_input_preserves_edits_history_and_recovery", "timeout": 180,
       "purpose": "公開MCP入口と実ソケットで旧・新プロトコルの部分行を編集前に拒否し、ジャーナル・Undo/Redo・完結した前方の編集・再オープンを保つ",
