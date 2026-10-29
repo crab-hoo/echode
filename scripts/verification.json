@@ -63,6 +63,15 @@
   ],
   "product_contracts": [
     {
+      "id": "peak-cache-validation", "runner": "rust", "package": "echode-history", "target": ["--test", "peak_cache_validation"],
+      "test": "contract_malformed_peak_caches_rebuild_from_unchanged_pcm", "timeout": 180,
+      "purpose": "壊れた波形キャッシュの段構成・件数・非有限値・逆転範囲を公開読込みで拒否し、元PCMを保って全幅・部分幅・細かい列を再生成する",
+      "negative_controls": [
+        {"file": "crates/echode-history/src/peaks.rs", "old": "if u64::try_from(columns).ok()? != expected_columns {", "new": "if false {"},
+        {"file": "crates/echode-history/src/peaks.rs", "old": "if !min.is_finite() || !max.is_finite() || min > max {", "new": "if false {"}
+      ]
+    },
+    {
       "id": "clip-gesture-document-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ClipGestureDocumentTests", "test": "contractOldClipControlsCannotEditTheReopenedDocument", "timeout": 180,
       "purpose": "全クリップハンドルの旧押下・ドラッグ・リセット待ち・数値欄を文書交換で取消し、履歴・保存と投入済み数値入力の文書再照合を確認",

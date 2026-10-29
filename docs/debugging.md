@@ -39,6 +39,11 @@ make debug-report
   `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、`swift build --build-tests` で診断を取得する。
   同じ `--package-path`・`--scratch-path` と `-Xswiftc -warnings-as-errors` を指定し、`target/` のログで `error:` 周辺を読む。
   Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
+- **Cargo の依存メタデータが欠ける**:
+  `extern location for <crate> does not exist` で `target/debug/deps/*.rmeta` が欠ける時は、まず別のビルドや整理処理との競合を確認する。
+  製品の型エラーと区別し、処理がない状態で欠落した依存だけを `cargo clean -p <package>` して再生成する。
+  検査結果やユーザー資料は削除しない。2026-10-29 の波形キャッシュ検査では `memchr`・`errno`・`bitflags` で観測した。
+  作業時の記録は `target/focused-checks/peak-cache-green/` に残し、正式な合否は `make verify` で確認する。
 - **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
   Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
   Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。
@@ -147,6 +152,12 @@ make debug-report
   ヘッダ長ではなくサンプル値の検証による拒否である。正しいハッシュも値の妥当性を保証しない。
   取込み元の復号と保存済み PCM の全読込みを区別し、後者は `canonical-pcm-validation` で再現する。
   トリム外の不正値も拒否するが、有限の振幅 1 を超える値は不正としない。原本を自動で書き換えない。
+
+- **波形が消える・キャッシュ破損後に表示が変わる**:
+  `cache/peaks/<hash>` は派生データであり、段構成・バイト長・有限で順序の正しい列を検査する。
+  不正なら `Waveforms::load` が正準 PCM から作り直す。再生成できなければ波形なしにするが、原本は変更しない。
+  `peak-cache-validation` は公開読込みと再生成、`peak_cache_validation.rs` の通常回帰は PCM なしの正常なキャッシュも確認する。
+  正常なキャッシュで粗い列だけを描けても、PCM の全体が読める証拠にはならない（[ADR 0058](decisions/0058-waveform-peaks.md)）。
 
 - **S2 / S3 は通るのに製品だけ負荷に弱い**:
   選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。

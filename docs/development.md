@@ -178,6 +178,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 保存済み音声の有限性は `crates/echode-history/src/media.rs::decode_pcm`、公開読込みとトリム後の素材準備の回帰は
 `crates/echode-audio-io/tests/pcm_validation.rs` に置く（[ADR 0056 の後続修正](decisions/0056-audio-import.md)）。
 
+波形キャッシュの構造・バイト長・列の検証は `peaks.rs::read_cache`、公開読込みと再生成の回帰は
+`crates/echode-history/tests/peak_cache_validation.rs` に置く（[ADR 0058](decisions/0058-waveform-peaks.md)）。
+
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
 回帰は `clip_move_tests.rs`、履歴と CLI の `clip_move`、`ClipMoveTests.swift`（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。

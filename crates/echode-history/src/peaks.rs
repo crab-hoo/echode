@@ -579,19 +579,37 @@ fn read_cache(package: &Path, hash: &str) -> Option<CachedPeaks> {
     let mut cursor = 8usize;
     let bucket = read_u32(&bytes, &mut cursor)?;
     let frames = read_u64(&bytes, &mut cursor)?;
-    let levels_count = read_u32(&bytes, &mut cursor)? as usize;
-    let mut levels = Vec::with_capacity(levels_count);
-    for _ in 0..levels_count {
-        let columns = read_u32(&bytes, &mut cursor)? as usize;
+    let levels_count = usize::try_from(read_u32(&bytes, &mut cursor)?).ok()?;
+    if bucket != BUCKET || frames == 0 {
+        return None;
+    }
+    // Derive the shape from the frame count, not the untrusted level count.
+    // Every allocation is also bounded by the bytes actually present on disk.
+    let mut expected_columns = frames.div_ceil(u64::from(bucket));
+    let mut levels = Vec::new();
+    loop {
+        let columns = usize::try_from(read_u32(&bytes, &mut cursor)?).ok()?;
+        if u64::try_from(columns).ok()? != expected_columns {
+            return None;
+        }
+        let end = cursor.checked_add(columns.checked_mul(8)?)?;
+        bytes.get(cursor..end)?;
         let mut level = Vec::with_capacity(columns);
         for _ in 0..columns {
             let min = read_f32(&bytes, &mut cursor)?;
             let max = read_f32(&bytes, &mut cursor)?;
+            if !min.is_finite() || !max.is_finite() || min > max {
+                return None;
+            }
             level.push(PeakColumn { min, max });
         }
         levels.push(level);
+        if expected_columns == 1 {
+            break;
+        }
+        expected_columns = expected_columns.div_ceil(2);
     }
-    if cursor != bytes.len() || bucket != BUCKET {
+    if cursor != bytes.len() || levels.len() != levels_count {
         return None;
     }
     Some(CachedPeaks {
