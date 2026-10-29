@@ -137,3 +137,23 @@ API 版の値の対応可否、改行の完了、error の内容の妥当性は�
 通常検査・必須契約の入口と選択の回帰を更新し、診断手順に API と MCP の ID 境界の違いを追記する。
 ログは既存の契約ログとして収集できるため、新しい収集先・製品ログは不要である。
 音声・保存形式・実アプリ・外部 MCP クライアントの設定は変更せず、実機の確認範囲へ広げない。
+
+## 旧 MCP の初期化と ID 再使用の回帰補強（2026-10-29）
+
+`3daaf8c` でも、旧 MCP は initialize → initialized の完了前と使用済み ID で編集しない。
+製品の挙動は変更せず、既存 CLI の短い回帰を、公開 `serve_mcp` と実ソケット・実履歴の回帰で補強する。
+
+- `tests/mcp_lifecycle.rs` は同じ stdio を保ち、初期化前と通知待ちの単一／一括編集・Undo / Redo を拒否する。
+  早すぎる通知、不正な initialize、null・配列等の通知 params、ID を持つ initialized が編集を解放しないことも検査する。
+- initialize・一覧・確定した編集の ID は再使用できない。接続数・モデル・ジャーナルを照合し、既存の Undo / Redo を保つ。
+  正常な initialized 後の一括編集は成功し、単一 Undo / Redo と再オープンを通す。再初期化の拒否後も同じ stdio を利用できる。
+- 通常回帰は数値と同じ値の文字列、空文字列・Unicode・整数の端も同じストリームへ通す。
+  dispatch 済みの未知メソッド・不正なツールの ID も再使用を拒否する。新 MCP の要求ごとのメタデータとは区別する。
+- `support/mcp_client.rs` は対の Unix ストリームで公開入口を動かし、後続 ping を通知処理の完了境界にする。
+  新しい待機時間の計測・ウィンドウ・音声機器は使わない。基盤の診断は既存の契約ログへ収集する。
+- 必須契約 `mcp-legacy-lifecycle` は準備完了の検査を外す反例、不正な通知を許す反例、使用済み ID を毎要求で消す反例を持つ。
+  各 red は終了コード 101 と `legacy lifecycle and replay guards must block backend edits` で照合した。
+  作業時の記録は `target/focused-checks/mcp-lifecycle-{gate,notification,replay}-red/` に残す。
+
+検査の入口と選択の回帰、開発・デバッグ手順を更新する。音声・保存形式・依存・製品ログの形式は変えない。
+実装範囲や設計は変わらないため status・全体設計の改訂は不要で、外部クライアントや実アプリの確認範囲へは広げない。

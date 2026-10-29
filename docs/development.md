@@ -141,6 +141,11 @@ MCP の要求 ID と通知は `McpSession::reply` が接続前に振り分ける
 実バックエンドは改行回帰と `tests/support/mcp_session.rs` を共有する
 （[ADR 0115 の入力回帰](decisions/0115-phase2-mcp.md#要求-id-と通知の回帰補強2026-10-29)）。
 
+旧 MCP の初期化と使用済み ID は `McpSession::legacy`・`reply` が接続前に検査する。
+`tests/mcp_lifecycle.rs` は同じ stdio を保つ `support/mcp_client.rs` で、初期化前・不正な initialized・ID 再使用の拒否、
+既存 Redo・確定した一括編集の単一 Undo / Redo・再オープンと、文字列／整数 ID の区別を検査する
+（[ADR 0115 の初期化回帰](decisions/0115-phase2-mcp.md#旧-mcp-の初期化と-id-再使用の回帰補強2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

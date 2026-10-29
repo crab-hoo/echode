@@ -52,6 +52,24 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_mcp_legacy_lifecycle_contract_guards_readiness_and_id_replay(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-legacy-lifecycle")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-api", ["--test", "mcp_lifecycle"]))
+        self.assertEqual(contract["test"], "contract_legacy_lifecycle_and_replay_guards_preserve_durable_history")
+        faults = contract["negative_controls"]
+        self.assertEqual({fault["old"] for fault in faults}, {
+            'if method != "ping" && self.lifecycle != Lifecycle::Ready {',
+            '&& value.get("params").is_none_or(Value::is_object)',
+            'if self.legacy_ids.contains(&id.to_string()) {',
+        })
+        for fault in faults:
+            self.assertEqual(fault["file"], "crates/echode-api/src/mcp.rs")
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in ("crates/echode-api/tests/mcp_lifecycle.rs", "crates/echode-api/tests/support/mcp_client.rs"):
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+            self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
+
     def test_mcp_request_identity_contract_blocks_edits_before_connecting(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-request-identity")
         self.assertEqual((contract["runner"], contract["package"], contract["target"]),
@@ -1299,7 +1317,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
+                          "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",

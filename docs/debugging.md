@@ -754,6 +754,14 @@ make debug-report
   正当な文字列・整数 ID まで拒否される場合は、元の型と旧・新 MCP の初期化・メタデータを分けて照合する
   （[ADR 0115 の入力回帰](decisions/0115-phase2-mcp.md#要求-id-と通知の回帰補強2026-10-29)）。
 
+- **旧 MCP が `initialize first` / `already initialized` / `request id was already used` を返す**:
+  `initialize` の成功だけでは編集可能にならない。続く ID なしの `notifications/initialized` が必要である。
+  初期化前の通知、null・配列等の params、ID を持つ同名の要求は準備完了へ遷移させない。
+  使用済み ID は型も照合し、数値 `1` と文字列 `"1"` を混同しない。dispatch 済みの失敗にも新しい ID を使う。
+  `mcp_lifecycle.rs` と必須契約 `mcp-legacy-lifecycle` は同じ stdio と実ソケットで、未送信・履歴・再オープンを検査する。
+  ここでの拒否は接続先 API の版エラーや、編集後の結果不明とは異なる
+  （[ADR 0115 の初期化回帰](decisions/0115-phase2-mcp.md#旧-mcp-の初期化と-id-再使用の回帰補強2026-10-29)）。
+
 - **MCP が `unsupported Echode session protocol` を返す**:
   MCP 自体のプロトコル版ではなく、接続先 API の `protocol.version` が返す整数の版 1 を確認する。
   この段階での拒否では編集をまだ送っていない。編集後の応答破損や切断による結果不明と区別する。
