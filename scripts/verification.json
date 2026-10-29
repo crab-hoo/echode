@@ -63,6 +63,12 @@
   ],
   "product_contracts": [
     {
+      "id": "mcp-backend-version", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_version"],
+      "test": "contract_backend_version_gate_preserves_edits_history_and_recovery", "timeout": 180,
+      "purpose": "公開MCP入口と実ソケットで非対応・不正なAPI版を編集前に拒否し、単一／一括編集・Undo/Redoを送らず、ジャーナル・既存のRedo・再オープンを保つ",
+      "negative_control": {"file": "crates/echode-api/src/mcp.rs", "old": "if version[\"result\"][\"version\"] != 1 {", "new": "if version[\"result\"][\"version\"] != 1 && false {"}
+    },
+    {
       "id": "mcp-backend-errors", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_responses"],
       "test": "contract_malformed_backend_errors_preserve_uncertain_edits_without_retrying", "timeout": 180,
       "purpose": "不正なAPIエラー応答をMCPで結果不明として案内し、編集を再送せず確定済みの編集・単一Undo/Redo・再オープンを保つ",

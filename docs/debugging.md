@@ -746,6 +746,12 @@ make debug-report
   テストで既存パッケージの JSON だけを上書きしても保存済み履歴は置き換わらない。文書の編集経路を使うか、別の入力は新しいパッケージへ書く。
   MCP（`echode mcp SOCKET`）は接続先の `echode serve PACKAGE SOCKET` と同じビルド・絶対ソケットパス・API 版 1 を確認し、stdout へログを混ぜない（[ADR 0115](decisions/0115-phase2-mcp.md)）。
 
+- **MCP が `unsupported Echode session protocol` を返す**:
+  MCP 自体のプロトコル版ではなく、接続先 API の `protocol.version` が返す整数の版 1 を確認する。
+  この段階での拒否では編集をまだ送っていない。編集後の応答破損や切断による結果不明と区別する。
+  `mcp_version.rs` と必須契約 `mcp-backend-version` は、実ソケットで未送信・履歴保持・再オープンを確認する。
+  正しい版 1 の追加フィールドは拒否しない（[ADR 0115 の版確認](decisions/0115-phase2-mcp.md#接続先の版確認の回帰補強2026-10-29)）。
+
 - **MCP が `invalid session response` と結果不明を返す**:
   接続先の版・ID・result/error の排他と、error の整数 code・文字列 message を照合する。
   `error:null` やフィールドの欠落・型違いは通常の実行エラーではなく不正な応答である。

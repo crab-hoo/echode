@@ -124,6 +124,11 @@ MCP の接続先の error の形は `mcp.rs::exchange` で検証する。
 記録済み編集の Undo / Redo・再オープン、正当な error / result の保持を検査する
 （[ADR 0115 の応答検証](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
 
+接続先 API の版確認は `mcp.rs::backend` に置く。
+`tests/mcp_version.rs` は公開入口と実ソケットで、非対応・不正な版に単一／一括編集・Undo / Redo を送らないことと、
+既存のジャーナル・Redo・再オープン、正当な版 1 での編集を検査する
+（[ADR 0115 の版確認](decisions/0115-phase2-mcp.md#接続先の版確認の回帰補強2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。
