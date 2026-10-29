@@ -146,6 +146,11 @@ MCP の要求 ID と通知は `McpSession::reply` が接続前に振り分ける
 既存 Redo・確定した一括編集の単一 Undo / Redo・再オープンと、文字列／整数 ID の区別を検査する
 （[ADR 0115 の初期化回帰](decisions/0115-phase2-mcp.md#旧-mcp-の初期化と-id-再使用の回帰補強2026-10-29)）。
 
+新 MCP の要求ごとの版・capabilities は `mcp.rs::validate_modern`、公開入口と実履歴の回帰は `tests/mcp_metadata.rs` に置く。
+旧 MCP の初期化前・完了後とも不正な編集を送らず、ジャーナル・既存 Redo と正当な一括編集の単一 Undo / Redo・再オープンを保つ。
+メタデータの省略時に直前の新 MCP 要求から版や準備完了を引き継がないことも検査する
+（[ADR 0115 のメタデータ回帰](decisions/0115-phase2-mcp.md#新-mcp-の要求ごとのメタデータの回帰補強2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

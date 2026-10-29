@@ -63,6 +63,16 @@
   ],
   "product_contracts": [
     {
+      "id": "mcp-modern-metadata", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_metadata"],
+      "test": "contract_modern_metadata_guards_edits_without_inheriting_legacy_readiness", "timeout": 180,
+      "purpose": "公開MCP入口と実ソケットで要求ごとの版とcapabilitiesを旧版初期化と独立に検証し、不正な単一／一括編集・Undo/Redoの未送信、ジャーナル・既存Redo・単一Undoと再オープンを保つ",
+      "negative_controls": [
+        {"file": "crates/echode-api/src/mcp.rs", "old": ".ok_or_else(|| ProtocolError::new(-32602, \"protocol version must be a string\"))?", "new": ".unwrap_or(MODERN)"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": "if version != MODERN {", "new": "if false {"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": "if !meta[CAPABILITIES_KEY].is_object() {", "new": "if false {"}
+      ]
+    },
+    {
       "id": "mcp-legacy-lifecycle", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_lifecycle"],
       "test": "contract_legacy_lifecycle_and_replay_guards_preserve_durable_history", "timeout": 180,
       "purpose": "公開MCP入口と実ソケットで旧版の初期化前・不正なinitialized・使用済みIDを接続前に拒否し、単一／一括編集・Undo/Redoの未送信、ジャーナル・既存Redo・単一Undoと再オープンを保つ",

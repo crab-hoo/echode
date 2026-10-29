@@ -52,6 +52,23 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_mcp_modern_metadata_contract_guards_edits_independently_of_legacy_state(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-modern-metadata")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-api", ["--test", "mcp_metadata"]))
+        self.assertEqual(contract["test"], "contract_modern_metadata_guards_edits_without_inheriting_legacy_readiness")
+        faults = contract["negative_controls"]
+        self.assertEqual({fault["old"] for fault in faults}, {
+            '.ok_or_else(|| ProtocolError::new(-32602, "protocol version must be a string"))?',
+            'if version != MODERN {', 'if !meta[CAPABILITIES_KEY].is_object() {',
+        })
+        for fault in faults:
+            self.assertEqual(fault["file"], "crates/echode-api/src/mcp.rs")
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in ("crates/echode-api/tests/mcp_metadata.rs", "crates/echode-api/tests/support/mcp_client.rs"):
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+            self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
+
     def test_mcp_legacy_lifecycle_contract_guards_readiness_and_id_replay(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-legacy-lifecycle")
         self.assertEqual((contract["runner"], contract["package"], contract["target"]),
@@ -1317,7 +1334,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
+                          "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",

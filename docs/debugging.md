@@ -762,6 +762,13 @@ make debug-report
   ここでの拒否は接続先 API の版エラーや、編集後の結果不明とは異なる
   （[ADR 0115 の初期化回帰](decisions/0115-phase2-mcp.md#旧-mcp-の初期化と-id-再使用の回帰補強2026-10-29)）。
 
+- **新 MCP が `unsupported protocol version` / `clientCapabilities must be an object` を返す**:
+  接続先 API の版ではなく、各要求の `params._meta` の MCP 版と capabilities を確認する。
+  版のキーを持つ要求は旧 MCP の準備完了に関係なく `validate_modern` を通り、未知・旧版の文字列は `-32022`、型の不正は `-32602` になる。
+  直前の正当な新 MCP 要求からメタデータを引き継がず、初期化していない旧 MCP の入力も編集を解放しない。
+  `mcp_metadata.rs` と必須契約 `mcp-modern-metadata` は接続前の拒否・履歴保持・後続の正当な編集と再オープンを検査する
+  （[ADR 0115 のメタデータ回帰](decisions/0115-phase2-mcp.md#新-mcp-の要求ごとのメタデータの回帰補強2026-10-29)）。
+
 - **MCP が `unsupported Echode session protocol` を返す**:
   MCP 自体のプロトコル版ではなく、接続先 API の `protocol.version` が返す整数の版 1 を確認する。
   この段階での拒否では編集をまだ送っていない。編集後の応答破損や切断による結果不明と区別する。
