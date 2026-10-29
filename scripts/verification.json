@@ -63,6 +63,26 @@
   ],
   "product_contracts": [
     {
+      "id": "mcp-version-envelope", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_version"],
+      "test": "contract_invalid_version_envelopes_do_not_authorize_edits", "timeout": 180,
+      "purpose": "公開MCP入口と実ソケットで不正な版応答のID・JSON-RPC版・result/error排他を検証し、編集未送信・ジャーナルと既存Redo・再オープンを保つ",
+      "negative_controls": [
+        {"file": "crates/echode-api/src/mcp.rs", "old": "if response[\"jsonrpc\"] != \"2.0\"", "new": "if false"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": "|| response[\"id\"] != id", "new": "|| false"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": "(response.get(\"result\").is_some() == response.get(\"error\").is_some())", "new": "false"}
+      ]
+    },
+    {
+      "id": "mcp-backend-envelope", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_responses"],
+      "test": "contract_invalid_backend_envelopes_preserve_uncertain_edits_without_retrying", "timeout": 180,
+      "purpose": "公開MCP入口と実ソケットで編集後の不正な応答ID・JSON-RPC版・result/error排他を結果不明として案内し、再送禁止・確定済みの編集と単一Undo/Redo・再オープンを保つ",
+      "negative_controls": [
+        {"file": "crates/echode-api/src/mcp.rs", "old": "if response[\"jsonrpc\"] != \"2.0\"", "new": "if false"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": "|| response[\"id\"] != id", "new": "|| false"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": "(response.get(\"result\").is_some() == response.get(\"error\").is_some())", "new": "false"}
+      ]
+    },
+    {
       "id": "mcp-backend-version", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_version"],
       "test": "contract_backend_version_gate_preserves_edits_history_and_recovery", "timeout": 180,
       "purpose": "公開MCP入口と実ソケットで非対応・不正なAPI版を編集前に拒否し、単一／一括編集・Undo/Redoを送らず、ジャーナル・既存のRedo・再オープンを保つ",

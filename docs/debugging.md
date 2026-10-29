@@ -759,6 +759,13 @@ make debug-report
   `mcp_responses.rs` と必須契約 `mcp-backend-errors` は、実際の編集後に応答だけを壊し、
   結果不明の案内・再送禁止・単一 Undo / Redo と再オープンを検査する
   （[ADR 0115 の応答検証](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
+  応答の ID は要求した整数と同一でなければならず、文字列・小数へ読み替えない。
+  外枠は `mcp-backend-envelope`、版応答の外枠は `mcp-version-envelope` で別々に検査する。
+  版確認中の外枠拒否なら編集は未送信だが、編集後の拒否なら既に確定している可能性がある。
+  同じ保守的な結果不明の案内でも、どの段階の応答かを分けて調べる
+  （[ADR 0115 の外枠回帰](decisions/0115-phase2-mcp.md#接続先の応答外枠の回帰補強2026-10-29)）。
+  完全な応答を送った後、検査用サーバーの `shutdown(Write)` だけが `NotConnected` になる場合は、先に正常に閉じた相手との競合を調べる。
+  `mcp_responses.rs` は半切断せず後続の読込みで EOF と再送禁止を検査する。部分行の拒否に必要な半切断とは区別する。
 
 - **MCP が `MCP message ended without a newline` を返す**:
   stdio 入力と接続先 API の応答は同じ `mcp.rs::read_line` を通るため、どちらの EOF かを切り分ける。

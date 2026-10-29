@@ -11,6 +11,9 @@ use echode_history::write_package;
 use echode_model::{Id, Project};
 use serde_json::{Value, json};
 
+#[path = "support/mcp_envelopes.rs"]
+mod envelopes;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -238,4 +241,49 @@ fn supported_backend_version_allows_one_durable_edit_and_extra_fields() {
         let reopened = ApiSession::open(&fixture.0).unwrap();
         assert_eq!(summary(&reopened), expected);
     }
+}
+
+#[test]
+fn contract_invalid_version_envelopes_do_not_authorize_edits() {
+    let fixture = Fixture::new();
+    let session = Arc::new(ApiSession::open(&fixture.0).unwrap());
+    for name in ["kept", "redo"] {
+        call(
+            &session,
+            "actions.perform",
+            json!({"type":"track.add", "name":name}),
+        );
+    }
+    let both = summary(&session);
+    call(&session, "edit.undo", json!({}));
+    let before = summary(&session);
+    let journal = fs::read(fixture.0.join("journal.jsonl")).unwrap();
+    for legacy in [false, true] {
+        for response in envelopes::invalid_envelopes(0, json!({"version":1})) {
+            let (reply, forwarded) = run(
+                &session,
+                response.clone(),
+                tool("echode.track.add", json!({"name":"must not arrive"})),
+                legacy,
+            );
+            assert!(
+                forwarded.is_empty(),
+                "an invalid version envelope must not authorize an edit: {response} -> {forwarded:?}"
+            );
+            assert_eq!(reply["isError"], true);
+            let message = reply["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap();
+            assert!(message.contains("invalid session response"), "{reply}");
+            assert_eq!(summary(&session), before);
+            assert_eq!(fs::read(fixture.0.join("journal.jsonl")).unwrap(), journal);
+        }
+    }
+    call(&session, "edit.redo", json!({}));
+    assert_eq!(summary(&session), both);
+    call(&session, "edit.undo", json!({}));
+    assert_eq!(summary(&session), before);
+    drop(session);
+    let reopened = ApiSession::open(&fixture.0).unwrap();
+    assert_eq!(summary(&reopened), before);
 }

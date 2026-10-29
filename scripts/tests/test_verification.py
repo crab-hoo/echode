@@ -52,6 +52,31 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_mcp_response_envelope_contracts_validate_each_boundary_independently(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name, target, test in (
+            ("mcp-version-envelope", "mcp_version", "contract_invalid_version_envelopes_do_not_authorize_edits"),
+            ("mcp-backend-envelope", "mcp_responses", "contract_invalid_backend_envelopes_preserve_uncertain_edits_without_retrying"),
+        ):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                             ("rust", "echode-api", ["--test", target]))
+            self.assertEqual(contract["test"], test)
+            faults = contract["negative_controls"]
+            self.assertEqual(len(faults), 3)
+            self.assertEqual({fault["old"] for fault in faults}, {
+                'if response["jsonrpc"] != "2.0"',
+                '|| response["id"] != id',
+                '(response.get("result").is_some() == response.get("error").is_some())',
+            })
+            for fault in faults:
+                self.assertEqual(fault["file"], "crates/echode-api/src/mcp.rs")
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in ("crates/echode-api/src/mcp.rs", "crates/echode-api/tests/mcp_version.rs",
+                     "crates/echode-api/tests/mcp_responses.rs", "crates/echode-api/tests/support/mcp_envelopes.rs"):
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+            self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
+
     def test_mcp_backend_version_contract_rejects_edits_before_dispatch(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-backend-version")
         self.assertEqual((contract["runner"], contract["package"], contract["target"]),
@@ -1258,7 +1283,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
+                          "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
