@@ -616,6 +616,13 @@ make debug-report
   `mixActions` の更新は文書 ID より先に来るため、終了は押下時の `gestureActions` を使い、新文書の別の試聴へ送らない。
   同文書の更新では押下を維持する。`mixer-gesture-document-ui`・`mixer-reset-document-ui` と
   `MixerGestureDocumentTests` で保存・履歴・callback の所有者を区別する（[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
+- **文書切替後に旧クリップのゲイン・フェード入力が反映される**:
+  `ArrangeView.audioDocument` の変更時に `cancelClipControls` が押下・下書き・タイマー・数値欄を取り消すかを確認する。
+  `setSnapshot` の下書き破棄だけでは旧押下と欄が残る。同じ配置 ID が再利用される再オープンでも文書 ID は異なる。
+  開始時の `ClipPress.edit`・操作中の `gestureEdit` と現在の `onClipEdit` を区別し、旧操作へ最新の編集先を貸さない。
+  投入済み数値入力は欄を閉じるだけでは止まらないため、実行時の文書照合も確認する。
+  `clip-gesture-document-ui`・`clip-gesture-callback-ui` は実入力・製品 ABI・履歴と保存再読込を検査する
+  （[ADR 0194](decisions/0194-clip-mix-gesture-document-scope.md)）。
 - **縦だけのヘッダドラッグや原点での解放で音量が無音になる**:
   押下時の音量と横移動量を確認する。`MixScale.position` は −60 dB 未満を位置 0 へ切り詰めるため、
   横移動ゼロでは表示スケールを往復せず元の Float を返す。`mixer-drag-identity-ui` で試聴・Undo / Redo・再読込を確認する。

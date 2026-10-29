@@ -145,6 +145,9 @@ Swift の警告と開く要求の取消は `RecoveryConsent.swift`、公開前�
 リセット待ちから別の操作子へ移る対象境界は `ValueControlTargetTests.swift` に置く。
 ヘッダの別フィールド・別トラックと、クリップの別ハンドルの数値欄を製品入力から検査する
 （[ADR 0153 の回帰補強](decisions/0153-value-control-clicks-and-typed-entry.md#回帰の補強-リセット待ちから別の操作子へ移る)）。
+クリップ側の文書境界は `ArrangeView` の `audioDocument`・`ClipPress`・`gestureEdit` に置く。
+`ClipGestureDocumentTests` は再オープン時の押下・下書き・数値欄の取消、投入済み送信の再照合と押下時の編集先保持を検査する
+（[ADR 0194](decisions/0194-clip-mix-gesture-document-scope.md)）。
 プラグインの文字の変換は、通信の `ParseParam`（`crates/echode-sandbox/src/params.rs`）、ヘルパーの `param_from_text`、
 FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
 

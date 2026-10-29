@@ -218,6 +218,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   6 番目の値の操作子（UIF-04）は、単クリックで値を変えない相対ドラッグ、ダブルクリックの既定値、トリプルクリックの入力欄を
   ヘッダの音量・パン、クリップのハンドル、パラメーター欄へ接続した。プラグインの値は `text_to_value` で表示単位のまま入力する
   （[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。実画面の操作感・VoiceOver・第三者プラグインの変換はユーザー確認待ちである。
+  クリップのゲイン・フェード操作も文書交換で取り消し、旧押下・数値欄が新文書の履歴と保存へ漏れないようにした
+  （[ADR 0194](decisions/0194-clip-mix-gesture-document-scope.md)）。実画面の文書切替・VoiceOver はユーザー確認待ちである。
   試聴のループ（UIF-10）は再現しておらず、原因は未確定である（[照合](reviews/2026-10-21-ui-feedback-audit.md)）。
   7 番目のクリップの移動（UIF-03）は、本体ドラッグの別トラックへの移動・四分音符の吸着と Shift の解除・Command の複製を単一 Undo で接続した。
   移動先で重なる配置は置き換え（削除・切詰め・分割）、複製の中身は元と独立する（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。

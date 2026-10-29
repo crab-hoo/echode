@@ -118,8 +118,16 @@ public final class ArrangeView: NSView {
     private var clipDraft: ClipDraft?
     /// Clip gain and fade clicks, drags and typing (ADR 0153).
     let clicks = ValueClicks<ClipTarget>()
-    /// The handle under the last press and its clip as recorded.
-    private var press: (target: ClipTarget, mix: ClipMix, layout: ClipControlLayout)?
+    /// The handle and edit destination captured on the press, before later view updates.
+    private struct ClipPress {
+        let target: ClipTarget
+        let mix: ClipMix
+        let layout: ClipControlLayout
+        let document: UUID?
+        let edit: ((ClipMixEdit) -> Void)?
+    }
+    private var press: ClipPress?
+    private var gestureEdit: ((ClipMixEdit) -> Void)?
     private(set) var entry: ValueEntryField?
     var onOpenPiano: ((UUID, Int64) -> Void)?
     var onClipEdit: ((ClipMixEdit) -> Void)?
@@ -131,7 +139,14 @@ public final class ArrangeView: NSView {
     var onSelect: ((UUID) -> Void)?
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
-    var audioDocument: UUID? { didSet { if oldValue != audioDocument { audioDragDocument = nil; cancelRuler() } } }
+    var audioDocument: UUID? {
+        didSet {
+            guard oldValue != audioDocument else { return }
+            audioDragDocument = nil
+            cancelRuler()
+            cancelClipControls()
+        }
+    }
     var onDropAudio: ((AudioFileDrop) -> Bool)?
     private var audioDragDocument: UUID?
     /// A press on a clip body and, once it travels, where the clip would land (ADR 0154).
@@ -153,7 +168,8 @@ public final class ArrangeView: NSView {
         setAccessibilityRole(.group)
         setAccessibilityLabel(text("Arrange"))
         clicks.begin = { [weak self] target in
-            guard let self, let press = self.press, press.target == target else { return false }
+            guard let self, let press = self.press, press.target == target, press.document == self.audioDocument else { return false }
+            self.gestureEdit = press.edit
             let mix = press.mix
             self.clipDraft = ClipDraft(original: mix, gain: mix.gain, fadeIn: mix.fadeIn, fadeOut: mix.fadeOut,
                 fadeInTicks: mix.fadeInTicks, fadeOutTicks: mix.fadeOutTicks, handle: target.handle, layout: press.layout)
@@ -258,7 +274,7 @@ public final class ArrangeView: NSView {
 
     public func stop() {
         cancelRuler()
-        clicks.cancel(); entry?.cancel()
+        cancelClipControls()
         feedback.invalidate(); renderer?.stop(); renderer = nil; elements = []; accessibleElements = [:]; clipDraft = nil; audioDragDocument = nil; movePress = nil
     }
 
@@ -339,7 +355,7 @@ public final class ArrangeView: NSView {
                     y: presentedTimelineTop + Double(element.y), height: Double(element.height))
                 if let handle = layout.hit(point) {
                     let target = ClipTarget(clip: id, handle: handle)
-                    if case .waiting(target) = clicks.phase {} else { press = (target, mix, layout) }
+                    if case .waiting(target) = clicks.phase {} else { press = ClipPress(target: target, mix: mix, layout: layout, document: audioDocument, edit: onClipEdit) }
                     clicks.down(target, at: point, clicks: event.clickCount)
                     return
                 }
@@ -429,21 +445,31 @@ public final class ArrangeView: NSView {
         clipDraft = draft; refresh()
     }
 
-    /// A commit sends the shown value as one edit; a cancel drops the draft.
+    private func cancelClipControls() {
+        clicks.cancel()
+        press = nil
+        gestureEdit = nil
+        clipDraft = nil
+        entry?.cancel()
+    }
+
+    /// A commit sends the shown value to the press's destination; cancellation only drops the draft.
     private func finishClip(commit: Bool) {
+        let edit = gestureEdit
+        gestureEdit = nil
         guard let draft = clipDraft else { return }
         clipDraft = nil; refresh()
         guard commit else { return }
         switch draft.handle {
-        case .gain: onClipEdit?(.gain(draft.original.id, draft.gain))
-        case .fadeIn, .fadeOut: onClipEdit?(.fades(draft.original.id, draft.fadeIn, draft.fadeOut))
+        case .gain: edit?(.gain(draft.original.id, draft.gain))
+        case .fadeIn, .fadeOut: edit?(.fades(draft.original.id, draft.fadeIn, draft.fadeOut))
         }
     }
 
     /// The third click's field, in the inspector's units: dB for gain and
     /// milliseconds for a fade.
     private func openEntry(_ target: ClipTarget) {
-        guard let press, press.target == target, let mix = snapshot?.clipMix(target.clip) else { return }
+        guard let press, press.target == target, press.document == audioDocument, let mix = snapshot?.clipMix(target.clip) else { return }
         entry?.cancel()
         let rect: CGRect
         let title: String
@@ -454,8 +480,9 @@ public final class ArrangeView: NSView {
         }
         entry = ValueEntryField.open(in: self, over: rect, text: ClipEntry.text(target.handle, mix), label: title,
             commit: { [weak self] typed in
-                guard let edit = ClipEntry.edit(target.handle, mix, typed) else { return false }
-                if ClipEntry.changes(edit, mix) { self?.onClipEdit?(edit) }
+                guard let self, self.audioDocument == press.document,
+                      let edit = ClipEntry.edit(target.handle, mix, typed) else { return false }
+                if ClipEntry.changes(edit, mix) { press.edit?(edit) }
                 return true
             }, onClose: { [weak self] in self?.entry = nil })
     }

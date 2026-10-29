@@ -191,7 +191,7 @@ check-bridge:
 	bash scripts/spike-bridge.sh
 
 # Product Swift wrapper, piano gestures/grids/time guides, single/batch velocity, note selection, batch deletion/movement/resizing/copying. No timing assertions.
-# Includes selected-track numeric/accessible mix batches and header gesture ownership across document replacement.
+# Includes selected-track numeric/accessible mix batches and header/clip gesture ownership across document replacement.
 check-shell:
 	bash scripts/check-shell.sh
 

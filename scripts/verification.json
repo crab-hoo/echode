@@ -63,6 +63,24 @@
   ],
   "product_contracts": [
     {
+      "id": "clip-gesture-document-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "ClipGestureDocumentTests", "test": "contractOldClipControlsCannotEditTheReopenedDocument", "timeout": 180,
+      "purpose": "全クリップハンドルの旧押下・ドラッグ・リセット待ち・数値欄を文書交換で取消し、履歴・保存と投入済み数値入力の文書再照合を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "            cancelClipControls()\n", "new": ""},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "self.audioDocument == press.document", "new": "self.audioDocument == press.document || press.document != nil"}
+      ]
+    },
+    {
+      "id": "clip-gesture-callback-ui", "runner": "swift", "package_path": "swift/EchodeApp",
+      "suite": "ClipGestureDocumentTests", "test": "contractClipGestureKeepsItsOriginalEditCallback", "timeout": 180,
+      "purpose": "同文書のcallback交換を押下後に行い、ドラッグ・リセット・数値入力が元の編集先と単一Undo/Redo・保存再読込を保つことを確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "let edit = gestureEdit", "new": "let edit = onClipEdit"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "press.edit?(edit)", "new": "self.onClipEdit?(edit)"}
+      ]
+    },
+    {
       "id": "mixer-reset-target-ui", "runner": "swift", "package_path": "swift/EchodeApp",
       "suite": "ValueControlTargetTests", "test": "contractHeaderResetWaitDoesNotBorrowTheNextControlsPress", "timeout": 180,
       "purpose": "リセット待ちから別フィールド・別トラックへの押下とドラッグを通し、対象保持・先行リセットと別々のUndo/Redo・保存再読込を確認",
