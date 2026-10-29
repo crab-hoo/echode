@@ -892,7 +892,13 @@ fn format_gain(gain: f32) -> String {
     if text.ends_with('.') {
         text.pop();
     }
-    text
+    // Keep legacy bytes only when they still describe the original float.
+    // Fixed decimal places lose quiet gains and low mantissa bits.
+    if text.parse::<f32>() == Ok(gain) {
+        text
+    } else {
+        gain.to_string()
+    }
 }
 
 /// Current package schema. Older numbers are raised by [`SCHEMA_STEPS`].
@@ -1025,8 +1031,8 @@ fn to_json(value: &(impl Serialize + ?Sized)) -> String {
     String::from_utf8(buffer).expect("package JSON is UTF-8")
 }
 
-/// serde_json writes strings and structure. `f32` keeps the ADR 0022 spelling,
-/// so 0 stays `0` and 1 stays `1`.
+/// serde_json writes strings and structure. Floats retain the legacy spelling
+/// when lossless, otherwise use round-trip decimals (ADR 0196). Zero stays `0`.
 struct PackageFormatter;
 
 impl serde_json::ser::Formatter for PackageFormatter {
@@ -1730,6 +1736,33 @@ mod tests {
         assert_eq!(format_gain(4.0), "4");
         assert_eq!(format_gain(-1.0), "-1");
         assert_eq!(format_gain(0.5), "0.5");
+        // Do not churn existing canonical bytes when the old spelling was exact.
+        assert_eq!(format_gain(0.1), "0.100000001");
+        assert_eq!(format_gain(0.0001), "0.0001");
+    }
+
+    #[test]
+    fn finite_nonzero_floats_keep_every_bit_in_package_json() {
+        #[derive(Serialize)]
+        struct Row {
+            gain: f32,
+        }
+        // A deterministic sample across exponent/mantissa/sign bits, not a model limit.
+        let mut bits = 1_u32;
+        for _ in 0..10_000 {
+            let value = f32::from_bits(bits);
+            if value.is_finite() && value != 0.0 {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&to_json(&Row { gain: value })).unwrap();
+                let restored: f32 = serde_json::from_value(parsed["gain"].clone()).unwrap();
+                assert_eq!(
+                    restored.to_bits(),
+                    bits,
+                    "float spelling lost bits: {value:e}"
+                );
+            }
+            bits = bits.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        }
     }
 
     #[test]

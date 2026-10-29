@@ -603,6 +603,23 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_clip_identity_and_float_roundtrip_contracts_preserve_disk_and_input_boundaries(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        disk = contracts["package-float-roundtrip"]
+        self.assertEqual((disk["runner"], disk["package"], disk["target"]),
+                         ("rust", "echode-history", ["--test", "float_roundtrip"]))
+        self.assertEqual(disk["test"], "contract_package_floats_preserve_quiet_gains_and_pan_bits")
+        native = contracts["clip-drag-identity-ui"]
+        self.assertEqual((native["runner"], native["suite"], native["test"]),
+                         ("swift", "ClipDragIdentityTests", "contractOrthogonalClipDragsPreserveExactValuesAndRedo"))
+        self.assertEqual(len(native["negative_controls"]), 3)
+        for fault in [disk["negative_control"], *native["negative_controls"]]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("crates/echode-history/src/document.rs", "crates/echode-history/tests/float_roundtrip.rs",
+                       "swift/EchodeApp/Tests/EchodeAppTests/ClipDragIdentityTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
+                            <= self.selected(source))
+
     def test_reset_target_contracts_cover_both_native_views_and_select_dynamic_checks(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for name, test, source in (
@@ -1090,7 +1107,7 @@ class PolicyTests(unittest.TestCase):
                           "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
                           "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-duplicate-key-ui", "clip-duplicate-key-guards-ui", "mixer-switch-batch-ui", "mixer-switch-order-ui", "mixer-value-batch-ui", "mixer-value-bounds-ui", "mixer-step-ui", "mixer-step-bounds-ui", "mixer-drag-identity-ui", "mixer-gesture-document-ui", "mixer-reset-document-ui", "scan-deadline", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
-                          "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui", "mixer-reset-target-ui", "clip-reset-target-ui", "clip-gesture-document-ui", "clip-gesture-callback-ui",
+                          "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui", "mixer-reset-target-ui", "clip-reset-target-ui", "clip-drag-identity-ui", "package-float-roundtrip", "clip-gesture-document-ui", "clip-gesture-callback-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",
                           "fx-header-ui", "fx-inspector-ui", "plugin-window-open-ui", "plugin-window-visibility", "plugin-window-loop", "plugin-window-status-ui", "plugin-window-state",

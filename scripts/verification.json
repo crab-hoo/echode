@@ -93,6 +93,22 @@
       "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "if case .waiting(target) = clicks.phase", "new": "if case .waiting = clicks.phase"}
     },
     {
+      "id": "package-float-roundtrip", "runner": "rust", "package": "echode-history", "target": ["--test", "float_roundtrip"],
+      "test": "contract_package_floats_preserve_quiet_gains_and_pan_bits", "timeout": 180,
+      "purpose": "製品アクション・Undo/Redo・ジャーナルからパッケージ保存へ通し、極小ゲインとパンの全ビット・再保存の安定性を確認",
+      "negative_control": {"file": "crates/echode-history/src/document.rs", "old": "if text.parse::<f32>() == Ok(gain) {", "new": "if true {"}
+    },
+    {
+      "id": "clip-drag-identity-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ClipDragIdentityTests", "test": "contractOrthogonalClipDragsPreserveExactValuesAndRedo", "timeout": 180,
+      "purpose": "クリップの直交ドラッグと解放時の原点復帰で、極小ゲイン・端数flick・長いフェードの完全保持、Redoと保存再読込を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "if draft.handle == .gain ? offset.height == 0 : offset.width == 0 {", "new": "if draft.handle != .gain && offset.width == 0 {"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "if draft.handle == .gain ? offset.height == 0 : offset.width == 0 {", "new": "if draft.handle == .gain && offset.height == 0 {"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ValueControl.swift", "old": "            dragged(to: point)\n", "new": ""}
+      ]
+    },
+    {
       "id": "mixer-drag-identity-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "MixerDragIdentityTests", "test": "contractZeroHorizontalHeaderDragsPreserveQuietGainAndRedo", "timeout": 180,
       "purpose": "実ヘッダの縦ドラッグと解放時の原点復帰で、表示下限未満を含む音量の完全保持・Undo/Redo不変・保存再読込を確認",

@@ -147,6 +147,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 ### 5. モデル・Git 履歴・CLI / MCP
 
 - 配置境界・ピーク部分読出・状態取り込み: [ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)、[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)。
+- パッケージの小さいゲイン・パンの保存精度と、クリップの直交ドラッグの恒等性:
+  [ADR 0196](decisions/0196-lossless-package-floats.md)。既存の正確な表記は維持し、9 桁丸めで失われるビットだけを保全する。
 - Phase 2 ヘッドレス MCP: [ADR 0115](decisions/0115-phase2-mcp.md)。
 - 選択位置へのトラック挿入と末尾追加: [ADR 0127](decisions/0127-positioned-track-insertion.md)。
 - トラックの通常複製と導出 ID: [ADR 0129](decisions/0129-track-duplication.md)。

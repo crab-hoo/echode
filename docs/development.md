@@ -170,6 +170,11 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 横移動ゼロの音量保持は `MixScale.dragged` の恒等分岐を通す。
 回帰は `MixerDragIdentityTests.swift`。縦ドラッグと解放時の原点復帰で、表示下限未満の値・Undo / Redo・保存を保持する。
 
+クリップの直交ドラッグと解放時の原点復帰は `ClipDragIdentityTests.swift` で検査する。
+非正規化数・端数 flick・長いフェード、Redo と実パッケージの再オープンを通す。
+保存の浮動小数点表記は `document.rs::format_gain`、独立した保存回帰は履歴の `tests/float_roundtrip.rs` に置く
+（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
+
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
 回帰は `clip_move_tests.rs`、履歴と CLI の `clip_move`、`ClipMoveTests.swift`（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。

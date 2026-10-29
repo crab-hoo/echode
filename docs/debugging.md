@@ -292,6 +292,13 @@ make debug-report
 
 ### UI・描画・入力・履歴・MCP
 
+- **保存して開き直すと小さいゲインやパンが変わる・0 になる**:
+  編集直後の値と、`tracks/<id>.json` の数値、再読込後の Float のビットを比較する。
+  旧 formatter の小数点以下 9 桁への丸めが原因なら、ジャーナルでは値を保持してもパッケージで失われる。
+  `package-float-roundtrip` でゲインと負のパン、`clip-drag-identity-ui` で直交ドラッグ・原点復帰と保存を切り分ける。
+  正確な旧表記は維持し、損失がある時だけ往復可能な表記へ変える。既に丸められた値は復元しない
+  （[ADR 0196](decisions/0196-lossless-package-floats.md)）。
+
 - **Option ドラッグで音高が動く・ベロシティが引き継がれない**:
   押下時の `PianoVelocityGesture` と通常の `PianoGesture` を分ける。横移動・グリッド・Shift はベロシティへ影響しない。
   `piano-note-velocity-ui` は解放位置と単一記録、`piano-note-velocity-cancel-ui` は取消後の遅れた解放を検査する。
