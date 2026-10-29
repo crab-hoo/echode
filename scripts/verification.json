@@ -63,6 +63,12 @@
   ],
   "product_contracts": [
     {
+      "id": "rpc-json-whitespace", "runner": "rust", "package": "echode-api", "target": ["--test", "request_whitespace"],
+      "test": "contract_non_json_whitespace_preserves_edits_history_and_recovery", "timeout": 180,
+      "purpose": "公開APIと実ソケットでJSON外の空白を伴う編集・通知・Undo/Redoをparse errorとして拒否し、ジャーナル・既存のRedo・再オープン時の状態を保つ",
+      "negative_control": {"file": "crates/echode-api/src/rpc.rs", "old": "let line = line.trim_matches([' ', '\\t', '\\r', '\\n']);", "new": "let line = line.trim();"}
+    },
+    {
       "id": "rpc-request-framing", "runner": "rust", "package": "echode-api", "target": ["--test", "request_framing"],
       "test": "contract_unterminated_socket_frames_preserve_edits_history_and_recovery", "timeout": 180,
       "purpose": "実ソケットで改行前に切断した編集・通知・Undo/Redoを拒否し、ジャーナルと既存の履歴・Redo・完結した前方の編集・再オープンを保つ",

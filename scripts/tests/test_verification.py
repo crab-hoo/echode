@@ -65,6 +65,20 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
             self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
 
+    def test_rpc_json_whitespace_contract_covers_both_public_entry_points(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "rpc-json-whitespace")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-api", ["--test", "request_whitespace"]))
+        self.assertEqual(contract["test"], "contract_non_json_whitespace_preserves_edits_history_and_recovery")
+        fault = contract["negative_control"]
+        self.assertEqual(fault["file"], "crates/echode-api/src/rpc.rs")
+        self.assertIn("trim_matches", fault["old"])
+        self.assertIn("line.trim()", fault["new"])
+        self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in (fault["file"], "crates/echode-api/tests/request_whitespace.rs"):
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+            self.assertFalse({"rtsan", "check-bridge-asan", "check-bridge-tsan"} & self.selected(path))
+
     def test_rpc_framing_contract_rejects_eof_before_dispatch(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "rpc-request-framing")
         self.assertEqual((contract["runner"], contract["package"], contract["target"]),
@@ -1199,7 +1213,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
+                          "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",

@@ -330,6 +330,13 @@ make debug-report
   `request_validation.rs` の公開 API と実ソケットの回帰で、拒否時のジャーナルと Undo / Redo 保持、
   後続要求の応答を確認する（[ADR 0020](decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
 
+- **JSON-RPC の前後に空白がある時だけ `-32700` になる**:
+  JSON の空白は SP・HT・CR・LF に限られる。垂直タブ・改ページ・ノーブレークスペース等は、見た目が空白でも不正である。
+  `rpc.rs::ApiSession::reply` が Unicode 全体の `trim()` で不正文字を消していないか確認する。
+  文字列の外側の構文エラーと、名前など文字列内の正当な Unicode を区別する。
+  `request_whitespace.rs` と必須契約 `rpc-json-whitespace` は公開 API と実ソケットで、拒否後の履歴と後続要求を検査する。
+  入力を自動修正して再送せず、元の入力と応答を照合する（[ADR 0020](decisions/0020-json-rpc.md#json-の空白だけを除去する2026-10-29)）。
+
 - **API が `request line ended without a newline` で接続を閉じる**:
   EOF の前に LF が届いていない。JSON 自体が正しくても、この部分行は編集・通知・Undo / Redo へ渡さない。
   `ApiSession::reply` の直接呼出しと、`serve_connection` の通信境界を区別する。

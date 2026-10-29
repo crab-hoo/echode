@@ -102,6 +102,7 @@ check-base:
 # Native scan fixtures prove the direct child has emitted its report and exited before the held-pipe deadline.
 # Sanitizer entry points also run recovery consent separately, retaining its tests and readiness deadline.
 # Socket framing rejects EOF before a newline without consuming edits or Undo/Redo (rpc-request-framing).
+# JSON-only whitespace trimming rejects malformed edits and preserves history (rpc-json-whitespace).
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

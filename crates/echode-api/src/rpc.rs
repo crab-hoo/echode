@@ -19,7 +19,9 @@ impl ApiSession {
 
     /// Answers one line. `None` means the caller sent a notification.
     pub fn reply(&self, line: &str) -> Option<String> {
-        let line = line.trim();
+        // Only JSON whitespace may surround a request; Unicode trimming can turn
+        // malformed input into an executable edit.
+        let line = line.trim_matches([' ', '\t', '\r', '\n']);
         if line.is_empty() {
             return None;
         }

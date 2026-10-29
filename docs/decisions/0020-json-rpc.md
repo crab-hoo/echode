@@ -43,3 +43,23 @@ UI はクライアントの 1 つで、同じ操作を外からも呼べるよ�
   作業時の記録は `target/focused-checks/rpc-envelope-red/` に残す。
 
 この変更は制御側の入力境界だけを直し、保存形式、音声処理、MCP の独自の外枠検証は変更しない。
+
+## JSON の空白だけを除去する（2026-10-29）
+
+`4ded93c` を基準に、編集要求の前に垂直タブ（U+000B）を付けても、
+公開 `ApiSession::reply` が編集を実行し、ジャーナルへ追記することを再現した。
+`str::trim()` は JSON が認めない Unicode の空白まで除去するため、末尾や ID なしの要求でも同じ問題がある。
+
+- 前後から除去する文字を JSON の空白（SP・HT・CR・LF）だけに限定する。
+  それ以外の空白は JSON パーサーへ残し、`-32700`・`id:null` の parse error として編集前に拒否する。
+  空白だけの不正行も応答を省略しない。
+- 正しい空行の無視、正しい通知、文字列内の Unicode と保存内容は変えない。
+  ソケットの LF による区切り、CRLF と行上限も従来どおりである。
+- `tests/request_whitespace.rs` は公開 API と実ソケットの両方で、前後の不正空白と ID の有無、
+  単一・一括編集と Undo / Redo、ジャーナル不変、既存の Redo と再オープンを検査する。
+  通常回帰では正しい空白と文字列内の Unicode、空白だけの行も区別する。
+  必須契約 `rpc-json-whitespace` は Unicode 全体の trim を戻す負の対照を持つ。
+- 修正前は終了コード 101 と `non-JSON whitespace must not execute an edit` で失敗した。
+  作業時のログは `target/focused-checks/rpc-whitespace-red/` に残す。
+
+制御側の構文検証の修正であり、プロトコルの版・保存形式・MCP・音声処理は変えない。

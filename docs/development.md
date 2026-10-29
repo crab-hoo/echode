@@ -104,6 +104,11 @@ JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` �
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する
 （[ADR 0020 の後続修正](decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
 
+JSON の構文上の空白は `ApiSession::reply` の `trim_matches` と既存の JSON パーサーで検証する。
+`tests/request_whitespace.rs` は公開 API・実ソケットで不正な前後の空白を拒否し、ジャーナル・Undo / Redo・再オープンを保つ。
+正しい空白・文字列内の Unicode と空白だけの行も検査する
+（[ADR 0020 の空白検証](decisions/0020-json-rpc.md#json-の空白だけを除去する2026-10-29)）。
+
 ソケットの改行完了は `serve.rs::serve_connection_limited` が検証する。
 `tests/request_framing.rs` は EOF の部分行で編集・通知・Undo / Redo を実行しないことと、
 完了済みの前方の編集・ジャーナル・既存の履歴・再オープン、CRLF と分割受信を検査する
