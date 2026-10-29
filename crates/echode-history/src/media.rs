@@ -123,9 +123,11 @@ fn decode_pcm(bytes: &[u8]) -> Result<DecodedPcm, PackageError> {
     let payload = &bytes[HEADER..];
     let mut samples = Vec::with_capacity(count);
     for chunk in payload.chunks_exact(4) {
-        samples.push(f32::from_le_bytes(
-            chunk.try_into().expect("four sample bytes"),
-        ));
+        let sample = f32::from_le_bytes(chunk.try_into().expect("four sample bytes"));
+        if !sample.is_finite() {
+            return Err(PackageError::new("audio contains a non-finite sample"));
+        }
+        samples.push(sample);
     }
     Ok(DecodedPcm {
         sample_rate,

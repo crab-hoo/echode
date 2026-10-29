@@ -72,8 +72,23 @@ fn full_source_sharing_still_rejects_nonfinite_placement_samples() {
     let trimmed = project
         .resize_clip(track, clip, Tick::new(0), Tick::new(7056))
         .unwrap();
-    let loaded = load_placed_clips(&fixture.0, &trimmed, 48000).unwrap();
-    assert!(loaded[0].samples.iter().all(|sample| *sample == 0.25));
+    assert!(
+        load_placed_clips(&fixture.0, &trimmed, 48000).is_err(),
+        "trimming must not admit a corrupt stored source"
+    );
+}
+
+#[test]
+fn placement_planes_check_nonfinite_results_in_shared_and_copied_paths() {
+    // This buffer length only separates the whole-source and trimmed test paths.
+    let source: Arc<[f32]> = Arc::from([0.25, 0.5, f32::NAN]);
+    assert!(placed_plane(&source, 0, source.len(), 1.0).is_err());
+    assert!(placed_plane(&source, 0, source.len(), 2.0).is_err());
+    let trimmed = placed_plane(&source, 0, 2, 1.0).unwrap();
+    assert_eq!(&*trimmed, &[0.25, 0.5]);
+    // Even validated finite PCM can overflow after a valid placement gain.
+    let loud: Arc<[f32]> = Arc::from([f32::MAX]);
+    assert!(placed_plane(&loud, 0, 1, 2.0).is_err());
 }
 
 #[test]

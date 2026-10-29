@@ -603,6 +603,19 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_canonical_pcm_validation_uses_public_reads_and_product_media_preparation(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "canonical-pcm-validation")
+        self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                         ("rust", "echode-audio-io", ["--test", "pcm_validation"]))
+        self.assertEqual(contract["test"], "contract_stored_pcm_rejects_nonfinite_samples_before_clip_preparation")
+        fault = contract["negative_control"]
+        self.assertEqual(fault["file"], "crates/echode-history/src/media.rs")
+        self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in (fault["file"], "crates/echode-audio-io/tests/pcm_validation.rs",
+                       "crates/echode-audio-io/src/clips_tests.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan", "rtsan"}
+                            <= self.selected(source))
+
     def test_clip_identity_and_float_roundtrip_contracts_preserve_disk_and_input_boundaries(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         disk = contracts["package-float-roundtrip"]
@@ -1097,7 +1110,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
+                          "canonical-pcm-validation", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "stop-cleanup", "plugin-onset", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
