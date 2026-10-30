@@ -284,11 +284,11 @@ extension ProjectController {
     /// one Undo step. The id is a CLAP parameter id, not a row number.
     @discardableResult
     public func setPinned(_ parameter: UInt32, device: UUID, pinned: Bool, documentID: UUID) async -> Bool {
-        await edit({ [self] in
+        await performActions({ [self] in
             guard self.documentID == documentID,
                   let row = tracks.lazy.flatMap({ self.deviceRows(on: $0.id) }).first(where: { $0.id == device }),
                   row.pinned.contains(parameter) != pinned else { return nil }
-            return ["type": "device.pin_parameter", "device": device.uuidString, "parameter": parameter, "pinned": pinned]
+            return [.pinParameter(device: device.uuidString, parameter: parameter, pinned: pinned)]
         }, documentID: documentID)
     }
 

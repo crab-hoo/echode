@@ -211,7 +211,8 @@ Swift の値と拍の変換は `EchodeBridge/ModelLimits.swift` の `ModelLimits
 `make swift-actions` で再生成し、`make check-swift-actions` は変更せず照合する。後者は `make check` でも行う。
 全操作の共有 fixture は `EchodeBridgeTests/Fixtures/edit-actions.json`、符号化は `EditActionTests.swift`、
 製品ワーカー・履歴・再オープンは `TypedEditTests.swift`、ピアノロールの型付き controller は `TypedPianoEditTests.swift` で検査する。
-ピアノロールの単一／一括編集は生成型へ移行した。他領域の辞書からの移行は残る
+ピアノロールとトラック・デバイスの単一／一括編集は生成型へ移行した。他領域の辞書からの移行は残る。
+トラック・デバイスの対象・選択・アンカーと末尾・CLAP ID 境界・履歴と再オープンは `TypedTrackDeviceEditTests.swift` で検査する
 （[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
 
 ループの下書きは `ProjectController.loopRange` の整数範囲を両ルーラーと送信で共有する。

@@ -90,6 +90,30 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
         self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/TypedPianoEditTests.swift"))
 
+    def test_typed_track_device_controller_keeps_generated_actions_and_verification(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "typed-track-device-controller")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "TypedTrackDeviceEditTests"))
+        fault = contract["negative_control"]
+        controller = (ROOT / fault["file"]).read_text()
+        self.assertEqual(controller.count(fault["old"]), 1)
+        for identifier in ("fx-bypass-ui", "fx-offline-ui"):
+            related = next(c for c in self.policy["product_contracts"] if c["id"] == identifier)["negative_control"]
+            self.assertEqual(related["file"], fault["file"])
+            self.assertEqual(controller.count(related["old"]), 1, identifier)
+        tracks = controller[controller.index("func insertTrack("):controller.index("public func selectTrack(")]
+        devices = controller[controller.index("public func insertPlugin("):controller.index("public func insertNote(")]
+        source = (ROOT / "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift").read_text()
+        pins = source[source.index("public func setPinned("):source.index("private func send(")]
+        for migrated in (tracks, devices, pins):
+            self.assertIn("performActions(", migrated)
+            for untyped in ("performEdit(", "await edit(", "JSONSerialization", '"type":', "[String: Any]"):
+                self.assertNotIn(untyped, migrated)
+        self.assertIn("selectingAddedTrack: selectingAddedTrack", controller)
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/TypedTrackDeviceEditTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(path))
+
     def test_model_units_contracts_cover_the_abi_and_swift_consumers(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         native = contracts["model-constants-abi"]
@@ -1440,7 +1464,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
+                          "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
                           "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",

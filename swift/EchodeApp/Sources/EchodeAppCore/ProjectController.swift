@@ -247,12 +247,13 @@ public final class ProjectController {
 
     @discardableResult
     func insertTrack(_ request: TrackInsertionRequest) async -> Bool {
-        var fields: [String: Any] = ["type": "track.add", "name": request.name]
+        let action: EditAction
         if let after = request.after {
-            fields = ["type": "track.insert", "name": request.name,
-                      "after": after.uuidString, "into_folder": request.intoFolder]
+            action = .insertTrack(after: after.uuidString, intoFolder: request.intoFolder, name: request.name)
+        } else {
+            action = .addTrack(name: request.name)
         }
-        return await performEdit({ fields }, documentID: request.document, selectingAddedTrack: true)
+        return await performActions({ [action] }, documentID: request.document, selectingAddedTrack: true)
     }
 
     /// One undo step. Each copy lands right after its source subtree.
@@ -261,8 +262,8 @@ public final class ProjectController {
         guard documentID == request.document, !request.sources.isEmpty,
               Set(request.sources).count == request.sources.count,
               Set(request.sources).isSubset(of: Set(tracks.map(\.id))) else { return false }
-        let actions = request.sources.map { ["type": "track.duplicate", "source": $0.uuidString] }
-        return await performEdit({ actions }, documentID: request.document, selectingAddedTrack: true)
+        let actions = request.sources.map { EditAction.duplicateTrack(source: $0.uuidString) }
+        return await performActions({ actions }, documentID: request.document, selectingAddedTrack: true)
     }
 
     public func selectTrack(_ id: UUID, change: TrackSelectionChange = .replace, visibleOrder: [UUID]? = nil) {
@@ -306,7 +307,7 @@ public final class ProjectController {
     @discardableResult
     public func insertPlugin(_ plugin: String, on track: UUID? = nil, documentID: UUID? = nil) async -> Bool {
         guard let target = track ?? selection, tracks.contains(where: { $0.id == target }), !plugin.isEmpty else { return false }
-        return await edit(["type": "device.add", "track": target.uuidString, "plugin": plugin], documentID: documentID)
+        return await performActions({ [.addDevice(track: target.uuidString, plugin: plugin)] }, documentID: documentID)
     }
 
     @discardableResult
@@ -314,40 +315,38 @@ public final class ProjectController {
         guard self.documentID == documentID, !plugin.isEmpty, !targets.isEmpty,
               Set(targets).count == targets.count,
               Set(targets).isSubset(of: Set(tracks.map(\.id))) else { return false }
-        let actions = targets.map { ["type": "device.add", "track": $0.uuidString, "plugin": plugin] }
-        return await performEdit({ actions }, documentID: documentID)
+        let actions = targets.map { EditAction.addDevice(track: $0.uuidString, plugin: plugin) }
+        return await performActions({ actions }, documentID: documentID)
     }
 
     public func removeDevice(_ id: UUID, documentID: UUID? = nil) async {
-        await edit(["type": "device.remove", "device": id.uuidString], documentID: documentID)
+        _ = await performActions({ [.removeDevice(device: id.uuidString)] }, documentID: documentID)
     }
 
     @discardableResult
     func editDeviceChain(_ change: DeviceChainEdit, documentID: UUID) async -> Bool {
-        await edit({ [self] in
+        await performActions({ [self] in
             guard self.documentID == documentID else { return nil }
-            var command: [String: Any]
+            let command: EditAction
             switch change {
             case .offline(let device, let offline):
                 guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.offline != offline else { return nil }
-                command = ["type": "device.offline", "device": device.uuidString, "offline": offline]
+                command = .offlineDevice(device: device.uuidString, offline: offline)
             case .bypass(let device, let bypassed):
                 guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.bypassed != bypassed else { return nil }
-                command = ["type": "device.bypass", "device": device.uuidString, "bypassed": bypassed]
+                command = .bypassDevice(device: device.uuidString, bypassed: bypassed)
             case .reorder(let device, let before):
                 guard let snapshot, let owner = tracks.first(where: { snapshot.devices(on: $0.id).contains(where: { $0.id == device }) }) else { return nil }
                 let ids = snapshot.devices(on: owner.id).map(\.id)
                 guard let index = ids.firstIndex(of: device) else { return nil }
                 if before == device || (before == nil && index == ids.count - 1) || (index + 1 < ids.count && before == ids[index + 1]) { return nil }
-                command = ["type": "device.reorder", "device": device.uuidString]
-                if let before { command["before"] = before.uuidString }
+                command = .reorderDevice(device: device.uuidString, before: before?.uuidString)
             case .copy(let source, let track, let before):
-                command = ["type": "device.copy", "source": source.uuidString, "track": track.uuidString]
-                if let before { command["before"] = before.uuidString }
+                command = .copyDevice(source: source.uuidString, track: track.uuidString, before: before?.uuidString)
             case .remove(let device):
-                command = ["type": "device.remove", "device": device.uuidString]
+                command = .removeDevice(device: device.uuidString)
             }
-            return command
+            return [command]
         }, documentID: documentID)
     }
 
@@ -696,10 +695,10 @@ public final class ProjectController {
         }
     }
 
-    private func performActions(_ actions: @escaping @MainActor () -> [EditAction]?, documentID: UUID?,
-                                rememberingLength: @escaping @MainActor () -> Int64? = { nil },
-                                rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
-        await applyEdit(actions, documentID: documentID, rememberingLength: rememberingLength,
+    func performActions(_ actions: @escaping @MainActor () -> [EditAction]?, documentID: UUID?, selectingAddedTrack: Bool = false,
+                        rememberingLength: @escaping @MainActor () -> Int64? = { nil },
+                        rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
+        await applyEdit(actions, documentID: documentID, selectingAddedTrack: selectingAddedTrack, rememberingLength: rememberingLength,
                         rememberingVelocity: rememberingVelocity, selectingNotes: selectingNotes) { document, actions in
             try await document.perform(actions)
         }

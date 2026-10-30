@@ -120,6 +120,7 @@ check-base:
 # Modern MCP metadata validates every edit independently of legacy readiness (mcp-modern-metadata).
 # MCP local argument guards reject type overrides and unexpected fields before connecting (mcp-local-arguments).
 # Owned helper main calls and correlated control replies retain timeout, state and save-order boundaries (SPG-01).
+# Generated track/device edits retain batch targets, added-root selection, nullable anchors and durable history.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

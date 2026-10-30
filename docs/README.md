@@ -167,7 +167,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - モデルの時間単位・値の範囲の共有と Swift の拍の変換: [ADR 0200](decisions/0200-shared-model-units-and-limits.md)。
   ループの整数下書きと未変更の入力欄の端点保持: [ADR 0201](decisions/0201-integer-loop-drafts.md)。
 - 編集登録簿からの Swift 型生成・鮮度検査と、型付き単一／一括の製品橋渡し:
-  [ADR 0202](decisions/0202-generated-swift-edit-actions.md)。ピアノロールを移行し、他領域の controller の辞書からの移行は残る。
+  [ADR 0202](decisions/0202-generated-swift-edit-actions.md)。ピアノロールとトラック・デバイスを移行し、他領域の controller の辞書からの移行は残る。
 - 一括開始診断と根拠付きの節・行の読込: [ADR 0126](decisions/0126-agent-context-and-source-reading.md)。
 - 検査の実行時間（反例のコピーの保持・契約ごとの再利用・定義単位の選択）: [ADR 0148](decisions/0148-verification-pipeline-speed.md)。
 - 検査時間の継続記録・テスト製品のビルド・同一反例のビルド共用: [ADR 0195](decisions/0195-verification-cost-observability.md)。

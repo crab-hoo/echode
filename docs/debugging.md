@@ -60,7 +60,10 @@ make debug-report
   ピアノロールは `typed-piano-controller` と既存の操作契約を使う。
   型付きのノート要求が拒否される場合は、`performActions` の前の幾何・MIDI 範囲・元の値と、`applyEdit` の文書照合を分ける。
   MIDI の `UInt8` 変換は検証後だけで行う。非整数化や clamping で拒否を隠さない。
-  トラック・デバイス・ミキサー・クリップ移動・音声の辞書の入口と混同せず、旧文書・古い元の値・モデルの拒否を区別する。
+  ミキサー・クリップ移動・音声の辞書の入口と混同せず、旧文書・古い元の値・モデルの拒否を区別する。
+  トラックとデバイスは `typed-track-device-controller` と既存の操作契約を使う。
+  追加した根の選択は `performActions` の `selectingAddedTrack`、順序と no-op は `applyEdit` の手番の前後で調べる。
+  並べ替え・コピーの `before: null` は末尾指定であり、ピンの `UInt32.max` は CLAP の予約 ID としてモデルが拒否する。
 - **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
   Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
   Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。
@@ -136,6 +139,9 @@ make debug-report
   同日の TSan 全体検査でも同じテストが 1 回期限切れとなり、データ競合の診断はなかった。
   当該テストだけの再実行と正式な `make verify` の再実行では再現せず、原因は未確定のままである。
   TSan の失敗記録は `target/bridge/thread/product/swift-tests.failed.log`、個別の記録は `preparation-focused.log` に残る。
+  2026-10-30 のトラック・デバイス型移行でも、ASan 全体で同じ未保留デバイスの応答待ちが `2 yielded polls` で期限切れとなった。
+  同じ計装バイナリのスイート単独では再現せず、メモリ診断はなかった。負荷による遅延との区別は未確定である。
+  単独の記録は `target/focused-checks/typed-track-device-asan/preparation-focused.log` に残し、対象と 5 秒の期限を変えず正式な検査を再実行する。
   2026-10-27 のベロシティレーンの検査でも TSan の全体実行で同じ期限切れが再発し、競合診断はなかった。
   同じバイナリの `DevicePreparationTests` 単独では再現せず、原因は未確定である。
   失敗は同じ `swift-tests.failed.log`、単独の記録は `velocity-lane-preparation-focused.log`、
