@@ -54,6 +54,8 @@ make debug-report
 - **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
   Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
   Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。
+  `echode_model_constants` の未解決シンボルや単位の不一致も、同じ製品 ABI・生成ヘッダ・再リンクから調べる。
+  `ModelLimitsTests` と `ModelUnitsTests` の独立した期待値で、橋渡しと UI 消費側のどちらが違うかを区別する。
 - **macOS 27 / M4 ビルド基準の不一致**:
   Cargo 生成物は `xcrun vtool -show-build <バイナリ>` と `lipo -archs` で確認する（単体の `rustc --print deployment-target` は `.cargo/config.toml` を読まない）。
   Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。

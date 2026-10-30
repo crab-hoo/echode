@@ -12,7 +12,7 @@ impl Project {
         note: Id,
         velocity: u8,
     ) -> Result<Self, ModelError> {
-        if velocity > 127 {
+        if velocity > crate::MIDI7_MAX {
             return Err(ModelError::InvalidNote);
         }
         let owner = self

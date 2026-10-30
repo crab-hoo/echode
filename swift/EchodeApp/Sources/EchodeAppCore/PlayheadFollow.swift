@@ -9,7 +9,7 @@ enum PlayheadFollow {
     /// A playhead past either edge lands on the left edge.
     static func origin(showing tick: Int64, from origin: Double, span: Double) -> Double? {
         guard origin.isFinite, span.isFinite, span > 0 else { return nil }
-        let beat = Double(tick) / 705_600
+        let beat = Double(tick) / Tick.perBeat
         if beat >= origin, beat < origin + span { return nil }
         return max(0, beat)
     }

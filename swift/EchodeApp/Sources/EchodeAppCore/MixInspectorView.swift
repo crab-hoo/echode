@@ -14,11 +14,12 @@ struct TrackMixInspector: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(text("Track Controls")).font(.subheadline)
                 ControlNumberField(title: text("Volume"), value: MixScale.decibels(mix.gain.value), unit: "dB", minimum: -120,
-                    maximum: 20 * log10(4), silence: true) { value in
+                    maximum: 20 * log10(Double(ModelLimits.gain.upperBound)), silence: true) { value in
                     let gain: Float = value == -.infinity ? 0 : Float(pow(10, value / 20))
                     set(document, .gain, gain)
                 }
-                ControlNumberField(title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%", minimum: -100, maximum: 100) { set(document, .pan, Float($0 / 100)) }
+                ControlNumberField(title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%",
+                    minimum: Double(ModelLimits.pan.lowerBound) * 100, maximum: Double(ModelLimits.pan.upperBound) * 100) { set(document, .pan, Float($0 / 100)) }
                 HStack {
                     Toggle(text("Mute"), isOn: Binding(get: { mix.mute.value != 0 }, set: { set(document, .mute, $0 ? 1 : 0) }))
                     Toggle(text("Solo"), isOn: Binding(get: { mix.solo.value != 0 }, set: { set(document, .solo, $0 ? 1 : 0) }))

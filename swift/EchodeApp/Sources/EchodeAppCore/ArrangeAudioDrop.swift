@@ -26,7 +26,7 @@ extension ArrangeView {
         let beat = input.camera.originBeat + (point.x - origin) / input.camera.pixelsPerBeat
         // The arrange grid currently draws quarter-note lines. Shift preserves
         // the pointer's tick rather than snapping to those visible lines.
-        guard let tick = PianoCamera.ticks(flags.contains(.shift) ? beat : beat.rounded()), tick >= 0 else { return nil }
+        guard let tick = Tick.ticks(flags.contains(.shift) ? beat : beat.rounded()), tick >= 0 else { return nil }
         let rows = input.camera.rows(trackCount: snapshot.trackCount, height: input.arrangeHeight)
         let track = rows.index(at: point.y - input.arrangeTop).flatMap { snapshot.trackID(at: $0) }
         return AudioFileDrop(document: document, url: url, track: track, tick: tick)

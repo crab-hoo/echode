@@ -1,3 +1,4 @@
+import EchodeBridge
 import SwiftUI
 
 struct WorkspaceTransportView: View {
@@ -9,10 +10,10 @@ struct WorkspaceTransportView: View {
     @FocusState private var loopField: LoopField?
     @FocusState private var startField: Bool
     private enum LoopField: Hashable { case start, end }
-    private var seekBeat: Double? { NoteDraft.number(seek).flatMap { $0 >= 0 && PianoCamera.ticks($0) != nil ? $0 : nil } }
+    private var seekBeat: Double? { NoteDraft.number(seek).flatMap { $0 >= 0 && Tick.ticks($0) != nil ? $0 : nil } }
     private var loopBeats: (Double, Double)? {
         guard let start = NoteDraft.number(loopStart), let end = NoteDraft.number(loopEnd),
-              let startTick = PianoCamera.ticks(start), let endTick = PianoCamera.ticks(end),
+              let startTick = Tick.ticks(start), let endTick = Tick.ticks(end),
               startTick >= 0, endTick > startTick else { return nil }
         return (start, end)
     }
@@ -23,7 +24,7 @@ struct WorkspaceTransportView: View {
             Button { Task { await controller.toggleMetronome() } } label: {
                 Label(text("Metronome"), systemImage: controller.audio.metronome ? "metronome.fill" : "metronome")
             }
-            LabeledContent(text("Position (beats)"), value: (Double(controller.audio.tick) / 705_600).formatted(.number.precision(.fractionLength(2))))
+            LabeledContent(text("Position (beats)"), value: (Double(controller.audio.tick) / Tick.perBeat).formatted(.number.precision(.fractionLength(2))))
                 .monospacedDigit()
             TextField(text("Start beat"), text: $seek).frame(width: 80)
                 .focused($startField).focusedValue(\.workspaceTextEntry, true)
@@ -67,7 +68,7 @@ struct WorkspaceTransportView: View {
             .onChange(of: startField) { _, focused in if !focused { showStart() } }
     }
     private func setStart() { if let beat = seekBeat { Task { await controller.setPlaybackStart(beat: beat) } } }
-    private func showStart() { seek = NoteDraft.format(Double(controller.playbackStart) / 705_600) }
+    private func showStart() { seek = NoteDraft.format(Double(controller.playbackStart) / Tick.perBeat) }
     private func showLoop() {
         loopStart = NoteDraft.format(controller.loopStartBeat)
         loopEnd = NoteDraft.format(controller.loopEndBeat)
@@ -79,7 +80,7 @@ struct WorkspaceTransportView: View {
     }
     private func commitLoop() {
         storeLoopDraft()
-        guard let start = PianoCamera.ticks(controller.loopStartBeat), let end = PianoCamera.ticks(controller.loopEndBeat),
+        guard let start = Tick.ticks(controller.loopStartBeat), let end = Tick.ticks(controller.loopEndBeat),
               LoopCommit.needsSend(soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd, start: start, end: end) else { return }
         Task { await controller.updateLoopBounds() }
     }

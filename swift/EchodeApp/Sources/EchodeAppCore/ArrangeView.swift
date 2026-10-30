@@ -346,7 +346,7 @@ public final class ArrangeView: NSView {
             if event.clickCount == 2, !rulerBusy, !isAudio, let onOpenPiano,
                presentedSnapshot === snapshot, presentedCamera == camera,
                event.modifierFlags.isDisjoint(with: [.command, .option, .control]),
-               let tick = PianoCamera.ticks(camera.originBeat + (point.x - renderInput.timelineOrigin) / camera.pixelsPerBeat), tick >= 0 {
+               let tick = Tick.ticks(camera.originBeat + (point.x - renderInput.timelineOrigin) / camera.pixelsPerBeat), tick >= 0 {
                 finishClipMove(at: nil, flags: []); onOpenPiano(id, tick); return
             }
             if let element = clip, let id = element.id.placement, selectedClip == id,

@@ -19,10 +19,10 @@ struct PianoVelocityLane: Sendable {
         return notes.compactMap { note in
             // A sustained note entering from the left must not acquire a false onset.
             let start = max(note.start, note.windowStart)
-            let x = rect.minX + (Double(start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+            let x = rect.minX + (Double(start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
             guard x >= rect.minX, x < rect.maxX else { return nil }
             let value = preview?.value(for: note) ?? Int(note.velocity >> 9)
-            let y = baseline - span * Double(value) / 127
+            let y = baseline - span * Double(value) / Double(ModelLimits.midi7.upperBound)
             return PianoVelocityBar(note: note, stem: CGRect(x: x, y: y, width: 2, height: max(1, baseline - y)),
                                     cap: CGRect(x: x - 3, y: y - 3, width: 8, height: 6))
         }

@@ -7,7 +7,7 @@ struct NoteInputVelocity {
     private(set) var generation: UInt64 = 0
 
     mutating func remember(_ value: Int) {
-        guard (0...127).contains(value) else { return }
+        guard ModelLimits.midi7.contains(value) else { return }
         self.value = value
         generation &+= 1
     }
@@ -42,7 +42,7 @@ struct PianoVelocityGesture {
         guard y.isFinite, self.y.isFinite, pointsPerStep.isFinite, pointsPerStep > 0 else { return nil }
         // Relative motion preserves the grabbed value and offset, independent of pitch zoom and time grid.
         let basis = originals.isEmpty ? [original] : originals.values.map { Int($0 >> 9) }
-        let delta = Int(min(Double(127 - (basis.max() ?? original)), max(Double(-(basis.min() ?? original)),
+        let delta = Int(min(Double(ModelLimits.midi7.upperBound - (basis.max() ?? original)), max(Double(-(basis.min() ?? original)),
             ((self.y - y) / pointsPerStep).rounded())))
         var values: [UUID: Int] = [:]
         for (id, raw) in originals { values[id.note] = Int(raw >> 9) + delta }

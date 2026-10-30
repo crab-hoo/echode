@@ -306,6 +306,10 @@ P2 の共通サンプルブラウザ（[interaction-design.md](interaction-desig
 
 `cbindgen` の C ABI と `EchodeBridge` の非同期関数・所有スナップショットハンドル（[ADR 0044](decisions/0044-swift-bridge.md)）。
 
+時間単位と値の範囲は、値を返す製品 C ABI から `EchodeBridge.ModelLimits` へ渡す。
+`Tick` が拍の入出力を整数へ変換し、座標の倍率とモデル範囲を直書きで重複させない
+（[ADR 0200](decisions/0200-shared-model-units-and-limits.md)）。
+
 ### 13.4 トラックパッドとジェスチャー
 
 軸別ピンチズーム、2 本指スクロール、`NSHapticFeedbackManager` の触覚フィードバック。

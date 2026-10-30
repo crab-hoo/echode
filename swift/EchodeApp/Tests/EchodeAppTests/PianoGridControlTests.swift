@@ -64,7 +64,7 @@ struct PianoGridControlTests {
         view.mouseDown(with: try gridMouse(view, .leftMouseDown, point))
         view.mouseUp(with: try gridMouse(view, .leftMouseUp, point))
         #expect(inserts.count == 1 && inserts[0].length == inputLength)
-        let raw = try #require(PianoCamera.ticks(view.camera.originBeat + (point.x - view.pianoLayout.gridOrigin.x) / 144))
+        let raw = try #require(Tick.ticks(view.camera.originBeat + (point.x - view.pianoLayout.gridOrigin.x) / 144))
         #expect(inserts[0].start == view.camera.snapped(raw))
         // Arrows and the ruler read the same fixed width, not a hard-coded sixteenth.
         view.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)

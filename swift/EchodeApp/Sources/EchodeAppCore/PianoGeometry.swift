@@ -56,7 +56,7 @@ public struct NoteGeometry: Sendable, Equatable {
         self.start = start; self.length = length; self.pitch = pitch
     }
     init(_ note: PianoNote) { self.init(start: note.start, length: note.length, pitch: note.pitch) }
-    var isValid: Bool { (0...127).contains(pitch) && start >= 0 && length > 0 && !start.addingReportingOverflow(length).overflow }
+    var isValid: Bool { ModelLimits.midi7.contains(pitch) && start >= 0 && length > 0 && !start.addingReportingOverflow(length).overflow }
 }
 
 struct PianoCamera: Sendable, Equatable {
@@ -67,15 +67,14 @@ struct PianoCamera: Sendable, Equatable {
     var gridMode = PianoGrid.automatic
     var grid: Int64 { gridMode.ticks(pixelsPerBeat: pixelsPerBeat) }
 
-    func tick(at x: Double) -> Int64? { Self.ticks(originBeat + x / pixelsPerBeat).map(snapped) }
+    func tick(at x: Double) -> Int64? { Tick.ticks(originBeat + x / pixelsPerBeat).map(snapped) }
     /// A ruler press snaps to the grid like note edits; Shift releases it.
     func rulerTick(at x: Double, snapping: Bool) -> Int64? {
-        let tick = snapping ? tick(at: x) : Self.ticks(originBeat + x / pixelsPerBeat)
+        let tick = snapping ? tick(at: x) : Tick.ticks(originBeat + x / pixelsPerBeat)
         return tick.map { max(0, $0) }
     }
-    func pitch(at y: Double) -> Int { min(127, max(0, Int((topPitch - y / pixelsPerPitch).rounded(.up)))) }
-    func snapped(_ tick: Int64) -> Int64 { Self.ticks((Double(tick) / Double(grid)).rounded() * Double(grid) / 705_600) ?? tick }
-    static func ticks(_ beat: Double) -> Int64? { Int64(exactly: (beat * 705_600).rounded()) }
+    func pitch(at y: Double) -> Int { min(ModelLimits.midi7.upperBound, max(0, Int((topPitch - y / pixelsPerPitch).rounded(.up)))) }
+    func snapped(_ tick: Int64) -> Int64 { Tick.ticks((Double(tick) / Double(grid)).rounded() * Double(grid) / Tick.perBeat) ?? tick }
 
     mutating func zoom(factor: Double, horizontal: Bool, vertical: Bool, anchor: CGPoint) {
         guard factor.isFinite, factor > 0, anchor.x.isFinite, anchor.y.isFinite else { return }
@@ -87,18 +86,18 @@ struct PianoCamera: Sendable, Equatable {
         if vertical {
             let pitch = topPitch - anchor.y / pixelsPerPitch
             pixelsPerPitch = min(80, max(12, pixelsPerPitch * factor))
-            topPitch = min(127, max(0, pitch + anchor.y / pixelsPerPitch))
+            topPitch = min(Double(ModelLimits.midi7.upperBound), max(0, pitch + anchor.y / pixelsPerPitch))
         }
     }
 
     mutating func reveal(_ note: PianoNote, width: Double, height: Double) {
-        let start = Double(max(note.start, note.windowStart)) / 705_600
-        let end = min(Double(note.start) + Double(note.length), Double(note.windowEnd)) / 705_600
+        let start = Double(max(note.start, note.windowStart)) / Tick.perBeat
+        let end = min(Double(note.start) + Double(note.length), Double(note.windowEnd)) / Tick.perBeat
         let span = width / pixelsPerBeat
         if start < originBeat || end > originBeat + span { originBeat = max(0, end - span); if start < originBeat { originBeat = max(0, start) } }
         if Double(note.pitch) > topPitch { topPitch = Double(note.pitch) }
         if (topPitch - Double(note.pitch) + 1) * pixelsPerPitch > height {
-            topPitch = min(127, Double(note.pitch) + max(1, height / pixelsPerPitch) - 1)
+            topPitch = min(Double(ModelLimits.midi7.upperBound), Double(note.pitch) + max(1, height / pixelsPerPitch) - 1)
         }
     }
 }
@@ -123,7 +122,7 @@ struct PianoGesture: Sendable {
               camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
               camera.pixelsPerPitch.isFinite, camera.pixelsPerPitch > 0,
               x.isFinite, y.isFinite, self.x.isFinite, self.y.isFinite,
-              let delta = PianoCamera.ticks((x - self.x) / camera.pixelsPerBeat) else { return nil }
+              let delta = Tick.ticks((x - self.x) / camera.pixelsPerBeat) else { return nil }
         let minimumLength: Int64 = snapping ? camera.grid : 1
         var value = original
         switch mode {
@@ -134,7 +133,7 @@ struct PianoGesture: Sendable {
             value.start = max(0, snapping ? camera.snapped(start.partialValue) : start.partialValue)
             let pitch = Double(original.pitch) + ((self.y - y) / camera.pixelsPerPitch).rounded()
             guard pitch.isFinite else { return nil }
-            value.pitch = Int(min(127, max(0, pitch)))
+            value.pitch = Int(min(Double(ModelLimits.midi7.upperBound), max(0, pitch)))
         case .rightEdge:
             let end = original.start.addingReportingOverflow(original.length)
             let moved = end.partialValue.addingReportingOverflow(delta)

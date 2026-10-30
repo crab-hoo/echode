@@ -10,7 +10,7 @@ struct PianoMoveChange: Sendable {
     var copies: [UUID: UUID] = [:]
 
     func translated(_ original: NoteGeometry) -> NoteGeometry? {
-        guard original.isValid, (-127...127).contains(pitch) else { return nil }
+        guard original.isValid, (-ModelLimits.midi7.upperBound...ModelLimits.midi7.upperBound).contains(pitch) else { return nil }
         let start = original.start.addingReportingOverflow(time)
         guard !start.overflow else { return nil }
         let value = NoteGeometry(start: start.partialValue, length: original.length, pitch: original.pitch + pitch)
@@ -63,7 +63,7 @@ struct PianoMoveGesture {
               let last = originals.values.map({ $0.start + $0.length }).max(),
               let low = originals.values.map(\.pitch).min(), let high = originals.values.map(\.pitch).max() else { return nil }
         let time = min(Int64.max - last, max(-first, moved.start - original.start))
-        let pitch = min(127 - high, max(-low, moved.pitch - original.pitch))
+        let pitch = min(ModelLimits.midi7.upperBound - high, max(-low, moved.pitch - original.pitch))
         let change = PianoMoveChange(anchor: anchor, originals: originals, time: time, pitch: pitch, copies: copies)
         guard change.geometries != nil else { return nil }
         return PianoMovePreview(change: change)

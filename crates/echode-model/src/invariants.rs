@@ -47,7 +47,10 @@ impl Project {
                 if !ids.insert(note.id) {
                     return broken(format!("id {} is used twice", note.id));
                 }
-                if note.pitch > 127 || note.length.get() <= 0 || note.articulation.is_some() {
+                if note.pitch > crate::MIDI7_MAX
+                    || note.length.get() <= 0
+                    || note.articulation.is_some()
+                {
                     return broken(format!("note {} is not usable", note.id));
                 }
                 if note.start.get().checked_add(note.length.get()).is_none() {

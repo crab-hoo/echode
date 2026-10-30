@@ -44,7 +44,7 @@ struct RulerHandleTests {
             try harness.send(.leftMouseDragged, beat: 5.3 - 2 / harness.pixels)
             try harness.send(.leftMouseUp, beat: 5.3 - 2 / harness.pixels, flags: .shift)
             let shifted = try #require(harness.ranges.last)
-            #expect(shifted == LoopRange(start: beat, end: PianoCamera.ticks(5.3)!))
+            #expect(shifted == LoopRange(start: beat, end: Tick.ticks(5.3)!))
             await controller.toggleLoop()
             await controller.setLoopRange(shifted, documentID: document)
             #expect(controller.audio.loopStart == shifted.start && controller.audio.loopEnd == shifted.end)
@@ -112,7 +112,7 @@ struct RulerHandleTests {
     }
 
     @Test func handlesClampWithoutCrossingAndKeepTheStationaryEdgeExact() throws {
-        let original = try #require(LoopRange(start: PianoCamera.ticks(1.3)!, end: PianoCamera.ticks(4.1)!))
+        let original = try #require(LoopRange(start: Tick.ticks(1.3)!, end: Tick.ticks(4.1)!))
         for grid in [beat, beat / 4] {
             var left = RulerPress(x: 100, originBeat: 0, pixelsPerBeat: 72, grid: grid, edge: .start, originalRange: original)
             left.update(x: 600, snapping: true)

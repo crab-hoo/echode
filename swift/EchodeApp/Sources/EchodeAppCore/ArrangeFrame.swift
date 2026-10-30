@@ -56,10 +56,10 @@ struct ArrangeFrame: Sendable {
         timelineOrigin = input.timelineOrigin
         timelineWidth = max(0, input.width - timelineOrigin)
         elements = input.snapshot?.visibleElements(
-            originTick: Int64((camera.originBeat * 705_600).rounded()),
-            widthTicks: Int64((max(1, timelineWidth) / camera.pixelsPerBeat * 705_600).rounded(.up)),
+            originTick: Int64((camera.originBeat * Tick.perBeat).rounded()),
+            widthTicks: Int64((max(1, timelineWidth) / camera.pixelsPerBeat * Tick.perBeat).rounded(.up)),
             originTrack: camera.originTrack, heightTracks: input.arrangeHeight / camera.pixelsPerTrack,
-            pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerTrack: camera.pixelsPerTrack
+            pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerTrack: camera.pixelsPerTrack
         ).elements ?? []
         waveforms = Self.waveforms(elements: elements, input: input, camera: camera, origin: timelineOrigin)
         guard input.header != nil, let snapshot = input.snapshot else { headers = []; return }
@@ -85,7 +85,7 @@ struct ArrangeFrame: Sendable {
     /// Timeline x in points, including the header gutter. Nil when no playhead is drawn.
     var playheadX: Double? {
         guard let position = input.playback?.position else { return nil }
-        let x = (Double(position.tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+        let x = (Double(position.tick) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
         guard x >= 0, x < timelineWidth else { return nil }
         return timelineOrigin + x
     }
@@ -116,7 +116,7 @@ struct ArrangeFrame: Sendable {
         instances.append(contentsOf: clipControlInstances)
         instances.append(contentsOf: clipMoveInstances)
         if let position = input.playback?.position {
-            let x = (Double(position.tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+            let x = (Double(position.tick) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
             if x >= 0, x < timelineWidth {
                 instances.append(Instance(rect: SIMD4(Float((timelineOrigin + x) * input.scale), 0, Float(2 * input.scale), Float(input.height * input.scale)),
                                           color: SIMD4(1, 0.60, 0.28, 1)))
@@ -216,8 +216,8 @@ struct ArrangeFrame: Sendable {
 
     private static func waveforms(elements: [ArrangeElement], input: CanvasInput, camera: ArrangeCamera, origin: Double) -> [WaveformDraw] {
         guard let snapshot = input.snapshot else { return [] }
-        let originTick = Int64((camera.originBeat * 705_600).rounded())
-        let pixelsPerTick = camera.pixelsPerBeat / 705_600
+        let originTick = Int64((camera.originBeat * Tick.perBeat).rounded())
+        let pixelsPerTick = camera.pixelsPerBeat / Tick.perBeat
         guard pixelsPerTick > 0 else { return [] }
         let color = SIMD4<Float>(0.78, 0.93, 0.96, 1)
         return elements.compactMap { element in

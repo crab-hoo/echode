@@ -9,6 +9,10 @@ use crate::model::ModelError;
 /// Linear amplitude of about +12 dB, the fader's upper end.
 pub const GAIN_MAX: f32 = 4.0;
 
+/// Normalized balance pan endpoints.
+pub const PAN_MIN: f32 = -1.0;
+pub const PAN_MAX: f32 = 1.0;
+
 /// Ids created with a track so a journal can rebuild the same mixer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MixerIds {
@@ -121,7 +125,7 @@ impl ParamKey {
         }
         match self {
             Self::Gain => (0.0..=GAIN_MAX).contains(&value),
-            Self::Pan => (-1.0..=1.0).contains(&value),
+            Self::Pan => (PAN_MIN..=PAN_MAX).contains(&value),
             Self::Mute | Self::Solo => value == 0.0 || value == 1.0,
         }
     }
@@ -129,7 +133,7 @@ impl ParamKey {
     pub(crate) fn ends(self) -> (f32, f32, f32) {
         match self {
             Self::Gain => (0.0, GAIN_MAX, 1.0),
-            Self::Pan => (-1.0, 1.0, 0.0),
+            Self::Pan => (PAN_MIN, PAN_MAX, 0.0),
             Self::Mute | Self::Solo => (0.0, 1.0, 0.0),
         }
     }

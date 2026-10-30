@@ -293,7 +293,7 @@ final class PianoGridView: NSView {
             onManualScroll?()
         }
         camera.originBeat = max(0, camera.originBeat - delta.x / camera.pixelsPerBeat)
-        camera.topPitch = min(127, max(0, camera.topPitch + delta.y / camera.pixelsPerPitch))
+        camera.topPitch = min(Double(ModelLimits.midi7.upperBound), max(0, camera.topPitch + delta.y / camera.pixelsPerPitch))
         refresh()
     }
     override func magnify(with event: NSEvent) {
@@ -323,7 +323,7 @@ final class PianoGridView: NSView {
             cancelGesture()
             if let hit = submittedFrame.velocityLane.hit(at: panePoint, bars: submittedFrame.velocityBars, focus: focus) {
                 if event.modifierFlags.contains(.command) { toggleSelection(hit); return }
-                beginVelocity(hit, y: pianoLayout.gridPoint(panePoint).y, pointsPerStep: submittedFrame.velocityLane.span / 127)
+                beginVelocity(hit, y: pianoLayout.gridPoint(panePoint).y, pointsPerStep: submittedFrame.velocityLane.span / Double(ModelLimits.midi7.upperBound))
             }
             return
         }
@@ -349,8 +349,8 @@ final class PianoGridView: NSView {
                 beginVelocity(hit, y: point.y)
                 return
             }
-            let start = (Double(hit.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
-            let end = start + Double(hit.length) / 705_600 * camera.pixelsPerBeat
+            let start = (Double(hit.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
+            let end = start + Double(hit.length) / Tick.perBeat * camera.pixelsPerBeat
             let mode = PianoGesture.mode(at: point.x, start: start, end: end)
             let groupedMove = mode == .move && selectedNotes.count > 1 && selectedNotes.contains(hit.id)
             if groupedMove {
@@ -465,7 +465,7 @@ final class PianoGridView: NSView {
             cancelGesture()
             if let geometry = insertion.geometry, !busy {
                 caretTick = geometry.start; caretPitch = geometry.pitch
-                onInsert?(geometry.pitch, Double(geometry.start) / 705_600, Double(geometry.length) / 705_600)
+                onInsert?(geometry.pitch, Double(geometry.start) / Tick.perBeat, Double(geometry.length) / Tick.perBeat)
             }
             return
         }
@@ -616,7 +616,7 @@ final class PianoGridView: NSView {
     }
     private func insertAtCaret() -> Bool {
         guard !busy, track != nil else { return false }
-        onInsert?(caretPitch, Double(caretTick) / 705_600, Double(inputLength() ?? camera.grid) / 705_600)
+        onInsert?(caretPitch, Double(caretTick) / Tick.perBeat, Double(inputLength() ?? camera.grid) / Tick.perBeat)
         return true
     }
     private func change(pitch: Int = 0, time: Int64 = 0, resize: Bool = false) {
@@ -631,7 +631,7 @@ final class PianoGridView: NSView {
         // already sent, and let the controller queue the write.
         guard let focus, let current = noteBasis(focus) else { return }
         var value = current
-        value.pitch = min(127, max(0, value.pitch + pitch))
+        value.pitch = min(ModelLimits.midi7.upperBound, max(0, value.pitch + pitch))
         let moved = (resize ? value.length : value.start).addingReportingOverflow(time)
         guard !moved.overflow else { return }
         if resize { value.length = max(camera.grid, moved.partialValue) } else { value.start = max(0, moved.partialValue) }
@@ -656,7 +656,7 @@ final class PianoGridView: NSView {
               location.tick >= 0, shownLocation != location.id, navigation?.pianoLocationID != location.id else { return }
         shownLocation = location.id; navigation?.pianoLocationID = location.id
         cancelGesture()
-        camera.originBeat = Double(location.tick) / 705_600
+        camera.originBeat = Double(location.tick) / Tick.perBeat
         caretTick = location.tick
         refresh()
     }
@@ -802,7 +802,7 @@ final class PianoGridView: NSView {
         child.setAccessibilityParent(self)
         child.setAccessibilityIdentifier("\(note.id.track)/\(note.id.placement)/\(note.id.note)")
         let degree = frame.piano.key.degreeLabel(note.pitch).map { ", \(text("Scale degree")) \($0)" } ?? ""
-        child.setAccessibilityLabel("\(noteName(note.pitch))\(degree), \(text("Start beat")) \(Double(note.start) / 705_600), \(text("Length in beats")) \(Double(note.length) / 705_600), \(text("Velocity")) \(frame.velocity(for: note))")
+        child.setAccessibilityLabel("\(noteName(note.pitch))\(degree), \(text("Start beat")) \(Double(note.start) / Tick.perBeat), \(text("Length in beats")) \(Double(note.length) / Tick.perBeat), \(text("Velocity")) \(frame.velocity(for: note))")
         applyAccessibility(child, note: note, frame: frame, convert: convert)
         child.actions.press = { [weak self] in self?.select(note); return true }
         child.actions.increment = { [weak self] in self?.select(note); self?.change(pitch: 1); return true }

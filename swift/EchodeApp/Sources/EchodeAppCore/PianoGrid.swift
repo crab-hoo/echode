@@ -1,4 +1,5 @@
 import AppKit
+import EchodeBridge
 
 /// Note values, in quarter-note ticks. Grid choice is viewport state,
 /// not a quantization of existing notes or of the remembered input length.
@@ -6,7 +7,7 @@ enum PianoGrid: Sendable, Equatable {
     case automatic
     case fixed(Int64)
 
-    static let divisions: [Int64] = [2_822_400, 1_411_200, 705_600, 352_800, 176_400, 88_200, 44_100, 22_050]
+    static let divisions: [Int64] = (0..<8).map { (4 * Tick.perQuarter) / (1 << $0) }
     static let triplets = divisions.map { $0 * 2 / 3 }
     static let dotted = divisions.map { $0 * 3 / 2 }
     static let choices: [PianoGrid] = [.automatic] + (divisions + triplets + dotted).map { .fixed($0) }
@@ -15,9 +16,9 @@ enum PianoGrid: Sendable, Equatable {
         switch self {
         case let .fixed(ticks): return ticks
         case .automatic:
-            guard pixelsPerBeat.isFinite, pixelsPerBeat > 0 else { return 176_400 }
+            guard pixelsPerBeat.isFinite, pixelsPerBeat > 0 else { return Tick.perQuarter / 4 }
             // Choose the finest straight division with at least 18pt between lines.
-            return Self.divisions.reversed().first { Double($0) / 705_600 * pixelsPerBeat >= 18 } ?? Self.divisions[0]
+            return Self.divisions.reversed().first { Double($0) / Tick.perBeat * pixelsPerBeat >= 18 } ?? Self.divisions[0]
         }
     }
 

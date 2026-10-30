@@ -34,25 +34,25 @@ struct PianoFrame: Sendable {
         self.layout = layout
         let camera = piano.camera
         notes = input.snapshot?.pianoNotes(track: piano.track,
-            originTick: PianoCamera.ticks(camera.originBeat) ?? 0,
-            widthTicks: max(1, PianoCamera.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
+            originTick: Tick.ticks(camera.originBeat) ?? 0,
+            widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
             topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,
-            pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerPitch: camera.pixelsPerPitch) ?? []
+            pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: camera.pixelsPerPitch) ?? []
         referenceNotes = piano.references.filter { $0 != piano.track }.flatMap { track in
             input.snapshot?.pianoNotes(track: track,
-                originTick: PianoCamera.ticks(camera.originBeat) ?? 0,
-                widthTicks: max(1, PianoCamera.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
+                originTick: Tick.ticks(camera.originBeat) ?? 0,
+                widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
                 topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,
-                pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerPitch: camera.pixelsPerPitch) ?? []
+                pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: camera.pixelsPerPitch) ?? []
         }
         // The lane shows all MIDI pitches, but only the horizontally visible intervals.
         velocityNotes = input.snapshot?.pianoNotes(track: piano.track,
-            originTick: PianoCamera.ticks(camera.originBeat) ?? 0,
-            widthTicks: max(1, PianoCamera.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
-            topPitch: 127, heightPitches: 128,
-            pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerPitch: 1) ?? []
+            originTick: Tick.ticks(camera.originBeat) ?? 0,
+            widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
+            topPitch: Double(ModelLimits.midi7.upperBound), heightPitches: Double(ModelLimits.midi7.count),
+            pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: 1) ?? []
         // MIDI pitch bounds are part of the note protocol, not a project limit.
-        rows = (0...127).map { pitch in
+        rows = ModelLimits.midi7.map { pitch in
             PianoRow(pitch: pitch, y: Float(layout.rulerHeight + (camera.topPitch - Double(pitch)) * camera.pixelsPerPitch),
                      height: Float(camera.pixelsPerPitch))
         }.filter { $0.y + $0.height > Float(layout.rulerHeight) && $0.y < Float(layout.grid.maxY) }
@@ -66,9 +66,9 @@ struct PianoFrame: Sendable {
                      color: row.black ? PianoPalette.blackRow : PianoPalette.whiteRow)
         }
         for tick in gridLineTicks {
-            let x = origin.x + (Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
-            let color: SIMD4<Float> = tick % 2_822_400 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
-                (tick % 705_600 == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
+            let x = origin.x + (Double(tick) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
+            let color: SIMD4<Float> = tick % (4 * Tick.perQuarter) == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
+                (tick % Tick.perQuarter == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
             instances.append(instance(SIMD4(Float(x), Float(origin.y), 1, Float(layout.grid.height)), color: color))
         }
         for note in referenceNotes {
@@ -82,13 +82,13 @@ struct PianoFrame: Sendable {
                                       color: piano.isSelected(note.id) ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
             let velocity = velocity(for: note)
             instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + note.height - 3,
-                                            max(0, note.width) * Float(velocity) / 127, 2),
+                                            max(0, note.width) * Float(velocity) / Float(ModelLimits.midi7.upperBound), 2),
                                       color: SIMD4(0.18, 0.25, 0.29, 1)))
         }
         for g in [piano.preview?.geometry, piano.insertion].compactMap({ $0 }) + (piano.move?.geometries(in: notes) ?? []) + (piano.resize?.geometries(in: notes) ?? []) {
-            let rect = SIMD4(Float(origin.x + (Double(g.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat),
+            let rect = SIMD4(Float(origin.x + (Double(g.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat),
                              Float(origin.y + (camera.topPitch - Double(g.pitch)) * camera.pixelsPerPitch + 1),
-                             Float(Double(g.length) / 705_600 * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))
+                             Float(Double(g.length) / Tick.perBeat * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))
             instances.append(instance(rect, color: SIMD4(0.96, 0.87, 0.54, 1)))
         }
         if let marquee = piano.marquee {
@@ -134,7 +134,7 @@ struct PianoFrame: Sendable {
     /// Playhead x in points. Nil when it falls outside the grid.
     var playheadX: Double? {
         guard let position = input.playback?.position else { return nil }
-        let x = (Double(position.tick) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        let x = (Double(position.tick) / Tick.perBeat - piano.camera.originBeat) * piano.camera.pixelsPerBeat
         guard x >= 0, x < layout.grid.width else { return nil }
         return layout.gridOrigin.x + x
     }
@@ -153,9 +153,9 @@ struct PianoFrame: Sendable {
         var instances = [instance(SIMD4(left, Float(layout.rulerHeight), width, Float(layout.grid.height)), color: SIMD4(0.25, 0.26, 0.28, 1))]
         // White keys extend behind the short black keys. Include neighbours
         // just beyond the visible rows so partial keys remain filled.
-        for pitch in 0...127 where !isBlack(pitch) {
+        for pitch in ModelLimits.midi7 where !isBlack(pitch) {
             let height = piano.camera.pixelsPerPitch
-            let above = pitch < 127 && isBlack(pitch + 1) ? height / 2 : 0
+            let above = pitch < ModelLimits.midi7.upperBound && isBlack(pitch + 1) ? height / 2 : 0
             let below = pitch > 0 && isBlack(pitch - 1) ? height / 2 : 0
             let y = layout.rulerHeight + (piano.camera.topPitch - Double(pitch)) * height - above
             guard y + height + above + below > layout.rulerHeight, y < layout.grid.maxY else { continue }
@@ -198,8 +198,8 @@ struct PianoFrame: Sendable {
     /// The visible part of the loop band, never the keyboard headings or note grid.
     var loopRect: CGRect? {
         guard let range = piano.loop?.range else { return nil }
-        let left = layout.gridOrigin.x + (Double(range.start) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
-        let right = layout.gridOrigin.x + (Double(range.end) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        let left = layout.gridOrigin.x + (Double(range.start) / Tick.perBeat - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        let right = layout.gridOrigin.x + (Double(range.end) / Tick.perBeat - piano.camera.originBeat) * piano.camera.pixelsPerBeat
         let rect = CGRect(x: max(layout.ruler.minX, left), y: 0,
                           width: max(0, min(layout.ruler.maxX, right) - max(layout.ruler.minX, left)), height: layout.rulerHeight)
         return rect.isEmpty ? nil : rect
@@ -208,7 +208,7 @@ struct PianoFrame: Sendable {
     /// Start marker x in points. Nil when it falls outside the ruler.
     var startX: Double? {
         guard let start = piano.start else { return nil }
-        let x = (Double(start) / 705_600 - piano.camera.originBeat) * piano.camera.pixelsPerBeat
+        let x = (Double(start) / Tick.perBeat - piano.camera.originBeat) * piano.camera.pixelsPerBeat
         guard x >= 0, x < layout.grid.width else { return nil }
         return layout.gridOrigin.x + x
     }
@@ -259,10 +259,10 @@ struct PianoFrame: Sendable {
     /// Paint subdivisions, beats, then four-quarter guides. Coincident ticks draw once.
     /// Time guides are visual references, independent of the chosen snap width.
     var gridLineTicks: [Int64] {
-        let subdivisions = gridTicks.filter { $0 % 705_600 != 0 }
-        let guides = visibleGridTicks(every: 705_600)
-        let beats = guides.filter { $0 % 2_822_400 != 0 }
-        let bars = guides.filter { $0 % 2_822_400 == 0 }
+        let subdivisions = gridTicks.filter { $0 % Tick.perQuarter != 0 }
+        let guides = visibleGridTicks(every: Tick.perQuarter)
+        let beats = guides.filter { $0 % (4 * Tick.perQuarter) != 0 }
+        let bars = guides.filter { $0 % (4 * Tick.perQuarter) == 0 }
         return subdivisions + beats + bars
     }
 
@@ -275,14 +275,14 @@ struct PianoFrame: Sendable {
         guard initialStep > 0, camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
               camera.originBeat.isFinite, camera.originBeat >= 0, layout.grid.width.isFinite else { return [] }
         var step = initialStep
-        while Double(step) / 705_600 * camera.pixelsPerBeat < 4 {
+        while Double(step) / Tick.perBeat * camera.pixelsPerBeat < 4 {
             let doubled = step.multipliedReportingOverflow(by: 2)
             guard !doubled.overflow else { return [] }
             step = doubled.partialValue
         }
-        let first = ceil(camera.originBeat * 705_600 / Double(step)) * Double(step)
+        let first = ceil(camera.originBeat * Tick.perBeat / Double(step)) * Double(step)
         guard var tick = Int64(exactly: first) else { return [] }
-        let end = (camera.originBeat + layout.grid.width / camera.pixelsPerBeat) * 705_600
+        let end = (camera.originBeat + layout.grid.width / camera.pixelsPerBeat) * Tick.perBeat
         var result: [Int64] = []
         while Double(tick) <= end {
             result.append(tick)

@@ -69,7 +69,7 @@ struct RulerLoopTests {
         try drag(2.7, flags: .shift)
         try up(2.7, flags: .shift)
         let unsnapped = try #require(ranges.last)
-        #expect(unsnapped == LoopRange(start: PianoCamera.ticks(1.3)!, end: PianoCamera.ticks(2.7)!))
+        #expect(unsnapped == LoopRange(start: Tick.ticks(1.3)!, end: Tick.ticks(2.7)!))
         await controller.toggleLoop()
         #expect(controller.audio.loopStart == expected.start && controller.audio.loopEnd == expected.end)
         await controller.setLoopRange(unsnapped, documentID: document)

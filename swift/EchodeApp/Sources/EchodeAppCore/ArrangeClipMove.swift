@@ -46,8 +46,8 @@ enum ClipMoveTarget {
     /// the pointer's tick.
     static func start(from start: Int64, beats: Double, free: Bool) -> Int64? {
         guard beats.isFinite else { return nil }
-        let beat = Double(start) / 705_600 + beats
-        return PianoCamera.ticks(free ? beat : beat.rounded()).map { max(0, $0) }
+        let beat = Double(start) / Tick.perBeat + beats
+        return Tick.ticks(free ? beat : beat.rounded()).map { max(0, $0) }
     }
 }
 
@@ -102,8 +102,8 @@ extension ArrangeFrame {
     var clipMoveRect: CGRect? {
         guard let move = input.clipMove, let snapshot = input.snapshot else { return nil }
         let row = camera.rows(trackCount: snapshot.trackCount, height: input.arrangeHeight).rect(at: move.row, width: 0)
-        return CGRect(x: timelineOrigin + (Double(move.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat,
-                      y: input.arrangeTop + row.minY, width: Double(move.length) * camera.pixelsPerBeat / 705_600, height: max(1, row.height - 1))
+        return CGRect(x: timelineOrigin + (Double(move.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat,
+                      y: input.arrangeTop + row.minY, width: Double(move.length) * camera.pixelsPerBeat / Tick.perBeat, height: max(1, row.height - 1))
     }
 
     var clipMoveInstances: [Instance] {

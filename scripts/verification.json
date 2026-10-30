@@ -69,6 +69,21 @@
   ],
   "product_contracts": [
     {
+      "id": "model-constants-abi", "runner": "rust", "package": "echode-ffi", "target": ["--test", "model_constants"],
+      "test": "contract_model_constants_match_the_authoritative_units_and_bounds", "timeout": 180,
+      "purpose": "文書や機器を開かない製品 C ABI の時間単位・ミキサー・配置・フェード・MIDI の値をモデル正本と照合する",
+      "negative_control": {"file": "crates/echode-ffi/src/constants.rs", "old": "ticks_per_quarter: echode_model::TICKS_PER_QUARTER,", "new": "ticks_per_quarter: echode_model::TICKS_PER_QUARTER / 2,"}
+    },
+    {
+      "id": "model-units-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ModelUnitsTests", "test": "contractModelUnitsReachNotesTransportAndMixControls", "timeout": 180,
+      "purpose": "共通単位からノート・グリッド・再生位置・ミックス操作子へつなぎ、丸め・境界と実パッケージへの保存を確認する",
+      "negative_controls": [
+        {"file": "swift/EchodeBridge/Sources/EchodeBridge/ModelLimits.swift", "old": "public static let perBeat = Double(perQuarter)", "new": "public static let perBeat = Double(perQuarter) / 2"},
+        {"file": "swift/EchodeBridge/Sources/EchodeBridge/ModelLimits.swift", "old": "public static let gain: ClosedRange<Float> = 0...model.gain_max", "new": "public static let gain: ClosedRange<Float> = 0...3"}
+      ]
+    },
+    {
       "id": "plugin-main-call-ownership", "runner": "rust", "package": "echode-plugin-host", "target": ["--lib"],
       "test": "main_requests::tests::abandoned_save_keeps_its_own_reply_and_blocks_replacement", "timeout": 180,
       "purpose": "時間切れのメインスレッド要求は入力と結果を専有し、実行中の後続を拒否して古い完了を次へ貸さない",
@@ -333,7 +348,7 @@
       "purpose": "実アクセシビリティ要素で共通音量・パン限界、確定値の読戻し、no-opのRedo保持と再オープン後の旧要素・要求の拒否を確認",
       "negative_controls": [
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let factor = min(upper, max(lower, Double(value) / Double(basis)))", "new": "let factor = max(lower, Double(value) / Double(basis)) + upper * 0"},
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let delta = min(1 - upper, max(-1 - lower, Double(value) - Double(basis)))", "new": "let delta = Double(value) - Double(basis) + (lower + upper) * 0"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let delta = min(Double(ModelLimits.pan.upperBound) - upper, max(Double(ModelLimits.pan.lowerBound) - lower, Double(value) - Double(basis)))", "new": "let delta = Double(value) - Double(basis) + (lower + upper) * 0"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "controlElements = [:]", "new": "controlElements = controlElements.filter { _ in true }"}
       ]
     },
@@ -353,7 +368,7 @@
       "purpose": "インスペクター共通の入力経路で音量・パンの共通限界とno-op時のRedo保持、古い文書とcallbackの拒否を確認",
       "negative_controls": [
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let factor = min(upper, max(lower, Double(value) / Double(basis)))", "new": "let factor = max(lower, Double(value) / Double(basis)) + upper * 0"},
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let delta = min(1 - upper, max(-1 - lower, Double(value) - Double(basis)))", "new": "let delta = Double(value) - Double(basis) + (lower + upper) * 0"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let delta = min(Double(ModelLimits.pan.upperBound) - upper, max(Double(ModelLimits.pan.lowerBound) - lower, Double(value) - Double(basis)))", "new": "let delta = Double(value) - Double(basis) + (lower + upper) * 0"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "}, documentID: request.document)", "new": "}, documentID: self.documentID ?? request.document)"}
       ]
     },
@@ -362,8 +377,8 @@
       "suite": "PianoTimeGuideTests", "test": "contractBeatAndBarGuidesSurviveCoarseAndThinnedRhythmicGrids", "timeout": 180,
       "purpose": "製品描画フレームで固定・三連符・付点と縮小時の拍・4拍の目印、強線の優先・同位置の重複排除・吸着幅の不変を確認",
       "negative_controls": [
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "let guides = visibleGridTicks(every: 705_600)", "new": "let guides = gridTicks.filter { $0 % 705_600 == 0 }"},
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "let subdivisions = gridTicks.filter { $0 % 705_600 != 0 }", "new": "let subdivisions = gridTicks"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "let guides = visibleGridTicks(every: Tick.perQuarter)", "new": "let guides = gridTicks.filter { $0 % Tick.perQuarter == 0 }"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "let subdivisions = gridTicks.filter { $0 % Tick.perQuarter != 0 }", "new": "let subdivisions = gridTicks"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "return subdivisions + beats + bars", "new": "return beats + bars + subdivisions"}
       ]
     },
@@ -384,7 +399,7 @@
       "negative_controls": [
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGeometry.swift", "old": "gridMode.ticks(pixelsPerBeat: pixelsPerBeat)", "new": "176_400"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoGeometry.swift", "old": "let beat = originBeat + anchor.x / pixelsPerBeat", "new": "let beat = originBeat"},
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "for tick in gridLineTicks {", "new": "for tick in gridLineTicks where tick % 705_600 == 0 {"}
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "for tick in gridLineTicks {", "new": "for tick in gridLineTicks where tick % Tick.perQuarter == 0 {"}
       ]
     },
     {
@@ -637,7 +652,7 @@
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "originals.allSatisfy({ snapshot?.pianoNote($0.key).map(NoteGeometry.init) == $0.value })", "new": "true"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "guard seen.insert(id.note).inserted, let value", "new": "guard seen.insert(id.note).inserted || true, let value"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "let time = min(Int64.max - last, max(-first, moved.start - original.start))", "new": "let time = moved.start - original.start; _ = first; _ = last"},
-        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "let pitch = min(127 - high, max(-low, moved.pitch - original.pitch))", "new": "let pitch = moved.pitch - original.pitch; _ = low; _ = high"}
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoMoveBatch.swift", "old": "let pitch = min(ModelLimits.midi7.upperBound - high, max(-low, moved.pitch - original.pitch))", "new": "let pitch = moved.pitch - original.pitch; _ = low; _ = high"}
       ]
     },
     {
@@ -659,7 +674,7 @@
     {"id": "piano-velocity-batch-targets-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "NoteVelocityBatchBoundaryTests", "test": "contractLinkedVelocityBatchesValidateAllTargetsAndAccessibility", "timeout": 180, "purpose": "リンク配置・画面外の選択の一括増減と読み上げ操作、古い値と不正対象の全拒否・共有内容の重複排除・記憶の世代を確認", "negative_controls": [{"file": "swift/EchodeApp/Sources/EchodeAppCore/NoteVelocityBatch.swift", "old": "guard isValid, originals.allSatisfy({ snapshot?.pianoNote($0.key)?.velocity == $0.value }) else { return nil }", "new": "guard isValid else { return nil }"}, {"file": "swift/EchodeApp/Sources/EchodeAppCore/NoteVelocityBatch.swift", "old": "guard seen.insert(id.note).inserted, let raw = originals[id] else { return nil }", "new": "guard seen.insert(id.note).inserted || true, let raw = originals[id] else { return nil }"}, {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": "if noteSelection != previous, noteFocus == nil { noteVelocity.invalidate() }", "new": "if false, noteSelection != previous, noteFocus == nil { noteVelocity.invalidate() }"}]},
     {"id": "piano-velocity-batch-cancel-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "NoteVelocityBatchBoundaryTests", "test": "contractBatchVelocityGesturesCancelOnSelectionChanges", "timeout": 180, "purpose": "ノートと棒の一括操作を選択変更・解除・Escape・フォーカス喪失・処理中・リサイズ・終了で取り消し、遅れた解放を拒否", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "old": "if selectedNotes != selected { velocityGesture = nil; velocityPreview = nil }", "new": ""}},
     {"id": "piano-velocity-lane-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "NoteVelocityLaneTests", "test": "contractLaneDragSharesVelocityHistoryAndPreservesGeometry", "timeout": 180, "purpose": "下部の棒の実ドラッグから幾何を保つベロシティ編集・解放時の単一Undoと保存、入力値共有へ接続", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "old": "if pianoLayout.velocity.contains(panePoint) {", "new": "if false, pianoLayout.velocity.contains(panePoint) {"}},
-    {"id": "piano-velocity-lane-frame-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "NoteVelocityLaneTests", "test": "contractLaneShowsAllPitchesAndSynchronizesPreviewAndAccessibility", "timeout": 180, "purpose": "音域外の棒・0と127・同時刻の音・左端の発音位置・共通仮表示とアクセシビリティの値と操作を検査", "negative_controls": [{"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "topPitch: 127, heightPitches: 128,", "new": "topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,"}, {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "velocityLane.bars(notes: velocityNotes, camera: piano.camera, preview: piano.velocity)", "new": "velocityLane.bars(notes: velocityNotes, camera: piano.camera, preview: nil)"}]},
+    {"id": "piano-velocity-lane-frame-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "NoteVelocityLaneTests", "test": "contractLaneShowsAllPitchesAndSynchronizesPreviewAndAccessibility", "timeout": 180, "purpose": "音域外の棒・0と127・同時刻の音・左端の発音位置・共通仮表示とアクセシビリティの値と操作を検査", "negative_controls": [{"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "topPitch: Double(ModelLimits.midi7.upperBound), heightPitches: Double(ModelLimits.midi7.count),", "new": "topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,"}, {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoFrame.swift", "old": "velocityLane.bars(notes: velocityNotes, camera: piano.camera, preview: piano.velocity)", "new": "velocityLane.bars(notes: velocityNotes, camera: piano.camera, preview: nil)"}]},
     {"id": "piano-velocity-lane-cancel-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "NoteVelocityLaneTests", "test": "laneGesturesCancelAndBlankClicksNeverInsert", "timeout": 180, "purpose": "棒のドラッグの取消・処理中・対象と文書と寸法の変更・終了と空白クリックで編集や追加しない", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "old": "private func cancelGesture() { selectionPress = nil; velocityGesture = nil; velocityPreview = nil; gesture = nil; preview = nil; insertion = nil; rulerPress = nil; cancelNoteTransforms(); refresh() }", "new": "private func cancelGesture() { selectionPress = nil; gesture = nil; preview = nil; insertion = nil; rulerPress = nil; cancelNoteTransforms(); refresh() }"}},
     {"id": "note-velocity-model", "runner": "rust", "package": "echode-history", "target": ["--test", "note_velocity"], "test": "contract_velocity_preserves_shared_content_windows_and_round_trips_history", "timeout": 180, "purpose": "ベロシティの境界値・共有内容と固定窓の保持・不正対象の拒否・Undo/Redo・新旧ジャーナル・保存を製品アクションで確認", "negative_control": {"file": "crates/echode-model/src/note_velocity.rs", "old": "target.velocity = midi7_to_velocity(velocity);", "new": "target.velocity = midi7_to_velocity(100);"}},
     {"id": "piano-note-clip-bounds-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "PianoDragTests", "test": "contractNoteDragsGrowClipWindowsAndKeepTheWholeNoteVisible", "timeout": 180, "purpose": "実ピアノロールの左右端・移動で通常・小節未満の移動後の自動配置と手動固定配置をノート全長まで広げ、確定フレーム・単一Undo/Redo・保存再読込を機器なしで確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": "\"length\": geometry.length]", "new": "\"length\": before.length]"}},

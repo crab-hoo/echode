@@ -27,14 +27,14 @@ final class PianoVelocityAccessibility {
             child.setAccessibilityRole(.slider)
             child.setAccessibilityParent(group)
             child.setAccessibilityIdentifier("velocity/\(note.id.track)/\(note.id.placement)/\(note.id.note)")
-            child.setAccessibilityLabel("\(text("Velocity")), \(noteName(note.pitch)), \(text("Start beat")) \(Double(note.start) / 705_600)")
+            child.setAccessibilityLabel("\(text("Velocity")), \(noteName(note.pitch)), \(text("Start beat")) \(Double(note.start) / Tick.perBeat)")
             child.setAccessibilityValue(value)
             child.setAccessibilityMinValue(0)
-            child.setAccessibilityMaxValue(127)
+            child.setAccessibilityMaxValue(ModelLimits.midi7.upperBound)
             child.setAccessibilityFocused(note.id == focus)
             child.setAccessibilityFrame(convert(bar.stem.union(bar.cap).intersection(frame.layout.velocity)))
             child.actions.press = { select(note); return true }
-            child.actions.increment = { change(note.id, min(127, value + 1)) }
+            child.actions.increment = { change(note.id, min(ModelLimits.midi7.upperBound, value + 1)) }
             child.actions.decrement = { change(note.id, max(0, value - 1)) }
             return child
         }

@@ -48,15 +48,16 @@ mod time;
 
 pub use changeset::{Change, ChangeSet, Field, ObjectKey, ObjectKind, Property, Value};
 pub use device::{
-    Device, DeviceKind, GAIN_MAX, MixerIds, ParamKey, Parameter, test_mixer, valid_plugin_id,
+    Device, DeviceKind, GAIN_MAX, MixerIds, PAN_MAX, PAN_MIN, ParamKey, Parameter, test_mixer,
+    valid_plugin_id,
 };
 pub use id::Id;
 pub use invariants::InvariantError;
 pub use model::{
     AudioRef, CLIP_GAIN_MAX, ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind,
-    ExpressionPoint, FADE_RATE_LIMIT, Lane, ModelError, Note, NoteDraft, NoteGeometry, Placement,
-    Project, Track, clip_gain_allowed, fade_allowed, fade_frames, initial_order, is_media_hash,
-    midi7_to_velocity, velocity_to_midi7,
+    ExpressionPoint, FADE_RATE_LIMIT, Lane, MIDI7_MAX, ModelError, Note, NoteDraft, NoteGeometry,
+    Placement, Project, Track, clip_gain_allowed, fade_allowed, fade_frames, initial_order,
+    is_media_hash, midi7_to_velocity, velocity_to_midi7,
 };
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,

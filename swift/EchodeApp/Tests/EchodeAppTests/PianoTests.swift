@@ -15,8 +15,8 @@ struct PianoTests {
         #expect(camera.pitch(at: 20) == 71)
         #expect(camera.pitch(at: 1_000_000) == 0)
         #expect(camera.tick(at: 10) == 176_400)
-        #expect(PianoCamera.ticks(.infinity) == nil)
-        #expect(PianoCamera.ticks(Double(Int64.max)) == nil)
+        #expect(Tick.ticks(.infinity) == nil)
+        #expect(Tick.ticks(Double(Int64.max)) == nil)
         #expect(DisplayKey().degree(60) == 1)
         #expect(DisplayKey().degreeLabel(60) == "I")
         #expect(DisplayKey.numeral(1) == "I" && DisplayKey.numeral(4) == "IV" && DisplayKey.numeral(7) == "VII")
@@ -158,7 +158,7 @@ struct PianoTests {
         var camera = PianoCamera()
         camera.reveal(far, width: 360, height: 200)
         let shown = try #require(controller.snapshot).pianoNotes(track: track,
-            originTick: try #require(PianoCamera.ticks(camera.originBeat)), widthTicks: 705_600 * 5,
+            originTick: try #require(Tick.ticks(camera.originBeat)), widthTicks: 705_600 * 5,
             topPitch: camera.topPitch, heightPitches: 10, pixelsPerTick: 72 / 705_600, pixelsPerPitch: 20)
         #expect(shown.contains { $0.id == far.id })
         await controller.editNote(far.id, geometry: NoteGeometry(start: 705_600 * 8, length: 705_600, pitch: 64))

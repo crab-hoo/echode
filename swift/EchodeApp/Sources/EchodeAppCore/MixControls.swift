@@ -54,11 +54,11 @@ struct TrackControlLayout: Sendable {
 }
 
 enum MixScale {
-    /// Matches `CLIP_GAIN_MAX` in the document model (`2^20`).
-    static let clipGainMax: Float = 1_048_576
+    static let clipGainMax = ModelLimits.clipGain.upperBound
+    static let maximumGainDecibels = 20 * log10(Double(ModelLimits.gain.upperBound))
     static func decibels(_ gain: Float) -> Double { gain > 0 ? 20 * log10(Double(gain)) : -.infinity }
-    static func gain(_ position: Double) -> Float { position <= 0 ? 0 : Float(pow(10, (-60 + min(1, position) * (60 + 20 * log10(4.0))) / 20)) }
-    static func position(_ gain: Float) -> Double { gain > 0 ? min(1, max(0, (decibels(gain) + 60) / (60 + 20 * log10(4.0)))) : 0 }
+    static func gain(_ position: Double) -> Float { position <= 0 ? 0 : Float(pow(10, (-60 + min(1, position) * (60 + maximumGainDecibels)) / 20)) }
+    static func position(_ gain: Float) -> Double { gain > 0 ? min(1, max(0, (decibels(gain) + 60) / (60 + maximumGainDecibels))) : 0 }
     /// Unity gain and the center.
     static func defaultValue(_ field: MixerField) -> Float { field == .gain ? 1 : 0 }
     /// A header drag. `fraction` is the pointer's travel over the control's
@@ -67,7 +67,7 @@ enum MixScale {
         // Display positions clip quiet gains; zero travel must not round-trip through that scale.
         if fraction == 0 { return original }
         if field == .gain { return gain(min(1, max(0, position(original) + fraction))) }
-        return Float(min(1, max(-1, Double(original) + fraction * 2)))
+        return Float(min(Double(ModelLimits.pan.upperBound), max(Double(ModelLimits.pan.lowerBound), Double(original) + fraction * Double(ModelLimits.pan.upperBound - ModelLimits.pan.lowerBound))))
     }
     /// Linear amplitude at -60 dB. Matches `DISPLAY_FLOOR` in the engine meter.
     /// The header bar and the inspector both treat this and anything quieter as silence.
@@ -98,9 +98,9 @@ enum MixScale {
             guard value > 0 else { return direction > 0 ? raised : 0 }
             let db = decibels(value) + direction
             if db <= floor { return direction > 0 ? raised : 0 }
-            return min(4, Float(pow(10, db / 20)))
+            return min(ModelLimits.gain.upperBound, Float(pow(10, db / 20)))
         case .pan:
-            return min(1, max(-1, value + Float(direction) * 0.05))
+            return min(ModelLimits.pan.upperBound, max(ModelLimits.pan.lowerBound, value + Float(direction) * 0.05))
         case .mute, .solo:
             return value == 0 ? 1 : 0
         }
@@ -171,10 +171,10 @@ enum MixEntry {
         case .gain:
             guard let db = number(text, unit: "dB", silence: true) else { return nil }
             if db == -.infinity { return 0 }
-            guard db >= -120, db <= 20 * log10(4.0) else { return nil }
-            return min(4, Float(pow(10, db / 20)))
+            guard db >= -120, db <= MixScale.maximumGainDecibels else { return nil }
+            return min(ModelLimits.gain.upperBound, Float(pow(10, db / 20)))
         case .pan:
-            guard let percent = number(text, unit: "%", silence: false), (-100...100).contains(percent) else { return nil }
+            guard let percent = number(text, unit: "%", silence: false), (Double(ModelLimits.pan.lowerBound) * 100...Double(ModelLimits.pan.upperBound) * 100).contains(percent) else { return nil }
             return Float(percent / 100)
         case .mute, .solo:
             return nil
@@ -205,8 +205,8 @@ struct ClipTarget: Equatable {
 /// Typed clip values in the inspector's units and range.
 enum ClipEntry {
     /// The inspector's fade limit: the longest fade the model accepts at 768 kHz.
-    static let maximumFadeMilliseconds = Double(UInt32.max) / 768_000 * 1000
-    static let flicksPerMillisecond = 705_600.0
+    static let maximumFadeMilliseconds = Double(UInt32.max) / Double(ModelLimits.fadeRateLimit) * 1000
+    static let flicksPerMillisecond = Double(ModelLimits.flicksPerSecond) / 1000
 
     static func text(_ handle: ClipHandle, _ mix: ClipMix) -> String {
         switch handle {
@@ -244,8 +244,8 @@ struct ClipControlLayout: Sendable {
     let fadeOut: Double
     static func make(_ clip: ClipMix, camera: ArrangeCamera, origin: Double, y: Double, height: Double,
                      fadeInTicks: Int64? = nil, fadeOutTicks: Int64? = nil) -> Self {
-        let scale = camera.pixelsPerBeat / 705_600
-        return Self(rect: CGRect(x: origin + (Double(clip.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat,
+        let scale = camera.pixelsPerBeat / Tick.perBeat
+        return Self(rect: CGRect(x: origin + (Double(clip.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat,
                                  y: y, width: Double(clip.length) * scale, height: max(1, height - 1)),
                     fadeIn: Double(fadeInTicks ?? clip.fadeInTicks) * scale,
                     fadeOut: Double(fadeOutTicks ?? clip.fadeOutTicks) * scale)

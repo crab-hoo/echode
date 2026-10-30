@@ -34,7 +34,7 @@ struct NoteInputLengthTests {
         #expect(writes.count == 1, "a single blank-grid click must insert exactly one note on release")
         for write in writes { #expect(await write.value) }
         let note = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-        #expect(note.start == PianoCamera.ticks(1.1) && note.length == view.camera.grid && note.pitch == 60)
+        #expect(note.start == Tick.ticks(1.1) && note.length == view.camera.grid && note.pitch == 60)
         #expect(controller.undoCount == undo + 1)
         await controller.undo()
         #expect(controller.snapshot?.pianoNeighbor(track: track, current: nil) == nil)
@@ -80,7 +80,7 @@ struct NoteInputLengthTests {
         try send(.leftMouseUp, to: view, at: point)
         #expect(controller.noteFocus == long.id && controller.noteInput.length == long.length)
         #expect(controller.undoCount == beforeSelection, "selection remembers length without a model edit")
-        let resized = NoteGeometry(start: long.start, length: PianoCamera.ticks(0.83)!, pitch: long.pitch)
+        let resized = NoteGeometry(start: long.start, length: Tick.ticks(0.83)!, pitch: long.pitch)
         #expect(await controller.editNote(long.id, geometry: resized))
         #expect(controller.noteInput.length == resized.length, "a successful resize must remember its exact length")
         #expect(!(await controller.editNote(long.id, geometry: resized)))

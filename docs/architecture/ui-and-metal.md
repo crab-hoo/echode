@@ -140,6 +140,12 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 | 計測値 | 共有メモリ（アトミック変数） | メーター、プレイヘッド、CPU 負荷 |
 
 命令とデータを C ABI にそろえ、`EchodeBridge` が非同期関数・エラー・所有権へ包む（[ADR 0044](../decisions/0044-swift-bridge.md)）。
+
+時間単位・ミキサーと MIDI の範囲は、値を返す製品 C ABI から `EchodeBridge.ModelLimits` へ渡す。
+`Tick` に拍の入出力の丸めを集め、ピアノ専用の変換へ依存しない。
+ループの UI 下書きと既存の全時刻フィールドの値型化は別の範囲に残す
+（[ADR 0200](../decisions/0200-shared-model-units-and-limits.md)）。
+
 編集 JSON は単一のアクション、または単一 Undo のアクション配列を受ける。
 配列は同じ文書ワーカーの `DocumentHost::apply` で全体を確定・巻戻しする
 （[ADR 0124](../decisions/0124-selected-track-fx-batches.md)）。

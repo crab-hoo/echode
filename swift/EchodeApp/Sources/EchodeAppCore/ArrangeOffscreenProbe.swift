@@ -95,7 +95,7 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
     // pixel positions. Only the newly exposed margin stays background.
     let staleInput = CanvasInput(snapshot: notes, selected: nil, camera: ArrangeCamera(originBeat: 3, pixelsPerBeat: 72, pixelsPerTrack: 64),
                                  width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()),
-                                 arrangeRuler: ArrangeRulerInput(start: 3 * 705_600, loop: RulerLoop(range: LoopRange(start: 705_600, end: 5 * 705_600)!, enabled: true)))
+                                 arrangeRuler: ArrangeRulerInput(start: 3 * Tick.perQuarter, loop: RulerLoop(range: LoopRange(start: Tick.perQuarter, end: 5 * Tick.perQuarter)!, enabled: true)))
     let staleFrame = ArrangeFrame(input: staleInput)
     let exact = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue)
     let stale = try renderOffscreen(staleFrame, painter: painter, device: device, queue: queue,
@@ -117,8 +117,8 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
         for enabled in [false, true] {
             let input = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(originBeat: 2),
                 width: 640, height: 211, scale: scale, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()),
-                arrangeRuler: ArrangeRulerInput(start: 3 * 705_600,
-                    loop: RulerLoop(range: LoopRange(start: 705_600, end: 4 * 705_600)!, enabled: enabled)))
+                arrangeRuler: ArrangeRulerInput(start: 3 * Tick.perQuarter,
+                    loop: RulerLoop(range: LoopRange(start: Tick.perQuarter, end: 4 * Tick.perQuarter)!, enabled: enabled)))
             let frame = ArrangeFrame(input: input)
             let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
             let stripe = enabled ? SIMD4<Float>(0.40, 0.84, 0.56, 1) : SIMD4<Float>(0.45, 0.48, 0.53, 1)

@@ -53,7 +53,7 @@ struct PianoResizeGesture {
         guard edge != .move, let original = originals[anchor], originals.values.allSatisfy(\.isValid),
               camera.grid > 0, camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
               point.x.isFinite, point.y.isFinite, self.point.x.isFinite, self.point.y.isFinite,
-              let displacement = PianoCamera.ticks((point.x - self.point.x) / camera.pixelsPerBeat),
+              let displacement = Tick.ticks((point.x - self.point.x) / camera.pixelsPerBeat),
               let shortest = originals.values.map(\.length).min(),
               let first = originals.values.map(\.start).min(),
               let last = originals.values.map({ $0.start + $0.length }).max() else { return nil }

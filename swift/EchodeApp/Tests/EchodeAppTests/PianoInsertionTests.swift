@@ -174,7 +174,7 @@ struct PianoInsertionTests {
         #expect(PianoInsertion(x: .nan, y: 0, camera: PianoCamera(), snapping: true) == nil)
     }
 
-    private func ticks(_ beat: Double) -> Int64 { PianoCamera.ticks(beat)! }
+    private func ticks(_ beat: Double) -> Int64 { Tick.ticks(beat)! }
 }
 
 /// Uses the accepted product frame and AppKit input, without a window or audio device.

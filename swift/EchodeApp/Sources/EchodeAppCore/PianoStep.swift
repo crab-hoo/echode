@@ -25,7 +25,7 @@ struct PianoStep: Sendable {
         guard let first = values.map(\.start).min(), let last = values.map({ $0.start + $0.length }).max(),
               let low = values.map(\.pitch).min(), let high = values.map(\.pitch).max() else { return nil }
         let delta = min(Int64.max - last, max(-first, time))
-        let interval = min(127 - high, max(-low, pitch))
+        let interval = min(ModelLimits.midi7.upperBound - high, max(-low, pitch))
         return originals.mapValues { NoteGeometry(start: $0.start + delta, length: $0.length, pitch: $0.pitch + interval) }
     }
 

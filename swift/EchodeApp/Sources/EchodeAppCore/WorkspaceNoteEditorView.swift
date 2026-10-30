@@ -59,7 +59,7 @@ struct WorkspaceNoteEditorView: View {
         let document = state.draft.document
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Stepper(value: $state.draft.pitch, in: 0...127) { Text(noteName(state.draft.pitch)) }.fixedSize().accessibilityLabel(text("MIDI pitch"))
+                Stepper(value: $state.draft.pitch, in: ModelLimits.midi7) { Text(noteName(state.draft.pitch)) }.fixedSize().accessibilityLabel(text("MIDI pitch"))
                 LabeledContent(text("Start beat")) {
                     TextField(text("Start beat"), text: $state.draft.beat).frame(width: 70).focusedValue(\.workspaceTextEntry, true)
                         .accessibilityLabel(text("Start beat"))
@@ -84,8 +84,8 @@ struct WorkspaceNoteEditorView: View {
                         guard let geometry = state.draft.geometry, let track = state.draft.track else { return }
                         Task {
                             if controller.documentID == document {
-                                await controller.insertNote(pitch: geometry.pitch, beat: Double(geometry.start) / 705_600,
-                                                            length: Double(geometry.length) / 705_600, on: track, documentID: document)
+                                await controller.insertNote(pitch: geometry.pitch, beat: Double(geometry.start) / Tick.perBeat,
+                                                            length: Double(geometry.length) / Tick.perBeat, on: track, documentID: document)
                             }
                         }
                     }.disabled(state.draft.geometry == nil)

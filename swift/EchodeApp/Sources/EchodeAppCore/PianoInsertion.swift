@@ -1,3 +1,4 @@
+import EchodeBridge
 import Foundation
 
 /// A blank-grid press owns its start, click length and camera until release.
@@ -39,6 +40,6 @@ struct PianoInsertion: Sendable {
     private static func pitch(at y: Double, camera: PianoCamera) -> Int? {
         let value = (camera.topPitch - y / camera.pixelsPerPitch).rounded(.up)
         guard value.isFinite else { return nil }
-        return Int(min(127, max(0, value)))
+        return Int(min(Double(ModelLimits.midi7.upperBound), max(0, value)))
     }
 }

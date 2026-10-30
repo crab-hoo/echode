@@ -235,7 +235,7 @@ struct PianoDragTests {
         await controller.close()
     }
 
-    private func ticks(_ beat: Double) -> Int64 { PianoCamera.ticks(beat)! }
+    private func ticks(_ beat: Double) -> Int64 { Tick.ticks(beat)! }
 }
 
 /// Presents the product frame and delivers AppKit input without a window or HAL output.

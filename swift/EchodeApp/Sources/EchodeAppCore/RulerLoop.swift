@@ -1,3 +1,4 @@
+import EchodeBridge
 import Foundation
 
 /// An exclusive tick range. This is transport state, outside model Undo.
@@ -32,8 +33,8 @@ struct RulerPress {
     private(set) var range: LoopRange?
 
     func tick(at x: Double, snapping: Bool) -> Int64? {
-        guard let tick = PianoCamera.ticks(originBeat + x / pixelsPerBeat) else { return nil }
-        let snapped = snapping ? PianoCamera.ticks((Double(tick) / Double(grid)).rounded() * Double(grid) / 705_600) ?? tick : tick
+        guard let tick = Tick.ticks(originBeat + x / pixelsPerBeat) else { return nil }
+        let snapped = snapping ? Tick.ticks((Double(tick) / Double(grid)).rounded() * Double(grid) / Tick.perBeat) ?? tick : tick
         return max(0, snapped)
     }
 
@@ -50,7 +51,7 @@ struct RulerPress {
     private func resize(_ edge: LoopEdge, original: LoopRange, x: Double, snapping: Bool) -> LoopRange? {
         guard x != self.x else { return nil }
         let endpoint = edge == .start ? original.start : original.end
-        let endpointX = (Double(endpoint) / 705_600 - originBeat) * pixelsPerBeat
+        let endpointX = (Double(endpoint) / Tick.perBeat - originBeat) * pixelsPerBeat
         // Retain the grab offset, rather than jumping the edge to the pointer.
         guard var current = tick(at: endpointX + x - self.x, snapping: snapping) else { return nil }
         let result: LoopRange?
@@ -76,15 +77,15 @@ struct RulerPress {
 
 extension ProjectController {
     var rulerLoop: RulerLoop? {
-        guard let start = PianoCamera.ticks(loopStartBeat), let end = PianoCamera.ticks(loopEndBeat),
+        guard let start = Tick.ticks(loopStartBeat), let end = Tick.ticks(loopEndBeat),
               let range = LoopRange(start: start, end: end) else { return nil }
         return RulerLoop(range: range, enabled: audio.loopStart != nil)
     }
 
     func setLoopRange(_ range: LoopRange, documentID: UUID) async {
         guard self.documentID == documentID, !busy else { return }
-        loopStartBeat = Double(range.start) / 705_600
-        loopEndBeat = Double(range.end) / 705_600
+        loopStartBeat = Double(range.start) / Tick.perBeat
+        loopEndBeat = Double(range.end) / Tick.perBeat
         // Changing the draft must not turn an inactive loop on.
         await updateLoopBounds()
     }

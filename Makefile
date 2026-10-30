@@ -215,6 +215,7 @@ check-bridge:
 
 # Product Swift wrapper, piano gestures/grids/time guides, single/batch velocity, note selection, batch deletion/movement/resizing/copying. No timing assertions.
 # Includes selected-track numeric/accessible mix batches and header/clip gesture ownership across document replacement.
+# Shared model units/bounds cross the generated C ABI and reach note, transport and mix controls (model-constants-abi/model-units-ui).
 check-shell:
 	bash scripts/check-shell.sh
 

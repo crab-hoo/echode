@@ -113,6 +113,9 @@ pub struct Note {
     pub articulation: Option<Id>,
 }
 
+/// Largest MIDI 1.0 pitch or velocity value.
+pub const MIDI7_MAX: u8 = 127;
+
 /// Stores a 0..=127 velocity in 16 bits. 127 becomes 65535.
 pub fn midi7_to_velocity(midi: u8) -> u16 {
     let midi = u16::from(midi);
@@ -1308,7 +1311,7 @@ impl Project {
                 if !seen.insert(note.id) {
                     return Err(ModelError::DuplicateId);
                 }
-                if note.pitch > 127
+                if note.pitch > MIDI7_MAX
                     || note.length.get() <= 0
                     || note.articulation.is_some()
                     || note.start.get().checked_add(note.length.get()).is_none()
@@ -1577,7 +1580,7 @@ pub(crate) fn sort_notes(notes: &mut [Note]) {
 }
 
 fn validate_note(draft: &NoteDraft) -> Result<(), ModelError> {
-    if draft.pitch > 127 || draft.velocity > 127 || draft.length.get() <= 0 {
+    if draft.pitch > MIDI7_MAX || draft.velocity > MIDI7_MAX || draft.length.get() <= 0 {
         return Err(ModelError::InvalidNote);
     }
     draft

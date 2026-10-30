@@ -17,7 +17,7 @@ struct MixerValueBatch: Sendable {
         guard !tracks.isEmpty, tracks.count == originals.count, Set(tracks).count == tracks.count,
               let index = tracks.firstIndex(of: anchor), value.isFinite,
               field == .gain || field == .pan else { return nil }
-        let range: ClosedRange<Float> = field == .gain ? 0...4 : -1...1
+        let range: ClosedRange<Float> = field == .gain ? ModelLimits.gain : ModelLimits.pan
         guard range.contains(value), originals.allSatisfy({ $0.isFinite && range.contains($0) }) else { return nil }
         let basis = originals[index]
         let value: Float
@@ -27,7 +27,7 @@ struct MixerValueBatch: Sendable {
             if field == .gain {
                 // Group steps remain finite dB offsets, including below the single-slider floor.
                 guard basis > 0 else { return direction < 0 ? originals : nil }
-                value = Float(min(4, max(Double(Float.leastNonzeroMagnitude), Double(basis) * pow(10, direction / 20))))
+                value = Float(min(Double(ModelLimits.gain.upperBound), max(Double(Float.leastNonzeroMagnitude), Double(basis) * pow(10, direction / 20))))
             } else {
                 value = MixScale.adjusted(.pan, value: basis, direction: direction)
             }
@@ -36,7 +36,7 @@ struct MixerValueBatch: Sendable {
         if basis == value { return originals }
         if field == .pan {
             let lower = Double(originals.min()!), upper = Double(originals.max()!)
-            let delta = min(1 - upper, max(-1 - lower, Double(value) - Double(basis)))
+            let delta = min(Double(ModelLimits.pan.upperBound) - upper, max(Double(ModelLimits.pan.lowerBound) - lower, Double(value) - Double(basis)))
             return originals.map { Float(Double($0) + delta) }
         }
         // Silence is an explicit endpoint, not a finite dB offset. Silent members
@@ -45,7 +45,7 @@ struct MixerValueBatch: Sendable {
         guard basis > 0 else { return nil }
         let positive = originals.filter { $0 > 0 }
         let lower = Double(Float.leastNonzeroMagnitude) / Double(positive.min()!)
-        let upper = 4 / Double(positive.max()!)
+        let upper = Double(ModelLimits.gain.upperBound) / Double(positive.max()!)
         let factor = min(upper, max(lower, Double(value) / Double(basis)))
         return originals.map { Float(Double($0) * factor) }
     }
@@ -55,7 +55,7 @@ extension ProjectController {
     func captureMixerValue(_ track: UUID, field: MixerField, value: Float, document: UUID?) -> MixerValueBatch? {
         guard let document, documentID == document, !busy, mixer(track) != nil,
               value.isFinite, field == .gain || field == .pan,
-              (field == .gain ? (0...4).contains(value) : (-1...1).contains(value)) else { return nil }
+              (field == .gain ? ModelLimits.gain.contains(value) : ModelLimits.pan.contains(value)) else { return nil }
         let targets = selectedTracks.contains(track) ? tracks.map(\.id).filter { selectedTracks.contains($0) } : [track]
         return MixerValueBatch(document: document, tracks: targets, anchor: track, field: field, value: value)
     }

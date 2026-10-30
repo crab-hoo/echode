@@ -38,7 +38,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
             let camera = PianoCamera(originBeat: Double(event % 5) / 7, topPitch: 74 + Double(event % 8) / 8,
                                      pixelsPerBeat: (event < 32 ? [24.0, 72.0, 144.0] : [8.0, 24.0, 72.0])[event % 3], pixelsPerPitch: [12.0, 20.0, 48.0][(event / 3) % 3],
                                      gridMode: event < 24 ? .automatic : .fixed(event < 32 ? (event % 2 == 0 ? 235_200 : 529_200) :
-                                        [2_822_400, 1_881_600, 4_233_600, 33_075][event % 4]))
+                                        [4 * Tick.perQuarter, 8 * Tick.perQuarter / 3, 6 * Tick.perQuarter, 3 * Tick.perQuarter / 64][event % 4]))
             let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
                                      width: event % 2 == 0 ? 640 : 720, height: 331, scale: scale)
             let referenceFrame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
@@ -83,7 +83,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
             // Choose a background column past the notes, clear of grid lines.
             let gridX = (Int(referenceFrame.layout.grid.width - 24)..<Int(referenceFrame.layout.grid.width - 3)).first { x in
                 referenceFrame.gridLineTicks.allSatisfy { tick in
-                    abs((Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat - Double(x)) > 1.5
+                    abs((Double(tick) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat - Double(x)) > 1.5
                 }
             }!
             for row in referenceFrame.rows {
@@ -103,17 +103,17 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
             }
             // Check subdivision pixels beyond the notes using the product encoder.
             for tick in referenceFrame.gridLineTicks {
-                let x = (Double(tick) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+                let x = (Double(tick) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
                 guard x > referenceFrame.layout.grid.width - 150, x < referenceFrame.layout.grid.width - 3,
                       let row = referenceFrame.rows.first else { continue }
                 let y = Double(row.y) + Double(row.height) / 2
                 guard y >= referenceFrame.layout.rulerHeight, y < referenceFrame.layout.grid.maxY else { continue }
-                let color: SIMD4<Float> = tick % 2_822_400 == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
-                    (tick % 705_600 == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
+                let color: SIMD4<Float> = tick % (4 * Tick.perQuarter) == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
+                    (tick % Tick.perQuarter == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
                 let expected = CanvasReadback.Pixel(b: UInt8((color.z * 255).rounded()), g: UInt8((color.y * 255).rounded()),
                                                     r: UInt8((color.x * 255).rounded()), a: 255)
                 checkedGridLines += 1
-                if tick % 705_600 == 0, !referenceFrame.gridTicks.contains(tick) { checkedIndependentGuides += 1 }
+                if tick % Tick.perQuarter == 0, !referenceFrame.gridTicks.contains(tick) { checkedIndependentGuides += 1 }
                 // Sample a covered pixel center, using the encoder's Float coordinates.
                 let pixelX = Int(ceil(Double(Float(referenceFrame.layout.gridOrigin.x + x) * Float(scale)) - 0.5))
                 let actual = reference.pixel(x: pixelX, y: Int(y * scale))
@@ -152,7 +152,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     for scale in [1.0, 2.0] {
         for enabled in [false, true] {
             let input = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 640, height: 200, scale: scale)
-            let loop = RulerLoop(range: LoopRange(start: 705_600, end: 4 * 705_600)!, enabled: enabled)
+            let loop = RulerLoop(range: LoopRange(start: Tick.perQuarter, end: 4 * Tick.perQuarter)!, enabled: enabled)
             let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil,
                 camera: PianoCamera(originBeat: 2), key: DisplayKey(), preview: nil, loop: loop))
             let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)

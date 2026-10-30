@@ -1,3 +1,4 @@
+import EchodeBridge
 import SwiftUI
 
 struct WorkspaceInspectorView: View {
@@ -24,8 +25,8 @@ struct WorkspaceInspectorView: View {
                         Divider()
                         Text(text("Selected Note")).font(.subheadline)
                         LabeledContent(text("MIDI pitch"), value: noteName(note.pitch))
-                        LabeledContent(text("Start beat"), value: (Double(note.start) / 705_600).formatted())
-                        LabeledContent(text("Length in beats"), value: (Double(note.length) / 705_600).formatted())
+                        LabeledContent(text("Start beat"), value: (Double(note.start) / Tick.perBeat).formatted())
+                        LabeledContent(text("Length in beats"), value: (Double(note.length) / Tick.perBeat).formatted())
                     } else if controller.pianoTrack == track.id, InspectorNotes.showsPrompt(noteFocused: false, audioClipFocused: audioClip) {
                         Text(text("Select a note to inspect it")).font(.caption).foregroundStyle(.secondary)
                     }

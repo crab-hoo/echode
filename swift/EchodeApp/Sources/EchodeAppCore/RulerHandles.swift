@@ -1,3 +1,4 @@
+import EchodeBridge
 import Foundation
 
 enum LoopEdge: CaseIterable { case start, end }
@@ -19,7 +20,7 @@ struct RulerHandles {
         guard let range, !ruler.isEmpty else { return [] }
         return LoopEdge.allCases.compactMap { edge in
             let tick = edge == .start ? range.start : range.end
-            let x = ruler.minX + (Double(tick) / 705_600 - originBeat) * pixelsPerBeat
+            let x = ruler.minX + (Double(tick) / Tick.perBeat - originBeat) * pixelsPerBeat
             guard x >= ruler.minX, x <= ruler.maxX else { return nil }
             let hit = CGRect(x: x - 5, y: ruler.minY, width: 10, height: min(8, ruler.height)).intersection(ruler)
             return hit.isEmpty ? nil : RulerHandle(edge: edge, x: x, hitRect: hit)

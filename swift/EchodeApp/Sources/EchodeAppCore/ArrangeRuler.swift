@@ -1,4 +1,5 @@
 import AppKit
+import EchodeBridge
 
 /// The ruler belongs to the arrange's single Metal surface, not a second canvas.
 struct ArrangeRulerInput: Sendable, Equatable {
@@ -44,7 +45,7 @@ extension ArrangeView {
         cancelRuler()
         guard !rulerBusy, snapshot != nil, rect.contains(point) else { return true }
         rulerPress = RulerPress(x: point.x - origin, originBeat: camera.originBeat,
-                                pixelsPerBeat: camera.pixelsPerBeat, grid: 705_600,
+                                pixelsPerBeat: camera.pixelsPerBeat, grid: Tick.perQuarter,
                                 edge: rulerHandles.hit(at: point), originalRange: ruler?.loop?.range)
         return true
     }
@@ -76,8 +77,8 @@ extension ArrangeFrame {
 
     var loopRect: CGRect? {
         guard let range = input.arrangeRuler?.loop?.range else { return nil }
-        let left = timelineOrigin + (Double(range.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
-        let right = timelineOrigin + (Double(range.end) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+        let left = timelineOrigin + (Double(range.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
+        let right = timelineOrigin + (Double(range.end) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
         let rect = CGRect(x: max(timelineOrigin, left), y: 0,
                           width: max(0, min(input.width, right) - max(timelineOrigin, left)), height: input.arrangeTop)
         return rect.isEmpty ? nil : rect
@@ -85,7 +86,7 @@ extension ArrangeFrame {
 
     var startX: Double? {
         guard let start = input.arrangeRuler?.start else { return nil }
-        let x = (Double(start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
+        let x = (Double(start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
         return x >= 0 && x < timelineWidth ? timelineOrigin + x : nil
     }
 

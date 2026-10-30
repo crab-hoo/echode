@@ -271,8 +271,8 @@ final class ArrangeHeaderView: NSView {
                     if let spoken = MixScale.spokenValue(field, shown) {
                         control.setAccessibilityValueDescription(spoken)
                     }
-                    control.setAccessibilityMinValue(NSNumber(value: field == .pan ? -1 : 0))
-                    control.setAccessibilityMaxValue(NSNumber(value: field == .gain ? 4 : 1))
+                    control.setAccessibilityMinValue(NSNumber(value: field == .pan ? ModelLimits.pan.lowerBound : ModelLimits.gain.lowerBound))
+                    control.setAccessibilityMaxValue(NSNumber(value: field == .gain ? ModelLimits.gain.upperBound : ModelLimits.pan.upperBound))
                     control.setAccessibilityParent(child)
                     control.setAccessibilityIdentifier(key)
                     control.setAccessibilityFrame(window.convertToScreen(convert(layout.rect(field).intersection(bounds), to: nil)))

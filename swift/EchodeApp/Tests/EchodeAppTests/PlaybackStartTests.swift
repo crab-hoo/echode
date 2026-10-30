@@ -94,7 +94,7 @@ struct PlaybackStartTests {
         #expect(requests == [beat * 5 / 4])
         grid.mouseDown(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, flags: .shift))
         grid.mouseUp(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, flags: .shift, type: .leftMouseUp))
-        #expect(requests.last == PianoCamera.ticks(1.3))
+        #expect(requests.last == Tick.ticks(1.3))
         // The keyboard header and the note grid never move the start.
         grid.mouseDown(with: try mouse(CGPoint(x: layout.degreeWidth + 4, y: layout.rulerHeight / 2), in: grid))
         grid.mouseDown(with: try mouse(CGPoint(x: x, y: layout.rulerHeight + 100), in: grid))

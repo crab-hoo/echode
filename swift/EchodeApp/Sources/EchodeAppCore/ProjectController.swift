@@ -366,7 +366,7 @@ public final class ProjectController {
     @discardableResult
     public func insertNote(pitch: Int, beat: Double, length: Double, on track: UUID? = nil, documentID: UUID? = nil) async -> Bool {
         guard let target = track ?? selection, tracks.contains(where: { $0.id == target }),
-              let start = PianoCamera.ticks(beat), let duration = PianoCamera.ticks(length),
+              let start = Tick.ticks(beat), let duration = Tick.ticks(length),
               NoteGeometry(start: start, length: duration, pitch: pitch).isValid else { return false }
         let velocity = noteVelocity.value
         return await performEdit({ [
@@ -377,7 +377,7 @@ public final class ProjectController {
 
     @discardableResult
     public func setNoteVelocity(_ id: PianoNote.ID, velocity: Int, documentID: UUID? = nil) async -> Bool {
-        guard (0...127).contains(velocity) else { return false }
+        guard ModelLimits.midi7.contains(velocity) else { return false }
         return await performEdit({ [self] in
             guard let before = snapshot?.pianoNote(id), Int(before.velocity >> 9) != velocity else { return nil }
             return ["type": "note.velocity", "track": id.track.uuidString, "clip": id.placement.uuidString,
@@ -559,7 +559,7 @@ public final class ProjectController {
 
     /// Moves the playhead without changing the remembered start.
     public func locate(beat: Double) async {
-        guard let tick = PianoCamera.ticks(beat), tick >= 0 else { return }
+        guard let tick = Tick.ticks(beat), tick >= 0 else { return }
         await orderedAudioCommand { .locate(tick: tick) }
     }
 
@@ -570,7 +570,7 @@ public final class ProjectController {
     }
 
     public func setPlaybackStart(beat: Double) async {
-        guard let tick = PianoCamera.ticks(beat) else { return }
+        guard let tick = Tick.ticks(beat) else { return }
         await setPlaybackStart(tick: tick)
     }
 
@@ -595,7 +595,7 @@ public final class ProjectController {
         await orderedAudioCommand { [self] in
             guard let on = enabled(audio) else { return nil }
             guard on else { return .loop(start: nil, end: nil) }
-            guard let start = PianoCamera.ticks(loopStartBeat), let end = PianoCamera.ticks(loopEndBeat),
+            guard let start = Tick.ticks(loopStartBeat), let end = Tick.ticks(loopEndBeat),
                   start >= 0, end > start else { return nil }
             return .loop(start: start, end: end)
         }
@@ -819,7 +819,7 @@ extension ProjectController {
     public func setMixer(_ track: UUID, field: MixerField, value: Float, documentID: UUID? = nil) async -> Bool {
         await edit({ [self] in
             guard let mix = mixer(track), value.isFinite, mix[field].value != value,
-                  field == .gain ? (0...4).contains(value) : field == .pan ? (-1...1).contains(value) : (value == 0 || value == 1) else { return nil }
+                  field == .gain ? ModelLimits.gain.contains(value) : field == .pan ? ModelLimits.pan.contains(value) : (value == 0 || value == 1) else { return nil }
             return ["type": "param.set", "parameter": mix[field].id.uuidString, "value": value]
         }, documentID: documentID)
     }
@@ -836,7 +836,7 @@ extension ProjectController {
 
     public func changeFader(_ value: Float) {
         guard var preview = faderPreview, !previewFinishing, value.isFinite,
-              preview.field == .gain ? (0...4).contains(value) : (-1...1).contains(value),
+              preview.field == .gain ? ModelLimits.gain.contains(value) : ModelLimits.pan.contains(value),
               let document else { return }
         if preview.field == .gain { preview.gain = value } else { preview.pan = value }
         faderPreview = preview

@@ -9,9 +9,9 @@ struct PianoVelocityChange {
 
     var anchorValue: Int? { originals[anchor].map { Int($0 >> 9) + delta } }
     var isValid: Bool {
-        guard !originals.isEmpty, originals[anchor] != nil, (-127...127).contains(delta), delta != 0 else { return false }
+        guard !originals.isEmpty, originals[anchor] != nil, (-ModelLimits.midi7.upperBound...ModelLimits.midi7.upperBound).contains(delta), delta != 0 else { return false }
         return originals.allSatisfy { id, raw in
-            raw <= UInt16.max && id.track == anchor.track && (0...127).contains(Int(raw >> 9) + delta)
+            raw <= UInt16.max && id.track == anchor.track && ModelLimits.midi7.contains(Int(raw >> 9) + delta)
         }
     }
 

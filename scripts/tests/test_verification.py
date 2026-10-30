@@ -52,6 +52,22 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_model_units_contracts_cover_the_abi_and_swift_consumers(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        native = contracts["model-constants-abi"]
+        self.assertEqual((native["runner"], native["package"], native["target"]),
+                         ("rust", "echode-ffi", ["--test", "model_constants"]))
+        ui = contracts["model-units-ui"]
+        self.assertEqual((ui["runner"], ui["suite"]), ("swift", "ModelUnitsTests"))
+        for contract in (native, ui):
+            for fault in contract.get("negative_controls", [contract.get("negative_control")]):
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in ("crates/echode-ffi/src/constants.rs", "crates/echode-model/src/device.rs",
+                     "swift/EchodeBridge/Sources/EchodeBridge/ModelLimits.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/ModelUnitsTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
+                             "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
+
     def test_helper_timeout_contracts_and_realtime_selection(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for key, package, target in (
@@ -1374,6 +1390,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                          "model-constants-abi", "model-units-ui",
                           "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",

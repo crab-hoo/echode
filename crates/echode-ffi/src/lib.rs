@@ -6,12 +6,14 @@
 
 mod activity;
 mod catalog;
+mod constants;
 mod controls;
 mod device;
 mod overview;
 mod piano;
 mod projection;
 mod queue;
+pub use constants::{ModelConstants, echode_model_constants};
 pub use controls::{
     ClipControls, MixerControls, echode_document_track_peak, echode_snapshot_clip_controls,
     echode_snapshot_flicks, echode_snapshot_mixer_controls,

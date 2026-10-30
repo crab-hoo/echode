@@ -202,6 +202,11 @@ Swift の警告と開く要求の取消は `RecoveryConsent.swift`、公開前�
 画面の選択肢は `WorkspaceView.swift`、回帰は `recovery_tests.rs`・`RecoveryConsentTests.swift` に置く
 （[ADR 0183](decisions/0183-recovery-consent.md)）。
 
+時間単位とモデル範囲の受渡しは `crates/echode-ffi/src/constants.rs` の `echode_model_constants`、
+Swift の値と拍の変換は `EchodeBridge/ModelLimits.swift` の `ModelLimits`・`Tick` に置く。
+回帰は ABI の `tests/model_constants.rs`、橋渡しの `ModelLimitsTests.swift`、製品の `ModelUnitsTests.swift` に置く
+（[ADR 0200](decisions/0200-shared-model-units-and-limits.md)）。
+
 値の操作子のクリック規則と重ねる入力欄は `ValueControl.swift`（`ValueClicks`・`ValueEntryField`）、
 単位と範囲は `MixControls.swift`（`MixEntry`・`ClipEntry`）、各操作子の接続は `ArrangeHeaderView.swift`・`ArrangeView.swift`・
 `WorkspaceParameterView.swift`、回帰は `ValueControlTests.swift` に置く。
