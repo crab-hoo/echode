@@ -29,6 +29,7 @@ MODULE
 
 # --target keeps host build scripts/macros uninstrumented. build-std is essential
 # for TSan to observe Rust's synchronization, including Arc and the command queue.
+# The product driver uses this exact target directory and flag set as well.
 export CARGO_TARGET_DIR="$bridge_output/rust"
 export RUSTFLAGS="-Ctarget-cpu=apple-m4 -Zsanitizer=$bridge_sanitizer -Zexternal-clangrt -Cdebuginfo=2 -Cforce-frame-pointers=yes"
 cargo "+$BRIDGE_NIGHTLY" rustc --locked --offline -Zbuild-std --target "$bridge_target" \

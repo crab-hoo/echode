@@ -91,7 +91,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   コンパイル失敗は検出の証拠にしない。
   コピーは `target/product-contract-mutations/checkouts/` に残し、変わったファイルだけを新しい時刻で書き換える（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
   Rust の反例は変えるクレートの依存の浅い順にまとめ、Swift の反例は 3 コピーで同時にビルドしてからテストを 1 件ずつ実行する。
-  通常の実行は 1 契約 1 プロセスのままで、Swift は 1 回のビルドの後に各契約を `--skip-build` で実行する。
+  通常の実行は 1 契約 1 プロセスを保ち、Swift はテスト製品のビルド後に同じ SwiftPM の Testing ヘルパーを直接起動する。
+  パッケージ解析・テスト探索の反復を省くが、一件判定・個別期限・反例ビルド時間の減算は維持する。
+  Rust の同じ置換はソース遷移を共用し、対象の Cargo コマンドとテストプロセスは一件ずつ維持する。
   通常テストと反例は別の識別値で再利用し、契約全体の合格には両段階の合格を要求する。
   反例定義だけの変更や反例段階の中断では、入力が同じ通常テストの完了記録を保持する。
   どちらの段階も、現在リンク・実行する製品コード・テスト・補助・ツールを入力に含める（[ADR 0197](decisions/0197-verification-target-scopes.md)）。
@@ -106,6 +108,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
 - `check-bridge-tsan`: 標準ライブラリを含む製品の Rust と Swift を、同じ固定ランタイムで競合検査する。
   読み込まれたランタイムも照合する（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
+  製品とスパイクの TSan は同じ `target/bridge/thread/rust` で標準ライブラリ・共通依存のビルドを再利用する。
+  ASan・通常・反例とは出力を分け、異なる feature 構成を一括実行へ混ぜない（[ADR 0198](decisions/0198-verification-launch-and-cache-cost.md)）。
   ASan / TSan の Swift は復旧同意のスイートを別プロセスへ分け、全体の同時実行の負荷から隔離する。
   対象と 5 秒の待機期限は維持し、スイートの 0 件実行と失敗を拒否する（[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。
 - `check-bridge-miri`: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
@@ -163,7 +167,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 明示した入力はターゲットの除外より優先する。通常の workspace 検査の入力は縮めない。
 Makefile はファイル全体ではなく、その検査のレシピ（`$(MAKE)` で呼ぶ対象を含む）と、変数などの全体に効く行だけを識別に含める。コメントの編集では失効しない。
 `scripts/verification.json` と Makefile の変更は、差分の基準と比べて定義・レシピが変わった検査だけを選ぶ。基準を読めない時は全自動検査を選ぶ。
-`infrastructure`（選択・記録・フック・CI の実装）と `evidence_inputs` の変更は全自動検査を選ぶ。
+`evidence_inputs` の共通実行器の変更は全自動検査を選ぶ。
+診断・表示・フック・CI の編集は基盤検査が扱い、製品検査の全件選択や共通識別値の失効理由にはしない。
+Markdown と `--plan` の表示は `scripts/verification_display.py`、時間診断は `scripts/verification_metrics.py` に分離する。
 自動検査は自身の `inputs` に一致する変更でも選ばれ、補助スクリプトの変更はそれを実行する検査を選ぶ。
 `--force` は検査内の契約ごとの再利用も行わず、全契約と反例を実行する。
 `tool_inputs` に指定した検査専用ランタイムは、Git の対象外でも実バイトをハッシュ化する。
@@ -192,6 +198,7 @@ Swift パッケージ内のテスト間の依存分割は未実施で、Swift �
 2. 製品契約では `product-contracts.json` の `execution` を読む。
    通常実行、コピー同期、Rust / Swift 反例、実ビルド数・反例数と直列テスト秒を分ける。
    並列の `build_work_seconds` は作業秒の和であり、段階全体の実測 `seconds` とは足し合わせない。
+   Rust の `source_transitions` と `test_processes` は同一置換のビルド共用と全反例の独立実行を区別する。
 3. 同じ機械・入力・対象集合・ウォーム状態で比較する。
    必要なら `python3 -B scripts/verify.py --all --only check-product-contracts --force` で全契約を測り直す。
    これは作業中の個別計測であり、完了時の `make verify` の代わりではない。

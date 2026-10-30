@@ -34,6 +34,13 @@ def load_verify():
 
 
 verify = load_verify()
+from swift_contract_runner import invocation as swift_invocation
+
+
+def test_invocation(root, contract):
+    if contract["runner"] == "swift" and contract.get("build_product") == "EchodeAppTests":
+        return swift_invocation(root, contract, SWIFT_SCRATCH)
+    return command(contract, skip_build=contract["runner"] == "swift"), None
 
 
 def run_process(args, *, cwd, capture_output, text, timeout, env=None):
@@ -332,34 +339,41 @@ def control_result(contract, stamp, caught, log, seconds):
             "seconds": round(seconds, 3)}
 
 
-def write_control(evidence, contract, stamp, output, caught, started, record):
-    log = evidence / (contract["id"] + "-negative.log")
-    log.write_text(output)
-    record(control_result(contract, stamp, caught, log, time.monotonic() - started))
-    if not caught:
-        print(f"{contract['id']} negative control: FAILED", flush=True)
-        print(output[-5000:], file=sys.stderr)
-
-
 def rust_controls(checkout, contracts, fingerprints, cargo_target, evidence, record):
     env = dict(os.environ, CARGO_TARGET_DIR=str(cargo_target))
+    # A single source transition can serve different test targets. Cargo still
+    # selects each package independently, retaining its original feature graph.
+    jobs = {}
     for contract in contracts:
-        started = time.monotonic()
-        output = ""
-        caught = True
-        for index, fault in enumerate(negative_control_mutations(contract), 1):
-            try:
-                with mutated(checkout, contract, fault):
+        for index, fault in enumerate(negative_control_mutations(contract)):
+            key = (fault["file"], fault["old"], fault["new"])
+            jobs.setdefault(key, []).append((contract, index, fault))
+    state = {c["id"]: {"output": "", "caught": True, "done": 0, "seconds": 0.0} for c in contracts}
+    for job in jobs.values():
+        with mutated(checkout, job[0][0], job[0][2]):
+            for contract, index, _ in job:
+                started = time.monotonic()
+                try:
                     completed = run_process(command(contract), cwd=checkout, capture_output=True, text=True,
                                             timeout=contract["timeout"], env=env)
-                run_output = completed.stdout + completed.stderr
-                rejected = rejected_behavior(contract, completed.returncode, run_output)
-            except (OSError, subprocess.TimeoutExpired) as error:
-                run_output, rejected = str(error), False
-            output += f"mutation {index}/{len(negative_control_mutations(contract))}: " \
-                      f"{'rejected' if rejected else 'NOT rejected'}\n" + run_output
-            caught = caught and rejected
-        write_control(evidence, contract, fingerprints.get(contract["id"]), output, caught, started, record)
+                    output = completed.stdout + completed.stderr
+                    rejected = rejected_behavior(contract, completed.returncode, output)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    output, rejected = str(error), False
+                entry = state[contract["id"]]
+                entry["seconds"] += time.monotonic() - started
+                entry["output"] += f"mutation {index + 1}/{len(negative_control_mutations(contract))}: " \
+                                   f"{'rejected' if rejected else 'NOT rejected'}\n" + output
+                entry["caught"] = entry["caught"] and rejected
+                entry["done"] += 1
+                if entry["done"] == len(negative_control_mutations(contract)):
+                    log = evidence / (contract["id"] + "-negative.log")
+                    log.write_text(entry["output"])
+                    record(control_result(contract, fingerprints.get(contract["id"]), entry["caught"], log, entry["seconds"]))
+                    if not entry["caught"]:
+                        print(f"{contract['id']} negative control: FAILED", flush=True)
+                        print(entry["output"][-5000:], file=sys.stderr)
+    return {"source_transitions": len(jobs), "test_processes": sum(len(job) for job in jobs.values())}
 
 
 def swift_mutation_jobs(contracts):
@@ -380,8 +394,10 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
         try:
             completed = run_process(swift_build(contract), cwd=checkout, capture_output=True, text=True,
                                     timeout=contract["timeout"])
+            if completed.returncode == 0:
+                test_invocation(checkout, contract)
             return completed.returncode, completed.stdout + completed.stderr, time.monotonic() - started
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
             return None, str(error), time.monotonic() - started
 
     state = {c["id"]: {"output": "", "caught": True, "done": 0, "seconds": 0.0} for c in contracts}
@@ -406,11 +422,12 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
                     test_started = time.monotonic()
                     if code == 0 and remaining > 0:
                         try:
-                            completed = run_process(command(contract, skip_build=True), cwd=checkout,
-                                                    capture_output=True, text=True, timeout=remaining)
+                            args, env = test_invocation(checkout, contract)
+                            completed = run_process(args, cwd=checkout,
+                                                    capture_output=True, text=True, timeout=remaining, env=env)
                             output += completed.stdout + completed.stderr
                             rejected = rejected_behavior(contract, completed.returncode, output)
-                        except (OSError, subprocess.TimeoutExpired) as error:
+                        except (OSError, ValueError, subprocess.SubprocessError) as error:
                             output += str(error)
                     elif code == 0:
                         output += "\nthe counterexample build used the whole contract timeout\n"
@@ -452,10 +469,10 @@ def negative_controls(root, contracts, fingerprints, evidence, record):
             sync_checkout(root, checkout)
         sync_seconds = time.monotonic() - started
         rust_started = time.monotonic()
-        rust_controls(checkouts[0], rust, fingerprints, cargo_target, evidence, record)
+        rust_timings = rust_controls(checkouts[0], rust, fingerprints, cargo_target, evidence, record)
         rust_seconds = time.monotonic() - rust_started
         swift = swift_controls(checkouts, swift, fingerprints, evidence, record)
-        return {"sync_seconds": round(sync_seconds, 3), "rust_seconds": round(rust_seconds, 3), "swift": swift}
+        return {"sync_seconds": round(sync_seconds, 3), "rust_seconds": round(rust_seconds, 3), "rust": rust_timings, "swift": swift}
 
 
 def build_swift_package(root, contracts, contract, invoke):
@@ -465,8 +482,10 @@ def build_swift_package(root, contracts, contract, invoke):
                   == (contract["package_path"], contract.get("build_product")))
     try:
         built = invoke(swift_build(contract), cwd=root, capture_output=True, text=True, timeout=timeout)
+        if built.returncode == 0:
+            test_invocation(root, contract)
         return built.returncode == 0, built.stdout + built.stderr
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         return False, str(error)
 
 
@@ -492,7 +511,8 @@ def run_tests(root, contracts, invoke, fingerprints, evidence, record):
                 output = f"Swift test-product build failed for {package}; see the first Swift contract log\n"
         if built:
             try:
-                completed = invoke(args, cwd=root, capture_output=True, text=True, timeout=contract["timeout"])
+                args, env = test_invocation(root, contract)
+                completed = invoke(args, cwd=root, capture_output=True, text=True, timeout=contract["timeout"], **({"env": env} if env is not None else {}))
                 output = completed.stdout + completed.stderr
                 ok = passed(contract, completed.returncode, output)
                 code = completed.returncode

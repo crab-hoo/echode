@@ -5,6 +5,7 @@
 - 対象: 製品契約、検査実行器、検査時間の診断
 - 前提: [ADR 0148](0148-verification-pipeline-speed.md)、[ADR 0166](0166-verification-failure-detection.md)
 
+- 後続: [ADR 0198](0198-verification-launch-and-cache-cost.md) が診断コードの入力境界、反例の起動・ビルド共有を改定した。
 ## 調査
 
 対象は `8ef044e` と、その上の検査基盤の未コミット変更である。

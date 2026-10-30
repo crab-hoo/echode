@@ -168,5 +168,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 検査時間の継続記録・テスト製品のビルド・同一反例のビルド共用: [ADR 0195](decisions/0195-verification-cost-observability.md)。
 - 契約のプラグイン依存と Cargo ターゲットの範囲、通常・反例の独立再利用、ヘッダの不変時刻とフック全体の予算:
   [ADR 0197](decisions/0197-verification-target-scopes.md)。Swift のリンク先変更と UI テスト全体の失効は引き続き区別する。
+- 契約の Swift Testing の直接起動、Rust の同一反例の共有、診断・フックと製品証拠の分離、TSan の同一ビルド先:
+  [ADR 0198](decisions/0198-verification-launch-and-cache-cost.md)。広い製品依存と計装ごとの検査は維持する。
 - 終了コードの保証・実行予定だけの環境事前確認・依存順序と失敗検出遅延: [ADR 0166](decisions/0166-verification-failure-detection.md)。
 - 起動復旧の終了待ち・Darwin errno の検査ランタイム修正: [ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)。

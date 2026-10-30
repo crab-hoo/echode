@@ -1241,8 +1241,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_infrastructure_runs_all_portable_checks_without_opening_windows(self):
         expected = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
-        for path in ("scripts/verify.py", ".cursor/hooks.json", ".codex/hooks.json", ".github/workflows/check.yml",
-                     "scripts/build-platform.env", ".cargo/config.toml"):
+        for path in ("scripts/verify.py", "scripts/build-platform.env", ".cargo/config.toml"):
             self.assertEqual(self.selected(path), expected)
         # Without the diff base the policy and Makefile cannot be compared, so every automatic check runs.
         for path in ("Makefile", "scripts/verification.json"):

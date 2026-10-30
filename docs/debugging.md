@@ -33,6 +33,10 @@ make debug-report
   Rust の製品ソース変更による Swift の失効はリンク先変更であり、反例の置換ファイルが不変という理由だけで除外しない。
   履歴は `target/verification/timing-history.jsonl` にあり、`make debug-report` にも収集する。
   同じ条件での再計測と、件数・失効集合の変化は [時間の保守](verification.md#実行時間の保守) に従って分ける。
+  Swift 契約の直接起動で `missing helper, test bundle, or Testing framework` が出た場合は、
+  選択した Xcode の `swiftpm-testing-helper` と SDK の Testing.framework、`--show-bin-path` の scratch を照合する。
+  ロード失敗・終了コード 69 は期待値での反例検出ではない。古いバンドルへ戻したり 0 件を合格にしない。
+  ヘルパーの実パス・バイト変更もツール識別に入り、現在の版で再検査する（[ADR 0198](decisions/0198-verification-launch-and-cache-cost.md)）。
 - **空き容量不足（`No space left on device` / `Errno 28`）**:
   `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 - **ツール不足・ビルド失敗**:
@@ -295,6 +299,10 @@ make debug-report
   さらに、従来の子孫保持ケースが shell の起動待ちだけで合格し得たため、専用のネイティブ検査ヘルパーへ変更した。
   製品の期限は維持し、出力済み・直接の子の終了も検査する。期限切れの PID・終了状態・byte 数・パイプの開閉で、起動前と保持を区別する
   （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。OS 側の起動遅延の根因は未確定である。
+  2026-10-30 の検査コスト改定でも、ネイティブ fixture の最初の正常 JSON が同じ 2 秒の期限切れとなり、単独でも一度再現した。
+  子は `running`・両出力 0 byte で、直後の同じバイナリの直接起動は約 8 ms、同じ Cargo 構成の再実行は約 0.45 秒で完了した。
+  shell 除去でこの環境の起動遅延自体が解決したとは扱わず、期限は維持する。
+  初回の失敗は検査時間履歴と作業ログへ残し、再実行の合否で過去の失敗を上書きしない。
 - **バイパスの表示と音が一致しない・解除後に古い音が鳴る**:
   文書のデバイス ID と `bypassed`、計画の要求・適用版、プラグイン失敗、ドライ／ウェットの平面数を確認する。
   バイパスした音源ではノートが無音でも同じトラックの配置音声は鳴る。解除時のリセットと現在のノート追跡を確認する（[ADR 0120](decisions/0120-device-bypass.md)）。
@@ -803,6 +811,11 @@ make debug-report
   完全な応答を送った後、検査用サーバーの `shutdown(Write)` だけが `NotConnected` になる場合は、先に正常に閉じた相手との競合を調べる。
   `mcp_responses.rs` は半切断せず後続の読込みで EOF と再送禁止を検査する。部分行の拒否に必要な半切断とは区別する。
 
+- **MCP 改行回帰で `backend EOF wait` が 5 秒の期限切れになる**:
+  2026-10-30 の検査基盤改定で、`mcp_framing` の版確認中・部分応答後の切断待ちが全体・単独とも一度ずつ失敗した。
+  後の同じ構成の単独実行では再現しなかった。子プロセスの起動前ではなく、部分応答後の EOF 待ちという別の境界である。
+  `handshake`・`suffix`・`following` と両側のスレッドを調べ、走査ヘルパーの起動遅延と同じ原因だと断定しない。
+  期限・期待値・検査対象は維持し、失敗と再実行を時間履歴・個別ログで区別する。根因は未確定である。
 - **MCP が `MCP message ended without a newline` を返す**:
   stdio 入力と接続先 API の応答は同じ `mcp.rs::read_line` を通るため、どちらの EOF かを切り分ける。
   stdio の部分行は編集前に拒否し、完了済みの前方の要求だけを保持する。CR だけの終端では完了しない。

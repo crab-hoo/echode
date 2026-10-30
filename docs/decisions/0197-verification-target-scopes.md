@@ -5,6 +5,7 @@
 - 対象: 契約の入力、通常テストと反例の再利用、橋渡し検査、生成ヘッダ、フック
 - 前提: [ADR 0100](0100-scoped-verification.md)、[ADR 0148](0148-verification-pipeline-speed.md)、[ADR 0195](0195-verification-cost-observability.md)
 
+- 後続: [ADR 0198](0198-verification-launch-and-cache-cost.md) が診断・フックの過大な連鎖と起動コストを改定した。
 ## 監査の照合
 
 毎タスクで全契約の反例を作り直す設計上の必要はない。

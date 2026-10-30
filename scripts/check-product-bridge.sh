@@ -21,7 +21,8 @@ case "$product_sanitizer" in
         product_validation+=(--tsan-runtime "$product_runtime")
         # The /usr/bin Swift forwarding shim strips DYLD_* before forwarding.
         product_swift="$(xcrun --find swift)"
-        export CARGO_TARGET_DIR="$product_output/rust"
+        # Same nightly, target, profile and flags as the TSan probe: reuse std/dependencies.
+        export CARGO_TARGET_DIR="$PWD/target/bridge/thread/rust"
         export RUSTFLAGS='-Ctarget-cpu=apple-m4 -Zsanitizer=thread -Zexternal-clangrt -Cdebuginfo=2 -Cforce-frame-pointers=yes'
         cargo "+$BRIDGE_NIGHTLY" rustc --locked --offline -Zbuild-std --target aarch64-apple-darwin \
             --release --lib --crate-type staticlib -p echode-ffi

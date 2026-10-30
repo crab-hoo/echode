@@ -12,6 +12,8 @@ swift --version > "$bridge_output/versions.txt"
 rustc "+$BRIDGE_NIGHTLY" -vV >> "$bridge_output/versions.txt"
 export ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:detect_stack_use_after_return=1
 
+# Keep one address target for build-std reuse, but invoke each package separately:
+# combining them would unify dev/test features and change the tested configuration.
 export CARGO_TARGET_DIR="$bridge_output/rust"
 export RUSTFLAGS='-Ctarget-cpu=apple-m4 -Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes'
 python3 scripts/run-bridge-validation.py --timeout 600 --log "$bridge_output/rust-tests.log" \
