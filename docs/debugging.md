@@ -51,6 +51,16 @@ make debug-report
   製品の型エラーと区別し、処理がない状態で欠落した依存だけを `cargo clean -p <package>` して再生成する。
   検査結果やユーザー資料は削除しない。2026-10-29 の波形キャッシュ検査では `memchr`・`errno`・`bitflags` で観測した。
   作業時の記録は `target/focused-checks/peak-cache-green/` に残し、正式な合否は `make verify` で確認する。
+- **Swift の編集型の生成鮮度が不一致になる**:
+  `make check-swift-actions` の `is stale; run make swift-actions` は、製品の編集拒否ではなく登録簿と生成物の差である。
+  `make swift-actions` で再生成し、`EditAction.swift` の差分と `EditActionTests` の共有 fixture を照合する。
+  未対応のスキーマや名前の衝突は生成器のエラーとして拒否する。生成物を手で直して回避しない。
+  `typed-edit-bridge` は文書ワーカー・履歴・再オープンを検査するが、controller の辞書の移行完了の証拠ではない
+  （[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
+  ピアノロールは `typed-piano-controller` と既存の操作契約を使う。
+  型付きのノート要求が拒否される場合は、`performActions` の前の幾何・MIDI 範囲・元の値と、`applyEdit` の文書照合を分ける。
+  MIDI の `UInt8` 変換は検証後だけで行う。非整数化や clamping で拒否を隠さない。
+  トラック・デバイス・ミキサー・クリップ移動・音声の辞書の入口と混同せず、旧文書・古い元の値・モデルの拒否を区別する。
 - **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
   Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
   Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。
@@ -97,6 +107,19 @@ make debug-report
   `background-graph` の初期化待ちが 5 秒未満で `WouldBlock` を返す時は、accept 後の `O_NONBLOCK` を調べる。
   Darwin は非ブロッキングのリスナーのフラグを受け継ぐため、読込み期限の設定だけでは待機に戻らない。
   検査用の `initializer_peer` と、送信前のフラグを確認する通常回帰を使う（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+  2026-10-30 の編集型生成の検査では、`mcp-backend-framing` の正常回帰が 5 秒の EOF 待ちで一度失敗した。
+  `handshake=true`・改行なし・`following=""`、Darwin errno 35 であり、反例の検出とは区別する。
+  当初は同じ Cargo 構成の単独実行では再現せず、原因は未確定だった。この時点では MCP の製品コード・期限・回帰は変更していない。
+  初回の失敗と単独再実行は `target/focused-checks/typed-edits-mcp-framing/` に残す。
+  再発時は接続の所有権・半閉鎖後の読取り・実行中のプロセスの状態を採取し、正式な `make verify` と区別する。
+  後続のピアノロール移行で再発し、fixture の `Value::Display` の直接書込みでは反復して再現した。
+  製品と同じ先行文字列化と `write_all` へ変えると反復では再現しなかった。OS 内部の原因は未確定である。
+  送信内容・半切断・期限・アサーションは維持し、サーバーとクライアントの時間・出力を失敗時に残す
+  （[ADR 0115 の fixture 補強](decisions/0115-phase2-mcp.md#半切断-fixture-の送信と診断の補強)）。
+  同じ作業の次の実行では、通常回帰後・Rust 反例 95 件の完了後、最初の Swift 反例ビルド群が個別期限に達した。
+  全体は約 954 秒で、3600 秒の一括予算到達ではない。群の強制終了前のコンパイラー出力は保存されていない。
+  `ArrangeAudioDrop.swift` と `ArrangeClipMove.swift` の 3 コピーが対象で、残留プロセスはなかった。
+  中断時点は同じ作業ログの `counterexample-timeout.log` に記録し、対象や期限は変えず未完了分を再実行する。
   `negative control must stay inside its source copy` は、期待値の不一致ではなく反例用コピーの検証エラーである。
   対象ファイルの欠落と、シンボリックリンクによるコピー外への逸脱を区別する。
   `target/` の整理と検査が競合すると、コピーが実行中に消えて同じエラーになる。

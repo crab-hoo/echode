@@ -57,6 +57,13 @@ check:
 	$(MAKE) check-base
 	$(MAKE) check-product-contracts
 
+.PHONY: swift-actions check-swift-actions
+swift-actions:
+	cargo run -q --locked --offline -p echode-actions --example swift_actions -- --write swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift
+
+check-swift-actions:
+	cargo run -q --locked --offline -p echode-actions --example swift_actions -- --check swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift
+
 check-format:
 	cargo fmt --all --check
 
@@ -66,6 +73,7 @@ check-base:
 	python3 -B scripts/check_build_host.py
 	cargo build -q --workspace
 	cargo clippy -q --workspace --all-targets -- -D warnings
+	$(MAKE) check-swift-actions
 	cargo test -q --workspace
 	scripts/check-ffi.sh
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }

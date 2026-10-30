@@ -27,7 +27,7 @@ struct PianoMoveChange: Sendable {
         return result
     }
 
-    func actions(in snapshot: Snapshot?) -> [[String: Any]]? {
+    func actions(in snapshot: Snapshot?) -> [EditAction]? {
         guard !copies.isEmpty || time != 0 || pitch != 0, let geometries,
               originals.allSatisfy({ snapshot?.pianoNote($0.key).map(NoteGeometry.init) == $0.value }) else { return nil }
         if !copies.isEmpty {
@@ -36,14 +36,14 @@ struct PianoMoveChange: Sendable {
         var seen: Set<UUID> = []
         // Prefer the grabbed placement when its content is also visible through a fixed link.
         let ids = [anchor] + originals.keys.filter { $0 != anchor }.sorted { $0.descriptionKey < $1.descriptionKey }
-        return ids.compactMap { id -> [String: Any]? in
+        return ids.compactMap { id -> EditAction? in
             guard seen.insert(id.note).inserted, let value = geometries[id] else { return nil }
             if let copy = copies[id.note] {
-                return ["type": "note.duplicate", "track": id.track.uuidString, "clip": id.placement.uuidString,
-                        "note": id.note.uuidString, "copy": copy.uuidString, "start": value.start, "pitch": value.pitch]
+                return .duplicateNote(track: id.track.uuidString, clip: id.placement.uuidString,
+                                      note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, copy: copy.uuidString)
             }
-            return ["type": "note.edit", "track": id.track.uuidString, "clip": id.placement.uuidString,
-                    "note": id.note.uuidString, "start": value.start, "length": value.length, "pitch": value.pitch]
+            return .editNote(track: id.track.uuidString, clip: id.placement.uuidString,
+                             note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, length: value.length)
         }
     }
 }

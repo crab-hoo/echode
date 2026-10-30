@@ -306,6 +306,9 @@ P2 の共通サンプルブラウザ（[interaction-design.md](interaction-desig
 
 `cbindgen` の C ABI と `EchodeBridge` の非同期関数・所有スナップショットハンドル（[ADR 0044](decisions/0044-swift-bridge.md)）。
 
+編集型の生成と段階的な橋渡しは [ADR 0202](decisions/0202-generated-swift-edit-actions.md) を参照する。
+ピアノロールの controller は生成型へ移行し、他領域の辞書の置換は後続の範囲である。
+
 時間単位と値の範囲は、値を返す製品 C ABI から `EchodeBridge.ModelLimits` へ渡す。
 `Tick` が拍の入出力を整数へ変換し、座標の倍率とモデル範囲を直書きで重複させない
 （[ADR 0200](decisions/0200-shared-model-units-and-limits.md)）。

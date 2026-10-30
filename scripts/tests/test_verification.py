@@ -52,6 +52,44 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_typed_edit_generation_and_product_boundary_remain_selected(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "typed-edit-bridge")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "TypedEditTests"))
+        fault = contract["negative_control"]
+        self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in ("crates/echode-actions/examples/swift_actions.rs",
+                     "crates/echode-actions/examples/swift_actions/tests.rs",
+                     "swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift",
+                     "swift/EchodeBridge/Tests/EchodeBridgeTests/Fixtures/edit-actions.json",
+                     "swift/EchodeApp/Tests/EchodeAppTests/TypedEditTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
+                             "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("\t$(MAKE) check-swift-actions", makefile)
+        command = subprocess.run(["make", "-n", "check-swift-actions"], cwd=ROOT,
+                                 check=True, capture_output=True, text=True).stdout
+        self.assertIn("--example swift_actions -- --check", command)
+        self.assertNotIn("--write", command)
+
+    def test_typed_piano_controller_keeps_generated_actions_and_verification(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "typed-piano-controller")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "TypedPianoEditTests"))
+        fault = contract["negative_control"]
+        controller = (ROOT / fault["file"]).read_text()
+        self.assertEqual(controller.count(fault["old"]), 1)
+        notes = controller[controller.index("public func insertNote("):controller.index("public func undo()")]
+        self.assertEqual(notes.count("performActions("), 8)
+        for untyped in ("performEdit(", "JSONSerialization", '"type":', "[String: Any]"):
+            self.assertNotIn(untyped, notes)
+        for filename in ("PianoMoveBatch.swift", "PianoResizeBatch.swift", "PianoStep.swift", "NoteVelocityBatch.swift"):
+            path = "swift/EchodeApp/Sources/EchodeAppCore/" + filename
+            source = (ROOT / path).read_text()
+            self.assertIn("func actions(in snapshot: Snapshot?) -> [EditAction]?", source)
+            self.assertNotIn("[String: Any]", source)
+            self.assertNotIn('"type":', source)
+            self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
+        self.assertIn("check-product-contracts", self.selected("swift/EchodeApp/Tests/EchodeAppTests/TypedPianoEditTests.swift"))
+
     def test_model_units_contracts_cover_the_abi_and_swift_consumers(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         native = contracts["model-constants-abi"]
@@ -1402,7 +1440,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
+                          "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
                           "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",

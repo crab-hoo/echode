@@ -41,6 +41,7 @@ let package = Package(
             name: "EchodeBridgeTests",
             dependencies: ["EchodeBridge"],
             path: "Tests/EchodeBridgeTests",
+            resources: [.process("Fixtures")],
             swiftSettings: [
                 .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])
             ]

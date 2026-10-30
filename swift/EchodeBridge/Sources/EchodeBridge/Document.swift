@@ -379,6 +379,22 @@ public final class Document: @unchecked Sendable {
     /// Queues one action object or an atomic array of actions (one Undo).
     /// An empty array leaves history intact. A cancellation before submission
     /// does not send it. A cancellation after that does not undo the edit.
+    public func perform(_ action: EditAction) async throws -> Snapshot {
+        try await performEncoded(action)
+    }
+
+    /// Applies a typed transaction through the same atomic document-worker path.
+    public func perform(_ actions: [EditAction]) async throws -> Snapshot {
+        try await performEncoded(actions)
+    }
+
+    private func performEncoded(_ value: some Encodable) async throws -> Snapshot {
+        try Task.checkCancellation()
+        let bytes = try JSONEncoder().encode(value)
+        return try await perform(String(decoding: bytes, as: UTF8.self))
+    }
+
+    /// Raw JSON compatibility boundary; model validation remains in Rust.
     public func perform(_ json: String) async throws -> Snapshot {
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { continuation in

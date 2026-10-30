@@ -15,13 +15,13 @@ struct PianoVelocityChange {
         }
     }
 
-    func actions(in snapshot: Snapshot?) -> [[String: Any]]? {
+    func actions(in snapshot: Snapshot?) -> [EditAction]? {
         guard isValid, originals.allSatisfy({ snapshot?.pianoNote($0.key)?.velocity == $0.value }) else { return nil }
         var seen: Set<UUID> = []
-        return originals.keys.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id -> [String: Any]? in
+        return originals.keys.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id -> EditAction? in
             guard seen.insert(id.note).inserted, let raw = originals[id] else { return nil }
-            return ["type": "note.velocity", "track": id.track.uuidString, "clip": id.placement.uuidString,
-                    "note": id.note.uuidString, "velocity": Int(raw >> 9) + delta]
+            return .setNoteVelocity(track: id.track.uuidString, clip: id.placement.uuidString,
+                                    note: id.note.uuidString, velocity: UInt8(Int(raw >> 9) + delta))
         }
     }
 }

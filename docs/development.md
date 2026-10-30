@@ -207,6 +207,13 @@ Swift の値と拍の変換は `EchodeBridge/ModelLimits.swift` の `ModelLimits
 回帰は ABI の `tests/model_constants.rs`、橋渡しの `ModelLimitsTests.swift`、製品の `ModelUnitsTests.swift` に置く
 （[ADR 0200](decisions/0200-shared-model-units-and-limits.md)）。
 
+編集型の生成器は `crates/echode-actions/examples/swift_actions.rs`、生成物は橋渡しの `EditAction.swift` に置く。
+`make swift-actions` で再生成し、`make check-swift-actions` は変更せず照合する。後者は `make check` でも行う。
+全操作の共有 fixture は `EchodeBridgeTests/Fixtures/edit-actions.json`、符号化は `EditActionTests.swift`、
+製品ワーカー・履歴・再オープンは `TypedEditTests.swift`、ピアノロールの型付き controller は `TypedPianoEditTests.swift` で検査する。
+ピアノロールの単一／一括編集は生成型へ移行した。他領域の辞書からの移行は残る
+（[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
+
 ループの下書きは `ProjectController.loopRange` の整数範囲を両ルーラーと送信で共有する。
 拍の文字列は `LoopEntry.swift` が入力境界だけで持ち、未変更の欄は元の tick をそのまま返す。
 回帰は `LoopDraftTests.swift`。精度外の端点・不正入力・旧文書の拒否・再オープン時の初期化を通す

@@ -85,6 +85,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   エージェント入口の選択の一致・失敗情報の保持・原文読込と鮮度の境界も既存の検査内で確認する（[手順](agent-workflow.md)）。
 - `check-format`: 従来 `check-base` のビルド後に行っていた Rust フォーマットを独立して先に検査する。
 - `check` (`check-base`): Rust / Swift のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
+  `make check-swift-actions` で登録簿・公開スキーマと Swift の生成編集型を照合し、古い生成物を変更せず拒否する。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
   さらにソースのコピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする。

@@ -367,37 +367,36 @@ public final class ProjectController {
               let start = Tick.ticks(beat), let duration = Tick.ticks(length),
               NoteGeometry(start: start, length: duration, pitch: pitch).isValid else { return false }
         let velocity = noteVelocity.value
-        return await performEdit({ [
-            "type": "note.insert", "track": target.uuidString,
-            "pitch": pitch, "velocity": velocity, "start": start, "length": duration,
+        return await performActions({ [
+            .insertNote(track: target.uuidString, pitch: UInt8(pitch), velocity: UInt8(velocity), start: start, length: duration),
         ] }, documentID: documentID, rememberingLength: { duration })
     }
 
     @discardableResult
     public func setNoteVelocity(_ id: PianoNote.ID, velocity: Int, documentID: UUID? = nil) async -> Bool {
         guard ModelLimits.midi7.contains(velocity) else { return false }
-        return await performEdit({ [self] in
+        return await performActions({ [self] in
             guard let before = snapshot?.pianoNote(id), Int(before.velocity >> 9) != velocity else { return nil }
-            return ["type": "note.velocity", "track": id.track.uuidString, "clip": id.placement.uuidString,
-                    "note": id.note.uuidString, "velocity": velocity]
+            return [.setNoteVelocity(track: id.track.uuidString, clip: id.placement.uuidString,
+                                     note: id.note.uuidString, velocity: UInt8(velocity))]
         }, documentID: documentID, rememberingVelocity: { velocity })
     }
 
     @discardableResult
     func setNoteVelocities(_ change: PianoVelocityChange, documentID: UUID? = nil) async -> Bool {
-        await performEdit({ [self] in
+        await performActions({ [self] in
             change.actions(in: snapshot)
         }, documentID: documentID, rememberingVelocity: { change.anchorValue })
     }
 
     @discardableResult
     func resizeNotes(_ change: PianoResizeChange, documentID: UUID? = nil) async -> Bool {
-        await performEdit({ [self] in change.actions(in: snapshot) }, documentID: documentID)
+        await performActions({ [self] in change.actions(in: snapshot) }, documentID: documentID)
     }
 
     @discardableResult
     func moveNotes(_ change: PianoMoveChange, documentID: UUID? = nil) async -> Bool {
-        await performEdit({ [self] in change.actions(in: snapshot) }, documentID: documentID,
+        await performActions({ [self] in change.actions(in: snapshot) }, documentID: documentID,
             selectingNotes: change.copies.isEmpty ? nil : Set(change.originals.keys.compactMap { id in
                 change.copies[id.note].map { PianoNote.ID(track: id.track, placement: id.placement, note: $0) }
             }))
@@ -416,7 +415,7 @@ public final class ProjectController {
 
     @discardableResult
     func stepNotes(_ step: PianoStep, documentID: UUID) async -> Bool {
-        await performEdit({ [self] in step.actions(in: snapshot) }, documentID: documentID,
+        await performActions({ [self] in step.actions(in: snapshot) }, documentID: documentID,
             rememberingLength: { [self] in
                 guard step.resize, step.ids.count == 1 else { return nil }
                 return step.geometries(in: snapshot)?.values.first?.length
@@ -425,11 +424,11 @@ public final class ProjectController {
 
     @discardableResult
     public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry, documentID: UUID? = nil) async -> Bool {
-        await performEdit({ [self] in
+        await performActions({ [self] in
             guard let before = snapshot?.pianoNote(id), geometry.isValid,
                   before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch else { return nil }
-            return ["type": "note.edit", "track": id.track.uuidString, "clip": before.id.placement.uuidString,
-                    "note": id.note.uuidString, "pitch": geometry.pitch, "start": geometry.start, "length": geometry.length]
+            return [.editNote(track: id.track.uuidString, clip: before.id.placement.uuidString,
+                              note: id.note.uuidString, pitch: UInt8(geometry.pitch), start: geometry.start, length: geometry.length)]
         }, documentID: documentID, rememberingLength: { [self] in
             guard let before = snapshot?.pianoNote(id), before.length != geometry.length else { return nil }
             return geometry.length
@@ -443,14 +442,14 @@ public final class ProjectController {
 
     @discardableResult
     func deleteNotes(_ ids: Set<PianoNote.ID>, documentID: UUID? = nil) async -> Bool {
-        await performEdit({ [self] in
+        await performActions({ [self] in
             guard !ids.isEmpty, ids.allSatisfy({ snapshot?.pianoNote($0) != nil }) else { return nil }
             // Linked placements can expose the same content note more than once.
             // note.delete addresses the content note, not its placement window.
             var seen: Set<UUID> = []
-            return ids.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id -> [String: Any]? in
+            return ids.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id -> EditAction? in
                 guard seen.insert(id.note).inserted else { return nil }
-                return ["type": "note.delete", "track": id.track.uuidString, "note": id.note.uuidString]
+                return .deleteNote(track: id.track.uuidString, note: id.note.uuidString)
             }
         }, documentID: documentID)
     }
@@ -690,8 +689,26 @@ public final class ProjectController {
     }
 
     private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false,
-                             selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil },
-                             rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
+                             selectingAddedTrack: Bool = false) async -> Bool {
+        await applyEdit(fields, documentID: documentID, finishingPreview: finishingPreview, selectingAddedTrack: selectingAddedTrack) { document, fields in
+            let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
+            return try await document.perform(String(decoding: bytes, as: UTF8.self))
+        }
+    }
+
+    private func performActions(_ actions: @escaping @MainActor () -> [EditAction]?, documentID: UUID?,
+                                rememberingLength: @escaping @MainActor () -> Int64? = { nil },
+                                rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
+        await applyEdit(actions, documentID: documentID, rememberingLength: rememberingLength,
+                        rememberingVelocity: rememberingVelocity, selectingNotes: selectingNotes) { document, actions in
+            try await document.perform(actions)
+        }
+    }
+
+    private func applyEdit<Fields>(_ fields: @escaping @MainActor () -> Fields?, documentID: UUID?, finishingPreview: Bool = false,
+                                   selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil },
+                                   rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil,
+                                   submit: @escaping @MainActor (Document, Fields) async throws -> Snapshot) async -> Bool {
         guard faderPreview == nil || finishingPreview else { return false }
         return await edits.run {
             guard let document = self.document,
@@ -700,8 +717,7 @@ public final class ProjectController {
                 let inputLength = self.noteInput.change(to: rememberingLength())
                 let velocity = rememberingVelocity(), velocityGeneration = self.noteVelocity.generation
                 let previousTracks = selectingAddedTrack ? Set(self.tracks.map(\.id)) : []
-                let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
-                let edited = try await document.perform(String(decoding: bytes, as: UTF8.self))
+                let edited = try await submit(document, fields)
                 self.publish(edited)
                 if selectingAddedTrack { self.selectAddedRoots(previous: previousTracks) }
                 if let selectingNotes { self.noteSelection = selectingNotes.filter { $0.track == self.pianoTrack && edited.pianoNote($0) != nil } }

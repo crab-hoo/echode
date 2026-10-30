@@ -29,14 +29,14 @@ struct PianoStep: Sendable {
         return originals.mapValues { NoteGeometry(start: $0.start + delta, length: $0.length, pitch: $0.pitch + interval) }
     }
 
-    func actions(in snapshot: Snapshot?) -> [[String: Any]]? {
+    func actions(in snapshot: Snapshot?) -> [EditAction]? {
         guard let geometries = geometries(in: snapshot),
               ids.contains(where: { snapshot?.pianoNote($0).map(NoteGeometry.init) != geometries[$0] }) else { return nil }
         var seen: Set<UUID> = []
         return ids.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id in
             guard seen.insert(id.note).inserted, let value = geometries[id] else { return nil }
-            return ["type": "note.edit", "track": id.track.uuidString, "clip": id.placement.uuidString,
-                    "note": id.note.uuidString, "start": value.start, "length": value.length, "pitch": value.pitch]
+            return .editNote(track: id.track.uuidString, clip: id.placement.uuidString,
+                             note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, length: value.length)
         }
     }
 }

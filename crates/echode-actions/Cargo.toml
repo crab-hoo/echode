@@ -13,5 +13,9 @@ schemars = "=1.2.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[[example]]
+name = "swift_actions"
+test = true
+
 [lints]
 workspace = true

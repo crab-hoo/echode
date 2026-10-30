@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use echode_api::{ApiSession, bind_socket, serve_mcp};
 use echode_model::Id;
@@ -146,12 +146,17 @@ fn contract_unterminated_backend_frames_do_not_authorize_or_acknowledge_edits() 
                     assert_eq!(edit["params"]["name"], "must not replay");
                     response = json!({"jsonrpc":"2.0", "id":1, "result":{}});
                 }
-                write!(stream.get_mut(), "{response}{suffix}").unwrap();
+                // Buffer JSON like the document server. This fixture probes EOF
+                // framing, not Value::Display's incremental socket writes.
+                let frame = format!("{response}{suffix}");
+                stream.get_mut().write_all(frame.as_bytes()).unwrap();
                 stream.get_mut().shutdown(Shutdown::Write).unwrap();
+                let shutdown = Instant::now();
                 let mut following = String::new();
                 stream.read_to_string(&mut following).unwrap_or_else(|error| {
                     panic!(
-                        "backend EOF wait (handshake={handshake}, suffix={suffix:?}) after partial reply: {error}; following={following:?}"
+                        "backend EOF wait (handshake={handshake}, suffix={suffix:?}) after partial reply: {error}; following={following:?}; elapsed={:?}",
+                        shutdown.elapsed()
                     )
                 });
                 following
@@ -161,8 +166,15 @@ fn contract_unterminated_backend_frames_do_not_authorize_or_acknowledge_edits() 
                 tool("echode.track.add", json!({"name":"must not replay"}))
             );
             let mut output = Vec::new();
+            let started = Instant::now();
             let result = serve_mcp(&socket, input.as_bytes(), &mut output);
-            let following = worker.join().unwrap();
+            let elapsed = started.elapsed();
+            let following = worker.join().unwrap_or_else(|error| {
+                panic!(
+                    "backend worker failed: {error:?}; client elapsed={elapsed:?}, result={result:?}, output={}",
+                    String::from_utf8_lossy(&output)
+                )
+            });
             fs::remove_file(&socket).unwrap();
             result.unwrap();
             assert!(

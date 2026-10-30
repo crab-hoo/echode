@@ -28,16 +28,16 @@ struct PianoResizeChange: Sendable {
         return result
     }
 
-    func actions(in snapshot: Snapshot?) -> [[String: Any]]? {
+    func actions(in snapshot: Snapshot?) -> [EditAction]? {
         guard delta != 0, let geometries,
               originals.allSatisfy({ snapshot?.pianoNote($0.key).map(NoteGeometry.init) == $0.value }) else { return nil }
         var seen: Set<UUID> = []
         // The grabbed placement owns any fixed-window growth for shared content.
         let ids = [anchor] + originals.keys.filter { $0 != anchor }.sorted { $0.descriptionKey < $1.descriptionKey }
-        return ids.compactMap { id -> [String: Any]? in
+        return ids.compactMap { id -> EditAction? in
             guard seen.insert(id.note).inserted, let value = geometries[id] else { return nil }
-            return ["type": "note.edit", "track": id.track.uuidString, "clip": id.placement.uuidString,
-                    "note": id.note.uuidString, "start": value.start, "length": value.length, "pitch": value.pitch]
+            return .editNote(track: id.track.uuidString, clip: id.placement.uuidString,
+                             note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, length: value.length)
         }
     }
 }
