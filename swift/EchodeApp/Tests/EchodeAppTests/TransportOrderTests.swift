@@ -89,7 +89,7 @@ struct TransportOrderTests {
         let second = Task { await controller.setPlaybackStart(tick: beat * 2) }
         let range = try #require(LoopRange(start: beat, end: beat * 3))
         let loop = Task {
-            controller.loopStartBeat = 1; controller.loopEndBeat = 3
+            controller.loopRange = range
             await controller.toggleLoop()
         }
         let ranged = Task { await controller.setLoopRange(range, documentID: document) }

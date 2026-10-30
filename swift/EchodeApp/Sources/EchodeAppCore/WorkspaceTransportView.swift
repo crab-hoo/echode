@@ -5,18 +5,12 @@ struct WorkspaceTransportView: View {
     let controller: ProjectController
     @Binding var followsPlayhead: Bool
     @State private var seek = "0"
-    @State private var loopStart = "0"
-    @State private var loopEnd = "4"
+    @State private var loopEntry = LoopEntry(range: .initial)
     @FocusState private var loopField: LoopField?
     @FocusState private var startField: Bool
     private enum LoopField: Hashable { case start, end }
     private var seekBeat: Double? { NoteDraft.number(seek).flatMap { $0 >= 0 && Tick.ticks($0) != nil ? $0 : nil } }
-    private var loopBeats: (Double, Double)? {
-        guard let start = NoteDraft.number(loopStart), let end = NoteDraft.number(loopEnd),
-              let startTick = Tick.ticks(start), let endTick = Tick.ticks(end),
-              startTick >= 0, endTick > startTick else { return nil }
-        return (start, end)
-    }
+    private var loopRange: LoopRange? { loopEntry.range }
     var body: some View {
         HStack(spacing: 12) {
             WorkspacePlayButton(paused: controller.playbackRequested) { Task { await controller.togglePause() } }
@@ -30,21 +24,18 @@ struct WorkspaceTransportView: View {
                 .focused($startField).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Playback start beat")).onSubmit(setStart)
             Button(text("Go"), action: setStart).disabled(seekBeat == nil)
-            TextField(text("Loop start (beats)"), text: $loopStart).frame(width: 64)
+            TextField(text("Loop start (beats)"), text: $loopEntry.start).frame(width: 64)
                 .focused($loopField, equals: .start).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Loop start (beats)")).onSubmit(commitLoop)
-            TextField(text("Loop end (beats)"), text: $loopEnd).frame(width: 64)
+            TextField(text("Loop end (beats)"), text: $loopEntry.end).frame(width: 64)
                 .focused($loopField, equals: .end).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Loop end (beats)")).onSubmit(commitLoop)
             Button {
-                if let beats = loopBeats {
-                    controller.loopStartBeat = beats.0
-                    controller.loopEndBeat = beats.1
-                }
+                storeLoopDraft()
                 Task { await controller.toggleLoop() }
             } label: {
                 Label(text("Loop"), systemImage: controller.audio.loopStart == nil ? "repeat" : "repeat.circle.fill")
-            }.disabled(controller.audio.loopStart == nil && loopBeats == nil)
+            }.disabled(controller.audio.loopStart == nil && loopRange == nil)
             // A manual time scroll turns this off; it stays off until turned on here (ADR 0159).
             Toggle(isOn: $followsPlayhead) {
                 Label(WorkspaceCommand.followPlayhead.title, systemImage: WorkspaceCommand.followPlayhead.icon)
@@ -53,35 +44,28 @@ struct WorkspaceTransportView: View {
             Text(controller.audio.activeDevice?.name ?? text("System Output")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }.disabled(controller.transportLocked)
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .onChange(of: loopStart) { _, _ in storeLoopDraft() }
-            .onChange(of: loopEnd) { _, _ in storeLoopDraft() }
+            .onChange(of: loopEntry) { _, _ in storeLoopDraft() }
             .onChange(of: loopField) { previous, _ in if previous != nil { commitLoop(); if loopField == nil { showLoop() } } }
             .onChange(of: controller.documentID) { _, _ in
-                loopStart = "0"
-                loopEnd = "4"
+                showLoop()
                 showStart()
             }
             // The rulers change the start too. A draft being typed is kept.
             .onChange(of: controller.playbackStart, initial: true) { _, _ in if !startField { showStart() } }
-            .onChange(of: controller.loopStartBeat, initial: true) { _, _ in if loopField == nil { showLoop() } }
-            .onChange(of: controller.loopEndBeat) { _, _ in if loopField == nil { showLoop() } }
+            .onChange(of: controller.loopRange, initial: true) { _, _ in if loopField == nil { showLoop() } }
             .onChange(of: startField) { _, focused in if !focused { showStart() } }
     }
     private func setStart() { if let beat = seekBeat { Task { await controller.setPlaybackStart(beat: beat) } } }
     private func showStart() { seek = NoteDraft.format(Double(controller.playbackStart) / Tick.perBeat) }
-    private func showLoop() {
-        loopStart = NoteDraft.format(controller.loopStartBeat)
-        loopEnd = NoteDraft.format(controller.loopEndBeat)
-    }
+    private func showLoop() { loopEntry = LoopEntry(range: controller.loopRange) }
     private func storeLoopDraft() {
-        guard let beats = loopBeats else { return }
-        controller.loopStartBeat = beats.0
-        controller.loopEndBeat = beats.1
+        if let range = loopRange { controller.loopRange = range }
     }
     private func commitLoop() {
-        storeLoopDraft()
-        guard let start = Tick.ticks(controller.loopStartBeat), let end = Tick.ticks(controller.loopEndBeat),
-              LoopCommit.needsSend(soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd, start: start, end: end) else { return }
+        guard let range = loopRange else { return }
+        controller.loopRange = range
+        guard LoopCommit.needsSend(soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd,
+                                   start: range.start, end: range.end) else { return }
         Task { await controller.updateLoopBounds() }
     }
 }

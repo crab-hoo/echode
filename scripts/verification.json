@@ -84,6 +84,16 @@
       ]
     },
     {
+      "id": "integer-loop-draft-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "LoopDraftTests", "test": "contractLoopDraftKeepsIntegerBoundsThroughTransportAndDocumentChanges", "timeout": 180,
+      "purpose": "整数ループ下書きと未変更の拍入力欄が端数tick・Doubleの精度外の端点を保持し、製品音声要求・オフ維持・旧文書拒否・再オープンを確認する",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/RulerLoop.swift", "old": "loopRange = range", "new": "loopRange = LoopRange(start: Tick.ticks(Tick(rawValue: range.start).beats) ?? 0, end: Tick.ticks(Tick(rawValue: range.end).beats) ?? 0) ?? .initial"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/LoopEntry.swift", "old": "let startTick = start == shownStart ? original.start : NoteDraft.number(start).flatMap(Tick.ticks)", "new": "let startTick = NoteDraft.number(start).flatMap(Tick.ticks)"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/LoopEntry.swift", "old": "let endTick = end == shownEnd ? original.end : NoteDraft.number(end).flatMap(Tick.ticks)", "new": "let endTick = NoteDraft.number(end).flatMap(Tick.ticks)"}
+      ]
+    },
+    {
       "id": "plugin-main-call-ownership", "runner": "rust", "package": "echode-plugin-host", "target": ["--lib"],
       "test": "main_requests::tests::abandoned_save_keeps_its_own_reply_and_blocks_replacement", "timeout": 180,
       "purpose": "時間切れのメインスレッド要求は入力と結果を専有し、実行中の後続を拒否して古い完了を次へ貸さない",

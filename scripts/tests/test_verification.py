@@ -68,6 +68,18 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
                              "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
 
+    def test_integer_loop_draft_contract_covers_transport_and_beat_text(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "integer-loop-draft-ui")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "LoopDraftTests"))
+        self.assertEqual(len(contract["negative_controls"]), 3)
+        for fault in contract["negative_controls"]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/RulerLoop.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/LoopEntry.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/LoopDraftTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
+                             "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
+
     def test_helper_timeout_contracts_and_realtime_selection(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for key, package, target in (
@@ -1390,7 +1402,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "model-constants-abi", "model-units-ui",
+                          "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
                           "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",

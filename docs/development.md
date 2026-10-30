@@ -207,6 +207,11 @@ Swift の値と拍の変換は `EchodeBridge/ModelLimits.swift` の `ModelLimits
 回帰は ABI の `tests/model_constants.rs`、橋渡しの `ModelLimitsTests.swift`、製品の `ModelUnitsTests.swift` に置く
 （[ADR 0200](decisions/0200-shared-model-units-and-limits.md)）。
 
+ループの下書きは `ProjectController.loopRange` の整数範囲を両ルーラーと送信で共有する。
+拍の文字列は `LoopEntry.swift` が入力境界だけで持ち、未変更の欄は元の tick をそのまま返す。
+回帰は `LoopDraftTests.swift`。精度外の端点・不正入力・旧文書の拒否・再オープン時の初期化を通す
+（[ADR 0201](decisions/0201-integer-loop-drafts.md)）。
+
 値の操作子のクリック規則と重ねる入力欄は `ValueControl.swift`（`ValueClicks`・`ValueEntryField`）、
 単位と範囲は `MixControls.swift`（`MixEntry`・`ClipEntry`）、各操作子の接続は `ArrangeHeaderView.swift`・`ArrangeView.swift`・
 `WorkspaceParameterView.swift`、回帰は `ValueControlTests.swift` に置く。

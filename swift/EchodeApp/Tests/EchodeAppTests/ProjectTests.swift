@@ -44,7 +44,7 @@ struct ProjectTests {
         #expect(controller.audio.metronome)
         await controller.toggleLoop()
         #expect(controller.audio.loopStart == 0 && controller.audio.loopEnd == 705_600 * 4)
-        controller.loopEndBeat = 0
+        #expect(LoopRange(start: 0, end: 0) == nil)
         await controller.setLoop(enabled: true)
         #expect(controller.audio.loopStart == 0 && controller.audio.loopEnd == 705_600 * 4)
         await controller.toggleLoop()

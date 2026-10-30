@@ -6,6 +6,8 @@ public struct LoopRange: Sendable, Equatable {
     public let start: Int64
     public let end: Int64
 
+    public static let initial = LoopRange(start: 0, end: 4 * Tick.perQuarter)!
+
     public init?(start: Int64, end: Int64) {
         guard start >= 0, end > start else { return nil }
         self.start = start; self.end = end
@@ -77,15 +79,12 @@ struct RulerPress {
 
 extension ProjectController {
     var rulerLoop: RulerLoop? {
-        guard let start = Tick.ticks(loopStartBeat), let end = Tick.ticks(loopEndBeat),
-              let range = LoopRange(start: start, end: end) else { return nil }
-        return RulerLoop(range: range, enabled: audio.loopStart != nil)
+        RulerLoop(range: loopRange, enabled: audio.loopStart != nil)
     }
 
     func setLoopRange(_ range: LoopRange, documentID: UUID) async {
         guard self.documentID == documentID, !busy else { return }
-        loopStartBeat = Double(range.start) / Tick.perBeat
-        loopEndBeat = Double(range.end) / Tick.perBeat
+        loopRange = range
         // Changing the draft must not turn an inactive loop on.
         await updateLoopBounds()
     }

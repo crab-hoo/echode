@@ -85,9 +85,8 @@ public final class ProjectController {
     /// The transport bar, both rulers and the transport commands share this.
     /// Only replacing or closing the document locks them.
     public var transportLocked: Bool { snapshot == nil || busy }
-    /// Loop bounds in beats. Transport state, not part of the project.
-    public var loopStartBeat = 0.0
-    public var loopEndBeat = 4.0
+    /// Integer loop bounds shared by the rulers and transport. Not part of the project.
+    public var loopRange: LoopRange = .initial
     public private(set) var playback: PlaybackFeed?
     /// Bumps on play, pause, stop, and locate. Position polling does not.
     public private(set) var transportGeneration: UInt64 = 0
@@ -205,8 +204,7 @@ public final class ProjectController {
                 self.transportGeneration = 0
                 self.audio = initialAudio
                 self.reportedAudioError = nil
-                self.loopStartBeat = 0
-                self.loopEndBeat = 4
+                self.loopRange = .initial
                 self.projectURL = url
                 self.undoCount = 0
                 self.redoCount = 0
@@ -538,8 +536,7 @@ public final class ProjectController {
             self.mixerSwitchTail = nil
             self.audio = AudioState()
             self.reportedAudioError = nil
-            self.loopStartBeat = 0
-            self.loopEndBeat = 4
+            self.loopRange = .initial
         }
     }
 
@@ -595,9 +592,7 @@ public final class ProjectController {
         await orderedAudioCommand { [self] in
             guard let on = enabled(audio) else { return nil }
             guard on else { return .loop(start: nil, end: nil) }
-            guard let start = Tick.ticks(loopStartBeat), let end = Tick.ticks(loopEndBeat),
-                  start >= 0, end > start else { return nil }
-            return .loop(start: start, end: end)
+            return .loop(start: loopRange.start, end: loopRange.end)
         }
     }
 

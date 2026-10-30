@@ -217,6 +217,11 @@ make debug-report
   押下では開始位置を送らず、離した時のクリックだけが `transport.set_start` を送る。
   ドラッグの範囲はオフ中は下書きだけ、オン中は `transport.loop` を 1 回送る（[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
   `piano-ruler-loop-ui`・`arrange-ruler-ui`・`arrange-ruler-cancel-ui` で入力と取消、`loop-entry` で音声側を切り分ける。
+  範囲欄のフォーカス移動・オンオフで端点が変わる場合は、`ProjectController.loopRange` と `LoopEntry.range` を比較する。
+  下書きと送信は整数で共有し、未変更の表示文字列を拍から再変換しない。
+  `integer-loop-draft-ui` は Double の精度外の端点も製品要求まで保持することを検査する。
+  手入力した欄の不正値・ゼロ長は拒否し、反対端を丸めたり左右を交換したりしない
+  （[ADR 0201](decisions/0201-integer-loop-drafts.md)）。
   既存端の調整は上端 8 pt のグリップから行う。画面外の端を、帯の切れ目でつかむことはできない。
   片端だけの調整にならない場合は `RulerHandles.hit` と `RulerPress.edge`、つかんだ範囲とポインターのずれを確認する。
   別エディタ・範囲欄・オンオフの変更で下書きが消えるのは、古い解放による上書きを防ぐ正常な取消である。
