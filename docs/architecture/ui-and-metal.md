@@ -149,9 +149,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 
 `echode-actions` の登録簿と公開スキーマから `EditAction: Encodable, Sendable` を生成する。
 型付きの単一／一括 `Document.perform` は既存の文書ワーカーへ送り、送信前の符号化失敗・取消では編集しない。
-生成物を通常検査で照合する。ピアノロールとトラック・デバイスの controller は生成型の配列を送る。
+生成物を通常検査で照合する。ピアノロールとトラック・デバイス・ミキサーの controller は生成型の配列を送る。
 型付きと未移行の辞書の adapter は generic の `applyEdit` で順序・文書照合・履歴・入力記憶を共有する。
-ミキサー・クリップ移動・音声の辞書と raw JSON の互換入口は移行中として残す
+クリップ移動・音声取込みの辞書と raw JSON の互換入口は移行中として残す
 （[ADR 0202](../decisions/0202-generated-swift-edit-actions.md)）。
 
 編集 JSON は単一のアクション、または単一 Undo のアクション配列を受ける。

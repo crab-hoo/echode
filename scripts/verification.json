@@ -69,6 +69,16 @@
   ],
   "product_contracts": [
     {
+      "id": "typed-mixer-controller", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "TypedMixerEditTests", "test": "contractMixerEditsPreserveExactValuesPreviewHistoryAndPersistence", "timeout": 180,
+      "purpose": "型付きミキサー要求の全対象・試聴の先行確定と取消・ピアノ行の単一対象・Floatと整数flickの保持・Undo / Redo・拒否・保存と旧文書を確認する",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": "try await document.perform(actions)", "new": "try await document.perform(actions.count > 1 ? Array(actions.dropFirst()) : actions)"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": ".setClipFades(clip: id.uuidString, fadeIn: fadeIn, fadeOut: fadeOut)", "new": ".setClipFades(clip: id.uuidString, fadeIn: fadeOut, fadeOut: fadeIn)"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "old": "documentID: preview.document, finishingPreview: true)", "new": "documentID: preview.document, finishingPreview: false)"}
+      ]
+    },
+    {
       "id": "typed-track-device-controller", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "TypedTrackDeviceEditTests", "test": "contractTrackAndDeviceEditsPreserveSelectionHistoryAndPersistence", "timeout": 180,
       "purpose": "型付きトラック・デバイス要求の全対象・追加後の選択・アンカーと末尾・CLAP ID の境界・単一 Undo / Redo・拒否時の履歴保持・保存と旧文書拒否を確認する",

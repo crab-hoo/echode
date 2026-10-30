@@ -695,10 +695,10 @@ public final class ProjectController {
         }
     }
 
-    func performActions(_ actions: @escaping @MainActor () -> [EditAction]?, documentID: UUID?, selectingAddedTrack: Bool = false,
+    func performActions(_ actions: @escaping @MainActor () -> [EditAction]?, documentID: UUID?, finishingPreview: Bool = false, selectingAddedTrack: Bool = false,
                         rememberingLength: @escaping @MainActor () -> Int64? = { nil },
                         rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
-        await applyEdit(actions, documentID: documentID, selectingAddedTrack: selectingAddedTrack, rememberingLength: rememberingLength,
+        await applyEdit(actions, documentID: documentID, finishingPreview: finishingPreview, selectingAddedTrack: selectingAddedTrack, rememberingLength: rememberingLength,
                         rememberingVelocity: rememberingVelocity, selectingNotes: selectingNotes) { document, actions in
             try await document.perform(actions)
         }
@@ -827,10 +827,10 @@ extension ProjectController {
 
     @discardableResult
     public func setMixer(_ track: UUID, field: MixerField, value: Float, documentID: UUID? = nil) async -> Bool {
-        await edit({ [self] in
+        await performActions({ [self] in
             guard let mix = mixer(track), value.isFinite, mix[field].value != value,
                   field == .gain ? ModelLimits.gain.contains(value) : field == .pan ? ModelLimits.pan.contains(value) : (value == 0 || value == 1) else { return nil }
-            return ["type": "param.set", "parameter": mix[field].id.uuidString, "value": value]
+            return [.setParameter(parameter: mix[field].id.uuidString, value: value)]
         }, documentID: documentID)
     }
 
@@ -883,8 +883,8 @@ extension ProjectController {
         var applied = false
         if commit, preview.document == documentID,
            let recorded = mixer(preview.track)?[preview.field].value, preview.value != recorded {
-            applied = await edit(["type": "param.set", "parameter": preview.parameter.uuidString, "value": preview.value],
-                                 documentID: preview.document, finishingPreview: true)
+            applied = await performActions({ [.setParameter(parameter: preview.parameter.uuidString, value: preview.value)] },
+                                           documentID: preview.document, finishingPreview: true)
         }
         if !applied {
             do { _ = try await sendAudio(document, .clearFaderPreview) }
@@ -895,18 +895,18 @@ extension ProjectController {
 
     @discardableResult
     public func setClipGain(_ id: UUID, gain: Float, documentID: UUID? = nil) async -> Bool {
-        await edit({ [self] in
+        await performActions({ [self] in
             guard let clip = snapshot?.clipMix(id), clip.isAudio, gain.isFinite, gain >= 0, clip.gain != gain else { return nil }
-            return ["type": "clip.set_gain", "clip": id.uuidString, "gain": gain]
+            return [.setClipGain(clip: id.uuidString, gain: gain)]
         }, documentID: documentID)
     }
 
     @discardableResult
     public func setClipFades(_ id: UUID, fadeIn: Int64, fadeOut: Int64, documentID: UUID? = nil) async -> Bool {
-        await edit({ [self] in
+        await performActions({ [self] in
             guard let clip = snapshot?.clipMix(id), clip.isAudio, fadeIn >= 0, fadeOut >= 0,
                   clip.fadeIn != fadeIn || clip.fadeOut != fadeOut else { return nil }
-            return ["type": "clip.set_fades", "clip": id.uuidString, "fade_in": fadeIn, "fade_out": fadeOut]
+            return [.setClipFades(clip: id.uuidString, fadeIn: fadeIn, fadeOut: fadeOut)]
         }, documentID: documentID)
     }
 }

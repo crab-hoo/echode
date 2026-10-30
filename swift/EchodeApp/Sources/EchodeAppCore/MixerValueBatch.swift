@@ -84,7 +84,7 @@ extension ProjectController {
 
     @discardableResult
     func applyMixerValue(_ request: MixerValueBatch) async -> Bool {
-        await editTransaction({ [self] in
+        await performActions({ [self] in
             let mixes = request.tracks.compactMap { mixer($0) }
             guard mixes.count == request.tracks.count else { return nil }
             let originals = mixes.map { $0[request.field].value }
@@ -95,9 +95,9 @@ extension ProjectController {
                 }
                 return nil
             }
-            let actions: [[String: Any]] = zip(mixes, values).compactMap { mix, value in
+            let actions: [EditAction] = zip(mixes, values).compactMap { mix, value in
                 guard mix[request.field].value != value else { return nil }
-                return ["type": "param.set", "parameter": mix[request.field].id.uuidString, "value": value]
+                return .setParameter(parameter: mix[request.field].id.uuidString, value: value)
             }
             return actions.isEmpty ? nil : actions
         }, documentID: request.document)

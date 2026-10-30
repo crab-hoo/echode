@@ -34,17 +34,17 @@ extension ProjectController {
 
     @discardableResult
     func applyMixerSwitch(_ request: MixerSwitchBatch) async -> Bool {
-        await editTransaction({ [self] in
+        await performActions({ [self] in
             guard request.field == .mute || request.field == .solo,
                   request.value == nil || request.value == 0 || request.value == 1,
                   !request.tracks.isEmpty, Set(request.tracks).count == request.tracks.count,
                   request.tracks.contains(request.anchor), let anchor = mixer(request.anchor) else { return nil }
             let value = request.value ?? (anchor[request.field].value == 0 ? 1 : 0)
-            var actions: [[String: Any]] = []
+            var actions: [EditAction] = []
             for track in request.tracks {
                 guard let mix = mixer(track) else { return nil }
                 if mix[request.field].value != value {
-                    actions.append(["type": "param.set", "parameter": mix[request.field].id.uuidString, "value": value])
+                    actions.append(.setParameter(parameter: mix[request.field].id.uuidString, value: value))
                 }
             }
             return actions.isEmpty ? nil : actions

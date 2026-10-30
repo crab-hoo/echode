@@ -60,10 +60,13 @@ make debug-report
   ピアノロールは `typed-piano-controller` と既存の操作契約を使う。
   型付きのノート要求が拒否される場合は、`performActions` の前の幾何・MIDI 範囲・元の値と、`applyEdit` の文書照合を分ける。
   MIDI の `UInt8` 変換は検証後だけで行う。非整数化や clamping で拒否を隠さない。
-  ミキサー・クリップ移動・音声の辞書の入口と混同せず、旧文書・古い元の値・モデルの拒否を区別する。
+  クリップ移動・音声取込みの辞書の入口と混同せず、旧文書・古い元の値・モデルの拒否を区別する。
   トラックとデバイスは `typed-track-device-controller` と既存の操作契約を使う。
   追加した根の選択は `performActions` の `selectingAddedTrack`、順序と no-op は `applyEdit` の手番の前後で調べる。
   並べ替え・コピーの `before: null` は末尾指定であり、ピンの `UInt32.max` は CLAP の予約 ID としてモデルが拒否する。
+  ミキサーと音声クリップの値は `typed-mixer-controller` と既存の入力・文書境界の契約を使う。
+  試聴の確定だけが失敗する場合は `performActions` から `applyEdit` へ渡す `finishingPreview` と、終了時の文書照合を調べる。
+  フェードは整数 flick を保持するが、モデルの `FADE_RATE_LIMIT` で `u32` フレームに収まらない値は従来どおり拒否する。
 - **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
   Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
   Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。

@@ -41,10 +41,9 @@ extension ProjectController {
     @discardableResult
     func togglePianoMixer(_ target: PianoTrackTarget, field: MixerField) async -> Bool {
         guard field == .solo || field == .mute else { return false }
-        return await edit({ [self] in
+        return await performActions({ [self] in
             guard let mix = mixer(target.track) else { return nil }
-            return ["type": "param.set", "parameter": mix[field].id.uuidString,
-                    "value": mix[field].value == 1 ? 0 : 1]
+            return [.setParameter(parameter: mix[field].id.uuidString, value: mix[field].value == 1 ? 0 : 1)]
         }, documentID: target.document)
     }
 
