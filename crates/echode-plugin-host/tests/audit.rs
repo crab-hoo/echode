@@ -1,4 +1,5 @@
-//! Open items from docs/reviews/2026-10-08-audit.md. Each test fails until its item
+//! Open items from docs/reviews/2026-10-08-audit.md and
+//! docs/reviews/2026-10-30-structure-audit.md. Each test fails until its item
 //! is fixed; `make known-bugs` runs them. Remove the `#[ignore]` with the fix.
 
 use std::path::{Path, PathBuf};
@@ -95,4 +96,87 @@ fn audit_plg9_a_watch_can_be_dropped_right_after_it_starts() {
         );
     }
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The test plugin and helper from this checkout, shared with `hosted_playback`.
+fn helper_fixture() -> (PathBuf, PathBuf) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let target = root.join("target/test-plugin");
+    let status = std::process::Command::new(env!("CARGO"))
+        .current_dir(&root)
+        .args(["build", "-q", "-p", "echode-test-plugin", "--target-dir"])
+        .arg(&target)
+        .status()
+        .expect("build test plugin");
+    assert!(status.success());
+    (
+        PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host")),
+        target.join("debug").join("libechode_test_plugin.dylib"),
+    )
+}
+
+/// docs/reviews/2026-10-30-structure-audit.md SPG-01. A request that timed out
+/// is still running on the helper's main thread when the next one is posted.
+/// Both share one byte buffer, so the restore must not load the save's output.
+#[test]
+#[ignore = "SPG-01: helper main-thread requests share one input/output buffer"]
+fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
+    use echode_sandbox::{PluginHost, PluginNotice, SessionLayout, SpawnOptions};
+
+    let (host_bin, plugin) = helper_fixture();
+    let mut host = PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin,
+        plugin: Some(plugin.as_path()),
+        fault: Some("slow-save"),
+        workgroup: None,
+        layout: SessionLayout {
+            max_frames: 64,
+            input_channels: 2,
+            output_channels: 2,
+            input_events: 4,
+            output_events: 1,
+        },
+        fan_in: None,
+        sample_rate: 48_000,
+        plugin_id: Some("dev.echode.test-state"),
+    })
+    .expect("state plugin");
+    let input = vec![0.0; 64];
+    let mut left = vec![0.0; 64];
+    let mut right = vec![0.0; 64];
+    host.process(
+        &[&input, &input],
+        &mut [&mut left, &mut right],
+        Duration::from_secs(2),
+    )
+    .expect("initial");
+    assert!((left[0] - 0.25).abs() < 1.0e-4, "{}", left[0]);
+
+    // The first save sleeps 3 s, past both 2 s waits.
+    assert!(host.save_state().is_err(), "the slow save must time out");
+    let restored = host.restore_state(&[128]);
+    // Long enough for the slow save and the request queued behind it.
+    std::thread::sleep(Duration::from_secs(4));
+    let mut loaded = false;
+    while let Some(notice) = host.poll_notice().expect("notice") {
+        loaded |= matches!(notice, PluginNotice::Dirty);
+    }
+    host.process(
+        &[&input, &input],
+        &mut [&mut left, &mut right],
+        Duration::from_secs(2),
+    )
+    .expect("after restore");
+    if loaded {
+        assert!(
+            (left[0] - 0.5).abs() < 1.0e-4,
+            "the helper loaded bytes other than the requested [128]: level {}, restore {restored:?}",
+            left[0]
+        );
+    } else {
+        assert!(
+            restored.is_err(),
+            "restore reported success without loading"
+        );
+    }
 }

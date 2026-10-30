@@ -217,6 +217,8 @@ enum Fault {
     TailLegacy,
     /// Sample-accurate stereo attack fixture for transparent note boundaries.
     Onset,
+    /// The first state save outlasts the host's 2 s state wait.
+    SlowSave,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -234,6 +236,7 @@ fn fault_code(text: &str) -> u8 {
         "tail" => 10,
         "tail-legacy" => 11,
         "onset" => 12,
+        "slow-save" => 14,
         _ => 0,
     }
 }
@@ -253,6 +256,7 @@ fn fault_from_code(code: u8) -> Fault {
         10 => Fault::Tail,
         11 => Fault::TailLegacy,
         12 => Fault::Onset,
+        14 => Fault::SlowSave,
         _ => Fault::None,
     }
 }
@@ -586,7 +590,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 }
                 return Ok(ProcessStatus::Continue);
             }
-            Fault::None | Fault::Activate | Fault::Generate => {}
+            Fault::None | Fault::Activate | Fault::Generate | Fault::SlowSave => {}
         }
 
         if self.role == Role::State {
@@ -934,10 +938,16 @@ unsafe impl ExtensionImplementation<TestGain> for PluginStateExt {
         });
 }
 
+/// Set once the `slow-save` fault has delayed a save.
+static SLOW_SAVE_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_ostream) -> bool {
     let _ = plugin;
     if stream.is_null() {
         return false;
+    }
+    if fault_now() == Fault::SlowSave && !SLOW_SAVE_DONE.swap(true, Ordering::AcqRel) {
+        std::thread::sleep(std::time::Duration::from_secs(3));
     }
     if current_role() == Role::Params {
         let bytes = params::save();
