@@ -43,7 +43,8 @@ if not headers:
 print(max(headers, key=lambda path: path.stat().st_mtime_ns))
 PY
 )"
-cp "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h
+cmp -s "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h || \
+    cp "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 # Keep every test and the recovery suite's 5s readiness deadline. A separate
 # process keeps unrelated concurrent fixtures out of the recovery readiness check.
 "${product_validation[@]}" --log "$product_output/swift-tests.log" "$product_swift" test -q \

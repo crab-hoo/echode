@@ -3,6 +3,8 @@
 - 日付: 2026-10-22
 - 状態: 採用
 - 対象: `scripts/verify.py`、`scripts/check_product_contracts.py`、`scripts/verification.json`、`check-shell`、`check-bridge`
+- 後続: [ADR 0197](0197-verification-target-scopes.md) がプラグイン依存・Cargo の入力範囲・段階ごとの再利用・フック予算を改定した。
+  本文の旧計測と当時の識別方式は、過去の判断の証拠として残す。
 
 ## 背景
 

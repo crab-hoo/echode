@@ -10,8 +10,8 @@ import time
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 LOCK = ROOT / "target/verification/.lock"
-# The stop hook's budget is 1800s. Leave a moment to return JSON before that kill.
-DEFAULT_TIMEOUT = 1790
+# The policy is the budget source; leave time to return JSON before the host kills the hook.
+DEFAULT_TIMEOUT = json.loads((ROOT / "scripts/verification.json").read_text())["hook_timeout"] - 10
 MUTATING = {"Shell", "Write", "StrReplace", "Delete", "EditNotebook", "Task"}
 
 

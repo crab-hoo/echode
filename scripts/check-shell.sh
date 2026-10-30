@@ -11,7 +11,7 @@ if [[ -z "$header" ]]; then
 fi
 include=swift/EchodeBridge/CEchodeFfi/include
 mkdir -p "$include"
-cp "$header" "$include/echode.h"
+cmp -s "$header" "$include/echode.h" || cp "$header" "$include/echode.h"
 
 # One build covers every product, executable and test target; the tests then
 # run without a second build plan.

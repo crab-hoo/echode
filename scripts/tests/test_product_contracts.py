@@ -343,7 +343,7 @@ class ContractEvidenceTests(unittest.TestCase):
     def test_an_edit_during_the_run_leaves_no_reusable_result(self):
         case = {"id": "a", "runner": "rust", "package": "p", "target": ["--lib"], "test": "a", "timeout": 5,
                 "purpose": "fixture", "negative_control": {"file": "src/lib.rs"}}
-        stamps = iter([{"a": "before"}, {"a": "edited"}])
+        stamps = iter([{"a": "before"}, {"a": "before"}, {"a": "edited"}, {"a": "edited"}])
         def good(args, **kwargs):
             return subprocess.CompletedProcess(args, 0, "test a ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", "")
         def controls(root, pending, fingerprints, evidence, record):

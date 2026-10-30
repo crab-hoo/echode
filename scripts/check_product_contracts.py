@@ -116,9 +116,12 @@ def contract_inputs(root, policy, contract):
     groups = policy["product_contract_inputs"]
     patterns = policy["global_inputs"] + policy["evidence_inputs"]
     packages = []
-    for group in ("common", contract["runner"]):
-        patterns += groups[group]["inputs"]
-        packages += groups[group]["packages"]
+    keys = ["common", contract["runner"]]
+    if contract["runner"] == "rust" and "rust:" + contract["package"] in groups:
+        keys.append("rust:" + contract["package"])
+    for key in keys:
+        patterns += groups[key]["inputs"]
+        packages += groups[key]["packages"]
     if contract["runner"] == "rust":
         packages.append(contract["package"])
     folders = verify.package_directories(root, sorted(set(packages)))
@@ -129,7 +132,7 @@ def contract_inputs(root, policy, contract):
     return patterns, folders
 
 
-def contract_fingerprints(root, policy, contracts, tools):
+def contract_fingerprints(root, policy, contracts, tools, phase="complete"):
     """Per-contract evidence identities: an unrelated edit does not rerun a contract or its counterexample."""
     files = verify.source_files(root)
     check = next(item for item in policy["checks"] if item["id"] == "check-product-contracts")
@@ -138,13 +141,30 @@ def contract_fingerprints(root, policy, contracts, tools):
     recipe = verify.makefile_identity(verify.makefile_rules(makefile.read_text() if makefile.is_file() else ""),
                                       check.get("make_target", check["id"]))
     # The wrapper's scheduling/overall budget is not an input to individual test processes.
-    shared = [recipe, policy["product_contract_inputs"], policy["global_inputs"], policy["evidence_inputs"]]
+    shared = [recipe, policy["global_inputs"], policy["evidence_inputs"], phase]
     stamps = {}
     for contract in contracts:
         patterns, folders = contract_inputs(root, policy, contract)
-        configuration = [contract, shared, tools]
-        stamps[contract["id"]] = verify.scoped_digest(root, files, configuration, patterns, folders)
+        definition = {key: value for key, value in contract.items()
+                      if phase != "tests" or key not in ("negative_control", "negative_controls", "purpose")}
+        test_folders = ({verify.workspace_members(root)[contract["package"]].relative_to(root).as_posix()}
+                        if contract["runner"] == "rust" else set())
+        excludes = verify.package_test_excludes(folders, test_folders, root)
+        configuration = [definition, shared, patterns, sorted(folders), excludes, tools]
+        stamps[contract["id"]] = verify.scoped_digest(root, files, configuration, patterns, folders,
+                                                     package_excludes=excludes)
     return stamps
+
+
+def reusable_phase(report, phase, fingerprints):
+    """Reuse only a complete, passing phase tied to its own current inputs."""
+    try:
+        entries = {item["id"]: item for item in report.get(phase, [])}
+        return {name: dict(entries[name], reused=True) for name, stamp in fingerprints.items()
+                if stamp and entries.get(name, {}).get("status") == "passed"
+                and entries[name].get("fingerprint") == stamp}
+    except (AttributeError, KeyError, TypeError):
+        return {}
 
 
 def reusable_results(report, fingerprints):
@@ -499,12 +519,15 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
         previous = json.loads(report.read_text())
     except (OSError, ValueError):
         previous = {}
-    fingerprints = (contract_fingerprints(root, policy, contracts, verify.tool_identity(root))
-                    if policy is not None else {})
-    reused = {} if fresh else reusable_results(previous, fingerprints)
-    pending = [contract for contract in contracts if contract["id"] not in reused]
-    tests = {name: pair[0] for name, pair in reused.items()}
-    controls = {name: pair[1] for name, pair in reused.items()}
+    tools = verify.tool_identity(root) if policy is not None else {}
+    fingerprints = contract_fingerprints(root, policy, contracts, tools) if policy is not None else {}
+    test_stamps = contract_fingerprints(root, policy, contracts, tools, "tests") if policy is not None else {}
+    tests = {} if fresh else reusable_phase(previous, "tests", test_stamps)
+    controls = {} if fresh else reusable_phase(previous, "negative_controls", fingerprints)
+    reused_tests, reused_controls = set(tests), set(controls)
+    reused = reused_tests & reused_controls
+    pending = [contract for contract in contracts if contract["id"] not in reused_tests]
+    pending_controls = [contract for contract in contracts if contract["id"] not in reused_controls]
 
     def save(status):
         # Written after every result, so an interrupted run keeps the evidence it finished.
@@ -523,29 +546,35 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
         controls[result["id"]] = result
         execution["negative_progress"] = {
             "seconds": round(time.monotonic() - control_started, 3),
-            "completed": {runner: sum(c["id"] in controls and c["id"] not in reused
+            "completed": {runner: sum(c["id"] in controls and c["id"] not in reused_controls
                                       for c in contracts if c["runner"] == runner)
                           for runner in ("rust", "swift")}}
         save("running")
 
     execution["identity_seconds"] = round(time.monotonic() - started, 3)
-    execution["pending"] = len(pending)
+    execution["pending"] = len(contracts) - len(reused)
+    execution["normal_pending"] = len(pending)
+    execution["negative_pending"] = len(pending_controls)
+    execution["reused_tests"] = len(reused_tests)
+    execution["reused_controls"] = len(reused_controls)
     save("running")
     normal_started = time.monotonic()
-    run_tests(root, pending, invoke, fingerprints, directory, record_test)
+    run_tests(root, pending, invoke, test_stamps, directory, record_test)
     execution["normal_seconds"] = round(time.monotonic() - normal_started, 3)
-    if pending and all(tests[contract["id"]]["status"] == "passed" for contract in pending):
+    if pending_controls and all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts):
         control_started = time.monotonic()
-        execution["negative"] = negative_controls(root, pending, fingerprints, directory, record_control)
+        execution["negative"] = negative_controls(root, pending_controls, fingerprints, directory, record_control)
         execution["negative_seconds"] = round(time.monotonic() - control_started, 3)
-    if policy is not None and pending:
-        # A result is tied to the inputs it ran on: an edit during the run makes it stale, never reusable.
-        after = contract_fingerprints(root, policy, contracts, verify.tool_identity(root))
-        for name in [contract["id"] for contract in pending if after[contract["id"]] != fingerprints[contract["id"]]]:
-            for entries in (tests, controls):
-                if name in entries:
+    if policy is not None:
+        # Recheck both phases, including reused evidence, before accepting this run.
+        tools = verify.tool_identity(root)
+        after = contract_fingerprints(root, policy, contracts, tools)
+        after_tests = contract_fingerprints(root, policy, contracts, tools, "tests")
+        for entries, before, current in ((tests, test_stamps, after_tests), (controls, fingerprints, after)):
+            for name in entries:
+                if current.get(name) != before.get(name):
                     entries[name] = dict(entries[name], status="stale", fingerprint=None)
-            print(f"{name}: inputs changed during the run; run it again", file=sys.stderr, flush=True)
+                    print(f"{name}: inputs changed during the run; run it again", file=sys.stderr, flush=True)
     ok = all(tests.get(c["id"], {}).get("status") == "passed" and controls.get(c["id"], {}).get("status") == "passed"
              for c in contracts)
     if ok:
@@ -563,7 +592,13 @@ def main():
     except (OSError, ValueError, KeyError) as error:
         report = ROOT / "target/verification/product-contracts.json"
         report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps({"status": "failed", "error": str(error)}) + "\n")
+        try:
+            previous = json.loads(report.read_text())
+            if not isinstance(previous, dict):
+                previous = {}
+        except (OSError, ValueError):
+            previous = {}
+        report.write_text(json.dumps({**previous, "status": "failed", "error": str(error)}, indent=2) + "\n")
         print("product contract verification failed: " + str(error), file=sys.stderr)
         return 1
 

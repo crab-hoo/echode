@@ -92,8 +92,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   コピーは `target/product-contract-mutations/checkouts/` に残し、変わったファイルだけを新しい時刻で書き換える（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
   Rust の反例は変えるクレートの依存の浅い順にまとめ、Swift の反例は 3 コピーで同時にビルドしてからテストを 1 件ずつ実行する。
   通常の実行は 1 契約 1 プロセスのままで、Swift は 1 回のビルドの後に各契約を `--skip-build` で実行する。
-  契約ごとの識別値（`product_contract_inputs` の範囲、契約の定義、レシピ、ツール）が前回と同じなら、その契約は再実行しない。
-  再利用するのは、同じ識別値でテストと反例の両方が合格した記録だけである。
+  通常テストと反例は別の識別値で再利用し、契約全体の合格には両段階の合格を要求する。
+  反例定義だけの変更や反例段階の中断では、入力が同じ通常テストの完了記録を保持する。
+  どちらの段階も、現在リンク・実行する製品コード・テスト・補助・ツールを入力に含める（[ADR 0197](decisions/0197-verification-target-scopes.md)）。
   Swift の負の対照も契約ごとに全反例の終了直後に保存し、後続の中断で完了した契約を失わない。
   複数反例の一部だけの終了は合格記録にしない。
   各契約の ID・対象テスト・目的・負の対照は `scripts/verification.json` を正本とし、本書へ重複記載しない（[ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
@@ -154,6 +155,12 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `deferred`: 理由付きの未実行。合格ではない。
 
 検査ごとの `inputs` と `packages`（Cargo のローカル path 依存を再帰的に含む）、共通設定、ツールの版と解決パスをハッシュ化して識別する。
+契約では全契約共通のプラグイン依存を置かず、実バンドルを使う Rust パッケージの追加入力を `rust:<package>` へ宣言する。
+ライブラリとして使う依存先の標準 `tests/**`・`benches/**`・`examples/**` は、そのライブラリの入力に含めない。
+`src/**` の単体テスト、マニフェスト、素材は保持し、build script・custom target のあるパッケージは全入力を保持する。
+橋渡しの ASan・TSan・Miri も `package_scope: targets` でこの境界を使う。
+統合テストも実行するパッケージは `test_packages`、テストディレクトリから読む fixture は明示的な `inputs` に宣言する。
+明示した入力はターゲットの除外より優先する。通常の workspace 検査の入力は縮めない。
 Makefile はファイル全体ではなく、その検査のレシピ（`$(MAKE)` で呼ぶ対象を含む）と、変数などの全体に効く行だけを識別に含める。コメントの編集では失効しない。
 `scripts/verification.json` と Makefile の変更は、差分の基準と比べて定義・レシピが変わった検査だけを選ぶ。基準を読めない時は全自動検査を選ぶ。
 `infrastructure`（選択・記録・フック・CI の実装）と `evidence_inputs` の変更は全自動検査を選ぶ。
@@ -174,6 +181,9 @@ Makefile はファイル全体ではなく、その検査のレシピ（`$(MAKE)
 開始・終了時の CPU 数・負荷平均・空き容量も記録するが、負荷の変化で合格を失効させない。
 一括予算の変更だけでは個別契約の合格を失効させず、個別の期限・入力・実行経路の変更は失効させる。
 反例の途中で上限に達した時も `negative_progress` に完了数と経過秒を残す。
+通常テストと反例の `normal_pending`・`negative_pending`、`reused_tests`・`reused_controls` も分けて記録する。
+Rust の製品コードの変更は Swift のリンク先の変更でもあり、通常・反例とも再検査する。
+Swift パッケージ内のテスト間の依存分割は未実施で、Swift テストの局所編集による全 UI 契約の失効は残る。
 
 遅くなった時は、まず次を比較する（[ADR 0195](decisions/0195-verification-cost-observability.md)）。
 
@@ -203,4 +213,6 @@ Xcode や製品アプリは変更しない。通常検査はネットワーク�
 
 `.cursor/hooks.json` の `preToolUse` は編集ツールをロック解除まで待たせ、`stop` は `completed` イベントで `scripts/verify.py` を呼ぶ。
 `.codex/hooks.json` もアダプターを備えるが、設定ファイルの存在だけでホスト側のフック発火済みとは扱わない。フックのない環境でも `make verify` は必須である。
+フックの上限は `verification.json` の `hook_timeout` と一致させ、全自動検査と事前確認の直列予算を覆うことを検査する。
+ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
 CI の自動検査一覧は `scripts/verification.json` から生成し、各ジョブが `--all --only ID` で分担する。調査資料の収集は [デバッグ手順](debugging.md) を参照する。

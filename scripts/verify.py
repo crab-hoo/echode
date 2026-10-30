@@ -67,7 +67,9 @@ def load_policy(root):
             raise ValueError("invalid make target")
         if not set(check["areas"]).issubset(policy["areas"]):
             raise ValueError("unknown verification area")
-        for field in ("inputs", "packages", "policy_inputs", "tool_inputs"):
+        if check.get("test_packages") and check.get("package_scope") != "targets":
+            raise ValueError("test_packages requires target-scoped package inputs")
+        for field in ("inputs", "packages", "policy_inputs", "tool_inputs", "test_packages"):
             values = check.get(field, [])
             if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
                 raise ValueError("invalid verification " + field)
@@ -76,6 +78,8 @@ def load_policy(root):
                 raise ValueError("verification tool inputs must be exact repository-relative paths")
         if not (check.get("inputs") or check.get("packages")):
             raise ValueError("each check needs explicit inputs or packages")
+        if check.get("package_scope", "all") not in ("all", "targets"):
+            raise ValueError("invalid package scope")
         if any(key not in policy for key in check.get("policy_inputs", [])):
             raise ValueError("unknown verification policy input")
         if check.get("extended") and check["mode"] != "manual":
@@ -86,6 +90,14 @@ def load_policy(root):
             if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
                 raise ValueError("invalid product contract " + field)
     validate_execution(policy)
+    if "hook_timeout" in policy:
+        budget = policy["hook_timeout"]
+        automatic = [check for check in policy["checks"] if check["mode"] == "automatic"]
+        preflights = {name for check in automatic for name in check.get("preflight", [])}
+        required = sum(check["timeout"] for check in automatic)
+        required += sum(policy["preflights"][name]["timeout"] for name in preflights)
+        if type(budget) is not int or budget < required + 120:
+            raise ValueError("hook budget must cover all serial automatic checks, preflights and shutdown")
     return policy
 
 
@@ -418,6 +430,26 @@ def package_directories(root, names, kinds=("dependencies", "dev-dependencies", 
     return {folder.relative_to(root.resolve()).as_posix() for folder in visited}
 
 
+def package_test_excludes(folders, test_folders=(), root=None):
+    """Exclude standard non-library targets, never src/**, build inputs or explicit fixtures.
+
+    Custom target paths and build scripts can consume arbitrary package files;
+    retain their whole package unless the check declares a more precise input.
+    """
+    excludes = []
+    for folder in sorted(set(folders) - set(test_folders)):
+        if root is not None:
+            directory = root / folder
+            manifest = tomllib.loads((directory / "Cargo.toml").read_text())
+            targets = [manifest.get("lib", {}), *manifest.get("bin", []), *manifest.get("test", []),
+                       *manifest.get("bench", []), *manifest.get("example", [])]
+            if ((directory / "build.rs").exists() or manifest.get("package", {}).get("build")
+                    or any("path" in target for target in targets)):
+                continue
+        excludes += [folder + "/" + kind + "/**" for kind in ("tests", "benches", "examples")]
+    return excludes
+
+
 def audio_output_identity():
     """Read device metadata without opening an IO stream; retain only a hash."""
     try:
@@ -455,13 +487,14 @@ def input_digest(root, relative):
     return value.digest()
 
 
-def scoped_digest(root, files, configuration, patterns, folders=(), tool_inputs=()):
+def scoped_digest(root, files, configuration, patterns, folders=(), tool_inputs=(), package_excludes=()):
     """Hash a configuration plus every file selected by patterns, package folders, or exact tool inputs."""
     digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
     tool_inputs = set(tool_inputs)
     for relative in sorted(set(files) | tool_inputs):
         if (relative in tool_inputs or matches([relative], patterns)
-                or any(relative.startswith(folder + "/") for folder in folders)):
+                or (any(relative.startswith(folder + "/") for folder in folders)
+                    and not matches([relative], package_excludes))):
             digest.update(os.fsencode(relative) + b"\0" + input_digest(root, relative))
     return digest.hexdigest()
 
@@ -475,11 +508,14 @@ def check_fingerprints(root, policy, tools, contexts=None):
     stamps = {}
     for check in policy["checks"]:
         # The definition covers this check's policy entry and make recipe, not the whole Makefile.
+        folders = package_directories(root, check.get("packages", []))
+        test_folders = {workspace_members(root)[name].relative_to(root).as_posix()
+                        for name in check.get("test_packages", [])}
+        excludes = package_test_excludes(folders, test_folders, root) if check.get("package_scope") == "targets" else []
         configuration = [definitions[check["id"]], common, tools, contexts if check.get("device_context") else {}]
         stamps[check["id"]] = scoped_digest(root, files, configuration,
                                             common + check.get("inputs", []) + preflight_inputs(policy, check),
-                                            package_directories(root, check.get("packages", [])),
-                                            check.get("tool_inputs", []))
+                                            folders, check.get("tool_inputs", []), excludes)
     return stamps
 
 

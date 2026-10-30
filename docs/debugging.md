@@ -28,6 +28,9 @@ make debug-report
   旧レポートの最後の合格時間を、今回再利用した検査の実行時間へ足さない。
   製品契約の `execution` は通常実行と反例、同期、ビルド作業秒と直列テスト秒を分ける。
   契約の秒数は自身の処理時間であり、並列の作業秒の和は全体の実測ではない。
+  `normal_pending` と `negative_pending`、`reused_tests` と `reused_controls` で、通常・反例のどちらが失効したかを分ける。
+  依存先の統合テストだけの変更で Swift が失効する場合は `package_scope` と明示した `inputs`、build script・custom target を調べる。
+  Rust の製品ソース変更による Swift の失効はリンク先変更であり、反例の置換ファイルが不変という理由だけで除外しない。
   履歴は `target/verification/timing-history.jsonl` にあり、`make debug-report` にも収集する。
   同じ条件での再計測と、件数・失効集合の変化は [時間の保守](verification.md#実行時間の保守) に従って分ける。
 - **空き容量不足（`No space left on device` / `Errno 28`）**:
@@ -77,6 +80,8 @@ make debug-report
   前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
   `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
   コピーの初回ビルドを含む一括予算は `scripts/verification.json` の `check-product-contracts.timeout`、各契約の期限は別の値である。
+  検査自身の時間切れより先にフックが終了する場合は、静的なフック設定と `verification.json` の `hook_timeout` の一致を確認する。
+  外側の予算は契約検査単体ではなく、全自動検査と事前確認の直列予算を覆う必要がある（[ADR 0197](decisions/0197-verification-target-scopes.md)）。
   2026-10-29 に旧 1800 秒で全件失効時の上限到達を観測し、件数と実測に合わせて一括予算を見直した（[ADR 0195](decisions/0195-verification-cost-observability.md)）。
   反例のコピーは `target/product-contract-mutations/checkouts/<N>` に残り、`<N>.json` が置いたファイルの一覧である。
   一覧が壊れていればコピーのソースを作り直す。コピーを疑う時は `checkouts/` を消せば次回に作り直す（初回ビルドの分だけ遅い）。

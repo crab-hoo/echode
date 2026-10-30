@@ -166,5 +166,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 一括開始診断と根拠付きの節・行の読込: [ADR 0126](decisions/0126-agent-context-and-source-reading.md)。
 - 検査の実行時間（反例のコピーの保持・契約ごとの再利用・定義単位の選択）: [ADR 0148](decisions/0148-verification-pipeline-speed.md)。
 - 検査時間の継続記録・テスト製品のビルド・同一反例のビルド共用: [ADR 0195](decisions/0195-verification-cost-observability.md)。
+- 契約のプラグイン依存と Cargo ターゲットの範囲、通常・反例の独立再利用、ヘッダの不変時刻とフック全体の予算:
+  [ADR 0197](decisions/0197-verification-target-scopes.md)。Swift のリンク先変更と UI テスト全体の失効は引き続き区別する。
 - 終了コードの保証・実行予定だけの環境事前確認・依存順序と失敗検出遅延: [ADR 0166](decisions/0166-verification-failure-detection.md)。
 - 起動復旧の終了待ち・Darwin errno の検査ランタイム修正: [ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)。

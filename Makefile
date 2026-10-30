@@ -31,7 +31,7 @@ spike-playhead:
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include "$(CURDIR)/target"; \
-	cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h; \
+	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h; \
 	frameworks="$$(xcrun --show-sdk-platform-path)/Developer/Library/Frameworks"; \
 	test -d "$$frameworks/Testing.framework"; \
 	swift build -q --package-path swift/EchodeApp --scratch-path target/echode-app-tests \
@@ -117,7 +117,7 @@ check-product-contracts:
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
-	cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
+	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py
 
 # Selection and evidence are shared by agents, the stop hook, and CI.
