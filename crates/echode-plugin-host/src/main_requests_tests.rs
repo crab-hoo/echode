@@ -1,0 +1,37 @@
+use super::*;
+
+#[test]
+fn abandoned_save_keeps_its_own_reply_and_blocks_replacement() {
+    let mailbox = MainRequests::default();
+    let save = mailbox.begin(MainRequest::Save).unwrap();
+    assert!(mailbox.begin(MainRequest::Load(vec![128])).is_err());
+    let (running, request) = mailbox.take().unwrap();
+    assert!(matches!(request, MainRequest::Save));
+    assert!(mailbox.take().is_none());
+    // Model a caller timing out while the main thread is still inside save.
+    assert!(save.take_reply().is_none());
+    assert!(mailbox.begin(MainRequest::Show("next".into())).is_err());
+    mailbox.complete(&running, Ok(MainReply::State(vec![64])));
+    let restore = mailbox.begin(MainRequest::Load(vec![128])).unwrap();
+    assert!(restore.id > save.id);
+    let (running, request) = mailbox.take().unwrap();
+    assert!(matches!(request, MainRequest::Load(bytes) if bytes == [128]));
+    assert!(restore.take_reply().is_none());
+    assert!(matches!(save.take_reply(), Some(Ok(MainReply::State(bytes))) if bytes == [64]));
+    // Even an accidentally repeated old completion cannot finish this call.
+    mailbox.complete(&save, Err("old failure".into()));
+    assert!(restore.take_reply().is_none());
+    mailbox.complete(&running, Ok(MainReply::Done));
+    assert!(matches!(restore.take_reply(), Some(Ok(MainReply::Done))));
+}
+
+#[test]
+fn dropping_a_timed_out_caller_does_not_make_the_mailbox_idle() {
+    let mailbox = MainRequests::default();
+    drop(mailbox.begin(MainRequest::Close).unwrap());
+    assert!(mailbox.begin(MainRequest::Parameters).is_err());
+    let (running, request) = mailbox.take().unwrap();
+    assert!(matches!(request, MainRequest::Close));
+    mailbox.complete(&running, Err("refused".into()));
+    assert!(mailbox.begin(MainRequest::Parameters).is_ok());
+}

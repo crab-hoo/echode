@@ -1828,42 +1828,13 @@ impl PlaybackControl {
             .ok_or_else(|| PlaybackError::Unsupported("the device has no running plugin".into()))
     }
 
-    /// A clone of the endpoint that [`Self::device_parameters`] uses, so another
-    /// control thread can wait for the helper's reply. Control thread only.
+    /// A control-only endpoint, so another thread can wait for a device reply.
+    /// Never call it from an audio callback.
     pub fn device_control_handle(
         &self,
         device: u128,
     ) -> Result<echode_sandbox::PluginControl, PlaybackError> {
         self.device_control(device).cloned()
-    }
-
-    /// Descriptions and values from the device's own helper. Control thread only.
-    pub fn device_parameters(
-        &self,
-        device: u128,
-    ) -> Result<Vec<echode_sandbox::ParamInfo>, PlaybackError> {
-        self.device_control(device)?
-            .parameters()
-            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
-    }
-
-    /// Applies values in the running helper. The project is unchanged until
-    /// the caller records a captured state.
-    pub fn set_device_parameters(
-        &self,
-        device: u128,
-        changes: &[echode_sandbox::ParamChange],
-    ) -> Result<Vec<echode_sandbox::ParamValue>, PlaybackError> {
-        self.device_control(device)?
-            .set_parameters(changes)
-            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
-    }
-
-    /// Plugin bytes that include every value applied before this call.
-    pub fn capture_device_state(&self, device: u128) -> Result<Vec<u8>, PlaybackError> {
-        self.device_control(device)?
-            .capture_state()
-            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
     }
 
     /// Bytes the running helper last saved or loaded. `Ok(None)` is a helper

@@ -6,6 +6,7 @@
 
 use crate::events::write_input;
 use crate::gui::GuiRequests;
+use crate::main_requests::{MainReply, MainRequest, MainRequests};
 use crate::relay::{RelayOutput, RelayRing};
 use crate::{HostError, gui, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
@@ -39,7 +40,7 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
     CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn,
-    GuiReport, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue,
+    MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue,
     RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
@@ -57,15 +58,6 @@ use std::thread::{self, ThreadId};
 
 const OP_RESTART: u8 = 1;
 const OP_ARM: u8 = 2;
-const STATE_SAVE: u8 = 1;
-const STATE_LOAD: u8 = 2;
-const PREPARE_CAPACITY: u8 = 3;
-const PARAM_LIST: u8 = 4;
-const PARAM_READ: u8 = 5;
-const PARAM_RELAY: u8 = 6;
-const GUI_SHOW: u8 = 7;
-const GUI_CLOSE: u8 = 8;
-const PARAM_PARSE: u8 = 9;
 
 /// Creating a plugin's view can load large resources the first time.
 const WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
@@ -197,13 +189,8 @@ struct Bridge {
     tail_samples: AtomicU32,
     /// Port channel counts, published before the worker threads start.
     ports: AtomicPtr<PortShape>,
-    /// 0 idle, [`STATE_SAVE`], or [`STATE_LOAD`]. The main thread clears it.
-    state_kind: AtomicU8,
-    state_gen: AtomicU64,
-    state_done: AtomicU64,
-    /// Bytes to load, or the bytes save produced. Not touched by the audio thread.
-    state_bytes: std::sync::Mutex<Vec<u8>>,
-    state_error: std::sync::Mutex<Option<String>>,
+    /// Owned calls between the control and main threads; never used by audio.
+    main_requests: MainRequests,
     plugin_dirty: AtomicBool,
     /// `clap.params`, looked up on the main thread after load. Null when absent.
     params: AtomicPtr<clap_plugin_params>,
@@ -213,8 +200,6 @@ struct Bridge {
     param_retired: AtomicPtr<ParamBatch>,
     param_generation: AtomicU64,
     param_flushed: AtomicU64,
-    /// What the last main-thread parameter read produced.
-    param_read: std::sync::Mutex<ParamRead>,
     /// Values and gestures from the plugin's output events.
     relay: RelayRing,
     /// The plugin asked for `flush` while no block may come.
@@ -292,7 +277,7 @@ impl Bridge {
                 }
             });
         }
-        self.service_state();
+        self.service_main_request();
         match self.op.swap(0, Ordering::AcqRel) {
             OP_RESTART => self.restart_on_main(),
             OP_ARM => self.arm_on_main(),
@@ -355,33 +340,13 @@ impl Bridge {
         self.bump_control();
     }
 
-    /// Runs a queued CLAP state save or load. The audio thread never calls this.
-    fn service_state(&self) {
-        let kind = self.state_kind.swap(0, Ordering::AcqRel);
-        if kind == 0 {
+    /// Runs one owned call without holding the mailbox lock across plugin code.
+    fn service_main_request(&self) {
+        let Some((call, request)) = self.main_requests.take() else {
             return;
-        }
-        let generation = self.state_gen.load(Ordering::Acquire);
-        let result = perform_plugin_state(self, kind);
-        match result {
-            Ok(bytes) => {
-                *self
-                    .state_bytes
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner()) = bytes;
-                *self
-                    .state_error
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner()) = None;
-            }
-            Err(error) => {
-                *self
-                    .state_error
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner()) = Some(error);
-            }
-        }
-        self.state_done.store(generation, Ordering::Release);
+        };
+        let result = perform_main_request(self, request);
+        self.main_requests.complete(&call, result);
     }
 }
 
@@ -745,18 +710,13 @@ fn serve_region(
         activation_frames: AtomicU32::new(max_frames.max(1)),
         tail_samples: AtomicU32::new(0),
         ports: AtomicPtr::new(ptr::null_mut()),
-        state_kind: AtomicU8::new(0),
-        state_gen: AtomicU64::new(0),
-        state_done: AtomicU64::new(0),
-        state_bytes: std::sync::Mutex::new(Vec::new()),
-        state_error: std::sync::Mutex::new(None),
+        main_requests: MainRequests::default(),
         plugin_dirty: AtomicBool::new(false),
         params: AtomicPtr::new(ptr::null_mut()),
         param_pending: AtomicPtr::new(ptr::null_mut()),
         param_retired: AtomicPtr::new(ptr::null_mut()),
         param_generation: AtomicU64::new(0),
         param_flushed: AtomicU64::new(0),
-        param_read: std::sync::Mutex::new(ParamRead::Infos(Vec::new())),
         relay: RelayRing::new(),
         flush_request: AtomicBool::new(false),
         rescan_request: AtomicBool::new(false),
@@ -1501,9 +1461,9 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
             }
         }
         if let Some(socket) = &mut socket {
-            match socket.try_recv() {
-                Ok(Some(message)) => {
-                    if handle_control(bridge, socket, message).is_err() {
+            match socket.try_recv_tagged() {
+                Ok(Some((id, message))) => {
+                    if handle_control(bridge, socket, id, message).is_err() {
                         bridge.stop.store(true, Ordering::Release);
                         bridge.bump_audio();
                         stop_loop(bridge);
@@ -1528,25 +1488,28 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
 fn handle_control(
     bridge: &Bridge,
     socket: &mut Socket,
+    request_id: u64,
     message: ControlMessage,
 ) -> Result<(), HostError> {
     match message {
         ControlMessage::SaveRequest => {
-            let reply = match call_plugin_state(bridge, None) {
-                Ok(bytes) => ControlMessage::State(bytes),
+            let reply = match call_main(bridge, MainRequest::Save) {
+                Ok(MainReply::State(bytes)) => ControlMessage::State(bytes),
+                Ok(_) => ControlMessage::StateRejected("unexpected main-thread reply".into()),
                 Err(error) => ControlMessage::StateRejected(error),
             };
             socket
-                .send(&reply)
+                .send_tagged(request_id, &reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::Restore(bytes) => {
-            let reply = match call_plugin_state(bridge, Some(bytes)) {
-                Ok(_) => ControlMessage::Restored,
+            let reply = match call_main(bridge, MainRequest::Load(bytes)) {
+                Ok(MainReply::Done) => ControlMessage::Restored,
+                Ok(_) => ControlMessage::StateRejected("unexpected main-thread reply".into()),
                 Err(error) => ControlMessage::StateRejected(error),
             };
             socket
-                .send(&reply)
+                .send_tagged(request_id, &reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::ParamsRequest => {
@@ -1555,7 +1518,7 @@ fn handle_control(
                 Err(error) => ControlMessage::ParamsRejected(error),
             };
             socket
-                .send(&reply)
+                .send_tagged(request_id, &reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::SetParams(changes) => {
@@ -1564,7 +1527,7 @@ fn handle_control(
                 Err(error) => ControlMessage::ParamsRejected(error),
             };
             socket
-                .send(&reply)
+                .send_tagged(request_id, &reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::ParseParam { id, text } => {
@@ -1573,51 +1536,45 @@ fn handle_control(
                 Err(error) => ControlMessage::ParamsRejected(error),
             };
             socket
-                .send(&reply)
+                .send_tagged(request_id, &reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::GuiShow(title) => {
-            let reply = match call_plugin_operation_within(
-                bridge,
-                GUI_SHOW,
-                title.into_bytes(),
-                WINDOW_WAIT,
-            )
-            .and_then(|bytes| decode_report(&bytes))
-            {
-                Ok(report) => ControlMessage::GuiShown(report),
+            let reply = match call_main(bridge, MainRequest::Show(title)) {
+                Ok(MainReply::Window(report)) => ControlMessage::GuiShown(report),
+                Ok(_) => ControlMessage::GuiRejected("unexpected main-thread reply".into()),
                 Err(error) => ControlMessage::GuiRejected(error),
             };
             socket
-                .send(&reply)
+                .send_tagged(request_id, &reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::GuiClose => {
-            let reply =
-                match call_plugin_operation_within(bridge, GUI_CLOSE, Vec::new(), WINDOW_WAIT) {
-                    Ok(_) => ControlMessage::GuiClosedReply,
-                    Err(error) => ControlMessage::GuiRejected(error),
-                };
+            let reply = match call_main(bridge, MainRequest::Close) {
+                Ok(MainReply::Done) => ControlMessage::GuiClosedReply,
+                Ok(_) => ControlMessage::GuiRejected("unexpected main-thread reply".into()),
+                Err(error) => ControlMessage::GuiRejected(error),
+            };
             socket
-                .send(&reply)
+                .send_tagged(request_id, &reply)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::SetChain(stages) => {
             if stages == 0 {
                 socket
-                    .send(&ControlMessage::ChainRejected)
+                    .send_tagged(request_id, &ControlMessage::ChainRejected)
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
             } else {
                 bridge.stages.store(stages, Ordering::Release);
                 socket
-                    .send(&ControlMessage::ChainReady)
+                    .send_tagged(request_id, &ControlMessage::ChainReady)
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
             }
         }
         ControlMessage::CancelRemap => {
             if bridge.pending.load(Ordering::Acquire).is_null() {
                 socket
-                    .send(&ControlMessage::RemapFailed)
+                    .send_tagged(request_id, &ControlMessage::RemapFailed)
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
                 return Ok(());
             }
@@ -1632,7 +1589,7 @@ fn handle_control(
             }
             reclaim_retired(bridge);
             socket
-                .send(&ControlMessage::RemapCancelled)
+                .send_tagged(request_id, &ControlMessage::RemapCancelled)
                 .map_err(|error| HostError::Plugin(error.to_string()))?;
         }
         ControlMessage::Remap { layout, fd } => match MappedRegion::from_fd(fd) {
@@ -1641,15 +1598,10 @@ fn handle_control(
                     && bridge.pending.load(Ordering::Acquire).is_null() =>
             {
                 if bridge.has_plugin.load(Ordering::Acquire)
-                    && call_plugin_operation(
-                        bridge,
-                        PREPARE_CAPACITY,
-                        layout.input_events.to_le_bytes().to_vec(),
-                    )
-                    .is_err()
+                    && call_main(bridge, MainRequest::PrepareCapacity(layout.input_events)).is_err()
                 {
                     socket
-                        .send(&ControlMessage::RemapFailed)
+                        .send_tagged(request_id, &ControlMessage::RemapFailed)
                         .map_err(|error| HostError::Plugin(error.to_string()))?;
                     return Ok(());
                 }
@@ -1664,18 +1616,18 @@ fn handle_control(
                 bridge.pending.store(pointer, Ordering::Release);
                 bridge.bump_audio();
                 socket
-                    .send(&ControlMessage::Remapped)
+                    .send_tagged(request_id, &ControlMessage::Remapped)
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
             }
             Ok(region) => {
                 drop(region);
                 socket
-                    .send(&ControlMessage::RemapFailed)
+                    .send_tagged(request_id, &ControlMessage::RemapFailed)
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
             }
             Err(_) => {
                 socket
-                    .send(&ControlMessage::RemapFailed)
+                    .send_tagged(request_id, &ControlMessage::RemapFailed)
                     .map_err(|error| HostError::Plugin(error.to_string()))?;
             }
         },
@@ -1904,119 +1856,85 @@ fn sum_ports(counts: &[u32]) -> usize {
         .fold(0usize, |total, count| total.saturating_add(*count as usize))
 }
 
-/// Asks the main thread to save, or to load `bytes`. `None` saves.
-///
-/// The audio thread does not call this. A missing extension or a refused
-/// stream is an error, not an empty success.
-fn call_plugin_state(bridge: &Bridge, load: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+/// Control-thread only. A timeout abandons the reply, not the owned input.
+/// The mailbox rejects later calls until the main thread finishes this one.
+fn call_main(bridge: &Bridge, request: MainRequest) -> Result<MainReply, String> {
     if !bridge.has_plugin.load(Ordering::Acquire) {
         return Err("no plugin".to_string());
     }
-    let kind = if load.is_some() {
-        STATE_LOAD
+    let wait = if matches!(request, MainRequest::Show(_) | MainRequest::Close) {
+        WINDOW_WAIT
     } else {
-        STATE_SAVE
+        STATE_WAIT
     };
-    call_plugin_operation(bridge, kind, load.unwrap_or_default())
-}
-
-fn call_plugin_operation(bridge: &Bridge, kind: u8, input: Vec<u8>) -> Result<Vec<u8>, String> {
-    call_plugin_operation_within(bridge, kind, input, STATE_WAIT)
-}
-
-fn call_plugin_operation_within(
-    bridge: &Bridge,
-    kind: u8,
-    input: Vec<u8>,
-    wait: std::time::Duration,
-) -> Result<Vec<u8>, String> {
-    if !bridge.has_plugin.load(Ordering::Acquire) {
-        return Err("no plugin".to_string());
-    }
-    {
-        let mut bytes = bridge
-            .state_bytes
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        *bytes = input;
-    }
-    *bridge
-        .state_error
-        .lock()
-        .unwrap_or_else(|error| error.into_inner()) = None;
-    let generation = bridge.state_gen.fetch_add(1, Ordering::AcqRel) + 1;
-    bridge.state_kind.store(kind, Ordering::Release);
+    let call = bridge.main_requests.begin(request)?;
     bridge.signal();
     let started = std::time::Instant::now();
-    while bridge.state_done.load(Ordering::Acquire) < generation {
+    loop {
+        if let Some(reply) = call.take_reply() {
+            return reply;
+        }
         if bridge.stop.load(Ordering::Acquire) {
-            return Err("plugin stopped before state finished".to_string());
+            return Err(format!(
+                "plugin stopped before main request {} finished",
+                call.id
+            ));
         }
         if started.elapsed() > wait {
-            return Err(if kind == GUI_SHOW || kind == GUI_CLOSE {
-                "plugin window timed out".to_string()
-            } else {
-                "plugin state timed out".to_string()
-            });
+            return Err(format!(
+                "plugin main request {} timed out; outcome unknown",
+                call.id
+            ));
         }
         thread::sleep(std::time::Duration::from_millis(1));
     }
-    if let Some(error) = bridge
-        .state_error
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone()
-    {
-        return Err(error);
-    }
-    Ok(bridge
-        .state_bytes
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clone())
 }
 
-fn perform_plugin_state(bridge: &Bridge, kind: u8) -> Result<Vec<u8>, String> {
+fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainReply, String> {
     INSTANCE.with(|cell| {
         let instance = cell.get();
         if instance.is_null() {
             return Err("plugin is not loaded".to_string());
         }
         let instance = unsafe { &*instance };
-        if kind == STATE_SAVE {
-            return save_plugin_state(instance);
-        }
-        let bytes = bridge
-            .state_bytes
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
-        match kind {
-            PREPARE_CAPACITY => {
-                let capacity = u32::from_le_bytes(
-                    bytes
-                        .as_slice()
-                        .try_into()
-                        .map_err(|_| "invalid capacity")?,
-                );
+        // Exhaustive: a new operation can never fall through to state loading.
+        Ok(match request {
+            MainRequest::Save => MainReply::State(save_plugin_state(instance)?),
+            MainRequest::Load(bytes) => {
+                load_plugin_state(instance, &bytes)?;
+                MainReply::Done
+            }
+            MainRequest::PrepareCapacity(capacity) => {
                 prepare_event_capacity(instance, capacity)?;
+                MainReply::Done
             }
-            PARAM_LIST | PARAM_READ | PARAM_RELAY | PARAM_PARSE => {
-                let read = read_on_main(bridge, instance, kind, &bytes);
-                *bridge
-                    .param_read
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner()) = read;
+            MainRequest::Parameters => {
+                let params = bridge.params.load(Ordering::Acquire);
+                MainReply::Parameters(
+                    unsafe { params.as_ref() }
+                        .map(|params| param_infos(instance.raw_instance(), params))
+                        .unwrap_or_default(),
+                )
             }
-            GUI_SHOW => {
-                let title = String::from_utf8_lossy(&bytes);
-                let report = gui::show(instance.raw_instance(), &title)?;
-                return Ok(encode_report(report));
+            MainRequest::Values { ids, relay } => {
+                MainReply::Values(read_values_on_main(bridge, instance, &ids, relay))
             }
-            GUI_CLOSE => gui::close(instance.raw_instance()),
-            _ => load_plugin_state(instance, &bytes)?,
-        }
-        Ok(bytes)
+            MainRequest::Parse { id, text } => {
+                let params = bridge.params.load(Ordering::Acquire);
+                MainReply::Parsed(
+                    unsafe { params.as_ref() }
+                        .map(|params| param_from_text(instance.raw_instance(), params, id, &text))
+                        .unwrap_or(ParamText::Unsupported),
+                )
+            }
+            MainRequest::Show(title) => {
+                MainReply::Window(gui::show(instance.raw_instance(), &title)?)
+            }
+            MainRequest::Close => {
+                gui::close(instance.raw_instance());
+                MainReply::Done
+            }
+        })
     })
 }
 
@@ -2026,12 +1944,6 @@ struct ParamBatch {
     events: EventBuffer,
     /// The next older batch on the retired list.
     next: *mut ParamBatch,
-}
-
-enum ParamRead {
-    Infos(Vec<ParamInfo>),
-    Values(Vec<ParamValue>),
-    Parsed(ParamText),
 }
 
 fn params_extension(instance: &PluginInstance<EchodeHost>) -> *mut clap_plugin_params {
@@ -2118,32 +2030,23 @@ fn reclaim_param_batches(bridge: &Bridge) {
 }
 
 fn read_params(bridge: &Bridge) -> Result<Vec<ParamInfo>, String> {
-    call_plugin_operation(bridge, PARAM_LIST, Vec::new())?;
-    match take_param_read(bridge) {
-        ParamRead::Infos(infos) => Ok(infos),
-        _ => Err("parameter read returned values".to_string()),
+    match call_main(bridge, MainRequest::Parameters)? {
+        MainReply::Parameters(infos) => Ok(infos),
+        _ => Err("unexpected main-thread reply to parameter list".to_string()),
     }
 }
 
-/// Typed text for one parameter, read by the plugin on its main thread.
 fn parse_param(bridge: &Bridge, id: u32, text: &str) -> Result<ParamText, String> {
-    let mut input = id.to_le_bytes().to_vec();
-    input.extend_from_slice(text.as_bytes());
-    call_plugin_operation(bridge, PARAM_PARSE, input)?;
-    match take_param_read(bridge) {
-        ParamRead::Parsed(parsed) => Ok(parsed),
-        _ => Err("parameter text read returned values".to_string()),
+    match call_main(
+        bridge,
+        MainRequest::Parse {
+            id,
+            text: text.to_string(),
+        },
+    )? {
+        MainReply::Parsed(parsed) => Ok(parsed),
+        _ => Err("unexpected main-thread reply to parameter text".to_string()),
     }
-}
-
-fn take_param_read(bridge: &Bridge) -> ParamRead {
-    std::mem::replace(
-        &mut *bridge
-            .param_read
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()),
-        ParamRead::Values(Vec::new()),
-    )
 }
 
 /// Publishes `changes` for the processing thread, waits until they were
@@ -2151,6 +2054,9 @@ fn take_param_read(bridge: &Bridge) -> ParamRead {
 fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamValue>, String> {
     if !bridge.has_plugin.load(Ordering::Acquire) {
         return Err("no plugin".to_string());
+    }
+    if bridge.main_requests.is_busy() {
+        return Err("plugin main thread is busy with an earlier request".to_string());
     }
     let params = bridge.params.load(Ordering::Acquire);
     // SAFETY: the extension table lives as long as the plugin instance.
@@ -2204,41 +2110,28 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
         thread::sleep(std::time::Duration::from_millis(1));
     }
     reclaim_param_batches(bridge);
-    let bytes = ids.iter().flat_map(|id| id.to_le_bytes()).collect();
-    call_plugin_operation(bridge, PARAM_READ, bytes)?;
-    match take_param_read(bridge) {
-        ParamRead::Values(values) => Ok(values),
-        _ => Err("parameter read returned descriptions".to_string()),
+    match call_main(bridge, MainRequest::Values { ids, relay: false })? {
+        MainReply::Values(values) => Ok(values),
+        _ => Err("unexpected main-thread reply to parameter values".to_string()),
     }
 }
 
 /// `clap.params` reads are main-thread calls. A plugin without the extension
 /// has no parameters, which is an empty result rather than an error.
-fn read_on_main(
+fn read_values_on_main(
     bridge: &Bridge,
     instance: &PluginInstance<EchodeHost>,
-    kind: u8,
-    input: &[u8],
-) -> ParamRead {
+    ids: &[u32],
+    relay: bool,
+) -> Vec<ParamValue> {
     let plugin = instance.raw_instance();
     let params = bridge.params.load(Ordering::Acquire);
     // SAFETY: the extension table lives as long as the plugin instance.
     let Some(params) = (unsafe { params.as_ref() }) else {
-        return match kind {
-            PARAM_LIST => ParamRead::Infos(Vec::new()),
-            PARAM_PARSE => ParamRead::Parsed(ParamText::Unsupported),
-            _ => ParamRead::Values(Vec::new()),
-        };
+        return Vec::new();
     };
-    if kind == PARAM_LIST {
-        return ParamRead::Infos(param_infos(plugin, params));
-    }
-    if kind == PARAM_PARSE {
-        return ParamRead::Parsed(param_from_text(plugin, params, input));
-    }
-    // A relay leaves out ids the plugin does not describe and read-only
-    // parameters, which report output such as meters rather than an edit.
-    let flags = (kind == PARAM_RELAY).then(|| {
+    // A relay leaves out unknown and read-only ids (such as output meters).
+    let flags = relay.then(|| {
         PARAM_FLAGS.with(|cache| {
             cache
                 .borrow_mut()
@@ -2246,27 +2139,24 @@ fn read_on_main(
                 .clone()
         })
     });
-    ParamRead::Values(
-        input
-            .chunks_exact(4)
-            .filter_map(|chunk| {
-                let id = u32::from_le_bytes(chunk.try_into().ok()?);
-                if let Some(flags) = &flags
-                    && flags
-                        .get(&id)
-                        .is_none_or(|bits| bits & CLAP_PARAM_IS_READONLY != 0)
-                {
-                    return None;
-                }
-                let value = param_value(plugin, params, id)?;
-                Some(ParamValue {
-                    id,
-                    value,
-                    text: param_text(plugin, params, id, value),
-                })
+    ids.iter()
+        .copied()
+        .filter_map(|id| {
+            if flags.as_ref().is_some_and(|flags| {
+                flags
+                    .get(&id)
+                    .is_none_or(|bits| bits & CLAP_PARAM_IS_READONLY != 0)
+            }) {
+                return None;
+            }
+            let value = param_value(plugin, params, id)?;
+            Some(ParamValue {
+                id,
+                value,
+                text: param_text(plugin, params, id, value),
             })
-            .collect(),
-    )
+        })
+        .collect()
 }
 
 /// Every described id and its flags, for filtering relays.
@@ -2307,9 +2197,8 @@ fn send_relay(bridge: &Bridge, socket: &mut Socket) {
     let values = if ids.is_empty() {
         Vec::new()
     } else {
-        let bytes = ids.iter().flat_map(|id| id.to_le_bytes()).collect();
-        match call_plugin_operation(bridge, PARAM_RELAY, bytes).map(|_| take_param_read(bridge)) {
-            Ok(ParamRead::Values(values)) => values,
+        match call_main(bridge, MainRequest::Values { ids, relay: true }) {
+            Ok(MainReply::Values(values)) => values,
             // The values could not be read; the parent reads the list again.
             _ => {
                 let _ = socket.send(&ControlMessage::ParamRelay(ParamRelay {
@@ -2331,25 +2220,6 @@ fn send_relay(bridge: &Bridge, socket: &mut Socket) {
     if !relay.is_empty() {
         let _ = socket.send(&ControlMessage::ParamRelay(relay));
     }
-}
-
-fn encode_report(report: GuiReport) -> Vec<u8> {
-    vec![
-        u8::from(report.created),
-        u8::from(report.visible),
-        u8::from(report.key),
-    ]
-}
-
-fn decode_report(bytes: &[u8]) -> Result<GuiReport, String> {
-    let [created, visible, key] = bytes else {
-        return Err("window report is the wrong size".to_string());
-    };
-    Ok(GuiReport {
-        created: *created != 0,
-        visible: *visible != 0,
-        key: *key != 0,
-    })
 }
 
 /// Applies the plugin's window requests and follows the active app, once per
@@ -2435,23 +2305,22 @@ fn param_text(plugin: &clap_plugin, params: &clap_plugin_params, id: u32, value:
     c_text(&buffer)
 }
 
-/// `input` is the id, then the UTF-8 text. Text with a NUL cannot reach the
-/// plugin and counts as refused, like a value the plugin reports as non-finite.
-fn param_from_text(plugin: &clap_plugin, params: &clap_plugin_params, input: &[u8]) -> ParamText {
+/// Text with a NUL counts as refused, like a non-finite converted value.
+fn param_from_text(
+    plugin: &clap_plugin,
+    params: &clap_plugin_params,
+    id: u32,
+    text: &str,
+) -> ParamText {
     let Some(to_value) = params.text_to_value else {
         return ParamText::Unsupported;
-    };
-    let Some((id, text)) = input.split_first_chunk::<4>() else {
-        return ParamText::Refused;
     };
     let Ok(text) = CString::new(text) else {
         return ParamText::Refused;
     };
     let mut value = f64::NAN;
     // SAFETY: main thread; the text is NUL-terminated and `value` is writable.
-    if unsafe { to_value(plugin, u32::from_le_bytes(*id), text.as_ptr(), &mut value) }
-        && value.is_finite()
-    {
+    if unsafe { to_value(plugin, id, text.as_ptr(), &mut value) } && value.is_finite() {
         ParamText::Value(value)
     } else {
         ParamText::Refused

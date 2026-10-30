@@ -33,7 +33,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 ### 1. 全体横断・Phase 1 最終照合
 
 - [2026-10-30 構造の横断監査](reviews/2026-10-30-structure-audit.md): SPG-01〜11。
-  絡み合いを起こしやすい構造と根本の修正方針・順番。SPG-01（ヘルパーの共有バイト列）は再現済み・未修正。
+  絡み合いを起こしやすい構造と根本の修正方針・順番。
+  SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md) で対応し、当時の再現は保持する。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。

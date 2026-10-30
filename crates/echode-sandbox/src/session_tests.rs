@@ -13,7 +13,7 @@ fn window_activity_is_kept_apart_from_replies() {
     let control = PluginControl::new(parent);
     let answer = std::thread::spawn(move || {
         helper.send(&ControlMessage::Dirty).unwrap();
-        let request = helper.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (id, request) = helper.recv_tagged(Duration::from_secs(5)).unwrap();
         assert!(matches!(request, ControlMessage::GuiShow(title) if title == "Pad"));
         let relay = ParamRelay {
             events: vec![ParamEvent {
@@ -25,11 +25,14 @@ fn window_activity_is_kept_apart_from_replies() {
         // A notice sent before the reply must not be taken as the reply.
         helper.send(&ControlMessage::ParamRelay(relay)).unwrap();
         helper
-            .send(&ControlMessage::GuiShown(GuiReport {
-                created: true,
-                visible: true,
-                key: false,
-            }))
+            .send_tagged(
+                id,
+                &ControlMessage::GuiShown(GuiReport {
+                    created: true,
+                    visible: true,
+                    key: false,
+                }),
+            )
             .unwrap();
         helper.send(&ControlMessage::Dirty).unwrap();
         helper.send(&ControlMessage::GuiClosed).unwrap();
@@ -44,7 +47,7 @@ fn window_activity_is_kept_apart_from_replies() {
     let dirty = state
         .inbox
         .iter()
-        .filter(|message| matches!(message, ControlMessage::Dirty))
+        .filter(|(_, message)| matches!(message, ControlMessage::Dirty))
         .count();
     assert_eq!(dirty, 3, "every dirty notice stays for the background save");
     drop(state);

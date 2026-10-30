@@ -16,7 +16,7 @@
   },
   "areas": {
     "bridge": ["crates/echode-engine/src/audition*.rs", "crates/echode-engine/src/resample_stream*.rs", "spikes/bridge/**", "crates/echode-model/**", "crates/echode-actions/**", "crates/echode-history/**", "crates/echode-ffi/**", "crates/echode-audio-io/**", "swift/EchodeBridge/**", "swift/EchodeApp/**"],
-    "audio": ["crates/echode-history/src/media.rs", "crates/echode-sine-pad/**", "crates/echode-engine/**", "crates/echode-realtime/**", "crates/echode-model/**", "crates/echode-sandbox/**", "crates/echode-audio-io/**", "crates/echode-ffi/**", "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift", "swift/EchodeBridge/Sources/EchodeBridge/Document.swift", "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "swift/EchodeBridge/Sources/EchodeBridge/Device.swift", "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift", "crates/echode-plugin-host/src/threads.rs", "crates/echode-plugin-host/src/relay.rs", "crates/echode-plugin-host/tests/hosted_playback.rs", "crates/echode-plugin-host/tests/hosted_playback/**"],
+    "audio": ["crates/echode-history/src/media.rs", "crates/echode-sine-pad/**", "crates/echode-engine/**", "crates/echode-realtime/**", "crates/echode-model/**", "crates/echode-sandbox/**", "crates/echode-audio-io/**", "crates/echode-ffi/**", "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift", "swift/EchodeBridge/Sources/EchodeBridge/Document.swift", "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift", "swift/EchodeBridge/Sources/EchodeBridge/Device.swift", "swift/EchodeApp/Sources/EchodeAppCore/DeviceParameters.swift", "crates/echode-plugin-host/src/threads.rs", "crates/echode-plugin-host/src/main_requests*.rs", "crates/echode-plugin-host/src/relay.rs", "crates/echode-plugin-host/tests/hosted_playback.rs", "crates/echode-plugin-host/tests/hosted_playback/**"],
     "isolation": ["crates/echode-plugin-host/**", "crates/echode-test-plugin/**", "crates/echode-sine-pad/**", "crates/echode-sandbox/**", "crates/echode-realtime/**", "crates/echode-engine/**"],
     "drawing": ["crates/echode-draw/**", "spikes/draw/**", "crates/echode-model/**", "swift/EchodeApp/Sources/EchodeAppCore/Arrange*.swift", "swift/EchodeApp/Sources/EchodeAppCore/Workspace*.swift", "swift/EchodeApp/Sources/EchodeAppCore/Canvas*.swift", "swift/EchodeApp/Sources/EchodeAppCore/Mix*.swift", "swift/EchodeApp/Sources/EchodeAppCore/FrameFeedbackGate.swift", "swift/EchodeApp/Sources/EchodeAppCore/FrameSlots.swift", "swift/EchodeApp/Sources/EchodeAppCore/Piano*.swift"],
     "history": ["crates/echode-history/**", "crates/echode-model/**", "crates/echode-actions/**"],
@@ -68,6 +68,33 @@
     {"id": "spike-verification-failures", "mode": "manual", "extended": true, "areas": [], "timeout": 120, "purpose": "同じ選択集合へ失敗を注入し、旧配置と優先順・事前確認の検出遅延を比較。製品の実行時間とは区別", "inputs": ["scripts/measure_verification_failures.py", "scripts/verification.json", "scripts/checked_commands.py"]}
   ],
   "product_contracts": [
+    {
+      "id": "plugin-main-call-ownership", "runner": "rust", "package": "echode-plugin-host", "target": ["--lib"],
+      "test": "main_requests::tests::abandoned_save_keeps_its_own_reply_and_blocks_replacement", "timeout": 180,
+      "purpose": "時間切れのメインスレッド要求は入力と結果を専有し、実行中の後続を拒否して古い完了を次へ貸さない",
+      "negative_control": {"file": "crates/echode-plugin-host/src/main_requests.rs", "old": "if active.is_some() {", "new": "if false {"}
+    },
+    {
+      "id": "plugin-main-timeout-state", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "audit"],
+      "test": "audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes", "timeout": 180,
+      "purpose": "slow-save の実ヘルパーで保存の時間切れ・復元拒否と再開後の正しいバイト・保存・発音を確認する",
+      "negative_control": {"file": "crates/echode-plugin-host/src/threads.rs", "old": "load_plugin_state(instance, &bytes)?;", "new": "load_plugin_state(instance, &[64])?;"}
+    },
+    {
+      "id": "plugin-control-request-ids", "runner": "rust", "package": "echode-sandbox", "target": ["--lib"],
+      "test": "session::correlation_tests::contract_control_replies_are_correlated_across_timeouts", "timeout": 180,
+      "purpose": "実ソケットで期限切れの応答を破棄し、後続の復元・保存と Dirty 通知・記録済み状態を取り違えない",
+      "negative_control": {"file": "crates/echode-sandbox/src/session.rs", "old": "if id != 0 && !self.pending.contains(&id) {", "new": "if false {"}
+    },
+    {
+      "id": "plugin-control-save-order", "runner": "rust", "package": "echode-sandbox", "target": ["--lib"],
+      "test": "session::correlation_tests::background_and_foreground_saves_keep_distinct_replies", "timeout": 180,
+      "purpose": "同種の背景保存と同期保存の応答を ID で分け、古い保存の回収が新しい適用済み状態を戻さない",
+      "negative_controls": [
+        {"file": "crates/echode-sandbox/src/session.rs", "old": "*reply_id == id && want(message)", "new": "(*reply_id == id || id != 0) && want(message)"},
+        {"file": "crates/echode-sandbox/src/session.rs", "old": "if id < self.remembered_request {", "new": "if false {"}
+      ]
+    },
     {
       "id": "mcp-local-arguments", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_arguments"],
       "test": "contract_local_tool_arguments_preserve_backend_history_and_recovery", "timeout": 180,

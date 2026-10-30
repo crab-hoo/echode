@@ -139,7 +139,7 @@ fn contract_loop_changes_keep_the_open_plugin_and_its_live_state() {
     let mut window = Window::accept(&listener);
     assert_eq!(window.lines(3), ["create", "parent", "show"]);
     window.act("value 1 1.5");
-    let captured = control.capture_device_state(device.raw()).unwrap();
+    let captured = endpoint.capture_state().unwrap();
     window.act("value 1 1.75");
     window.act("value 3 0.75");
     let initial_events: usize = control.plugin_event_caps().iter().sum();

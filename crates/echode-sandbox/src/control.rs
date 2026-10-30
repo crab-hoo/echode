@@ -1,6 +1,6 @@
 //! Control socket. The audio thread never reads or writes it.
 //!
-//! Messages are a little-endian length, a type, and a body. `Remap` also carries
+//! Messages are a little-endian length, a type, a request id, and a body. `Remap` also carries
 //! one file descriptor with `SCM_RIGHTS`. A body longer than 64 MiB is rejected
 //! so a corrupt peer cannot force an unbounded allocation.
 
@@ -178,15 +178,29 @@ impl Socket {
     }
 
     pub fn send(&mut self, message: &ControlMessage) -> io::Result<()> {
+        self.send_tagged(0, message)
+    }
+
+    /// A nonzero id correlates one control request and its reply. Notices use 0.
+    pub fn send_tagged(&mut self, id: u64, message: &ControlMessage) -> io::Result<()> {
         let (typ, body) = encode(message)?;
-        let bytes = frame(typ, &body)?;
+        let bytes = frame_tagged(id, typ, &body)?;
         send_bytes(self.fd.as_raw_fd(), &bytes, None)
     }
 
     /// Send a new mapping. `fd` is duplicated by the kernel; this end is closed.
     pub fn send_remap(&mut self, layout: SessionLayout, fd: OwnedFd) -> io::Result<()> {
+        self.send_remap_tagged(0, layout, fd)
+    }
+
+    pub fn send_remap_tagged(
+        &mut self,
+        id: u64,
+        layout: SessionLayout,
+        fd: OwnedFd,
+    ) -> io::Result<()> {
         let body = layout_bytes(layout);
-        let bytes = frame(REMAP, &body)?;
+        let bytes = frame_tagged(id, REMAP, &body)?;
         send_bytes(self.fd.as_raw_fd(), &bytes, Some(fd.as_raw_fd()))?;
         drop(fd);
         Ok(())
@@ -197,6 +211,10 @@ impl Socket {
     }
 
     pub fn try_recv(&mut self) -> io::Result<Option<ControlMessage>> {
+        Ok(self.try_recv_tagged()?.map(|(_, message)| message))
+    }
+
+    pub fn try_recv_tagged(&mut self) -> io::Result<Option<(u64, ControlMessage)>> {
         if let Some(message) = self.parse_one()? {
             return Ok(Some(message));
         }
@@ -207,9 +225,13 @@ impl Socket {
     }
 
     pub fn recv_timeout(&mut self, timeout: Duration) -> io::Result<ControlMessage> {
+        self.recv_tagged(timeout).map(|(_, message)| message)
+    }
+
+    pub fn recv_tagged(&mut self, timeout: Duration) -> io::Result<(u64, ControlMessage)> {
         let deadline = Instant::now() + timeout;
         loop {
-            if let Some(message) = self.try_recv()? {
+            if let Some(message) = self.try_recv_tagged()? {
                 return Ok(message);
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -225,12 +247,12 @@ impl Socket {
         }
     }
 
-    fn parse_one(&mut self) -> io::Result<Option<ControlMessage>> {
+    fn parse_one(&mut self) -> io::Result<Option<(u64, ControlMessage)>> {
         if self.incoming.len() < 4 {
             return Ok(None);
         }
         let len = u32::from_le_bytes(self.incoming[..4].try_into().expect("4 bytes")) as usize;
-        if !(4..=MAX_MESSAGE).contains(&len) {
+        if !(12..=MAX_MESSAGE).contains(&len) {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
                 "control message length is not usable",
@@ -240,7 +262,7 @@ impl Socket {
         if self.incoming.len() < total {
             return Ok(None);
         }
-        let payload: Vec<u8> = self.incoming.drain(..total).skip(4).collect();
+        let mut payload: Vec<u8> = self.incoming.drain(..total).skip(4).collect();
         let fd = match self.pending_fd.take() {
             Some(pending) if pending.at < total => Some(pending.fd),
             Some(mut pending) => {
@@ -250,7 +272,9 @@ impl Socket {
             }
             None => None,
         };
-        decode(&payload, fd)
+        let id = u64::from_le_bytes(payload[4..12].try_into().expect("8 bytes"));
+        payload.drain(4..12);
+        Ok(decode(&payload, fd)?.map(|message| (id, message)))
     }
 
     fn read_some(&mut self, nonblock: bool) -> io::Result<bool> {
@@ -552,8 +576,8 @@ fn read_layout(body: &[u8]) -> io::Result<SessionLayout> {
     })
 }
 
-fn frame(typ: u32, body: &[u8]) -> io::Result<Vec<u8>> {
-    let len = 4 + body.len();
+fn frame_tagged(id: u64, typ: u32, body: &[u8]) -> io::Result<Vec<u8>> {
+    let len = 12 + body.len();
     if len > MAX_MESSAGE {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
@@ -563,6 +587,7 @@ fn frame(typ: u32, body: &[u8]) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(4 + len);
     bytes.extend_from_slice(&(len as u32).to_le_bytes());
     bytes.extend_from_slice(&typ.to_le_bytes());
+    bytes.extend_from_slice(&id.to_le_bytes());
     bytes.extend_from_slice(body);
     Ok(bytes)
 }
@@ -874,3 +899,7 @@ mod tests {
         assert!(decode(&payload, None).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "control_tagged_tests.rs"]
+mod tagged_tests;

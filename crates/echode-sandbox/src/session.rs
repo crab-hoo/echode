@@ -13,7 +13,7 @@ use crate::sync::{SyncFlags, wake_one};
 use crate::workgroup::spawn_helper;
 use crate::{CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN};
 use echode_realtime::Event;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::ffi::OsString;
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -113,8 +113,8 @@ pub struct PluginHost {
     tail_samples: u32,
 }
 
-/// Longer than the helper's own bounds (2 s for the flush, 2 s for the main
-/// thread read), so a slow reply is not left to answer the next request.
+/// Covers the helper's flush and main-thread read bounds. Late replies are
+/// still matched by request id, independently of this deadline.
 const PARAMETER_REPLY: Duration = Duration::from_secs(5);
 
 /// Longer than the helper's 8 s bound for creating a plugin's view, which can
@@ -140,7 +140,10 @@ pub struct PluginControl {
 
 struct ControlState {
     control: Socket,
-    inbox: VecDeque<ControlMessage>,
+    inbox: VecDeque<(u64, ControlMessage)>,
+    next_request: u64,
+    remembered_request: u64,
+    pending: HashSet<u64>,
     /// The same storage as [`PluginControl::applied_state`].
     applied: Arc<Mutex<Option<Vec<u8>>>>,
     /// The same storage as [`PluginControl::take_activity`].
@@ -148,7 +151,7 @@ struct ControlState {
     /// The helper showed the window and has not reported it closed.
     window_open: bool,
     dirty_again: bool,
-    save_requested: bool,
+    save_requested: Option<u64>,
 }
 
 impl PluginControl {
@@ -159,11 +162,14 @@ impl PluginControl {
             socket: Arc::new(Mutex::new(ControlState {
                 control,
                 inbox: VecDeque::new(),
+                next_request: 0,
+                remembered_request: 0,
+                pending: HashSet::new(),
                 applied: Arc::clone(&applied),
                 activity: Arc::clone(&activity),
                 window_open: false,
                 dirty_again: false,
-                save_requested: false,
+                save_requested: None,
             })),
             applied,
             activity,
@@ -246,20 +252,17 @@ impl PluginControl {
         if matches!(state.poll_notice(), Ok(Some(PluginNotice::Dirty))) {
             state.dirty_again = true;
         }
-        if state.dirty_again && !state.save_requested && state.request_save().is_ok() {
-            state.save_requested = true;
+        if state.dirty_again && state.save_requested.is_none() && state.request_save().is_ok() {
             state.dirty_again = false;
         }
-        if !state.save_requested {
-            return None;
-        }
+        state.save_requested?;
         match state.poll_saved() {
             Ok(Some(Ok(bytes))) => {
-                state.save_requested = false;
+                state.save_requested = None;
                 Some(bytes)
             }
             Ok(Some(Err(_))) | Err(_) => {
-                state.save_requested = false;
+                state.save_requested = None;
                 state.dirty_again = false;
                 None
             }
@@ -286,11 +289,14 @@ impl ControlState {
     /// window is open, also counts as a change the user made in the plugin.
     /// Window replies update the open state here, not when a request takes
     /// them, so a notice right behind the reply sees the new state.
-    fn accept(&mut self, message: ControlMessage) {
+    fn accept(&mut self, id: u64, message: ControlMessage) {
         match &message {
             ControlMessage::GuiShown(_) => self.set_window_state(true),
             ControlMessage::GuiClosedReply => self.set_window_state(false),
             _ => {}
+        }
+        if id != 0 && !self.pending.contains(&id) {
+            return; // A late reply can never satisfy a newer request.
         }
         let note = match message {
             ControlMessage::GuiCommand(command) => PluginActivity {
@@ -311,14 +317,14 @@ impl ControlState {
                 }
             }
             ControlMessage::Dirty if self.window_open => {
-                self.inbox.push_back(ControlMessage::Dirty);
+                self.inbox.push_back((0, ControlMessage::Dirty));
                 PluginActivity {
                     dirty: true,
                     ..PluginActivity::default()
                 }
             }
             other => {
-                self.inbox.push_back(other);
+                self.inbox.push_back((id, other));
                 return;
             }
         };
@@ -329,9 +335,8 @@ impl ControlState {
     }
 
     fn show_gui(&mut self, title: &str) -> Result<GuiReport, SessionError> {
-        self.control
-            .send(&ControlMessage::GuiShow(title.to_string()))?;
-        match self.wait_message(WINDOW_REPLY, |message| {
+        let id = self.request(ControlMessage::GuiShow(title.to_string()))?;
+        match self.wait_reply(id, WINDOW_REPLY, |message| {
             matches!(
                 message,
                 ControlMessage::GuiShown(_) | ControlMessage::GuiRejected(_)
@@ -346,8 +351,8 @@ impl ControlState {
     }
 
     fn close_gui(&mut self) -> Result<(), SessionError> {
-        self.control.send(&ControlMessage::GuiClose)?;
-        match self.wait_message(WINDOW_REPLY, |message| {
+        let id = self.request(ControlMessage::GuiClose)?;
+        match self.wait_reply(id, WINDOW_REPLY, |message| {
             matches!(
                 message,
                 ControlMessage::GuiClosedReply | ControlMessage::GuiRejected(_)
@@ -361,7 +366,11 @@ impl ControlState {
         }
     }
 
-    fn remember(&self, bytes: &[u8]) {
+    fn remember(&mut self, id: u64, bytes: &[u8]) {
+        if id < self.remembered_request {
+            return;
+        }
+        self.remembered_request = id;
         *self
             .applied
             .lock()
@@ -370,42 +379,59 @@ impl ControlState {
 
     /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
     pub fn request_save(&mut self) -> Result<(), SessionError> {
-        self.control.send(&ControlMessage::SaveRequest)?;
+        if self.save_requested.is_some() {
+            return Err(SessionError::Protocol(
+                "a background save is already pending".into(),
+            ));
+        }
+        let id = self.request(ControlMessage::SaveRequest)?;
+        self.save_requested = Some(id);
         Ok(())
     }
 
     /// A save reply already queued, or `None` when the helper has not answered.
     pub fn poll_saved(&mut self) -> Result<Option<Result<Vec<u8>, String>>, SessionError> {
-        self.drain()?;
-        let index = self.inbox.iter().position(|message| {
-            matches!(
-                message,
-                ControlMessage::State(_) | ControlMessage::StateRejected(_)
-            )
+        if let Err(error) = self.drain() {
+            if let Some(id) = self.save_requested.take() {
+                self.pending.remove(&id);
+            }
+            return Err(error);
+        }
+        let Some(id) = self.save_requested else {
+            return Ok(None);
+        };
+        let index = self.inbox.iter().position(|(reply_id, message)| {
+            *reply_id == id
+                && matches!(
+                    message,
+                    ControlMessage::State(_) | ControlMessage::StateRejected(_)
+                )
         });
         let Some(index) = index else {
             return Ok(None);
         };
+        self.save_requested = None;
+        self.pending.remove(&id);
         match self.inbox.remove(index) {
-            Some(ControlMessage::State(bytes)) => {
-                self.remember(&bytes);
+            Some((_, ControlMessage::State(bytes))) => {
+                self.remember(id, &bytes);
                 Ok(Some(Ok(bytes)))
             }
-            Some(ControlMessage::StateRejected(reason)) => Ok(Some(Err(reason))),
+            Some((_, ControlMessage::StateRejected(reason))) => Ok(Some(Err(reason))),
             _ => Ok(None),
         }
     }
 
     pub fn save_state(&mut self) -> Result<Vec<u8>, SessionError> {
-        self.control.send(&ControlMessage::SaveRequest)?;
-        match self.wait_message(Duration::from_secs(2), |message| {
+        let id = self.request(ControlMessage::SaveRequest)?;
+        match self.wait_reply(id, Duration::from_secs(2), |message| {
             matches!(
                 message,
                 ControlMessage::State(_) | ControlMessage::StateRejected(_)
             )
         })? {
             ControlMessage::State(bytes) => {
-                self.remember(&bytes);
+                self.remember(id, &bytes);
                 Ok(bytes)
             }
             ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
@@ -416,8 +442,8 @@ impl ControlState {
     }
 
     pub fn parameters(&mut self) -> Result<Vec<ParamInfo>, SessionError> {
-        self.control.send(&ControlMessage::ParamsRequest)?;
-        match self.wait_message(PARAMETER_REPLY, |message| {
+        let id = self.request(ControlMessage::ParamsRequest)?;
+        match self.wait_reply(id, PARAMETER_REPLY, |message| {
             matches!(
                 message,
                 ControlMessage::Params(_) | ControlMessage::ParamsRejected(_)
@@ -440,9 +466,8 @@ impl ControlState {
                 "parameter value is not finite".to_string(),
             ));
         }
-        self.control
-            .send(&ControlMessage::SetParams(changes.to_vec()))?;
-        match self.wait_message(PARAMETER_REPLY, |message| {
+        let id = self.request(ControlMessage::SetParams(changes.to_vec()))?;
+        match self.wait_reply(id, PARAMETER_REPLY, |message| {
             matches!(
                 message,
                 ControlMessage::ParamsApplied(_) | ControlMessage::ParamsRejected(_)
@@ -457,11 +482,11 @@ impl ControlState {
     }
 
     pub fn parse_parameter(&mut self, id: u32, text: &str) -> Result<ParamText, SessionError> {
-        self.control.send(&ControlMessage::ParseParam {
+        let request = self.request(ControlMessage::ParseParam {
             id,
             text: text.to_string(),
         })?;
-        match self.wait_message(PARAMETER_REPLY, |message| {
+        match self.wait_reply(request, PARAMETER_REPLY, |message| {
             matches!(
                 message,
                 ControlMessage::ParamParsed(_) | ControlMessage::ParamsRejected(_)
@@ -478,29 +503,27 @@ impl ControlState {
     /// A background save already in flight answers first on this socket.
     /// Collect it so the reply taken here is the one requested after the edits.
     pub fn capture_state(&mut self) -> Result<Vec<u8>, SessionError> {
-        if self.save_requested {
-            self.wait_message(Duration::from_secs(2), |message| {
+        if let Some(id) = self.save_requested.take() {
+            self.wait_reply(id, Duration::from_secs(2), |message| {
                 matches!(
                     message,
                     ControlMessage::State(_) | ControlMessage::StateRejected(_)
                 )
             })?;
-            self.save_requested = false;
         }
         self.save_state()
     }
 
     pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), SessionError> {
-        self.control
-            .send(&ControlMessage::Restore(bytes.to_vec()))?;
-        match self.wait_message(Duration::from_secs(2), |message| {
+        let id = self.request(ControlMessage::Restore(bytes.to_vec()))?;
+        match self.wait_reply(id, Duration::from_secs(2), |message| {
             matches!(
                 message,
                 ControlMessage::Restored | ControlMessage::StateRejected(_)
             )
         })? {
             ControlMessage::Restored => {
-                self.remember(bytes);
+                self.remember(id, bytes);
                 Ok(())
             }
             ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
@@ -512,7 +535,7 @@ impl ControlState {
 
     pub fn poll_notice(&mut self) -> Result<Option<PluginNotice>, SessionError> {
         self.drain()?;
-        let index = self.inbox.iter().position(|message| {
+        let index = self.inbox.iter().position(|(_, message)| {
             matches!(
                 message,
                 ControlMessage::Dirty
@@ -524,11 +547,11 @@ impl ControlState {
             return Ok(None);
         };
         Ok(Some(match self.inbox.remove(index) {
-            Some(ControlMessage::Dirty) => PluginNotice::Dirty,
-            Some(ControlMessage::PluginRestarted { latency_samples }) => {
+            Some((_, ControlMessage::Dirty)) => PluginNotice::Dirty,
+            Some((_, ControlMessage::PluginRestarted { latency_samples })) => {
                 PluginNotice::PluginRestarted { latency_samples }
             }
-            Some(ControlMessage::RequestProcess) => PluginNotice::RequestProcess,
+            Some((_, ControlMessage::RequestProcess)) => PluginNotice::RequestProcess,
             _ => {
                 return Err(SessionError::Protocol(
                     "queued notice disappeared".to_string(),
@@ -539,8 +562,8 @@ impl ControlState {
 
     fn drain(&mut self) -> Result<(), SessionError> {
         loop {
-            match self.control.try_recv() {
-                Ok(Some(message)) => self.accept(message),
+            match self.control.try_recv_tagged() {
+                Ok(Some((id, message))) => self.accept(id, message),
                 Ok(None) => return Ok(()),
                 // The helper can close after a complete message. That EOF must
                 // not discard a reason already sitting in the inbox.
@@ -555,18 +578,64 @@ impl ControlState {
         }
     }
 
+    fn request(&mut self, message: ControlMessage) -> Result<u64, SessionError> {
+        let id = self.allocate_request()?;
+        if let Err(error) = self.control.send_tagged(id, &message) {
+            self.pending.remove(&id);
+            return Err(error.into());
+        }
+        Ok(id)
+    }
+
+    fn allocate_request(&mut self) -> Result<u64, SessionError> {
+        self.next_request = self
+            .next_request
+            .checked_add(1)
+            .ok_or_else(|| SessionError::Protocol("control request ids exhausted".into()))?;
+        self.pending.insert(self.next_request);
+        Ok(self.next_request)
+    }
+
+    fn wait_reply(
+        &mut self,
+        id: u64,
+        timeout: Duration,
+        want: impl Fn(&ControlMessage) -> bool,
+    ) -> Result<ControlMessage, SessionError> {
+        let result = self.wait_matching(id, timeout, want);
+        self.pending.remove(&id);
+        self.inbox.retain(|(reply_id, _)| *reply_id != id);
+        result
+    }
     fn wait_message(
         &mut self,
+        timeout: Duration,
+        want: impl Fn(&ControlMessage) -> bool,
+    ) -> Result<ControlMessage, SessionError> {
+        self.wait_matching(0, timeout, want)
+    }
+
+    fn wait_matching(
+        &mut self,
+        id: u64,
         timeout: Duration,
         want: impl Fn(&ControlMessage) -> bool,
     ) -> Result<ControlMessage, SessionError> {
         let deadline = Instant::now() + timeout;
         loop {
             self.drain()?;
-            if let Some(index) = self.inbox.iter().position(&want) {
-                return self.inbox.remove(index).ok_or_else(|| {
-                    SessionError::Protocol("queued control message disappeared".to_string())
-                });
+            if let Some(index) = self
+                .inbox
+                .iter()
+                .position(|(reply_id, message)| *reply_id == id && want(message))
+            {
+                return self
+                    .inbox
+                    .remove(index)
+                    .map(|(_, message)| message)
+                    .ok_or_else(|| {
+                        SessionError::Protocol("queued control message disappeared".to_string())
+                    });
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -574,9 +643,9 @@ impl ControlState {
             }
             match self
                 .control
-                .recv_timeout(remaining.min(Duration::from_millis(50)))
+                .recv_tagged(remaining.min(Duration::from_millis(50)))
             {
-                Ok(message) => self.accept(message),
+                Ok((id, message)) => self.accept(id, message),
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
                 Err(error) => {
                     self.set_window_state(false);
@@ -733,7 +802,9 @@ impl PluginHost {
             let mut control = self.control.lock();
             control.set_window_state(false);
             control.inbox.clear();
-            control.save_requested = false;
+            control.pending.clear();
+            control.remembered_request = 0;
+            control.save_requested = None;
             control.dirty_again = false;
         }
         self.closed = false;
@@ -882,11 +953,9 @@ impl PluginHost {
 
     /// Ask the helper to run `stages` process calls, in order, for each block.
     pub fn set_chain(&mut self, stages: u32) -> Result<(), SessionError> {
-        self.control
-            .lock()
-            .control
-            .send(&ControlMessage::SetChain(stages))?;
-        match self.wait_message(Duration::from_secs(2), |message| {
+        let mut control = self.control.lock();
+        let id = control.request(ControlMessage::SetChain(stages))?;
+        match control.wait_reply(id, Duration::from_secs(2), |message| {
             matches!(
                 message,
                 ControlMessage::ChainReady | ControlMessage::ChainRejected
@@ -1000,16 +1069,21 @@ impl PluginHost {
         }
         let mut region = MappedRegion::create_shared(layout)?;
         region.set_wake_target(Arc::clone(&self.root));
-        self.control
-            .lock()
-            .control
-            .send_remap(layout, region.duplicate_fd()?)?;
-        match self.wait_message(Duration::from_secs(2), |message| {
+        let fd = region.duplicate_fd()?;
+        let mut control = self.control.lock();
+        let id = control.allocate_request()?;
+        if let Err(error) = control.control.send_remap_tagged(id, layout, fd) {
+            control.pending.remove(&id);
+            return Err(error.into());
+        }
+        let reply = control.wait_reply(id, Duration::from_secs(2), |message| {
             matches!(
                 message,
                 ControlMessage::Remapped | ControlMessage::RemapFailed
             )
-        })? {
+        })?;
+        drop(control);
+        match reply {
             ControlMessage::Remapped => {
                 self.previous_region = Some(std::mem::replace(&mut self.region, Arc::new(region)));
                 Ok(())
@@ -1032,13 +1106,12 @@ impl PluginHost {
         if self.region.published() != 0 {
             return Err(SessionError::MappingPending);
         }
-        self.control
-            .lock()
-            .control
-            .send(&ControlMessage::CancelRemap)?;
-        self.wait_message(Duration::from_secs(2), |message| {
+        let mut control = self.control.lock();
+        let id = control.request(ControlMessage::CancelRemap)?;
+        control.wait_reply(id, Duration::from_secs(2), |message| {
             matches!(message, ControlMessage::RemapCancelled)
         })?;
+        drop(control);
         if let Some(previous) = self.previous_region.take() {
             self.region = previous;
         }
@@ -1721,3 +1794,7 @@ impl PluginAudio {
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_correlation_tests.rs"]
+mod correlation_tests;

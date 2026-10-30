@@ -156,6 +156,12 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 ジャーナル・既存 Redo・後続の正当な編集の単一 Undo / Redo と再オープンを検査する
 （[ADR 0115 の引数回帰](decisions/0115-phase2-mcp.md#ツール引数のローカル拒否の回帰補強2026-10-29)）。
 
+プラグインのメインスレッド要求の所有は `echode-plugin-host/src/main_requests.rs`、実行は `threads.rs::perform_main_request` に置く。
+要求番号付きの制御フレームは `echode-sandbox/src/control.rs`、親の応答照合と背景保存は `session.rs` に置く。
+回帰は `main_requests_tests.rs`・`session_correlation_tests.rs`・`control_tagged_tests.rs` と `tests/audit.rs` の SPG-01 を使う。
+エンジンのテスト専用の素通しではなく、製品と同じ `device_control_handle` を通す
+（[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。

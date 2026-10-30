@@ -211,19 +211,26 @@ fn contract_parameter_edit_sounds_records_and_restores_under_rtsan() {
         control.replace(&project).unwrap();
         control.command(PlaybackCommand::Play).unwrap();
         close(hear(&mut control, &mut audio, frames), 0.25);
-        let before = control.capture_device_state(device.raw()).unwrap();
+        let before = control
+            .device_control_handle(device.raw())
+            .unwrap()
+            .capture_state()
+            .unwrap();
         let applied = control
-            .set_device_parameters(
-                device.raw(),
-                &[
-                    echode_sandbox::ParamChange { id: 1, value: 1.5 },
-                    echode_sandbox::ParamChange { id: 2, value: 1.0 },
-                ],
-            )
+            .device_control_handle(device.raw())
+            .unwrap()
+            .set_parameters(&[
+                echode_sandbox::ParamChange { id: 1, value: 1.5 },
+                echode_sandbox::ParamChange { id: 2, value: 1.0 },
+            ])
             .unwrap();
         assert_eq!(applied[0].text, "1.50x");
         close(hear(&mut control, &mut audio, frames), 0.1875);
-        let edited = control.capture_device_state(device.raw()).unwrap();
+        let edited = control
+            .device_control_handle(device.raw())
+            .unwrap()
+            .capture_state()
+            .unwrap();
         assert_ne!(edited, before);
         assert_eq!(
             control.device_applied_state(device.raw()).unwrap(),
@@ -233,10 +240,9 @@ fn contract_parameter_edit_sounds_records_and_restores_under_rtsan() {
         // Recording the captured bytes replaces the plan but not the helper.
         // The hidden value is not in the fixture's state, so a respawn resets it.
         control
-            .set_device_parameters(
-                device.raw(),
-                &[echode_sandbox::ParamChange { id: 3, value: 0.75 }],
-            )
+            .device_control_handle(device.raw())
+            .unwrap()
+            .set_parameters(&[echode_sandbox::ParamChange { id: 3, value: 0.75 }])
             .unwrap();
         let host = host_bin();
         let saved = project
@@ -245,21 +251,30 @@ fn contract_parameter_edit_sounds_records_and_restores_under_rtsan() {
         control.set_routes(&host, &[params_route(Some(edited.clone())), sine_route()]);
         control.replace(&saved).unwrap();
         close(hear(&mut control, &mut audio, frames), 0.1875);
-        let kept = control.device_parameters(device.raw()).unwrap();
+        let kept = control
+            .device_control_handle(device.raw())
+            .unwrap()
+            .parameters()
+            .unwrap();
         assert_eq!((kept[1].text.as_str(), kept[2].value), ("Half", 0.75));
 
         // Undo loads the earlier bytes into the same running helper.
         control.restore_device_state(device.raw(), &before).unwrap();
         close(hear(&mut control, &mut audio, frames), 0.25);
         assert_eq!(
-            control.device_parameters(device.raw()).unwrap()[2].value,
+            control
+                .device_control_handle(device.raw())
+                .unwrap()
+                .parameters()
+                .unwrap()[2]
+                .value,
             0.75
         );
         control.restore_device_state(device.raw(), &edited).unwrap();
         close(hear(&mut control, &mut audio, frames), 0.1875);
         assert!(
             control
-                .set_device_parameters(Id::from_raw(0x9B).raw(), &[])
+                .device_control_handle(Id::from_raw(0x9B).raw())
                 .is_err()
         );
         if let Some(previous) = &recorded {
@@ -300,17 +315,24 @@ fn recorded_states_load_into_the_running_helper_or_request_replacement_under_rts
     control.set_clip_loader(stereo_clip(track.raw()));
     control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
-    let before = control.capture_device_state(device.raw()).unwrap();
-    control
-        .set_device_parameters(
-            device.raw(),
-            &[
-                echode_sandbox::ParamChange { id: 2, value: 2.0 },
-                echode_sandbox::ParamChange { id: 3, value: 0.5 },
-            ],
-        )
+    let before = control
+        .device_control_handle(device.raw())
+        .unwrap()
+        .capture_state()
         .unwrap();
-    let edited = control.capture_device_state(device.raw()).unwrap();
+    control
+        .device_control_handle(device.raw())
+        .unwrap()
+        .set_parameters(&[
+            echode_sandbox::ParamChange { id: 2, value: 2.0 },
+            echode_sandbox::ParamChange { id: 3, value: 0.5 },
+        ])
+        .unwrap();
+    let edited = control
+        .device_control_handle(device.raw())
+        .unwrap()
+        .capture_state()
+        .unwrap();
     close(hear(&mut control, &mut audio, frames), 0.0);
 
     let id = device.raw();
@@ -318,7 +340,15 @@ fn recorded_states_load_into_the_running_helper_or_request_replacement_under_rts
     assert!(!control.restore_recorded_states(&[id], |_| Ok(Some(before.clone()))));
     close(hear(&mut control, &mut audio, frames), 0.25);
     // Same helper: the unsaved hidden value survived the load.
-    assert_eq!(control.device_parameters(id).unwrap()[2].value, 0.5);
+    assert_eq!(
+        control
+            .device_control_handle(id)
+            .unwrap()
+            .parameters()
+            .unwrap()[2]
+            .value,
+        0.5
+    );
     assert!(!control.restore_recorded_states(&[0x9D], |_| Ok(None)));
     assert!(control.restore_recorded_states(&[id], |_| Ok(None)));
     assert!(control.restore_recorded_states(&[id], |_| Err("missing object".into())));

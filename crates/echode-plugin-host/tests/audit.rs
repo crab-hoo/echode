@@ -115,11 +115,10 @@ fn helper_fixture() -> (PathBuf, PathBuf) {
     )
 }
 
-/// docs/reviews/2026-10-30-structure-audit.md SPG-01. A request that timed out
-/// is still running on the helper's main thread when the next one is posted.
-/// Both share one byte buffer, so the restore must not load the save's output.
+/// docs/reviews/2026-10-30-structure-audit.md SPG-01. A timed-out save
+/// used to replace the next restore's bytes. An in-flight call must now keep
+/// its own input and reply; a rejected restore leaves the plugin unchanged.
 #[test]
-#[ignore = "SPG-01: helper main-thread requests share one input/output buffer"]
 fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
     use echode_sandbox::{PluginHost, PluginNotice, SessionLayout, SpawnOptions};
 
@@ -141,6 +140,7 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
         plugin_id: Some("dev.echode.test-state"),
     })
     .expect("state plugin");
+    // This regression's 64-frame buffer is not a product capacity limit.
     let input = vec![0.0; 64];
     let mut left = vec![0.0; 64];
     let mut right = vec![0.0; 64];
@@ -155,7 +155,7 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
     // The first save sleeps 3 s, past both 2 s waits.
     assert!(host.save_state().is_err(), "the slow save must time out");
     let restored = host.restore_state(&[128]);
-    // Long enough for the slow save and the request queued behind it.
+    // Allow the earlier main-thread call to finish before checking its effects.
     std::thread::sleep(Duration::from_secs(4));
     let mut loaded = false;
     while let Some(notice) = host.poll_notice().expect("notice") {
@@ -178,5 +178,24 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
             restored.is_err(),
             "restore reported success without loading"
         );
+        assert!(
+            (left[0] - 0.25).abs() < 1.0e-4,
+            "rejected restore changed state"
+        );
     }
+    // The old save response must not reject this later restore, nor satisfy
+    // this new save. Both calls use the product control-only endpoint.
+    let endpoint = host.control_handle();
+    endpoint
+        .restore_state(&[128])
+        .expect("restore after completion");
+    assert_eq!(endpoint.capture_state().unwrap(), [128]);
+    assert_eq!(endpoint.applied_state().unwrap(), [128]);
+    host.process(
+        &[&input, &input],
+        &mut [&mut left, &mut right],
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert!((left[0] - 0.5).abs() < 1.0e-4, "restored level {}", left[0]);
 }

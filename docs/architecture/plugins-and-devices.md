@@ -41,6 +41,10 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
   （[ADR 0079](../decisions/0079-failed-export.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - 再起動ではヘルパーを起動し直して最後に取得した状態を復元する
 
+- メインスレッドの制御要求は型付きの専有領域で渡し、時間切れ後も完了まで後続を busy で拒否する。
+  ソケットの要求と応答は 64 bit の要求番号で照合し、遅れた応答を後続へ貸さない。
+  時間切れは取消ではなく結果不明で、自動再送はしない（[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
+
 ### 9.5 GUI とデバイスビュー
 
 - プラグイン GUI はヘルパープロセスが持つフローティングの `NSPanel` に表示する（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。

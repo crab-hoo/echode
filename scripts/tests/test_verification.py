@@ -52,6 +52,29 @@ class PolicyTests(unittest.TestCase):
     def selected(self, *paths):
         return set(verify.select_checks(self.policy, list(paths)))
 
+    def test_helper_timeout_contracts_and_realtime_selection(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for key, package, target in (
+            ("plugin-main-call-ownership", "echode-plugin-host", ["--lib"]),
+            ("plugin-main-timeout-state", "echode-plugin-host", ["--test", "audit"]),
+            ("plugin-control-request-ids", "echode-sandbox", ["--lib"]),
+            ("plugin-control-save-order", "echode-sandbox", ["--lib"]),
+        ):
+            contract = contracts[key]
+            self.assertEqual((contract["runner"], contract["package"], contract["target"]),
+                             ("rust", package, target))
+            faults = contract.get("negative_controls", [contract.get("negative_control")])
+            for fault in faults:
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for path in (
+            "crates/echode-plugin-host/src/main_requests.rs",
+            "crates/echode-plugin-host/src/main_requests_tests.rs",
+            "crates/echode-plugin-host/src/threads.rs",
+            "crates/echode-sandbox/src/control.rs",
+            "crates/echode-sandbox/src/session_correlation_tests.rs",
+        ):
+            self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
+
     def test_mcp_local_arguments_contract_rejects_overrides_before_connecting(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "mcp-local-arguments")
         self.assertEqual((contract["runner"], contract["package"], contract["target"]),
@@ -1351,6 +1374,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                          "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",
                           "engine-measurement-completion", "pane-boundary", "canvas-resize-ui", "drawable-mismatch-ui", "header-width-ui", "transport-layout-ui", "arrange-camera-ui", "arrange-camera-input-ui", "piano-accessibility-ui", "workspace-layout-ui", "workspace-stack-ui", "pending-transport",

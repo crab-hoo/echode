@@ -13,6 +13,7 @@ compile_error!("Echode only builds for macOS");
 
 mod awake;
 mod gui;
+mod main_requests;
 mod relay;
 pub use awake::HelperActivity;
 

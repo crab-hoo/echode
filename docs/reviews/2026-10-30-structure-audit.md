@@ -18,12 +18,12 @@
 
 | ID | 優先度 | 内容 | 状態 |
 |---|---|---|---|
-| SPG-01 | P1 | ヘルパーのメインスレッド要求が 1 つの共有バイト列と種類番号を使い回し、応答に要求の識別がない | 再現済み・未修正 |
+| SPG-01 | P1 | ヘルパーのメインスレッド要求が 1 つの共有バイト列と種類番号を使い回し、応答に要求の識別がない | 対応済み（後述） |
 | SPG-02 | P2 | 文書ごとの状態が `ProjectController` に散在し、文書の照合が手書きの 63 か所に分かれる | 未着手 |
 | SPG-03 | P2 | Swift から Rust への編集要求だけが型のない辞書で、30 種類の操作の形を二重に持つ | 未着手 |
 | SPG-04 | P2 | 時間単位・値の範囲を Swift が数値の直書きで重複して持つ | 未着手 |
 | SPG-05 | P2 | 文書の処理の調停（保存の取込み・デバイス要求の待ち）が FFI の crate に入っている | 未着手 |
-| SPG-06 | P3 | プラグイン操作 1 つが約 9 層の素通しを通り、一部の素通しはテストだけが使う | 未着手 |
+| SPG-06 | P3 | プラグイン操作 1 つが約 9 層の素通しを通り、一部の素通しはテストだけが使う | 旧素通し 3 件を削除、残りは未着手 |
 | SPG-07 | P3 | 再生の生成関数が 6 種類あり、本体の重複と引数の増加が続く | 未着手 |
 | SPG-08 | P3 | ピアノロールの排他的な操作状態を 9 個の独立した Optional で持つ | 未着手 |
 | SPG-09 | P3 | モデルの項目を 1 つ足すと変更セットの 6 か所以上と 30 前後のファイルに手が入る | 未着手 |
@@ -56,6 +56,15 @@
   - `Bridge` のアトミックを、領域の交換・状態・パラメーター・GUI・再起動の小さな構造体へ分け、所有スレッドを型と注釈で示す。
 - 修正条件: `audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes` の `#[ignore]` を外して通ること。
   既存の隔離回帰（`hosted_playback`・`isolation`・`sine_pad`）と RTSan が通ること。
+
+#### 後続対応（2026-10-30）
+
+[ADR 0199](../decisions/0199-owned-helper-control-requests.md) により、型付きの専有要求と結果・処理中の明示拒否を導入した。
+状態要求の共有バイト列・種類番号・別枠のパラメーター結果を除き、制御応答は要求番号で照合する。
+上の再現テストは `#[ignore]` を外し、完了後の復元・保存と出力サンプルの検査を追加した。
+`main_requests_tests.rs` と `session_correlation_tests.rs` も、古い完了・応答の非干渉を検査する。
+時間切れは結果不明であり、プラグインを強制的に取消すものではない。
+残りの `Bridge` のアトミック全体の分割は行っていない。
 
 ### SPG-02: 文書ごとの状態と文書の照合が散在する
 
@@ -120,6 +129,9 @@
   操作を足すたびに 3〜4 個の素通しが増える。
 - 根本の修正方針: テストを製品と同じ `device_control_handle` の経路へ寄せ、使われない素通しを消す。
   SPG-01 の型付き要求と合わせ、`PluginControl` は 1 つの `request(PluginRequest)` を持つ形へ寄せる。
+
+後続対応（2026-10-30）: テストを製品と同じ `device_control_handle` へ移し、上記の旧素通し 3 件を削除した。
+`PluginControl` の公開操作を汎用の 1 要求へまとめる部分は未着手である（[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
 
 ### SPG-07: 再生の生成関数の増殖
 
@@ -186,7 +198,7 @@
 ## 再現テストと証拠
 
 - [audit.rs](../../crates/echode-plugin-host/tests/audit.rs) の
-  `audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes`（`#[ignore]`、`make known-bugs` で実行）。
+  `audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes`（監査時点は `#[ignore]`、`make known-bugs` で実行）。
   テスト用プラグインに初回の状態保存だけを 3 秒止める `slow-save` の故障を追加した。
 - 監査時点の結果（終了コード 101）:
   `the helper loaded bytes other than the requested [128]: level 0.25, restore Err(Protocol("plugin state timed out"))`。

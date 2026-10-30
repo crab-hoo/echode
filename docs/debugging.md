@@ -147,6 +147,15 @@ make debug-report
 
 ### オーディオ・トランスポート・プラグイン
 
+- **ヘルパーの保存・復元・パラメーター・窓の要求が時間切れ／busy になる**:
+  `plugin main request N timed out; outcome unknown` は実行の取消ではない。
+  メインスレッドに残る要求が完了するまで後続は busy で拒否し、自動再送しない。
+  要求番号 N はヘルパー内部の呼出し番号で、ソケットの応答照合の番号とは別である。
+  `plugin-main-timeout-state` は機器なしの `slow-save` で再現し、`plugin-control-request-ids` は古い応答の破棄を検査する。
+  完了後の復元バイトと新しい保存結果を比較し、実行中の拒否と、古い応答の取り違えを区別する。
+  親とヘルパーは同じビルドでそろえ、古い起動済みアプリを新しいヘルパーだけに置き換えない
+  （[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
+
 - **ノートの端から再生すると、その音が鳴り続ける**:
   開始位置がノートの終端ちょうどかを確認する。追いかけ（`Cursor::chase_events`）は終端ちょうどのノートを鳴らさず、
   その時刻のノートオフだけを出す（[ADR 0164](decisions/0164-note-end-chase.md)）。

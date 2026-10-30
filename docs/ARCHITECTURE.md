@@ -251,6 +251,7 @@ CLAP（`clack-host`）、VST3、AU の共通インターフェース（AUv3 は�
 ### 9.4 クラッシュとハング
 
 締め切り超過時の無音化、`kqueue` と致命シグナル印による検知（[ADR 0079](decisions/0079-failed-export.md)、[ADR 0111](decisions/0111-macos-helper-notices.md)）、状態復元再起動を行う。
+メインスレッド要求の所有と、時間切れ後の応答照合は [ADR 0199](decisions/0199-owned-helper-control-requests.md) を参照する。
 
 ### 9.5 GUI とデバイスビュー
 
