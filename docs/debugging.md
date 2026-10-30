@@ -769,6 +769,14 @@ make debug-report
   `mcp_metadata.rs` と必須契約 `mcp-modern-metadata` は接続前の拒否・履歴保持・後続の正当な編集と再オープンを検査する
   （[ADR 0115 のメタデータ回帰](decisions/0115-phase2-mcp.md#新-mcp-の要求ごとのメタデータの回帰補強2026-10-29)）。
 
+- **MCP のツール引数が拒否される・拒否したのに履歴が変わる**:
+  `mcp.rs::call_tool` はツール名からアクションの `type` を決める。呼出側の `type` は同じ値・null でも拒否する。
+  Undo / Redo・概要は引数なし、一括編集は `actions` だけを受ける。省略した arguments と明示した null は区別する。
+  型の不正・未知のツールは `-32602`、既知のツールの余分な引数は `isError` の実行エラーになり、どちらも接続しない。
+  `mcp_arguments.rs` と必須契約 `mcp-local-arguments` は接続数・ジャーナル・既存 Redo・後続の編集と再オープンを検査する。
+  接続先で拒否したアクションや結果不明とは段階が異なり、この拒否では自動再送や履歴の巻戻しは不要である
+  （[ADR 0115 の引数回帰](decisions/0115-phase2-mcp.md#ツール引数のローカル拒否の回帰補強2026-10-29)）。
+
 - **MCP が `unsupported Echode session protocol` を返す**:
   MCP 自体のプロトコル版ではなく、接続先 API の `protocol.version` が返す整数の版 1 を確認する。
   この段階での拒否では編集をまだ送っていない。編集後の応答破損や切断による結果不明と区別する。

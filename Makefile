@@ -110,6 +110,7 @@ check-base:
 # MCP invalid IDs and edit-like notifications never connect or consume durable history (mcp-request-identity).
 # Legacy MCP readiness and request-ID replay guards preserve edits and history (mcp-legacy-lifecycle).
 # Modern MCP metadata validates every edit independently of legacy readiness (mcp-modern-metadata).
+# MCP local argument guards reject type overrides and unexpected fields before connecting (mcp-local-arguments).
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

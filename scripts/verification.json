@@ -63,6 +63,16 @@
   ],
   "product_contracts": [
     {
+      "id": "mcp-local-arguments", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_arguments"],
+      "test": "contract_local_tool_arguments_preserve_backend_history_and_recovery", "timeout": 180,
+      "purpose": "公開MCP入口と実ソケットでツール名による種別選択と引数のローカル拒否を検証し、不正な編集・Undo/Redoの未送信、ジャーナル・既存Redo・単一Undoと再オープンを保つ",
+      "negative_controls": [
+        {"file": "crates/echode-api/src/mcp.rs", "old": "if arguments.get(\"type\").is_some() {", "new": "if false {"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": ".is_some_and(|object| object.is_empty())", "new": ".is_some_and(|_| true)"},
+        {"file": "crates/echode-api/src/mcp.rs", "old": ".is_some_and(|object| object.keys().any(|key| key != \"actions\"))", "new": ".is_some_and(|_| false)"}
+      ]
+    },
+    {
       "id": "mcp-modern-metadata", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_metadata"],
       "test": "contract_modern_metadata_guards_edits_without_inheriting_legacy_readiness", "timeout": 180,
       "purpose": "公開MCP入口と実ソケットで要求ごとの版とcapabilitiesを旧版初期化と独立に検証し、不正な単一／一括編集・Undo/Redoの未送信、ジャーナル・既存Redo・単一Undoと再オープンを保つ",

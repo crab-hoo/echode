@@ -151,6 +151,11 @@ MCP の要求 ID と通知は `McpSession::reply` が接続前に振り分ける
 メタデータの省略時に直前の新 MCP 要求から版や準備完了を引き継がないことも検査する
 （[ADR 0115 のメタデータ回帰](decisions/0115-phase2-mcp.md#新-mcp-の要求ごとのメタデータの回帰補強2026-10-29)）。
 
+MCP のツール名によるアクション種別の決定と引数のローカル拒否は `mcp.rs::call_tool` に置く。
+`tests/mcp_arguments.rs` は旧・新 MCP で種別上書き・余分な引数・不正な型と未知のツールを接続前に拒否し、
+ジャーナル・既存 Redo・後続の正当な編集の単一 Undo / Redo と再オープンを検査する
+（[ADR 0115 の引数回帰](decisions/0115-phase2-mcp.md#ツール引数のローカル拒否の回帰補強2026-10-29)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。
