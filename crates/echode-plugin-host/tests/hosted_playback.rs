@@ -57,7 +57,12 @@ fn playback_with_plugins(
 > {
     let mut routes = routes.to_vec();
     routes.push(sine_route());
-    echode_engine::playback_with_plugins(project, rate, frames, host, &routes)
+    echode_engine::playback(
+        project,
+        rate,
+        frames,
+        echode_engine::PlaybackOptions::default().plugins(host, &routes),
+    )
 }
 
 fn playback_pair(
@@ -90,17 +95,52 @@ fn contract_live_workgroup_failure_cannot_be_silent_offline_hosting() {
         fault: None,
         state: None,
     };
-    let result = echode_engine::playback_with_plugins_in_workgroup_at(
+    let result = echode_engine::playback(
         &project,
         48000,
         64,
-        &host_bin(),
-        &[route],
-        0,
-        group,
+        echode_engine::PlaybackOptions::default()
+            .plugins(&host_bin(), &[route])
+            .workgroup(group),
     );
     assert!(
         matches!(result, Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("selected device workgroup unavailable"))
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// The product opens without helpers when the binary is missing, and `replace`
+/// looks for it again. Helpers started then must still join the output's group.
+#[test]
+fn a_workgroup_given_without_helpers_reaches_helpers_started_later() {
+    let (project, track) = score();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let group: echode_engine::PluginWorkgroup = Arc::new(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err("selected device workgroup unavailable".into())
+    });
+    let (mut control, _audio) = echode_engine::playback(
+        &project,
+        48000,
+        64,
+        echode_engine::PlaybackOptions::default().workgroup(group),
+    )
+    .unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let route = PluginRoute {
+        clap_id: "dev.echode.test-gain".into(),
+        path: plugin_dylib(),
+        instrument: false,
+        fault: None,
+        state: None,
+    };
+    control.set_routes(&host_bin(), &[route]);
+    let edited = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    assert!(
+        matches!(control.replace(&edited), Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("selected device workgroup unavailable"))
     );
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
@@ -162,14 +202,13 @@ fn live_workgroup_survives_product_edits_and_helper_restart() {
     };
     let (project, track) = Project::new().add_track("workgroup fixture");
     // Start without devices, then insert one after output preparation.
-    let (mut control, mut audio) = echode_engine::playback_with_plugins_in_workgroup_at(
+    let (mut control, mut audio) = echode_engine::playback(
         &project,
         48000,
         64,
-        &host_bin(),
-        std::slice::from_ref(&route),
-        0,
-        Arc::clone(&group),
+        echode_engine::PlaybackOptions::default()
+            .plugins(&host_bin(), std::slice::from_ref(&route))
+            .workgroup(Arc::clone(&group)),
     )
     .unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {

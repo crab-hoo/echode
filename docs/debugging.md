@@ -291,7 +291,7 @@ make debug-report
   実画面のメニュー・IME・VoiceOver・キーリピートと聴感はユーザー確認に残す（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
 - **ピアノロールの枠選択・削除が想定と違う**:
   右ドラッグはノートグリッド内から始める。下部の棒・鍵盤・ルーラーからは始めず、枠は発音窓内の可視ノートとの部分交差を使う。
-  `PianoGridView.selectionPress` が仮の枠、`ProjectController.noteSelection` が確定選択である。
+  `PianoGridView.selectionPress` が仮の枠（`PianoInteraction` の射影）、`ProjectController.noteSelection` が確定選択である。
   複数選択の時の `noteFocus == nil` は正常で、単一ノート欄や記憶値へ任意の代表を流さないための区別である。
   Delete は `deleteNotes` の待機列の手番で全 ID を検証する。リンク配置の二重削除と、古いメニュー・旧文書の拒否を分けて調べる。
   `piano-note-selection-ui`・`piano-note-selection-cancel-ui`・`piano-note-selection-delete-ui`・`piano-note-linked-delete-ui` を使う。

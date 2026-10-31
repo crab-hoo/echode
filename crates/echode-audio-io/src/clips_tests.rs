@@ -1,5 +1,5 @@
 use super::*;
-use echode_engine::{PlaybackCommand, playback_pair, render_offline_blocks_with_clips};
+use echode_engine::{PlaybackCommand, PlaybackOptions, playback, render_offline_blocks_with_clips};
 use echode_model::{AudioRef, Id};
 
 struct Fixture(PathBuf);
@@ -244,7 +244,8 @@ fn contract_loop_head_is_resident_before_wrap_under_rtsan() {
                 .set_clip_fades(clip, 0, 0)
                 .unwrap();
             let loader = media_loader(fixture.0.clone());
-            let (mut control, mut audio) = playback_pair(&project, rate, block).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, rate, block, PlaybackOptions::default()).unwrap();
             control.set_clip_loader(Arc::clone(&loader));
             control.replace(&project).unwrap();
             let expected = loader(&project, rate).unwrap();
@@ -387,7 +388,8 @@ fn contract_imported_stereo_survives_trim_gain_resampling_playback_and_export() 
         let frames = loaded.start_sample as usize + loaded.samples.len();
         // Scratch sizes exercise stream partitioning, not product limits.
         for block in [1, 64, 511] {
-            let (mut control, mut audio) = playback_pair(&project, 48_000, block).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, 48_000, block, PlaybackOptions::default()).unwrap();
             let clips = clips.clone();
             let expected = clips.clone();
             control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));

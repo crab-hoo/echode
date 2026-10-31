@@ -8,7 +8,7 @@ use echode_cli::{
     WAV_FAULT_DIR_SYNC, WAV_FAULT_FLUSH, WAV_FAULT_RENAME, WAV_FAULT_WRITE, arm_wav_fault,
     export_lines_for_test, render_to_wav, write_wav,
 };
-use echode_engine::{PlaybackCommand, playback_pair};
+use echode_engine::{PlaybackCommand, PlaybackOptions, playback};
 use echode_history::write_package;
 use echode_model::{Id, NoteDraft, Project, Tick};
 
@@ -246,7 +246,8 @@ fn audit_aud09_clip_gain_scales_playback_export_undo_and_recovery() {
 }
 
 fn play_middle(package: &Path, project: &Project, frames: usize) -> f32 {
-    let (mut control, mut audio) = playback_pair(project, 48_000, frames).unwrap();
+    let (mut control, mut audio) =
+        playback(project, 48_000, frames, PlaybackOptions::default()).unwrap();
     let package = package.to_path_buf();
     control.set_clip_loader(Arc::new(move |project, rate| {
         echode_audio_io::load_placed_clips(&package, project, rate)
@@ -891,9 +892,13 @@ impl Drop for FaultFile {
 fn play_plugins(package: &Path, project: &Project) -> Vec<f32> {
     let host = echode_plugin_host::host_binary().unwrap();
     let routes = echode_audio_io::installed_plugin_routes(project);
-    let (mut control, mut audio) =
-        echode_engine::playback_with_plugins(project, 48_000, PLUGIN_FRAMES, &host, &routes)
-            .unwrap();
+    let (mut control, mut audio) = echode_engine::playback(
+        project,
+        48_000,
+        PLUGIN_FRAMES,
+        echode_engine::PlaybackOptions::default().plugins(&host, &routes),
+    )
+    .unwrap();
     let package = package.to_path_buf();
     control.set_clip_loader(Arc::new(move |project, rate| {
         echode_audio_io::load_placed_clips(&package, project, rate)

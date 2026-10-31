@@ -1,5 +1,5 @@
 use super::*;
-use echode_engine::playback_pair;
+use echode_engine::{PlaybackOptions, playback};
 
 fn fixture_clips(track: u128, rate: u32) -> Vec<echode_engine::LoadedClip> {
     // This constant source covers these device-free HAL fixtures only.
@@ -30,7 +30,8 @@ fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_r
             std::fs::create_dir_all(&directory).unwrap();
             let (trace, mut files) = crate::trace::pair(rate, frames, directory.clone());
             let (project, track) = Project::new().add_track("stop trace");
-            let (mut control, player) = playback_pair(&project, rate, frames).unwrap();
+            let (mut control, player) =
+                playback(&project, rate, frames, PlaybackOptions::default()).unwrap();
             let wave = |sample: usize, channel: usize| {
                 let (amplitude, frequency) = [(0.25, 437.0), (-0.5, 1601.0)][channel];
                 amplitude
@@ -187,7 +188,8 @@ fn contract_transport_discontinuities_declick_hal_output_under_rtsan() {
             ] {
                 let cancellation_only = command.is_none();
                 let (project, track) = Project::new().add_track("continuous audio");
-                let (mut control, player) = playback_pair(&project, rate, frames).unwrap();
+                let (mut control, player) =
+                    playback(&project, rate, frames, PlaybackOptions::default()).unwrap();
                 control.set_clip_loader(Arc::new(move |_, _| {
                     Ok(vec![echode_engine::LoadedClip {
                         track: track.raw(),
@@ -293,7 +295,8 @@ fn contract_stop_preserves_waveform_while_fading_under_rtsan() {
                                 .sin()
                     };
                     let (project, track) = Project::new().add_track("waveform");
-                    let (mut control, player) = playback_pair(&project, rate, frames).unwrap();
+                    let (mut control, player) =
+                        playback(&project, rate, frames, PlaybackOptions::default()).unwrap();
                     let length = rate as usize;
                     let pcm_left: Arc<[f32]> = (0..length).map(|i| sample(i, 0)).collect();
                     let pcm_right: Arc<[f32]> = (0..length).map(|i| sample(i, 1)).collect();
@@ -410,15 +413,15 @@ fn in_flight_stop_preserves_heard_audio_and_cancels_unheard_starts_under_rtsan()
         let cancellation = TransportCancellation::default();
         let armed = Arc::new(AtomicBool::new(false));
         let (project, track) = Project::new().add_track("continuing PCM");
-        let (mut control, player) = echode_engine::playback_with_clock(
+        let (mut control, player) = echode_engine::playback(
             &project,
             rate,
             frames,
-            Box::new(Clock {
+            echode_engine::PlaybackOptions::default().clock(Box::new(Clock {
                 sample: 0,
                 armed: Arc::clone(&armed),
                 cancellation: cancellation.clone(),
-            }),
+            })),
         )
         .unwrap();
         control.set_clip_loader(Arc::new(move |_, _| {
@@ -716,7 +719,8 @@ fn interleaved_and_planar_hal_buffers_match_under_rtsan() {
         .unwrap()
         .0;
     let callback = || {
-        let (mut control, player) = playback_pair(&project, 48000, 64).unwrap();
+        let (mut control, player) =
+            playback(&project, 48000, 64, PlaybackOptions::default()).unwrap();
         control.set_clip_loader(Arc::new(move |_, _| Ok(fixture_clips(track.raw(), 48_000))));
         control.replace(&project).unwrap();
         control.command(PlaybackCommand::Play).unwrap();
@@ -814,7 +818,7 @@ fn the_hal_deadline_starts_when_the_callback_is_entered() {
         )
         .unwrap()
         .0;
-    let (mut control, player) = playback_pair(&project, 48_000, 64).unwrap();
+    let (mut control, player) = playback(&project, 48_000, 64, PlaybackOptions::default()).unwrap();
     control.set_clip_loader(Arc::new(move |_, _| Ok(fixture_clips(track.raw(), 48_000))));
     control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();

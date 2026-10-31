@@ -35,7 +35,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - [2026-10-30 構造の横断監査](reviews/2026-10-30-structure-audit.md): SPG-01〜11。
   絡み合いを起こしやすい構造と根本の修正方針・順番。
   SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md)、SPG-02 は [ADR 0203](decisions/0203-document-session.md)、
-  SPG-05 は [ADR 0204](decisions/0204-document-service.md) で対応し、当時の再現は保持する。
+  SPG-05 は [ADR 0204](decisions/0204-document-service.md)、SPG-07 は [ADR 0205](decisions/0205-playback-options.md)、
+  SPG-08 は [ADR 0206](decisions/0206-piano-interaction-state.md) で対応し、当時の再現は保持する。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。
@@ -57,6 +58,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 再生準備の取消・排他グラフ・停止減衰・非ブロック後片付け: [ADR 0097](decisions/0097-cancellable-retained-transport.md)、[ADR 0101](decisions/0101-live-output-discontinuities.md)、[ADR 0102](decisions/0102-exclusive-audio-graph.md)、[ADR 0103](decisions/0103-live-stop-waveform.md)、[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)。
 - 停止中のプラグイン処理・自然な余韻・編集時の全体暗転の解消: [ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)。
 - 実機計測の完走条件: [ADR 0096](decisions/0096-measurement-completion.md)。
+- 再生の生成の 1 つの入口と、開始位置・時計・プラグイン・ワークグループの組合せ: [ADR 0205](decisions/0205-playback-options.md)。
 - 文書ワーカーから独立したサンプルの単発試聴・専用 IOProc: [ADR 0135](decisions/0135-sample-audition.md)。
   有限の先読み・連続 SRC と同じ読込みからの部分波形: [ADR 0151](decisions/0151-streaming-sample-audition.md)。
   表示中の出力保持・音量・自動試聴の切替と手動の開始位置: [ADR 0152](decisions/0152-browser-audition-controls.md)。
@@ -138,6 +140,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   [ADR 0184](decisions/0184-piano-note-duplicate-drag.md)。
 - 選択済みノートの左右端の一括伸縮・共通の最短長と時刻制限・反対端と入力記憶の保持:
   [ADR 0179](decisions/0179-piano-batch-note-resizing.md)。
+- ピアノロールの排他的な操作状態・押下による前の操作の取消・取消の範囲: [ADR 0206](decisions/0206-piano-interaction-state.md)。
 - ピアノロールのトラック切替・再生成で共有する時間・音域・倍率と、別文書での初期化:
   [ADR 0174](decisions/0174-shared-piano-viewport.md)。
 - ピアノロールの自動／固定グリッドと共通吸着幅・表示線・旧押下の取消: [ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)。

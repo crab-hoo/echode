@@ -75,12 +75,12 @@ fn contract_offline_releases_helpers_and_restores_recorded_state_under_rtsan() {
     // These block lengths exercise this fixture only; they are not engine limits.
     for block in [7, 64, 512] {
         let missing_host = host_bin().with_file_name("missing-offline-host");
-        let (mut control, mut audio) = echode_engine::playback_with_plugins(
+        let (mut control, mut audio) = echode_engine::playback(
             &offline,
             48_000,
             block,
-            &missing_host,
-            std::slice::from_ref(&route),
+            echode_engine::PlaybackOptions::default()
+                .plugins(&missing_host, std::slice::from_ref(&route)),
         )
         .expect("an offline device must never load its plugin");
         assert!(control.plugin_event_caps().is_empty());

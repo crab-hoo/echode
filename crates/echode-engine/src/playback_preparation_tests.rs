@@ -4,7 +4,7 @@ use super::*;
 fn asynchronous_preparation_failure_is_reported_once_and_releases_pending_plans() {
     let (base, track) = Project::new().add_track("error fixture");
     // This block size bounds only this failure/lifecycle fixture.
-    let (mut control, mut audio) = playback_pair(&base, 48_000, 64).unwrap();
+    let (mut control, mut audio) = playback(&base, 48_000, 64, PlaybackOptions::default()).unwrap();
     control.prepare_in_background();
     // The workgroup provider rejects before any helper is spawned. The existing
     // executable is only an existent route path, never loaded as a plugin.

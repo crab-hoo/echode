@@ -144,8 +144,13 @@ pub fn render_offline_blocks_with_clips<E>(
         )));
     }
     let scratch = block_frames as usize;
-    let (mut control, mut audio) = crate::playback::playback_pair(project, sample_rate, scratch)
-        .map_err(OfflineError::Playback)?;
+    let (mut control, mut audio) = crate::playback::playback(
+        project,
+        sample_rate,
+        scratch,
+        crate::playback::PlaybackOptions::default(),
+    )
+    .map_err(OfflineError::Playback)?;
     let clips = clips.to_vec();
     control.set_clip_loader(std::sync::Arc::new(move |_, _| Ok(clips.clone())));
     control.replace(project).map_err(OfflineError::Playback)?;

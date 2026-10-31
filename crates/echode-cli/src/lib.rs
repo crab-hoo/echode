@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 use echode_api::serve;
 use echode_audio_io::{load_placed_clips, project_plugin_ids, routes_with_saved_state};
 use echode_engine::{
-    PlaybackCommand, PluginRoute, playback_with_plugins, render_offline_blocks_with_clips,
+    PlaybackCommand, PlaybackOptions, PluginRoute, playback, render_offline_blocks_with_clips,
     render_span_frames,
 };
 use echode_history::DocumentHost;
@@ -299,8 +299,13 @@ fn render_with_plugins(
         return WavFile::create(wav, sample_rate, 0)?.finish();
     }
     let block = (frames as usize).min(PLUGIN_CALLBACK_FRAMES);
-    let (mut control, mut audio) = playback_with_plugins(project, sample_rate, block, host, routes)
-        .map_err(|error| CliError::new(error.to_string()))?;
+    let (mut control, mut audio) = playback(
+        project,
+        sample_rate,
+        block,
+        PlaybackOptions::default().plugins(host, routes),
+    )
+    .map_err(|error| CliError::new(error.to_string()))?;
     let tail = if include_tail {
         control.tail_samples()
     } else {

@@ -142,6 +142,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
     （[ADR 0187](decisions/0187-piano-independent-time-guides.md)）。
     複数トラックの同時編集・試聴・ドラム入力は残り、実画面と VoiceOver はユーザー確認待ちである。
     選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md) を参照する。
+    進行中の操作は 1 つの状態にまとめ、押下は解放の届かなかった前の操作を確定せずに終える（[ADR 0206](decisions/0206-piano-interaction-state.md)、SPG-08）。
+    解放が届かない製品の経路は未確認で、実画面はユーザー確認待ちである。
 
 ## 利用時に残る制約
 

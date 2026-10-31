@@ -118,7 +118,7 @@ fn stopped_replacements_load_new_media_off_the_control_turn() {
     let (base, track) = Project::new().add_track("audio");
     let placed = with_audio(&base, track, 0x51);
     // The block size bounds this fixture only.
-    let (mut control, mut audio) = playback_pair(&base, 48_000, 64).unwrap();
+    let (mut control, mut audio) = playback(&base, 48_000, 64, PlaybackOptions::default()).unwrap();
     let gate = Arc::new(Gate::default());
     control.set_clip_loader(gated_loader(Arc::clone(&gate)));
     control.replace(&base).unwrap();
@@ -166,7 +166,7 @@ fn stopped_replacements_load_new_media_off_the_control_turn() {
 #[test]
 fn a_running_replacement_loads_its_media_on_the_control_turn() {
     let (base, track) = Project::new().add_track("audio");
-    let (mut control, _audio) = playback_pair(&base, 48_000, 64).unwrap();
+    let (mut control, _audio) = playback(&base, 48_000, 64, PlaybackOptions::default()).unwrap();
     let gate = Arc::new(Gate::default());
     control.set_clip_loader(gated_loader(Arc::clone(&gate)));
     control.replace(&base).unwrap();
@@ -179,7 +179,7 @@ fn a_running_replacement_loads_its_media_on_the_control_turn() {
 #[test]
 fn a_failed_background_media_load_is_reported_once_and_releases_the_plan() {
     let (base, track) = Project::new().add_track("audio");
-    let (mut control, mut audio) = playback_pair(&base, 48_000, 64).unwrap();
+    let (mut control, mut audio) = playback(&base, 48_000, 64, PlaybackOptions::default()).unwrap();
     let gate = Arc::new(Gate::default());
     control.set_clip_loader(gated_loader(Arc::clone(&gate)));
     control.replace(&base).unwrap();

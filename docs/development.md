@@ -84,7 +84,7 @@
 | アクション・編集セッション | `crates/echode-actions` | `action.rs`（`Action` / 登録簿）、`session.rs`（`Session` の Undo / Redo 履歴） |
 | Git 履歴・パッケージ・ピーク | `crates/echode-history` | `host.rs`（`DocumentHost`・ジャーナル・復旧）、`store.rs`（CAS）、`peaks.rs`（ピークキャッシュ） |
 | リアルタイム検査 | `crates/echode-realtime` | `alloc.rs`（RT 確保禁止ガード）、`event.rs`（固定容量イベント列）、`ring.rs`（SPSC） |
-| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（実機計測） |
+| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器の入口 `playback` と `PlaybackOptions`・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（実機計測） |
 | CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`opening.rs`（出力準備の別スレッド・機器なしの検査用出力）、`session.rs`（文書の音声セッション）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止） |
 | 共有メモリ・IPC | `crates/echode-sandbox` | `region.rs`（共有メモリ・`arm_abort_notice`）、`session.rs`（`PluginControl`）、`workgroup.rs`、`wire.rs` |
 | プラグインヘルパー | `crates/echode-plugin-host` | `scan.rs`（バンドル走査）、`catalog.rs`（キャッシュ）、`threads.rs` / `events.rs`（CLAP 処理・リセット）、`awake.rs` |
@@ -305,8 +305,12 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 回帰は `PlayheadFollowTests.swift`（[ADR 0159](decisions/0159-playhead-follow.md)）。
 
 単一ノートのドラッグの吸着・Shift と最短長は `PianoGeometry.swift` の `PianoGesture.preview`、
-入力・解放時の計算と単一送信は `PianoRollView.swift` の `notePreview`・`mouseUp` に置く。
+解放時の計算と単一送信は `PianoRollView.swift` の `mouseUp` に置く。
 回帰は `PianoDragTests.swift`（[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
+
+ピアノロールの進行中の操作は `PianoInteraction.swift` の列挙型が 1 つだけ持ち、ドラッグの遷移と取消の範囲もここに置く。
+新しい操作は case を足し、`PianoGridView` の `mouseDown` と `mouseUp` の `switch` へ加える。
+回帰は `PianoInteractionTests.swift`（[ADR 0206](decisions/0206-piano-interaction-state.md)）。
 
 自動／固定グリッドは `PianoGrid.swift`（音価と実効幅・ネイティブ操作子）と `PianoCamera.gridMode` に置く。
 `PianoGridView.setGridMode` が押下の取消と所有確認、`PianoFrame.gridTicks` が表示幅内の縦線を扱う。

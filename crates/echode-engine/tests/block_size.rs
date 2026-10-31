@@ -20,7 +20,7 @@ const VOICES_PER_TRACK: usize = 8;
 
 #[test]
 fn offline_devices_keep_stereo_clips_independent_of_block_size_under_rtsan() {
-    use echode_engine::{LoadedClip, PlaybackCommand, PluginRoute, playback_with_plugins};
+    use echode_engine::{LoadedClip, PlaybackCommand, PlaybackOptions, PluginRoute, playback};
     let (project, track) = Project::new().add_track("offline instrument");
     let device = Id::generate();
     let project = project
@@ -51,12 +51,14 @@ fn offline_devices_keep_stereo_clips_independent_of_block_size_under_rtsan() {
     for rate in [48_000, 96_000] {
         let mut reference = None;
         for block in BLOCKS {
-            let (mut control, mut audio) = playback_with_plugins(
+            let (mut control, mut audio) = playback(
                 &project,
                 rate,
                 block as usize,
-                std::path::Path::new("/missing-offline-host"),
-                std::slice::from_ref(&route),
+                PlaybackOptions::default().plugins(
+                    std::path::Path::new("/missing-offline-host"),
+                    std::slice::from_ref(&route),
+                ),
             )
             .unwrap();
             let source = Arc::clone(&input);
@@ -94,7 +96,7 @@ fn offline_devices_keep_stereo_clips_independent_of_block_size_under_rtsan() {
 }
 #[test]
 fn contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan() {
-    use echode_engine::{LoadedClip, PlaybackCommand, playback_pair};
+    use echode_engine::{LoadedClip, PlaybackCommand, PlaybackOptions, playback};
     let (project, track) = Project::new().add_track("loop source");
     // The duration and loop bounds exercise this regression only, not engine limits.
     let source: Arc<[f32]> = (0..4096).map(|index| index as f32 / 8192.0).collect();
@@ -104,7 +106,7 @@ fn contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan() {
             let mut reference = None;
             for block in BLOCKS {
                 let (mut control, mut audio) =
-                    playback_pair(&project, rate, block as usize).unwrap();
+                    playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
                 let samples = Arc::clone(&source);
                 control.set_clip_loader(Arc::new(move |_, _| {
                     Ok(vec![LoadedClip {
@@ -218,7 +220,7 @@ fn bypass_copies_each_plane_without_partition_or_gain_changes() {
 
 #[test]
 fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
-    use echode_engine::{CachedTrack, PlaybackCommand, playback_pair};
+    use echode_engine::{CachedTrack, PlaybackCommand, PlaybackOptions, playback};
     use echode_model::ParamKey;
     let (live, track) = Project::new().add_track("source port");
     let live = live.insert_note(track, note(0.0, 4.0, 60)).unwrap().0;
@@ -235,7 +237,8 @@ fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
     for rate in [48_000, 96_000] {
         let mut reference = None;
         for block in BLOCKS {
-            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
             control.set_routes(std::path::Path::new("/missing/fixture/helper"), &[]);
             // These planes cover this fixture only; a provider can prepare any
             // number of tracks or any duration outside the callback.
@@ -332,7 +335,7 @@ fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
 
 #[test]
 fn live_fader_preview_switches_only_previous_and_next_track_under_rtsan() {
-    use echode_engine::{PlaybackCommand, playback_pair};
+    use echode_engine::{PlaybackCommand, PlaybackOptions, playback};
     let (project, a) = Project::new().add_track("first");
     let (project, b) = project.add_track("second");
     let (project, c) = project.add_track("unrelated");
@@ -340,7 +343,8 @@ fn live_fader_preview_switches_only_previous_and_next_track_under_rtsan() {
     for rate in [48_000, 96_000] {
         let mut reference = None;
         for block in BLOCKS {
-            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
             // These planes cover only this four-phase fixture's timeline.
             let clips: Vec<_> = tracks
                 .iter()
@@ -387,7 +391,9 @@ fn live_fader_preview_switches_only_previous_and_next_track_under_rtsan() {
 
 #[test]
 fn contract_live_fader_preview_and_peak_taps_under_rtsan() {
-    use echode_engine::{PlaybackAudio, PlaybackCommand, PlaybackControl, playback_pair};
+    use echode_engine::{
+        PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions, playback,
+    };
     use echode_model::ParamKey;
     fn until(
         audio: &mut PlaybackAudio,
@@ -427,7 +433,8 @@ fn contract_live_fader_preview_and_peak_taps_under_rtsan() {
                 .unwrap()
                 .set_parameter(parameter(ParamKey::Pan), 1.0)
                 .unwrap();
-            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
             // These samples cover this fixture's timeline only.
             let clip = stereo_clip(track, vec![0.25; 10_000], vec![-0.5; 10_000]);
             control.set_clip_loader(Arc::new(move |_, _| Ok(vec![clip.clone()])));
@@ -531,7 +538,13 @@ fn clip_player(
     block: usize,
     clips: Vec<echode_engine::LoadedClip>,
 ) -> (echode_engine::PlaybackControl, echode_engine::PlaybackAudio) {
-    let (mut control, audio) = echode_engine::playback_pair(project, RATE, block).unwrap();
+    let (mut control, audio) = echode_engine::playback(
+        project,
+        RATE,
+        block,
+        echode_engine::PlaybackOptions::default(),
+    )
+    .unwrap();
     control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
     control.replace(project).unwrap();
     control
@@ -600,8 +613,13 @@ fn product_audio_loop_fades_follow_project_positions_across_blocks() {
     let clips = vec![stereo_clip(track, vec![0.25; 2048], vec![-0.5; 2048])];
     let mut reference = None;
     for block in BLOCKS {
-        let (mut control, mut audio) =
-            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        let (mut control, mut audio) = echode_engine::playback(
+            &project,
+            RATE,
+            block as usize,
+            echode_engine::PlaybackOptions::default(),
+        )
+        .unwrap();
         let clips = clips.clone();
         control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
         control
@@ -733,8 +751,13 @@ fn short_audio_loops_keep_an_interior_and_never_depend_on_blocks() {
     for length in 1..=8 {
         let mut reference = None;
         for block in BLOCKS {
-            let (mut control, mut audio) =
-                echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+            let (mut control, mut audio) = echode_engine::playback(
+                &project,
+                RATE,
+                block as usize,
+                echode_engine::PlaybackOptions::default(),
+            )
+            .unwrap();
             control.set_clip_loader(Arc::new(move |_, _| {
                 Ok(vec![stereo_clip(track, vec![0.5; 32], vec![-0.5; 32])])
             }));
@@ -983,7 +1006,13 @@ fn a_stop_returning_to_the_start_replays_the_same_audio_for_every_block_size() {
         output
     };
     let render = |block: usize| {
-        let (mut control, mut audio) = echode_engine::playback_pair(&project, RATE, block).unwrap();
+        let (mut control, mut audio) = echode_engine::playback(
+            &project,
+            RATE,
+            block,
+            echode_engine::PlaybackOptions::default(),
+        )
+        .unwrap();
         let samples = Arc::clone(&clip);
         control.set_clip_loader(Arc::new(move |_, _| {
             Ok(vec![LoadedClip {
@@ -1033,9 +1062,21 @@ fn an_initial_position_matches_a_queued_locate_for_every_block_size() {
     let frames = 2_048;
     let render = |block: usize, initial: bool| {
         let (mut control, mut audio) = if initial {
-            echode_engine::playback_pair_at(&project, RATE, block, sample).unwrap()
+            echode_engine::playback(
+                &project,
+                RATE,
+                block,
+                echode_engine::PlaybackOptions::default().at(sample),
+            )
+            .unwrap()
         } else {
-            let (mut control, audio) = echode_engine::playback_pair(&project, RATE, block).unwrap();
+            let (mut control, audio) = echode_engine::playback(
+                &project,
+                RATE,
+                block,
+                echode_engine::PlaybackOptions::default(),
+            )
+            .unwrap();
             control
                 .command(echode_engine::PlaybackCommand::Locate(sample))
                 .unwrap();
@@ -1089,8 +1130,13 @@ fn product_playback_matches_offline_export_for_every_block_size() {
     let mut expected = vec![0.0; frames as usize * 2];
     echode_engine::render_offline(&project, RATE, frames, &mut expected).unwrap();
     for block in BLOCKS {
-        let (mut control, mut audio) =
-            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        let (mut control, mut audio) = echode_engine::playback(
+            &project,
+            RATE,
+            block as usize,
+            echode_engine::PlaybackOptions::default(),
+        )
+        .unwrap();
         control
             .command(echode_engine::PlaybackCommand::Play)
             .unwrap();
@@ -1118,8 +1164,13 @@ fn product_loop_and_metronome_match_across_block_sizes() {
     let frames = 48_000u32;
     let mut reference: Option<Vec<f32>> = None;
     for block in BLOCKS {
-        let (mut control, mut audio) =
-            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        let (mut control, mut audio) = echode_engine::playback(
+            &project,
+            RATE,
+            block as usize,
+            echode_engine::PlaybackOptions::default(),
+        )
+        .unwrap();
         control
             .command(echode_engine::PlaybackCommand::SetLoop { start: 0, end })
             .unwrap();
@@ -1169,8 +1220,13 @@ fn product_audio_clips_match_across_block_sizes() {
     let frames = 200u32;
     let mut reference: Option<Vec<f32>> = None;
     for block in BLOCKS {
-        let (mut control, mut audio) =
-            echode_engine::playback_pair(&project, RATE, block as usize).unwrap();
+        let (mut control, mut audio) = echode_engine::playback(
+            &project,
+            RATE,
+            block as usize,
+            echode_engine::PlaybackOptions::default(),
+        )
+        .unwrap();
         let samples = Arc::clone(&samples);
         control.set_clip_loader(Arc::new(move |_project, _rate| {
             Ok(vec![echode_engine::LoadedClip {
@@ -1524,12 +1580,13 @@ fn live_transport_declick_is_independent_of_blocks_and_leaves_steady_audio_uncha
 
 #[test]
 fn stopped_callbacks_do_not_play_sources_or_advance_the_loop_under_rtsan() {
-    use echode_engine::{LoadedClip, PlaybackCommand, playback_pair};
+    use echode_engine::{LoadedClip, PlaybackCommand, PlaybackOptions, playback};
     // Fixture-only loop, placement and callback sizes; no host limit.
     for block in BLOCKS {
         let (project, track) = Project::new().add_track("stopped sources");
         let frames = block as usize;
-        let (mut control, mut audio) = playback_pair(&project, RATE, frames).unwrap();
+        let (mut control, mut audio) =
+            playback(&project, RATE, frames, PlaybackOptions::default()).unwrap();
         control.set_clip_loader(Arc::new(move |_, _| {
             Ok(vec![LoadedClip {
                 track: track.raw(),
@@ -1585,7 +1642,7 @@ fn stopped_callbacks_do_not_play_sources_or_advance_the_loop_under_rtsan() {
 
 #[test]
 fn live_stop_fades_an_existing_metronome_click_without_starting_another_under_rtsan() {
-    use echode_engine::{PlaybackCommand, playback_pair};
+    use echode_engine::{PlaybackCommand, PlaybackOptions, playback};
     let project = Project::new();
     let fade = RATE as usize / 200;
     let stop = 64usize; // Inside one click, only for this regression.
@@ -1606,7 +1663,8 @@ fn live_stop_fades_an_existing_metronome_click_without_starting_another_under_rt
     )
     .unwrap();
     for block in BLOCKS {
-        let (mut control, mut audio) = playback_pair(&project, RATE, block as usize).unwrap();
+        let (mut control, mut audio) =
+            playback(&project, RATE, block as usize, PlaybackOptions::default()).unwrap();
         control
             .command(PlaybackCommand::SetMetronome(true))
             .unwrap();
@@ -1649,7 +1707,7 @@ fn live_stop_fades_an_existing_metronome_click_without_starting_another_under_rt
 
 #[test]
 fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
-    use echode_engine::{OutputDeclick, PlaybackCommand, playback_pair};
+    use echode_engine::{OutputDeclick, PlaybackCommand, PlaybackOptions, playback};
     for rate in [48_000, 96_000] {
         let fade = (rate / 200) as usize;
         let stop = rate as usize / 50;
@@ -1659,7 +1717,8 @@ fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
         let mut reference = None;
         for block in BLOCKS {
             let (project, track) = Project::new().add_track("waveform");
-            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
             let clip = Arc::clone(&pcm);
             control.set_clip_loader(Arc::new(move |_, _| {
                 Ok(vec![echode_engine::LoadedClip {
@@ -1720,11 +1779,16 @@ fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
 
 #[test]
 fn live_stop_does_not_start_future_clips_or_metronome_beats() {
-    use echode_engine::{PlaybackCommand, playback_pair_at};
+    use echode_engine::{PlaybackCommand, PlaybackOptions, playback};
     let frames = 64; // Fixture-only buffer size.
     let (project, track) = Project::new().add_track("future audio");
-    let (mut control, mut audio) =
-        playback_pair_at(&project, RATE, frames, RATE as i64 / 2 - frames as i64).unwrap();
+    let (mut control, mut audio) = playback(
+        &project,
+        RATE,
+        frames,
+        PlaybackOptions::default().at(RATE as i64 / 2 - frames as i64),
+    )
+    .unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {
         Ok(vec![echode_engine::LoadedClip {
             track: track.raw(),
@@ -1764,7 +1828,7 @@ fn live_stop_does_not_start_future_clips_or_metronome_beats() {
 
 #[test]
 fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
-    use echode_engine::{OutputDeclick, PlaybackCommand, playback_pair};
+    use echode_engine::{OutputDeclick, PlaybackCommand, PlaybackOptions, playback};
     for rate in [48_000, 96_000] {
         let fade = (rate / 200) as usize;
         let end = fade * 8;
@@ -1773,7 +1837,7 @@ fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
             for block in BLOCKS {
                 let (project, track) = Project::new().add_track("loop seam");
                 let (mut control, mut audio) =
-                    playback_pair(&project, rate, block as usize).unwrap();
+                    playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
                 // This fixture's clip length covers the loop and the stop tail.
                 control.set_clip_loader(Arc::new(move |_, _| {
                     Ok(vec![echode_engine::LoadedClip {
@@ -1859,11 +1923,12 @@ fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
 
 #[test]
 fn cached_stop_does_not_start_a_later_region_or_pass_the_loop_end() {
-    use echode_engine::{CachedTrack, PlaybackCommand, playback_pair};
+    use echode_engine::{CachedTrack, PlaybackCommand, PlaybackOptions, playback};
     for rate in [48_000u32, 96_000] {
         for block in BLOCKS {
             let (project, track) = Project::new().add_track("late cache");
-            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
             let late = CachedTrack {
                 track: track.raw(),
                 sample_rate: rate,
@@ -1913,7 +1978,8 @@ fn cached_stop_does_not_start_a_later_region_or_pass_the_loop_end() {
             }
 
             let (project, track) = Project::new().add_track("loop cache");
-            let (mut control, mut audio) = playback_pair(&project, rate, block as usize).unwrap();
+            let (mut control, mut audio) =
+                playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
             let mut inside = vec![0.4f32; 800];
             inside[200..].fill(0.9);
             let cache = CachedTrack {

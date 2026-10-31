@@ -135,7 +135,13 @@ fn offline_clips_match_playback() {
         Ok::<(), PlaybackError>(())
     })
     .unwrap();
-    let (mut control, mut playback) = crate::playback::playback_pair(&project, 48_000, 64).unwrap();
+    let (mut control, mut playback) = crate::playback::playback(
+        &project,
+        48_000,
+        64,
+        crate::playback::PlaybackOptions::default(),
+    )
+    .unwrap();
     let samples = Arc::clone(&samples);
     let track_raw = project.tracks()[0].id.raw();
     control.set_clip_loader(Arc::new(move |_project, _rate| {

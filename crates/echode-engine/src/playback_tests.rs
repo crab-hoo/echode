@@ -6,6 +6,54 @@ use std::time::Instant;
 mod background;
 #[path = "playback_media_tests.rs"]
 mod media_loading;
+#[test]
+fn every_option_rejects_a_negative_start_before_opening_helpers() {
+    let project = Project::new();
+    let cases = [
+        PlaybackOptions::default().at(-1),
+        PlaybackOptions::default().clock(Box::new(InternalClock { position: -1 })),
+        PlaybackOptions::default()
+            .plugins(std::path::Path::new("/unused"), &[])
+            .at(-1),
+    ];
+    for options in cases {
+        assert!(matches!(
+            playback(&project, 48_000, 64, options),
+            Err(PlaybackError::Time)
+        ));
+    }
+}
+
+#[test]
+fn start_clock_and_plugins_combine_and_the_last_start_choice_wins() {
+    let project = Project::new();
+    let host = std::path::Path::new("/unused");
+    let (control, _audio) = playback(
+        &project,
+        48_000,
+        64,
+        PlaybackOptions::default()
+            .at(10)
+            .plugins(host, &[])
+            .clock(Box::new(InternalClock { position: 96 })),
+    )
+    .unwrap();
+    assert_eq!(control.status().sample, 96);
+    assert_eq!(control.host_bin, host);
+
+    let (control, _audio) = playback(
+        &project,
+        48_000,
+        64,
+        PlaybackOptions::default()
+            .clock(Box::new(InternalClock { position: 96 }))
+            .at(10),
+    )
+    .unwrap();
+    assert_eq!(control.status().sample, 10);
+    assert!(control.host_bin.as_os_str().is_empty());
+}
+
 fn placed(track: u128, start: i64, value: f32, frames: usize) -> LoadedClip {
     LoadedClip {
         track,
@@ -28,7 +76,8 @@ fn stereo_clips_loop_and_fader_replacements_run_under_rtsan() {
         .id;
     let quiet = project.set_parameter(gain, 0.0).unwrap();
     let block = 64; // Scratch for this test, not a playback limit.
-    let (mut control, mut audio) = playback_pair(&project, 48_000, block).unwrap();
+    let (mut control, mut audio) =
+        playback(&project, 48_000, block, PlaybackOptions::default()).unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {
         let mut clip = placed(track.raw(), 0, 0.25, 2048);
         clip.right = Some(Arc::from(vec![-0.25; 2048]));
@@ -64,7 +113,8 @@ fn stereo_clips_loop_and_fader_replacements_run_under_rtsan() {
 fn an_unheard_start_cancelled_after_a_stop_returned_keeps_the_start() {
     let (project, track) = Project::new().add_track("audio");
     let block = 64; // Scratch for this test, not a playback limit.
-    let (mut control, mut audio) = playback_pair(&project, 48_000, block).unwrap();
+    let (mut control, mut audio) =
+        playback(&project, 48_000, block, PlaybackOptions::default()).unwrap();
     control.set_clip_loader(Arc::new(move |_, _| {
         Ok(vec![placed(track.raw(), 0, 0.25, 96_000)])
     }));
@@ -90,7 +140,8 @@ fn an_unheard_start_cancelled_after_a_stop_returned_keeps_the_start() {
 
 #[test]
 fn state_polling_does_not_change_the_current_plan() {
-    let (mut control, mut audio) = playback_pair(&Project::new(), 48000, 64).unwrap();
+    let (mut control, mut audio) =
+        playback(&Project::new(), 48000, 64, PlaybackOptions::default()).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = [0.0; 64];
     let mut right = left;
@@ -106,7 +157,8 @@ fn state_polling_does_not_change_the_current_plan() {
 fn each_callback_publishes_each_track_meter_once() {
     let (project, track) = Project::new().add_track("one meter store");
     let block = 128; // Scratch for this test, not a playback limit.
-    let (mut control, mut audio) = playback_pair(&project, 48_000, block).unwrap();
+    let (mut control, mut audio) =
+        playback(&project, 48_000, block, PlaybackOptions::default()).unwrap();
     let clip = placed(track.raw(), 0, 0.5, 4_096);
     control.set_clip_loader(Arc::new(move |_, _| Ok(vec![clip.clone()])));
     control.replace(&project).unwrap();
@@ -140,7 +192,8 @@ fn callback_block(mut clips: Vec<LoadedClip>) -> Vec<f32> {
     for clip in &mut clips {
         clip.track = track;
     }
-    let (mut control, mut audio) = playback_pair(&project, 48_000, 256).unwrap();
+    let (mut control, mut audio) =
+        playback(&project, 48_000, 256, PlaybackOptions::default()).unwrap();
     control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
     control.replace(&project).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
@@ -192,7 +245,8 @@ fn future_clips_do_not_extend_the_callback() {
         for clip in &mut clips {
             clip.track = track;
         }
-        let (mut control, mut audio) = playback_pair(&project, 48_000, 256).unwrap();
+        let (mut control, mut audio) =
+            playback(&project, 48_000, 256, PlaybackOptions::default()).unwrap();
         control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
         control.replace(&project).unwrap();
         control.command(PlaybackCommand::Play).unwrap();
@@ -218,7 +272,8 @@ fn future_clips_do_not_extend_the_callback() {
 #[test]
 fn ten_thousand_product_replacements_and_transport_commands_run_under_rtsan() {
     let project = Project::new().add_track("silent").0;
-    let (mut control, mut audio) = playback_pair(&project, 48000, 64).unwrap();
+    let (mut control, mut audio) =
+        playback(&project, 48000, 64, PlaybackOptions::default()).unwrap();
     let (mut left, mut right) = ([0.0; 64], [0.0; 64]);
     for index in 0..10000 {
         control.replace(&project).unwrap();
@@ -283,7 +338,8 @@ fn audit_rea01_a_loop_free_plan_does_not_scale_events_with_the_block() {
         let project = project_with_notes(notes);
         let mut counts = Vec::new();
         for frames in [1usize, 64, 128, 512] {
-            let (control, _audio) = playback_pair(&project, 48_000, frames).unwrap();
+            let (control, _audio) =
+                playback(&project, 48_000, frames, PlaybackOptions::default()).unwrap();
             counts.push(control.reserved_events());
         }
         assert!(
@@ -310,7 +366,8 @@ fn audit_rea01_a_loop_free_plan_does_not_scale_events_with_the_block() {
         )
         .unwrap()
         .0;
-    let (mut control, _audio) = playback_pair(&project, 48_000, 512).unwrap();
+    let (mut control, _audio) =
+        playback(&project, 48_000, 512, PlaybackOptions::default()).unwrap();
     let open = control.reserved_events();
     control
         .command(PlaybackCommand::SetLoop { start: 0, end: 1 })
@@ -325,11 +382,11 @@ fn audit_rea01_a_loop_free_plan_does_not_scale_events_with_the_block() {
 fn many_notes_reserve_events_without_the_block_length() {
     for notes in [10_000usize, 100_000] {
         let project = project_with_notes(notes);
-        let small = playback_pair(&project, 48_000, 1)
+        let small = playback(&project, 48_000, 1, PlaybackOptions::default())
             .unwrap()
             .0
             .reserved_events();
-        let large = playback_pair(&project, 48_000, 512)
+        let large = playback(&project, 48_000, 512, PlaybackOptions::default())
             .unwrap()
             .0
             .reserved_events();
@@ -356,7 +413,8 @@ fn audit_pro06_a_hundred_sample_loop_keeps_playing_in_a_large_block() {
         .unwrap()
         .0;
     for frames in [64usize, 512] {
-        let (mut control, mut audio) = playback_pair(&project, 48_000, frames).unwrap();
+        let (mut control, mut audio) =
+            playback(&project, 48_000, frames, PlaybackOptions::default()).unwrap();
         control.set_clip_loader(Arc::new(move |_, _| {
             Ok(vec![placed(track.raw(), 0, 0.25, 100)])
         }));
@@ -381,7 +439,8 @@ fn audit_pro06_a_hundred_sample_loop_keeps_playing_in_a_large_block() {
 fn a_short_loop_wraps_and_the_metronome_clicks_on_the_downbeat() {
     use echode_model::{TICKS_PER_QUARTER, Tick};
     let project = Project::new();
-    let (mut control, mut audio) = playback_pair(&project, 48_000, 64).unwrap();
+    let (mut control, mut audio) =
+        playback(&project, 48_000, 64, PlaybackOptions::default()).unwrap();
     let quarter =
         crate::tick_to_sample(Tick::new(TICKS_PER_QUARTER), project.tempo(), 48_000).unwrap();
     control
@@ -437,8 +496,13 @@ fn audit_aud04_replacing_a_host_graph_and_sorting_events_does_not_allocate() {
     assert_eq!(at_forty, vec![(true, 0.0), (false, 0.2), (false, 0.8)]);
 
     let project = Project::new().add_track("a").0;
-    let (mut control, mut audio) =
-        playback_with_plugins(&project, 48_000, 64, std::path::Path::new("/unused"), &[]).unwrap();
+    let (mut control, mut audio) = playback(
+        &project,
+        48_000,
+        64,
+        PlaybackOptions::default().plugins(std::path::Path::new("/unused"), &[]),
+    )
+    .unwrap();
     control.command(PlaybackCommand::Play).unwrap();
     let (mut left, mut right) = ([0.0; 64], [0.0; 64]);
     audio.render(&mut left, &mut right);

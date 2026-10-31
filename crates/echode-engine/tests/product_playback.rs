@@ -1,4 +1,4 @@
-use echode_engine::{PlaybackCommand, playback_pair};
+use echode_engine::{PlaybackCommand, PlaybackOptions, playback};
 use echode_model::{NoteDraft, Project, Tick};
 
 fn score() -> Project {
@@ -21,7 +21,8 @@ fn score() -> Project {
 fn notes_without_an_instrument_do_not_create_an_implicit_synth() {
     let project = score();
     // These buffers cover this device-free regression only.
-    let (mut control, mut audio) = playback_pair(&project, 48_000, 128).unwrap();
+    let (mut control, mut audio) =
+        playback(&project, 48_000, 128, PlaybackOptions::default()).unwrap();
     control.command(PlaybackCommand::Play).unwrap();
     let (mut left, mut right) = ([0.0; 128], [0.0; 128]);
     audio.render(&mut left, &mut right);

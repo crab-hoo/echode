@@ -1,5 +1,5 @@
 //! Bundled Sine Pad uses the same model and isolated CLAP graph as other instruments.
-use echode_engine::{PlaybackCommand, PluginRoute, playback_with_plugins};
+use echode_engine::{PlaybackCommand, PlaybackOptions, PluginRoute, playback};
 use echode_model::{Id, NoteDraft, Project, Tick};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -53,8 +53,13 @@ fn contract_sine_pad_is_an_explicit_isolated_instrument_under_rtsan() {
                 .any(|feature| feature == "instrument")
     }));
     let (project, _track, device) = score();
-    let (mut control, mut audio) =
-        playback_with_plugins(&project, 48_000, 128, &host, &[route]).unwrap();
+    let (mut control, mut audio) = playback(
+        &project,
+        48_000,
+        128,
+        PlaybackOptions::default().plugins(&host, &[route]),
+    )
+    .unwrap();
     control.command(PlaybackCommand::Play).unwrap();
     // These buffers and deadlines cover this deterministic, device-free regression.
     let (mut left, mut right) = ([0.0; 128], [0.0; 128]);
@@ -93,12 +98,14 @@ fn playback_pair(
     (echode_engine::PlaybackControl, echode_engine::PlaybackAudio),
     echode_engine::PlaybackError,
 > {
-    playback_with_plugins(
+    playback(
         project,
         rate,
         frames,
-        &PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host")),
-        &[route()],
+        PlaybackOptions::default().plugins(
+            &PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host")),
+            &[route()],
+        ),
     )
 }
 fn render_content(audio: &mut echode_engine::PlaybackAudio, left: &mut [f32], right: &mut [f32]) {

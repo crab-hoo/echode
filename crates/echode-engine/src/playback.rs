@@ -22,7 +22,9 @@ use echode_realtime::{Cursor, Event, Plan, Span, TempoIndex, sort_events};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::mix::{FaderState, Signal};
-use crate::plugins::{ChainDevice, HostGraph, PluginRoute, TrackChain, collect_deadline};
+use crate::plugins::{
+    ChainDevice, HostGraph, PluginRoute, PluginWorkgroup, TrackChain, collect_deadline,
+};
 use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
 use crate::{PlaybackError, PlaybackIds, PlayedSpan, TrackFader};
@@ -1202,88 +1204,97 @@ pub struct PlaybackAudio {
     status: Arc<Status>,
 }
 
-pub fn playback_pair(
-    project: &Project,
-    rate: u32,
-    frames: usize,
-) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
-    playback_with_clock(project, rate, frames, Box::<InternalClock>::default())
+/// How [`playback`] starts. Every choice combines with the others, so a new
+/// choice extends this type instead of adding another constructor.
+pub struct PlaybackOptions<'a> {
+    clock: Box<dyn ClockSource>,
+    plugins: Option<PluginSetup<'a>>,
+    workgroup: Option<PluginWorkgroup>,
 }
 
-/// Prepare both the clock and published position before a device can call back.
-pub fn playback_pair_at(
+struct PluginSetup<'a> {
+    host_bin: &'a std::path::Path,
+    routes: &'a [PluginRoute],
+}
+
+impl Default for PlaybackOptions<'_> {
+    /// Stopped at sample zero on the internal clock, without helpers.
+    fn default() -> Self {
+        Self {
+            clock: Box::<InternalClock>::default(),
+            plugins: None,
+            workgroup: None,
+        }
+    }
+}
+
+impl<'a> PlaybackOptions<'a> {
+    /// Prepares both the clock and the published position before a device can
+    /// call back. Replaces any earlier [`Self::clock`].
+    pub fn at(mut self, sample: i64) -> Self {
+        self.clock = Box::new(InternalClock { position: sample });
+        self
+    }
+
+    /// Replaces the internal clock and any earlier [`Self::at`].
+    pub fn clock(mut self, clock: Box<dyn ClockSource>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Starts a helper for each resolved CLAP device. Unresolved devices do not
+    /// create a substitute instrument.
+    pub fn plugins(mut self, host_bin: &'a std::path::Path, routes: &'a [PluginRoute]) -> Self {
+        self.plugins = Some(PluginSetup { host_bin, routes });
+        self
+    }
+
+    /// The selected output's retained workgroup, kept for this transport's
+    /// lifetime so helpers started after opening join it too.
+    pub fn workgroup(mut self, workgroup: PluginWorkgroup) -> Self {
+        self.workgroup = Some(workgroup);
+        self
+    }
+}
+
+/// Prepares both sides of a transport. Nothing is shared with a device until
+/// the caller hands over the returned audio side.
+pub fn playback(
     project: &Project,
     rate: u32,
     frames: usize,
-    sample: i64,
+    options: PlaybackOptions<'_>,
 ) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
-    if sample < 0 {
+    let PlaybackOptions {
+        clock,
+        plugins,
+        workgroup,
+    } = options;
+    if clock.position() < 0 {
         return Err(PlaybackError::Time);
     }
-    playback_with_clock(
-        project,
-        rate,
-        frames,
-        Box::new(InternalClock { position: sample }),
-    )
-}
-
-/// Same transport as [`playback_pair`], and a helper for each resolved CLAP
-/// device. Unresolved devices do not create a substitute instrument.
-pub fn playback_with_plugins(
-    project: &Project,
-    rate: u32,
-    frames: usize,
-    host_bin: &std::path::Path,
-    routes: &[PluginRoute],
-) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
-    playback_with_plugins_at(project, rate, frames, host_bin, routes, 0)
-}
-
-/// Hosted playback with an initial position already visible to status readers.
-pub fn playback_with_plugins_at(
-    project: &Project,
-    rate: u32,
-    frames: usize,
-    host_bin: &std::path::Path,
-    routes: &[PluginRoute],
-    sample: i64,
-) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
-    let (mut control, mut audio) = playback_pair_at(project, rate, frames, sample)?;
-    let chain = chain_of(project, &audio.current);
-    control.hosts = HostGraph::open(host_bin, routes, &chain, frames, rate, None)?;
-    control.save_controls = control.hosts.save_controls();
-    audio.hosts = Box::new(control.hosts.audio_snapshot());
-    control.chain = chain;
-    control.routes = routes.to_vec();
-    control.host_bin = host_bin.to_path_buf();
+    let (mut control, mut audio) = transport_pair(project, rate, frames, clock)?;
+    control.workgroup = workgroup;
+    if let Some(PluginSetup { host_bin, routes }) = plugins {
+        let chain = chain_of(project, &audio.current);
+        control.hosts = HostGraph::open(
+            host_bin,
+            routes,
+            &chain,
+            frames,
+            rate,
+            control.workgroup.as_ref(),
+        )?;
+        control.save_controls = control.hosts.save_controls();
+        audio.hosts = Box::new(control.hosts.audio_snapshot());
+        control.chain = chain;
+        control.routes = routes.to_vec();
+        control.host_bin = host_bin.to_path_buf();
+    }
     Ok((control, audio))
 }
 
-/// Live hosting with the selected output's retained workgroup.
-#[allow(clippy::too_many_arguments)]
-pub fn playback_with_plugins_in_workgroup_at(
-    project: &Project,
-    rate: u32,
-    frames: usize,
-    host_bin: &std::path::Path,
-    routes: &[PluginRoute],
-    sample: i64,
-    workgroup: crate::plugins::PluginWorkgroup,
-) -> Result<(PlaybackControl, PlaybackAudio), PlaybackError> {
-    let (mut control, mut audio) = playback_pair_at(project, rate, frames, sample)?;
-    let chain = chain_of(project, &audio.current);
-    control.hosts = HostGraph::open(host_bin, routes, &chain, frames, rate, Some(&workgroup))?;
-    control.workgroup = Some(workgroup);
-    control.save_controls = control.hosts.save_controls();
-    audio.hosts = Box::new(control.hosts.audio_snapshot());
-    control.chain = chain;
-    control.routes = routes.to_vec();
-    control.host_bin = host_bin.to_path_buf();
-    Ok((control, audio))
-}
-
-pub fn playback_with_clock(
+fn transport_pair(
     project: &Project,
     rate: u32,
     frames: usize,

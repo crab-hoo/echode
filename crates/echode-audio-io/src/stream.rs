@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use echode_engine::{
-    ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackStatus,
-    PluginActivity, PluginControl, PluginRoute, PluginWorkgroup, playback_pair_at,
-    playback_with_plugins_at, playback_with_plugins_in_workgroup_at, tick_to_sample,
+    ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions,
+    PlaybackStatus, PluginActivity, PluginControl, PluginRoute, PluginWorkgroup, playback,
+    tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -722,37 +722,19 @@ fn open_playback(
     sample: i64,
     workgroup: Option<PluginWorkgroup>,
 ) -> Result<(PlaybackControl, PlaybackAudio), String> {
+    let host = echode_plugin_host::host_binary();
+    let routes = match host {
+        Some(_) => plugin_routes(project, package)?,
+        None => Vec::new(),
+    };
+    let mut options = PlaybackOptions::default().at(sample);
+    if let Some(host) = &host {
+        options = options.plugins(host, &routes);
+    }
     if let Some(workgroup) = workgroup {
-        let host = echode_plugin_host::host_binary().unwrap_or_default();
-        let routes = if host.as_os_str().is_empty() {
-            Vec::new()
-        } else {
-            plugin_routes(project, package)?
-        };
-        return playback_with_plugins_in_workgroup_at(
-            project,
-            sample_rate,
-            frames,
-            &host,
-            &routes,
-            sample,
-            workgroup,
-        )
-        .map_err(|error| error.to_string());
+        options = options.workgroup(workgroup);
     }
-    if let Some(host) = echode_plugin_host::host_binary() {
-        playback_with_plugins_at(
-            project,
-            sample_rate,
-            frames,
-            &host,
-            &plugin_routes(project, package)?,
-            sample,
-        )
-    } else {
-        playback_pair_at(project, sample_rate, frames, sample)
-    }
-    .map_err(|error| error.to_string())
+    playback(project, sample_rate, frames, options).map_err(|error| error.to_string())
 }
 
 fn loop_sample(project: &Project, sample_rate: u32, tick: i64) -> Result<i64, String> {

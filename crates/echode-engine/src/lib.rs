@@ -52,9 +52,7 @@ pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
 pub use playback::{
     CachedTrack, ClipLoader, ClockSource, InternalClock, LoadedClip, MediaInputs, PlaybackAudio,
-    PlaybackCommand, PlaybackControl, PlaybackStatus, playback_pair, playback_pair_at,
-    playback_with_clock, playback_with_plugins, playback_with_plugins_at,
-    playback_with_plugins_in_workgroup_at,
+    PlaybackCommand, PlaybackControl, PlaybackOptions, PlaybackStatus, playback,
 };
 pub use plugins::{PluginRoute, PluginWorkgroup};
 pub use realtime::ForbidAlloc;
