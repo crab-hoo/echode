@@ -36,25 +36,22 @@ struct CanvasSubmissionTests {
             } else {
                 reference = try renderOffscreen(ArrangeFrame(input: input), painter: painter, device: device, queue: queue)
             }
-            var painted = 0
-            for y in 0..<reference.height {
-                for x in 0..<reference.width where reference.pixel(x: x, y: y) != .canvasBackground { painted += 1 }
-            }
-            #expect(painted > 1_000)
+            let painted = await reference.scan { _, _, pixel in pixel != .canvasBackground }
+            #expect(painted.count > 1_000)
             let renderer = try CanvasRenderer(layer: CAMetalLayer(), onElements: { _ in }, startsDisplayLink: false)
             defer { renderer.stop() }
             renderer.update(input)
             let firstRevision = renderer.measurement.revision
             let matching = try submit(renderer, size: input.drawableSize, device: device)
             #expect(matching.width == reference.width && matching.height == reference.height)
-            expectPixels(matching, reference: reference)
+            await expectPixels(matching, reference: reference)
             #expect(renderer.measurement.drawnRevision == firstRevision)
             #expect(renderer.measurement.displayLinkPaused)
 
             // A mismatch can arrive after this revision was already consumed.
             // Retry must stay awake even though revision equality still holds.
             let sameRevision = try submit(renderer, size: CGSize(width: 700, height: 380), device: device)
-            expectPixels(sameRevision, reference: reference)
+            await expectPixels(sameRevision, reference: reference)
             #expect(renderer.measurement.drawnRevision == firstRevision)
             #expect(!renderer.measurement.displayLinkPaused)
 
@@ -64,45 +61,40 @@ struct CanvasSubmissionTests {
             for size in [CGSize(width: 700, height: 380), CGSize(width: 600, height: 280),
                          CGSize(width: 700, height: 280), CGSize(width: 600, height: 380)] {
                 let stale = try submit(renderer, size: size, device: device)
-                expectPixels(stale, reference: reference)
+                await expectPixels(stale, reference: reference)
                 #expect(renderer.measurement.drawnRevision == firstRevision)
                 #expect(!renderer.measurement.displayLinkPaused)
             }
             #expect(renderer.measurement.sizeMismatches == 5)
             let corrected = try submit(renderer, size: input.drawableSize, device: device)
             #expect(corrected.width == reference.width && corrected.height == reference.height)
-            expectPixels(corrected, reference: reference)
+            await expectPixels(corrected, reference: reference)
             #expect(renderer.measurement.drawnRevision == nextRevision)
             #expect(renderer.measurement.displayLinkPaused)
 
             let empty = CanvasInput(snapshot: snapshot, selected: selected, camera: input.camera, width: 0, height: 0, scale: 2)
             renderer.update(empty)
             let blank = try submit(renderer, size: input.drawableSize, device: device)
-            var nonBackground = 0
-            for y in 0..<blank.height {
-                for x in 0..<blank.width where blank.pixel(x: x, y: y) != .canvasBackground { nonBackground += 1 }
-            }
-            #expect(nonBackground == 0)
+            let nonBackground = await blank.scan { _, _, pixel in pixel != .canvasBackground }
+            #expect(nonBackground.count == 0)
             #expect(renderer.measurement.drawnRevision == nextRevision)
             #expect(renderer.measurement.displayLinkPaused)
         }
         await controller.close()
     }
 
-    private func expectPixels(_ image: CanvasReadback, reference: CanvasReadback) {
+    private func expectPixels(_ image: CanvasReadback, reference: CanvasReadback) async {
         // Report mismatch counts instead of expanding entire pixel arrays in
         // expected negative-control failures.
-        var overlap = 0, margin = 0
-        for y in 0..<image.height {
-            for x in 0..<image.width {
-                let pixel = image.pixel(x: x, y: y)
-                if x < reference.width && y < reference.height {
-                    if pixel != reference.pixel(x: x, y: y) { overlap += 1 }
-                } else if pixel != .canvasBackground { margin += 1 }
-            }
+        let background = CanvasReadback.Pixel.canvasBackground
+        let overlap = await image.scan { x, y, pixel in
+            x < reference.width && y < reference.height && pixel != reference.pixel(x: x, y: y)
         }
-        #expect(overlap == 0)
-        #expect(margin == 0)
+        let margin = await image.scan { x, y, pixel in
+            (x >= reference.width || y >= reference.height) && pixel != background
+        }
+        #expect(overlap.count == 0, "first overlap difference at \(overlap.first ?? "none")")
+        #expect(margin.count == 0, "first margin difference at \(margin.first ?? "none")")
     }
 
     private func submit(_ renderer: CanvasRenderer, size: CGSize, device: any MTLDevice) throws -> CanvasReadback {

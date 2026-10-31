@@ -88,4 +88,5 @@ release ビルドの `Document.o` には `__tsan_*` も `ContinuationHandoff` �
 - `await` の直後に読まない継続（`RecoveryConsent` の main actor での応答など）には入れていない。
 - 負荷下の TSan 全体では、この報告とは別に 5 秒のポーリングの期限切れが出ることがある。注釈ありの 14 回では `DevicePreparationTests` が 3 回、`MixerStepTests` が 1 回だった。
   `MixerStepTests` 単独は同じ負荷の 4 回とも合格した。いずれも TSan の報告はなく、この注釈では解決しない。
+  （2026-10-31 追記: この 14 回は全面走査を主アクターの外へ移す修正の前である。修正後の数値は[デバッグ手順](../debugging.md)の `Status did not arrive` を参照。）
 - 作業中の `make verify` で、実 HAL の `write_planes` と自動保存の zlib の組も 1 回報告された。これは別の原因で、`FolderDisclosureTests` を機器なしへ分離した（[デバッグ手順](../debugging.md) の TSan の項目 1）。

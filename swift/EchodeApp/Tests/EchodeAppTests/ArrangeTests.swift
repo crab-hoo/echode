@@ -271,33 +271,20 @@ struct ArrangeTests {
         let reference = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
         #expect(reference.width == 640 && reference.height == 320)
         let background = CanvasReadback.Pixel.canvasBackground
-        var painted = 0
-        for y in 0..<reference.height {
-            for x in 0..<reference.width where reference.pixel(x: x, y: y) != background { painted += 1 }
-        }
-        #expect(painted > 1_000)
+        let painted = await reference.scan { _, _, pixel in pixel != background }
+        #expect(painted.count > 1_000)
         for size in [CGSize(width: 700, height: 380), CGSize(width: 600, height: 280)] {
             let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue, size: size)
             #expect(image.width == Int(size.width) && image.height == Int(size.height))
-            var differing = 0
-            for y in 0..<min(reference.height, image.height) {
-                for x in 0..<min(reference.width, image.width) where image.pixel(x: x, y: y) != reference.pixel(x: x, y: y) {
-                    differing += 1
-                }
+            let differing = await image.scan { x, y, pixel in
+                x < reference.width && y < reference.height && pixel != reference.pixel(x: x, y: y)
             }
-            #expect(differing == 0, "stale \(size) differs in \(differing) overlapping pixels")
+            #expect(differing.count == 0, "stale \(size) differs in \(differing.count) overlapping pixels")
             if image.width > reference.width || image.height > reference.height {
-                var marginDiffering = 0
-                var firstMargin: String?
-                for y in 0..<image.height {
-                    for x in 0..<image.width where x >= reference.width || y >= reference.height {
-                        if image.pixel(x: x, y: y) != background {
-                            marginDiffering += 1
-                            firstMargin = firstMargin ?? "\(x),\(y)"
-                        }
-                    }
+                let margin = await image.scan { x, y, pixel in
+                    (x >= reference.width || y >= reference.height) && pixel != background
                 }
-                #expect(marginDiffering == 0, "stale \(size) margin differs at \(firstMargin ?? "none")")
+                #expect(margin.count == 0, "stale \(size) margin differs at \(margin.first ?? "none")")
             }
         }
         let piano = PianoFrame(input: input, piano: PianoRenderInput(track: selected, focus: nil, camera: PianoCamera(),
@@ -305,24 +292,14 @@ struct ArrangeTests {
         let pianoReference = try renderOffscreen(piano, painter: painter, device: device, queue: queue)
         let pianoStale = try renderOffscreen(piano, painter: painter, device: device, queue: queue,
                                              size: CGSize(width: 700, height: 380))
-        var pianoDiffering = 0
-        for y in 0..<pianoReference.height {
-            for x in 0..<pianoReference.width where pianoStale.pixel(x: x, y: y) != pianoReference.pixel(x: x, y: y) {
-                pianoDiffering += 1
-            }
+        let pianoDiffering = await pianoStale.scan { x, y, pixel in
+            x < pianoReference.width && y < pianoReference.height && pixel != pianoReference.pixel(x: x, y: y)
         }
-        #expect(pianoDiffering == 0)
-        var pianoMarginDiffering = 0
-        var firstPianoMargin: String?
-        for y in 0..<pianoStale.height {
-            for x in 0..<pianoStale.width where x >= pianoReference.width || y >= pianoReference.height {
-                if pianoStale.pixel(x: x, y: y) != background {
-                    pianoMarginDiffering += 1
-                    firstPianoMargin = firstPianoMargin ?? "\(x),\(y)"
-                }
-            }
+        #expect(pianoDiffering.count == 0)
+        let pianoMargin = await pianoStale.scan { x, y, pixel in
+            (x >= pianoReference.width || y >= pianoReference.height) && pixel != background
         }
-        #expect(pianoMarginDiffering == 0, "piano margin differs at \(firstPianoMargin ?? "none")")
+        #expect(pianoMargin.count == 0, "piano margin differs at \(pianoMargin.first ?? "none")")
         let matching = CanvasDrawablePolicy.resolve(input: input, drawableSize: input.drawableSize)
         #expect(!matching.mismatched && matching.draws && matching.consumesRevision)
         let stale = CanvasDrawablePolicy.resolve(input: input, drawableSize: CGSize(width: 600, height: 280))

@@ -64,6 +64,8 @@
 - 製品ソースファイル内の単体テストが大きくなった場合（目安 100 行以上）は、`#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;` で同ディレクトリの別ファイルへ分離し、製品コードの閲覧コストを抑える。
 - モジュール・依存・ツールチェーン・実行入口が変わったら、`scripts/verification.json`、`Makefile`、CI、実行手順を照合する。選択条件は `scripts/verification.json` だけに置く。
 - 必須契約（`product_contracts`）は、正しいソースで実テストが 1 件通過し、誤りを戻したソースのコピーでは期待値で失敗することを確認する。
+- `@MainActor` のテストは同時に動き、主スレッドを交互に使う。長い同期処理は `await` で区切るか主アクターの外へ移し、他のテストの実時間の待ちを止めない。
+  画素の全面走査は `CanvasReadback.scan` を使う（[デバッグ手順](debugging.md)の `Status did not arrive`）。
 
 ### デバッグ基盤
 

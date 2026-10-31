@@ -130,6 +130,9 @@ make debug-report
   全体は約 954 秒で、3600 秒の一括予算到達ではない。群の強制終了前のコンパイラー出力は保存されていない。
   `ArrangeAudioDrop.swift` と `ArrangeClipMove.swift` の 3 コピーが対象で、残留プロセスはなかった。
   中断時点は同じ作業ログの `counterexample-timeout.log` に記録し、対象や期限は変えず未完了分を再実行する。
+  2026-10-31 に新しい worktree で同じ位置（Rust 反例 101 件の後）の停止を再現した。コピーに Swift のビルドがなく、最初の群が 3 コピー同時の初回ビルドになり、180 秒の個別期限に達する。
+  完了した反例の記録と途中までのビルドは残るので、再実行で先へ進む。追加のビルドは 1 コピー約 25 秒だった。製品やテストの失敗と区別する。
+  新しい worktree ではこの検査だけで数 GB を超え、Rust 反例の `cargo` は一時 26 GB に達した。空きが少ない時は、記録済みの反例の `cargo` を消して再実行できる。
   `negative control must stay inside its source copy` は、期待値の不一致ではなく反例用コピーの検証エラーである。
   対象ファイルの欠落と、シンボリックリンクによるコピー外への逸脱を区別する。
   `target/` の整理と検査が競合すると、コピーが実行中に消えて同じエラーになる。
@@ -138,39 +141,40 @@ make debug-report
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
   一時パッケージを作る `scratch()` は使用前に同じパスを削除する。
-- **ASan / TSan の Swift 検査で `Status did not arrive`**:
-  2026-10-26 に `DevicePreparationTests` の状態待ちが 1 回期限切れとなり、同じバイナリの個別・全体再実行では再現しなかった。
-  原因は未確定で、ASan のメモリ診断とは区別する。`target/bridge/address/product/swift-tests.failed.log` を保持する。
-  第 2 デバイスの一覧、初期の出力状態、準備後の出力状態のどの待ちかを切り分け、タスクの取消と主スレッドの競合を調べる。
-  権限警告だけを原因と決めず、期限の延長や検査の無効化で合格にしない。個別確認後も正式な `make verify` を再実行する。
-  同日の TSan 全体検査でも同じテストが 1 回期限切れとなり、データ競合の診断はなかった。
-  当該テストだけの再実行と正式な `make verify` の再実行では再現せず、原因は未確定のままである。
-  TSan の失敗記録は `target/bridge/thread/product/swift-tests.failed.log`、個別の記録は `preparation-focused.log` に残る。
-  2026-10-30 のトラック・デバイス型移行でも、ASan 全体で同じ未保留デバイスの応答待ちが `2 yielded polls` で期限切れとなった。
-  同じ計装バイナリのスイート単独では再現せず、メモリ診断はなかった。負荷による遅延との区別は未確定である。
-  単独の記録は `target/focused-checks/typed-track-device-asan/preparation-focused.log` に残し、対象と 5 秒の期限を変えず正式な検査を再実行する。
-  2026-10-27 のベロシティレーンの検査でも TSan の全体実行で同じ期限切れが再発し、競合診断はなかった。
-  同じバイナリの `DevicePreparationTests` 単独では再現せず、原因は未確定である。
-  失敗は同じ `swift-tests.failed.log`、単独の記録は `velocity-lane-preparation-focused.log`、
-  正式な再実行の合否は検査レポートで確認する。期限と対象テストは変更しない。
-  2026-10-28 の時間目印変更でも、TSan 全体で同じテストの未保留デバイスの応答待ちが期限切れとなり、競合診断はなかった。
-  診断は `1 yielded polls` で、同じバイナリの `DevicePreparationTests` 単独では再現しなかった。原因は未確定である。
-  失敗は `target/bridge/thread/product/swift-tests.failed.log`、単独実行は `time-guides-preparation-focused.log` に残す。
-  既存の 5 秒と検査対象を変えず、正式な全体再実行の結果と区別する。
-  2026-10-29 の検査時間基盤の変更でも同じ未保留デバイスの応答待ちが `1 yielded polls` で期限切れとなった。
-  同じバイナリの `DevicePreparationTests` 単独では再現せず、競合診断はなかった。
-  単独実行は `target/bridge/thread/product/verification-preparation-focused.log` に残す。原因解明や期限変更は行っていない。
-  2026-10-31 の `DocumentSession` の導入でも、TSan 全体で同じ応答待ちが `2 yielded polls` で期限切れとなり、競合診断はなかった。
-  5 秒で数回しか進まないのは応答の喪失ではなく、主スレッドが待ちの間ほぼ動いていないことを示す。喪失なら約 1000 回進む。
-  同じバイナリの単独実行は `target/focused-checks/document-session/preparation-tsan.log` に残す。期限と対象テストは変更しない。
-  2026-10-28 のグリッド変更の ASan 全体検査では、`RecoveryConsentTests` の警告待ちも 2 回期限切れとなった。
-  同じバイナリの当該スイート単独では再現せず、ASan のメモリ診断はなかった。5 秒の期限は変更しない。
-  記録は `target/bridge/address/product/swift-tests.failed.log` と `target/focused-checks/piano-grid-recovery-asan/`。
-  初回か取消後の再オープンか、`busy`・`errorMessage`・公開中の文書とトラックを期限切れの診断へ追加した。
-  同じ入力の全体再実行では再現しない場合もあり、待機期限は維持する。
-  TSan の全体検査でも最初のオープン中に同じ期限切れを観測した。`busy=true`、エラーなしで、旧文書は未交換だった。
-  原因は未確定だが、sanitizer では復旧同意のスイートを別プロセスで実行して、他の同時テストの負荷から分ける。
-  対象と期限を保ち、0 件実行も拒否する。分離後のログは各 `product/recovery-swift-tests.log` と失敗時の `.failed.log` に残す。
+- **ASan / TSan の Swift 検査で `Status did not arrive`（復旧の警告待ちの期限切れを含む）**:
+  原因は主アクターの占有で、応答の喪失でもデータ競合でもない。
+  Swift Testing は `@MainActor` のテストを同時に開始し、全テストが主スレッドの 1 本の列を交互に使う。
+  あるテストが `await` なしで長く処理すると、他のテストのポーリングも応答の受取りも止まり、実時間の 5 秒だけが減る。
+  目印はポーリングの回数である。喪失なら 5 秒で約 1000 回進むが、占有では `1 yielded polls` のように数回で切れる。
+  単独実行で再現しないのは、占有する相手がいないためである。
+  2026-10-31 に特定した占有の主は、全画素を主アクターで走査していた次の 2 テストだった。
+  `CanvasSubmissionTests.contractStaleDrawableSubmissionDrawsAndRetries` と `ArrangeTests.contractMismatchedDrawableKeepsTopLeftPixels`。
+  連続する占有は TSan で 4.0〜6.0 秒、ASan で 3.5〜4.6 秒に達し、どの実行でも 5 秒の窓をほぼ使い切っていた。
+  待ちの開始が占有の直前に重なった時だけ失敗し、修正前の TSan 全体では 21 回中 6 回失敗した。
+  `wait` の途中で主アクターを 5.4 秒止める一時変更でも、同じメッセージで 3 回中 3 回失敗した。
+  全面走査を `CanvasReadback.scan` で主アクターの外へ移した。比較の内容と 5 秒の期限は変えていない。
+  通常の全体実行では解消した。修正後は TSan 全体 50 回、ASan 全体 26 回の完走で、この期限切れは 0 回だった。
+  TSan の同じ待ちの所要は 1.4〜2.9 秒になった。修正前は通常でも 7.6 秒に達した。
+  全コアに負荷をかけた TSan 全体では減ったが、なくなっていない。修正なしは 20 回中 5 回、修正ありは 29 回中 1 回失敗した。
+  修正ありの負荷下の待ちは 2.2〜5.1 秒まで伸び、余裕はほぼない（2026-10-31 の main の上で 8 回測定）。
+  失敗した 1 回は全体の所要が 79.8 秒（他は 37〜76 秒）で、28.2〜33.5 秒の停止の直後に期限が切れた。
+  この停止では監視スレッド自身も 3 標本しか取れず（通常は 1 秒に約 3.5 標本）、特定のテストの占有より CPU の飽和とみられる。
+  同じ実行では `MixerStepTests` と `MixerValueBatchTests` も同じ 5 秒の待ちで失敗した。こちらは `undoCount` の不一致として出る。
+  修正後の最長の停止は ASan で 1.6〜3.0 秒、TSan は 2.5〜6.7 秒である。
+  3.1 秒を超える回は 2026-10-31 の main（05dda77）の上でだけ見えた。差の原因は調べていない。
+  長い停止は実行直後の AppKit の遅延読込みと初回のビュー構築で、入力欄のフォーカスや `NSMenuItem` の実行を契機に数百のフレームワークが主スレッドで読み込まれる。
+  長い停止の標本には複数のテストが並ぶので、1 つのテストの占有とは限らない。TSan の負荷なしで 6.7 秒の停止があった回も合格したので、停止の長さだけで判断せず標本の主を見る。
+  `DYLD_PRINT_LIBRARIES` の出力は原因ではない。外しても同じように失敗し、占有の長さも変わらなかった。
+  再発時の手順:
+  1. `target/bridge/<sanitizer>/product/swift-tests.failed.log` のポーリング回数で、占有と応答の喪失を区別する。
+  2. 製品の検査でビルドした後、`python3 -B scripts/main_thread_stalls.py thread --runs 5` で占有の主を特定する（ASan は `address`）。
+     期限切れの時刻と直前の停止、テストごとの占有時間を `product/main-thread-stalls.log` に残す。判定には使わない。
+     計測用に手でビルドし直す時は、製品の検査と同じ `-DECHODE_TSAN` を付ける。抜けると誤検出で止まり、報告の出力で停止も伸びるので、計測にならない。
+     別の作業と重ねた実行で出た時は、特定のテストの占有か、CPU の飽和かをここで区別する。
+  3. 占有するテストの同期処理を `await` で区切るか、主アクターの外へ移す。
+  期限の延長、検査の無効化、対象の除外で合格にしない。
+  復旧の警告待ちの期限切れ（2026-10-28）も同じ占有が原因とみられるが、再現はしていない。
+  `RecoveryConsentTests` の別プロセス実行はそのまま残し、失敗は各 `product/recovery-swift-tests.failed.log` に残る。
 - **中断後に `running` が残る・全結果が一度に `stale` になる**:
   呼出し元の時間切れは検査自身の終了コードではない。ロックが空いていても、自分が起動した make / cargo / テストの子が残る場合がある。
   `ps` と保存ログで所有関係と終了を確認し、残った検査と次の検査を重ねない。既存アプリや他の作業のプロセスは終了しない。
@@ -916,7 +920,7 @@ make debug-report
      回帰テストだけが落ちる時は、`-D ECHODE_TSAN` の抜けか、`awaitCompletion` を通らない経路を疑う。
      `continuation-unannotated` だけが落ちる時は、Swift ランタイムが穴を塞いだ可能性がある。注釈を外せるか調べる。
      `await` の直後に読まず、actor へ戻ってから読む経路は、切替えで順序が見えるので報告されない。報告の有無で読取りの位置を変えない。
-     負荷下の全体実行では別に 5 秒のポーリングの期限切れ（`DevicePreparationTests`、`MixerStepTests`）が出ることがある。TSan の報告とは区別する。
+     負荷下の全体実行で出る 5 秒のポーリングの期限切れ（`DevicePreparationTests`、`MixerStepTests`、`MixerValueBatchTests`）は別の問題である（`Status did not arrive` の項）。TSan の報告とは区別する。
      失敗した実行のログは `target/bridge/<sanitizer>/product/swift-tests.failed.log` に残り、再実行で消えない。
      抜粋には dyld の行ではなく `WARNING`〜`SUMMARY` の報告を出す。
   いずれも抑制（suppression）や不要なロックで隠さず、スタックと対象アドレスを確認して製品データの競合と区別する。
