@@ -126,18 +126,18 @@ struct DeviceParameterTests {
         var pending: Task<Void, Never>?
         let controller: ProjectController
         let track: UUID
-        let document: UUID
+        let document: DocumentID
 
-        init(_ controller: ProjectController, track: UUID, document: UUID) {
+        init(_ controller: ProjectController, track: UUID, document: DocumentID) {
             self.controller = controller; self.track = track; self.document = document
             window.contentView = strip
             strip.onEdit = { [unowned self] edit in self.pending = Task { _ = await controller.editDeviceChain(edit, documentID: document) } }
-            strip.onBegin = { controller.beginParameter($0, device: $1) }
-            strip.onChange = { controller.changeParameter($0) }
-            strip.onEnd = { [unowned self] commit in self.pending = Task { await controller.finishParameter(commit: commit) } }
-            strip.onEnter = { device, id, text in await controller.enterParameter(text, id: id, device: device) }
+            strip.onBegin = { controller.beginParameter($0, device: $1, documentID: document) }
+            strip.onChange = { controller.changeParameter($0, documentID: document) }
+            strip.onEnd = { [unowned self] commit in self.pending = Task { await controller.finishParameter(commit: commit, documentID: document) } }
+            strip.onEnter = { device, id, text in await controller.enterParameter(text, id: id, device: device, documentID: document) }
             strip.onStep = { [unowned self] device, id, value in
-                self.pending = Task { _ = await controller.setParameter(id, device: device, value: value) }
+                self.pending = Task { _ = await controller.setParameter(id, device: device, value: value, documentID: document) }
             }
             strip.onPin = { [unowned self] device, id, pinned in
                 self.pending = Task { _ = await controller.setPinned(id, device: device, pinned: pinned, documentID: document) }
@@ -164,7 +164,7 @@ struct DeviceParameterTests {
     }
 
     private func project(_ name: String, plugin: FakeParameterPlugin, devices: Int = 1) async throws
-        -> (ProjectController, UUID, UUID, URL) {
+        -> (ProjectController, DocumentID, UUID, URL) {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-\(name)-\(UUID()).echode")
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)

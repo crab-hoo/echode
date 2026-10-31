@@ -63,7 +63,7 @@ struct MixerStepBoundaryTests {
     }
 
     @Test func relativeStepEndpointsAndMalformedTargetsAreExplicit() {
-        let first = UUID(), second = UUID(), document = UUID()
+        let first = UUID(), second = UUID(), document = DocumentID()
         func values(_ field: MixerField, _ direction: Double, _ originals: [Float], targets: [UUID]? = nil) -> [Float]? {
             MixerValueBatch(document: document, tracks: targets ?? [first, second], anchor: first,
                 field: field, value: 0, direction: direction).values(from: originals)

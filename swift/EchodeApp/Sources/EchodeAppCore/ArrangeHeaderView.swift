@@ -27,7 +27,7 @@ final class ArrangeHeaderView: NSView {
     var onToggleFolder: ((UUID) -> Void)?
     var onDropFX: ((UUID, TrackFXDrop) -> Void)?
     var onDuplicateTracks: (() -> Void)?
-    var documentID: UUID? {
+    var documentID: DocumentID? {
         didSet {
             guard oldValue != documentID else { return }
             clicks.cancel()
@@ -42,7 +42,7 @@ final class ArrangeHeaderView: NSView {
     /// Fader and pan clicks, drags and typing (ADR 0153).
     let clicks = ValueClicks<MixTarget>()
     /// The control and value under the last press, which a drag moves from.
-    private var press: (target: MixTarget, rect: CGRect, original: Float, document: UUID?, actions: MixActions)?
+    private var press: (target: MixTarget, rect: CGRect, original: Float, document: DocumentID?, actions: MixActions)?
     /// A view update must not lend new callbacks to a gesture already in progress.
     private var gestureActions: MixActions?
     private(set) var entry: ValueEntryField?

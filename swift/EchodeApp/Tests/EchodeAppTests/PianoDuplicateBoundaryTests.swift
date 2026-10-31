@@ -45,7 +45,7 @@ struct PianoDuplicateBoundaryTests {
         stale[first.id]?.start += 1
         #expect(!(await controller.moveNotes(PianoMoveChange(anchor: first.id, originals: stale,
             time: 70_560, pitch: -1, copies: change.copies), documentID: document)), "every copy source must be validated")
-        #expect(!(await controller.moveNotes(change, documentID: UUID())))
+        #expect(!(await controller.moveNotes(change, documentID: DocumentID())))
         #expect(controller.undoCount == undo)
         await controller.close()
 

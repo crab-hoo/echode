@@ -13,7 +13,7 @@ struct ClipGestureDocumentTests {
     private func show(_ controller: ProjectController, in pane: ArrangePaneView, track: UUID, clip: UUID,
                       completion: @escaping (Task<Void, Never>) -> Void) throws -> ClipControlLayout {
         // Match ArrangeCanvas.updateNSView: callbacks change before the document ID and snapshot.
-        let document = controller.documentID
+        let document = try #require(controller.documentID)
         pane.onClipEdit = { edit in completion(Task {
             switch edit {
             case .gain(let id, let gain): await controller.setClipGain(id, gain: gain, documentID: document)

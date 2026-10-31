@@ -29,7 +29,7 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     await controller.open(url, creating: true)
     await controller.addTrack(name: "Piano")
     // This project's note count and event count are scoped to this probe.
-    for pitch in 60...73 { await controller.insertNote(pitch: pitch, beat: Double(pitch - 60) / 8, length: 0.75) }
+    for pitch in 60...73 { await controller.insertNote(pitch: pitch, beat: Double(pitch - 60) / 8, length: 0.75, documentID: controller.documentID!) }
     guard let snapshot = controller.snapshot, let track = controller.selection else { throw CocoaError(.coderValueNotFound) }
     var frames = 0, compared = 0, checkedRows = 0, checkedDegrees = 0, mismatches = 0, degreePixels = 0
     var checkedGridLines = 0, checkedIndependentGuides = 0
@@ -170,8 +170,8 @@ public func runOffscreenPianoProbe(reportPath: String) async throws {
     // Reference notes share the product encoder, but never the velocity or keyboard planes.
     await controller.addTrack(name: "Reference")
     guard let referenceTrack = controller.selection else { throw CocoaError(.coderValueNotFound) }
-    await controller.insertNote(pitch: 62, beat: 4, length: 1, on: referenceTrack)
-    await controller.insertNote(pitch: 62, beat: 0.25, length: 0.75, on: referenceTrack)
+    await controller.insertNote(pitch: 62, beat: 4, length: 1, on: referenceTrack, documentID: controller.documentID!)
+    await controller.insertNote(pitch: 62, beat: 0.25, length: 0.75, on: referenceTrack, documentID: controller.documentID!)
     guard let references = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
     var checkedReferenceNotes = 0
     for scale in [1.0, 2.0] {

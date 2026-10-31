@@ -11,7 +11,7 @@ private actor DisclosureRequests {
 @MainActor
 struct DeviceDisclosureTests {
     @Test func contractDeviceDisclosureKeepsIdentityAndDropTargets() throws {
-        let document = UUID(), track = UUID()
+        let document = DocumentID(), track = UUID()
         let devices = (0..<3).map { TrackDevice(id: UUID(), plugin: "org.example.\($0)") }
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 1200, height: 300))
         let state = DeviceParameterState(document: document, device: devices[0].id)
@@ -143,7 +143,7 @@ struct DeviceDisclosureTests {
         original.disclosure.performClick(nil)
         #expect(controller.redoCount == 1)
         #expect(!controller.setDeviceCollapsed(UUID(), collapsed: true, documentID: document))
-        #expect(!controller.setDeviceCollapsed(device.id, collapsed: true, documentID: UUID()))
+        #expect(!controller.setDeviceCollapsed(device.id, collapsed: true, documentID: DocumentID()))
         original.disclosure.performClick(nil)
         #expect(controller.collapsedDevices == [device.id])
         #expect(await requests.count == 0)
@@ -158,7 +158,7 @@ struct DeviceDisclosureTests {
     }
 
     @Test func offlineLoadingAndFailedColumnsCanBeFoldedAndScrollExtentShrinks() throws {
-        let document = UUID(), track = UUID()
+        let document = DocumentID(), track = UUID()
         var devices = (0..<3).map { TrackDevice(id: UUID(), plugin: "org.example.\($0)") }
         devices[0].offline = true
         let failed = DeviceParameterState(document: document, device: devices[2].id)
@@ -188,7 +188,7 @@ struct DeviceDisclosureTests {
         let strip = DeviceStripView(frame: .zero)
         window.contentView = strip
         let device = TrackDevice(id: UUID(), plugin: "org.example.fx")
-        strip.configure(devices: [device], track: UUID(), document: UUID(), busy: false)
+        strip.configure(devices: [device], track: UUID(), document: DocumentID(), busy: false)
         layout(strip)
         let column = try #require(strip.columns.first)
         #expect(window.makeFirstResponder(column.search))

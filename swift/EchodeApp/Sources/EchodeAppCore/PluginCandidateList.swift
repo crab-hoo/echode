@@ -8,7 +8,7 @@ import SwiftUI
 struct PluginCandidateList: NSViewRepresentable {
     let plugins: [PluginListing]
     let selection: String?
-    let document: UUID
+    let document: DocumentID
     let onSelect: (String?) -> Void
     /// The plugin and whether the panel closes afterwards.
     let onInsert: (String, Bool) -> Void
@@ -104,7 +104,7 @@ final class PluginListTable: NSTableView {
     var onInsert: (String, Bool) -> Void = { _, _ in }
     var onInsertOnSelected: (String) -> Void = { _ in }
     var canInsertOnSelected = false
-    var document: UUID?
+    var document: DocumentID?
     var plugin: (Int) -> String? = { _ in nil }
     private var dragDown: (NSEvent, String)?
 

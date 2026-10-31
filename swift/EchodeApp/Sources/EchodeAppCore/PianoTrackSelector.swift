@@ -108,8 +108,7 @@ final class PianoTrackCell: NSTableCellView {
     }
 
     @objc private func activate(_ button: NSButton) {
-        guard let row, row.enabled, let controller, !controller.busy,
-              controller.documentID == row.target.document,
+        guard let row, row.enabled, let controller, controller.acceptsInput(row.target.document),
               controller.tracks.contains(where: { $0.id == row.target.track }) else { return }
         if button === reference {
             controller.setPianoReference(row.target, visible: controller.hiddenPianoTracks.contains(row.target.track))

@@ -151,7 +151,7 @@ public struct PlayheadChecks {
             "document switch",
         ]) {
             try #require(await shown.settled())
-            try #require(await shown.controller.insertNote(pitch: 64, beat: 1, length: 1))
+            try #require(await shown.controller.insertNote(pitch: 64, beat: 1, length: 1, documentID: shown.controller.documentID!))
             let swapped = try #require(shown.controller.snapshot)
             shown.arrange.setSnapshot(swapped, selected: shown.track)
             shown.piano.grid.setSnapshot(swapped, track: shown.track, focus: nil, key: DisplayKey(), busy: false)
@@ -313,7 +313,7 @@ private final class ShownProject {
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "pad")
-        await controller.insertNote(pitch: 60, beat: 0, length: 8)
+        await controller.insertNote(pitch: 60, beat: 0, length: 8, documentID: controller.documentID!)
         let snapshot = try #require(controller.snapshot)
         let track = try #require(snapshot.trackID(at: 0))
         let feed = try #require(controller.playback)

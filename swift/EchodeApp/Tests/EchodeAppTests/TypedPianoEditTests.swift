@@ -48,7 +48,7 @@ struct TypedPianoEditTests {
             #expect(!(await controller.insertNote(pitch: invalid, beat: 1, length: 1, documentID: document)))
         }
         #expect(!(await controller.editNote(anchor, geometry: NoteGeometry(start: 0, length: 1, pitch: 128), documentID: document)))
-        #expect(!(await controller.setNoteVelocity(anchor, velocity: 0, documentID: UUID())))
+        #expect(!(await controller.setNoteVelocity(anchor, velocity: 0, documentID: DocumentID())))
         #expect(controller.undoCount == undo && controller.redoCount == 1)
         #expect(controller.noteInput.length == inputLength && controller.noteVelocity.value == inputVelocity)
         await controller.redo()

@@ -78,7 +78,7 @@ struct TrackFXHeaderTests {
         let retained = header.deviceMenu([devices[1]], track: track)
         await controller.undo()
         try refresh()
-        header.documentID = UUID()
+        header.documentID = DocumentID()
         retained.performActionForItem(at: 0)
         #expect(opened.count == 2)
         await controller.close()

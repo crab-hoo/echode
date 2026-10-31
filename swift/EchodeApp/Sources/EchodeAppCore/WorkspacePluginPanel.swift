@@ -5,7 +5,7 @@ import SwiftUI
 /// while it is open. Its document session stays fixed until it closes.
 struct WorkspacePluginPanel: NSViewRepresentable {
     let controller: ProjectController
-    let document: UUID?
+    let document: DocumentID?
     let close: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSView { NSView() }
@@ -17,11 +17,11 @@ struct WorkspacePluginPanel: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSWindowDelegate {
         private var panel: NSPanel?
-        private var document: UUID?
+        private var document: DocumentID?
         private var close: (() -> Void)?
-        func update(controller: ProjectController, document: UUID?, close: @escaping () -> Void) {
+        func update(controller: ProjectController, document: DocumentID?, close: @escaping () -> Void) {
             self.close = close
-            guard let document, document == controller.documentID else { dismiss(); return }
+            guard let document, controller.isCurrent(document) else { dismiss(); return }
             guard self.document != document || panel == nil else { return }
             dismiss()
             self.document = document

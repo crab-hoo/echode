@@ -8,7 +8,7 @@ struct CanvasResizeTests {
     @Test func contractHeaderWidthSurvivesZeroAndNarrowLayouts() {
         let navigation = CanvasNavigationState()
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 300))
-        pane.setNavigation(navigation)
+        pane.setNavigation(navigation, documentID: navigation.document)
         pane.layout()
         pane.resizeHeader(to: 220)
         let camera = pane.viewport
@@ -24,7 +24,7 @@ struct CanvasResizeTests {
         }
         // Recreating a pane while narrow must not replace the remembered width.
         let restored = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
-        restored.setNavigation(navigation)
+        restored.setNavigation(navigation, documentID: navigation.document)
         restored.layout()
         #expect(restored.headers.frame.width == 150)
         #expect(navigation.headerWidth == 220)
@@ -96,7 +96,7 @@ struct CanvasResizeTests {
         let snapshot = try #require(controller.snapshot)
         let navigation = CanvasNavigationState()
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 320))
-        pane.setNavigation(navigation)
+        pane.setNavigation(navigation, documentID: navigation.document)
         pane.setSnapshot(snapshot, selected: nil)
         pane.layout()
         // Scroll to the last track at a short height, then grow the pane.
@@ -134,7 +134,7 @@ struct CanvasResizeTests {
         let snapshot = try #require(controller.snapshot)
         func pane() -> ArrangePaneView {
             let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 320))
-            pane.setNavigation(CanvasNavigationState())
+            pane.setNavigation(CanvasNavigationState(), documentID: nil)
             pane.setSnapshot(snapshot, selected: nil)
             pane.layout()
             pane.timeline.onScroll?(0, -100_000)

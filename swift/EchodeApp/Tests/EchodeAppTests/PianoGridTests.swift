@@ -36,7 +36,7 @@ struct PianoGridTests {
         #expect(frame.gridTicks.prefix(3).map { $0 } == [3_528_000, 3_616_200, 3_704_400])
         #expect(frame.gridInstances.count == frame.rows.count + frame.gridLineTicks.count,
                 "The rendered note grid must include the snapping subdivisions")
-        let undo = controller.undoCount, document = controller.documentID
+        let undo = controller.undoCount, document = try #require(controller.documentID)
         var writes: [Task<Void, Never>] = []
         view.onInsert = { pitch, beat, length in
             writes.append(Task { await controller.insertNote(pitch: pitch, beat: beat, length: length, on: track, documentID: document) })

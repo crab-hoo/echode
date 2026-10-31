@@ -83,7 +83,7 @@ struct MixerValueBoundaryTests {
     }
 
     @Test func malformedTargetsAndExtremeValuesCannotProducePartialEdits() async throws {
-        let document = UUID(), first = UUID(), second = UUID()
+        let document = DocumentID(), first = UUID(), second = UUID()
         func values(_ field: MixerField, _ target: Float, _ original: [Float]) -> [Float]? {
             MixerValueBatch(document: document, tracks: [first, second], anchor: first, field: field, value: target).values(from: original)
         }

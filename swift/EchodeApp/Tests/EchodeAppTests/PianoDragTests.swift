@@ -16,7 +16,7 @@ struct PianoDragTests {
         await controller.insertNote(pitch: 60, beat: 1.1, length: 0.7)
         let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
         let note = try #require(snapshot.pianoNeighbor(track: track, current: nil))
-        let document = controller.documentID, undo = controller.undoCount
+        let document = try #require(controller.documentID), undo = controller.undoCount
         var last = NoteGeometry(note)
 
         for mode in [PianoGesture.Mode.move, .leftEdge, .rightEdge] {
@@ -94,7 +94,7 @@ struct PianoDragTests {
             let snapshot = try #require(controller.snapshot)
             let note = try #require(snapshot.pianoNote(initial.id))
             let clip = try #require(snapshot.clipMix(note.id.placement))
-            let undo = controller.undoCount, document = controller.documentID
+            let undo = controller.undoCount, document = try #require(controller.documentID)
             for mode in [PianoGesture.Mode.rightEdge, .leftEdge, .move] {
                 let harness = PianoDragHarness(snapshot: snapshot, note: note)
                 defer { harness.view.stop() }

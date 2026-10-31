@@ -12,7 +12,7 @@ struct NoteVelocityLaneTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         #expect(await controller.insertNote(pitch: 60, beat: 1, length: 1))
-        let track = try #require(controller.selection), document = controller.documentID
+        let track = try #require(controller.selection), document = try #require(controller.documentID)
         let note = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
         let undo = controller.undoCount
         let view = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
@@ -148,7 +148,7 @@ struct NoteVelocityLaneTests {
             case 1: view.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: true)
             case 2: view.setFrameSize(NSSize(width: 600, height: 300))
             case 3: view.setSnapshot(snapshot, track: UUID(), focus: nil, key: DisplayKey(), busy: false)
-            case 4: view.setNavigation(CanvasNavigationState(), documentID: UUID())
+            case 4: view.setNavigation(CanvasNavigationState(), documentID: DocumentID())
             case 5: view.stop()
             case 6:
                 let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,

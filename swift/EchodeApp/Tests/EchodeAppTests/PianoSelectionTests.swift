@@ -107,7 +107,7 @@ struct PianoSelectionTests {
             case 2: view.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: true)
             case 3: view.setFrameSize(NSSize(width: 620, height: 380))
             case 4: view.setSnapshot(snapshot, track: UUID(), focus: nil, key: DisplayKey(), busy: false)
-            case 5: view.setNavigation(CanvasNavigationState(), documentID: UUID())
+            case 5: view.setNavigation(CanvasNavigationState(), documentID: DocumentID())
             case 6: view.stop()
             case 7:
                 let event = try #require(NSEvent.mouseEvent(with: .rightMouseUp, location: .zero, modifierFlags: [], timestamp: 0,

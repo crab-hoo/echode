@@ -159,7 +159,7 @@ struct ClipMoveTests {
         // No displacement, a removed track, and another document send nothing.
         #expect(!(await controller.moveClip(ClipMove(document: document, clip: first, track: track, start: 3 * beat, copy: true))))
         #expect(!(await controller.moveClip(ClipMove(document: document, clip: first, track: UUID(), start: 0, copy: false))))
-        #expect(!(await controller.moveClip(ClipMove(document: UUID(), clip: first, track: track, start: 0, copy: false))))
+        #expect(!(await controller.moveClip(ClipMove(document: DocumentID(), clip: first, track: track, start: 0, copy: false))))
         #expect(!(await controller.moveClip(ClipMove(document: document, clip: first, track: track, start: -1, copy: false))))
         #expect(controller.undoCount == count + 1)
         await controller.undo()

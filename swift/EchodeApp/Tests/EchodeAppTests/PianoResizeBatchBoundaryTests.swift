@@ -53,7 +53,7 @@ struct PianoResizeBatchBoundaryTests {
             #expect(!(await controller.resizeNotes(change, documentID: document)), "a stale geometry must reject the entire resize")
             await controller.undo()
             #expect(notes.allSatisfy { controller.snapshot?.pianoNote($0.id).map(NoteGeometry.init) == NoteGeometry($0) })
-            #expect(!(await controller.resizeNotes(change, documentID: UUID())))
+            #expect(!(await controller.resizeNotes(change, documentID: DocumentID())))
         }
         var stale = originals
         stale[first.id]?.length += 1

@@ -49,7 +49,7 @@ struct PianoResizeBatchCancellationTests {
                 case 6: view.setBoundsSize(NSSize(width: 640, height: 410))
                 case 7: view.setSnapshot(replacement, track: track, focus: nil, key: DisplayKey(), busy: false, selection: ids)
                 case 8: view.setSnapshot(snapshot, track: UUID(), focus: nil, key: DisplayKey(), busy: false, selection: ids)
-                case 9: view.setNavigation(nil, documentID: UUID())
+                case 9: view.setNavigation(nil, documentID: DocumentID())
                 case 10:
                     let event = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0))
                     view.scrollWheel(with: try #require(NSEvent(cgEvent: event)))

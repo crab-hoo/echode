@@ -6,7 +6,8 @@ import Testing
 extension ProjectController {
     /// Applies one fixture edit to the current document through the product's typed entry.
     func edit(_ action: EditAction) async -> Bool {
-        await performActions({ [action] }, documentID: nil)
+        guard let documentID else { return false }
+        return await performActions({ [action] }, documentID: documentID)
     }
 }
 

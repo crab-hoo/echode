@@ -19,7 +19,7 @@ public final class WorkspaceState {
     var layout: WorkspaceLayout
     var displayKey = DisplayKey()
     var presentation: WorkspacePresentation?
-    var pluginBrowserDocument: UUID?
+    var pluginBrowserDocument: DocumentID?
     var showsDevices: Bool { layout.devices }
     var showsEditor: Bool { layout.editor }
 
@@ -30,7 +30,7 @@ public final class WorkspaceState {
     /// Editors page to the playhead until a manual time scroll. Not saved;
     /// each opened document starts following (ADR 0159).
     var followsPlayhead = true
-    @ObservationIgnored private var folderDocument: UUID?
+    @ObservationIgnored private var folderDocument: DocumentID?
     @ObservationIgnored private var projectionSource: Snapshot?
     @ObservationIgnored private var projectionCollapsed: Set<UUID> = []
     @ObservationIgnored private var projectedOrder: [UUID] = []
@@ -112,15 +112,15 @@ public final class CanvasNavigationState {
     var headerWidth = 160.0
     var pianoCamera: PianoCamera?
     var pianoLocationID: UUID?
-    private(set) var document: UUID?
+    private(set) var document: DocumentID?
     private var tracks: Set<UUID> = []
     public init() {}
 
-    func permits(document: UUID?, track: UUID? = nil) -> Bool {
+    func permits(document: DocumentID?, track: UUID? = nil) -> Bool {
         self.document == document && (track.map { tracks.contains($0) } ?? true)
     }
 
-    func prepare(document: UUID?, tracks: Set<UUID>) {
+    func prepare(document: DocumentID?, tracks: Set<UUID>) {
         if self.document != document { self.document = document; arrange = nil; headerWidth = 160; pianoCamera = nil; pianoLocationID = nil }
         self.tracks = tracks
     }

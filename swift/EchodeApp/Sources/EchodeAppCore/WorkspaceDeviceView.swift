@@ -53,7 +53,7 @@ private struct DeviceListChange: Equatable {
 
 /// A list is read again when the shown track or its running devices change.
 private struct DeviceViewKey: Equatable {
-    let document: UUID
+    let document: DocumentID
     let track: UUID
     let running: [UUID]
 }
@@ -62,7 +62,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
     let controller: ProjectController
     let devices: [TrackDevice]
     let track: UUID
-    let document: UUID
+    let document: DocumentID
     let states: [UUID: DeviceParameterState]
     let busy: Bool
     let locked: Bool
@@ -90,11 +90,11 @@ private struct DeviceStripCanvas: NSViewRepresentable {
             controller.setDeviceCollapsed(device, collapsed: collapsed, documentID: document)
         }
         strip.onAdd = add
-        strip.onBegin = { controller.beginParameter($0, device: $1) }
-        strip.onChange = { controller.changeParameter($0) }
-        strip.onEnd = { commit in Task { await controller.finishParameter(commit: commit) } }
-        strip.onStep = { device, id, value in Task { await controller.setParameter(id, device: device, value: value) } }
-        strip.onEnter = { device, id, text in await controller.enterParameter(text, id: id, device: device) }
+        strip.onBegin = { controller.beginParameter($0, device: $1, documentID: document) }
+        strip.onChange = { controller.changeParameter($0, documentID: document) }
+        strip.onEnd = { commit in Task { await controller.finishParameter(commit: commit, documentID: document) } }
+        strip.onStep = { device, id, value in Task { await controller.setParameter(id, device: device, value: value, documentID: document) } }
+        strip.onEnter = { device, id, text in await controller.enterParameter(text, id: id, device: device, documentID: document) }
         strip.onPin = { device, id, pinned in Task { await controller.setPinned(id, device: device, pinned: pinned, documentID: document) } }
         strip.onRetry = { device in controller.retryParameters(device, documentID: document) }
         strip.configure(devices: devices, track: track, document: document, busy: busy, locked: locked, states: states, outputOpening: outputOpening, collapsed: collapsed)
@@ -126,7 +126,7 @@ final class DeviceStripView: NSView {
     /// reuses them with their rows and scroll positions.
     private var cache: [UUID: DeviceColumnView] = [:]
     private var track: UUID?
-    private var document: UUID?
+    private var document: DocumentID?
     private var busy = false
     private let empty = NSTextField(labelWithString: "")
     let addButton = NSButton(title: text("Add FX"), target: nil, action: nil)
@@ -161,7 +161,7 @@ final class DeviceStripView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Keeps the column of a device that stays, with its list and scroll position.
-    func configure(devices: [TrackDevice], track: UUID, document: UUID, busy: Bool,
+    func configure(devices: [TrackDevice], track: UUID, document: DocumentID, busy: Bool,
                    locked: Bool = false, states: [UUID: DeviceParameterState] = [:], outputOpening: Bool = false, collapsed: Set<UUID> = []) {
         if self.document != document { cache = [:] }
         self.devices = devices; self.track = track; self.document = document; self.busy = busy

@@ -23,7 +23,7 @@ public func runArrangeProbe(reportPath: String) {
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Probe")
-        await controller.insertNote(pitch: 60, beat: 0, length: 8)
+        await controller.insertNote(pitch: 60, beat: 0, length: 8, documentID: controller.documentID!)
         // This project size belongs to the explicit display regression only.
         for index in 1..<20 { await controller.addTrack(name: "Track \(index)") }
         guard let snapshot = controller.snapshot else { exit(1) }

@@ -79,7 +79,7 @@ public func runOffscreenArrangeProbe(reportPath: String) async throws {
     }
     // A long clip starting before the viewport must never spill into headers.
     controller.selection = snapshot.trackID(at: 0)
-    await controller.insertNote(pitch: 60, beat: 0, length: 16)
+    await controller.insertNote(pitch: 60, beat: 0, length: 16, documentID: controller.documentID!)
     guard let notes = controller.snapshot else { throw CocoaError(.coderValueNotFound) }
     let clipped = ArrangeFrame(input: CanvasInput(snapshot: notes, selected: nil, camera: ArrangeCamera(originBeat: 7),
                               width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette())))

@@ -44,7 +44,7 @@ struct PianoViewportTests {
         navigation.prepare(document: controller.documentID, tracks: [])
         recreated.scrollWheel(with: NSEvent(cgEvent: scroll)!)
         #expect(navigation.pianoCamera == shared)
-        let replacement = UUID()
+        let replacement = DocumentID()
         navigation.prepare(document: replacement, tracks: [chords, melody])
         grid.scrollWheel(with: NSEvent(cgEvent: scroll)!)
         #expect(navigation.pianoCamera == nil)

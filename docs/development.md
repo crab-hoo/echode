@@ -95,7 +95,7 @@
 | CLI | `crates/echode-cli` | `render`、`serve`、`mcp` サブコマンド。統合テストは `tests/render.rs`、`tests/mcp.rs` |
 | 製品 C ABI | `crates/echode-ffi` | `lib.rs`、`queue.rs`（コマンド投入・取消）、`controls.rs`。ヘッダ生成は `cbindgen` |
 | Swift ブリッジ | `swift/EchodeBridge` | `Document.swift`、`Audio.swift`、`Controls.swift`（`echode-ffi` の Swift 6 ラッパー） |
-| 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |
+| 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`DocumentSession.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
@@ -323,7 +323,7 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 回帰は `PianoInsertionTests.swift` に置く（[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
 
 単クリックの記憶長入力も同じ `PianoInsertion` を使い、長さと非永続の履歴枠は `NoteInputLength.swift` に置く。
-`ProjectController.recordEdit` が全モデル編集の枠をそろえ、ノート選択・追加・長さ変更だけが長さを更新する。
+`DocumentSession.recordEdit` が全モデル編集の枠をそろえ、ノート選択・追加・長さ変更だけが長さを更新する。
 回帰は `NoteInputLengthTests.swift`・`NoteInputHistoryTests.swift`（[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
 
 ベロシティの専用モデルは `crates/echode-model/src/note_velocity.rs`、製品アクションは `note.velocity`、

@@ -33,16 +33,16 @@ extension ProjectController {
     /// Opens the plugin's own window in its helper, or raises it. The window
     /// never takes keyboard focus. Selection and edits never wait for this.
     @discardableResult
-    public func openPluginWindow(_ device: UUID, documentID: UUID) async -> DeviceWindowReport? {
-        guard self.documentID == documentID, let document,
+    public func openPluginWindow(_ device: UUID, documentID: DocumentID) async -> DeviceWindowReport? {
+        guard let document = session(for: documentID)?.document,
               let track = tracks.first(where: { track in deviceRows(on: track.id).contains { $0.id == device } }),
               let row = deviceRows(on: track.id).first(where: { $0.id == device }), !row.offline else { return nil }
         do {
             let result = try await sendDevice(document, .showWindow(device: device, title: "\(track.name) — \(row.title)"))
-            guard self.documentID == documentID else { return nil }
+            guard isCurrent(documentID) else { return nil }
             return result.report.window
         } catch {
-            if self.documentID == documentID { report(error) }
+            if isCurrent(documentID) { report(error) }
             return nil
         }
     }
@@ -51,12 +51,12 @@ extension ProjectController {
     /// window without focus. Batch adds, copies and track duplication call
     /// the plain insertion and leave windows closed.
     @discardableResult
-    func addPluginOpeningWindow(_ plugin: String, on track: UUID, documentID: UUID) async -> Bool {
+    func addPluginOpeningWindow(_ plugin: String, on track: UUID, documentID: DocumentID) async -> Bool {
         let before = Set(deviceRows(on: track).map(\.id))
         guard await insertPlugin(plugin, on: track, documentID: documentID) else { return false }
-        if let added = deviceRows(on: track).first(where: { !before.contains($0.id) }) {
-            let previous = pluginWindowTask
-            pluginWindowTask = Task { [weak self] in
+        if let session = session(for: documentID), let added = deviceRows(on: track).first(where: { !before.contains($0.id) }) {
+            let previous = session.pluginWindowTask
+            session.pluginWindowTask = Task { [weak self] in
                 await previous?.value
                 await self?.openPluginWindow(added.id, documentID: documentID)
             }
@@ -64,22 +64,13 @@ extension ProjectController {
         return true
     }
 
-    func startPluginActivity(_ document: Document, documentID: UUID) {
-        pluginActivity?.stop()
-        pluginActivity = PluginActivityReader(document: document) { [weak self] entries in
+    func startPluginActivity(_ session: DocumentSession) {
+        guard let document = session.document, let documentID = session.id else { return }
+        session.pluginActivity = PluginActivityReader(document: document) { [weak self] entries in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.receivePluginActivity(entries, documentID: documentID) }
             }
         }
-    }
-
-    func stopPluginActivity() {
-        pluginActivity?.stop()
-        pluginActivity = nil
-        for task in pluginQuiet.values { task.cancel() }
-        pluginQuiet = [:]
-        pluginGestures = [:]
-        openPluginWindows = []
     }
 
     /// Applies what plugins did on their own. Values reach each device's list
@@ -87,13 +78,13 @@ extension ProjectController {
     /// without one, while the plugin's window is open, is recorded once the
     /// plugin has been quiet for `pluginQuietDelay`. Recording only adds a
     /// step when the plugin's bytes changed.
-    func receivePluginActivity(_ entries: [PluginActivity], documentID: UUID) {
-        guard self.documentID == documentID else { return }
+    func receivePluginActivity(_ entries: [PluginActivity], documentID: DocumentID) {
+        guard let session = session(for: documentID) else { return }
         for entry in entries {
             let device = entry.device
             guard tracks.contains(where: { track in deviceRows(on: track.id).contains { $0.id == device && !$0.offline } }) else { continue }
             if let open = entry.windowState {
-                if open { openPluginWindows.insert(device) } else { openPluginWindows.remove(device) }
+                if open { session.openPluginWindows.insert(device) } else { session.openPluginWindows.remove(device) }
             }
             if entry.windowOpen {
                 for name in entry.commands {
@@ -101,14 +92,14 @@ extension ProjectController {
                 }
             }
             // The parameter under the user's pointer in the device view keeps its slider.
-            let dragging = parameterGesture.flatMap { $0.device == device ? $0.parameter : nil }
+            let dragging = session.parameterGesture.flatMap { $0.device == device ? $0.parameter : nil }
             for value in entry.values where value.id != dragging {
-                parameterState(device)?.update(value.id, value: value.value, text: value.text)
+                session.parameterStates[device]?.update(value.id, value: value.value, text: value.text)
             }
-            if entry.rescan || entry.lost, let state = parameterState(device) {
-                Task { await self.relistParameters(state) }
+            if entry.rescan || entry.lost, let state = session.parameterStates[device] {
+                Task { await self.listParameters(state, in: session) }
             }
-            var open = pluginGestures[device] ?? []
+            var open = session.pluginGestures[device] ?? []
             var ended = false
             var plain = false
             for event in entry.events {
@@ -120,14 +111,14 @@ extension ProjectController {
                 case .value: if !open.contains(event.id) { plain = true }
                 }
             }
-            pluginGestures[device] = open.isEmpty ? nil : open
+            session.pluginGestures[device] = open.isEmpty ? nil : open
             // A drag in the device view records this device itself when it ends.
-            guard parameterGesture?.device != device else { continue }
+            guard session.parameterGesture?.device != device else { continue }
             if ended && open.isEmpty {
-                pluginQuiet.removeValue(forKey: device)?.cancel()
-                recordPluginEdit(device, documentID: documentID)
+                session.pluginQuiet.removeValue(forKey: device)?.cancel()
+                recordPluginEdit(device, in: session)
             } else if open.isEmpty && entry.windowOpen && (plain || entry.dirty || entry.lost) {
-                waitForQuiet(device, documentID: documentID)
+                waitForQuiet(device, in: session)
             }
         }
     }
@@ -135,38 +126,39 @@ extension ProjectController {
     /// Waits for every plugin-made edit already scheduled, including quiet
     /// waits that are still running, so tests do not depend on timing.
     func settlePluginEdits() async {
-        await pluginWindowTask?.value
+        let session = self.session
+        await session.pluginWindowTask?.value
         while true {
-            if let (device, quiet) = pluginQuiet.first {
+            if let (device, quiet) = session.pluginQuiet.first {
                 await quiet.value
-                if pluginQuiet[device] == quiet { pluginQuiet[device] = nil }
+                if session.pluginQuiet[device] == quiet { session.pluginQuiet[device] = nil }
                 continue
             }
-            guard let task = pluginRecordTask else { return }
+            guard let task = session.pluginRecordTask else { return }
             await task.value
-            if pluginRecordTask == task { pluginRecordTask = nil }
+            if session.pluginRecordTask == task { session.pluginRecordTask = nil }
         }
     }
 
-    private func waitForQuiet(_ device: UUID, documentID: UUID) {
-        pluginQuiet.removeValue(forKey: device)?.cancel()
+    private func waitForQuiet(_ device: UUID, in session: DocumentSession) {
+        session.pluginQuiet.removeValue(forKey: device)?.cancel()
         let delay = pluginQuietDelay
-        pluginQuiet[device] = Task { [weak self] in
+        session.pluginQuiet[device] = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self else { return }
-            self.pluginQuiet[device] = nil
-            guard self.pluginGestures[device] == nil, self.parameterGesture?.device != device else { return }
-            self.recordPluginEdit(device, documentID: documentID)
+            session.pluginQuiet[device] = nil
+            guard session.pluginGestures[device] == nil, session.parameterGesture?.device != device else { return }
+            self.recordPluginEdit(device, in: session)
         }
     }
 
-    private func recordPluginEdit(_ device: UUID, documentID: UUID) {
-        guard let document, self.documentID == documentID else { return }
-        let previous = pluginRecordTask
-        pluginRecordTask = Task { [weak self] in
+    private func recordPluginEdit(_ device: UUID, in session: DocumentSession) {
+        guard self.session === session else { return }
+        let previous = session.pluginRecordTask
+        session.pluginRecordTask = Task { [weak self] in
             await previous?.value
             guard let self else { return }
-            _ = await self.record(device: device, document: document, documentID: documentID)
+            _ = await self.record(device: device, in: session)
         }
     }
 }

@@ -5,6 +5,8 @@ struct WorkspaceHistoryView: View {
     let controller: ProjectController
     let close: () -> Void
     @State private var revisions: [SavedRevision] = []
+    /// The document the listed revisions belong to.
+    @State private var document: DocumentID?
     @State private var notice: String?
     @State private var loaded = false
 
@@ -45,12 +47,13 @@ struct WorkspaceHistoryView: View {
     }
 
     private func reload() async {
+        document = controller.documentID
         revisions = await controller.savedRevisions()
         loaded = true
     }
 
     private func restore(_ id: String) async {
-        guard let report = await controller.restoreRevision(id) else { return }
+        guard let document, let report = await controller.restoreRevision(id, documentID: document) else { return }
         revisions = report.revisions
         loaded = true
         notice = report.changed ? nil : "Already at this revision"

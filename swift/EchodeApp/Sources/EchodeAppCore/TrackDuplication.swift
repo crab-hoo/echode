@@ -1,7 +1,7 @@
 import Foundation
 
 struct TrackDuplicationRequest: Sendable {
-    let document: UUID
+    let document: DocumentID
     /// Selected tracks without a selected ancestor, in arrange order.
     let sources: [UUID]
 }

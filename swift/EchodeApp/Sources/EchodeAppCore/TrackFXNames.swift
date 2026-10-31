@@ -46,7 +46,7 @@ extension ArrangeHeaderView {
 }
 
 private struct HeaderDeviceTarget {
-    let document: UUID?
+    let document: DocumentID?
     let track: UUID
     let device: UUID
 }

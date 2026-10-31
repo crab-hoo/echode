@@ -7,7 +7,7 @@ import Testing
 @MainActor
 struct DeviceParameterRetryTests {
     @Test func failedListOffersAnAccessibleRetryInItsColumn() throws {
-        let document = UUID(), track = UUID(), device = UUID()
+        let document = DocumentID(), track = UUID(), device = UUID()
         let row = TrackDevice(id: device, plugin: "dev.echode.test-params")
         let state = DeviceParameterState(document: document, device: device)
         state.fail("The plugin did not answer")
@@ -122,7 +122,7 @@ struct DeviceParameterRetryTests {
         await plugin.failNextListing(device)
         await controller.showDevices(on: track).value
         let reads = await plugin.listings(device)
-        await controller.retryParameters(device, documentID: UUID()).value
+        await controller.retryParameters(device, documentID: DocumentID()).value
         #expect(await plugin.listings(device) == reads)
         #expect(await controller.editDeviceChain(.offline(device: device, offline: true), documentID: document))
         await controller.retryParameters(device, documentID: document).value
@@ -171,7 +171,7 @@ struct DeviceParameterRetryTests {
         #expect(controller.documentID == nil && controller.parameterStates.isEmpty)
     }
 
-    private func project(_ plugin: FakeParameterPlugin) async throws -> (ProjectController, UUID, UUID, URL) {
+    private func project(_ plugin: FakeParameterPlugin) async throws -> (ProjectController, DocumentID, UUID, URL) {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-parameter-retry-\(UUID()).echode")
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)

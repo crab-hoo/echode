@@ -2,7 +2,7 @@ import EchodeBridge
 import Foundation
 
 public struct FaderPreview: Sendable, Equatable {
-    public let document: UUID
+    public let document: DocumentID
     public let track: UUID
     public let field: MixerField
     public let parameter: UUID

@@ -29,7 +29,7 @@ struct MixerSwitchValidationTests {
             MixerSwitchBatch(document: document, tracks: [first, second], anchor: first, field: .pan, value: 1),
             MixerSwitchBatch(document: document, tracks: [first, second], anchor: first, field: .mute, value: .nan),
             MixerSwitchBatch(document: document, tracks: [first, second], anchor: first, field: .mute, value: 0.5),
-            MixerSwitchBatch(document: UUID(), tracks: [first, second], anchor: first, field: .mute, value: 1),
+            MixerSwitchBatch(document: DocumentID(), tracks: [first, second], anchor: first, field: .mute, value: 1),
         ] {
             #expect(!(await controller.applyMixerSwitch(invalid)))
             #expect(controller.mixer(first)?.mute.value == 0 && controller.mixer(second)?.mute.value == 0)

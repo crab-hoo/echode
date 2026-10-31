@@ -257,7 +257,7 @@ struct PianoTests {
         let note = try #require(snapshot.pianoNeighbor(track: track, current: nil))
         let count = controller.undoCount
         let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        let document = controller.documentID
+        let document = try #require(controller.documentID)
         var sent: [Int] = []
         var writes: [Task<Bool, Never>] = []
         grid.onEdit = { id, geometry in

@@ -112,10 +112,10 @@ struct PianoGridControlTests {
         #expect(recreated.grid.camera == shared)
         #expect(recreated.gridBar.picker.indexOfSelectedItem == PianoGrid.choices.firstIndex(of: shared.gridMode))
         // A stale control cannot write into a replacement document's shared state.
-        navigation.prepare(document: UUID(), tracks: [track, other])
+        navigation.prepare(document: DocumentID(), tracks: [track, other])
         try choose(.fixed(705_600))
         #expect(navigation.pianoCamera == nil && view.camera == shared)
-        recreated.grid.setNavigation(navigation)
+        recreated.grid.setNavigation(navigation, documentID: navigation.document)
         recreated.grid.setSnapshot(snapshot, track: other, focus: nil, key: DisplayKey(), busy: false)
         #expect(recreated.grid.camera == PianoCamera() && recreated.gridBar.picker.indexOfSelectedItem == 0)
         #expect(controller.noteInput.length == inputLength && controller.undoCount == undo)

@@ -48,12 +48,12 @@ struct WorkspaceInspectorView: View {
                             .accessibilityHint(text("Open plugin window"))
                             .disabled(controller.busy || device.offline)
                             Spacer()
-                            Button { Task { await controller.removeDevice(device.id, documentID: document) } } label: { Image(systemName: "minus.circle") }
+                            Button { if let document { Task { await controller.removeDevice(device.id, documentID: document) } } } label: { Image(systemName: "minus.circle") }
                                 .help(text("Remove")).accessibilityLabel(text("Remove") + " " + device.title).disabled(controller.busy)
                         }
                     }
                     InspectorAddFX(enabled: !controller.busy) {
-                        guard controller.documentID == document, !controller.busy else { return }
+                        guard controller.acceptsInput(document) else { return }
                         add(track.id)
                     }
                 } else { Text(text("Select a track")).foregroundStyle(.secondary) }

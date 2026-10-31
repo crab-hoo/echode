@@ -35,7 +35,7 @@ struct PianoDuplicateCancellationTests {
             case 3: _ = view.resignFirstResponder()
             case 4: view.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: true, selection: ids)
             case 5: view.setFrameSize(NSSize(width: 650, height: 400))
-            case 6: view.setNavigation(nil, documentID: UUID())
+            case 6: view.setNavigation(nil, documentID: DocumentID())
             case 7: view.setSnapshot(snapshot, track: track, focus: first.id, key: DisplayKey(), busy: false, selection: [first.id])
             case 8: view.stop()
             default: break

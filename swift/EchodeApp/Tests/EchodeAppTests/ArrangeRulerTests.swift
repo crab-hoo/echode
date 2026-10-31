@@ -126,7 +126,7 @@ struct ArrangeRulerTests {
             { pane.timeline.onScroll?(-10, 0) },
             { pane.timeline.onZoom?(1.2, [], .zero) },
             { view.setRuler(start: nil, loop: nil, busy: true) },
-            { view.audioDocument = UUID() },
+            { view.audioDocument = DocumentID() },
             { view.stop() },
         ]
         for cancel in cancellations {

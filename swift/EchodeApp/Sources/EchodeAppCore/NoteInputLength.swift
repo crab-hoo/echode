@@ -43,7 +43,7 @@ struct NoteInputLength {
     }
 }
 
-extension ProjectController {
+extension DocumentSession {
     /// All journaled mutations, including plugin state and revision restores,
     /// share this slot accounting with note input's non-persistent history.
     func recordEdit(inputLength: NoteInputLength.Change? = nil) {

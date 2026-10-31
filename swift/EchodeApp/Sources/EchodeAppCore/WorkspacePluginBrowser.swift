@@ -3,7 +3,7 @@ import SwiftUI
 
 struct WorkspacePluginBrowser: View {
     let controller: ProjectController
-    let document: UUID
+    let document: DocumentID
     let close: () -> Void
     @State private var query = ""
     @State private var plugins: [PluginListing] = []
@@ -13,7 +13,7 @@ struct WorkspacePluginBrowser: View {
     @State private var scans = CoalescedReload()
     @FocusState private var searching: Bool
     private var filtered: [PluginListing] { plugins.filter { fuzzyMatch(query, in: "\($0.name) \($0.vendor) \($0.id)") } }
-    private var targetExists: Bool { controller.documentID == document && controller.tracks.contains { $0.id == controller.selection } }
+    private var targetExists: Bool { controller.isCurrent(document) && controller.tracks.contains { $0.id == controller.selection } }
     /// A rescan does not block inserting a plugin that is listed (ADR 0162).
     private var canInsert: Bool { targetExists && !controller.busy && selected != nil }
     var body: some View {
@@ -29,7 +29,7 @@ struct WorkspacePluginBrowser: View {
                                 onSelect: { selected = $0 },
                                 onInsert: { plugin, closeAfter in selected = plugin; insert(plugin, allSelected: false, closeAfter: closeAfter) },
                                 onInsertOnSelected: { insert($0, allSelected: true, closeAfter: false) },
-                                canInsertOnSelected: controller.documentID == document && !controller.selectedTracks.isEmpty && !controller.busy)
+                                canInsertOnSelected: controller.acceptsInput(document) && !controller.selectedTracks.isEmpty)
             HStack {
                 Button(text("Refresh")) { Task { await reload() } }.disabled(loading || controller.busy)
                 Spacer()

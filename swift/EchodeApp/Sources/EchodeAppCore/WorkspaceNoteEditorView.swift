@@ -21,8 +21,7 @@ struct WorkspaceNoteEditorView: View {
                 }.fixedSize()
             }.padding(10)
             Divider()
-            if let snapshot = controller.snapshot, let track = controller.pianoTrack {
-                let document = controller.documentID
+            if let snapshot = controller.snapshot, let track = controller.pianoTrack, let document = controller.documentID {
                 HStack(spacing: 0) {
                 PianoCanvas(snapshot: snapshot, track: track, focus: $controller.noteFocus, key: state.displayKey, busy: controller.busy,
                     insert: { pitch, beat, length in
@@ -31,9 +30,9 @@ struct WorkspaceNoteEditorView: View {
                     edit: { id, geometry in Task { await controller.editNote(id, geometry: geometry, documentID: document) } },
                     delete: { id in Task { await controller.deleteNote(id, documentID: document) } },
                     start: controller.playbackStart,
-                    setStart: { tick in Task { await controller.setPlaybackStart(tick: tick) } },
+                    setStart: { tick in Task { if controller.isCurrent(document) { await controller.setPlaybackStart(tick: tick) } } },
                     loop: controller.rulerLoop,
-                    setLoop: { range in if let document { Task { await controller.setLoopRange(range, documentID: document) } } },
+                    setLoop: { range in Task { await controller.setLoopRange(range, documentID: document) } },
                     playback: controller.playback, transportGeneration: controller.transportGeneration,
                     navigation: state.navigation, documentID: document,
                     followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false },
@@ -42,9 +41,9 @@ struct WorkspaceNoteEditorView: View {
                     velocities: { change in Task { await controller.setNoteVelocities(change, documentID: document) } },
                     moves: { change in Task { await controller.moveNotes(change, documentID: document) } },
                     resizes: { change in Task { await controller.resizeNotes(change, documentID: document) } },
-                    steps: { step in if let document { _ = controller.enqueuePianoStep(step, documentID: document) } },
+                    steps: { step in _ = controller.enqueuePianoStep(step, documentID: document) },
                     references: controller.pianoReferences, location: controller.pianoLocation,
-                    selection: controller.noteSelection, selectNotes: { if controller.documentID == document { controller.selectNotes($0) } },
+                    selection: controller.noteSelection, selectNotes: { if controller.isCurrent(document) { controller.selectNotes($0) } },
                     deleteNotes: { ids in Task { await controller.deleteNotes(ids, documentID: document) } })
                     .id(controller.documentID)
                     Divider()
@@ -72,21 +71,19 @@ struct WorkspaceNoteEditorView: View {
             HStack {
                 if let id = state.draft.note {
                     Button(text("Apply Changes")) {
-                        guard let geometry = state.draft.geometry else { return }
+                        guard let document, let geometry = state.draft.geometry else { return }
                         Task { await controller.editNote(id, geometry: geometry, documentID: document) }
                     }.disabled(!state.draft.canApply)
                     Button(text("Revert")) { state.draft.reset() }.disabled(!state.draft.dirty)
-                    Button(text("Delete Note")) { Task { await controller.deleteNote(id, documentID: document) } }
+                    Button(text("Delete Note")) { if let document { Task { await controller.deleteNote(id, documentID: document) } } }
                     Spacer()
-                    Button(text("New Note")) { if controller.documentID == document { controller.noteFocus = nil } }
+                    Button(text("New Note")) { if controller.isCurrent(document) { controller.noteFocus = nil } }
                 } else {
                     Button(text("Insert Note")) {
-                        guard let geometry = state.draft.geometry, let track = state.draft.track else { return }
+                        guard let document, let geometry = state.draft.geometry, let track = state.draft.track else { return }
                         Task {
-                            if controller.documentID == document {
-                                await controller.insertNote(pitch: geometry.pitch, beat: Double(geometry.start) / Tick.perBeat,
-                                                            length: Double(geometry.length) / Tick.perBeat, on: track, documentID: document)
-                            }
+                            await controller.insertNote(pitch: geometry.pitch, beat: Double(geometry.start) / Tick.perBeat,
+                                                        length: Double(geometry.length) / Tick.perBeat, on: track, documentID: document)
                         }
                     }.disabled(state.draft.geometry == nil)
                     Spacer()

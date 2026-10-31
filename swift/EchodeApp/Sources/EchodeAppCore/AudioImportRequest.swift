@@ -5,7 +5,7 @@ import Foundation
 /// Queued work must never retarget itself after a selection or document change.
 struct AudioImportRequest {
     let url: URL
-    let document: UUID
+    let document: DocumentID
     let track: UUID
     let tick: Int64
 }
@@ -31,7 +31,7 @@ extension ProjectController {
 
     @discardableResult
     func importAudio(_ request: AudioImportRequest) async -> Bool {
-        guard documentID == request.document, tracks.contains(where: { $0.id == request.track }), request.tick >= 0 else { return false }
+        guard isCurrent(request.document), tracks.contains(where: { $0.id == request.track }), request.tick >= 0 else { return false }
         return await performActions({ [
             .importAudio(track: request.track.uuidString, start: request.tick, path: request.url.path),
         ] }, documentID: request.document)

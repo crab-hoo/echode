@@ -3,7 +3,7 @@ import EchodeBridge
 
 /// One clip move or copy, captured by the arrange before document work starts (ADRs 0154, 0188).
 public struct ClipMove: Sendable, Equatable {
-    let document: UUID
+    let document: DocumentID
     let clip: UUID
     let track: UUID
     let start: Int64
@@ -116,7 +116,7 @@ extension ArrangeFrame {
 extension WorkspaceSession {
     @discardableResult
     func moveClip(_ move: ClipMove) -> Task<Bool, Never>? {
-        guard !controller.busy, controller.documentID == move.document else { return nil }
+        guard controller.acceptsInput(move.document) else { return nil }
         return Task { await controller.moveClip(move) }
     }
 }
@@ -126,7 +126,7 @@ extension ProjectController {
     @discardableResult
     func moveClip(_ move: ClipMove) async -> Bool {
         let applied = await performActions({ [self] in
-            guard documentID == move.document, move.start >= 0, let clip = snapshot?.clipMix(move.clip),
+            guard move.start >= 0, let clip = snapshot?.clipMix(move.clip),
                   tracks.contains(where: { $0.id == move.track }),
                   clip.track != move.track || clip.start != move.start else { return nil }
             let action: EditAction = move.copy
@@ -134,7 +134,7 @@ extension ProjectController {
                 : .moveClip(clip: move.clip.uuidString, track: move.track.uuidString, start: move.start)
             return [action]
         }, documentID: move.document)
-        guard applied, documentID == move.document else { return applied }
+        guard applied, isCurrent(move.document) else { return applied }
         selection = move.track
         clipFocus = move.copy ? landedClip(on: move.track, at: move.start) : move.clip
         return true

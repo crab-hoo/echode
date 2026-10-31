@@ -34,7 +34,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 - [2026-10-30 構造の横断監査](reviews/2026-10-30-structure-audit.md): SPG-01〜11。
   絡み合いを起こしやすい構造と根本の修正方針・順番。
-  SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md) で対応し、当時の再現は保持する。
+  SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md)、SPG-02 は [ADR 0203](decisions/0203-document-session.md) で対応し、当時の再現は保持する。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。
@@ -109,6 +109,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   数値入力とヘッダの読み上げ増減は共通差分と限界を保ち、ドラッグ・既定値リセットは単一対象を保つ。
 - ヘッダの値操作の文書切替境界: [ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)。
   押下・リセット待ち・数値欄を文書交換で取り消し、旧操作へ新文書のコールバックを貸さない。
+- 文書の寿命の状態のまとめ・丸ごとの差替え・省略できない文書 ID と 1 か所の照合: [ADR 0203](decisions/0203-document-session.md)。
 - クリップのゲイン・フェードの文書境界と押下時の編集先保持:
   [ADR 0194](decisions/0194-clip-mix-gesture-document-scope.md)。旧押下・数値欄と投入済みの送信を文書交換で拒否する。
 - 値の操作子のクリック規則・入力欄・`text_to_value` の文字入力: [ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)。

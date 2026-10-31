@@ -13,7 +13,7 @@ struct NoteVelocityTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         #expect(await controller.insertNote(pitch: 60, beat: 1, length: 1))
-        let track = try #require(controller.selection), document = controller.documentID
+        let track = try #require(controller.selection), document = try #require(controller.documentID)
         let note = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
         let undo = controller.undoCount
         let view = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
@@ -67,7 +67,7 @@ struct NoteVelocityTests {
         #expect(!(await controller.setNoteVelocity(note.id, velocity: 115)))
         #expect(!(await controller.setNoteVelocity(note.id, velocity: 128)))
         #expect(!(await controller.setNoteVelocity(note.id, velocity: -1)))
-        #expect(!(await controller.setNoteVelocity(note.id, velocity: 80, documentID: UUID())))
+        #expect(!(await controller.setNoteVelocity(note.id, velocity: 80, documentID: DocumentID())))
         #expect(controller.undoCount == undo + 1 && controller.noteVelocity.value == 115)
 
         // A click alone and a drag returning to its origin do not add history.

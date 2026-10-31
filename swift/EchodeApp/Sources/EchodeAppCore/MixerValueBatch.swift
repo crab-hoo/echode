@@ -3,7 +3,7 @@ import Foundation
 
 /// Discrete entries and steps capture IDs on submission, then resolve values on their edit turn.
 struct MixerValueBatch: Sendable {
-    let document: UUID
+    let document: DocumentID
     let tracks: [UUID]
     let anchor: UUID
     let field: MixerField
@@ -52,15 +52,15 @@ struct MixerValueBatch: Sendable {
 }
 
 extension ProjectController {
-    func captureMixerValue(_ track: UUID, field: MixerField, value: Float, document: UUID?) -> MixerValueBatch? {
-        guard let document, documentID == document, !busy, mixer(track) != nil,
+    func captureMixerValue(_ track: UUID, field: MixerField, value: Float, document: DocumentID?) -> MixerValueBatch? {
+        guard let document, acceptsInput(document), mixer(track) != nil,
               value.isFinite, field == .gain || field == .pan,
               (field == .gain ? ModelLimits.gain.contains(value) : ModelLimits.pan.contains(value)) else { return nil }
         let targets = selectedTracks.contains(track) ? tracks.map(\.id).filter { selectedTracks.contains($0) } : [track]
         return MixerValueBatch(document: document, tracks: targets, anchor: track, field: field, value: value)
     }
 
-    func captureMixerStep(_ track: UUID, field: MixerField, direction: Double, document: UUID?) -> MixerValueBatch? {
+    func captureMixerStep(_ track: UUID, field: MixerField, direction: Double, document: DocumentID?) -> MixerValueBatch? {
         guard direction == -1 || direction == 1,
               var request = captureMixerValue(track, field: field, value: 0, document: document) else { return nil }
         request.direction = direction
@@ -69,16 +69,16 @@ extension ProjectController {
 
     @discardableResult
     func enqueueMixerValue(_ request: MixerValueBatch) -> Task<Bool, Never>? {
-        guard !busy, documentID == request.document else { return nil }
+        guard let session = inputSession(for: request.document) else { return nil }
         // Discrete numeric entries, steps and switches share one event-order queue.
-        let previous = mixerSwitchTail
+        let previous = session.mixerSwitchTail
         let task = Task { [self] in
             _ = await previous?.value
-            guard documentID == request.document else { return false }
-            if faderPreview != nil { await finishFader(commit: true) }
+            guard isCurrent(request.document) else { return false }
+            if session.faderPreview != nil { await finishFader(commit: true, in: session) }
             return await applyMixerValue(request)
         }
-        mixerSwitchTail = task
+        session.mixerSwitchTail = task
         return task
     }
 

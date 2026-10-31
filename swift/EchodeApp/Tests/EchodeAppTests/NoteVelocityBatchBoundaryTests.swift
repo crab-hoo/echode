@@ -80,7 +80,7 @@ struct NoteVelocityBatchBoundaryTests {
         #expect(!(await controller.setNoteVelocities(PianoVelocityChange(anchor: first.id, originals: current, delta: 0))))
         #expect(!(await controller.setNoteVelocities(PianoVelocityChange(anchor: first.id, originals: current, delta: 128))))
         #expect(!(await controller.setNoteVelocities(PianoVelocityChange(anchor: first.id, originals: current, delta: -20))))
-        #expect(!(await controller.setNoteVelocities(PianoVelocityChange(anchor: first.id, originals: current, delta: 1), documentID: UUID())))
+        #expect(!(await controller.setNoteVelocities(PianoVelocityChange(anchor: first.id, originals: current, delta: 1), documentID: DocumentID())))
         #expect(controller.undoCount == undo + 1 && controller.noteVelocity.value == 19)
         // Changing to a multi-selection invalidates an earlier pending entry-value response without choosing a representative.
         controller.noteFocus = first.id

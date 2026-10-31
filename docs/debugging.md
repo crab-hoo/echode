@@ -160,6 +160,9 @@ make debug-report
   2026-10-29 の検査時間基盤の変更でも同じ未保留デバイスの応答待ちが `1 yielded polls` で期限切れとなった。
   同じバイナリの `DevicePreparationTests` 単独では再現せず、競合診断はなかった。
   単独実行は `target/bridge/thread/product/verification-preparation-focused.log` に残す。原因解明や期限変更は行っていない。
+  2026-10-31 の `DocumentSession` の導入でも、TSan 全体で同じ応答待ちが `2 yielded polls` で期限切れとなり、競合診断はなかった。
+  5 秒で数回しか進まないのは応答の喪失ではなく、主スレッドが待ちの間ほぼ動いていないことを示す。喪失なら約 1000 回進む。
+  同じバイナリの単独実行は `target/focused-checks/document-session/preparation-tsan.log` に残す。期限と対象テストは変更しない。
   2026-10-28 のグリッド変更の ASan 全体検査では、`RecoveryConsentTests` の警告待ちも 2 回期限切れとなった。
   同じバイナリの当該スイート単独では再現せず、ASan のメモリ診断はなかった。5 秒の期限は変更しない。
   記録は `target/bridge/address/product/swift-tests.failed.log` と `target/focused-checks/piano-grid-recovery-asan/`。
@@ -564,13 +567,13 @@ make debug-report
   `plugin-window-state` でソケット受信順の `window_state`、`plugin-window-status-ui` で画面の `openPluginWindows` を確認する。
   活動の `window` は編集時の過去の文脈、`closed` は未読期間内の閉鎖の有無であり、現在の表示へ代用しない。
   開く要求の返答から楽観的に表示を更新していないか、未読圧縮で最後の寿命を保っているかも調べる。
-  削除・オフライン後の残留は `publish`、文書交換後の残留は `stopPluginActivity` と文書 ID の照合を確認する
+  削除・オフライン後の残留は `publish`、文書交換後の残留は `DocumentSession.retire` と、処理が保持するセッションを確認する
   （[ADR 0138](decisions/0138-plugin-window-status.md)）。
 - **デバイスの一覧が隠れる・折りたたみ後の FX ドロップ先がずれる**:
   名前の左の開閉状態を確認する。折りたたみは音やオフライン状態を変えず、検索・一覧・状態の本文だけを隠す。
   展開しても一覧が戻らない時はパラメーターの取得失敗と区別する。
   `device-disclosure-ui` で可変幅の列の中央前後と送り先 ID を確認し、配置・挿入先に固定の列幅を使っていないか調べる。
-  トラック切替・エディタ再生成で開閉が戻るなら `collapsedDevices`、文書交換後も残るなら `forgetParameters` を確認する。
+  トラック切替・エディタ再生成で開閉が戻るなら `collapsedDevices`、文書交換後も残るなら、書込み先が `controller.session` と同じセッションかを確認する。
   見えない検索欄がキーを消費する時は折りたたみ時のフォーカス解除を確認する（[ADR 0137](decisions/0137-device-disclosure.md)）。
 - **値の操作子のクリックで値が跳ぶ・ダブルクリックが記録されない・入力欄が閉じない**:
   規則は `ValueClicks` の段階（押下・ドラッグ・既定値の表示中・3 回目待ち）で決まる。単クリックで値が変わるなら、

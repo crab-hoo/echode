@@ -3,7 +3,7 @@ import Foundation
 
 /// Captured by native controls before an asynchronous edit or document exchange.
 struct PianoTrackTarget: Sendable, Equatable {
-    let document: UUID
+    let document: DocumentID
     let track: UUID
 }
 
@@ -30,7 +30,7 @@ extension ProjectController {
 
     @discardableResult
     func openPiano(_ target: PianoTrackTarget) -> Bool {
-        guard !busy, documentID == target.document, tracks.contains(where: { $0.id == target.track }) else { return false }
+        guard acceptsInput(target.document), tracks.contains(where: { $0.id == target.track }) else { return false }
         if pianoTrack != target.track {
             pianoTrack = target.track
             selectNotes([])
@@ -48,8 +48,8 @@ extension ProjectController {
     }
 
     func setPianoReference(_ target: PianoTrackTarget, visible: Bool) {
-        guard !busy, documentID == target.document, tracks.contains(where: { $0.id == target.track }) else { return }
-        if visible { hiddenPianoTracks.remove(target.track) } else { hiddenPianoTracks.insert(target.track) }
+        guard let session = inputSession(for: target.document), tracks.contains(where: { $0.id == target.track }) else { return }
+        if visible { session.hiddenPianoTracks.remove(target.track) } else { session.hiddenPianoTracks.insert(target.track) }
     }
 }
 

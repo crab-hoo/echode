@@ -46,7 +46,7 @@ struct TrackMixInspector: View {
             }
         }
     }
-    private func set(_ document: UUID?, _ field: MixerField, _ value: Float) {
+    private func set(_ document: DocumentID?, _ field: MixerField, _ value: Float) {
         let actions = controller.arrangeMixActions(document: document)
         if field == .gain || field == .pan { (actions.enter ?? actions.set)(track, field, value) }
         else { actions.set(track, field, value) }
@@ -63,7 +63,7 @@ struct ClipMixInspector: View {
             ControlNumberField(title: text("Clip Gain"), value: MixScale.decibels(clip.gain), unit: "dB", minimum: -120,
                 maximum: 20 * log10(Double(MixScale.clipGainMax)), silence: true) { db in
                 let gain: Float = db == -.infinity ? 0 : min(MixScale.clipGainMax, Float(pow(10, db / 20)))
-                let document = controller.documentID
+                guard let document = controller.documentID else { return }
                 Task { await controller.setClipGain(clip.id, gain: gain, documentID: document) }
             }
             ControlNumberField(title: text("Fade In"), value: Double(clip.fadeIn) / ClipEntry.flicksPerMillisecond, unit: "ms", minimum: 0,
@@ -76,7 +76,7 @@ struct ClipMixInspector: View {
     }
     private func setFade(_ milliseconds: Double, entering: Bool) {
         let flicks = Int64((milliseconds * ClipEntry.flicksPerMillisecond).rounded())
-        let document = controller.documentID
+        guard let document = controller.documentID else { return }
         Task { await controller.setClipFades(clip.id, fadeIn: entering ? flicks : clip.fadeIn,
             fadeOut: entering ? clip.fadeOut : flicks, documentID: document) }
     }

@@ -103,7 +103,7 @@ struct SampleAudioDropTests {
         for point in [CGPoint(x: 160, y: 34), CGPoint(x: 640, y: 34), CGPoint(x: 220, y: -1), CGPoint(x: 220, y: 300), CGPoint(x: CGFloat.infinity, y: 0)] {
             #expect(view.audioDrop(board, at: point, flags: [], document: document) == nil)
         }
-        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: UUID()) == nil)
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: DocumentID()) == nil)
         // Empty projects are drop targets too. A decode error must not leave a track.
         let empty = try #require(view.audioDrop(board, at: CGPoint(x: 220, y: 34), flags: [], document: document))
         #expect(empty.track == nil)
@@ -186,7 +186,7 @@ struct SampleAudioDropTests {
         view.draggingExited(info)
         #expect(!view.performDragOperation(info))
         #expect(view.draggingEntered(info) == .copy)
-        view.audioDocument = UUID()
+        view.audioDocument = DocumentID()
         #expect(view.draggingUpdated(info).isEmpty && !view.performDragOperation(info))
         view.audioDocument = document
         info.draggingSourceOperationMask = .move

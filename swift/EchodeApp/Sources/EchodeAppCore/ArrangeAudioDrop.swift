@@ -3,7 +3,7 @@ import EchodeBridge
 
 /// One file gesture, captured before any asynchronous document work starts.
 public struct AudioFileDrop: Sendable {
-    let document: UUID
+    let document: DocumentID
     let url: URL
     let track: UUID? // Nil appends a top-level track, in the same undo group.
     let tick: Int64
@@ -17,7 +17,7 @@ public struct AudioFileDrop: Sendable {
 }
 
 extension ArrangeView {
-    func audioDrop(_ board: NSPasteboard, at point: CGPoint, flags: NSEvent.ModifierFlags, document: UUID) -> AudioFileDrop? {
+    func audioDrop(_ board: NSPasteboard, at point: CGPoint, flags: NSEvent.ModifierFlags, document: DocumentID) -> AudioFileDrop? {
         let input = renderInput
         let origin = input.header.map { $0.width + 1 } ?? 0
         guard audioDocument == document, onDropAudio != nil, let snapshot = input.snapshot,
@@ -33,7 +33,7 @@ extension ArrangeView {
     }
 
     @discardableResult
-    func acceptAudio(_ board: NSPasteboard, at point: CGPoint, flags: NSEvent.ModifierFlags, document: UUID) -> Bool {
+    func acceptAudio(_ board: NSPasteboard, at point: CGPoint, flags: NSEvent.ModifierFlags, document: DocumentID) -> Bool {
         guard let drop = audioDrop(board, at: point, flags: flags, document: document) else { return false }
         return onDropAudio?(drop) ?? false
     }
@@ -42,7 +42,7 @@ extension ArrangeView {
 extension WorkspaceSession {
     @discardableResult
     func importDroppedAudio(_ drop: AudioFileDrop) -> Task<Bool, Never>? {
-        guard !controller.busy, controller.documentID == drop.document else { return nil }
+        guard controller.acceptsInput(drop.document) else { return nil }
         return Task { await controller.importDroppedAudio(drop) }
     }
 }

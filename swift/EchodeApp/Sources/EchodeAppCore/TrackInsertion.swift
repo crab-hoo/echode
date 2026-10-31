@@ -1,7 +1,7 @@
 import Foundation
 
 struct TrackInsertionRequest: Sendable {
-    let document: UUID
+    let document: DocumentID
     let after: UUID?
     let name: String
     var intoFolder = true

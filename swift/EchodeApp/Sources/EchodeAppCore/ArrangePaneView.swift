@@ -17,7 +17,7 @@ public final class ArrangePaneView: NSView {
     // Preserve the requested width; narrow layouts only constrain its display.
     private var headerWidth = 160.0
     private var navigation: CanvasNavigationState?
-    private var navigationDocument: UUID?
+    private var navigationDocument: DocumentID?
     private var restoring = false
     let follower = PlayheadFollower()
     /// A time scroll in the headers or the timeline turns following off (ADR 0159).
@@ -82,8 +82,7 @@ public final class ArrangePaneView: NSView {
         updateViewport()
     }
 
-    func setNavigation(_ navigation: CanvasNavigationState?, documentID: UUID? = nil) {
-        let document = documentID ?? navigation?.document
+    func setNavigation(_ navigation: CanvasNavigationState?, documentID document: DocumentID?) {
         guard self.navigation !== navigation || navigationDocument != document else { return }
         self.navigation = navigation; navigationDocument = document
         if navigation?.permits(document: document) == true, let saved = navigation?.arrange {

@@ -14,7 +14,7 @@ struct PianoInsertionTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
-        let document = controller.documentID, undo = controller.undoCount
+        let document = try #require(controller.documentID), undo = controller.undoCount
         var last: NoteGeometry?
         for (downShift, releaseShift) in [(false, false), (true, true), (true, false), (false, true)] {
             let harness = PianoInsertionHarness(snapshot: snapshot, track: track)

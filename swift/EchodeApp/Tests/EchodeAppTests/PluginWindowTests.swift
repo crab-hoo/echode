@@ -44,7 +44,7 @@ struct PluginWindowTests {
         controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true, commands: ["Toggle Inspector"])], documentID: document)
         #expect(state.layout.inspector != before)
         state.presentation = nil
-        for (id, target, open) in [(document, device, false), (UUID(), device, true), (document, UUID(), true)] {
+        for (id, target, open) in [(document, device, false), (DocumentID(), device, true), (document, UUID(), true)] {
             controller.receivePluginActivity([PluginActivity(device: target, windowOpen: open, commands: ["Toggle Inspector"])], documentID: id)
         }
         #expect(received == [.inspector, .inspector], "closed windows and stale targets cannot issue commands")
@@ -65,7 +65,7 @@ struct PluginWindowTests {
     }
     @Test func contractAddFXFollowsTheLastDevice() throws {
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 800, height: 320))
-        let track = UUID(), document = UUID()
+        let track = UUID(), document = DocumentID()
         let rows = (0..<2).map { index in
             TrackDevice(id: UUID(), plugin: "FX \(index)")
         }
@@ -90,7 +90,7 @@ struct PluginWindowTests {
     }
     private func project(_ name: String, plugin: FakeParameterPlugin, tracks: Int = 1,
                          sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) })
-        async throws -> (ProjectController, UUID, [UUID], URL) {
+        async throws -> (ProjectController, DocumentID, [UUID], URL) {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-\(name)-\(UUID()).echode")
         let controller = ProjectController(sendAudio: sendAudio, sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
@@ -169,7 +169,7 @@ struct PluginWindowTests {
         #expect(controller.undoCount == before + 2)
         // Activity for another document is not applied.
         controller.receivePluginActivity([PluginActivity(device: device, events: [.init(id: 1, kind: .end)])],
-                                         documentID: UUID())
+                                         documentID: DocumentID())
         await controller.settlePluginEdits()
         #expect(controller.undoCount == before + 2)
     }

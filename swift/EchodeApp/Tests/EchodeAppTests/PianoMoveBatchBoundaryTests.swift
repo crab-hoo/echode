@@ -59,7 +59,7 @@ struct PianoMoveBatchBoundaryTests {
         for (time, pitch) in [(Int64(0), 0), (-2 * 705_600, 0), (1, 1), (Int64.max, 0), (0, Int.max)] {
             #expect(!(await controller.moveNotes(PianoMoveChange(anchor: first.id, originals: originals, time: time, pitch: pitch))))
         }
-        #expect(!(await controller.moveNotes(change, documentID: UUID())))
+        #expect(!(await controller.moveNotes(change, documentID: DocumentID())))
         #expect(controller.undoCount == undo)
         await controller.redo()
         await controller.close()

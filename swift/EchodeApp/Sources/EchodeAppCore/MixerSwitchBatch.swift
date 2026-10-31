@@ -3,7 +3,7 @@ import Foundation
 
 /// Transient event targets. A toggle resolves the anchor's latest state on its edit turn.
 struct MixerSwitchBatch: Sendable {
-    let document: UUID
+    let document: DocumentID
     let tracks: [UUID]
     let anchor: UUID
     let field: MixerField
@@ -11,8 +11,8 @@ struct MixerSwitchBatch: Sendable {
 }
 
 extension ProjectController {
-    func captureMixerSwitch(_ track: UUID, field: MixerField, value: Float? = nil, document: UUID?) -> MixerSwitchBatch? {
-        guard let document, documentID == document, !busy, field == .mute || field == .solo,
+    func captureMixerSwitch(_ track: UUID, field: MixerField, value: Float? = nil, document: DocumentID?) -> MixerSwitchBatch? {
+        guard let document, acceptsInput(document), field == .mute || field == .solo,
               value == nil || value == 0 || value == 1, mixer(track) != nil else { return nil }
         let targets = selectedTracks.contains(track) ? tracks.map(\.id).filter { selectedTracks.contains($0) } : [track]
         return MixerSwitchBatch(document: document, tracks: targets, anchor: track, field: field, value: value)
@@ -20,15 +20,15 @@ extension ProjectController {
 
     @discardableResult
     func enqueueMixerSwitch(_ request: MixerSwitchBatch) -> Task<Bool, Never>? {
-        guard !busy, documentID == request.document else { return nil }
-        let previous = mixerSwitchTail
+        guard let session = inputSession(for: request.document) else { return nil }
+        let previous = session.mixerSwitchTail
         let task = Task { [self] in
             _ = await previous?.value
-            guard documentID == request.document else { return false }
-            if faderPreview != nil { await finishFader(commit: true) }
+            guard isCurrent(request.document) else { return false }
+            if session.faderPreview != nil { await finishFader(commit: true, in: session) }
             return await applyMixerSwitch(request)
         }
-        mixerSwitchTail = task
+        session.mixerSwitchTail = task
         return task
     }
 
@@ -52,27 +52,24 @@ extension ProjectController {
     }
 
     /// Switches, numeric entries and relative steps capture groups; live previews remain single-track.
-    func arrangeMixActions(document: UUID?) -> MixActions {
+    func arrangeMixActions(document: DocumentID?) -> MixActions {
         MixActions(begin: { [self] track, field in
-            guard let document, documentID == document else { return false }
-            return beginFader(track, field: field)
+            guard let document else { return false }
+            return beginFader(track, field: field, documentID: document)
         }, change: { [self] value in
-            guard documentID == document else { return }
-            changeFader(value)
+            guard let document else { return }
+            changeFader(value, documentID: document)
         }, finish: { [self] commit in
-            guard documentID == document else { return }
-            Task {
-                guard documentID == document else { return }
-                await finishFader(commit: commit)
-            }
+            guard let document, isCurrent(document) else { return }
+            Task { await finishFader(commit: commit, documentID: document) }
         }, set: { [self] track, field, value in
-            guard let document, documentID == document else { return }
+            guard let document, isCurrent(document) else { return }
             if field == .mute || field == .solo {
                 if let request = captureMixerSwitch(track, field: field, value: value, document: document) { enqueueMixerSwitch(request) }
             } else {
                 Task {
-                    guard documentID == document else { return }
-                    if faderPreview != nil { await finishFader(commit: true) }
+                    guard let session = session(for: document) else { return }
+                    if session.faderPreview != nil { await finishFader(commit: true, in: session) }
                     await setMixer(track, field: field, value: value, documentID: document)
                 }
             }

@@ -13,7 +13,7 @@ struct NoteInputLengthTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
-        let document = controller.documentID, undo = controller.undoCount
+        let document = try #require(controller.documentID), undo = controller.undoCount
         let view = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         defer { view.stop() }
         view.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
@@ -58,7 +58,7 @@ struct NoteInputLengthTests {
         let long = try #require(controller.snapshot?.pianoNeighbor(track: first, current: nil))
         #expect(await controller.insertNote(pitch: 64, beat: 2, length: 0.1))
         await controller.addTrack(name: "melody")
-        let second = try #require(controller.selection), document = controller.documentID
+        let second = try #require(controller.selection), document = try #require(controller.documentID)
         controller.selection = first
         let snapshot = try #require(controller.snapshot)
         let view = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
@@ -84,7 +84,7 @@ struct NoteInputLengthTests {
         #expect(await controller.editNote(long.id, geometry: resized))
         #expect(controller.noteInput.length == resized.length, "a successful resize must remember its exact length")
         #expect(!(await controller.editNote(long.id, geometry: resized)))
-        #expect(!(await controller.insertNote(pitch: 60, beat: 3, length: 1, documentID: UUID())))
+        #expect(!(await controller.insertNote(pitch: 60, beat: 3, length: 1, documentID: DocumentID())))
         #expect(controller.noteInput.length == resized.length)
         await controller.undo()
         #expect(controller.noteInput.length == long.length, "Undo must restore input length with the note edit")

@@ -20,7 +20,7 @@ struct PianoCanvas: NSViewRepresentable {
     var playback: PlaybackFeed? = nil
     var transportGeneration: UInt64 = 0
     var navigation: CanvasNavigationState? = nil
-    var documentID: UUID? = nil
+    var documentID: DocumentID? = nil
     var followsPlayhead = false
     var onManualScroll: (() -> Void)? = nil
     var inputLength: () -> Int64? = { nil }
@@ -96,7 +96,7 @@ final class PianoGridView: NSView {
     private var feedback = FrameFeedbackGate()
     private var submittedFrame: PianoFrame?
     private var navigation: CanvasNavigationState?
-    private var navigationDocument: UUID?
+    private var navigationDocument: DocumentID?
     private var snapshot: Snapshot?
     private var playback: PlaybackFeed?
     private var transportGeneration: UInt64 = 0
@@ -218,8 +218,7 @@ final class PianoGridView: NSView {
     func markMainBusy(_ busy: Bool) { renderer?.markMainBusy(busy) }
     var measurement: ArrangeMeasurement { renderer?.measurement ?? ArrangeMeasurement() }
     var rendererAvailable: Bool { renderer != nil }
-    func setNavigation(_ navigation: CanvasNavigationState?, documentID: UUID? = nil) {
-        let document = documentID ?? navigation?.document
+    func setNavigation(_ navigation: CanvasNavigationState?, documentID document: DocumentID?) {
         if self.navigation !== navigation || navigationDocument != document {
             // Never write the departing document's viewport into its replacement.
             cancelGesture(); selectedNotes = []; focus = nil; track = nil; camera = PianoCamera()

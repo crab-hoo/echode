@@ -106,7 +106,7 @@ struct DevicePreparationTests {
 
     @Test func preparationMessagesRespectDeviceStateAndDisclosure() throws {
         #expect(!AudioState().opening)
-        let document = UUID(), track = UUID(), device = UUID()
+        let document = DocumentID(), track = UUID(), device = UUID()
         let row = TrackDevice(id: device, plugin: "dev.echode.test-params")
         let state = DeviceParameterState(document: document, device: device)
         let column = DeviceColumnView(device: row, payload: FXDrag(document: document, track: track, device: device, plugin: nil))

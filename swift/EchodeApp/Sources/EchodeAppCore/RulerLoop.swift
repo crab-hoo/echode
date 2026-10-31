@@ -82,9 +82,9 @@ extension ProjectController {
         RulerLoop(range: loopRange, enabled: audio.loopStart != nil)
     }
 
-    func setLoopRange(_ range: LoopRange, documentID: UUID) async {
-        guard self.documentID == documentID, !busy else { return }
-        loopRange = range
+    func setLoopRange(_ range: LoopRange, documentID: DocumentID) async {
+        guard let session = inputSession(for: documentID) else { return }
+        session.loopRange = range
         // Changing the draft must not turn an inactive loop on.
         await updateLoopBounds()
     }

@@ -18,7 +18,7 @@ struct PianoRhythmicGridTests {
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Keys")
-        let track = try #require(controller.pianoTrack), document = controller.documentID
+        let track = try #require(controller.pianoTrack), document = try #require(controller.documentID)
         let snapshot = try #require(controller.snapshot)
         let navigation = CanvasNavigationState()
         navigation.prepare(document: document, tracks: [track])

@@ -9,7 +9,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var playback: PlaybackFeed?
     public var transportGeneration: UInt64 = 0
     public var navigation: CanvasNavigationState?
-    public var documentID: UUID?
+    public var documentID: DocumentID?
     public var selectedClip: UUID?
     public var faderPreview: FaderPreview?
     public var mixActions: MixActions?
@@ -35,7 +35,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var followsPlayhead = false
     public var onManualScroll: (() -> Void)?
 
-    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: UUID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
+    public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: DocumentID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
                 collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil, onMoveClip: ((ClipMove) -> Void)? = nil,
                 start: Int64? = nil, loop: RulerLoop? = nil, busy: Bool = false,
                 onSetStart: ((Int64) -> Void)? = nil, onSetLoop: ((LoopRange) -> Void)? = nil,
@@ -123,7 +123,7 @@ public final class ArrangeView: NSView {
         let target: ClipTarget
         let mix: ClipMix
         let layout: ClipControlLayout
-        let document: UUID?
+        let document: DocumentID?
         let edit: ((ClipMixEdit) -> Void)?
     }
     private var press: ClipPress?
@@ -139,7 +139,7 @@ public final class ArrangeView: NSView {
     var onSelect: ((UUID) -> Void)?
     var onScroll: ((Double, Double) -> Void)?
     var onZoom: ((Double, NSEvent.ModifierFlags, CGPoint) -> Void)?
-    var audioDocument: UUID? {
+    var audioDocument: DocumentID? {
         didSet {
             guard oldValue != audioDocument else { return }
             audioDragDocument = nil
@@ -148,7 +148,7 @@ public final class ArrangeView: NSView {
         }
     }
     var onDropAudio: ((AudioFileDrop) -> Bool)?
-    private var audioDragDocument: UUID?
+    private var audioDragDocument: DocumentID?
     /// A press on a clip body and, once it travels, where the clip would land (ADR 0154).
     var movePress: ClipMovePress?
     var onClipMove: ((ClipMove) -> Void)?

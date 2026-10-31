@@ -137,13 +137,13 @@ struct DeviceChainTests {
 
     @Test func staleMalformedAndBusyDropsDoNotEdit() async throws {
         let list = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 520, height: 100))
-        let track = UUID(), document = UUID(), device = UUID()
+        let track = UUID(), document = DocumentID(), device = UUID()
         var edits = [DeviceChainEdit]()
         list.onEdit = { edits.append($0) }
         list.configure(devices: [TrackDevice(id: device, plugin: "org.example.a")], track: track, document: document, busy: false)
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        board.setData(try JSONEncoder().encode(FXDrag(document: UUID(), track: track, device: device, plugin: nil)), forType: FXDrag.deviceType)
+        board.setData(try JSONEncoder().encode(FXDrag(document: DocumentID(), track: track, device: device, plugin: nil)), forType: FXDrag.deviceType)
         #expect(!list.accept(board, at: .zero, copying: false))
         board.setData(Data("{}".utf8), forType: FXDrag.deviceType)
         #expect(!list.accept(board, at: .zero, copying: false))
@@ -162,7 +162,7 @@ struct DeviceChainTests {
         let scroll = DeviceStripScrollView(frame: CGRect(x: 0, y: 0, width: 520, height: 220))
         let list = DeviceStripView(frame: .zero)
         scroll.documentView = list
-        let track = UUID(), document = UUID()
+        let track = UUID(), document = DocumentID()
         list.configure(devices: [], track: track, document: document, busy: false)
         scroll.layout()
         #expect(list.frame.size == scroll.contentSize)

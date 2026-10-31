@@ -49,7 +49,7 @@ public enum TrackFXDrop {
 struct FXDrag: Codable {
     static let deviceType = NSPasteboard.PasteboardType("io.echode.device")
     static let pluginType = NSPasteboard.PasteboardType("io.echode.plugin")
-    let document: UUID
+    let document: DocumentID
     let track: UUID?
     let device: UUID?
     let plugin: String?

@@ -136,6 +136,29 @@ class PolicyTests(unittest.TestCase):
                      "swift/EchodeApp/Tests/EchodeAppTests/TypedMixerEditTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(path))
 
+    def test_document_operations_take_a_required_id_and_share_one_check(self):
+        sources = ROOT / "swift/EchodeApp/Sources/EchodeAppCore"
+        controller = (sources / "ProjectController.swift").read_text()
+        self.assertEqual(controller.count("session.id == id"), 1)
+        # A header compares the document bound to it with a gesture's own payload.
+        for path in sorted(sources.glob("*.swift")):
+            source = path.read_text()
+            if path.name not in ("ArrangeHeaderView.swift", "TrackFXNames.swift"):
+                self.assertNotRegex(source, r"[dD]ocumentID == |== (self\.)?documentID\b", path.name)
+            for declaration in re.findall(r"func [^\n]*documentID[^\n:]*: DocumentID\?[^\n]*", source):
+                self.assertIn("setNavigation(", declaration, path.name)
+        ids = {c["id"]: c for c in self.policy["product_contracts"]}
+        for identifier in ("document-session-drag-ui", "document-session-audio-ui",
+                           "document-session-restore-ui", "document-session-stale-ui"):
+            contract = ids[identifier]
+            self.assertEqual((contract["runner"], contract["suite"]), ("swift", "DocumentSessionTests"))
+            faults = contract.get("negative_controls") or [contract["negative_control"]]
+            for fault in faults:
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1, identifier)
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/DocumentSession.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/DocumentSessionTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(path))
+
     def test_typed_clip_controller_keeps_generated_actions_and_verification(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "typed-clip-controller")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "TypedClipEditTests"))
@@ -1508,6 +1531,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                          "document-session-drag-ui", "document-session-audio-ui", "document-session-restore-ui", "document-session-stale-ui",
                           "typed-clip-controller", "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
                           "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",

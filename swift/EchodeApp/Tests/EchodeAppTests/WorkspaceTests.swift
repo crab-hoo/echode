@@ -106,7 +106,7 @@ struct WorkspaceTests {
         let url = temporaryProject()
         defer { try? FileManager.default.removeItem(at: url) }
         let controller = ProjectController()
-        await controller.open(url, creating: true); let document = controller.documentID
+        await controller.open(url, creating: true); let document = try #require(controller.documentID)
         await controller.addTrack(name: "first"); let first = try #require(controller.selection)
         await controller.insertNote(pitch: 60, beat: 0, length: 1)
         let note = try #require(controller.snapshot?.pianoNeighbor(track: first, current: nil, backwards: false))
@@ -151,7 +151,7 @@ struct WorkspaceTests {
         #expect(!(await controller.insertNote(pitch: 64, beat: 1, length: 1, on: track, documentID: document)))
         #expect(!(await controller.insertPlugin("dev.echode.test-gain", on: track, documentID: document)))
         #expect(controller.undoCount == 0 && controller.snapshot?.pianoNote(note.id)?.pitch == 60)
-        #expect(await controller.editNote(note.id, geometry: geometry, documentID: controller.documentID))
+        #expect(await controller.editNote(note.id, geometry: geometry, documentID: try #require(controller.documentID)))
         #expect(controller.snapshot?.pianoNote(note.id)?.pitch == 65)
         await controller.close()
     }
@@ -185,7 +185,7 @@ struct WorkspaceTests {
         state.choosingFile = true
         #expect(!session.enabled(.openProject) && !session.enabled(.palette))
         state.choosingFile = false
-        state.pluginBrowserDocument = UUID()
+        state.pluginBrowserDocument = DocumentID()
         state.synchronize(controller)
         #expect(state.pluginBrowserDocument == nil)
         state.presentation = .history
@@ -291,16 +291,16 @@ struct WorkspaceTests {
         let navigation = CanvasNavigationState()
         navigation.prepare(document: controller.documentID, tracks: Set(controller.tracks.map(\.id)))
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 650, height: 180))
-        pane.setNavigation(navigation); pane.setSnapshot(snapshot, selected: track); pane.layout()
+        pane.setNavigation(navigation, documentID: navigation.document); pane.setSnapshot(snapshot, selected: track); pane.layout()
         pane.headers.onScroll?(-144, -200); pane.resizeHeader(to: 200)
         let saved = try #require(navigation.arrange)
         let recreated = ArrangePaneView(frame: pane.frame)
-        recreated.setNavigation(navigation); recreated.setSnapshot(snapshot, selected: track); recreated.layout()
+        recreated.setNavigation(navigation, documentID: navigation.document); recreated.setSnapshot(snapshot, selected: track); recreated.layout()
         #expect(recreated.viewport == saved && recreated.headers.bounds.width == 200)
         let piano = PianoCamera(originBeat: 12, topPitch: 90.5, pixelsPerBeat: 120, pixelsPerPitch: 28)
         navigation.pianoCamera = piano
         let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 650, height: 180))
-        grid.setNavigation(navigation); grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
+        grid.setNavigation(navigation, documentID: navigation.document); grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
         #expect(grid.camera == piano && grid.window == nil && !grid.rendererAvailable)
         grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(tonic: 2), busy: true)
         #expect(grid.camera == piano)
@@ -310,7 +310,7 @@ struct WorkspaceTests {
         navigation.prepare(document: controller.documentID, tracks: [])
         grid.stop()
         #expect(navigation.pianoCamera == piano)
-        navigation.prepare(document: UUID(), tracks: [track])
+        navigation.prepare(document: DocumentID(), tracks: [track])
         grid.stop(); pane.layout()
         #expect(navigation.arrange == nil && navigation.headerWidth == 160 && navigation.pianoCamera == nil)
         await controller.close()

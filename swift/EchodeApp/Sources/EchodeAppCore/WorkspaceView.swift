@@ -134,7 +134,7 @@ public struct WorkspaceView: View {
     private var setStart: (Int64) -> Void {
         let document = controller.documentID
         return { tick in Task {
-            guard let document, controller.documentID == document else { return }
+            guard controller.isCurrent(document) else { return }
             await controller.setPlaybackStart(tick: tick)
         } }
     }
@@ -148,6 +148,7 @@ public struct WorkspaceView: View {
     private var clipEdit: (ClipMixEdit) -> Void {
         let document = controller.documentID
         return { edit in Task {
+            guard let document else { return }
             switch edit {
             case .gain(let id, let gain): await controller.setClipGain(id, gain: gain, documentID: document)
             case .fades(let id, let entering, let leaving): await controller.setClipFades(id, fadeIn: entering, fadeOut: leaving, documentID: document)
@@ -218,7 +219,7 @@ struct WorkspaceStatusBar: View {
 }
 
 private struct WorkspaceSelectionContext: Equatable {
-    let document: UUID?
+    let document: DocumentID?
     let tracks: [UUID]
     let track: UUID?
     let pianoTrack: UUID?
