@@ -136,7 +136,7 @@ struct SampleAudioDropTests {
         await controller.open(root, creating: true)
         await controller.addTrack(name: "folder")
         let folder = try #require(controller.selection)
-        #expect(await controller.edit(["type": "track.add_child", "parent": folder.uuidString, "name": "hidden"]))
+        #expect(await controller.edit(.addChild(parent: folder.uuidString, name: "hidden")))
         await controller.addTrack(name: "tail")
         let tail = try #require(controller.selection), document = try #require(controller.documentID)
         let pane = ArrangePaneView(frame: CGRect(x: 0, y: 0, width: 640, height: 100))

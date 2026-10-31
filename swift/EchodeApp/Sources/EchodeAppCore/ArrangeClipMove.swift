@@ -125,12 +125,14 @@ extension ProjectController {
     /// One undo step. The landed clip keeps the focus on its new track.
     @discardableResult
     func moveClip(_ move: ClipMove) async -> Bool {
-        let applied = await edit({ [self] in
+        let applied = await performActions({ [self] in
             guard documentID == move.document, move.start >= 0, let clip = snapshot?.clipMix(move.clip),
                   tracks.contains(where: { $0.id == move.track }),
                   clip.track != move.track || clip.start != move.start else { return nil }
-            return ["type": move.copy ? "clip.duplicate" : "clip.move", "clip": move.clip.uuidString,
-                    "track": move.track.uuidString, "start": move.start]
+            let action: EditAction = move.copy
+                ? .duplicateClip(clip: move.clip.uuidString, track: move.track.uuidString, start: move.start)
+                : .moveClip(clip: move.clip.uuidString, track: move.track.uuidString, start: move.start)
+            return [action]
         }, documentID: move.document)
         guard applied, documentID == move.document else { return applied }
         selection = move.track

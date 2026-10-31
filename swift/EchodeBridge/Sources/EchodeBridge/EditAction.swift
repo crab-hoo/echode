@@ -2,38 +2,44 @@
 // Regenerate with `make swift-actions`; verify with `make check-swift-actions`.
 import Foundation
 
+/// Typed action requests with literal strings.
+public typealias EditAction = EditActionOf<String>
+
+/// A transaction whose strings may name results of its earlier actions.
+public typealias ReferencingEditAction = EditActionOf<EditText>
+
 /// Typed action requests. Rust still validates model constraints and references.
-public enum EditAction: Encodable, Sendable {
-    case `addTrack`(`name`: String)
-    case `insertTrack`(`after`: String, `intoFolder`: Bool, `name`: String)
-    case `duplicateTrack`(`source`: String)
+public enum EditActionOf<Text: Encodable & Sendable>: Encodable, Sendable {
+    case `addTrack`(`name`: Text)
+    case `insertTrack`(`after`: Text, `intoFolder`: Bool, `name`: Text)
+    case `duplicateTrack`(`source`: Text)
     case `setMeter`(`numerator`: Int64, `denominator`: Int64)
     case `setTempo`(`at`: Int64, `numerator`: Int64, `denominator`: Int64)
-    case `insertNote`(`track`: String, `pitch`: UInt8, `velocity`: UInt8, `start`: Int64, `length`: Int64)
-    case `duplicateNote`(`track`: String, `clip`: String, `note`: String, `pitch`: UInt8, `start`: Int64, `copy`: String? = nil)
-    case `editNote`(`track`: String, `clip`: String, `note`: String, `pitch`: UInt8, `start`: Int64, `length`: Int64)
-    case `setNoteVelocity`(`track`: String, `clip`: String, `note`: String, `velocity`: UInt8)
-    case `deleteNote`(`track`: String, `note`: String)
-    case `resizeClip`(`track`: String, `clip`: String, `start`: Int64, `length`: Int64)
-    case `addChild`(`parent`: String, `name`: String)
-    case `setParent`(`track`: String, `parent`: String? = nil)
-    case `linkClip`(`source`: String, `track`: String, `start`: Int64)
-    case `moveClip`(`clip`: String, `track`: String, `start`: Int64)
-    case `duplicateClip`(`clip`: String, `track`: String, `start`: Int64)
-    case `setClipGain`(`clip`: String, `gain`: Float)
-    case `setParameter`(`parameter`: String, `value`: Float)
-    case `setPluginState`(`device`: String, `state`: String? = nil)
-    case `setClipFades`(`clip`: String, `fadeIn`: Int64, `fadeOut`: Int64)
-    case `addDevice`(`track`: String, `plugin`: String)
-    case `bypassDevice`(`device`: String, `bypassed`: Bool)
-    case `offlineDevice`(`device`: String, `offline`: Bool)
-    case `pinParameter`(`device`: String, `parameter`: UInt32, `pinned`: Bool)
-    case `reorderDevice`(`device`: String, `before`: String? = nil)
-    case `copyDevice`(`source`: String, `track`: String, `before`: String? = nil)
-    case `removeDevice`(`device`: String)
-    case `restore`(`revision`: String)
-    case `placeAudio`(`track`: String, `start`: Int64, `hash`: String, `sampleRate`: UInt32, `channels`: UInt16, `frames`: UInt64)
-    case `importAudio`(`track`: String, `start`: Int64, `path`: String)
+    case `insertNote`(`track`: Text, `pitch`: UInt8, `velocity`: UInt8, `start`: Int64, `length`: Int64)
+    case `duplicateNote`(`track`: Text, `clip`: Text, `note`: Text, `pitch`: UInt8, `start`: Int64, `copy`: Text? = nil)
+    case `editNote`(`track`: Text, `clip`: Text, `note`: Text, `pitch`: UInt8, `start`: Int64, `length`: Int64)
+    case `setNoteVelocity`(`track`: Text, `clip`: Text, `note`: Text, `velocity`: UInt8)
+    case `deleteNote`(`track`: Text, `note`: Text)
+    case `resizeClip`(`track`: Text, `clip`: Text, `start`: Int64, `length`: Int64)
+    case `addChild`(`parent`: Text, `name`: Text)
+    case `setParent`(`track`: Text, `parent`: Text? = nil)
+    case `linkClip`(`source`: Text, `track`: Text, `start`: Int64)
+    case `moveClip`(`clip`: Text, `track`: Text, `start`: Int64)
+    case `duplicateClip`(`clip`: Text, `track`: Text, `start`: Int64)
+    case `setClipGain`(`clip`: Text, `gain`: Float)
+    case `setParameter`(`parameter`: Text, `value`: Float)
+    case `setPluginState`(`device`: Text, `state`: Text? = nil)
+    case `setClipFades`(`clip`: Text, `fadeIn`: Int64, `fadeOut`: Int64)
+    case `addDevice`(`track`: Text, `plugin`: Text)
+    case `bypassDevice`(`device`: Text, `bypassed`: Bool)
+    case `offlineDevice`(`device`: Text, `offline`: Bool)
+    case `pinParameter`(`device`: Text, `parameter`: UInt32, `pinned`: Bool)
+    case `reorderDevice`(`device`: Text, `before`: Text? = nil)
+    case `copyDevice`(`source`: Text, `track`: Text, `before`: Text? = nil)
+    case `removeDevice`(`device`: Text)
+    case `restore`(`revision`: Text)
+    case `placeAudio`(`track`: Text, `start`: Int64, `hash`: Text, `sampleRate`: UInt32, `channels`: UInt16, `frames`: UInt64)
+    case `importAudio`(`track`: Text, `start`: Int64, `path`: Text)
 
     private struct Key: CodingKey {
         let stringValue: String

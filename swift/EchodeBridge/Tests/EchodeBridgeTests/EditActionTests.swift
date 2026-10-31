@@ -67,6 +67,22 @@ final class EditActionTests: XCTestCase {
         }
     }
 
+    func testResultReferencesUseTheTransactionWireFormAndKeepLiteralsAndNull() throws {
+        let actions: [ReferencingEditAction] = [
+            .addTrack(name: .value("新しい \"track\"")),
+            .importAudio(track: .result(action: 0, field: "id"), start: 9_007_199_254_740_993, path: .value("/tmp/a.wav")),
+            .setParent(track: .result(action: 0, field: "id"), parent: nil)
+        ]
+        let encoded = try JSONEncoder().encode(actions)
+        XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("9007199254740993"))
+        let expected: [[String: Any]] = [
+            ["type": "track.add", "name": "新しい \"track\""],
+            ["type": "audio.import", "track": ["ref": 0, "field": "id"], "start": 9_007_199_254_740_993, "path": "/tmp/a.wav"],
+            ["type": "track.set_parent", "track": ["ref": 0, "field": "id"], "parent": NSNull()]
+        ]
+        XCTAssertEqual(try canonical(JSONSerialization.jsonObject(with: encoded)), try canonical(expected))
+    }
+
     func testFloatBitsSurviveEncodingAndNonFiniteValuesAreRejected() throws {
         struct Parameter: Decodable { let value: Float }
         for value in [Float.leastNonzeroMagnitude, Float.greatestFiniteMagnitude, -Float.leastNormalMagnitude, -0.25] {

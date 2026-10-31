@@ -60,9 +60,9 @@ struct TrackInsertionTests {
         let folder = try #require(controller.selection)
         await controller.addTrack(name: "tail")
         let tail = try #require(controller.selection)
-        #expect(await controller.edit(["type": "track.add_child", "parent": folder.uuidString, "name": "child"]))
+        #expect(await controller.edit(.addChild(parent: folder.uuidString, name: "child")))
         let child = try #require(controller.tracks.first { $0.name == "child" }?.id)
-        #expect(await controller.edit(["type": "track.add_child", "parent": child.uuidString, "name": "nested"]))
+        #expect(await controller.edit(.addChild(parent: child.uuidString, name: "nested")))
         let nested = try #require(controller.tracks.first { $0.name == "nested" }?.id)
         let session = WorkspaceSession(controller: controller, state: WorkspaceState(defaults: .init()))
         controller.selection = folder

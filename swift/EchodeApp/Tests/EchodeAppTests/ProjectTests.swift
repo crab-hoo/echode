@@ -3,6 +3,13 @@ import Foundation
 import Testing
 @testable import EchodeAppCore
 
+extension ProjectController {
+    /// Applies one fixture edit to the current document through the product's typed entry.
+    func edit(_ action: EditAction) async -> Bool {
+        await performActions({ [action] }, documentID: nil)
+    }
+}
+
 func wavMono(rate: UInt32, frames: Int) -> Data {
     var data = Data()
     data.append(contentsOf: [0x52, 0x49, 0x46, 0x46])

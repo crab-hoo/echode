@@ -1,3 +1,4 @@
+import EchodeBridge
 import Foundation
 
 /// An input gesture captures the session, track, and live tick before yielding.
@@ -31,9 +32,8 @@ extension ProjectController {
     @discardableResult
     func importAudio(_ request: AudioImportRequest) async -> Bool {
         guard documentID == request.document, tracks.contains(where: { $0.id == request.track }), request.tick >= 0 else { return false }
-        return await edit([
-            "type": "audio.import", "track": request.track.uuidString,
-            "start": request.tick, "path": request.url.path,
-        ], documentID: request.document)
+        return await performActions({ [
+            .importAudio(track: request.track.uuidString, start: request.tick, path: request.url.path),
+        ] }, documentID: request.document)
     }
 }

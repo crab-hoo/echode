@@ -29,8 +29,7 @@ struct ClipDuplicationTests {
         let track = try #require(controller.selection), document = try #require(controller.documentID)
         let note = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
         // A manually trimmed, off-grid window must determine the repeat width, not its bar or content length.
-        #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString,
-            "clip": note.id.placement.uuidString, "start": beat / 4, "length": beat * 3 / 2]))
+        #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: note.id.placement.uuidString, start: beat / 4, length: beat * 3 / 2)))
         let original = try #require(controller.snapshot?.clipMix(note.id.placement))
         await controller.addTrack(name: "unrelated")
         let other = try #require(controller.selection)
@@ -99,11 +98,10 @@ struct ClipDuplicationTests {
         #expect(await controller.importAudio(wav, on: track))
         let imported = try #require(controller.snapshot)
         let source = try #require(clips(imported).first)
-        #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString, "clip": source.uuidString,
-            "start": beat / 4, "length": beat]))
+        #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: source.uuidString, start: beat / 4, length: beat)))
         #expect(await controller.setClipGain(source, gain: 0.5, documentID: document))
         #expect(await controller.setClipFades(source, fadeIn: 1000, fadeOut: 2000, documentID: document))
-        #expect(await controller.edit(["type": "audio.import", "track": track.uuidString, "start": beat * 5 / 4, "path": wav.path]))
+        #expect(await controller.edit(.importAudio(track: track.uuidString, start: beat * 5 / 4, path: wav.path)))
         let original = try #require(controller.snapshot?.clipMix(source)), undo = controller.undoCount
         let view = ArrangeView(frame: CGRect(x: 0, y: 0, width: 1000, height: 200))
         defer { view.stop() }

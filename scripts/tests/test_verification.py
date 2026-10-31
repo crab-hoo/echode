@@ -136,6 +136,28 @@ class PolicyTests(unittest.TestCase):
                      "swift/EchodeApp/Tests/EchodeAppTests/TypedMixerEditTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(path))
 
+    def test_typed_clip_controller_keeps_generated_actions_and_verification(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "typed-clip-controller")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "TypedClipEditTests"))
+        for fault in contract["negative_controls"]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        related = next(c for c in self.policy["product_contracts"] if c["id"] == "sample-import-target")["negative_control"]
+        self.assertEqual((ROOT / related["file"]).read_text().count(related["old"]), 1)
+        for filename in ("ArrangeClipMove.swift", "AudioImportRequest.swift", "ArrangeAudioDrop.swift"):
+            source = (ROOT / "swift/EchodeApp/Sources/EchodeAppCore" / filename).read_text()
+            self.assertIn("performActions(", source)
+        # No controller rebuilds an edit from an untyped dictionary; Document keeps only its raw JSON boundary.
+        for source in (ROOT / "swift/EchodeApp/Sources/EchodeAppCore").glob("*.swift"):
+            for untyped in ("editTransaction(", "performEdit(", "JSONSerialization", '"type":', "[String: Any]"):
+                self.assertNotIn(untyped, source.read_text(), source.name)
+        reference = (ROOT / "swift/EchodeBridge/Sources/EchodeBridge/EditText.swift").read_text()
+        self.assertIn("case ref, field", reference)
+        for path in ("swift/EchodeApp/Sources/EchodeAppCore/ArrangeClipMove.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/AudioImportRequest.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/ArrangeAudioDrop.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/TypedClipEditTests.swift"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(path))
+
     def test_model_units_contracts_cover_the_abi_and_swift_consumers(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         native = contracts["model-constants-abi"]
@@ -1486,7 +1508,7 @@ class PolicyTests(unittest.TestCase):
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
-                          "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
+                          "typed-clip-controller", "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
                           "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
                           "store-gitignore", "audio-import-validation", "canonical-pcm-validation", "peak-cache-validation", "stereo-waveform-average", "waveform-boundary-silence", "stereo-media", "stereo-plugin-chain", "audio-loop-seam", "audio-fader-ramp",

@@ -15,8 +15,7 @@ struct PianoResizeBatchBoundaryTests {
         #expect(await controller.insertNote(pitch: 127, beat: 2, length: 0.2))
         let track = try #require(controller.selection), document = try #require(controller.documentID)
         let first = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-        #expect(await controller.edit(["type": "clip.link", "source": first.id.placement.uuidString,
-                                      "track": track.uuidString, "start": 8 * 705_600]))
+        #expect(await controller.edit(.linkClip(source: first.id.placement.uuidString, track: track.uuidString, start: 8 * 705_600)))
         let snapshot = try #require(controller.snapshot)
         let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,
             topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1)
@@ -102,8 +101,7 @@ struct PianoResizeBatchBoundaryTests {
             let note = try #require(snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,
                 topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1).max { $0.start < $1.start })
             let clip = try #require(snapshot.clipMix(note.id.placement))
-            #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString, "clip": clip.id.uuidString,
-                                          "start": clip.start, "length": note.start + note.length - clip.start]))
+            #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: clip.id.uuidString, start: clip.start, length: note.start + note.length - clip.start)))
         }
         let snapshot = try #require(controller.snapshot)
         let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,

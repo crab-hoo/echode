@@ -63,8 +63,7 @@ struct PianoStepTests {
         #expect(await controller.insertNote(pitch: 126, beat: 2, length: 0.7))
         let track = try #require(controller.pianoTrack), document = try #require(controller.documentID)
         let first = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-        #expect(await controller.edit(["type": "clip.link", "source": first.id.placement.uuidString,
-                                      "track": track.uuidString, "start": 8 * 705_600]))
+        #expect(await controller.edit(.linkClip(source: first.id.placement.uuidString, track: track.uuidString, start: 8 * 705_600)))
         let snapshot = try #require(controller.snapshot)
         let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,
             topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1)

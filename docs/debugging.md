@@ -60,13 +60,17 @@ make debug-report
   ピアノロールは `typed-piano-controller` と既存の操作契約を使う。
   型付きのノート要求が拒否される場合は、`performActions` の前の幾何・MIDI 範囲・元の値と、`applyEdit` の文書照合を分ける。
   MIDI の `UInt8` 変換は検証後だけで行う。非整数化や clamping で拒否を隠さない。
-  クリップ移動・音声取込みの辞書の入口と混同せず、旧文書・古い元の値・モデルの拒否を区別する。
+  旧文書・古い元の値・モデルの拒否を区別する。
   トラックとデバイスは `typed-track-device-controller` と既存の操作契約を使う。
   追加した根の選択は `performActions` の `selectingAddedTrack`、順序と no-op は `applyEdit` の手番の前後で調べる。
   並べ替え・コピーの `before: null` は末尾指定であり、ピンの `UInt32.max` は CLAP の予約 ID としてモデルが拒否する。
   ミキサーと音声クリップの値は `typed-mixer-controller` と既存の入力・文書境界の契約を使う。
   試聴の確定だけが失敗する場合は `performActions` から `applyEdit` へ渡す `finishingPreview` と、終了時の文書照合を調べる。
   フェードは整数 flick を保持するが、モデルの `FADE_RATE_LIMIT` で `u32` フレームに収まらない値は従来どおり拒否する。
+  クリップ移動・複製と音声取込みは `typed-clip-controller` と既存の実入力の契約を使う。
+  tick の精度・捕捉したトラックと、移動後の選択・複製側のフォーカスを分けて調べる。
+  `action reference is out of range` や `action reference field is missing` は、`EditText.result` の番号や項目名の誤りである。
+  番号は同じ配列の 0 からの位置で、項目は確定後のアクションの文字列を指す。失敗すると一括編集全体が巻き戻る。
 - **Rust に追加したアクションを Swift が `unknown variant` として拒否する**:
   Swift のテストは Rust の製品 ABI をリンクするため、先に `make check-shell` で ABI と生成ヘッダを更新して再リンクする。
   Swift の単体実行だけでは古いアクション登録簿が残り得る。更新後も失敗する場合は、送信した `type` と登録簿を照合する。
@@ -174,6 +178,10 @@ make debug-report
   当時のログと、現在の入力に結び付いた有効な検査記録を区別する。
   Swift の負の対照を同じ位置まで何度もやり直す場合は、契約ごとの完了記録が増えているかも確認する。
   各契約の全反例が終わった時点で保存する。一部の反例だけが終わった契約は合格ではない（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
+- **負の対照の `NOT rejected` / `Build failed`**:
+  反例は、ビルドが通り、テストの `Expectation failed` で落ちた時だけ拒否と数える。
+  コンパイルエラーと `Fatal error` のクラッシュは、アサーションが欠陥を捕まえた証拠にならない。
+  逃げるクロージャ内の `self.` の欠落や、境界値での `Int64(Double(...))` のトラップを `<契約>-negative.log` で確認し、反例側を直す。
 - **基準コミット（`VERIFY_BASE`）エラー**:
   一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
 - **終了フック直後の不要な再実行**:

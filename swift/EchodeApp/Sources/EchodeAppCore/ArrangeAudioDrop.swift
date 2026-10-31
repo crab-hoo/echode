@@ -51,16 +51,12 @@ extension ProjectController {
     @discardableResult
     func importDroppedAudio(_ drop: AudioFileDrop) async -> Bool {
         guard drop.url.isFileURL, BrowserFile(url: drop.url, directory: false).audio, drop.tick >= 0 else { return false }
-        return await editTransaction({ [self] in
-            guard documentID == drop.document else { return nil }
-            if let track = drop.track {
-                guard tracks.contains(where: { $0.id == track }) else { return nil }
-                return [["type": "audio.import", "track": track.uuidString, "start": drop.tick, "path": drop.url.path]]
-            }
-            return [
-                ["type": "track.add", "name": drop.url.deletingPathExtension().lastPathComponent],
-                ["type": "audio.import", "track": ["ref": 0, "field": "id"], "start": drop.tick, "path": drop.url.path],
-            ]
-        }, documentID: drop.document, selectingAddedTrack: drop.track == nil)
+        if let track = drop.track {
+            return await importAudio(AudioImportRequest(url: drop.url, document: drop.document, track: track, tick: drop.tick))
+        }
+        return await performActions(referencing: [
+            .addTrack(name: .value(drop.url.deletingPathExtension().lastPathComponent)),
+            .importAudio(track: .result(action: 0, field: "id"), start: drop.tick, path: .value(drop.url.path)),
+        ], documentID: drop.document, selectingAddedTrack: true)
     }
 }

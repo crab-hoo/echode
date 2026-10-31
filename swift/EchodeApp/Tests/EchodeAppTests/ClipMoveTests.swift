@@ -148,7 +148,7 @@ struct ClipMoveTests {
         #expect(await controller.importAudio(wav, on: track))
         let initial = try #require(controller.snapshot)
         let first = try #require(clips(initial).first)
-        #expect(await controller.edit(["type": "audio.import", "track": track.uuidString, "start": 4 * beat, "path": wav.path]))
+        #expect(await controller.edit(.importAudio(track: track.uuidString, start: 4 * beat, path: wav.path)))
         let both = try #require(controller.snapshot)
         let second = try #require(clips(both).first { $0 != first })
         // Landing one beat into the second clip keeps its last beat as a trimmed piece.

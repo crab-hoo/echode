@@ -15,8 +15,7 @@ struct PianoMoveBatchBoundaryTests {
         #expect(await controller.insertNote(pitch: 127, beat: 2, length: 0.7))
         let track = try #require(controller.selection), document = try #require(controller.documentID)
         let first = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-        #expect(await controller.edit(["type": "clip.link", "source": first.id.placement.uuidString,
-                                      "track": track.uuidString, "start": 8 * 705_600]))
+        #expect(await controller.edit(.linkClip(source: first.id.placement.uuidString, track: track.uuidString, start: 8 * 705_600)))
         let snapshot = try #require(controller.snapshot)
         let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,
             topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1)
@@ -95,8 +94,7 @@ struct PianoMoveBatchBoundaryTests {
         for pitch in [60, 62] { #expect(await controller.insertNote(pitch: pitch, beat: Double(pitch - 59), length: 0.7)) }
         let track = try #require(controller.selection)
         let first = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-        #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString, "clip": first.id.placement.uuidString,
-                                      "start": 0, "length": 4 * 705_600]))
+        #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: first.id.placement.uuidString, start: 0, length: 4 * 705_600)))
         let snapshot = try #require(controller.snapshot), clip = try #require(snapshot.clipMix(first.id.placement))
         let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 8 * 705_600,
             topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1)
@@ -126,8 +124,7 @@ struct PianoMoveBatchBoundaryTests {
             let latest = try #require(current.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,
                 topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1).max { $0.start < $1.start })
             let clip = try #require(current.clipMix(latest.id.placement))
-            #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString, "clip": latest.id.placement.uuidString,
-                                          "start": clip.start, "length": clip.length]))
+            #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: latest.id.placement.uuidString, start: clip.start, length: clip.length)))
         }
         let snapshot = try #require(controller.snapshot)
         let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,

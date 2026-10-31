@@ -19,17 +19,16 @@ struct NoopEditTests {
         #expect(await controller.editNote(note.id, geometry: longer))
         await controller.undo()
         let undo = controller.undoCount, redo = controller.redoCount
-        let velocity: [String: Any] = ["type": "note.velocity", "track": track.uuidString,
-            "clip": note.id.placement.uuidString, "note": note.id.note.uuidString, "velocity": 100]
+        let velocity = EditAction.setNoteVelocity(track: track.uuidString, clip: note.id.placement.uuidString,
+                                                  note: note.id.note.uuidString, velocity: 100)
         #expect(await controller.edit(velocity))
         #expect(controller.undoCount == undo && controller.redoCount == redo,
                 "a no-op must not consume visible history")
         #expect(controller.noteInput.length == note.length)
-        #expect(await controller.editTransaction({ [velocity] }, documentID: document))
-        var quieter = velocity
-        quieter["velocity"] = 60
-        let cancelled = [quieter, velocity]
-        #expect(await controller.editTransaction({ cancelled }, documentID: document))
+        #expect(await controller.performActions({ [velocity] }, documentID: document))
+        let quieter = EditAction.setNoteVelocity(track: track.uuidString, clip: note.id.placement.uuidString,
+                                                 note: note.id.note.uuidString, velocity: 60)
+        #expect(await controller.performActions({ [quieter, velocity] }, documentID: document))
         #expect(controller.undoCount == undo && controller.redoCount == redo)
         #expect(try controller.snapshot?.historyReport().changed == false)
         await controller.redo()

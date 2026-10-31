@@ -88,8 +88,7 @@ struct PianoDragTests {
                 #expect(await controller.moveClip(ClipMove(document: try #require(controller.documentID), clip: initial.id.placement,
                                                          track: track, start: movedStart, copy: false)))
                 if fixed {
-                    #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString,
-                                                   "clip": initial.id.placement.uuidString, "start": movedStart, "length": ticks(4)]))
+                    #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: initial.id.placement.uuidString, start: movedStart, length: ticks(4))))
                 }
             }
             let snapshot = try #require(controller.snapshot)

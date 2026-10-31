@@ -388,6 +388,11 @@ public final class Document: @unchecked Sendable {
         try await performEncoded(actions)
     }
 
+    /// Applies a transaction whose later actions may name results of earlier ones.
+    public func perform(referencing actions: [ReferencingEditAction]) async throws -> Snapshot {
+        try await performEncoded(actions)
+    }
+
     private func performEncoded(_ value: some Encodable) async throws -> Snapshot {
         try Task.checkCancellation()
         let bytes = try JSONEncoder().encode(value)

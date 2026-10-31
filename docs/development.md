@@ -211,11 +211,13 @@ Swift の値と拍の変換は `EchodeBridge/ModelLimits.swift` の `ModelLimits
 `make swift-actions` で再生成し、`make check-swift-actions` は変更せず照合する。後者は `make check` でも行う。
 全操作の共有 fixture は `EchodeBridgeTests/Fixtures/edit-actions.json`、符号化は `EditActionTests.swift`、
 製品ワーカー・履歴・再オープンは `TypedEditTests.swift`、ピアノロールの型付き controller は `TypedPianoEditTests.swift` で検査する。
-ピアノロールとトラック・デバイス・ミキサーの単一／一括編集は生成型へ移行した。クリップ移動・音声取込みの辞書からの移行は残る。
+controller の単一／一括編集はすべて生成型へ移行した。辞書で要求を組まない。
 トラック・デバイスの対象・選択・アンカーと末尾・CLAP ID 境界・履歴と再オープンは `TypedTrackDeviceEditTests.swift` で検査する
 （[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
 ミキサーと音声クリップのゲイン・フェードは `TypedMixerEditTests.swift` で、試聴の先行確定・精度・履歴・拒否と保存を検査する。
 `performActions` の `finishingPreview` は共通の `applyEdit` へ渡し、試聴終了時だけ通常編集の排他を越える。
+クリップ移動・複製と音声配置は `TypedClipEditTests.swift` で、整数 tick・入力先・選択・結果参照・履歴・拒否と再オープンを検査する。
+一括編集内で前の結果を使う要求は `ReferencingEditAction` で組み、`EditText.result` と `performActions(referencing:)` で送る。
 
 ループの下書きは `ProjectController.loopRange` の整数範囲を両ルーラーと送信で共有する。
 拍の文字列は `LoopEntry.swift` が入力境界だけで持ち、未変更の欄は元の tick をそのまま返す。

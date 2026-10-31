@@ -670,37 +670,20 @@ public final class ProjectController {
         } catch { if self.document === document, revision == audioRevision { report(error) } }
     }
 
-    @discardableResult
-    func edit(_ fields: [String: Any], documentID: UUID? = nil, finishingPreview: Bool = false) async -> Bool {
-        await performEdit({ fields }, documentID: documentID, finishingPreview: finishingPreview)
-    }
-
-    /// Resolve no-op checks after earlier edits publish. Otherwise a quick
-    /// switch back to the displayed value can be dropped while its first
-    /// change is still queued.
-    @discardableResult
-    func edit(_ fields: @escaping @MainActor () -> [String: Any]?, documentID: UUID? = nil) async -> Bool {
-        await performEdit({ fields() }, documentID: documentID)
-    }
-
-    func editTransaction(_ actions: @escaping @MainActor () -> [[String: Any]]?, documentID: UUID, selectingAddedTrack: Bool = false) async -> Bool {
-        await performEdit({ actions() }, documentID: documentID, selectingAddedTrack: selectingAddedTrack)
-    }
-
-    private func performEdit(_ fields: @escaping @MainActor () -> Any?, documentID: UUID?, finishingPreview: Bool = false,
-                             selectingAddedTrack: Bool = false) async -> Bool {
-        await applyEdit(fields, documentID: documentID, finishingPreview: finishingPreview, selectingAddedTrack: selectingAddedTrack) { document, fields in
-            let bytes = try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys])
-            return try await document.perform(String(decoding: bytes, as: UTF8.self))
-        }
-    }
-
+    /// Resolve targets and no-op checks after earlier edits publish, retaining typed payloads.
     func performActions(_ actions: @escaping @MainActor () -> [EditAction]?, documentID: UUID?, finishingPreview: Bool = false, selectingAddedTrack: Bool = false,
                         rememberingLength: @escaping @MainActor () -> Int64? = { nil },
                         rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
         await applyEdit(actions, documentID: documentID, finishingPreview: finishingPreview, selectingAddedTrack: selectingAddedTrack, rememberingLength: rememberingLength,
                         rememberingVelocity: rememberingVelocity, selectingNotes: selectingNotes) { document, actions in
             try await document.perform(actions)
+        }
+    }
+
+    /// Applies one transaction whose later actions name earlier results, such as a new track's ID.
+    func performActions(referencing actions: [ReferencingEditAction], documentID: UUID, selectingAddedTrack: Bool = false) async -> Bool {
+        await applyEdit({ actions }, documentID: documentID, selectingAddedTrack: selectingAddedTrack) { document, actions in
+            try await document.perform(referencing: actions)
         }
     }
 

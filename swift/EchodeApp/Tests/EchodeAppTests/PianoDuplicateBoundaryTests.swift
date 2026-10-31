@@ -15,8 +15,7 @@ struct PianoDuplicateBoundaryTests {
         #expect(await controller.insertNote(pitch: 127, beat: 2, length: 0.7))
         let track = try #require(controller.pianoTrack), document = try #require(controller.documentID)
         let first = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-        #expect(await controller.edit(["type": "clip.link", "source": first.id.placement.uuidString,
-                                      "track": track.uuidString, "start": 8 * 705_600]))
+        #expect(await controller.edit(.linkClip(source: first.id.placement.uuidString, track: track.uuidString, start: 8 * 705_600)))
         let snapshot = try #require(controller.snapshot)
         let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 16 * 705_600,
             topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1)
@@ -75,8 +74,7 @@ struct PianoDuplicateBoundaryTests {
         #expect(await controller.insertNote(pitch: 60, beat: 1, length: 1))
         let track = try #require(controller.pianoTrack)
         let note = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil))
-        #expect(await controller.edit(["type": "clip.resize", "track": track.uuidString, "clip": note.id.placement.uuidString,
-                                      "start": 0, "length": 4 * 705_600]))
+        #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: note.id.placement.uuidString, start: 0, length: 4 * 705_600)))
         let original = try #require(controller.snapshot?.pianoNote(note.id)), undo = controller.undoCount
         controller.noteInput.remember(12_345); controller.noteVelocity.remember(77)
         let change = PianoMoveChange(anchor: note.id, originals: [note.id: NoteGeometry(original)],

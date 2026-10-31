@@ -74,6 +74,9 @@ fn nullable_fields_and_snake_case_names_preserve_the_wire_boundary() {
     assert_eq!(field.swift, "`fadeIn`");
     assert_eq!(field.kind, "Int64");
     assert!(field.optional);
+    // Rust resolves a result reference in any string field, not only IDs.
+    let name = super::field("name", &json!({"type": "string"}), true).unwrap();
+    assert_eq!(name.kind, "Text");
     assert!(identifier("bad-name").is_err());
     assert!(identifier("").is_err());
 }

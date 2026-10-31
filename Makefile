@@ -122,6 +122,7 @@ check-base:
 # Owned helper main calls and correlated control replies retain timeout, state and save-order boundaries (SPG-01).
 # Generated track/device edits retain batch targets, added-root selection, nullable anchors and durable history.
 # Generated mixer/clip-mix edits retain exact values, preview completion, single/group scope and durable history.
+# Generated clip moves/copies and audio imports retain integer targets, focus, result references, rejection and durable history.
 check-product-contracts:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli

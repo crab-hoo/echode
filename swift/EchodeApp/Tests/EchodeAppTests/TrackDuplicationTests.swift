@@ -15,7 +15,7 @@ struct TrackDuplicationTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "folder")
         let folder = try #require(controller.selection)
-        #expect(await controller.edit(["type": "track.add_child", "parent": folder.uuidString, "name": "child"]))
+        #expect(await controller.edit(.addChild(parent: folder.uuidString, name: "child")))
         let child = try #require(controller.tracks.first { $0.name == "child" }?.id)
         await controller.addTrack(name: "lead")
         let lead = try #require(controller.selection)
