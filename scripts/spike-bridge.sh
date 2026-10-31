@@ -28,6 +28,7 @@ swift_flags=("${swift_common[@]}" -L "$bridge_library" -lechode_bridge_spike)
 swiftc "${swift_flags[@]}" -I "$bridge_output/c" -D BRIDGE_VALIDATION \
     -Xcc -DECHODE_BRIDGE_FAULT_INJECTION \
     spikes/bridge/swift/CBridge.swift spikes/bridge/swift/CProbe.swift spikes/bridge/swift/ContractProbe.swift \
+    swift/EchodeBridge/Sources/EchodeBridge/ContinuationHandoff.swift \
     -o "$bridge_output/c-probe"
 python3 scripts/run-bridge-validation.py --log "$bridge_output/c-probe.log" \
     "$bridge_output/c-probe" "$@" | tee -a "$bridge_output/report.txt"

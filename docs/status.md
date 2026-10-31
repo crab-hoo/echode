@@ -360,8 +360,11 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
 - **実 HAL と UI テストの TSan**: 2026-10-17 に UI テストが実 HAL を開いた際の TSan 警告は、UI テスト側を機器なし応答へ修正して分離したが、実 HAL バッファ再利用時の警告原因自体は未確定であり、抑制は行わない（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
   2026-10-29 の同種の警告では、単体候補の追加が窓を開く既存 UI 回帰のデバイス要求を機器なしへ分離した。
   フェーダー入力の変更とは別の検査基盤の修正であり、実 HAL の警告原因の解決とは扱わない。
+  2026-10-31 にも、`FolderDisclosureTests` の FX のドロップが開く窓の要求を機器なしへ分離した。警告の原因が未確定であることは変わらない。
 - **errno TSan 警告**: Darwin arm64 のスレッド固有領域の再利用が、C だけの再現でも誤検出された。
   検査専用ランタイムで errno の寿命処理を修正し、同じ errno を実際に共有する競合の検出も保つ（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
   正式な合否は検査レポートを参照する。
+- **継続の先行再開の TSan 誤検出**: 完了の継続が `await` より先に再開されると、Swift ランタイムの経路で TSan に順序が見えない。
+  検査ビルドだけの注釈で順序を示し、再開の後の書込みの検出は対照で保つ（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
 - **プラグイン発音アタック**: Vital Init の無音からの発音は 48 / 96 kHz・複数ブロック長でプラグイン単体出力と全サンプル一致しており、ホスト由来の不連続は再現していない（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
 - **検査種別の境界**: 通常の回帰検査、負の対照（`negative_control`）、オフスクリーン GPU 検査、実ウィンドウの `spike-playhead`、長時間計測（[ADR 0096](decisions/0096-measurement-completion.md)）、フックの直接検査と実ホスト発火、ローカル検査とリモート CI、ユーザーの聴感確認はそれぞれ別の証拠として区別する。

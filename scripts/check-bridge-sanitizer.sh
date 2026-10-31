@@ -59,9 +59,23 @@ for bridge_language in rust swift; do
         --expect "$bridge_diagnostic" --site "$bridge_site" "$bridge_output/control/probe" "$bridge_language-$bridge_fault"
 done
 
-swiftc "${swift_flags[@]}" -O -D BRIDGE_VALIDATION -Xcc -DECHODE_BRIDGE_FAULT_INJECTION \
+# The product's annotation file: the runtime gap exists, the annotation closes it,
+# and a write after the resume is still a race.
+swiftc "${swift_flags[@]}" -Onone -D ECHODE_TSAN spikes/bridge/sanitizers/Continuation.swift \
+    swift/EchodeBridge/Sources/EchodeBridge/ContinuationHandoff.swift -o "$bridge_output/control/continuation"
+python3 scripts/run-bridge-validation.py --tsan-runtime "$bridge_tsan_runtime" \
+    --log "$bridge_output/control/continuation-unannotated.log" --expect "$bridge_diagnostic" --site 'Value\.init' \
+    "$bridge_output/control/continuation" unannotated
+python3 scripts/run-bridge-validation.py --tsan-runtime "$bridge_tsan_runtime" \
+    --log "$bridge_output/control/continuation-annotated.log" "$bridge_output/control/continuation" annotated
+python3 scripts/run-bridge-validation.py --tsan-runtime "$bridge_tsan_runtime" \
+    --log "$bridge_output/control/continuation-late-write.log" --expect "$bridge_diagnostic" --site writeAfterResume \
+    "$bridge_output/control/continuation" late-write
+
+swiftc "${swift_flags[@]}" -O -D BRIDGE_VALIDATION -D ECHODE_TSAN -Xcc -DECHODE_BRIDGE_FAULT_INJECTION \
     -I "$bridge_output/c" "$bridge_output/c/libbridge.a" \
     spikes/bridge/swift/CBridge.swift spikes/bridge/swift/CProbe.swift spikes/bridge/swift/ContractProbe.swift \
+    swift/EchodeBridge/Sources/EchodeBridge/ContinuationHandoff.swift \
     -o "$bridge_output/c-probe"
 python3 scripts/run-bridge-validation.py --tsan-runtime "$bridge_tsan_runtime" \
     --log "$bridge_output/c-probe.log" "$bridge_output/c-probe"

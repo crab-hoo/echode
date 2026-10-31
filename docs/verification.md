@@ -109,6 +109,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
 - `check-bridge-tsan`: 標準ライブラリを含む製品の Rust と Swift を、同じ固定ランタイムで競合検査する。
   読み込まれたランタイムも照合する（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
+  製品とスパイクの Swift は `-D ECHODE_TSAN` で、継続の先行再開の前後関係を TSan へ示す注釈を入れる（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
+  対照 `continuation-*` は、注釈なしで報告が出ること、注釈で消えること、再開の後の書込みは報告されることを確認する。
   製品とスパイクの TSan は同じ `target/bridge/thread/rust` で標準ライブラリ・共通依存のビルドを再利用する。
   ASan・通常・反例とは出力を分け、異なる feature 構成を一括実行へ混ぜない（[ADR 0198](decisions/0198-verification-launch-and-cache-cost.md)）。
   ASan / TSan の Swift は復旧同意のスイートを別プロセスへ分け、全体の同時実行の負荷から隔離する。

@@ -47,11 +47,14 @@ private final class PendingCall: Sendable {
     static var liveCount: Int { live.withLock { $0 } }
     let continuation: CheckedContinuation<CSnapshot, any Error>
     let observer: @Sendable (CChange) -> Void
+    let handoff: ContinuationHandoff
 
     init(_ continuation: CheckedContinuation<CSnapshot, any Error>,
-         _ observer: @escaping @Sendable (CChange) -> Void) {
+         _ observer: @escaping @Sendable (CChange) -> Void,
+         _ handoff: ContinuationHandoff) {
         self.continuation = continuation
         self.observer = observer
+        self.handoff = handoff
         Self.live.withLock { $0 += 1 }
     }
     deinit { Self.live.withLock { $0 -= 1 } }
@@ -62,21 +65,22 @@ private final class PendingCall: Sendable {
 private func completeTrack(_ context: UnsafeMutableRawPointer?, _ status: BridgeStatus,
                            _ handle: OpaquePointer?) {
     let pending = Unmanaged<PendingCall>.fromOpaque(context!).takeRetainedValue()
+    let result: Result<CSnapshot, any Error>
     if status == Ok, let handle {
         let snapshot = CSnapshot(taking: handle)
         pending.observer(CChange(revision: snapshot.revision, trackCount: snapshot.trackCount))
-        pending.continuation.resume(returning: snapshot)
+        result = .success(snapshot)
     } else {
         if let handle { eb_snapshot_free(handle) }
-        let error: CBridgeError
         switch status {
-        case EmptyName: error = .emptyName
-        case InvalidUtf8: error = .invalidUTF8
-        case Stopped: error = .stopped
-        default: error = .invalidResult
+        case EmptyName: result = .failure(CBridgeError.emptyName)
+        case InvalidUtf8: result = .failure(CBridgeError.invalidUTF8)
+        case Stopped: result = .failure(CBridgeError.stopped)
+        default: result = .failure(CBridgeError.invalidResult)
         }
-        pending.continuation.resume(throwing: error)
     }
+    pending.handoff.release()
+    pending.continuation.resume(with: result)
 }
 
 // Only immutable ownership is stored in Swift. Rust serializes commands on its
@@ -99,8 +103,10 @@ final class CDocument: @unchecked Sendable {
         try Task.checkCancellation()
         // Cancellation after enqueueing does not roll back a committed edit.
         // The continuation still consumes the completion and its owned handle.
+        let handoff = ContinuationHandoff()
+        defer { handoff.acquire() }
         return try await withCheckedThrowingContinuation { continuation in
-            let pending = PendingCall(continuation, observer)
+            let pending = PendingCall(continuation, observer, handoff)
             let context = Unmanaged.passRetained(pending).toOpaque()
             Array(name.utf8).withUnsafeBufferPointer { bytes in
                 eb_document_add_track(handle, bytes.baseAddress, bytes.count, context, completeTrack)

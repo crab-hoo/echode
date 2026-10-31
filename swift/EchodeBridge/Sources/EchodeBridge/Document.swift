@@ -324,27 +324,40 @@ extension Snapshot {
 
 private final class PendingCall: Sendable {
     let continuation: CheckedContinuation<Snapshot, any Error>
+    let handoff: ContinuationHandoff
 
-    init(_ continuation: CheckedContinuation<Snapshot, any Error>) {
+    init(_ continuation: CheckedContinuation<Snapshot, any Error>, _ handoff: ContinuationHandoff) {
         self.continuation = continuation
+        self.handoff = handoff
     }
 }
 
-private func completeCommand(
+func completeCommand(
     _ context: UnsafeMutableRawPointer?,
     _ status: Int32,
     _ message: UnsafePointer<CChar>?,
     _ snapshot: OpaquePointer?
 ) {
     let pending = Unmanaged<PendingCall>.fromOpaque(context!).takeRetainedValue()
+    let result: Result<Snapshot, any Error>
     if status == ECHODE_OK, let snapshot {
-        pending.continuation.resume(returning: Snapshot(taking: snapshot))
+        result = .success(Snapshot(taking: snapshot))
     } else {
         if let snapshot {
             echode_snapshot_free(snapshot)
         }
-        let text = message.map { String(cString: $0) } ?? "command failed"
-        pending.continuation.resume(throwing: BridgeError(message: text))
+        result = .failure(BridgeError(message: message.map { String(cString: $0) } ?? "command failed"))
+    }
+    pending.handoff.release()
+    pending.continuation.resume(with: result)
+}
+
+/// Hands `submit` the context that `completeCommand` consumes, then waits for it.
+func awaitCompletion(_ submit: (UnsafeMutableRawPointer) -> Void) async throws -> Snapshot {
+    let handoff = ContinuationHandoff()
+    defer { handoff.acquire() }
+    return try await withCheckedThrowingContinuation { continuation in
+        submit(Unmanaged.passRetained(PendingCall(continuation, handoff)).toOpaque())
     }
 }
 
@@ -402,9 +415,7 @@ public final class Document: @unchecked Sendable {
     /// Raw JSON compatibility boundary; model validation remains in Rust.
     public func perform(_ json: String) async throws -> Snapshot {
         try Task.checkCancellation()
-        return try await withCheckedThrowingContinuation { continuation in
-            let pending = PendingCall(continuation)
-            let context = Unmanaged.passRetained(pending).toOpaque()
+        return try await awaitCompletion { context in
             let bytes = Array(json.utf8)
             bytes.withUnsafeBufferPointer { buffer in
                 _ = echode_document_submit(
@@ -442,8 +453,7 @@ public final class Document: @unchecked Sendable {
     public func audio(_ command: AudioCommand) async throws -> AudioState {
         try Task.checkCancellation()
         let bytes = Array(try JSONEncoder().encode(command))
-        let snapshot: Snapshot = try await withCheckedThrowingContinuation { continuation in
-            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+        let snapshot = try await awaitCompletion { context in
             bytes.withUnsafeBufferPointer { buffer in
                 _ = echode_document_audio(handle, buffer.baseAddress, buffer.count, context, completeCommand)
             }
@@ -478,8 +488,7 @@ public final class Document: @unchecked Sendable {
     public func history(_ command: HistoryCommand) async throws -> Snapshot {
         try Task.checkCancellation()
         let bytes = Array(try JSONEncoder().encode(command))
-        return try await withCheckedThrowingContinuation { continuation in
-            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+        return try await awaitCompletion { context in
             bytes.withUnsafeBufferPointer { buffer in
                 _ = echode_document_history(handle, buffer.baseAddress, buffer.count, context, completeCommand)
             }
@@ -491,8 +500,7 @@ public final class Document: @unchecked Sendable {
     public func device(_ command: DeviceCommand) async throws -> Snapshot {
         try Task.checkCancellation()
         let bytes = Array(try JSONEncoder().encode(command))
-        return try await withCheckedThrowingContinuation { continuation in
-            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+        return try await awaitCompletion { context in
             bytes.withUnsafeBufferPointer { buffer in
                 _ = echode_document_device(handle, buffer.baseAddress, buffer.count, context, completeCommand)
             }
@@ -509,8 +517,7 @@ public final class Document: @unchecked Sendable {
 
     private func query(_ operation: UInt32) async throws -> Snapshot {
         try Task.checkCancellation()
-        return try await withCheckedThrowingContinuation { continuation in
-            let context = Unmanaged.passRetained(PendingCall(continuation)).toOpaque()
+        return try await awaitCompletion { context in
             _ = echode_document_query(handle, operation, context, completeCommand)
         }
     }

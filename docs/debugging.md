@@ -900,12 +900,23 @@ make debug-report
      単体候補の追加は `opensWindow` からデバイス要求も送るため、再生なし・`preparesOutput = false` でも実 HAL へ到達し得る。
      `PluginBatchTests.invalidTargetsDoNotPartiallyInsertOrClearRedo` は `FakeParameterPlugin` を注入し、窓要求を待って対象も照合する。
      実 HAL の `write_planes` と別スレッドの過去の書込みが競合した場合も、まずこの未分離の経路を調べる。警告自体は抑制しない。
+     2026-10-31 には `FolderDisclosureTests` の FX のドロップが窓要求を実 HAL へ届けていて、同じテストを含む全体実行で 13 回は出ず、`make verify` で 1 回出た。
+     出にくいので、1 回の合格を未分離の根拠にしない。報告のスタックにテスト名は出ない。
+     特定するには、作業ツリーの外のコピーで `Document.device` と `Document.audio` にパッケージのパスとコマンドの出力を足し、全体を 1 回実行する。
+     `play`・`prepare`・`output`・`refresh` か、実際のプラグインを持つ文書への `device` が出たら、そのテストに `sendDevice` か `sendAudio` を注入する。
   2. 終了済みと新規のスレッドの `errno` 誤検出は、C のみでも再現し、検査ランタイムの寿命処理を修正した（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
      `target/bridge/thread/errno/` の baseline・fixed・real-race の対照と、同じランタイムのロード証拠を確認する。
      準備が古い時は `make setup-bridge` を使う。取得済みソースの再ビルドには `python3 scripts/tsan_runtime.py --prepare` も使える。
-  3. 2026-10-25 の `check-bridge-tsan` で 1 回だけ、文書ワーカーの完了コールバックの `Snapshot.init(taking:)` の書込みと、
-     `Document.audio` の継続の後の `Snapshot.audioState()` の読取りが競合と報告された。同じ入力の再実行では再現していない。
-     継続が `await` の前に再開されると、Swift ランタイムの即時再開の経路で TSan が前後関係を見ない可能性がある（未確定）。
+  3. 継続が `await` より先に再開されると、再開側の書込みと `await` の直後の読取りを、TSan は順序なしと見る（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
+     順序はハードウェアで保証され、製品の競合ではない。Swift ランタイムの即時再開の経路が TSan の acquire を呼ばないことが原因である。
+     2026-10-25 に報告された `Snapshot.audioState()`（読取り）と `Snapshot.init(taking:)`（書込み）の組がこれにあたる。
+     未修正では、全コアに CPU 負荷をかけた TSan の Swift 全体で毎回再現した。負荷なしではまれにしか出ない。
+     文書の完了は `awaitCompletion` と `ContinuationHandoff` で、呼出しごとの前後関係を TSan へ示す。注釈が入るのは `-D ECHODE_TSAN` のビルドだけである。
+     再発したら `DocumentCompletionOrderTests` と `target/bridge/thread/control/continuation-*.log` を確認する。
+     回帰テストだけが落ちる時は、`-D ECHODE_TSAN` の抜けか、`awaitCompletion` を通らない経路を疑う。
+     `continuation-unannotated` だけが落ちる時は、Swift ランタイムが穴を塞いだ可能性がある。注釈を外せるか調べる。
+     `await` の直後に読まず、actor へ戻ってから読む経路は、切替えで順序が見えるので報告されない。報告の有無で読取りの位置を変えない。
+     負荷下の全体実行では別に 5 秒のポーリングの期限切れ（`DevicePreparationTests`、`MixerStepTests`）が出ることがある。TSan の報告とは区別する。
      失敗した実行のログは `target/bridge/<sanitizer>/product/swift-tests.failed.log` に残り、再実行で消えない。
      抜粋には dyld の行ではなく `WARNING`〜`SUMMARY` の報告を出す。
   いずれも抑制（suppression）や不要なロックで隠さず、スタックと対象アドレスを確認して製品データの競合と区別する。

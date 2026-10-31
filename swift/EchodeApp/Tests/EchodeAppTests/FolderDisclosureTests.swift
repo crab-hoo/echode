@@ -8,7 +8,9 @@ struct FolderDisclosureTests {
     @Test func contractFolderDisclosureKeepsHeadersAndLanesOnTheSameVisibleTracks() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-folder-view-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: url) }
-        let controller = ProjectController()
+        let plugin = FakeParameterPlugin()
+        // A dropped FX also opens its GUI; keep that request off real HAL.
+        let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
         await controller.addTrack(name: "folder")
         let folder = try #require(controller.selection)
@@ -68,6 +70,8 @@ struct FolderDisclosureTests {
         #expect(pane.headers.acceptFX(board, at: CGPoint(x: 8, y: 70), copying: false))
         #expect(await pending?.value == true)
         #expect(controller.deviceRows(on: tail).count == 1 && controller.deviceRows(on: child).isEmpty)
+        await controller.pluginWindowTask?.value
+        #expect(await plugin.windowRequests() == [try #require(controller.deviceRows(on: tail).first).id])
         await controller.undo()
         #expect(controller.deviceRows(on: tail).isEmpty)
         controller.selection = folder
