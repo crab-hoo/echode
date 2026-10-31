@@ -182,7 +182,7 @@ pub unsafe extern "C" fn echode_document_track_peak(
         return 0.0;
     }
     let id = u128::from_be_bytes(unsafe { std::ptr::read_unaligned(track.cast::<[u8; 16]>()) });
-    document_ref(document).map_or(0.0, |document| document.track_peak(id))
+    document_ref(document).map_or(0.0, |document| document.service.track_peak(id))
 }
 
 /// # Safety

@@ -248,6 +248,11 @@ struct DocumentSessionTests {
         let url = location("close")
         defer { try? FileManager.default.removeItem(at: url) }
         let controller = ProjectController()
+        let (released, release) = AsyncStream<Void>.makeStream()
+        controller.endDocument = { document in
+            for await _ in released { break }
+            await Task.detached { document.shutdown() }.value
+        }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "one")
         let closing = Task { await controller.close() }
@@ -255,6 +260,7 @@ struct DocumentSessionTests {
         // Views rendered during shutdown never pair old contents with no document.
         #expect(controller.snapshot == nil && controller.tracks.isEmpty && controller.projectURL == nil)
         #expect(controller.busy)
+        release.finish()
         await closing.value
         #expect(!controller.busy)
     }

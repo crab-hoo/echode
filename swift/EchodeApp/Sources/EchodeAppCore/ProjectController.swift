@@ -33,6 +33,11 @@ public final class ProjectController {
     @ObservationIgnored let sendAudition: @Sendable (Document, URL?, AuditionOrigin) -> Void
     @ObservationIgnored var sendAuditionAt: @Sendable (Document, URL, UInt64, AuditionOrigin) -> Void = { $0.audition($1, from: $2, origin: $3) }
     @ObservationIgnored var sendAuditionSettings: @Sendable (Document, Bool, Float) -> Void = { _ = $0.configureAudition(visible: $1, gain: $2) }
+    /// Ends a replaced document off the main actor. Tests hold it to read the
+    /// state views see during shutdown.
+    @ObservationIgnored var endDocument: @Sendable (Document) async -> Void = { document in
+        await Task.detached { document.shutdown() }.value
+    }
     @ObservationIgnored let auditionLog: AuditionLog
     /// One document change at a time. A repeated step waits instead of being dropped.
     @ObservationIgnored let edits = EditTurn()
@@ -197,7 +202,7 @@ public final class ProjectController {
     }
 
     private func shutDown(_ session: DocumentSession) async {
-        if let document = session.document { await Task.detached { document.shutdown() }.value }
+        if let document = session.document { await endDocument(document) }
     }
 
     /// Outside the edit turn: the worker answers at once and prepares on its own

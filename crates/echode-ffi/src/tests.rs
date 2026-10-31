@@ -182,7 +182,8 @@ extern "C" fn close_on_complete(
     _message: *const c_char,
     snapshot: *mut Snapshot,
 ) {
-    let reply = unsafe { &*(context as *const ShutdownReply) };
+    // The callback owns its context: the waiter returns while this runs.
+    let reply = unsafe { Box::from_raw(context as *mut ShutdownReply) };
     if !snapshot.is_null() {
         unsafe { echode_snapshot_free(snapshot) };
     }
@@ -194,14 +195,14 @@ extern "C" fn close_on_complete(
 fn audit_pro14_close_from_the_completion_callback_does_not_abort() {
     let document = open();
     let (sender, incoming) = mpsc::channel();
-    let reply = ShutdownReply { document, sender };
+    let reply = Box::into_raw(Box::new(ShutdownReply { document, sender }));
     let json = br#"{"type":"track.add","name":"piano"}"#;
     let code = unsafe {
         echode_document_submit(
             document,
             json.as_ptr(),
             json.len(),
-            &reply as *const ShutdownReply as *mut c_void,
+            reply.cast(),
             close_on_complete,
         )
     };

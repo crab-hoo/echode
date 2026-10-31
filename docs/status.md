@@ -175,6 +175,12 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   実画面での文書切替・VoiceOver・聴感はユーザー確認待ちである
   （[ADR 0203](decisions/0203-document-session.md)、SPG-02）。
 
+- **文書の手番の調停**:
+  ワーカー・デバイスレーン・保存の取込みを `echode-document` へ移し、FFI は C のコールバックの変換と表示の問い合わせだけを持つ。
+  投入した要求は、ワーカーの異常終了でも 1 回完了する。デバイスの完了コールバックから文書を止めても join の循環は起きない。
+  C の関数と JSON の報告の形は変えていない。CLI と MCP はこのサービスを使わず、従来どおり `DocumentHost` へ直接つなぐ
+  （[ADR 0204](decisions/0204-document-service.md)、SPG-05）。
+
 - **Swift の型付き編集入口**:
   Rust の登録簿とスキーマから全アクションの `EditAction` を生成し、単一／一括の `Document.perform` へ接続した。
   生成鮮度・両言語の wire 表記・単一 Undo / Redo・拒否時の保持と再オープンを回帰で照合する。

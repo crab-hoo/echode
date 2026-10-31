@@ -121,7 +121,7 @@ class ContractEvidenceTests(unittest.TestCase):
             return {"id": name, "runner": "rust", "package": package, "target": ["--lib"],
                     "negative_control": {"file": path}}
         ordered = contracts.mutation_order(ROOT, [
-            case("ffi", "crates/echode-ffi/src/queue.rs"),
+            case("ffi", "crates/echode-ffi/src/snapshot.rs"),
             case("model", "crates/echode-model/src/lib.rs", "echode-history"),
             case("engine-a", "crates/echode-engine/src/lib.rs", "echode-engine"),
             case("model-again", "crates/echode-model/src/lib.rs", "echode-history"),

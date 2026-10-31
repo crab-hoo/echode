@@ -136,6 +136,27 @@ class PolicyTests(unittest.TestCase):
                      "swift/EchodeApp/Tests/EchodeAppTests/TypedMixerEditTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"} <= self.selected(path))
 
+    def test_document_turns_stay_out_of_the_c_abi_crate(self):
+        sources = ROOT / "crates/echode-ffi/src"
+        tests = ("tests.rs", "snapshot_ownership.rs")
+        for path in sorted(sources.glob("*.rs")):
+            if path.name in tests or path.name.endswith("_tests.rs"):
+                continue
+            source = path.read_text()
+            for name in ("catch_unwind", "DocumentHost", "mpsc::", "Session"):
+                self.assertNotIn(name, source, path.name)
+        ids = {c["id"]: c for c in self.policy["product_contracts"]}
+        for identifier in ("document-worker-completion", "document-lane-completion"):
+            contract = ids[identifier]
+            self.assertEqual((contract["runner"], contract["package"]), ("rust", "echode-ffi"))
+            self.assertTrue(contract["test"].startswith("completion_tests::contract_"))
+            fault = contract["negative_control"]
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1, identifier)
+        self.assertEqual(ids["queued-stop"]["package"], "echode-document")
+        for path in ("crates/echode-document/src/worker.rs", "crates/echode-document/src/ticket.rs"):
+            self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
+                             "check-bridge-miri"} <= self.selected(path))
+
     def test_document_operations_take_a_required_id_and_share_one_check(self):
         sources = ROOT / "swift/EchodeApp/Sources/EchodeAppCore"
         controller = (sources / "ProjectController.swift").read_text()
@@ -617,7 +638,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(click["negative_control"]["file"], "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceFileList.swift")
         for path in ("crates/echode-engine/src/audition.rs", "crates/echode-audio-io/src/audition.rs"):
             self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
-        for path in ("crates/echode-ffi/src/queue.rs", "swift/EchodeApp/Sources/EchodeAppCore/SampleAudition.swift"):
+        for path in ("crates/echode-document/src/service.rs", "swift/EchodeApp/Sources/EchodeAppCore/SampleAudition.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
 
@@ -662,7 +683,7 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("audio.opening()", worker["negative_control"]["old"])
         for path in ("crates/echode-audio-io/src/opening.rs", "crates/echode-audio-io/src/session.rs"):
             self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
-        for path in ("crates/echode-ffi/src/queue.rs", "crates/echode-ffi/src/device.rs"):
+        for path in ("crates/echode-document/src/worker.rs", "crates/echode-document/src/device.rs"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected(path))
 
@@ -737,7 +758,7 @@ class PolicyTests(unittest.TestCase):
         for path in ("crates/echode-actions/src/session.rs", "crates/echode-history/tests/noop_edits.rs",
                      "crates/echode-cli/tests/mcp.rs"):
             self.assertTrue({"check", "check-product-contracts"} <= self.selected(path))
-        for path in ("crates/echode-ffi/src/queue.rs",
+        for path in ("crates/echode-document/src/worker.rs",
                      "swift/EchodeApp/Tests/EchodeAppTests/NoopEditTests.swift"):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan",
                              "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
@@ -764,7 +785,8 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("rtsan", checks)
 
     def test_product_bridge_and_app_select_ownership_checks(self):
-        for path in ("crates/echode-ffi/src/queue.rs", "swift/EchodeBridge/Sources/EchodeBridge/Document.swift",
+        for path in ("crates/echode-document/src/service.rs", "crates/echode-ffi/src/document.rs",
+                     "swift/EchodeBridge/Sources/EchodeBridge/Document.swift",
                      "swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift"):
             with self.subTest(path=path):
                 self.assertTrue({"check", "check-bridge-asan", "check-bridge-tsan", "check-bridge-miri"} <= self.selected(path))
@@ -1532,6 +1554,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual({c["id"] for c in contracts},
                          {"explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "document-session-drag-ui", "document-session-audio-ui", "document-session-restore-ui", "document-session-stale-ui",
+                          "document-worker-completion", "document-lane-completion",
                           "typed-clip-controller", "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",
                           "plugin-main-call-ownership", "plugin-main-timeout-state", "plugin-control-request-ids", "plugin-control-save-order",
                           "mcp-local-arguments", "mcp-modern-metadata", "mcp-legacy-lifecycle", "mcp-request-identity", "mcp-version-envelope", "mcp-backend-envelope", "mcp-backend-version", "mcp-backend-errors", "mcp-stdio-framing", "mcp-backend-framing", "rpc-json-whitespace", "rpc-request-framing", "rpc-request-envelope", "rpc-notification-boundary",
@@ -1607,7 +1630,7 @@ class PolicyTests(unittest.TestCase):
         for name in ("device-view-slow-ui", "device-view-long-ui"):
             with self.subTest(contract=name):
                 self.assertEqual((contracts[name]["runner"], contracts[name]["suite"]), ("swift", "DeviceParameterTests"))
-        for path in ("crates/echode-ffi/src/lane.rs", "crates/echode-sandbox/src/session.rs",
+        for path in ("crates/echode-document/src/lane.rs", "crates/echode-sandbox/src/session.rs",
                      "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceParameterView.swift"):
             with self.subTest(path=path):
                 self.assertIn("check-product-contracts", self.selected(path))
@@ -1648,7 +1671,7 @@ class PolicyTests(unittest.TestCase):
         # A key window would take Space and shortcuts from Echode.
         self.assertIn("key: false", contracts["plugin-window-helper"]["negative_control"]["old"])
         for path in ("crates/echode-plugin-host/src/gui.rs", "crates/echode-plugin-host/src/relay.rs",
-                     "crates/echode-ffi/src/activity.rs", "crates/echode-sandbox/src/gui.rs",
+                     "crates/echode-document/src/activity.rs", "crates/echode-sandbox/src/gui.rs",
                      "crates/echode-plugin-host/src/gui_appkit.rs", "crates/echode-sandbox/src/shortcuts.rs",
                      "swift/EchodeApp/Sources/EchodeAppCore/PluginWindows.swift"):
             with self.subTest(path=path):

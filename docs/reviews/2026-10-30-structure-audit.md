@@ -22,7 +22,7 @@
 | SPG-02 | P2 | 文書ごとの状態が `ProjectController` に散在し、文書の照合が手書きの 63 か所に分かれる | 対応済み（後述）。監査時点の案のうち別の型への分割は行わない |
 | SPG-03 | P2 | Swift から Rust への編集要求だけが型のない辞書で、30 種類の操作の形を二重に持つ | 対応済み（後述）。raw JSON の互換入口と、ID・時刻の値型化は残す |
 | SPG-04 | P2 | 時間単位・値の範囲を Swift が数値の直書きで重複して持つ | 定数・変換・下書きの整数化に対応（後述） |
-| SPG-05 | P2 | 文書の処理の調停（保存の取込み・デバイス要求の待ち）が FFI の crate に入っている | 未着手 |
+| SPG-05 | P2 | 文書の処理の調停（保存の取込み・デバイス要求の待ち）が FFI の crate に入っている | 対応済み（後述）。CLI / MCP の移行は残す |
 | SPG-06 | P3 | プラグイン操作 1 つが約 9 層の素通しを通り、一部の素通しはテストだけが使う | 旧素通し 3 件を削除、残りは未着手 |
 | SPG-07 | P3 | 再生の生成関数が 6 種類あり、本体の重複と引数の増加が続く | 未着手 |
 | SPG-08 | P3 | ピアノロールの排他的な操作状態を 9 個の独立した Optional で持つ | 未着手 |
@@ -150,13 +150,21 @@ Swift の `ModelLimits`・`Tick` を導入した。
 
 ### SPG-05: 文書の処理の調停が FFI の crate にある
 
-- 場所: [queue.rs](../../crates/echode-ffi/src/queue.rs) の `worker`（554 行〜、約 240 行）。
+- 場所: 監査時点の `crates/echode-ffi/src/queue.rs` の `worker`（554 行〜、約 240 行）。
 - C ABI の変換を担う crate が、履歴（`DocumentHost`）・音声（`Session`）・デバイスの通り道・プラグインの保存の取込み
   （`pending_saves`・`editing`）・出力待ちのデバイス要求の調停を持っている。
   CLI と MCP は同じ調停を再利用できず、ヘッドレスの経路と製品の経路の差になり得る。
 - `catch_unwind` と受付停止・完了通知の分岐が 3 回、文書が変わった時の保存と編集中の破棄が 2 回、ほぼ同じ形で書かれている。
 - 根本の修正方針: 調停を FFI の外（新しい文書サービスの crate、または `echode-audio-io`）へ移し、
   `DocumentService::handle(Operation) -> Outcome` と 1 つの保護付き実行の補助にまとめる。FFI は C ABI と完了通知だけを持つ。
+
+#### 後続対応（2026-10-31）
+
+[ADR 0204](../decisions/0204-document-service.md) で `echode-document` crate へ調停を移し、FFI は C のコールバックの変換と表示の問い合わせだけを持つ。
+監査時点では誤動作を実証していなかったが、修正前のコードで 2 件を再現した。
+保護のない手番の panic で投入済みの完了が消えること、デバイスの完了コールバックからの終了でワーカーとレーンが互いを join することである。
+`completion_tests.rs` と必須契約 `document-worker-completion`・`document-lane-completion` が確認する。
+同期の `Outcome` の代わりに破棄でも完了する `Ticket` を置いた。CLI と MCP は音声セッションを持たないので移行していない。
 
 ### SPG-06: プラグイン操作の素通しの層
 

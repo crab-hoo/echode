@@ -63,6 +63,8 @@
   - `document-session-stale-ui` は、開き直しで ID が同じ対象に対する前の文書 ID の全操作の拒否を見る。
     `session(for:)` の照合を外す反例を拒否する。
 - `closingRemovesTheDocumentAndItsContentsTogether` は通常回帰で、閉じる途中も文書 ID と内容が一緒に消えることを確認する。
+  当初はポーリングと終了の順序に依存し、`Task.yield` がグローバルの実行プールを経由するため `check-bridge-asan` で一度失敗した。
+  後続で `endDocument` を止めるゲートへ直した（2026-10-31、[ADR 0204](0204-document-service.md) の作業）。
   この不整合は型の構造で起きないため、反例を置かない。
 - 検査基盤は、`documentID ==` の比較がヘッダ以外へ戻らないことと、関数の引数に任意の文書 ID を足さないことを確認する。
   既存の反例は差分の移動に合わせて更新し、音声の検査の選択へ `DocumentSession.swift` を加えた。

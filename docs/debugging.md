@@ -374,7 +374,11 @@ make debug-report
 - **パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない**:
   デバイスの列の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、
   `no output device is available` は停止中の出力起動、`parameter changes timed out` はヘルパーの処理スレッドの `flush` を疑う。
-  `document thread stopped` は文書を閉じた後の要求、`device request panicked` はデバイスレーンでの異常終了である。
+  `document thread stopped` は文書を閉じた後の要求か、ワーカーの異常終了の後の要求、`device request panicked` はデバイスレーンでの異常終了である。
+  `document thread panicked` は文書の手番の panic で、以後の要求は `stopped` になる。stderr の `echode-worker` の panic が原因を示す（[ADR 0204](decisions/0204-document-service.md)）。
+  完了が返らない要求は `completion_tests.rs`、`failed to join thread: Resource deadlock avoided` は `document-lane-completion` で切り分ける。
+  `echode-ffi` のテストが `removal index ... should be < len` と `panic in a function that cannot unwind` で abort したら、完了コンテキストの寿命を疑う。
+  コールバックの `send` が走っている間に待つ側が抜けられるので、コンテキストはスタックに置かず、コールバックが `Box` で所有する。
   一覧取得の失敗は列の「パラメーターを再読込み」で対象だけを再試行する。検索・選択・履歴は変えず、再失敗も同じ列に出す。
   プラグインの再起動や状態の再読込とは異なるため、クラッシュしたヘルパーや未検出のプラグインの復旧を保証しない。
   再試行で他の列も消える・連打で要求が重なる場合は `device-list-retry-ui` と `DeviceParameterRetryTests` を使う

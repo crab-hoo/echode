@@ -34,7 +34,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 - [2026-10-30 構造の横断監査](reviews/2026-10-30-structure-audit.md): SPG-01〜11。
   絡み合いを起こしやすい構造と根本の修正方針・順番。
-  SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md)、SPG-02 は [ADR 0203](decisions/0203-document-session.md) で対応し、当時の再現は保持する。
+  SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md)、SPG-02 は [ADR 0203](decisions/0203-document-session.md)、
+  SPG-05 は [ADR 0204](decisions/0204-document-service.md) で対応し、当時の再現は保持する。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。
@@ -160,6 +161,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - クリップの移動・複製移動と置き換えでの着地（削除・切詰め・分割）: [ADR 0154](decisions/0154-clip-move-and-duplicate.md)。
 - アレンジ自身の ⌘D・現在の窓の直後への独立した複製・単一 Undo と保存:
   [ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)。
+
+- 文書の手番の調停（ワーカー・デバイスレーン・保存の取込み）・完了の 1 回の保証・`Presenter`: [ADR 0204](decisions/0204-document-service.md)。
 
 ### 6. ビルド・対象プラットフォーム・検査基盤
 

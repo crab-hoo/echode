@@ -4,15 +4,14 @@
 //! then the completion callback runs once, without a lock held. The spike in
 //! `spikes/bridge` is not used here.
 
-mod activity;
 mod catalog;
 mod constants;
 mod controls;
-mod device;
+mod document;
 mod overview;
 mod piano;
 mod projection;
-mod queue;
+mod snapshot;
 pub use constants::{ModelConstants, echode_model_constants};
 pub use controls::{
     ClipControls, MixerControls, echode_document_track_peak, echode_snapshot_clip_controls,
@@ -20,7 +19,8 @@ pub use controls::{
 };
 pub use projection::{TrackTreeInfo, echode_snapshot_project_arrange, echode_snapshot_track_tree};
 
-pub use queue::{Document, Snapshot};
+pub use document::Document;
+pub use snapshot::Snapshot;
 
 /// A coherent copy of the live playhead. This query is safe on a draw thread.
 #[repr(C)]
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn echode_document_audio(
     } else {
         unsafe { std::slice::from_raw_parts(json, json_len) }
     };
-    document.enqueue(queue::Operation::Audio(bytes.to_vec()), context, complete);
+    document.enqueue(Operation::Audio(bytes.to_vec()), context, complete);
     ECHODE_OK
 }
 
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn echode_document_history(
     } else {
         unsafe { std::slice::from_raw_parts(json, json_len) }
     };
-    document.enqueue(queue::Operation::History(bytes.to_vec()), context, complete);
+    document.enqueue(Operation::History(bytes.to_vec()), context, complete);
     ECHODE_OK
 }
 
@@ -152,7 +152,7 @@ pub unsafe extern "C" fn echode_document_device(
     } else {
         unsafe { std::slice::from_raw_parts(json, json_len) }
     };
-    document.enqueue(queue::Operation::Device(bytes.to_vec()), context, complete);
+    document.enqueue(Operation::Device(bytes.to_vec()), context, complete);
     ECHODE_OK
 }
 
@@ -206,7 +206,7 @@ pub unsafe extern "C" fn echode_document_plugin_activity(
     else {
         return -1;
     };
-    let json = document.plugin_activity(
+    let json = document.service.plugin_activity(
         after,
         std::time::Duration::from_millis(u64::from(timeout_ms)),
     );
@@ -284,14 +284,16 @@ pub unsafe extern "C" fn echode_document_audition_at(
         delay_us: (input != echode_audio_io::AuditionInput::Other).then_some(input_delay_us),
     };
     if path_len == 0 {
-        document.audition(None, origin, 0);
+        document.service.audition(None, origin, 0);
         return ECHODE_OK;
     }
     let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
     let Ok(text) = std::str::from_utf8(bytes) else {
         return ECHODE_ERR;
     };
-    document.audition(Some(std::path::PathBuf::from(text)), origin, start_frame);
+    document
+        .service
+        .audition(Some(std::path::PathBuf::from(text)), origin, start_frame);
     ECHODE_OK
 }
 
@@ -311,7 +313,7 @@ pub unsafe extern "C" fn echode_document_audition_configure(
     let Some(document) = (unsafe { document.as_ref() }) else {
         return ECHODE_ERR;
     };
-    if visible > 1 || !document.configure_audition(visible == 1, gain) {
+    if visible > 1 || !document.service.configure_audition(visible == 1, gain) {
         return ECHODE_ERR;
     }
     ECHODE_OK
@@ -384,6 +386,7 @@ pub unsafe extern "C" fn echode_snapshot_history(
 use std::ffi::{CStr, c_char, c_void};
 use std::os::raw::c_int;
 
+use echode_document::Operation;
 use echode_history::write_package;
 use echode_model::Project;
 
@@ -498,7 +501,7 @@ pub unsafe extern "C" fn echode_document_open(path: *const c_char) -> *mut Docum
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_shutdown(document: *mut Document) {
     if let Some(document) = document_ref(document) {
-        document.shutdown();
+        document.service.shutdown();
     }
 }
 
@@ -568,10 +571,10 @@ pub unsafe extern "C" fn echode_document_query(
         return 0;
     };
     let operation = match operation {
-        ECHODE_DOCUMENT_SNAPSHOT => queue::Operation::Snapshot,
-        ECHODE_DOCUMENT_UNDO => queue::Operation::Undo,
-        ECHODE_DOCUMENT_REDO => queue::Operation::Redo,
-        _ => queue::Operation::Invalid,
+        ECHODE_DOCUMENT_SNAPSHOT => Operation::Snapshot,
+        ECHODE_DOCUMENT_UNDO => Operation::Undo,
+        ECHODE_DOCUMENT_REDO => Operation::Redo,
+        _ => Operation::Invalid,
     };
     document.enqueue(operation, context, complete);
     0
@@ -1036,6 +1039,9 @@ fn snapshot_ref<'a>(snapshot: *const Snapshot) -> Option<&'a Snapshot> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod completion_tests;
 
 #[cfg(test)]
 mod opening_tests;

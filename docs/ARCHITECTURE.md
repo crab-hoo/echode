@@ -76,6 +76,7 @@ flowchart LR
 | `echode-plugin` | プラグインの共通の抽象と CLAP / VST3 / AU のアダプタ |
 | `echode-sandbox` | ヘルパープロセスの起動と監視、IPC、共有メモリ |
 | `echode-api` | JSON-RPC のサーバーと MCP |
+| `echode-document` | 開いた文書の手番の調停（編集・再生・デバイス要求・プラグイン保存の取込み） |
 | `echode-ffi` | Swift 向けの橋渡し |
 | `echode-cli`、`echode-plugin-host` | 実行ファイル |
 

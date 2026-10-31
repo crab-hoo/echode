@@ -155,7 +155,7 @@
 
 - 状態: **修正済み（2026-10-14）**。[ADR 0087](../decisions/0087-callback-shutdown.md)。ワーカー自身からの停止と解放は `join` しない。別スレッドからの停止がハンドルを待つ。下記は監査対象 HEAD の修正前の記録である。
 - 区分: C ABI の再入・所有権契約の穴。実行確認済み。現在の Swift 包みの通常 callback では行わないため P2。
-- 根拠: [queue.rs](../../crates/echode-ffi/src/queue.rs)、101・513行。[lib.rs](../../crates/echode-ffi/src/lib.rs)、276行。
+- 根拠: `crates/echode-ffi/src/queue.rs`（当時）、101・513行。[lib.rs](../../crates/echode-ffi/src/lib.rs)、276行。
 - 正常に作った文書へ snapshot を問い合わせ、成功 callback 内から、まだ所有する同じ文書の shutdown を呼んだ。`Resource deadlock avoided` の自己 join panic が C ABI 境界へ出て **SIGABRT (-6)**。無効なポインタや二重解放は使っていない。ヘッダにこの呼出しの禁止もない。
 - 対応: worker 自身からの停止・最終解放を安全に処理するか、完了の配送を worker 外へ分ける。callback 内の停止・最終解放・再送と、外部停止との競合を検査する。
 
@@ -181,7 +181,7 @@
 以下を17件の確定指摘に重複計上していない。
 
 - **C-01 / UI の休止から再生への遷移**: [CanvasRenderer.swift](../../swift/EchodeApp/Sources/EchodeAppCore/CanvasRenderer.swift)、103・128行は idle で表示リンクを pause する。再生操作は同じ snapshot / PlaybackFeed を維持し、[ArrangeView.swift](../../swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift)、98行などの setter は refresh しない。Representable の更新まで追っても、再生だけで wake する経路を確認できなかった。付随する layout が偶然起こす可能性はある。実ウィンドウでは未確認。`spike-app` の `beginMeasurement` は continuous を強制するので、この遷移を検査しない。
-- **C-02 / ライブ位置の文書処理依存**: [queue.rs](../../crates/echode-ffi/src/queue.rs)、352行は音声の位置を20msごとに別の atomic へコピーする。描画は直接の音声 atomic を読むわけではない。import・履歴復帰・索引構築の間は位置のコピーも止まる。長い操作中の実表示は未計測。
+- **C-02 / ライブ位置の文書処理依存**: `crates/echode-ffi/src/queue.rs`（当時）、352行は音声の位置を20msごとに別の atomic へコピーする。描画は直接の音声 atomic を読むわけではない。import・履歴復帰・索引構築の間は位置のコピーも止まる。長い操作中の実表示は未計測。
 - **C-03 / 波形と切り取った配置窓**: [peaks.rs](../../crates/echode-history/src/peaks.rs)、132・149行は offset と元のレートを使わず、配置の長さへ音声全体のフレームを対応させる。trim / split した窓の音と表示が一致しない候補。編集済み素材を GPU で描く再現は未実施。
 - **C-04 / ジャーナルの切り戻し自身の失敗**: [document.rs](../../crates/echode-history/src/document.rs)、151行。追記失敗に続いて切り詰め・同期も失敗すると、不確かな耐久性としてホストを停止させず通常エラーになる経路がある。複合障害注入は未実施。
 - **C-05 / 特殊な音声経路の走査量**: `release_covering` はループ終端前の全ノートを走査し、計画交換の `covers` と `live_key_of` は各発音ノートで線形検索する。[realtime lib.rs](../../crates/echode-realtime/src/lib.rs)、409・569・584行。通常カーソルの計測だけでは評価できない。発音数固定・非発音ノート増加の測定が必要。

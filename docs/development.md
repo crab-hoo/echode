@@ -93,7 +93,8 @@
 | 描画クエリ・可視列 | `crates/echode-draw` | `query.rs`（アレンジ・ピアノロールの可視列抽出・空間インデックス） |
 | JSON-RPC・MCP | `crates/echode-api` | `rpc.rs` / `serve.rs`（Unix ソケット RPC）、`mcp.rs`（MCP stdio ブリッジ） |
 | CLI | `crates/echode-cli` | `render`、`serve`、`mcp` サブコマンド。統合テストは `tests/render.rs`、`tests/mcp.rs` |
-| 製品 C ABI | `crates/echode-ffi` | `lib.rs`、`queue.rs`（コマンド投入・取消）、`controls.rs`。ヘッダ生成は `cbindgen` |
+| 文書の手番 | `crates/echode-document` | `service.rs`（投入・取消・終了）、`worker.rs`（手番と保護）、`ticket.rs`（完了の 1 回の保証）、`saves.rs`（保存の取込み）、`lane.rs`（デバイスレーン）、`device.rs`、`activity.rs`、`live.rs` |
+| 製品 C ABI | `crates/echode-ffi` | `lib.rs`、`document.rs`（C のコールバックと `Ticket`）、`snapshot.rs`（`Snapshot`・`SnapshotPresenter`）、`controls.rs`。ヘッダ生成は `cbindgen` |
 | Swift ブリッジ | `swift/EchodeBridge` | `Document.swift`、`Audio.swift`、`Controls.swift`（`echode-ffi` の Swift 6 ラッパー） |
 | 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`DocumentSession.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
@@ -171,14 +172,14 @@ JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バ�
 ヘッダの開閉と表示行の共有は `ArrangePaneView.swift`、追加位置の保持は `TrackInsertion.swift` を使う。
 複製対象の保持は `TrackDuplication.swift`、ヘッダの右メニューは `ArrangeHeaderView.swift` に置く。
 CLAP パラメーターの通信は `crates/echode-sandbox/src/params.rs`、ヘルパー側は `threads.rs` の `flush_params` / `param_infos`、
-FFI は `crates/echode-ffi/src/device.rs`（検査・往復・記録）と `lane.rs`（ワーカー外のデバイスレーン）に置く。
+文書の手番は `crates/echode-document/src/device.rs`（検査・往復・記録）と `lane.rs`（ワーカー外のデバイスレーン）に置く。
 画面は `DeviceParameters.swift`（デバイスごとの状態・世代・ピン留め）、`WorkspaceParameterView.swift`（画面内の行だけの一覧）、
 `WorkspaceDeviceView.swift`（横並びの列とドロップ）に置く。
 列の開閉と文書 ID の検査は `DeviceDisclosure.swift`、幅・入力・フォーカスの制御は `WorkspaceDeviceView.swift` に置く。
 ヘッダの FX 名前と残りのチェインのメニューは `TrackFXNames.swift`、入力とアクセシビリティは `ArrangeHeaderView.swift` に置く。
 テスト用 CLAP のパラメーターは `crates/echode-test-plugin/src/params.rs` が持つ。
 プラグイン独自のウィンドウは、ヘルパーの `crates/echode-plugin-host/src/gui.rs`（窓と規則）・`gui_appkit.rs`（AppKit とキー入力）と `relay.rs`（出力イベントのリング）、
-通信の `crates/echode-sandbox/src/gui.rs`、FFI の `crates/echode-ffi/src/activity.rs`（文書単位の受け口）に置く。
+通信の `crates/echode-sandbox/src/gui.rs`、`crates/echode-document/src/activity.rs`（文書単位の受け口）に置く。
 画面は `PluginWindows.swift`（開く要求・活動の読取り・記録）、テスト用 CLAP の窓は `crates/echode-test-plugin/src/gui.rs` が持つ。
 サンプルの試聴は、ボイスを `crates/echode-engine/src/audition.rs`、試聴スレッドと専用 IOProc を `crates/echode-audio-io/src/audition.rs`、
 FFI の入口を `echode_document_audition`、画面の選択の扱いと要求の記録（`AuditionLog`）を `SampleAudition.swift`、
@@ -189,7 +190,7 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 試聴の設定・手動要求は `SampleAudition.swift`、実操作子は `WorkspaceAuditionControls.swift`、
 表示寿命の通知は `WorkspaceView.swift`、元サンプル位置の seek は `AudioFileReader` に置く（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
 最初の出力準備は `crates/echode-audio-io/src/opening.rs`（`Outputs`・`Opening`・`HeadlessOutput`）と `session.rs` の `install`、
-準備を待つデバイス要求の順序は `crates/echode-ffi/src/queue.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
+準備を待つデバイス要求の順序は `crates/echode-document/src/worker.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
 開いた出力の置換グラフの準備スレッドと回収は `crates/echode-engine/src/playback_preparation.rs`、
 要求の集約と公開は `playback.rs` の `publish_pending` に置く（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
 停止中の置換の素材読込みスレッドと `MediaInputs` は `crates/echode-engine/src/playback_media.rs`、
@@ -197,7 +198,7 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 （[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
 
 古い保存版への復旧通知と書込み禁止は `DocumentHost::recovery_notice`・`accept_recovery`、
-C ABI の受渡しは `queue.rs` の `historyReport.recovery` と `history.accept_recovery` に置く。
+受渡しは `crates/echode-document/src/worker.rs` の `history_report` の `recovery` と `history.accept_recovery` に置く。
 Swift の警告と開く要求の取消は `RecoveryConsent.swift`、公開前の確認は `ProjectController.open`、
 画面の選択肢は `WorkspaceView.swift`、回帰は `recovery_tests.rs`・`RecoveryConsentTests.swift` に置く
 （[ADR 0183](decisions/0183-recovery-consent.md)）。

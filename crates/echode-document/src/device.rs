@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn recording_the_same_bytes_twice_adds_one_undo_step() {
-        let dir = std::env::temp_dir().join(format!("echode-ffi-device-{}", Id::generate()));
+        let dir = std::env::temp_dir().join(format!("echode-document-device-{}", Id::generate()));
         let (project, track) = echode_model::Project::new().add_track("fx");
         let device = Id::from_raw(0xD0);
         let project = project
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn device_commands_refuse_unknown_fields_and_the_mixer() {
-        let dir = std::env::temp_dir().join(format!("echode-ffi-device-{}", Id::generate()));
+        let dir = std::env::temp_dir().join(format!("echode-document-device-{}", Id::generate()));
         let (project, _) = echode_model::Project::new().add_track("fx");
         let mixer = project.tracks()[0].devices[0].id;
         echode_history::write_package(&dir, &project).unwrap();
@@ -409,7 +409,7 @@ mod tests {
     /// this unresolvable plugin would fail if the close tried.
     #[test]
     fn closing_a_window_without_a_helper_does_nothing() {
-        let dir = std::env::temp_dir().join(format!("echode-ffi-device-{}", Id::generate()));
+        let dir = std::env::temp_dir().join(format!("echode-document-device-{}", Id::generate()));
         let (project, track) = echode_model::Project::new().add_track("fx");
         let device = Id::from_raw(0xD2);
         let project = project

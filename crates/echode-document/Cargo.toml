@@ -1,0 +1,23 @@
+[package]
+name = "echode-document"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The turns of one open document: edits, transport, device requests and plugin saves"
+
+[dependencies]
+echode-actions = { path = "../echode-actions" }
+echode-audio-io = { path = "../echode-audio-io" }
+echode-history = { path = "../echode-history" }
+echode-model = { path = "../echode-model" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = "1"
+
+[dev-dependencies]
+echode-audio-io = { path = "../echode-audio-io", features = ["headless-output"] }
+
+[lints]
+workspace = true

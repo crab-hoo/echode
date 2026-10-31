@@ -14,7 +14,8 @@ extern "C" fn complete(
     message: *const c_char,
     snapshot: *mut Snapshot,
 ) {
-    let sender = unsafe { &*context.cast::<mpsc::Sender<Reply>>() };
+    // The callback owns its context: the waiter may return while this runs.
+    let sender = unsafe { Box::from_raw(context.cast::<mpsc::Sender<Reply>>()) };
     let message = (!message.is_null()).then(|| {
         unsafe { CStr::from_ptr(message) }
             .to_string_lossy()
@@ -25,7 +26,7 @@ extern "C" fn complete(
 
 fn request(document: *mut Document, operation: u32, json: Option<&str>) -> Reply {
     let (sender, incoming) = mpsc::channel::<Reply>();
-    let context = &sender as *const _ as *mut c_void;
+    let context = Box::into_raw(Box::new(sender)).cast::<c_void>();
     unsafe {
         if let Some(json) = json {
             let entry = match operation {

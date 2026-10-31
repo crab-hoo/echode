@@ -718,6 +718,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "echode-document"
+version = "0.0.0"
+dependencies = [
+ "echode-actions",
+ "echode-audio-io",
+ "echode-history",
+ "echode-model",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "echode-draw"
 version = "0.0.0"
 dependencies = [
@@ -748,6 +761,7 @@ dependencies = [
  "cbindgen",
  "echode-actions",
  "echode-audio-io",
+ "echode-document",
  "echode-draw",
  "echode-history",
  "echode-model",
