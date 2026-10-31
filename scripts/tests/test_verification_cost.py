@@ -1,5 +1,8 @@
 """Cost regressions must retain current linked inputs and assertion isolation."""
+import hashlib
 import importlib.util
+import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,7 +16,76 @@ spec.loader.exec_module(contracts)
 verify = contracts.verify
 
 
+def hashed_alone(root, files, configuration, patterns, folders, tool_inputs, excludes):
+    """The scope rule written out directly, with nothing shared between calls."""
+    digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
+    for relative in sorted(set(files) | set(tool_inputs)):
+        if (relative in tool_inputs or verify.matches([relative], patterns)
+                or (any(relative.startswith(folder + "/") for folder in folders)
+                    and not verify.matches([relative], excludes))):
+            digest.update(os.fsencode(relative) + b"\0" + verify.input_digest(root, relative))
+    return digest.hexdigest()
+
+
 class VerificationCostTests(unittest.TestCase):
+    def test_a_shared_pass_hashes_each_scope_like_a_pass_of_its_own(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = ["one/lib.rs", "one/tests/audit.rs", "two/lib.rs", "readme.md"]
+            for relative in files + ["tool-a", "tool-b"]:
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text(relative)
+            # Each pair differs in one part of the scope, so ignoring that part reuses the wrong files.
+            scopes = [(["one/*"], (), (), ()), (["two/*"], (), (), ()),
+                      ([], ("one",), (), ()), ([], ("two",), (), ()),
+                      ([], ("one",), (), ("one/tests/*",)),
+                      ([], (), ("tool-a",), ()), ([], (), ("tool-b",), ())]
+            shared = {}
+            for scope in scopes * 2:
+                self.assertEqual(verify.scoped_digest(root, files, "configuration", *scope, scopes=shared),
+                                 hashed_alone(root, files, "configuration", *scope), scope)
+            self.assertEqual(len(shared), len(scopes))
+            self.assertNotEqual(verify.scoped_digest(root, files, "another", *scopes[0], scopes=shared),
+                                verify.scoped_digest(root, files, "configuration", *scopes[0], scopes=shared),
+                                "a shared scope must not hide a different configuration")
+
+    def test_each_fingerprint_pass_reads_a_shared_scope_once_and_the_next_pass_reads_it_again(self):
+        policy = verify.load_policy(ROOT)
+        cases = policy["product_contracts"]
+        with patch.object(verify, "scope_entries", wraps=verify.scope_entries) as selection:
+            contracts.contract_fingerprints(ROOT, policy, cases, {})
+            first = selection.call_count
+            contracts.contract_fingerprints(ROOT, policy, cases, {})
+        self.assertGreater(first, 0, "a pass must read the files itself")
+        self.assertLess(first, len(cases) / 4, "contracts sharing a scope must not reread its files")
+        self.assertEqual(selection.call_count, 2 * first, "a later pass must not reuse an earlier read")
+
+    def test_parsed_manifests_are_reused_only_while_the_file_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Cargo.toml"
+            path.write_text('[package]\nname = "one"\n')
+            first = verify.manifest(path)
+            self.assertIs(verify.manifest(path), first)
+            status = path.stat()
+            # Same size and restored mtime: ctime still changes, so the edit is seen.
+            path.write_text('[package]\nname = "two"\n')
+            os.utime(path, ns=(status.st_atime_ns, status.st_mtime_ns))
+            self.assertEqual(verify.manifest(path)["package"]["name"], "two")
+            path.unlink()
+            with self.assertRaises(FileNotFoundError):
+                verify.manifest(path)
+
+    def test_without_a_first_commit_the_index_is_the_change_and_a_bad_base_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            verify.git(root, "init", "--quiet")
+            (root / "indexed.txt").write_text("indexed\n")
+            (root / "untracked.txt").write_text("untracked\n")
+            verify.git(root, "add", "indexed.txt")
+            self.assertEqual(verify.changed_paths(root), ["indexed.txt", "untracked.txt"])
+            with self.assertRaises(subprocess.CalledProcessError):
+                verify.changed_paths(root, "no-such-ref")
+
     def test_diagnostic_edits_do_not_invalidate_product_evidence(self):
         policy = verify.load_policy(ROOT)
         cases = policy["product_contracts"]

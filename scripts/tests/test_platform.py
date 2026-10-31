@@ -1,5 +1,6 @@
 """Product, tests and standalone probes share one M4/macOS 27 build baseline."""
 
+from functools import cache
 import json
 from pathlib import Path
 import shlex
@@ -19,7 +20,9 @@ def run(arguments, **options):
     return result.stdout
 
 
+@cache
 def package(path):
+    # Each test only reads the manifest, and none of them edits it during the run.
     return json.loads(run(["swift", "package", "--package-path", path, "dump-package"]))
 
 

@@ -150,6 +150,7 @@ def contract_fingerprints(root, policy, contracts, tools, phase="complete"):
     # The wrapper's scheduling/overall budget is not an input to individual test processes.
     shared = [recipe, policy["global_inputs"], policy["evidence_inputs"], phase]
     stamps = {}
+    scopes = {}
     for contract in contracts:
         patterns, folders = contract_inputs(root, policy, contract)
         definition = {key: value for key, value in contract.items()
@@ -159,7 +160,7 @@ def contract_fingerprints(root, policy, contracts, tools, phase="complete"):
         excludes = verify.package_test_excludes(folders, test_folders, root)
         configuration = [definition, shared, patterns, sorted(folders), excludes, tools]
         stamps[contract["id"]] = verify.scoped_digest(root, files, configuration, patterns, folders,
-                                                     package_excludes=excludes)
+                                                     package_excludes=excludes, scopes=scopes)
     return stamps
 
 

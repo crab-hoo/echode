@@ -39,13 +39,14 @@ def changed_paths(root, base=None):
     # --no-renames includes both the removed path and the destination. Comparing
     # to HEAD/base includes staged and unstaged edits; untracked files need ls-files.
     reference = base or "HEAD"
-    if not base and subprocess.run(
-        ["git", "rev-parse", "--verify", "HEAD"], cwd=root,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode:
+    try:
+        commit = git(root, "rev-parse", "--verify", "--end-of-options", f"{reference}^{{commit}}").strip().decode()
+    except subprocess.CalledProcessError:
+        if base:
+            raise
+        # Before the first commit, every indexed file counts as changed.
         changed = paths(git(root, "ls-files", "-z", "--cached"))
     else:
-        commit = git(root, "rev-parse", "--verify", "--end-of-options", f"{reference}^{{commit}}").strip().decode()
         changed = paths(git(root, "diff", "--name-only", "--no-renames", "-z", commit, "--"))
     changed += paths(git(root, "ls-files", "-z", "--others", "--exclude-standard"))
     return sorted(set(changed))
@@ -349,6 +350,12 @@ def tool_identity(root):
 
 
 CONTENT_DIGESTS = {}
+MANIFESTS = {}
+
+
+def file_state(path, status):
+    return (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns,
+            status.st_mode)
 
 
 def content_digest(path):
@@ -358,8 +365,7 @@ def content_digest(path):
     while a check runs; a new process (the next verification) always rereads.
     """
     status = path.stat()
-    key = (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns,
-           status.st_mode)
+    key = file_state(path, status)
     if key not in CONTENT_DIGESTS:
         value = hashlib.sha256(str(status.st_mode).encode() + b"\0")
         with path.open("rb") as source:
@@ -369,16 +375,24 @@ def content_digest(path):
     return CONTENT_DIGESTS[key]
 
 
+def manifest(path):
+    """Parse a TOML file once per file state, as content_digest hashes it; callers only read the result."""
+    key = file_state(path, path.stat())
+    if key not in MANIFESTS:
+        MANIFESTS[key] = tomllib.loads(path.read_text())
+    return MANIFESTS[key]
+
+
 def source_files(root):
     return sorted(set(paths(git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"))))
 
 
-def fingerprint(root, changed, base, tools):
+def fingerprint(root, changed, base, tools, files=None):
     digest = hashlib.sha256()
     digest.update(json.dumps([changed, base, tools], sort_keys=True).encode())
     # Hash the whole non-ignored tree, including unchanged dependencies and fixtures.
     # Status/mtime alone cannot invalidate a result after another edit of the same file.
-    for relative in source_files(root):
+    for relative in source_files(root) if files is None else files:
         path = root / relative
         digest.update(os.fsencode(relative) + b"\0")
         if path.is_symlink():
@@ -393,15 +407,14 @@ def fingerprint(root, changed, base, tools):
 
 def workspace_members(root):
     """Map each workspace package name to its folder."""
-    workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
+    workspace = manifest(root / "Cargo.toml")["workspace"]
     manifests = {}
     for pattern in workspace["members"]:
         for folder in root.glob(pattern):
             relative = folder.relative_to(root).as_posix()
             if any(fnmatch.fnmatchcase(relative, excluded) for excluded in workspace.get("exclude", [])):
                 continue
-            manifest = tomllib.loads((folder / "Cargo.toml").read_text())
-            manifests[manifest["package"]["name"]] = folder
+            manifests[manifest(folder / "Cargo.toml")["package"]["name"]] = folder
     return manifests
 
 
@@ -409,22 +422,23 @@ def package_directories(root, names, kinds=("dependencies", "dev-dependencies", 
     """Include local dependencies for all features/targets, including test/build dependencies."""
     if not names:
         return set()
-    workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
+    workspace = manifest(root / "Cargo.toml")["workspace"]
     manifests = workspace_members(root)
     requested = set(manifests) if names == ["*"] else set(names)
     if requested - manifests.keys():
         raise ValueError("unknown verification package: " + ", ".join(sorted(requested - manifests.keys())))
     pending = [manifests[name] for name in requested]
     visited = set()
+    resolved_root = root.resolve()
     while pending:
         folder = pending.pop().resolve()
-        if not folder.is_relative_to(root.resolve()):
+        if not folder.is_relative_to(resolved_root):
             raise ValueError("verification cannot cache a local dependency outside the repository")
         if folder in visited:
             continue
         visited.add(folder)
-        manifest = tomllib.loads((folder / "Cargo.toml").read_text())
-        sections = [manifest, *manifest.get("target", {}).values()]
+        package = manifest(folder / "Cargo.toml")
+        sections = [package, *package.get("target", {}).values()]
         for section in sections:
             for kind in kinds:
                 for alias, dependency in section.get(kind, {}).items():
@@ -434,7 +448,7 @@ def package_directories(root, names, kinds=("dependencies", "dev-dependencies", 
                         base = root
                     if isinstance(dependency, dict) and "path" in dependency:
                         pending.append(base / dependency["path"])
-    return {folder.relative_to(root.resolve()).as_posix() for folder in visited}
+    return {folder.relative_to(resolved_root).as_posix() for folder in visited}
 
 
 def package_test_excludes(folders, test_folders=(), root=None):
@@ -447,10 +461,10 @@ def package_test_excludes(folders, test_folders=(), root=None):
     for folder in sorted(set(folders) - set(test_folders)):
         if root is not None:
             directory = root / folder
-            manifest = tomllib.loads((directory / "Cargo.toml").read_text())
-            targets = [manifest.get("lib", {}), *manifest.get("bin", []), *manifest.get("test", []),
-                       *manifest.get("bench", []), *manifest.get("example", [])]
-            if ((directory / "build.rs").exists() or manifest.get("package", {}).get("build")
+            package = manifest(directory / "Cargo.toml")
+            targets = [package.get("lib", {}), *package.get("bin", []), *package.get("test", []),
+                       *package.get("bench", []), *package.get("example", [])]
+            if ((directory / "build.rs").exists() or package.get("package", {}).get("build")
                     or any("path" in target for target in targets)):
                 continue
         excludes += [folder + "/" + kind + "/**" for kind in ("tests", "benches", "examples")]
@@ -494,25 +508,43 @@ def input_digest(root, relative):
     return value.digest()
 
 
-def scoped_digest(root, files, configuration, patterns, folders=(), tool_inputs=(), package_excludes=()):
-    """Hash a configuration plus every file selected by patterns, package folders, or exact tool inputs."""
-    digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
-    tool_inputs = set(tool_inputs)
+def scope_entries(root, files, patterns, folders, tool_inputs, package_excludes):
+    """The path and content digest of every file selected by patterns, package folders, or exact tool inputs."""
+    entries = []
     for relative in sorted(set(files) | tool_inputs):
         if (relative in tool_inputs or matches([relative], patterns)
                 or (any(relative.startswith(folder + "/") for folder in folders)
                     and not matches([relative], package_excludes))):
-            digest.update(os.fsencode(relative) + b"\0" + input_digest(root, relative))
+            entries.append(os.fsencode(relative) + b"\0" + input_digest(root, relative))
+    return b"".join(entries)
+
+
+def scoped_digest(root, files, configuration, patterns, folders=(), tool_inputs=(), package_excludes=(), scopes=None):
+    """Hash a configuration plus every file in its scope.
+
+    Many checks and contracts share a scope. One fingerprint pass over one `files`
+    list shares a `scopes` dict, so each scope is selected and read once. The dict
+    must not outlive the pass: the next pass has to read the files again.
+    """
+    digest = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode())
+    scope = (tuple(patterns), frozenset(folders), frozenset(tool_inputs), tuple(package_excludes))
+    if scopes is None:
+        scopes = {}
+    if scope not in scopes:
+        scopes[scope] = scope_entries(root, files, *scope)
+    digest.update(scopes[scope])
     return digest.hexdigest()
 
 
-def check_fingerprints(root, policy, tools, contexts=None):
+def check_fingerprints(root, policy, tools, contexts=None, files=None):
     if contexts is None:
         contexts = external_contexts(policy)
-    files = source_files(root)
+    if files is None:
+        files = source_files(root)
     common = policy["global_inputs"] + policy.get("evidence_inputs", ["scripts/verify.py", ".cargo/**"])
     definitions = current_definitions(root, policy)
     stamps = {}
+    scopes = {}
     for check in policy["checks"]:
         # The definition covers this check's policy entry and make recipe, not the whole Makefile.
         folders = package_directories(root, check.get("packages", []))
@@ -522,7 +554,7 @@ def check_fingerprints(root, policy, tools, contexts=None):
         configuration = [definitions[check["id"]], common, tools, contexts if check.get("device_context") else {}]
         stamps[check["id"]] = scoped_digest(root, files, configuration,
                                             common + check.get("inputs", []) + preflight_inputs(policy, check),
-                                            folders, check.get("tool_inputs", []), excludes)
+                                            folders, check.get("tool_inputs", []), excludes, scopes)
     return stamps
 
 
@@ -647,9 +679,10 @@ def verify(root, args):
     directory = root / "target/verification"
     with report_lock(directory):
         tools = tool_identity(root)
-        stamp = fingerprint(root, changed, args.base, tools)
+        files = source_files(root)
+        stamp = fingerprint(root, changed, args.base, tools, files)
         contexts = external_contexts(policy)
-        stamps = check_fingerprints(root, policy, tools, contexts)
+        stamps = check_fingerprints(root, policy, tools, contexts, files)
         report = load_report(directory)
         report.update({"fingerprint": stamp, "input_fingerprints": stamps, "changed_paths": changed,
                        "base": args.base, "selected": selected, "tools": tools})
@@ -724,9 +757,10 @@ def verify(root, args):
                     "kind": "check", "id": name, "seconds": round(time.monotonic() - started, 3)}
             # Concurrent edits may occur while an agent or CI runs a long check.
             current_tools = tool_identity(root)
+            files = source_files(root)
             if (changed_paths(root, args.base) != changed
-                    or fingerprint(root, changed, args.base, current_tools) != stamp
-                    or check_fingerprints(root, policy, current_tools)[name] != stamps[name]):
+                    or fingerprint(root, changed, args.base, current_tools, files) != stamp
+                    or check_fingerprints(root, policy, current_tools, files=files)[name] != stamps[name]):
                 result["status"] = "stale"
                 result["error"] = "source or toolchain changed during verification"
                 report["execution"]["first_failure"] = {
@@ -742,8 +776,10 @@ def verify(root, args):
                     print(f"--- {name} 失敗箇所の抜粋 ({name}.log) ---\n{excerpt}\n---", file=sys.stderr)
                 return finish(1)
         current_tools = tool_identity(root)
-        current_stamps = check_fingerprints(root, policy, current_tools)
-        if (changed_paths(root, args.base) != changed or fingerprint(root, changed, args.base, current_tools) != stamp
+        files = source_files(root)
+        current_stamps = check_fingerprints(root, policy, current_tools, files=files)
+        if (changed_paths(root, args.base) != changed
+                or fingerprint(root, changed, args.base, current_tools, files) != stamp
                 or any(current_stamps[name] != stamps[name] for name in selected)):
             print("検査の確認中に変更がありました。make verify を再実行してください。", file=sys.stderr)
             return finish(1)

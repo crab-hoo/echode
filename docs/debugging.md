@@ -37,6 +37,16 @@ make debug-report
   選択した Xcode の `swiftpm-testing-helper` と SDK の Testing.framework、`--show-bin-path` の scratch を照合する。
   ロード失敗・終了コード 69 は期待値での反例検出ではない。古いバンドルへ戻したり 0 件を合格にしない。
   ヘルパーの実パス・バイト変更もツール識別に入り、現在の版で再検査する（[ADR 0198](decisions/0198-verification-launch-and-cache-cost.md)）。
+- **`check-verification` の `VERIFICATION TIMEOUT`**:
+  ログが進捗の点だけで `FAIL:` / `ERROR:` と `Ran N tests` がなければ、テストの失敗ではなく 180 秒の期限である。
+  製品の不具合や変更の影響と扱わず、期限も緩めない。
+  `top` で他の作業の負荷を確認し、静かになってから再実行する。すぐに繰り返しても同じ負荷なら通らない。
+  2026-10-31 の短縮後は、負荷なしで約 60 秒、ビジーループ 7 本で約 108 秒である（[ADR 0208](decisions/0208-verification-shared-scopes.md)）。
+  短縮前は同じ 7 本で 184〜186 秒かかり、OpenUtau が約 3 コアを使う時は 201 秒で止まった。
+  これより大幅に長ければ、`python3 -m unittest discover -s scripts/tests -v --durations 12` で遅いテストを確かめる。
+  実リポジトリの識別計算のテストが上位に戻った時は、範囲の共有が外れていないかを見る。
+  `contract_fingerprints` 1 回は約 0.6 秒で、`scope_entries` は契約 236 件に 11 回だけ呼ばれる。
+  短縮で足りなければ、測定値を添えて期限の変更をユーザーに相談する。
 - **空き容量不足（`No space left on device` / `Errno 28`）**:
   `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 - **ツール不足・ビルド失敗**:
@@ -133,6 +143,10 @@ make debug-report
   2026-10-31 に新しい worktree で同じ位置（Rust 反例 101 件の後）の停止を再現した。コピーに Swift のビルドがなく、最初の群が 3 コピー同時の初回ビルドになり、180 秒の個別期限に達する。
   完了した反例の記録と途中までのビルドは残るので、再実行で先へ進む。追加のビルドは 1 コピー約 25 秒だった。製品やテストの失敗と区別する。
   新しい worktree ではこの検査だけで数 GB を超え、Rust 反例の `cargo` は一時 26 GB に達した。空きが少ない時は、記録済みの反例の `cargo` を消して再実行できる。
+  2026-11-01 に `target` を消した main でも、Rust 反例 103 件の後に同じ停止が起きた。
+  この時は親を失った `swift-frontend` がコピーの中で 20 個以上動き続け、負荷平均が 50 を超えた。
+  各プロセスが自分のプロセスグループで動くので、検査が止めるグループの外に残る。
+  再実行の前に `ps -Ao pid,ppid,comm` で親が 1 の `swift-frontend` を探し、`lsof -a -p PID -d cwd` で作業フォルダーがコピーの中と確かめて止める。
   `negative control must stay inside its source copy` は、期待値の不一致ではなく反例用コピーの検証エラーである。
   対象ファイルの欠落と、シンボリックリンクによるコピー外への逸脱を区別する。
   `target/` の整理と検査が競合すると、コピーが実行中に消えて同じエラーになる。

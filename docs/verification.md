@@ -178,6 +178,7 @@ Markdown と `--plan` の表示は `scripts/verification_display.py`、時間診
 `tool_inputs` に指定した検査専用ランタイムは、Git の対象外でも実バイトをハッシュ化する。
 文書だけの変更は製品コードの検査結果を失効させない。
 `device_context` を持つ実機計測は、`system_profiler` で読み取った既定出力デバイスのメタデータのハッシュも識別に含める。
+1 回の識別計算の中では同じ範囲の選択と読取りを共有し、次の計算では読み直す（[ADR 0208](decisions/0208-verification-shared-scopes.md)）。
 `target/verification/.lock` の排他ロックを保持する間はファイル変更を待つ。`make doctor` はロックの保持状態と各検査結果の鮮度（`current` / `partial` / `stale`）を確認する。
 
 ## 実行時間の保守
