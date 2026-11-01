@@ -50,9 +50,11 @@ Phase 1 は変わっていないトラックを `Arc` で共有し、ノート�
 - **履歴**: 版を JSON に書き出してコミットする
 - **Undo**: 過去の版を保持しておくだけで実現できる
 
-パラメーターの変更セットは、`changeset_parameter.rs` の項目表から差分・作成・下書き・設定・復元を生成する。
-浮動小数点のビット、フィールド順と既存のジャーナルを保つ。
-ほかのオブジェクトと保存・FFI の項目表への統合は残る（[ADR 0214](../decisions/0214-parameter-changeset-fields.md)、SPG-09）。
+パラメーターの変更セットは `changeset_parameter.rs`、デバイスのスカラー項目は `changeset_device.rs` の項目表から、
+差分・作成・下書き・設定・復元を生成する。浮動小数点のビット、フィールド順と既存のジャーナルを保つ。
+デバイスの ID・所属・種別と、子パラメーターの順序・解決はスカラー項目と分ける。
+ほかのオブジェクトと保存・FFI の統合は残る
+（[ADR 0214](../decisions/0214-parameter-changeset-fields.md)、[ADR 0215](../decisions/0215-device-changeset-fields.md)、SPG-09）。
 
 ### 4.3 ID と並び順
 

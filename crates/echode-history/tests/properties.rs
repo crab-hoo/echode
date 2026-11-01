@@ -755,12 +755,20 @@ proptest! {
 
     #[test]
     fn random_edits_keep_every_property(
-        steps in prop::collection::vec(step(), 1..48), seeded in any::<bool>()
+        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..3
     ) {
-        let base = if seeded {
-            Project::new().add_track("seed mixer").0
-        } else {
-            Project::new()
+        let base = match seeded {
+            0 => Project::new(),
+            1 => Project::new().add_track("seed mixer").0,
+            _ => {
+                let (project, track) = Project::new().add_track("seed device settings");
+                let id = Id::generate();
+                project.add_clap_device(track, id, "org.example.seed").unwrap()
+                    .set_device_bypassed(id, true).unwrap()
+                    .set_device_offline(id, true).unwrap()
+                    .set_parameter_pinned(id, 7, true).unwrap()
+                    .set_device_state(id, Some(plugin_state_hash().to_string())).unwrap()
+            }
         };
         let mut session = Session::open(base.clone());
         for step in &steps {

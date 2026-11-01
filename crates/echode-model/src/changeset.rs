@@ -7,10 +7,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::device::{Device, DeviceKind};
+use crate::device::Device;
 use crate::id::Id;
 use crate::model::{ClipKind, Content, ModelError, Note, Placement, Project, Track};
 use crate::time::{Meter, Tempo, TempoMap, TempoPoint, Tick};
+
+#[path = "changeset_device.rs"]
+mod device;
+use device::{DeviceState, device_change, diff_device_fields};
 
 #[path = "changeset_parameter.rs"]
 mod parameter;
@@ -548,141 +552,6 @@ fn diff_devices(
     }
 }
 
-fn diff_device_fields(before: &Device, after: &Device, updates: &mut Vec<Change>) {
-    if before.pinned != after.pinned {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::PinnedParameters,
-            Value::ParamIds(before.pinned.clone()),
-            Value::ParamIds(after.pinned.clone()),
-        ));
-    }
-    if before.offline != after.offline {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Offline,
-            Value::Byte(u8::from(before.offline)),
-            Value::Byte(u8::from(after.offline)),
-        ));
-    }
-    if before.bypassed != after.bypassed {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Bypassed,
-            Value::Byte(u8::from(before.bypassed)),
-            Value::Byte(u8::from(after.bypassed)),
-        ));
-    }
-    if before.state != after.state {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::PluginState,
-            Value::Text(before.state.clone().unwrap_or_default()),
-            Value::Text(after.state.clone().unwrap_or_default()),
-        ));
-    }
-    if before
-        .parameters
-        .iter()
-        .map(|parameter| parameter.id)
-        .collect::<Vec<_>>()
-        != after
-            .parameters
-            .iter()
-            .map(|parameter| parameter.id)
-            .collect::<Vec<_>>()
-    {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::ParamOrder,
-            Value::Ids(
-                before
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.id)
-                    .collect(),
-            ),
-            Value::Ids(
-                after
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.id)
-                    .collect(),
-            ),
-        ));
-    }
-    for parameter in &after.parameters {
-        if let Some(previous) = before
-            .parameters
-            .iter()
-            .find(|item| item.id == parameter.id)
-        {
-            diff_parameter_fields(previous, parameter, updates);
-        }
-    }
-}
-
-fn device_change(create: bool, track: Id, device: &Device) -> Change {
-    let mut fields = vec![
-        Field {
-            property: Property::Owner,
-            value: Value::Id(track),
-        },
-        Field {
-            property: Property::DeviceKind,
-            value: Value::Text(device.kind.as_str().to_string()),
-        },
-    ];
-    fields.push(Field {
-        property: Property::Bypassed,
-        value: Value::Byte(u8::from(device.bypassed)),
-    });
-    fields.push(Field {
-        property: Property::Offline,
-        value: Value::Byte(u8::from(device.offline)),
-    });
-    fields.push(Field {
-        property: Property::PinnedParameters,
-        value: Value::ParamIds(device.pinned.clone()),
-    });
-    if let Some(plugin) = &device.plugin {
-        fields.push(Field {
-            property: Property::Plugin,
-            value: Value::Text(plugin.clone()),
-        });
-    }
-    if let Some(state) = &device.state {
-        fields.push(Field {
-            property: Property::PluginState,
-            value: Value::Text(state.clone()),
-        });
-    }
-    fields.push(Field {
-        property: Property::ParamOrder,
-        value: Value::Ids(
-            device
-                .parameters
-                .iter()
-                .map(|parameter| parameter.id)
-                .collect(),
-        ),
-    });
-    let id = ObjectKey::Id(device.id);
-    if create {
-        Change::Create {
-            kind: ObjectKind::Device,
-            id,
-            fields,
-        }
-    } else {
-        Change::Delete {
-            kind: ObjectKind::Device,
-            id,
-            fields,
-        }
-    }
-}
-
 fn diff_clips(
     before: &Project,
     after: &Project,
@@ -1183,17 +1052,6 @@ struct NoteState {
     articulation: Option<Id>,
 }
 
-struct DeviceState {
-    track: Id,
-    kind: String,
-    plugin: Option<String>,
-    state: Option<String>,
-    bypassed: bool,
-    offline: bool,
-    pinned: Vec<u32>,
-    parameters: Vec<Id>,
-}
-
 struct Draft {
     meter: Meter,
     tempos: HashMap<i64, Tempo>,
@@ -1274,23 +1132,9 @@ impl Draft {
                 },
             );
             for device in &track.devices {
-                draft.devices.insert(
-                    device.id,
-                    DeviceState {
-                        track: track.id,
-                        kind: device.kind.as_str().to_string(),
-                        plugin: device.plugin.clone(),
-                        state: device.state.clone(),
-                        bypassed: device.bypassed,
-                        offline: device.offline,
-                        pinned: device.pinned.clone(),
-                        parameters: device
-                            .parameters
-                            .iter()
-                            .map(|parameter| parameter.id)
-                            .collect(),
-                    },
-                );
+                draft
+                    .devices
+                    .insert(device.id, DeviceState::from_device(track.id, device));
                 for parameter in &device.parameters {
                     draft.parameters.insert(
                         parameter.id,
@@ -1383,26 +1227,7 @@ impl Draft {
                 if self.devices.contains_key(&id) {
                     return Err(ModelError::InvalidChange);
                 }
-                let state = field_optional_text(fields, Property::PluginState)?;
-                if state
-                    .as_deref()
-                    .is_some_and(|hash| !crate::device::valid_state_hash(hash))
-                {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.devices.insert(
-                    id,
-                    DeviceState {
-                        track: field_id(fields, Property::Owner)?,
-                        kind: field_text(fields, Property::DeviceKind)?,
-                        plugin: field_optional_text(fields, Property::Plugin)?,
-                        state,
-                        bypassed: field_bypassed(fields)?,
-                        offline: field_offline(fields)?,
-                        pinned: field_pinned(fields)?,
-                        parameters: field_ids(fields, Property::ParamOrder)?,
-                    },
-                );
+                self.devices.insert(id, DeviceState::from_fields(fields)?);
                 Ok(())
             }
             (ObjectKind::Parameter, ObjectKey::Id(id)) => {
@@ -1460,6 +1285,15 @@ impl Draft {
         {
             return parameter.set(property, value);
         }
+        if let ObjectKey::Id(id) = id
+            && DeviceState::is_scalar(property)
+        {
+            return self
+                .devices
+                .get_mut(&id)
+                .ok_or(ModelError::InvalidChange)?
+                .set(property, value);
+        }
         match (id, property, value) {
             (ObjectKey::Project, Property::Meter, Value::Meter(meter)) => {
                 self.meter = *meter;
@@ -1513,50 +1347,6 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .device_order = ids.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Bypassed, Value::Byte(value)) if *value <= 1 => {
-                self.devices
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .bypassed = *value != 0;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::PinnedParameters, Value::ParamIds(ids))
-                if crate::device::valid_pins(ids) =>
-            {
-                self.devices
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .pinned = ids.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Offline, Value::Byte(value)) if *value <= 1 => {
-                self.devices
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .offline = *value != 0;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Plugin, Value::Text(plugin)) => {
-                self.devices
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .plugin = Some(plugin.clone());
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::PluginState, Value::Text(text)) => {
-                let state = if text.is_empty() {
-                    None
-                } else if crate::device::valid_state_hash(text) {
-                    Some(text.clone())
-                } else {
-                    return Err(ModelError::InvalidChange);
-                };
-                self.devices
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .state = state;
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Start, Value::Tick(tick)) => {
@@ -1809,15 +1599,6 @@ impl Draft {
                 if device.track != *track_id {
                     return Err(ModelError::InvalidChange);
                 }
-                let kind = DeviceKind::parse(&device.kind).ok_or(ModelError::InvalidChange)?;
-                if kind == DeviceKind::Mixer
-                    && (device.bypassed
-                        || device.offline
-                        || device.state.is_some()
-                        || !device.pinned.is_empty())
-                {
-                    return Err(ModelError::InvalidChange);
-                }
                 let mut parameters = Vec::with_capacity(device.parameters.len());
                 for parameter_id in &device.parameters {
                     let Some(parameter) = self.parameters.get(parameter_id) else {
@@ -1828,16 +1609,7 @@ impl Draft {
                     }
                     parameters.push(parameter.finish(*parameter_id)?);
                 }
-                devices.push(Device {
-                    id: *device_id,
-                    kind,
-                    plugin: device.plugin.clone(),
-                    state: device.state.clone(),
-                    bypassed: device.bypassed,
-                    offline: device.offline,
-                    pinned: device.pinned.clone(),
-                    parameters,
-                });
+                devices.push(device.finish(*device_id, parameters)?);
             }
             let owned = self
                 .devices
@@ -2042,39 +1814,6 @@ fn field_u16(fields: &[Field], property: Property) -> Result<u16, ModelError> {
             _ => None,
         })
         .ok_or(ModelError::InvalidChange)
-}
-
-fn field_bypassed(fields: &[Field]) -> Result<bool, ModelError> {
-    field_flag(fields, Property::Bypassed)
-}
-
-fn field_offline(fields: &[Field]) -> Result<bool, ModelError> {
-    field_flag(fields, Property::Offline)
-}
-
-/// A device created before pins existed has none.
-fn field_pinned(fields: &[Field]) -> Result<Vec<u32>, ModelError> {
-    match fields
-        .iter()
-        .find(|field| field.property == Property::PinnedParameters)
-        .map(|field| &field.value)
-    {
-        None => Ok(Vec::new()),
-        Some(Value::ParamIds(ids)) if crate::device::valid_pins(ids) => Ok(ids.clone()),
-        Some(_) => Err(ModelError::InvalidChange),
-    }
-}
-
-fn field_flag(fields: &[Field], property: Property) -> Result<bool, ModelError> {
-    match fields
-        .iter()
-        .find(|field| field.property == property)
-        .map(|field| &field.value)
-    {
-        None | Some(Value::Byte(0)) => Ok(false),
-        Some(Value::Byte(1)) => Ok(true),
-        _ => Err(ModelError::InvalidChange),
-    }
 }
 
 fn field_byte(fields: &[Field], property: Property) -> Result<u8, ModelError> {
