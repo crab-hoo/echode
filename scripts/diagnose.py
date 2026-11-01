@@ -138,6 +138,7 @@ def collect(root, *, use_report_base=True):
                        "log": f"target/verification/{name}.log"})
     freshness = ("unavailable" if not report else "current" if all(check["fresh"] for check in checks)
                  else "partial" if any(check["fresh"] for check in checks) else "stale")
+    full_tier = verify.unverified_full_tier(policy, results, stamps)
     tools_needed = ("git", "make", "rustc", "cargo", "swift", "xcodebuild", "xcrun", "cargo-deny", "cmake", "ninja")
     # Never export tools' raw environment values, Cargo config, or report.tools.
     versions = {key: value for key, value in tools.items()
@@ -151,7 +152,7 @@ def collect(root, *, use_report_base=True):
                             "setup_needed": setup_needed()},
             "build": build_status(root, stamp),
             "verification": {"freshness": freshness,
-                             "running": busy, "error": error, "checks": checks,
+                             "running": busy, "error": error, "checks": checks, "full_tier_unverified": full_tier,
                              "report": "target/verification/report.md"}}
     if source_stamp(root) != stamp:
         data["verification"]["freshness"] = "changed_during_collection"
@@ -178,6 +179,9 @@ def render(data):
     for check in verification["checks"]:
         reason = f" — {check['reason']}" if check.get("reason") else ""
         lines.append(f"- {check['id']}: {check['status']}{reason}")
+    if verification["full_tier_unverified"]:
+        lines += ["", "全体検査で未確認（作業の完了条件ではない。節目に make verify-full）: "
+                  + ", ".join(verification["full_tier_unverified"])]
     lines += ["", "検査の詳細: target/verification/report.md",
               "アプリが stale / unknown なら make app。検査が stale / partial / unavailable なら make verify。",
               "検査中は編集せず、完了を待つ。failed は該当ログ、not_run は実行か理由の記録が必要。",

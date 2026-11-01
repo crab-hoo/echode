@@ -5,14 +5,14 @@
       {
         "command": ".cursor/hooks/wait-for-verify.sh",
         "matcher": "Shell|Write|StrReplace|Delete|EditNotebook|Task",
-        "timeout": 14400,
+        "timeout": 15600,
         "failClosed": true
       }
     ],
     "stop": [
       {
         "command": ".cursor/hooks/check-on-stop.sh",
-        "timeout": 14400,
+        "timeout": 15600,
         "failClosed": true,
         "loop_limit": 3
       }

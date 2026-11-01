@@ -7,6 +7,13 @@ rust-version.workspace = true
 publish = false
 description = "Plain-text project files with background git history"
 
+[features]
+spike = []
+
+[[test]]
+name = "roundtrip"
+required-features = ["spike"]
+
 [dependencies]
 blake3 = "=1.8.7"
 echode-actions = { path = "../echode-actions" }

@@ -30,7 +30,9 @@ make debug-report
   契約の秒数は自身の処理時間であり、並列の作業秒の和は全体の実測ではない。
   `normal_pending` と `negative_pending`、`reused_tests` と `reused_controls` で、通常・反例のどちらが失効したかを分ける。
   依存先の統合テストだけの変更で Swift が失効する場合は `package_scope` と明示した `inputs`、build script・custom target を調べる。
-  Rust の製品ソース変更による Swift の失効はリンク先変更であり、反例の置換ファイルが不変という理由だけで除外しない。
+  Rust の製品ソース変更による Swift の失効はリンク先変更であり、反例の置換ファイルが不変という理由だけで全体の段階から除外しない。
+  `make verify` で多数の反例が走る時は、`execution` の `changed_sites` と置換箇所を確認する。
+  定義・置換元の前後 20 行・テスト本体が変わった契約だけが対象である（[ADR 0212](decisions/0212-verification-tiers.md)）。
   履歴は `target/verification/timing-history.jsonl` にあり、`make debug-report` にも収集する。
   同じ条件での再計測と、件数・失効集合の変化は [時間の保守](verification.md#実行時間の保守) に従って分ける。
   Swift 契約の直接起動で `missing helper, test bundle, or Testing framework` が出た場合は、
@@ -107,15 +109,24 @@ make debug-report
   `echo`、`;`、`grep` / `head` のパイプによる終了コードの置換を調べる。
   [個別コマンドの記録](verification.md#作業中の個別コマンド) の `commands.json` と完全ログを使い、成功表示だけを証拠にしない。
   macOS 標準 make 3.81 は `.SHELLFLAGS` を無視する。厳密なレシピ実行は Makefile の `SHELL` のオプションで行う。
+- **`全体検査で未確認` の表示**:
+  失敗ではなく、現在の入力で全体の段階の合格の記録がないことを示す。節目に `make verify-full` を実行する。
+  ただし未実行の間に入った不具合は、節目まで検出されない。発生時期は `timing-history.jsonl` と `report.json` の `finished_at` で絞る。
+- **`negative control no longer matches`**:
+  製品コードの編集で、反例の置換元が現在のソースに 1 回だけ現れなくなった。ビルドの前に全反例で確認する。
+  検査を緩めず、`scripts/verification.json` の `old` / `new` を本来の不具合を戻す差分へ更新する。
+- **`the unmutated source copy does not build`**:
+  反例を入れる前のコピーがビルドできない。反例の検出とは無関係で、コピーの同期か本体のビルドを調べる。
 - **自動検査・製品契約の失敗**:
   `make verify` 失敗時は標準エラーに出力される失敗箇所の抜粋を確認し、必要なら `target/verification/<ID>.log` または `product-contracts/` の該当ログを読む。
   最適化等で `negative_control` が期待値で落ちなくなった場合は、本来の不具合を再現する差分へ更新する（例: `loop-head-residency`）。
   Swift の反例ビルドは Rust ABI を作り直さない。Rust の差分を Swift 契約へ直接登録すると、
   未変更の ABI へリンクして反例を検出できない。モデルの反例は Rust 契約、UI の反例は Swift 契約に分ける。
-  `check-product-contracts` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
+  `check-product-contracts`・`check-contract-controls` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
   前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
   `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
-  コピーの初回ビルドを含む一括予算は `scripts/verification.json` の `check-product-contracts.timeout`、各契約の期限は別の値である。
+  一括予算は `scripts/verification.json` の各検査の `timeout`、各契約の期限は別の値である。
+  Swift のコピーの初回ビルドは `SWIFT_COPY_BUILD_TIMEOUT` の範囲で行い、契約の期限に算入しない。
   検査自身の時間切れより先にフックが終了する場合は、静的なフック設定と `verification.json` の `hook_timeout` の一致を確認する。
   外側の予算は契約検査単体ではなく、全自動検査と事前確認の直列予算を覆う必要がある（[ADR 0197](decisions/0197-verification-target-scopes.md)）。
   2026-10-29 に旧 1800 秒で全件失効時の上限到達を観測し、件数と実測に合わせて一括予算を見直した（[ADR 0195](decisions/0195-verification-cost-observability.md)）。
@@ -152,6 +163,9 @@ make debug-report
   `target/` の整理と検査が競合すると、コピーが実行中に消えて同じエラーになる。
   整理の完了と検査のロック解除を確認してから再実行し、コピーの欠落を製品不具合の検出と扱わない。
   コピー内のディレクトリ削除時の `.DS_Store` 競合は自動リトライされるが、権限エラー等の継続失敗は合格にしない。
+  履歴の `roundtrip` が `requires the features: spike` で拒否された場合は、非既定 feature の指定漏れである。
+  `cargo test -q -p echode-history --features spike --lib --test roundtrip` を使う。計測は `make spike-history` を使う。
+  製品のテストを通すために workspace 全体でこの feature を有効にしない（[ADR 0211](decisions/0211-opt-in-history-spike.md)）。
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
   一時パッケージを作る `scratch()` は使用前に同じパスを削除する。

@@ -85,6 +85,13 @@ def load_policy(root):
             raise ValueError("unknown verification policy input")
         if check.get("extended") and check["mode"] != "manual":
             raise ValueError("extended checks must be manual")
+        if check.get("tier", "task") not in ("task", "full") or (check.get("tier") == "full" and check["mode"] != "automatic"):
+            raise ValueError("invalid verification tier")
+        if (check.get("task_inputs") or check.get("task_unsafe") or check.get("task_requires")) and check.get("tier") != "full":
+            raise ValueError("task_inputs, task_unsafe and task_requires are for full-tier checks")
+        for value in check.get("task_requires", []):
+            if value not in {other["id"] for other in policy["checks"] if other.get("tier") == "full"}:
+                raise ValueError("task_requires must name a full-tier check")
     for group in policy.get("product_contract_inputs", {}).values():
         for field in ("inputs", "packages"):
             values = group.get(field) if isinstance(group, dict) else None
@@ -178,6 +185,9 @@ def matches(changed, patterns):
     return [path for path in changed if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)]
 
 
+UNSAFE_ESCAPES = {".rs": re.compile(r"\bunsafe\b"), ".swift": re.compile(r"Unsafe|@unchecked|nonisolated\(unsafe\)")}
+
+
 RULE = re.compile(r"^([A-Za-z0-9_.-]+)[ \t]*:(.*)$")
 
 
@@ -258,7 +268,44 @@ def redefined_checks(root, policy, base=None):
     return {name for name, identity in current_definitions(root, policy).items() if before.get(name) != identity}
 
 
-def select_checks(policy, changed, all_checks=False, redefined=None):
+def changed_lines(root, path, base=None):
+    """Added and removed lines against the diff base; an untracked file is all additions."""
+    if path in paths(git(root, "ls-files", "-z", "--others", "--exclude-standard", "--", path)):
+        return (root / path).read_text(errors="replace").splitlines()
+    diff = git(root, "diff", "--no-renames", "--unified=0", base or "HEAD", "--", path).decode(errors="replace")
+    return [line[1:] for line in diff.splitlines() if line[:1] in ("+", "-") and not line.startswith(("+++", "---"))]
+
+
+def unsafe_changes(root, policy, changed, base=None):
+    """Per check, changed product lines that step outside the compilers' memory and data-race checks.
+
+    Only an added or removed escape counts: `unsafe` elsewhere in an edited file is
+    no reason to rerun a sanitizer, and code the compiler still checks needs none.
+    """
+    found = {}
+    for check in policy["checks"]:
+        if not check.get("task_unsafe"):
+            continue
+        folders = package_directories(root, check.get("packages", []))
+        for path in changed:
+            pattern = UNSAFE_ESCAPES.get(Path(path).suffix)
+            if (pattern is None or "/Tests/" in path or "/tests/" in path or not (root / path).is_file()
+                    or not (matches([path], check.get("inputs", []))
+                            or any(path.startswith(folder + "/") for folder in folders))):
+                continue
+            try:
+                if any(pattern.search(line) for line in changed_lines(root, path, base)):
+                    found.setdefault(check["id"], []).append(path)
+            except subprocess.CalledProcessError:
+                # Without the diff base, the whole file is the only safe answer.
+                if pattern.search((root / path).read_text(errors="replace")):
+                    found.setdefault(check["id"], []).append(path)
+    return found
+
+
+def select_checks(policy, changed, all_checks=False, redefined=None, full=False, unsafe=None, covered=None):
+    """Checks this change concerns. Without `full`, a full-tier check needs a direct task trigger
+    that its last pass did not already cover."""
     selected = {}
     global_hits = matches(changed, policy["global_inputs"])
     # Evidence inputs are part of every check's identity, so they select every automatic check.
@@ -276,15 +323,60 @@ def select_checks(policy, changed, all_checks=False, redefined=None):
                                + preflight_inputs(policy, check))
             if definitions and (redefined is None or check["id"] in redefined):
                 reasons += definitions
+        if check.get("tier") == "full" and not (full or all_checks):
+            reasons = [path for path in matches(changed, check.get("task_inputs", [])) + (unsafe or {}).get(check["id"], [])
+                       if path not in (covered or {}).get(check["id"], ())]
         if all_checks or (not check.get("extended") and (reasons or (changed and check.get("always")))):
             selected[check["id"]] = sorted(set(reasons)) or ["all checks" if all_checks else "every change"]
+    for check in policy["checks"]:
+        if check["id"] in selected and not (full or all_checks):
+            for name in check.get("task_requires", []):
+                selected.setdefault(name, ["required by " + check["id"]])
     return selected
 
 
-def plan_checks(root, policy, changed, base=None, all_checks=False):
+def plan_checks(root, policy, changed, base=None, all_checks=False, full=False):
     """The selection shared by verify, doctor, and agent-context."""
     redefined = redefined_checks(root, policy, base) if matches(changed, [POLICY.as_posix(), "Makefile"]) else set()
-    return select_checks(policy, changed, all_checks, redefined)
+    unsafe, covered = {}, {}
+    if not (full or all_checks):
+        unsafe = unsafe_changes(root, policy, changed, base)
+        covered = covered_changes(root, load_report(root / "target/verification")["results"])
+    selected = select_checks(policy, changed, all_checks, redefined, full, unsafe, covered)
+    if full:
+        # An unchanged tree still owes the full tier: earlier tasks ran without it.
+        for check in policy["checks"]:
+            if check["mode"] == "automatic":
+                selected.setdefault(check["id"], ["full verification"])
+    return selected
+
+
+def covered_changes(root, results):
+    """Per check, the files its last pass ran on and that still have the same contents.
+
+    Uncommitted work stays in the diff across tasks. Without this, one trigger
+    would rerun a full-tier check on every later edit until the next commit.
+    """
+    return {name: {path for path, digest in result.get("covered", {}).items() if file_digests(root, [path]).get(path) == digest}
+            for name, result in results.items() if result.get("status") == "passed"}
+
+
+def file_digests(root, relatives):
+    digests = {}
+    for relative in relatives:
+        try:
+            digests[relative] = input_digest(root, relative).hex()
+        except (OSError, ValueError):
+            # A link leaving the repository cannot be a covered trigger; it simply stays selected.
+            pass
+    return digests
+
+
+def unverified_full_tier(policy, results, stamps):
+    """Full-tier checks with no pass on the current inputs. Neither a failure nor a pass."""
+    names = [check["id"] for check in policy["checks"] if check.get("tier") == "full"]
+    return [name for name in names if not (results.get(name, {}).get("status") == "passed"
+                                           and results[name].get("fingerprint") == stamps[name])]
 
 
 def toolchain_paths():
@@ -638,13 +730,15 @@ def save_report(directory, report, policy, selected):
     temporary.replace(directory / "report.md")
 
 
-def run_check(root, check, log, force=False):
+def run_check(root, check, log, force=False, base=None):
     # Each recipe shell fails on an earlier command or pipeline stage, even in
     # fixture/third-party Makefiles without the repository's strict defaults.
     env = {key: value for key, value in os.environ.items() if key != "ECHODE_VERIFY_FORCE"}
     env.update({"PYTHONDONTWRITEBYTECODE": "1", "ECHODE_VERIFY_GROUP": "1", "RUSTUP_AUTO_INSTALL": "0"})
     if force:
         env["ECHODE_VERIFY_FORCE"] = "1"
+    if base:
+        env["VERIFY_BASE"] = base
     target = check.get("make_target", check["id"])
     return run_logged(root, ["make", target, "SHELL=/bin/bash -euo pipefail"],
                       log, check["timeout"], env)
@@ -654,14 +748,14 @@ def verify(root, args):
     started = time.monotonic()
     policy = load_policy(root)
     changed = changed_paths(root, args.base)
-    selected = plan_checks(root, policy, changed, args.base, args.all)
+    selected = plan_checks(root, policy, changed, args.base, args.all, args.full)
     checks = {check["id"]: check for check in policy["checks"]}
     for name in args.run:
         if name in checks and checks[name].get("extended"):
             selected[name] = ["explicit --run"]
     for name in args.only + args.run + args.defer:
         if name not in selected:
-            raise ValueError(f"{name} is not selected; use --all to select an otherwise unrelated check")
+            raise ValueError(f"{name} is not selected; use --full or --all to select an otherwise unrelated check")
     for name in args.run + args.defer:
         if checks[name]["mode"] != "manual":
             raise ValueError("--run/--defer accepts only manual measurements")
@@ -685,7 +779,8 @@ def verify(root, args):
         stamps = check_fingerprints(root, policy, tools, contexts, files)
         report = load_report(directory)
         report.update({"fingerprint": stamp, "input_fingerprints": stamps, "changed_paths": changed,
-                       "base": args.base, "selected": selected, "tools": tools})
+                       "base": args.base, "selected": selected, "tools": tools,
+                       "profile": "full" if args.full or args.all else "task"})
         previous_results = dict(report["results"])
         for name in selected:
             status = "pending" if checks[name]["mode"] == "automatic" else "not_run"
@@ -709,7 +804,8 @@ def verify(root, args):
             report["execution"]["resources_end"] = resource_snapshot(root)
             report["execution"]["contract_inventory"] = inventory(policy)
             report["execution"]["preflight_seconds"] = round(sum(r.get("seconds", 0) for r in report["preflight"].values()), 3)
-            if "check-product-contracts" in report["execution"]["checks"]:
+            report["full_tier_unverified"] = unverified_full_tier(policy, report["results"], stamps)
+            if {"check-product-contracts", "check-contract-controls"} & report["execution"]["checks"].keys():
                 report["execution"]["contracts"] = contract_summary(directory)
             report["execution"].update(seconds=round(time.monotonic() - started, 3),
                                        status="passed" if code == 0 else "failed")
@@ -743,10 +839,13 @@ def verify(root, args):
             previous_result = previous_results.get(name, {})
             report["results"][name] = {"status": "running", "fingerprint": stamps[name]}
             save_report(directory, report, policy, selected)
-            result = run_check(root, check, directory / f"{name}.log", args.force)
+            result = run_check(root, check, directory / f"{name}.log", args.force, args.base)
             if result["status"] == "passed" and check.get("device_context") and contexts.get("audio-output") is None:
                 result.update({"status": "failed", "error": "audio device metadata unavailable; cannot attest this measurement"})
             result["fingerprint"] = stamps[name]
+            result["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            if check.get("tier") == "full":
+                result["covered"] = file_digests(root, changed)
             report["results"][name] = result
             result["timeout"] = check["timeout"]
             report["execution"]["checks"][name] = result
@@ -788,6 +887,9 @@ def verify(root, args):
         pending = [name for name in requested
                    if report["results"][name]["status"] not in ("passed", "deferred")]
         print("結果: target/verification/report.md", flush=True)
+        unverified = unverified_full_tier(policy, report["results"], stamps)
+        if unverified:
+            print("全体検査で未確認（作業の完了条件ではない。節目に make verify-full）: " + ", ".join(unverified), flush=True)
         if pending:
             print("完了していない検査: " + ", ".join(sorted(pending)), file=sys.stderr)
             print("失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID --reason 理由を使います。", file=sys.stderr)
@@ -799,6 +901,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default=os.environ.get("VERIFY_BASE"))
     parser.add_argument("--all", action="store_true")
+    parser.add_argument("--full", action="store_true", help="every automatic check, including the full tier")
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument("--run", action="append", default=[])
     parser.add_argument("--defer", action="append", default=[])

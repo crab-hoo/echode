@@ -323,6 +323,7 @@ class ContractEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: dict(stamps)), \
+                 patch.object(contracts, "control_sites", return_value=({}, set())), \
                  patch.object(contracts.verify, "tool_identity", return_value={}), \
                  patch.object(contracts, "negative_controls", side_effect=controls), \
                  redirect_stdout(io.StringIO()):
@@ -351,6 +352,7 @@ class ContractEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: next(stamps)), \
+                 patch.object(contracts, "control_sites", return_value=({}, set())), \
                  patch.object(contracts.verify, "tool_identity", return_value={}), \
                  patch.object(contracts, "negative_controls", side_effect=controls), \
                  redirect_stderr(io.StringIO()):

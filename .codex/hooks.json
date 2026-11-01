@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "'/Users/someone/Echode/.codex/hooks/wait-for-verify.sh'",
-            "timeout": 14400
+            "timeout": 15600
           }
         ]
       }

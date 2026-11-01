@@ -4,6 +4,10 @@
 - 操作要件の正本: [../interaction-design.md](../interaction-design.md)
 - 現在の実装範囲: [../status.md](../status.md)
 
+製品モデルは `echode_model::Project` だけを使う。
+Phase 0 の履歴の別モデル・形式・Git 保存は、`echode-history` の非既定の `spike` feature に閉じる
+（[ADR 0211](../decisions/0211-opt-in-history-spike.md)）。通常の製品ビルドには含めない。
+
 ## 4. ドキュメントモデル
 
 ### 4.1 主なオブジェクト

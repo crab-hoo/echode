@@ -237,7 +237,7 @@ Phase 1 期間中の各機能の設計判断と監査対応は [ADR 0048](decisi
 - **規約と設計判断の明文化**: `AGENTS.md` に必須規則、`docs/decisions/` に ADR を記録する。
 - **ヘッドレス検証とプロパティテスト**: CLI の基準 WAV 比較、オフスクリーン GPU 描画比較、ランダムなアクション列による不変条件・Undo / Redo・保存往復テストを常時回す。
 - **故障注入プラグイン**: クラッシュ・ハング・確保・大量イベントを起こす `echode-test-plugin` で隔離を検証する。
-- **単一入口の確認**: 着手時に `make verify-plan`、完了時に `make verify` を実行し、`scripts/verification.json` の単一ポリシーをエージェント・フック・CI で共有する。
+- **単一入口の確認**: 着手時に `make verify-plan`、完了時に `make verify`、節目に `make verify-full` を実行し、`scripts/verification.json` の単一ポリシーをエージェント・フック・CI で共有する。
 
 ## 8. 開発環境の準備
 

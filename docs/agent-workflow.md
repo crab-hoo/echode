@@ -18,6 +18,7 @@ make agent-context
 全変更、検査の選択根拠・目的、資料のハッシュと見出しは `target/agent-context.json` に保存する。
 全文 JSON が必要な時だけ `--json` を使う。
 自動検査の失敗・未完了・古い結果は個別に表示し、手動検査は状態・鮮度・理由がすべて同じものだけをまとめる。
+`Full tier without a pass` は全体の段階の未確認を示す。作業の完了条件ではなく、合格でもない。
 診断の成功は検査の合格ではなく、最後の `make verify` は引き続き必要である。
 
 差分の基準は新しい `make verify-plan` と同じく現在の `VERIFY_BASE`、未指定なら HEAD を使う。

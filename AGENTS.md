@@ -77,8 +77,12 @@ Phase 0 は確定済み、Phase 1 の完了範囲は [現在の制約](docs/stat
 
 着手時に `make agent-context` または `make verify-plan`、変更を終えたら `make verify` を実行します。
 変更箇所と追加検査の対応は `scripts/verification.json` だけに置きます。
-通常の `make check`（フォーマット、clippy、Rust / Swift、FFI、ライセンス）に加え、橋渡しの全 feature・ASan・TSan・Miri、音声の RTSan、入力の単体テストを必要な範囲で選びます。
-依存するモデルの変更も対象です。実行方法と検査範囲は `docs/verification.md` を読んでください。
+`make verify` は、フォーマット、clippy、Rust / Swift、FFI、ライセンス、必須契約の通常テストに加え、変更に応じて RTSan、入力の単体テスト、橋渡しの全 feature を選びます。
+ASan・TSan・Miri と全契約の反例は全体検査の段階です。
+作業ごとには、変更行に `unsafe` の脱出口がある時、検査自身のスクリプトが変わった時、定義・置換箇所・テスト本体が変わった契約の反例だけを実行します。
+全体検査は `make verify-full` で、ユーザーの依頼・配布前・受入の節目に実行します。依頼なしに作業の完了条件へ足しません。
+`make verify` の合格を全体検査の合格と言いません。未確認の検査は `make verify` と `make agent-context` が表示します。
+実行方法と検査範囲は `docs/verification.md` を読んでください（[ADR 0212](docs/decisions/0212-verification-tiers.md)）。
 
 選択された計測・実機・ネットワーク検査は、`scripts/verify.py --run ID` で実行するか、`--defer ID --reason 理由` で未実行の理由を記録します。
 10分間の長時間計測は通常の候補にせず、必要な時に明示実行します。候補を一律に実行せず、検査の目的と今回の影響を確認します。
@@ -87,7 +91,7 @@ Phase 0 は確定済み、Phase 1 の完了範囲は [現在の制約](docs/stat
 
 Cursor の stop hook（`.cursor/hooks.json`）も同じ入口を使い、失敗や理由のない未実行があれば続きの指示を返します。
 ファイルを変える操作は、進行中の検査が `target/verification/.lock` を持っている間は、そのロックが外れるまで待ちます。
-フックのない環境でも `make verify` の実行は必要です。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify`、全体の確認は `scripts/verify.py --all` を使います。
+フックのない環境でも `make verify` の実行は必要です。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify` を使います。
 `--only` は個別検査や CI の分割用で、作業の完了時には使いません。新しい環境では、先に `make setup`、橋渡しの動的検査には `make setup-bridge` を実行します。
 
 監査の再現のうち登録済みのものは、`audit_<ID>_...` という名前の無視したテストです。全指摘がテスト化されているとは限りません。

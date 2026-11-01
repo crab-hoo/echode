@@ -94,7 +94,7 @@ class ExecutionTests(unittest.TestCase):
     def test_failure_latency_uses_the_actual_order_not_the_average_runtime(self):
         self.policy([self.check("slow"), self.check("asan", priority=30), self.check("infra", priority=10)])
         called = []
-        def run(root, check, log, force=False):
+        def run(root, check, log, force=False, base=None):
             called.append(check["id"])
             return {"status": "failed" if check["id"] == "asan" else "passed", "seconds": 1}
         self.assertEqual(self.run_verify(support.arguments(), run), (1, 2))

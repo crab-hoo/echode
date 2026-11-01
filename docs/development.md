@@ -32,6 +32,7 @@
 - 関連する実装・資料・回帰テストを一つの完了条件にまとめ、更新をそろえてから最終検査する。
 - 作業中は再現・修正確認に必要な個別テストを `-q` で実行し、最後の編集後に `make verify` で全選択項目をまとめて処理する。
   再実行は追加変更・失敗の修正・未解決の懸念がある時に行う。
+  サニタイザと全反例を含む `make verify-full` は節目の検査で、作業ごとには実行しない（[検査手順](verification.md#二つの段階)）。
 - 結果の再利用と失効は [検査基盤](verification.md#記録と有効期限) に任せ、入力とツールが同じ有効な結果を使う。
 - 検査を `grep` / `head` へ直接パイプしたり、`;` や最後の `echo` で失敗コードを隠したりしない。
   独立した複数の個別検査は [安全なコマンド実行](verification.md#作業中の個別コマンド) で全終了コードを集約する。
@@ -101,6 +102,11 @@
 | 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`DocumentSession.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`check_real_hal.py`、`diagnose.py`、`distribution.py`、`tests/` |
+
+Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`store.rs`）は、非既定の `spike` feature 専用である。
+直接その通常回帰を動かす時は `cargo test -q -p echode-history --features spike --lib --test roundtrip`、
+計測は従来どおり `make spike-history` を使う。製品の型・保存形式と混同しない
+（[ADR 0211](decisions/0211-opt-in-history-spike.md)）。
 
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、

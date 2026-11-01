@@ -40,7 +40,7 @@ wait_for_verify = module("wait_for_verify", "wait_for_verify.py")
 
 
 def arguments(**overrides):
-    options = dict(base=None, all=False, only=[], run=[], defer=[], reason=None, plan=False, force=False)
+    options = dict(base=None, all=False, full=False, only=[], run=[], defer=[], reason=None, plan=False, force=False)
     options.update(overrides)
     return argparse.Namespace(**options)
 
@@ -50,7 +50,8 @@ class PolicyTests(unittest.TestCase):
         self.policy = verify.load_policy(ROOT)
 
     def selected(self, *paths):
-        return set(verify.select_checks(self.policy, list(paths)))
+        # Which checks a path concerns. The task tier narrows this for full-tier checks.
+        return set(verify.select_checks(self.policy, list(paths), full=True))
 
     def test_typed_edit_generation_and_product_boundary_remain_selected(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "typed-edit-bridge")
@@ -1425,7 +1426,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_input_has_both_headless_tests_and_an_explicit_hardware_check(self):
         self.assertEqual(self.selected("spikes/input/Sources/EchodeInputCore/Gesture.swift"),
-                         {"check-format", "check-verification", "check", "check-product-contracts", "check-real-hal", "check-input", "spike-input"})
+                         {"check-format", "check-verification", "check", "check-swift", "check-product-contracts", "check-real-hal", "check-input", "spike-input"})
 
     def test_isolation_and_dependency_changes_select_their_extra_checks(self):
         checks = self.selected("crates/echode-sandbox/src/lib.rs")
@@ -1448,10 +1449,10 @@ class PolicyTests(unittest.TestCase):
         # Without the diff base the policy and Makefile cannot be compared, so every automatic check runs.
         for path in ("Makefile", "scripts/verification.json"):
             self.assertEqual(self.selected(path), expected)
-        self.assertEqual(self.selected("docs/PLAN.md"), {"check-format", "check-verification", "check", "check-product-contracts", "check-real-hal"})
+        self.assertEqual(self.selected("docs/PLAN.md"), {"check-format", "check-verification", "check", "check-swift", "check-product-contracts", "check-real-hal"})
 
     def test_a_helper_script_selects_only_the_checks_that_run_it(self):
-        always = {"check-format", "check-verification", "check", "check-product-contracts", "check-real-hal"}
+        always = {"check-format", "check-verification", "check", "check-swift", "check-product-contracts", "check-real-hal"}
         self.assertEqual(self.selected("scripts/check-bridge-address.sh"),
                          always | {"check-bridge-asan", "check-bridge-tsan"})
         self.assertEqual(self.selected("scripts/check-bridge-miri.sh"), always | {"check-bridge-miri"})
@@ -1471,10 +1472,10 @@ class PolicyTests(unittest.TestCase):
         # A shared sub-make target belongs to every check that calls it.
         plugins = makefile.replace("bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh",
                                    "bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh debug")
-        self.assertEqual(redefined(text=plugins), {"check", "check-product-contracts", "rtsan"})
+        self.assertEqual(redefined(text=plugins), {"check", "check-swift", "check-product-contracts", "check-contract-controls", "rtsan"})
         policy = json.loads(json.dumps(self.policy))
         policy["product_contracts"].append(dict(policy["product_contracts"][0], id="another-contract"))
-        self.assertEqual(redefined(policy), {"check-product-contracts"})
+        self.assertEqual(redefined(policy), {"check-product-contracts", "check-contract-controls"})
         policy = json.loads(json.dumps(self.policy))
         next(check for check in policy["checks"] if check["id"] == "rtsan")["timeout"] += 1
         self.assertEqual(redefined(policy), {"rtsan"})
@@ -1483,7 +1484,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(redefined(policy), set())
         policy["global_inputs"].append("extra.toml")
         self.assertEqual(redefined(policy), {check["id"] for check in self.policy["checks"]})
-        always = {"check-format", "check-verification", "check", "check-product-contracts", "check-real-hal"}
+        always = {"check-format", "check-verification", "check", "check-swift", "check-product-contracts", "check-real-hal"}
         self.assertEqual(set(verify.select_checks(self.policy, ["Makefile"], redefined=set())), always)
         self.assertEqual(set(verify.select_checks(self.policy, ["Makefile"], redefined={"rtsan", "spike-audio"})),
                          always | {"rtsan"})
@@ -1591,9 +1592,12 @@ class PolicyTests(unittest.TestCase):
         for contract in contracts:
             faults = contract.get("negative_controls") or [contract["negative_control"]]
             self.assertTrue(all((ROOT / fault["file"]).is_file() for fault in faults))
-        recipe = (ROOT / "Makefile").read_text().split("check-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
+        makefile = (ROOT / "Makefile").read_text()
+        recipe = makefile.split("\ncheck-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("check_product_contracts.py", recipe)
-        self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", recipe)
+        self.assertIn("contract-prerequisites", recipe)
+        prerequisites = makefile.split("\ncontract-prerequisites:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("-p echode-ffi -p echode-plugin-host -p echode-test-plugin", prerequisites)
 
     def test_journal_invariants_use_the_product_recovery_boundary(self):
         contracts = {c["id"]: c for c in self.policy["product_contracts"]}
@@ -1995,7 +1999,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.report()["results"]["measure"]["status"], "stale")
 
     def test_a_failed_measurement_is_not_hidden_by_an_unrelated_edit(self):
-        def fail_measurement(root, check, log, force=False):
+        def fail_measurement(root, check, log, force=False, base=None):
             return {"status": "failed" if check["id"] == "measure" else "passed"}
         self.assertEqual(self.run_verify(arguments(run=["measure"]), fail_measurement), (1, 2))
         (self.root / "README.md").write_text("unrelated edit")
@@ -2062,7 +2066,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_verify(arguments(only=["measure"])), (1, 0))
         self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
         self.assertEqual(self.report()["results"]["measure"]["status"], "passed")
-        def fail_measurement(root, check, log, force=False):
+        def fail_measurement(root, check, log, force=False, base=None):
             return {"status": "failed" if check["id"] == "measure" else "passed"}
         self.assertEqual(self.run_verify(arguments(run=["measure"], force=True), fail_measurement), (1, 2))
         response = hook.respond({"status": "completed"}, lambda: self.run_verify(arguments())[0])

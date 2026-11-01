@@ -174,6 +174,9 @@ def render(data):
     for (status, fresh, reason), names in groups.items():
         warning = "INVALID deferral: missing reason" if status == "deferred" and not reason.strip() else reason
         lines.append(f"Manual {status} (fresh={fresh}): {', '.join(names)}" + (f" — {warning}" if warning else ""))
+    if verification["full_tier_unverified"]:
+        lines.append("Full tier without a pass on current inputs (not required per task; make verify-full at milestones): "
+                     + ", ".join(verification["full_tier_unverified"]))
     lines.append("Guides (AGENTS.md remains mandatory; follow related ADR/audit links):")
     lines.extend("  " + guide["path"] for guide in data["guides"])
     lines += [f"Full paths, selection reasons, guide hashes/outlines and logs: {SNAPSHOT}",

@@ -1,23 +1,27 @@
 //! Plain-text projects committed in the background with gix.
 //!
 //! Product packages store an [`echode_model::Project`] through [`Autosave`].
-//! The 1,000-track benchmark lives in [`spike`].
+//! The Phase 0 benchmark is available through `spike` with the opt-in `spike` feature.
 
 #![cfg_attr(not(target_os = "macos"), allow(unused))]
 
 mod autosave;
 mod document;
+#[cfg(feature = "spike")]
 mod format;
 mod host;
 mod media;
 mod objects;
 mod package_io;
 mod peaks;
+#[cfg(feature = "spike")]
 mod project;
+#[cfg(feature = "spike")]
 mod store;
 mod thin;
 mod transport;
 
+#[cfg(feature = "spike")]
 pub mod spike;
 
 pub use autosave::{Autosave, PendingAutosave, SavedRevision};

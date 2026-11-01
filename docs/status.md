@@ -354,6 +354,10 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
 - **プラグイン隔離・Workgroup・キャッシュ**:
   - ヘルパーは `SIGABRT` / `SIGSEGV` / `SIGBUS` / `SIGILL` で共有領域にクラッシュ印を書く。AUv3 の二重隔離回避、スキャンの Seatbelt、Workgroup ポートの 2 ms ポーリング置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
   - 選択デバイスの Workgroup をヘルパーの追加・保持・再起動へ引き継ぎ、変更通知で出力を再準備する。同一素材・同一配置結果の PCM 共有と、版・カメラによる可視列キャッシュを接続済み（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。CPU 並列グラフ、メーカー単位のヘルパー集約、SME、Metal 4 は未実装。
+- **Phase 0 の履歴モデルの分離**: 別モデル・JSON 形式・Git 保存は、`echode-history` の非既定の `spike` feature へ分離した。
+  製品は従来どおり `echode_model::Project` と `Autosave`・`DocumentHost` を使う。
+  通常回帰と `make spike-history` は維持し、エンジン側の分離は残る
+  （[ADR 0211](decisions/0211-opt-in-history-spike.md)、SPG-10）。
 
 ## 検査基盤で区別すること
 
@@ -371,4 +375,6 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
 - **継続の先行再開の TSan 誤検出**: 完了の継続が `await` より先に再開されると、Swift ランタイムの経路で TSan に順序が見えない。
   検査ビルドだけの注釈で順序を示し、再開の後の書込みの検出は対照で保つ（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
 - **プラグイン発音アタック**: Vital Init の無音からの発音は 48 / 96 kHz・複数ブロック長でプラグイン単体出力と全サンプル一致しており、ホスト由来の不連続は再現していない（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
+- **検査の段階**: `make verify` は作業の段階で、ASan・TSan・Miri と全反例は `make verify-full` の全体の段階にある。
+  作業の段階の合格は全体の段階の合格ではない。未確認の検査は `make agent-context` が表示する（[ADR 0212](decisions/0212-verification-tiers.md)）。
 - **検査種別の境界**: 通常の回帰検査、負の対照（`negative_control`）、オフスクリーン GPU 検査、実ウィンドウの `spike-playhead`、長時間計測（[ADR 0096](decisions/0096-measurement-completion.md)）、フックの直接検査と実ホスト発火、ローカル検査とリモート CI、ユーザーの聴感確認はそれぞれ別の証拠として区別する。

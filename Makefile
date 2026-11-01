@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -55,6 +55,7 @@ check:
 	$(MAKE) check-format
 	$(MAKE) check-verification
 	$(MAKE) check-base
+	$(MAKE) check-swift
 	$(MAKE) check-product-contracts
 
 .PHONY: swift-actions check-swift-actions
@@ -67,7 +68,7 @@ check-swift-actions:
 check-format:
 	cargo fmt --all --check
 
-# The verifier records this part and product contracts as separate checks.
+# The verifier records the Rust part, the Swift part and product contracts as separate checks.
 check-base:
 	$(MAKE) bundled-plugins
 	python3 -B scripts/check_build_host.py
@@ -75,9 +76,18 @@ check-base:
 	cargo clippy -q --workspace --all-targets -- -D warnings
 	$(MAKE) check-swift-actions
 	cargo test -q --workspace
+	cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings
+	cargo test -q -p echode-history --features spike --lib --test roundtrip
 	scripts/check-ffi.sh
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
 	cargo deny -L error check licenses bans sources
+
+# Swift tests start the plugin helper, the test plugin and the CLI, so a Swift-only
+# change can reuse check-base but must still build what these tests run.
+check-swift:
+	$(MAKE) bundled-plugins
+	python3 -B scripts/check_build_host.py
+	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
@@ -124,13 +134,21 @@ check-base:
 # Generated mixer/clip-mix edits retain exact values, preview completion, single/group scope and durable history.
 # Generated clip moves/copies and audio imports retain integer targets, focus, result references, rejection and durable history.
 check-product-contracts:
+	$(MAKE) contract-prerequisites
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py --changed-controls
+
+# Every counterexample, including those whose only change is a linked dependency (ADR 0212).
+check-contract-controls:
+	$(MAKE) contract-prerequisites
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py
+
+contract-prerequisites:
 	$(MAKE) bundled-plugins
 	cargo build -q --locked --offline -p echode-ffi -p echode-plugin-host -p echode-test-plugin -p echode-cli
 	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
 	test -n "$$header"; \
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
 	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
-	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py
 
 # Names the EchodeApp test that reaches the real HAL. Opens no device: the test bundle has no HAL (ADR 0209).
 check-real-hal:
@@ -144,6 +162,10 @@ check-real-hal:
 # Selection and evidence are shared by agents, the stop hook, and CI.
 verify:
 	python3 scripts/verify.py $(VERIFY_ARGS)
+
+# Every automatic check, including sanitizers and all counterexamples. Not needed per task.
+verify-full:
+	python3 scripts/verify.py --full $(VERIFY_ARGS)
 
 verify-plan:
 	python3 scripts/verify.py --plan $(VERIFY_ARGS)
@@ -213,7 +235,7 @@ spike-arrange-query:
 
 # Plain-text project history. See docs/spikes/S4-history.md.
 spike-history:
-	cargo test -q --release -p echode-history --test roundtrip -- --include-ignored --test-threads=1
+	cargo test -q --release -p echode-history --features spike --test roundtrip -- --include-ignored --test-threads=1
 	cargo test -q --release -p echode-model --lib a_gain_edit_stays_cheap_as_unrelated_notes_grow -- --ignored
 
 # Trackpad pinch, haptics, and chord pressure. See docs/spikes/S5-input.md.

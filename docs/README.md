@@ -1,7 +1,7 @@
 # 資料の入口
 
 AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
-開始は `make agent-context`（個別確認は `make doctor` と `make verify-plan`）、終了は `make verify`。
+開始は `make agent-context`（個別確認は `make doctor` と `make verify-plan`）、終了は `make verify`、節目は `make verify-full`。
 この索引は資料の役割を示し、検査の選択条件は持たない（[ADR 0094](decisions/0094-agent-development-foundation.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
 
 ## 作業で使う資料
@@ -37,6 +37,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md)、SPG-02 は [ADR 0203](decisions/0203-document-session.md)、
   SPG-05 は [ADR 0204](decisions/0204-document-service.md)、SPG-07 は [ADR 0205](decisions/0205-playback-options.md)、
   SPG-08 は [ADR 0206](decisions/0206-piano-interaction-state.md) で対応し、当時の再現は保持する。
+  SPG-10 は履歴側だけを非既定 feature へ分離した（[ADR 0211](decisions/0211-opt-in-history-spike.md)）。エンジン側は残る。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。
@@ -185,6 +186,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 識別計算での同じ範囲の共有と `check-verification` の短縮、前後の測定: [ADR 0208](decisions/0208-verification-shared-scopes.md)。
 - UI テストのバンドルから実 HAL をなくすリンク時の代役と、触れたテストを名指しする `check-real-hal`: [ADR 0209](decisions/0209-real-hal-guard.md)。
 - サニタイザの Swift 全体実行の同時実行数と、全テスト同時で競合を探す実行、前後の測定: [ADR 0210](decisions/0210-sanitizer-test-width.md)。
+- 作業ごとの検査と節目の全体検査の分離、反例とサニタイザの選択条件: [ADR 0212](decisions/0212-verification-tiers.md)。
 - 終了コードの保証・実行予定だけの環境事前確認・依存順序と失敗検出遅延: [ADR 0166](decisions/0166-verification-failure-detection.md)。
 - 起動復旧の終了待ち・Darwin errno の検査ランタイム修正: [ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)。
 - 継続の先行再開の TSan 誤検出と検査ビルドだけの注釈: [ADR 0207](decisions/0207-continuation-handoff-tsan.md)。

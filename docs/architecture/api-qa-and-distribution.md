@@ -60,6 +60,7 @@
 テスト製品と同一反例のビルドだけを共用し、契約ごとの隔離・期限・判定を保つ（[ADR 0195](../decisions/0195-verification-cost-observability.md)）。
 契約と橋渡しの入力は Cargo のライブラリ・別ターゲットを区別し、通常テストと反例の証拠を独立に再利用する。
 製品のリンク先変更は両段階を失効させ、呼出し元のフックにも直列予算を確保する（[ADR 0197](../decisions/0197-verification-target-scopes.md)）。
+作業ごとの `make verify` と、サニタイザ・全反例を含む節目の `make verify-full` に段階を分ける（[ADR 0212](../decisions/0212-verification-tiers.md)）。
 診断・表示と製品の証拠入力は分離し、契約の起動コストと同一反例・TSan のビルドを共有する。
 実テストの独立プロセス・期限・全反例の判定は維持する（[ADR 0198](../decisions/0198-verification-launch-and-cache-cost.md)）。
 個別コマンドの記録補助は終了コードを集約するだけで、別の選択・キャッシュ・合格経路を持たない。

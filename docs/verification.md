@@ -3,6 +3,32 @@
 選択・依存関係・実行予算・必須契約の正本は [scripts/verification.json](../scripts/verification.json)。
 実行器は `scripts/verify.py`。AGENTS、終了フック、CI に別の選択条件を持たせない。
 
+## 二つの段階
+
+検査は `tier` で作業の段階と全体の段階に分かれる（[ADR 0212](decisions/0212-verification-tiers.md)）。
+どちらも同じポリシーから選び、同じ合否の記録を使う。
+
+- `make verify`（作業の段階）: 作業ごとの完了条件。今回の変更で壊れていないかを調べる。終了フックもこれを呼ぶ。
+- `make verify-full`（全体の段階）: 自動検査の全件。ASan、TSan、Miri、全契約の反例を含む。
+
+全体の段階は次の節目で実行する。依頼なしに作業の完了条件へ足さない。
+
+- ユーザーの依頼。
+- 配布の前（`make dist`）。
+- Phase の単位の受入完了の前。
+
+全体の段階の検査は、作業の段階でも次の時だけ選ばれる。
+
+- 変更行（追加・削除）に `unsafe` の脱出口がある。Rust の `unsafe`、Swift の `Unsafe`・`@unchecked`・`nonisolated(unsafe)` が対象で、その検査の入力の範囲にあるものに限る。テストのディレクトリは数えない。
+- `task_inputs` に一致する。その検査自身のスクリプトと、Miri の対象のファイルが該当する。
+
+それ以外のコードはコンパイラーの検査の内にあるため、作業の段階ではサニタイザを動かさない。
+合格時に変更ファイルの内容を `covered` へ記録し、同じ内容のままの変更では選び直さない。
+未コミットの変更が残っていても、後の無関係な編集で再実行しないためである。
+`make verify` の合格は全体の段階の合格ではない。
+現在の入力で合格の記録がない検査は、`make verify` の出力、`report.md`、`make doctor`、`make agent-context` に名前が出る。
+未確認の検査があっても `make verify` は失敗しない。
+
 ## 作業の入口と完了
 
 着手時に `make verify-plan` を実行する。
@@ -25,12 +51,12 @@ make verify VERIFY_ARGS='--defer spike-audio --reason "今回の変更は文書�
 make verify
 ```
 
-`--all` は追加の長時間検査も含めて全検査を選択する。
+`--all` は手動の検査と追加の長時間検査も含めて全検査を選択する。自動検査の全件には `make verify-full` を使う。
 10分計測は `make verify VERIFY_ARGS='--run spike-engine'` でも追加できる。
 スケジューラー・リアルタイム処理の大きな変更、長時間でだけ起きる不具合、リリース前など、目的がある時に実行する。
 
 `--only ID` は作業中の個別検査か CI の分割用で、完了報告前には使わない。
-無関係な検査を追加実行する時は `python3 scripts/verify.py --all --only ID`、手動検査ならさらに `--run ID` を付ける。
+無関係な検査を追加実行する時は `python3 scripts/verify.py --full --only ID`、手動検査は `--all --only ID --run ID` を使う。
 自動検査の失敗は見送れない。手動検査の見送りも合格ではなく、最終報告に名前と理由を残す。
 
 ## 事前確認と実行順序
@@ -76,8 +102,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 
 ## 自動検査
 
-通常の `make check` は `check-format`、`check-verification`、`check-base`、`check-product-contracts` を順に 1 回ずつ実行する。
-`scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、基盤と製品契約は別の結果として記録する。
+通常の `make check` は `check-format`、`check-verification`、`check-base`、`check-swift`、`check-product-contracts` を順に 1 回ずつ実行する。
+`scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、Rust、Swift、製品契約は別の結果として記録する。
 
 - `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク。
   既存のローカル証拠は文書・宛先の例外一覧と注意書きを要求し、新しい `target/` リンクは拒否する（[証拠の保全](evidence/README.md)）。
@@ -85,11 +111,22 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
   エージェント入口の選択の一致・失敗情報の保持・原文読込と鮮度の境界も既存の検査内で確認する（[手順](agent-workflow.md)）。
 - `check-format`: 従来 `check-base` のビルド後に行っていた Rust フォーマットを独立して先に検査する。
-- `check` (`check-base`): Rust / Swift のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
+- `check` (`check-base`): Rust のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
   `make check-swift-actions` で登録簿・公開スキーマと Swift の生成編集型を照合し、古い生成物を変更せず拒否する。
+  履歴の Phase 0 モデルは既定ではビルドせず、別の Cargo 呼出しで `spike` feature の lint・単体テスト・非計測の往復回帰も維持する。
+  既定の workspace の依存解決でこの feature が有効でないことは `check-verification` で照合する。
+- `check-swift`: Swift のビルドと全テスト（Swift 6 の厳密な並行性）と、橋渡しスパイクの ABI 検証。
+  Swift だけの変更では `check` を再利用する。リンク先の Rust が変われば両方を実行する。
+  テストが起動するヘルパー・検査用プラグイン・CLI は、このレシピ自身がビルドする。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
-  さらにソースのコピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする。
+  全反例が現在のソースへ適用できること（置換元が 1 回だけ現れること）を、ビルドせずに確認する。
+  反例は、差分の基準と比べて次のいずれかが変わった契約だけ実行する。
+  契約の定義（`purpose` を除く）、置換元とその前後 20 行、テストの関数本体。
+  遠いコードの変更で検出力が変わる場合は、全体の段階の `check-contract-controls` で検出する。
+  同じ置換箇所で合格済みなら、他の入力が変わっても作業の段階では再実行しない。
+- `check-contract-controls`（全体の段階）: 全契約の反例を実行する。
+  ソースのコピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする。
   コンパイル失敗は検出の証拠にしない。
   コピーは `target/product-contract-mutations/checkouts/` に残し、変わったファイルだけを新しい時刻で書き換える（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
   Rust の反例は変えるクレートの依存の浅い順にまとめ、Swift の反例は 3 コピーで同時にビルドしてからテストを 1 件ずつ実行する。
@@ -99,6 +136,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   通常テストと反例は別の識別値で再利用し、契約全体の合格には両段階の合格を要求する。
   反例定義だけの変更や反例段階の中断では、入力が同じ通常テストの完了記録を保持する。
   どちらの段階も、現在リンク・実行する製品コード・テスト・補助・ツールを入力に含める（[ADR 0197](decisions/0197-verification-target-scopes.md)）。
+  Swift の反例の前に、変更を入れないコピーをビルドする。コピーの遅れを各契約の期限に算入しない。
   Swift の負の対照も契約ごとに全反例の終了直後に保存し、後続の中断で完了した契約を失わない。
   複数反例の一部だけの終了は合格記録にしない。
   各契約の ID・対象テスト・目的・負の対照は `scripts/verification.json` を正本とし、本書へ重複記載しない（[ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
@@ -106,12 +144,13 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   試聴の有限の先読み・音量補間・指定位置からのコールバックも対象とする。禁止操作はロック、確保、ブロックするシステムコールである。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
-- `check-tsan-runtime`: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
+- `check-tsan-runtime`（全体の段階）: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
+  作業の段階で `check-bridge-tsan` が選ばれれば一緒に選ばれる。
 - `check-real-hal`: `EchodeAppTests` を 1 件ずつ実行し、実 HAL に触れたテストの名前を示して失敗する。機器は開かない（[ADR 0209](decisions/0209-real-hal-guard.md)）。
   バンドルに実物の HAL の参照がないこと、製品とプローブに実物が残っていること、既定の `ProjectController()` の再生が名指しで止まることも毎回確かめる。
   結果は `target/real-hal/` に残す。
-- `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
-- `check-bridge-tsan`: 標準ライブラリを含む製品の Rust と Swift を、同じ固定ランタイムで競合検査する。
+- `check-bridge-asan`（全体の段階）: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
+- `check-bridge-tsan`（全体の段階）: 標準ライブラリを含む製品の Rust と Swift を、同じ固定ランタイムで競合検査する。
   読み込まれたランタイムも照合する（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
   製品とスパイクの Swift は `-D ECHODE_TSAN` で、継続の先行再開の前後関係を TSan へ示す注釈を入れる（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
   対照 `continuation-*` は、注釈なしで報告が出ること、注釈で消えること、再開の後の書込みは報告されることを確認する。
@@ -122,7 +161,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   ASan / TSan の Swift の全体実行は同時実行数を 16 に絞って合否を決める。実際の幅は `check_test_width.py` がイベント列で確かめる。
   TSan はその後、全テストを同時に動かす実行をもう一度行い、テストをまたぐ競合を探す。
   この実行はサニタイザの報告と途中の異常終了だけを判定し、テストの失敗は判定しない（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
-- `check-bridge-miri`: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
+- `check-bridge-miri`（全体の段階）: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
   フォルダ開閉用の表示ハンドルの保持・再展開と可視行の容量境界も同じ経路で確認する。
 
 ## 実機・計測・ネットワークの検査
@@ -177,7 +216,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 明示した入力はターゲットの除外より優先する。通常の workspace 検査の入力は縮めない。
 Makefile はファイル全体ではなく、その検査のレシピ（`$(MAKE)` で呼ぶ対象を含む）と、変数などの全体に効く行だけを識別に含める。コメントの編集では失効しない。
 `scripts/verification.json` と Makefile の変更は、差分の基準と比べて定義・レシピが変わった検査だけを選ぶ。基準を読めない時は全自動検査を選ぶ。
-`evidence_inputs` の共通実行器の変更は全自動検査を選ぶ。
+`evidence_inputs` の共通実行器の変更は作業の段階の全自動検査を選び、全体の段階の結果を失効させる。
 診断・表示・フック・CI の編集は基盤検査が扱い、製品検査の全件選択や共通識別値の失効理由にはしない。
 Markdown と `--plan` の表示は `scripts/verification_display.py`、時間診断は `scripts/verification_metrics.py` に分離する。
 自動検査は自身の `inputs` に一致する変更でも選ばれ、補助スクリプトの変更はそれを実行する検査を選ぶ。
@@ -199,8 +238,8 @@ Markdown と `--plan` の表示は `scripts/verification_display.py`、時間診
 一括予算の変更だけでは個別契約の合格を失効させず、個別の期限・入力・実行経路の変更は失効させる。
 反例の途中で上限に達した時も `negative_progress` に完了数と経過秒を残す。
 通常テストと反例の `normal_pending`・`negative_pending`、`reused_tests`・`reused_controls` も分けて記録する。
-Rust の製品コードの変更は Swift のリンク先の変更でもあり、通常・反例とも再検査する。
-Swift パッケージ内のテスト間の依存分割は未実施で、Swift テストの局所編集による全 UI 契約の失効は残る。
+Rust の製品コードの変更は Swift のリンク先の変更でもあり、通常テストは作業の段階で、反例は全体の段階で再検査する。
+Swift パッケージ内のテスト間の依存分割は未実施で、Swift テストの局所編集で全 UI 契約の通常テストと、全体の段階の反例が失効する範囲は残る。
 
 遅くなった時は、まず次を比較する（[ADR 0195](decisions/0195-verification-cost-observability.md)）。
 
@@ -211,7 +250,7 @@ Swift パッケージ内のテスト間の依存分割は未実施で、Swift �
    並列の `build_work_seconds` は作業秒の和であり、段階全体の実測 `seconds` とは足し合わせない。
    Rust の `source_transitions` と `test_processes` は同一置換のビルド共用と全反例の独立実行を区別する。
 3. 同じ機械・入力・対象集合・ウォーム状態で比較する。
-   必要なら `python3 -B scripts/verify.py --all --only check-product-contracts --force` で全契約を測り直す。
+   必要なら `python3 -B scripts/verify.py --full --only check-contract-controls --force` で全契約を測り直す。
    これは作業中の個別計測であり、完了時の `make verify` の代わりではない。
 4. 件数増加、再ビルド範囲、機器・外部環境の変化を識別し、期待値・期限・隔離を緩めずに直す。
    原因と比較条件・数値は追跡する ADR 等へ要約する。作業用の全ログを恒久的な証拠にしない。
@@ -229,8 +268,8 @@ TSan のセットアップには CMake と Ninja も必要で、固定した公�
 検査専用ランタイムの準備・再生成は `make setup-bridge`、取得済みソースだけの再ビルドは `python3 scripts/tsan_runtime.py --prepare` を使う。
 Xcode や製品アプリは変更しない。通常検査はネットワークを使わず、古い準備は失敗として報告する。
 
-`.cursor/hooks.json` の `preToolUse` は編集ツールをロック解除まで待たせ、`stop` は `completed` イベントで `scripts/verify.py` を呼ぶ。
+`.cursor/hooks.json` の `preToolUse` は編集ツールをロック解除まで待たせ、`stop` は `completed` イベントで `scripts/verify.py`（作業の段階）を呼ぶ。
 `.codex/hooks.json` もアダプターを備えるが、設定ファイルの存在だけでホスト側のフック発火済みとは扱わない。フックのない環境でも `make verify` は必須である。
 フックの上限は `verification.json` の `hook_timeout` と一致させ、全自動検査と事前確認の直列予算を覆うことを検査する。
 ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
-CI の自動検査一覧は `scripts/verification.json` から生成し、各ジョブが `--all --only ID` で分担する。調査資料の収集は [デバッグ手順](debugging.md) を参照する。
+CI の自動検査一覧は `scripts/verification.json` から生成し、各ジョブが `--all --only ID` で分担する。全体の段階も CI の全件に含む。調査資料の収集は [デバッグ手順](debugging.md) を参照する。
