@@ -28,6 +28,10 @@ use note::{NoteState, diff_note_fields, note_change};
 mod parameter;
 use parameter::{ParamState, diff_parameter_fields, parameter_change};
 
+#[path = "changeset_placement.rs"]
+mod placement;
+use placement::{ClipState, clip_change, diff_clip_fields};
+
 #[path = "changeset_track.rs"]
 mod track;
 use track::{TrackState, diff_track_fields, track_change};
@@ -518,87 +522,6 @@ fn clips_outside_unchanged<'a>(
     clips
 }
 
-fn diff_clip_fields(
-    before_owner: Id,
-    after_owner: Id,
-    before: &Placement,
-    after: &Placement,
-    updates: &mut Vec<Change>,
-) {
-    if before_owner != after_owner {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Owner,
-            Value::Id(before_owner),
-            Value::Id(after_owner),
-        ));
-    }
-    if before.start != after.start {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Start,
-            Value::Tick(before.start),
-            Value::Tick(after.start),
-        ));
-    }
-    if before.length != after.length {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Length,
-            Value::Tick(before.length),
-            Value::Tick(after.length),
-        ));
-    }
-    if before.kind != after.kind {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Kind,
-            Value::Kind(before.kind),
-            Value::Kind(after.kind),
-        ));
-    }
-    if before.offset != after.offset {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Offset,
-            Value::Tick(before.offset),
-            Value::Tick(after.offset),
-        ));
-    }
-    if before.content != after.content {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Content,
-            Value::Id(before.content),
-            Value::Id(after.content),
-        ));
-    }
-    if before.gain.to_bits() != after.gain.to_bits() {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Gain,
-            Value::Gain(before.gain.to_bits()),
-            Value::Gain(after.gain.to_bits()),
-        ));
-    }
-    if before.fade_in != after.fade_in {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::FadeIn,
-            Value::Flicks(before.fade_in),
-            Value::Flicks(after.fade_in),
-        ));
-    }
-    if before.fade_out != after.fade_out {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::FadeOut,
-            Value::Flicks(before.fade_out),
-            Value::Flicks(after.fade_out),
-        ));
-    }
-}
-
 fn diff_notes(
     before: &Project,
     after: &Project,
@@ -712,77 +635,6 @@ fn update(id: ObjectKey, property: Property, before: Value, after: Value) -> Cha
     }
 }
 
-fn clip_change(create: bool, track: Id, clip: &Placement) -> Change {
-    let fields = vec![
-        Field {
-            property: Property::Owner,
-            value: Value::Id(track),
-        },
-        Field {
-            property: Property::Content,
-            value: Value::Id(clip.content),
-        },
-        Field {
-            property: Property::Start,
-            value: Value::Tick(clip.start),
-        },
-        Field {
-            property: Property::Length,
-            value: Value::Tick(clip.length),
-        },
-        Field {
-            property: Property::Offset,
-            value: Value::Tick(clip.offset),
-        },
-        Field {
-            property: Property::Kind,
-            value: Value::Kind(clip.kind),
-        },
-        Field {
-            property: Property::Gain,
-            value: Value::Gain(clip.gain.to_bits()),
-        },
-        Field {
-            property: Property::FadeIn,
-            value: Value::Flicks(clip.fade_in),
-        },
-        Field {
-            property: Property::FadeOut,
-            value: Value::Flicks(clip.fade_out),
-        },
-        Field {
-            property: Property::Lane,
-            value: Value::Text("timeline".to_string()),
-        },
-    ];
-    let id = ObjectKey::Id(clip.id);
-    if create {
-        Change::Create {
-            kind: ObjectKind::Clip,
-            id,
-            fields,
-        }
-    } else {
-        Change::Delete {
-            kind: ObjectKind::Clip,
-            id,
-            fields,
-        }
-    }
-}
-
-struct ClipState {
-    track: Id,
-    content: Id,
-    start: Tick,
-    length: Tick,
-    offset: Tick,
-    kind: ClipKind,
-    gain_bits: u32,
-    fade_in: i64,
-    fade_out: i64,
-}
-
 struct Draft {
     meter: Meter,
     tempos: HashMap<i64, Tempo>,
@@ -821,20 +673,9 @@ impl Draft {
         }
         for track in project.tracks() {
             for clip in &track.clips {
-                draft.clips.insert(
-                    clip.id,
-                    ClipState {
-                        track: track.id,
-                        content: clip.content,
-                        start: clip.start,
-                        length: clip.length,
-                        offset: clip.offset,
-                        kind: clip.kind,
-                        gain_bits: clip.gain.to_bits(),
-                        fade_in: clip.fade_in,
-                        fade_out: clip.fade_out,
-                    },
-                );
+                draft
+                    .clips
+                    .insert(clip.id, ClipState::from_clip(track.id, clip));
             }
             draft.tracks.insert(track.id, TrackState::from_track(track));
             for device in &track.devices {
@@ -890,20 +731,7 @@ impl Draft {
                 if self.clips.contains_key(&id) {
                     return Err(ModelError::InvalidChange);
                 }
-                self.clips.insert(
-                    id,
-                    ClipState {
-                        track: field_id(fields, Property::Owner)?,
-                        content: field_id(fields, Property::Content)?,
-                        start: field_tick(fields, Property::Start)?,
-                        length: field_tick(fields, Property::Length)?,
-                        offset: field_tick(fields, Property::Offset)?,
-                        kind: field_kind(fields)?,
-                        gain_bits: field_gain(fields)?,
-                        fade_in: field_flicks(fields, Property::FadeIn)?,
-                        fade_out: field_flicks(fields, Property::FadeOut)?,
-                    },
-                );
+                self.clips.insert(id, ClipState::from_fields(fields)?);
                 Ok(())
             }
             (ObjectKind::Content, ObjectKey::Id(id)) => {
@@ -988,6 +816,11 @@ impl Draft {
         {
             return content.set(property, value);
         }
+        if let ObjectKey::Id(id) = id
+            && let Some(clip) = self.clips.get_mut(&id)
+        {
+            return clip.set(property, value);
+        }
         match (id, property, value) {
             (ObjectKey::Project, Property::Meter, Value::Meter(meter)) => {
                 self.meter = *meter;
@@ -1008,70 +841,7 @@ impl Draft {
                     .parameters = ids.clone();
                 Ok(())
             }
-            (ObjectKey::Id(id), Property::Start, Value::Tick(tick)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .start = *tick;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Length, Value::Tick(tick)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .length = *tick;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Kind, Value::Kind(kind)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .kind = *kind;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Content, Value::Id(content)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .content = *content;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Offset, Value::Tick(tick)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .offset = *tick;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Gain, Value::Gain(bits)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .gain_bits = *bits;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::FadeIn, Value::Flicks(flicks)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .fade_in = *flicks;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::FadeOut, Value::Flicks(flicks)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .fade_out = *flicks;
-                Ok(())
-            }
             (ObjectKey::Id(_id), Property::Lane, Value::Text(_)) => Ok(()),
-            (ObjectKey::Id(id), Property::Owner, Value::Id(owner)) => {
-                self.clips
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .track = *owner;
-                Ok(())
-            }
             _ => Err(ModelError::InvalidChange),
         }
     }
@@ -1129,18 +899,7 @@ impl Draft {
                     return Err(ModelError::InvalidChange);
                 }
                 used_clips += 1;
-                clips.push(Placement {
-                    id: *clip_id,
-                    content: clip.content,
-                    lane: crate::model::Lane::Timeline,
-                    start: clip.start,
-                    length: clip.length,
-                    offset: clip.offset,
-                    kind: clip.kind,
-                    gain: f32::from_bits(clip.gain_bits),
-                    fade_in: clip.fade_in,
-                    fade_out: clip.fade_out,
-                });
+                clips.push(clip.finish(*clip_id));
             }
             let mut devices = Vec::with_capacity(track.device_order.len());
             for device_id in &track.device_order {
@@ -1287,45 +1046,6 @@ fn field_tick(fields: &[Field], property: Property) -> Result<Tick, ModelError> 
                 property: found,
                 value: Value::Tick(tick),
             } if *found == property => Some(*tick),
-            _ => None,
-        })
-        .ok_or(ModelError::InvalidChange)
-}
-
-fn field_kind(fields: &[Field]) -> Result<ClipKind, ModelError> {
-    fields
-        .iter()
-        .find_map(|field| match field {
-            Field {
-                property: Property::Kind,
-                value: Value::Kind(kind),
-            } => Some(*kind),
-            _ => None,
-        })
-        .ok_or(ModelError::InvalidChange)
-}
-
-fn field_gain(fields: &[Field]) -> Result<u32, ModelError> {
-    fields
-        .iter()
-        .find_map(|field| match field {
-            Field {
-                property: Property::Gain,
-                value: Value::Gain(bits),
-            } => Some(*bits),
-            _ => None,
-        })
-        .ok_or(ModelError::InvalidChange)
-}
-
-fn field_flicks(fields: &[Field], property: Property) -> Result<i64, ModelError> {
-    fields
-        .iter()
-        .find_map(|field| match field {
-            Field {
-                property: found,
-                value: Value::Flicks(flicks),
-            } if *found == property => Some(*flicks),
             _ => None,
         })
         .ok_or(ModelError::InvalidChange)

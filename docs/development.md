@@ -136,6 +136,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない
 （[ADR 0218](decisions/0218-content-changeset-fields.md)）。
 
+配置の項目表は `echode-model/src/changeset_placement.rs`、独立した整数・ゲインビット・フィールド順の回帰は
+履歴の `tests/placement_changesets.rs` に置く。所属とトラックの配置 ID 列、中身の存在・異常入力・レーンの互換も検査する。
+操作列は固定・共有配置、負のオフセット・小さいゲイン・非既定フェードからも始める。素材・機器は開かない
+（[ADR 0219](decisions/0219-placement-changeset-fields.md)）。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する

@@ -849,12 +849,62 @@ fn seeded_contents() -> Project {
     project.apply_changeset(&fields).unwrap()
 }
 
+// Start with fixed/shared windows, negative offsets, and non-default mix values.
+fn seeded_placements() -> Project {
+    let project = seeded_contents();
+    let mut fields = ChangeSet::new();
+    for (index, clip) in project
+        .tracks()
+        .iter()
+        .flat_map(|track| &track.clips)
+        .enumerate()
+    {
+        for (property, before, after) in [
+            (
+                Property::Kind,
+                Value::Kind(clip.kind),
+                Value::Kind(echode_model::ClipKind::Fixed),
+            ),
+            (
+                Property::Offset,
+                Value::Tick(clip.offset),
+                Value::Tick(Tick::new(-EIGHTH / 3)),
+            ),
+            (
+                Property::Gain,
+                Value::Gain(clip.gain.to_bits()),
+                Value::Gain(if index == 0 { 1 } else { 0x3eaa_aaab }),
+            ),
+            (
+                Property::FadeIn,
+                Value::Flicks(clip.fade_in),
+                Value::Flicks(1),
+            ),
+            (
+                Property::FadeOut,
+                Value::Flicks(clip.fade_out),
+                Value::Flicks(705_600_001),
+            ),
+        ] {
+            fields.push(Change::Update {
+                id: ObjectKey::Id(clip.id),
+                property,
+                before,
+                after,
+            });
+        }
+    }
+    let project = project.apply_changeset(&fields).unwrap();
+    project.check_invariants().unwrap();
+    project
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     #[test]
     fn random_edits_keep_every_property(
-        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..6
+        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..7
     ) {
         let base = match seeded {
             0 => Project::new(),
@@ -870,7 +920,8 @@ proptest! {
             }
             3 => seeded_notes(),
             4 => seeded_tracks(),
-            _ => seeded_contents(),
+            5 => seeded_contents(),
+            _ => seeded_placements(),
         };
         let mut session = Session::open(base.clone());
         for step in &steps {
