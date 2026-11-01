@@ -242,10 +242,16 @@ fn step() -> impl Strategy<Value = Step> {
                 fade_in,
                 fade_out,
             }),
+        // Package JSON normalizes signed zero (ADR 0196); raw-bit coverage lives
+        // in parameter_changesets.rs, without changing that package policy.
         1 => (
             any::<usize>(),
             any::<usize>(),
-            prop_oneof![Just(0.0f32), Just(1.0), Just(4.0), Just(-1.0)],
+            prop_oneof![
+                Just(0.0f32), Just(1.0), Just(4.0), Just(-1.0),
+                Just(f32::from_bits(1)), Just(f32::NAN), Just(f32::INFINITY),
+                (0u32..=1.0f32.to_bits()).prop_map(f32::from_bits),
+            ],
         )
             .prop_map(|(track, parameter, value)| Step::SetParameter {
                 track,
@@ -748,8 +754,14 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     #[test]
-    fn random_edits_keep_every_property(steps in prop::collection::vec(step(), 1..48)) {
-        let base = Project::new();
+    fn random_edits_keep_every_property(
+        steps in prop::collection::vec(step(), 1..48), seeded in any::<bool>()
+    ) {
+        let base = if seeded {
+            Project::new().add_track("seed mixer").0
+        } else {
+            Project::new()
+        };
         let mut session = Session::open(base.clone());
         for step in &steps {
             let before = session.project().clone();
@@ -787,6 +799,11 @@ proptest! {
         }
 
         let last = session.project().clone();
+        // A whole-sequence diff also exercises combined creation, deletion, and updates.
+        let combined = base.diff(&last);
+        prop_assert_eq!(base.apply_changeset(&combined).unwrap(), last.clone());
+        prop_assert_eq!(last.apply_changeset(&combined.invert()).unwrap(), base.clone());
+        prop_assert_eq!(combined.invert().invert(), combined);
         prop_assert_eq!(&replay(&base, session.journal()).unwrap(), &last);
         let decoded = decode(&encode(session.journal())).unwrap();
         prop_assert_eq!(&replay(&base, &decoded).unwrap(), &last);

@@ -113,6 +113,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 製品の `playback`・機器一覧・`IoWorkgroup` は feature なしで使える
 （[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 
+パラメーターの変更セットの項目表は `echode-model/src/changeset_parameter.rs`、
+ビット単位の差分・作成・削除・逆適用とジャーナルの回帰は履歴の `tests/parameter_changesets.rs` に置く。
+任意のビットを扱う低水準 API と、公開前の不変条件・保存時のゼロの正規化を区別する。
+操作列全体の往復は `tests/properties.rs` で検査する（[ADR 0214](decisions/0214-parameter-changeset-fields.md)）。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する

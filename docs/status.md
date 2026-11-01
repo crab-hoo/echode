@@ -359,6 +359,10 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   通常回帰と `make spike-history`・`make spike-engine`・`make spike-engine-smoke` は維持する。
   SPG-10 の分離は完了だが、並列 CPU グラフの製品接続ではない
   （[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
+- **モデル項目の変更セット（SPG-09 の先行分）**:
+  パラメーターの 4 項目は、差分・作成・下書き・設定・復元を 1 つの項目表から生成する。
+  ビット単位の往復・ジャーナル・異常入力と操作列の性質テストを補強し、保存形式と音声処理は保つ。
+  他オブジェクトと保存・FFI の統合は残る（[ADR 0214](decisions/0214-parameter-changeset-fields.md)）。
 
 ## 検査基盤で区別すること
 

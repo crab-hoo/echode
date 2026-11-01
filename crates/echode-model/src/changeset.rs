@@ -7,10 +7,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::device::{Device, DeviceKind, ParamKey, Parameter};
+use crate::device::{Device, DeviceKind};
 use crate::id::Id;
 use crate::model::{ClipKind, Content, ModelError, Note, Placement, Project, Track};
 use crate::time::{Meter, Tempo, TempoMap, TempoPoint, Tick};
+
+#[path = "changeset_parameter.rs"]
+mod parameter;
+use parameter::{ParamState, diff_parameter_fields, parameter_change};
 
 /// One property written by a [`Change`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -618,25 +622,6 @@ fn diff_device_fields(before: &Device, after: &Device, updates: &mut Vec<Change>
     }
 }
 
-fn diff_parameter_fields(before: &Parameter, after: &Parameter, updates: &mut Vec<Change>) {
-    let pair = [
-        (Property::Minimum, before.min, after.min),
-        (Property::Maximum, before.max, after.max),
-        (Property::Default, before.default, after.default),
-        (Property::Value, before.value, after.value),
-    ];
-    for (property, left, right) in pair {
-        if left.to_bits() != right.to_bits() {
-            updates.push(update(
-                ObjectKey::Id(after.id),
-                property,
-                Value::Bits(left.to_bits()),
-                Value::Bits(right.to_bits()),
-            ));
-        }
-    }
-}
-
 fn device_change(create: bool, track: Id, device: &Device) -> Change {
     let mut fields = vec![
         Field {
@@ -692,49 +677,6 @@ fn device_change(create: bool, track: Id, device: &Device) -> Change {
     } else {
         Change::Delete {
             kind: ObjectKind::Device,
-            id,
-            fields,
-        }
-    }
-}
-
-fn parameter_change(create: bool, device: Id, parameter: &Parameter) -> Change {
-    let fields = vec![
-        Field {
-            property: Property::Owner,
-            value: Value::Id(device),
-        },
-        Field {
-            property: Property::Key,
-            value: Value::Text(parameter.key.as_str().to_string()),
-        },
-        Field {
-            property: Property::Minimum,
-            value: Value::Bits(parameter.min.to_bits()),
-        },
-        Field {
-            property: Property::Maximum,
-            value: Value::Bits(parameter.max.to_bits()),
-        },
-        Field {
-            property: Property::Default,
-            value: Value::Bits(parameter.default.to_bits()),
-        },
-        Field {
-            property: Property::Value,
-            value: Value::Bits(parameter.value.to_bits()),
-        },
-    ];
-    let id = ObjectKey::Id(parameter.id);
-    if create {
-        Change::Create {
-            kind: ObjectKind::Parameter,
-            id,
-            fields,
-        }
-    } else {
-        Change::Delete {
-            kind: ObjectKind::Parameter,
             id,
             fields,
         }
@@ -1252,15 +1194,6 @@ struct DeviceState {
     parameters: Vec<Id>,
 }
 
-struct ParamState {
-    device: Id,
-    key: String,
-    min_bits: u32,
-    max_bits: u32,
-    default_bits: u32,
-    value_bits: u32,
-}
-
 struct Draft {
     meter: Meter,
     tempos: HashMap<i64, Tempo>,
@@ -1361,14 +1294,7 @@ impl Draft {
                 for parameter in &device.parameters {
                     draft.parameters.insert(
                         parameter.id,
-                        ParamState {
-                            device: device.id,
-                            key: parameter.key.as_str().to_string(),
-                            min_bits: parameter.min.to_bits(),
-                            max_bits: parameter.max.to_bits(),
-                            default_bits: parameter.default.to_bits(),
-                            value_bits: parameter.value.to_bits(),
-                        },
+                        ParamState::from_parameter(device.id, parameter),
                     );
                 }
             }
@@ -1483,17 +1409,7 @@ impl Draft {
                 if self.parameters.contains_key(&id) {
                     return Err(ModelError::InvalidChange);
                 }
-                self.parameters.insert(
-                    id,
-                    ParamState {
-                        device: field_id(fields, Property::Owner)?,
-                        key: field_text(fields, Property::Key)?,
-                        min_bits: field_bits(fields, Property::Minimum)?,
-                        max_bits: field_bits(fields, Property::Maximum)?,
-                        default_bits: field_bits(fields, Property::Default)?,
-                        value_bits: field_bits(fields, Property::Value)?,
-                    },
-                );
+                self.parameters.insert(id, ParamState::from_fields(fields)?);
                 Ok(())
             }
             (ObjectKind::Note, ObjectKey::Id(id)) => {
@@ -1539,6 +1455,11 @@ impl Draft {
     }
 
     fn set(&mut self, id: ObjectKey, property: Property, value: &Value) -> Result<(), ModelError> {
+        if let ObjectKey::Id(id) = id
+            && let Some(parameter) = self.parameters.get_mut(&id)
+        {
+            return parameter.set(property, value);
+        }
         match (id, property, value) {
             (ObjectKey::Project, Property::Meter, Value::Meter(meter)) => {
                 self.meter = *meter;
@@ -1571,34 +1492,6 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .parameters = ids.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Value, Value::Bits(bits)) => {
-                self.parameters
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .value_bits = *bits;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Minimum, Value::Bits(bits)) => {
-                self.parameters
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .min_bits = *bits;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Maximum, Value::Bits(bits)) => {
-                self.parameters
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .max_bits = *bits;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Default, Value::Bits(bits)) => {
-                self.parameters
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .default_bits = *bits;
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Order, Value::Text(order)) => {
@@ -1933,15 +1826,7 @@ impl Draft {
                     if parameter.device != *device_id {
                         return Err(ModelError::InvalidChange);
                     }
-                    let key = ParamKey::parse(&parameter.key).ok_or(ModelError::InvalidChange)?;
-                    parameters.push(Parameter {
-                        id: *parameter_id,
-                        key,
-                        min: f32::from_bits(parameter.min_bits),
-                        max: f32::from_bits(parameter.max_bits),
-                        default: f32::from_bits(parameter.default_bits),
-                        value: f32::from_bits(parameter.value_bits),
-                    });
+                    parameters.push(parameter.finish(*parameter_id)?);
                 }
                 devices.push(Device {
                     id: *device_id,
