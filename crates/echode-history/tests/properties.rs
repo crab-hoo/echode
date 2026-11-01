@@ -823,12 +823,38 @@ fn seeded_tracks() -> Project {
         .unwrap()
 }
 
+// Seed metadata and nonempty take lists so unrelated actions must retain them.
+// The references are model-only: this suite never opens an audio file or device.
+fn seeded_contents() -> Project {
+    let project = seeded_notes();
+    let (project, track) = project.add_track("seed audio metadata");
+    let project = project
+        .place_audio(
+            track,
+            Id::generate(),
+            Id::generate(),
+            Tick::new(0),
+            echode_model::AudioRef::try_new("ab".repeat(32), 96_000, 2, 96_000).unwrap(),
+        )
+        .unwrap();
+    let source = project.tracks()[0].clips[0].content;
+    let take = project.tracks().last().unwrap().clips[0].content;
+    let mut fields = ChangeSet::new();
+    fields.push(Change::Update {
+        id: ObjectKey::Id(source),
+        property: Property::Takes,
+        before: Value::Ids(Vec::new()),
+        after: Value::Ids(vec![take, take]),
+    });
+    project.apply_changeset(&fields).unwrap()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     #[test]
     fn random_edits_keep_every_property(
-        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..5
+        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..6
     ) {
         let base = match seeded {
             0 => Project::new(),
@@ -843,7 +869,8 @@ proptest! {
                     .set_device_state(id, Some(plugin_state_hash().to_string())).unwrap()
             }
             3 => seeded_notes(),
-            _ => seeded_tracks(),
+            4 => seeded_tracks(),
+            _ => seeded_contents(),
         };
         let mut session = Session::open(base.clone());
         for step in &steps {

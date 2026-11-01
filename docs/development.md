@@ -131,6 +131,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 履歴の `tests/track_changesets.rs` に置く。子の ID 列と解決、親の木・分数キーの拒否とジャーナルも検査する。
 操作列は入れ子のフォルダとノート・デバイスを持つ子からも始める（[ADR 0217](decisions/0217-track-changeset-fields.md)）。
 
+中身の音声参照・テイク ID 列の表は `echode-model/src/changeset_content.rs`、独立したメタデータ・ID 列と順序の回帰は
+履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。
+操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない
+（[ADR 0218](decisions/0218-content-changeset-fields.md)）。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する

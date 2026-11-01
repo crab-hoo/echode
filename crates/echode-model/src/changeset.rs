@@ -12,6 +12,10 @@ use crate::id::Id;
 use crate::model::{ClipKind, Content, ModelError, Note, Placement, Project, Track};
 use crate::time::{Meter, Tempo, TempoMap, TempoPoint, Tick};
 
+#[path = "changeset_content.rs"]
+mod content;
+use content::{ContentState, content_change, diff_content_fields};
+
 #[path = "changeset_device.rs"]
 mod device;
 use device::{DeviceState, device_change, diff_device_fields};
@@ -349,27 +353,7 @@ fn diff_content_shells(
             if content_same(before, after, content.id) {
                 continue;
             }
-            let before_notes: Vec<Id> = previous.notes.iter().map(|note| note.id).collect();
-            let after_notes: Vec<Id> = content.notes.iter().map(|note| note.id).collect();
-            if before_notes != after_notes {
-                updates.push(note_order_change(content.id, &before_notes, &after_notes));
-            }
-            if previous.audio != content.audio {
-                updates.push(update(
-                    ObjectKey::Id(content.id),
-                    Property::Audio,
-                    Value::Audio(previous.audio.clone()),
-                    Value::Audio(content.audio.clone()),
-                ));
-            }
-            if previous.takes != content.takes {
-                updates.push(update(
-                    ObjectKey::Id(content.id),
-                    Property::Takes,
-                    Value::Ids(previous.takes.clone()),
-                    Value::Ids(content.takes.clone()),
-                ));
-            }
+            diff_content_fields(previous, content, updates);
         } else {
             creates.push(content_change(true, content));
         }
@@ -380,37 +364,6 @@ fn push_content_deletes(before: &Project, after: &Project, deletes: &mut Vec<Cha
     for content in before.contents() {
         if after.content(content.id).is_none() {
             deletes.push(content_change(false, content));
-        }
-    }
-}
-
-fn content_change(create: bool, content: &Content) -> Change {
-    let fields = vec![
-        Field {
-            property: Property::Audio,
-            value: Value::Audio(content.audio.clone()),
-        },
-        Field {
-            property: Property::Takes,
-            value: Value::Ids(content.takes.clone()),
-        },
-        Field {
-            property: Property::NoteOrder,
-            value: Value::Ids(content.notes.iter().map(|note| note.id).collect()),
-        },
-    ];
-    let id = ObjectKey::Id(content.id);
-    if create {
-        Change::Create {
-            kind: ObjectKind::Content,
-            id,
-            fields,
-        }
-    } else {
-        Change::Delete {
-            kind: ObjectKind::Content,
-            id,
-            fields,
         }
     }
 }
@@ -818,12 +771,6 @@ fn clip_change(create: bool, track: Id, clip: &Placement) -> Change {
     }
 }
 
-struct ContentState {
-    audio: Option<crate::model::AudioRef>,
-    takes: Vec<Id>,
-    note_order: Vec<Id>,
-}
-
 struct ClipState {
     track: Id,
     content: Id,
@@ -860,14 +807,9 @@ impl Draft {
             parameters: HashMap::new(),
         };
         for content in project.contents() {
-            draft.contents.insert(
-                content.id,
-                ContentState {
-                    audio: content.audio.clone(),
-                    takes: content.takes.clone(),
-                    note_order: content.notes.iter().map(|note| note.id).collect(),
-                },
-            );
+            draft
+                .contents
+                .insert(content.id, ContentState::from_content(content));
             for note in &content.notes {
                 draft
                     .notes
@@ -968,14 +910,7 @@ impl Draft {
                 if self.contents.contains_key(&id) {
                     return Err(ModelError::InvalidChange);
                 }
-                self.contents.insert(
-                    id,
-                    ContentState {
-                        audio: audio_field(fields)?,
-                        takes: field_ids(fields, Property::Takes)?,
-                        note_order: field_ids(fields, Property::NoteOrder)?,
-                    },
-                );
+                self.contents.insert(id, ContentState::from_fields(fields)?);
                 Ok(())
             }
             (ObjectKind::Device, ObjectKey::Id(id)) => {
@@ -1048,6 +983,11 @@ impl Draft {
         {
             return track.set(property, value);
         }
+        if let ObjectKey::Id(id) = id
+            && let Some(content) = self.contents.get_mut(&id)
+        {
+            return content.set(property, value);
+        }
         match (id, property, value) {
             (ObjectKey::Project, Property::Meter, Value::Meter(meter)) => {
                 self.meter = *meter;
@@ -1087,60 +1027,6 @@ impl Draft {
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .kind = *kind;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::NoteOrder, Value::Ids(ids)) => {
-                self.contents
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .note_order = ids.clone();
-                Ok(())
-            }
-            (
-                ObjectKey::Id(id),
-                Property::NoteOrder,
-                Value::OrderStep {
-                    index,
-                    id: note,
-                    present,
-                },
-            ) => {
-                let order = &mut self
-                    .contents
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .note_order;
-                let index = usize::try_from(*index).map_err(|_| ModelError::InvalidChange)?;
-                if *present {
-                    if index > order.len() {
-                        return Err(ModelError::InvalidChange);
-                    }
-                    order.insert(index, *note);
-                } else if order.get(index) == Some(note) {
-                    order.remove(index);
-                } else {
-                    return Err(ModelError::InvalidChange);
-                }
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Audio, value) => {
-                let audio = match value {
-                    Value::Audio(audio) => audio.clone(),
-                    // Journals written before audio files stored a null parent.
-                    Value::Parent(None) => None,
-                    _ => return Err(ModelError::InvalidChange),
-                };
-                self.contents
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .audio = audio;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Takes, Value::Ids(ids)) => {
-                self.contents
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .takes = ids.clone();
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Content, Value::Id(content)) => {
@@ -1222,13 +1108,7 @@ impl Draft {
                 used_notes += 1;
                 notes.push(note.finish(*note_id));
             }
-            contents.push(Arc::new(Content {
-                id: content_id,
-                audio: content.audio.clone(),
-                takes: content.takes.clone(),
-                notes,
-                expressions: Vec::new(),
-            }));
+            contents.push(Arc::new(content.finish(content_id, notes)));
         }
         let mut tracks = Vec::with_capacity(self.tracks.len());
         let mut used_clips = 0;
@@ -1358,18 +1238,6 @@ fn field_text(fields: &[Field], property: Property) -> Result<String, ModelError
             _ => None,
         })
         .ok_or(ModelError::InvalidChange)
-}
-
-fn audio_field(fields: &[Field]) -> Result<Option<crate::model::AudioRef>, ModelError> {
-    let value = fields
-        .iter()
-        .find(|field| field.property == Property::Audio)
-        .ok_or(ModelError::InvalidChange)?;
-    match &value.value {
-        Value::Audio(audio) => Ok(audio.clone()),
-        Value::Parent(None) => Ok(None),
-        _ => Err(ModelError::InvalidChange),
-    }
 }
 
 fn field_optional_id(fields: &[Field], property: Property) -> Result<Option<Id>, ModelError> {
