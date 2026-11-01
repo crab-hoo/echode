@@ -8,7 +8,7 @@ import Testing
 struct NoteVelocityBatchBoundaryTests {
     @Test func contractLinkedVelocityBatchesValidateAllTargetsAndAccessibility() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-velocity-linked-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "linked keys")
@@ -97,7 +97,7 @@ struct NoteVelocityBatchBoundaryTests {
 
     @Test func contractBatchVelocityGesturesCancelOnSelectionChanges() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-velocity-group-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

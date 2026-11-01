@@ -7,7 +7,7 @@ import Testing
 struct PianoSelectionTests {
     @Test func contractRightDragSelectsIntersectingNotes() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-note-selection-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -79,7 +79,7 @@ struct PianoSelectionTests {
 
     @Test func contractSelectionPressesCancelWithoutChangingSelection() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-selection-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

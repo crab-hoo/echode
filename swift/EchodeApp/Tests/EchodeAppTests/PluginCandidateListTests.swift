@@ -19,7 +19,7 @@ struct PluginCandidateListTests {
     /// undo step (ADR 0162, ADR 0124).
     @Test func contractPluginListSelectsOnPressAndInsertsFromAnywhereInTheRow() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-plugin-list-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)

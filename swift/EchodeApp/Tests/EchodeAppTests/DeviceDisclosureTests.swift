@@ -29,7 +29,7 @@ struct DeviceDisclosureTests {
         strip.onOpenWindow = { opened = $0 }
         var edits: [DeviceChainEdit] = []
         strip.onEdit = { edits.append($0) }
-        disclosure.performClick(nil)
+        disclosure.clickWithoutAnimation()
         layout(strip)
         #expect(strip.contentWidth < width)
         #expect(column.isCollapsed && !strip.columns[1].isCollapsed)
@@ -58,7 +58,7 @@ struct DeviceDisclosureTests {
         #expect(edits.last == .copy(source: devices[0].id, track: track, before: devices[1].id))
 
         // Every boundary uses the displayed width, not a fixed column index.
-        strip.columns[2].disclosure.performClick(nil)
+        strip.columns[2].disclosure.clickWithoutAnimation()
         layout(strip)
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
@@ -83,7 +83,7 @@ struct DeviceDisclosureTests {
 
         // A reply arriving while closed changes the state, not the visible body.
         state.update(7, value: 0.8, text: "0.8")
-        disclosure.performClick(nil)
+        disclosure.clickWithoutAnimation()
         layout(strip)
         #expect(!column.isCollapsed && !column.list.isHidden && !column.search.isHidden)
         #expect(column.list.state === state && column.search.stringValue == "gain")
@@ -93,7 +93,7 @@ struct DeviceDisclosureTests {
 
     @Test func disclosureIsDocumentLocalAndNeverEditsOrContactsThePlugin() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-disclosure-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let requests = DisclosureRequests()
         let controller = ProjectController(sendDevice: { _, _ in try await requests.send() })
         await controller.open(url, creating: true)
@@ -113,7 +113,7 @@ struct DeviceDisclosureTests {
         let before = controller.undoCount
         refresh(first)
         let original = try #require(strip.columns.first)
-        original.disclosure.performClick(nil)
+        original.disclosure.clickWithoutAnimation()
         #expect(controller.collapsedDevices == [device.id])
         #expect(controller.undoCount == before && controller.redoCount == 0)
         #expect(controller.deviceRows(on: first) == [device])
@@ -140,11 +140,11 @@ struct DeviceDisclosureTests {
         refresh(first)
         #expect(strip.columns.first === original && original.isCollapsed)
         #expect(controller.redoCount == 1)
-        original.disclosure.performClick(nil)
+        original.disclosure.clickWithoutAnimation()
         #expect(controller.redoCount == 1)
         #expect(!controller.setDeviceCollapsed(UUID(), collapsed: true, documentID: document))
         #expect(!controller.setDeviceCollapsed(device.id, collapsed: true, documentID: DocumentID()))
-        original.disclosure.performClick(nil)
+        original.disclosure.clickWithoutAnimation()
         #expect(controller.collapsedDevices == [device.id])
         #expect(await requests.count == 0)
         await controller.close()
@@ -170,15 +170,15 @@ struct DeviceDisclosureTests {
         scroll.layout(); layout(strip)
         #expect(strip.columns.allSatisfy { !$0.message.isHidden })
         scroll.contentView.scroll(to: CGPoint(x: strip.contentWidth - scroll.contentSize.width, y: 0))
-        for column in strip.columns { column.disclosure.performClick(nil) }
+        for column in strip.columns { column.disclosure.clickWithoutAnimation() }
         scroll.layout(); layout(strip)
         #expect(Double(strip.frame.width) == strip.contentWidth)
         #expect(scroll.contentView.bounds.maxX <= strip.frame.maxX)
         #expect(strip.columns.allSatisfy { $0.isCollapsed && $0.message.isHidden && $0.list.isHidden })
-        for column in strip.columns { column.disclosure.performClick(nil) }
+        for column in strip.columns { column.disclosure.clickWithoutAnimation() }
         #expect(strip.columns.allSatisfy { !$0.isCollapsed && !$0.message.isHidden })
         strip.configure(devices: devices, track: track, document: document, busy: true)
-        strip.columns[0].disclosure.performClick(nil)
+        strip.columns[0].disclosure.clickWithoutAnimation()
         #expect(!strip.columns[0].isCollapsed && !strip.columns[0].disclosure.isEnabled)
     }
 
@@ -193,7 +193,7 @@ struct DeviceDisclosureTests {
         let column = try #require(strip.columns.first)
         #expect(window.makeFirstResponder(column.search))
         let editor = try #require(column.search.currentEditor())
-        column.disclosure.performClick(nil)
+        column.disclosure.clickWithoutAnimation()
         #expect(column.isCollapsed && column.search.isHidden)
         #expect(window.firstResponder !== editor && window.firstResponder !== column.search)
     }

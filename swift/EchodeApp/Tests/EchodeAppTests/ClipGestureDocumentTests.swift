@@ -32,7 +32,7 @@ struct ClipGestureDocumentTests {
 
     @Test func contractOldClipControlsCannotEditTheReopenedDocument() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-gesture-document-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav")
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)
@@ -110,7 +110,7 @@ struct ClipGestureDocumentTests {
 
     @Test func contractClipGestureKeepsItsOriginalEditCallback() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-callback-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav")
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)

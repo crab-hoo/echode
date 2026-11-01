@@ -19,7 +19,7 @@ struct RulerLoopTests {
     @Test func contractPianoRulerDragSetsOnlyTheLoopRange() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-ruler-loop-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let document = try #require(controller.documentID)

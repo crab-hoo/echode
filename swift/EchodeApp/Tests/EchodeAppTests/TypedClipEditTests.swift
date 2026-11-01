@@ -7,7 +7,7 @@ import Testing
 struct TypedClipEditTests {
     @Test func contractClipEditsPreserveIntegerTargetsHistoryAndPersistence() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-typed-clips-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("音声 \"clip\".wav"), url = root.appendingPathComponent("Project.echode")
         // This one-second fixture supplies clip windows, not a product buffer limit.

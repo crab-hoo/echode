@@ -8,6 +8,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def module():
@@ -24,7 +25,7 @@ WATCH = """\
     0.400 IMAGE main AppKit ?
     0.400 BURST main
     0.400 frame dyld dlopen
-    6.000 STALL 4.700
+    6.000 STALL 4.700 main_user=1.100 main_system=0.200 process=8.500 runnable=37.000 read_mb=1.5 pageins=2 running=40 waiting=25 uninterruptible=0 stopped=0 watch_gap=0.080 sample_block=0.010
     6.000 SAMPLE
     6.000 frame libclang_rt.tsan_osx_dynamic.dylib __tsan_memset
     6.000 frame EchodeAppTests $sPixel
@@ -81,9 +82,44 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(issues, [(6.5, "Status did not arrive")])
         lines = self.tool.summarize_run(self.stalls, issues, NAMES)
         self.assertIn("longest stall 4.70 s", lines[0])
-        self.assertIn("issue at 6.500 s: Status did not arrive", lines[1])
-        self.assertIn("CanvasSubmissionTests.contractStale", lines[2])
-        self.assertIn("MixerTests.closes [file removal]", lines[3])
+        self.assertIn("issue at 6.500 s: Status did not arrive", lines[2])
+        self.assertIn("CanvasSubmissionTests.contractStale", lines[3])
+        self.assertIn("MixerTests.closes [file removal]", lines[4])
+
+    def test_a_stall_keeps_what_the_thread_and_the_process_did(self):
+        self.assertEqual(self.stalls[0].load["runnable"], 37.0)
+        self.assertEqual(self.stalls[1].load, {})
+        self.assertEqual(self.tool.describe_load(self.stalls[0]),
+                         "main CPU 1.30 s, process 8.5 CPU-s, runnable 37.0 s, watcher gap 0.08 s")
+        self.assertEqual(self.tool.describe_load(self.stalls[1]), "")
+        lines = self.tool.summarize_run(self.stalls, [], NAMES)
+        self.assertIn("longest stall load: main CPU 1.30 s", lines[1])
+
+    def test_a_profile_is_split_by_activity_and_keeps_the_blocked_share(self):
+        samples = self.tool.parse_profile("""\
+    0.100 PROFILE 0.050 1
+    0.100 frame dyld dlopen_internal
+    0.100 frame EchodeAppTests $sOwner
+    0.200 PROFILE 0.100 4
+    0.200 frame libremovefile.dylib removefile
+    0.200 frame EchodeAppTests $sThunk
+    0.300 PROFILE 9.000 3
+    0.300 frame AppKit -[NSButtonCell _doUserDisclosureExpandOrCollapseInRect:]
+    0.300 frame EchodeAppTests $sOwner
+    0.400 STALL 1.000
+    0.400 frame EchodeAppTests $sIgnored
+    0.500 PROFILE 9.100 1
+    0.500 frame libsystem_kernel.dylib mach_msg2_trap
+""")
+        self.assertEqual([sample[:2] for sample in samples], [(0.05, 1), (0.1, 4), (9.0, 3), (9.1, 1)])
+        self.assertEqual(len(samples[2][2]), 2)
+        self.assertEqual([self.tool.profile_category(sample[2]) for sample in samples],
+                         ["framework load", "file removal", "disclosure click (nested run loop)", "no test frame"])
+        whole = self.tool.profile_table([samples, []])
+        self.assertEqual(len(whole), 4)
+        self.assertIn("0.03 s/run  blocked 100%  file removal", " ".join(whole))
+        early = self.tool.profile_table([samples], end=8.0)
+        self.assertEqual(len(early), 2)
 
     def test_attribution_is_averaged_over_runs(self):
         lines = self.tool.attribution([(self.stalls, NAMES), ([], {})], top=1)

@@ -10,7 +10,7 @@ struct SampleAuditionControlTests {
     @Test func contractManualAuditionAndVolumeWorkWithAutomaticAuditionOffWithoutEditing() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-audition-controls-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         for name in ["kick.wav", "snare.wav", "song.mid"] { try Data().write(to: root.appendingPathComponent(name)) }
         let defaultsName = "echode-audition-controls-\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: defaultsName))

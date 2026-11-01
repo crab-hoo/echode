@@ -7,7 +7,7 @@ import Testing
 struct PianoMoveBatchBoundaryTests {
     @Test func contractLinkedMovesValidateEveryTargetAndShareBounds() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-move-linked-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "linked keys")
@@ -87,7 +87,7 @@ struct PianoMoveBatchBoundaryTests {
 
     @Test func batchTimeMovesGrowFixedWindowsAndUndoTogether() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-move-fixed-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "fixed keys")
@@ -113,7 +113,7 @@ struct PianoMoveBatchBoundaryTests {
 
     @Test func anOverlapFailureRollsBackEarlierMovesInTheTransaction() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-move-rollback-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

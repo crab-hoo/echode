@@ -8,7 +8,7 @@ import Testing
 struct NoteVelocityTests {
     @Test func contractOptionDragChangesVelocityWithoutMovingTheNote() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-note-velocity-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -103,7 +103,7 @@ struct NoteVelocityTests {
 
     @Test func cancelledVelocityDragsNeverCommit() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-velocity-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -153,7 +153,7 @@ struct NoteVelocityTests {
 
     @Test func relativeVelocityClampsAndLateResponsesRespectNewerSelections() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-velocity-bounds-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

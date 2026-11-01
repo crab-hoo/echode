@@ -13,7 +13,7 @@ struct CanvasSubmissionTests {
         let queue = try #require(device.makeCommandQueue())
         let painter = try ArrangePainter(device: device)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-submission-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         for index in 0..<3 { await controller.addTrack(name: "Track \(index)") }

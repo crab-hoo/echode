@@ -70,7 +70,7 @@ struct DocumentSessionTests {
 
     @Test func contractADragInANewDocumentReachesThatDocument() async throws {
         let (first, second) = (location("drag-first"), location("drag-second"))
-        defer { for url in [first, second] { try? FileManager.default.removeItem(at: url) } }
+        defer { for url in [first, second] { removeTestFile(url) } }
         let (controller, gate) = heldParameters()
         await controller.open(first, creating: true)
         let oldDevice = try await addListedDevice(controller, track: "old")
@@ -98,7 +98,7 @@ struct DocumentSessionTests {
 
     @Test func contractAReplyForTheOldDocumentDoesNotHoldTheNextOnesCommands() async throws {
         let (first, second) = (location("audio-first"), location("audio-second"))
-        defer { for url in [first, second] { try? FileManager.default.removeItem(at: url) } }
+        defer { for url in [first, second] { removeTestFile(url) } }
         let gate = AudioReplyGate()
         let metronome = Mutex(false)
         let state = try JSONDecoder().decode(AudioState.self, from: Data("""
@@ -142,7 +142,7 @@ struct DocumentSessionTests {
 
     @Test func contractARevisionRestoreStaysWithItsDocument() async throws {
         let url = location("restore")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let (controller, gate) = heldParameters()
         await controller.open(url, creating: true)
         let device = try await addListedDevice(controller, track: "one")
@@ -172,7 +172,7 @@ struct DocumentSessionTests {
     /// document ID tells an earlier input from a current one.
     @Test func contractEveryDocumentOperationRejectsAnEarlierDocument() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-session-stale-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav"), url = root.appendingPathComponent("Project.echode")
         // This short fixture only supplies a clip to address, not a product buffer limit.
@@ -246,7 +246,7 @@ struct DocumentSessionTests {
 
     @Test func closingRemovesTheDocumentAndItsContentsTogether() async throws {
         let url = location("close")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         let (released, release) = AsyncStream<Void>.makeStream()
         controller.endDocument = { document in

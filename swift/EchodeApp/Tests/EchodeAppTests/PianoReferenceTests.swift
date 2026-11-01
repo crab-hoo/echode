@@ -7,7 +7,7 @@ import Testing
 struct PianoReferenceTests {
     @Test func contractReferenceNotesRenderBehindTheInputAndNeverOwnEdits() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-reference-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Chords")
@@ -72,7 +72,7 @@ struct PianoReferenceTests {
 
     @Test func contractTrackSelectorSeparatesReferenceEditAndMixerState() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-selector-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Chords")

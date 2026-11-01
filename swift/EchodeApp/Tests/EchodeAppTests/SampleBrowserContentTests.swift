@@ -7,7 +7,7 @@ import Testing
 struct SampleBrowserContentTests {
     @Test func contractBrowserShowsProductionFilesAndMarksMIDIUnavailable() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-browser-content-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         for name in ["folder", "Song.echode", "Other.app"] {
             try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
         }

@@ -8,7 +8,7 @@ import Testing
 struct TrackDuplicationTests {
     @Test func contractHeaderMenuDuplicatesSelectedSubtreesAsOneUndoAndReopen() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-track-duplicate-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         let state = WorkspaceState(defaults: .init())
         let session = WorkspaceSession(controller: controller, state: state)
@@ -82,7 +82,7 @@ struct TrackDuplicationTests {
 
     @Test func outsideRightClickSelectsThatRowAndStaleRequestsAreRefused() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-stale-duplicate-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         let session = WorkspaceSession(controller: controller, state: WorkspaceState(defaults: .init()))
         #expect(session.duplicateTracks() == nil)

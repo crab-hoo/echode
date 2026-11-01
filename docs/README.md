@@ -184,6 +184,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   [ADR 0198](decisions/0198-verification-launch-and-cache-cost.md)。広い製品依存と計装ごとの検査は維持する。
 - 識別計算での同じ範囲の共有と `check-verification` の短縮、前後の測定: [ADR 0208](decisions/0208-verification-shared-scopes.md)。
 - UI テストのバンドルから実 HAL をなくすリンク時の代役と、触れたテストを名指しする `check-real-hal`: [ADR 0209](decisions/0209-real-hal-guard.md)。
+- サニタイザの Swift 全体実行の同時実行数と、全テスト同時で競合を探す実行、前後の測定: [ADR 0210](decisions/0210-sanitizer-test-width.md)。
 - 終了コードの保証・実行予定だけの環境事前確認・依存順序と失敗検出遅延: [ADR 0166](decisions/0166-verification-failure-detection.md)。
 - 起動復旧の終了待ち・Darwin errno の検査ランタイム修正: [ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)。
 - 継続の先行再開の TSan 誤検出と検査ビルドだけの注釈: [ADR 0207](decisions/0207-continuation-handoff-tsan.md)。

@@ -8,7 +8,7 @@ import Testing
 struct SampleAudioDropTests {
     @Test func contractFileURLDropUsesPointerAndAppendsInOneUndoAcrossReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audio-drop-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("tone.wav"), project = root.appendingPathComponent("Song.echode")
         try wavMono(rate: 48_000, frames: 480).write(to: wav)
@@ -77,7 +77,7 @@ struct SampleAudioDropTests {
 
     @Test func rejectsWrongTypesBoundariesRemovedTargetsAndFailedImportsWithoutPartialTracks() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audio-drop-reject-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let controller = ProjectController()
         await controller.open(root, creating: true)
         let document = try #require(controller.documentID)
@@ -131,7 +131,7 @@ struct SampleAudioDropTests {
 
     @Test func projectedRowsAndFractionalScrollUseCurrentCameraNotHiddenChildren() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audio-drop-rows-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let controller = ProjectController()
         await controller.open(root, creating: true)
         await controller.addTrack(name: "folder")
@@ -165,7 +165,7 @@ struct SampleAudioDropTests {
 
     @Test func nativeDropEntryRejectsDocumentChangesAndCancelledDrags() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-native-drop-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let controller = ProjectController()
         await controller.open(root, creating: true)
         let view = ArrangeView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))

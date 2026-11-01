@@ -8,7 +8,7 @@ import Testing
 struct PianoStepTests {
     @Test func contractArrowRepeatsEditTheWholeSelectionOnTheirTurn() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-key-batch-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Keys")
@@ -55,7 +55,7 @@ struct PianoStepTests {
 
     @Test func contractKeyboardBoundsAndLinkedNotesStayAtomic() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-key-linked-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Links")

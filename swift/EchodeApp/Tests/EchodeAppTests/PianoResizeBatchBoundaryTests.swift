@@ -7,7 +7,7 @@ import Testing
 struct PianoResizeBatchBoundaryTests {
     @Test func contractLinkedResizesValidateTargetsAndShareEdgeBounds() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-resize-linked-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "linked keys")
@@ -90,7 +90,7 @@ struct PianoResizeBatchBoundaryTests {
 
     @Test func fixedWindowsGrowAndLaterOverlapFailureRollsBackEarlierResizes() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-resize-fixed-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

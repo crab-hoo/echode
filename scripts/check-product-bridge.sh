@@ -9,6 +9,11 @@ product_output="$PWD/target/bridge/$product_sanitizer/product"
 product_validation=(python3 scripts/run-bridge-validation.py --timeout 600)
 product_swift=swift
 product_swift_flags=(-Xswiftc -warnings-as-errors)
+# Tests on the main actor share one queue, so a poll waits for a lap of every live
+# test. With all of them alive, that lap used up the 5 s deadlines on a busy machine
+# (ADR 0210). Swift Testing has only this variable: `--num-workers` leaves it uncapped.
+product_width=16
+unset SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
 mkdir -p "$product_output"
 case "$product_sanitizer" in
     address)
@@ -51,13 +56,27 @@ cmp -s "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h || \
     cp "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 # Keep every test and the recovery suite's 5s readiness deadline. A separate
 # process keeps unrelated concurrent fixtures out of the recovery readiness check.
-"${product_validation[@]}" --log "$product_output/swift-tests.log" "$product_swift" test -q \
+rm -f "$product_output/swift-tests.events"
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="$product_width" \
+    "${product_validation[@]}" --log "$product_output/swift-tests.log" "$product_swift" test -q \
     --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
-    --sanitize "$product_sanitizer" "${product_swift_flags[@]}" --skip RecoveryConsentTests
+    --sanitize "$product_sanitizer" "${product_swift_flags[@]}" --skip RecoveryConsentTests \
+    --event-stream-output-path "$product_output/swift-tests.events" --event-stream-version 0
+python3 scripts/check_test_width.py "$product_output/swift-tests.events" --at-most "$product_width"
 "${product_validation[@]}" --log "$product_output/recovery-swift-tests.log" "$product_swift" test -q --skip-build \
     --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
     --sanitize "$product_sanitizer" "${product_swift_flags[@]}" --filter RecoveryConsentTests
 if ! grep -Eq 'Test run with [1-9][0-9]* tests? .*passed' "$product_output/recovery-swift-tests.log"; then
     echo "product bridge: recovery suite must execute at least one test" >&2
     exit 1
+fi
+if [ "$product_sanitizer" = thread ]; then
+    # The width above hides races between tests that never overlap (ADR 0210), so all of
+    # them run together once more. The run above judged the tests; this one finds reports.
+    rm -f "$product_output/race-swift-tests.events"
+    "${product_validation[@]}" --races-only --log "$product_output/race-swift-tests.log" "$product_swift" test -q --skip-build \
+        --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
+        --sanitize "$product_sanitizer" "${product_swift_flags[@]}" --skip RecoveryConsentTests \
+        --event-stream-output-path "$product_output/race-swift-tests.events" --event-stream-version 0
+    python3 scripts/check_test_width.py "$product_output/race-swift-tests.events" --more-than "$product_width"
 fi

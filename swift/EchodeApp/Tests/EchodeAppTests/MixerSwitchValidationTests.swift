@@ -7,7 +7,7 @@ import Testing
 struct MixerSwitchValidationTests {
     @Test func missingOrMalformedTargetsCannotPartiallyChangeTracksOrDiscardRedo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-switch-invalid-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first")
@@ -54,7 +54,7 @@ struct MixerSwitchValidationTests {
 
     @Test func aSwitchCommitsTheSingleTrackFaderPreviewBeforeTheAtomicGroupEdit() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-switch-preview-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first")

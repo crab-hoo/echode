@@ -11,7 +11,7 @@ import Testing
 struct DocumentCompletionOrderTests {
     @Test func aResultFromAResumeAheadOfTheAwaitIsOrdered() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-completion-order-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let document = try Document(creating: url.path)
         let relay = CompletionRelay()
         let snapshot = try await awaitCompletion { context in

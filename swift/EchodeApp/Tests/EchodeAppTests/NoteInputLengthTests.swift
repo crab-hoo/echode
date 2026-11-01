@@ -8,7 +8,7 @@ import Testing
 struct NoteInputLengthTests {
     @Test func contractSingleClickInsertsOnceAndKeepsThePressedPosition() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-note-click-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -48,7 +48,7 @@ struct NoteInputLengthTests {
 
     @Test func contractInputLengthFollowsSelectionResizeAndHistoryAcrossTracks() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-note-length-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         #expect(controller.noteInput.length == nil)

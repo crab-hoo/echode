@@ -119,6 +119,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   ASan・通常・反例とは出力を分け、異なる feature 構成を一括実行へ混ぜない（[ADR 0198](decisions/0198-verification-launch-and-cache-cost.md)）。
   ASan / TSan の Swift は復旧同意のスイートを別プロセスへ分け、全体の同時実行の負荷から隔離する。
   対象と 5 秒の待機期限は維持し、スイートの 0 件実行と失敗を拒否する（[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。
+  ASan / TSan の Swift の全体実行は同時実行数を 16 に絞って合否を決める。実際の幅は `check_test_width.py` がイベント列で確かめる。
+  TSan はその後、全テストを同時に動かす実行をもう一度行い、テストをまたぐ競合を探す。
+  この実行はサニタイザの報告と途中の異常終了だけを判定し、テストの失敗は判定しない（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
 - `check-bridge-miri`: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
   フォルダ開閉用の表示ハンドルの保持・再展開と可視行の容量境界も同じ経路で確認する。
 

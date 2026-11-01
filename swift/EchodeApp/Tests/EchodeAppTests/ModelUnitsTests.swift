@@ -18,7 +18,7 @@ struct ModelUnitsTests {
         #expect(ModelLimits.midi7 == 0...127)
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-units-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "units")

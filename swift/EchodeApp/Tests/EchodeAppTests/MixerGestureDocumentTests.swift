@@ -19,7 +19,7 @@ struct MixerGestureDocumentTests {
 
     @Test func contractOldHeaderPressCannotStartADragInTheReopenedDocument() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-press-document-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "saved")
@@ -49,7 +49,7 @@ struct MixerGestureDocumentTests {
 
     @Test func contractOldResetAndEntryCannotFinishANewDocumentsPreview() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-reset-document-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "saved")
@@ -97,7 +97,7 @@ struct MixerGestureDocumentTests {
 
     @Test func sameDocumentUpdatesKeepThePressCallbacksAndFreshGesturesStillWork() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-gesture-update-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "saved")

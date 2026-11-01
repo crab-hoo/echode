@@ -9,7 +9,7 @@ import Testing
 struct PianoInsertionTests {
     @Test func contractBlankDragsInsertOnReleaseAndKeepUndoAndSave() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-insert-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -58,7 +58,7 @@ struct PianoInsertionTests {
 
     @Test func blankPressCancellationNeverInsertsOrLeavesAPreview() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-insert-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -103,7 +103,7 @@ struct PianoInsertionTests {
 
     @Test func blankClicksInsertOnceAndDrawTheInsertion() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-insert-click-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

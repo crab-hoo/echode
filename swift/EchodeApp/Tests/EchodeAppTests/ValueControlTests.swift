@@ -108,7 +108,7 @@ struct ValueControlTests {
 
     @Test func contractHeaderDoubleClickResetsAndTripleClickTypesWithOneUndo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-value-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Lead")
@@ -199,7 +199,7 @@ struct ValueControlTests {
 
     @Test func contractClipHandlesResetOnDoubleClickAndTypeOnTripleClick() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-value-clip-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav")
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)

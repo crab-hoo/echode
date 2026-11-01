@@ -7,7 +7,7 @@ import Testing
 struct FolderDisclosureTests {
     @Test func contractFolderDisclosureKeepsHeadersAndLanesOnTheSameVisibleTracks() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-folder-view-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let plugin = FakeParameterPlugin()
         // A dropped FX also opens its GUI; keep that request off real HAL.
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
@@ -95,7 +95,7 @@ struct FolderDisclosureTests {
 
     @Test func nestedDisclosureAndKeyboardKeepTransientStateWithoutEditingTheProject() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-folder-keys-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "folder")

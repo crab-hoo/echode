@@ -8,7 +8,7 @@ import Testing
 struct MixerValueOrderTests {
     @Test func queuedEntriesResolveCurrentValuesAndKeepTheSubmittedSelection() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-value-order-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first")
@@ -52,7 +52,7 @@ struct MixerValueOrderTests {
 
     @Test func anOldNumericFieldCannotBorrowTheReopenedDocumentsCallback() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-value-field-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "saved")

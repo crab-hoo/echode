@@ -17,7 +17,7 @@ struct ArrangeRulerTests {
     @Test func contractArrangeRulerSharesStartAndLoopWithoutSelectingTracks() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-arrange-ruler-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let snapshot = try #require(controller.snapshot), document = try #require(controller.documentID)
@@ -104,7 +104,7 @@ struct ArrangeRulerTests {
     @Test func cancelledRulerGesturesNeverSendAStartOrRange() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-arrange-ruler-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         let snapshot = try #require(controller.snapshot)
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 640, height: 200))
@@ -147,7 +147,7 @@ struct ArrangeRulerTests {
     @Test func initialSelectionRevealsBeforeTheFirstChildLayout() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-arrange-ruler-layout-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first"); await controller.addTrack(name: "last")
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 640, height: 128))

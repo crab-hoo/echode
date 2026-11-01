@@ -8,7 +8,7 @@ import Testing
 struct PianoWorkflowTests {
     @Test func contractTrackSelectionKeepsThePianoTargetAndNoteSelection() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-target-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Chords")
@@ -41,7 +41,7 @@ struct PianoWorkflowTests {
 
     @Test func contractArrangeDoubleClickOpensAnIndependentPianoLocation() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-arrange-open-piano-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Chords")

@@ -38,7 +38,7 @@ struct PlaybackStartTests {
                 """.utf8))
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-start-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         #expect(controller.playbackStart == 0)
         await controller.setPlaybackStart(beat: 2)
@@ -72,7 +72,7 @@ struct PlaybackStartTests {
     @Test func contractPianoRulerSetsTheStartOnTheGridAndDrawsItsMarker() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-ruler-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let track = try #require(controller.selection)

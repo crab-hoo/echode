@@ -14,7 +14,7 @@ struct PianoRhythmicGridTests {
 
     private func exercise(ticks: Int64, name: String) async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-rhythmic-grid-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Keys")

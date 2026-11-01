@@ -103,7 +103,7 @@ struct PianoTests {
 
     @Test func aDragIsOneDurableEditAndPreservesIdentityAndVelocity() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -146,7 +146,7 @@ struct PianoTests {
 
     @Test func resizeMergesAutoClipsAndNavigationRevealsOffscreenNotes() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -174,7 +174,7 @@ struct PianoTests {
 
     @Test func contractPianoAccessibilityBuildsOnlyOnQueryAndReusesElements() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-ax-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -247,7 +247,7 @@ struct PianoTests {
 
     @Test func repeatedArrowKeysMoveFromTheStepAlreadySent() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-steps-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

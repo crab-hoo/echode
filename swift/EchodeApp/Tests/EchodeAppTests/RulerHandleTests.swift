@@ -11,7 +11,7 @@ struct RulerHandleTests {
     @Test func contractLoopHandlesResizeOneEdgeWithoutSeekingInBothEditors() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-loop-handles-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
@@ -73,7 +73,7 @@ struct RulerHandleTests {
     @Test func cancelledHandlesDoNotCommitOverExternalChanges() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-loop-handle-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)

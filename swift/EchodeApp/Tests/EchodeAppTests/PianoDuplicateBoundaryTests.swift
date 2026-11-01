@@ -7,7 +7,7 @@ import Testing
 struct PianoDuplicateBoundaryTests {
     @Test func contractCopiesShareBoundsDeduplicateLinksAndRejectStaleTargets() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-copy-links-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "linked keys")
@@ -67,7 +67,7 @@ struct PianoDuplicateBoundaryTests {
 
     @Test func fixedWindowCopyGrowsWithoutMovingSourceAndFailureRollsBack() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-copy-fixed-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

@@ -363,6 +363,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   2026-10-31 にも、`FolderDisclosureTests` の FX のドロップが開く窓の要求を機器なしへ分離した。警告の原因が未確定であることは変わらない。
   2026-11-01 からは `EchodeAppTests` のバンドルに実 HAL がなく、触れたテストは `make check-real-hal` が名指しで止める（[ADR 0209](decisions/0209-real-hal-guard.md)）。
   UI テストからこの警告の経路はなくなったが、原因の解決ではない。
+- **サニタイザの Swift 全体実行の幅**: 合否は同時実行数 16 の実行で決め、TSan は全テスト同時の実行で競合だけを探す（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
+  幅は実験的な環境変数に頼るので、実際の幅をイベント列で確かめる。5 秒を超えるシステム全体の停止は、この対策でも吸収できない。
 - **errno TSan 警告**: Darwin arm64 のスレッド固有領域の再利用が、C だけの再現でも誤検出された。
   検査専用ランタイムで errno の寿命処理を修正し、同じ errno を実際に共有する競合の検出も保つ（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
   正式な合否は検査レポートを参照する。

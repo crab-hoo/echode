@@ -7,7 +7,7 @@ import Testing
 struct TrackInsertionTests {
     @Test func contractCommandAndFooterInsertTracksAsOneUndoAndReopen() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-track-insert-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         let state = WorkspaceState(defaults: .init())
         let session = WorkspaceSession(controller: controller, state: state)
@@ -53,7 +53,7 @@ struct TrackInsertionTests {
 
     @Test func expandedFoldersAppendChildrenAndLeafTracksKeepTheirParent() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-folder-insert-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "folder")
@@ -85,7 +85,7 @@ struct TrackInsertionTests {
 
     @Test func removedAnchorsAndReopenedDocumentsRejectCapturedRequestsWithoutClearingRedo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-stale-insert-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "kept")

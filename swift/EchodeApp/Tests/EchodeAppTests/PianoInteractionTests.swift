@@ -36,7 +36,7 @@ struct PianoInteractionTests {
 
     @Test func selectionAndResizeEndOnlyTheInteractionsBoundToThem() async throws {
         let (_, _, first, _, url) = try await fixture()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         for (name, value, keptBySelection, keptByResize) in try everyInteraction(first.id) {
             #expect(!value.isIdle, "\(name)")
             var selection = value, resize = value
@@ -49,7 +49,7 @@ struct PianoInteractionTests {
 
     @Test func aNoteTransformDrawsNothingUntilItsDragThreshold() async throws {
         let (_, _, first, _, url) = try await fixture()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let camera = PianoCamera()
         let values = try everyInteraction(first.id)
         var move = try #require(values.first { $0.name == "move" }).value
@@ -73,7 +73,7 @@ struct PianoInteractionTests {
 
     @Test func anEdgePressAfterAnUnreleasedGroupMoveResizes() async throws {
         let (snapshot, track, first, ids, url) = try await fixture()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let harness = PianoMoveBatchHarness(snapshot: snapshot, track: track, selected: ids)
         defer { harness.view.stop() }
         var moves = 0, resizes = 0
@@ -96,7 +96,7 @@ struct PianoInteractionTests {
     /// interaction. It still ends the old one, whose drag must not resume.
     @Test func aPressDuringAnUnreleasedPreviewEndsItWithoutCommitting() async throws {
         let (snapshot, track, first, ids, url) = try await fixture()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let harness = PianoMoveBatchHarness(snapshot: snapshot, track: track, selected: ids)
         defer { harness.view.stop() }
         var writes = 0
@@ -119,7 +119,7 @@ struct PianoInteractionTests {
 
     @Test func aNotePressAfterAnUnreleasedRulerPressEditsTheNote() async throws {
         let (snapshot, track, first, _, url) = try await fixture()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let harness = PianoMoveBatchHarness(snapshot: snapshot, track: track, selected: [first.id])
         defer { harness.view.stop() }
         var edits = 0, requests = 0

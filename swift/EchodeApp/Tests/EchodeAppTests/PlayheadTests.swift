@@ -10,7 +10,7 @@ import Testing
 struct PlayheadTests {
     @Test func transportCommandsRequestAFrameAndPollingDoesNot() async {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-playhead-gen-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController { document, command in
             guard case .play = command else { return try await document.audio(command) }
             // This test checks UI invalidation, not HAL. Keep the real bridge

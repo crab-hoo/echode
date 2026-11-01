@@ -49,7 +49,7 @@ struct TransportOrderTests {
             return try await document.audio(command)
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-transport-order-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let document = try #require(controller.documentID), snapshot = try #require(controller.snapshot)

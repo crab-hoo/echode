@@ -7,7 +7,7 @@ import Testing
 struct MixerStepOrderTests {
     @Test func stepsResolveAfterNumericEntriesAndLivePreviewsWithoutRetargeting() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-step-order-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "anchor")

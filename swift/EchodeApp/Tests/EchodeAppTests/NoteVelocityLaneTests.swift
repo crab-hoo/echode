@@ -7,7 +7,7 @@ import Testing
 struct NoteVelocityLaneTests {
     @Test func contractLaneDragSharesVelocityHistoryAndPreservesGeometry() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-velocity-lane-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -59,7 +59,7 @@ struct NoteVelocityLaneTests {
 
     @Test func contractLaneShowsAllPitchesAndSynchronizesPreviewAndAccessibility() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-velocity-lane-frame-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -119,7 +119,7 @@ struct NoteVelocityLaneTests {
 
     @Test func laneGesturesCancelAndBlankClicksNeverInsert() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-velocity-lane-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

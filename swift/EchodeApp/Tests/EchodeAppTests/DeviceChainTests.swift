@@ -8,7 +8,7 @@ import Testing
 struct DeviceChainTests {
     @Test func contractDeviceBypassPersistsWithUndo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-bypass-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
@@ -45,7 +45,7 @@ struct DeviceChainTests {
 
     @Test func contractDeviceChainGesturesPersistOnceAndUndo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-chain-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)

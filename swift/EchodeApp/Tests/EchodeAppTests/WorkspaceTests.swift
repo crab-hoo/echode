@@ -8,7 +8,7 @@ import Testing
 struct WorkspaceTests {
     @Test func failedStartupOpenReenablesNewAndOpen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-startup-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let previous = root.appendingPathComponent("Previous.echode")
         let fresh = root.appendingPathComponent("Fresh.echode")
@@ -77,7 +77,7 @@ struct WorkspaceTests {
 
     @Test func pendingDraftsFollowNoteIdentityAndExternalChanges() async throws {
         let url = temporaryProject()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true); await controller.addTrack(name: "notes")
         await controller.insertNote(pitch: 60, beat: 0, length: 1)
@@ -104,7 +104,7 @@ struct WorkspaceTests {
 
     @Test func selectionAndCapturedEditTargetsStayConsistentWithoutAView() async throws {
         let url = temporaryProject()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true); let document = try #require(controller.documentID)
         await controller.addTrack(name: "first"); let first = try #require(controller.selection)
@@ -134,7 +134,7 @@ struct WorkspaceTests {
     @Test func editsCapturedBeforeOpeningACopyCannotMutateItsIdenticalIDs() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-context-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let original = root.appendingPathComponent("original.echode"), copy = root.appendingPathComponent("copy.echode")
         let controller = ProjectController()
         await controller.open(original, creating: true); await controller.addTrack(name: "pad")
@@ -158,7 +158,7 @@ struct WorkspaceTests {
 
     @Test func commandCapabilitiesAndNonmodalPluginDocumentOwnershipStayConsistent() async throws {
         let url = temporaryProject()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         let state = WorkspaceState(defaults: .init())
         let session = WorkspaceSession(controller: controller, state: state)
@@ -219,7 +219,7 @@ struct WorkspaceTests {
 
     @Test func folderNavigationFiltersProjectsAndLatestRequestWins() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-browser-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let first = root.appendingPathComponent("first"), second = root.appendingPathComponent("second")
         try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: second.appendingPathComponent("Song.echode"), withIntermediateDirectories: true)
@@ -280,7 +280,7 @@ struct WorkspaceTests {
 
     @Test func closingAndRecreatingCanvasesPreservesViewportsWithoutOpeningWindows() async throws {
         let url = temporaryProject()
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         for index in 0..<12 { await controller.addTrack(name: "track \(index)") }

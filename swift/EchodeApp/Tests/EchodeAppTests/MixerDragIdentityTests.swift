@@ -12,7 +12,7 @@ struct MixerDragIdentityTests {
 
     @Test func contractZeroHorizontalHeaderDragsPreserveQuietGainAndRedo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-drag-identity-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController(sendAudio: { _, _ in AudioState() })
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Quiet")

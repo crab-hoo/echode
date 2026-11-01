@@ -7,7 +7,7 @@ import Testing
 struct PluginBatchTests {
     @Test func contractSelectedTrackFXBatchPersistsAsOneUndo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-batch-fx-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
@@ -74,7 +74,7 @@ struct PluginBatchTests {
 
     @Test func invalidTargetsDoNotPartiallyInsertOrClearRedo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-batch-invalid-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let plugin = FakeParameterPlugin()
         // A single candidate also opens its GUI; keep that request off real HAL.
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })

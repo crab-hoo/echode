@@ -9,7 +9,7 @@ import Testing
 struct PianoDragTests {
     @Test func contractShiftNoteDragsReleaseTheGridAndCommitOnce() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-drag-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -75,7 +75,7 @@ struct PianoDragTests {
         for variant in 0..<3 {
             let fixed = variant == 2
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-bounds-\(UUID()).echode")
-            defer { try? FileManager.default.removeItem(at: url) }
+            defer { removeTestFile(url) }
             let controller = ProjectController()
             await controller.open(url, creating: true)
             await controller.addTrack(name: "keys")
@@ -153,7 +153,7 @@ struct PianoDragTests {
 
     @Test func cancelledOrUnmovedNotePressesNeverEdit() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -188,7 +188,7 @@ struct PianoDragTests {
 
     @Test func noteDragBoundariesKeepPositiveLengthsAndUseTheReleasePosition() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-limits-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

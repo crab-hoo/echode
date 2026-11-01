@@ -7,9 +7,9 @@ import Testing
 struct RecoveryConsentTests {
     @Test func contractRecoveryWarningPrecedesDocumentPublicationAndEditing() async throws {
         let fixture = try await damagedProject()
-        defer { try? FileManager.default.removeItem(at: fixture.url) }
+        defer { removeTestFile(fixture.url) }
         let previous = FileManager.default.temporaryDirectory.appendingPathComponent("echode-before-recovery-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: previous) }
+        defer { removeTestFile(previous) }
         let prepares = PrepareCalls()
         let controller = ProjectController(sendAudio: { _, command in await prepares.receive(command) })
         await controller.open(previous, creating: true)
@@ -60,7 +60,7 @@ struct RecoveryConsentTests {
 
     @Test func cancellingOpenReleasesConsentAndPackageOwnership() async throws {
         let fixture = try await damagedProject()
-        defer { try? FileManager.default.removeItem(at: fixture.url) }
+        defer { removeTestFile(fixture.url) }
         let controller = ProjectController()
         let opening = Task { await controller.open(fixture.url) }
         try await waitForPrompt(controller, opening: opening)

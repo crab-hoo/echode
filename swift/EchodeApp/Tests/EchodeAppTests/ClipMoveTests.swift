@@ -27,7 +27,7 @@ struct ClipMoveTests {
 
     @Test func contractBodyDragMovesAndCommandDragCopiesClipsAsOneUndoAndReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-move-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav"), url = root.appendingPathComponent("Project.echode")
         // One second at 120 bpm: two beats, 144 points at the pane's 72 points per beat.
@@ -137,7 +137,7 @@ struct ClipMoveTests {
 
     @Test func landingReplacesOverlapsAndStaleRequestsAreRefused() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-replace-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav")
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)

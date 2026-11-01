@@ -62,7 +62,7 @@ struct RealHALGuardTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ECHODE_REAL_HAL_CONTROL"] != nil))
     func aDefaultControllerStopsAtTheGuard() async {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-real-hal-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.togglePlayback()

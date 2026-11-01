@@ -7,7 +7,7 @@ import Testing
 struct MixerValueBoundaryTests {
     @Test func contractNumericEntriesClampTheCommonDifferenceAndRejectStaleDocuments() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-value-bounds-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "anchor")
@@ -54,7 +54,7 @@ struct MixerValueBoundaryTests {
 
     @Test func silenceAndSingleTrackEntriesHaveExplicitSemantics() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-value-silence-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "silent")
@@ -100,7 +100,7 @@ struct MixerValueBoundaryTests {
             #expect(request.values(from: targets.map { _ in 0.5 }) == nil)
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-value-invalid-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "remaining")

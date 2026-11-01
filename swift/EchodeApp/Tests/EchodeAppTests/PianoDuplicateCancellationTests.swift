@@ -8,7 +8,7 @@ import Testing
 struct PianoDuplicateCancellationTests {
     @Test func contractCopyClicksAndCancelledDragsNeverWrite() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-copy-cancel-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

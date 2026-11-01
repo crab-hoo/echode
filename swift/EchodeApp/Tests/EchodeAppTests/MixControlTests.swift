@@ -13,7 +13,7 @@ struct MixControlTests {
 
     @Test func pendingPreviewKeepsOnlyTheLatestValueAndCloseCancelsIt() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-preview-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let gate = PreviewGate()
         let controller = ProjectController(sendAudio: { _, command in
             if case .previewFader(_, let gain, _) = command { await gate.receive(gain) }
@@ -44,7 +44,7 @@ struct MixControlTests {
 
     @Test func contractHeaderMixerGesturesPersistOnceAndUndo() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Mixer")
@@ -132,7 +132,7 @@ struct MixControlTests {
 
     @Test func contractClipHandlesPersistGainAndFadesInDocumentTime() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-controls-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav")
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)
@@ -319,7 +319,7 @@ struct MixControlTests {
 
     @Test func repeatedMixerStepsLandWhileTheFirstEditIsStillBusy() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-steps-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Steps")
@@ -379,7 +379,7 @@ struct MixControlTests {
 
     @Test func queuedSwitchesBackToTheDisplayedValueAreNotDropped() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-switches-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "switches")
@@ -423,7 +423,7 @@ struct MixControlTests {
 
     @Test func startingAFaderDoesNotDropAnEditAlreadyQueued() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-queued-fader-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController(sendAudio: { _, _ in AudioState() })
         await controller.open(url, creating: true)
         await controller.addTrack(name: "queued fader")

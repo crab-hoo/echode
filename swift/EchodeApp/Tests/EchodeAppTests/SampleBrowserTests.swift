@@ -9,7 +9,7 @@ import Testing
 struct SampleBrowserTests {
     @Test func contractRegisteredSampleSearchCoversAllRootsAndSkipsPackagesAndLinks() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-library-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let first = root.appendingPathComponent("first"), second = root.appendingPathComponent("second")
         let nested = first.appendingPathComponent("nested"), package = first.appendingPathComponent("Song.echode")
         for folder in [nested, package, second] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
@@ -56,7 +56,7 @@ struct SampleBrowserTests {
 
     @Test func contractSampleInsertionCapturesItsTargetAndSurvivesUndoAndReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-sample-target-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("tone.wav"), project = root.appendingPathComponent("Song.echode")
         try wavMono(rate: 48_000, frames: 4_800).write(to: wav)
@@ -105,7 +105,7 @@ struct SampleBrowserTests {
 
     @Test func contractBrowserSelectionAuditionsOnlySamplesWithoutTheEditQueue() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-audition-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let folder = root.appendingPathComponent("samples")
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
         for name in ["kick.wav", "snare.aif", "melody.mid"] {
@@ -138,7 +138,7 @@ struct SampleBrowserTests {
 
     @Test func contractBrowserClickSelectsAndFocusesAtOnceAndOpensOnlyOnDoubleClick() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-browser-click-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let folder = root.appendingPathComponent("samples")
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
         for name in ["kick.wav", "snare.wav"] { try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name)) }
@@ -257,7 +257,7 @@ struct SampleBrowserTests {
 
         // The app's file holds one JSON line per entry and keeps one older file.
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audition-log-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: folder) }
+        defer { removeTestFile(folder) }
         let file = LineLog(url: folder.appendingPathComponent("audition.ndjson"), limit: 250)
         let kept = AuditionLog()
         kept.keep(in: file)
@@ -276,7 +276,7 @@ struct SampleBrowserTests {
 
     @Test func supersededLibraryScanCannotRestoreARemovedRoot() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-sample-race-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try Data().write(to: root.appendingPathComponent("sample.wav"))
         let browser = FileBrowserState()
@@ -291,7 +291,7 @@ struct SampleBrowserTests {
 
     @Test func importUsesTheLivePlayheadInsteadOfTheLastStatusPoll() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-sample-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("tone.wav")
         try wavMono(rate: 48_000, frames: 4_800).write(to: wav)

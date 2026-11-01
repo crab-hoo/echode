@@ -6,7 +6,7 @@ import Testing
 struct TypedEditTests {
     @Test func contractTypedEditsRetainAtomicHistoryAndPersistence() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-typed-edit-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let document = try Document(creating: url.path)
         defer { document.shutdown() }
         let added = try await document.perform(EditAction.addTrack(name: "typed"))

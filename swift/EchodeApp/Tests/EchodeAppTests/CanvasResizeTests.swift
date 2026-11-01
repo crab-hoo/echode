@@ -89,7 +89,7 @@ struct CanvasResizeTests {
 
     @Test func contractArrangeCameraKeepsRequestedVerticalPosition() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-camera-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         for index in 0..<10 { await controller.addTrack(name: "t\(index)") }
@@ -127,7 +127,7 @@ struct CanvasResizeTests {
 
     @Test func contractArrangeCameraUsesDisplayedRowsForVerticalInput() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-camera-input-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         for index in 0..<20 { await controller.addTrack(name: "t\(index)") }

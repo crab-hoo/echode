@@ -11,7 +11,7 @@ struct WorkspaceLayoutTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-layout-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "notes")

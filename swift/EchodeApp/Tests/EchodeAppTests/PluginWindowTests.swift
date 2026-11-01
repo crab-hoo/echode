@@ -19,7 +19,7 @@ struct PluginWindowTests {
                 {"playing":\(playing),"running":true,"opening":false,"tick":0,"devices":[],"metronome":false}
                 """.utf8))
         })
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         #expect(await controller.insertPlugin("dev.echode.test-params", on: tracks[0], documentID: document))
         let device = try #require(controller.deviceRows(on: tracks[0]).first).id
         let suite = "echode-plugin-keys-\(UUID())"
@@ -114,7 +114,7 @@ struct PluginWindowTests {
     @Test func contractPluginWindowGestureRecordsOneUndoStep() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, tracks, url) = try await project("window-undo", plugin: plugin)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         #expect(await controller.insertPlugin("dev.echode.test-params", on: tracks[0], documentID: document))
         let device = try #require(controller.deviceRows(on: tracks[0]).first).id
         await controller.showDevices(on: tracks[0]).value
@@ -181,7 +181,7 @@ struct PluginWindowTests {
     @Test func contractNameClickOpensWindowAndOnlySingleAddsOpenIt() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, tracks, url) = try await project("window-open", plugin: plugin, tracks: 2)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let first = tracks[0]
         #expect(await controller.insertPlugin("dev.echode.test-params", on: first, documentID: document))
         let device = try #require(controller.deviceRows(on: first).first)

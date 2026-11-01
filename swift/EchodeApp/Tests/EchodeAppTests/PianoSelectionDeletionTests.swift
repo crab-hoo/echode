@@ -7,7 +7,7 @@ import Testing
 struct PianoSelectionDeletionTests {
     @Test func contractSelectedNotesDeleteAtomicallyAndRoundTripHistory() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-selection-delete-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
@@ -63,7 +63,7 @@ struct PianoSelectionDeletionTests {
 
     @Test func linkedPlacementsDeleteEachContentNoteOnlyOnce() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-selection-linked-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "linked keys")
@@ -86,7 +86,7 @@ struct PianoSelectionDeletionTests {
 
     @Test func menusSelectOnlyUnselectedNotesAndRejectInvalidContexts() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-selection-menu-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")

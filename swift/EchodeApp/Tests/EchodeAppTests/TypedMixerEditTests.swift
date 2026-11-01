@@ -7,7 +7,7 @@ import Testing
 struct TypedMixerEditTests {
     @Test func contractMixerEditsPreserveExactValuesPreviewHistoryAndPersistence() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-typed-mixer-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav"), url = root.appendingPathComponent("Project.echode")
         // This one-second fixture only supplies a clip for mix edits, not a product buffer limit.

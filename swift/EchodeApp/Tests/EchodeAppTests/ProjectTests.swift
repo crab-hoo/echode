@@ -34,7 +34,7 @@ func wavMono(rate: UInt32, frames: Int) -> Data {
 struct ProjectTests {
     @Test func transportCommandsDoNotConsumeUndoAndClosingClearsTheFeed() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-transport-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "pad")
@@ -68,7 +68,7 @@ struct ProjectTests {
 
     @Test func importingAudioPlacesAClipAndUndoRemovesIt() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-import-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("tone.wav")
         try wavMono(rate: 48_000, frames: 4_800).write(to: wav)
@@ -96,7 +96,7 @@ struct ProjectTests {
     }
     @Test func insertingAPluginKeepsTheMixerAndSurvivesReopen() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-plugin-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "pad")
@@ -118,7 +118,7 @@ struct ProjectTests {
 
     @Test func editsUndoRedoAndReopenUseTheSameDurableProject() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-app-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         #expect(controller.errorMessage == nil)
@@ -147,7 +147,7 @@ struct ProjectTests {
 
     @Test func failedOpenPreservesTheCurrentProjectAndCreationNeverOverwrites() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-app-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keep")
@@ -165,7 +165,7 @@ struct ProjectTests {
 
     @Test func aFreshEditAfterUndoClearsRedoAndInvalidNotesDoNotEdit() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-app-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first")
@@ -182,7 +182,7 @@ struct ProjectTests {
 
     @Test func restoringAnOlderAutosaveBecomesANewUndoableVersion() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-history-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "one")

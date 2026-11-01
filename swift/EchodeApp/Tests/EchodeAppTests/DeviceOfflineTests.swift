@@ -7,7 +7,7 @@ import Testing
 struct DeviceOfflineTests {
     @Test func contractOfflineFXPreservesSettingsAndUndoAcrossReopen() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-offline-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)

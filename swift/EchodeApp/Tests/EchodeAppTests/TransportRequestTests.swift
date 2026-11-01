@@ -30,7 +30,7 @@ struct TransportRequestTests {
                 return try await document.audio(command)
             }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-pending-\(UUID()).echode")
-            defer { try? FileManager.default.removeItem(at: url) }
+            defer { removeTestFile(url) }
             await controller.open(url, creating: true)
             let session = WorkspaceSession(controller: controller, state: WorkspaceState())
             let play = Task { await controller.togglePlayback() }
@@ -66,7 +66,7 @@ struct TransportRequestTests {
             }
             controller.preparesOutput = prepares
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-prepare-\(UUID()).echode")
-            defer { try? FileManager.default.removeItem(at: url) }
+            defer { removeTestFile(url) }
             await controller.open(url, creating: true)
             #expect(!controller.busy && controller.snapshot != nil)
             let deadline = ContinuousClock.now + .seconds(5)

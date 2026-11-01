@@ -29,7 +29,7 @@ struct DevicePreparationTests {
         let controller = ProjectController(sendAudio: { _, _ in try await audio.status() },
                                            sendDevice: { try await plugin.send($0, $1) })
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-device-preparation-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
         await controller.addTrack(name: "fx")
@@ -87,7 +87,7 @@ struct DevicePreparationTests {
         let audio = PreparingAudio()
         let controller = ProjectController(sendAudio: { _, _ in try await audio.status() })
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-preparation-observation-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.refreshOutputs()
         #expect(controller.outputOpening)
@@ -118,9 +118,9 @@ struct DevicePreparationTests {
         #expect(column.message.stringValue == text("Preparing audio output"))
         #expect(column.message.accessibilityLabel()?.contains(row.title) == true)
         refresh(state)
-        column.disclosure.performClick(nil)
+        column.disclosure.clickWithoutAnimation()
         #expect(column.isCollapsed && column.message.isHidden)
-        column.disclosure.performClick(nil)
+        column.disclosure.clickWithoutAnimation()
         #expect(!column.isCollapsed && !column.message.isHidden)
         #expect(column.message.stringValue == text("Preparing audio output"), "Local disclosure must keep the output status")
         refresh(state, opening: false)

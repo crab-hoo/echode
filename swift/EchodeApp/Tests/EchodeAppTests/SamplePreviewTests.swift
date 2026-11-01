@@ -44,7 +44,7 @@ struct SamplePreviewTests {
     /// the product bridge; only the count is recorded.
     @Test func contractSelectedSampleShowsItsWholeWaveformBeforeAndAfterAudition() async throws {
         let folder = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-overview-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: folder) }
+        defer { removeTestFile(folder) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for (name, frames) in [("kick.wav", 96_000), ("snare.wav", 4_800), ("hat.wav", 2_400)] {
             try wavMono(rate: 48_000, frames: frames).write(to: folder.appendingPathComponent(name))

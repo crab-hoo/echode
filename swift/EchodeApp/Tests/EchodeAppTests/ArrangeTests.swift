@@ -96,7 +96,7 @@ struct ArrangeTests {
 
     @Test func headerRowsMatchRustTimelineLanesAfterScrollZoomAndResize() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-arrange-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         // Track count and viewport sizes belong to this regression, not a cap.
@@ -163,7 +163,7 @@ struct ArrangeTests {
 
     @Test func aDelayedFrameKeepsBothSidesTogetherDuringRapidInput() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-frame-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         // This project's size and event count are regression parameters only.
@@ -205,7 +205,7 @@ struct ArrangeTests {
 
     @Test func cachedGeometryFollowsDocumentAndViewportRevisions() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-geometry-cache-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         let controller = ProjectController()
         await controller.open(root, creating: true)
         await controller.addTrack(name: "first")
@@ -251,7 +251,7 @@ struct ArrangeTests {
             throw CocoaError(.featureUnsupported)
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mismatch-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         for index in 0..<3 { await controller.addTrack(name: "Track \(index)") }
@@ -314,7 +314,7 @@ struct ArrangeTests {
             throw CocoaError(.featureUnsupported)
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-wave-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("tone.wav")
         try alternatingWav(rate: 48_000, frames: 4_800).write(to: wav)

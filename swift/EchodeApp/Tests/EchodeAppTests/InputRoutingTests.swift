@@ -46,7 +46,7 @@ struct InputRoutingTests {
             return try await document.audio(command)
         }, sendAudition: { _, url, _ in sent.withLock { $0.append("audition \(url?.lastPathComponent ?? "-")") } })
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-list-space-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         let session = WorkspaceSession(controller: controller, state: WorkspaceState(defaults: .init()))
         let list = FileListView()

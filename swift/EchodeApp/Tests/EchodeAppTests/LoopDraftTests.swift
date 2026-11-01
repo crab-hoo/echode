@@ -7,7 +7,7 @@ import Testing
 struct LoopDraftTests {
     @Test func contractLoopDraftKeepsIntegerBoundsThroughTransportAndDocumentChanges() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-loop-draft-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "loop")

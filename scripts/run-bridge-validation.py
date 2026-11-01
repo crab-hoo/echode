@@ -15,6 +15,8 @@ parser.add_argument("--expect")
 parser.add_argument("--site")
 parser.add_argument("--timeout", type=int, default=120)
 parser.add_argument("--tsan-runtime", type=Path)
+parser.add_argument("--races-only", action="store_true",
+                    help="a finished run whose tests failed passes: another run judged the tests")
 parser.add_argument("command", nargs=argparse.REMAINDER)
 
 
@@ -78,6 +80,9 @@ else:
         kept = args.log.with_name(args.log.stem + ".failed" + args.log.suffix)
         kept.write_text(output)
         reports = sanitizer_reports(output)
+        if args.races_only and not reports and re.search(r"Test run with [1-9][0-9]* tests? .*failed", output):
+            print("no sanitizer report; this run does not judge its test failures: " + str(kept))
+            sys.exit(0)
         print("\n".join(reports)[-8000:] if reports else output[-8000:], file=sys.stderr)
         sys.exit("bridge validation failed: " + str(args.log) + "; kept as " + str(kept))
     print(stdout, end="")

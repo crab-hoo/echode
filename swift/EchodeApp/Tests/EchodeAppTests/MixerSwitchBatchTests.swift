@@ -12,7 +12,7 @@ struct MixerSwitchBatchTests {
 
     @Test func contractHeaderSwitchesSetTheCapturedSelectionAtomicallyAndPreserveOtherSolos() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-switch-batch-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         var tracks: [UUID] = []

@@ -17,10 +17,15 @@ import signal
 import subprocess
 import sys
 
+from check_test_width import peak_live_tests
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = Path(__file__).with_suffix(".c")
 SAMPLE_SECONDS = 0.25
+PROFILE_SECONDS = 0.05
 WINDOW_SECONDS = 5.0  # The deadline of the Swift tests that poll on the main actor.
+EARLY_SECONDS = 8.0  # All tests are alive at once in this first part of an uncapped run.
+THREAD_BLOCKED = (3, 4)  # TH_STATE_WAITING and TH_STATE_UNINTERRUPTIBLE.
 RUN_TIMEOUT_SECONDS = 300
 TEST_NAME = re.compile(r"\b([A-Z]\w*Tests)\.(\w+)")
 
@@ -30,6 +35,7 @@ class Stall:
     end: float
     seconds: float
     samples: list = field(default_factory=list)
+    load: dict = field(default_factory=dict)
 
     @property
     def start(self):
@@ -47,7 +53,8 @@ def parse_watch(text):
         if kind == "START":
             start_wall = float(parts[2])
         elif kind == "STALL":
-            stalls.append(Stall(float(parts[0]), float(parts[2])))
+            load = dict(item.split("=", 1) for item in parts[3].split()) if len(parts) == 4 else {}
+            stalls.append(Stall(float(parts[0]), float(parts[2]), load={key: float(value) for key, value in load.items()}))
             sample = None
         elif kind == "SAMPLE" and stalls:
             sample = []
@@ -57,6 +64,49 @@ def parse_watch(text):
         else:
             sample = None
     return start_wall, stalls
+
+
+def parse_profile(text):
+    """The continuous main-thread samples of a profile run: (seconds, thread state, frames)."""
+    samples, frames = [], None
+    for line in text.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) >= 4 and parts[1] == "PROFILE":
+            frames = []
+            samples.append((float(parts[2]), int(parts[3]), frames))
+        elif len(parts) == 4 and parts[1] == "frame" and frames is not None:
+            frames.append((parts[2], parts[3]))
+        else:
+            frames = None
+    return samples
+
+
+def profile_category(frames):
+    """What a main-thread sample was doing, for telling occupation from waiting on the system."""
+    images = {image for image, _ in frames}
+    symbols = " ".join(symbol for _, symbol in frames)
+    if "_doUserDisclosureExpandOrCollapse" in symbols:
+        return "disclosure click (nested run loop)"
+    if "dyld" in images:
+        return "framework load"
+    if "libremovefile.dylib" in images:
+        return "file removal"
+    if "EchodeAppTests" in images:
+        return "test code"
+    return "no test frame"
+
+
+def profile_table(runs, start=0.0, end=float("inf")):
+    """Main-thread seconds per run by category, with the share the thread spent blocked."""
+    counts, blocked = Counter(), Counter()
+    for samples in runs:
+        for moment, state, frames in samples:
+            if start <= moment < end:
+                category = profile_category(frames)
+                counts[category] += 1
+                blocked[category] += state in THREAD_BLOCKED
+    return [f"{count * PROFILE_SECONDS / max(len(runs), 1):6.2f} s/run  blocked {100 * blocked[name] // count:3d}%  {name}"
+            for name, count in counts.most_common()]
 
 
 def issues_from_events(text, start_wall):
@@ -99,9 +149,22 @@ def most_silence(stalls, window=WINDOW_SECONDS):
                 for stall in stalls), default=0.0)
 
 
+def describe_load(stall):
+    """Whether a stall was the main thread's work, the machine's saturation, or a starved process."""
+    load = stall.load
+    if not load:
+        return ""
+    main = load.get("main_user", 0.0) + load.get("main_system", 0.0)
+    return (f"main CPU {main:.2f} s, process {load.get('process', 0.0):.1f} CPU-s, "
+            f"runnable {load.get('runnable', 0.0):.1f} s, watcher gap {load.get('watch_gap', 0.0):.2f} s")
+
+
 def summarize_run(stalls, issues, names):
     lines = [f"longest stall {max((stall.seconds for stall in stalls), default=0.0):.2f} s; "
              f"most silence in {WINDOW_SECONDS:.0f} s {most_silence(stalls):.2f} s"]
+    longest = max(stalls, key=lambda stall: stall.seconds, default=None)
+    if longest and longest.load:
+        lines.append(f"longest stall load: {describe_load(longest)}")
     for moment, message in issues:
         lines.append(f"issue at {moment:.3f} s: {message[:140]}")
         for stall in stalls:
@@ -121,13 +184,16 @@ def xcrun_demangle(names):
                           capture_output=True, text=True, check=True).stdout.splitlines()
 
 
-def run_once(sanitizer, watcher, directory, number, passthrough):
+def run_once(sanitizer, watcher, directory, number, passthrough, scratch=None, profile=False):
     watch = directory / f"{number}.watch"
     events = directory / f"{number}.events"
     log = directory / f"{number}.log"
-    for path in (watch, events):
+    samples = directory / f"{number}.profile"
+    for path in (watch, events, samples):
         path.unlink(missing_ok=True)
     environment = os.environ | {"DYLD_INSERT_LIBRARIES": str(watcher), "ECHODE_MAIN_THREAD_STALLS_LOG": str(watch)}
+    if profile:
+        environment["ECHODE_MAIN_THREAD_PROFILE"] = str(samples)
     if sanitizer == "thread":
         # Same runtime as check-bridge-tsan. xcrun's real path keeps DYLD_* (the /usr/bin shim strips them).
         runtime = subprocess.check_output([sys.executable, "-B", str(ROOT / "scripts/tsan_runtime.py"),
@@ -135,7 +201,7 @@ def run_once(sanitizer, watcher, directory, number, passthrough):
         environment |= {"DYLD_LIBRARY_PATH": runtime, "TSAN_OPTIONS": "halt_on_error=1:exitcode=66"}
     swift = subprocess.check_output(["xcrun", "--find", "swift"], text=True).strip()
     command = [swift, "test", "-q", "--skip-build", "--package-path", "swift/EchodeApp",
-               "--scratch-path", str(ROOT / f"target/bridge/{sanitizer}/product/swift"),
+               "--scratch-path", str(scratch or ROOT / f"target/bridge/{sanitizer}/product/swift"),
                "--sanitize", sanitizer, "-Xswiftc", "-warnings-as-errors",
                "--event-stream-output-path", str(events), "--event-stream-version", "0", *passthrough]
     with log.open("w") as output:
@@ -160,6 +226,8 @@ def main(argv=None):
     parser.add_argument("sanitizer", choices=["thread", "address"])
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--top", type=int, default=12)
+    parser.add_argument("--profile", action="store_true",
+                        help="also sample the main thread continuously; suspending it lengthens stalls")
     parser.add_argument("swift_test_arguments", nargs="*", default=["--skip", "RecoveryConsentTests"],
                         help="after --, replaces the default of skipping the separately run recovery suite")
     options = parser.parse_args(argv)
@@ -173,15 +241,24 @@ def main(argv=None):
     watcher = directory / "libstalls.dylib"
     subprocess.run(["xcrun", "clang", "-arch", "arm64", "-arch", "arm64e", "-dynamiclib", "-O1", "-g", "-Wall", "-Wextra",
                     "-Werror", str(SOURCE), "-o", str(watcher)], check=True)
-    report, runs = [], []
+    report, runs, profiles = [], [], []
     for number in range(1, options.runs + 1):
-        code, stalls, issues = run_once(options.sanitizer, watcher, directory, number, options.swift_test_arguments)
+        code, stalls, issues = run_once(options.sanitizer, watcher, directory, number, options.swift_test_arguments,
+                                        profile=options.profile)
         names = demangled(stalls, xcrun_demangle)
         runs.append((stalls, names))
-        lines = [f"run {number}: exit {code}", *("  " + line for line in summarize_run(stalls, issues, names))]
+        events = directory / f"{number}.events"
+        peak = peak_live_tests(events.read_text(errors="replace")) if events.exists() else 0
+        lines = [f"run {number}: exit {code}, at most {peak} tests at once",
+                 *("  " + line for line in summarize_run(stalls, issues, names))]
         print("\n".join(lines), flush=True)
         report += lines
+        if options.profile:
+            profiles.append(parse_profile((directory / f"{number}.profile").read_text(errors="replace")))
     owners = [f"main-thread silence by owner, about {SAMPLE_SECONDS} s per sample:", *attribution(runs, options.top)]
+    if options.profile:
+        owners += ["main thread by activity, whole run:", *profile_table(profiles),
+                   f"main thread by activity, first {EARLY_SECONDS:.0f} s:", *profile_table(profiles, end=EARLY_SECONDS)]
     print("\n".join(owners))
     # The name matches the bundle pattern of make debug-report.
     (product / "main-thread-stalls.log").write_text("\n".join(report + owners) + "\n")

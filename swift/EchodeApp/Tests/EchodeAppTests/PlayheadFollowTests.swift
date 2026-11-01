@@ -66,7 +66,7 @@ struct PlayheadFollowTests {
     @Test func contractBothEditorsPageToThePlayheadUntilATimeScroll() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-follow-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
@@ -193,7 +193,7 @@ struct PlayheadFollowTests {
     @Test func canvasesCarryTheWorkspaceFlagBothWays() async throws {
         let controller = ProjectController()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-follow-host-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         let state = WorkspaceState(defaults: .init())

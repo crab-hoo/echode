@@ -178,7 +178,7 @@ struct DeviceParameterTests {
     @Test func contractParameterDragSoundsLiveAndRecordsOneUndoStep() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, track, url) = try await project("parameters", plugin: plugin)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let device = try #require(controller.deviceRows(on: track).first)
 
         // Showing the track's devices lists each running plugin's parameters.
@@ -284,7 +284,7 @@ struct DeviceParameterTests {
         for converts in [true, false] {
             let plugin = FakeParameterPlugin(converts: converts)
             let (controller, document, track, url) = try await project("value-clicks", plugin: plugin)
-            defer { try? FileManager.default.removeItem(at: url) }
+            defer { removeTestFile(url) }
             let device = try #require(controller.deviceRows(on: track).first)
             await controller.showDevices(on: track).value
             let state = try #require(controller.parameterState(device.id))
@@ -361,7 +361,7 @@ struct DeviceParameterTests {
     @Test func contractDeviceEditsNeverDisableTheWorkspace() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, track, url) = try await project("enabled", plugin: plugin)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.showDevices(on: track).value
         let harness = Harness(controller, track: track, document: document)
         let column = try #require(harness.strip.columns.first)
@@ -399,7 +399,7 @@ struct DeviceParameterTests {
     @Test func contractSlowPluginListingDoesNotHoldSelectionOrEdits() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, first, url) = try await project("slow", plugin: plugin)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         await controller.addTrack(name: "other")
         let second = try #require(controller.selection)
         #expect(await controller.insertPlugin("dev.echode.test-params", on: second, documentID: document))
@@ -462,7 +462,7 @@ struct DeviceParameterTests {
         let count = 3000
         let plugin = FakeParameterPlugin(extra: count)
         let (controller, document, track, url) = try await project("long", plugin: plugin, devices: 2)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let devices = controller.deviceRows(on: track)
         #expect(devices.count == 2)
         await controller.showDevices(on: track).value

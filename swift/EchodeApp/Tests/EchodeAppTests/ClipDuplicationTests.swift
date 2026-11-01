@@ -20,7 +20,7 @@ struct ClipDuplicationTests {
 
     @Test func contractCommandDDuplicatesTheCurrentWindowWithIndependentContentAndHistory() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-key-copy-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         let session = WorkspaceSession(controller: controller, state: WorkspaceState(defaults: .init()))
         await controller.open(url, creating: true)
@@ -86,7 +86,7 @@ struct ClipDuplicationTests {
 
     @Test func audioRepeatPreservesTrimMixAndReplaceLandingAndRejectsStaleDocuments() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audio-key-copy-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("source.wav"), url = root.appendingPathComponent("Project.echode")
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)

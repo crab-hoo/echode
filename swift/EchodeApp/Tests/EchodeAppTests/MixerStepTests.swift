@@ -7,7 +7,7 @@ import Testing
 struct MixerStepTests {
     @Test func contractAccessibleStepsPreserveCapturedGroupOffsetsAndHistory() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-step-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         var tracks: [UUID] = []

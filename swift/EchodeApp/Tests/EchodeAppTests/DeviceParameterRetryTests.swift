@@ -42,7 +42,7 @@ struct DeviceParameterRetryTests {
     @Test func contractFailedListRetriesOnlyItsDeviceWithoutHoldingEdits() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, track, url) = try await project(plugin)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let devices = controller.deviceRows(on: track)
         let failed = devices[0].id, other = devices[1].id
         await plugin.failNextListing(failed)
@@ -117,7 +117,7 @@ struct DeviceParameterRetryTests {
     @Test func retryRejectsOfflineRemovedAndOldDocumentTargets() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, track, url) = try await project(plugin)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let device = try #require(controller.deviceRows(on: track).first?.id)
         await plugin.failNextListing(device)
         await controller.showDevices(on: track).value
@@ -146,7 +146,7 @@ struct DeviceParameterRetryTests {
     @Test func lateRetryCannotOverwriteANewerListOrRestoreAClosedDocument() async throws {
         let plugin = FakeParameterPlugin()
         let (controller, document, track, url) = try await project(plugin)
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let device = try #require(controller.deviceRows(on: track).first?.id)
         await plugin.failNextListing(device)
         await controller.showDevices(on: track).value

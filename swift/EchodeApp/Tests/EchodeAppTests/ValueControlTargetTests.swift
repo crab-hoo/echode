@@ -14,7 +14,7 @@ struct ValueControlTargetTests {
         // Exercise both parts of target identity: the field and the track.
         for otherTrack in [false, true] {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-reset-target-\(UUID()).echode")
-            defer { try? FileManager.default.removeItem(at: url) }
+            defer { removeTestFile(url) }
             let controller = ProjectController(sendAudio: { _, _ in AudioState() })
             await controller.open(url, creating: true)
             await controller.addTrack(name: "First")
@@ -67,7 +67,7 @@ struct ValueControlTargetTests {
 
     @Test func contractClipResetWaitKeepsOnlyTheMatchingHandlesPress() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-reset-target-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let wav = root.appendingPathComponent("clip.wav")
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)

@@ -8,7 +8,7 @@ import Testing
 struct PluginWindowStatusTests {
     @Test func contractPluginWindowStatusIsVisibleWithoutChangingTheProject() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-window-status-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let plugin = FakeParameterPlugin()
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
@@ -122,7 +122,7 @@ struct PluginWindowStatusTests {
         let release = AsyncStream<Void>.makeStream()
         let plugin = FakeParameterPlugin()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-window-late-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: url) }
+        defer { removeTestFile(url) }
         let controller = ProjectController(sendDevice: { document, command in
             let result = try await plugin.send(document, command)
             if case .showWindow = command {
