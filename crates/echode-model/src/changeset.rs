@@ -32,6 +32,10 @@ use parameter::{ParamState, diff_parameter_fields, parameter_change};
 mod placement;
 use placement::{ClipState, clip_change, diff_clip_fields};
 
+#[path = "changeset_tempo.rs"]
+mod tempo;
+use tempo::{TempoState, diff_tempo};
+
 #[path = "changeset_track.rs"]
 mod track;
 use track::{TrackState, diff_track_fields, track_change};
@@ -263,80 +267,6 @@ impl Project {
             draft.apply(change)?;
         }
         draft.finish()
-    }
-}
-
-fn diff_tempo(
-    before: &Project,
-    after: &Project,
-    creates: &mut Vec<Change>,
-    updates: &mut Vec<Change>,
-    deletes: &mut Vec<Change>,
-) {
-    let previous: HashMap<i64, Tempo> = before
-        .tempo()
-        .points()
-        .iter()
-        .map(|point| (point.at.get(), point.tempo))
-        .collect();
-    let next: HashMap<i64, Tempo> = after
-        .tempo()
-        .points()
-        .iter()
-        .map(|point| (point.at.get(), point.tempo))
-        .collect();
-    let mut created: Vec<i64> = next
-        .keys()
-        .filter(|tick| !previous.contains_key(tick))
-        .copied()
-        .collect();
-    created.sort_unstable();
-    for tick in created {
-        creates.push(tempo_change(true, Tick::new(tick), next[&tick]));
-    }
-    let mut revised: Vec<i64> = next
-        .iter()
-        .filter(|(tick, tempo)| previous.get(tick).is_some_and(|before| before != *tempo))
-        .map(|(tick, _)| *tick)
-        .collect();
-    revised.sort_unstable();
-    for tick in revised {
-        updates.push(Change::Update {
-            id: ObjectKey::Tempo(Tick::new(tick)),
-            property: Property::Tempo,
-            before: Value::Tempo(previous[&tick]),
-            after: Value::Tempo(next[&tick]),
-        });
-    }
-    let mut removed: Vec<i64> = previous
-        .keys()
-        .filter(|tick| !next.contains_key(tick))
-        .copied()
-        .collect();
-    removed.sort_unstable();
-    for tick in removed {
-        deletes.push(tempo_change(false, Tick::new(tick), previous[&tick]));
-    }
-}
-
-fn tempo_change(create: bool, at: Tick, tempo: Tempo) -> Change {
-    let fields = vec![Field {
-        property: Property::Tempo,
-        value: Value::Tempo(tempo),
-    }];
-    let id = ObjectKey::Tempo(at);
-    if create {
-        Change::Create {
-            kind: ObjectKind::TempoPoint,
-            id,
-            fields,
-        }
-    } else {
-        Change::Delete {
-            kind: ObjectKind::TempoPoint,
-            id,
-            fields,
-        }
     }
 }
 
@@ -637,7 +567,7 @@ fn update(id: ObjectKey, property: Property, before: Value, after: Value) -> Cha
 
 struct Draft {
     meter: Meter,
-    tempos: HashMap<i64, Tempo>,
+    tempos: HashMap<i64, TempoState>,
     tracks: HashMap<Id, TrackState>,
     contents: HashMap<Id, ContentState>,
     clips: HashMap<Id, ClipState>,
@@ -669,7 +599,9 @@ impl Draft {
             }
         }
         for point in project.tempo().points() {
-            draft.tempos.insert(point.at.get(), point.tempo);
+            draft
+                .tempos
+                .insert(point.at.get(), TempoState::from_point(point));
         }
         for track in project.tracks() {
             for clip in &track.clips {
@@ -717,7 +649,8 @@ impl Draft {
                 if self.tempos.contains_key(&at.get()) {
                     return Err(ModelError::InvalidChange);
                 }
-                self.tempos.insert(at.get(), field_tempo(fields)?);
+                self.tempos
+                    .insert(at.get(), TempoState::from_fields(fields)?);
                 Ok(())
             }
             (ObjectKind::Track, ObjectKey::Id(id)) => {
@@ -827,13 +760,11 @@ impl Draft {
                 Ok(())
             }
             (ObjectKey::Project, Property::TrackOrder, Value::Ids(_)) => Ok(()),
-            (ObjectKey::Tempo(at), Property::Tempo, Value::Tempo(tempo)) => {
-                if !self.tempos.contains_key(&at.get()) {
-                    return Err(ModelError::InvalidChange);
-                }
-                self.tempos.insert(at.get(), *tempo);
-                Ok(())
-            }
+            (ObjectKey::Tempo(at), property, value) => self
+                .tempos
+                .get_mut(&at.get())
+                .ok_or(ModelError::InvalidChange)?
+                .set(property, value),
             (ObjectKey::Id(id), Property::ParamOrder, Value::Ids(ids)) => {
                 self.devices
                     .get_mut(&id)
@@ -850,10 +781,7 @@ impl Draft {
         let mut points: Vec<TempoPoint> = self
             .tempos
             .iter()
-            .map(|(at, tempo)| TempoPoint {
-                at: Tick::new(*at),
-                tempo: *tempo,
-            })
+            .map(|(at, point)| point.finish(Tick::new(*at)))
             .collect();
         points.sort_by_key(|point| point.at);
         let tempo = TempoMap::try_from_points(points).ok_or(ModelError::InvalidChange)?;
@@ -941,19 +869,6 @@ impl Draft {
         let tracks = crate::model::arrange_tracks(&tracks)?;
         Ok(Project::from_arcs(self.meter, tempo, contents, tracks))
     }
-}
-
-fn field_tempo(fields: &[Field]) -> Result<Tempo, ModelError> {
-    fields
-        .iter()
-        .find_map(|field| match field {
-            Field {
-                property: Property::Tempo,
-                value: Value::Tempo(tempo),
-            } => Some(*tempo),
-            _ => None,
-        })
-        .ok_or(ModelError::InvalidChange)
 }
 
 fn field_bits(fields: &[Field], property: Property) -> Result<u32, ModelError> {

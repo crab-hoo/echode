@@ -124,7 +124,7 @@ enum Step {
     },
     SetTempo {
         at: i64,
-        bpm: u32,
+        tempo: Tempo,
     },
     SetMeter {
         numerator: u32,
@@ -261,7 +261,9 @@ fn step() -> impl Strategy<Value = Step> {
                 parameter,
                 value,
             }),
-        1 => (0i64..32, 40u32..=240).prop_map(|(at, bpm)| Step::SetTempo { at, bpm }),
+        1 => (-8i64..32, 1u32..=999, 1u32..=16).prop_map(|(at, numerator, denominator)| Step::SetTempo {
+            at, tempo: Tempo::rational(numerator, denominator).unwrap(),
+        }),
         1 => (1u32..=7, prop_oneof![Just(2u32), Just(4), Just(8)])
             .prop_map(|(numerator, denominator)| Step::SetMeter { numerator, denominator }),
         2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
@@ -561,9 +563,9 @@ fn command(project: &Project, step: &Step) -> Option<Command> {
                 value: *value,
             }
         }
-        Step::SetTempo { at, bpm } => Command::SetTempo {
+        Step::SetTempo { at, tempo } => Command::SetTempo {
             at: Tick::quarters(*at).unwrap(),
-            tempo: Tempo::quarters_per_minute(*bpm).unwrap(),
+            tempo: *tempo,
         },
         Step::SetMeter {
             numerator,
@@ -899,12 +901,20 @@ fn seeded_placements() -> Project {
     project
 }
 
+// Preserve off-grid, negative and rational tempo points across unrelated edits.
+fn seeded_tempos() -> Project {
+    seeded_placements()
+        .with_tempo(Tick::new(-EIGHTH - 1), Tempo::rational(300, 7).unwrap())
+        .with_tempo(Tick::new(0), Tempo::rational(901, 8).unwrap())
+        .with_tempo(Tick::new(5 * EIGHTH + 1), Tempo::rational(800, 3).unwrap())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     #[test]
     fn random_edits_keep_every_property(
-        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..7
+        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..8
     ) {
         let base = match seeded {
             0 => Project::new(),
@@ -921,7 +931,8 @@ proptest! {
             3 => seeded_notes(),
             4 => seeded_tracks(),
             5 => seeded_contents(),
-            _ => seeded_placements(),
+            6 => seeded_placements(),
+            _ => seeded_tempos(),
         };
         let mut session = Session::open(base.clone());
         for step in &steps {

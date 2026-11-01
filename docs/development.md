@@ -141,6 +141,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 操作列は固定・共有配置、負のオフセット・小さいゲイン・非既定フェードからも始める。素材・機器は開かない
 （[ADR 0219](decisions/0219-placement-changeset-fields.md)）。
 
+テンポ点のテンポ項目の表は `echode-model/src/changeset_tempo.rs`、独立した分数・tick 順とジャーナルの回帰は
+履歴の `tests/tempo_changesets.rs` に置く。必須項目・型・未知の tick・二重作成・空マップと旧作成規則も検査する。
+操作列は負の位置・グリッド外の位置と分数テンポからも始める。実時間変換・素材・機器はこの回帰の対象外とする
+（[ADR 0220](decisions/0220-tempo-changeset-fields.md)）。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する
