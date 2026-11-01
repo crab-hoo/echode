@@ -21,6 +21,7 @@ rtsan-standalone = { version = "=0.3.0", optional = true }
 wavesynth = "=0.1.0"
 
 [features]
+spike = []
 rtsan = ["dep:rtsan-standalone"]
 
 [lib]
@@ -29,6 +30,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "echode-engine-spike"
 path = "src/bin/spike.rs"
+required-features = ["spike"]
 
 [lints]
 workspace = true

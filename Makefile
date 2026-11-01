@@ -78,6 +78,9 @@ check-base:
 	cargo test -q --workspace
 	cargo clippy -q -p echode-history --features spike --all-targets -- -D warnings
 	cargo test -q -p echode-history --features spike --lib --test roundtrip
+	cargo build -q -p echode-engine --features spike --bin echode-engine-spike
+	cargo clippy -q -p echode-engine --features spike --all-targets -- -D warnings
+	cargo test -q -p echode-engine --features spike --lib
 	scripts/check-ffi.sh
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
 	cargo deny -L error check licenses bans sources
@@ -284,14 +287,14 @@ check-bridge-miri:
 
 # Brief hardware check of the same 1,000-node graph; not a long-run stability claim.
 spike-engine-smoke:
-	cargo build -q --release -p echode-engine
-	cargo run -q --release -p echode-engine --bin echode-engine-spike -- --seconds 10 --native-rate --workers auto --report target/spike-s2-smoke.txt
+	cargo build -q --release -p echode-engine --features spike
+	cargo run -q --release -p echode-engine --features spike --bin echode-engine-spike -- --seconds 10 --native-rate --workers auto --report target/spike-s2-smoke.txt
 
 # Explicit long-run stability and release event-sort measurement. See docs/spikes/S2-engine.md.
 spike-engine:
-	cargo build -q --release -p echode-engine
-	cargo test -q --release -p echode-engine -- --include-ignored --skip audit_
-	cargo run -q --release -p echode-engine --bin echode-engine-spike -- --seconds 600 --workers auto --report target/spike-s2.txt
+	cargo build -q --release -p echode-engine --features spike
+	cargo test -q --release -p echode-engine --features spike -- --include-ignored --skip audit_
+	cargo run -q --release -p echode-engine --features spike --bin echode-engine-spike -- --seconds 600 --workers auto --report target/spike-s2.txt
 
 # RealtimeSanitizer on the test synth, plan handoff, and the plugin helper.
 # The first build downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).

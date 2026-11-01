@@ -87,7 +87,7 @@
 | アクション・編集セッション | `crates/echode-actions` | `action.rs`（`Action` / 登録簿）、`session.rs`（`Session` の Undo / Redo 履歴） |
 | Git 履歴・パッケージ・ピーク | `crates/echode-history` | `host.rs`（`DocumentHost`・ジャーナル・復旧）、`store.rs`（CAS）、`peaks.rs`（ピークキャッシュ） |
 | リアルタイム検査 | `crates/echode-realtime` | `alloc.rs`（RT 確保禁止ガード）、`event.rs`（固定容量イベント列）、`ring.rs`（SPSC） |
-| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器の入口 `playback` と `PlaybackOptions`・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（実機計測） |
+| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器の入口 `playback` と `PlaybackOptions`・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（機器問い合わせ）、`device_measurement.rs`（非既定 feature の実機計測） |
 | CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`opening.rs`（出力準備の別スレッド・機器なしの検査用出力）、`session.rs`（文書の音声セッション）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止） |
 | 共有メモリ・IPC | `crates/echode-sandbox` | `region.rs`（共有メモリ・`arm_abort_notice`）、`session.rs`（`PluginControl`）、`workgroup.rs`、`wire.rs` |
 | プラグインヘルパー | `crates/echode-plugin-host` | `scan.rs`（バンドル走査）、`catalog.rs`（キャッシュ）、`threads.rs` / `events.rs`（CLAP 処理・リセット）、`awake.rs` |
@@ -107,6 +107,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 直接その通常回帰を動かす時は `cargo test -q -p echode-history --features spike --lib --test roundtrip`、
 計測は従来どおり `make spike-history` を使う。製品の型・保存形式と混同しない
 （[ADR 0211](decisions/0211-opt-in-history-spike.md)）。
+
+エンジンの Phase 0 の `graph.rs`・`wait.rs`・`device_measurement.rs` も非既定の `spike` feature 専用である。
+通常回帰は `cargo test -q -p echode-engine --features spike --lib`、実機計測は `make spike-engine-smoke`・`make spike-engine` を使う。
+製品の `playback`・機器一覧・`IoWorkgroup` は feature なしで使える
+（[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、

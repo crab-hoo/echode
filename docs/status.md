@@ -1,6 +1,6 @@
 # 現在の範囲と制約
 
-更新: 2026-10-31。
+更新: 2026-11-02。
 製品の完成状況を案内する文書であり、最新ソースの合格証ではない。
 合否は `make verify` の結果、実操作は日付付きの監査記録で確認する。
 
@@ -354,10 +354,11 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
 - **プラグイン隔離・Workgroup・キャッシュ**:
   - ヘルパーは `SIGABRT` / `SIGSEGV` / `SIGBUS` / `SIGILL` で共有領域にクラッシュ印を書く。AUv3 の二重隔離回避、スキャンの Seatbelt、Workgroup ポートの 2 ms ポーリング置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
   - 選択デバイスの Workgroup をヘルパーの追加・保持・再起動へ引き継ぎ、変更通知で出力を再準備する。同一素材・同一配置結果の PCM 共有と、版・カメラによる可視列キャッシュを接続済み（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。CPU 並列グラフ、メーカー単位のヘルパー集約、SME、Metal 4 は未実装。
-- **Phase 0 の履歴モデルの分離**: 別モデル・JSON 形式・Git 保存は、`echode-history` の非既定の `spike` feature へ分離した。
-  製品は従来どおり `echode_model::Project` と `Autosave`・`DocumentHost` を使う。
-  通常回帰と `make spike-history` は維持し、エンジン側の分離は残る
-  （[ADR 0211](decisions/0211-opt-in-history-spike.md)、SPG-10）。
+- **Phase 0 の別モデル・計測の分離**: 履歴の別モデル・JSON 形式・Git 保存と、エンジンの固定グラフ・計測器を、各 crate の非既定の `spike` feature へ分離した。
+  製品は従来どおり `echode_model::Project` と `Autosave`・`DocumentHost`、製品の `playback` と機器問い合わせを使う。
+  通常回帰と `make spike-history`・`make spike-engine`・`make spike-engine-smoke` は維持する。
+  SPG-10 の分離は完了だが、並列 CPU グラフの製品接続ではない
+  （[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 
 ## 検査基盤で区別すること
 

@@ -1,7 +1,7 @@
-//! Realtime graph scheduler, transport, and the CoreAudio spike.
+//! Realtime graph scheduler, transport, and playback.
 //!
 //! Playback planning does not allocate: callers pass the event and sample
-//! buffers. The 10-minute measurement lives in [`spike`].
+//! buffers. The Phase 0 graph and device measurement require the `spike` feature.
 
 #![cfg_attr(not(target_os = "macos"), allow(unused))]
 
@@ -14,6 +14,7 @@ mod bypass;
 mod clock;
 mod declick;
 mod device;
+#[cfg(feature = "spike")]
 mod graph;
 mod handoff;
 mod mix;
@@ -27,10 +28,12 @@ mod resample;
 mod resample_stream;
 mod sequence;
 
+#[cfg(feature = "spike")]
 pub mod spike;
 mod synth;
 mod transport;
 mod voice;
+#[cfg(feature = "spike")]
 mod wait;
 
 pub use audition::{AuditionAudio, AuditionControl, AuditionSound, AuditionWriter, audition_pair};

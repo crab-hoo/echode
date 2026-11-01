@@ -20,6 +20,10 @@
 製品の独立した CLAP トラックは同時に投入し、ヘルパーの Workgroup は選択デバイスへ接続する
 （[最適化監査 M27-01 / 05](../reviews/2026-10-17-macos27-optimization-audit.md)）。
 
+Phase 0 の固定グラフ・待機処理・機器計測は、非既定の `echode-engine/spike` feature へ分離する。
+製品の機器問い合わせは feature なしで使い、計測と共有する読取りだけを `device.rs` に残す
+（[ADR 0213](../decisions/0213-opt-in-engine-spike.md)）。
+
 ### 7.2 グラフ
 
 - ChangeSet をもとに制御スレッドで新しい実行計画を組み立て、計画用とパラメータ用の別々のロックフリーキューでオーディオスレッドに渡す。

@@ -62,6 +62,11 @@ make spike-engine
 
 `make spike-engine` は `--workers auto` で、Workgroup の推奨から本数を決める。オーディオスレッドだけは `--workers 0`。結果は標準出力と `target/spike-s2.txt` に出る。Ctrl-C でもバッファサイズは元に戻る。
 
+2026-11-02 から、固定グラフと機器計測は非既定の `spike` feature が必要である（[ADR 0213](../decisions/0213-opt-in-engine-spike.md)）。
+両 Make ターゲットは明示指定する。Cargo から直接起動する場合も `--features spike --bin echode-engine-spike` を付ける。
+機器を開かない通常回帰は `cargo test -q -p echode-engine --features spike --lib`。
+今回の分離で実機の再計測はしておらず、上の数値は当時の条件のまま保持する。
+
 ## スリープをまたいだ計測の失敗（2026-10-15）
 
 音声バスの製品接続後の全体検査で、48 kHz・64フレーム、ワーカー3本の計測は396,260コールバック（ウォーミングアップ200回を除く）、CPU p50 0.294／p99 0.321／最大0.716 ms、期限超過0件、ホスト時刻の間隔異常1件で不合格になった。Workgroup参加と時間制約の設定の失敗は0件だった。

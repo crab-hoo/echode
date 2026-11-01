@@ -166,6 +166,10 @@ make debug-report
   履歴の `roundtrip` が `requires the features: spike` で拒否された場合は、非既定 feature の指定漏れである。
   `cargo test -q -p echode-history --features spike --lib --test roundtrip` を使う。計測は `make spike-history` を使う。
   製品のテストを通すために workspace 全体でこの feature を有効にしない（[ADR 0211](decisions/0211-opt-in-history-spike.md)）。
+  エンジンの `echode-engine-spike` が同じ理由で拒否された場合も、`--features spike` の指定漏れである。
+  通常回帰は `cargo test -q -p echode-engine --features spike --lib`、実機計測は明示的な依頼がある時だけ `make spike-engine-smoke`・`make spike-engine` を使う。
+  製品の `playback`・機器一覧・Workgroup の問い合わせのビルドに、この feature は不要である
+  （[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
   単独では通る保存・復旧の回帰が、復旧後のトラック数などの過剰で落ちる時は、`$TMPDIR` に残った同じ pid の一時パッケージを疑う。
   失敗した過去の実行が残したジャーナルが再生され、2026-10-21 に `phase1-acceptance` で再現した。
   一時パッケージを作る `scratch()` は使用前に同じパスを削除する。
