@@ -38,8 +38,9 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   SPG-05 は [ADR 0204](decisions/0204-document-service.md)、SPG-07 は [ADR 0205](decisions/0205-playback-options.md)、
   SPG-08 は [ADR 0206](decisions/0206-piano-interaction-state.md) で対応し、当時の再現は保持する。
   SPG-10 は履歴とエンジンの Phase 0 コードを非既定 feature へ分離した（[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
-  SPG-09 はパラメーター・デバイス・ノートの項目表・性質テストから着手した
-  （[ADR 0214](decisions/0214-parameter-changeset-fields.md)、[ADR 0215](decisions/0215-device-changeset-fields.md)、[ADR 0216](decisions/0216-note-changeset-fields.md)）。
+  SPG-09 はパラメーター・デバイス・ノート・トラックの項目表・性質テストから着手した
+  （[ADR 0214](decisions/0214-parameter-changeset-fields.md)、[ADR 0215](decisions/0215-device-changeset-fields.md)、
+  [ADR 0216](decisions/0216-note-changeset-fields.md)、[ADR 0217](decisions/0217-track-changeset-fields.md)）。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。

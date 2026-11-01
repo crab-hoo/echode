@@ -24,6 +24,10 @@ use note::{NoteState, diff_note_fields, note_change};
 mod parameter;
 use parameter::{ParamState, diff_parameter_fields, parameter_change};
 
+#[path = "changeset_track.rs"]
+mod track;
+use track::{TrackState, diff_track_fields, track_change};
+
 /// One property written by a [`Change`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Field {
@@ -471,53 +475,6 @@ fn unchanged(before: &HashMap<Id, &Arc<Track>>, after: &HashMap<Id, &Arc<Track>>
     matches!((before.get(&id), after.get(&id)), (Some(left), Some(right)) if Arc::ptr_eq(*left, *right))
 }
 
-fn diff_track_fields(before: &Track, after: &Track, updates: &mut Vec<Change>) {
-    if before.name != after.name {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Name,
-            Value::Text(before.name.clone()),
-            Value::Text(after.name.clone()),
-        ));
-    }
-    if before.parent != after.parent {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Parent,
-            Value::Parent(before.parent),
-            Value::Parent(after.parent),
-        ));
-    }
-    if before.order != after.order {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Order,
-            Value::Text(before.order.clone()),
-            Value::Text(after.order.clone()),
-        ));
-    }
-    let before_clips = ids_of_clips(before);
-    let after_clips = ids_of_clips(after);
-    if before_clips != after_clips {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::ClipOrder,
-            Value::Ids(before_clips),
-            Value::Ids(after_clips),
-        ));
-    }
-    let before_devices = ids_of_devices(before);
-    let after_devices = ids_of_devices(after);
-    if before_devices != after_devices {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::DeviceOrder,
-            Value::Ids(before_devices),
-            Value::Ids(after_devices),
-        ));
-    }
-}
-
 fn diff_devices(
     before: Option<&Track>,
     after: Option<&Track>,
@@ -802,53 +759,6 @@ fn update(id: ObjectKey, property: Property, before: Value, after: Value) -> Cha
     }
 }
 
-fn ids_of_clips(track: &Track) -> Vec<Id> {
-    track.clips.iter().map(|clip| clip.id).collect()
-}
-
-fn ids_of_devices(track: &Track) -> Vec<Id> {
-    track.devices.iter().map(|device| device.id).collect()
-}
-
-fn track_change(create: bool, track: &Track) -> Change {
-    let fields = vec![
-        Field {
-            property: Property::Name,
-            value: Value::Text(track.name.clone()),
-        },
-        Field {
-            property: Property::Parent,
-            value: Value::Parent(track.parent),
-        },
-        Field {
-            property: Property::Order,
-            value: Value::Text(track.order.clone()),
-        },
-        Field {
-            property: Property::ClipOrder,
-            value: Value::Ids(ids_of_clips(track)),
-        },
-        Field {
-            property: Property::DeviceOrder,
-            value: Value::Ids(ids_of_devices(track)),
-        },
-    ];
-    let id = ObjectKey::Id(track.id);
-    if create {
-        Change::Create {
-            kind: ObjectKind::Track,
-            id,
-            fields,
-        }
-    } else {
-        Change::Delete {
-            kind: ObjectKind::Track,
-            id,
-            fields,
-        }
-    }
-}
-
 fn clip_change(create: bool, track: Id, clip: &Placement) -> Change {
     let fields = vec![
         Field {
@@ -906,14 +816,6 @@ fn clip_change(create: bool, track: Id, clip: &Placement) -> Change {
             fields,
         }
     }
-}
-
-struct TrackState {
-    name: String,
-    parent: Option<Id>,
-    order: String,
-    clip_order: Vec<Id>,
-    device_order: Vec<Id>,
 }
 
 struct ContentState {
@@ -976,9 +878,7 @@ impl Draft {
             draft.tempos.insert(point.at.get(), point.tempo);
         }
         for track in project.tracks() {
-            let mut clip_order = Vec::new();
             for clip in &track.clips {
-                clip_order.push(clip.id);
                 draft.clips.insert(
                     clip.id,
                     ClipState {
@@ -994,16 +894,7 @@ impl Draft {
                     },
                 );
             }
-            draft.tracks.insert(
-                track.id,
-                TrackState {
-                    name: track.name.clone(),
-                    parent: track.parent,
-                    order: track.order.clone(),
-                    clip_order,
-                    device_order: track.devices.iter().map(|device| device.id).collect(),
-                },
-            );
+            draft.tracks.insert(track.id, TrackState::from_track(track));
             for device in &track.devices {
                 draft
                     .devices
@@ -1050,16 +941,7 @@ impl Draft {
                 if self.tracks.contains_key(&id) {
                     return Err(ModelError::InvalidChange);
                 }
-                self.tracks.insert(
-                    id,
-                    TrackState {
-                        name: field_text(fields, Property::Name)?,
-                        parent: field_parent(fields)?,
-                        order: field_text(fields, Property::Order)?,
-                        clip_order: field_ids(fields, Property::ClipOrder)?,
-                        device_order: field_ids(fields, Property::DeviceOrder)?,
-                    },
-                );
+                self.tracks.insert(id, TrackState::from_fields(fields)?);
                 Ok(())
             }
             (ObjectKind::Clip, ObjectKey::Id(id)) => {
@@ -1161,6 +1043,11 @@ impl Draft {
                 .ok_or(ModelError::InvalidChange)?
                 .set(property, value);
         }
+        if let ObjectKey::Id(id) = id
+            && let Some(track) = self.tracks.get_mut(&id)
+        {
+            return track.set(property, value);
+        }
         match (id, property, value) {
             (ObjectKey::Project, Property::Meter, Value::Meter(meter)) => {
                 self.meter = *meter;
@@ -1174,46 +1061,11 @@ impl Draft {
                 self.tempos.insert(at.get(), *tempo);
                 Ok(())
             }
-            (ObjectKey::Id(id), Property::Name, Value::Text(name)) => {
-                self.tracks
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .name = name.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Parent, Value::Parent(parent)) => {
-                self.tracks
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .parent = *parent;
-                Ok(())
-            }
             (ObjectKey::Id(id), Property::ParamOrder, Value::Ids(ids)) => {
                 self.devices
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .parameters = ids.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Order, Value::Text(order)) => {
-                self.tracks
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .order = order.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::ClipOrder, Value::Ids(ids)) => {
-                self.tracks
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .clip_order = ids.clone();
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::DeviceOrder, Value::Ids(ids)) => {
-                self.tracks
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .device_order = ids.clone();
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Start, Value::Tick(tick)) => {
@@ -1439,14 +1291,7 @@ impl Draft {
                 return Err(ModelError::InvalidChange);
             }
             used_devices += devices.len();
-            tracks.push(Arc::new(Track {
-                id: *track_id,
-                name: track.name.clone(),
-                parent: track.parent,
-                order: track.order.clone(),
-                clips,
-                devices,
-            }));
+            tracks.push(Arc::new(track.finish(*track_id, clips, devices)));
         }
         if used_clips != self.clips.len()
             || used_notes != self.notes.len()
@@ -1513,10 +1358,6 @@ fn field_text(fields: &[Field], property: Property) -> Result<String, ModelError
             _ => None,
         })
         .ok_or(ModelError::InvalidChange)
-}
-
-fn field_parent(fields: &[Field]) -> Result<Option<Id>, ModelError> {
-    field_optional_id(fields, Property::Parent)
 }
 
 fn audio_field(fields: &[Field]) -> Result<Option<crate::model::AudioRef>, ModelError> {

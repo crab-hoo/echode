@@ -800,12 +800,35 @@ fn seeded_notes() -> Project {
         .unwrap()
 }
 
+// Begin with nested folders and populated children, not only trees grown by chance.
+fn seeded_tracks() -> Project {
+    let (project, root) = Project::new().add_track("folder 日本語");
+    let (project, child) = project.add_child(root, "child 🎹").unwrap();
+    let (project, leaf) = project.add_child(child, "leaf").unwrap();
+    let (project, _) = project.add_track("other root");
+    let project = project
+        .insert_note(
+            leaf,
+            NoteDraft {
+                pitch: 60,
+                velocity: 100,
+                start: Tick::new(0),
+                length: Tick::new(EIGHTH),
+            },
+        )
+        .unwrap()
+        .0;
+    project
+        .add_clap_device(child, Id::generate(), "org.example.tree")
+        .unwrap()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     #[test]
     fn random_edits_keep_every_property(
-        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..4
+        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..5
     ) {
         let base = match seeded {
             0 => Project::new(),
@@ -819,7 +842,8 @@ proptest! {
                     .set_parameter_pinned(id, 7, true).unwrap()
                     .set_device_state(id, Some(plugin_state_hash().to_string())).unwrap()
             }
-            _ => seeded_notes(),
+            3 => seeded_notes(),
+            _ => seeded_tracks(),
         };
         let mut session = Session::open(base.clone());
         for step in &steps {

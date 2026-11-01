@@ -127,6 +127,10 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 操作列は共有内容と 16 bit の発音・リリースの強弱を持つ初期状態からも始める。
 低水準の任意値の往復は公開前の不変条件検査と区別する（[ADR 0216](decisions/0216-note-changeset-fields.md)）。
 
+トラックのスカラー項目の表は `echode-model/src/changeset_track.rs`、独立した名前・親・兄弟キーとフィールド順の回帰は
+履歴の `tests/track_changesets.rs` に置く。子の ID 列と解決、親の木・分数キーの拒否とジャーナルも検査する。
+操作列は入れ子のフォルダとノート・デバイスを持つ子からも始める（[ADR 0217](decisions/0217-track-changeset-fields.md)）。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する

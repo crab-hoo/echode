@@ -360,10 +360,12 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   SPG-10 の分離は完了だが、並列 CPU グラフの製品接続ではない
   （[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 - **モデル項目の変更セット（SPG-09 の先行分）**:
-  パラメーターの 4 項目、デバイスの 5 スカラー項目、ノートの 6 項目は、差分・作成・下書き・設定・復元を各項目表から生成する。
-  ビット・整数の往復、フィールド順・異常入力と共有ノートを含む操作列の性質テストを補強し、保存形式と音声処理は保つ。
-  他オブジェクトと保存・FFI の統合は残る
-  （[ADR 0214](decisions/0214-parameter-changeset-fields.md)、[ADR 0215](decisions/0215-device-changeset-fields.md)、[ADR 0216](decisions/0216-note-changeset-fields.md)）。
+  パラメーターの 4 項目、デバイスの 5 スカラー項目、ノートの 6 項目とトラックの 3 スカラー項目は、
+  差分・作成・下書き・設定・復元を各項目表から生成する。
+  ビット・整数・フィールド順・異常入力の回帰と、共有ノート・入れ子のフォルダを含む操作列の性質テストを補強した。
+  保存形式・音声処理と子の解決・親の木と兄弟順の検証は保ち、他オブジェクトと保存・FFI の統合は残る
+  （[ADR 0214](decisions/0214-parameter-changeset-fields.md)、[ADR 0215](decisions/0215-device-changeset-fields.md)、
+  [ADR 0216](decisions/0216-note-changeset-fields.md)、[ADR 0217](decisions/0217-track-changeset-fields.md)）。
 
 ## 検査基盤で区別すること
 
