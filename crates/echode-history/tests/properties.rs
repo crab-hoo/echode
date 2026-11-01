@@ -264,7 +264,7 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (-8i64..32, 1u32..=999, 1u32..=16).prop_map(|(at, numerator, denominator)| Step::SetTempo {
             at, tempo: Tempo::rational(numerator, denominator).unwrap(),
         }),
-        1 => (1u32..=7, prop_oneof![Just(2u32), Just(4), Just(8)])
+        1 => (1u32..=31, prop::sample::select(vec![1u32, 2, 3, 4, 7, 8, 16, 25, 64]))
             .prop_map(|(numerator, denominator)| Step::SetMeter { numerator, denominator }),
         2 => (any::<usize>(), 0u8..4).prop_map(|(track, plugin)| Step::AddDevice { track, plugin }),
         2 => (any::<usize>(), any::<usize>(), any::<bool>())
@@ -909,12 +909,37 @@ fn seeded_tempos() -> Project {
         .with_tempo(Tick::new(5 * EIGHTH + 1), Tempo::rational(800, 3).unwrap())
 }
 
+// Preserve a non-4/4 signature across edits, including populated fixed windows.
+fn seeded_project(populated: bool) -> Project {
+    let project = if populated {
+        seeded_tempos()
+    } else {
+        let (project, root) = Project::new().add_track("meter folder");
+        project.add_child(root, "meter child").unwrap().0
+    };
+    Project::try_assemble(
+        Meter::try_new(7, 8).unwrap(),
+        project.tempo().clone(),
+        project
+            .contents()
+            .iter()
+            .map(|part| (**part).clone())
+            .collect(),
+        project
+            .tracks()
+            .iter()
+            .map(|part| (**part).clone())
+            .collect(),
+    )
+    .unwrap()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     #[test]
     fn random_edits_keep_every_property(
-        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..8
+        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..10
     ) {
         let base = match seeded {
             0 => Project::new(),
@@ -932,7 +957,9 @@ proptest! {
             4 => seeded_tracks(),
             5 => seeded_contents(),
             6 => seeded_placements(),
-            _ => seeded_tempos(),
+            7 => seeded_tempos(),
+            8 => seeded_project(false),
+            _ => seeded_project(true),
         };
         let mut session = Session::open(base.clone());
         for step in &steps {

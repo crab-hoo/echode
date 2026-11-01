@@ -32,6 +32,10 @@ use parameter::{ParamState, diff_parameter_fields, parameter_change};
 mod placement;
 use placement::{ClipState, clip_change, diff_clip_fields};
 
+#[path = "changeset_project.rs"]
+mod project;
+use project::{ProjectState, diff_project_fields};
+
 #[path = "changeset_tempo.rs"]
 mod tempo;
 use tempo::{TempoState, diff_tempo};
@@ -244,14 +248,7 @@ impl Project {
         let mut updates = Vec::new();
         let mut deletes = Vec::new();
         diff_tempo(self, after, &mut creates, &mut updates, &mut deletes);
-        if self.meter() != after.meter() {
-            updates.push(Change::Update {
-                id: ObjectKey::Project,
-                property: Property::Meter,
-                before: Value::Meter(self.meter()),
-                after: Value::Meter(after.meter()),
-            });
-        }
+        diff_project_fields(self, after, &mut updates);
         diff_content_shells(self, after, &mut creates, &mut updates);
         diff_tracks(self, after, &mut creates, &mut updates, &mut deletes);
         push_content_deletes(self, after, &mut deletes);
@@ -566,7 +563,7 @@ fn update(id: ObjectKey, property: Property, before: Value, after: Value) -> Cha
 }
 
 struct Draft {
-    meter: Meter,
+    project: ProjectState,
     tempos: HashMap<i64, TempoState>,
     tracks: HashMap<Id, TrackState>,
     contents: HashMap<Id, ContentState>,
@@ -579,7 +576,7 @@ struct Draft {
 impl Draft {
     fn from_project(project: &Project) -> Self {
         let mut draft = Self {
-            meter: project.meter(),
+            project: ProjectState::from_project(project),
             tempos: HashMap::new(),
             tracks: HashMap::new(),
             contents: HashMap::new(),
@@ -755,11 +752,7 @@ impl Draft {
             return clip.set(property, value);
         }
         match (id, property, value) {
-            (ObjectKey::Project, Property::Meter, Value::Meter(meter)) => {
-                self.meter = *meter;
-                Ok(())
-            }
-            (ObjectKey::Project, Property::TrackOrder, Value::Ids(_)) => Ok(()),
+            (ObjectKey::Project, property, value) => self.project.set(property, value),
             (ObjectKey::Tempo(at), property, value) => self
                 .tempos
                 .get_mut(&at.get())
@@ -867,7 +860,7 @@ impl Draft {
             return Err(ModelError::InvalidChange);
         }
         let tracks = crate::model::arrange_tracks(&tracks)?;
-        Ok(Project::from_arcs(self.meter, tempo, contents, tracks))
+        Ok(self.project.finish(tempo, contents, tracks))
     }
 }
 

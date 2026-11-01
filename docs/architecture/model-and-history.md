@@ -57,11 +57,12 @@ Phase 1 は変わっていないトラックを `Arc` で共有し、ノート�
 中身は音声参照・テイク ID 列を表へ集め、ノートの並びの差分と解決・旧ジャーナルの null 音声の互換は別に保つ。
 配置は中身の ID・窓・種類・ゲイン・フェードを表へ集め、所属・中身の存在・トラックの配置列の照合とレーンの互換は別に保つ。
 テンポ点はテンポ項目を表へ集め、同一性となる tick・各群の昇順とマップ全体の検証は別に保つ。
-プロジェクトの項目と保存・FFI の統合は残る
+プロジェクトの拍子も項目表から差分・下書き・設定・復元を生成し、旧トラック ID 配列は保存せず無視する互換を保つ。
+プロジェクトの作成・削除はなく、集合の解決は別に保つ。保存・FFI の統合は残る
 （[ADR 0214](../decisions/0214-parameter-changeset-fields.md)、[ADR 0215](../decisions/0215-device-changeset-fields.md)、
 [ADR 0216](../decisions/0216-note-changeset-fields.md)、[ADR 0217](../decisions/0217-track-changeset-fields.md)、
 [ADR 0218](../decisions/0218-content-changeset-fields.md)、[ADR 0219](../decisions/0219-placement-changeset-fields.md)、
-[ADR 0220](../decisions/0220-tempo-changeset-fields.md)、SPG-09）。
+[ADR 0220](../decisions/0220-tempo-changeset-fields.md)、[ADR 0221](../decisions/0221-project-changeset-fields.md)、SPG-09）。
 
 ### 4.3 ID と並び順
 

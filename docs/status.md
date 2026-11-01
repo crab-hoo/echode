@@ -366,11 +366,12 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   ビット・整数・フィールド順・異常入力の回帰と、共有ノート・入れ子のフォルダを含む操作列の性質テストを補強した。
   保存形式・音声処理と子の解決・親の木・兄弟順の検証、ノートの並び・旧 null 音声とレーンの互換は保つ。
   テンポ点の tick 順と分数値も保つ。
-  プロジェクトの項目と保存・FFI の統合は残る
+  プロジェクトの拍子も差分・下書き・設定・復元を項目表から生成し、旧トラック ID 配列を無視する互換を保つ。
+  保存・FFI の統合は残る
   （[ADR 0214](decisions/0214-parameter-changeset-fields.md)、[ADR 0215](decisions/0215-device-changeset-fields.md)、
   [ADR 0216](decisions/0216-note-changeset-fields.md)、[ADR 0217](decisions/0217-track-changeset-fields.md)、
   [ADR 0218](decisions/0218-content-changeset-fields.md)、[ADR 0219](decisions/0219-placement-changeset-fields.md)、
-  [ADR 0220](decisions/0220-tempo-changeset-fields.md)）。
+  [ADR 0220](decisions/0220-tempo-changeset-fields.md)、[ADR 0221](decisions/0221-project-changeset-fields.md)）。
 
 ## 検査基盤で区別すること
 

@@ -146,6 +146,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 操作列は負の位置・グリッド外の位置と分数テンポからも始める。実時間変換・素材・機器はこの回帰の対象外とする
 （[ADR 0220](decisions/0220-tempo-changeset-fields.md)）。
 
+プロジェクトの拍子の表は `echode-model/src/changeset_project.rs`、独立した分子・分母と更新順の回帰は
+履歴の `tests/project_changesets.rs` に置く。型・キーの拒否と旧トラック ID 配列の無変更互換も検査する。
+操作列は非 `4/4` の空の階層と固定配置のある状態からも始める。低水準の適用は拍子アクションを再実行しない
+（[ADR 0221](decisions/0221-project-changeset-fields.md)）。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する
