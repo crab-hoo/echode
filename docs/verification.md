@@ -44,6 +44,7 @@ make verify
 検査は JSON の `priority` と `after` に従う安定した順序で実行する。
 フォーマット、ポリシー整合、TSan ランタイムの対照、選択された ASan を高コストな製品契約より先に確認する。
 `after` は対象集合内の先行関係だけを指定し、検査の追加選択・省略・並列実行はしない。
+`make -s verify` のようなフラグは `MAKEFLAGS` としてツールの識別に入り、全検査の結果を再利用できなくする。`VERIFY_ARGS` だけは識別に入らない。
 開始から最初の失敗までの時間と対象は `report.json` の `execution.first_failure` に記録する。
 
 `make spike-verification-failures` は同じ集合へ失敗を注入する比較計測で、結果は `target/verification/failure-latency.json`。
@@ -106,6 +107,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-tsan-runtime`: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
+- `check-real-hal`: `EchodeAppTests` を 1 件ずつ実行し、実 HAL に触れたテストの名前を示して失敗する。機器は開かない（[ADR 0209](decisions/0209-real-hal-guard.md)）。
+  バンドルに実物の HAL の参照がないこと、製品とプローブに実物が残っていること、既定の `ProjectController()` の再生が名指しで止まることも毎回確かめる。
+  結果は `target/real-hal/` に残す。
 - `check-bridge-asan`: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
 - `check-bridge-tsan`: 標準ライブラリを含む製品の Rust と Swift を、同じ固定ランタイムで競合検査する。
   読み込まれたランタイムも照合する（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。

@@ -915,13 +915,14 @@ make debug-report
 
 - **TSan の既知の環境要因と製品不具合の切り分け**:
   1. UI テストは機器なしの応答差し替え口を使い、実 HAL を開かない（`target/macos27-audit/tsan-hal-before.log`）。
+     `EchodeAppTests` のバンドルでは `RealHALGuard.swift` が HAL の関数をリンク時に置き換え、機器を開かずに失敗させる（[ADR 0209](decisions/0209-real-hal-guard.md)）。
+     `Real HAL reached:` で全体実行が失敗し、Swift Testing がテストを「unknown」と示したら、`make check-real-hal` がテスト名を示す。
+     そのテストに `sendDevice`、`sendAudio`、`sendAudition` のいずれかを注入する。
+     名前のテストに心当たりがなければ、併記された直前のテストが待たずに残した要求を調べる。
      単体候補の追加は `opensWindow` からデバイス要求も送るため、再生なし・`preparesOutput = false` でも実 HAL へ到達し得る。
      `PluginBatchTests.invalidTargetsDoNotPartiallyInsertOrClearRedo` は `FakeParameterPlugin` を注入し、窓要求を待って対象も照合する。
-     実 HAL の `write_planes` と別スレッドの過去の書込みが競合した場合も、まずこの未分離の経路を調べる。警告自体は抑制しない。
-     2026-10-31 には `FolderDisclosureTests` の FX のドロップが窓要求を実 HAL へ届けていて、同じテストを含む全体実行で 13 回は出ず、`make verify` で 1 回出た。
-     出にくいので、1 回の合格を未分離の根拠にしない。報告のスタックにテスト名は出ない。
-     特定するには、作業ツリーの外のコピーで `Document.device` と `Document.audio` にパッケージのパスとコマンドの出力を足し、全体を 1 回実行する。
-     `play`・`prepare`・`output`・`refresh` か、実際のプラグインを持つ文書への `device` が出たら、そのテストに `sendDevice` か `sendAudio` を注入する。
+     実 HAL の `write_planes` と別スレッドの過去の書込みが競合した報告は、`EchodeAppTests` からは出なくなった。
+     出たら `EchodeBridgeTests` か `spike-*` など、実 HAL を使う経路を調べる。警告自体は抑制しない。
   2. 終了済みと新規のスレッドの `errno` 誤検出は、C のみでも再現し、検査ランタイムの寿命処理を修正した（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
      `target/bridge/thread/errno/` の baseline・fixed・real-race の対照と、同じランタイムのロード証拠を確認する。
      準備が古い時は `make setup-bridge` を使う。取得済みソースの再ビルドには `python3 scripts/tsan_runtime.py --prepare` も使える。

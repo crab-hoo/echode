@@ -361,6 +361,8 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   2026-10-29 の同種の警告では、単体候補の追加が窓を開く既存 UI 回帰のデバイス要求を機器なしへ分離した。
   フェーダー入力の変更とは別の検査基盤の修正であり、実 HAL の警告原因の解決とは扱わない。
   2026-10-31 にも、`FolderDisclosureTests` の FX のドロップが開く窓の要求を機器なしへ分離した。警告の原因が未確定であることは変わらない。
+  2026-11-01 からは `EchodeAppTests` のバンドルに実 HAL がなく、触れたテストは `make check-real-hal` が名指しで止める（[ADR 0209](decisions/0209-real-hal-guard.md)）。
+  UI テストからこの警告の経路はなくなったが、原因の解決ではない。
 - **errno TSan 警告**: Darwin arm64 のスレッド固有領域の再利用が、C だけの再現でも誤検出された。
   検査専用ランタイムで errno の寿命処理を修正し、同じ errno を実際に共有する競合の検出も保つ（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
   正式な合否は検査レポートを参照する。

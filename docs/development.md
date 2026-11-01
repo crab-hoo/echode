@@ -100,7 +100,7 @@
 | Swift ブリッジ | `swift/EchodeBridge` | `Document.swift`、`Audio.swift`、`Controls.swift`（`echode-ffi` の Swift 6 ラッパー） |
 | 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`DocumentSession.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
-| 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`diagnose.py`、`distribution.py`、`tests/` |
+| 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`check_real_hal.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、

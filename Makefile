@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-format check-base check-product-contracts verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell rtsan
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -131,6 +131,15 @@ check-product-contracts:
 	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
 	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py
+
+# Names the EchodeApp test that reaches the real HAL. Opens no device: the test bundle has no HAL (ADR 0209).
+check-real-hal:
+	cargo build -q --locked --offline -p echode-ffi
+	set -eu; header="$$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"; \
+	test -n "$$header"; \
+	mkdir -p swift/EchodeBridge/CEchodeFfi/include; \
+	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
+	python3 -B scripts/check_real_hal.py
 
 # Selection and evidence are shared by agents, the stop hook, and CI.
 verify:
