@@ -12,7 +12,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use echode_actions::{ActionError, Command, Session, decode, encode, replay};
 use echode_history::{read_package, write_package};
-use echode_model::{CLIP_GAIN_MAX, Id, Meter, NoteDraft, Project, TICKS_PER_QUARTER, Tempo, Tick};
+use echode_model::{
+    CLIP_GAIN_MAX, Change, ChangeSet, Id, Meter, NoteDraft, ObjectKey, Project, Property,
+    TICKS_PER_QUARTER, Tempo, Tick, Value,
+};
 use proptest::prelude::*;
 
 const EIGHTH: i64 = TICKS_PER_QUARTER / 2;
@@ -750,17 +753,64 @@ fn scratch() -> PathBuf {
     path
 }
 
+// Start with shared content and non-MIDI-rounded 16-bit values so later edits,
+// duplication, deletion, and history must preserve the untouched note fields.
+fn seeded_notes() -> Project {
+    let (mut project, track) = Project::new().add_track("seed notes");
+    for (index, pitch) in [60, 64].into_iter().enumerate() {
+        project = project
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch,
+                    velocity: 100,
+                    start: Tick::new(index as i64 * EIGHTH),
+                    length: Tick::new(EIGHTH),
+                },
+            )
+            .unwrap()
+            .0;
+    }
+    let clip = &project.tracks()[0].clips[0];
+    let source = clip.id;
+    let mut fields = ChangeSet::new();
+    for (index, note) in project
+        .content(clip.content)
+        .unwrap()
+        .notes
+        .iter()
+        .enumerate()
+    {
+        for (property, before, after) in [
+            (Property::Velocity, note.velocity, 1001 + index as u16),
+            (Property::Release, note.release, 40001 + index as u16),
+        ] {
+            fields.push(Change::Update {
+                id: ObjectKey::Id(note.id),
+                property,
+                before: Value::U16(before),
+                after: Value::U16(after),
+            });
+        }
+    }
+    let project = project.apply_changeset(&fields).unwrap();
+    let (project, linked) = project.add_track("linked seed notes");
+    project
+        .link_clip(source, linked, Tick::new(EIGHTH), Id::generate())
+        .unwrap()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     #[test]
     fn random_edits_keep_every_property(
-        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..3
+        steps in prop::collection::vec(step(), 1..48), seeded in 0u8..4
     ) {
         let base = match seeded {
             0 => Project::new(),
             1 => Project::new().add_track("seed mixer").0,
-            _ => {
+            2 => {
                 let (project, track) = Project::new().add_track("seed device settings");
                 let id = Id::generate();
                 project.add_clap_device(track, id, "org.example.seed").unwrap()
@@ -769,6 +819,7 @@ proptest! {
                     .set_parameter_pinned(id, 7, true).unwrap()
                     .set_device_state(id, Some(plugin_state_hash().to_string())).unwrap()
             }
+            _ => seeded_notes(),
         };
         let mut session = Session::open(base.clone());
         for step in &steps {

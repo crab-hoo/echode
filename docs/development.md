@@ -122,6 +122,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 履歴の `tests/device_changesets.rs` に置く。操作列は設定済み CLAP デバイスからも始める。
 モデル値だけを検査し、プラグインを読み込まない（[ADR 0215](decisions/0215-device-changeset-fields.md)）。
 
+ノートのスカラー項目の表は `echode-model/src/changeset_note.rs`、独立した整数・参照・フィールド順の回帰は
+履歴の `tests/note_changesets.rs` に置く。所属と中身の順序、必須項目・型・未知の ID の拒否とジャーナルも検査する。
+操作列は共有内容と 16 bit の発音・リリースの強弱を持つ初期状態からも始める。
+低水準の任意値の往復は公開前の不変条件検査と区別する（[ADR 0216](decisions/0216-note-changeset-fields.md)）。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する

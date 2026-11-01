@@ -16,6 +16,10 @@ use crate::time::{Meter, Tempo, TempoMap, TempoPoint, Tick};
 mod device;
 use device::{DeviceState, device_change, diff_device_fields};
 
+#[path = "changeset_note.rs"]
+mod note;
+use note::{NoteState, diff_note_fields, note_change};
+
 #[path = "changeset_parameter.rs"]
 mod parameter;
 use parameter::{ParamState, diff_parameter_fields, parameter_change};
@@ -789,71 +793,6 @@ fn one_inserted(before: &[Id], after: &[Id]) -> Option<(u32, Id)> {
     u32::try_from(index).ok().map(|index| (index, id))
 }
 
-fn diff_note_fields(
-    before_owner: Id,
-    after_owner: Id,
-    before: &Note,
-    after: &Note,
-    updates: &mut Vec<Change>,
-) {
-    if before_owner != after_owner {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Owner,
-            Value::Id(before_owner),
-            Value::Id(after_owner),
-        ));
-    }
-    if before.start != after.start {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Start,
-            Value::Tick(before.start),
-            Value::Tick(after.start),
-        ));
-    }
-    if before.length != after.length {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Length,
-            Value::Tick(before.length),
-            Value::Tick(after.length),
-        ));
-    }
-    if before.pitch != after.pitch {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Pitch,
-            Value::Byte(before.pitch),
-            Value::Byte(after.pitch),
-        ));
-    }
-    if before.velocity != after.velocity {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Velocity,
-            Value::U16(before.velocity),
-            Value::U16(after.velocity),
-        ));
-    }
-    if before.release != after.release {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Release,
-            Value::U16(before.release),
-            Value::U16(after.release),
-        ));
-    }
-    if before.articulation != after.articulation {
-        updates.push(update(
-            ObjectKey::Id(after.id),
-            Property::Articulation,
-            Value::Parent(before.articulation),
-            Value::Parent(after.articulation),
-        ));
-    }
-}
-
 fn update(id: ObjectKey, property: Property, before: Value, after: Value) -> Change {
     Change::Update {
         id,
@@ -969,53 +908,6 @@ fn clip_change(create: bool, track: Id, clip: &Placement) -> Change {
     }
 }
 
-fn note_change(create: bool, clip: Id, note: &Note) -> Change {
-    let fields = vec![
-        Field {
-            property: Property::Owner,
-            value: Value::Id(clip),
-        },
-        Field {
-            property: Property::Start,
-            value: Value::Tick(note.start),
-        },
-        Field {
-            property: Property::Length,
-            value: Value::Tick(note.length),
-        },
-        Field {
-            property: Property::Pitch,
-            value: Value::Byte(note.pitch),
-        },
-        Field {
-            property: Property::Velocity,
-            value: Value::U16(note.velocity),
-        },
-        Field {
-            property: Property::Release,
-            value: Value::U16(note.release),
-        },
-        Field {
-            property: Property::Articulation,
-            value: Value::Parent(note.articulation),
-        },
-    ];
-    let id = ObjectKey::Id(note.id);
-    if create {
-        Change::Create {
-            kind: ObjectKind::Note,
-            id,
-            fields,
-        }
-    } else {
-        Change::Delete {
-            kind: ObjectKind::Note,
-            id,
-            fields,
-        }
-    }
-}
-
 struct TrackState {
     name: String,
     parent: Option<Id>,
@@ -1040,16 +932,6 @@ struct ClipState {
     gain_bits: u32,
     fade_in: i64,
     fade_out: i64,
-}
-
-struct NoteState {
-    clip: Id,
-    start: Tick,
-    length: Tick,
-    pitch: u8,
-    velocity: u16,
-    release: u16,
-    articulation: Option<Id>,
 }
 
 struct Draft {
@@ -1085,18 +967,9 @@ impl Draft {
                 },
             );
             for note in &content.notes {
-                draft.notes.insert(
-                    note.id,
-                    NoteState {
-                        clip: content.id,
-                        start: note.start,
-                        length: note.length,
-                        pitch: note.pitch,
-                        velocity: note.velocity,
-                        release: note.release,
-                        articulation: note.articulation,
-                    },
-                );
+                draft
+                    .notes
+                    .insert(note.id, NoteState::from_note(content.id, note));
             }
         }
         for point in project.tempo().points() {
@@ -1241,18 +1114,7 @@ impl Draft {
                 if self.notes.contains_key(&id) {
                     return Err(ModelError::InvalidChange);
                 }
-                self.notes.insert(
-                    id,
-                    NoteState {
-                        clip: field_id(fields, Property::Owner)?,
-                        start: field_tick(fields, Property::Start)?,
-                        length: field_tick(fields, Property::Length)?,
-                        pitch: field_byte(fields, Property::Pitch)?,
-                        velocity: field_u16(fields, Property::Velocity)?,
-                        release: field_u16(fields, Property::Release)?,
-                        articulation: field_optional_id(fields, Property::Articulation)?,
-                    },
-                );
+                self.notes.insert(id, NoteState::from_fields(fields)?);
                 Ok(())
             }
             _ => Err(ModelError::InvalidChange),
@@ -1284,6 +1146,11 @@ impl Draft {
             && let Some(parameter) = self.parameters.get_mut(&id)
         {
             return parameter.set(property, value);
+        }
+        if let ObjectKey::Id(id) = id
+            && let Some(note) = self.notes.get_mut(&id)
+        {
+            return note.set(property, value);
         }
         if let ObjectKey::Id(id) = id
             && DeviceState::is_scalar(property)
@@ -1350,22 +1217,14 @@ impl Draft {
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Start, Value::Tick(tick)) => {
-                if let Some(clip) = self.clips.get_mut(&id) {
-                    clip.start = *tick;
-                    return Ok(());
-                }
-                self.notes
+                self.clips
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .start = *tick;
                 Ok(())
             }
             (ObjectKey::Id(id), Property::Length, Value::Tick(tick)) => {
-                if let Some(clip) = self.clips.get_mut(&id) {
-                    clip.length = *tick;
-                    return Ok(());
-                }
-                self.notes
+                self.clips
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
                     .length = *tick;
@@ -1469,42 +1328,10 @@ impl Draft {
             }
             (ObjectKey::Id(_id), Property::Lane, Value::Text(_)) => Ok(()),
             (ObjectKey::Id(id), Property::Owner, Value::Id(owner)) => {
-                if let Some(clip) = self.clips.get_mut(&id) {
-                    clip.track = *owner;
-                    return Ok(());
-                }
-                self.notes
+                self.clips
                     .get_mut(&id)
                     .ok_or(ModelError::InvalidChange)?
-                    .clip = *owner;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Pitch, Value::Byte(byte)) => {
-                self.notes
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .pitch = *byte;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Velocity, Value::U16(value)) => {
-                self.notes
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .velocity = *value;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Release, Value::U16(value)) => {
-                self.notes
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .release = *value;
-                Ok(())
-            }
-            (ObjectKey::Id(id), Property::Articulation, Value::Parent(id_value)) => {
-                self.notes
-                    .get_mut(&id)
-                    .ok_or(ModelError::InvalidChange)?
-                    .articulation = *id_value;
+                    .track = *owner;
                 Ok(())
             }
             _ => Err(ModelError::InvalidChange),
@@ -1537,19 +1364,11 @@ impl Draft {
                 let Some(note) = self.notes.get(note_id) else {
                     return Err(ModelError::InvalidChange);
                 };
-                if note.clip != content_id || seen.insert(*note_id, ()).is_some() {
+                if note.content != content_id || seen.insert(*note_id, ()).is_some() {
                     return Err(ModelError::InvalidChange);
                 }
                 used_notes += 1;
-                notes.push(Note {
-                    id: *note_id,
-                    start: note.start,
-                    length: note.length,
-                    pitch: note.pitch,
-                    velocity: note.velocity,
-                    release: note.release,
-                    articulation: note.articulation,
-                });
+                notes.push(note.finish(*note_id));
             }
             contents.push(Arc::new(Content {
                 id: content_id,
