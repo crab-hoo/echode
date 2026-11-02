@@ -31,6 +31,38 @@ pub struct ClipControls {
     pub fade_out_ticks: i64,
 }
 
+macro_rules! clip_scalar {
+    (skip, $controls:ident, $clip:ident, $field:ident) => {};
+    (copy, $controls:ident, $clip:ident, $field:ident) => {
+        $controls.$field = $clip.$field;
+    };
+    (ticks, $controls:ident, $clip:ident, $field:ident) => {
+        $controls.$field = $clip.$field.get();
+    };
+}
+macro_rules! clip_snapshot_fields {
+    (
+        fields { $($property:ident => $visibility:vis $field:ident: $model:ty => $type:ty,
+            $value:ident, $read:ident, $encode:path, $decode:path; $ffi:ident;)+ }
+        diff [$($diff:ident),+];
+    ) => {
+        impl ClipControls {
+            fn from_placement(project: &Project, track: echode_model::Id, clip: &echode_model::Placement) -> Self {
+                let mut controls = Self {
+                    track_id: bytes(track), clip_id: bytes(clip.id),
+                    audio: u32::from(project.content(clip.content).is_some_and(|content| content.audio.is_some())),
+                    fade_in_ticks: fade_ticks(project, clip, true),
+                    fade_out_ticks: fade_ticks(project, clip, false),
+                    ..Self::default()
+                };
+                $(clip_scalar!($ffi, controls, clip, $field);)+
+                controls
+            }
+        }
+    };
+}
+echode_model::placement_fields!(clip_snapshot_fields);
+
 pub(crate) struct ControlIndex {
     mixers: Vec<MixerControls>,
     clips: BTreeMap<u128, ClipControls>,
@@ -73,22 +105,7 @@ impl ControlIndex {
                 track.clips.iter().map(move |clip| {
                     (
                         clip.id.raw(),
-                        ClipControls {
-                            track_id: bytes(track.id),
-                            clip_id: bytes(clip.id),
-                            start: clip.start.get(),
-                            length: clip.length.get(),
-                            fade_in: clip.fade_in,
-                            fade_out: clip.fade_out,
-                            gain: clip.gain,
-                            audio: u32::from(
-                                project
-                                    .content(clip.content)
-                                    .is_some_and(|content| content.audio.is_some()),
-                            ),
-                            fade_in_ticks: fade_ticks(project, clip, true),
-                            fade_out_ticks: fade_ticks(project, clip, false),
-                        },
+                        ClipControls::from_placement(project, track.id, clip),
                     )
                 })
             })

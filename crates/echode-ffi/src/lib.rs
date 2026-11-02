@@ -1041,6 +1041,9 @@ fn snapshot_ref<'a>(snapshot: *const Snapshot) -> Option<&'a Snapshot> {
 mod tests;
 
 #[cfg(test)]
+mod snapshot_fields_tests;
+
+#[cfg(test)]
 mod completion_tests;
 
 #[cfg(test)]

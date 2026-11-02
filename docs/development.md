@@ -147,25 +147,33 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 保存ヘッダの配置だけを扱う formatter は `src/document_track.rs` に残し、ID・子・階層の検証は省略しない
 （[ADR 0225](decisions/0225-track-package-fields.md)）。
 
-中身の音声参照・テイク ID 列の表は `echode-model/src/changeset_content.rs`、独立したメタデータ・ID 列と順序の回帰は
+中身の音声参照・テイク ID 列の表は `echode-model/src/content_fields.rs`、独立したメタデータ・ID 列と順序の回帰は
 履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。
 操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない
 （[ADR 0218](decisions/0218-content-changeset-fields.md)）。
 
-配置の項目表は `echode-model/src/changeset_placement.rs`、独立した整数・ゲインビット・フィールド順の回帰は
+配置の項目表は `echode-model/src/placement_fields.rs`、独立した整数・ゲインビット・フィールド順の回帰は
 履歴の `tests/placement_changesets.rs` に置く。所属とトラックの配置 ID 列、中身の存在・異常入力・レーンの互換も検査する。
 操作列は固定・共有配置、負のオフセット・小さいゲイン・非既定フェードからも始める。素材・機器は開かない
 （[ADR 0219](decisions/0219-placement-changeset-fields.md)）。
 
-テンポ点のテンポ項目の表は `echode-model/src/changeset_tempo.rs`、独立した分数・tick 順とジャーナルの回帰は
+テンポ点のテンポ項目の表は `echode-model/src/tempo_fields.rs`、独立した分数・tick 順とジャーナルの回帰は
 履歴の `tests/tempo_changesets.rs` に置く。必須項目・型・未知の tick・二重作成・空マップと旧作成規則も検査する。
 操作列は負の位置・グリッド外の位置と分数テンポからも始める。実時間変換・素材・機器はこの回帰の対象外とする
 （[ADR 0220](decisions/0220-tempo-changeset-fields.md)）。
 
-プロジェクトの拍子の表は `echode-model/src/changeset_project.rs`、独立した分子・分母と更新順の回帰は
+プロジェクトの拍子の表は `echode-model/src/project_fields.rs`、独立した分子・分母と更新順の回帰は
 履歴の `tests/project_changesets.rs` に置く。型・キーの拒否と旧トラック ID 配列の無変更互換も検査する。
 操作列は非 `4/4` の空の階層と固定配置のある状態からも始める。低水準の適用は拍子アクションを再実行しない
 （[ADR 0221](decisions/0221-project-changeset-fields.md)）。
+
+項目を追加する時は、その `*_fields.rs` と意味を持つ編集規則・不変条件・移行を変更する。
+新しいプロパティ名は `changeset.rs` の登録簿へ、新しい値の種類だけは `change_values.rs` へ加える。
+保存・復元の転記や FFI の安全なスカラー問い合わせを別に手書きしない。
+デバイス・トラック・配置の表の投影指定は、公開しない項目も明記する。C ABI の追加は別に設計・検証する。
+残りの保存のレイアウトと原本保持は履歴の `tests/schema_fields.rs`、全値の wire 表記は `tests/change_value_wire.rs`、
+保存再読込みから保持した ABI の値は FFI の `snapshot_fields_tests.rs` に置く
+（[ADR 0226](decisions/0226-model-field-registry-completion.md)）。
 
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
@@ -229,6 +237,12 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 回帰は `main_requests_tests.rs`・`session_correlation_tests.rs`・`control_tagged_tests.rs` と `tests/audit.rs` の SPG-01 を使う。
 エンジンのテスト専用の素通しではなく、製品と同じ `device_control_handle` を通す
 （[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
+
+制御専用ハンドルの型付き操作は `echode-sandbox/src/session_operations.rs` に直接実装し、
+同名の `ControlState` や `PluginHost` の素通しを増やさない。
+公開操作と通信の対応・拒否・背景保存の順序は `session_operations_tests.rs`、
+要求番号・古い応答と保存の世代は `session_correlation_tests.rs` を使う
+（[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
 
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない

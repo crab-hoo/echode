@@ -152,9 +152,13 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
     .expect("initial");
     assert!((left[0] - 0.25).abs() < 1.0e-4, "{}", left[0]);
 
+    let endpoint = host.control_handle();
     // The first save sleeps 3 s, past both 2 s waits.
-    assert!(host.save_state().is_err(), "the slow save must time out");
-    let restored = host.restore_state(&[128]);
+    assert!(
+        endpoint.capture_state().is_err(),
+        "the slow save must time out"
+    );
+    let restored = endpoint.restore_state(&[128]);
     // Allow the earlier main-thread call to finish before checking its effects.
     std::thread::sleep(Duration::from_secs(4));
     let mut loaded = false;
@@ -185,7 +189,6 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
     }
     // The old save response must not reject this later restore, nor satisfy
     // this new save. Both calls use the product control-only endpoint.
-    let endpoint = host.control_handle();
     endpoint
         .restore_state(&[128])
         .expect("restore after completion");

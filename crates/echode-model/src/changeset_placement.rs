@@ -3,18 +3,18 @@
 use std::convert::identity;
 
 use super::{
-    Change, ClipKind, Field, Id, ModelError, ObjectKey, ObjectKind, Placement, Property, Tick,
-    Value, field_id, field_tick, update,
+    Change, ClipKind, Field, Id, ModelError, ObjectKey, ObjectKind, Placement, Property, Value,
+    field_id, field_tick, update,
 };
 use crate::model::Lane;
 
 // Declaration order is creation order; updates keep the existing different order.
 // Track ownership and content existence are checked by Draft, not by this table.
-macro_rules! placement_fields {
+macro_rules! define_placement_changes {
     (
         fields { $(
-            $property:ident => $visibility:vis $field:ident: $type:ty, $value:ident,
-            $read:ident, $encode:path, $decode:path;
+            $property:ident => $visibility:vis $field:ident: $model:ty => $type:ty, $value:ident,
+            $read:ident, $encode:path, $decode:path; $ffi:ident;
         )+ }
         diff [$($diff:ident),+];
     ) => {
@@ -105,19 +105,7 @@ macro_rules! placement_fields {
     };
 }
 
-placement_fields! {
-    fields {
-        Content => pub content: Id, Id, field_id, identity, identity;
-        Start => start: Tick, Tick, field_tick, identity, identity;
-        Length => length: Tick, Tick, field_tick, identity, identity;
-        Offset => offset: Tick, Tick, field_tick, identity, identity;
-        Kind => kind: ClipKind, Kind, field_kind, identity, identity;
-        Gain => gain: u32, Gain, field_gain, f32::to_bits, f32::from_bits;
-        FadeIn => fade_in: i64, Flicks, field_flicks, identity, identity;
-        FadeOut => fade_out: i64, Flicks, field_flicks, identity, identity;
-    }
-    diff [Start, Length, Kind, Offset, Content, Gain, FadeIn, FadeOut];
-}
+crate::placement_fields!(define_placement_changes);
 
 fn field_kind(fields: &[Field], property: Property) -> Result<ClipKind, ModelError> {
     fields

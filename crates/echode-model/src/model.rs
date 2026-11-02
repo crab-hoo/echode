@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::convert::identity;
 
 use fractional_index::FractionalIndex;
 
@@ -154,14 +155,16 @@ pub struct Expression {
 }
 
 /// Whether a placement still follows its notes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ClipKind {
     Auto,
     Fixed,
 }
 
 /// Where a placement sits. Phase 1 has the timeline only.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Lane {
     Timeline,
 }
@@ -175,7 +178,8 @@ pub const FADE_RATE_LIMIT: u32 = 768_000;
 /// BLAKE3-256 of the decoded samples, plus the facts needed to place them.
 ///
 /// The bytes live in the package store. This value is what the project records.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AudioRef {
     pub hash: String,
     pub sample_rate: u32,
@@ -219,53 +223,68 @@ pub fn is_media_hash(text: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-/// Notes shared by one or more placements.
-///
-/// Content time zero is fixed when the content is created. A note before that
-/// origin has a negative `start`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Content {
-    pub id: Id,
-    pub audio: Option<AudioRef>,
-    pub takes: Vec<Id>,
-    pub notes: Vec<Note>,
-    /// Per-note expression curves. Empty until those curves can be edited.
-    pub expressions: Vec<Expression>,
-}
+macro_rules! define_content {
+    ($($property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
+        /// Notes and metadata shared by one or more placements.
+        /// Content time zero is fixed; notes before it have negative starts.
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct Content {
+            pub id: Id,
+            $(pub $field: $type,)+
+            pub notes: Vec<Note>,
+            /// Reserved curves, empty until expression editing is implemented.
+            pub expressions: Vec<Expression>,
+        }
 
-/// A window onto a [`Content`].
-///
-/// `gain` uses float bits for equality so a project can stay `Eq`.
-#[derive(Clone, Debug)]
-pub struct Placement {
-    pub id: Id,
-    pub content: Id,
-    pub lane: Lane,
-    pub start: Tick,
-    pub length: Tick,
-    pub offset: Tick,
-    pub kind: ClipKind,
-    pub gain: f32,
-    pub fade_in: i64,
-    pub fade_out: i64,
-}
+        /// Package scalars; decoding does not validate references or a project.
+        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct ContentMetadata { $(pub $field: $type,)+ }
 
-impl PartialEq for Placement {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-            && self.content == other.content
-            && self.lane == other.lane
-            && self.start == other.start
-            && self.length == other.length
-            && self.offset == other.offset
-            && self.kind == other.kind
-            && self.gain.to_bits() == other.gain.to_bits()
-            && self.fade_in == other.fade_in
-            && self.fade_out == other.fade_out
-    }
+        impl From<&Content> for ContentMetadata {
+            fn from(content: &Content) -> Self {
+                Self { $($field: content.$field.to_owned(),)+ }
+            }
+        }
+        impl ContentMetadata {
+            pub fn into_content(self, id: Id, notes: Vec<Note>, expressions: Vec<Expression>) -> Content {
+                Content { id, $($field: self.$field,)+ notes, expressions }
+            }
+        }
+    };
 }
+crate::content_fields::content_fields!(define_content);
 
-impl Eq for Placement {}
+macro_rules! define_placement {
+    (
+        fields {
+            Content => $vis:vis content: $content:ty => $state:ty, $value:ident,
+                $read:ident, $encode:path, $decode:path; $ffi:ident;
+            $($property:ident => $visibility:vis $field:ident: $model:ty => $type:ty,
+                $variant:ident, $reader:ident, $encoder:path, $decoder:path; $projection:ident;)+
+        }
+        diff [$($diff:ident),+];
+    ) => {
+        /// A window onto shared content. Equality preserves all gain bits.
+        /// Serde checks shape only; assembly validates bounds and references.
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct Placement {
+            pub id: Id,
+            pub content: $content,
+            pub lane: Lane,
+            $(pub $field: $model,)+
+        }
+        impl PartialEq for Placement {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id && self.content == other.content && self.lane == other.lane
+                    $(&& $encoder(self.$field) == $encoder(other.$field))+
+            }
+        }
+        impl Eq for Placement {}
+    };
+}
+crate::placement_fields!(define_placement);
 
 impl Placement {
     /// Timeline time of a note heard through this window.
@@ -330,7 +349,7 @@ pub fn fade_allowed(flicks: i64) -> bool {
 }
 
 macro_rules! define_track {
-    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
+    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident, $read:ident; $ffi:ident $getter:ident;)+) => {
         /// A track. MIDI and audio can share one.
         ///
         /// `parent` is another track, so folders can nest without a depth cap.
@@ -373,14 +392,35 @@ macro_rules! define_track {
 
 track_fields!(define_track);
 
-/// Immutable project snapshot.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Project {
-    meter: Meter,
-    tempo: TempoMap,
-    contents: Vec<Arc<Content>>,
-    tracks: Vec<Arc<Track>>,
+macro_rules! define_project {
+    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident;)+) => {
+        /// Immutable project snapshot.
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct Project {
+            $($field: $type,)+
+            tempo: TempoMap,
+            contents: Vec<Arc<Content>>,
+            tracks: Vec<Arc<Track>>,
+        }
+        /// Project scalars without tempo points or child identities.
+        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct ProjectMetadata { $($(#[$attribute])* pub $field: $type,)+ }
+
+        impl From<&Project> for ProjectMetadata {
+            fn from(project: &Project) -> Self {
+                Self { $($field: project.$field,)+ }
+            }
+        }
+        impl ProjectMetadata {
+            /// Resolves package children and validates the entire project.
+            pub fn try_assemble(self, tempo: TempoMap, contents: Vec<Content>, tracks: Vec<Track>) -> Result<Project, ModelError> {
+                Project::try_assemble($(self.$field,)+ tempo, contents, tracks)
+            }
+        }
+    };
 }
+crate::project_fields::project_fields!(define_project);
 
 impl Default for Project {
     fn default() -> Self {

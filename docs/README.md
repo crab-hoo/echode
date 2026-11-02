@@ -38,18 +38,9 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   SPG-05 は [ADR 0204](decisions/0204-document-service.md)、SPG-07 は [ADR 0205](decisions/0205-playback-options.md)、
   SPG-08 は [ADR 0206](decisions/0206-piano-interaction-state.md) で対応し、当時の再現は保持する。
   SPG-10 は履歴とエンジンの Phase 0 コードを非既定 feature へ分離した（[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
-  SPG-09 はパラメーター・デバイス・ノート・トラック・中身・配置・テンポ点・プロジェクト拍子の項目表・性質テストから着手した
-  （[ADR 0214](decisions/0214-parameter-changeset-fields.md)、[ADR 0215](decisions/0215-device-changeset-fields.md)、
-  [ADR 0216](decisions/0216-note-changeset-fields.md)、[ADR 0217](decisions/0217-track-changeset-fields.md)、
-  [ADR 0218](decisions/0218-content-changeset-fields.md)、[ADR 0219](decisions/0219-placement-changeset-fields.md)、
-  [ADR 0220](decisions/0220-tempo-changeset-fields.md)、[ADR 0221](decisions/0221-project-changeset-fields.md)）。
-  パラメーターはモデル宣言・等価比較・保存の Serde とも項目表を共有した（[ADR 0222](decisions/0222-parameter-package-fields.md)）。
-  デバイスもモデル宣言・Serde と項目表を共有し、保存時と復元時の手書きの列挙を除いた
-  （[ADR 0223](decisions/0223-device-package-fields.md)）。
-  ノートも同じ項目表からモデル宣言・Serde・変更セットを作り、保存専用の型と変換を除いた
-  （[ADR 0224](decisions/0224-note-package-fields.md)）。
-  トラックの名前・親・兄弟順もモデルと保存用メタデータ・変換を同じ項目表へ集めた
-  （[ADR 0225](decisions/0225-track-package-fields.md)）。
+  SPG-06 の残りの素通しは制御専用ハンドルへ集め、型付きの操作を保った（[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
+  SPG-09 はモデル・変更セット・保存・ジャーナルの項目登録と、FFI 内のスカラー転記の共有まで完了した。
+  既存の形式・ABI・子の検証を保つ。経緯と境界は [ADR 0226](decisions/0226-model-field-registry-completion.md) を参照する。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。

@@ -7,8 +7,8 @@ use super::{
 
 // Declaration order is the existing update order and from_arcs argument order.
 // Tempo points and children are resolved by Draft, not stored as scalar fields.
-macro_rules! project_fields {
-    ($($property:ident => $field:ident: $type:ty, $value:ident;)+) => {
+macro_rules! define_project_changes {
+    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident;)+) => {
         pub(super) struct ProjectState {
             $($field: $type,)+
         }
@@ -45,6 +45,4 @@ macro_rules! project_fields {
     };
 }
 
-project_fields! {
-    Meter => meter: Meter, Meter;
-}
+crate::project_fields::project_fields!(define_project_changes);

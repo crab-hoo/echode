@@ -14,18 +14,22 @@ pub(super) fn render_header(track: &Track, schema: u32) -> String {
         metadata: TrackMetadata,
     }
 
-    let mut buffer = Vec::new();
-    let mut serializer =
-        serde_json::Serializer::with_formatter(&mut buffer, HeaderFormatter::default());
-    Header {
+    render_metadata(&Header {
         schema,
         id: track.id,
         metadata: TrackMetadata::from(track),
-    }
-    .serialize(&mut serializer)
-    .expect("track metadata is JSON");
-    let mut text = String::from_utf8(buffer).expect("track metadata is UTF-8");
-    // Continue this root object with separately formatted/resolved child arrays.
+    })
+}
+
+pub(super) fn render_metadata(value: &impl Serialize) -> String {
+    let mut buffer = Vec::new();
+    let mut serializer =
+        serde_json::Serializer::with_formatter(&mut buffer, HeaderFormatter::default());
+    value
+        .serialize(&mut serializer)
+        .expect("package metadata is JSON");
+    let mut text = String::from_utf8(buffer).expect("package metadata is UTF-8");
+    // Continue the root object with separately formatted/resolved child arrays.
     assert!(text.ends_with("\n}"));
     text.truncate(text.len() - 2);
     text.push_str(",\n");

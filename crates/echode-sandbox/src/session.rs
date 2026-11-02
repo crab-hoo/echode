@@ -6,8 +6,7 @@
 //! helper exits.
 
 use crate::control::{ControlMessage, Socket};
-use crate::gui::{GuiReport, PluginActivity};
-use crate::params::{ParamChange, ParamInfo, ParamText, ParamValue};
+use crate::gui::PluginActivity;
 use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
 use crate::workgroup::spawn_helper;
@@ -176,17 +175,6 @@ impl PluginControl {
         }
     }
 
-    /// Opens the plugin's window in its helper, or raises it when it is open.
-    /// The window does not take keyboard focus. `title` names a new window.
-    pub fn show_gui(&self, title: &str) -> Result<GuiReport, SessionError> {
-        self.lock().show_gui(title)
-    }
-
-    /// Closes the plugin's window. Closing a window that is not open succeeds.
-    pub fn close_gui(&self) -> Result<(), SessionError> {
-        self.lock().close_gui()
-    }
-
     /// Window notices and plugin-made changes since the last call, in order.
     /// Never waits for the socket. `None` when nothing happened.
     pub fn take_activity(&self) -> Option<PluginActivity> {
@@ -211,32 +199,6 @@ impl PluginControl {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .clone()
-    }
-
-    /// Every parameter the plugin describes, with its value and text.
-    pub fn parameters(&self) -> Result<Vec<ParamInfo>, SessionError> {
-        self.lock().parameters()
-    }
-
-    /// Applies `changes` in order and returns those parameters as read back.
-    pub fn set_parameters(&self, changes: &[ParamChange]) -> Result<Vec<ParamValue>, SessionError> {
-        self.lock().set_parameters(changes)
-    }
-
-    /// Reads typed text for one parameter with the plugin's `text_to_value`.
-    /// The plugin's value does not change.
-    pub fn parse_parameter(&self, id: u32, text: &str) -> Result<ParamText, SessionError> {
-        self.lock().parse_parameter(id, text)
-    }
-
-    /// Saves after every change already sent on this socket has been applied.
-    pub fn capture_state(&self) -> Result<Vec<u8>, SessionError> {
-        self.lock().capture_state()
-    }
-
-    /// Loads recorded bytes into the running plugin.
-    pub fn restore_state(&self, bytes: &[u8]) -> Result<(), SessionError> {
-        self.lock().restore_state(bytes)
     }
 
     /// Poll notices and collect an asynchronous state save. A newer dirty
@@ -334,38 +296,6 @@ impl ControlState {
             .merge(note);
     }
 
-    fn show_gui(&mut self, title: &str) -> Result<GuiReport, SessionError> {
-        let id = self.request(ControlMessage::GuiShow(title.to_string()))?;
-        match self.wait_reply(id, WINDOW_REPLY, |message| {
-            matches!(
-                message,
-                ControlMessage::GuiShown(_) | ControlMessage::GuiRejected(_)
-            )
-        })? {
-            ControlMessage::GuiShown(report) => Ok(report),
-            ControlMessage::GuiRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not show the window".to_string(),
-            )),
-        }
-    }
-
-    fn close_gui(&mut self) -> Result<(), SessionError> {
-        let id = self.request(ControlMessage::GuiClose)?;
-        match self.wait_reply(id, WINDOW_REPLY, |message| {
-            matches!(
-                message,
-                ControlMessage::GuiClosedReply | ControlMessage::GuiRejected(_)
-            )
-        })? {
-            ControlMessage::GuiClosedReply => Ok(()),
-            ControlMessage::GuiRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not close the window".to_string(),
-            )),
-        }
-    }
-
     fn remember(&mut self, id: u64, bytes: &[u8]) {
         if id < self.remembered_request {
             return;
@@ -437,98 +367,6 @@ impl ControlState {
             ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
             _ => Err(SessionError::Protocol(
                 "helper did not return state".to_string(),
-            )),
-        }
-    }
-
-    pub fn parameters(&mut self) -> Result<Vec<ParamInfo>, SessionError> {
-        let id = self.request(ControlMessage::ParamsRequest)?;
-        match self.wait_reply(id, PARAMETER_REPLY, |message| {
-            matches!(
-                message,
-                ControlMessage::Params(_) | ControlMessage::ParamsRejected(_)
-            )
-        })? {
-            ControlMessage::Params(infos) => Ok(infos),
-            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not return parameters".to_string(),
-            )),
-        }
-    }
-
-    pub fn set_parameters(
-        &mut self,
-        changes: &[ParamChange],
-    ) -> Result<Vec<ParamValue>, SessionError> {
-        if changes.iter().any(|change| !change.value.is_finite()) {
-            return Err(SessionError::Protocol(
-                "parameter value is not finite".to_string(),
-            ));
-        }
-        let id = self.request(ControlMessage::SetParams(changes.to_vec()))?;
-        match self.wait_reply(id, PARAMETER_REPLY, |message| {
-            matches!(
-                message,
-                ControlMessage::ParamsApplied(_) | ControlMessage::ParamsRejected(_)
-            )
-        })? {
-            ControlMessage::ParamsApplied(values) => Ok(values),
-            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not apply parameters".to_string(),
-            )),
-        }
-    }
-
-    pub fn parse_parameter(&mut self, id: u32, text: &str) -> Result<ParamText, SessionError> {
-        let request = self.request(ControlMessage::ParseParam {
-            id,
-            text: text.to_string(),
-        })?;
-        match self.wait_reply(request, PARAMETER_REPLY, |message| {
-            matches!(
-                message,
-                ControlMessage::ParamParsed(_) | ControlMessage::ParamsRejected(_)
-            )
-        })? {
-            ControlMessage::ParamParsed(parsed) => Ok(parsed),
-            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not read the parameter text".to_string(),
-            )),
-        }
-    }
-
-    /// A background save already in flight answers first on this socket.
-    /// Collect it so the reply taken here is the one requested after the edits.
-    pub fn capture_state(&mut self) -> Result<Vec<u8>, SessionError> {
-        if let Some(id) = self.save_requested.take() {
-            self.wait_reply(id, Duration::from_secs(2), |message| {
-                matches!(
-                    message,
-                    ControlMessage::State(_) | ControlMessage::StateRejected(_)
-                )
-            })?;
-        }
-        self.save_state()
-    }
-
-    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), SessionError> {
-        let id = self.request(ControlMessage::Restore(bytes.to_vec()))?;
-        match self.wait_reply(id, Duration::from_secs(2), |message| {
-            matches!(
-                message,
-                ControlMessage::Restored | ControlMessage::StateRejected(_)
-            )
-        })? {
-            ControlMessage::Restored => {
-                self.remember(id, bytes);
-                Ok(())
-            }
-            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not acknowledge restore".to_string(),
             )),
         }
     }
@@ -830,7 +668,7 @@ impl PluginHost {
         self.finish_launch()?;
         let state = self.control.applied_state();
         if let Some(state) = state {
-            self.restore_state(&state)?;
+            self.control.restore_state(&state)?;
         }
         Ok(())
     }
@@ -1025,22 +863,6 @@ impl PluginHost {
     /// A control-only endpoint. Polling it never borrows the audio mapping.
     pub fn control_handle(&self) -> PluginControl {
         self.control.clone()
-    }
-
-    pub fn request_save(&mut self) -> Result<(), SessionError> {
-        self.control.lock().request_save()
-    }
-
-    pub fn poll_saved(&mut self) -> Result<Option<Result<Vec<u8>, String>>, SessionError> {
-        self.control.lock().poll_saved()
-    }
-
-    pub fn save_state(&mut self) -> Result<Vec<u8>, SessionError> {
-        self.control.lock().save_state()
-    }
-
-    pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), SessionError> {
-        self.control.lock().restore_state(bytes)
     }
 
     pub fn poll_notice(&mut self) -> Result<Option<PluginNotice>, SessionError> {
@@ -1791,6 +1613,9 @@ impl PluginAudio {
     }
 }
 
+#[path = "session_operations.rs"]
+mod operations;
+
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
@@ -1798,3 +1623,7 @@ mod tests;
 #[cfg(test)]
 #[path = "session_correlation_tests.rs"]
 mod correlation_tests;
+
+#[cfg(test)]
+#[path = "session_operations_tests.rs"]
+mod operations_tests;

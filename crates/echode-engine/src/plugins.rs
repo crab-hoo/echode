@@ -1331,9 +1331,10 @@ fn spawn_stage(
         sample_rate,
         plugin_id: Some(route.clap_id.as_str()),
     }) {
-        Ok(mut host) => {
+        Ok(host) => {
             if let Some(bytes) = &route.state {
-                host.restore_state(bytes)
+                host.control_handle()
+                    .restore_state(bytes)
                     .map_err(|error| PlaybackError::Unsupported(error.to_string()))?;
             }
             host

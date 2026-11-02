@@ -45,6 +45,10 @@ CLAP、VST3、AU の違いを 1 つのインターフェース（サンプル位
   ソケットの要求と応答は 64 bit の要求番号で照合し、遅れた応答を後続へ貸さない。
   時間切れは取消ではなく結果不明で、自動再送はしない（[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
 
+- 制御専用の `PluginControl` は、`session_operations.rs` に型付きの操作と通信の実装を直接持つ。
+  `ControlState` は要求番号・通知・保存の管理を共用し、ホスト経由の保存・復元の別経路は持たない。
+  再起動と回帰も同じハンドルへつなぐ（[ADR 0227](../decisions/0227-control-only-plugin-operations.md)、SPG-06）。
+
 ### 9.5 GUI とデバイスビュー
 
 - プラグイン GUI はヘルパープロセスが持つフローティングの `NSPanel` に表示する（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。

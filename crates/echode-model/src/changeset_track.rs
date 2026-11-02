@@ -9,7 +9,7 @@ use crate::track_fields::track_fields;
 // Declaration order is the existing wire order. Child orders are resolved by Draft;
 // hierarchy and fractional keys are validated by arrange_tracks after replay.
 macro_rules! define_track_changeset {
-    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
+    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident, $read:ident; $ffi:ident $getter:ident;)+) => {
         pub(super) struct TrackState {
             $($field: $type,)+
             pub clip_order: Vec<Id>,

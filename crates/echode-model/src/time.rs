@@ -112,12 +112,37 @@ impl Tempo {
     }
 }
 
-/// One step of a tempo map. The tempo holds until the next point.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TempoPoint {
-    pub at: Tick,
-    pub tempo: Tempo,
+macro_rules! define_tempo_point {
+    ($($property:ident => $field:ident: $type:ty, $value:ident;
+        package { $($wire:ident: $wire_type:ty = $encode:expr;)+ }
+        restore $decode:expr;)+) => {
+        /// One step of a tempo map, addressed by its tick.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(try_from = "TempoPointParts", into = "TempoPointParts")]
+        pub struct TempoPoint {
+            pub at: Tick,
+            $(pub $field: $type,)+
+        }
+        // The package flattens the tempo fraction next to the identity tick.
+        #[derive(Clone, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct TempoPointParts { at: Tick, $($($wire: $wire_type,)+)+ }
+        impl From<TempoPoint> for TempoPointParts {
+            fn from(point: TempoPoint) -> Self {
+                let TempoPoint { at, $($field,)+ } = point;
+                Self { at, $($($wire: $encode,)+)+ }
+            }
+        }
+        impl TryFrom<TempoPointParts> for TempoPoint {
+            type Error = &'static str;
+            fn try_from(parts: TempoPointParts) -> Result<Self, Self::Error> {
+                let TempoPointParts { at, $($($wire,)+)+ } = parts;
+                Ok(Self { at, $($field: ($decode)?,)+ })
+            }
+        }
+    };
 }
+crate::tempo_fields::tempo_fields!(define_tempo_point);
 
 /// Constant tempo between points. Tick zero is flick zero.
 ///

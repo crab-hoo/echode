@@ -95,75 +95,62 @@ pub enum ObjectKey {
     Id(Id),
 }
 
-/// A stored field. The object kind decides which names are legal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Property {
-    Meter,
-    TrackOrder,
-    Name,
-    Parent,
-    Order,
-    ClipOrder,
-    Start,
-    Length,
-    Kind,
-    NoteOrder,
-    Owner,
-    Pitch,
-    Velocity,
-    Release,
-    Articulation,
-    Tempo,
-    Offset,
-    Gain,
-    FadeIn,
-    FadeOut,
-    Lane,
-    Content,
-    Audio,
-    Takes,
-    Key,
-    Minimum,
-    Maximum,
-    Default,
-    Value,
-    ParamOrder,
-    DeviceKind,
-    DeviceOrder,
-    Plugin,
-    PluginState,
-    Bypassed,
-    Offline,
-    PinnedParameters,
+macro_rules! define_properties {
+    ($($property:ident => $wire:literal,)+) => {
+        /// A stored field. The object kind decides which names are legal.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Property { $($property,)+ }
+        impl Property {
+            pub fn as_str(self) -> &'static str {
+                match self { $(Self::$property => $wire,)+ }
+            }
+            pub fn parse(text: &str) -> Option<Self> {
+                match text { $($wire => Some(Self::$property),)+ _ => None }
+            }
+        }
+    };
+}
+define_properties! {
+    Meter => "meter",
+    TrackOrder => "track_order",
+    Name => "name",
+    Parent => "parent",
+    Order => "order",
+    ClipOrder => "clip_order",
+    Start => "start",
+    Length => "length",
+    Kind => "kind",
+    NoteOrder => "note_order",
+    Owner => "owner",
+    Pitch => "pitch",
+    Velocity => "velocity",
+    Release => "release",
+    Articulation => "articulation",
+    Tempo => "tempo",
+    Offset => "offset",
+    Gain => "gain",
+    FadeIn => "fade_in",
+    FadeOut => "fade_out",
+    Lane => "lane",
+    Content => "content",
+    Audio => "audio",
+    Takes => "takes",
+    Key => "key",
+    Minimum => "minimum",
+    Maximum => "maximum",
+    Default => "default",
+    Value => "value",
+    ParamOrder => "param_order",
+    DeviceKind => "device_kind",
+    DeviceOrder => "device_order",
+    Plugin => "plugin",
+    PluginState => "plugin_state",
+    Bypassed => "bypassed",
+    Offline => "offline",
+    PinnedParameters => "pinned_parameters",
 }
 
-/// A property value. The variant has to match the [`Property`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Value {
-    Meter(Meter),
-    Tempo(Tempo),
-    Tick(Tick),
-    Text(String),
-    Id(Id),
-    Ids(Vec<Id>),
-    Parent(Option<Id>),
-    Audio(Option<crate::model::AudioRef>),
-    Kind(ClipKind),
-    Byte(u8),
-    U16(u16),
-    Gain(u32),
-    Bits(u32),
-    Flicks(i64),
-    /// CLAP parameter ids, ascending and unique.
-    ParamIds(Vec<u32>),
-    /// One id in an ordered list. `present` is whether this side contains it.
-    /// A single insert or removal records this instead of both full lists.
-    OrderStep {
-        index: u32,
-        id: Id,
-        present: bool,
-    },
-}
+pub use crate::change_values::Value;
 
 /// Ordered property changes. Forward application reaches the later snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -17,8 +17,8 @@ use std::sync::Mutex;
 
 use crate::package_io::Directory;
 use echode_model::{
-    AudioRef, CLIP_GAIN_MAX, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick,
-    Track, TrackMetadata, clip_gain_allowed,
+    ContentMetadata, Id, Note, Placement, Project, ProjectMetadata, TempoMap, TempoPoint, Track,
+    TrackMetadata,
 };
 use gix::objs::Tree;
 use gix::objs::tree::{Entry, EntryKind};
@@ -372,28 +372,21 @@ pub(crate) fn render(project: &Project) -> PackageText {
 }
 
 fn render_project_only(project: &Project) -> String {
-    let meter = project.meter();
-    let mut project_json = String::from("{\n");
-    push_field(&mut project_json, "schema", &to_json(&SCHEMA));
-    push_field(
-        &mut project_json,
-        "meter",
-        &to_json(&MeterLine {
-            numerator: meter.numerator(),
-            denominator: meter.denominator(),
-        }),
-    );
+    #[derive(Serialize)]
+    struct Header {
+        schema: u32,
+        #[serde(flatten)]
+        metadata: ProjectMetadata,
+    }
+    let mut project_json = track_json::render_metadata(&Header {
+        schema: SCHEMA,
+        metadata: ProjectMetadata::from(project),
+    });
     project_json.push_str("  \"tempo\":[\n");
     push_json_lines(
         &mut project_json,
         "    ",
-        project.tempo().points().iter().map(|point| {
-            to_json(&TempoLine {
-                at: point.at.get(),
-                numerator: point.tempo.numerator(),
-                denominator: point.tempo.denominator(),
-            })
-        }),
+        project.tempo().points().iter().map(to_json),
     );
     project_json.push_str("  ],\n  \"contents\":[\n");
     push_json_lines(
@@ -794,39 +787,24 @@ fn render_track(track: &Track) -> String {
         let _ = writeln!(out, "    {}{comma}", device_json::render(device));
     }
     out.push_str("  ],\n  \"clips\":[\n");
-    push_json_lines(
-        &mut out,
-        "    ",
-        track.clips.iter().map(|clip| {
-            let kind = match clip.kind {
-                ClipKind::Auto => "auto",
-                ClipKind::Fixed => "fixed",
-            };
-            to_json(&PlacementLine {
-                id: clip.id.to_string(),
-                content: clip.content.to_string(),
-                lane: "timeline",
-                start: clip.start.get(),
-                length: clip.length.get(),
-                offset: clip.offset.get(),
-                kind,
-                gain: clip.gain,
-                fade_in: clip.fade_in,
-                fade_out: clip.fade_out,
-            })
-        }),
-    );
+    push_json_lines(&mut out, "    ", track.clips.iter().map(to_json));
     out.push_str("  ]\n}\n");
     out
 }
 
 fn render_content(content: &echode_model::Content) -> String {
-    let takes: Vec<String> = content.takes.iter().map(|id| id.to_string()).collect();
-    let mut out = String::from("{\n");
-    push_field(&mut out, "schema", &to_json(&SCHEMA));
-    push_field(&mut out, "id", &to_json(&content.id.to_string()));
-    push_field(&mut out, "audio", &render_audio(content.audio.as_ref()));
-    push_field(&mut out, "takes", &to_json(&takes));
+    #[derive(Serialize)]
+    struct Header {
+        schema: u32,
+        id: Id,
+        #[serde(flatten)]
+        metadata: ContentMetadata,
+    }
+    let mut out = track_json::render_metadata(&Header {
+        schema: SCHEMA,
+        id: content.id,
+        metadata: ContentMetadata::from(content),
+    });
     out.push_str("  \"notes\":[\n");
     push_json_lines(&mut out, "    ", content.notes.iter().map(to_json));
     out.push_str("  ],\n  \"expressions\":");
@@ -959,14 +937,6 @@ fn audio_reference(value: &mut serde_json::Value) -> Result<(), String> {
     Ok(())
 }
 
-fn push_field(out: &mut String, key: &str, value: &str) {
-    out.push_str("  \"");
-    out.push_str(key);
-    out.push_str("\":");
-    out.push_str(value);
-    out.push_str(",\n");
-}
-
 fn push_json_lines(out: &mut String, indent: &str, values: impl Iterator<Item = String>) {
     let values: Vec<String> = values.collect();
     for (index, value) in values.iter().enumerate() {
@@ -1062,7 +1032,7 @@ fn parse_schema<T: DeserializeOwned>(
 }
 
 struct Header {
-    meter: Meter,
+    metadata: ProjectMetadata,
     tempo: TempoMap,
     content_ids: Vec<String>,
     track_ids: Vec<String>,
@@ -1076,21 +1046,12 @@ fn parse_header(json: &str) -> Result<Header, PackageError> {
             file.schema
         )));
     }
-    let meter = Meter::try_new(file.meter.numerator, file.meter.denominator)
-        .ok_or_else(|| PackageError::new("meter does not divide into ticks"))?;
-    let mut points = Vec::with_capacity(file.tempo.len());
-    for point in file.tempo {
-        let tempo = Tempo::rational(point.numerator, point.denominator)
-            .ok_or_else(|| PackageError::new("tempo is outside the allowed range"))?;
-        points.push(TempoPoint {
-            at: Tick::new(point.at),
-            tempo,
-        });
-    }
-    let tempo = TempoMap::try_from_points(points)
+    let metadata = serde_json::from_value(serde_json::Value::Object(file.metadata))
+        .map_err(|error| PackageError::new(format!("project.json: {error}")))?;
+    let tempo = TempoMap::try_from_points(file.tempo)
         .ok_or_else(|| PackageError::new("tempo map is empty or has two points at one tick"))?;
     Ok(Header {
-        meter,
+        metadata,
         tempo,
         content_ids: canonical_track_ids(file.contents)?,
         track_ids: canonical_track_ids(file.tracks)?,
@@ -1131,7 +1092,9 @@ fn assemble(
         }
         parsed.push(parse_track(&json, id, package)?);
     }
-    Project::try_assemble(header.meter, header.tempo, parsed_contents, parsed)
+    header
+        .metadata
+        .try_assemble(header.tempo, parsed_contents, parsed)
         .map_err(|error| PackageError::new(error.to_string()))
 }
 
@@ -1154,37 +1117,7 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
         )));
     }
     let id = parse_id(&file.id)?;
-    let mut clips = Vec::with_capacity(file.clips.len());
-    for clip in file.clips {
-        if clip.lane != "timeline" {
-            return Err(PackageError::new(format!("unknown lane {}", clip.lane)));
-        }
-        let kind = match clip.kind.as_str() {
-            "auto" => ClipKind::Auto,
-            "fixed" => ClipKind::Fixed,
-            other => {
-                return Err(PackageError::new(format!("unknown clip kind {other}")));
-            }
-        };
-        let gain = clip.gain;
-        if !clip_gain_allowed(gain) {
-            return Err(PackageError::new(format!(
-                "gain must be finite, at least zero, and at most {CLIP_GAIN_MAX}"
-            )));
-        }
-        clips.push(echode_model::Placement {
-            id: parse_id(&clip.id)?,
-            content: parse_id(&clip.content)?,
-            lane: echode_model::Lane::Timeline,
-            start: Tick::new(clip.start),
-            length: Tick::new(clip.length),
-            offset: Tick::new(clip.offset),
-            kind,
-            gain,
-            fade_in: clip.fade_in,
-            fade_out: clip.fade_out,
-        });
-    }
+    let clips = file.clips;
     let devices = file
         .devices
         .into_iter()
@@ -1223,6 +1156,14 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
 
 fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content, PackageError> {
     let file: ContentFile = parse_schema(json, "content json", "content")?;
+    let metadata: ContentMetadata =
+        serde_json::from_value(serde_json::Value::Object(file.metadata))
+            .map_err(|error| PackageError::new(format!("content json: {error}")))?;
+    if let Some(audio) = &metadata.audio {
+        audio
+            .check()
+            .map_err(|error| PackageError::new(error.to_string()))?;
+    }
     if file.schema != SCHEMA {
         return Err(PackageError::new(format!(
             "unsupported content schema {}",
@@ -1254,34 +1195,7 @@ fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content,
                 .unwrap_or(0)
         )));
     }
-    let mut takes = Vec::with_capacity(file.takes.len());
-    for take in file.takes {
-        takes.push(parse_id(&take)?);
-    }
-    Ok(echode_model::Content {
-        id: parse_id(&file.id)?,
-        audio: file.audio.map(parse_audio).transpose()?,
-        takes,
-        notes: file.notes,
-        expressions: Vec::new(),
-    })
-}
-
-fn render_audio(audio: Option<&AudioRef>) -> String {
-    let Some(audio) = audio else {
-        return "null".to_string();
-    };
-    to_json(&AudioFile {
-        hash: audio.hash.clone(),
-        sample_rate: audio.sample_rate,
-        channels: audio.channels,
-        frames: audio.frames,
-    })
-}
-
-fn parse_audio(file: AudioFile) -> Result<AudioRef, PackageError> {
-    AudioRef::try_new(file.hash, file.sample_rate, file.channels, file.frames)
-        .map_err(|error| PackageError::new(error.to_string()))
+    Ok(metadata.into_content(parse_id(&file.id)?, file.notes, Vec::new()))
 }
 
 fn parse_id(text: &str) -> Result<Id, PackageError> {
@@ -1460,57 +1374,15 @@ pub(crate) fn io_error(path: &Path, error: std::io::Error) -> PackageError {
     PackageError::new(format!("{}: {error}", path.display()))
 }
 
-#[derive(Serialize)]
-struct MeterLine {
-    numerator: u32,
-    denominator: u32,
-}
-
-#[derive(Serialize)]
-struct TempoLine {
-    at: i64,
-    numerator: u32,
-    denominator: u32,
-}
-
-#[derive(Serialize)]
-struct PlacementLine<'a> {
-    id: String,
-    content: String,
-    lane: &'a str,
-    start: i64,
-    length: i64,
-    offset: i64,
-    kind: &'a str,
-    gain: f32,
-    fade_in: i64,
-    fade_out: i64,
-}
-
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ProjectFile {
     schema: u32,
-    meter: MeterFile,
-    tempo: Vec<TempoFile>,
+    #[serde(flatten)]
+    metadata: serde_json::Map<String, serde_json::Value>,
+    tempo: Vec<TempoPoint>,
     #[serde(default)]
     contents: Vec<String>,
     tracks: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MeterFile {
-    numerator: u32,
-    denominator: u32,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TempoFile {
-    at: i64,
-    numerator: u32,
-    denominator: u32,
 }
 
 #[derive(Deserialize)]
@@ -1520,42 +1392,17 @@ struct TrackFile {
     #[serde(flatten)]
     metadata: serde_json::Map<String, serde_json::Value>,
     devices: Vec<echode_model::Device>,
-    clips: Vec<ClipFile>,
+    clips: Vec<Placement>,
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ClipFile {
-    id: String,
-    content: String,
-    lane: String,
-    start: i64,
-    length: i64,
-    offset: i64,
-    kind: String,
-    gain: f32,
-    fade_in: i64,
-    fade_out: i64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ContentFile {
     schema: u32,
     id: String,
-    audio: Option<AudioFile>,
-    takes: Vec<String>,
+    #[serde(flatten)]
+    metadata: serde_json::Map<String, serde_json::Value>,
     notes: Vec<Note>,
     expressions: Vec<ExpressionFile>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AudioFile {
-    hash: String,
-    sample_rate: u32,
-    channels: u16,
-    frames: u64,
 }
 
 #[derive(Deserialize)]

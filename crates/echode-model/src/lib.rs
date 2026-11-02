@@ -35,8 +35,10 @@
 //! - The track array is the arrange order. Sibling order keys are unique
 //!   fractional indexes.
 
+mod change_values;
 mod changeset;
 mod clip_move;
+mod content_fields;
 mod device;
 mod device_fields;
 mod duplicate;
@@ -45,8 +47,12 @@ mod invariants;
 mod model;
 mod note_fields;
 mod note_velocity;
+mod package_fields;
 mod parameter_fields;
 mod placement;
+mod placement_fields;
+mod project_fields;
+mod tempo_fields;
 mod time;
 mod track_fields;
 
@@ -58,10 +64,10 @@ pub use device::{
 pub use id::Id;
 pub use invariants::InvariantError;
 pub use model::{
-    AudioRef, CLIP_GAIN_MAX, ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind,
-    ExpressionPoint, FADE_RATE_LIMIT, Lane, MIDI7_MAX, ModelError, Note, NoteDraft, NoteGeometry,
-    Placement, Project, Track, TrackMetadata, clip_gain_allowed, fade_allowed, fade_frames,
-    initial_order, is_media_hash, midi7_to_velocity, velocity_to_midi7,
+    AudioRef, CLIP_GAIN_MAX, ClipKind, Content, ContentMetadata, DEFAULT_FADE_FLICKS, Expression,
+    ExpressionKind, ExpressionPoint, FADE_RATE_LIMIT, Lane, MIDI7_MAX, ModelError, Note, NoteDraft,
+    NoteGeometry, Placement, Project, ProjectMetadata, Track, TrackMetadata, clip_gain_allowed,
+    fade_allowed, fade_frames, initial_order, is_media_hash, midi7_to_velocity, velocity_to_midi7,
 };
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,

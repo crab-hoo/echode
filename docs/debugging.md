@@ -247,12 +247,26 @@ make debug-report
 
 ### オーディオ・トランスポート・プラグイン
 
+- **監視の即時破棄回帰が `drop did not return within 3 s` で落ちる**:
+  `audit_plg9_a_watch_can_be_dropped_right_after_it_starts` の期限は、監視の開始と破棄の両方を含む。
+  2026-11-02 の SPG-09 検査では全体と単独で失敗した後、同じ期限の単独実行が約 97 秒で完走した。
+  成功した診断実行の標本は `FolderWatch::start` → `FSEventStreamStart` → `register_with_server` → `mach_msg` であり、破棄の待ちとは限らない。
+  初回の失敗位置と OS 側の根因は未確定。既修正の run-loop 開始競合と決めつけず、開始・停止のどちらかを標本で区別する。
+  期限・対象は変更せず、採取ありの診断と正式な検査を区別する。証拠は `target/focused-checks/spg09-watch-timeout.md` と `spg09-watch-recheck/`。
+  SPG-06 の検査でも単独実行は約 100 秒で完走した一方、全 audit と `make verify` では同じ期限で失敗した。
+  失敗した全 audit の実行中の標本も開始 RPC の待ちであり、停止処理のハングと断定しない。
+  記録は `target/focused-checks/spg06-watch-diagnostic.log` と `spg06-watch-sample-52165.txt`。
+  標本は期限切れの瞬間を特定していないため、OS 側の根因は引き続き未確定である。
+
 - **ヘルパーの保存・復元・パラメーター・窓の要求が時間切れ／busy になる**:
   `plugin main request N timed out; outcome unknown` は実行の取消ではない。
   メインスレッドに残る要求が完了するまで後続は busy で拒否し、自動再送しない。
   要求番号 N はヘルパー内部の呼出し番号で、ソケットの応答照合の番号とは別である。
   `plugin-main-timeout-state` は機器なしの `slow-save` で再現し、`plugin-control-request-ids` は古い応答の破棄を検査する。
   完了後の復元バイトと新しい保存結果を比較し、実行中の拒否と、古い応答の取り違えを区別する。
+  操作と通信の対応・Unicode と状態バイト・拒否理由は `session_operations_tests.rs` で切り分ける。
+  実装は `session_operations.rs` の `PluginControl` にあり、ホスト経由の保存・復元の別入口はない
+  （[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
   親とヘルパーは同じビルドでそろえ、古い起動済みアプリを新しいヘルパーだけに置き換えない
   （[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
 
@@ -519,6 +533,15 @@ make debug-report
   メタデータの直接復号や子との結合だけでは有効なプロジェクトにならない。
   `track_package.rs` は形・同一性・子と階層の拒否、原本保持・保存バイト・旧版・部分木の履歴を検査する
   （[ADR 0225](decisions/0225-track-package-fields.md)）。
+
+- **項目表の変更後に保存・ジャーナル・スナップショットが一致しない**:
+  モデルの `*_fields.rs` と投影指定、`changeset.rs` のプロパティ名、`change_values.rs` の値の codec を確認する。
+  保存の未知の項目・型は `project.json:` / `content json:` / `track json:` の形の復号で拒否する。
+  配置の不正 ID・レーン・種類も `track json:` の文脈を持ち、組立て後の範囲・参照の拒否と区別する。
+  履歴の `schema_fields.rs` と `change_value_wire.rs` は保存バイト・旧 wire 表記・異常入力と原本保持を検査する。
+  ABI の値だけが違う場合は FFI の `snapshot_fields_tests.rs` と `Snapshot::source_track_index`、元ハンドルの寿命を確認する。
+  子の解決・不変条件の検証を迂回して値の一致だけを合格にしない。新しいログや収集先はない
+  （[ADR 0226](decisions/0226-model-field-registry-completion.md)）。
 
 - **Option ドラッグで音高が動く・ベロシティが引き継がれない**:
   押下時の `PianoVelocityGesture` と通常の `PianoGesture` を分ける。横移動・グリッド・Shift はベロシティへ影響しない。

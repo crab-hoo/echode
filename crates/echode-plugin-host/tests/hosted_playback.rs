@@ -1713,8 +1713,9 @@ fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
     )
     .expect("initial");
     assert!((left[0] - 0.25).abs() < 1.0e-4);
-    assert_eq!(host.save_state().expect("save"), vec![64]);
-    host.restore_state(&[128]).expect("restore");
+    let endpoint = host.control_handle();
+    assert_eq!(endpoint.capture_state().expect("save"), vec![64]);
+    endpoint.restore_state(&[128]).expect("restore");
     let started = Instant::now();
     loop {
         if matches!(
@@ -1733,7 +1734,7 @@ fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
     )
     .expect("restored");
     assert!((left[0] - 0.5).abs() < 1.0e-4, "{}", left[0]);
-    assert_eq!(host.save_state().expect("save again"), vec![128]);
+    assert_eq!(endpoint.capture_state().expect("save again"), vec![128]);
     host.request_reset();
     host.process(
         &[&input, &input],
@@ -1742,7 +1743,7 @@ fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
     )
     .expect("processing reset");
     assert!((left[0] - 0.5).abs() < 1.0e-4, "reset changed the preset");
-    assert_eq!(host.save_state().unwrap(), vec![128]);
+    assert_eq!(endpoint.capture_state().unwrap(), vec![128]);
     host.restart().expect("restart");
     host.process(
         &[&input, &input],
@@ -1751,9 +1752,18 @@ fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
     )
     .expect("after restart");
     assert!((left[0] - 0.5).abs() < 1.0e-4, "{}", left[0]);
+    assert_eq!(
+        endpoint
+            .capture_state()
+            .expect("retained control after restart"),
+        vec![128]
+    );
 
-    let mut gain = spawn_declared("dev.echode.test-gain").expect("gain");
-    let error = gain.save_state().expect_err("gain has no state");
+    let gain = spawn_declared("dev.echode.test-gain").expect("gain");
+    let error = gain
+        .control_handle()
+        .capture_state()
+        .expect_err("gain has no state");
     assert!(error.to_string().contains("state"), "{error}");
 
     let (project, track) = Project::new().add_track("state");

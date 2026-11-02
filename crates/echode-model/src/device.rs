@@ -217,7 +217,7 @@ macro_rules! define_device {
         fields { $(
             $(#[$meta:meta])*
             $property:ident => $field:ident: $type:ty,
-            $encode:ident, $read:ident, $parse:ident;
+            $encode:ident, $read:ident, $parse:ident; $ffi:ident $getter:ident;
         )+ }
         create [$($create:ident),+];
         diff [$($diff:ident),+];

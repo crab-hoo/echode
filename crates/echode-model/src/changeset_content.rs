@@ -8,7 +8,7 @@ use crate::model::AudioRef;
 
 // Creation keeps audio/takes before note order; updates keep note order first.
 // Draft resolves the notes separately, checking ownership, reuse, and leftovers.
-macro_rules! content_fields {
+macro_rules! define_content_changes {
     ($($property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
         pub(super) struct ContentState {
             $($field: $type,)+
@@ -85,10 +85,7 @@ macro_rules! content_fields {
     };
 }
 
-content_fields! {
-    Audio => audio: Option<AudioRef>, Audio, audio_field;
-    Takes => takes: Vec<Id>, Ids, field_ids;
-}
+crate::content_fields::content_fields!(define_content_changes);
 
 fn note_order(content: &Content) -> Vec<Id> {
     content.notes.iter().map(|note| note.id).collect()

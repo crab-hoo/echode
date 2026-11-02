@@ -154,6 +154,11 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   再現は通常回帰へ移し、完了後の正しい復元と状態保存・発音も検査する
   （[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。実機の期限と聴感はユーザー担当である。
 
+- **プラグイン制御の通り道（SPG-06）**:
+  一覧・変更・文字解釈・状態の取得と復元・GUI の型付き操作を、制御専用ハンドルへ直接集めた。
+  ホストの保存・復元の別経路と未使用の素通しを除き、状態導入・再起動と回帰も同じハンドルを使う。
+  通信形式・期限・DSP は変更しない（[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
+
 - **JSON-RPC の不正な要求**:
   真偽値・配列・オブジェクトの ID と、スカラーの params を編集前に拒否する。
   版やメソッドの不正は、ID がなくても通知と扱わず `-32600` を返す。
@@ -359,31 +364,13 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   通常回帰と `make spike-history`・`make spike-engine`・`make spike-engine-smoke` は維持する。
   SPG-10 の分離は完了だが、並列 CPU グラフの製品接続ではない
   （[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
-- **モデル項目の変更セット（SPG-09 の先行分）**:
-  パラメーターの 4 項目、デバイスの 5 スカラー項目、ノートの 6 項目とトラックの 3 スカラー項目、
-  中身の音声参照・テイク ID 列と配置の 8 項目、テンポ点のテンポ項目は、
-  差分・作成・下書き・設定・復元を各項目表から生成する。
-  ビット・整数・フィールド順・異常入力の回帰と、共有ノート・入れ子のフォルダを含む操作列の性質テストを補強した。
-  保存形式・音声処理と子の解決・親の木・兄弟順の検証、ノートの並び・旧 null 音声とレーンの互換は保つ。
-  テンポ点の tick 順と分数値も保つ。
-  プロジェクトの拍子も差分・下書き・設定・復元を項目表から生成し、旧トラック ID 配列を無視する互換を保つ。
-  保存・FFI の統合は残る
-  （[ADR 0214](decisions/0214-parameter-changeset-fields.md)、[ADR 0215](decisions/0215-device-changeset-fields.md)、
-  [ADR 0216](decisions/0216-note-changeset-fields.md)、[ADR 0217](decisions/0217-track-changeset-fields.md)、
-  [ADR 0218](decisions/0218-content-changeset-fields.md)、[ADR 0219](decisions/0219-placement-changeset-fields.md)、
-  [ADR 0220](decisions/0220-tempo-changeset-fields.md)、[ADR 0221](decisions/0221-project-changeset-fields.md)）。
-  パラメーターはモデルの宣言・等価比較・Serde も同じ項目表へ集め、履歴の別の保存型と手書きの変換を除いた。
-  キー順・数値表記・スキーマ 6 と旧版の段階変換、公開前の検証は保つ。
-  ほかのオブジェクトの保存と FFI の統合は残る（[ADR 0222](decisions/0222-parameter-package-fields.md)）。
-  デバイスもモデル宣言・Serde と表を共有し、保存・復元の手書きの列挙を除いた。
-  キー順・改行・旧版の段階変換と、状態オブジェクトの読込み・公開前の検証は保つ
-  （[ADR 0223](decisions/0223-device-package-fields.md)）。
-  ノートもモデル宣言・Serde と表を共有し、保存専用の型と手書きの変換を除いた。
-  1 ノート 1 行・整数の精度・旧版の段階変換、未対応の表情と公開前の検証は保つ
-  （[ADR 0224](decisions/0224-note-package-fields.md)）。
-  トラックも名前・親・兄弟順の表からモデルと保存用メタデータ・変換を生成し、手書きの列挙を除いた。
-  同一性・子の検証と階層の組立て、保存バイト・旧版の段階変換は保つ
-  （[ADR 0225](decisions/0225-track-package-fields.md)）。
+- **モデル項目の共有（SPG-09）**: 対応済み。
+  全オブジェクトとプロジェクト拍子の項目表を、モデル宣言・変更セット・保存の Serde と変換で共有した。
+  ジャーナルのプロパティ名と値の種類も登録簿へ集め、FFI 内のスカラー問い合わせ・配置値の転記も生成する。
+  保存スキーマ 6・キー順・改行・数値表記・旧版の互換と、公開 ABI・借用の寿命を保つ。
+  子の解決・同一性・階層・派生値と編集規則は別に保ち、構造整理を理由に検証を省略しない。
+  オブジェクト別の性質テストに加え、公開保存・全値のジャーナル表記・保持したスナップショットの回帰を補強した
+  （[ADR 0226](decisions/0226-model-field-registry-completion.md)）。実機性能・聴感の改善を主張する変更ではない。
 
 ## 検査基盤で区別すること
 

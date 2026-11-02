@@ -191,10 +191,6 @@ impl Snapshot {
             .map_or(self.project.tracks().len(), |rows| rows.len())
     }
 
-    pub(crate) fn track_name(&self, index: usize) -> Option<&str> {
-        self.track(index).map(|track| track.name.as_str())
-    }
-
     pub(crate) fn write_track_id(&self, index: usize, out: &mut [u8; 16]) -> bool {
         let Some(track) = self.track(index) else {
             return false;
@@ -218,32 +214,6 @@ impl Snapshot {
         };
         *out = id_bytes(device.id);
         true
-    }
-
-    pub(crate) fn device_bypassed(&self, track: usize, device: usize) -> Option<bool> {
-        self.track(track)?
-            .devices
-            .get(device)
-            .map(|device| device.bypassed)
-    }
-
-    pub(crate) fn device_offline(&self, track: usize, device: usize) -> Option<bool> {
-        self.track(track)?
-            .devices
-            .get(device)
-            .map(|device| device.offline)
-    }
-
-    pub(crate) fn device_plugin(&self, track: usize, device: usize) -> Option<&str> {
-        self.track(track)
-            .and_then(|track| track.devices.get(device))
-            .and_then(|device| device.plugin.as_deref())
-    }
-
-    pub(crate) fn device_pins(&self, track: usize, device: usize) -> Option<&[u32]> {
-        self.track(track)
-            .and_then(|track| track.devices.get(device))
-            .map(|device| device.pinned.as_slice())
     }
 
     pub(crate) fn write_visible(
@@ -318,6 +288,52 @@ impl Snapshot {
             .map(piano_element)
     }
 }
+
+// Generate the mechanical scalar queries, not pointer handling or C layout.
+macro_rules! device_accessor {
+    (skip, $getter:ident, $field:ident, $type:ty) => {};
+    (copy, $getter:ident, $field:ident, $type:ty) => {
+        pub(crate) fn $getter(&self, track: usize, device: usize) -> Option<$type> {
+            Some(self.track(track)?.devices.get(device)?.$field)
+        }
+    };
+    (text, $getter:ident, $field:ident, $type:ty) => {
+        pub(crate) fn $getter(&self, track: usize, device: usize) -> Option<&str> {
+            self.track(track)?.devices.get(device)?.$field.as_deref()
+        }
+    };
+    (slice, $getter:ident, $field:ident, $type:ty) => {
+        pub(crate) fn $getter(&self, track: usize, device: usize) -> Option<&[u32]> {
+            Some(self.track(track)?.devices.get(device)?.$field.as_slice())
+        }
+    };
+}
+macro_rules! snapshot_device_fields {
+    (
+        fields { $( $(#[$meta:meta])* $property:ident => $field:ident: $type:ty,
+            $encode:ident, $read:ident, $parse:ident; $ffi:ident $getter:ident;)+ }
+        create [$($create:ident),+]; diff [$($diff:ident),+];
+    ) => {
+        impl Snapshot { $(device_accessor!($ffi, $getter, $field, $type);)+ }
+    };
+}
+echode_model::device_fields!(snapshot_device_fields);
+
+macro_rules! track_accessor {
+    (skip, $getter:ident, $field:ident) => {};
+    (text, $getter:ident, $field:ident) => {
+        pub(crate) fn $getter(&self, row: usize) -> Option<&str> {
+            Some(self.track(row)?.$field.as_str())
+        }
+    };
+}
+macro_rules! snapshot_track_fields {
+    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty,
+        $value:ident, $read:ident; $ffi:ident $getter:ident;)+) => {
+        impl Snapshot { $(track_accessor!($ffi, $getter, $field);)+ }
+    };
+}
+echode_model::track_fields!(snapshot_track_fields);
 
 fn piano_element(note: PianoNote) -> PianoNoteElement {
     PianoNoteElement {

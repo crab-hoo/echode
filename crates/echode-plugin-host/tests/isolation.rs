@@ -614,6 +614,7 @@ fn dirty_and_restored_state_cross_the_socket() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let error = host
+        .control_handle()
         .restore_state(b"abc")
         .expect_err("restore without a plugin");
     assert!(error.to_string().contains("no plugin"), "{error}");

@@ -7,8 +7,10 @@ use super::{
 use std::collections::HashMap;
 
 // Tick is the point's identity, not a writable field. Draft validates the map.
-macro_rules! tempo_fields {
-    ($($property:ident => $field:ident: $type:ty, $value:ident;)+) => {
+macro_rules! define_tempo_changes {
+    ($($property:ident => $field:ident: $type:ty, $value:ident;
+        package { $($wire:ident: $wire_type:ty = $encode:expr;)+ }
+        restore $decode:expr;)+) => {
         pub(super) struct TempoState {
             $($field: $type,)+
         }
@@ -63,9 +65,7 @@ macro_rules! tempo_fields {
     };
 }
 
-tempo_fields! {
-    Tempo => tempo: Tempo, Tempo;
-}
+crate::tempo_fields::tempo_fields!(define_tempo_changes);
 
 pub(super) fn diff_tempo(
     before: &Project,

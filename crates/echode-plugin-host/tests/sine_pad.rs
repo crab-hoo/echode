@@ -245,8 +245,8 @@ fn sine_pad_state_and_declared_tail_use_the_standard_helper_protocol_under_rtsan
         })
         .unwrap();
         assert_eq!(plugin.tail_samples(), rate * 400 / 1000);
-        let state = plugin.save_state().unwrap();
-        plugin.restore_state(&state).unwrap();
+        let state = plugin.control_handle().capture_state().unwrap();
+        plugin.control_handle().restore_state(&state).unwrap();
         // The first process on a fresh helper also exercises cold thread state.
         let mut output = [0.0; 64];
         plugin
@@ -259,6 +259,6 @@ fn sine_pad_state_and_declared_tail_use_the_standard_helper_protocol_under_rtsan
             )
             .unwrap_or_else(|error| panic!("{error}: {}", plugin.stderr_log()));
         assert!(output.iter().any(|sample| *sample != 0.0));
-        assert!(plugin.restore_state(b"invalid").is_err());
+        assert!(plugin.control_handle().restore_state(b"invalid").is_err());
     }
 }
