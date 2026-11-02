@@ -113,10 +113,13 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 製品の `playback`・機器一覧・`IoWorkgroup` は feature なしで使える
 （[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 
-パラメーターの変更セットの項目表は `echode-model/src/changeset_parameter.rs`、
+パラメーターの変更セットの生成器は `echode-model/src/changeset_parameter.rs`、
 ビット単位の差分・作成・削除・逆適用とジャーナルの回帰は履歴の `tests/parameter_changesets.rs` に置く。
 任意のビットを扱う低水準 API と、公開前の不変条件・保存時のゼロの正規化を区別する。
 操作列全体の往復は `tests/properties.rs` で検査する（[ADR 0214](decisions/0214-parameter-changeset-fields.md)）。
+パラメーターの項目表は `echode-model/src/parameter_fields.rs` でモデル宣言・等価比較・Serde とも共有する。
+公開パッケージのキー順・拒否時の保持・旧版の移行とコミット再読込みは履歴の `tests/parameter_package.rs` に置く。
+形の復号とプロジェクトの受入を区別し、保存の formatter は履歴に残す（[ADR 0222](decisions/0222-parameter-package-fields.md)）。
 
 デバイスのスカラー項目の表は `echode-model/src/changeset_device.rs`、独立したフィールド順・省略値・異常入力の回帰は
 履歴の `tests/device_changesets.rs` に置く。操作列は設定済み CLAP デバイスからも始める。

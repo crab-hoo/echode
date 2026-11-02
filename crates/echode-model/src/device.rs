@@ -3,8 +3,12 @@
 //! A track ends with one mixer. CLAP devices sit before it, in insertion order.
 //! Their process and saved state are not stored here.
 
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 use crate::id::Id;
 use crate::model::ModelError;
+use crate::parameter_fields::parameter_fields;
 
 /// Linear amplitude of about +12 dB, the fader's upper end.
 pub const GAIN_MAX: f32 = 4.0;
@@ -139,29 +143,46 @@ impl ParamKey {
     }
 }
 
-/// One addressable value. Equality uses float bits.
-#[derive(Clone, Debug)]
-pub struct Parameter {
-    pub id: Id,
-    pub key: ParamKey,
-    pub min: f32,
-    pub max: f32,
-    pub default: f32,
-    pub value: f32,
-}
-
-impl PartialEq for Parameter {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-            && self.key == other.key
-            && self.min.to_bits() == other.min.to_bits()
-            && self.max.to_bits() == other.max.to_bits()
-            && self.default.to_bits() == other.default.to_bits()
-            && self.value.to_bits() == other.value.to_bits()
+impl Serialize for ParamKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
     }
 }
 
-impl Eq for Parameter {}
+impl<'de> Deserialize<'de> for ParamKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).ok_or_else(|| D::Error::custom(format!("unknown parameter {text}")))
+    }
+}
+
+macro_rules! define_parameter {
+    ($($property:ident => $field:ident),+ $(,)?) => {
+        /// One addressable value. Equality uses float bits.
+        ///
+        /// Serde checks the record's shape, not mixer invariants. Validate the
+        /// assembled project before publishing a decoded parameter.
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct Parameter {
+            pub id: Id,
+            pub key: ParamKey,
+            $(pub $field: f32,)+
+        }
+
+        impl PartialEq for Parameter {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+                    && self.key == other.key
+                    $(&& self.$field.to_bits() == other.$field.to_bits())+
+            }
+        }
+
+        impl Eq for Parameter {}
+    };
+}
+
+parameter_fields!(define_parameter);
 
 impl Parameter {
     fn at_default(id: Id, key: ParamKey) -> Self {

@@ -372,6 +372,9 @@ Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、�
   [ADR 0216](decisions/0216-note-changeset-fields.md)、[ADR 0217](decisions/0217-track-changeset-fields.md)、
   [ADR 0218](decisions/0218-content-changeset-fields.md)、[ADR 0219](decisions/0219-placement-changeset-fields.md)、
   [ADR 0220](decisions/0220-tempo-changeset-fields.md)、[ADR 0221](decisions/0221-project-changeset-fields.md)）。
+  パラメーターはモデルの宣言・等価比較・Serde も同じ項目表へ集め、履歴の別の保存型と手書きの変換を除いた。
+  キー順・数値表記・スキーマ 6 と旧版の段階変換、公開前の検証は保つ。
+  ほかのオブジェクトの保存と FFI の統合は残る（[ADR 0222](decisions/0222-parameter-package-fields.md)）。
 
 ## 検査基盤で区別すること
 

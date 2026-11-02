@@ -5,10 +5,11 @@ use super::{
     field_text, update,
 };
 use crate::device::{ParamKey, Parameter};
+use crate::parameter_fields::parameter_fields;
 
 // Keep the wire order and float-bit representation explicit. Identity, ownership,
 // and the immutable key are not writable parameter fields.
-macro_rules! parameter_fields {
+macro_rules! define_parameter_changes {
     ($($property:ident => $field:ident),+ $(,)?) => {
         pub(super) struct ParamState {
             pub device: Id,
@@ -96,9 +97,4 @@ macro_rules! parameter_fields {
     };
 }
 
-parameter_fields! {
-    Minimum => min,
-    Maximum => max,
-    Default => default,
-    Value => value,
-}
+parameter_fields!(define_parameter_changes);

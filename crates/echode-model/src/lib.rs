@@ -43,6 +43,7 @@ mod id;
 mod invariants;
 mod model;
 mod note_velocity;
+mod parameter_fields;
 mod placement;
 mod time;
 

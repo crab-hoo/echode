@@ -43,6 +43,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   [ADR 0216](decisions/0216-note-changeset-fields.md)、[ADR 0217](decisions/0217-track-changeset-fields.md)、
   [ADR 0218](decisions/0218-content-changeset-fields.md)、[ADR 0219](decisions/0219-placement-changeset-fields.md)、
   [ADR 0220](decisions/0220-tempo-changeset-fields.md)、[ADR 0221](decisions/0221-project-changeset-fields.md)）。
+  パラメーターはモデル宣言・等価比較・保存の Serde とも項目表を共有した（[ADR 0222](decisions/0222-parameter-package-fields.md)）。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。

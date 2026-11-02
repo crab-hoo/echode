@@ -50,7 +50,7 @@ Phase 1 は変わっていないトラックを `Arc` で共有し、ノート�
 - **履歴**: 版を JSON に書き出してコミットする
 - **Undo**: 過去の版を保持しておくだけで実現できる
 
-パラメーター・デバイス・ノート・トラック・中身・配置・テンポ点の変更セットは、各 `changeset_*.rs` の項目表から、
+パラメーター・デバイス・ノート・トラック・中身・配置・テンポ点の変更セットは、領域ごとの項目表から、
 差分・作成・下書き・設定・復元を生成する。浮動小数点のビット、整数、フィールド順と既存のジャーナルを保つ。
 デバイスの ID・所属・種別と子パラメーター、ノートの ID と所属・中身の順序の照合は、スカラー項目と分ける。
 トラックの ID・子の解決・親の木と兄弟順の検証も別に保つ。
@@ -63,6 +63,9 @@ Phase 1 は変わっていないトラックを `Arc` で共有し、ノート�
 [ADR 0216](../decisions/0216-note-changeset-fields.md)、[ADR 0217](../decisions/0217-track-changeset-fields.md)、
 [ADR 0218](../decisions/0218-content-changeset-fields.md)、[ADR 0219](../decisions/0219-placement-changeset-fields.md)、
 [ADR 0220](../decisions/0220-tempo-changeset-fields.md)、[ADR 0221](../decisions/0221-project-changeset-fields.md)、SPG-09）。
+パラメーターの項目表はモデルの宣言・ビット等価比較・Serde とも共有し、履歴の別の保存型と変換をなくす。
+保存は従来の formatter とキー順を使い、形の復号後に組立て・不変条件を検査する。
+ほかのオブジェクトの保存と FFI の統合は残る（[ADR 0222](../decisions/0222-parameter-package-fields.md)）。
 
 ### 4.3 ID と並び順
 

@@ -806,20 +806,7 @@ fn render_track(track: &Track) -> String {
             to_json(&device.offline),
             to_json(&device.pinned)
         );
-        push_json_lines(
-            &mut out,
-            "      ",
-            device.parameters.iter().map(|parameter| {
-                to_json(&ParameterLine {
-                    id: parameter.id.to_string(),
-                    key: parameter.key.as_str(),
-                    min: parameter.min,
-                    max: parameter.max,
-                    default: parameter.default,
-                    value: parameter.value,
-                })
-            }),
-        );
+        push_json_lines(&mut out, "      ", device.parameters.iter().map(to_json));
         let _ = writeln!(out, "    ]}}{comma}");
     }
     out.push_str("  ],\n  \"clips\":[\n");
@@ -1257,20 +1244,7 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
                         Some(text.to_string())
                     }
                 };
-                let mut parameters = Vec::with_capacity(device.parameters.len());
-                for parameter in device.parameters {
-                    let key = echode_model::ParamKey::parse(&parameter.key).ok_or_else(|| {
-                        PackageError::new(format!("unknown parameter {}", parameter.key))
-                    })?;
-                    parameters.push(echode_model::Parameter {
-                        id: parse_id(&parameter.id)?,
-                        key,
-                        min: parameter.min,
-                        max: parameter.max,
-                        default: parameter.default,
-                        value: parameter.value,
-                    });
-                }
+                let parameters = device.parameters;
                 let plugin = match (kind, device.plugin) {
                     (echode_model::DeviceKind::Mixer, None) => None,
                     (echode_model::DeviceKind::Clap, Some(plugin))
@@ -1564,16 +1538,6 @@ struct TempoLine {
 }
 
 #[derive(Serialize)]
-struct ParameterLine<'a> {
-    id: String,
-    key: &'a str,
-    min: f32,
-    max: f32,
-    default: f32,
-    value: f32,
-}
-
-#[derive(Serialize)]
 struct PlacementLine<'a> {
     id: String,
     content: String,
@@ -1647,18 +1611,7 @@ struct DeviceFile {
     bypassed: bool,
     offline: bool,
     pinned: Vec<u32>,
-    parameters: Vec<ParameterFile>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ParameterFile {
-    id: String,
-    key: String,
-    min: f32,
-    max: f32,
-    default: f32,
-    value: f32,
+    parameters: Vec<echode_model::Parameter>,
 }
 
 #[derive(Deserialize)]
