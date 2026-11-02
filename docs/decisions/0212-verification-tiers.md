@@ -70,6 +70,7 @@ Rust の `unsafe`、Swift の `Unsafe`・`@unchecked`・`nonisolated(unsafe)` �
 その検査の入力の範囲に限り、テストのディレクトリは数えない。
 
 ファイル単位ではなく行単位にしたのは、`unsafe` を持つファイルの無関係な編集で選ばれるのを避けるためである。
+2026-11-02 の後続修正で、消したファイルの削除行と、C（`.c`・`.h`）の空行以外の変更行も数えるようにした（[ADR 0232](0232-verification-escapes-and-expected-red.md)、ENV-01）。
 コンパイラーが検査するコードの範囲では、Rust の所有権と Swift 6 の厳密な並行性がメモリと競合の誤りを止める。
 
 検査自身のスクリプトと Miri の対象は `task_inputs` で選ぶ。

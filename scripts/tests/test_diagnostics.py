@@ -277,6 +277,16 @@ class DeveloperDocumentationTests(unittest.TestCase):
                     errors = local_link_errors(root, path, link, {})
                     self.assertTrue(errors, "new target evidence link must be rejected")
 
+    def test_file_url_links_are_rejected(self):
+        # ENV-07: a file URL names one machine's path and was never checked.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "docs/review.md"
+            for link in ("[here](file:///Users/someone/Echode/docs/status.md)", "[here](FILE:///tmp/x)"):
+                with self.subTest(link=link):
+                    errors = local_link_errors(root, path, link, {})
+                    self.assertTrue(any("file URL" in error for error in errors), errors)
+
     def test_legacy_links_require_both_a_notice_and_document_scoped_allowance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

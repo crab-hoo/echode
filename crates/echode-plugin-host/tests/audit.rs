@@ -80,16 +80,27 @@ fn audit_plg2_rewriting_the_executable_inside_a_bundle_triggers_a_rescan() {
     assert_eq!(due, vec![bundle]);
 }
 
+/// The deadline is on the drop, the step that used to hang. Starting registers
+/// the stream with fseventsd, which can take seconds on a busy machine; its
+/// bound only keeps a start that never returns from hanging the test
+/// (docs/debugging.md).
 #[test]
 fn audit_plg9_a_watch_can_be_dropped_right_after_it_starts() {
     let root = scratch("plg9");
     for _ in 0..100 {
-        let (done, finished) = mpsc::channel();
+        let (started, start) = mpsc::channel();
+        let (dropped, finished) = mpsc::channel();
         let watched = root.clone();
         std::thread::spawn(move || {
-            drop(FolderWatch::start(&watched).unwrap());
-            let _ = done.send(());
+            let watch = FolderWatch::start(&watched).unwrap();
+            let _ = started.send(());
+            drop(watch);
+            let _ = dropped.send(());
         });
+        assert!(
+            start.recv_timeout(Duration::from_secs(60)).is_ok(),
+            "start did not return within 60 s"
+        );
         assert!(
             finished.recv_timeout(Duration::from_secs(3)).is_ok(),
             "drop did not return within 3 s"

@@ -20,6 +20,7 @@
 全体の段階の検査は、作業の段階でも次の時だけ選ばれる。
 
 - 変更行（追加・削除）に `unsafe` の脱出口がある。Rust の `unsafe`、Swift の `Unsafe`・`@unchecked`・`nonisolated(unsafe)` が対象で、その検査の入力の範囲にあるものに限る。テストのディレクトリは数えない。
+  消したファイルは差分の基準から削除行を読む。C（`.c`・`.h`）は空行以外の変更行をすべて数える（[ADR 0232](decisions/0232-verification-escapes-and-expected-red.md)）。
 - `task_inputs` に一致する。その検査自身のスクリプトと、Miri の対象のファイルが該当する。
 
 それ以外のコードはコンパイラーの検査の内にあるため、作業の段階ではサニタイザを動かさない。
@@ -94,6 +95,7 @@ python3 -B scripts/checked_commands.py --log-dir target/focused-checks \
 ログの絞込みは実行後に別の読込みで行い、検査の成否を表示コマンドの成否へ置き換えない。
 TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--expect-failure` を両方指定する。
 後者はその回帰固有のアサーションの正規表現とし、単なる `failed` やビルドエラーを条件にしない。
+照合するのはログのヘッダ（`Command:`・`Timeout:`）より後の、コマンドが出力した部分だけである。
 時間切れ・起動不能・シグナル・別の終了コードは期待した red にならない。
 これはログ用の補助で、検査の選択・キャッシュ・完了判定は引き続き `make verify` だけが担当する。
 

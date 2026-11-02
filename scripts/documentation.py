@@ -15,6 +15,10 @@ def local_link_errors(root: Path, path: Path, content: str, legacy: dict) -> lis
     destinations += re.findall(r"^\s*\[[^\]]+\]:\s*<?([^\s>]+)", content, re.MULTILINE)
     destinations += re.findall(r"<((?:\.\.?/|/|target/)[^<>\s]+)>", content)
     for destination in destinations:
+        if destination.lower().startswith("file:"):
+            # A file URL names one machine's path and is never checked (ENV-07).
+            errors.append(f"{path.relative_to(root)}: file URL link: {destination}; use a relative link")
+            continue
         if "://" in destination or destination.startswith("#"):
             continue
         relative = unquote(urlsplit(destination.split()[0].strip("<>")).path)

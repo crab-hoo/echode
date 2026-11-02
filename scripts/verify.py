@@ -185,7 +185,9 @@ def matches(changed, patterns):
     return [path for path in changed if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)]
 
 
-UNSAFE_ESCAPES = {".rs": re.compile(r"\bunsafe\b"), ".swift": re.compile(r"Unsafe|@unchecked|nonisolated\(unsafe\)")}
+# C has no memory or data-race checks of its own: every line it changes counts (ENV-01).
+UNSAFE_ESCAPES = {".rs": re.compile(r"\bunsafe\b"), ".swift": re.compile(r"Unsafe|@unchecked|nonisolated\(unsafe\)"),
+                  ".c": re.compile(r"\S"), ".h": re.compile(r"\S")}
 
 
 RULE = re.compile(r"^([A-Za-z0-9_.-]+)[ \t]*:(.*)$")
@@ -289,16 +291,18 @@ def unsafe_changes(root, policy, changed, base=None):
         folders = package_directories(root, check.get("packages", []))
         for path in changed:
             pattern = UNSAFE_ESCAPES.get(Path(path).suffix)
-            if (pattern is None or "/Tests/" in path or "/tests/" in path or not (root / path).is_file()
+            if (pattern is None or "/Tests/" in path or "/tests/" in path
                     or not (matches([path], check.get("inputs", []))
                             or any(path.startswith(folder + "/") for folder in folders))):
                 continue
+            # A deleted file is read from its diff: removing an escape counts too (ENV-01).
             try:
                 if any(pattern.search(line) for line in changed_lines(root, path, base)):
                     found.setdefault(check["id"], []).append(path)
             except subprocess.CalledProcessError:
                 # Without the diff base, the whole file is the only safe answer.
-                if pattern.search((root / path).read_text(errors="replace")):
+                gone = not (root / path).is_file()
+                if gone or pattern.search((root / path).read_text(errors="replace")):
                     found.setdefault(check["id"], []).append(path)
     return found
 

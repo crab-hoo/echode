@@ -82,6 +82,7 @@
 
 ## W4: 検査基盤（ENV-01・06・02・05・07）— P2〜P3
 
+- 状態: 2026-11-02、ENV-01・05・06・07 を完了（[ADR 0232](../decisions/0232-verification-escapes-and-expected-red.md)）。ENV-02 は理由とともに残した。
 - ENV-01: `scripts/verify.py` の `unsafe_changes` は、削除したファイルも差分の基準の内容から削除行を読む。
   `.c`・`.h` を対象にするかを決め、[検査手順](../verification.md) と ADR 0212 に書く。
 - ENV-06: `scripts/checked_commands.py` は、ヘッダより後の出力だけを照合する。

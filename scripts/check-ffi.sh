@@ -1,12 +1,13 @@
 #!/bin/bash
-# Fails when a Rust file declares foreign functions (`extern "C" { ... }` or `#[link]`)
-# and is not listed in scripts/ffi-allowlist.txt, or when a listed file no longer does.
-# The list may only shrink. See docs/reviews/2026-10-08-audit.md, ENG-15.
+# Fails when a Rust file declares foreign functions (an `extern` block with any ABI or
+# none, its brace on the same or the next line, or `#[link]`) and is not listed in
+# scripts/ffi-allowlist.txt, or when a listed file no longer does.
+# The list may only shrink. See docs/reviews/2026-10-08-audit.md, ENG-15, and ENV-05.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 allowlist=scripts/ffi-allowlist.txt
-pattern='^[[:space:]]*(unsafe[[:space:]]+)?extern[[:space:]]+"C(-unwind)?"[[:space:]]*\{|#\[link\('
+pattern='^[[:space:]]*(unsafe[[:space:]]+)?extern([[:space:]]+"[^"]*")?[[:space:]]*(\{|$)|#\[link\('
 
 declaring=$(grep -rlE --include='*.rs' "$pattern" crates | sort -u || true)
 listed=$(grep -vE '^[[:space:]]*(#|$)' "$allowlist" | awk '{print $1}' | sort -u)

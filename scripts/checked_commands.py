@@ -17,12 +17,17 @@ import sys
 import time
 
 
+def header(command, timeout):
+    """The lines a log starts with, before anything the command printed."""
+    return f"Command: {shlex.join(command)}\nTimeout: {timeout} s\n\n"
+
+
 def run_logged(root, command, log, timeout, env=None):
     started = time.monotonic()
     log.parent.mkdir(parents=True, exist_ok=True)
     result = {"command": command, "log": str(log)}
     with log.open("w") as output:
-        output.write(f"Command: {shlex.join(command)}\nTimeout: {timeout} s\n\n")
+        output.write(header(command, timeout))
         output.flush()
         try:
             process = subprocess.Popen(command, cwd=root, stdout=output, stderr=subprocess.STDOUT,
@@ -73,9 +78,13 @@ def main():
         result = run_logged(Path.cwd(), command, directory / f"{number}.log", args.timeout,
                             {**os.environ, "RUSTUP_AUTO_INSTALL": "0"})
         if expected:
+            # Only what the command printed counts: the header repeats its argv,
+            # which holds the very pattern the assertion is matched with (ENV-06).
+            printed = Path(result["log"]).read_text(errors="replace")
+            printed = printed.removeprefix(header(command, args.timeout))
             result["expected_failure"] = bool(
                 not result.get("error") and result["exit_code"] == args.expect_exit
-                and pattern.search(Path(result["log"]).read_text(errors="replace")))
+                and pattern.search(printed))
             result["status"] = "expected_failure" if result["expected_failure"] else "failed"
         results.append(result)
         (directory / "commands.json").write_text(json.dumps(results, indent=2) + "\n")

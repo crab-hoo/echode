@@ -84,9 +84,8 @@ class DurabilityTraceTests(unittest.TestCase):
 
 
 class RegisteredAuditReproductions(unittest.TestCase):
-    """Remove the skip when the item is fixed (docs/reviews/2026-11-02-fix-instructions.md)."""
+    """Reproductions from docs/reviews/2026-11-02-fix-instructions.md, fixed by ADR 0232."""
 
-    @unittest.skip("audit ENV-01: deleting a file with `unsafe` selects no sanitizer")
     def test_audit_env01_deleting_unsafe_code_selects_the_sanitizers(self):
         directory = Path(tempfile.mkdtemp())
 
@@ -105,7 +104,6 @@ class RegisteredAuditReproductions(unittest.TestCase):
         found = verify.unsafe_changes(directory, policy, verify.changed_paths(directory))
         self.assertEqual(found, {"san": ["crates/x/src/a.rs"]})
 
-    @unittest.skip("audit ENV-06: an expected red can match the logged command line")
     def test_audit_env06_the_command_line_cannot_satisfy_an_expected_failure(self):
         directory = Path(tempfile.mkdtemp())
         command = f"{sys.executable} -c 'import sys; sys.exit(101)' the_regression_assertion"
@@ -113,6 +111,54 @@ class RegisteredAuditReproductions(unittest.TestCase):
                                  "--log-dir", str(directory), "--command", command, "--expect-exit", "101",
                                  "--expect-failure", "the_regression_assertion"], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0, "text only in the Command: line passed as the expected red")
+
+    def test_a_changed_c_line_selects_the_sanitizers_and_tests_do_not(self):
+        directory = Path(tempfile.mkdtemp())
+
+        def git(*arguments):
+            subprocess.run(["git", *arguments], cwd=directory, check=True, capture_output=True)
+
+        git("init", "-q")
+        git("config", "user.email", "audit@example.invalid")
+        git("config", "user.name", "audit")
+        (directory / "bridge").mkdir()
+        (directory / "bridge/tests").mkdir()
+        for name in ("bridge/shim.c", "bridge/shim.h", "bridge/tests/fixture.c"):
+            (directory / name).write_text("int f(void) { return 0; }\n")
+        git("add", ".")
+        git("commit", "-qm", "base")
+        for name in ("bridge/shim.c", "bridge/shim.h", "bridge/tests/fixture.c"):
+            (directory / name).write_text("int f(void) { return 1; }\n")
+        policy = {"checks": [{"id": "san", "task_unsafe": True, "inputs": ["bridge/**"], "packages": []}]}
+        found = verify.unsafe_changes(directory, policy, verify.changed_paths(directory))
+        self.assertEqual(found, {"san": ["bridge/shim.c", "bridge/shim.h"]})
+
+
+class ForeignDeclarations(unittest.TestCase):
+    """ENV-05: every form of a hand-written foreign block is found."""
+
+    def test_extern_blocks_without_an_abi_with_another_abi_or_a_split_brace_are_found(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "scripts").mkdir()
+        (directory / "scripts/check-ffi.sh").write_text((ROOT / "scripts/check-ffi.sh").read_text())
+        # The script reads at least one listed file; an allowlist with none stops its grep.
+        (directory / "scripts/ffi-allowlist.txt").write_text("crates/x/src/listed.rs\n")
+        sources = {
+            "listed.rs": 'extern "C" {\n    fn f();\n}\n',
+            "plain.rs": 'unsafe extern {\n    fn f();\n}\n',
+            "system.rs": 'extern "system" {\n    fn f();\n}\n',
+            "split.rs": 'unsafe extern "C"\n{\n    fn f();\n}\n',
+            "callback.rs": 'pub extern "C" fn f() {}\nextern crate core;\n',
+        }
+        (directory / "crates/x/src").mkdir(parents=True)
+        for name, text in sources.items():
+            (directory / "crates/x/src" / name).write_text(text)
+        result = subprocess.run(["bash", str(directory / "scripts/check-ffi.sh")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for name in ("plain.rs", "system.rs", "split.rs"):
+            self.assertIn("crates/x/src/" + name, result.stdout)
+        self.assertNotIn("callback.rs", result.stdout, "a definition is not a declaration")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -252,7 +252,11 @@ make debug-report
 ### オーディオ・トランスポート・プラグイン
 
 - **監視の即時破棄回帰が `drop did not return within 3 s` で落ちる**:
-  `audit_plg9_a_watch_can_be_dropped_right_after_it_starts` の期限は、監視の開始と破棄の両方を含む。
+  2026-11-02 の W1〜W4 の検査で、`make verify` の `check` がこのテストだけで 8 回落ちた。
+  標本はいつも `FSEventStreamStart` → `register_with_server` → `mach_msg`（fseventsd への登録待ち）で、大量のビルドの直後に多かった。
+  そこで 3 秒の期限を破棄だけにかけ、開始は 60 秒の上限（止まった時だけ止める）で区別した。
+  今は `start did not return within 60 s` なら OS 側の登録待ち、`drop did not return within 3 s` なら破棄のハング（PLG-9 の回帰）である。
+  以下は変更前の記録で、当時の期限は監視の開始と破棄の両方を含んでいた。
   2026-11-02 の SPG-09 検査では全体と単独で失敗した後、同じ期限の単独実行が約 97 秒で完走した。
   成功した診断実行の標本は `FolderWatch::start` → `FSEventStreamStart` → `register_with_server` → `mach_msg` であり、破棄の待ちとは限らない。
   初回の失敗位置と OS 側の根因は未確定。既修正の run-loop 開始競合と決めつけず、開始・停止のどちらかを標本で区別する。
