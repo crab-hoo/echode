@@ -4,10 +4,11 @@ use super::{
     Change, Field, Id, ModelError, Note, ObjectKey, ObjectKind, Property, Tick, Value, field_byte,
     field_id, field_optional_id, field_tick, field_u16, update,
 };
+use crate::note_fields::note_fields;
 
 // The declaration order is the existing wire order. Identity and content ownership
 // are separate: ownership is writable, but must agree with the content's note order.
-macro_rules! note_fields {
+macro_rules! define_note_changeset {
     ($($property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
         pub(super) struct NoteState {
             pub content: Id,
@@ -85,11 +86,4 @@ macro_rules! note_fields {
     };
 }
 
-note_fields! {
-    Start => start: Tick, Tick, field_tick;
-    Length => length: Tick, Tick, field_tick;
-    Pitch => pitch: u8, Byte, field_byte;
-    Velocity => velocity: u16, U16, field_u16;
-    Release => release: u16, U16, field_u16;
-    Articulation => articulation: Option<Id>, Parent, field_optional_id;
-}
+note_fields!(define_note_changeset);

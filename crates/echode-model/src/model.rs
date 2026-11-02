@@ -16,6 +16,7 @@ use fractional_index::FractionalIndex;
 
 use crate::device::{Device, DeviceKind, MixerIds, valid_plugin_id};
 use crate::id::Id;
+use crate::note_fields::note_fields;
 use crate::time::{FLICKS_PER_SECOND, Flick, Meter, Tempo, TempoMap, Tick};
 
 /// Largest linear clip gain. `2^20` is exact in `f32` and stays finite when a
@@ -98,20 +99,23 @@ pub struct NoteGeometry {
     pub length: Tick,
 }
 
-/// A note stored relative to its content.
-///
-/// `velocity` and `release` are 0..=65535. A MIDI 1.0 value `v` in 0..=127 is
-/// stored as `(v << 9) | (v << 2) | (v >> 5)`, so 127 becomes 65535.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Note {
-    pub id: Id,
-    pub start: Tick,
-    pub length: Tick,
-    pub pitch: u8,
-    pub velocity: u16,
-    pub release: u16,
-    pub articulation: Option<Id>,
+macro_rules! define_note {
+    ($($property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
+        /// A note stored relative to its content.
+        ///
+        /// `velocity` and `release` are 0..=65535. A MIDI 1.0 value `v` in 0..=127 is
+        /// stored as `(v << 9) | (v << 2) | (v >> 5)`, so 127 becomes 65535.
+        /// Serde decodes the stored shape; project assembly validates musical values.
+        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct Note {
+            pub id: Id,
+            $(pub $field: $type,)+
+        }
+    };
 }
+
+note_fields!(define_note);
 
 /// Largest MIDI 1.0 pitch or velocity value.
 pub const MIDI7_MAX: u8 = 127;

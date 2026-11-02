@@ -38,10 +38,12 @@
 mod changeset;
 mod clip_move;
 mod device;
+mod device_fields;
 mod duplicate;
 mod id;
 mod invariants;
 mod model;
+mod note_fields;
 mod note_velocity;
 mod parameter_fields;
 mod placement;

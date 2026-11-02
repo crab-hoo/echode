@@ -496,6 +496,22 @@ make debug-report
   `parameter_package.rs` は各段階の拒否と原本の保持、旧スキーマ・保存のキー順とコミットからの再読込みを検査する
   （[ADR 0222](decisions/0222-parameter-package-fields.md)）。
 
+- **デバイスを含むパッケージの読込みが拒否される**:
+  `track json:` の必須項目・型・未知の項目・`invalid id`・`unknown device kind` は `Device` の形の復号で調べる。
+  `mixer state must be null` と `does not match its plugin id` は履歴の組立て前の検査である。
+  状態オブジェクトの欠落・`does not match its BLAKE3` は保管庫の検査で、モデルの直接復号は代わりにならない。
+  ピン・フラグ・順序・ID の重複は組立て後の不変条件と区別する。
+  `device_package.rs` で拒否と原本保持、旧版・保存のキー順と改行・コミット再読込みを検査する
+  （[ADR 0223](decisions/0223-device-package-fields.md)）。
+
+- **ノートを含むパッケージの読込みが拒否される**:
+  `content json:` の必須項目・型・未知の項目・`invalid id` は `Note` の形の復号で調べる。
+  `articulation is not accepted yet` と `expressions are not accepted yet` は組立て前の未対応機能の拒否である。
+  `not usable`・`not in start, pitch, id order`・`id is already used` はプロジェクトの組立てで調べる。
+  直接の Serde は任意の整数・参照を表せても、音高・長さ・順序・ID の一意性を保証しない。
+  `note_package.rs` は形と意味の拒否・原本保持、保存バイト・旧版・共有内容・コミット再読込みを分けて検査する
+  （[ADR 0224](decisions/0224-note-package-fields.md)）。
+
 - **Option ドラッグで音高が動く・ベロシティが引き継がれない**:
   押下時の `PianoVelocityGesture` と通常の `PianoGesture` を分ける。横移動・グリッド・Shift はベロシティへ影響しない。
   `piano-note-velocity-ui` は解放位置と単一記録、`piano-note-velocity-cancel-ui` は取消後の遅れた解放を検査する。

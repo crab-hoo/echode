@@ -6,6 +6,7 @@
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::device_fields::device_fields;
 use crate::id::Id;
 use crate::model::ModelError;
 use crate::parameter_fields::parameter_fields;
@@ -76,6 +77,19 @@ impl DeviceKind {
             "clap" => Some(Self::Clap),
             _ => None,
         }
+    }
+}
+
+impl Serialize for DeviceKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for DeviceKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).ok_or_else(|| D::Error::custom(format!("unknown device kind {text}")))
     }
 }
 
@@ -198,25 +212,31 @@ impl Parameter {
     }
 }
 
-/// A device on a track. The mixer keeps [`ParamKey::ORDER`]. A CLAP device has
-/// no parameters until the host publishes them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Device {
-    pub id: Id,
-    pub kind: DeviceKind,
-    /// CLAP plugin id. The mixer leaves this empty.
-    pub plugin: Option<String>,
-    /// BLAKE3 of the plugin's saved bytes in `media/objects`. The mixer is `None`.
-    pub state: Option<String>,
-    /// Host bypass keeps the helper and its settings, while passing dry audio.
-    pub bypassed: bool,
-    /// Offline devices keep their recorded settings without loading a helper.
-    pub offline: bool,
-    /// CLAP parameter ids shown first in this device's parameter list,
-    /// ascending and unique. Values stay in the plugin state; the mixer has none.
-    pub pinned: Vec<u32>,
-    pub parameters: Vec<Parameter>,
+macro_rules! define_device {
+    (
+        fields { $(
+            $(#[$meta:meta])*
+            $property:ident => $field:ident: $type:ty,
+            $encode:ident, $read:ident, $parse:ident;
+        )+ }
+        create [$($create:ident),+];
+        diff [$($diff:ident),+];
+    ) => {
+        /// A device on a track. The mixer keeps [`ParamKey::ORDER`]. A CLAP device
+        /// has no model parameters. Serde checks shape, not project invariants or
+        /// the existence and integrity of a saved plugin-state object.
+        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct Device {
+            pub id: Id,
+            pub kind: DeviceKind,
+            $($(#[$meta])* pub $field: $type,)+
+            pub parameters: Vec<Parameter>,
+        }
+    };
 }
+
+device_fields!(define_device);
 
 impl Device {
     pub fn unity(ids: MixerIds) -> Self {

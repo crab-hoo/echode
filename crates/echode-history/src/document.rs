@@ -2,7 +2,7 @@
 //!
 //! The same project always produces the same bytes. Each note is one line.
 //! A file older than the current schema is raised one version at a time on a
-//! JSON value, then parsed with unknown fields rejected. Schema 3 is current.
+//! JSON value, then parsed with unknown fields rejected. Schema 6 is current.
 //! The journal is an append-only log.
 //! Recovery replays the lines that continue after the newest readable commit.
 
@@ -25,6 +25,9 @@ use gix::objs::tree::{Entry, EntryKind};
 use gix::{ObjectId, Repository};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+#[path = "document_device.rs"]
+mod device_json;
 
 /// Autosave commits land here until a project has more than one alternate.
 pub const AUTOSAVE_REF: &str = "refs/echode/autosave/main";
@@ -795,19 +798,7 @@ fn render_track(track: &Track) -> String {
         } else {
             ","
         };
-        let _ = writeln!(
-            out,
-            "    {{\"id\":{},\"kind\":{},\"plugin\":{},\"state\":{},\"bypassed\":{},\"offline\":{},\"pinned\":{},\"parameters\":[",
-            to_json(&device.id.to_string()),
-            to_json(device.kind.as_str()),
-            to_json(&device.plugin),
-            to_json(&device.state),
-            to_json(&device.bypassed),
-            to_json(&device.offline),
-            to_json(&device.pinned)
-        );
-        push_json_lines(&mut out, "      ", device.parameters.iter().map(to_json));
-        let _ = writeln!(out, "    ]}}{comma}");
+        let _ = writeln!(out, "    {}{comma}", device_json::render(device));
     }
     out.push_str("  ],\n  \"clips\":[\n");
     push_json_lines(
@@ -844,21 +835,7 @@ fn render_content(content: &echode_model::Content) -> String {
     push_field(&mut out, "audio", &render_audio(content.audio.as_ref()));
     push_field(&mut out, "takes", &to_json(&takes));
     out.push_str("  \"notes\":[\n");
-    push_json_lines(
-        &mut out,
-        "    ",
-        content.notes.iter().map(|note| {
-            to_json(&NoteLine {
-                id: note.id.to_string(),
-                start: note.start.get(),
-                length: note.length.get(),
-                pitch: note.pitch,
-                velocity: note.velocity,
-                release: note.release,
-                articulation: note.articulation.map(|id| id.to_string()),
-            })
-        }),
-    );
+    push_json_lines(&mut out, "    ", content.notes.iter().map(to_json));
     out.push_str("  ],\n  \"expressions\":");
     out.push_str(&to_json(&Vec::<serde_json::Value>::new()));
     out.push_str("\n}\n");
@@ -1224,51 +1201,34 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
             .devices
             .into_iter()
             .map(|device| {
-                let kind = echode_model::DeviceKind::parse(&device.kind).ok_or_else(|| {
-                    PackageError::new(format!("unknown device kind {}", device.kind))
-                })?;
-                let state = match (kind, device.state.as_deref()) {
-                    (_, None) => None,
+                let kind = device.kind;
+                match (kind, device.state.as_deref()) {
+                    (_, None) => {}
                     (echode_model::DeviceKind::Mixer, Some(_)) => {
                         return Err(PackageError::new("mixer state must be null"));
                     }
-                    (echode_model::DeviceKind::Clap, Some(text))
-                        if !crate::objects::is_content_hash(text) =>
-                    {
-                        return Err(PackageError::new(
-                            "state hash must be 64 lowercase hex digits",
-                        ));
-                    }
                     (echode_model::DeviceKind::Clap, Some(text)) => {
+                        if !crate::objects::is_content_hash(text) {
+                            return Err(PackageError::new(
+                                "state hash must be 64 lowercase hex digits",
+                            ));
+                        }
                         crate::objects::read_object(package, text)?;
-                        Some(text.to_string())
                     }
-                };
-                let parameters = device.parameters;
-                let plugin = match (kind, device.plugin) {
-                    (echode_model::DeviceKind::Mixer, None) => None,
+                }
+                match (kind, device.plugin.as_deref()) {
+                    (echode_model::DeviceKind::Mixer, None) => {}
                     (echode_model::DeviceKind::Clap, Some(plugin))
-                        if echode_model::valid_plugin_id(&plugin) && parameters.is_empty() =>
-                    {
-                        Some(plugin)
-                    }
+                        if echode_model::valid_plugin_id(plugin)
+                            && device.parameters.is_empty() => {}
                     _ => {
                         return Err(PackageError::new(format!(
                             "device {} does not match its plugin id",
                             device.id
                         )));
                     }
-                };
-                Ok(echode_model::Device {
-                    id: parse_id(&device.id)?,
-                    kind,
-                    plugin,
-                    state,
-                    bypassed: device.bypassed,
-                    offline: device.offline,
-                    pinned: device.pinned,
-                    parameters,
-                })
+                }
+                Ok(device)
             })
             .collect::<Result<Vec<_>, PackageError>>()?,
         clips,
@@ -1289,20 +1249,10 @@ fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content,
             file.id
         )));
     }
-    let mut notes = Vec::with_capacity(file.notes.len());
-    for note in file.notes {
+    for note in &file.notes {
         if note.articulation.is_some() {
             return Err(PackageError::new("articulation is not accepted yet"));
         }
-        notes.push(Note {
-            id: parse_id(&note.id)?,
-            start: Tick::new(note.start),
-            length: Tick::new(note.length),
-            pitch: note.pitch,
-            velocity: note.velocity,
-            release: note.release,
-            articulation: None,
-        });
     }
     if let Some(expression) = file.expressions.first() {
         return Err(PackageError::new(format!(
@@ -1326,7 +1276,7 @@ fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content,
         id: parse_id(&file.id)?,
         audio: file.audio.map(parse_audio).transpose()?,
         takes,
-        notes,
+        notes: file.notes,
         expressions: Vec::new(),
     })
 }
@@ -1551,17 +1501,6 @@ struct PlacementLine<'a> {
     fade_out: i64,
 }
 
-#[derive(Serialize)]
-struct NoteLine {
-    id: String,
-    start: i64,
-    length: i64,
-    pitch: u8,
-    velocity: u16,
-    release: u16,
-    articulation: Option<String>,
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectFile {
@@ -1597,21 +1536,8 @@ struct TrackFile {
     #[serde(default)]
     parent: Option<String>,
     order: String,
-    devices: Vec<DeviceFile>,
+    devices: Vec<echode_model::Device>,
     clips: Vec<ClipFile>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DeviceFile {
-    id: String,
-    kind: String,
-    plugin: Option<String>,
-    state: Option<String>,
-    bypassed: bool,
-    offline: bool,
-    pinned: Vec<u32>,
-    parameters: Vec<echode_model::Parameter>,
 }
 
 #[derive(Deserialize)]
@@ -1636,7 +1562,7 @@ struct ContentFile {
     id: String,
     audio: Option<AudioFile>,
     takes: Vec<String>,
-    notes: Vec<NoteFile>,
+    notes: Vec<Note>,
     expressions: Vec<ExpressionFile>,
 }
 
@@ -1647,18 +1573,6 @@ struct AudioFile {
     sample_rate: u32,
     channels: u16,
     frames: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NoteFile {
-    id: String,
-    start: i64,
-    length: i64,
-    pitch: u8,
-    velocity: u16,
-    release: u16,
-    articulation: Option<String>,
 }
 
 #[derive(Deserialize)]

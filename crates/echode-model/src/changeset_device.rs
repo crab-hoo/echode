@@ -5,15 +5,18 @@ use super::{
     field_id, field_ids, field_optional_text, field_text, update,
 };
 use crate::device::{Device, DeviceKind, Parameter, valid_pins, valid_state_hash};
+use crate::device_fields::device_fields;
 
 // Identity, kind, ownership, and the separately resolved parameter order are not
 // scalar fields. Creation and update orders differ in existing journals.
-macro_rules! device_fields {
+macro_rules! define_device_changeset {
     (
         fields { $(
+            $(#[$meta:meta])*
             $property:ident => $field:ident: $type:ty,
             $encode:ident, $read:ident, $parse:ident;
         )+ }
+        create [$($create:ident),+];
         diff [$($diff:ident),+];
     ) => {
         pub(super) struct DeviceState {
@@ -72,7 +75,7 @@ macro_rules! device_fields {
                 Field { property: Property::Owner, value: Value::Id(track) },
                 Field { property: Property::DeviceKind, value: Value::Text(device.kind.as_str().into()) },
             ];
-            $(fields.extend(DeviceField::$property.create(device));)+
+            $(fields.extend(DeviceField::$create.create(device));)+
             fields.push(Field { property: Property::ParamOrder, value: Value::Ids(parameter_order(device)) });
             let id = ObjectKey::Id(device.id);
             if create {
@@ -133,16 +136,7 @@ macro_rules! device_fields {
     };
 }
 
-device_fields! {
-    fields {
-        Bypassed => bypassed: bool, flag_value, field_flag, parse_flag;
-        Offline => offline: bool, flag_value, field_flag, parse_flag;
-        PinnedParameters => pinned: Vec<u32>, pins_value, field_pinned, parse_pins;
-        Plugin => plugin: Option<String>, text_value, field_optional_text, parse_plugin;
-        PluginState => state: Option<String>, text_value, field_state, parse_state;
-    }
-    diff [PinnedParameters, Offline, Bypassed, PluginState];
-}
+device_fields!(define_device_changeset);
 
 fn parameter_order(device: &Device) -> Vec<Id> {
     device

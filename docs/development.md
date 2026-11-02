@@ -121,14 +121,22 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 公開パッケージのキー順・拒否時の保持・旧版の移行とコミット再読込みは履歴の `tests/parameter_package.rs` に置く。
 形の復号とプロジェクトの受入を区別し、保存の formatter は履歴に残す（[ADR 0222](decisions/0222-parameter-package-fields.md)）。
 
-デバイスのスカラー項目の表は `echode-model/src/changeset_device.rs`、独立したフィールド順・省略値・異常入力の回帰は
+デバイスのスカラー項目の表は `echode-model/src/device_fields.rs` でモデル宣言・Serde とも共有する。
+変更セットの生成器は `echode-model/src/changeset_device.rs`、独立したフィールド順・省略値・異常入力の回帰は
 履歴の `tests/device_changesets.rs` に置く。操作列は設定済み CLAP デバイスからも始める。
 モデル値だけを検査し、プラグインを読み込まない（[ADR 0215](decisions/0215-device-changeset-fields.md)）。
+公開保存のキー順・改行、拒否時の原本保持、状態オブジェクトの検証・旧版の移行とコミット再読込みは
+履歴の `tests/device_package.rs` に置く。保存の配置だけを扱う formatter は `src/document_device.rs` に残す
+（[ADR 0223](decisions/0223-device-package-fields.md)）。
 
-ノートのスカラー項目の表は `echode-model/src/changeset_note.rs`、独立した整数・参照・フィールド順の回帰は
+ノートのスカラー項目の表は `echode-model/src/note_fields.rs`、独立した整数・参照・フィールド順の回帰は
 履歴の `tests/note_changesets.rs` に置く。所属と中身の順序、必須項目・型・未知の ID の拒否とジャーナルも検査する。
 操作列は共有内容と 16 bit の発音・リリースの強弱を持つ初期状態からも始める。
 低水準の任意値の往復は公開前の不変条件検査と区別する（[ADR 0216](decisions/0216-note-changeset-fields.md)）。
+モデル宣言・Serde と変更セットもこの表を共有し、保存の型と手書きの変換は持たない。
+公開保存のキー順・1 ノート 1 行・整数の端点・旧版の段階変換と拒否時の原本保持、
+共有内容とコミットからの再読込みは履歴の `tests/note_package.rs` に置く
+（[ADR 0224](decisions/0224-note-package-fields.md)）。
 
 トラックのスカラー項目の表は `echode-model/src/changeset_track.rs`、独立した名前・親・兄弟キーとフィールド順の回帰は
 履歴の `tests/track_changesets.rs` に置く。子の ID 列と解決、親の木・分数キーの拒否とジャーナルも検査する。
