@@ -325,3 +325,119 @@ fn contract_plugin_window_relays_gestures_and_values() {
     assert_eq!(window.lines(2), ["hide", "destroy"]);
     let _ = std::fs::remove_file(&socket);
 }
+
+/// The helper as `gui_session` makes it, with the project and route kept for a later replace.
+fn audit_session(
+    name: &str,
+) -> (
+    UnixListener,
+    std::path::PathBuf,
+    echode_engine::PlaybackControl,
+    echode_engine::PlaybackAudio,
+    Id,
+    usize,
+    Project,
+    PluginRoute,
+) {
+    let (project, track) = Project::new().add_track("window");
+    let device = Id::from_raw(0x6A);
+    let project = project
+        .add_clap_device(track, device, "dev.echode.test-params")
+        .unwrap();
+    let socket = std::env::temp_dir().join(format!("echode-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket).unwrap();
+    let mut route = params_route(None);
+    route.fault = Some(format!("gui:{}", socket.display()));
+    let frames = 64;
+    let (mut control, mut audio) = playback_with_plugins(
+        &project,
+        48_000,
+        frames,
+        &host_bin(),
+        std::slice::from_ref(&route),
+    )
+    .unwrap();
+    control.set_clip_loader(stereo_clip(track.raw()));
+    control.replace(&project).unwrap();
+    let _ = hear(&mut control, &mut audio, frames);
+    (
+        listener, socket, control, audio, device, frames, project, route,
+    )
+}
+
+/// DOC-A1: a change the plugin marks dirty while its window is open is the
+/// user's edit (ADR 0132), so the activity must say the window was open.
+#[test]
+#[ignore = "audit DOC-A1: a dirty-only change in an open window reports window_open=false"]
+fn audit_doc_a1_a_dirty_change_in_an_open_window_counts_as_a_window_edit() {
+    let (listener, socket, mut control, audio, device, _, _, _) = audit_session("audit-a1");
+    let endpoint = control.device_control_handle(device.raw()).unwrap();
+    endpoint.show_gui("window — Params").unwrap();
+    let mut window = Window::accept(&listener);
+    assert_eq!(window.lines(3), ["create", "parent", "show"]);
+    let _ = collect(&mut control, device, |seen| seen.window_state == Some(true));
+    window.act("dirty");
+    let seen = collect(&mut control, device, |seen| seen.dirty);
+    assert!(
+        seen.window_open,
+        "a dirty change in an open window reported no open window: {seen:?}"
+    );
+    endpoint.close_gui().unwrap();
+    drop((audio, control));
+    let _ = std::fs::remove_file(socket);
+}
+
+/// DOC-A2, as the document worker drives the engine today: it drops the held
+/// save and replaces the graph with the model's older state. A fix in the
+/// worker changes the routes passed here; then move this reproduction to the
+/// worker instead of deleting it.
+#[test]
+#[ignore = "audit DOC-A2: an unrelated edit replaces a helper whose unrecorded change is held"]
+fn audit_doc_a2_an_unrelated_edit_keeps_the_held_plugin_change() {
+    let (listener, socket, mut control, mut audio, device, frames, project, route) =
+        audit_session("audit-a2");
+    let endpoint = control.device_control_handle(device.raw()).unwrap();
+    endpoint.show_gui("window — Params").unwrap();
+    let mut window = Window::accept(&listener);
+    assert_eq!(window.lines(3), ["create", "parent", "show"]);
+    window.act("value 1 1.5");
+    window.act("dirty");
+    let started = Instant::now();
+    let held = loop {
+        control.service();
+        if let Some((_, bytes)) = control.take_plugin_saves().into_iter().next() {
+            break bytes;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "no background save"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let (edited, _) = project.add_track("unrelated edit");
+    control.set_routes(&host_bin(), std::slice::from_ref(&route));
+    control.replace(&edited).unwrap();
+    let adopted = Instant::now();
+    loop {
+        let _ = hear(&mut control, &mut audio, frames);
+        if !control.status().pending_plan {
+            break;
+        }
+        assert!(
+            adopted.elapsed() < Duration::from_secs(10),
+            "plan never adopted"
+        );
+    }
+    let after = control.device_control_handle(device.raw()).unwrap();
+    let report = after.show_gui("window — Params").unwrap();
+    assert!(!report.created, "the helper and its window were replaced");
+    assert_eq!(
+        after.parameters().unwrap()[0].value,
+        1.5,
+        "the change was lost"
+    );
+    assert_eq!(after.applied_state(), Some(held));
+    drop((audio, control));
+    let _ = std::fs::remove_file(socket);
+}

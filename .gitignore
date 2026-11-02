@@ -9,3 +9,5 @@ Echode.xcodeproj/
 DerivedData/
 .idea/
 *.swp
+.claude/worktrees/
+.claude/settings.local.json

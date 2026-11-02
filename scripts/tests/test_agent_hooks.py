@@ -1,0 +1,118 @@
+"""Claude Code hook adapters, the durability trace analysis, and registered audit reproductions."""
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import check_on_stop  # noqa: E402
+import durability_trace  # noqa: E402
+import verify  # noqa: E402
+import wait_for_verify  # noqa: E402
+
+
+class ClaudeHookTests(unittest.TestCase):
+    def test_settings_run_existing_adapters_within_the_policy_budget(self):
+        settings = json.loads((ROOT / ".claude/settings.json").read_text())["hooks"]
+        budget = verify.load_policy(ROOT)["hook_timeout"]
+        self.assertEqual(set(settings), {"PreToolUse", "Stop"})
+        for entries in settings.values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    self.assertEqual(hook["timeout"], budget)
+                    script = ROOT / hook["command"].replace('"$CLAUDE_PROJECT_DIR"/', "")
+                    self.assertTrue(os.access(script, os.X_OK), script)
+        matcher = set(settings["PreToolUse"][0]["matcher"].split("|"))
+        self.assertEqual(matcher, wait_for_verify.CLAUDE_MUTATING)
+
+    def test_edits_wait_for_the_lock_and_answer_in_claude_format(self):
+        root = Path(tempfile.mkdtemp())
+        allowed = wait_for_verify.respond({"tool_name": "Edit"}, root, timeout=1,
+                                          mutating=wait_for_verify.CLAUDE_MUTATING)
+        self.assertEqual(wait_for_verify.claude_response(allowed), {})
+        denied = wait_for_verify.claude_response({"permission": "deny", "agent_message": "busy"})
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecisionReason"], "busy")
+        self.assertEqual(wait_for_verify.respond({"tool_name": "Bash"}, root, timeout=1,
+                                                 mutating=wait_for_verify.CLAUDE_MUTATING),
+                         {"permission": "allow"})
+
+    def test_real_wrapper_allows_a_read_and_denies_invalid_input(self):
+        script = ROOT / ".claude/hooks/wait-for-verify.sh"
+        allowed = subprocess.run([str(script)], cwd=ROOT, input=json.dumps({"tool_name": "Read"}),
+                                 capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(allowed.stdout), {})
+        denied = subprocess.run([str(script)], cwd=ROOT, input="{invalid",
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_stop_blocks_a_failed_verification_a_bounded_number_of_times(self):
+        counts = Path(tempfile.mkdtemp()) / "blocks.json"
+        event = {"session_id": "s", "stop_hook_active": False}
+        for _ in range(check_on_stop.LOOP_LIMIT):
+            self.assertEqual(check_on_stop.respond_claude(event, lambda: 1, counts)["decision"], "block")
+        final = check_on_stop.respond_claude(event, lambda: 1, counts)
+        self.assertNotIn("decision", final)
+        self.assertIn("systemMessage", final)
+        self.assertEqual(check_on_stop.respond_claude(event, lambda: 1, counts)["decision"], "block")
+        self.assertEqual(check_on_stop.respond_claude(event, lambda: 0, counts), {})
+        self.assertEqual(json.loads(counts.read_text()), {})
+        with self.assertRaises(ValueError):
+            check_on_stop.respond_claude([], lambda: 0, counts)
+
+
+class DurabilityTraceTests(unittest.TestCase):
+    def test_a_rename_needs_its_directory_synced_before_the_next_journal_event(self):
+        unsynced = [("RENAME", ".git/objects/ab/cd"), ("RENAME", "media/objects/h"),
+                    ("SYNC", "media/objects"), ("RENAME", ".journal.jsonl.1.tmp")]
+        self.assertEqual(durability_trace.unsynced(unsynced), [".git/objects/ab/cd"])
+        synced = [("RENAME", ".git/refs/echode/autosave/main"), ("SYNC", ".git/refs/echode/autosave"),
+                  ("SYNC", "journal.jsonl")]
+        self.assertEqual(durability_trace.unsynced(synced), [])
+
+    def test_events_keep_only_paths_inside_the_package(self):
+        package = Path(tempfile.mkdtemp())
+        text = f"SYNC {package}\nRENAME {package}/media/objects/h\nSYNC /elsewhere/file\n"
+        self.assertEqual(durability_trace.events(text, package), [("SYNC", "."), ("RENAME", "media/objects/h")])
+
+
+class RegisteredAuditReproductions(unittest.TestCase):
+    """Remove the skip when the item is fixed (docs/reviews/2026-11-02-fix-instructions.md)."""
+
+    @unittest.skip("audit ENV-01: deleting a file with `unsafe` selects no sanitizer")
+    def test_audit_env01_deleting_unsafe_code_selects_the_sanitizers(self):
+        directory = Path(tempfile.mkdtemp())
+
+        def git(*arguments):
+            subprocess.run(["git", *arguments], cwd=directory, check=True, capture_output=True)
+
+        git("init", "-q")
+        git("config", "user.email", "audit@example.invalid")
+        git("config", "user.name", "audit")
+        (directory / "crates/x/src").mkdir(parents=True)
+        (directory / "crates/x/src/a.rs").write_text("pub fn f() { unsafe {} }\n")
+        git("add", ".")
+        git("commit", "-qm", "base")
+        os.unlink(directory / "crates/x/src/a.rs")
+        policy = {"checks": [{"id": "san", "task_unsafe": True, "inputs": ["crates/**"], "packages": []}]}
+        found = verify.unsafe_changes(directory, policy, verify.changed_paths(directory))
+        self.assertEqual(found, {"san": ["crates/x/src/a.rs"]})
+
+    @unittest.skip("audit ENV-06: an expected red can match the logged command line")
+    def test_audit_env06_the_command_line_cannot_satisfy_an_expected_failure(self):
+        directory = Path(tempfile.mkdtemp())
+        command = f"{sys.executable} -c 'import sys; sys.exit(101)' the_regression_assertion"
+        result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/checked_commands.py"),
+                                 "--log-dir", str(directory), "--command", command, "--expect-exit", "101",
+                                 "--expect-failure", "the_regression_assertion"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, "text only in the Command: line passed as the expected red")
+
+if __name__ == "__main__":
+    unittest.main()

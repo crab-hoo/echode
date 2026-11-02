@@ -304,6 +304,9 @@ rtsan:
 	RTSAN_ENABLE=1 cargo test -q -p echode-audio-io --features rtsan under_rtsan
 	RTSAN_ENABLE=1 cargo test -q -p echode-plugin-host --features rtsan under_rtsan
 
+	# The RTSan helper replaced target/debug/echode-plugin-host and cannot load without the
+	# sanitizer runtime; leave the normal helper for the CLI and later builds.
+	cargo build -q -p echode-plugin-host
 # Device-free release measurement; never part of normal correctness tests.
 spike-audition:
 	cargo test -q --release -p echode-audio-io --lib audition::tests::measure_streaming_audition_startup_without_a_device -- --ignored --exact

@@ -51,6 +51,10 @@ make debug-report
   短縮で足りなければ、測定値を添えて期限の変更をユーザーに相談する。
 - **空き容量不足（`No space left on device` / `Errno 28`）**:
   `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
+- **検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する**:
+  `make rtsan` が `target/debug/echode-plugin-host` を RTSan 版で上書きした状態である。製品の不具合ではない。
+  2026-11-02 から `make rtsan` は最後に通常版を作り直す。途中で失敗した時は `cargo build -q -p echode-plugin-host` で戻すか、
+  `ECHODE_PLUGIN_HOST` で別のビルドを指す（[外部監査の精査](reviews/2026-11-02-external-audit-review.md)）。
 - **ツール不足・ビルド失敗**:
   `doctor` の `missing_tools` と最初のエラーを読む。通常ツールは `make setup`、動的検査は `make setup-bridge`。
   ツールがそろっていても、`setup_needed` に `setup-bridge` があれば TSan の検査専用ランタイムが未準備か、

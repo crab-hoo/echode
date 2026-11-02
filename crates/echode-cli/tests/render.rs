@@ -1082,3 +1082,17 @@ fn newest_source(dir: &Path) -> std::io::Result<std::time::SystemTime> {
     }
     Ok(newest)
 }
+
+/// CLI-A1: an offline export waits for the plugin instead of judging it by a
+/// real-time deadline. One frame leaves the helper about 18 microseconds today.
+#[test]
+#[ignore = "audit CLI-A1: a plugin export fails on the real-time deadline of a short block"]
+fn audit_cli_a1_a_one_frame_plugin_export_completes() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    write_package(&directory, &reference_project()).unwrap();
+    let wav = directory.join("one.wav");
+    render_to_wav(&directory, &wav, 48_000, Some(1)).unwrap();
+    assert_eq!(std::fs::metadata(&wav).unwrap().len(), 44 + 8);
+    let _ = std::fs::remove_dir_all(directory);
+}

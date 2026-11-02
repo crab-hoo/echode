@@ -32,6 +32,13 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 ### 1. 全体横断・Phase 1 最終照合
 
+- [2026-11-02 コード品質とエージェント環境の横断監査](reviews/2026-11-02-cross-cutting-audit.md): XCA-01〜22。
+  保存の同期の順序、ソースと CI の継続性、エージェントごとの防護、資料の量。P1 の XCA-01〜05 は未着手。
+  証拠は [保存の耐久性の追跡](evidence/2026-11-02-durability-trace.md) に置く。
+- [2026-11-02 外部監査 2 件の精査](reviews/2026-11-02-external-audit-review.md): 製品・エージェント環境・検査時間の外部指摘の判定。
+  プラグインの窓での変更の消失（DOC-A1・A2）と、保管物のない状態による読めない先端（HIS-A1）を再現した。未着手。
+- [2026-11-02 監査対応の実行指示](reviews/2026-11-02-fix-instructions.md): 上の 2 監査の作業単位 W1〜W4、再現テスト、境界と完了条件。
+
 - [2026-10-30 構造の横断監査](reviews/2026-10-30-structure-audit.md): SPG-01〜11。
   絡み合いを起こしやすい構造と根本の修正方針・順番。
   SPG-01 は [ADR 0199](decisions/0199-owned-helper-control-requests.md)、SPG-02 は [ADR 0203](decisions/0203-document-session.md)、

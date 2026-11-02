@@ -89,7 +89,7 @@ ASan・TSan・Miri と全契約の反例は全体検査の段階です。
 自動検査の失敗を見送ってはいけません。未実行を合格と言わず、最終報告に検査名と理由を残します。
 結果は `target/verification/report.md` にあり、その検査の依存入力やツールが変われば合格と見送りは無効です。無関係な文書変更では製品の検査結果を再利用します。
 
-Cursor の stop hook（`.cursor/hooks.json`）も同じ入口を使い、失敗や理由のない未実行があれば続きの指示を返します。
+Cursor の stop hook（`.cursor/hooks.json`）と Claude Code の Stop フック（`.claude/settings.json`）も同じ入口を使い、失敗や理由のない未実行があれば続きの指示を返します。
 ファイルを変える操作は、進行中の検査が `target/verification/.lock` を持っている間は、そのロックが外れるまで待ちます。
 フックのない環境でも `make verify` の実行は必要です。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify` を使います。
 `--only` は個別検査や CI の分割用で、作業の完了時には使いません。新しい環境では、先に `make setup`、橋渡しの動的検査には `make setup-bridge` を実行します。
