@@ -392,36 +392,23 @@ impl Prepared {
             .map(|entry| entry.1)
     }
 
-    fn preview_fader(
-        &mut self,
-        previous: Option<u128>,
-        preview: Option<(u128, f32, f32)>,
-        playing: bool,
-    ) {
-        let apply = |track: &mut Track, values: Option<(f32, f32)>| {
-            let mut target = track.base_fader;
-            if let Some((gain, pan)) = values {
-                target.gain = gain;
-                target.pan = pan;
+    fn preview_faders(&mut self, preview: &[(u128, f32, f32)], restore: bool, playing: bool) {
+        // The control thread validates and allocates the affected set. Never scan
+        // the whole project or allocate/free group storage in the callback.
+        for &(id, gain, pan) in preview {
+            if let Some(slot) = self.mixer_slot(id)
+                && let Some(track) = self.tracks.get_mut(slot)
+            {
+                let mut target = track.base_fader;
+                if !restore {
+                    target.gain = gain;
+                    target.pan = pan;
+                }
+                track.fader.retarget(target);
+                if !playing {
+                    track.fader.settle();
+                }
             }
-            track.fader.retarget(target);
-            if !playing {
-                track.fader.settle();
-            }
-        };
-        // Resolve only the old and new audition targets through an index built
-        // on the control thread; dragging never scans the entire track list.
-        if previous != preview.map(|entry| entry.0)
-            && let Some(slot) = previous.and_then(|id| self.mixer_slot(id))
-            && let Some(track) = self.tracks.get_mut(slot)
-        {
-            apply(track, None);
-        }
-        if let Some((id, gain, pan)) = preview
-            && let Some(slot) = self.mixer_slot(id)
-            && let Some(track) = self.tracks.get_mut(slot)
-        {
-            apply(track, Some((gain, pan)));
         }
     }
 
@@ -1129,11 +1116,19 @@ struct Pending {
     restore_states: bool,
 }
 
+type FaderGroup = Box<[(u128, f32, f32)]>;
+
+enum QueuedCommand {
+    Transport(PlaybackCommand),
+    Faders(FaderGroup),
+}
+
 pub struct PlaybackControl {
     workgroup: Option<crate::plugins::PluginWorkgroup>,
     plans: Producer<Update>,
     returns: Consumer<Update>,
-    commands: Producer<(u64, PlaybackCommand)>,
+    commands: Producer<(u64, QueuedCommand)>,
+    preview_returns: Consumer<FaderGroup>,
     command_revision: u64,
     held: Option<Pending>,
     hosts: HostGraph,
@@ -1175,7 +1170,8 @@ pub struct PlaybackControl {
 pub struct PlaybackAudio {
     plans: Consumer<Update>,
     returns: Producer<Update>,
-    commands: Consumer<(u64, PlaybackCommand)>,
+    commands: Consumer<(u64, QueuedCommand)>,
+    preview_returns: Producer<FaderGroup>,
     applied_command: u64,
     reset_plugins: bool,
     output_revision: u64,
@@ -1185,7 +1181,7 @@ pub struct PlaybackAudio {
     live_processed: bool,
     stop_tail: Option<StopTail>,
     stop_fade_offset: Option<u32>,
-    fader_preview: Option<(u128, f32, f32)>,
+    fader_preview: Option<FaderGroup>,
     clear_preview_after: Option<u64>,
     hosts: Box<HostGraph>,
     current: Box<Prepared>,
@@ -1304,6 +1300,7 @@ fn transport_pair(
     let (plans, incoming) = RingBuffer::new(2);
     let (returning, returns) = RingBuffer::new(2);
     let (commands, actions) = RingBuffer::new(32);
+    let (preview_returning, preview_returns) = RingBuffer::new(32);
     let mut ids = PlaybackIds::new();
     let mut meters = BTreeMap::new();
     let caches = BTreeMap::new();
@@ -1343,6 +1340,7 @@ fn transport_pair(
         plans,
         returns,
         commands,
+        preview_returns,
         command_revision: 0,
         held: None,
         hosts: HostGraph::empty(),
@@ -1376,6 +1374,7 @@ fn transport_pair(
         plans: incoming,
         returns: returning,
         commands: actions,
+        preview_returns: preview_returning,
         applied_command: 0,
         reset_plugins: false,
         output_revision: 0,
@@ -1504,18 +1503,8 @@ impl PlaybackControl {
 
     pub fn command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
         match command {
-            PlaybackCommand::PreviewFader { track, gain, pan }
-                if !gain.is_finite()
-                    || !(0.0..=4.0).contains(&gain)
-                    || !pan.is_finite()
-                    || !(-1.0..=1.0).contains(&pan)
-                    || !self
-                        .project
-                        .tracks()
-                        .iter()
-                        .any(|entry| entry.id.raw() == track) =>
-            {
-                Err(PlaybackError::InvalidFader)
+            PlaybackCommand::PreviewFader { track, gain, pan } => {
+                self.preview_faders(&[(track, gain, pan)])
             }
             PlaybackCommand::SetLoop { start, end } if end > start => {
                 self.set_loop(Some((start, end)))
@@ -1524,7 +1513,7 @@ impl PlaybackControl {
             other => {
                 let revision = self.command_revision.wrapping_add(1);
                 self.commands
-                    .push((revision, other))
+                    .push((revision, QueuedCommand::Transport(other)))
                     .map_err(|_| PlaybackError::BufferTooSmall)?;
                 self.command_revision = revision;
                 Ok(())
@@ -1564,6 +1553,36 @@ impl PlaybackControl {
         self.command(PlaybackCommand::PreviewFader { track, gain, pan })
     }
 
+    /// Publishes a complete transient group in one callback command. Queue depth
+    /// bounds pending gestures, never the number of affected tracks.
+    pub fn preview_faders(&mut self, values: &[(u128, f32, f32)]) -> Result<(), PlaybackError> {
+        let tracks: std::collections::BTreeSet<_> = self
+            .project
+            .tracks()
+            .iter()
+            .map(|track| track.id.raw())
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        if values.is_empty()
+            || values.iter().any(|&(track, gain, pan)| {
+                !tracks.contains(&track)
+                    || !seen.insert(track)
+                    || !gain.is_finite()
+                    || !(0.0..=4.0).contains(&gain)
+                    || !pan.is_finite()
+                    || !(-1.0..=1.0).contains(&pan)
+            })
+        {
+            return Err(PlaybackError::InvalidFader);
+        }
+        while self.preview_returns.pop().is_ok() {}
+        let revision = self.command_revision.wrapping_add(1);
+        self.commands
+            .push((revision, QueuedCommand::Faders(values.into())))
+            .map_err(|_| PlaybackError::BufferTooSmall)?;
+        self.command_revision = revision;
+        Ok(())
+    }
     pub fn clear_fader_preview(&mut self, committed: bool) -> Result<(), PlaybackError> {
         let after_plan = if committed {
             self.status.requested_plan.load(Ordering::Acquire)
@@ -1796,6 +1815,7 @@ impl PlaybackControl {
 
     pub fn service(&mut self) {
         while self.returns.pop().is_ok() {}
+        while self.preview_returns.pop().is_ok() {}
         for (device, control) in &mut self.save_controls {
             if let Some(bytes) = control.poll_state_save() {
                 self.plugin_saves.push((*device, bytes));
@@ -2085,6 +2105,20 @@ impl PlaybackAudio {
         self.status.generation.fetch_add(1, Ordering::SeqCst);
     }
 
+    fn restore_fader_preview(&mut self, live: bool) {
+        if let Some(previous) = self.fader_preview.take() {
+            self.current.preview_faders(
+                &previous,
+                true,
+                (self.playing && (self.live_output || !live)) || (live && self.live_processed),
+            );
+            // The caller reserves a return slot before taking ownership.
+            if let Err(rtrb::PushError::Full(_)) = self.preview_returns.push(previous) {
+                std::process::abort();
+            }
+        }
+    }
+
     fn step(
         &mut self,
         left: &mut [f32],
@@ -2099,7 +2133,6 @@ impl PlaybackAudio {
         }
         self.stop_fade_offset = None;
         let mut faders_changed = false;
-        let previous_fader = self.fader_preview.map(|entry| entry.0);
         if self.stop_tail.is_none()
             && !self.reset_plugins
             && !self.hosts.cleanup_pending()
@@ -2132,7 +2165,21 @@ impl PlaybackAudio {
             self.loop_end = self.current.loop_end;
             self.arm_loop();
         }
-        while let Ok((revision, command)) = self.commands.pop() {
+        while self.preview_returns.slots() > 0 {
+            let Ok((revision, command)) = self.commands.pop() else {
+                break;
+            };
+            let command = match command {
+                QueuedCommand::Transport(command) => command,
+                QueuedCommand::Faders(values) => {
+                    self.restore_fader_preview(live);
+                    self.fader_preview = Some(values);
+                    self.clear_preview_after = None;
+                    faders_changed = true;
+                    self.applied_command = revision;
+                    continue;
+                }
+            };
             match command {
                 PlaybackCommand::Play => {
                     self.stop_tail = None;
@@ -2181,11 +2228,8 @@ impl PlaybackAudio {
                     self.loop_armed = false;
                 }
                 PlaybackCommand::SetMetronome(enabled) => self.metronome = enabled,
-                PlaybackCommand::PreviewFader { track, gain, pan } => {
-                    self.fader_preview = Some((track, gain, pan));
-                    self.clear_preview_after = None;
-                    faders_changed = true;
-                }
+                // Public single-track previews are converted on the control thread.
+                PlaybackCommand::PreviewFader { .. } => std::process::abort(),
                 PlaybackCommand::ClearFaderPreview { after_plan } => {
                     self.clear_preview_after = Some(after_plan)
                 }
@@ -2200,15 +2244,16 @@ impl PlaybackAudio {
                     .load(Ordering::Acquire)
                     .wrapping_sub(revision)
                     <= u64::MAX / 2
-        }) {
-            self.fader_preview = None;
+        }) && self.preview_returns.slots() > 0
+        {
+            self.restore_fader_preview(live);
             self.clear_preview_after = None;
             faders_changed = true;
         }
         if faders_changed {
-            self.current.preview_fader(
-                previous_fader,
-                self.fader_preview,
+            self.current.preview_faders(
+                self.fader_preview.as_deref().unwrap_or_default(),
+                false,
                 (self.playing && (self.live_output || !live)) || (live && self.live_processed),
             );
         }

@@ -356,7 +356,10 @@
       "id": "mixer-reset-target-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ValueControlTargetTests", "test": "contractHeaderResetWaitDoesNotBorrowTheNextControlsPress", "timeout": 180,
       "purpose": "リセット待ちから別フィールド・別トラックへの押下とドラッグを通し、対象保持・先行リセットと別々のUndo/Redo・保存再読込を確認",
-      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "if case .waiting(target) = clicks.phase", "new": "if case .waiting = clicks.phase"}
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "if case .waiting(target) = clicks.phase", "new": "if case .waiting = clicks.phase"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerFaderBatch.swift", "old": "let shown = session.faderPreview?.values(on: id)", "new": "let shown: FaderValue? = nil"}
+      ]
     },
     {
       "id": "clip-reset-target-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
@@ -430,6 +433,33 @@
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let factor = min(upper, max(lower, Double(value) / Double(basis)))", "new": "let factor = max(lower, Double(value) / Double(basis)) + upper * 0"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let delta = min(Double(ModelLimits.pan.upperBound) - upper, max(Double(ModelLimits.pan.lowerBound) - lower, Double(value) - Double(basis)))", "new": "let delta = Double(value) - Double(basis) + (lower + upper) * 0"},
         {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "controlElements = [:]", "new": "controlElements = controlElements.filter { _ in true }"}
+      ]
+    },
+    {
+      "id": "mixer-drag-batch-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "MixerDragBatchTests", "test": "contractHeaderDragAndResetKeepCapturedGroupBalanceAndAtomicHistory", "timeout": 180,
+      "purpose": "実ヘッダのドラッグ・リセットで押下時の選択と共通差分を保ち、単一Undo/Redo・保存再読込を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerFaderBatch.swift", "old": "if members.count > 1 { session.faderPreview?.members = members }", "new": "if members.isEmpty { session.faderPreview?.members = members }"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerFaderBatch.swift", "old": "let value = preview.field == .gain ? member.gain : member.pan", "new": "let value = preview.value"}
+      ]
+    },
+    {
+      "id": "mixer-drag-bounds-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "MixerDragBatchTests", "test": "contractGroupDragClampsTogetherAndCancellationPreservesRedo", "timeout": 180,
+      "purpose": "グループの共通音量限界・取消・解放時の原点復帰で、プレビューと履歴・Redoの保持を確認",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/MixerValueBatch.swift", "old": "let factor = min(upper, max(lower, Double(value) / Double(basis)))", "new": "let factor = max(lower, Double(value) / Double(basis)) + upper * 0"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ValueControl.swift", "old": "case .dragging, .resetting, .waiting: phase = .idle; finish(false)", "new": "case .dragging, .resetting, .waiting: phase = .idle; finish(true)"}
+      ]
+    },
+    {
+      "id": "mixer-group-audio", "runner": "rust", "package": "echode-engine", "target": ["--test", "block_size"],
+      "test": "contract_group_fader_previews_are_atomic_and_block_independent_under_rtsan", "timeout": 240,
+      "purpose": "キュー深さを超える選択全体のプレビュー・確定計画待ち・対象交換・取消を製品PCMで比較し、ブロック長独立性とRTを確認",
+      "negative_controls": [
+        {"file": "crates/echode-engine/src/playback.rs", "old": ".push((revision, QueuedCommand::Faders(values.into())))", "new": ".push((revision, QueuedCommand::Faders(values[..1].into())))"},
+        {"file": "crates/echode-engine/src/playback.rs", "old": "                &previous,\n                true,", "new": "                &previous,\n                false,"}
       ]
     },
     {

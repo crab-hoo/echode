@@ -926,6 +926,21 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan"}
                             <= self.selected("swift/EchodeApp/" + source))
 
+    def test_mixer_drag_contracts_cover_groups_preview_audio_bounds_and_history(self):
+        contracts = {item["id"]: item for item in self.policy["product_contracts"]}
+        for name in ("mixer-drag-batch-ui", "mixer-drag-bounds-ui", "mixer-group-audio"):
+            contract = contracts[name]
+            faults = contract.get("negative_controls", [contract.get("negative_control")])
+            self.assertTrue(faults)
+            for fault in faults:
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        for source in ("Sources/EchodeAppCore/MixerFaderBatch.swift", "Tests/EchodeAppTests/MixerDragBatchTests.swift",
+                       "Tests/EchodeAppTests/MixerDragBoundaryTests.swift", "Tests/EchodeAppTests/MixerDragAudioTests.swift"):
+            self.assertTrue({"check-swift", "check-product-contracts", "check-real-hal"}
+                            <= self.selected("swift/EchodeApp/" + source))
+        self.assertTrue({"check", "rtsan", "check-product-contracts"}
+                        <= self.selected("crates/echode-engine/src/playback.rs"))
+
     def test_mixer_value_contracts_cover_numeric_groups_common_bounds_and_document_scope(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
         for name, suite, faults in (("mixer-value-batch-ui", "MixerValueBatchTests", 3),
@@ -1086,7 +1101,12 @@ class PolicyTests(unittest.TestCase):
                 ("clip-reset-target-ui", "contractClipResetWaitKeepsOnlyTheMatchingHandlesPress", "ArrangeView.swift")):
             contract = contracts[name]
             self.assertEqual((contract["runner"], contract["suite"], contract["test"]), ("swift", "ValueControlTargetTests", test))
-            fault = contract["negative_control"]
+            faults = contract.get("negative_controls", [contract.get("negative_control")])
+            fault = faults[0]
+            if name == "mixer-reset-target-ui":
+                self.assertEqual(len(faults), 2)
+                self.assertTrue(faults[1]["file"].endswith("/MixerFaderBatch.swift"))
+                self.assertEqual((ROOT / faults[1]["file"]).read_text().count(faults[1]["old"]), 1)
             self.assertTrue(fault["file"].endswith("/" + source))
             self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
             self.assertIn(".waiting(target)", fault["old"])
@@ -1569,7 +1589,7 @@ class PolicyTests(unittest.TestCase):
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",
                           "track-insertion-ui", "track-insertion-order", "folder-disclosure-ui", "folder-projection-ownership",
-                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-duplicate-key-ui", "clip-duplicate-key-guards-ui", "mixer-switch-batch-ui", "mixer-switch-order-ui", "mixer-value-batch-ui", "mixer-value-bounds-ui", "mixer-step-ui", "mixer-step-bounds-ui", "mixer-drag-identity-ui", "mixer-gesture-document-ui", "mixer-reset-document-ui", "scan-deadline", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
+                          "track-duplicate-ui", "track-duplicate-model", "clip-move-ui", "clip-move-model", "clip-duplicate-key-ui", "clip-duplicate-key-guards-ui", "mixer-switch-batch-ui", "mixer-switch-order-ui", "mixer-value-batch-ui", "mixer-value-bounds-ui", "mixer-step-ui", "mixer-step-bounds-ui", "mixer-drag-identity-ui", "mixer-drag-batch-ui", "mixer-drag-bounds-ui", "mixer-group-audio", "mixer-gesture-document-ui", "mixer-reset-document-ui", "scan-deadline", "clip-content-bars", "journal-clip-bar-basis", "plugin-params", "fx-params-ui",
                           "plugin-text-parse", "fx-params-clicks-ui", "mix-clicks-ui", "clip-clicks-ui", "mixer-reset-target-ui", "clip-reset-target-ui", "clip-drag-identity-ui", "package-float-roundtrip", "clip-gesture-document-ui", "clip-gesture-callback-ui",
                           "device-lane-held", "device-view-slow-ui", "device-view-long-ui", "device-disclosure-ui",
                           "plugin-window-helper", "plugin-window-relay", "plugin-window-undo-ui",

@@ -112,6 +112,7 @@ check-swift:
 # Piano time guides retain beat/four-quarter references independently of snap subdivisions and thinning.
 # Selected-track mute/solo switches capture event targets, serialize current-state toggles and share atomic history through this gate.
 # Selected-track numeric entries and native accessibility steps share common limits, current-state ordering and atomic history.
+# Header group drags/resets share atomic preview sets, affected-only callback work, cancellation, common bounds and one durable transaction.
 # Zero-horizontal-travel header drags preserve exact gains below the display floor and leave Undo/Redo untouched.
 # Clip identity drags preserve exact gain/fade values and Redo; package floats retain every nonzero bit across disk saves.
 # Import and autosave recognize exact store-ignore lines, retaining user text and idempotence.
@@ -303,10 +304,10 @@ rtsan:
 	RTSAN_ENABLE=1 cargo test -q -p echode-engine --features rtsan under_rtsan
 	RTSAN_ENABLE=1 cargo test -q -p echode-audio-io --features rtsan under_rtsan
 	RTSAN_ENABLE=1 cargo test -q -p echode-plugin-host --features rtsan under_rtsan
-
 	# The RTSan helper replaced target/debug/echode-plugin-host and cannot load without the
 	# sanitizer runtime; leave the normal helper for the CLI and later builds.
 	cargo build -q -p echode-plugin-host
+
 # Device-free release measurement; never part of normal correctness tests.
 spike-audition:
 	cargo test -q --release -p echode-audio-io --lib audition::tests::measure_streaming_audition_startup_without_a_device -- --ignored --exact

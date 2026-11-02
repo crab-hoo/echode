@@ -7,10 +7,10 @@
         "ja": { "stringUnit": { "state": "translated", "value": "相対音量の調整は無音でないトラックを基準にするか、このトラックだけを選択してください。" } }
       }
     },
-    "Numeric entries and header accessibility steps adjust selected tracks relatively. Drags affect one track.": {
+    "Volume and pan controls adjust selected tracks relatively, including header drags and resets.": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Numeric entries and header accessibility steps adjust selected tracks relatively. Drags affect one track." } },
-        "ja": { "stringUnit": { "state": "translated", "value": "数値入力とヘッダの読み上げの増減は選択トラックを相対調整します。ドラッグは単一トラックです。" } }
+        "en": { "stringUnit": { "state": "translated", "value": "Volume and pan controls adjust selected tracks relatively, including header drags and resets." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "音量とパンは、ヘッダのドラッグ・既定値リセットも含めて選択トラックを相対調整します。" } }
       }
     },
     "The latest saved version could not be read": {

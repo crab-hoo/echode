@@ -51,9 +51,9 @@ extension ProjectController {
         }, documentID: request.document)
     }
 
-    /// Switches, numeric entries and relative steps capture groups; live previews remain single-track.
+    /// Discrete edits and live gestures share target capture and relative group limits.
     func arrangeMixActions(document: DocumentID?) -> MixActions {
-        MixActions(begin: { [self] track, field in
+        var actions = MixActions(begin: { [self] track, field in
             guard let document else { return false }
             return beginFader(track, field: field, documentID: document)
         }, change: { [self] value in
@@ -80,5 +80,7 @@ extension ProjectController {
         }, adjust: { [self] track, field, direction in
             if let request = captureMixerStep(track, field: field, direction: direction, document: document) { enqueueMixerValue(request) }
         })
+        actions.capture = { [self] actions, track, field in captureFaderActions(&actions, track: track, field: field, document: document) }
+        return actions
     }
 }

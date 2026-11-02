@@ -61,7 +61,9 @@ final class ArrangeHeaderView: NSView {
         }
         clicks.drag = { [weak self] target, offset in
             guard let press = self?.press, press.target == target else { return }
-            self?.gestureActions?.change(MixScale.dragged(target.field, from: press.original, by: Double(offset.width) / max(1, Double(press.rect.width))))
+            let fraction = Double(offset.width) / max(1, Double(press.rect.width))
+            if let dragged = self?.gestureActions?.dragged { dragged(fraction) }
+            else { self?.gestureActions?.change(MixScale.dragged(target.field, from: press.original, by: fraction)) }
         }
         clicks.reset = { [weak self] target in self?.gestureActions?.change(MixScale.defaultValue(target.field)) }
         clicks.finish = { [weak self] commit in
@@ -132,7 +134,11 @@ final class ArrangeHeaderView: NSView {
             else { mixActions.set(id, field, mix[field].value == 0 ? 1 : 0) }
         } else {
             let target = MixTarget(track: id, field: field)
-            if case .waiting(target) = clicks.phase {} else { press = (target, controls.rect(field), mix[field].value, documentID, mixActions) }
+            if case .waiting(target) = clicks.phase {} else {
+                var captured = mixActions
+                mixActions.capture?(&captured, id, field)
+                press = (target, controls.rect(field), mix[field].value, documentID, captured)
+            }
             clicks.down(target, at: point, clicks: event.clickCount)
         }
     }

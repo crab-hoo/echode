@@ -10,6 +10,17 @@ public struct FaderPreview: Sendable, Equatable {
     public var gain: Float
     public var pan: Float
     public var value: Float { field == .gain ? gain : pan }
+    var members: [UUID: FaderMember] = [:]
+    func values(on track: UUID) -> FaderValue? {
+        if let member = members[track] { return FaderValue(track: track, gain: member.gain, pan: member.pan) }
+        return members.isEmpty && self.track == track ? FaderValue(track: track, gain: gain, pan: pan) : nil
+    }
+}
+
+struct FaderMember: Sendable, Equatable {
+    let original: TrackMix
+    var gain: Float
+    var pan: Float
 }
 
 @MainActor
@@ -19,7 +30,9 @@ public struct MixActions {
     public var finish: (Bool) -> Void
     public var set: (UUID, MixerField, Float) -> Void
     public var toggle: ((UUID, MixerField) -> Void)?
-    /// Numeric submission and relative steps are distinct from live single-track drags.
+    /// Bind a live gesture to the targets present at the native press.
+    var capture: ((inout MixActions, UUID, MixerField) -> Void)?
+    var dragged: ((Double) -> Void)?
     public var enter: ((UUID, MixerField, Float) -> Void)?
     public var adjust: ((UUID, MixerField, Double) -> Void)?
     public init(begin: @escaping (UUID, MixerField) -> Bool, change: @escaping (Float) -> Void,

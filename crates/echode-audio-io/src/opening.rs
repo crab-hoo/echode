@@ -86,7 +86,7 @@ pub(crate) struct Basis {
     pub(crate) tick: i64,
     pub(crate) loop_ticks: Option<(i64, i64)>,
     pub(crate) metronome: bool,
-    pub(crate) fader_preview: Option<(u128, f32, f32)>,
+    pub(crate) fader_preview: Option<Vec<(u128, f32, f32)>>,
     /// The preparation queued Play for `revision`.
     pub(crate) start: bool,
     pub(crate) revision: u64,

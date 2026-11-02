@@ -880,11 +880,18 @@ make debug-report
   （[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
 - **音量・パンの数値入力で選択全体が変わらない／入力値まで動かない**:
   `MixActions.enter` と `MixerValueBatch` の捕捉 ID 群・基準 ID・要求値を確認する。
-  数値入力とヘッダの読み上げ増減が相対一括変更で、ドラッグ・既定値リセットは単一対象を保つ。
+  数値入力・読み上げ増減に加え、ヘッダのドラッグ・既定値リセットも相対一括変更である。
   `mixerSwitchTail` の手番で現行値を読み、最大音量 4・パン ±1 を最初に踏む対象で共通差分を止める。
   無音の基準からの音量増加は比が決まらないため理由を表示し、他の無音は有限倍率でも無音を保つ。
   古い文書・欠けた ID の全体拒否と no-op による Redo の保持を、`MixerValue*Tests` と
   `mixer-value-batch-ui`・`mixer-value-bounds-ui` で切り分ける（[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
+- **一括ドラッグでヘッダと音が一致しない／一部だけ確定する**:
+  `MixerFaderBatch` の押下時の集合・元の値と、`FaderPreview.members`・送信中／最新の集合を比較する。
+  音声は `audio.preview_faders` で完全な集合を受ける。出力準備中は `Basis` と現在の集合の差を導入時に反映する。
+  別ノブの押下で先行する試聴を確定する時は、押下時の表示値と新しいドラッグ開始時の原点を区別する。
+  確定が拒否された時は旧文書・削除／変更済みのメンバーを調べ、音が戻る時は確定計画の版と解除要求を照合する。
+  `MixerDrag*Tests` と `mixer-group-audio` で、共通限界・取消・原点復帰・ブロック長と RT を切り分ける
+  （[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
 - **ヘッダの読み上げ増減で選択全体が動かない・段数が違う・読み上げ値が先走る**:
   `MixActions.adjust` と `captureMixerStep` の捕捉 ID 群・方向（±1）、`mixerSwitchTail` の手番の現行値を確認する。
   AppKit の主スレッドの呼出しは同期捕捉、別スレッドからは UI actor に渡す。木の更新前の絶対値を繰り返し送らない。

@@ -111,7 +111,11 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 - **ヘッダの読み上げの音量・パン増減**: `MixActions.adjust` が操作時の対象と方向を捕捉し、同じ待ち列と `MixerValueBatch` を使う。
   現行値から 1 dB・5% の共通差分を計算し、単一対象の無音への段と複数対象の有限の dB 差を分ける。
   主スレッドの callback は同期捕捉し、別スレッドからは UI actor に渡す。読上げ値は確定値を使い、文書交換で要素を再生成する。
-  ドラッグ・既定値リセットは単一対象を保つ（[ADR 0192](../decisions/0192-selected-track-accessibility-steps.md)）。
+  （[ADR 0192](../decisions/0192-selected-track-accessibility-steps.md)）。
+- **ヘッダの音量・パンの一括ドラッグとリセット**: 押下時の `MixActions.capture` が全対象と元の値を保持する。
+  `MixerFaderBatch` が共通限界・試聴・確定前の全体照合を行い、`FaderPreview.members` を描画と音声へ共有する。
+  取消と原点復帰は履歴を変えず、確定だけが既存のアクション配列へ進む
+  （[ADR 0228](../decisions/0228-selected-track-live-mix.md)）。
 - **P2 のアレンジ・ミックス編集**: 右ドラッグでクリップ選択、空白左ドラッグで編集区間選択、リージョン作成、相対音量・パンの一括操作に対応する
   （[ADR 0117](../decisions/0117-workflow-interactions.md)、[ミックスの要件](../interaction-design.md#ミキサーの複数選択)）
 

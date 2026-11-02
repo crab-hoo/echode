@@ -223,6 +223,44 @@ fn a_plugin_hash_keeps_the_fader_preview_without_a_stream() {
     assert!(session.stream.is_none());
     assert!(session.error.is_none());
 }
+
+#[test]
+fn complete_mixer_groups_validate_before_replacing_the_previous_preview() {
+    let (project, first) = Project::new().add_track("first");
+    let (project, second) = project.add_track("second");
+    let mut session = Session::new(Arc::new(project.clone()));
+    let command = serde_json::json!({"type": "audio.preview_faders", "values": [
+        {"track": first, "gain": 0.5, "pan": -0.25},
+        {"track": second, "gain": 0.25, "pan": 0.5}
+    ]});
+    session
+        .perform(serde_json::from_value(command.clone()).unwrap())
+        .unwrap();
+    let preview = session.fader_preview.clone();
+    assert_eq!(preview.as_ref().unwrap().len(), 2);
+    for invalid in [
+        serde_json::json!([]),
+        serde_json::json!([command["values"][0], command["values"][0]]),
+        serde_json::json!([command["values"][0], {"track": second, "gain": 5.0, "pan": 0.0}]),
+        serde_json::json!([{"track": echode_model::Id::generate(), "gain": 1.0, "pan": 0.0}]),
+    ] {
+        let input = serde_json::json!({"type": "audio.preview_faders", "values": invalid});
+        assert!(
+            session
+                .perform(serde_json::from_value(input).unwrap())
+                .is_err()
+        );
+        assert_eq!(session.fader_preview, preview);
+    }
+    assert!(session.stream.is_none() && session.opening.is_none());
+    session.perform(AudioCommand::ClearFaderPreview).unwrap();
+    assert!(session.fader_preview.is_none());
+    session
+        .perform(serde_json::from_value(command).unwrap())
+        .unwrap();
+    session.update(Arc::new(project.add_track("edit").0));
+    assert!(session.fader_preview.is_none());
+}
 #[test]
 fn device_access_without_a_running_plugin_does_not_open_hardware() {
     let (project, track) = Project::new().add_track("fx");
@@ -314,6 +352,48 @@ fn pumped_peak(session: &mut Session, blocks: usize) -> f32 {
         session.service();
     }
     peak
+}
+
+#[test]
+fn group_previews_started_during_output_preparation_apply_together_under_rtsan() {
+    let (project, first) = Project::new().add_track("audio");
+    let (project, second) = project.add_track("audio");
+    let mut session = Session::new(Arc::new(project));
+    audio_tracks_sound(&mut session);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    session
+        .perform(AudioCommand::PreviewFader {
+            track: first,
+            gain: 0.0,
+            pan: 0.0,
+        })
+        .unwrap();
+    output.hold();
+    session.perform(AudioCommand::Play).unwrap();
+    until_waiting(&output);
+    session
+        .perform(AudioCommand::PreviewFaders {
+            values: vec![
+                FaderValue {
+                    track: first,
+                    gain: 0.0,
+                    pan: 0.0,
+                },
+                FaderValue {
+                    track: second,
+                    gain: 0.0,
+                    pan: 0.0,
+                },
+            ],
+        })
+        .unwrap();
+    output.release();
+    until_opened(&mut session);
+    assert_eq!(pumped_peak(&mut session, 8), 0.0);
+    session.perform(AudioCommand::ClearFaderPreview).unwrap();
+    assert!(pumped_peak(&mut session, 16) > 0.3);
+    assert!(session.state().error.is_none());
 }
 
 #[test]

@@ -195,6 +195,16 @@ public struct AuditionEntry: Codable, Sendable, Equatable {
     }
 }
 
+/// One member of a complete transient mixer preview.
+public struct FaderValue: Encodable, Sendable, Equatable {
+    public let track: UUID
+    public let gain: Float
+    public let pan: Float
+    public init(track: UUID, gain: Float, pan: Float) {
+        self.track = track; self.gain = gain; self.pan = pan
+    }
+}
+
 public enum AudioCommand: Encodable, Sendable {
     case play, pause, stop, locate(tick: Int64), output(uid: String?), refresh, status
     /// Remembers where playback starts and stop returns, saved with the package.
@@ -205,8 +215,9 @@ public enum AudioCommand: Encodable, Sendable {
     case loop(start: Int64?, end: Int64?)
     case metronome(enabled: Bool)
     case previewFader(track: UUID, gain: Float, pan: Float)
+    case previewFaders(values: [FaderValue])
     case clearFaderPreview
-    enum CodingKeys: String, CodingKey { case type, tick, uid, start, end, enabled, track, gain, pan }
+    enum CodingKeys: String, CodingKey { case type, tick, uid, start, end, enabled, track, gain, pan, values }
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         let type: String
@@ -232,6 +243,9 @@ public enum AudioCommand: Encodable, Sendable {
             try container.encode(track, forKey: .track)
             try container.encode(gain, forKey: .gain)
             try container.encode(pan, forKey: .pan)
+        case .previewFaders(let values):
+            type = "audio.preview_faders"
+            try container.encode(values, forKey: .values)
         case .clearFaderPreview: type = "audio.clear_fader_preview"
         }
         try container.encode(type, forKey: .type)

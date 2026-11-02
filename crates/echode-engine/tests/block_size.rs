@@ -506,6 +506,107 @@ fn contract_live_fader_preview_and_peak_taps_under_rtsan() {
 }
 
 #[test]
+fn contract_group_fader_previews_are_atomic_and_block_independent_under_rtsan() {
+    use echode_engine::{PlaybackCommand, PlaybackOptions, playback};
+    use echode_model::ParamKey;
+
+    fn until(
+        audio: &mut echode_engine::PlaybackAudio,
+        control: &mut echode_engine::PlaybackControl,
+        end: i64,
+        block: usize,
+        output: &mut Vec<(f32, f32)>,
+    ) {
+        let (mut left, mut right) = (vec![0.0; block], vec![0.0; block]);
+        while control.status().sample < end {
+            let n = block.min((end - control.status().sample) as usize);
+            audio.render(&mut left[..n], &mut right[..n]);
+            assert!(!control.status().failed);
+            output.extend(left[..n].iter().copied().zip(right[..n].iter().copied()));
+            control.service();
+        }
+    }
+    for rate in [48_000, 96_000] {
+        let mut reference = None;
+        for block in BLOCKS {
+            let mut project = Project::new();
+            let mut tracks = Vec::new();
+            // Forty tracks only bound this regression fixture: a single group
+            // must exceed the command ring's depth, not impose a product limit.
+            for _ in 0..40 {
+                let (next, track) = project.add_track("group preview");
+                project = next;
+                tracks.push(track);
+            }
+            let mut committed = project.clone();
+            for track in committed.clone().tracks() {
+                for parameter in &track.devices[0].parameters {
+                    let value = match parameter.key {
+                        ParamKey::Gain => 0.5,
+                        ParamKey::Pan => 1.0,
+                        _ => continue,
+                    };
+                    committed = committed.set_parameter(parameter.id, value).unwrap();
+                }
+            }
+            let (mut control, mut audio) =
+                playback(&project, rate, block as usize, PlaybackOptions::default()).unwrap();
+            // PCM lengths cover only this fixture's 3,400-sample timeline.
+            let clips = vec![
+                stereo_clip(tracks[0], vec![0.25; 3400], vec![0.25; 3400]),
+                stereo_clip(tracks[39], vec![0.5; 3400], vec![0.5; 3400]),
+            ];
+            control.set_clip_loader(Arc::new(move |_, _| Ok(clips.clone())));
+            control.replace(&project).unwrap();
+            control.command(PlaybackCommand::Play).unwrap();
+            let mut output = Vec::new();
+            until(&mut audio, &mut control, 137, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.75, 0.75)));
+            let values: Vec<_> = tracks.iter().map(|track| (track.raw(), 0.5, 1.0)).collect();
+            control.preview_faders(&values).unwrap();
+            assert!(control.preview_faders(&[values[0], values[0]]).is_err());
+            assert!(
+                control
+                    .preview_faders(&[(tracks[0].raw(), f32::NAN, 0.0)])
+                    .is_err()
+            );
+            assert!(control.preview_faders(&[(u128::MAX, 1.0, 0.0)]).is_err());
+            assert!(control.preview_faders(&[]).is_err());
+            until(&mut audio, &mut control, 800, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.0, 0.375)));
+            control.replace(&project).unwrap();
+            control.replace(&committed).unwrap();
+            control.clear_fader_preview(true).unwrap();
+            until(&mut audio, &mut control, 1600, block as usize, &mut output);
+            assert!(
+                output[800..1600]
+                    .iter()
+                    .all(|sample| *sample == (0.0, 0.375))
+            );
+            // A new complete group must restore members it no longer contains.
+            control
+                .preview_faders(&[(tracks[0].raw(), 1.0, -1.0), (tracks[39].raw(), 0.0, 0.0)])
+                .unwrap();
+            until(&mut audio, &mut control, 2200, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.25, 0.0)));
+            control
+                .preview_faders(&[(tracks[39].raw(), 0.0, 0.0)])
+                .unwrap();
+            until(&mut audio, &mut control, 2800, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.0, 0.125)));
+            control.clear_fader_preview(false).unwrap();
+            until(&mut audio, &mut control, 3400, block as usize, &mut output);
+            assert_eq!(output.last(), Some(&(0.0, 0.375)));
+            if let Some(reference) = &reference {
+                assert_eq!(&output, reference);
+            } else {
+                reference = Some(output);
+            }
+        }
+    }
+}
+
+#[test]
 fn ordinary_silent_to_note_boundaries_leave_the_source_unchanged() {
     for rate in [48_000, 96_000] {
         let mut source = vec![0.0f32; 1003];

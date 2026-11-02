@@ -648,7 +648,7 @@ fn preview_before_open_applies_before_any_live_output_under_rtsan() {
     for rate in [48_000, 96_000] {
         let mut setup = TransportSetup::idle();
         setup.clips = Arc::new(move |_, _| Ok(fixture_clips(track.raw(), rate)));
-        setup.fader_preview = Some((track.raw(), 0.0, 0.0));
+        setup.fader_preview = Some(vec![(track.raw(), 0.0, 0.0)]);
         let (mut control, mut player) = prepare_playback(&project, rate, 64, 0, &setup).unwrap();
         // These buffers cover only this product preparation fixture.
         let (mut left, mut right) = (vec![0.0; 64], vec![0.0; 64]);

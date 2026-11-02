@@ -154,7 +154,7 @@ struct ArrangeFrame: Sendable {
                 }
                 add(layout.mute, mix.mute.value != 0 ? SIMD4(0.75, 0.25, 0.20, 1) : palette.separator)
                 add(layout.solo, mix.solo.value != 0 ? SIMD4(0.70, 0.55, 0.13, 1) : palette.separator)
-                let preview = input.faderPreview.flatMap { $0.track == row.id ? $0 : nil }
+                let preview = input.faderPreview?.values(on: row.id)
                 for (rect, value) in [(layout.gain, MixScale.position(preview?.gain ?? mix.gain.value)),
                                       (layout.pan, Double((preview?.pan ?? mix.pan.value) + 1) / 2)] {
                     add(CGRect(x: rect.minX, y: rect.midY - 1.5, width: rect.width, height: 3), palette.separator)

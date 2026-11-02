@@ -703,7 +703,7 @@ extension AudioCommand {
     var requestsPlayheadFrame: Bool {
         switch self {
         case .play, .pause, .stop, .locate, .setStart: true
-        case .output, .refresh, .status, .prepare, .loop, .metronome, .previewFader, .clearFaderPreview: false
+        case .output, .refresh, .status, .prepare, .loop, .metronome, .previewFader, .previewFaders, .clearFaderPreview: false
         }
     }
 }
@@ -738,6 +738,7 @@ extension ProjectController {
               preview.field == .gain ? ModelLimits.gain.contains(value) : ModelLimits.pan.contains(value),
               let document = session.document else { return }
         if preview.field == .gain { preview.gain = value } else { preview.pan = value }
+        guard updateFaderMembers(&preview, value: value) else { return }
         session.faderPreview = preview
         session.previewPending = preview
         guard session.previewTask == nil else { return }
@@ -747,7 +748,12 @@ extension ProjectController {
             guard let self else { return }
             while let pending = session.previewPending {
                 session.previewPending = nil
-                do { _ = try await self.sendAudio(document, .previewFader(track: pending.track, gain: pending.gain, pan: pending.pan)) }
+                do {
+                    let command: AudioCommand = pending.members.isEmpty
+                        ? .previewFader(track: pending.track, gain: pending.gain, pan: pending.pan)
+                        : .previewFaders(values: pending.members.map { FaderValue(track: $0.key, gain: $0.value.gain, pan: $0.value.pan) })
+                    _ = try await self.sendAudio(document, command)
+                }
                 catch { if self.session === session { self.report(error) } }
             }
             session.previewTask = nil
@@ -775,9 +781,8 @@ extension ProjectController {
     private func completeFader(_ preview: FaderPreview, document: Document, in session: DocumentSession, commit: Bool) async {
         if let task = session.previewTask { await task.value }
         var applied = false
-        if commit, self.session === session,
-           let recorded = mixer(preview.track)?[preview.field].value, preview.value != recorded {
-            applied = await performActions({ [.setParameter(parameter: preview.parameter.uuidString, value: preview.value)] },
+        if commit, self.session === session {
+            applied = await performActions({ [self] in faderActions(preview) },
                                            documentID: preview.document, finishingPreview: true)
         }
         if !applied {

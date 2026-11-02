@@ -62,7 +62,7 @@ pub(crate) struct TransportSetup {
     pub(crate) package: Option<std::path::PathBuf>,
     pub(crate) cancellation: TransportCancellation,
     pub(crate) revision: u64,
-    pub(crate) fader_preview: Option<(u128, f32, f32)>,
+    pub(crate) fader_preview: Option<Vec<(u128, f32, f32)>>,
     /// False opens helpers and the device without starting the transport.
     pub(crate) start: bool,
 }
@@ -179,9 +179,9 @@ pub(crate) struct Start {
 }
 
 impl OutputStream {
-    pub(crate) fn preview_fader(&mut self, track: u128, gain: f32, pan: f32) -> Result<(), String> {
+    pub(crate) fn preview_faders(&mut self, values: &[(u128, f32, f32)]) -> Result<(), String> {
         self.control
-            .preview_fader(track, gain, pan)
+            .preview_faders(values)
             .map_err(|error| error.to_string())
     }
     pub(crate) fn clear_fader_preview(&mut self, committed: bool) -> Result<(), String> {
@@ -728,9 +728,9 @@ fn prepare_playback_mode(
     control
         .command(PlaybackCommand::SetMetronome(transport.metronome))
         .map_err(|error| error.to_string())?;
-    if let Some((track, gain, pan)) = transport.fader_preview {
+    if let Some(values) = &transport.fader_preview {
         control
-            .preview_fader(track, gain, pan)
+            .preview_faders(values)
             .map_err(|error| error.to_string())?;
     }
     if transport.start {

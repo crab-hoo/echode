@@ -124,7 +124,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - 選択トラックのミュート・ソロ、音量・パンの数値入力とヘッダの読み上げ増減:
   [ADR 0189](decisions/0189-selected-track-mute-and-solo.md)、[ADR 0191](decisions/0191-selected-track-numeric-mix.md)、
   [ADR 0192](decisions/0192-selected-track-accessibility-steps.md)。
-  数値入力とヘッダの読み上げ増減は共通差分と限界を保ち、ドラッグ・既定値リセットは単一対象を保つ。
+  数値入力・読み上げ増減に続き、ドラッグ・既定値リセットも共通差分・全対象の試聴・単一 Undo へ接続した
+  （[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
 - ヘッダの値操作の文書切替境界: [ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)。
   押下・リセット待ち・数値欄を文書交換で取り消し、旧操作へ新文書のコールバックを貸さない。
 - 文書の寿命の状態のまとめ・丸ごとの差替え・省略できない文書 ID と 1 か所の照合: [ADR 0203](decisions/0203-document-session.md)。

@@ -44,6 +44,8 @@ pub enum AudioCommand {
         gain: f32,
         pan: f32,
     },
+    #[serde(rename = "audio.preview_faders")]
+    PreviewFaders { values: Vec<FaderValue> },
     #[serde(rename = "audio.clear_fader_preview")]
     ClearFaderPreview,
     /// Both ticks set the loop. Both absent clear it. A tick is a project position.
@@ -54,6 +56,14 @@ pub enum AudioCommand {
     },
     #[serde(rename = "transport.metronome")]
     Metronome { enabled: bool },
+}
+
+/// One member of a complete transient mixer group, validated before publication.
+#[derive(Clone, Debug, Deserialize)]
+pub struct FaderValue {
+    pub track: echode_model::Id,
+    pub gain: f32,
+    pub pan: f32,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -123,7 +133,7 @@ pub struct Session {
     clips: ClipLoader,
     package: Option<PathBuf>,
     error: Option<String>,
-    fader_preview: Option<(u128, f32, f32)>,
+    fader_preview: Option<Vec<(u128, f32, f32)>>,
     activity: Option<crate::activity::UserActivity>,
     /// A device view asked for running plugins, or the app prepared the output.
     /// The output stays open while stopped, as it does after playback.
@@ -204,6 +214,33 @@ impl Session {
         session
     }
 
+    fn preview_faders(&mut self, values: &[FaderValue]) -> Result<(), String> {
+        let tracks: std::collections::BTreeSet<_> =
+            self.project.tracks().iter().map(|track| track.id).collect();
+        let mut seen = std::collections::BTreeSet::new();
+        if values.is_empty()
+            || values.iter().any(|value| {
+                !tracks.contains(&value.track)
+                    || !seen.insert(value.track)
+                    || !value.gain.is_finite()
+                    || !(0.0..=4.0).contains(&value.gain)
+                    || !value.pan.is_finite()
+                    || !(-1.0..=1.0).contains(&value.pan)
+            })
+        {
+            return Err("invalid mixer preview".into());
+        }
+        let values: Vec<_> = values
+            .iter()
+            .map(|value| (value.track.raw(), value.gain, value.pan))
+            .collect();
+        if let Some(stream) = &mut self.stream {
+            stream.preview_faders(&values)?;
+        }
+        self.fader_preview = Some(values);
+        Ok(())
+    }
+
     pub fn perform(&mut self, command: AudioCommand) -> Result<(), String> {
         let revision = self.cancellation.request(&command);
         self.perform_requested(command, revision)
@@ -218,19 +255,9 @@ impl Session {
     ) -> Result<(), String> {
         match command {
             AudioCommand::PreviewFader { track, gain, pan } => {
-                if !self.project.tracks().iter().any(|entry| entry.id == track)
-                    || !gain.is_finite()
-                    || !(0.0..=4.0).contains(&gain)
-                    || !pan.is_finite()
-                    || !(-1.0..=1.0).contains(&pan)
-                {
-                    return Err("invalid mixer preview".into());
-                }
-                if let Some(stream) = &mut self.stream {
-                    stream.preview_fader(track.raw(), gain, pan)?;
-                }
-                self.fader_preview = Some((track.raw(), gain, pan));
+                self.preview_faders(&[FaderValue { track, gain, pan }])?;
             }
+            AudioCommand::PreviewFaders { values } => self.preview_faders(&values)?,
             AudioCommand::ClearFaderPreview => {
                 if let Some(stream) = &mut self.stream {
                     stream.clear_fader_preview(false)?;
@@ -761,7 +788,7 @@ impl Session {
             package: self.package.clone(),
             cancellation: self.cancellation.clone(),
             revision: self.play_revision,
-            fader_preview: self.fader_preview,
+            fader_preview: self.fader_preview.clone(),
             start: self.playing,
         };
         let basis = Basis {
@@ -769,7 +796,7 @@ impl Session {
             tick: self.tick,
             loop_ticks: self.loop_ticks,
             metronome: self.metronome,
-            fader_preview: self.fader_preview,
+            fader_preview: self.fader_preview.clone(),
             start: self.playing,
             revision: self.play_revision,
         };
@@ -827,8 +854,8 @@ impl Session {
             stream.set_metronome(self.metronome)?;
         }
         if self.fader_preview != basis.fader_preview {
-            match self.fader_preview {
-                Some((track, gain, pan)) => stream.preview_fader(track, gain, pan)?,
+            match &self.fader_preview {
+                Some(values) => stream.preview_faders(values)?,
                 // The edit that ended it holds the value until its plan applies.
                 None => stream.clear_fader_preview(edited)?,
             }

@@ -334,6 +334,11 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 ヘッダのマウス操作の文書境界は `ArrangeHeaderView` の `documentID`・`press`・`gestureActions` に置く。
 回帰は `MixerGestureDocumentTests.swift`。文書交換で押下・リセット待ち・数値欄を取り消し、同文書の更新では押下時のコールバックを保持する
 （[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
+ヘッダの一括ドラッグ・既定値リセットは `MixerFaderBatch.swift` が押下時の全対象・元の値を捕捉し、共通差分と確定前の全体照合を行う。
+`MixerDragBatchTests.swift`・`MixerDragBoundaryTests.swift`・`MixerDragAudioTests.swift` が実入力・描画・送信集約・履歴を通す。
+音声側の完全な集合と制御側での解放は `playback.rs`、出力準備中の集合保持は `session.rs` と `opening.rs` に置く。
+製品 PCM のブロック長比較は `block_size.rs` の `contract_group_fader_previews_are_atomic_and_block_independent_under_rtsan` を使う
+（[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
 横移動ゼロの音量保持は `MixScale.dragged` の恒等分岐を通す。
 回帰は `MixerDragIdentityTests.swift`。縦ドラッグと解放時の原点復帰で、表示下限未満の値・Undo / Redo・保存を保持する。
 
