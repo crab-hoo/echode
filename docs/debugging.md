@@ -661,6 +661,9 @@ make debug-report
   原本をコピーして保全し、連番・不変条件の理由・基点と先端を記録する。自動で行を削除したり、繰り返し保存して直そうとしない。
   旧版では不正な状態をコミットし、debug では最初の編集が panic する経路もあった。
   後退したホストは `recovery confirmation required` で書込みを拒否する（[ADR 0183](decisions/0183-recovery-consent.md)）。
+  `recovery.reason` が `journal_gap` ならジャーナルの連番の欠け、`missing_state` なら再生する行の名指す状態の保管物の欠落・破損で、
+  どちらも `tip` と `base` は同じになる。参照だけが古い時はコミットチェーンの最新から開き、通知しない（[ADR 0230](decisions/0230-save-durability.md)）。
+  保存の同期の順序は `cargo build -p echode-cli` の後に `python3 -B scripts/durability_trace.py --require-durable` で確かめる。
   警告でいったんキャンセルし、原本のコピーを保全する。「続行」は復旧状態の同期保存であり、失われた編集の復元ではない。
   確認時の保存に失敗した場合は編集を解放しない。CLI / MCP には同意の入口がないため、アプリで確認する。
   確認の取消後も開く処理が残る場合は、要求の UUID と `RecoveryOpenRequest` の取消・`recoveryReply` の解放を調べる。

@@ -15,8 +15,8 @@ use echode_model::{Content, Project, Track};
 use gix::{ObjectId, Repository};
 
 use crate::document::{
-    AUTOSAVE_REF, FilePlan, PackageError, clear_save_pending, commit_tree, mark_save_pending,
-    read_commit, write_incremental,
+    FilePlan, PackageError, clear_save_pending, commit_tree, mark_save_pending, read_commit,
+    write_incremental,
 };
 
 /// One autosave commit, newest first when listed.
@@ -148,9 +148,38 @@ fn open_or_init(directory: &Path) -> Result<Repository, String> {
     }
 }
 
-fn tip(repo: &Repository) -> Option<ObjectId> {
-    let reference = repo.try_find_reference(AUTOSAVE_REF).ok()??;
-    Some(reference.id().detach())
+/// The commit the next save builds on, as recovery found it.
+fn tip(directory: &Path) -> Option<ObjectId> {
+    crate::document::autosave_tip(directory)
+}
+
+/// Moves a ref that lost its update to `parent`, the chain's newest commit
+/// (XCA-02). gix moves the ref only from a commit's first parent, so without
+/// this every later save would fail.
+fn follow_chain(repo: &Repository, parent: Option<ObjectId>) -> Result<(), PackageError> {
+    let Some(parent) = parent else {
+        return Ok(());
+    };
+    let Some(current) = repo
+        .try_find_reference(crate::document::AUTOSAVE_REF)
+        .map_err(|error| PackageError::new(error.to_string()))?
+        .map(|reference| reference.id().detach())
+    else {
+        return Ok(());
+    };
+    if current == parent {
+        return Ok(());
+    }
+    repo.reference(
+        crate::document::AUTOSAVE_REF,
+        parent,
+        gix::refs::transaction::PreviousValue::ExistingMustMatch(gix::refs::Target::Object(
+            current,
+        )),
+        "autosave: follow the commit chain",
+    )
+    .map(|_| ())
+    .map_err(|error| PackageError::new(error.to_string()))
 }
 
 fn worker(directory: PathBuf, incoming: Receiver<Request>) {
@@ -167,7 +196,7 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
         }
     };
     let mut parents = Vec::new();
-    if let Some(id) = tip(&repo) {
+    if let Some(id) = tip(&directory) {
         parents.push(id);
     }
     let mut cache = None;
@@ -217,7 +246,7 @@ fn worker(directory: PathBuf, incoming: Receiver<Request>) {
 }
 
 fn list_revisions(repo: &Repository, directory: &Path) -> Result<Vec<SavedRevision>, PackageError> {
-    let Some(mut current) = tip(repo) else {
+    let Some(mut current) = tip(directory) else {
         return Ok(Vec::new());
     };
     let mut seen = HashSet::new();
@@ -351,15 +380,21 @@ fn save(
         };
         write_incremental(directory, project, &file_plan)?
     };
+    // Blobs this save writes; the commit writes them out with its trees.
+    let mut blobs = Vec::new();
     let project_blob = match cache
         .as_ref()
         .filter(|cache| cache.project_json == written.project_json)
     {
         Some(cache) => cache.project_blob,
-        None => repo
-            .write_blob(written.project_json.as_bytes())
-            .map_err(|error| PackageError::new(error.to_string()))?
-            .detach(),
+        None => {
+            let blob = repo
+                .write_blob(written.project_json.as_bytes())
+                .map_err(|error| PackageError::new(error.to_string()))?
+                .detach();
+            blobs.push(blob);
+            blob
+        }
     };
     let changed_contents: HashMap<String, String> = written.contents.into_iter().collect();
     let changed_tracks: HashMap<String, String> = written.tracks.into_iter().collect();
@@ -384,6 +419,7 @@ fn save(
             .write_blob(json.as_bytes())
             .map_err(|error| PackageError::new(error.to_string()))?
             .detach();
+        blobs.push(blob);
         content_blobs.push((filename, blob));
         stored_contents.insert(id, (Arc::clone(content), blob));
     }
@@ -410,9 +446,11 @@ fn save(
             .write_blob(json.as_bytes())
             .map_err(|error| PackageError::new(error.to_string()))?
             .detach();
+        blobs.push(blob);
         track_blobs.push((filename, blob));
         stored.insert(id, (Arc::clone(track), blob));
     }
+    follow_chain(repo, parents.first().copied())?;
     let id = commit_tree(
         repo,
         project_blob,
@@ -420,6 +458,7 @@ fn save(
         &track_blobs,
         parents,
         journal_seq,
+        &blobs,
     )?;
     *parents = vec![id];
     clear_save_pending(directory)?;

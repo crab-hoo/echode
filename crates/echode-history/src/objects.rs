@@ -26,7 +26,12 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
-/// Writes `bytes` to `media/objects/<hash>`. An object that already matches is kept.
+/// Writes `bytes` to `media/objects/<hash>`. An object that already matches is
+/// kept. One whose bytes no longer match its name is damaged and is replaced.
+///
+/// The object and its directory entry are synced before this returns: the
+/// journal line that names the object is written next, and Git commits do not
+/// hold the store (XCA-03).
 pub fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError> {
     let hash = hash_bytes(bytes);
     let directory = package.join("media").join("objects");
@@ -37,19 +42,16 @@ pub fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError
     if owned
         .has_file(&hash)
         .map_err(|error| io_error(&directory, error))?
-    {
-        let existing = owned
+        && owned
             .read(&hash)
-            .map_err(|error| io_error(&directory, error))?;
-        if existing != bytes {
-            return Err(PackageError::new(format!(
-                "object {hash} already holds different bytes"
-            )));
-        }
+            .map_err(|error| io_error(&directory, error))?
+            == bytes
+    {
         return Ok(hash);
     }
     owned
-        .write_atomic(&hash, bytes, false)
+        .write_atomic(&hash, bytes, true)
+        .and_then(|()| owned.sync())
         .map_err(|error| io_error(&directory, error))?;
     Ok(hash)
 }
@@ -196,6 +198,9 @@ mod tests {
         fs::write(objects.join(&other), b"nope").unwrap();
         let mismatch = read_object(&package, &other).unwrap_err().to_string();
         assert!(mismatch.contains("does not match"), "{mismatch}");
+        // The same content repairs a damaged object (XCA-03).
+        assert_eq!(write_object(&package, b"hello").unwrap(), other);
+        assert_eq!(read_object(&package, &other).unwrap(), b"hello");
         let named = read_object(&package, &other.to_ascii_uppercase())
             .unwrap_err()
             .to_string();

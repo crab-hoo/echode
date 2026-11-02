@@ -50,12 +50,16 @@ impl std::fmt::Display for HostError {
 
 impl std::error::Error for HostError {}
 
-/// A readable ancestor was used instead of the autosave tip. Editing requires consent.
+/// Recent edits may be missing from the opened document: a readable ancestor
+/// was used instead of the autosave tip, or the journal could not be replayed
+/// to its end. Editing requires consent (ADR 0183). `tip` equals `base` when
+/// only the journal stopped early.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct RecoveryNotice {
     pub tip: String,
     pub base: String,
     pub applied_seq: u64,
+    pub reason: crate::RecoveryReason,
 }
 
 enum Request {
@@ -180,14 +184,12 @@ impl DocumentHost {
         let directory = lock.path().to_path_buf();
         repair_journal(&directory)?;
         let recovered = crate::document::recover_labeled(&directory)?;
-        let recovery = recovered
-            .tip_revision
-            .filter(|tip| *tip != recovered.base_revision)
-            .map(|tip| RecoveryNotice {
-                tip,
-                base: recovered.base_revision.clone(),
-                applied_seq: recovered.applied_seq,
-            });
+        let recovery = recovered.reason.map(|reason| RecoveryNotice {
+            tip: recovered.tip_revision.clone().unwrap_or_default(),
+            base: recovered.base_revision.clone(),
+            applied_seq: recovered.applied_seq,
+            reason,
+        });
         let recovery_pending = Arc::new(AtomicBool::new(recovery.is_some()));
         let mut base_revision = recovered.base_revision;
         let applied_seq = recovered.applied_seq;
@@ -329,9 +331,18 @@ impl DocumentHost {
     /// Every writer must check this before changing project or session state.
     pub fn require_recovery_confirmation(&self) -> Result<(), PackageError> {
         if let Some(notice) = self.recovery_notice() {
+            let cause = match notice.reason {
+                crate::RecoveryReason::UnreadableTip => format!("unreadable tip {}", notice.tip),
+                crate::RecoveryReason::JournalGap => {
+                    "journal lines after a missing one were not replayed".to_string()
+                }
+                crate::RecoveryReason::MissingState => {
+                    "a journal line names a missing plugin state".to_string()
+                }
+            };
             return Err(PackageError::new(format!(
-                "recovery confirmation required: unreadable tip {}; recovered base {}; applied journal seq {}. Preserve a copy before continuing",
-                notice.tip, notice.base, notice.applied_seq
+                "recovery confirmation required: {cause}; recovered base {}; applied journal seq {}. Preserve a copy before continuing",
+                notice.base, notice.applied_seq
             )));
         }
         Ok(())

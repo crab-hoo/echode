@@ -228,6 +228,11 @@ impl Directory {
         self.0.sync_all()
     }
 
+    /// Hands this directory's entries to the drive. See [`write_out`].
+    pub(crate) fn write_out(&self) -> io::Result<()> {
+        write_out(&self.0)
+    }
+
     pub(crate) fn names(&self) -> io::Result<Vec<OsString>> {
         // A fresh open, rather than dup, gives this stream its own directory offset.
         let file = self.open_directory(c".")?;
@@ -258,6 +263,18 @@ impl Directory {
             }
         }
     }
+}
+
+/// Hands `file` to the drive with `fsync`, leaving the drive's cache to a
+/// later full sync. On macOS `File::sync_all` is that full sync
+/// (`F_FULLFSYNC`), which costs milliseconds per call; one at the end of a
+/// batch makes every file written out before it durable (XCA-01).
+pub(crate) fn write_out(file: &File) -> io::Result<()> {
+    // SAFETY: the descriptor stays open for the call, and fsync only reads it.
+    if unsafe { libc::fsync(file.as_raw_fd()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 struct DirectoryStream(NonNull<libc::DIR>);

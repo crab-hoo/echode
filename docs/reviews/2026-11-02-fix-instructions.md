@@ -55,6 +55,7 @@
 
 ## W2: 保存の耐久性（XCA-01・02・03、HIS-A1）— P1
 
+- 状態: 2026-11-02 完了（[ADR 0230](../decisions/0230-save-durability.md)）。
 - 場所: `crates/echode-history/src/` の `autosave.rs`（コミット）、`document.rs`（`commit_tree`・`compact_journal`・`contiguous_suffix`・`parse_track`）、
   `host.rs`（`publish`・`finish_saves`・`wait_for_saves`）、`objects.rs`（`write_object`）。プラグイン状態は `crates/echode-document/src/device.rs` からも書く。
 - 契約:

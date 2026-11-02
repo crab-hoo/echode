@@ -25,6 +25,7 @@ mod transport;
 pub mod spike;
 
 pub use autosave::{Autosave, PendingAutosave, SavedRevision};
+pub use document::RecoveryReason;
 pub use document::{
     AUTOSAVE_REF, PackageError, append_journal, compact_journal, mark_save_pending, read_package,
     recover, write_package,

@@ -164,11 +164,13 @@ fn saving_one_edited_track_of_a_thousand_touches_only_that_file() {
         Project::try_assemble(skeleton.meter(), skeleton.tempo().clone(), contents, tracks)
             .expect("assemble");
     let autosave = Autosave::create(&directory).unwrap();
+    let initial_started = Instant::now();
     autosave
         .save(std::sync::Arc::new(project.clone()), 0)
         .unwrap()
         .wait()
         .unwrap();
+    let initial = initial_started.elapsed();
 
     let edited_index = 500;
     let edited_id = project.tracks()[edited_index].id;
@@ -202,8 +204,10 @@ fn saving_one_edited_track_of_a_thousand_touches_only_that_file() {
     assert_eq!(mtime(&directory.join("project.json")), before_project);
     println!(
         "product tracks: {TRACKS}\n\
+         product commit initial: {:.3} ms\n\
          product schedule edit: {:.3} ms\n\
          product commit edit: {:.3} ms\n",
+        initial.as_secs_f64() * 1_000.0,
         scheduled.as_secs_f64() * 1_000.0,
         commit.as_secs_f64() * 1_000.0,
     );

@@ -299,6 +299,20 @@ pub(crate) fn open_package(directory: &Path) -> Result<Directory, PackageError> 
     Ok(root)
 }
 
+/// Why an opened document waits for the user's consent before any edit
+/// (ADR 0183): recent edits may be missing from what it shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryReason {
+    /// The autosave tip could not be read, so an older commit was used.
+    UnreadableTip,
+    /// Journal lines continue after a missing one and were not replayed.
+    JournalGap,
+    /// A journal line names plugin state the store does not hold intact.
+    /// It and the lines after it were not replayed (HIS-A1).
+    MissingState,
+}
+
 /// The project recovery chose, the commit it was read from, and the last journal
 /// line included. `base_revision` is empty when there was no commit.
 pub(crate) struct Recovered {
@@ -306,6 +320,7 @@ pub(crate) struct Recovered {
     pub base_revision: String,
     pub applied_seq: u64,
     pub tip_revision: Option<String>,
+    pub reason: Option<RecoveryReason>,
 }
 
 /// Loads the newest readable commit, then replays the contiguous journal suffix.
@@ -324,16 +339,18 @@ pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageErro
         let Some((commit, project, seq)) = first_readable_commit(directory, id)? else {
             return Err(PackageError::new("no readable commit"));
         };
-        let project = replay_suffix(project, seq, &records)?;
-        let applied = contiguous_suffix(seq, &records)
-            .last()
-            .map(|line| line.seq)
-            .unwrap_or(seq);
+        let replayed = replay_suffix(directory, project, seq, &records)?;
+        let reason = if commit == id {
+            replayed.stopped
+        } else {
+            Some(RecoveryReason::UnreadableTip)
+        };
         return Ok(Recovered {
-            project,
+            project: replayed.project,
             base_revision: commit.to_string(),
-            applied_seq: applied,
+            applied_seq: replayed.applied,
             tip_revision: Some(id.to_string()),
+            reason,
         });
     }
     if pending {
@@ -342,16 +359,13 @@ pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageErro
         ));
     }
     let project = read_package(directory)?;
-    let applied = contiguous_suffix(0, &records)
-        .last()
-        .map(|line| line.seq)
-        .unwrap_or(0);
-    let project = replay_suffix(project, 0, &records)?;
+    let replayed = replay_suffix(directory, project, 0, &records)?;
     Ok(Recovered {
-        project,
+        project: replayed.project,
         base_revision: String::new(),
-        applied_seq: applied,
+        applied_seq: replayed.applied,
         tip_revision: None,
+        reason: replayed.stopped,
     })
 }
 
@@ -656,6 +670,9 @@ fn read_tree_files(
     Ok(files)
 }
 
+/// Commits the tree and moves the autosave ref. `written` names the blobs the
+/// caller wrote for this commit. Once this returns, the commit, its new
+/// objects and the ref are durable, so the journal may drop the edit.
 pub(crate) fn commit_tree(
     repo: &Repository,
     project_blob: ObjectId,
@@ -663,7 +680,9 @@ pub(crate) fn commit_tree(
     track_blobs: &[(String, ObjectId)],
     parents: &[ObjectId],
     journal_seq: u64,
+    written: &[ObjectId],
 ) -> Result<ObjectId, PackageError> {
+    let mut written = written.to_vec();
     let mut track_entries = Vec::with_capacity(track_blobs.len());
     for (filename, blob) in track_blobs {
         track_entries.push(Entry {
@@ -694,6 +713,7 @@ pub(crate) fn commit_tree(
             })
             .map_err(|error| PackageError::new(error.to_string()))?
             .detach();
+        written.push(contents_tree);
         root_entries.push(Entry {
             mode: EntryKind::Tree.into(),
             filename: gix::bstr::BString::from("contents"),
@@ -707,6 +727,7 @@ pub(crate) fn commit_tree(
             })
             .map_err(|error| PackageError::new(error.to_string()))?
             .detach();
+        written.push(tracks_tree);
         root_entries.push(Entry {
             mode: EntryKind::Tree.into(),
             filename: gix::bstr::BString::from("tracks"),
@@ -738,8 +759,53 @@ pub(crate) fn commit_tree(
         )
         .map_err(|error| PackageError::new(error.to_string()))?;
     let id = commit.detach();
+    written.extend([root, id]);
+    write_out_commit(repo, &written)?;
+    // The chain's full sync also flushes the drive's cache over everything
+    // written out above.
     remember_commit(repo, parents.first().copied(), id)?;
     Ok(id)
+}
+
+/// Writes out this commit's loose objects, their folders and the autosave
+/// ref. gix renames them into place without syncing (XCA-01). An object
+/// that is not loose was already stored, for example in a pack.
+fn write_out_commit(repo: &Repository, objects: &[ObjectId]) -> Result<(), PackageError> {
+    let git_dir = repo.git_dir();
+    let failed = |error| io_error(git_dir, error);
+    let git = Directory::open(git_dir).map_err(failed)?;
+    let store = git.child("objects").map_err(failed)?;
+    let mut folders = std::collections::BTreeMap::new();
+    for id in objects {
+        let hex = id.to_string();
+        let (fan, name) = hex.split_at(2);
+        if !folders.contains_key(fan) {
+            let Some(folder) = store.optional_child(fan).map_err(failed)? else {
+                continue;
+            };
+            folders.insert(fan.to_string(), folder);
+        }
+        let folder = &folders[fan];
+        if folder.has_file(name).map_err(failed)? {
+            let file = folder.open_file(name, false, false).map_err(failed)?;
+            crate::package_io::write_out(&file).map_err(failed)?;
+        }
+    }
+    for folder in folders.values() {
+        folder.write_out().map_err(failed)?;
+    }
+    store.write_out().map_err(failed)?;
+    let (folders, name) = AUTOSAVE_REF
+        .rsplit_once('/')
+        .expect("the autosave ref has folders");
+    let mut folder = git;
+    for part in folders.split('/') {
+        folder.write_out().map_err(failed)?;
+        folder = folder.child(part).map_err(failed)?;
+    }
+    folder.write_out().map_err(failed)?;
+    let reference = folder.open_file(name, false, false).map_err(failed)?;
+    crate::package_io::write_out(&reference).map_err(failed)
 }
 
 fn remember_commit(
@@ -1285,13 +1351,26 @@ fn contiguous_suffix(
     suffix
 }
 
+/// A replayed project, the last journal line in it, and why later lines are not.
+struct Replayed {
+    project: Project,
+    applied: u64,
+    stopped: Option<RecoveryReason>,
+}
+
+/// Replays the journal lines that continue `base_seq`. It stops before a line
+/// whose plugin state the store does not hold intact (HIS-A1), and it reports
+/// lines left after a missing one (XCA-02). Either way the document must not
+/// look complete: the next autosave would commit it as the tip.
 fn replay_suffix(
+    directory: &Path,
     project: Project,
     base_seq: u64,
     records: &[echode_actions::JournalLine],
-) -> Result<Project, PackageError> {
+) -> Result<Replayed, PackageError> {
     let suffix = contiguous_suffix(base_seq, records);
     let mut project = project;
+    let mut applied = base_seq;
     for line in suffix {
         let changes = match line.op {
             echode_actions::JournalOp::Undo => line.changes.invert(),
@@ -1299,7 +1378,8 @@ fn replay_suffix(
                 line.changes.clone()
             }
         };
-        project = project
+        let before = project;
+        project = before
             .apply_changeset(&changes)
             .map_err(|error| PackageError::new(error.to_string()))?;
         // A journal is external input, not a trusted in-memory undo step.
@@ -1310,8 +1390,43 @@ fn replay_suffix(
                 line.seq
             ))
         })?;
+        if !states_stored(directory, &before, &project) {
+            return Ok(Replayed {
+                project: before,
+                applied,
+                stopped: Some(RecoveryReason::MissingState),
+            });
+        }
+        applied = line.seq;
     }
-    Ok(project)
+    let gap = records.iter().any(|line| line.seq > applied);
+    Ok(Replayed {
+        project,
+        applied,
+        stopped: gap.then_some(RecoveryReason::JournalGap),
+    })
+}
+
+/// True when the store holds intact every plugin state `after` names that
+/// `before` did not. States read from a commit were checked by `parse_track`.
+fn states_stored(directory: &Path, before: &Project, after: &Project) -> bool {
+    let known: std::collections::HashMap<Id, Option<&str>> = before
+        .tracks()
+        .iter()
+        .flat_map(|track| &track.devices)
+        .map(|device| (device.id, device.state.as_deref()))
+        .collect();
+    after
+        .tracks()
+        .iter()
+        .flat_map(|track| &track.devices)
+        .all(|device| match device.state.as_deref() {
+            None => true,
+            Some(hash) => {
+                known.get(&device.id).copied().flatten() == Some(hash)
+                    || crate::objects::read_object(directory, hash).is_ok()
+            }
+        })
 }
 
 fn first_readable_commit(
@@ -1339,10 +1454,40 @@ fn first_readable_commit(
     Ok(None)
 }
 
+/// The autosave tip: the ref, or a newer commit the chain records on top of
+/// it. Every commit syncs its chain line, while the ref's update can be lost
+/// with the drive's cache. Recovery then goes on from the newest commit
+/// instead of hiding it behind an older ref (XCA-02).
 pub(crate) fn autosave_tip(directory: &Path) -> Option<ObjectId> {
     let repo = gix::open(directory).ok()?;
-    let reference = repo.try_find_reference(AUTOSAVE_REF).ok()??;
-    Some(reference.id().detach())
+    let reference = repo.try_find_reference(AUTOSAVE_REF).ok()??.id().detach();
+    Some(chained_descendant(directory, reference).unwrap_or(reference))
+}
+
+/// The chain's newest commit, when the chain leads from it back to `tip`.
+fn chained_descendant(directory: &Path, tip: ObjectId) -> Option<ObjectId> {
+    let git = Directory::open(directory)
+        .ok()?
+        .optional_child(".git")
+        .ok()??;
+    let text = git.read_text("echode-commit-chain").ok()?;
+    let parents: std::collections::HashMap<&str, &str> = text
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .collect();
+    let newest = text.lines().last()?.split_once(' ')?.0;
+    let tip = tip.to_string();
+    let mut cursor = newest;
+    // Each step follows a recorded parent; a cycle cannot outlast the chain.
+    for _ in 0..=parents.len() {
+        if cursor == tip {
+            return (newest != tip)
+                .then(|| ObjectId::from_hex(newest.as_bytes()).ok())
+                .flatten();
+        }
+        cursor = parents.get(cursor)?;
+    }
+    None
 }
 
 fn blob_text(root: &gix::Tree<'_>, path: &str) -> Result<String, PackageError> {

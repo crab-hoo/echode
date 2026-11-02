@@ -1,12 +1,11 @@
-//! Reproductions from the 2026-11-02 audits (XCA-02, XCA-03, HIS-A1).
-//!
-//! Each test fails until its item is fixed; then remove its `#[ignore]`.
+//! Reproductions from the 2026-11-02 audits (XCA-02, XCA-03, HIS-A1), fixed
+//! by ADR 0230, and the regressions that pin down how each is reported.
 //! See docs/reviews/2026-11-02-fix-instructions.md for the fix conditions.
 
 use std::path::{Path, PathBuf};
 
 use echode_actions::{Command, JournalLine, JournalOp, Session, encode_line};
-use echode_history::{DocumentHost, read_package, write_object, write_package};
+use echode_history::{DocumentHost, RecoveryReason, read_package, write_object, write_package};
 use echode_model::{Id, Project, Tick};
 
 fn scratch(name: &str) -> PathBuf {
@@ -100,7 +99,6 @@ fn names(project: &Project) -> Vec<String> {
 /// A tip whose ref update was lost while the journal had already dropped
 /// the next line leaves a gap. Opening must not hide the later line.
 #[test]
-#[ignore = "audit XCA-02: a journal gap is replayed as if nothing were missing"]
 fn audit_xca02_a_journal_gap_is_not_silently_dropped() {
     let directory = scratch("gap");
     write_package(&directory, &Project::new()).unwrap();
@@ -145,7 +143,6 @@ fn audit_xca02_a_journal_gap_is_not_silently_dropped() {
 /// An object the rename made visible before its bytes reached the disk is
 /// empty. Importing the same audio again must repair it.
 #[test]
-#[ignore = "audit XCA-03: a damaged media object refuses the same audio again"]
 fn audit_xca03_reimport_repairs_a_damaged_object() {
     let directory = scratch("object");
     let source = directory.parent().unwrap().join("tone.wav");
@@ -180,7 +177,6 @@ fn audit_xca03_reimport_repairs_a_damaged_object() {
 /// A journal line may name plugin state whose object did not survive. Open
 /// replays it without reading the object, then the next autosave commits it.
 #[test]
-#[ignore = "audit HIS-A1: a missing state object becomes an unreadable tip after the next save"]
 fn audit_his_a1_a_missing_state_object_does_not_lose_later_edits() {
     let directory = scratch("state");
     write_package(&directory, &Project::new()).unwrap();
@@ -226,4 +222,131 @@ fn audit_his_a1_a_missing_state_object_does_not_lose_later_edits() {
         "an edit accepted after opening is behind an unreadable tip"
     );
     assert!(names(&reopened.snapshot()).contains(&"after".to_string()));
+}
+
+/// The ref's update was lost but the chain, synced with every commit, names
+/// the newer commit. Recovery goes on from it: nothing is missing, so no
+/// consent is asked, and the next save builds on it (XCA-02, ADR 0230).
+#[test]
+fn a_ref_behind_the_chain_recovers_from_the_newest_commit() {
+    let directory = scratch("chain");
+    write_package(&directory, &Project::new()).unwrap();
+    {
+        let host = DocumentHost::open(&directory).unwrap();
+        add_track(&host, "first");
+        add_track(&host, "second");
+    }
+    let newest = tip(&directory);
+    let repo = gix::open(&directory).unwrap();
+    let parent = repo
+        .find_commit(newest)
+        .unwrap()
+        .parent_ids()
+        .next()
+        .unwrap()
+        .detach();
+    std::fs::write(
+        directory.join(".git/refs/echode/autosave/main"),
+        format!("{parent}\n"),
+    )
+    .unwrap();
+    {
+        let host = DocumentHost::open(&directory).unwrap();
+        assert!(host.recovery_notice().is_none());
+        assert_eq!(names(&host.snapshot()), ["first", "second"]);
+        add_track(&host, "third");
+    }
+    let repo = gix::open(&directory).unwrap();
+    let saved = repo.find_commit(tip(&directory)).unwrap();
+    assert_eq!(saved.parent_ids().next().unwrap().detach(), newest);
+    let reopened = DocumentHost::open(&directory).unwrap();
+    assert_eq!(names(&reopened.snapshot()), ["first", "second", "third"]);
+}
+
+/// The consent names its cause and holds every write until it is given.
+/// Accepting it keeps what was replayed and drops the lines it could not.
+#[test]
+fn a_journal_gap_and_a_missing_state_name_their_cause_and_hold_edits() {
+    let directory = scratch("reasons");
+    write_package(&directory, &Project::new()).unwrap();
+    {
+        let host = DocumentHost::open(&directory).unwrap();
+        add_track(&host, "first");
+    }
+    let project = read_package(&directory).unwrap();
+    let seq = tip_seq(&directory);
+    let gap = line(
+        &project,
+        seq + 2,
+        Command::AddTrack {
+            name: "late".into(),
+        },
+    );
+    std::fs::write(directory.join("journal.jsonl"), gap).unwrap();
+    {
+        let host = DocumentHost::open(&directory).unwrap();
+        let notice = host.recovery_notice().cloned().unwrap();
+        assert_eq!(notice.reason, RecoveryReason::JournalGap);
+        assert_eq!(
+            (notice.tip.as_str(), notice.applied_seq),
+            (notice.base.as_str(), seq)
+        );
+        let refused = host
+            .perform(Command::AddTrack {
+                name: "held".into(),
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("journal lines after a missing one"),
+            "{refused}"
+        );
+        host.accept_recovery(&notice.tip, &notice.base).unwrap();
+        add_track(&host, "accepted");
+    }
+    let reopened = DocumentHost::open(&directory).unwrap();
+    assert!(reopened.recovery_notice().is_none());
+    assert_eq!(names(&reopened.snapshot()), ["first", "accepted"]);
+    drop(reopened);
+
+    let device = {
+        let host = DocumentHost::open(&directory).unwrap();
+        let track = host.snapshot().tracks()[0].id;
+        host.perform(Command::AddDevice {
+            track,
+            plugin: "dev.echode.sine-pad".into(),
+        })
+        .unwrap();
+        host.snapshot().tracks()[0]
+            .devices
+            .iter()
+            .find(|device| device.plugin.is_some())
+            .unwrap()
+            .id
+    };
+    let project = read_package(&directory).unwrap();
+    let missing = echode_history::object_hash(b"never stored");
+    let state = line(
+        &project,
+        tip_seq(&directory) + 1,
+        Command::SetPluginState {
+            device,
+            state: Some(missing),
+        },
+    );
+    std::fs::write(directory.join("journal.jsonl"), state).unwrap();
+    let host = DocumentHost::open(&directory).unwrap();
+    let notice = host.recovery_notice().cloned().unwrap();
+    assert_eq!(notice.reason, RecoveryReason::MissingState);
+    let device_state = host.snapshot().tracks()[0]
+        .devices
+        .iter()
+        .find(|item| item.id == device)
+        .unwrap()
+        .state
+        .clone();
+    assert_eq!(
+        device_state, None,
+        "the line naming the missing state was not replayed"
+    );
 }
