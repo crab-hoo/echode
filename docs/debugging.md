@@ -512,6 +512,14 @@ make debug-report
   `note_package.rs` は形と意味の拒否・原本保持、保存バイト・旧版・共有内容・コミット再読込みを分けて検査する
   （[ADR 0224](decisions/0224-note-package-fields.md)）。
 
+- **トラックを含むパッケージの読込みが拒否される**:
+  `track json:` の必須項目・型・未知の項目・親の `invalid id` は `TrackMetadata` の形の復号で調べる。
+  `does not contain that id` はファイル名と同一性の照合、子の ID・中身・ミキサーの拒否は子の組立てと区別する。
+  `track is not in the project`・`cannot contain itself`・`track order key` は親・階層・兄弟順の検証である。
+  メタデータの直接復号や子との結合だけでは有効なプロジェクトにならない。
+  `track_package.rs` は形・同一性・子と階層の拒否、原本保持・保存バイト・旧版・部分木の履歴を検査する
+  （[ADR 0225](decisions/0225-track-package-fields.md)）。
+
 - **Option ドラッグで音高が動く・ベロシティが引き継がれない**:
   押下時の `PianoVelocityGesture` と通常の `PianoGesture` を分ける。横移動・グリッド・Shift はベロシティへ影響しない。
   `piano-note-velocity-ui` は解放位置と単一記録、`piano-note-velocity-cancel-ui` は取消後の遅れた解放を検査する。

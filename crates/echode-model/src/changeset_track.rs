@@ -4,11 +4,12 @@ use super::{
     Change, Device, Field, Id, ModelError, ObjectKey, ObjectKind, Placement, Property, Track,
     Value, field_ids, field_optional_id, field_text, update,
 };
+use crate::track_fields::track_fields;
 
 // Declaration order is the existing wire order. Child orders are resolved by Draft;
 // hierarchy and fractional keys are validated by arrange_tracks after replay.
-macro_rules! track_fields {
-    ($($property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
+macro_rules! define_track_changeset {
+    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
         pub(super) struct TrackState {
             $($field: $type,)+
             pub clip_order: Vec<Id>,
@@ -91,11 +92,7 @@ macro_rules! track_fields {
     };
 }
 
-track_fields! {
-    Name => name: String, Text, field_text;
-    Parent => parent: Option<Id>, Parent, field_optional_id;
-    Order => order: String, Text, field_text;
-}
+track_fields!(define_track_changeset);
 
 fn clip_order(track: &Track) -> Vec<Id> {
     track.clips.iter().map(|clip| clip.id).collect()

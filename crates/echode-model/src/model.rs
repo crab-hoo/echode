@@ -18,6 +18,7 @@ use crate::device::{Device, DeviceKind, MixerIds, valid_plugin_id};
 use crate::id::Id;
 use crate::note_fields::note_fields;
 use crate::time::{FLICKS_PER_SECOND, Flick, Meter, Tempo, TempoMap, Tick};
+use crate::track_fields::track_fields;
 
 /// Largest linear clip gain. `2^20` is exact in `f32` and stays finite when a
 /// full-scale sample also passes a track fader at `GAIN_MAX`.
@@ -328,23 +329,49 @@ pub fn fade_allowed(flicks: i64) -> bool {
     flicks >= 0 && fade_frames(flicks, FADE_RATE_LIMIT).is_some()
 }
 
-/// A track. MIDI and audio can share one; this slice stores notes only.
-///
-/// `parent` is another track, so folders can nest. There is no depth cap.
-/// A folder is any track that others name as their parent. Summing children
-/// onto that bus happens later; this only records the tree.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Track {
-    pub id: Id,
-    pub name: String,
-    pub parent: Option<Id>,
-    /// Sibling order under `parent`. Compared as a fractional index string.
-    pub order: String,
-    /// Placements on this track, in timeline order.
-    pub clips: Vec<Placement>,
-    /// Built-in devices. A track has one mixer.
-    pub devices: Vec<crate::device::Device>,
+macro_rules! define_track {
+    ($($(#[$attribute:meta])* $property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
+        /// A track. MIDI and audio can share one.
+        ///
+        /// `parent` is another track, so folders can nest without a depth cap.
+        /// Child summing happens later; this records the tree and its contents.
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct Track {
+            pub id: Id,
+            $($(#[$attribute])* pub $field: $type,)+
+            /// Placements on this track, in timeline order.
+            pub clips: Vec<Placement>,
+            /// Devices in processing order, ending with one mixer.
+            pub devices: Vec<Device>,
+        }
+
+        /// Track scalars without identity or children, for package assembly.
+        ///
+        /// Serde checks shape only. Resolving children and validating the tree,
+        /// sibling keys and object identities belongs to `Project::try_assemble`.
+        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct TrackMetadata {
+            $($(#[$attribute])* pub $field: $type,)+
+        }
+
+        impl From<&Track> for TrackMetadata {
+            fn from(track: &Track) -> Self {
+                Self { $($field: track.$field.to_owned(),)+ }
+            }
+        }
+
+        impl TrackMetadata {
+            /// Joins decoded scalars to their separately resolved identity and children.
+            /// This does not validate a project or repair its order.
+            pub fn into_track(self, id: Id, clips: Vec<Placement>, devices: Vec<Device>) -> Track {
+                Track { id, $($field: self.$field,)+ clips, devices }
+            }
+        }
+    };
 }
+
+track_fields!(define_track);
 
 /// Immutable project snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]

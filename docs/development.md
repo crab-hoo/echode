@@ -138,9 +138,14 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 共有内容とコミットからの再読込みは履歴の `tests/note_package.rs` に置く
 （[ADR 0224](decisions/0224-note-package-fields.md)）。
 
-トラックのスカラー項目の表は `echode-model/src/changeset_track.rs`、独立した名前・親・兄弟キーとフィールド順の回帰は
-履歴の `tests/track_changesets.rs` に置く。子の ID 列と解決、親の木・分数キーの拒否とジャーナルも検査する。
-操作列は入れ子のフォルダとノート・デバイスを持つ子からも始める（[ADR 0217](decisions/0217-track-changeset-fields.md)）。
+トラックのスカラー項目の表は `echode-model/src/track_fields.rs`、変更セットの生成器は `changeset_track.rs` に置く。
+独立した名前・親・兄弟キーとフィールド順の回帰は履歴の `tests/track_changesets.rs` を使う。
+子の ID 列と解決、親の木・分数キーの拒否とジャーナルも検査し、操作列は入れ子のフォルダとノート・デバイスを持つ子からも始める
+（[ADR 0217](decisions/0217-track-changeset-fields.md)）。
+モデル宣言と保存用の `TrackMetadata`・変換もこの表から生成する。
+公開保存のキー順・改行・旧版・拒否時の原本保持と部分木・コミット再読込みは `tests/track_package.rs` に置く。
+保存ヘッダの配置だけを扱う formatter は `src/document_track.rs` に残し、ID・子・階層の検証は省略しない
+（[ADR 0225](decisions/0225-track-package-fields.md)）。
 
 中身の音声参照・テイク ID 列の表は `echode-model/src/changeset_content.rs`、独立したメタデータ・ID 列と順序の回帰は
 履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。

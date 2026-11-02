@@ -48,6 +48,7 @@ mod note_velocity;
 mod parameter_fields;
 mod placement;
 mod time;
+mod track_fields;
 
 pub use changeset::{Change, ChangeSet, Field, ObjectKey, ObjectKind, Property, Value};
 pub use device::{
@@ -59,8 +60,8 @@ pub use invariants::InvariantError;
 pub use model::{
     AudioRef, CLIP_GAIN_MAX, ClipKind, Content, DEFAULT_FADE_FLICKS, Expression, ExpressionKind,
     ExpressionPoint, FADE_RATE_LIMIT, Lane, MIDI7_MAX, ModelError, Note, NoteDraft, NoteGeometry,
-    Placement, Project, Track, clip_gain_allowed, fade_allowed, fade_frames, initial_order,
-    is_media_hash, midi7_to_velocity, velocity_to_midi7,
+    Placement, Project, Track, TrackMetadata, clip_gain_allowed, fade_allowed, fade_frames,
+    initial_order, is_media_hash, midi7_to_velocity, velocity_to_midi7,
 };
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,

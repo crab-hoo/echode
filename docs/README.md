@@ -48,6 +48,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   （[ADR 0223](decisions/0223-device-package-fields.md)）。
   ノートも同じ項目表からモデル宣言・Serde・変更セットを作り、保存専用の型と変換を除いた
   （[ADR 0224](decisions/0224-note-package-fields.md)）。
+  トラックの名前・親・兄弟順もモデルと保存用メタデータ・変換を同じ項目表へ集めた
+  （[ADR 0225](decisions/0225-track-package-fields.md)）。
 
 - [2026-10-27 敵対的監査](reviews/2026-10-27-adversarial-audit.md): ADV-01〜04 対応済み。
   壊れたジャーナルは拒否し、空の Undo は無変更の成功とする。

@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use crate::package_io::Directory;
 use echode_model::{
     AudioRef, CLIP_GAIN_MAX, ClipKind, Id, Meter, Note, Project, Tempo, TempoMap, TempoPoint, Tick,
-    Track, clip_gain_allowed,
+    Track, TrackMetadata, clip_gain_allowed,
 };
 use gix::objs::Tree;
 use gix::objs::tree::{Entry, EntryKind};
@@ -28,6 +28,8 @@ use serde::{Deserialize, Serialize};
 
 #[path = "document_device.rs"]
 mod device_json;
+#[path = "document_track.rs"]
+mod track_json;
 
 /// Autosave commits land here until a project has more than one alternate.
 pub const AUTOSAVE_REF: &str = "refs/echode/autosave/main";
@@ -781,16 +783,7 @@ pub(crate) fn commit_parent(directory: &Path, id: ObjectId) -> Option<ObjectId> 
 }
 
 fn render_track(track: &Track) -> String {
-    let mut out = String::from("{\n");
-    push_field(&mut out, "schema", &to_json(&SCHEMA));
-    push_field(&mut out, "id", &to_json(&track.id.to_string()));
-    push_field(&mut out, "name", &to_json(&track.name));
-    push_field(
-        &mut out,
-        "parent",
-        &to_json(&track.parent.map(|id| id.to_string())),
-    );
-    push_field(&mut out, "order", &to_json(&track.order));
+    let mut out = track_json::render_header(track, SCHEMA);
     out.push_str("  \"devices\":[\n");
     for (index, device) in track.devices.iter().enumerate() {
         let comma = if index + 1 == track.devices.len() {
@@ -1144,6 +1137,10 @@ fn assemble(
 
 fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, PackageError> {
     let file: TrackFile = parse_schema(json, "track json", "track")?;
+    // Keep unknown-field rejection in the scalar type, rather than combining
+    // Serde's unsupported flatten + deny_unknown_fields attributes.
+    let metadata: TrackMetadata = serde_json::from_value(serde_json::Value::Object(file.metadata))
+        .map_err(|error| PackageError::new(format!("track json: {error}")))?;
     if file.schema != SCHEMA {
         return Err(PackageError::new(format!(
             "unsupported track schema {}",
@@ -1157,10 +1154,6 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
         )));
     }
     let id = parse_id(&file.id)?;
-    let parent = match file.parent.as_deref() {
-        None => None,
-        Some(text) => Some(parse_id(text)?),
-    };
     let mut clips = Vec::with_capacity(file.clips.len());
     for clip in file.clips {
         if clip.lane != "timeline" {
@@ -1192,47 +1185,40 @@ fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, P
             fade_out: clip.fade_out,
         });
     }
-    Ok(Track {
-        id,
-        name: file.name,
-        parent,
-        order: file.order,
-        devices: file
-            .devices
-            .into_iter()
-            .map(|device| {
-                let kind = device.kind;
-                match (kind, device.state.as_deref()) {
-                    (_, None) => {}
-                    (echode_model::DeviceKind::Mixer, Some(_)) => {
-                        return Err(PackageError::new("mixer state must be null"));
-                    }
-                    (echode_model::DeviceKind::Clap, Some(text)) => {
-                        if !crate::objects::is_content_hash(text) {
-                            return Err(PackageError::new(
-                                "state hash must be 64 lowercase hex digits",
-                            ));
-                        }
-                        crate::objects::read_object(package, text)?;
-                    }
+    let devices = file
+        .devices
+        .into_iter()
+        .map(|device| {
+            let kind = device.kind;
+            match (kind, device.state.as_deref()) {
+                (_, None) => {}
+                (echode_model::DeviceKind::Mixer, Some(_)) => {
+                    return Err(PackageError::new("mixer state must be null"));
                 }
-                match (kind, device.plugin.as_deref()) {
-                    (echode_model::DeviceKind::Mixer, None) => {}
-                    (echode_model::DeviceKind::Clap, Some(plugin))
-                        if echode_model::valid_plugin_id(plugin)
-                            && device.parameters.is_empty() => {}
-                    _ => {
-                        return Err(PackageError::new(format!(
-                            "device {} does not match its plugin id",
-                            device.id
-                        )));
+                (echode_model::DeviceKind::Clap, Some(text)) => {
+                    if !crate::objects::is_content_hash(text) {
+                        return Err(PackageError::new(
+                            "state hash must be 64 lowercase hex digits",
+                        ));
                     }
+                    crate::objects::read_object(package, text)?;
                 }
-                Ok(device)
-            })
-            .collect::<Result<Vec<_>, PackageError>>()?,
-        clips,
-    })
+            }
+            match (kind, device.plugin.as_deref()) {
+                (echode_model::DeviceKind::Mixer, None) => {}
+                (echode_model::DeviceKind::Clap, Some(plugin))
+                    if echode_model::valid_plugin_id(plugin) && device.parameters.is_empty() => {}
+                _ => {
+                    return Err(PackageError::new(format!(
+                        "device {} does not match its plugin id",
+                        device.id
+                    )));
+                }
+            }
+            Ok(device)
+        })
+        .collect::<Result<Vec<_>, PackageError>>()?;
+    Ok(metadata.into_track(id, clips, devices))
 }
 
 fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content, PackageError> {
@@ -1528,14 +1514,11 @@ struct TempoFile {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct TrackFile {
     schema: u32,
     id: String,
-    name: String,
-    #[serde(default)]
-    parent: Option<String>,
-    order: String,
+    #[serde(flatten)]
+    metadata: serde_json::Map<String, serde_json::Value>,
     devices: Vec<echode_model::Device>,
     clips: Vec<ClipFile>,
 }
