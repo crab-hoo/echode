@@ -148,12 +148,15 @@ impl<P: Presenter> Worker<P> {
         })
     }
 
-    /// A step for a submitter, which may change the document.
+    /// A step for a submitter, which may change the document. Helpers holding
+    /// a change an edit in progress will record outlive it (ADR 0229).
     fn turn<T>(&mut self, step: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+        self.audio.keep_live_plugin_edits(self.saves.held());
         let before = self.host.snapshot();
         let result = self.guarded(step);
-        if !Arc::ptr_eq(&before, &self.host.snapshot()) {
-            self.saves.document_changed();
+        let after = self.host.snapshot();
+        if !Arc::ptr_eq(&before, &after) {
+            self.saves.document_changed(&before, &after);
         }
         result
     }
@@ -181,6 +184,7 @@ impl<P: Presenter> Worker<P> {
                 .is_ok()
         });
         if recorded {
+            self.audio.keep_live_plugin_edits(self.saves.held());
             self.audio.update(self.host.snapshot());
         }
     }

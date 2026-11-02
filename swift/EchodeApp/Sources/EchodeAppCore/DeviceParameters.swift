@@ -116,6 +116,8 @@ struct ParameterGesture {
     var pending: Double?
     /// What the plugin reported for the last value it applied.
     var applied: DeviceParameterValue?
+    /// A value was sent, even if the drag came back to `original`.
+    var moved = false
 }
 
 extension ProjectController {
@@ -199,6 +201,7 @@ extension ProjectController {
         guard target != gesture.latest else { return }
         gesture.latest = target
         gesture.pending = target
+        gesture.moved = true
         session.parameterGesture = gesture
         session.parameterStates[gesture.device]?.update(gesture.parameter, value: target, text: nil)
         guard session.parameterTask == nil else { return }
@@ -220,7 +223,8 @@ extension ProjectController {
     /// Ends the drag. A commit records the plugin's bytes as one Undo step
     /// when they changed. A cancel puts the original value back, then also
     /// commits: equal bytes record nothing, and the edit no longer defers
-    /// the plugin's own background saves.
+    /// the plugin's own background saves. A drag that came back to where it
+    /// started commits for the same reason (DOC-A1).
     func finishParameter(commit: Bool, in session: DocumentSession) async {
         guard session.parameterGesture != nil else { return }
         if let task = session.parameterTask { await task.value }
@@ -228,8 +232,8 @@ extension ProjectController {
         session.parameterGesture = nil
         let state = session.parameterStates[gesture.device]
         if let applied = gesture.applied { state?.update(applied.id, value: applied.value, text: applied.text) }
-        guard self.session === session, let document = session.document, gesture.latest != gesture.original else { return }
-        if !commit {
+        guard self.session === session, let document = session.document, gesture.moved else { return }
+        if !commit && gesture.latest != gesture.original {
             state?.update(gesture.parameter, value: gesture.original, text: nil)
             await send(gesture, value: gesture.original, document: document, in: session)
         }

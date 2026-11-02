@@ -174,6 +174,41 @@ struct PluginWindowTests {
         #expect(controller.undoCount == before + 2)
     }
 
+    /// DOC-A1: lost events or a closed window finish an open gesture, which
+    /// is recorded at once. Undo first records an edit still waiting for the
+    /// plugin to be quiet, then takes that edit back instead of discarding
+    /// it (ADR 0229).
+    @Test func unfinishedPluginEditsAreRecordedNotDropped() async throws {
+        let plugin = FakeParameterPlugin()
+        let (controller, document, tracks, url) = try await project("window-unfinished", plugin: plugin)
+        defer { removeTestFile(url) }
+        #expect(await controller.insertPlugin("dev.echode.test-params", on: tracks[0], documentID: document))
+        let device = try #require(controller.deviceRows(on: tracks[0]).first).id
+        await controller.showDevices(on: tracks[0]).value
+        // Long enough that only the cases below can record.
+        controller.pluginQuietDelay = .seconds(60)
+        let before = controller.undoCount
+        let endings = [PluginActivity(device: device, rescan: true, lost: true, windowOpen: true),
+                       PluginActivity(device: device, closed: true, windowState: false)]
+        for (index, ending) in endings.enumerated() {
+            controller.receivePluginActivity([PluginActivity(device: device, events: [.init(id: 1, kind: .begin)], windowOpen: true)],
+                                             documentID: document)
+            await plugin.setGain(1.3 + Double(index) * 0.2)
+            controller.receivePluginActivity([ending], documentID: document)
+            await controller.settlePluginEdits()
+            #expect(controller.undoCount == before + index + 1, "no end is coming for this gesture")
+        }
+
+        await plugin.setGain(0.5)
+        controller.receivePluginActivity([PluginActivity(device: device, dirty: true, windowOpen: true)], documentID: document)
+        let redo = controller.redoCount
+        await controller.undo()
+        #expect(controller.undoCount == before + 2 && controller.redoCount == redo + 1,
+                "Undo took back the waiting edit, not the gesture before it")
+        await controller.settlePluginEdits()
+        #expect(controller.undoCount == before + 2, "the quiet wait was replaced by the record")
+    }
+
     /// The name of an inserted plugin, in the device view and the inspector,
     /// opens its own window. Only a single add from the candidates opens one
     /// by itself; adding to every selected track, copying a device and

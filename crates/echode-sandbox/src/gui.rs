@@ -78,8 +78,8 @@ pub struct PluginActivity {
     pub dirty: bool,
     /// The user closed the plugin window.
     pub closed: bool,
-    /// The window was open when the relay arrived. Only then does a change
-    /// without a gesture count as the user's edit (ADR 0132).
+    /// The window was open when the relay or the dirty notice arrived. Only
+    /// then does a change without a gesture count as the user's edit (ADR 0132).
     pub window_open: bool,
     /// Latest confirmed window lifetime, independent of visibility and of
     /// whether an earlier relay arrived while the window was open.

@@ -38,6 +38,7 @@
 
 ## W1: プラグインの窓での変更（DOC-A1・DOC-A2）— P1、最初に行う
 
+- 状態: 2026-11-02 完了。ヘルパーを作り直さない案を選んだ（[ADR 0229](../decisions/0229-plugin-window-live-edits.md)）。
 - 場所: `crates/echode-sandbox/src/session.rs` の `Dirty` の腕、`crates/echode-document/src/saves.rs` と `worker.rs` の `turn`、
   `crates/echode-document/src/activity.rs` の `collapse`、`swift/EchodeApp/Sources/EchodeAppCore/PluginWindows.swift` と `DeviceParameters.swift` の `finishParameter`。
 - 契約:

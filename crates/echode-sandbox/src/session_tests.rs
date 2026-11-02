@@ -6,11 +6,13 @@ use std::time::Duration;
 
 /// Window notices and plugin-made changes leave the inbox, so a request
 /// waiting for its reply never takes them, and a dirty notice counts as
-/// the user's change only while the window is open.
+/// the user's change only while the window is open. That change says the
+/// window was open, so the app records it once the plugin is quiet (DOC-A1).
 #[test]
 fn window_activity_is_kept_apart_from_replies() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);
+    let (go, opened) = std::sync::mpsc::channel::<()>();
     let answer = std::thread::spawn(move || {
         helper.send(&ControlMessage::Dirty).unwrap();
         let (id, request) = helper.recv_tagged(Duration::from_secs(5)).unwrap();
@@ -34,6 +36,7 @@ fn window_activity_is_kept_apart_from_replies() {
                 }),
             )
             .unwrap();
+        opened.recv().unwrap();
         helper.send(&ControlMessage::Dirty).unwrap();
         helper.send(&ControlMessage::GuiClosed).unwrap();
         helper.send(&ControlMessage::Dirty).unwrap();
@@ -41,6 +44,17 @@ fn window_activity_is_kept_apart_from_replies() {
     });
     let report = control.show_gui("Pad").unwrap();
     assert!(report.created && !report.key);
+    let before = control.take_activity().unwrap();
+    assert_eq!(before.relay.events.len(), 1);
+    assert!(
+        !before.dirty,
+        "the dirty notice came before the window opened"
+    );
+    assert!(
+        !before.window_open,
+        "the relay arrived before the window opened"
+    );
+    go.send(()).unwrap();
     let helper = answer.join().unwrap();
     let mut state = control.lock();
     state.drain().unwrap();
@@ -52,12 +66,9 @@ fn window_activity_is_kept_apart_from_replies() {
     assert_eq!(dirty, 3, "every dirty notice stays for the background save");
     drop(state);
     let activity = control.take_activity().unwrap();
-    assert_eq!(activity.relay.events.len(), 1);
+    assert!(activity.relay.is_empty());
     assert!(activity.dirty, "the dirty notice while the window was open");
-    assert!(
-        !activity.window_open,
-        "the relay arrived before the window opened"
-    );
+    assert!(activity.window_open, "a dirty notice is a window edit");
     assert!(activity.closed);
     assert!(control.take_activity().is_none());
     drop(helper);

@@ -897,3 +897,47 @@ fn a_stream_opened_for_devices_stays_stopped_until_play() {
     assert!(control.status().playing);
     assert!(left.iter().any(|sample| *sample != 0.0));
 }
+
+/// DOC-A2 (ADR 0229): a device whose helper holds an unrecorded change gets
+/// a route with that helper's bytes, so the replacement keeps the helper.
+/// Other devices still restore their recorded objects.
+#[test]
+fn a_live_device_route_carries_its_helper_bytes_instead_of_the_recorded_object() {
+    use echode_model::Id;
+    let package = std::env::temp_dir().join(format!("echode-live-routes-{}", Id::generate()));
+    let recorded = echode_history::write_object(&package, b"recorded").unwrap();
+    let (project, track) = Project::new().add_track("fx");
+    let (held, fresh, other) = (Id::from_raw(0x1A), Id::from_raw(0x1B), Id::from_raw(0x1C));
+    let mut project = project;
+    for device in [held, fresh, other] {
+        project = project
+            .add_clap_device(track, device, "dev.echode.test-params")
+            .unwrap()
+            .set_device_state(device, Some(recorded.clone()))
+            .unwrap();
+    }
+    let installed = [PluginRoute {
+        clap_id: "dev.echode.test-params".into(),
+        path: "/nowhere/params.clap".into(),
+        instrument: false,
+        fault: None,
+        state: None,
+    }];
+    let routes = routes_with_states(&project, &package, &installed, |device| {
+        if device == held.raw() {
+            Some(Some(b"held".to_vec()))
+        } else if device == fresh.raw() {
+            Some(None)
+        } else {
+            None
+        }
+    })
+    .unwrap();
+    let states: Vec<_> = routes.iter().map(|route| route.state.as_deref()).collect();
+    assert_eq!(
+        states,
+        [Some(&b"held"[..]), None, Some(&b"recorded"[..])],
+        "one route per device, in project order"
+    );
+    let _ = std::fs::remove_dir_all(package);
+}

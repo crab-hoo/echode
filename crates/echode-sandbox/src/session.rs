@@ -282,6 +282,7 @@ impl ControlState {
                 self.inbox.push_back((0, ControlMessage::Dirty));
                 PluginActivity {
                     dirty: true,
+                    window_open: true,
                     ..PluginActivity::default()
                 }
             }

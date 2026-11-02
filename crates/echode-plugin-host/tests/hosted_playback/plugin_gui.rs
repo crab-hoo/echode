@@ -369,7 +369,6 @@ fn audit_session(
 /// DOC-A1: a change the plugin marks dirty while its window is open is the
 /// user's edit (ADR 0132), so the activity must say the window was open.
 #[test]
-#[ignore = "audit DOC-A1: a dirty-only change in an open window reports window_open=false"]
 fn audit_doc_a1_a_dirty_change_in_an_open_window_counts_as_a_window_edit() {
     let (listener, socket, mut control, audio, device, _, _, _) = audit_session("audit-a1");
     let endpoint = control.device_control_handle(device.raw()).unwrap();
@@ -388,12 +387,13 @@ fn audit_doc_a1_a_dirty_change_in_an_open_window_counts_as_a_window_edit() {
     let _ = std::fs::remove_file(socket);
 }
 
-/// DOC-A2, as the document worker drives the engine today: it drops the held
-/// save and replaces the graph with the model's older state. A fix in the
-/// worker changes the routes passed here; then move this reproduction to the
-/// worker instead of deleting it.
+/// DOC-A2, the real helper's half (ADR 0229). The document worker keeps the
+/// held save and names the device live; the session then routes the helper's
+/// own bytes instead of the model's older state, so the replacement keeps the
+/// helper, its window and the change. The worker's half is
+/// `saves::tests::an_unrelated_edit_keeps_a_held_save_and_its_edit`, the
+/// session's `a_live_plugin_edit_survives_only_updates_that_keep_its_recorded_state`.
 #[test]
-#[ignore = "audit DOC-A2: an unrelated edit replaces a helper whose unrecorded change is held"]
 fn audit_doc_a2_an_unrelated_edit_keeps_the_held_plugin_change() {
     let (listener, socket, mut control, mut audio, device, frames, project, route) =
         audit_session("audit-a2");
@@ -416,7 +416,9 @@ fn audit_doc_a2_an_unrelated_edit_keeps_the_held_plugin_change() {
         std::thread::sleep(Duration::from_millis(5));
     };
     let (edited, _) = project.add_track("unrelated edit");
-    control.set_routes(&host_bin(), std::slice::from_ref(&route));
+    let mut live = route.clone();
+    live.state = control.device_applied_state(device.raw()).unwrap();
+    control.set_routes(&host_bin(), std::slice::from_ref(&live));
     control.replace(&edited).unwrap();
     let adopted = Instant::now();
     loop {

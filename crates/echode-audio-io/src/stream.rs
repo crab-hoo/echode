@@ -347,10 +347,18 @@ impl OutputStream {
         data
     }
 
-    pub fn replace(&mut self, project: &Project) -> Result<(), String> {
+    /// `live` names devices whose helpers hold a change the document has not
+    /// recorded yet. Their routes carry the bytes those helpers already have,
+    /// so the replacement keeps them instead of restoring older bytes (ADR 0229).
+    pub fn replace(&mut self, project: &Project, live: &[u128]) -> Result<(), String> {
         if let Some(host) = echode_plugin_host::host_binary() {
-            self.control
-                .set_routes(&host, &plugin_routes(project, self.package.as_deref())?);
+            let held = |device: u128| {
+                live.contains(&device)
+                    .then(|| self.control.device_applied_state(device).ok())
+                    .flatten()
+            };
+            let routes = plugin_routes(project, self.package.as_deref(), held)?;
+            self.control.set_routes(&host, &routes);
         }
         self.control
             .replace(project)
@@ -444,6 +452,7 @@ impl OutputStream {
         &mut self,
         project: &Project,
         devices: &[u128],
+        live: &[u128],
     ) -> Result<(), String> {
         let package = self.package.clone();
         let recorded = |device: u128| -> Result<Option<Vec<u8>>, String> {
@@ -463,7 +472,7 @@ impl OutputStream {
         };
         let replace = self.control.restore_recorded_states(devices, recorded);
         if self.control.preparing_graph() || replace {
-            self.replace(project)
+            self.replace(project, live)
         } else {
             Ok(())
         }
@@ -560,9 +569,12 @@ impl Drop for OutputStream {
 fn plugin_routes(
     project: &Project,
     package: Option<&std::path::Path>,
+    live: impl Fn(u128) -> Option<Option<Vec<u8>>>,
 ) -> Result<Vec<PluginRoute>, String> {
     match package {
-        Some(package) => routes_with_saved_state(project, package),
+        Some(package) => {
+            routes_with_states(project, package, &installed_plugin_routes(project), live)
+        }
         None => Ok(installed_plugin_routes(project)),
     }
 }
@@ -612,7 +624,20 @@ pub fn routes_with_saved_state(
     project: &Project,
     package: &std::path::Path,
 ) -> Result<Vec<PluginRoute>, String> {
-    let installed = installed_plugin_routes(project);
+    routes_with_states(project, package, &installed_plugin_routes(project), |_| {
+        None
+    })
+}
+
+/// [`routes_with_saved_state`] over `installed`, except that a device `live`
+/// answers for takes the bytes its running helper holds (or none) instead of
+/// its recorded object.
+fn routes_with_states(
+    project: &Project,
+    package: &std::path::Path,
+    installed: &[PluginRoute],
+    live: impl Fn(u128) -> Option<Option<Vec<u8>>>,
+) -> Result<Vec<PluginRoute>, String> {
     let mut routes = Vec::new();
     for track in project.tracks() {
         for device in &track.devices {
@@ -626,7 +651,9 @@ pub fn routes_with_saved_state(
                 continue;
             };
             let mut route = found.clone();
-            if let Some(hash) = &device.state {
+            if let Some(held) = live(device.id.raw()) {
+                route.state = held;
+            } else if let Some(hash) = &device.state {
                 route.state = Some(
                     echode_history::read_object(package, hash)
                         .map_err(|error| error.to_string())?,
@@ -724,7 +751,7 @@ fn open_playback(
 ) -> Result<(PlaybackControl, PlaybackAudio), String> {
     let host = echode_plugin_host::host_binary();
     let routes = match host {
-        Some(_) => plugin_routes(project, package)?,
+        Some(_) => plugin_routes(project, package, |_| None)?,
         None => Vec::new(),
     };
     let mut options = PlaybackOptions::default().at(sample);

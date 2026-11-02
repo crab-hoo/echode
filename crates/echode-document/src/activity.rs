@@ -134,22 +134,33 @@ impl ActivityHub {
     }
 }
 
-/// Keeps one entry per device that says events were lost.
+/// Keeps one entry per device that says events were lost. Whether a window
+/// was open and whether the plugin marked itself dirty survive, so the
+/// reader still records a change made in the window (ADR 0132).
 fn collapse(state: &mut HubState) {
     let mut kept: Vec<Entry> = Vec::new();
     for entry in state.entries.drain(..) {
-        let closed = entry.activity.closed;
+        let PluginActivity {
+            closed,
+            dirty,
+            window_open,
+            window_state,
+            ..
+        } = entry.activity;
         match kept.iter_mut().find(|known| known.device == entry.device) {
             Some(known) => {
                 known.seq = entry.seq;
                 known.activity.closed |= closed;
-                known.activity.window_state =
-                    entry.activity.window_state.or(known.activity.window_state);
+                known.activity.dirty |= dirty;
+                known.activity.window_open |= window_open;
+                known.activity.window_state = window_state.or(known.activity.window_state);
             }
             None => {
                 let mut activity = PluginActivity {
                     closed,
-                    window_state: entry.activity.window_state,
+                    dirty,
+                    window_open,
+                    window_state,
                     ..PluginActivity::default()
                 };
                 activity.relay.lost = true;

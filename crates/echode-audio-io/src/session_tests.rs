@@ -721,3 +721,26 @@ fn prepare_without_a_running_plugin_opens_once_and_a_later_play_reuses_it() {
     assert!(session.state().running);
     assert_eq!(output.prepared(), 1);
 }
+
+/// DOC-A2 (ADR 0229): an unrelated edit keeps a helper's unrecorded change;
+/// Undo of that device, its removal or taking it offline loads the recorded bytes.
+#[test]
+fn a_live_plugin_edit_survives_only_updates_that_keep_its_recorded_state() {
+    let (project, track) = Project::new().add_track("fx");
+    let device = echode_model::Id::from_raw(0x2A);
+    let project = project
+        .add_clap_device(track, device, "dev.echode.test-params")
+        .unwrap();
+    let mut session = Session::new(Arc::new(project.clone()));
+    session.keep_live_plugin_edits(vec![device.raw(), 0x2B]);
+    let (unrelated, _) = project.add_track("unrelated edit");
+    assert_eq!(session.live_edits_kept_by(&unrelated), [device.raw()]);
+    let undone = project
+        .set_device_state(device, Some("a".repeat(64)))
+        .unwrap();
+    let offline = project.set_device_offline(device, true).unwrap();
+    let removed = project.remove_device(device).unwrap();
+    for next in [undone, offline, removed] {
+        assert!(session.live_edits_kept_by(&next).is_empty());
+    }
+}

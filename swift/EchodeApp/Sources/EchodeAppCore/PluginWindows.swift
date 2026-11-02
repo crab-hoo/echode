@@ -111,6 +111,12 @@ extension ProjectController {
                 case .value: if !open.contains(event.id) { plain = true }
                 }
             }
+            // No end is coming for a gesture whose events were lost or whose
+            // window closed. The change is finished and recorded now (DOC-A1).
+            if !open.isEmpty && (entry.lost || entry.closed || entry.windowState == false) {
+                open.removeAll()
+                ended = true
+            }
             session.pluginGestures[device] = open.isEmpty ? nil : open
             // A drag in the device view records this device itself when it ends.
             guard session.parameterGesture?.device != device else { continue }
@@ -138,6 +144,20 @@ extension ProjectController {
             await task.value
             if session.pluginRecordTask == task { session.pluginRecordTask = nil }
         }
+    }
+
+    /// Records at once every plugin-made edit still waiting for its quiet
+    /// period. Undo and Redo then act on that edit instead of discarding
+    /// it (ADR 0229).
+    func recordWaitingPluginEdits(in session: DocumentSession) async {
+        let waiting = session.pluginQuiet
+        session.pluginQuiet = [:]
+        for (device, quiet) in waiting {
+            quiet.cancel()
+            guard session.pluginGestures[device] == nil, session.parameterGesture?.device != device else { continue }
+            recordPluginEdit(device, in: session)
+        }
+        await session.pluginRecordTask?.value
     }
 
     private func waitForQuiet(_ device: UUID, in session: DocumentSession) {

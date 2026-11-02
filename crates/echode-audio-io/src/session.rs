@@ -133,6 +133,8 @@ pub struct Session {
     resume_held: bool,
     /// Follows this session's output choice. Its requests do not come here.
     audition: Option<crate::Audition>,
+    /// Devices whose helpers hold a change the document has not recorded yet.
+    live_plugin_edits: Vec<u128>,
 }
 
 impl Session {
@@ -165,6 +167,7 @@ impl Session {
             engine_held: false,
             resume_held: false,
             audition: None,
+            live_plugin_edits: Vec::new(),
         }
     }
 
@@ -397,10 +400,40 @@ impl Session {
         Ok(())
     }
 
+    /// Names the devices whose helpers hold a change the document has not
+    /// recorded yet (ADR 0229). A later update that leaves such a device's
+    /// recorded state unchanged keeps its helper and that change. One that
+    /// changes it, such as Undo of that device, still loads the recorded bytes.
+    pub fn keep_live_plugin_edits(&mut self, devices: Vec<u128>) {
+        self.live_plugin_edits = devices;
+    }
+
+    /// The live edits `next` leaves in place: each device is still there
+    /// with the same plugin and recorded state.
+    fn live_edits_kept_by(&self, next: &Project) -> Vec<u128> {
+        let recorded = |project: &Project, device: u128| {
+            project
+                .tracks()
+                .iter()
+                .flat_map(|track| &track.devices)
+                .find(|item| item.id.raw() == device)
+                .map(|item| (item.plugin.clone(), item.state.clone(), item.offline))
+        };
+        self.live_plugin_edits
+            .iter()
+            .copied()
+            .filter(|&device| {
+                let before = recorded(&self.project, device);
+                before.is_some() && before == recorded(next, device)
+            })
+            .collect()
+    }
+
     pub fn update(&mut self, project: Arc<Project>) {
         if Arc::ptr_eq(&self.project, &project) {
             return;
         }
+        let live = self.live_edits_kept_by(&project);
         let diff = self.project.diff(&project);
         if diff.is_empty() || Self::plugin_state_only(&diff) {
             // A hash the helper saved is already sounding. Undo or Redo of a
@@ -419,7 +452,7 @@ impl Session {
                 .collect();
             let synced = match &mut self.stream {
                 Some(stream) if !devices.is_empty() => {
-                    stream.sync_plugin_states(&project, &devices)
+                    stream.sync_plugin_states(&project, &devices, &live)
                 }
                 _ => Ok(()),
             };
@@ -443,7 +476,7 @@ impl Session {
         let running = self.playing && self.cancellation.is_current(self.play_revision);
         let mut replaced = if let Some(stream) = &mut self.stream {
             stream.load_media_in_background(!running);
-            stream.replace(&self.project).and_then(|_| {
+            stream.replace(&self.project, &live).and_then(|_| {
                 if changed_tempo {
                     stream.locate(&self.project, tick)
                 } else {

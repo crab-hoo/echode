@@ -31,6 +31,7 @@ actor FakeParameterPlugin {
     /// False acts like a plugin without `text_to_value`.
     private let converts: Bool
     private(set) var parsed: [String] = []
+    private(set) var commits = 0
 
     init(extra: Int = 0, converts: Bool = true) { self.extra = extra; self.converts = converts }
 
@@ -104,6 +105,7 @@ actor FakeParameterPlugin {
             openWindows.remove(device)
             return DeviceResult(report: DeviceReport(closed: true), snapshot: try await document.snapshot())
         case .commit(let device):
+            commits += 1
             let hash = Self.hash(gain: gain, mode: mode)
             guard hash != recorded else {
                 return DeviceResult(report: DeviceReport(changed: false), snapshot: try await document.snapshot())
@@ -247,6 +249,31 @@ struct DeviceParameterTests {
         #expect(column.list.isHidden && !column.message.isHidden && !column.search.isEnabled)
         await controller.close()
         #expect(controller.parameterStates.isEmpty)
+    }
+
+    /// DOC-A1: a drag that came back to where it started still commits, so
+    /// the plugin's own saves stop waiting for an edit that has ended. Equal
+    /// bytes add no step. A press without a move sends nothing.
+    @Test func parameterDragBackToStartStillCommits() async throws {
+        let plugin = FakeParameterPlugin()
+        let (controller, document, track, url) = try await project("parameter-back", plugin: plugin)
+        defer { removeTestFile(url) }
+        let device = try #require(controller.deviceRows(on: track).first)
+        await controller.showDevices(on: track).value
+        let before = controller.undoCount
+        let commits = await plugin.commits
+        #expect(controller.beginParameter(1, device: device.id, documentID: document))
+        await controller.finishParameter(commit: true, documentID: document)
+        #expect(await plugin.commits == commits, "a press without a move has nothing to record")
+        for commit in [true, false] {
+            #expect(controller.beginParameter(1, device: device.id, documentID: document))
+            controller.changeParameter(1.5, documentID: document)
+            controller.changeParameter(1, documentID: document)
+            await controller.finishParameter(commit: commit, documentID: document)
+            #expect(await plugin.sentGains.last == 1)
+        }
+        #expect(await plugin.commits == commits + 2, "each drag that moved ends its edit")
+        #expect(controller.undoCount == before)
     }
 
     private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView, clicks: Int = 1) throws -> NSEvent {

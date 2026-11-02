@@ -429,6 +429,7 @@ public final class ProjectController {
         let session = self.session
         if session.faderPreview != nil { await finishFader(commit: false, in: session) }
         if session.parameterGesture != nil { await finishParameter(commit: true, in: session) }
+        await recordWaitingPluginEdits(in: session)
         let changed = await edits.run {
             guard self.session === session, session.undoCount > 0, let document = session.document else { return false }
             session.historyBusy = true
@@ -449,6 +450,7 @@ public final class ProjectController {
         let session = self.session
         if session.faderPreview != nil { await finishFader(commit: false, in: session) }
         if session.parameterGesture != nil { await finishParameter(commit: true, in: session) }
+        await recordWaitingPluginEdits(in: session)
         let changed = await edits.run {
             guard self.session === session, session.redoCount > 0, let document = session.document else { return false }
             session.historyBusy = true

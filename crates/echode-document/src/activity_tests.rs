@@ -142,3 +142,37 @@ fn an_unread_backlog_collapses_to_a_loss_per_device() {
     assert!(entries[..2].iter().all(|entry| entry["lost"] == true));
     assert_eq!(collapsed["next"], (BACKLOG + 1) as u64);
 }
+
+/// DOC-A1 path 2: a change made in an open window is still a window edit
+/// after the backlog collapses, so the reader records it once it is quiet.
+#[test]
+fn a_collapsed_backlog_keeps_an_open_window_and_a_dirty_state() {
+    let hub = ActivityHub::new();
+    hub.publish(
+        0xD0,
+        PluginActivity {
+            dirty: true,
+            window_open: true,
+            ..PluginActivity::default()
+        },
+    );
+    hub.publish(0xD1, gesture_end(0.5));
+    for _ in 0..BACKLOG {
+        hub.publish(0xD1, gesture_end(1.0));
+    }
+    let collapsed = page(&hub.read(0, Duration::ZERO));
+    let entries = collapsed["entries"].as_array().unwrap();
+    let window = entries
+        .iter()
+        .find(|entry| entry["device"] == uuid::Uuid::from_u128(0xD0).to_string())
+        .unwrap();
+    assert_eq!(window["lost"], true);
+    assert_eq!(window["window"], true, "the window edit was forgotten");
+    assert_eq!(window["dirty"], true);
+    let closed = entries
+        .iter()
+        .find(|entry| entry["device"] == uuid::Uuid::from_u128(0xD1).to_string())
+        .unwrap();
+    assert_eq!(closed["window"], false);
+    assert_eq!(closed["dirty"], false);
+}

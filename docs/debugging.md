@@ -763,6 +763,9 @@ make debug-report
   値が一覧へ届かないなら `plugin-window-relay` で処理スレッドのリングと制御スレッドの読み戻しを、
   Undo が増えない・増えすぎるなら `plugin-window-undo-ui` でジェスチャーの数え方と静止の待ちを確かめる。
   窓が閉じている時のプラグイン自身の変化は自動保存だけで、Undo に入らないのが正しい。
+  窓での変更が無関係な編集の後に戻る・窓が閉じるなら、活動の `window` と `dirty`、ワーカーの保留（`PluginSaves::held`）、
+  セッションへ渡した `keep_live_plugin_edits` の集合、置換の経路の状態がヘルパーの適用済みのバイトかを順に確かめる。
+  実ヘルパーでは `plugin_gui::audit_doc_a2_...`、ワーカーでは `saves::tests` を実行する（[ADR 0229](decisions/0229-plugin-window-live-edits.md)）。
   テスト用 CLAP の `ECHODE_TEST_FAULT=gui:<socket>` は、ヘルパーに記録用の窓を選ばせ、ソケットからプラグイン画面の操作を送る。
 - **起動直後から新規作成・開くが無効で「変更を保存中」のまま**:
   前回プロジェクトの自動復元と `ProjectController.busy` を確認する。
