@@ -444,6 +444,10 @@ make debug-report
   `chain_of` と `project_plugin_ids` / `routes_with_saved_state` の対象、計画の要求・適用版を確認する。
   `device rendering requires the isolated plugin host` が全オフライン時に出たら、ホストなし書出しの対象判定を確認する。
   再有効化後の未検出・状態オブジェクトの読込エラーとは区別する（[ADR 0125](decisions/0125-device-offline.md)）。
+- **プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`**:
+  書き出しは実時間の期限を使わず、1 ブロック 60 秒だけ待つ。この文が出たら、ヘルパーが応答しなくなったか、1 ブロックに 60 秒以上かかっている。
+  テスト用 CLAP の故障 `slow-process` で遅いプラグインを再現する。`missing plugin` は走査キャッシュの読み違いで、
+  キャッシュは置換で書くので切り詰められた内容は見えない。走査の出力が 64 MiB を超えたバンドルは `larger than` で走査を止める（[ADR 0231](decisions/0231-offline-export-and-scan-cache.md)）。
 - **パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない**:
   デバイスの列の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、
   `no output device is available` は停止中の出力起動、`parameter changes timed out` はヘルパーの処理スレッドの `flush` を疑う。

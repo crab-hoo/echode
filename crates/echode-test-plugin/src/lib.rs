@@ -217,6 +217,8 @@ enum Fault {
     TailLegacy,
     /// Sample-accurate stereo attack fixture for transparent note boundaries.
     Onset,
+    /// Sleeps in every `process`, slower than real time at the host's blocks.
+    SlowProcess,
     /// The first state save outlasts the host's 2 s state wait.
     SlowSave,
 }
@@ -237,6 +239,7 @@ fn fault_code(text: &str) -> u8 {
         "tail-legacy" => 11,
         "onset" => 12,
         "slow-save" => 14,
+        "slow-process" => 15,
         _ => 0,
     }
 }
@@ -257,6 +260,7 @@ fn fault_from_code(code: u8) -> Fault {
         11 => Fault::TailLegacy,
         12 => Fault::Onset,
         14 => Fault::SlowSave,
+        15 => Fault::SlowProcess,
         _ => Fault::None,
     }
 }
@@ -416,6 +420,8 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             Fault::Hang => loop {
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             },
+            // Several times one 256-frame block at 48 kHz (about 5.3 ms).
+            Fault::SlowProcess => std::thread::sleep(std::time::Duration::from_millis(20)),
             Fault::Callback => self.host.request_callback(),
             Fault::Restart => self.host.request_restart(),
             Fault::Onset => {

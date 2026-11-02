@@ -1086,7 +1086,6 @@ fn newest_source(dir: &Path) -> std::io::Result<std::time::SystemTime> {
 /// CLI-A1: an offline export waits for the plugin instead of judging it by a
 /// real-time deadline. One frame leaves the helper about 18 microseconds today.
 #[test]
-#[ignore = "audit CLI-A1: a plugin export fails on the real-time deadline of a short block"]
 fn audit_cli_a1_a_one_frame_plugin_export_completes() {
     let _lock = PLUGIN_ENV.lock().unwrap();
     let directory = scratch();
@@ -1095,4 +1094,37 @@ fn audit_cli_a1_a_one_frame_plugin_export_completes() {
     render_to_wav(&directory, &wav, 48_000, Some(1)).unwrap();
     assert_eq!(std::fs::metadata(&wav).unwrap().len(), 44 + 8);
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// CLI-A1: an export is not real time. A plugin slower than real time still
+/// finishes, and its file matches the same export without the slowdown.
+#[test]
+fn a_plugin_slower_than_real_time_still_exports() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    std::fs::create_dir_all(&directory).unwrap();
+    let cache = directory.join("clap-scan.jsonl");
+    let _env = PluginEnv::set(&cache);
+    write_plugin_cache(&cache, &plugin_dylib());
+    let project = reference_project();
+    let track = project.tracks()[0].id;
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    write_package(&directory, &project).unwrap();
+    // Several blocks, so the slowdown adds up beyond one block's time.
+    let frames = PLUGIN_FRAMES * 8;
+    let render = |name: &str| {
+        let wav = directory.join(name);
+        render_to_wav(&directory, &wav, 48_000, Some(frames as u32))
+            .map(|()| wav_lefts(&wav, frames))
+    };
+    let quick = render("quick.wav").unwrap();
+    assert!(quick.iter().any(|sample| *sample != 0.0));
+    let slow = {
+        let _slow = FaultFile::set("dev.echode.test-gain", "slow-process");
+        render("slow.wav")
+    };
+    assert_eq!(slow.expect("a slow plugin still exports"), quick);
+    std::fs::remove_dir_all(directory).unwrap();
 }

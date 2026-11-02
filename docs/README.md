@@ -38,7 +38,8 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   証拠は [保存の耐久性の追跡](evidence/2026-11-02-durability-trace.md) に置く。
 - [2026-11-02 外部監査 2 件の精査](reviews/2026-11-02-external-audit-review.md): 製品・エージェント環境・検査時間の外部指摘の判定。
   プラグインの窓での変更の消失（DOC-A1・A2）と、保管物のない状態による読めない先端（HIS-A1）を再現した。
-  DOC-A1・A2 は [ADR 0229](decisions/0229-plugin-window-live-edits.md)、HIS-A1 は [ADR 0230](decisions/0230-save-durability.md) で修正した。ほかは未着手。
+  DOC-A1・A2 は [ADR 0229](decisions/0229-plugin-window-live-edits.md)、HIS-A1 は [ADR 0230](decisions/0230-save-durability.md)、
+  CLI-A1・PLG-A1 (b)(c) は [ADR 0231](decisions/0231-offline-export-and-scan-cache.md) で修正した。ほかは未着手。
 - [2026-11-02 監査対応の実行指示](reviews/2026-11-02-fix-instructions.md): 上の 2 監査の作業単位 W1〜W4、再現テスト、境界と完了条件。
 
 - [2026-10-30 構造の横断監査](reviews/2026-10-30-structure-audit.md): SPG-01〜11。

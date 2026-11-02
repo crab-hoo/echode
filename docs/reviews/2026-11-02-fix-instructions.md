@@ -72,6 +72,7 @@
 
 ## W3: 書き出しと走査のキャッシュ（CLI-A1、PLG-A1 (b)(c)）— P2
 
+- 状態: 2026-11-02 完了（[ADR 0231](../decisions/0231-offline-export-and-scan-cache.md)）。
 - CLI-A1: `crates/echode-cli/src/lib.rs` の `render_with_plugins`。オフラインの書き出しは期限なしで完了を待つ。
   ブロック長はテールを足した後に決める。再生のコールバックの期限は変えない。上の再現を通す。
 - PLG-A1 (b): `crates/echode-plugin-host/src/scan.rs` の `store_scan_cache` を一時ファイルと名前変更にし、内容が同じなら書かない。

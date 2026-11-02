@@ -15,6 +15,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use echode_api::serve;
 use echode_audio_io::{load_placed_clips, project_plugin_ids, routes_with_saved_state};
@@ -26,8 +27,14 @@ use echode_history::DocumentHost;
 use echode_model::Project;
 
 /// One product callback while exporting plugins. Scratch for the helper, not a
-/// limit on the export. 256 frames at 48 kHz is about 5.3 ms.
+/// limit on the export. 256 frames at 48 kHz is about 5.3 ms. The block does
+/// not depend on the export's length or tail; the last one is shorter.
 const PLUGIN_CALLBACK_FRAMES: usize = 256;
+
+/// How long an export waits for its helpers to finish one block. An export is
+/// not real time, so a plugin slower than real time still finishes (CLI-A1).
+/// This only ends an export whose helper stopped answering.
+const OFFLINE_BLOCK_WAIT: Duration = Duration::from_secs(60);
 
 /// Why a command stopped.
 #[derive(Debug)]
@@ -298,7 +305,7 @@ fn render_with_plugins(
     if frames == 0 {
         return WavFile::create(wav, sample_rate, 0)?.finish();
     }
-    let block = (frames as usize).min(PLUGIN_CALLBACK_FRAMES);
+    let block = PLUGIN_CALLBACK_FRAMES;
     let (mut control, mut audio) = playback(
         project,
         sample_rate,
@@ -330,7 +337,11 @@ fn render_with_plugins(
     let mut rendered = 0usize;
     while rendered < total {
         let count = (total - rendered).min(block);
-        audio.render(&mut left[..count], &mut right[..count]);
+        audio.render_until(
+            &mut left[..count],
+            &mut right[..count],
+            Instant::now() + OFFLINE_BLOCK_WAIT,
+        );
         if let Some(reason) = control.plugin_failure() {
             return Err(CliError::new(reason));
         }

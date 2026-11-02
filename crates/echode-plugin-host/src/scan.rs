@@ -158,6 +158,11 @@ pub fn scan_path(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
 
 const STDERR_CAP: usize = 64 * 1024;
 
+/// Bound on one bundle's scan output, against a helper that never stops
+/// writing (PLG-A1). One plugin's description is a few hundred bytes, so this
+/// is far above any real bundle and is not a limit on how many it holds.
+const STDOUT_CAP: usize = 64 * 1024 * 1024;
+
 fn stderr_text(bytes: &[u8], overflow: bool) -> String {
     let mut text = String::from_utf8_lossy(bytes).into_owned();
     if overflow {
@@ -186,11 +191,15 @@ fn set_nonblocking(fd: i32) -> Result<(), String> {
 }
 
 /// `Ok(true)` is end of file. Bytes past `cap` are read and discarded.
+/// Reads what `fd` has now. Past `cap`, bytes are dropped and `overflow` is
+/// set; with `stop_at_cap` the read also ends there, so a writer that never
+/// stops cannot keep this loop going.
 fn take_bytes(
     fd: i32,
     into: &mut Vec<u8>,
     cap: Option<usize>,
     overflow: &mut bool,
+    stop_at_cap: bool,
 ) -> Result<bool, String> {
     let mut buf = [0u8; 8192];
     loop {
@@ -217,6 +226,9 @@ fn take_bytes(
                 into.extend_from_slice(&chunk[..room.min(chunk.len())]);
             }
             None => into.extend_from_slice(chunk),
+        }
+        if *overflow && stop_at_cap {
+            return Ok(false);
         }
     }
 }
@@ -290,6 +302,7 @@ pub fn scan_with_budget(
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut stderr_overflow = false;
+    let mut stdout_overflow = false;
     while stdout_open || stderr_open {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -341,8 +354,22 @@ pub fn scan_with_budget(
         }
         let mut slot = 0;
         if stdout_open {
-            let mut unused = false;
-            match take_bytes(polls[slot].fd, &mut stdout, None, &mut unused) {
+            match take_bytes(
+                polls[slot].fd,
+                &mut stdout,
+                Some(STDOUT_CAP),
+                &mut stdout_overflow,
+                true,
+            ) {
+                Ok(_) if stdout_overflow => {
+                    drop(stdout_pipe);
+                    drop(stderr_pipe);
+                    stop_scan(&mut child);
+                    return Err(format!(
+                        "plugin scan output is larger than {STDOUT_CAP} bytes ({})",
+                        bundle.display()
+                    ));
+                }
                 Ok(true) => stdout_open = false,
                 Ok(false) => {}
                 Err(error) => {
@@ -360,6 +387,7 @@ pub fn scan_with_budget(
                 &mut stderr,
                 Some(STDERR_CAP),
                 &mut stderr_overflow,
+                false,
             ) {
                 Ok(true) => stderr_open = false,
                 Ok(false) => {}
@@ -518,7 +546,9 @@ pub struct ResolvedPlugin {
     pub instrument: bool,
 }
 
-/// Looks up `ids` in the shared cache. Missing ids are omitted. This does not scan.
+/// Looks up `ids` in the shared cache, then among the bundled plugins, whose
+/// own cache is refreshed first: a bundled plugin that changed since its last
+/// scan is scanned out of process. Missing ids are omitted.
 pub fn resolve_installed(ids: &[impl AsRef<str>]) -> Vec<ResolvedPlugin> {
     let mut resolved = resolve_cached(&shared_cache_path(), ids);
     if let Some(host) = host_binary() {
@@ -590,14 +620,39 @@ pub fn installed_clap_bundles(clap_path: Option<&str>) -> Vec<crate::BundleFound
         .collect()
 }
 
+/// Writes the scan cache, one JSON entry per line.
+///
+/// The new text replaces the file by a rename, so a reader in another thread
+/// or process sees the old list or the new one, never a truncated one. An
+/// unchanged list is not written (PLG-A1).
 pub fn store_scan_cache(path: &Path, entries: &[ScanCacheEntry]) -> std::io::Result<()> {
-    let mut file = File::create(path)?;
+    let mut text = String::new();
     for entry in entries {
         let line = serde_json::to_string(entry)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        writeln!(file, "{line}")?;
+        text.push_str(&line);
+        text.push('\n');
     }
-    Ok(())
+    if std::fs::read(path).is_ok_and(|current| current == text.as_bytes()) {
+        return Ok(());
+    }
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temporary = path.with_file_name(format!(
+        ".{name}.{}-{}.tmp",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let written = File::create(&temporary)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 fn stamp(time: SystemTime) -> (u64, u32) {
@@ -692,5 +747,92 @@ mod tests {
         assert_eq!(plugins[0].id, "p0");
         assert_eq!(plugins[127].id, "p127");
         std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    /// PLG-A1 (b): a reader never sees a cache cut short while another thread
+    /// rewrites it, and an unchanged list is not written again.
+    #[test]
+    fn a_rewritten_scan_cache_stays_whole_for_concurrent_readers() {
+        let directory =
+            std::env::temp_dir().join(format!("echode-scan-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("clap-scan.jsonl");
+        // Enough entries that a truncating write would be seen half done.
+        let entries: Vec<ScanCacheEntry> = (0..400)
+            .map(|index| ScanCacheEntry {
+                path: format!("/Library/Audio/Plug-Ins/CLAP/Plugin {index}.clap"),
+                bundle_version: "1.0".into(),
+                modified_secs: index,
+                modified_nanos: 0,
+                executable_size: 4096,
+                plugins: vec![ScannedPlugin {
+                    id: format!("dev.echode.plugin-{index}"),
+                    name: format!("Plugin {index}"),
+                    vendor: "Echode".into(),
+                    version: "1.0".into(),
+                    features: vec!["audio-effect".into()],
+                    url: String::new(),
+                }],
+            })
+            .collect();
+        store_scan_cache(&path, &entries).unwrap();
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        store_scan_cache(&path, &entries).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            written,
+            "an unchanged list was written again"
+        );
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writers: Vec<_> = (0..2)
+            .map(|writer| {
+                let (path, stop) = (path.clone(), std::sync::Arc::clone(&stop));
+                let mut entries = entries.clone();
+                std::thread::spawn(move || {
+                    let mut round = 0u64;
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        // Alternate the content so every round rewrites the file.
+                        entries[0].modified_nanos = (round * 2 + writer) as u32;
+                        store_scan_cache(&path, &entries).unwrap();
+                        round += 1;
+                    }
+                })
+            })
+            .collect();
+        for _ in 0..300 {
+            let read = load_scan_cache(&path).expect("a whole cache");
+            assert_eq!(read.len(), entries.len(), "a reader saw a truncated cache");
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let leftovers: Vec<_> = std::fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temporary files were left behind");
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// PLG-A1 (c): a helper that never stops writing ends the scan at the
+    /// output bound, long before the scan's deadline, instead of filling memory.
+    #[test]
+    fn endless_scan_output_stops_at_its_bound() {
+        let started = Instant::now();
+        let error = scan_with_budget(
+            Path::new("/usr/bin/yes"),
+            Path::new("Endless.clap"),
+            Duration::from_secs(60),
+        )
+        .unwrap_err();
+        assert!(error.contains("larger than"), "{error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(50),
+            "the scan ran to its deadline"
+        );
     }
 }
