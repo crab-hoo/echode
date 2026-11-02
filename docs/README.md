@@ -34,7 +34,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 
 - [2026-11-02 コード品質とエージェント環境の横断監査](reviews/2026-11-02-cross-cutting-audit.md): XCA-01〜22。
   保存の同期の順序、ソースと CI の継続性、エージェントごとの防護、資料の量。
-  XCA-01〜03 は [ADR 0230](decisions/0230-save-durability.md) で修正した。P1 の XCA-04〜05 は未着手。
+  XCA-01〜03 は [ADR 0230](decisions/0230-save-durability.md) で修正した。XCA-04 は 2026-11-02 にプッシュした。P1 の XCA-05 は未着手。
   証拠は [保存の耐久性の追跡](evidence/2026-11-02-durability-trace.md) に置く。
 - [2026-11-02 外部監査 2 件の精査](reviews/2026-11-02-external-audit-review.md): 製品・エージェント環境・検査時間の外部指摘の判定。
   プラグインの窓での変更の消失（DOC-A1・A2）と、保管物のない状態による読めない先端（HIS-A1）を再現した。
