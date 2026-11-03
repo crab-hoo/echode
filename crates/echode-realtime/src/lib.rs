@@ -2,7 +2,7 @@
 //!
 //! Nothing here knows the document model. The control thread builds the plan
 //! and the cursor buffers. Filling a block only advances indexes and rewrites
-//! marks in those buffers.
+//! the live set in those buffers.
 
 mod event;
 pub mod plugin_capacity;
@@ -11,6 +11,22 @@ pub use event::{
     ChokeEvent, Event, ExpressionEvent, ExpressionKind, NoteEvent, ParamEvent, Target, Transport,
     event_cmp, sort_events,
 };
+
+// Count inspected note payloads only in unit tests; release has no counter.
+#[cfg(test)]
+std::thread_local! {
+    static NOTE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[inline(always)]
+fn visit_note() {
+    #[cfg(test)]
+    NOTE_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
+#[cfg(test)]
+#[path = "cursor_tests.rs"]
+mod cursor_tests;
 
 /// One tempo segment. `start_flick` is the rounded flick at `start_tick`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,25 +206,38 @@ impl Plan {
 
 impl Plan {
     pub fn cursor(&self) -> Cursor {
+        let mut track_indices: Vec<_> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| (track.track, index))
+            .collect();
+        track_indices.sort_unstable_by_key(|entry| entry.0);
         Cursor {
             tracks: self
                 .tracks
                 .iter()
                 .map(|track| {
                     let count = track.notes.len();
+                    let mut by_id: Vec<_> = (0..count as u32).collect();
+                    by_id.sort_unstable_by_key(|index| {
+                        let note = &track.notes[*index as usize];
+                        (note.note, note.on)
+                    });
                     TrackCursor {
                         on_index: 0,
                         off_index: 0,
                         sounding: vec![0; count],
                         sounding_len: 0,
                         live_key: vec![0; count],
-                        mark: vec![0; count],
-                        epoch: 0,
+                        sounding_slots: vec![usize::MAX; count],
+                        by_id,
                         ends: EndIndex::new(&track.notes),
                     }
                 })
                 .collect(),
             position: None,
+            track_indices,
         }
     }
 }
@@ -232,6 +261,7 @@ pub enum PlayError {
 #[derive(Clone, Debug)]
 pub struct Cursor {
     tracks: Vec<TrackCursor>,
+    track_indices: Vec<(u128, usize)>,
     position: Option<i64>,
 }
 
@@ -244,8 +274,10 @@ struct TrackCursor {
     /// Key sent with the note-on, indexed like `notes`. A later plan may change
     /// pitch; the note-off still uses this key.
     live_key: Vec<u8>,
-    mark: Vec<u32>,
-    epoch: u32,
+    /// Reverse index into the dense live set; a stopped note has no slot.
+    sounding_slots: Vec<usize>,
+    /// Note model ID then onset. Repeated placements may share a model ID.
+    by_id: Vec<u32>,
     ends: EndIndex,
 }
 
@@ -272,6 +304,13 @@ impl EndIndex {
 }
 
 impl Cursor {
+    fn track_slot(&self, id: u128) -> Option<usize> {
+        self.track_indices
+            .binary_search_by_key(&id, |entry| entry.0)
+            .ok()
+            .map(|index| self.track_indices[index].1)
+    }
+
     /// Chases notes already covering `sample` into the sounding set.
     ///
     /// Does not allocate and does not emit note-ons. The cursor buffers were
@@ -289,6 +328,7 @@ impl Cursor {
         let mut count = 0;
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
             for index in cursor.sounding.iter().take(cursor.sounding_len) {
+                visit_note();
                 let Some(note) = track.notes.get(*index as usize) else {
                     continue;
                 };
@@ -318,6 +358,7 @@ impl Cursor {
     pub fn keep_live_keys(&mut self, plan: &Plan, previous: &Cursor, previous_plan: &Plan) {
         for (cursor, track) in self.tracks.iter_mut().zip(&plan.tracks) {
             for slot in 0..cursor.sounding_len {
+                visit_note();
                 let index = cursor.sounding[slot] as usize;
                 let Some(note) = track.notes.get(index) else {
                     continue;
@@ -334,10 +375,13 @@ impl Cursor {
     /// Note-offs for notes this cursor is sounding that `next` does not cover
     /// at `sample`. A note that still covers that sample stays, including when
     /// only its pitch changed. Offs are written at `block_offset`.
+    /// `next_cursor` must have been built from `next`; its immutable indexes
+    /// are ready even before that cursor is positioned.
     pub fn release_replaced(
         &self,
         plan: &Plan,
         next: &Plan,
+        next_cursor: &Cursor,
         sample: i64,
         block_offset: u32,
         out: &mut [Event],
@@ -345,16 +389,16 @@ impl Cursor {
         let mut count = 0;
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
             for slot in 0..cursor.sounding_len {
+                visit_note();
                 let index = cursor.sounding[slot] as usize;
-                // A note-off already left this cursor. The slot stays until the
-                // next place, and sending the off again restarts the release.
-                if !cursor.sounding(index) {
-                    continue;
-                }
                 let Some(note) = track.notes.get(index) else {
                     continue;
                 };
-                if covers(next, track.track, note.note, sample) {
+                if next_cursor.track_slot(track.track).is_some_and(|slot| {
+                    next_cursor.tracks[slot]
+                        .covering(&next.tracks[slot], note.note, sample)
+                        .is_some()
+                }) {
                     continue;
                 }
                 let key = cursor.live_key.get(index).copied().unwrap_or(note.pitch);
@@ -390,8 +434,8 @@ impl Cursor {
                 .checked_add(i64::from(span.frames))
                 .ok_or(PlayError::Time)?;
             let continued = self.position == Some(span.start);
-            if let Some(release) = span.release_at {
-                self.release_covering(plan, span, release, out, &mut count)?;
+            if span.release_at.is_some() {
+                self.release_all_into(plan, span.block_offset, out, &mut count)?;
                 self.place(plan, span.start, false);
             } else if !continued {
                 self.place(plan, span.start, true);
@@ -412,29 +456,36 @@ impl Cursor {
         self.position = Some(sample);
     }
 
-    fn release_covering(
-        &mut self,
+    /// Stops only live voices, without searching the score or testing a sentinel
+    /// sample. The caller repositions or retires this cursor after the release.
+    pub fn release_all(
+        &self,
         plan: &Plan,
-        span: &Span,
-        release: i64,
+        block_offset: u32,
+        out: &mut [Event],
+    ) -> Result<usize, PlayError> {
+        let mut count = 0;
+        self.release_all_into(plan, block_offset, out, &mut count)?;
+        Ok(count)
+    }
+
+    fn release_all_into(
+        &self,
+        plan: &Plan,
+        block_offset: u32,
         out: &mut [Event],
         count: &mut usize,
     ) -> Result<(), PlayError> {
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
-            let end = track.notes.partition_point(|note| note.on < release);
-            for (index, note) in track.notes[..end].iter().enumerate() {
-                if note.off >= release {
-                    let key = if cursor.sounding(index) {
-                        cursor.live_key.get(index).copied().unwrap_or(note.pitch)
-                    } else {
-                        note.pitch
-                    };
-                    push_event(
-                        out,
-                        count,
-                        Event::note_off(span.block_offset, track.track_key, note.note_id, key),
-                    )?;
-                }
+            for &index in &cursor.sounding[..cursor.sounding_len] {
+                visit_note();
+                let note = &track.notes[index as usize];
+                let key = cursor.live_key[index as usize];
+                push_event(
+                    out,
+                    count,
+                    Event::note_off(block_offset, track.track_key, note.note_id, key),
+                )?;
             }
         }
         Ok(())
@@ -456,16 +507,26 @@ impl Cursor {
 }
 
 impl TrackCursor {
+    fn covering(&self, track: &TrackPlan, id: u128, sample: i64) -> Option<usize> {
+        let end = self.by_id.partition_point(|index| {
+            let note = &track.notes[*index as usize];
+            (note.note, note.on) < (id, sample)
+        });
+        let index = *self.by_id.get(end.checked_sub(1)?)? as usize;
+        visit_note();
+        let note = track.notes.get(index)?;
+        (note.note == id && note.on < sample && note.off >= sample).then_some(index)
+    }
+
     fn place(&mut self, track: &TrackPlan, sample: i64, chase: bool) {
         self.on_index = track.notes.partition_point(|note| note.on < sample);
         self.off_index = track
             .by_off
             .partition_point(|index| track.notes[*index as usize].off < sample);
-        self.sounding_len = 0;
-        self.epoch = self.epoch.wrapping_add(1);
-        if self.epoch == 0 {
-            self.mark.fill(0);
-            self.epoch = 1;
+        // Clear only the previous live set. No generation wrap can scan the score.
+        while self.sounding_len != 0 {
+            let index = self.sounding[self.sounding_len - 1] as usize;
+            self.clear(index);
         }
         if !chase {
             return;
@@ -478,6 +539,7 @@ impl TrackCursor {
             return;
         }
         if end - start == 1 {
+            visit_note();
             if let Some(note) = track.notes.get(start) {
                 self.hold(start, note.pitch);
             }
@@ -489,25 +551,31 @@ impl TrackCursor {
     }
 
     fn hold(&mut self, index: usize, key: u8) {
-        if self.sounding_len >= self.sounding.len() {
+        if self.sounding(index) || self.sounding_len >= self.sounding.len() {
             return;
         }
         self.sounding[self.sounding_len] = index as u32;
+        self.sounding_slots[index] = self.sounding_len;
         self.sounding_len += 1;
-        self.mark[index] = self.epoch;
-        if index < self.live_key.len() {
-            self.live_key[index] = key;
-        }
+        self.live_key[index] = key;
     }
 
     fn sounding(&self, index: usize) -> bool {
-        self.mark.get(index).copied() == Some(self.epoch)
+        self.sounding_slots
+            .get(index)
+            .is_some_and(|slot| *slot != usize::MAX)
     }
 
     fn clear(&mut self, index: usize) {
-        if index < self.mark.len() {
-            self.mark[index] = 0;
+        if !self.sounding(index) {
+            return;
         }
+        let slot = self.sounding_slots[index];
+        self.sounding_len -= 1;
+        let last = self.sounding[self.sounding_len];
+        self.sounding[slot] = last;
+        self.sounding_slots[last as usize] = slot;
+        self.sounding_slots[index] = usize::MAX;
     }
 
     fn emit(
@@ -580,37 +648,19 @@ impl TrackCursor {
     }
 }
 
-fn covers(plan: &Plan, track: u128, note: u128, sample: i64) -> bool {
-    let Some(track) = plan.tracks.iter().find(|slot| slot.track == track) else {
-        return false;
-    };
-    track
-        .notes
-        .iter()
-        .any(|span| span.note == note && span.on < sample && span.off >= sample)
-}
-
 fn offset(span: &Span, sample: i64) -> Result<u32, PlayError> {
     let local = u32::try_from(sample - span.start).map_err(|_| PlayError::Time)?;
     span.block_offset.checked_add(local).ok_or(PlayError::Time)
 }
 
 fn live_key_of(cursor: &Cursor, plan: &Plan, track: u128, note: u128) -> Option<u8> {
-    let (cursor, track) = cursor
-        .tracks
-        .iter()
-        .zip(&plan.tracks)
-        .find(|(_, slot)| slot.track == track)?;
-    let index = cursor.sounding[..cursor.sounding_len]
-        .iter()
-        .map(|slot| *slot as usize)
-        .find(|index| {
-            track
-                .notes
-                .get(*index)
-                .is_some_and(|span| span.note == note)
-        })?;
-    cursor.live_key.get(index).copied()
+    let slot = cursor.track_slot(track)?;
+    let track_cursor = cursor.tracks.get(slot)?;
+    let track = plan.tracks.get(slot)?;
+    let index = track_cursor.covering(track, note, cursor.position?)?;
+    track_cursor
+        .sounding(index)
+        .then(|| track_cursor.live_key[index])
 }
 
 fn unit_velocity(stored: u16) -> f64 {

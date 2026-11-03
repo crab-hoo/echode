@@ -54,6 +54,26 @@ fn project() -> Project {
     .unwrap()
 }
 
+#[test]
+fn stateless_schedule_reconstructs_the_departure_when_its_first_span_wraps() {
+    let project = project();
+    // This buffer covers this fixture's single held note, not a product limit.
+    let mut events = [quiet(); 4];
+    let spans = [PlayedSpan {
+        start_sample: 1_000,
+        frames: 64,
+        block_offset: 0,
+        release_at: Some(2_000),
+        loop_end: None,
+        wrap_from: None,
+    }];
+    let count = schedule(&project, project.tempo(), 48_000, &spans, &mut events).unwrap();
+    assert_eq!(count, 1);
+    assert!(events[0].is_note_off());
+    assert_eq!(events[0].time(), 0);
+    assert_eq!(events[0].key(), Some(60));
+}
+
 fn two_tracks() -> Project {
     let (skeleton, _) = Project::new().add_track("low");
     let (skeleton, _) = skeleton.add_track("high");

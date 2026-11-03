@@ -439,7 +439,6 @@ impl Prepared {
 
     /// Note-offs for every note this cursor has already sent to the plugin.
     fn queue_all_offs(&mut self) -> Result<(), PlaybackError> {
-        let sample = i64::MAX / 4;
         let start = self.released;
         let Prepared {
             events,
@@ -451,9 +450,7 @@ impl Prepared {
         let rest = events
             .get_mut(start..)
             .ok_or(PlaybackError::BufferTooSmall)?;
-        let count = cursor
-            .release_replaced(plan, plan, sample, 0, rest)
-            .map_err(play_error)?;
+        let count = cursor.release_all(plan, 0, rest).map_err(play_error)?;
         *released = start + count;
         Ok(())
     }
@@ -465,6 +462,7 @@ impl Prepared {
             events,
             plan,
             released,
+            cursor,
             ..
         } = self;
         let rest = events
@@ -472,7 +470,7 @@ impl Prepared {
             .ok_or(PlaybackError::BufferTooSmall)?;
         let count = previous
             .cursor
-            .release_replaced(&previous.plan, plan, sample, 0, rest)
+            .release_replaced(&previous.plan, plan, cursor, sample, 0, rest)
             .map_err(play_error)?;
         *released = start + count;
         Ok(())

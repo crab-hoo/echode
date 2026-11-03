@@ -207,6 +207,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   実機の出力待ちと聴感の計測とは区別する。
 - `spike-plugin-tracks`: 機器を開かず、1・16・64・256 トラックでコールバック自身の CPU 時間を release 計測する。
   各トラックにヘルパーを 1 つ置く場合と、拍ごとの和音を置く場合を比べ、`target/spike-plugin-tracks.json` へ記録する。
+  プラグイン付きの `plugin-loop` は折り返しだけ、`plugin-edits` は採用だけを抽出し、最大値も比べる（[ADR 0239](decisions/0239-live-note-cursor-work.md)）。
   トラックあたりの値が数とともに増えれば、2 乗の処理が残っている（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
 - `spike-scale`: 機器とプラグインなしで、ループの折り返しと再生中の編集のブロック、制御側の作り直し、モデルの編集と読込みの検証を release 計測する（`target/spike-scale.json`）。
   どの変更でも選ばれない明示の計測で、FCA-01〜05 の修正の前後に実行する（[実行指示](reviews/2026-11-03-fix-instructions.md)）。

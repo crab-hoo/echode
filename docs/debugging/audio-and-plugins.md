@@ -65,7 +65,15 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。
 トラックが多い時だけ弱いなら、`make spike-plugin-tracks` でコールバック自身の CPU 時間をトラック数ごとに比べる。
 トラックあたりの値が数とともに増えれば 2 乗の処理が戻っている。ほぼ一定なら、ヘルパーへの投入のような比例する費用である（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
-ノートの多いプロジェクトで、ループの折り返しや再生中の編集の直後だけ途切れるなら、`make spike-scale` でノート数を変えた時のそのブロックを比べる（FCA-01・02）。
+
+### ノートが多い時にループの折り返し・再生中の編集だけ途切れる
+
+`make spike-scale` でノート数を変えた折り返しと、100 / 3,500 ブロック後の採用を比べる（[ADR 0239](../decisions/0239-live-note-cursor-work.md)）。
+`wrap_p50_us` と `adoption_p50_us` は音声側、`replace_p50_ms` は制御側であり、混ぜない。
+時間に依らない訪問数は `echode-realtime` の `cursor_tests` で確認する。
+プラグインありは `make spike-plugin-tracks` の `plugin-loop` / `plugin-edits` の CPU と実時間の最大値を見る。
+この計測は機器なし・期限 1 秒なので、実機の締め切り内という証拠にはしない（UC-47）。
+独立した `schedule` の先頭だけが折り返す再現では、出発地点の追いかけを確認する。製品の継続カーソルと違い、前ブロックの集合を持たない。
 
 ## プラグイン
 

@@ -111,7 +111,19 @@ fn percentile(sorted: &[u64], fraction: f64) -> u64 {
     sorted[index]
 }
 
-fn measure(scenario: &'static str, tracks: usize, plugins: bool, chords: bool) -> Sample {
+#[derive(Clone, Copy)]
+enum Activity {
+    Steady,
+    Loop,
+    Edits,
+}
+fn measure(
+    scenario: &'static str,
+    tracks: usize,
+    plugins: bool,
+    chords: bool,
+    activity: Activity,
+) -> Sample {
     let project = project(tracks, plugins, chords);
     let routes = [gain_route()];
     let host = host_bin();
@@ -124,12 +136,29 @@ fn measure(scenario: &'static str, tracks: usize, plugins: bool, chords: bool) -
     let (mut control, mut audio) =
         echode_engine::playback(&project, RATE, FRAMES, options).unwrap();
     let descriptors = open_descriptors().saturating_sub(before);
+    if matches!(activity, Activity::Loop) {
+        // The final note covers the departure, while earlier notes have ended.
+        // These bounds exercise wraps only; they impose no product limit.
+        let end = 40 * 24_000 + 3_000;
+        let start = end - 32 * FRAMES as i64 - 37;
+        control.command(PlaybackCommand::Locate(start)).unwrap();
+        control
+            .command(PlaybackCommand::SetLoop { start, end })
+            .unwrap();
+    }
     control.command(PlaybackCommand::Play).unwrap();
     let mut left = vec![0.0; FRAMES];
     let mut right = vec![0.0; FRAMES];
     let mut wall = Vec::with_capacity(BLOCKS);
     let mut cpu = Vec::with_capacity(BLOCKS);
+    let mut last_sample = control.status().sample;
     for block in 0..WARMUP + BLOCKS {
+        let adopting = matches!(activity, Activity::Edits) && block % 128 == 0;
+        if adopting {
+            // Rebuild and adopt the same score: live voices must carry without
+            // retriggering. The control-thread work is outside the timed block.
+            control.replace(&project).unwrap();
+        }
         // A generous deadline keeps every helper's work in the figure. A
         // product callback would silence the late ones instead.
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -138,7 +167,14 @@ fn measure(scenario: &'static str, tracks: usize, plugins: bool, chords: bool) -
         audio.render_until(&mut left, &mut right, deadline);
         let spent_cpu = thread_cpu_ns() - started_cpu;
         let spent = started.elapsed();
-        if block >= WARMUP {
+        let now = control.status().sample;
+        let target_block = match activity {
+            Activity::Steady => true,
+            Activity::Loop => now < last_sample,
+            Activity::Edits => adopting,
+        };
+        last_sample = now;
+        if block >= WARMUP && target_block {
             wall.push(spent.as_nanos() as u64);
             cpu.push(spent_cpu);
         }
@@ -163,10 +199,18 @@ fn measure(scenario: &'static str, tracks: usize, plugins: bool, chords: bool) -
 fn measure_callback_cost_as_tracks_grow() {
     let mut samples = Vec::new();
     for tracks in [1, 16, 64, 256] {
-        samples.push(measure("plugins", tracks, true, false));
+        samples.push(measure("plugins", tracks, true, false, Activity::Steady));
     }
     for tracks in [1, 16, 64, 256] {
-        samples.push(measure("chords", tracks, false, true));
+        samples.push(measure("chords", tracks, false, true, Activity::Steady));
+    }
+    for (scenario, activity) in [
+        ("plugin-loop", Activity::Loop),
+        ("plugin-edits", Activity::Edits),
+    ] {
+        for tracks in [1, 16, 64, 256] {
+            samples.push(measure(scenario, tracks, true, true, activity));
+        }
     }
     let mut rows = Vec::new();
     println!(
@@ -192,6 +236,7 @@ fn measure_callback_cost_as_tracks_grow() {
         );
         rows.push(serde_json::json!({
             "scenario": sample.scenario,
+            "measured_blocks": sample.wall.len(),
             "tracks": sample.tracks,
             "wall_us": {"p50": us(percentile(wall, 0.5)), "p99": us(percentile(wall, 0.99)), "max": us(*wall.last().unwrap())},
             "cpu_us": {"p50": us(percentile(cpu, 0.5)), "p99": us(percentile(cpu, 0.99)), "max": us(*cpu.last().unwrap())},

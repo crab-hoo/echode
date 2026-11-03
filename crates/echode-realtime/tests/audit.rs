@@ -43,7 +43,6 @@ fn span(start: i64, frames: u32, block_offset: u32, release_at: Option<i64>) -> 
 /// visible part is a second note-off for a note the first wrap already stopped.
 /// The fix walks only the sounding notes; also bound the visits per block.
 #[test]
-#[ignore = "FCA-01: a loop wrap scans and releases every note that covers the loop end"]
 fn audit_fca01_a_loop_wrap_releases_only_sounding_notes() {
     let plan = held_across_the_loop();
     let mut cursor = plan.cursor();

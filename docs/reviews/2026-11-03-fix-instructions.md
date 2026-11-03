@@ -42,6 +42,8 @@ FCA-01 の再現は、折り返しで鳴っていないノートへ送るノー�
 
 ## W1: オーディオスレッドの楽譜に比例する処理（FCA-01・02）— P1、最初に行う
 
+2026-11-03: 実装は [ADR 0239](../decisions/0239-live-note-cursor-work.md) で対応した。実機の聴感は UC-47 に残す。
+
 - 場所: `crates/echode-realtime/src/lib.rs` の `TrackCursor`（`hold`・`clear`・`place`）、`Cursor` の `release_covering`・`release_replaced`・`keep_live_keys`、`covers`、`live_key_of`。
   `crates/echode-engine/src/playback.rs` の `Prepared::carry`・`queue_replaced`・`queue_all_offs`・`place`。
 - 契約:

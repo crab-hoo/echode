@@ -252,6 +252,7 @@ impl Audio {
             (Some(current), Ok(next)) => current.cursor.release_replaced(
                 &current.plan,
                 &next.plan,
+                &next.cursor,
                 sample,
                 block_offset,
                 edges,

@@ -29,6 +29,12 @@ pub fn schedule(
     let mut ids = PlaybackIds::new();
     let plan = crate::plan::build_plan(project, tempo, sample_rate, &mut ids)?;
     let mut cursor = plan.cursor();
+    // This stateless, off-thread helper has no preceding block's live set.
+    // If the first span wraps, reconstruct the notes at its departure. Product
+    // playback instead retains its cursor and releases only actual live voices.
+    if let Some(release) = spans.first().and_then(|span| span.release_at) {
+        cursor.catch_up(&plan, release);
+    }
     let silent = Event::note_off(0, 0, 0, 0);
     let mut order = vec![0usize; out.len()];
     let mut scratch = vec![silent; out.len()];

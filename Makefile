@@ -265,7 +265,7 @@ rtsan:
 	cargo build -q -p echode-plugin-host
 
 # Device-free release measurement of the callback's own CPU time as plugin
-# and note-heavy tracks grow. See docs/decisions/0236-callback-work-per-track.md.
+# and note-heavy tracks grow, including wraps and edits. See ADR 0236 / 0239.
 spike-plugin-tracks:
 	cargo build -q --release -p echode-plugin-host -p echode-test-plugin
 	cargo test -q --release -p echode-plugin-host --test track_scale -- --ignored --exact measure_callback_cost_as_tracks_grow --nocapture
