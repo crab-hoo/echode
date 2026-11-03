@@ -46,6 +46,13 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 逐次復号の `AudioFileReader::read` が拒否しても、一括の `decode_file` に同じ検証がある証拠にはならない。
 取込み時の拒否はパッケージへの書込み前、保存済み PCM の拒否は読込み時であり、同じエラーでも段階を区別する。
 
+### クリップゲインの変更で素材の準備に失敗する
+
+保存済み PCM 自体の有限性と、窓のピークにゲインを掛けた結果の桁あふれを区別する。
+`clips.rs` の `Planes::peak` は未スケールの左右の最大絶対値で、ゲイン変更時には PCM 全体を走査し直さない。
+`cached_window_peaks_reject_gain_overflow_without_rereading_pcm` は、極大値を含む窓の拒否、失敗後の準備の保持、極大値がトリム外の場合の受入を確認する。
+ゲインとモノの昇格を二重に掛けた疑いは `tests/block_size/clip_gain.rs` の焼込みとの比較で調べる（[ADR 0241](../decisions/0241-unscaled-placement-pcm.md)）。
+
 ### 波形が消える・キャッシュ破損後に表示が変わる
 
 `cache/peaks/<hash>` は派生データであり、段構成・バイト長・有限で順序の正しい列を検査する。

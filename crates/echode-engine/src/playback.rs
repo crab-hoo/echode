@@ -150,6 +150,7 @@ struct StoredClip {
     start_sample: i64,
     samples: Arc<[f32]>,
     right: Option<Arc<[f32]>>,
+    gain: f32,
     fade_in: u32,
     fade_out: u32,
 }
@@ -163,6 +164,9 @@ pub struct LoadedClip {
     /// The right plane of a stereo placement. `samples` is its left plane.
     /// `None` describes mono. Both stereo planes must have the same length.
     pub right: Option<Arc<[f32]>>,
+    /// Linear placement gain, applied before mono promotion and edge fades.
+    /// The sample planes are unscaled and may be shared by other placements.
+    pub gain: f32,
     pub fade_in: u32,
     pub fade_out: u32,
 }
@@ -265,9 +269,11 @@ impl Prepared {
         }
         let loaded = sources.clips;
         if loaded.iter().any(|clip| {
-            clip.right
-                .as_ref()
-                .is_some_and(|right| right.len() != clip.samples.len())
+            !echode_model::clip_gain_allowed(clip.gain)
+                || clip
+                    .right
+                    .as_ref()
+                    .is_some_and(|right| right.len() != clip.samples.len())
                 || !project
                     .tracks()
                     .iter()
@@ -297,24 +303,13 @@ impl Prepared {
                     start_sample: clip.start_sample,
                     samples: Arc::clone(&clip.samples),
                     right: clip.right.clone(),
+                    gain: clip.gain,
                     fade_in: clip.fade_in,
                     fade_out: clip.fade_out,
                 })
                 .collect();
             clips.sort_by_key(|clip| clip.start_sample);
             let clip_stereo = clips.iter().any(|clip| clip.right.is_some());
-            if clip_stereo {
-                for clip in &mut clips {
-                    if clip.right.is_none() {
-                        clip.samples = clip
-                            .samples
-                            .iter()
-                            .map(|sample| sample * std::f32::consts::FRAC_1_SQRT_2)
-                            .collect();
-                        clip.right = Some(Arc::clone(&clip.samples));
-                    }
-                }
-            }
             let demand = track_event_demand(track, loop_bounds, frames)?;
             event_count = event_count
                 .checked_add(demand.events)
@@ -1033,6 +1028,11 @@ fn add_stored_clips(
             {
                 continue;
             }
+            let promotion = if stereo && clip.right.is_none() {
+                std::f32::consts::FRAC_1_SQRT_2
+            } else {
+                1.0
+            };
             let mut view = [crate::voice::FadedClip {
                 start_sample: clip.start_sample,
                 samples: clip.samples.as_ref(),
@@ -1047,10 +1047,12 @@ fn add_stored_clips(
                 loop_end: None,
                 wrap_from: None,
             }];
-            crate::voice::render_faded_clips(&view, &played, output)?;
+            crate::voice::render_scaled_faded_clips(&view, &played, output, clip.gain, promotion)?;
             if stereo {
                 view[0].samples = clip.right.as_deref().unwrap_or(&clip.samples);
-                crate::voice::render_faded_clips(&view, &played, right)?;
+                crate::voice::render_scaled_faded_clips(
+                    &view, &played, right, clip.gain, promotion,
+                )?;
             }
         }
         let played = [PlayedSpan {

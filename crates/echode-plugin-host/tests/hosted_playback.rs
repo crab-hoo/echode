@@ -222,6 +222,7 @@ fn live_workgroup_survives_product_edits_and_helper_restart() {
             start_sample: 0,
             samples: vec![0.25; 4096].into(),
             right: None,
+            gain: 1.0,
             fade_in: 0,
             fade_out: 0,
         }])
@@ -1246,6 +1247,7 @@ fn constant_clips(track: u128, value: f32, frames: usize) -> echode_engine::Clip
             start_sample: 0,
             samples: Arc::clone(&samples),
             right: None,
+            gain: 1.0,
             fade_in: 0,
             fade_out: 0,
         }])
@@ -1350,6 +1352,7 @@ fn bypassed_runs_preserve_stereo_audio_between_active_effects_under_rtsan() {
                     start_sample: 0,
                     samples: vec![0.125; 256].into(),
                     right: Some(vec![-0.25; 256].into()),
+                    gain: 1.0,
                     fade_in: 0,
                     fade_out: 0,
                 }])
@@ -1444,6 +1447,7 @@ fn contract_stereo_planes_survive_effects_and_instrument_injection() {
                 start_sample: 0,
                 samples: Arc::from(vec![0.125; 256]),
                 right: Some(Arc::from(vec![-0.25; 256])),
+                gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
             }])
@@ -1510,6 +1514,7 @@ fn a_rejected_stereo_to_mono_mapping_preserves_the_sounding_helper() {
             start_sample: 0,
             samples: Arc::from(vec![0.125; 1024]),
             right: Some(Arc::from(vec![-0.125; 1024])),
+            gain: 1.0,
             fade_in: 0,
             fade_out: 0,
         }])
@@ -1553,6 +1558,7 @@ fn rejected_unbypass_preserves_the_stereo_dry_graph_under_rtsan() {
             start_sample: 0,
             samples: vec![0.125; 1024].into(),
             right: Some(vec![-0.25; 1024].into()),
+            gain: 1.0,
             fade_in: 0,
             fade_out: 0,
         }])

@@ -156,6 +156,7 @@ pub(super) fn stereo_clip(track: u128) -> echode_engine::ClipLoader {
             start_sample: 0,
             samples: Arc::clone(&left),
             right: Some(Arc::clone(&right)),
+            gain: 1.0,
             fade_in: 0,
             fade_out: 0,
         }])
@@ -397,6 +398,7 @@ fn recorded_parameter_state_is_independent_of_block_size_under_rtsan() {
                 start_sample: 0,
                 samples: Arc::clone(&left),
                 right: Some(Arc::clone(&right)),
+                gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
             }])

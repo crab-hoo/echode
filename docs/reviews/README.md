@@ -10,7 +10,8 @@
 
 - [2026-11-03 コード全体の監査](2026-11-03-full-code-audit.md): FCA-01〜20。実装の妥当性と規模をプロの水準で問い直した。
   ループの折り返しと再生中の編集がノート数に比例する FCA-01・02 は [ADR 0239](../decisions/0239-live-note-cursor-work.md) で対応した。
-  イベント容量の FCA-03 は [ADR 0240](../decisions/0240-block-local-event-capacity.md) で対応した。残りは未着手。
+  イベント容量の FCA-03 は [ADR 0240](../decisions/0240-block-local-event-capacity.md) で対応した。
+  配置の PCM の複製（FCA-10）は [ADR 0241](../decisions/0241-unscaled-placement-pcm.md) で対応した。残りは未着手。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
 - [2026-11-03 コード全体の監査の実行指示](2026-11-03-fix-instructions.md): 上の監査の作業単位 W1〜W5、再現 4 件と `make spike-scale`、境界と完了条件。
 - [2026-11-02 コード品質とエージェント環境の横断監査](2026-11-02-cross-cutting-audit.md): XCA-01〜22。

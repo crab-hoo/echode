@@ -5,6 +5,8 @@
 //! same material with several block lengths and compares the samples bit for bit.
 //! The block lengths and voice slots are this test's choice, not engine limits.
 
+#[path = "block_size/clip_gain.rs"]
+mod clip_gain;
 use echode_engine::{
     AudioClip, Event, PlayedSpan, SynthVoice, TrackFader, Transport, fade_loop_seam, mix_tracks,
     render_audio_clips, render_metronome, render_test_synth, schedule, seam_fade_frames,
@@ -69,6 +71,7 @@ fn offline_devices_keep_stereo_clips_independent_of_block_size_under_rtsan() {
                     start_sample: 0,
                     samples: Arc::clone(&source),
                     right: Some(Arc::clone(&right)),
+                    gain: 1.0,
                     fade_in: 0,
                     fade_out: 0,
                 }])
@@ -114,6 +117,7 @@ fn contract_loops_enter_from_before_and_bypass_from_the_end_under_rtsan() {
                         start_sample: 0,
                         samples: Arc::clone(&samples),
                         right: Some(Arc::clone(&samples)),
+                        gain: 1.0,
                         fade_in: 0,
                         fade_out: 0,
                     }])
@@ -314,6 +318,7 @@ fn contract_pre_fader_cached_track_bypasses_devices_under_rtsan() {
                     start_sample: 0,
                     samples: vec![0.5; 48_000].into(),
                     right: None,
+                    gain: 1.0,
                     fade_in: 0,
                     fade_out: 0,
                 }])
@@ -660,6 +665,7 @@ fn stereo_clip(track: Id, left: Vec<f32>, right: Vec<f32>) -> echode_engine::Loa
         start_sample: 0,
         samples: left.into(),
         right: Some(right.into()),
+        gain: 1.0,
         fade_in: 0,
         fade_out: 0,
     }
@@ -909,6 +915,7 @@ fn mono_and_stereo_placements_keep_their_bus_gains_on_the_same_track() {
         start_sample: 0,
         samples: Arc::from(vec![0.5; 8]),
         right: None,
+        gain: 1.0,
         fade_in: 0,
         fade_out: 0,
     };
@@ -1121,6 +1128,7 @@ fn a_stop_returning_to_the_start_replays_the_same_audio_for_every_block_size() {
                 start_sample: 0,
                 samples: Arc::clone(&samples),
                 right: None,
+                gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
             }])
@@ -1190,6 +1198,7 @@ fn an_initial_position_matches_a_queued_locate_for_every_block_size() {
                 start_sample: 0,
                 samples: vec![0.25; 48_000].into(),
                 right: None,
+                gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
             }])
@@ -1335,6 +1344,7 @@ fn product_audio_clips_match_across_block_sizes() {
                 start_sample: 0,
                 samples: Arc::clone(&samples),
                 right: None,
+                gain: 1.0,
                 fade_in: 8,
                 fade_out: 8,
             }])
@@ -1694,6 +1704,7 @@ fn stopped_callbacks_do_not_play_sources_or_advance_the_loop_under_rtsan() {
                 start_sample: 0,
                 samples: vec![0.25; 1024].into(),
                 right: Some(vec![-0.5; 1024].into()),
+                gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
             }])
@@ -1827,6 +1838,7 @@ fn live_stop_fades_the_continuing_waveform_independently_of_blocks() {
                     start_sample: 0,
                     samples: Arc::clone(&clip),
                     right: Some(Arc::clone(&clip)),
+                    gain: 1.0,
                     fade_in: 0,
                     fade_out: 0,
                 }])
@@ -1896,6 +1908,7 @@ fn live_stop_does_not_start_future_clips_or_metronome_beats() {
             start_sample: RATE as i64 / 2,
             samples: vec![1.0; 512].into(),
             right: None,
+            gain: 1.0,
             fade_in: 0,
             fade_out: 0,
         }])
@@ -1946,6 +1959,7 @@ fn live_stop_preserves_the_active_loop_seam_instead_of_restoring_full_volume() {
                         start_sample: 0,
                         samples: vec![0.25; end + fade].into(),
                         right: Some(vec![-0.5; end + fade].into()),
+                        gain: 1.0,
                         fade_in: 0,
                         fade_out: 0,
                     }])

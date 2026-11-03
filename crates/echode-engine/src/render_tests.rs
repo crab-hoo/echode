@@ -126,6 +126,7 @@ fn offline_clips_match_playback() {
         start_sample: 0,
         samples: Arc::clone(&samples),
         right: None,
+        gain: 1.0,
         fade_in: 8,
         fade_out: 8,
     }];
@@ -150,6 +151,7 @@ fn offline_clips_match_playback() {
             start_sample: 0,
             samples: Arc::clone(&samples),
             right: None,
+            gain: 1.0,
             fade_in: 8,
             fade_out: 8,
         }])

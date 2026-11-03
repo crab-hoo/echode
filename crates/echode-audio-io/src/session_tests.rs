@@ -310,6 +310,7 @@ fn audio_tracks_sound(session: &mut Session) {
                 start_sample: 0,
                 samples: vec![0.25; rate as usize * 4].into(),
                 right: None,
+                gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
             })
@@ -700,8 +701,9 @@ fn gated_media(session: &mut Session, gate: &MediaGate) {
                     .map(move |clip| echode_engine::LoadedClip {
                         track: track.id.raw(),
                         start_sample: 0,
-                        samples: vec![0.25 * clip.gain; rate as usize * 4].into(),
+                        samples: vec![0.25; rate as usize * 4].into(),
                         right: None,
+                        gain: clip.gain,
                         fade_in: 0,
                         fade_out: 0,
                     })

@@ -61,8 +61,10 @@ Phase 2 のクリップ FX も経路に含め、バイパス・オフライン�
   （[ADR 0095](../decisions/0095-product-audio-buses-and-continuity.md)）。
   ループ先頭も計画採用前に全体準備に含め、`media_loader` が最後に成功した PCM を保持する
   （[ADR 0108](../decisions/0108-phase1-loop-readiness.md)）。
-  同じハッシュ・メタデータ・デバイスレートの変換と、同じ内容位置・長さ・ゲインの結果を共有し、配置の位置・フェードだけの編集では読み直さない
-  （[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）
+  同じハッシュ・メタデータ・デバイスレートの変換と、同じ内容位置・長さの未スケールの窓を共有する。
+  配置ゲインとモノのステレオ昇格は、ブロックを読む時の係数とし、PCM を複製しない。
+  ゲイン変更時の桁あふれは、準備時に保持した窓のピークから判定する
+  （[ADR 0241](../decisions/0241-unscaled-placement-pcm.md)）。
 - **サンプルレート変換**: 既定は `rubato`（比率一定は FFT、可変は sinc）。
   `r8brain-free-src`、`soxr`、`zita-resampler`、`libsamplerate`、`AudioConverter` は測って選択肢に加える
   （[ADR 0014](../decisions/0014-existing-implementations-as-options.md)）

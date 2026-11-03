@@ -75,6 +75,18 @@ pub fn render_faded_clips(
     spans: &[PlayedSpan],
     output: &mut [f32],
 ) -> Result<(), PlaybackError> {
+    render_scaled_faded_clips(clips, spans, output, 1.0, 1.0)
+}
+
+/// Keep the old baking order: placement gain, mono promotion, then edge fade.
+/// Do not combine the two coefficients: that changes f32 rounding.
+pub(crate) fn render_scaled_faded_clips(
+    clips: &[FadedClip<'_>],
+    spans: &[PlayedSpan],
+    output: &mut [f32],
+    gain: f32,
+    promotion: f32,
+) -> Result<(), PlaybackError> {
     for span in spans {
         let end = span
             .start_sample
@@ -94,7 +106,7 @@ pub fn render_faded_clips(
                 if index >= output.len() {
                     return Err(PlaybackError::BufferTooSmall);
                 }
-                output[index] += faded_sample(clip, project);
+                output[index] += faded_sample(clip, project, gain, promotion);
                 project += 1;
             }
         }
@@ -118,7 +130,7 @@ fn faded_end(clip: &FadedClip<'_>) -> i64 {
         .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX))
 }
 
-fn faded_sample(clip: &FadedClip<'_>, project: i64) -> f32 {
+fn faded_sample(clip: &FadedClip<'_>, project: i64, gain: f32, promotion: f32) -> f32 {
     let Some(pos) = project.checked_sub(clip.start_sample) else {
         return 0.0;
     };
@@ -132,6 +144,8 @@ fn faded_sample(clip: &FadedClip<'_>, project: i64) -> f32 {
         return 0.0;
     };
     sample
+        * gain
+        * promotion
         * pair_gain(
             pos,
             clip.samples.len() as i64,

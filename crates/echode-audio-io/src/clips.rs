@@ -1,7 +1,7 @@
 //! Turn stored audio into device-rate clips on the control thread.
 //!
-//! The whole file is decoded and resampled here, then the placement's linear
-//! gain is baked into those samples. Fades still run when the block is mixed.
+//! The whole file is decoded and resampled here. Placements share unscaled
+//! samples; gain, mono promotion and fades run when the block is mixed.
 //! The callback only reads the slice that was stored on the plan. Offline
 //! render uses the same clips.
 //! The live loader retains one preparation across loop and transport changes,
@@ -45,6 +45,24 @@ struct PreparedMedia {
 pub(crate) struct Planes {
     pub(crate) left: Arc<[f32]>,
     pub(crate) right: Option<Arc<[f32]>>,
+    // Cached once so gain edits can reject overflow without scanning the PCM.
+    peak: f32,
+}
+
+impl Planes {
+    fn new(left: Arc<[f32]>, right: Option<Arc<[f32]>>) -> Result<Self, PlaybackError> {
+        let mut peak = 0.0f32;
+        for &sample in left
+            .iter()
+            .chain(right.iter().flat_map(|plane| plane.iter()))
+        {
+            if !sample.is_finite() {
+                return Err(PlaybackError::Media);
+            }
+            peak = peak.max(sample.abs());
+        }
+        Ok(Self { left, right, peak })
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -61,7 +79,6 @@ struct WindowKey {
     source: SourceKey,
     lead: i64,
     frames: usize,
-    gain: u32,
 }
 
 fn source_key(audio: &AudioRef, rate: u32) -> SourceKey {
@@ -196,7 +213,6 @@ fn prepare_media(
                 source: source_key.clone(),
                 lead,
                 frames: window,
-                gain: gain.to_bits(),
             };
             let planes = if let Some(planes) = windows.get(&window_key) {
                 planes.clone()
@@ -215,18 +231,25 @@ fn prepare_media(
                         }
                     }
                     let source = sources.get(&source_key).ok_or(PlaybackError::Media)?;
-                    Planes {
-                        left: placed_plane(&source.left, lead, window, gain)?,
-                        right: source
-                            .right
-                            .as_ref()
-                            .map(|plane| placed_plane(plane, lead, window, gain))
-                            .transpose()?,
+                    if lead == 0 && source.left.len() == window {
+                        source.clone()
+                    } else {
+                        Planes::new(
+                            placed_plane(&source.left, lead, window)?,
+                            source
+                                .right
+                                .as_ref()
+                                .map(|plane| placed_plane(plane, lead, window))
+                                .transpose()?,
+                        )?
                     }
                 };
                 windows.insert(window_key, planes.clone());
                 planes
             };
+            if !(planes.peak * gain).is_finite() {
+                return Err(PlaybackError::Media);
+            }
             if sources
                 .get(&source_key)
                 .is_some_and(|source| Arc::ptr_eq(&source.left, &planes.left))
@@ -238,6 +261,7 @@ fn prepare_media(
                 start_sample: start,
                 samples: planes.left,
                 right: planes.right,
+                gain,
                 fade_in: fade_frames(placement.fade_in, device_rate).ok_or(PlaybackError::Time)?,
                 fade_out: fade_frames(placement.fade_out, device_rate)
                     .ok_or(PlaybackError::Time)?,
@@ -292,19 +316,15 @@ pub(crate) fn device_planes(pcm: &DecodedPcm, rate: u32) -> Result<Planes, Playb
     } else {
         None
     };
-    Ok(Planes {
-        left: planes.pop().ok_or(PlaybackError::Media)?,
-        right,
-    })
+    Planes::new(planes.pop().ok_or(PlaybackError::Media)?, right)
 }
 
 fn placed_plane(
     source: &Arc<[f32]>,
     lead: i64,
     window: usize,
-    gain: f32,
 ) -> Result<Arc<[f32]>, PlaybackError> {
-    if lead == 0 && source.len() == window && gain == 1.0 {
+    if lead == 0 && source.len() == window {
         if source.iter().any(|sample| !sample.is_finite()) {
             return Err(PlaybackError::Media);
         }
@@ -312,7 +332,7 @@ fn placed_plane(
     }
     let samples = (0..window)
         .map(|index| {
-            let sample = placed_sample(source, lead, index)? * gain;
+            let sample = placed_sample(source, lead, index)?;
             if sample.is_finite() {
                 Ok(sample)
             } else {

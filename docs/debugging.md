@@ -67,6 +67,7 @@ make debug-report
   - ノートの端から再生すると、その音が鳴り続ける
   - 壊れた素材を読むと `attempt to multiply with overflow` / `capacity overflow` で文書が使えなくなる
   - 保存済み素材だけが `audio contains a non-finite sample` になる
+  - クリップゲインの変更で素材の準備に失敗する
   - 波形が消える・キャッシュ破損後に表示が変わる
   - S2 / S3 は通るのに製品だけ負荷に弱い
   - ノートが多い時にループの折り返し・再生中の編集だけ途切れる

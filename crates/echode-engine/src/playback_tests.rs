@@ -60,11 +60,68 @@ fn placed(track: u128, start: i64, value: f32, frames: usize) -> LoadedClip {
         start_sample: start,
         samples: Arc::from(vec![value; frames]),
         right: None,
+        gain: 1.0,
         fade_in: 0,
         fade_out: 0,
     }
 }
 
+#[test]
+fn prepared_audio_shares_unscaled_mono_planes_on_a_stereo_track() {
+    let (project, track) = Project::new().add_track("shared mono");
+    // These plane lengths exercise adjacent mono/stereo placements only.
+    let mut mono = placed(track.raw(), 0, 0.35, 257);
+    mono.gain = 0.37;
+    let mut stereo = placed(track.raw(), 257, 0.25, 257);
+    stereo.right = Some(Arc::from(vec![-0.5; 257]));
+    let clips = [mono, stereo];
+    let mut ids = PlaybackIds::default();
+    let mut meters = BTreeMap::new();
+    let prepared = Prepared::new(
+        &project,
+        48_000,
+        64,
+        &mut ids,
+        PreparedSources {
+            clips: &clips,
+            caches: &BTreeMap::new(),
+        },
+        None,
+        &mut meters,
+    )
+    .unwrap();
+    let stored = &prepared.tracks[0].clips[0];
+    assert!(prepared.tracks[0].clip_stereo);
+    assert!(
+        stored.right.is_none(),
+        "mono promotion allocated a stereo plane"
+    );
+    assert!(Arc::ptr_eq(&stored.samples, &clips[0].samples));
+    assert_eq!(stored.samples[0], 0.35);
+    assert_eq!(stored.gain, 0.37);
+}
+
+#[test]
+fn loaded_clips_reject_invalid_gains_before_publishing_a_plan() {
+    let (project, track) = Project::new().add_track("invalid gain");
+    for gain in [
+        f32::NAN,
+        f32::INFINITY,
+        -1.0,
+        echode_model::CLIP_GAIN_MAX * 2.0,
+    ] {
+        let (mut control, _) = playback(&project, 48_000, 64, PlaybackOptions::default()).unwrap();
+        control.set_clip_loader(Arc::new(move |_, _| {
+            let mut clip = placed(track.raw(), 0, 0.25, 257);
+            clip.gain = gain;
+            Ok(vec![clip])
+        }));
+        assert!(matches!(
+            control.replace(&project),
+            Err(PlaybackError::Media)
+        ));
+    }
+}
 #[test]
 fn stereo_clips_loop_and_fader_replacements_run_under_rtsan() {
     let (project, track) = Project::new().add_track("stereo");

@@ -8,6 +8,7 @@ fn fixture_clips(track: u128, rate: u32) -> Vec<echode_engine::LoadedClip> {
         start_sample: 0,
         samples: vec![0.25; rate as usize * 4].into(),
         right: None,
+        gain: 1.0,
         fade_in: 0,
         fade_out: 0,
     }]
@@ -45,6 +46,7 @@ fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_r
                     start_sample: 0,
                     samples: Arc::clone(&left),
                     right: Some(Arc::clone(&right)),
+                    gain: 1.0,
                     fade_in: 0,
                     fade_out: 0,
                 }])
@@ -197,6 +199,7 @@ fn contract_transport_discontinuities_declick_hal_output_under_rtsan() {
                         start_sample: 0,
                         samples: vec![0.25; 10_000].into(),
                         right: Some(vec![-0.5; 10_000].into()),
+                        gain: 1.0,
                         fade_in: 0,
                         fade_out: 0,
                     }])
@@ -308,6 +311,7 @@ fn contract_stop_preserves_waveform_while_fading_under_rtsan() {
                             start_sample: 0,
                             samples: Arc::clone(&pcm_left),
                             right: Some(Arc::clone(&pcm_right)),
+                            gain: 1.0,
                             fade_in: 0,
                             fade_out: 0,
                         }])
@@ -433,6 +437,7 @@ fn in_flight_stop_preserves_heard_audio_and_cancels_unheard_starts_under_rtsan()
                 start_sample: 0,
                 samples: vec![0.25; 4096].into(),
                 right: Some(vec![-0.5; 4096].into()),
+                gain: 1.0,
                 fade_in: 0,
                 fade_out: 0,
             }])

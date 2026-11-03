@@ -82,13 +82,71 @@ fn full_source_sharing_still_rejects_nonfinite_placement_samples() {
 fn placement_planes_check_nonfinite_results_in_shared_and_copied_paths() {
     // This buffer length only separates the whole-source and trimmed test paths.
     let source: Arc<[f32]> = Arc::from([0.25, 0.5, f32::NAN]);
-    assert!(placed_plane(&source, 0, source.len(), 1.0).is_err());
-    assert!(placed_plane(&source, 0, source.len(), 2.0).is_err());
-    let trimmed = placed_plane(&source, 0, 2, 1.0).unwrap();
+    assert!(placed_plane(&source, 0, source.len()).is_err());
+    let trimmed = placed_plane(&source, 0, 2).unwrap();
     assert_eq!(&*trimmed, &[0.25, 0.5]);
-    // Even validated finite PCM can overflow after a valid placement gain.
-    let loud: Arc<[f32]> = Arc::from([f32::MAX]);
-    assert!(placed_plane(&loud, 0, 1, 2.0).is_err());
+    assert!(Planes::new(Arc::clone(&source), None).is_err());
+    assert!(Planes::new(Arc::from([0.25]), Some(source)).is_err());
+}
+
+#[test]
+fn cached_window_peaks_reject_gain_overflow_without_rereading_pcm() {
+    for channels in [1u16, 2] {
+        let fixture = Fixture(
+            std::env::temp_dir().join(format!("echode-gain-peak-{}", Id::generate().raw())),
+        );
+        std::fs::create_dir_all(&fixture.0).unwrap();
+        // This source and its short trim only bound the finite-gain regression.
+        let frames = 4096u64;
+        let mut bytes = b"ECHDPCM1".to_vec();
+        bytes.extend(48000u32.to_le_bytes());
+        bytes.extend(channels.to_le_bytes());
+        bytes.extend(0u16.to_le_bytes());
+        bytes.extend(frames.to_le_bytes());
+        for frame in 0..frames {
+            for channel in 0..channels {
+                let sample = if frame + 1 == frames && channel + 1 == channels {
+                    -f32::MAX
+                } else {
+                    0.25f32
+                };
+                bytes.extend(sample.to_le_bytes());
+            }
+        }
+        let hash = echode_history::write_object(&fixture.0, &bytes).unwrap();
+        let (project, track) = Project::new().add_track("finite gain");
+        let clip = Id::generate();
+        let project = project
+            .place_audio(
+                track,
+                clip,
+                Id::generate(),
+                Tick::new(0),
+                AudioRef::try_new(hash, 48000, channels, frames).unwrap(),
+            )
+            .unwrap();
+        let loader = media_loader(fixture.0.clone());
+        let before = loader(&project, 48000).unwrap();
+        std::fs::remove_dir_all(fixture.0.join("media/objects")).unwrap();
+        assert!(matches!(
+            loader(&project.set_clip_gain(clip, 2.0).unwrap(), 48000),
+            Err(PlaybackError::Media)
+        ));
+        for gain in [0.0, 0.5, 1.0] {
+            let changed = loader(&project.set_clip_gain(clip, gain).unwrap(), 48000).unwrap();
+            assert_eq!(changed[0].gain, gain);
+            assert!(Arc::ptr_eq(&before[0].samples, &changed[0].samples));
+        }
+        // A peak outside the placement must not forbid an otherwise safe gain.
+        let trimmed = project
+            .resize_clip(track, clip, Tick::new(0), Tick::new(7056))
+            .unwrap()
+            .set_clip_gain(clip, 2.0)
+            .unwrap();
+        let trimmed = loader(&trimmed, 48000).unwrap();
+        assert_eq!(trimmed[0].samples[0], 0.25);
+        assert_eq!(trimmed[0].gain, 2.0);
+    }
 }
 
 #[test]
@@ -152,6 +210,22 @@ fn short_trim_cache_does_not_pin_the_unused_whole_file() {
         &prepared.clips[0].samples,
         &reused.clips[0].samples
     ));
+    let quieter = prepare_media(
+        &fixture.0,
+        &faded.set_clip_gain(clip, 0.25).unwrap(),
+        48000,
+        Some(&reused),
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(
+        &prepared.clips[0].samples,
+        &quieter.clips[0].samples
+    ));
+    assert!(Arc::ptr_eq(
+        prepared.clips[0].right.as_ref().unwrap(),
+        quieter.clips[0].right.as_ref().unwrap()
+    ));
+    assert_eq!(quieter.clips[0].gain, 0.25);
 }
 
 #[test]
@@ -195,8 +269,17 @@ fn shared_pcm_survives_placement_edits_without_rereading_media() {
     let before = loader(&project, 48000).unwrap();
     std::fs::remove_dir_all(fixture.0.join("media/objects")).unwrap();
     let changed = loader(&project.set_clip_gain(first, 0.25).unwrap(), 48000).unwrap();
-    assert_eq!(changed[0].samples[0], 0.125);
-    assert_eq!(changed[0].right.as_ref().unwrap()[0], -0.125);
+    assert!(
+        Arc::ptr_eq(&before[0].samples, &changed[0].samples),
+        "clip gain copied the whole placement PCM"
+    );
+    assert!(Arc::ptr_eq(
+        before[0].right.as_ref().unwrap(),
+        changed[0].right.as_ref().unwrap()
+    ));
+    assert_eq!(changed[0].gain, 0.25);
+    assert_eq!(changed[0].samples[0], 0.5);
+    assert_eq!(changed[0].right.as_ref().unwrap()[0], -0.5);
     assert!(Arc::ptr_eq(&before[1].samples, &changed[1].samples));
     let restored = loader(&project, 48000).unwrap();
     assert!(Arc::ptr_eq(&before[0].samples, &restored[0].samples));
@@ -285,8 +368,11 @@ fn contract_loop_head_is_resident_before_wrap_under_rtsan() {
                 let gain = ((position as f32 / (fade - 1) as f32).min(1.0))
                     * (((1008 - position) as f32 / (fade - 1) as f32).min(1.0));
                 let source = (start + position - expected[0].start_sample) as usize;
-                assert_eq!(left, expected[0].samples[source] * gain);
-                assert_eq!(right, expected[0].right.as_ref().unwrap()[source] * gain);
+                assert_eq!(left, expected[0].samples[source] * expected[0].gain * gain);
+                assert_eq!(
+                    right,
+                    expected[0].right.as_ref().unwrap()[source] * expected[0].gain * gain
+                );
             }
             assert!(
                 heard
@@ -305,7 +391,9 @@ fn contract_loop_head_is_resident_before_wrap_under_rtsan() {
             );
             // A new rate is a different preparation, never stale PCM.
             assert!(loader(&project, rate / 2).is_err());
-            assert!(loader(&project.set_clip_gain(clip, 0.25).unwrap(), rate).is_err());
+            let quieter = loader(&project.set_clip_gain(clip, 0.25).unwrap(), rate).unwrap();
+            assert!(Arc::ptr_eq(&quieter[0].samples, &expected[0].samples));
+            assert_eq!(quieter[0].gain, 0.25);
             let faded = loader(
                 &project.set_clip_fades(clip, 7_056_000, 14_112_000).unwrap(),
                 rate,
@@ -313,15 +401,6 @@ fn contract_loop_head_is_resident_before_wrap_under_rtsan() {
             .unwrap();
             assert!(Arc::ptr_eq(&faded[0].samples, &expected[0].samples));
             assert_ne!(faded[0].fade_out, expected[0].fade_out);
-            let slower = project.with_tempo(
-                Tick::new(0),
-                echode_model::Tempo::quarters_per_minute(60).unwrap(),
-            );
-            assert!(loader(&slower, rate).is_err());
-            let moved = project
-                .resize_clip(track, clip, Tick::new(0), Tick::new(100))
-                .unwrap();
-            assert!(loader(&moved, rate).is_err());
             let gain = project.tracks()[0].devices[0].parameters[0].id;
             let mixed = project.set_parameter(gain, 0.75).unwrap();
             let retained = loader(&mixed, rate).unwrap();
@@ -330,6 +409,33 @@ fn contract_loop_head_is_resident_before_wrap_under_rtsan() {
                 loader(&project, rate).is_ok(),
                 "failed preparation destroyed the retained head"
             );
+            // A retained unscaled whole source can rebuild geometry without I/O.
+            // Rounded windows that do not publish it still need the missing file.
+            let moved = project
+                .resize_clip(track, clip, Tick::new(0), Tick::new(100))
+                .unwrap();
+            match loader(&moved, rate) {
+                Ok(moved) => {
+                    assert_eq!(moved[0].start_sample, 0);
+                    assert!(moved[0].samples.len() < expected[0].samples.len());
+                    assert!(!Arc::ptr_eq(&moved[0].samples, &expected[0].samples));
+                }
+                Err(PlaybackError::Media) => {}
+                other => panic!("unexpected rewindow result: {other:?}"),
+            }
+            let slower = project.with_tempo(
+                Tick::new(0),
+                echode_model::Tempo::quarters_per_minute(60).unwrap(),
+            );
+            match loader(&slower, rate) {
+                Ok(slower) => {
+                    assert!(slower[0].samples.len() > expected[0].samples.len());
+                    assert!(!Arc::ptr_eq(&slower[0].samples, &expected[0].samples));
+                    assert_eq!(slower[0].samples.last(), Some(&0.0));
+                }
+                Err(PlaybackError::Media) => {}
+                other => panic!("unexpected tempo result: {other:?}"),
+            }
             assert!(loader(&Project::new(), rate).unwrap().is_empty());
             assert!(
                 loader(&project, rate).is_err(),
@@ -383,8 +489,9 @@ fn contract_imported_stereo_survives_trim_gain_resampling_playback_and_export() 
         assert!(loaded.start_sample > 0);
         assert_eq!(loaded.samples.len(), right.len());
         let mid = loaded.samples.len() / 2;
-        assert!((loaded.samples[mid] - 0.25).abs() < 1.0e-4);
-        assert!((right[mid] + 0.25).abs() < 1.0e-4);
+        assert_eq!(loaded.gain, 0.5);
+        assert!((loaded.samples[mid] - 0.5).abs() < 1.0e-4);
+        assert!((right[mid] + 0.5).abs() < 1.0e-4);
         let frames = loaded.start_sample as usize + loaded.samples.len();
         // Scratch sizes exercise stream partitioning, not product limits.
         for block in [1, 64, 511] {
