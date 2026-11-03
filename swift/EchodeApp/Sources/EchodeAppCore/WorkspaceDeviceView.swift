@@ -264,6 +264,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     let search = NSSearchField()
     let list = DeviceParameterListView(frame: .zero)
     let message = NSTextField(wrappingLabelWithString: "")
+    let latency = NSTextField(labelWithString: "")
     let retry = NSButton(title: text("Retry parameters"), target: nil, action: nil)
     private let payload: FXDrag
     private var origin: CGPoint?
@@ -317,6 +318,10 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         search.target = self; search.action = #selector(searched)
         message.textColor = .secondaryLabelColor
         message.alignment = .center
+        latency.identifier = NSUserInterfaceItemIdentifier("plugin-latency")
+        latency.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        latency.textColor = .secondaryLabelColor
+        addSubview(latency)
         retry.identifier = NSUserInterfaceItemIdentifier("retry-parameters")
         retry.bezelStyle = .rounded
         retry.target = self; retry.action = #selector(retryList)
@@ -369,6 +374,11 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         search.isEnabled = !device.offline
         search.setAccessibilityLabel(text("Search parameters") + " " + device.title)
         if search.stringValue != (state?.query ?? "") { search.stringValue = state?.query ?? "" }
+        latency.isHidden = device.offline || state?.error != nil || state?.latencySamples == nil
+        latency.stringValue = state?.latencySamples.map { String(format: text("Plugin latency samples"), $0) } ?? ""
+        latency.toolTip = text("Plugin latency uncompensated")
+        latency.setAccessibilityLabel(latency.stringValue + " " + device.title)
+        latency.setAccessibilityHelp(text("Plugin latency uncompensated"))
         // Offline devices keep settings but have no running plugin to read.
         let note: String? = if device.offline {
             text("Offline device parameters")
@@ -406,8 +416,10 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         for (index, button) in [left, right, copy, remove].enumerated() {
             button.frame = CGRect(x: max(8, bounds.width - 8 - Double(4 - index) * 32), y: isCollapsed ? 64 : 32, width: 28, height: 26)
         }
-        search.frame = CGRect(x: 8, y: 64, width: max(0, width), height: 24)
-        let body = CGRect(x: 4, y: 94, width: max(0, bounds.width - 8), height: max(0, bounds.height - 98))
+        let latencyHeight = latency.isHidden ? 0.0 : 22.0
+        latency.frame = CGRect(x: 8, y: isCollapsed ? 96 : 64, width: max(0, width), height: 20)
+        search.frame = CGRect(x: 8, y: 64 + latencyHeight, width: max(0, width), height: 24)
+        let body = CGRect(x: 4, y: 94 + latencyHeight, width: max(0, bounds.width - 8), height: max(0, bounds.height - 98 - latencyHeight))
         list.frame = body
         message.frame = body.insetBy(dx: 8, dy: 8)
         if !retry.isHidden {

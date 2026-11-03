@@ -177,6 +177,16 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 テスト用 CLAP の故障 `slow-process` で遅いプラグインを再現する。`missing plugin` は走査キャッシュの読み違いで、
 キャッシュは置換で書くので切り詰められた内容は見えない。走査の出力が 64 MiB を超えたバンドルは `larger than` で走査を止める（[ADR 0231](../decisions/0231-offline-export-and-scan-cache.md)）。
 
+### プラグインの遅延表示が更新されない・音がずれる
+
+値は出力レートのサンプル数で、PDC はまだ行わない。値が正しく表示されても他トラックと音がずれるのは未補正の制約である。
+未取得・オフライン・一覧取得失敗は値を隠し、拡張または `get` がないプラグインは 0 と報告する。
+`device.parameters` の `latency_samples` と、活動列の同名フィールドを比べる。
+初回が 0 のままなら `threads.rs::query_latency` と `Ports`、再起動後だけ古ければ `PluginRestarted` の受信と親の保持を調べる。
+親の値が新しければ、Swift の文書 ID・デバイス ID と `DeviceParameterState` を調べる。
+`hosted_playback/latency.rs` は 256 → 512 → 0 を別プロセスで報告させる。`PluginLatencyTests` は機器なしで表示と旧文書の拒否を確認する。
+第三者の設定・出力レート・報告値・再起動前後を記録し、補正済みとは扱わない（[ADR 0246](../decisions/0246-plugin-latency-reporting.md)、UC-51）。
+
 ### パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
 
 デバイスの列の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、

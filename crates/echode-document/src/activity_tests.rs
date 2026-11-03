@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn latency_survives_activity_json_and_backlog_collapse() {
+    let hub = ActivityHub::new();
+    // The count exceeds only this reader backlog, not a device limit.
+    for index in 0..BACKLOG + 1 {
+        hub.publish(
+            0xD0,
+            PluginActivity {
+                latency_samples: match index {
+                    0 => Some(512),
+                    1 => Some(0),
+                    _ => None,
+                },
+                ..PluginActivity::default()
+            },
+        );
+    }
+    let received = page(&hub.read(0, Duration::ZERO));
+    assert_eq!(received["entries"][0]["latency_samples"], 0);
+    assert!(received["entries"][1]["latency_samples"].is_null());
+}
 use echode_audio_io::{ParamEvent, ParamValue};
 
 fn gesture_end(value: f64) -> PluginActivity {

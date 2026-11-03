@@ -41,20 +41,24 @@ public struct PluginActivity: Decodable, Sendable, Equatable {
     /// Latest confirmed lifetime, not physical visibility. Nil means this
     /// entry carries no lifecycle change; `windowOpen` describes past edits.
     public let windowState: Bool?
+    /// Latest helper latency in device-rate samples. No PDC is applied yet.
+    public let latencySamples: UInt32?
 
     public init(device: UUID, events: [PluginParameterEvent] = [], values: [DeviceParameterValue] = [],
                 rescan: Bool = false, lost: Bool = false, dirty: Bool = false, closed: Bool = false,
-                windowOpen: Bool = false, commands: [String] = [], windowState: Bool? = nil) {
+                windowOpen: Bool = false, commands: [String] = [], windowState: Bool? = nil, latencySamples: UInt32? = nil) {
         self.device = device; self.events = events; self.values = values
         self.rescan = rescan; self.lost = lost; self.dirty = dirty; self.closed = closed
         self.windowOpen = windowOpen
         self.commands = commands
         self.windowState = windowState
+        self.latencySamples = latencySamples
     }
 
     enum CodingKeys: String, CodingKey {
         case device, commands, events, values, rescan, lost, dirty, closed, windowOpen = "window"
         case windowState = "window_state"
+        case latencySamples = "latency_samples"
     }
 }
 

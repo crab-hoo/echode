@@ -3,7 +3,6 @@
 更新: 2026-11-03。
 利用者に残る制約と未確認・未接続だけを置く。合格証ではない。
 合否は `make verify` の結果、実操作は日付付きの監査記録で確認する。
-経緯は ADR、Phase 2 の状態と受入条件は [進め方](phase2.md)、監査対応は各監査を参照する。
 ユーザーの確認待ちは `UC-番号` で示し、内容と手順は [ユーザー確認の一覧](user-checks.md) にある。
 
 対象は macOS 27 以降、M4 ファミリー以降の Apple Silicon である（[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)）。
@@ -78,7 +77,7 @@
   従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
 - **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
 - **規模とミックス（FCA-04〜07）**: 計画の採用は機器なしの計測でも期限を超え得る。全体の作り直しと ID の線形探索は残る（[ADR 0239](decisions/0239-live-note-cursor-work.md)）。
-  フォルダの音量・パンは子に効かず、遅延は補正しない。実機のループとミックスの聴感は未確認（UC-47・49）。
+  フォルダの音量・パンは子に効かず、遅延は未補正。ループとミックスの聴感は UC-47・49、遅延表示は UC-51（[ADR 0246](decisions/0246-plugin-latency-reporting.md)）。
 - **Phase 0 の別モデル・計測の分離（SPG-10）**: 分離は完了したが、並列の CPU グラフを製品へ接続したものではない（[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 
 ### プラグイン・デバイスビュー

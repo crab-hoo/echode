@@ -86,6 +86,7 @@ extension ProjectController {
             if let open = entry.windowState {
                 if open { session.openPluginWindows.insert(device) } else { session.openPluginWindows.remove(device) }
             }
+            if let samples = entry.latencySamples { session.parameterStates[device]?.setLatency(samples) }
             if entry.windowOpen {
                 for name in entry.commands {
                     if let command = WorkspaceCommand(rawValue: name) { pluginCommand?(command) }

@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn latency_is_retained_when_another_request_drains_the_socket() {
+    let (parent, _helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    let mut state = control.lock();
+    state.accept(
+        0,
+        ControlMessage::PluginRestarted {
+            latency_samples: u32::MAX,
+        },
+    );
+    assert_eq!(control.latency_samples(), u32::MAX);
+    assert_eq!(
+        control.take_activity().unwrap().latency_samples,
+        Some(u32::MAX)
+    );
+    // An unsolicited late reply must not replace newer metadata.
+    state.accept(
+        99,
+        ControlMessage::PluginRestarted {
+            latency_samples: 64,
+        },
+    );
+    assert_eq!(control.latency_samples(), u32::MAX);
+    state.accept(0, ControlMessage::PluginRestarted { latency_samples: 0 });
+    assert_eq!(control.latency_samples(), 0);
+    assert_eq!(control.take_activity().unwrap().latency_samples, Some(0));
+}
+
+#[test]
 fn contract_control_replies_are_correlated_across_timeouts() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);

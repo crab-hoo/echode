@@ -203,7 +203,10 @@ pub(crate) fn round_trip(
     let report = match request {
         Request::Parameters => {
             let infos = control.parameters().map_err(|error| error.to_string())?;
-            serde_json::json!({ "parameters": infos.iter().map(parameter).collect::<Vec<_>>() })
+            serde_json::json!({
+                "parameters": infos.iter().map(parameter).collect::<Vec<_>>(),
+                "latency_samples": control.latency_samples(),
+            })
         }
         Request::Set(changes) => {
             let values = control

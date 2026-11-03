@@ -84,6 +84,7 @@ make debug-report
   - オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
   - プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`
   - パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
+  - プラグインの遅延表示が更新されない・音がずれる
 - 再生・停止・ループ
   - 再生開始が遅い・準備中に停止できない
   - 再生が `audio callback panicked` で止まる・アプリが理由を残さず落ちる

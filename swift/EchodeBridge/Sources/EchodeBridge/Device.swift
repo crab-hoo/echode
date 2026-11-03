@@ -76,10 +76,17 @@ public struct DeviceReport: Decodable, Sendable, Equatable {
     /// A close request finished; there is no window now.
     public let closed: Bool?
     public let parsed: DeviceParameterParse?
+    /// Device-rate samples declared by the helper; not yet compensated.
+    public let latencySamples: UInt32?
     public init(parameters: [DeviceParameter]? = nil, values: [DeviceParameterValue]? = nil, changed: Bool? = nil,
-                window: DeviceWindowReport? = nil, closed: Bool? = nil, parsed: DeviceParameterParse? = nil) {
+                window: DeviceWindowReport? = nil, closed: Bool? = nil, parsed: DeviceParameterParse? = nil, latencySamples: UInt32? = nil) {
         self.parameters = parameters; self.values = values; self.changed = changed
         self.window = window; self.closed = closed; self.parsed = parsed
+        self.latencySamples = latencySamples
+    }
+    enum CodingKeys: String, CodingKey {
+        case parameters, values, changed, window, closed, parsed
+        case latencySamples = "latency_samples"
     }
 }
 

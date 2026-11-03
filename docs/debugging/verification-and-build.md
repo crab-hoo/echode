@@ -84,6 +84,8 @@ Xcode・CMake・Ninja の版と合わない。この時 TSan の検査はソー�
 `swift test -q` が `Build failed` / `fatalError` だけを返す場合は、`swift build --build-tests` で診断を取得する。
 同じ `--package-path`・`--scratch-path` と `-Xswiftc -warnings-as-errors` を指定し、`target/` のログで `error:` 周辺を読む。
 Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
+`-Zbuild-std --offline` が `failed to download addr2line` 等で止まる場合は、製品の依存とは別の固定 nightly の標準ライブラリ用キャッシュが不足している。
+`make setup-bridge` の Miri sysroot 準備で取得してから検査を再実行する。ツールの存在確認だけでは、このキャッシュ不足は分からない。
 
 ### Cargo の依存メタデータが欠ける
 

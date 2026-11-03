@@ -3,6 +3,19 @@ import XCTest
 @testable import EchodeBridge
 
 final class DeviceTests: XCTestCase {
+    func testLatencyMetadataDecodesWithoutBreakingOlderReports() throws {
+        let decoder = JSONDecoder()
+        XCTAssertNil(try decoder.decode(DeviceReport.self, from: Data(#"{"parameters":[]}"#.utf8)).latencySamples)
+        for samples: UInt32 in [0, 512, .max] {
+            let report = try decoder.decode(DeviceReport.self, from: Data("{\"parameters\":[],\"latency_samples\":\(samples)}".utf8))
+            XCTAssertEqual(report.latencySamples, samples)
+            let activity = try decoder.decode(PluginActivity.self, from: Data("""
+                {"device":"00000000-0000-0000-0000-0000000000d0","events":[],"values":[],"commands":[],
+                 "rescan":false,"lost":false,"dirty":false,"closed":false,"window":false,"latency_samples":\(samples)}
+                """.utf8))
+            XCTAssertEqual(activity.latencySamples, samples)
+        }
+    }
     /// Window commands go to the device lane; closing never starts a helper,
     /// and a quiet document reports no plugin activity without waiting long.
     func testPluginWindowCommandsAndActivityPages() async throws {

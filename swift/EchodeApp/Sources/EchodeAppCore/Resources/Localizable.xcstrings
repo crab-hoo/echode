@@ -277,6 +277,18 @@
         "ja": { "stringUnit": { "state": "translated", "value": "パラメーターを再読込み" } }
       }
     },
+    "Plugin latency samples": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Latency: %u samples · no PDC" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "遅延: %u サンプル（未補正）" } }
+      }
+    },
+    "Plugin latency uncompensated": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Reported at the output sample rate. Delay compensation is not yet applied." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "出力サンプルレートでの報告値です。遅延補正はまだ適用されません。" } }
+      }
+    },
     "No editable parameters": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "This plugin reports no editable parameters." } },

@@ -25,6 +25,8 @@ public final class DeviceParameterState {
     /// True while an empty or failed list is waiting for its first result.
     public private(set) var loading = true
     public private(set) var error: String?
+    /// Unknown until a live helper reports it. This is not delay compensation.
+    public private(set) var latencySamples: UInt32?
     /// Bumps when the listed ids change, which is the only time rows are rebuilt.
     public private(set) var layout = 0
     /// Bumps when a value or its text changes. Rows on screen are refreshed.
@@ -34,6 +36,7 @@ public final class DeviceParameterState {
     /// The newest listing request. An older reply is dropped.
     @ObservationIgnored var request = 0
     @ObservationIgnored private var positions: [UInt32: Int] = [:]
+    @ObservationIgnored private(set) var latencyRevision = 0
 
     init(document: DocumentID, device: UUID) {
         self.document = document
@@ -70,10 +73,18 @@ public final class DeviceParameterState {
 
     func fail(_ message: String) {
         parameters = []
+        setLatency(nil)
         positions = [:]
         error = message
         loading = false
         layout &+= 1
+    }
+
+    func setLatency(_ samples: UInt32?) {
+        guard latencySamples != samples else { return }
+        latencySamples = samples
+        latencyRevision &+= 1
+        revision &+= 1
     }
 
     func update(_ id: UInt32, value: Double, text: String?) {
@@ -169,6 +180,7 @@ extension ProjectController {
         state.beginLoading()
         state.request &+= 1
         let request = state.request
+        let latencyRevision = state.latencyRevision
         // A reply for an older request, a closed document or a removed device is dropped.
         let current = { self.session === session && session.parameterStates[state.device] === state && state.request == request }
         do {
@@ -176,6 +188,8 @@ extension ProjectController {
             guard current() else { return }
             let dragging = session.parameterGesture.flatMap { $0.device == state.device ? $0.parameter : nil }
             state.list(result.report.parameters ?? [], keeping: dragging)
+            // An activity delivered while the list waited is newer than its metadata.
+            if state.latencyRevision == latencyRevision { state.setLatency(result.report.latencySamples) }
         } catch {
             guard current() else { return }
             state.fail((error as? BridgeError)?.message ?? error.localizedDescription)

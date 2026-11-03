@@ -20,7 +20,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -135,6 +135,7 @@ pub struct PluginControl {
     socket: Arc<Mutex<ControlState>>,
     applied: Arc<Mutex<Option<Vec<u8>>>>,
     activity: Arc<Mutex<PluginActivity>>,
+    latency_samples: Arc<AtomicU32>,
 }
 
 struct ControlState {
@@ -151,12 +152,14 @@ struct ControlState {
     window_open: bool,
     dirty_again: bool,
     save_requested: Option<u64>,
+    latency_samples: Arc<AtomicU32>,
 }
 
 impl PluginControl {
     fn new(control: Socket) -> Self {
         let applied = Arc::new(Mutex::new(None));
         let activity = Arc::new(Mutex::new(PluginActivity::default()));
+        let latency_samples = Arc::new(AtomicU32::new(0));
         Self {
             socket: Arc::new(Mutex::new(ControlState {
                 control,
@@ -169,10 +172,18 @@ impl PluginControl {
                 window_open: false,
                 dirty_again: false,
                 save_requested: None,
+                latency_samples: Arc::clone(&latency_samples),
             })),
             applied,
             activity,
+            latency_samples,
         }
+    }
+
+    /// Last latency declared by the live helper, in device-rate samples.
+    /// This is metadata only; the engine does not compensate it yet.
+    pub fn latency_samples(&self) -> u32 {
+        self.latency_samples.load(Ordering::Acquire)
     }
 
     /// Window notices and plugin-made changes since the last call, in order.
@@ -259,6 +270,21 @@ impl ControlState {
         }
         if id != 0 && !self.pending.contains(&id) {
             return; // A late reply can never satisfy a newer request.
+        }
+        if let ControlMessage::Ports {
+            latency_samples, ..
+        }
+        | ControlMessage::PluginRestarted { latency_samples } = &message
+        {
+            let previous = self
+                .latency_samples
+                .swap(*latency_samples, Ordering::AcqRel);
+            if previous != *latency_samples {
+                self.activity
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .latency_samples = Some(*latency_samples);
+            }
         }
         let note = match message {
             ControlMessage::GuiCommand(command) => PluginActivity {
@@ -1075,6 +1101,7 @@ impl PluginHost {
                 inputs,
                 outputs,
                 tail_samples,
+                ..
             } => {
                 self.tail_samples = tail_samples;
                 (inputs, outputs)

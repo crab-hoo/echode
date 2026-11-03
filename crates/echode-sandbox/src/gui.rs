@@ -84,6 +84,8 @@ pub struct PluginActivity {
     /// Latest confirmed window lifetime, independent of visibility and of
     /// whether an earlier relay arrived while the window was open.
     pub window_state: Option<bool>,
+    /// Latest reported device latency, without delay compensation.
+    pub latency_samples: Option<u32>,
 }
 
 impl PluginActivity {
@@ -93,6 +95,7 @@ impl PluginActivity {
             && !self.dirty
             && !self.closed
             && self.window_state.is_none()
+            && self.latency_samples.is_none()
     }
 
     pub fn merge(&mut self, later: Self) {
@@ -102,6 +105,7 @@ impl PluginActivity {
         self.closed |= later.closed;
         self.window_open |= later.window_open;
         self.window_state = later.window_state.or(self.window_state);
+        self.latency_samples = later.latency_samples.or(self.latency_samples);
     }
 }
 
@@ -268,6 +272,7 @@ mod tests {
             window_open: true,
             commands: vec![crate::PluginCommand::Playback],
             window_state: Some(true),
+            latency_samples: Some(256),
         });
         assert_eq!(first.relay.events.len(), 4);
         assert_eq!(first.relay.values.len(), 1);
@@ -276,11 +281,21 @@ mod tests {
         assert!(first.window_open);
         assert_eq!(first.commands, [crate::PluginCommand::Playback]);
         assert_eq!(first.window_state, Some(true));
+        assert_eq!(first.latency_samples, Some(256));
         first.merge(PluginActivity {
             window_state: Some(false),
+            latency_samples: Some(0),
             ..PluginActivity::default()
         });
         first.merge(PluginActivity::default());
+        assert_eq!(first.latency_samples, Some(0));
+        assert!(
+            !PluginActivity {
+                latency_samples: Some(0),
+                ..PluginActivity::default()
+            }
+            .is_empty()
+        );
         assert_eq!(first.window_state, Some(false));
         assert!(
             first.window_open,

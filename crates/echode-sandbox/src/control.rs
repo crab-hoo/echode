@@ -78,12 +78,13 @@ pub enum ControlMessage {
     ChainRejected,
     /// Channel counts of each input port, then each output port.
     ///
-    /// The helper sends this after reading the plugin's audio-ports extension
-    /// on the main thread, before the plugin is active.
+    /// The helper sends port counts with tail and latency after activation.
+    /// The counts themselves are queried on the main thread while inactive.
     Ports {
         inputs: Vec<u32>,
         outputs: Vec<u32>,
         tail_samples: u32,
+        latency_samples: u32,
     },
     /// The plugin has no usable audio-port description. The bytes are the reason.
     PortsRejected(String),
@@ -354,9 +355,11 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
             inputs,
             outputs,
             tail_samples,
+            latency_samples,
         } => {
             let mut bytes = port_bytes(inputs, outputs);
             bytes.extend_from_slice(&tail_samples.to_le_bytes());
+            bytes.extend_from_slice(&latency_samples.to_le_bytes());
             (PORTS, bytes)
         }
         ControlMessage::PortsRejected(reason) => (PORTS_REJECTED, reason.as_bytes().to_vec()),
@@ -425,16 +428,19 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         CHAIN_READY => ControlMessage::ChainReady,
         CHAIN_REJECTED => ControlMessage::ChainRejected,
         PORTS => {
-            let split = body
-                .len()
-                .checked_sub(4)
-                .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "port tail is missing"))?;
+            let split = body.len().checked_sub(8).ok_or_else(|| {
+                io::Error::new(ErrorKind::InvalidData, "port tail/latency is missing")
+            })?;
             let (inputs, outputs) = read_ports(&body[..split])?;
-            let tail_samples = u32::from_le_bytes(body[split..].try_into().expect("4 bytes"));
+            let tail_samples =
+                u32::from_le_bytes(body[split..split + 4].try_into().expect("4 bytes"));
+            let latency_samples =
+                u32::from_le_bytes(body[split + 4..].try_into().expect("4 bytes"));
             ControlMessage::Ports {
                 inputs,
                 outputs,
                 tail_samples,
+                latency_samples,
             }
         }
         PORTS_REJECTED => ControlMessage::PortsRejected(
@@ -883,17 +889,18 @@ mod tests {
     }
 
     #[test]
-    fn port_metadata_round_trips_the_declared_tail() {
+    fn port_metadata_round_trips_the_declared_tail_and_latency() {
         let message = ControlMessage::Ports {
             inputs: vec![],
             outputs: vec![1],
             tail_samples: 19_200,
+            latency_samples: 256,
         };
         let (kind, bytes) = encode(&message).unwrap();
         let mut payload = kind.to_le_bytes().to_vec();
         payload.extend(bytes);
         assert!(
-            matches!(decode(&payload, None).unwrap(), Some(ControlMessage::Ports { inputs, outputs, tail_samples: 19_200 }) if inputs.is_empty() && outputs == [1])
+            matches!(decode(&payload, None).unwrap(), Some(ControlMessage::Ports { inputs, outputs, tail_samples: 19_200, latency_samples: 256 }) if inputs.is_empty() && outputs == [1])
         );
         payload.pop();
         assert!(decode(&payload, None).is_err());

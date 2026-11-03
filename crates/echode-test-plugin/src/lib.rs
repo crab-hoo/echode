@@ -25,6 +25,7 @@ use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 
 mod gui;
+mod latency;
 mod params;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -118,6 +119,9 @@ impl Plugin for TestGain {
         }
         if current_role() == Role::Order || fault_now() == Fault::TailLegacy {
             builder.register::<PluginNotePorts>();
+        }
+        if fault_now() == Fault::Latency {
+            builder.register::<latency::PluginLatency>();
         }
     }
 }
@@ -223,6 +227,8 @@ enum Fault {
     SlowProcess,
     /// The first state save outlasts the host's 2 s state wait.
     SlowSave,
+    /// Reports a different latency after each activation.
+    Latency,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -242,6 +248,7 @@ fn fault_code(text: &str) -> u8 {
         "onset" => 12,
         "slow-save" => 14,
         "slow-process" => 15,
+        "latency" => 16,
         _ => 0,
     }
 }
@@ -263,6 +270,7 @@ fn fault_from_code(code: u8) -> Fault {
         12 => Fault::Onset,
         14 => Fault::SlowSave,
         15 => Fault::SlowProcess,
+        16 => Fault::Latency,
         _ => Fault::None,
     }
 }
@@ -367,6 +375,9 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         _shared: &'a (),
         _audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
+        if fault_now() == Fault::Latency {
+            latency::activated(&main_thread.host);
+        }
         let fault = fault_now();
         if fault == Fault::Activate {
             return Err(PluginError::Message("activate refused"));
@@ -448,7 +459,7 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             // Several times one 256-frame block at 48 kHz (about 5.3 ms).
             Fault::SlowProcess => std::thread::sleep(std::time::Duration::from_millis(20)),
             Fault::Callback => self.host.request_callback(),
-            Fault::Restart => self.host.request_restart(),
+            Fault::Restart | Fault::Latency => self.host.request_restart(),
             Fault::Onset => {
                 let initial = self.onset;
                 let mut channel = 0usize;

@@ -53,6 +53,7 @@ struct EntryJson<'a> {
     closed: bool,
     window: bool,
     window_state: Option<bool>,
+    latency_samples: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -145,6 +146,7 @@ fn collapse(state: &mut HubState) {
             dirty,
             window_open,
             window_state,
+            latency_samples,
             ..
         } = entry.activity;
         match kept.iter_mut().find(|known| known.device == entry.device) {
@@ -154,6 +156,7 @@ fn collapse(state: &mut HubState) {
                 known.activity.dirty |= dirty;
                 known.activity.window_open |= window_open;
                 known.activity.window_state = window_state.or(known.activity.window_state);
+                known.activity.latency_samples = latency_samples.or(known.activity.latency_samples);
             }
             None => {
                 let mut activity = PluginActivity {
@@ -161,6 +164,7 @@ fn collapse(state: &mut HubState) {
                     dirty,
                     window_open,
                     window_state,
+                    latency_samples,
                     ..PluginActivity::default()
                 };
                 activity.relay.lost = true;
@@ -214,6 +218,7 @@ fn entry_json(entry: &Entry) -> EntryJson<'_> {
         closed: entry.activity.closed,
         window: entry.activity.window_open,
         window_state: entry.activity.window_state,
+        latency_samples: entry.activity.latency_samples,
     }
 }
 

@@ -187,6 +187,7 @@ struct Bridge {
     sample_bits: AtomicU64,
     activation_frames: AtomicU32,
     tail_samples: AtomicU32,
+    latency_samples: AtomicU32,
     /// Port channel counts, published before the worker threads start.
     ports: AtomicPtr<PortShape>,
     /// Owned calls between the control and main threads; never used by audio.
@@ -300,7 +301,11 @@ impl Bridge {
                     f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
                     self.activation_frames.load(Ordering::Acquire),
                 ) {
-                    Ok(stopped) => publish_stopped(&self.processor, stopped, false),
+                    Ok(stopped) => {
+                        self.latency_samples
+                            .store(query_latency(instance), Ordering::Release);
+                        publish_stopped(&self.processor, stopped, false);
+                    }
                     Err(error) => {
                         eprintln!("echode-plugin-host: activate after restart failed: {error}");
                         self.stop.store(true, Ordering::Release);
@@ -327,7 +332,11 @@ impl Bridge {
                     f64::from_bits(self.sample_bits.load(Ordering::Acquire)),
                     self.activation_frames.load(Ordering::Acquire),
                 ) {
-                    Ok(stopped) => publish_stopped(&self.processor, stopped, false),
+                    Ok(stopped) => {
+                        self.latency_samples
+                            .store(query_latency(instance), Ordering::Release);
+                        publish_stopped(&self.processor, stopped, false);
+                    }
                     Err(error) => {
                         eprintln!("echode-plugin-host: activate failed: {error}");
                         self.stop.store(true, Ordering::Release);
@@ -587,6 +596,27 @@ unsafe extern "C" fn host_params_flush(host: *const clap_host) {
     }
 }
 
+#[derive(Copy, Clone)]
+struct HostLatency;
+
+unsafe impl Extension for HostLatency {
+    const IDENTIFIERS: &[&CStr] = &[clap_sys::ext::latency::CLAP_EXT_LATENCY];
+    type ExtensionSide = HostExtensionSide;
+    unsafe fn from_raw(_raw: RawExtension<Self::ExtensionSide>) -> Self {
+        Self
+    }
+}
+
+unsafe impl ExtensionImplementation<EchodeHost> for HostLatency {
+    const IMPLEMENTATION: RawExtensionImplementation =
+        RawExtensionImplementation::new(&clap_sys::ext::latency::clap_host_latency {
+            changed: Some(host_latency_changed),
+        });
+}
+
+// CLAP permits this notice only during activation. Every successful activation
+// reads latency before returning the processor to audio, even without a notice.
+unsafe extern "C" fn host_latency_changed(_host: *const clap_host) {}
 impl HostHandlers for EchodeHost {
     type Shared<'a> = HostShared;
     type MainThread<'a> = HostMain<'a>;
@@ -596,6 +626,7 @@ impl HostHandlers for EchodeHost {
         builder.register::<HostState>();
         builder.register::<HostGui>();
         builder.register::<HostParams>();
+        builder.register::<HostLatency>();
     }
 }
 
@@ -709,6 +740,7 @@ fn serve_region(
         sample_bits: AtomicU64::new(sample_rate.to_bits()),
         activation_frames: AtomicU32::new(max_frames.max(1)),
         tail_samples: AtomicU32::new(0),
+        latency_samples: AtomicU32::new(0),
         ports: AtomicPtr::new(ptr::null_mut()),
         main_requests: MainRequests::default(),
         plugin_dirty: AtomicBool::new(false),
@@ -801,6 +833,9 @@ fn serve_region(
             bridge
                 .tail_samples
                 .store(query_tail(&loaded.instance), Ordering::Release);
+            bridge
+                .latency_samples
+                .store(query_latency(&loaded.instance), Ordering::Release);
             prepare_event_capacity(&loaded.instance, bridge.root.layout().input_events)
                 .map_err(HostError::Plugin)?;
             publish_stopped(&bridge.processor, stopped, false);
@@ -1375,6 +1410,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
                 inputs: shape.inputs.clone(),
                 outputs: shape.outputs.clone(),
                 tail_samples: bridge.tail_samples.load(Ordering::Acquire),
+                latency_samples: bridge.latency_samples.load(Ordering::Acquire),
             }
         };
         if socket.send(&message).is_err() {
@@ -1430,7 +1466,9 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
                 emit_line("restart-observed");
             }
             if let Some(socket) = &mut socket {
-                let _ = socket.send(&ControlMessage::PluginRestarted { latency_samples: 0 });
+                let _ = socket.send(&ControlMessage::PluginRestarted {
+                    latency_samples: bridge.latency_samples.load(Ordering::Acquire),
+                });
             }
             restarted = want;
             continue;
@@ -2337,6 +2375,20 @@ fn c_text(chars: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+fn query_latency(instance: &PluginInstance<EchodeHost>) -> u32 {
+    use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_plugin_latency};
+    let plugin = instance.raw_instance();
+    let Some(get) = plugin.get_extension else {
+        return 0;
+    };
+    // SAFETY: CLAP latency is read on the main thread after successful activation.
+    let raw = unsafe { get(plugin, CLAP_EXT_LATENCY.as_ptr()) };
+    if raw.is_null() {
+        return 0;
+    }
+    let extension = unsafe { &*raw.cast::<clap_plugin_latency>() };
+    extension.get.map(|get| unsafe { get(plugin) }).unwrap_or(0)
+}
 fn query_tail(instance: &PluginInstance<EchodeHost>) -> u32 {
     use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_plugin_tail};
     let plugin = instance.raw_instance();
