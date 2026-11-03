@@ -79,6 +79,7 @@ make debug-report
   - CLAP が鳴らない・走査失敗
   - プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
   - バイパスの表示と音が一致しない・解除後に古い音が鳴る
+  - float WAV を読み手が拒否する・ヘッダ変更後に音声の比較がずれる
   - オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
   - プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`
   - パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない

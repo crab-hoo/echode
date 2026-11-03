@@ -46,6 +46,11 @@ bundle のない実行ファイルでは、置かれたフォルダが主 bundle
 試聴のテストは `warm_audio_toolbox`（`audition_tests.rs`）で最初の読込みを 1 回済ませてから、停止の期限を数え始める。
 ほかのテストで同じ遅れが出たら、その実行ファイルを空のフォルダへ写して比べる。`deps` の古い成果物を減らすかはユーザーと決める。
 
+2026-11-03 の後続確認では `deps` が 549,820 件あり、通常の `cargo test -q --workspace` も 1,200 秒で終わらなかった。`--no-run` は 1.178 秒だった。
+同じ `device_offline` の製品回帰は、小さいフォルダのコピーで 1.098 秒、`deps` では 22.984 秒だった（単回の診断比較）。
+`sample` は `ExtAudioFileOpenURL` → `AudioAnalytics` → `_CFCopySystemVersionDictionary` → `CFBundleGetMainBundle` → `_CFIterateDirectory` の列挙を示した。
+テスト本体の失敗と混同せず、期限を延ばす前に置き場所を比較する。キャッシュの削除は同意を得て行い、検査ログを消す `cargo clean` 全体実行は避ける。
+
 ### `swift test` が出力なしで止まる（Swift Testing の待ち続け）
 
 Swift Testing は始めた全テストの終わりを待つ。再開されない `await` が 1 つあると、全スレッドが休んだまま実行が続き、遅いだけに見える。

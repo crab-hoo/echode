@@ -386,8 +386,9 @@ fn usage() -> CliError {
     )
 }
 
-/// Canonical stereo 32-bit float WAV. The data chunk must fit in 4 GiB.
+/// Stereo 32-bit IEEE float WAV with WAVEFORMATEX and a frame-count `fact` chunk.
 ///
+/// The complete RIFF chunk, including format metadata, must fit in 4 GiB.
 /// Samples are converted in groups and written through [`BufWriter`].
 pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(), CliError> {
     if !interleaved.len().is_multiple_of(2) {
@@ -490,30 +491,34 @@ impl WavFile {
     }
 }
 
-fn wav_header(sample_rate: u32, frames: u32) -> Result<[u8; 44], CliError> {
+fn wav_header(sample_rate: u32, frames: u32) -> Result<[u8; 58], CliError> {
     let data_bytes = frames
         .checked_mul(8)
         .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
     let riff_size = data_bytes
-        .checked_add(36)
+        .checked_add(50)
         .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
     let byte_rate = sample_rate
         .checked_mul(8)
         .ok_or_else(|| CliError::new("sample rate does not fit in the wav header"))?;
-    let mut header = [0u8; 44];
+    let mut header = [0u8; 58];
     header[0..4].copy_from_slice(b"RIFF");
     header[4..8].copy_from_slice(&riff_size.to_le_bytes());
     header[8..12].copy_from_slice(b"WAVE");
     header[12..16].copy_from_slice(b"fmt ");
-    header[16..20].copy_from_slice(&16u32.to_le_bytes());
+    header[16..20].copy_from_slice(&18u32.to_le_bytes());
     header[20..22].copy_from_slice(&3u16.to_le_bytes());
     header[22..24].copy_from_slice(&2u16.to_le_bytes());
     header[24..28].copy_from_slice(&sample_rate.to_le_bytes());
     header[28..32].copy_from_slice(&byte_rate.to_le_bytes());
     header[32..34].copy_from_slice(&8u16.to_le_bytes());
     header[34..36].copy_from_slice(&32u16.to_le_bytes());
-    header[36..40].copy_from_slice(b"data");
-    header[40..44].copy_from_slice(&data_bytes.to_le_bytes());
+    header[36..38].copy_from_slice(&0u16.to_le_bytes()); // WAVEFORMATEX cbSize.
+    header[38..42].copy_from_slice(b"fact");
+    header[42..46].copy_from_slice(&4u32.to_le_bytes());
+    header[46..50].copy_from_slice(&frames.to_le_bytes()); // Per-channel sample count.
+    header[50..54].copy_from_slice(b"data");
+    header[54..58].copy_from_slice(&data_bytes.to_le_bytes());
     Ok(header)
 }
 
@@ -539,6 +544,10 @@ fn sync_parent(path: &Path) -> std::io::Result<()> {
         .unwrap_or(Path::new("."));
     File::open(parent)?.sync_all()
 }
+
+#[cfg(test)]
+#[path = "wav_tests.rs"]
+mod wav_tests;
 
 #[cfg(test)]
 mod tail_tests {

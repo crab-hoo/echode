@@ -1,3 +1,5 @@
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -66,9 +68,15 @@ fn a_package_renders_to_the_committed_reference() {
     assert_eq!(&rendered[0..4], b"RIFF");
     assert_eq!(&rendered[8..12], b"WAVE");
     assert_eq!(&rendered[20..22], &3u16.to_le_bytes());
-    assert!(rendered.len() > 44);
-    assert!(rendered[44..].iter().any(|byte| *byte != 0));
-    assert_eq!(rendered, reference);
+    let data = support::chunk(&rendered, b"data");
+    assert!(!data.is_empty());
+    assert!(data.iter().any(|byte| *byte != 0));
+    // Keep the committed audio reference; only the container metadata changed.
+    assert_eq!(
+        &support::chunk(&rendered, b"fmt ")[..16],
+        &support::chunk(&reference, b"fmt ")[..16]
+    );
+    assert_eq!(data, support::chunk(&reference, b"data"));
 }
 
 #[test]
@@ -88,9 +96,49 @@ fn default_export_uses_the_declared_device_tail_and_respects_bypass() {
         render_to_wav(&package, &wav, 48_000, None).unwrap();
         assert_eq!(
             std::fs::metadata(wav).unwrap().len() as usize,
-            44 + (24_000 + tail) * 8
+            58 + (24_000 + tail) * 8
         );
     }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn zero_frame_exports_keep_float_metadata_with_and_without_plugins() {
+    let _lock = PLUGIN_ENV.lock().unwrap();
+    let directory = scratch();
+    for (index, project) in [Project::new(), reference_project()]
+        .into_iter()
+        .enumerate()
+    {
+        let package = directory.join(index.to_string());
+        write_package(&package, &project).unwrap();
+        let wav = package.join("empty.wav");
+        render_to_wav(&package, &wav, 48_000, Some(0)).unwrap();
+        let bytes = std::fs::read(&wav).unwrap();
+        assert_eq!(bytes.len(), 58);
+        assert_eq!(support::chunk(&bytes, b"fmt ").len(), 18);
+        assert_eq!(support::chunk(&bytes, b"fact"), &0u32.to_le_bytes());
+        assert!(support::chunk(&bytes, b"data").is_empty());
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn oversized_riff_export_preserves_the_existing_destination() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let wav = directory.join("too-long.wav");
+    std::fs::write(&wav, b"keep").unwrap();
+    // The data fits u32; the complete RIFF chunk does not. No huge buffer is made.
+    let frames = (u32::MAX - 50) / 8 + 1;
+    let error = render_to_wav(&directory, &wav, 48_000, Some(frames)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("wav data does not fit in a 32-bit chunk")
+    );
+    assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
+    assert!(part_files(&directory).is_empty());
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -154,8 +202,9 @@ fn a_placed_file_is_audible_in_the_wav() {
     render_to_wav(&directory, &wav, 48_000, Some(128)).unwrap();
     let rendered = std::fs::read(&wav).unwrap();
     let _ = std::fs::remove_dir_all(directory);
-    assert!(rendered.len() > 44);
-    assert!(rendered[44..].iter().any(|byte| *byte != 0));
+    let data = support::chunk(&rendered, b"data");
+    assert!(!data.is_empty());
+    assert!(data.iter().any(|byte| *byte != 0));
 }
 
 #[test]
@@ -170,7 +219,7 @@ fn a_minute_of_stereo_silence_is_written_in_bulk() {
     let elapsed = started.elapsed();
     let bytes = std::fs::metadata(&wav).unwrap().len();
     let _ = std::fs::remove_dir_all(directory);
-    assert_eq!(bytes, 44 + samples.len() as u64 * 4);
+    assert_eq!(bytes, 58 + samples.len() as u64 * 4);
     // A write of one sample at a time took 15.3 s. Buffered writes of this
     // buffer were 0.028 s. Two seconds still fails the old path.
     assert!(
@@ -273,7 +322,8 @@ fn export_middle(package: &Path, project: &Project, clip: Id, frames: usize) -> 
     let wav = package.join("out.wav");
     render_to_wav(package, &wav, 48_000, Some(u32::try_from(frames).unwrap())).unwrap();
     let bytes = std::fs::read(wav).unwrap();
-    let start = 44 + (frames / 2) * 8;
+    let bytes = support::chunk(&bytes, b"data");
+    let start = (frames / 2) * 8;
     let left = f32::from_le_bytes(bytes[start..start + 4].try_into().unwrap());
     let right = f32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap());
     assert_eq!(right, -2.0 * left, "the WAV writer lost the right channel");
@@ -328,7 +378,11 @@ fn audit_aud11_a_journaled_note_exports_and_a_pending_save_is_not_mixed() {
     let wav = directory.join("out.wav");
     render_to_wav(&directory, &wav, 48_000, Some(128)).unwrap();
     let exported = std::fs::read(&wav).unwrap();
-    assert!(exported[44..].iter().any(|byte| *byte != 0));
+    assert!(
+        support::chunk(&exported, b"data")
+            .iter()
+            .any(|byte| *byte != 0)
+    );
     let host = echode_history::DocumentHost::open(&directory).unwrap();
     let revision = host.revisions().unwrap()[0].id.clone();
     assert!(!revision.is_empty());
@@ -359,7 +413,11 @@ fn audit_aud11_a_journaled_note_exports_and_a_pending_save_is_not_mixed() {
     let dirty_wav = dirty.join("out.wav");
     render_to_wav(&dirty, &dirty_wav, 48_000, Some(128)).unwrap();
     let silent = std::fs::read(&dirty_wav).unwrap();
-    assert!(silent[44..].iter().all(|byte| *byte == 0));
+    assert!(
+        support::chunk(&silent, b"data")
+            .iter()
+            .all(|byte| *byte == 0)
+    );
     let again = echode_history::DocumentHost::open(&dirty).unwrap();
     assert_eq!(again.revisions().unwrap()[0].id, committed);
     assert!(again.snapshot().tracks().is_empty());
@@ -920,9 +978,10 @@ fn play_plugins(package: &Path, project: &Project) -> Vec<f32> {
 
 fn wav_lefts(path: &Path, frames: usize) -> Vec<f32> {
     let bytes = std::fs::read(path).unwrap();
+    let bytes = support::chunk(&bytes, b"data");
     (0..frames)
         .map(|frame| {
-            let start = 44 + frame * 8;
+            let start = frame * 8;
             f32::from_le_bytes(bytes[start..start + 4].try_into().unwrap())
         })
         .collect()
@@ -1092,7 +1151,7 @@ fn audit_cli_a1_a_one_frame_plugin_export_completes() {
     write_package(&directory, &reference_project()).unwrap();
     let wav = directory.join("one.wav");
     render_to_wav(&directory, &wav, 48_000, Some(1)).unwrap();
-    assert_eq!(std::fs::metadata(&wav).unwrap().len(), 44 + 8);
+    assert_eq!(std::fs::metadata(&wav).unwrap().len(), 58 + 8);
     let _ = std::fs::remove_dir_all(directory);
 }
 

@@ -1,3 +1,5 @@
+mod support;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -7,7 +9,7 @@ use echode_history::{DocumentHost, import_audio, write_package};
 use echode_model::{AudioRef, Id, Project, Tick};
 
 fn samples(bytes: &[u8]) -> Vec<f32> {
-    bytes[44..]
+    support::chunk(bytes, b"data")
         .chunks_exact(4)
         .map(|sample| f32::from_le_bytes(sample.try_into().unwrap()))
         .collect()

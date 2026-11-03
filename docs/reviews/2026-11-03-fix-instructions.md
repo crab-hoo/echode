@@ -109,6 +109,7 @@ FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-ref
 - FCA-15: Sine Pad の DSP を Sine Pad の crate か小さな DSP の crate へ移し、`TestSynth` の名前を直す。Sine Pad の状態と音は変えない。
 - FCA-16: `crates/echode-cli/src/lib.rs` の `wav_header` を 18 バイトの `fmt` と `fact` にし、`audit_fca16` を通す。
   `crates/echode-cli/tests/render.rs` などの 44 バイトのヘッダの期待値も直す。RF64 と整数形式は別の作業単位にする。
+  2026-11-03: ヘッダと回帰は [ADR 0243](../decisions/0243-float-wav-metadata.md) で対応した。RF64・整数形式は未着手。
 - FCA-17〜20: 監査の修正方針に従う。FCA-18 の保管の形式、FCA-19 のメモリの予算、FCA-20 の走査の期限は、ADR とユーザーの確認を先にする。
 
 ## 実行役が決めないこと
