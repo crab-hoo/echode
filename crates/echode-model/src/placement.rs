@@ -626,19 +626,13 @@ fn origin(clip: &Placement) -> Result<i64, ModelError> {
 }
 
 fn notes(contents: &[Arc<Content>], id: Id) -> Result<Vec<Note>, ModelError> {
-    contents
-        .iter()
-        .find(|content| content.id == id)
-        .map(|content| content.notes.clone())
-        .ok_or(ModelError::MissingClip)
+    let index = crate::model::content_index(contents, id).ok_or(ModelError::MissingClip)?;
+    Ok(contents[index].notes.clone())
 }
 
 fn content_mut(contents: &mut [Arc<Content>], id: Id) -> Result<&mut Content, ModelError> {
-    let content = contents
-        .iter_mut()
-        .find(|content| content.id == id)
-        .ok_or(ModelError::MissingClip)?;
-    Ok(Arc::make_mut(content))
+    let index = crate::model::content_index(contents, id).ok_or(ModelError::MissingClip)?;
+    Ok(Arc::make_mut(&mut contents[index]))
 }
 
 fn insert_content(contents: &mut Vec<Arc<Content>>, content: Content) {
@@ -661,9 +655,6 @@ fn contains(clip: &Placement, at: i64) -> bool {
 }
 
 pub(super) fn drop_unreferenced(contents: &mut Vec<Arc<Content>>, tracks: &[Arc<Track>]) {
-    contents.retain(|content| {
-        tracks
-            .iter()
-            .any(|track| track.clips.iter().any(|clip| clip.content == content.id))
-    });
+    let referenced = crate::model::referenced_contents(tracks);
+    contents.retain(|content| referenced.contains(&content.id));
 }

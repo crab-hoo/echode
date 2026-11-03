@@ -10,6 +10,7 @@
 //!
 //! - The meter divides into a whole number of ticks per bar.
 //! - Content, note, track, device, parameter, and placement ids are unique.
+//! - Contents are sorted by id.
 //! - A content does not list its own id as a take.
 //! - A note has a pitch in 0..=127, a positive length, no articulation, and
 //!   `start + length` does not overflow. Velocity and release may be any
@@ -45,6 +46,8 @@ mod duplicate;
 mod id;
 mod invariants;
 mod model;
+#[cfg(test)]
+mod model_scale_tests;
 mod note_fields;
 mod note_velocity;
 mod package_fields;

@@ -451,10 +451,7 @@ impl Project {
     }
 
     pub fn content(&self, id: Id) -> Option<&Content> {
-        self.contents
-            .iter()
-            .find(|content| content.id == id)
-            .map(Arc::as_ref)
+        content_index(&self.contents, id).map(|index| self.contents[index].as_ref())
     }
 
     pub fn meter(&self) -> Meter {
@@ -1415,16 +1412,17 @@ impl Project {
                 if !clip_gain_allowed(clip.gain) {
                     return Err(ModelError::InvalidGain);
                 }
-                if !stored.iter().any(|content| content.id == clip.content) {
+                if content_index(&stored, clip.content).is_none() {
                     return Err(ModelError::MissingClip);
                 }
             }
-            if track
-                .clips
-                .iter()
-                .enumerate()
-                .any(|(index, _)| overlaps_others(&track.clips, index))
-            {
+            if track.clips.windows(2).any(|pair| {
+                #[cfg(test)]
+                crate::model_scale_tests::overlap();
+                // Scalar bounds were checked above. Unsorted non-overlapping
+                // input is still rejected by check_invariants below.
+                spans_overlap(span(&pair[0]).unwrap(), span(&pair[1]).unwrap())
+            }) {
                 return Err(ModelError::Overlap);
             }
             crate::device::validate_devices(&track.devices, &mut seen)?;
@@ -1434,11 +1432,11 @@ impl Project {
         if arrange_fault(&assembled).is_some() {
             return Err(ModelError::BadOrder);
         }
-        if stored.iter().any(|content| {
-            !assembled
-                .iter()
-                .any(|track| track.clips.iter().any(|clip| clip.content == content.id))
-        }) {
+        let referenced = referenced_contents(&assembled);
+        if stored
+            .iter()
+            .any(|content| !referenced.contains(&content.id))
+        {
             return Err(ModelError::InvalidClip);
         }
         let project = Self {
@@ -1493,6 +1491,30 @@ impl Project {
             tracks: tracks.into_iter().map(Arc::new).collect(),
         }
     }
+}
+
+/// Contents are kept in ID order at every snapshot boundary.
+pub(crate) fn content_index(contents: &[Arc<Content>], id: Id) -> Option<usize> {
+    contents
+        .binary_search_by_key(&id, |content| {
+            #[cfg(test)]
+            crate::model_scale_tests::content_key();
+            content.id
+        })
+        .ok()
+}
+
+/// Build membership once, rather than scanning all placements per content.
+pub(crate) fn referenced_contents(tracks: &[Arc<Track>]) -> HashSet<Id> {
+    tracks
+        .iter()
+        .flat_map(|track| &track.clips)
+        .map(|clip| {
+            #[cfg(test)]
+            crate::model_scale_tests::reference();
+            clip.content
+        })
+        .collect()
 }
 
 fn parent_chain_contains(tracks: &[Arc<Track>], start: Id, target: Id) -> bool {
@@ -1674,6 +1696,8 @@ pub(crate) fn overlaps_others(clips: &[Placement], index: usize) -> bool {
         return true;
     };
     clips.iter().enumerate().any(|(other_index, other)| {
+        #[cfg(test)]
+        crate::model_scale_tests::overlap();
         other_index != index
             && span(other).is_some_and(|other_range| spans_overlap(range, other_range))
     })

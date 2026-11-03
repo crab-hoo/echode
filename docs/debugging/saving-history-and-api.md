@@ -48,6 +48,15 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 
 ## 保存・パッケージ・復旧
 
+### クリップが増えると読込み・ノートの編集が急に遅くなる
+
+`make spike-scale` の `model_edit` にある `assemble_ms` と `edit_note_ms` を、64 / 128 トラック × 64 クリップで比べる。
+機器・プラグインは使わない。編集の操作感全体ではなく、モデル単体の時間である。
+時間に依らない回帰は `cargo test -q -p echode-model model_scale_tests` で、内容のキー・配置の参照・重なりの比較を数える。
+`content id order` の拒否は二分探索の前提の破れであり、保存入力を整列する組立てと、変更セット復元の内容の順を調べる。
+モデルが速くても `replace_p50_ms` が遅ければ FCA-04、保存で待つなら FCA-14 を別に調べる。
+ID 重複の線形探索と、毎回全配置から作る参照集合は残る（[ADR 0242](../decisions/0242-model-content-lookup-and-references.md)）。
+
 ### 素材やキャッシュが Git の除外対象にならない
 
 パッケージ直下の `.gitignore` に `/media/objects/` と `/cache/` の正確な規則行があるかを確認する。

@@ -33,6 +33,14 @@ impl Project {
         let Some(bar) = self.meter().bar_ticks().map(|bar| bar.get()) else {
             return broken("the meter has no whole-tick bar".into());
         };
+        if self
+            .contents()
+            .windows(2)
+            .any(|pair| pair[0].id > pair[1].id)
+        {
+            return broken("contents are out of content id order".into());
+        }
+        let referenced = crate::model::referenced_contents(self.tracks());
         let mut ids = HashSet::new();
         let mut parents = HashMap::new();
         let mut auto_counts: HashMap<Id, usize> = HashMap::new();
@@ -226,11 +234,7 @@ impl Project {
             return broken("a content has more than one auto placement".into());
         }
         for content in self.contents() {
-            let referenced = self
-                .tracks()
-                .iter()
-                .any(|track| track.clips.iter().any(|clip| clip.content == content.id));
-            if !referenced {
+            if !referenced.contains(&content.id) {
                 return broken(format!("content {} has no placement", content.id));
             }
             if let Some(audio) = &content.audio

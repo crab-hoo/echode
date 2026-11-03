@@ -62,7 +62,8 @@ FCA-01 の再現は、折り返しで鳴っていないノートへ送るノー�
 ## W2: 規模（FCA-03・04・05・10）— P2
 
 2026-11-03: FCA-03 は [ADR 0240](../decisions/0240-block-local-event-capacity.md) で対応した。
-FCA-10 は [ADR 0241](../decisions/0241-unscaled-placement-pcm.md) で対応した。FCA-04・05 は未着手である。
+FCA-10 は [ADR 0241](../decisions/0241-unscaled-placement-pcm.md) で対応した。
+FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-references.md) で対応した。ID の探索と参照の差分更新、FCA-04 は残す。
 
 - FCA-03: `playback.rs` の `track_event_demand`、`plugins.rs` の `fit_stage`・`reconcile`・`can_reconcile`。
   1 ブロックの容量は、整列済みの端を幅 `frames` の窓で数えた最大（ループの周回を含む）とし、追いかけは重なりの最大にする。
