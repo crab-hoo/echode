@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition spike-plugin-tracks check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -269,6 +269,11 @@ rtsan:
 spike-plugin-tracks:
 	cargo build -q --release -p echode-plugin-host -p echode-test-plugin
 	cargo test -q --release -p echode-plugin-host --test track_scale -- --ignored --exact measure_callback_cost_as_tracks_grow --nocapture
+
+# Device-free release measurement of blocks and edits that grow with the score.
+# See docs/reviews/2026-11-03-full-code-audit.md (FCA-01 to FCA-05).
+spike-scale:
+	cargo test -q --release -p echode-engine --test scale -- --ignored --exact measure_playback_scale --nocapture
 
 # Device-free release measurement; never part of normal correctness tests.
 spike-audition:

@@ -65,6 +65,7 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。
 トラックが多い時だけ弱いなら、`make spike-plugin-tracks` でコールバック自身の CPU 時間をトラック数ごとに比べる。
 トラックあたりの値が数とともに増えれば 2 乗の処理が戻っている。ほぼ一定なら、ヘルパーへの投入のような比例する費用である（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
+ノートの多いプロジェクトで、ループの折り返しや再生中の編集の直後だけ途切れるなら、`make spike-scale` でノート数を変えた時のそのブロックを比べる（FCA-01・02）。
 
 ## プラグイン
 

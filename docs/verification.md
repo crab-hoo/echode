@@ -208,6 +208,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `spike-plugin-tracks`: 機器を開かず、1・16・64・256 トラックでコールバック自身の CPU 時間を release 計測する。
   各トラックにヘルパーを 1 つ置く場合と、拍ごとの和音を置く場合を比べ、`target/spike-plugin-tracks.json` へ記録する。
   トラックあたりの値が数とともに増えれば、2 乗の処理が残っている（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
+- `spike-scale`: 機器とプラグインなしで、ループの折り返しと再生中の編集のブロック、制御側の作り直し、モデルの編集と読込みの検証を release 計測する（`target/spike-scale.json`）。
+  どの変更でも選ばれない明示の計測で、FCA-01〜05 の修正の前後に実行する（[実行指示](reviews/2026-11-03-fix-instructions.md)）。
 - `spike-audio`: 製品の CoreAudio 出力を無音で開き、コールバック、停止・再起動、機器一覧と通知登録、再生中の計画更新・位置移動を確認する。
 - `spike-bridge`: スナップショットと配列の受け渡しの release 計測。
 - `spike-render`: WAV の一括書き出しの release 計測。

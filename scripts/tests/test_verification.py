@@ -1466,6 +1466,21 @@ class PolicyTests(unittest.TestCase):
         recipe = (ROOT / "Makefile").read_text().split("spike-plugin-tracks:\n", 1)[1].split("\n\n", 1)[0]
         self.assertIn("--test track_scale -- --ignored --exact measure_callback_cost_as_tracks_grow", recipe)
 
+    def test_score_scale_is_an_explicit_measurement(self):
+        # Run before and after an FCA-01 to FCA-05 fix. Regressions are pinned by
+        # deterministic tests, so no change selects this release measurement.
+        for path in ("crates/echode-realtime/src/lib.rs", "crates/echode-engine/src/playback.rs",
+                     "crates/echode-model/src/model.rs", "crates/echode-engine/tests/scale.rs"):
+            with self.subTest(path=path):
+                self.assertNotIn("spike-scale", self.selected(path))
+        check = {item["id"]: item for item in self.policy["checks"]}["spike-scale"]
+        self.assertEqual(check["mode"], "manual")
+        self.assertEqual(check["areas"], [])
+        self.assertIn("crates/echode-engine/tests/scale.rs", check["inputs"])
+        self.assertNotIn("device_context", check)
+        recipe = (ROOT / "Makefile").read_text().split("spike-scale:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("--test scale -- --ignored --exact measure_playback_scale", recipe)
+
     def test_common_settings_do_not_require_unrelated_measurements(self):
         automatic = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
         for path in self.policy["global_inputs"]:

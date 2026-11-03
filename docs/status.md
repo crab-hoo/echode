@@ -77,6 +77,8 @@
   トラックメーターはフェーダー後の左右最大ピークで、LUFS やトゥルーピークではない（[ADR 0107](decisions/0107-mix-controls.md)）。
 - **Sine Pad と音源の選択**: 音源のないトラックのノートは無音で、旧プロジェクトへ暗黙の音源を補わない。
   従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
+- **規模とミックスの意味（FCA-01・02・06・07）**: ノートの多いプロジェクトでは、ループの折り返しと再生中の編集で音が切れ得る。
+  フォルダの音量・ミュート・ソロは子に効かず、プラグインの遅延は補正しない（[監査](reviews/2026-11-03-full-code-audit.md)）。
 - **Phase 0 の別モデル・計測の分離（SPG-10）**: 分離は完了したが、並列の CPU グラフを製品へ接続したものではない（[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 
 ### プラグイン・デバイスビュー
