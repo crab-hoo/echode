@@ -29,6 +29,9 @@ use crate::realtime::ForbidAlloc;
 use crate::sequence::render_metronome_index_before;
 use crate::{PlaybackError, PlaybackIds, PlayedSpan, TrackFader};
 
+#[path = "playback_capacity.rs"]
+mod capacity;
+use capacity::{TrackEventDemand, track_event_demand};
 #[path = "playback_media.rs"]
 mod media;
 pub use media::MediaInputs;
@@ -204,6 +207,7 @@ struct Prepared {
     sort_order: Vec<usize>,
     /// Note-offs already written at the front of `events`, not yet submitted.
     released: usize,
+    previous_releases: usize,
     sample_rate: u32,
     meter: Meter,
     chase: bool,
@@ -276,12 +280,10 @@ impl Prepared {
         let tempo = crate::plan::tempo_index(project.tempo())?;
         let solo = plan.tracks.iter().any(|track| track.solo != 0.0);
         let mut tracks = Vec::with_capacity(plan.tracks.len());
-        let iterations = loop_iterations(frames, loop_bounds)?;
         let mut event_count = 1usize;
         let mut chase_count = 0usize;
         let mut demands = Vec::with_capacity(plan.tracks.len());
         for track in &plan.tracks {
-            let voices = track.notes.len();
             let mut notes: Vec<_> = track
                 .notes
                 .iter()
@@ -313,7 +315,7 @@ impl Prepared {
                     }
                 }
             }
-            let demand = track_event_demand(track, loop_bounds, iterations, voices)?;
+            let demand = track_event_demand(track, loop_bounds, frames)?;
             event_count = event_count
                 .checked_add(demand.events)
                 .ok_or(PlaybackError::Time)?;
@@ -378,6 +380,7 @@ impl Prepared {
             event_ends: vec![0; plan_tracks + 1],
             sort_order: vec![0; event_count],
             released: 0,
+            previous_releases: 0,
             sample_rate: rate,
             meter: project.meter(),
             chase: true,
@@ -434,6 +437,36 @@ impl Prepared {
                 track.carried_at = None;
             }
         }
+        Ok(())
+    }
+
+    /// The preceding published plan may release more voices than the new score
+    /// can hold. Size this transition only after any background plan published.
+    fn reserve_previous_releases(
+        &mut self,
+        previous: &BTreeMap<u32, usize>,
+    ) -> Result<(), PlaybackError> {
+        let extra = previous.values().try_fold(0usize, |sum, count| {
+            sum.checked_add(*count).ok_or(PlaybackError::Time)
+        })?;
+        for demand in &mut self.demands {
+            if let Some(&chase) = previous.get(&demand.key) {
+                demand.events = demand
+                    .events
+                    .checked_add(chase.saturating_sub(demand.previous_chase))
+                    .ok_or(PlaybackError::Time)?;
+                demand.previous_chase = demand.previous_chase.max(chase);
+            }
+        }
+        let size = self
+            .events
+            .len()
+            .checked_add(extra.saturating_sub(self.previous_releases))
+            .ok_or(PlaybackError::Time)?;
+        self.previous_releases = self.previous_releases.max(extra);
+        self.events.resize(size, Event::note_off(0, 0, 0, 0));
+        self.filtered.resize(size, Event::note_off(0, 0, 0, 0));
+        self.sort_order.resize(size, 0);
         Ok(())
     }
 
@@ -1055,53 +1088,6 @@ fn stored_end(clip: &StoredClip) -> i64 {
         .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX))
 }
 
-struct TrackEventDemand {
-    key: u32,
-    events: usize,
-    chase: usize,
-}
-
-fn loop_iterations(frames: usize, bounds: Option<(i64, i64)>) -> Result<usize, PlaybackError> {
-    let Some((start, end)) = bounds else {
-        return Ok(1);
-    };
-    if end <= start {
-        return Ok(1);
-    }
-    let len = usize::try_from(end - start).map_err(|_| PlaybackError::Time)?;
-    if len == 0 {
-        return Err(PlaybackError::InvalidLoop);
-    }
-    frames
-        .checked_add(len - 1)
-        .and_then(|sum| sum.checked_div(len))
-        .filter(|count| *count > 0)
-        .ok_or(PlaybackError::Time)
-}
-
-fn track_event_demand(
-    track: &echode_realtime::TrackPlan,
-    bounds: Option<(i64, i64)>,
-    iterations: usize,
-    voices: usize,
-) -> Result<TrackEventDemand, PlaybackError> {
-    let mut events = 0usize;
-    for note in &track.notes {
-        let inside = bounds.is_some_and(|(start, end)| note.on < end && note.off > start);
-        let times = if inside { iterations } else { 1 };
-        events = events
-            .checked_add(3)
-            .and_then(|count| count.checked_mul(times))
-            .ok_or(PlaybackError::Time)?;
-    }
-    let chase = voices.max(1);
-    Ok(TrackEventDemand {
-        key: track.track_key,
-        events,
-        chase,
-    })
-}
-
 fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {
     prepared
         .plan
@@ -1207,6 +1193,8 @@ pub struct PlaybackControl {
     replacements: u64,
     published_plan: u64,
     chain: Vec<TrackChain>,
+    /// Maximum live voices in the preceding published plan, including cached tracks.
+    previous_chases: BTreeMap<u32, usize>,
     routes: Vec<PluginRoute>,
     host_bin: std::path::PathBuf,
     ids: PlaybackIds,
@@ -1414,6 +1402,11 @@ fn transport_pair(
         replacements: 0,
         published_plan: 0,
         chain: Vec::new(),
+        previous_chases: current
+            .demands
+            .iter()
+            .map(|demand| (demand.key, demand.chase))
+            .collect(),
         routes: Vec::new(),
         host_bin: std::path::PathBuf::new(),
         ids,
@@ -1600,7 +1593,7 @@ impl PlaybackControl {
         self.reserved_events
     }
 
-    /// Event slots reserved on each live plugin track.
+    /// Largest shared input-event bank on each live plugin track. Banks only grow.
     pub fn plugin_event_caps(&self) -> Vec<usize> {
         self.preparing.as_ref().map_or_else(
             || self.hosts.track_event_caps(),
@@ -1811,13 +1804,28 @@ impl PlaybackControl {
         if self.plans.slots() == 0 {
             return Ok(());
         }
-        let Some(pending) = &self.held else {
+        let Some(mut pending) = self.held.take() else {
             return Ok(());
         };
+        pending
+            .prepared
+            .reserve_previous_releases(&self.previous_chases)?;
+        let demands: BTreeMap<_, _> = pending
+            .prepared
+            .demands
+            .iter()
+            .map(|demand| (demand.key, demand.events))
+            .collect();
+        for chain in &mut pending.chain {
+            if let Some(&events) = demands.get(&chain.key) {
+                chain.events = events;
+            }
+        }
+        self.reserved_events = pending.prepared.events.len();
         if !self.hosts.can_reconcile(&pending.chain) {
+            self.held = Some(pending);
             return Ok(());
         }
-        let pending = self.held.take().ok_or(PlaybackError::Plugin)?;
         if self.background && !self.host_bin.as_os_str().is_empty() {
             let hosts = std::mem::replace(&mut self.hosts, HostGraph::empty());
             self.preparing = Some(GraphPreparation::begin(
@@ -1858,6 +1866,12 @@ impl PlaybackControl {
 
     fn publish_graph(&mut self, pending: Pending) -> Result<(), PlaybackError> {
         self.save_controls = self.hosts.save_controls();
+        self.previous_chases = pending
+            .prepared
+            .demands
+            .iter()
+            .map(|demand| (demand.key, demand.chase))
+            .collect();
         self.chain = pending.chain;
         let update = Update {
             prepared: pending.prepared,

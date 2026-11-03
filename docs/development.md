@@ -261,6 +261,8 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 コールバックの費用がトラック数とともにどう増えるかの release 計測は `crates/echode-plugin-host/tests/track_scale.rs` に置き、`make spike-plugin-tracks` で動かす。
 ブロックのイベントの振り分けは `playback.rs` の `group_events`、ヘルパーのトラックのキーの索引は `plugins.rs` の `HostTracks` である（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
 楽譜の大きさに比例する処理（ループの折り返し、再生中の編集、制御側の作り直し、モデルの探索）の release 計測は `crates/echode-engine/tests/scale.rs` に置き、`make spike-scale` で動かす（[実行指示](reviews/2026-11-03-fix-instructions.md)）。
+イベントの局所的な容量上界は `playback_capacity.rs`、通常の境界回帰は `playback_capacity_tests.rs` と `tests/audit_scale_and_mix.rs` に置く。
+共有領域の密度・拡張・旧発音の解放は `hosted_playback/event_capacity.rs` で製品バッファへ通す（[ADR 0240](decisions/0240-block-local-event-capacity.md)）。
 
 ヘルパーの記述子の上限を上げる処理は `echode-sandbox/src/descriptors.rs` に置き、回帰は上限を変えるため専用のバイナリ `tests/descriptor_limit.rs` にする（[ADR 0237](decisions/0237-helper-descriptor-limit.md)）。
 

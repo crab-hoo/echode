@@ -546,7 +546,7 @@ impl HostGraph {
                     }
                     let host = stage.instance.host();
                     host.layout().input_events as usize
-                        == chain.events.saturating_add(chain.chase).max(1)
+                        >= chain.events.saturating_add(chain.chase).max(1)
                         || !host.mapping_pending()
                 })
         })
@@ -709,7 +709,7 @@ impl HostGraph {
                 chain
                     .events
                     .checked_add(chain.chase)
-                    .map(|n| n.max(1))
+                    .and_then(|n| n.max(1).checked_next_power_of_two())
                     .ok_or(PlaybackError::Time)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -780,7 +780,7 @@ impl HostGraph {
                     chain.key,
                     stages,
                     frames,
-                    chain.events.max(1),
+                    delivery,
                     chain.chase.max(1),
                 ));
             }
@@ -886,7 +886,14 @@ impl HostGraph {
     pub(crate) fn track_event_caps(&self) -> Vec<usize> {
         self.tracks
             .iter()
-            .map(|track| track.source_events.capacity())
+            .map(|track| {
+                track
+                    .stages
+                    .iter()
+                    .map(|stage| stage.instance.host().layout().input_events as usize)
+                    .max()
+                    .unwrap_or(0)
+            })
             .collect()
     }
 
@@ -1324,20 +1331,12 @@ fn restore_tracks(
         .collect()
 }
 
-fn fit_vec<T>(buf: &mut Vec<T>, cap: usize) {
-    if buf.capacity() < cap {
-        reserve_to(buf, cap);
-    } else if buf.capacity() > cap {
-        buf.shrink_to(cap.max(buf.len()));
-    }
-}
-
 fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
     let delivery = u32::try_from(delivery).map_err(|_| PlaybackError::BufferTooSmall)?;
-    fit_vec(&mut stage.routed, delivery as usize);
+    reserve_to(&mut stage.routed, delivery as usize);
     let mut host = stage.instance.host();
     let layout = host.layout();
-    if layout.input_events == delivery {
+    if layout.input_events >= delivery {
         return Ok(());
     }
     let mut next = layout;

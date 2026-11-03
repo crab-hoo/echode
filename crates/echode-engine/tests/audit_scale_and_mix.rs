@@ -39,13 +39,44 @@ fn reserved_events(project: &Project) -> usize {
 /// long the score is. Slots sized by every note on the track also size each
 /// plugin's locked shared memory and remap it whenever a note is added.
 #[test]
-#[ignore = "FCA-03: event slots are sized by every note on the track"]
 fn audit_fca03_event_slots_follow_one_block_not_the_whole_track() {
     let short = reserved_events(&evenly_spaced(64));
     let long = reserved_events(&evenly_spaced(2_048));
     assert_eq!(
         long, short,
         "the same density reserved {short} slots for 64 notes and {long} for 2,048"
+    );
+}
+
+#[test]
+fn replacing_a_dense_score_with_an_empty_plan_keeps_release_space() {
+    let (mut project, track) = Project::new().add_track("chord");
+    for _ in 0..128 {
+        // This fixture's chord size, not a product limit.
+        project = project
+            .insert_note(
+                track,
+                NoteDraft {
+                    pitch: 60,
+                    velocity: 100,
+                    start: Tick::new(0),
+                    length: Tick::quarters(1).unwrap(),
+                },
+            )
+            .unwrap()
+            .0;
+    }
+    let (mut control, mut audio) =
+        playback(&project, RATE, FRAMES, PlaybackOptions::default()).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let mut left = vec![0.0; FRAMES];
+    let mut right = left.clone();
+    audio.render(&mut left, &mut right);
+    control.replace(&Project::new()).unwrap();
+    audio.render(&mut left, &mut right);
+    assert!(
+        !control.status().failed,
+        "removed tracks' note-offs exceeded the empty plan's bank"
     );
 }
 

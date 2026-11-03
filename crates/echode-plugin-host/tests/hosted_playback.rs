@@ -15,6 +15,8 @@ mod background_graph;
 mod device_offline;
 #[path = "hosted_playback/device_params.rs"]
 mod device_params;
+#[path = "hosted_playback/event_capacity.rs"]
+mod event_capacity;
 #[path = "hosted_playback/note_edges.rs"]
 mod note_edges;
 #[path = "hosted_playback/plugin_gui.rs"]
@@ -2341,18 +2343,18 @@ fn queued_event_capacity_changes_preserve_the_existing_processor_under_rtsan() {
     let mut right = left.clone();
     render_content(&mut audio, &mut left, &mut right);
     assert_level(left[0], 1.0);
-    // Several edits arrive before audio adopts the first prepared mapping.
-    // Future notes increase storage without changing the sounding note.
+    // Several density changes arrive before audio adopts the first mapping.
+    // Future chords grow storage without changing the sounding note.
     for count in [4, 16, 2, 8, 0] {
         let mut next = base.clone();
-        for offset in 0..count {
+        for _offset in 0..count {
             next = next
                 .insert_note(
                     track,
                     NoteDraft {
                         pitch: 61,
                         velocity: 100,
-                        start: Tick::quarters(20 + offset).unwrap(),
+                        start: Tick::quarters(20).unwrap(),
                         length: Tick::quarters(1).unwrap(),
                     },
                 )
@@ -2376,14 +2378,14 @@ fn queued_event_capacity_changes_preserve_the_existing_processor_under_rtsan() {
     // Mapping publication must also progress without any sounding audio.
     for count in [3, 9, 1] {
         let mut next = base.clone();
-        for offset in 0..count {
+        for _offset in 0..count {
             next = next
                 .insert_note(
                     track,
                     NoteDraft {
                         pitch: 61,
                         velocity: 100,
-                        start: Tick::quarters(20 + offset).unwrap(),
+                        start: Tick::quarters(20).unwrap(),
                         length: Tick::quarters(1).unwrap(),
                     },
                 )
