@@ -131,12 +131,9 @@ fn loudest(project: &Project, child: Id) -> f32 {
     peak
 }
 
-/// FCA-06: the engine has no track hierarchy. A folder's mute does not reach
-/// its children, and soloing the folder silences them. Until folders become
-/// buses (P2-03), ADR the chosen meaning; if folder controls are disabled
-/// instead, replace this with a test of that contract.
+/// FCA-06: folder mute gates every descendant, and folder solo opens its subtree.
+/// Audio still mixes directly to master until folder buses arrive in P2-03.
 #[test]
-#[ignore = "FCA-06: folder mute and solo do not reach the children"]
 fn audit_fca06_a_folder_mute_and_solo_reach_its_children() {
     let (project, folder) = Project::new().add_track("folder");
     let (project, child) = project.add_child(folder, "child").unwrap();

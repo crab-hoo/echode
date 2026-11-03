@@ -79,7 +79,7 @@
   従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
 - **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
 - **規模とミックス（FCA-04〜07）**: 計画の採用は機器なしの計測でも期限を超え得る。全体の作り直しと ID の線形探索は残る（[ADR 0239](decisions/0239-live-note-cursor-work.md)）。
-  フォルダのミックスは子に効かず、遅延は補正しない。実機のループと編集の聴感は未確認（UC-47）。
+  フォルダの音量・パンは子に効かず、遅延は補正しない。実機のループとミックスの聴感は未確認（UC-47・49）。
 - **Phase 0 の別モデル・計測の分離（SPG-10）**: 分離は完了したが、並列の CPU グラフを製品へ接続したものではない（[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
 
 ### プラグイン・デバイスビュー

@@ -14,6 +14,7 @@
   配置の PCM の複製（FCA-10）は [ADR 0241](../decisions/0241-unscaled-placement-pcm.md) で対応した。
   FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-references.md) を参照する。残りは未着手。
   float WAV のヘッダ（FCA-16）の先行分は [ADR 0243](../decisions/0243-float-wav-metadata.md) で対応した。RF64・整数形式・ディザは残る。
+  フォルダのミュート・ソロ（FCA-06）は [ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md) で子孫へ反映した。音量・パンとバス化は残る。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
 - [2026-11-03 コード全体の監査の実行指示](2026-11-03-fix-instructions.md): 上の監査の作業単位 W1〜W5、再現 4 件と `make spike-scale`、境界と完了条件。
 - [2026-11-02 コード品質とエージェント環境の横断監査](2026-11-02-cross-cutting-audit.md): XCA-01〜22。

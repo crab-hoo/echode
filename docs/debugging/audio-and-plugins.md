@@ -91,6 +91,16 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 通常の境界は `playback_capacity_tests`、共有領域の密度・拡張・一括削除は `hosted_playback` の `event_capacity` を使う。
 `make spike-scale` の `reserved_events` と `replace_p50_ms` は別の問題であり、容量減少を全体の作り直しの解消と扱わない。
 
+### フォルダのミュート・ソロと子の音が一致しない
+
+各行の保存値は自身の値であり、親の操作で子のパラメーターは変わらない。
+対象と祖先のミュート、対象と祖先のソロ、全体のソロの有無を分けて記録し、`Track::parent` の部分木と照合する。
+祖先のミュートは子のソロより優先する。親のソロは子孫を開くが、子だけのソロは兄弟や親自身の素材を開かない。
+実効フェーダーの解決は `playback_faders.rs::track_faders`、交換後の補間は `FaderState::carry`、メーターは各トラック自身のフェーダー後を見る。
+`cargo test -q -p echode-engine --test block_size folder_mix::` で入れ子・複数ソロ・親の付替え・5 ms の補間・左右・キャッシュを機器なしで照合する。
+親の音量・パン・FX が子へ効かないのは、未実装のフォルダバスの境界である（[ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md)）。
+実機だけで起きる段差は、機器・バッファ長・切替順・プラグインと取りこぼし数を UC-49 へ記録する。
+
 ## プラグイン
 
 ### ヘルパーの保存・復元・パラメーター・窓の要求が時間切れ／busy になる

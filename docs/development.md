@@ -348,6 +348,8 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 `WorkspaceView` と `MixInspectorView` は同じ `arrangeMixActions` を使い、ピアノ行の単一対象と区別する。
 回帰は `MixerSwitchBatchTests.swift`・`MixerSwitchBoundaryTests.swift`・`MixerSwitchValidationTests.swift`
 （[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
+フォルダの実効ミュート・ソロは `playback_faders.rs` が制御側で親子から解決する。
+回帰は `audit_scale_and_mix.rs` と `block_size/folder_mix.rs`（[ADR 0244](decisions/0244-folder-mute-and-solo-gates.md)）。
 
 音量・パンの数値入力の対象・共通倍率／差分・上下限は `MixerValueBatch.swift`、入力の振分けは `MixActions.enter` を使う。
 回帰は `MixerValueBatchTests.swift`・`MixerValueBoundaryTests.swift`・`MixerValueOrderTests.swift` に置く。

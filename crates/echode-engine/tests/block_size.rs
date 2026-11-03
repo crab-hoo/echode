@@ -7,6 +7,8 @@
 
 #[path = "block_size/clip_gain.rs"]
 mod clip_gain;
+#[path = "block_size/folder_mix.rs"]
+mod folder_mix;
 use echode_engine::{
     AudioClip, Event, PlayedSpan, SynthVoice, TrackFader, Transport, fade_loop_seam, mix_tracks,
     render_audio_clips, render_metronome, render_test_synth, schedule, seam_fade_frames,

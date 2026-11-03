@@ -39,6 +39,9 @@ use media::MediaPreparation;
 #[path = "playback_preparation.rs"]
 mod preparation;
 use preparation::GraphPreparation;
+#[path = "playback_faders.rs"]
+mod faders;
+use faders::track_faders;
 /// Clock providers consume device frames. External synchronization may supply
 /// another provider without making the UI timer advance the transport.
 pub trait ClockSource: Send {
@@ -284,12 +287,12 @@ impl Prepared {
         let plan = crate::plan::build_plan(project, project.tempo(), rate, ids)?;
         let cursor = plan.cursor();
         let tempo = crate::plan::tempo_index(project.tempo())?;
-        let solo = plan.tracks.iter().any(|track| track.solo != 0.0);
+        let faders = track_faders(project, &plan)?;
         let mut tracks = Vec::with_capacity(plan.tracks.len());
         let mut event_count = 1usize;
         let mut chase_count = 0usize;
         let mut demands = Vec::with_capacity(plan.tracks.len());
-        for track in &plan.tracks {
+        for (track, fader) in plan.tracks.iter().zip(faders) {
             let mut notes: Vec<_> = track
                 .notes
                 .iter()
@@ -318,12 +321,6 @@ impl Prepared {
                 .checked_add(demand.chase)
                 .ok_or(PlaybackError::Time)?;
             demands.push(demand);
-            let fader = TrackFader {
-                gain: track.gain,
-                pan: track.pan,
-                mute: track.mute != 0.0 || (solo && track.solo == 0.0),
-                solo: false,
-            };
             tracks.push(Track {
                 key: track.track_key,
                 meter: Arc::clone(
