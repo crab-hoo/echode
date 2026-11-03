@@ -456,6 +456,18 @@ pub type Complete = extern "C" fn(
     snapshot: *mut Snapshot,
 );
 
+/// Appends later panics to the NDJSON file at `path` (ADR 0238). An audio
+/// callback's panic stops at the callback and reaches the log, with its
+/// location, from the thread that reports the stopped output. Only the first
+/// call installs the hook; null keeps the callbacks' capture without a file.
+///
+/// # Safety
+/// `path` is a nullable NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echode_keep_panic_log(path: *const c_char) {
+    echode_audio_io::keep_panic_log(c_str(path).map(std::path::PathBuf::from));
+}
+
 /// Creates an empty package at `path` and opens it. Null if that fails.
 ///
 /// # Safety

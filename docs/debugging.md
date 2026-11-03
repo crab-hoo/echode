@@ -14,7 +14,7 @@ make debug-report
 - `agent-context` は同じ診断経路と検査選択を一度で使い、要約と根拠の JSON を作る。
   取得の失敗、本文予算の超過、曖昧な節、古い行番号の識別と復旧は [エージェントの手順](agent-workflow.md) を参照する。
 - `debug-report` は `target/debug-reports/<日時>-<一意名>/` へ診断 JSON、案内、既存ログ（末尾最大 2 MiB）とスパイクの JSON をコピーする。
-  アプリが `~/Library/Logs/Echode/` に書いた試聴の記録も `app-logs/` へ写す（素材のパスを含む）。
+  アプリが `~/Library/Logs/Echode/` に書いた試聴の記録（素材のパスを含む）と panic の記録（[ADR 0238](decisions/0238-audio-callback-panics.md)）も `app-logs/` へ写す。
   生の環境変数・Cargo 設定・ユーザープロジェクトは収集しない。
 - `make app` は署名後の本体・ヘルパー・同梱プラグインのハッシュとソースを `target/Echode.build.json` に記録する。
 - ソースが同じでも実機計測だけが古くなったら、既定出力とレートの変更、`system_profiler -json SPAudioDataType -detailLevel mini` の読取可否を確認する。機器設定を診断のために勝手に変えない。
@@ -81,6 +81,7 @@ make debug-report
   - パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
 - 再生・停止・ループ
   - 再生開始が遅い・準備中に停止できない
+  - 再生が `audio callback panicked` で止まる・アプリが理由を残さず落ちる
   - 再生中のぶつぶつ・停止時のクリック
   - 停止中にプラグインの時間・鍵盤の発音が止まる、または余韻が切れる
   - 停止で開始位置へ戻らない・戻る時に余韻が切れる・開き直すと開始位置が消える

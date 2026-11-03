@@ -4,6 +4,9 @@
 //! debug binary may install [`GuardAlloc`]. Release builds skip the check so
 //! measurements stay unchanged. The guard aborts instead of panicking, because
 //! formatting a panic would allocate again.
+//! A thread that is already panicking may allocate: the panic formats its
+//! message and boxes its payload, and refusing that would turn a callback's
+//! caught panic into an abort with no reason (ADR 0238).
 
 #[cfg(debug_assertions)]
 use std::cell::Cell;
@@ -61,7 +64,7 @@ unsafe impl std::alloc::GlobalAlloc for GuardAlloc {
 
 #[cfg(debug_assertions)]
 fn refuse() {
-    if FORBID.with(|flag| flag.get()) {
+    if FORBID.with(|flag| flag.get()) && !std::thread::panicking() {
         std::process::abort();
     }
 }

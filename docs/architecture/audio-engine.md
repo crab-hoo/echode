@@ -122,6 +122,9 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
   （[操作要件](../interaction-design.md#再生の開始位置)、[ADR 0117](../decisions/0117-workflow-interactions.md)）。
   セッションが開始位置を持ち、停止は `Rewind` で時計だけを戻してプラグインのリセットと余韻の打ち切りをしない。
   開始位置はパッケージの `transport.json` に保存する（[ADR 0155](../decisions/0155-remembered-playback-start.md)）
+- **コールバックの panic**: 出力と試聴のコールバックは panic を捕まえ、そのブロック以降を無音にして出力の失敗として報告する。
+  オーディオスレッドではフックが場所と文を前もって確保した領域へ写すだけで、記録へは制御スレッドが書く
+  （[ADR 0238](../decisions/0238-audio-callback-panics.md)）
 - **出力デバイス追従**: 既定はシステム出力に追従し、明示選択したデバイスが抜けたときはシステム出力へフォールバックし、戻ったら復帰する
   （[ADR 0015](../decisions/0015-output-device-follow.md)）
 

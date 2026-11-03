@@ -15,6 +15,7 @@
   XCA-11 は共通の運用の知識を各手順へ移し、XCA-12 は確認待ちを [ユーザー確認の一覧](../user-checks.md) へ集めた。
   XCA-16 は保存の不確定の判定を型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。
   XCA-13 はコールバックのトラックごとの全体の走査をなくした（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
+  XCA-14 はコールバックの panic を捕まえて理由を記録へ残した（[ADR 0238](../decisions/0238-audio-callback-panics.md)、添字の lint は残る）。
   証拠は [保存の耐久性の追跡](../evidence/2026-11-02-durability-trace.md) に置く。
 - [2026-11-02 外部監査 2 件の精査](2026-11-02-external-audit-review.md): 製品・エージェント環境・検査時間の外部指摘の判定。
   プラグインの窓での変更の消失（DOC-A1・A2）と、保管物のない状態による読めない先端（HIS-A1）を再現した。

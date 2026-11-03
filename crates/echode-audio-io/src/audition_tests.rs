@@ -68,6 +68,8 @@ struct Probe {
     hold: Arc<AtomicBool>,
     held: Arc<AtomicBool>,
     fail_open: Arc<AtomicBool>,
+    /// What `panic` reports while the output is broken.
+    panic: Arc<Mutex<Option<String>>>,
 }
 
 struct TestOutputs {
@@ -109,6 +111,9 @@ impl AuditionOutputs for TestOutputs {
     }
     fn healthy(&self) -> bool {
         self.control.is_some() && !self.probe.broken.load(Ordering::Acquire)
+    }
+    fn panic(&self) -> Option<String> {
+        lock(&self.probe.panic).clone()
     }
     fn heard(&mut self) -> Option<(u64, u64)> {
         self.control
@@ -410,6 +415,27 @@ fn the_audition_follows_the_project_output_and_closes_when_the_device_changes() 
         report.request == request && report.phase == AuditionPhase::Sounding
     });
     assert_eq!(probe.opens.load(Ordering::Acquire), 3);
+}
+
+/// XCA-14 (ADR 0238): a panicked callback stops the sound with where it
+/// panicked, not as a device change.
+#[test]
+fn a_panicked_audition_callback_stops_its_sound_with_the_reason() {
+    let fixture = fixture("panic");
+    let sample = fixture.0.join("long.wav");
+    std::fs::write(&sample, wav(RATE, 1, &tone(RATE as usize, 1, 0.02, 0.3))).unwrap();
+    let (audition, probe) = audition(RATE);
+    let request = audition.play(sample);
+    wait(&audition, |report| {
+        report.request == request && report.phase == AuditionPhase::Sounding
+    });
+    *lock(&probe.panic) = Some("audition.rs:1:1: injected".into());
+    probe.broken.store(true, Ordering::Release);
+    let report = wait(&audition, |report| report.phase == AuditionPhase::Stopped);
+    assert_eq!(
+        report.error.as_deref(),
+        Some("the audition callback panicked: audition.rs:1:1: injected")
+    );
 }
 
 fn entry(audition: &Audition, request: u64) -> AuditionEntry {

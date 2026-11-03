@@ -33,6 +33,7 @@ use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp, Audio
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
 
+use crate::panic_log::CallbackPanic;
 use crate::{OutputDevice, hardware};
 
 /// How often an open output frees returned sounds and checks its device.
@@ -427,6 +428,8 @@ pub(crate) trait AuditionOutputs {
     fn is_open(&self) -> bool;
     /// False once the device changed or the callback failed.
     fn healthy(&self) -> bool;
+    /// Where and why the callback panicked, once it has (ADR 0238).
+    fn panic(&self) -> Option<String>;
     /// The newest sound the callback started, and the host nanoseconds its
     /// first block was due at the output.
     fn heard(&mut self) -> Option<(u64, u64)>;
@@ -573,14 +576,15 @@ fn service(
         return;
     }
     if !outputs.healthy() {
+        // Read before closing, which frees the callback with its reason.
+        let error = outputs.panic().map_or_else(
+            || "the output device changed".into(),
+            |reason| format!("the audition callback panicked: {reason}"),
+        );
         outputs.close();
         shared.set_rate(None);
         if let Some((request, _)) = sounding.take() {
-            shared.update(
-                request,
-                AuditionPhase::Stopped,
-                Some("the output device changed".into()),
-            );
+            shared.update(request, AuditionPhase::Stopped, Some(error));
         }
         *idle_since = None;
         return;
@@ -678,6 +682,11 @@ impl AuditionOutputs for HalOutputs {
         })
     }
 
+    fn panic(&self) -> Option<String> {
+        let (_, stream) = self.open.as_ref()?;
+        stream.callback.as_ref()?.panic.reason().map(str::to_owned)
+    }
+
     fn heard(&mut self) -> Option<(u64, u64)> {
         self.open
             .as_mut()
@@ -685,6 +694,8 @@ impl AuditionOutputs for HalOutputs {
     }
 
     fn close(&mut self) {
+        // The log keeps a panic even when nothing was sounding.
+        let _ = self.panic();
         if let Some((_, mut stream)) = self.open.take() {
             stream.close();
         }
@@ -707,6 +718,7 @@ pub(crate) struct AuditionCallback {
     epoch: Arc<AtomicU64>,
     observed: u64,
     failed: AtomicBool,
+    panic: CallbackPanic,
 }
 
 // SAFETY: HAL serializes calls to this IOProc, and only the callback touches
@@ -734,6 +746,7 @@ impl AuditionCallback {
             epoch,
             observed,
             failed: AtomicBool::new(false),
+            panic: CallbackPanic::new("audition callback"),
         }
     }
 
@@ -845,12 +858,26 @@ unsafe extern "C-unwind" fn render(
 }
 
 /// Also runs with owned test buffers; no HAL call happens here. `host` is
-/// the host time this block is due at the output, or 0 when unknown.
+/// the host time this block is due at the output, or 0 when unknown. A panic
+/// leaves this and every later block silent (ADR 0238).
 ///
 /// # Safety
 /// HAL serializes calls, and each non-null buffer is writable for its size.
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 pub(crate) unsafe fn fill(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u64) {
+    if !callback
+        .panic
+        .run(|| unsafe { mix(callback, buffers, host) })
+    {
+        callback.failed.store(true, Ordering::Release);
+        // SAFETY: the same buffers the body was given; it may have written part of them.
+        unsafe { crate::stream::clear_buffers(buffers) };
+    }
+}
+
+/// # Safety
+/// As for [`fill`].
+unsafe fn mix(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u64) {
     let _guard = ForbidAlloc::enter();
     let (frames, valid) = unsafe { crate::stream::clear_buffers(buffers) };
     // A changed device stays silent until the thread closes this output.

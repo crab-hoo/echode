@@ -118,6 +118,9 @@ final class LineLog: Sendable {
     static var auditions: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Echode/audition.ndjson")
     }
+    static var panics: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Echode/panic.ndjson")
+    }
     let url: URL
     let limit: Int
     private let queue = DispatchQueue(label: "io.echode.line-log", qos: .utility)
@@ -154,5 +157,12 @@ extension ProjectController {
     /// tests and tools that never call it write nothing.
     public func keepAuditionLog(at file: URL? = nil) {
         auditionLog.keep(in: LineLog(url: file ?? LineLog.auditions))
+    }
+
+    /// Lets the Rust core append its panics beside the audition log
+    /// (ADR 0238). Once per process; tests and tools that never call it
+    /// write nothing.
+    public static func keepPanicLog(at file: URL? = nil) {
+        PanicLog.keep(at: file ?? LineLog.panics)
     }
 }

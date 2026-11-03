@@ -156,6 +156,14 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 
 `pending-transport`（UI 受付）、`queued-stop`（ABI 投入時取消）、`transport-cancellation`（HAL 初回発音禁止）の 3 境界を切り分ける（[ADR 0097](../decisions/0097-cancellable-retained-transport.md)）。
 
+### 再生が `audio callback panicked` で止まる・アプリが理由を残さず落ちる
+
+エラーの `<場所>: <文>` は、panic した Rust のソースの位置である。そのブロックからコールバックは無音で、プレイヤーを再び使わない（[ADR 0238](../decisions/0238-audio-callback-panics.md)）。
+アプリの記録は `~/Library/Logs/Echode/panic.ndjson` で、`make debug-report` が `app-logs/` へ写す。
+`source` が `output callback` / `audition callback` ならコールバック、`thread` ならほかのスレッドで、`backtrace` が付く。FFI の中の panic は、この行を書いた後に異常終了する。
+再現は、その場所を通る入力の `cargo test` で行う。デバッグのテストの `GuardAlloc` は panic 中の確保を許すので、`ForbidAlloc` の内側の panic もテストの失敗として文が出る。
+理由のない SIGABRT は、panic ではない確保を `GuardAlloc` が止めたことを疑う。
+
 ### 再生中のぶつぶつ・停止時のクリック
 
 `audio.status` の `plugin_missed_blocks` と `pending_plan` を確認する。

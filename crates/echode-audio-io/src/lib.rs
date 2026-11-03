@@ -6,6 +6,7 @@ mod audition;
 mod clips;
 mod hardware;
 mod opening;
+mod panic_log;
 mod session;
 mod stream;
 mod trace;
@@ -25,6 +26,7 @@ pub use echode_engine::{
 pub use hardware::{Inventory, OutputDevice, inventory};
 #[cfg(any(test, feature = "headless-output"))]
 pub use opening::HeadlessOutput;
+pub use panic_log::keep_panic_log;
 pub use session::{AudioCommand, AudioState, DeviceAccess, Session};
 pub use stream::{
     OutputStream, installed_plugin_routes, project_plugin_ids, routes_with_saved_state,

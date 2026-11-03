@@ -4,6 +4,8 @@ import SwiftUI
 
 @main
 struct EchodeApp: App {
+    init() { ProjectController.keepPanicLog() }
+
     var body: some Scene {
         Window("Echode", id: "workspace") { ProjectWindow() }
             .defaultSize(width: 1200, height: 740)

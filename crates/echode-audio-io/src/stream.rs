@@ -24,6 +24,7 @@ use echode_model::{Project, Tick};
 use objc2_core_audio::*;
 use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp};
 
+use crate::panic_log::CallbackPanic;
 use crate::{OutputDevice, TransportCancellation, hardware};
 
 struct Render {
@@ -38,6 +39,8 @@ struct Render {
 struct Callback {
     render: UnsafeCell<Render>,
     failed: AtomicBool,
+    /// Catches a panic in the block's body; HAL never sees it unwind.
+    panic: CallbackPanic,
     callbacks: AtomicU64,
     trace: UnsafeCell<Option<crate::trace::Writer>>,
     channels: u32,
@@ -308,6 +311,7 @@ impl OutputStream {
                 right: vec![0.0; frames],
             }),
             failed: AtomicBool::new(false),
+            panic: CallbackPanic::new("output callback"),
             callbacks: AtomicU64::new(0),
             trace: UnsafeCell::new(trace),
             channels: device.channels,
@@ -489,6 +493,15 @@ impl OutputStream {
         if let Some(error) = self.control.take_preparation_error() {
             return Err(error.to_string());
         }
+        if let Some(reason) = self
+            .callback
+            .as_ref()
+            .and_then(|callback| callback.panic.reason())
+        {
+            return Err(format!(
+                "audio playback stopped because the audio callback panicked: {reason}"
+            ));
+        }
         if self.control.status().failed
             || self
                 .callback
@@ -537,6 +550,10 @@ impl OutputStream {
     /// control thread, including every plan still in an ownership ring.
     pub fn close(&mut self) -> PlaybackStatus {
         let mut failed = false;
+        // The log keeps a panic even when no service call asked for it.
+        if let Some(callback) = &self.callback {
+            let _ = callback.panic.reason();
+        }
         if let Some(callback) = self.callback.take()
             && self.registered
         {
@@ -791,7 +808,7 @@ unsafe extern "C-unwind" fn render(
     let count = unsafe { (*list).mNumberBuffers } as usize;
     let pointer = unsafe { std::ptr::addr_of_mut!((*list).mBuffers).cast::<AudioBuffer>() };
     let buffers = unsafe { std::slice::from_raw_parts_mut(pointer, count) };
-    unsafe { fill_with_time(callback, buffers, entered, output_time.as_ref().mHostTime) };
+    unsafe { block(callback, buffers, entered, output_time.as_ref().mHostTime) };
     0
 }
 
@@ -799,7 +816,25 @@ unsafe extern "C-unwind" fn render(
 #[cfg(test)]
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 unsafe fn fill(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instant) {
-    unsafe { fill_with_time(callback, buffers, entered, 0) };
+    unsafe { block(callback, buffers, entered, 0) };
+}
+
+/// One HAL block. A panic in its body leaves this and every later block
+/// silent, and the control thread reports it (ADR 0238).
+unsafe fn block(
+    callback: &Callback,
+    buffers: &mut [AudioBuffer],
+    entered: Instant,
+    host_time: u64,
+) {
+    let finished = callback
+        .panic
+        .run(|| unsafe { fill_with_time(callback, buffers, entered, host_time) });
+    if !finished {
+        callback.failed.store(true, Ordering::Release);
+        // SAFETY: the same buffers the body was given; it may have written part of them.
+        unsafe { clear_buffers(buffers) };
+    }
 }
 
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]

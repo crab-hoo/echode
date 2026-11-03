@@ -62,6 +62,7 @@ fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_r
                     right: vec![0.0; frames],
                 }),
                 failed: AtomicBool::new(false),
+                panic: CallbackPanic::new("output callback"),
                 callbacks: AtomicU64::new(0),
                 trace: UnsafeCell::new(Some(trace)),
                 channels: if layout == 2 { 1 } else { 2 },
@@ -213,6 +214,7 @@ fn contract_transport_discontinuities_declick_hal_output_under_rtsan() {
                         right: vec![0.0; frames],
                     }),
                     failed: AtomicBool::new(false),
+                    panic: CallbackPanic::new("output callback"),
                     callbacks: AtomicU64::new(0),
                     trace: UnsafeCell::new(None),
                     channels: 2,
@@ -323,6 +325,7 @@ fn contract_stop_preserves_waveform_while_fading_under_rtsan() {
                             right: vec![0.0; frames],
                         }),
                         failed: AtomicBool::new(false),
+                        panic: CallbackPanic::new("output callback"),
                         callbacks: AtomicU64::new(0),
                         trace: UnsafeCell::new(None),
                         channels: 2,
@@ -446,6 +449,7 @@ fn in_flight_stop_preserves_heard_audio_and_cancels_unheard_starts_under_rtsan()
                 right: vec![0.0; frames],
             }),
             failed: AtomicBool::new(false),
+            panic: CallbackPanic::new("output callback"),
             callbacks: AtomicU64::new(0),
             trace: UnsafeCell::new(None),
             channels: 2,
@@ -585,6 +589,7 @@ fn contract_stop_during_preparation_gates_callbacks_under_rtsan() {
             right: vec![0.0; 64],
         }),
         failed: AtomicBool::new(false),
+        panic: CallbackPanic::new("output callback"),
         callbacks: AtomicU64::new(0),
         trace: UnsafeCell::new(None),
         channels: 2,
@@ -736,6 +741,7 @@ fn interleaved_and_planar_hal_buffers_match_under_rtsan() {
                     right: vec![0.0; 64],
                 }),
                 failed: AtomicBool::new(false),
+                panic: CallbackPanic::new("output callback"),
                 callbacks: AtomicU64::new(0),
                 trace: UnsafeCell::new(None),
                 channels: 2,
@@ -832,6 +838,7 @@ fn the_hal_deadline_starts_when_the_callback_is_entered() {
             right: vec![0.0; 64],
         }),
         failed: AtomicBool::new(false),
+        panic: CallbackPanic::new("output callback"),
         callbacks: AtomicU64::new(0),
         trace: UnsafeCell::new(None),
         channels: 2,
@@ -940,4 +947,141 @@ fn a_live_device_route_carries_its_helper_bytes_instead_of_the_recorded_object()
         "one route per device, in project order"
     );
     let _ = std::fs::remove_dir_all(package);
+}
+
+/// XCA-14 (ADR 0238): a panic inside the product render stops at the
+/// callback instead of unwinding into HAL. That block and every later one
+/// are silent, the player is not entered again, and the control thread
+/// reports where it panicked.
+#[test]
+fn a_panic_in_the_render_leaves_the_output_silent_and_reports_its_location() {
+    let log = crate::panic_log::tests::test_log();
+    // A live block moves the clock with `locate` after it has rendered.
+    struct Clock {
+        sample: i64,
+        moves: Arc<AtomicU64>,
+        panic_at: i64,
+    }
+    impl echode_engine::ClockSource for Clock {
+        fn position(&self) -> i64 {
+            self.sample
+        }
+        fn locate(&mut self, sample: i64) {
+            self.moves.fetch_add(1, Ordering::Relaxed);
+            if sample >= self.panic_at {
+                panic!("render marker at sample {sample}");
+            }
+            self.sample = sample;
+        }
+        fn advance(&mut self, frames: u32) -> Result<(), echode_engine::PlaybackError> {
+            self.locate(self.sample + i64::from(frames));
+            Ok(())
+        }
+    }
+    let rate = 48_000;
+    let frames = 64; // Fixture buffer size only.
+    let moves = Arc::new(AtomicU64::new(0));
+    let (project, track) = Project::new().add_track("pcm");
+    let (mut control, player) = playback(
+        &project,
+        rate,
+        frames,
+        PlaybackOptions::default().clock(Box::new(Clock {
+            sample: 0,
+            moves: Arc::clone(&moves),
+            panic_at: frames as i64 * 3,
+        })),
+    )
+    .unwrap();
+    control.set_clip_loader(Arc::new(move |_, rate| {
+        Ok(fixture_clips(track.raw(), rate))
+    }));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let callback = Callback {
+        render: UnsafeCell::new(Render {
+            player,
+            declick: echode_engine::OutputDeclick::new(rate),
+            output_revision: 0,
+            enabled: true,
+            left: vec![0.0; frames],
+            right: vec![0.0; frames],
+        }),
+        failed: AtomicBool::new(false),
+        panic: CallbackPanic::new("output callback"),
+        callbacks: AtomicU64::new(0),
+        trace: UnsafeCell::new(None),
+        channels: 2,
+        sample_rate: rate,
+        silent: false,
+        hardware_epoch: Arc::new(AtomicU64::new(0)),
+        observed_epoch: AtomicU64::new(0),
+        cancellation: TransportCancellation::default(),
+        transport_revision: AtomicU64::new(0),
+    };
+    let mut stream = OutputStream {
+        workgroup_listener: None,
+        device: OutputDevice {
+            id: 0,
+            uid: "fixture".into(),
+            name: "fixture".into(),
+            sample_rate: rate,
+            buffer_frames: frames as u32,
+            channels: 2,
+            formats: Vec::new(),
+        },
+        control,
+        callback: Some(Box::new(callback)),
+        proc: None,
+        registered: false,
+        package: None,
+        pending_locate: None,
+        trace_files: None,
+    };
+    let mut output = vec![0.0f32; frames * 2];
+    let mut run = |stream: &OutputStream| {
+        output.fill(1.0);
+        let buffer = AudioBuffer {
+            mNumberChannels: 2,
+            mDataByteSize: std::mem::size_of_val(output.as_slice()) as u32,
+            mData: output.as_mut_ptr().cast(),
+        };
+        let callback = stream.callback.as_deref().unwrap();
+        unsafe { fill(callback, &mut [buffer], Instant::now()) };
+        output.clone()
+    };
+    for _ in 0..2 {
+        assert!(run(&stream).iter().any(|sample| *sample != 0.0));
+        stream.service().unwrap();
+    }
+    // The third block renders, then panics while moving the clock to 192.
+    assert!(run(&stream).iter().all(|sample| *sample == 0.0));
+    let entered = moves.load(Ordering::Relaxed);
+    for _ in 0..4 {
+        assert!(run(&stream).iter().all(|sample| *sample == 0.0));
+    }
+    assert_eq!(
+        moves.load(Ordering::Relaxed),
+        entered,
+        "the player ran again"
+    );
+    let callback = stream.callback.as_deref().unwrap();
+    assert!(callback.failed.load(Ordering::Acquire));
+    let error = stream.service().unwrap_err();
+    assert!(
+        error.starts_with("audio playback stopped because the audio callback panicked: ")
+            && error.contains("stream_tests.rs:")
+            && error.ends_with("render marker at sample 192"),
+        "{error}"
+    );
+    assert_eq!(stream.service().unwrap_err(), error);
+    let lines: Vec<_> = std::fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains("render marker at sample 192"))
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["source"], "output callback");
+    stream.close();
 }
