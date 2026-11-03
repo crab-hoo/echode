@@ -1,4 +1,4 @@
-//! `echode render` writes a project package to a stereo float WAV.
+//! `echode render` writes a project package to a stereo float or 24-bit PCM WAV.
 //!
 //! A project with no instrument does not synthesize notes. Placed audio uses
 //! the same buffers and faders as product playback. A project with
@@ -35,6 +35,31 @@ const PLUGIN_CALLBACK_FRAMES: usize = 256;
 /// not real time, so a plugin slower than real time still finishes (CLI-A1).
 /// This only ends an export whose helper stopped answering.
 const OFFLINE_BLOCK_WAIT: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy)]
+enum WavFormat {
+    Float32,
+    Pcm24,
+}
+
+impl WavFormat {
+    fn parse(text: &str) -> Result<Self, CliError> {
+        match text {
+            "float32" => Ok(Self::Float32),
+            "pcm24" => Ok(Self::Pcm24),
+            _ => Err(CliError::new(format!(
+                "expected wav format float32 or pcm24, got {text}"
+            ))),
+        }
+    }
+
+    fn frame_bytes(self) -> u16 {
+        match self {
+            Self::Float32 => 8,
+            Self::Pcm24 => 6,
+        }
+    }
+}
 
 /// Why a command stopped.
 #[derive(Debug)]
@@ -154,6 +179,7 @@ where
     };
     let mut sample_rate = 48_000u32;
     let mut frames = None;
+    let mut format = WavFormat::Float32;
     while let Some(flag) = args.next() {
         match flag.as_ref() {
             "--sample-rate" => {
@@ -168,14 +194,21 @@ where
                 };
                 frames = Some(parse_u32(value.as_ref())?);
             }
+            "--format" => {
+                let Some(value) = args.next() else {
+                    return Err(usage());
+                };
+                format = WavFormat::parse(value.as_ref())?;
+            }
             _ => return Err(usage()),
         }
     }
-    render_to_wav(
+    render_to_wav_format(
         Path::new(package.as_ref()),
         Path::new(wav.as_ref()),
         sample_rate,
         frames,
+        format,
     )
 }
 
@@ -228,6 +261,16 @@ pub fn render_to_wav(
     sample_rate: u32,
     frames: Option<u32>,
 ) -> Result<(), CliError> {
+    render_to_wav_format(package, wav, sample_rate, frames, WavFormat::Float32)
+}
+
+fn render_to_wav_format(
+    package: &Path,
+    wav: &Path,
+    sample_rate: u32,
+    frames: Option<u32>,
+    format: WavFormat,
+) -> Result<(), CliError> {
     if sample_rate == 0 {
         return Err(CliError::new("invalid sample rate"));
     }
@@ -248,7 +291,7 @@ pub fn render_to_wav(
     if ids.is_empty() {
         let clips = load_placed_clips(package, &project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?;
-        let mut wav = WavFile::create(wav, sample_rate, frames)?;
+        let mut wav = WavFile::create(wav, sample_rate, frames, format)?;
         render_offline_blocks_with_clips(&project, sample_rate, frames, 64, &clips, |block| {
             wav.write_block(block)
         })
@@ -284,6 +327,7 @@ pub fn render_to_wav(
         sample_rate,
         frames,
         include_tail,
+        format,
         &host,
         &routes,
     )?;
@@ -299,11 +343,12 @@ fn render_with_plugins(
     sample_rate: u32,
     frames: u32,
     include_tail: bool,
+    format: WavFormat,
     host: &Path,
     routes: &[PluginRoute],
 ) -> Result<(), CliError> {
     if frames == 0 {
-        return WavFile::create(wav, sample_rate, 0)?.finish();
+        return WavFile::create(wav, sample_rate, 0, format)?.finish();
     }
     let block = PLUGIN_CALLBACK_FRAMES;
     let (mut control, mut audio) = playback(
@@ -330,7 +375,7 @@ fn render_with_plugins(
     control
         .command(PlaybackCommand::Play)
         .map_err(|error| CliError::new(error.to_string()))?;
-    let mut wav = WavFile::create(wav, sample_rate, frames)?;
+    let mut wav = WavFile::create(wav, sample_rate, frames, format)?;
     let mut left = vec![0.0; block];
     let mut right = vec![0.0; block];
     let mut interleaved = vec![0.0; block.saturating_mul(2)];
@@ -382,7 +427,7 @@ fn parse_u32(text: &str) -> Result<u32, CliError> {
 
 fn usage() -> CliError {
     CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
+        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N] [--format float32|pcm24]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
     )
 }
 
@@ -396,7 +441,7 @@ pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(
     }
     let frames = u32::try_from(interleaved.len() / 2)
         .map_err(|_| CliError::new("wav data does not fit in a 32-bit chunk"))?;
-    let mut wav = WavFile::create(path, sample_rate, frames)?;
+    let mut wav = WavFile::create(path, sample_rate, frames, WavFormat::Float32)?;
     for block in interleaved.chunks(64 * 2) {
         wav.write_block(block)?;
     }
@@ -406,6 +451,7 @@ pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(
 struct WavFile {
     writer: BufWriter<File>,
     bytes: Vec<u8>,
+    format: WavFormat,
     temporary: PathBuf,
     destination: PathBuf,
     /// Set once `rename` has replaced the destination. Drop must not delete it.
@@ -421,8 +467,13 @@ impl Drop for WavFile {
 }
 
 impl WavFile {
-    fn create(path: &Path, sample_rate: u32, frames: u32) -> Result<Self, CliError> {
-        let header = wav_header(sample_rate, frames)?;
+    fn create(
+        path: &Path,
+        sample_rate: u32,
+        frames: u32,
+        format: WavFormat,
+    ) -> Result<Self, CliError> {
+        let header = wav_header(sample_rate, frames, format)?;
         let destination = path.to_path_buf();
         let temporary = temporary_wav_path(&destination)?;
         let file = OpenOptions::new()
@@ -440,6 +491,7 @@ impl WavFile {
         Ok(Self {
             writer,
             bytes: Vec::with_capacity(64 * 2 * 4),
+            format,
             temporary,
             destination,
             published: false,
@@ -451,9 +503,26 @@ impl WavFile {
             return Err(CliError::new("wav write failed"));
         }
         self.bytes.clear();
-        self.bytes.reserve(interleaved.len().saturating_mul(4));
+        self.bytes.reserve(
+            interleaved
+                .len()
+                .saturating_mul(usize::from(self.format.frame_bytes() / 2)),
+        );
         for sample in interleaved {
-            self.bytes.extend_from_slice(&sample.to_le_bytes());
+            match self.format {
+                WavFormat::Float32 => self.bytes.extend_from_slice(&sample.to_le_bytes()),
+                WavFormat::Pcm24 => {
+                    if !sample.is_finite() {
+                        return Err(CliError::new("non-finite sample in PCM24 export"));
+                    }
+                    // Quantize once, at the file boundary. No dither or noise shaping.
+                    // f64 preserves the half-LSB rounding boundary near full scale.
+                    let integer = (f64::from(*sample) * 8_388_608.0)
+                        .round()
+                        .clamp(-8_388_608.0, 8_388_607.0) as i32;
+                    self.bytes.extend_from_slice(&integer.to_le_bytes()[..3]);
+                }
+            }
         }
         self.writer
             .write_all(&self.bytes)
@@ -491,34 +560,56 @@ impl WavFile {
     }
 }
 
-fn wav_header(sample_rate: u32, frames: u32) -> Result<[u8; 58], CliError> {
+fn wav_header(sample_rate: u32, frames: u32, format: WavFormat) -> Result<Vec<u8>, CliError> {
+    let frame_bytes = u32::from(format.frame_bytes());
+    let header_length = match format {
+        WavFormat::Float32 => 58usize,
+        WavFormat::Pcm24 => 68,
+    };
     let data_bytes = frames
-        .checked_mul(8)
+        .checked_mul(frame_bytes)
         .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
     let riff_size = data_bytes
-        .checked_add(50)
+        .checked_add(header_length as u32 - 8)
         .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
     let byte_rate = sample_rate
-        .checked_mul(8)
+        .checked_mul(frame_bytes)
         .ok_or_else(|| CliError::new("sample rate does not fit in the wav header"))?;
-    let mut header = [0u8; 58];
+    let mut header = vec![0u8; header_length];
     header[0..4].copy_from_slice(b"RIFF");
     header[4..8].copy_from_slice(&riff_size.to_le_bytes());
     header[8..12].copy_from_slice(b"WAVE");
     header[12..16].copy_from_slice(b"fmt ");
-    header[16..20].copy_from_slice(&18u32.to_le_bytes());
-    header[20..22].copy_from_slice(&3u16.to_le_bytes());
     header[22..24].copy_from_slice(&2u16.to_le_bytes());
     header[24..28].copy_from_slice(&sample_rate.to_le_bytes());
     header[28..32].copy_from_slice(&byte_rate.to_le_bytes());
-    header[32..34].copy_from_slice(&8u16.to_le_bytes());
-    header[34..36].copy_from_slice(&32u16.to_le_bytes());
-    header[36..38].copy_from_slice(&0u16.to_le_bytes()); // WAVEFORMATEX cbSize.
-    header[38..42].copy_from_slice(b"fact");
-    header[42..46].copy_from_slice(&4u32.to_le_bytes());
-    header[46..50].copy_from_slice(&frames.to_le_bytes()); // Per-channel sample count.
-    header[50..54].copy_from_slice(b"data");
-    header[54..58].copy_from_slice(&data_bytes.to_le_bytes());
+    header[32..34].copy_from_slice(&format.frame_bytes().to_le_bytes());
+    match format {
+        WavFormat::Float32 => {
+            header[16..20].copy_from_slice(&18u32.to_le_bytes());
+            header[20..22].copy_from_slice(&3u16.to_le_bytes());
+            header[34..36].copy_from_slice(&32u16.to_le_bytes());
+            // WAVEFORMATEX cbSize remains zero.
+            header[38..42].copy_from_slice(b"fact");
+            header[42..46].copy_from_slice(&4u32.to_le_bytes());
+            header[46..50].copy_from_slice(&frames.to_le_bytes());
+        }
+        WavFormat::Pcm24 => {
+            // WAVEFORMATEXTENSIBLE makes >16-bit PCM and the stereo layout explicit.
+            header[16..20].copy_from_slice(&40u32.to_le_bytes());
+            header[20..22].copy_from_slice(&0xfffeu16.to_le_bytes());
+            header[34..36].copy_from_slice(&24u16.to_le_bytes());
+            header[36..38].copy_from_slice(&22u16.to_le_bytes()); // cbSize.
+            header[38..40].copy_from_slice(&24u16.to_le_bytes()); // Valid bits.
+            header[40..44].copy_from_slice(&3u32.to_le_bytes()); // Front left/right.
+            header[44..60].copy_from_slice(&[
+                1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+            ]); // KSDATAFORMAT_SUBTYPE_PCM.
+        }
+    }
+    let data_chunk = header_length - 8;
+    header[data_chunk..data_chunk + 4].copy_from_slice(b"data");
+    header[data_chunk + 4..].copy_from_slice(&data_bytes.to_le_bytes());
     Ok(header)
 }
 

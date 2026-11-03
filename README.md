@@ -139,6 +139,22 @@ Enter ならブラウザを開いたまま挿入します。同梱の Sine Pad �
 現在の拍グリッドへ吸着し、Shift を押している間は解除します。最終行より下（空のプロジェクトも含む）では最上位末尾に新しいトラックを作ります。
 トラック作成と取込みは 1 回の Undo で戻せます。複数ファイルの同時ドロップと、同トラックの既存クリップに重なる配置はまだ受け付けません。
 
+## CLI で WAV を書き出す
+
+CLI と隔離ヘルパー、同梱音源を同じ版でビルドし、プロジェクトと出力先を渡します。
+
+```sh
+cargo build --release -p echode-cli -p echode-plugin-host
+bash scripts/build-bundled-plugins.sh release
+target/release/echode render Song.echode mix.wav --format pcm24 --sample-rate 48000
+```
+
+`--format pcm24` は 24 bit PCM、`--format float32` は 32 bit float のステレオ WAV です。省略時は従来どおり float です。
+PCM はフルスケールで飽和し、ディザやノーマライズはしません。
+`--frames N` を省略すると曲の終端とプラグインの申告する余韻を含めます。無限の余韻には明示した長さが必要です。
+失敗時は既存の出力を保ち、完成後のディレクトリ同期だけが失敗した場合は出力を残して耐久性不明を返します。
+4 GiB 超の RIFF、GUI の書出し画面、設定保存は未対応です（[ADR 0247](docs/decisions/0247-pcm24-wav-export.md)）。
+
 ## MCP でヘッドレスのセッションへ接続する
 
 既存の `.echode` パッケージを指定して、別のターミナルで `target/release/echode serve PACKAGE SOCKET` を起動します。実行ファイルは `cargo build --release -p echode-cli` で作れます。MCP クライアントには、その実行ファイルの絶対パスを command、`["mcp", "SOCKETの絶対パス"]` を args として指定します。

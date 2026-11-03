@@ -23,7 +23,7 @@
   改行前に EOF となった要求は、その接続だけをエラーで閉じて編集へ渡さない。
   完了済みの前方の要求は保持し、CRLF・分割受信・改行込みの行上限は変えない
   （[ADR 0073 の改行境界](../decisions/0073-socket-path.md#改行前の切断の拒否2026-10-29)）。
-- **CLI とヘッドレス**: `echode render`（ステレオ float WAV 書き出し、[ADR 0019](../decisions/0019-offline-wav.md)、[ADR 0057](../decisions/0057-crash-recovery.md)）、
+- **CLI とヘッドレス**: `echode render`（ステレオ float / PCM24 WAV 書き出し、[ADR 0247](../decisions/0247-pcm24-wav-export.md)）、
   `echode apply`（アクション列の実行）、`echode serve`（ヘッドレスサーバー）、`echode mcp`（MCP サーバー）
 - **MCP**: アクション登録簿から MCP ツールを自動生成し、プロジェクト概要やトラック一覧をリソースとして公開する。
   Phase 2 の初版（[ADR 0115](../decisions/0115-phase2-mcp.md)）は `echode mcp SOCKET` の stdio と同一ビルドの `echode serve` 接続を実装し、MCP `2026-07-28` と `2025-11-25` の要求を分ける。

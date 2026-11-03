@@ -13,7 +13,8 @@
   イベント容量の FCA-03 は [ADR 0240](../decisions/0240-block-local-event-capacity.md) で対応した。
   配置の PCM の複製（FCA-10）は [ADR 0241](../decisions/0241-unscaled-placement-pcm.md) で対応した。
   FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-references.md) を参照する。残りは未着手。
-  float WAV のヘッダ（FCA-16）の先行分は [ADR 0243](../decisions/0243-float-wav-metadata.md) で対応した。RF64・整数形式・ディザは残る。
+  WAV（FCA-16）は [ADR 0243](../decisions/0243-float-wav-metadata.md) の float ヘッダと、
+  [ADR 0247](../decisions/0247-pcm24-wav-export.md) の PCM24 を接続した。RF64・16 bit・ディザは残る。
   フォルダのミュート・ソロ（FCA-06）は [ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md) で子孫へ反映した。音量・パンとバス化は残る。
   取りこぼしの減衰・復帰（FCA-08）は [ADR 0245](../decisions/0245-plugin-deadline-fades.md) で接続した。実機の聴感は UC-50 に残す。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。

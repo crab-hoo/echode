@@ -269,6 +269,9 @@ PDC と `clap.log`・`clap.thread-check` 等の拡張は残り、実画面・第
 2026-11-03 の先行対応: [ADR 0243](../decisions/0243-float-wav-metadata.md) で、18 バイトの `fmt` とフレーム数の `fact` を接続した。
 再現は通常テストへ移し、基準音声は再生成せず全サンプルを保持する。RF64・整数形式・ディザは残る。
 
+追加対応: [ADR 0247](../decisions/0247-pcm24-wav-export.md) で、CLI の 24 bit PCM 選択と飽和・丸め・出力保全を接続した。
+RF64・16 bit・ディザは残り、当時の指摘全体の完了とはしない。
+
 ### FCA-17: Swift のポーリングとラベル
 
 - `observeAudio`（ProjectController.swift 568 行）は、表示中は 50 ms ごとに文書ワーカーへ状態の要求を送り、JSON で往復する。変化がなくても止まらない。

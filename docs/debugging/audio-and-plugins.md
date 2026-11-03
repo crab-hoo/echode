@@ -163,6 +163,13 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 長い書き出しの `wav data does not fit in a 32-bit chunk` は、メタデータ込みの RIFF 長の上限であり、RF64 への切替は未実装である。
 再現時はフレーム数・サンプルレート・読み手の名称とエラーを残し、音声の差・形式の拒否・容量超過を分ける（[ADR 0243](../decisions/0243-float-wav-metadata.md)）。
 
+`--format pcm24` の `fmt` は 40 バイト・形式コード `0xfffe`・24 bit・PCM subtype で、`fact` はない。
+`tests/pcm24.rs` は実 CLI の形式と独立した AudioToolbox の読込み、float との差を比較する。
+PCM の飽和と半 LSB の丸めは仕様で、ディザはしない。非有限値の拒否・上限・出力保全は `src/wav_tests.rs` も確認する。
+形式が違う出力を float として比較せず、再現には `--format` も残す（[ADR 0247](../decisions/0247-pcm24-wav-export.md)）。
+単体テストで正常系が `export durability is unknown` になり、故障系が予想外に成功する場合は、`arm_wav_fault` の共有を確認する。
+故障はプロセス全体に効くため、`wav_tests.rs` の全ファイル書込みは同じ `WRITER` mutex を取り、故障テストと直列化する。
+
 ### オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
 
 文書の `offline`、`bypassed`、`state` を分け、保存形式 5 と旧版からの変換を確認する。
