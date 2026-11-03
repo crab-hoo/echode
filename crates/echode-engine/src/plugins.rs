@@ -60,7 +60,7 @@ pub(crate) struct TrackChain {
 
 pub(crate) struct HostGraph {
     fan: Option<Arc<FanIn>>,
-    tracks: Vec<TrackHost>,
+    tracks: HostTracks,
     stage_index: Vec<(u128, usize, usize)>,
     /// A block tried to send more events than the routed buffer can hold.
     dropped_events: bool,
@@ -97,6 +97,65 @@ struct TrackHost {
     chased_ons: Vec<Event>,
     chase_order: Vec<usize>,
     chase_scratch: Vec<Event>,
+}
+
+/// Live tracks in chain order, and an index by key rebuilt with every change
+/// to the list. The callback looks each track up without scanning the others,
+/// so a block's lookups grow with the tracks rather than their square
+/// (XCA-13). Only the control thread replaces or shortens the list.
+#[derive(Default)]
+struct HostTracks {
+    list: Vec<TrackHost>,
+    /// `(key, position)`, sorted by key. Keys are unique within one chain.
+    by_key: Vec<(u32, usize)>,
+}
+
+impl HostTracks {
+    fn new(list: Vec<TrackHost>) -> Self {
+        let mut by_key: Vec<_> = list
+            .iter()
+            .enumerate()
+            .map(|(position, track)| (track.key, position))
+            .collect();
+        by_key.sort_unstable_by_key(|entry| entry.0);
+        debug_assert!(
+            by_key.windows(2).all(|pair| pair[0].0 != pair[1].0),
+            "two live tracks share a key"
+        );
+        Self { list, by_key }
+    }
+
+    fn position(&self, key: u32) -> Option<usize> {
+        let index = self
+            .by_key
+            .binary_search_by_key(&key, |entry| entry.0)
+            .ok()?;
+        self.by_key.get(index).map(|entry| entry.1)
+    }
+
+    fn take(&mut self) -> Vec<TrackHost> {
+        std::mem::take(self).list
+    }
+
+    fn retain(&mut self, keep: impl FnMut(&TrackHost) -> bool) {
+        let mut list = self.take();
+        list.retain(keep);
+        *self = Self::new(list);
+    }
+}
+
+impl std::ops::Deref for HostTracks {
+    type Target = [TrackHost];
+
+    fn deref(&self) -> &[TrackHost] {
+        &self.list
+    }
+}
+
+impl std::ops::DerefMut for HostTracks {
+    fn deref_mut(&mut self) -> &mut [TrackHost] {
+        &mut self.list
+    }
 }
 
 struct TrackRestore {
@@ -189,7 +248,7 @@ impl HostGraph {
     pub(crate) fn empty() -> Self {
         Self {
             fan: None,
-            tracks: Vec::new(),
+            tracks: HostTracks::default(),
             stage_index: Vec::new(),
             dropped_events: false,
             export_reason: 0,
@@ -225,7 +284,7 @@ impl HostGraph {
     /// Mark every live processor, including downstream effects. Each helper
     /// resets on its own audio thread before the next block's events.
     pub(crate) fn reset_processing(&mut self) {
-        for track in &mut self.tracks {
+        for track in self.tracks.iter_mut() {
             for stage in &mut track.stages {
                 stage.host.request_reset();
             }
@@ -246,10 +305,23 @@ impl HostGraph {
         }
         let started = Instant::now();
         let mut fits = true;
-        for track in &mut self.tracks {
-            fits &= !copy_events(&mut track.source_events, events, |event| {
-                event.track_key() == Some(track.key)
-            });
+        for track in self.tracks.iter_mut() {
+            track.source_events.clear();
+        }
+        // One pass over the events, so a stop with many held notes does not
+        // scan them once per track (XCA-13).
+        for event in events {
+            let Some(position) = event.track_key().and_then(|key| self.tracks.position(key)) else {
+                continue;
+            };
+            let held = &mut self.tracks[position].source_events;
+            if held.len() == held.capacity() {
+                fits = false;
+                continue;
+            }
+            held.push(*event);
+        }
+        for track in self.tracks.iter_mut() {
             for stage in &mut track.stages {
                 if stage.bypassed {
                     // No discarded process block is needed while dry. The
@@ -366,45 +438,46 @@ impl HostGraph {
     pub(crate) fn audio_snapshot(&self) -> Self {
         let mut graph = Self::empty();
         graph.fan = self.fan.clone();
-        graph.tracks = self
-            .tracks
-            .iter()
-            .map(|track| {
-                let stages = track
-                    .stages
-                    .iter()
-                    .map(|stage| Stage {
-                        device: stage.device,
-                        clap_id: stage.clap_id.clone(),
-                        bypassed: stage.bypassed,
-                        bypass_output: stage.bypass_output.clone(),
-                        awaiting_notes: true,
-                        chase_in_buffer: false,
-                        chase_pending: false,
-                        needs_restart: false,
-                        block_complete: false,
-                        cleanup: Cleanup::None,
-                        // SAFETY: only the current bank is processed; queued and
-                        // retired banks are never submitted or collected.
-                        host: unsafe { stage.instance.host().audio_handle() },
-                        instance: Arc::clone(&stage.instance),
-                        instrument: stage.instrument,
-                        input: stage.input.clone(),
-                        output: stage.output.clone(),
-                        main_outputs: stage.main_outputs,
-                        main_inputs: stage.main_inputs,
-                        routed: Vec::with_capacity(stage.routed.capacity()),
-                    })
-                    .collect();
-                track_host(
-                    track.key,
-                    stages,
-                    track.inject.len(),
-                    track.source_events.capacity(),
-                    track.chased_ons.capacity(),
-                )
-            })
-            .collect();
+        graph.tracks = HostTracks::new(
+            self.tracks
+                .iter()
+                .map(|track| {
+                    let stages = track
+                        .stages
+                        .iter()
+                        .map(|stage| Stage {
+                            device: stage.device,
+                            clap_id: stage.clap_id.clone(),
+                            bypassed: stage.bypassed,
+                            bypass_output: stage.bypass_output.clone(),
+                            awaiting_notes: true,
+                            chase_in_buffer: false,
+                            chase_pending: false,
+                            needs_restart: false,
+                            block_complete: false,
+                            cleanup: Cleanup::None,
+                            // SAFETY: only the current bank is processed; queued and
+                            // retired banks are never submitted or collected.
+                            host: unsafe { stage.instance.host().audio_handle() },
+                            instance: Arc::clone(&stage.instance),
+                            instrument: stage.instrument,
+                            input: stage.input.clone(),
+                            output: stage.output.clone(),
+                            main_outputs: stage.main_outputs,
+                            main_inputs: stage.main_inputs,
+                            routed: Vec::with_capacity(stage.routed.capacity()),
+                        })
+                        .collect();
+                    track_host(
+                        track.key,
+                        stages,
+                        track.inject.len(),
+                        track.source_events.capacity(),
+                        track.chased_ons.capacity(),
+                    )
+                })
+                .collect(),
+        );
         graph.stage_index = graph
             .tracks
             .iter()
@@ -641,7 +714,7 @@ impl HostGraph {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut kept = Vec::new();
-        for track in self.tracks.drain(..) {
+        for track in self.tracks.take() {
             for stage in track.stages {
                 kept.push(stage);
             }
@@ -687,7 +760,8 @@ impl HostGraph {
                     Ok(Some(stage)) => stages.push(stage),
                     Ok(None) => {}
                     Err(error) => {
-                        self.tracks = restore_tracks(restore, tracks, stages, kept);
+                        self.tracks =
+                            HostTracks::new(restore_tracks(restore, tracks, stages, kept));
                         return Err(error);
                     }
                 }
@@ -698,7 +772,7 @@ impl HostGraph {
                     .try_for_each(|stage| fit_stage(stage, delivery))
             });
             if let Err(error) = result {
-                self.tracks = restore_tracks(restore, tracks, stages, kept);
+                self.tracks = HostTracks::new(restore_tracks(restore, tracks, stages, kept));
                 return Err(error);
             }
             if !stages.is_empty() {
@@ -711,7 +785,7 @@ impl HostGraph {
                 ));
             }
         }
-        self.tracks = tracks;
+        self.tracks = HostTracks::new(tracks);
         Ok(())
     }
 
@@ -720,7 +794,8 @@ impl HostGraph {
     /// `source` contains placed audio. `clips` is the placed
     /// audio alone. The first instrument ignores `source` and receives notes;
     /// `clips` is added to that instrument's output. A track with no helper is
-    /// left idle so the caller keeps `source`.
+    /// left idle so the caller keeps `source`. `events` and `chased_ons` are
+    /// this track's alone; the caller groups the block's events once.
     pub(crate) fn submit(
         &mut self,
         key: u32,
@@ -729,7 +804,7 @@ impl HostGraph {
         events: &[Event],
         chased_ons: &[Event],
     ) -> bool {
-        let Some(index) = self.tracks.iter().position(|track| track.key == key) else {
+        let Some(index) = self.tracks.position(key) else {
             return false;
         };
         self.tracks[index].heard = false;
@@ -819,7 +894,7 @@ impl HostGraph {
     /// reconcile starts a new process that still needs those notes.
     pub(crate) fn take_restarts(&mut self) -> bool {
         let mut restart = false;
-        for track in &mut self.tracks {
+        for track in self.tracks.iter_mut() {
             let before = track.stages.len();
             track
                 .stages
@@ -832,7 +907,7 @@ impl HostGraph {
 
     /// Writes the collected plugin audio back. A miss silences the block.
     pub(crate) fn apply(&self, key: u32, left: &mut [f32], right: &mut [f32]) -> Option<bool> {
-        let track = self.tracks.iter().find(|track| track.key == key)?;
+        let track = self.tracks.get(self.tracks.position(key)?)?;
         let frames = left.len().min(right.len()).min(track.frames);
         let stage = track.stages.get(track.stage)?;
         let output = stage.rendered();

@@ -5,7 +5,9 @@ def render_report(report, policy, selected, summarize):
     lines = ["# 変更に対する検査", "", f"更新: {report['updated_at']}",
              f"ソースの識別値: `{report['fingerprint']}`", ""]
     execution = report.get("execution", {})
-    if execution:
+    if execution.get("status") == "recorded":
+        lines += ["## 今回の実行", "", "見送りの記録だけで、検査は実行していない（`--record-only`）。", ""]
+    elif execution:
         lines += ["## 今回の実行", "", "実行順（再利用を除く）: " + ", ".join(execution["order"]), ""]
         if "seconds" in execution:
             lines += [f"今回の所要時間: {execution['seconds']} 秒（{execution.get('status', 'running')}）", ""]
@@ -35,7 +37,7 @@ def render_report(report, policy, selected, summarize):
             kind += "・通常の完了判定外"
         lines.append(f"- `{name}` ({kind}): **{status}** — {check['purpose']}")
         if result.get("reason"):
-            lines.append(f"  - 未実行の理由: {result['reason']}")
+            lines.append(f"  - 未実行の理由: {result['reason']}（記録 {result.get('deferred_at', '記録日時なし')}）")
         if result.get("log"):
             lines.append(f"  - ログ: [{name}]({name}.log)")
         lines.append(f"  - 検査入力の識別値: `{result['fingerprint']}`")

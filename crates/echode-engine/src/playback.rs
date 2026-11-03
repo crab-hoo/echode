@@ -196,7 +196,10 @@ struct Prepared {
     track_indices: Vec<(u32, usize)>,
     mixer_indices: Vec<(u128, usize)>,
     events: Vec<Event>,
+    /// Sort workspace, then the block's events grouped by track position.
     filtered: Vec<Event>,
+    /// One more entry than `tracks`. See [`group_events`].
+    event_ends: Vec<usize>,
     /// Index workspace for `sort_events`. Same length as `events`.
     sort_order: Vec<usize>,
     /// Note-offs already written at the front of `events`, not yet submitted.
@@ -209,6 +212,9 @@ struct Prepared {
     /// Note-ons chased from the previous plan. Retained helpers hold these voices.
     /// A plugin that was just spawned still needs them. Timeline note-ons stay in `events`.
     chased_ons: Vec<Event>,
+    /// `chased_ons` grouped by track position, like `filtered` and `event_ends`.
+    chased_grouped: Vec<Event>,
+    chased_ends: Vec<usize>,
     /// Installed with the event buffers. The callback does not change these alone.
     loop_start: Option<i64>,
     loop_end: Option<i64>,
@@ -347,6 +353,7 @@ impl Prepared {
             .checked_add(chase_count)
             .ok_or(PlaybackError::Time)?
             .max(1);
+        let plan_tracks = tracks.len();
         let mut track_indices: Vec<_> = tracks
             .iter()
             .enumerate()
@@ -368,6 +375,7 @@ impl Prepared {
             mixer_indices,
             events: vec![Event::note_off(0, 0, 0, 0); event_count],
             filtered: vec![Event::note_off(0, 0, 0, 0); event_count],
+            event_ends: vec![0; plan_tracks + 1],
             sort_order: vec![0; event_count],
             released: 0,
             sample_rate: rate,
@@ -375,6 +383,8 @@ impl Prepared {
             chase: true,
             plugin_holds: false,
             chased_ons: Vec::with_capacity(chase_count.max(1)),
+            chased_grouped: vec![Event::note_off(0, 0, 0, 0); chase_count.max(1)],
+            chased_ends: vec![0; plan_tracks + 1],
             loop_start: loop_bounds.map(|(start, _)| start),
             loop_end: loop_bounds.map(|(_, end)| end),
             demands,
@@ -610,7 +620,25 @@ impl Prepared {
             .events
             .get(..count)
             .ok_or(PlaybackError::BufferTooSmall)?;
-        for track in &mut self.tracks {
+        let chased: &[Event] = if range.started_before.is_none() {
+            &self.chased_ons
+        } else {
+            &[]
+        };
+        if !group_events(
+            events,
+            &self.track_indices,
+            &mut self.filtered,
+            &mut self.event_ends,
+        ) || !group_events(
+            chased,
+            &self.track_indices,
+            &mut self.chased_grouped,
+            &mut self.chased_ends,
+        ) {
+            return Err(PlaybackError::BufferTooSmall);
+        }
+        for (position, track) in self.tracks.iter_mut().enumerate() {
             let frames = left.len();
             let Track {
                 key,
@@ -646,21 +674,9 @@ impl Prepared {
                 *stereo = cache.right.is_some();
                 continue;
             }
-            let mut kept = 0usize;
-            for event in events.iter() {
-                if event.track_key() != Some(*key) {
-                    continue;
-                }
-                let slot = self
-                    .filtered
-                    .get_mut(kept)
-                    .ok_or(PlaybackError::BufferTooSmall)?;
-                *slot = *event;
-                kept += 1;
-            }
-            let filtered = self
-                .filtered
-                .get(..kept)
+            let filtered = track_events(&self.filtered, &self.event_ends, position)
+                .ok_or(PlaybackError::BufferTooSmall)?;
+            let chased = track_events(&self.chased_grouped, &self.chased_ends, position)
                 .ok_or(PlaybackError::BufferTooSmall)?;
             add_stored_clips(
                 clips,
@@ -686,11 +702,7 @@ impl Prepared {
                     right: clip_stereo.then_some(&*clip_right),
                 },
                 filtered,
-                if range.started_before.is_none() {
-                    &self.chased_ons
-                } else {
-                    &[]
-                },
+                chased,
             );
         }
         if hosts.dropped_events() {
@@ -769,27 +781,21 @@ impl Prepared {
             .events
             .get(..count)
             .ok_or(PlaybackError::BufferTooSmall)?;
-        for track in &mut self.tracks {
+        if !group_events(
+            events,
+            &self.track_indices,
+            &mut self.filtered,
+            &mut self.event_ends,
+        ) {
+            return Err(PlaybackError::BufferTooSmall);
+        }
+        for (position, track) in self.tracks.iter_mut().enumerate() {
             let plane = track
                 .plane
                 .get_mut(..frames)
                 .ok_or(PlaybackError::BufferTooSmall)?;
             plane.fill(0.0);
-            let mut kept = 0usize;
-            for event in events.iter() {
-                if event.track_key() != Some(track.key) {
-                    continue;
-                }
-                let slot = self
-                    .filtered
-                    .get_mut(kept)
-                    .ok_or(PlaybackError::BufferTooSmall)?;
-                *slot = *event;
-                kept += 1;
-            }
-            let filtered = self
-                .filtered
-                .get(..kept)
+            let filtered = track_events(&self.filtered, &self.event_ends, position)
                 .ok_or(PlaybackError::BufferTooSmall)?;
             hosts.submit(
                 track.key,
@@ -820,6 +826,61 @@ impl Prepared {
         self.released = 0;
         Ok(())
     }
+}
+
+/// Groups one block's events by track position in one counting pass and one
+/// placing pass, so the work grows with the events plus the tracks rather than
+/// their product (XCA-13). Each track keeps its events in the block's order.
+/// Afterwards track `i` owns `grouped[ends[i - 1]..ends[i]]`, from 0 for the
+/// first track. Events of no listed track, such as transport, are left out.
+fn group_events(
+    events: &[Event],
+    tracks: &[(u32, usize)],
+    grouped: &mut [Event],
+    ends: &mut [usize],
+) -> bool {
+    let position = |event: &Event| {
+        let key = event.track_key()?;
+        let index = tracks.binary_search_by_key(&key, |entry| entry.0).ok()?;
+        tracks.get(index).map(|entry| entry.1)
+    };
+    ends.fill(0);
+    for event in events {
+        if let Some(slot) = position(event) {
+            let Some(count) = ends.get_mut(slot) else {
+                return false;
+            };
+            *count += 1;
+        }
+    }
+    // Counts become starts. Placing advances each start to that track's end.
+    let mut start = 0usize;
+    for entry in ends.iter_mut() {
+        let count = *entry;
+        *entry = start;
+        start += count;
+    }
+    for event in events {
+        if let Some(slot) = position(event) {
+            let Some(end) = ends.get_mut(slot) else {
+                return false;
+            };
+            let Some(target) = grouped.get_mut(*end) else {
+                return false;
+            };
+            *target = *event;
+            *end += 1;
+        }
+    }
+    true
+}
+
+fn track_events<'a>(grouped: &'a [Event], ends: &[usize], position: usize) -> Option<&'a [Event]> {
+    let start = match position.checked_sub(1) {
+        Some(previous) => *ends.get(previous)?,
+        None => 0,
+    };
+    grouped.get(start..*ends.get(position)?)
 }
 
 fn fade_stopped_source(left: &mut [f32], right: &mut [f32], offset: Option<u32>, rate: u32) {

@@ -132,6 +132,31 @@ class ContextTests(unittest.TestCase):
                        "make verify"):
             self.assertIn(signal, output)
 
+    def test_reading_budget_reports_the_start_reads_and_oversized_sections(self):
+        big = self.root / "docs/development.md"
+        big.write_text("# Guide\n\n## Large\n" + "x" * context.SECTION_BUDGET_BYTES + "\n## Small\nok\n")
+        status = self.root / "docs/status.md"
+        # Many small sections: only the start total exceeds its budget.
+        status.write_text("# Status\n\n" + ("## Part\n" + "y" * 1000 + "\n") * (context.START_BUDGET_BYTES // 1000))
+        data = context.collect(self.root)
+        reading = data["reading"]
+        self.assertEqual([item["path"] for item in reading["start"]], list(context.START_GUIDES))
+        self.assertGreater(reading["start_bytes"], context.START_BUDGET_BYTES)
+        self.assertEqual([(item["path"], item["title"]) for item in reading["oversized"]],
+                         [("docs/development.md", "Large")])
+        output = context.render(data)
+        self.assertIn("OVER BUDGET: the full reads", output)
+        self.assertIn("OVER BUDGET: docs/development.md:3 Large", output)
+        status.write_text("# Status\n")
+        big.write_text("# Guide\n\n## Large\n" + "x" * (context.SECTION_BUDGET_BYTES - 100) + "\n")
+        self.assertNotIn("OVER BUDGET", context.render(context.collect(self.root)))
+
+    def test_live_guides_stay_within_the_reading_budget(self):
+        # XCA-10: raising a budget needs an ADR with the reason and measurements.
+        reading = context.reading_budget(ROOT, context.all_guides())
+        self.assertLessEqual(reading["start_bytes"], context.START_BUDGET_BYTES, reading["start"])
+        self.assertEqual(reading["oversized"], [])
+
     def test_live_documentation_index_covers_every_verification_area(self):
         policy = context.verify.load_policy(ROOT)
         self.assertEqual(set(context.AREA_GUIDES), set(policy["areas"]))

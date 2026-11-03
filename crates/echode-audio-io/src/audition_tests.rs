@@ -120,7 +120,24 @@ impl AuditionOutputs for TestOutputs {
     }
 }
 
+/// The first `ExtAudioFileOpenURL` of a newly linked test binary took more
+/// than 10 s on 2026-11-03 while macOS set AudioToolbox up for it; the next
+/// run of the same binary did not. That is not audition time, so it is spent
+/// once here, before any test starts its stall deadline.
+fn warm_audio_toolbox() {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(|| {
+        let fixture = fixture("warm");
+        let sample = fixture.0.join("warm.wav");
+        std::fs::write(&sample, wav(RATE, 1, &[0; 16])).unwrap();
+        let started = Instant::now();
+        echode_history::AudioFileReader::open(&sample).expect("AudioToolbox opens a WAV");
+        eprintln!("AudioToolbox's first open took {:?}", started.elapsed());
+    });
+}
+
 fn audition(rate: u32) -> (Audition, Probe) {
+    warm_audio_toolbox();
     let probe = Probe::default();
     let outputs = probe.clone();
     let audition = Audition::spawn(move || {

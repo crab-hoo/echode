@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-29
 - 状態: 採用。製品の走査期限と対象は維持し、診断と回帰の実行条件を改善する
-- 関連: [デバッグ手順](../debugging.md#オーディオトランスポートプラグイン)、
+- 関連: [デバッグ手順](../debugging/audio-and-plugins.md#プラグイン)、
   [ADR 0189](0189-selected-track-mute-and-solo.md)、[検査手順](../verification.md)
 
 ## 発見と切分け

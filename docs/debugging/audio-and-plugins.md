@@ -1,0 +1,291 @@
+# デバッグ手順: 音声・再生・プラグイン
+
+音声エンジン・素材・再生と停止・CLAP の隔離とプラグインの窓の症状を切り分ける。
+最初の診断と記録する項目は [デバッグ手順](../debugging.md) にある。症状の一覧は `--outline` で見る。
+
+## エンジン・素材・波形
+
+### 監視の即時破棄回帰が `drop did not return within 3 s` で落ちる
+
+2026-11-02 の W1〜W4 の検査で、`make verify` の `check` がこのテストだけで 8 回落ちた。
+標本はいつも `FSEventStreamStart` → `register_with_server` → `mach_msg`（fseventsd への登録待ち）で、大量のビルドの直後に多かった。
+そこで 3 秒の期限を破棄だけにかけ、開始は 60 秒の上限（止まった時だけ止める）で区別した。
+今は `start did not return within 60 s` なら OS 側の登録待ち、`drop did not return within 3 s` なら破棄のハング（PLG-9 の回帰）である。
+以下は変更前の記録で、当時の期限は監視の開始と破棄の両方を含んでいた。
+2026-11-02 の SPG-09 検査では全体と単独で失敗した後、同じ期限の単独実行が約 97 秒で完走した。
+成功した診断実行の標本は `FolderWatch::start` → `FSEventStreamStart` → `register_with_server` → `mach_msg` であり、破棄の待ちとは限らない。
+初回の失敗位置と OS 側の根因は未確定。既修正の run-loop 開始競合と決めつけず、開始・停止のどちらかを標本で区別する。
+期限・対象は変更せず、採取ありの診断と正式な検査を区別する。証拠は `target/focused-checks/spg09-watch-timeout.md` と `spg09-watch-recheck/`。
+SPG-06 の検査でも単独実行は約 100 秒で完走した一方、全 audit と `make verify` では同じ期限で失敗した。
+失敗した全 audit の実行中の標本も開始 RPC の待ちであり、停止処理のハングと断定しない。
+記録は `target/focused-checks/spg06-watch-diagnostic.log` と `spg06-watch-sample-52165.txt`。
+標本は期限切れの瞬間を特定していないため、OS 側の根因は引き続き未確定である。
+
+### ノートの端から再生すると、その音が鳴り続ける
+
+開始位置がノートの終端ちょうどかを確認する。追いかけ（`Cursor::chase_events`）は終端ちょうどのノートを鳴らさず、
+その時刻のノートオフだけを出す（[ADR 0164](../decisions/0164-note-end-chase.md)）。
+同じ時刻ではノートオフがノートオンより先に並ぶため、追いかけのノートオンがあると鳴り続ける。
+必須契約 `note-end-start` は実ヘルパーで位置移動と停止の復帰を確認する。計画の交換中の場合は `release_replaced` を別に調べる。
+
+### 壊れた素材を読むと `attempt to multiply with overflow` / `capacity overflow` で文書が使えなくなる
+
+`media.rs::decode_pcm` のヘッダ長の計算を確認する。
+BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
+`audit_cur01_malformed_pcm_length_returns_an_error_without_panicking` が、24 バイトの不正ヘッダで再現する。
+現行の回帰は debug / release の両方で、サンプル数・バイト数・ヘッダ加算の桁あふれをエラーとして拒否する。
+当時の panic の位置は [CUR-01](../reviews/2026-10-25-code-audit.md#cur-01-pcm-のバイト長計算が桁あふれする) を参照する。
+
+### 保存済み素材だけが `audio contains a non-finite sample` になる
+
+ヘッダ長ではなくサンプル値の検証による拒否である。正しいハッシュも値の妥当性を保証しない。
+取込み元の復号と保存済み PCM の全読込みを区別し、後者は `canonical-pcm-validation` で再現する。
+トリム外の不正値も拒否するが、有限の振幅 1 を超える値は不正としない。原本を自動で書き換えない。
+
+外部 WAV の取込み・一括復号の拒否は `audio-import-validation` で別に検査する。
+逐次復号の `AudioFileReader::read` が拒否しても、一括の `decode_file` に同じ検証がある証拠にはならない。
+取込み時の拒否はパッケージへの書込み前、保存済み PCM の拒否は読込み時であり、同じエラーでも段階を区別する。
+
+### 波形が消える・キャッシュ破損後に表示が変わる
+
+`cache/peaks/<hash>` は派生データであり、段構成・バイト長・有限で順序の正しい列を検査する。
+不正なら `Waveforms::load` が正準 PCM から作り直す。再生成できなければ波形なしにするが、原本は変更しない。
+`peak-cache-validation` は公開読込みと再生成、`peak_cache_validation.rs` の通常回帰は PCM なしの正常なキャッシュも確認する。
+正常なキャッシュで粗い列だけを描けても、PCM の全体が読める証拠にはならない（[ADR 0058](../decisions/0058-waveform-peaks.md)）。
+有限の大きなステレオ素材だけが無音の波形になる時は、平均の加算が `f32` へ戻っていないかを確認する。
+構築とマップの両方が対象で、`stereo-waveform-average` が極大値・非正規化数と旧キャッシュの再生成を区別する。
+`ECHDPK01` は再利用せず PCM から `ECHDPK02` を作るため、素材がない旧キャッシュは波形を出さない。
+素材の自動修復や再生音の変更ではない（[ADR 0058 の後続修正](../decisions/0058-waveform-peaks.md)）。
+境界が 1 列の途中にある時だけ包絡が違う場合は、`source_span` の素材範囲と `includes_silence` を調べる。
+素材前・EOF 後・配置窓の外側を切り詰めても、その無音は列の最小・最大へ含める必要がある。
+`waveform-boundary-silence` は正負の包絡・粗い列とマップの端・テンポ変化・キャッシュ再利用を区別する。
+
+### S2 / S3 は通るのに製品だけ負荷に弱い
+
+選択デバイスの Workgroup 取得・ヘルパー参加・変更通知後の再準備を確認する（[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）。`plugin_missed_blocks` と実機条件を記録する。
+トラックが多い時だけ弱いなら、`make spike-plugin-tracks` でコールバック自身の CPU 時間をトラック数ごとに比べる。
+トラックあたりの値が数とともに増えれば 2 乗の処理が戻っている。ほぼ一定なら、ヘルパーへの投入のような比例する費用である（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
+
+## プラグイン
+
+### ヘルパーの保存・復元・パラメーター・窓の要求が時間切れ／busy になる
+
+`plugin main request N timed out; outcome unknown` は実行の取消ではない。
+メインスレッドに残る要求が完了するまで後続は busy で拒否し、自動再送しない。
+要求番号 N はヘルパー内部の呼出し番号で、ソケットの応答照合の番号とは別である。
+`plugin-main-timeout-state` は機器なしの `slow-save` で再現し、`plugin-control-request-ids` は古い応答の破棄を検査する。
+完了後の復元バイトと新しい保存結果を比較し、実行中の拒否と、古い応答の取り違えを区別する。
+操作と通信の対応・Unicode と状態バイト・拒否理由は `session_operations_tests.rs` で切り分ける。
+実装は `session_operations.rs` の `PluginControl` にあり、ホスト経由の保存・復元の別入口はない
+（[ADR 0227](../decisions/0227-control-only-plugin-operations.md)）。
+親とヘルパーは同じビルドでそろえ、古い起動済みアプリを新しいヘルパーだけに置き換えない
+（[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
+
+### 音源なしのノート・Sine Pad が鳴らない
+
+音源のないトラックは無音である。デバイス一覧に `dev.echode.sine-pad` があるかを確認する。
+一覧にない時は `make bundled-plugins` とヘルパー隣の `plugins/`、アプリ内の `Contents/PlugIns/`、同梱用走査キャッシュを確認する。
+`host event capacity was not prepared` はイベント領域の準備漏れであり、音声側の確保や固定発音数で回避しない
+（[ADR 0123](../decisions/0123-explicit-sine-pad-plugin.md)）。
+
+### 同梱 CLAP の初回だけ RTSan が malloc を検出する
+
+子プロセスの標準エラーを収集し、`_tlv_get_addr` と `ForbidAlloc` が並ぶかを確認する。
+dylib 固有の検査用 TLS は、ヘルパーの最初の非 RT 起動段階の `start_processing` で初期化する。
+検知を外さず、未発音の新しいヘルパーで最初の処理も検査する。
+
+### CLAP が鳴らない・走査失敗
+
+プラグイン ID、バンドル走査（macOS の `.clap` ディレクトリを含む）、キャッシュ、ヘルパー起動、入出力バスを追う。走査失敗時は子の終了コードとシグナルを確認する。本体プロセスにプラグインをロードして切り分けてはいけない。
+2026-10-28 の ⌘D 変更の通常検査では、`audit_rea08_descendant_pipe_does_not_extend_deadline` の最初の JSON 出力が 2 秒の期限切れとなった。
+失敗は子孫のパイプ保持ケースではなく、最初の短い shell の起動・完了待ちで、単独実行では再現しなかった。原因は未確定である。
+個別のログは `target/focused-checks/clip-duplicate-scan/`。期限・対象を変更せず、正式な `make verify` の結果と区別する。
+ミュート／ソロの一括操作の検査で再発し、期限切れの子は `running`・両出力 0 byte で、採取では `_dyld_start` にとどまっていた。
+さらに、従来の子孫保持ケースが shell の起動待ちだけで合格し得たため、専用のネイティブ検査ヘルパーへ変更した。
+製品の期限は維持し、出力済み・直接の子の終了も検査する。期限切れの PID・終了状態・byte 数・パイプの開閉で、起動前と保持を区別する
+（[ADR 0190](../decisions/0190-native-scan-deadline-fixtures.md)）。OS 側の起動遅延の根因は未確定である。
+2026-10-30 の検査コスト改定でも、ネイティブ fixture の最初の正常 JSON が同じ 2 秒の期限切れとなり、単独でも一度再現した。
+子は `running`・両出力 0 byte で、直後の同じバイナリの直接起動は約 8 ms、同じ Cargo 構成の再実行は約 0.45 秒で完了した。
+shell 除去でこの環境の起動遅延自体が解決したとは扱わず、期限は維持する。
+初回の失敗は検査時間履歴と作業ログへ残し、再実行の合否で過去の失敗を上書きしない。
+
+### プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
+
+親はヘルパー 1 つにつき記述子を 4 つ持ち、Finder から起動したアプリの soft の上限は 256 である（`launchctl limit maxfiles`）。
+最初のヘルパーの前に上限を上げるので、この文が出るなら上げられなかったか、hard の上限が低い（[ADR 0237](../decisions/0237-helper-descriptor-limit.md)）。
+そのプロセスの上限を `launchctl limit maxfiles` と、可能なら `lsof -p <pid> | wc -l` で記録する。回帰は `cargo test -p echode-plugin-host --test descriptor_limit` である。
+
+### バイパスの表示と音が一致しない・解除後に古い音が鳴る
+
+文書のデバイス ID と `bypassed`、計画の要求・適用版、プラグイン失敗、ドライ／ウェットの平面数を確認する。
+バイパスした音源ではノートが無音でも同じトラックの配置音声は鳴る。解除時のリセットと現在のノート追跡を確認する（[ADR 0120](../decisions/0120-device-bypass.md)）。
+
+### オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
+
+文書の `offline`、`bypassed`、`state` を分け、保存形式 5 と旧版からの変換を確認する。
+`fx-offline-ui` は実ボタンと履歴、`plugin-offline` は隔離グラフと記録済み状態の復元、`offline-export` は実 CLI のログである。
+`chain_of` と `project_plugin_ids` / `routes_with_saved_state` の対象、計画の要求・適用版を確認する。
+`device rendering requires the isolated plugin host` が全オフライン時に出たら、ホストなし書出しの対象判定を確認する。
+再有効化後の未検出・状態オブジェクトの読込エラーとは区別する（[ADR 0125](../decisions/0125-device-offline.md)）。
+
+### プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`
+
+書き出しは実時間の期限を使わず、1 ブロック 60 秒だけ待つ。この文が出たら、ヘルパーが応答しなくなったか、1 ブロックに 60 秒以上かかっている。
+テスト用 CLAP の故障 `slow-process` で遅いプラグインを再現する。`missing plugin` は走査キャッシュの読み違いで、
+キャッシュは置換で書くので切り詰められた内容は見えない。走査の出力が 64 MiB を超えたバンドルは `larger than` で走査を止める（[ADR 0231](../decisions/0231-offline-export-and-scan-cache.md)）。
+
+### パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
+
+デバイスの列の表示文が境界を示す。`the project has no running plugin` と `the device has no running plugin` は文書・オフライン・未検出、
+`no output device is available` は停止中の出力起動、`parameter changes timed out` はヘルパーの処理スレッドの `flush` を疑う。
+`document thread stopped` は文書を閉じた後の要求か、ワーカーの異常終了の後の要求、`device request panicked` はデバイスレーンでの異常終了である。
+`document thread panicked` は文書の手番の panic で、以後の要求は `stopped` になる。stderr の `echode-worker` の panic が原因を示す（[ADR 0204](../decisions/0204-document-service.md)）。
+完了が返らない要求は `completion_tests.rs`、`failed to join thread: Resource deadlock avoided` は `document-lane-completion` で切り分ける。
+`echode-ffi` のテストが `removal index ... should be < len` と `panic in a function that cannot unwind` で abort したら、完了コンテキストの寿命を疑う。
+コールバックの `send` が走っている間に待つ側が抜けられるので、コンテキストはスタックに置かず、コールバックが `Box` で所有する。
+一覧取得の失敗は列の「パラメーターを再読込み」で対象だけを再試行する。検索・選択・履歴は変えず、再失敗も同じ列に出す。
+プラグインの再起動や状態の再読込とは異なるため、クラッシュしたヘルパーや未検出のプラグインの復旧を保証しない。
+再試行で他の列も消える・連打で要求が重なる場合は `device-list-retry-ui` と `DeviceParameterRetryTests` を使う
+（[ADR 0140](../decisions/0140-device-parameter-list-retry.md)）。
+`plugin-params` は実ヘルパーとエンジン、`fx-params-ui` は画面と履歴のログである。
+Undo では記録のハッシュとヘルパーが最後に保存・読込したバイトを比べ、一致すれば読み込まない（[ADR 0130](../decisions/0130-clap-parameter-editing.md)）。
+
+## 再生・停止・ループ
+
+### 再生開始が遅い・準備中に停止できない
+
+`pending-transport`（UI 受付）、`queued-stop`（ABI 投入時取消）、`transport-cancellation`（HAL 初回発音禁止）の 3 境界を切り分ける（[ADR 0097](../decisions/0097-cancellable-retained-transport.md)）。
+
+### 再生中のぶつぶつ・停止時のクリック
+
+`audio.status` の `plugin_missed_blocks` と `pending_plan` を確認する。
+定期保存確認による一時バイパス排除（[ADR 0101](../decisions/0101-live-output-discontinuities.md)）、音声側の排他グラフ所有（[ADR 0102](../decisions/0102-exclusive-audio-graph.md)）、5 ms の停止波形減衰（[ADR 0103](../decisions/0103-live-stop-waveform.md)）、待機しない後片付け（[ADR 0105](../decisions/0105-nonblocking-stop-cleanup.md)）のどの境界かを確認する。
+[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md) 以降は素材をプラグインの手前で減衰し、マスターの停止フェードは使わない。
+`stop_fade_offset` は素材の減衰位置である。停止後も余韻・自発的な発音が出ることは正常で、停止中の `plugin_missed_blocks` も実際の処理失敗を表す。
+
+### 停止中にプラグインの時間・鍵盤の発音が止まる、または余韻が切れる
+
+`playing = false` とライブ処理の停止を混同しない。保持した出力は無音入力の処理を続ける。
+`stopped-plugin-output` で実ヘルパーと後段 FX の出力、`stopped-plugin-tails` でノートオフと自然な余韻の終端を確認する。
+音源・FX の `bypassed` / `offline`、出力が既に開いているか、位置移動・準備取消でリセットが要求されていないかを分ける。
+停止だけで `cleanup_pending` が立つなら旧仕様か不具合を疑う。位置移動の後片付け中なら正常である。
+位置移動直後の停止で期限切れになる場合は `stop-cleanup` を使い、保留中に通常の素材処理を始めていないか確認する。
+
+### 停止で開始位置へ戻らない・戻る時に余韻が切れる・開き直すと開始位置が消える
+
+`audio.status` の `tick`（現在位置）、`start`（記憶した開始位置）、`paused` を分けて読む（[ADR 0155](../decisions/0155-remembered-playback-start.md)）。
+停止は `Rewind` で時計だけを戻す。余韻が切れるなら停止の経路が `Locate`（リセットあり）になっていないかを `stop-return-tails` と `playback-start` で切り分ける。
+開始位置はパッケージ直下の `transport.json` にあり、履歴・Undo・復帰の対象外である。
+壊れた・新しい版・リンクのファイルは 0 として読むので、開始位置が 0 に戻る時はこのファイルの中身と種類を確認する。
+
+### ループ範囲のドラッグで再生位置が動く・終端以降から勝手に戻る
+
+押下では開始位置を送らず、離した時のクリックだけが `transport.set_start` を送る。
+ドラッグの範囲はオフ中は下書きだけ、オン中は `transport.loop` を 1 回送る（[ADR 0156](../decisions/0156-ruler-loop-range-and-entry.md)）。
+`piano-ruler-loop-ui`・`arrange-ruler-ui`・`arrange-ruler-cancel-ui` で入力と取消、`loop-entry` で音声側を切り分ける。
+範囲欄のフォーカス移動・オンオフで端点が変わる場合は、`ProjectController.loopRange` と `LoopEntry.range` を比較する。
+下書きと送信は整数で共有し、未変更の表示文字列を拍から再変換しない。
+`integer-loop-draft-ui` は Double の精度外の端点も製品要求まで保持することを検査する。
+手入力した欄の不正値・ゼロ長は拒否し、反対端を丸めたり左右を交換したりしない
+（[ADR 0201](../decisions/0201-integer-loop-drafts.md)）。
+既存端の調整は上端 8 pt のグリップから行う。画面外の端を、帯の切れ目でつかむことはできない。
+片端だけの調整にならない場合は `RulerHandles.hit` と `RulerPress.edge`、つかんだ範囲とポインターのずれを確認する。
+別エディタ・範囲欄・オンオフの変更で下書きが消えるのは、古い解放による上書きを防ぐ正常な取消である。
+`loop-handles-ui` と `loop-handles-cancel-ui`、各オフスクリーンプローブで入力・取消・描画を分ける。
+アレンジの行だけがずれる場合は `arrangeTop` を描画とヒットから二重に足したり除いたりしていないかを確認する。
+`spike-arrange-frame` の `rulerMismatches` は帯と印の画素不一致、`maxHeaderLaneError` は上端補正後の左右の誤差である。
+`audio.status` のループがオンでも、終端以降へ置いた再生は通常進行する。
+ブロック処理で終端に着いた場合は次のブロックで戻るため、同じ値の `tick` でも位置移動と混同しない。
+
+### 空白への移動・再開で以前の残響が鳴る
+
+停止・シーク時の `active.reset()`、`NOTE_CHOKE`、宣言された全 MIDI ポートへの CC120 / All Notes Off を確認し、自然な余韻と区別する（[ADR 0099](../decisions/0099-transport-plugin-state.md)）。
+ライブ停止では余韻を残す。上の消去は位置移動・未発音の準備取消とオフライン停止の検査であり、ライブ停止へ戻さない
+（[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+
+### 左右の消失・定位変化・ループやフェーダーの段差
+
+逆位相・異振幅の左右信号で素材読込・エフェクト間・フェーダー後を照合する（`stereo-media`、`stereo-plugin-chain`、`audio-loop-seam`、`audio-fader-ramp`、[ADR 0095](../decisions/0095-product-audio-buses-and-continuity.md)）。
+
+### ループ変更での再読込・トリム位置ずれ
+
+`clips.rs` の保持キーと `CachedTrack` の失効条件を確認する（[ADR 0108](../decisions/0108-phase1-loop-readiness.md)）。内容位置 0 は `start - offset` のテンポ積分で、負のオフセットは無音となる（[ADR 0109](../decisions/0109-placement-bounds-and-plugin-capture.md)）。
+
+### 長時間・短時間の実機音声計測の失敗
+
+処理期限超過（`late`）と HAL 呼出欠落（`gaps`、`pmset -g log` の Sleep / Wake や `/usr/bin/log show` の coreaudiod デバイス変更）を区別する（[ADR 0096](../decisions/0096-measurement-completion.md)）。短時間確認は `--native-rate` を使う。
+
+## プラグインの窓
+
+### 窓アイコンが消えない・閉じた窓が再び開として表示される
+
+アイコンは物理的な可視性ではなく寿命を示す。別アプリの操作中に隠れていても開の表示は正しい。
+`plugin-window-state` でソケット受信順の `window_state`、`plugin-window-status-ui` で画面の `openPluginWindows` を確認する。
+活動の `window` は編集時の過去の文脈、`closed` は未読期間内の閉鎖の有無であり、現在の表示へ代用しない。
+開く要求の返答から楽観的に表示を更新していないか、未読圧縮で最後の寿命を保っているかも調べる。
+削除・オフライン後の残留は `publish`、文書交換後の残留は `DocumentSession.retire` と、処理が保持するセッションを確認する
+（[ADR 0138](../decisions/0138-plugin-window-status.md)）。
+
+### プラグイン付きトラックの選択が止まる・パラメーター画面が重い
+
+2026-10-20 のユーザー報告は「選択のたび」と「汎用パラメーター画面」の 2 症状であり、独自プラグイン GUI の問題ではない。
+機器なしで、旧欄の全行一括生成（800 個で約 0.68 秒）と再選択での作り直し、文書ワーカー上の応答待ちを再現し、対応した
+（[ADR 0131](../decisions/0131-device-view-and-responsive-parameters.md)）。
+再発時は、プラグイン名・版・パラメータ数、再生状態、下部の表示、初回と再選択、停止時間、入力全体が固まるか操作が無効表示になるかを区別する。
+初回だけ一覧が遅いなら、音声状態の `opening` を見る。真の間に編集・Undo が終わるなら、出力の準備（ヘルパー起動・素材）の時間である。
+未取得の列の「音声出力を準備中」は同じ `opening` の表示であり、個別プラグインの進捗率ではない。
+出力の準備が終わっても一覧が来なければ「パラメーターを読み込み中」へ戻る。失敗とオフラインは待機表示より優先する。
+状態と列の表示が食い違う場合は `device-preparation-ui` と `DevicePreparationTests` を使う（[ADR 0141](../decisions/0141-device-output-preparation-status.md)）。
+同テストの期限失敗は、未保留デバイスの返答・初回の音声状態・準備後の音声状態のどの待ちかをメッセージで区別する。
+サニタイザーの失敗ログを保持して単独実行と全体実行を比べ、期限だけを延長して製品不良や並行実行の影響を隠さない。
+`opening` の間に編集も終わらないなら、ワーカーが準備を待っている。`output-opening-worker` を実行して手番を確かめる。
+導入後に位置・ループ・追加したトラックが反映されないなら `output-opening` で導入時の差分を確かめる（[ADR 0136](../decisions/0136-output-opening-off-worker.md)）。
+開いた出力で FX を追加した時は `pending_plan` を見る。新しいヘルパーの初期化と共有領域の準備は `echode-graph-prepare` が待つ。
+その間の編集と停止は `background-graph`、導入後のデバイス要求の待ちは Session の機器なし回帰で区別する。
+状態の復元やループ変更の後で既存ヘルパーが再生成されるなら、投入時の状態一致の保持と次の `Pending` の経路を確認する。
+`opening` が偽でも `pending_plan` は真になり得る。置換専用の列の表示は未接続である。
+素材・保存済み状態の読込みや初回導入時の差分は同期のままなので、ヘルパー初期化の待ちと分ける
+（[ADR 0142](../decisions/0142-background-plugin-graph-preparation.md)）。
+機器なしの出力は計画の採用に検査側の `pump` が必要である。初回の準備だけを待つ時に `Session.opening()` の全置換待ちを使わない。
+製品アプリでは開いた直後の `opening` は事前準備（`audio.prepare`）である。最初の再生がまだ待つなら、押した時点の状態を分ける。
+`opening` が真なら事前準備の途中、偽で `pending_plan` が真なら停止中の編集の素材読込み（`echode-media-prepare`）の残りである。
+`playing` が真で `running` が偽のまま止まるなら、読込みの失敗か保留の解除を `output-prewarm-play` で確かめる。
+開いても `opening` にならないなら、`output-prepare-on-open` で controller の送信、`output-prepare-worker` で C ABI を確かめる
+（[ADR 0147](../decisions/0147-output-prewarm-and-background-media.md)）。
+毎回止まるなら、`DeviceParameterListView.visibleRows` の数と `table.numberOfRows` を比べ、全行を作っていないかを確認する。
+列が作り直されているなら `DeviceStripView` の列の保持（文書の切替でだけ捨てる）を確認する。
+値の往復で止まるなら、`device-lane-held` を実行し、背景保存の確認と適用済み状態の読取りが通信中の制御端点を待っていないか確かめる。
+画面だけが古い一覧へ戻るなら、`device-view-slow-ui` で要求世代の照合を確かめる。
+テスト用 CLAP の `ECHODE_TEST_FAULT=params-wait:<socket>` は一覧をメインスレッドで保留し、機器なしで遅いプラグインを再現する。
+実測時間を使う性能検査は通常回帰から分ける。実機操作とサンプリングが必要な場合は担当・許可を確認し、既存アプリの終了・置換は行わない。
+[追加受入条件](../phase2.md#p2-02-デバイスビューとパラメーター編集着手中)を参照する。
+
+### プラグイン GUI がすぐ消える・ループ切替で状態が戻る・Space が届かない
+
+`plugin-window-visibility` は OS の一時非表示を閉鎖と誤判定する経路を確認する。
+`NSPanel.close` の記録、親・自分・同じ親のヘルパーの最前面判定を調べ、実際の閉鎖と隠れただけの状態を区別する。
+`plugin-window-loop` は状態の取り込み後に未保存の値を変え、停止中・再生中のループ切替で同じ GUI と値が残ることを確認する。
+`Pending.restore_states` がループだけで真にならないこと、保留中のプロジェクト編集の復元を落とさないことを調べる。
+キーは `plugin-key-events`（AppKit）、`plugin-key-socket`（制御通知）、`plugin-key-ui`（既存コマンド）で境界を分ける。
+ヘルパーはコマンドを名前（`PluginCommand::name`）で送り、画面は `WorkspaceCommand` の `rawValue` で受ける。
+コマンド名を変えて片方だけ直すと、中継したキーは黙って無視される。`plugin-key-ui` は未知の名前をその場で失敗にする。
+以前はここで来ない音声コマンドを待ち続け、Swift の全体実行が 1 件のテストで止まった（[ADR 0155](../decisions/0155-remembered-playback-start.md)）。
+文字入力中は転送しない。独自入力欄は `NSTextInputClient.selectedRange` の公開状態を確認する。
+実画面の再発時はプラグイン名・版、前面のアプリ、窓を開く前の状態保存、入力欄の編集中かも記録する
+（[ADR 0134](../decisions/0134-plugin-window-lifetime-and-shortcuts.md)）。
+
+### プラグインのウィンドウが開かない・フォーカスを奪う・値や Undo が届かない
+
+エラー表示で境界を分ける。`the plugin has no window` はプラグインが `clap.gui` を持たない、
+`the plugin has no Cocoa window` は Cocoa の API を持たない、`the plugin refused the window` は `set_parent` の拒否である。
+`plugin window timed out` はヘルパーのメインスレッドが 8 秒以内に `create` / `show` を終えなかったことを示す（[ADR 0132](../decisions/0132-helper-plugin-windows.md)）。
+開くまでの待ちは、停止中の最初の表示で出力とヘルパーを準備する待ち（`opening`）と区別する。
+ウィンドウがキーになる・隠れない・戻らない場合は、記録用の窓で規則を確かめる `plugin-window-helper` を先に実行し、
+合格なら AppKit の実画面の問題としてユーザーの確認へ回す。実画面の操作は依頼がある時だけ行う。
+値が一覧へ届かないなら `plugin-window-relay` で処理スレッドのリングと制御スレッドの読み戻しを、
+Undo が増えない・増えすぎるなら `plugin-window-undo-ui` でジェスチャーの数え方と静止の待ちを確かめる。
+窓が閉じている時のプラグイン自身の変化は自動保存だけで、Undo に入らないのが正しい。
+窓での変更が無関係な編集の後に戻る・窓が閉じるなら、活動の `window` と `dirty`、ワーカーの保留（`PluginSaves::held`）、
+セッションへ渡した `keep_live_plugin_edits` の集合、置換の経路の状態がヘルパーの適用済みのバイトかを順に確かめる。
+実ヘルパーでは `plugin_gui::audit_doc_a2_...`、ワーカーでは `saves::tests` を実行する（[ADR 0229](../decisions/0229-plugin-window-live-edits.md)）。
+テスト用 CLAP の `ECHODE_TEST_FAULT=gui:<socket>` は、ヘルパーに記録用の窓を選ばせ、ソケットからプラグイン画面の操作を送る。

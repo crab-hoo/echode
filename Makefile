@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition spike-plugin-tracks check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -94,49 +94,7 @@ check-swift:
 	$(MAKE) check-shell
 	$(MAKE) check-bridge
 
-# Audition streaming/EOF, resident output, volume and manual preview contracts use this entry too.
-# Named behavioral tests (including independent workspace panes/stacking, canvas resizing/header width/stale drawable extents and margins, fixed transport chrome sizes, the remembered playback start and stop return, output prewarm/background media, background graph startup, device preparation/disclosure/drop targets, plugin window lifetimes/status/keys, tracks, FX, and file-URL sample drops) must run; ignored/deleted tests cannot pass.
-# Arrange/piano ruler clicks, loop drags/edge handles, cancellation and shared row geometry and loop entry/bypass run through the same native/RT contract gate.
-# Content-relative auto moves/copies, subsequent refits, and unmarked legacy journals share this gate.
-# Arrange-local Command-D repeats the exact current clip window with independent content and atomic history.
-# Blank piano-grid clicks/drags, remembered input length with Undo/Redo, release geometry and cancellation share the native UI gate.
-# Shared piano viewports across track switches and document-lifetime guards use this native UI gate too.
-# Right-drag note selection, Command toggles, atomic deletion and linked-content deduplication also use this gate.
-# Group note movement, common bounds, linked-content writes and gesture cancellation share this gate.
-# Group edge resizing shares common one-tick/time bounds, previews and atomic history through this gate.
-# Independent piano targets, reference-only notes, track controls and ordered arrow/Return routing share this gate too.
-# No-op commands/groups preserve history, durable publication and MCP acknowledgements through this gate.
-# JSON-RPC envelopes reject invalid IDs/params before edits; only valid notifications suppress socket replies.
-# Command note copies preserve full-resolution attributes, linked identity, selection and atomic history through this gate.
-# Piano automatic/fixed straight/triplet/dotted grid controls, zoom anchoring, snap subdivisions and press cancellation share this gate.
-# Piano time guides retain beat/four-quarter references independently of snap subdivisions and thinning.
-# Selected-track mute/solo switches capture event targets, serialize current-state toggles and share atomic history through this gate.
-# Selected-track numeric entries and native accessibility steps share common limits, current-state ordering and atomic history.
-# Header group drags/resets share atomic preview sets, affected-only callback work, cancellation, common bounds and one durable transaction.
-# Zero-horizontal-travel header drags preserve exact gains below the display floor and leave Undo/Redo untouched.
-# Clip identity drags preserve exact gain/fade values and Redo; package floats retain every nonzero bit across disk saves.
-# Import and autosave recognize exact store-ignore lines, retaining user text and idempotence.
-# External audio imports reject non-finite samples before package writes and preserve history on failure.
-# Canonical PCM rejects non-finite samples before trimmed clip preparation or SRC, without rewriting stored objects.
-# Peak cache allocations stay within file data; invalid pyramid shapes or columns rebuild from canonical PCM.
-# Stereo waveform averages widen before summing; V1 caches rebuild so overflow cannot remain cached silence.
-# Pending resets keep press state only for the matching header control or clip handle; cross-target edits retain separate history.
-# Native scan fixtures prove the direct child has emitted its report and exited before the held-pipe deadline.
-# Sanitizer entry points also run recovery consent separately, retaining its tests and readiness deadline.
-# Socket framing rejects EOF before a newline without consuming edits or Undo/Redo (rpc-request-framing).
-# JSON-only whitespace trimming rejects malformed edits and preserves history (rpc-json-whitespace).
-# MCP partial stdio/backend lines retain edits/history and never authorize, acknowledge or replay an edit.
-# Malformed MCP backend error objects report uncertain outcomes without replaying committed edits (mcp-backend-errors).
-# MCP backend version gating blocks incompatible edits without consuming history (mcp-backend-version).
-# MCP response envelopes reject wrong IDs/versions and ambiguous outcomes before and after edits.
-# MCP invalid IDs and edit-like notifications never connect or consume durable history (mcp-request-identity).
-# Legacy MCP readiness and request-ID replay guards preserve edits and history (mcp-legacy-lifecycle).
-# Modern MCP metadata validates every edit independently of legacy readiness (mcp-modern-metadata).
-# MCP local argument guards reject type overrides and unexpected fields before connecting (mcp-local-arguments).
-# Owned helper main calls and correlated control replies retain timeout, state and save-order boundaries (SPG-01).
-# Generated track/device edits retain batch targets, added-root selection, nullable anchors and durable history.
-# Generated mixer/clip-mix edits retain exact values, preview completion, single/group scope and durable history.
-# Generated clip moves/copies and audio imports retain integer targets, focus, result references, rejection and durable history.
+# Each required contract, its tests and its counterexample are listed in scripts/verification.json.
 check-product-contracts:
 	$(MAKE) contract-prerequisites
 	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py --changed-controls
@@ -259,9 +217,7 @@ spike-render:
 check-bridge:
 	bash scripts/spike-bridge.sh
 
-# Product Swift wrapper, piano gestures/grids/time guides, single/batch velocity, note selection, batch deletion/movement/resizing/copying. No timing assertions.
-# Includes selected-track numeric/accessible mix batches and header/clip gesture ownership across document replacement.
-# Shared model units/bounds cross the generated C ABI and reach note, transport and mix controls (model-constants-abi/model-units-ui).
+# Product Swift wrapper tests through the generated C ABI. No timing assertions.
 check-shell:
 	bash scripts/check-shell.sh
 
@@ -307,6 +263,12 @@ rtsan:
 	# The RTSan helper replaced target/debug/echode-plugin-host and cannot load without the
 	# sanitizer runtime; leave the normal helper for the CLI and later builds.
 	cargo build -q -p echode-plugin-host
+
+# Device-free release measurement of the callback's own CPU time as plugin
+# and note-heavy tracks grow. See docs/decisions/0236-callback-work-per-track.md.
+spike-plugin-tracks:
+	cargo build -q --release -p echode-plugin-host -p echode-test-plugin
+	cargo test -q --release -p echode-plugin-host --test track_scale -- --ignored --exact measure_callback_cost_as_tracks_grow --nocapture
 
 # Device-free release measurement; never part of normal correctness tests.
 spike-audition:

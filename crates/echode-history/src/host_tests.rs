@@ -394,6 +394,22 @@ fn audit_aud03_unknown_durability_stops_later_edits_until_recovery() {
 }
 
 #[test]
+fn only_the_typed_durability_error_halts_later_edits() {
+    // A path or an OS message can contain the same words (XCA-16).
+    let mut halted = None;
+    let lookalike = HostError::Package(PackageError::new(format!(
+        "/tmp/{JOURNAL_DURABILITY_UNKNOWN}/journal.jsonl: Permission denied"
+    )));
+    note_failure(&mut halted, &lookalike);
+    assert_eq!(halted, None);
+    note_failure(
+        &mut halted,
+        &HostError::Package(PackageError::durability_unknown()),
+    );
+    assert_eq!(halted.as_deref(), Some(JOURNAL_DURABILITY_UNKNOWN));
+}
+
+#[test]
 fn audit_rea09_export_label_uses_readable_parent() {
     let directory = scratch();
     write_package(&directory, &Project::new()).unwrap();

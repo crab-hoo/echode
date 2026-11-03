@@ -519,3 +519,57 @@ fn audit_aud04_replacing_a_host_graph_and_sorting_events_does_not_allocate() {
     }
     assert!(!control.status().failed);
 }
+
+fn transport_at(time: u32) -> Event {
+    Event::Transport(echode_realtime::Transport {
+        time,
+        playing: true,
+        recording: false,
+        loop_active: false,
+        tempo_bpm: 120.0,
+        tempo_inc: 0.0,
+        song_pos_beats: 0.0,
+        song_pos_seconds: 0.0,
+        loop_start_beats: 0.0,
+        loop_end_beats: 0.0,
+        loop_start_seconds: 0.0,
+        loop_end_seconds: 0.0,
+        bar_start: 0.0,
+        bar_number: 0,
+        signature_numerator: 4,
+        signature_denominator: 4,
+    })
+}
+
+#[test]
+fn grouped_events_keep_each_tracks_order_and_leave_out_the_rest() {
+    // Keys are sparse and the mixer order differs from key order.
+    let indices = [(3, 1), (7, 0), (40, 2)];
+    let events = [
+        transport_at(0),
+        Event::note_on(0, 7, 1, 60, 1.0),
+        Event::note_on(0, 3, 2, 62, 1.0),
+        Event::note_on(5, 99, 3, 64, 1.0),
+        Event::note_off(9, 7, 1, 60),
+        Event::note_on(9, 3, 4, 65, 1.0),
+    ];
+    let mut grouped = vec![Event::note_off(0, 0, 0, 0); events.len()];
+    let mut ends = vec![usize::MAX; indices.len() + 1];
+    assert!(group_events(&events, &indices, &mut grouped, &mut ends));
+    let track = |position| track_events(&grouped, &ends, position).unwrap().to_vec();
+    assert_eq!(track(0), [events[1], events[4]]);
+    assert_eq!(track(1), [events[2], events[5]]);
+    assert!(track(2).is_empty());
+}
+
+#[test]
+fn grouping_events_into_too_little_room_fails_instead_of_dropping_any() {
+    let indices = [(1, 0), (2, 1)];
+    let events = [
+        Event::note_on(0, 2, 1, 60, 1.0),
+        Event::note_on(0, 1, 2, 62, 1.0),
+    ];
+    let mut grouped = vec![Event::note_off(0, 0, 0, 0); 1];
+    let mut ends = vec![0; indices.len() + 1];
+    assert!(!group_events(&events, &indices, &mut grouped, &mut ends));
+}

@@ -24,6 +24,8 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
 
 ### 13.1 画面の構成
 
+#### ペインとデバイスビュー
+
 - **ペイン構成**: 左ペイン（インスペクター）、中央（アレンジ画面）、中央下部（MIDI エディタ・オーディオエディタ・デバイスビュー）、右ペイン（ブラウザ・マスター）。
   ペインの親が先に縮んでも隣の領域へはみ出さないよう AppKit の親・表示面で明示的に切る
   （[ADR 0098](../decisions/0098-pane-render-boundaries.md)）
@@ -47,6 +49,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   列の開閉は文書内だけでデバイス ID ごとに保持し、保存・Undo・プラグイン通信を変更しない（[ADR 0137](../decisions/0137-device-disclosure.md)）。
   可変幅の累積を配置とドロップ判定に共有する。複数選択時の対象は未決である
   （[操作要件](../interaction-design.md#デバイスビューと-fx-一覧の役割)）。
+
+#### 表示と文書の状態
+
 - **単一 drawable のアレンジ表示**: トラックヘッダとタイムラインの縦の原点・行の高さは `ArrangePaneView` が単一所有し、左右の名前・背景・行境界・オブジェクト・音量・パン・M/S・ピークを 1 つの Metal フレームへ描く
   （[ADR 0050](../decisions/0050-arrange-viewport.md)、[ADR 0051](../decisions/0051-arrange-presentation.md)、[ADR 0107](../decisions/0107-mix-controls.md)）
 - **状態分離**: 文書・選択・確定編集を `ProjectController`、配置・表示設定・下書きを `WorkspaceState`、画面操作を `WorkspaceSession` に分け、共通の `WorkspaceCommand` を使う
@@ -69,6 +74,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
   再生・停止以外のトランスポートの要求は順番待ちで送り、操作子は `transportLocked`（文書なし・`busy`）だけで無効にする
   （[ADR 0160](../decisions/0160-ordered-transport-requests.md)）。
+
+#### 操作子・ブラウザ・ミックス
+
 - **値の操作子**: ヘッダの音量・パン、クリップのハンドル、パラメーター欄は `ValueClicks` の同じ規則で押下を受ける。
   単クリックは値を変えず、ドラッグは押した値からの相対量、ダブルクリックは既定値の仮表示と間隔後の記録、3 回目は入力欄を開く。
   入力欄（`ValueEntryField`）は編集中のキーを先に受け、メニューの Space や文書の Undo へ渡さない

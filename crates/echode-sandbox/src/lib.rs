@@ -11,6 +11,7 @@
 compile_error!("Echode only builds for macOS");
 
 mod control;
+mod descriptors;
 mod gui;
 mod params;
 mod region;

@@ -1,11 +1,17 @@
 """Execution safety, selected-only prerequisites, and failure detection order."""
 
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+import unittest.mock
+from unittest.mock import patch
 
 import test_verification as support
 
@@ -130,6 +136,99 @@ class ExecutionTests(unittest.TestCase):
         checks = {c["id"]: c for c in policy["checks"]}
         self.assertIn("tsan-runtime", checks["check-bridge-tsan"]["preflight"])
         self.assertNotIn("tsan-runtime", checks["check-bridge-asan"]["preflight"])
+
+    def test_each_deferral_keeps_its_own_reason_and_a_shared_reason_is_refused(self):
+        self.policy([self.check("check"), self.check("measure", mode="manual"), self.check("listen", mode="manual")])
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code, count = self.run_verify(support.arguments(defer=["measure=no device", "listen=the user listens = later"]))
+        self.assertEqual((code, count), (0, 1))
+        results = self.report()["results"]
+        self.assertEqual((results["measure"]["reason"], results["listen"]["reason"]),
+                         ("no device", "the user listens = later"))
+        self.assertRegex(results["measure"]["deferred_at"], r"^\d{4}-\d\d-\d\dT")
+        self.assertIn("未実行の理由: no device（記録 ", (self.root / "target/verification/report.md").read_text())
+        for refused in (dict(defer=["measure", "listen"], reason="shared"), dict(defer=["measure=a", "measure=b"]),
+                        dict(defer=["measure= "]), dict(defer=["measure=a"], reason="stray"), dict(defer=["measure"])):
+            with self.subTest(refused=refused), self.assertRaises(ValueError):
+                self.run_verify(support.arguments(**refused))
+        # One plain ID with --reason keeps working for existing callers.
+        self.assertEqual(self.run_verify(support.arguments(defer=["measure"], reason="single")), (0, 0))
+        self.assertEqual(self.report()["results"]["listen"]["reason"], "the user listens = later")
+
+    def test_every_selected_deferral_and_its_reason_reach_the_final_output(self):
+        self.policy([self.check("check"), self.check("measure", mode="manual")])
+        self.assertEqual(self.run_verify(support.arguments(defer=["measure=no device"])), (0, 1))
+        output = io.StringIO()
+        with patch.object(verify, "tool_identity", return_value={"rust": "fixture-v1"}), redirect_stdout(output):
+            self.assertEqual(verify.verify(self.root, support.arguments()), 0)
+        self.assertRegex(output.getvalue(), r"見送り measure: no device（記録 \d{4}-")
+
+    def test_record_only_writes_deferrals_without_preflights_checks_or_timing(self):
+        self.policy([self.check("check", preflight=["broken"]), self.check("measure", mode="manual")],
+                    {"broken": {"command": ["missing-fixture-tool"], "timeout": 5, "remedy": "prepare fixture"}})
+        self.assertEqual(self.run_verify(support.arguments(defer=["measure=no device"], record_only=True)), (0, 0))
+        report = self.report()
+        self.assertEqual((report["results"]["check"]["status"], report["results"]["measure"]["status"]),
+                         ("pending", "deferred"))
+        self.assertEqual((report["execution"]["status"], report["preflight"]), ("recorded", {}))
+        self.assertFalse((self.root / "target/verification/timing-history.jsonl").exists())
+        self.assertIn("--record-only", (self.root / "target/verification/report.md").read_text())
+        for refused in (dict(record_only=True), dict(record_only=True, defer=["measure=x"], run=["measure"]),
+                        dict(record_only=True, defer=["measure=x"], only=["measure"]),
+                        dict(record_only=True, defer=["measure=x"], force=True)):
+            with self.subTest(refused=refused), self.assertRaises(ValueError):
+                self.run_verify(support.arguments(**refused))
+        self.policy([self.check("check"), self.check("measure", mode="manual")])
+        self.assertEqual(self.run_verify(support.arguments()), (0, 1), "the recorded deferral completes a later verify")
+
+    def test_display_only_make_flags_keep_the_identity_but_outcome_flags_change_it(self):
+        self.assertEqual(verify.make_flags_identity("s"), [])
+        self.assertEqual(verify.make_flags_identity("ws -- VERIFY_ARGS=--plan"), [])
+        self.assertEqual(verify.make_flags_identity(" --no-print-directory"), [])
+        self.assertEqual(verify.make_flags_identity("s --jobserver-fds=3,4 -j"), ["-j"])
+        self.assertEqual(verify.make_flags_identity("ski"), ["ki"])
+        self.assertEqual(verify.make_flags_identity("VERIFY_ARGS=x"), [])
+        # The host's make decides how flags are spelled; compare real invocations.
+        (self.root / "Makefile").write_text("identity:\n\t@" + shlex.quote(sys.executable) + " -B -c "
+                                            + shlex.quote("import json, os, sys; sys.path.insert(0, " + repr(str(ROOT / "scripts"))
+                                                          + "); import verify; print(json.dumps(verify.make_flags_identity("
+                                                          "os.environ.get('MAKEFLAGS', ''))))") + "\n")
+        def identity(*flags):
+            result = subprocess.run(["make", *flags, "identity"], cwd=self.root, capture_output=True, text=True, check=True)
+            return [line for line in result.stdout.splitlines() if line.startswith("[")][-1]
+        plain = identity()
+        for flags in (["-s"], ["-w"], ["--no-print-directory"], ["-C", str(self.root)], ["-s", "VERIFY_ARGS=--plan"]):
+            with self.subTest(flags=flags):
+                self.assertEqual(identity(*flags), plain)
+        for flags in (["-i"], ["-k"], ["-s", "-i"]):
+            with self.subTest(flags=flags):
+                self.assertNotEqual(identity(*flags), plain)
+
+    def test_build_checks_require_free_space_sized_for_their_cold_caches(self):
+        disk = support.module("check_disk_space", "check_disk_space.py")
+        (self.root / "target/debug").mkdir(parents=True)
+        cold = [("target/debug", 6.0), ("target/mutations", 4.0)]
+        self.assertEqual(disk.required_gib(self.root, 3.0, cold), (7.0, ["target/mutations"]))
+        usage = lambda free: unittest.mock.patch.object(disk.shutil, "disk_usage", return_value=SimpleNamespace(free=free * disk.GIB))
+        with usage(6.9), redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(disk.main(["--min-gib", "3", "--cold", "target/debug=6", "--cold", "target/mutations=4"],
+                                       self.root), 1)
+        self.assertIn("target/mutations", error.getvalue())
+        with usage(7.1), redirect_stdout(io.StringIO()):
+            self.assertEqual(disk.main(["--min-gib", "3", "--cold", "target/mutations=4"], self.root), 0)
+        for bad in ("/tmp/x=1", "../x=1", "target=0", "target"):
+            with self.subTest(bad=bad), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                disk.main(["--min-gib", "3", "--cold", bad], self.root)
+        policy = verify.load_policy(ROOT)
+        checks = {c["id"]: c for c in policy["checks"]}
+        mutations = policy["preflights"]["disk-space-mutations"]["command"]
+        self.assertIn(f"{support.load_contracts().MUTATIONS.as_posix()}/cargo=4", mutations)
+        for name, check in checks.items():
+            if check["mode"] == "automatic" and name not in ("check-format", "check-verification", "check-tsan-runtime"):
+                with self.subTest(check=name):
+                    expected = "disk-space-mutations" if name in ("check-product-contracts", "check-contract-controls") else "disk-space"
+                    self.assertEqual(check["preflight"][0], expected)
 
 
 class BridgeReadinessTests(unittest.TestCase):

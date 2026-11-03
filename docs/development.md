@@ -53,7 +53,10 @@
 ### ドキュメント
 
 - 利用方法・コマンド・設定が変われば `README.md` と該当手順を更新する。
+- 実画面・VoiceOver・聴感・実機の確認待ちを作ったら [ユーザー確認の一覧](user-checks.md) に項目を足し、status.md からはその番号を示す。
 - 実装範囲・制約が変われば [status.md](status.md)、設計が変われば [ARCHITECTURE.md](ARCHITECTURE.md) と対応する [docs/architecture/](architecture/) 分割資料および ADR、方針・完了条件が変われば [PLAN.md](PLAN.md) を更新する。
+- status.md には利用者に残る制約と未確認の項目だけを書き、実装の経緯は ADR へ書く。制約が消えたら status.md の項目も消す。
+- 資料の大きさは [読む量の上限](agent-workflow.md#読む量の上限) に収める。超えた時は上限を上げず、経緯を移すか見出しで節を分ける。
 - どの資料が正本かは [資料の入口](README.md) に従い、同じ事実を複数の資料へ重複追記しない。
 - 行指定読込でのトークン消費を抑えるため、1 文または 1 項目ごとに改行し、1 行を概ね 250 バイト以下に保つ（[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
 - 監査の指摘を直したら、当時の失敗記録は保持したまま、対応と回帰テストへの参照を追記する。
@@ -64,13 +67,14 @@
 - 新しいアクションには `crates/echode-history/tests/properties.rs`、音を作る処理には `crates/echode-engine/tests/block_size.rs` の回帰を追加する。
 - 製品ソースファイル内の単体テストが大きくなった場合（目安 100 行以上）は、`#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;` で同ディレクトリの別ファイルへ分離し、製品コードの閲覧コストを抑える。
 - モジュール・依存・ツールチェーン・実行入口が変わったら、`scripts/verification.json`、`Makefile`、CI、実行手順を照合する。選択条件は `scripts/verification.json` だけに置く。
+  Makefile のコメントは各規則の目的を 3 行以内で書き、機能ごとの経緯や契約の一覧を積まない。
 - 必須契約（`product_contracts`）は、正しいソースで実テストが 1 件通過し、誤りを戻したソースのコピーでは期待値で失敗することを確認する。
 - `@MainActor` のテストは同時に動き、主スレッドを交互に使う。長い同期処理は `await` で区切るか主アクターの外へ移し、他のテストの実時間の待ちを止めない。
   画素の全面走査は `CanvasReadback.scan` を使う（[デバッグ手順](debugging.md)の `Status did not arrive`）。
 
 ### デバッグ基盤
 
-- 新しい失敗経路・環境依存・ツールの取得エラーが判明したら、[デバッグ手順](debugging.md) に識別方法と調査先を反映する。
+- 新しい失敗経路・環境依存・ツールの取得エラーが判明したら、[領域別のデバッグ手順](debugging/) の該当する節へ `###` の見出しで識別方法と調査先を足し、[索引](debugging.md#症状の索引) にも同じ名前を足す。
 - ログ・成果物の出力先や形式、新しいヘルパー・バンドル・外部入力を変えたら、`make doctor` の鮮度照合と `make debug-report` の収集範囲を見直す。
 - 古い結果・環境不足・製品不良を区別できること、秘密情報やユーザー文書を収集しないこと、音声スレッドへ禁止操作を持ち込まないことを維持する。
 
@@ -80,6 +84,8 @@
 最終報告では今回の基盤の更新内容（または更新不要の理由）を簡潔に示す。
 
 ## コードの所在
+
+### crate と主な入口
 
 | 領域 | パス | 役割・主な入口 |
 | :--- | :--- | :--- |
@@ -103,6 +109,8 @@
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`check_real_hal.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
+### Phase 0 の検証コード
+
 Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`store.rs`）は、非既定の `spike` feature 専用である。
 直接その通常回帰を動かす時は `cargo test -q -p echode-history --features spike --lib --test roundtrip`、
 計測は従来どおり `make spike-history` を使う。製品の型・保存形式と混同しない
@@ -112,6 +120,8 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 通常回帰は `cargo test -q -p echode-engine --features spike --lib`、実機計測は `make spike-engine-smoke`・`make spike-engine` を使う。
 製品の `playback`・機器一覧・`IoWorkgroup` は feature なしで使える
 （[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
+
+### モデルの項目表と変更セット
 
 パラメーターの変更セットの生成器は `echode-model/src/changeset_parameter.rs`、
 ビット単位の差分・作成・削除・逆適用とジャーナルの回帰は履歴の `tests/parameter_changesets.rs` に置く。
@@ -175,10 +185,12 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 保存再読込みから保持した ABI の値は FFI の `snapshot_fields_tests.rs` に置く
 （[ADR 0226](decisions/0226-model-field-registry-completion.md)）。
 
+### JSON-RPC・MCP
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する
-（[ADR 0020 の後続修正](decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
+（[ADR 0020 の後続修正](decisions/0020-json-rpc.md#要求の外枠の検証2026-10-29)）。
 
 JSON の構文上の空白は `ApiSession::reply` の `trim_matches` と既存の JSON パーサーで検証する。
 `tests/request_whitespace.rs` は公開 API・実ソケットで不正な前後の空白を拒否し、ジャーナル・Undo / Redo・再オープンを保つ。
@@ -188,7 +200,7 @@ JSON の構文上の空白は `ApiSession::reply` の `trim_matches` と既存�
 ソケットの改行完了は `serve.rs::serve_connection_limited` が検証する。
 `tests/request_framing.rs` は EOF の部分行で編集・通知・Undo / Redo を実行しないことと、
 完了済みの前方の編集・ジャーナル・既存の履歴・再オープン、CRLF と分割受信を検査する
-（[ADR 0073 の改行境界](decisions/0073-socket-path.md#改行前の切断の拒否-2026-10-29)）。
+（[ADR 0073 の改行境界](decisions/0073-socket-path.md#改行前の切断の拒否2026-10-29)）。
 
 MCP の改行完了は `crates/echode-api/src/mcp.rs::read_line` が stdio と接続先 API の応答の両方で検査する。
 公開入口と実ソケットの `tests/mcp_framing.rs` は、部分行の拒否・前方の編集・履歴と再オープン、
@@ -232,6 +244,8 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 ジャーナル・既存 Redo・後続の正当な編集の単一 Undo / Redo と再オープンを検査する
 （[ADR 0115 の引数回帰](decisions/0115-phase2-mcp.md#ツール引数のローカル拒否の回帰補強2026-10-29)）。
 
+### プラグインのヘルパーと走査
+
 プラグインのメインスレッド要求の所有は `echode-plugin-host/src/main_requests.rs`、実行は `threads.rs::perform_main_request` に置く。
 要求番号付きの制御フレームは `echode-sandbox/src/control.rs`、親の応答照合と背景保存は `session.rs` に置く。
 回帰は `main_requests_tests.rs`・`session_correlation_tests.rs`・`control_tagged_tests.rs` と `tests/audit.rs` の SPG-01 を使う。
@@ -244,9 +258,16 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 要求番号・古い応答と保存の世代は `session_correlation_tests.rs` を使う
 （[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
 
+コールバックの費用がトラック数とともにどう増えるかの release 計測は `crates/echode-plugin-host/tests/track_scale.rs` に置き、`make spike-plugin-tracks` で動かす。
+ブロックのイベントの振り分けは `playback.rs` の `group_events`、ヘルパーのトラックのキーの索引は `plugins.rs` の `HostTracks` である（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
+
+ヘルパーの記述子の上限を上げる処理は `echode-sandbox/src/descriptors.rs` に置き、回帰は上限を変えるため専用のバイナリ `tests/descriptor_limit.rs` にする（[ADR 0237](decisions/0237-helper-descriptor-limit.md)）。
+
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
 （[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。
+
+### FFI・文書・復旧・編集型
 
 フォルダ表示の製品 ABI は `crates/echode-ffi/src/projection.rs`、Swift の保持と階層取得は
 `swift/EchodeBridge/Sources/EchodeBridge/TrackHierarchy.swift` に置く。
@@ -301,6 +322,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
 クリップ移動・複製と音声配置は `TypedClipEditTests.swift` で、整数 tick・入力先・選択・結果参照・履歴・拒否と再オープンを検査する。
 一括編集内で前の結果を使う要求は `ReferencingEditAction` で組み、`EditText.result` と `performActions(referencing:)` で送る。
 
+### ループ・値の操作子・ミックス・ヘッダ
+
 ループの下書きは `ProjectController.loopRange` の整数範囲を両ルーラーと送信で共有する。
 拍の文字列は `LoopEntry.swift` が入力境界だけで持ち、未変更の欄は元の tick をそのまま返す。
 回帰は `LoopDraftTests.swift`。精度外の端点・不正入力・旧文書の拒否・再オープン時の初期化を通す
@@ -347,6 +370,8 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 保存の浮動小数点表記は `document.rs::format_gain`、独立した保存回帰は履歴の `tests/float_roundtrip.rs` に置く
 （[ADR 0196](decisions/0196-lossless-package-floats.md)）。同じ回帰で `DocumentHost` の増分保存・コミットからの再オープン・履歴復帰と Undo / Redo も通す。
 
+### 素材・保管庫・波形キャッシュ
+
 保存済み音声の有限性は `crates/echode-history/src/media.rs::decode_pcm`、公開読込みとトリム後の素材準備の回帰は
 `crates/echode-audio-io/tests/pcm_validation.rs` に置く（[ADR 0056 の後続修正](decisions/0056-audio-import.md)）。
 
@@ -356,7 +381,7 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 
 保管庫とキャッシュの Git 除外は `objects.rs::ensure_store_gitignore`、回帰は履歴の `tests/store_gitignore.rs` に置く。
 公開取込みとホスト開始で、コメント・似たパスの誤認拒否、CRLF・既存テキストの保持と二重実行を通す
-（[ADR 0031 の後続修正](decisions/0031-content-addressed-store.md#除外規則の行単位の照合-2026-10-29)）。
+（[ADR 0031 の後続修正](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
 
 波形キャッシュの構造・バイト長・列の検証は `peaks.rs::read_cache`、公開読込みと再生成の回帰は
 `crates/echode-history/tests/peak_cache_validation.rs` に置く（[ADR 0058](decisions/0058-waveform-peaks.md)）。
@@ -364,6 +389,8 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 構築・マップの極大値と非正規化数、旧キャッシュの再生成と PCM の保持を製品の公開波形経路へ通す。
 境界の途中をまたぐ列の無音は `waveform_silence.rs` で検査する。
 素材前・EOF 後・配置外の包絡、粗い列とマップの端・テンポ変化とキャッシュ再利用を公開経路へ通す。
+
+### クリップ・再生開始位置・ルーラー
 
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
@@ -389,6 +416,8 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 再生ヘッドへの追従の判定と主スレッドの表示リンクは `PlayheadFollow.swift`（`PlayheadFollow`・`PlayheadFollower`）、
 ページ送りと手動スクロールでの解除は `ArrangePaneView.swift` と `PianoRollView.swift`、値は `WorkspaceState.followsPlayhead` に置く。
 回帰は `PlayheadFollowTests.swift`（[ADR 0159](decisions/0159-playhead-follow.md)）。
+
+### ピアノロール
 
 単一ノートのドラッグの吸着・Shift と最短長は `PianoGeometry.swift` の `PianoGesture.preview`、
 解放時の計算と単一送信は `PianoRollView.swift` の `mouseUp` に置く。
@@ -445,6 +474,8 @@ Command 複製移動は `PianoMoveGesture.copies` と `PianoMoveChange.actions`�
 一括伸縮の対象検証・共通の端の差分と仮表示は `PianoResizeBatch.swift`、確定は `ProjectController.resizeNotes` に置く。
 回帰は `PianoResizeBatchTests.swift`・`PianoResizeBatchBoundaryTests.swift`・`PianoResizeBatchCancellationTests.swift`
 （[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
+
+### アレンジ表示・描画面・ドロップ
 
 アレンジの音高表示の音域と縦変換は `crates/echode-draw/src/query.rs` の `PitchRange`・`PitchLayout` に置く。
 製品フレームと VoiceOver 用矩形の回帰は `ArrangePitchTests.swift`、可視列は `tests/arrange_pitch.rs` を使う。

@@ -12,28 +12,38 @@ import tempfile
 
 sys.dont_write_bytecode = True
 import diagnose
+from documentation import headings
 import verify
 
 ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT = "target/agent-context.json"
 # Presentation budget only; callers may explicitly request a larger excerpt.
 DEFAULT_MAX_BYTES = 6000
-COMMON_GUIDES = ("AGENTS.md", "docs/README.md", "docs/status.md", "docs/development.md",
-                 "docs/verification.md", "docs/debugging.md", "docs/PLAN.md", "docs/ARCHITECTURE.md",
-                 "docs/agent-workflow.md")
+# Every task reads these in full before it starts; the other guides are read by
+# --outline and --section (XCA-10).
+START_GUIDES = ("AGENTS.md", "docs/README.md", "docs/status.md", "docs/agent-workflow.md")
+COMMON_GUIDES = (*START_GUIDES, "docs/development.md", "docs/verification.md", "docs/debugging.md",
+                 "docs/debugging/verification-and-build.md", "docs/PLAN.md", "docs/ARCHITECTURE.md")
+# Japanese text is about one token per three bytes. The start budget bounds the
+# full reads; the section budget bounds the smallest unit a section read returns.
+START_BUDGET_BYTES = 44_000
+SECTION_BUDGET_BYTES = 12_000
 # Only documentation references live here. Source globs and check selection stay
 # in verification.json; this index cannot remove verification obligations.
 AREA_GUIDES = {
-    "bridge": ("docs/architecture/ui-and-metal.md", "docs/architecture/api-qa-and-distribution.md"),
-    "audio": ("docs/architecture/audio-engine.md",),
-    "isolation": ("docs/architecture/plugins-and-devices.md",),
-    "drawing": ("docs/architecture/ui-and-metal.md",),
-    "history": ("docs/architecture/model-and-history.md",),
-    "input": ("docs/architecture/ui-and-metal.md",),
-    "render": ("docs/architecture/audio-engine.md", "docs/architecture/api-qa-and-distribution.md"),
+    "bridge": ("docs/architecture/ui-and-metal.md", "docs/architecture/api-qa-and-distribution.md",
+               "docs/debugging/arrange-mixer-and-browser.md", "docs/debugging/saving-history-and-api.md"),
+    "audio": ("docs/architecture/audio-engine.md", "docs/debugging/audio-and-plugins.md"),
+    "isolation": ("docs/architecture/plugins-and-devices.md", "docs/debugging/audio-and-plugins.md"),
+    "drawing": ("docs/architecture/ui-and-metal.md", "docs/debugging/arrange-mixer-and-browser.md"),
+    "history": ("docs/architecture/model-and-history.md", "docs/debugging/saving-history-and-api.md"),
+    "input": ("docs/architecture/ui-and-metal.md", "docs/debugging/piano-roll.md"),
+    "render": ("docs/architecture/audio-engine.md", "docs/architecture/api-qa-and-distribution.md",
+               "docs/debugging/audio-and-plugins.md"),
     "dependencies": ("docs/PLAN.md", "docs/architecture/api-qa-and-distribution.md"),
-    "app_drawing": ("docs/architecture/ui-and-metal.md",),
-    "product_audio": ("docs/architecture/audio-engine.md",),
+    "app_drawing": ("docs/architecture/ui-and-metal.md", "docs/debugging/arrange-mixer-and-browser.md",
+                    "docs/debugging/piano-roll.md"),
+    "product_audio": ("docs/architecture/audio-engine.md", "docs/debugging/audio-and-plugins.md"),
 }
 
 
@@ -47,31 +57,6 @@ def read_source(root, name, expected=None):
         raise ValueError("source changed; refresh the outline before using its line numbers")
     return {"path": path.relative_to(root.resolve()).as_posix(), "sha256": stamp,
             "bytes": len(raw)}, raw.decode("utf-8")
-
-
-def headings(text):
-    """Index ATX headings, ignoring fenced examples; retain nested sections."""
-    result = []
-    fence = None
-    lines = text.splitlines(keepends=True)
-    for number, line in enumerate(lines, 1):
-        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
-        if fence:
-            if (marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1]
-                    and not marker[2].strip()):
-                fence = None
-            continue
-        if marker:
-            fence = (marker[1][0], len(marker[1]))
-            continue
-        match = re.match(r"^ {0,3}(#{1,6})[ \t]+(.+?)\s*$", line)
-        if match:
-            title = re.sub(r"[ \t]+#+[ \t]*$", "", match[2])
-            result.append({"title": title, "level": len(match[1]), "start": number})
-    for index, item in enumerate(result):
-        item["end"] = next((other["start"] - 1 for other in result[index + 1:]
-                            if other["level"] <= item["level"]), len(lines))
-    return result
 
 
 def source_view(root, name, *, outline=False, section=None, line_range=None,
@@ -101,6 +86,35 @@ def source_view(root, name, *, outline=False, section=None, line_range=None,
     return {"source": source, "total_lines": len(lines), "start": start, "end": end, "content": content}
 
 
+def section_sizes(text):
+    """Bytes from each heading to the next heading of any level: the smallest section read."""
+    lines = text.splitlines(keepends=True)
+    entries = headings(text)
+    return [(item, len("".join(lines[item["start"] - 1:(entries[index + 1]["start"] - 1
+                                                         if index + 1 < len(entries) else len(lines))]).encode("utf-8")))
+            for index, item in enumerate(entries)]
+
+
+def reading_budget(root, names):
+    """Measure the full reads at the start and the largest section of every guide (XCA-10)."""
+    start = [{"path": name, "bytes": (root / name).stat().st_size} for name in START_GUIDES]
+    oversized = []
+    largest = {"path": None, "title": None, "bytes": 0}
+    for name in names:
+        for item, size in section_sizes((root / name).read_text(encoding="utf-8")):
+            if size > largest["bytes"]:
+                largest = {"path": name, "title": item["title"], "bytes": size}
+            if size > SECTION_BUDGET_BYTES:
+                oversized.append({"path": name, "title": item["title"], "line": item["start"], "bytes": size})
+    total = sum(item["bytes"] for item in start)
+    return {"start": start, "start_bytes": total, "start_budget": START_BUDGET_BYTES,
+            "section_budget": SECTION_BUDGET_BYTES, "largest_section": largest, "oversized": oversized}
+
+
+def all_guides():
+    return list(dict.fromkeys([*COMMON_GUIDES, *(name for names in AREA_GUIDES.values() for name in names)]))
+
+
 def collect(root, requested_areas=()):
     # Match a new verify-plan invocation, rather than inheriting an old report's
     # diff base. Existing per-check evidence is still evaluated by diagnose.
@@ -124,7 +138,8 @@ def collect(root, requested_areas=()):
     if (data["verification"]["freshness"] == "changed_during_collection"
             or diagnose.source_stamp(root) != data["source"]):
         raise ValueError("source changed during context collection; collect again")
-    return {"version": 1, "diagnosis": data, "areas": areas, "selection": selection, "guides": records}
+    return {"version": 1, "diagnosis": data, "areas": areas, "selection": selection, "guides": records,
+            "reading": reading_budget(root, all_guides())}
 
 
 def render_view(data, *, as_json=False, max_bytes=DEFAULT_MAX_BYTES):
@@ -177,8 +192,19 @@ def render(data):
     if verification["full_tier_unverified"]:
         lines.append("Full tier without a pass on current inputs (not required per task; make verify-full at milestones): "
                      + ", ".join(verification["full_tier_unverified"]))
-    lines.append("Guides (AGENTS.md remains mandatory; follow related ADR/audit links):")
-    lines.extend("  " + guide["path"] for guide in data["guides"])
+    reading = data["reading"]
+    largest = reading["largest_section"]
+    lines.append(f"Read in full first: {', '.join(item['path'] for item in reading['start'])} "
+                 f"({reading['start_bytes'] / 1000:.1f} KB of the {reading['start_budget'] / 1000:.1f} KB budget)")
+    lines.append("Guides (read by --outline and --section; follow related ADR/audit links):")
+    lines.extend("  " + guide["path"] for guide in data["guides"] if guide["path"] not in START_GUIDES)
+    if largest["path"]:
+        lines.append(f"Largest section: {largest['bytes'] / 1000:.1f} KB of the {reading['section_budget'] / 1000:.1f} KB budget "
+                     f"({largest['path']} {largest['title']})")
+    if reading["start_bytes"] > reading["start_budget"]:
+        lines.append("OVER BUDGET: the full reads exceed the start budget; move history to ADRs (docs/agent-workflow.md)")
+    for item in reading["oversized"]:
+        lines.append(f"OVER BUDGET: {item['path']}:{item['line']} {item['title']} is {item['bytes'] / 1000:.1f} KB; split it with headings")
     lines += [f"Full paths, selection reasons, guide hashes/outlines and logs: {SNAPSHOT}",
               "Inspect: python3 -B scripts/agent_context.py --outline PATH; --read PATH --section TITLE or --lines START:END",
               "Diagnostics only; completion still requires make verify. Refresh context after source changes."]

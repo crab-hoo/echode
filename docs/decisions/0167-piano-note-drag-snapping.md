@@ -42,6 +42,6 @@ Return は [ADR 0155](0155-remembered-playback-start.md) の既存挿入との�
 - 必須契約は `scripts/verification.json` と選択の回帰へ登録する。
   吸着解除を無視する、古いプレビューを確定する、最短長をグリッド幅へ戻す、の 3 つを負の対照とする。
   既存の `check-shell` / `check-product-contracts` が新しいテストを実行し、新しい Makefile 入口は不要である。
-- [デバッグ手順](../debugging.md#ui描画入力履歴mcp) に入力と幾何の切り分けを追加する。
+- [デバッグ手順](../debugging/piano-roll.md#追加吸着入力長) に入力と幾何の切り分けを追加する。
   新しい出力・外部入力・ログ形式はなく、`doctor` と `debug-report` の収集範囲は変更しない。
 - 機器とウィンドウを開かない回帰を先に使う。実画面の Shift 操作・ドラッグの見え方はユーザー担当である。

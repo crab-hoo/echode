@@ -40,7 +40,8 @@ wait_for_verify = module("wait_for_verify", "wait_for_verify.py")
 
 
 def arguments(**overrides):
-    options = dict(base=None, all=False, full=False, only=[], run=[], defer=[], reason=None, plan=False, force=False)
+    options = dict(base=None, all=False, full=False, only=[], run=[], defer=[], reason=None, record_only=False,
+                   plan=False, force=False)
     options.update(overrides)
     return argparse.Namespace(**options)
 
@@ -1453,6 +1454,18 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue({"rtsan", "spike-engine-smoke", "spike-isolation"} <= checks)
         self.assertIn("advisories", self.selected("crates/echode-api/Cargo.toml"))
 
+    def test_callback_work_per_track_is_measured_without_a_device(self):
+        for path in ("crates/echode-engine/src/playback.rs", "crates/echode-engine/src/plugins.rs",
+                     "crates/echode-plugin-host/tests/track_scale.rs"):
+            with self.subTest(path=path):
+                self.assertIn("spike-plugin-tracks", self.selected(path))
+        self.assertNotIn("spike-plugin-tracks", self.selected("crates/echode-draw/src/query.rs"))
+        check = {item["id"]: item for item in self.policy["checks"]}["spike-plugin-tracks"]
+        self.assertEqual(check["mode"], "manual")
+        self.assertNotIn("device_context", check)
+        recipe = (ROOT / "Makefile").read_text().split("spike-plugin-tracks:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("--test track_scale -- --ignored --exact measure_callback_cost_as_tracks_grow", recipe)
+
     def test_common_settings_do_not_require_unrelated_measurements(self):
         automatic = {check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"}
         for path in self.policy["global_inputs"]:
@@ -1604,7 +1617,7 @@ class PolicyTests(unittest.TestCase):
                           "piano-note-move-batch-ui", "piano-note-move-batch-targets-ui", "piano-note-move-batch-cancel-ui",
                           "piano-note-resize-batch-ui", "piano-note-resize-batch-targets-ui", "piano-note-resize-batch-cancel-ui",
                           "piano-note-selection-ui", "piano-note-selection-cancel-ui", "piano-note-selection-delete-ui", "piano-note-linked-delete-ui", "piano-velocity-lane-ui", "piano-velocity-lane-frame-ui", "piano-velocity-lane-cancel-ui", "piano-shared-viewport-ui", "piano-note-velocity-ui", "piano-note-velocity-cancel-ui", "note-velocity-model", "piano-note-click-ui", "piano-note-input-length-ui", "piano-note-drag-ui", "piano-note-insert-ui", "piano-note-insert-cancel-ui", "piano-note-clip-bounds-ui", "piano-note-clip-bounds", "arrange-note-pitch", "arrange-note-pitch-ui", "playhead-follow-ui", "playhead-follow-state-ui",
-                          "note-end-start", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
+                          "note-end-start", "track-event-routing", "helper-descriptor-limit", "transport-order-ui", "sample-list-space-ui", "plugin-list-ui",
                           "sample-overview", "sample-overview-ui", "journal-place-fades",
                           "recovery-consent", "recovery-consent-ui", "journal-invariants", "journal-confirmed-edits", "noop-edits", "mcp-noop-edits", "noop-edits-ui",
                           "device-list-retry-ui", "output-opening", "output-opening-worker", "background-graph", "device-preparation-ui",

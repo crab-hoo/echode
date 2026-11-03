@@ -47,10 +47,18 @@ HEAD と作業ツリーの差分には、ステージ済み・未ステージ・
 make verify VERIFY_ARGS='--run spike-audio --run spike-playhead'
 # 実機確認を依頼された場合は10秒の確認から選ぶ。長時間計測は必要な時だけ明示する
 make verify VERIFY_ARGS='--run spike-engine-smoke'
-# 選ばれた実機検査を見送る時は、その検査の入力に理由を結び付ける
-make verify VERIFY_ARGS='--defer spike-audio --reason "今回の変更は文書だけで製品の音声経路に変更なし"'
+# 選ばれた実機検査を見送る時は、検査ごとの理由をその検査の入力に結び付ける
+make verify VERIFY_ARGS='--defer spike-audio="音声の経路に変更なし" --defer spike-isolation="隔離の境界に変更なし"'
+# 見送りの記録だけをする時。検査は実行しないので、続けて make verify を実行する
+python3 -B scripts/verify.py --record-only --defer spike-audio="音声の経路に変更なし"
 make verify
 ```
+
+見送りの理由は検査ごとに書く（[ADR 0233](decisions/0233-verification-deferral-reasons-and-traps.md)）。
+`--defer ID --reason 理由` は 1 件の時だけ使え、`--reason` を複数の検査に付けると拒否する。
+1 つの理由がほかの検査の目的を説明しなくなるからである（XCA-08）。
+`make verify` の最後に、選択された見送りを検査名・理由・記録日時で表示する。前の作業の理由が残っていれば、ここで気付いて記録し直す。
+`--defer` は記録だけでなく、選択された自動検査も実行する。記録だけなら `--record-only` を使う。
 
 `--all` は手動の検査と追加の長時間検査も含めて全検査を選択する。自動検査の全件には `make verify-full` を使う。
 10分計測は `make verify VERIFY_ARGS='--run spike-engine'` でも追加できる。
@@ -64,6 +72,9 @@ make verify
 
 `make verify` は選択と合格再利用の判定後、実行予定の検査が宣言した `preflight` を重複なく実行する。
 ツールチェーン、オフライン依存、固定 nightly の rust-src / Miri、TSan の準備状態を軽量に確認する。
+ビルドする検査は空き容量も確認する（`disk-space`、反例を作る検査は `disk-space-mutations`）。
+既存のビルドキャッシュがあれば 3 GiB、`target/debug` がなければ 6 GiB、反例の `cargo` がなければさらに 4 GiB を求める。
+値は 2026-10-31 の新しい worktree の初回（約 10 GB）と、既存のキャッシュでの 1 回（最大 1.5 GiB）からの見積もりである。
 対象外・合格再利用・理由付き見送りの検査には準備を要求せず、取得・ビルド・機器操作もしない。
 失敗時は長い検査を開始せず、`report.md` と `preflight-<ID>.log` に環境エラーと復旧案内を残す。
 事前確認は製品検査の合格ではなく、既存の `check-tsan-runtime` 等も省略しない。
@@ -71,7 +82,8 @@ make verify
 検査は JSON の `priority` と `after` に従う安定した順序で実行する。
 フォーマット、ポリシー整合、TSan ランタイムの対照、選択された ASan を高コストな製品契約より先に確認する。
 `after` は対象集合内の先行関係だけを指定し、検査の追加選択・省略・並列実行はしない。
-`make -s verify` のようなフラグは `MAKEFLAGS` としてツールの識別に入り、全検査の結果を再利用できなくする。`VERIFY_ARGS` だけは識別に入らない。
+`make` のフラグは `MAKEFLAGS` としてツールの識別に入り、全検査の結果を再利用できなくする。
+表示だけを変える `-s`・`-w`・`--no-print-directory` と `VERIFY_ARGS` は識別に入らない。`-i`・`-k`・`-n` などの結果を変えるフラグは入る。
 開始から最初の失敗までの時間と対象は `report.json` の `execution.first_failure` に記録する。
 
 `make spike-verification-failures` は同じ集合へ失敗を注入する比較計測で、結果は `target/verification/failure-latency.json`。
@@ -170,7 +182,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 ## 実機・計測・ネットワークの検査
 
 実機・聴感の判定は原則としてユーザーが担当する。
-実機を使う検査は明示的な依頼がある時だけ `--run ID` で実行し、ユーザーが担当する項目は理由付きで `--defer ID --reason 理由` で見送る。
+実機を使う検査は明示的な依頼がある時だけ `--run ID` で実行し、ユーザーが担当する項目は検査ごとの理由付きで `--defer ID=理由` で見送る。
+実画面・VoiceOver・聴感の確認待ちは [ユーザー確認の一覧](user-checks.md) に置く。
 ウィンドウを使う検査は現在の Space で表示条件を満たせる環境で実行する。
 
 - `spike-isolation`: 隔離の release 計測と製品 CLAP の実時間ブロック期限。明示的な依頼がある時に実行し、[S3](spikes/S3-plugin-isolation.md) の数値を更新する。
@@ -192,6 +205,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `spike-audition`: 機器を開かず製品の試聴スレッドとコールバックで、4 秒・60 秒の素材の開始を release 計測する。
   最初の読込み・変換・受渡し・発音の時刻と、全復号前に発音したことを `target/spike-audition.json` へ記録する。
   実機の出力待ちと聴感の計測とは区別する。
+- `spike-plugin-tracks`: 機器を開かず、1・16・64・256 トラックでコールバック自身の CPU 時間を release 計測する。
+  各トラックにヘルパーを 1 つ置く場合と、拍ごとの和音を置く場合を比べ、`target/spike-plugin-tracks.json` へ記録する。
+  トラックあたりの値が数とともに増えれば、2 乗の処理が残っている（[ADR 0236](decisions/0236-callback-work-per-track.md)）。
 - `spike-audio`: 製品の CoreAudio 出力を無音で開き、コールバック、停止・再起動、機器一覧と通知登録、再生中の計画更新・位置移動を確認する。
 - `spike-bridge`: スナップショットと配列の受け渡しの release 計測。
 - `spike-render`: WAV の一括書き出しの release 計測。
@@ -258,6 +274,13 @@ Swift パッケージ内のテスト間の依存分割は未実施で、Swift �
 4. 件数増加、再ビルド範囲、機器・外部環境の変化を識別し、期待値・期限・隔離を緩めずに直す。
    原因と比較条件・数値は追跡する ADR 等へ要約する。作業用の全ログを恒久的な証拠にしない。
 
+全コアに負荷をかけて比べる計測（[ADR 0210](decisions/0210-sanitizer-test-width.md) のスピナー）は、ユーザーの音声の作業を乱す。
+各回の前に `ps -Ao comm` で音声アプリを、`pmset -g assertions` で `audio` と `named:` を含む行を確かめ、どちらかがあれば待つ。
+2026-11-01 はこの待ちが約 2 時間続いた。
+比べる版は 1 つの計測の中で交互に流す。このマシンでは常駐のデーモンが動き続けるので、別々の時間帯の結果は比べられない。
+計測の前に、`sample` やスレッドの監視などの観測用のプロセスを止める。残った 1 つが比較の 3 回を汚した。
+失敗の有無を見るならスピナー 30 本、余裕を見るなら 10 本にする。10 本では制限なしの 55 回で失敗 0、30 本では 10 回中 6 回失敗した。
+
 Swift の `build_product` はポリシーに宣言し、製品契約ではテスト製品だけをビルドする。
 同一反例はビルドのみを共用し、すべての契約・反例のテストを独立プロセスと従来の期限で判定する。
 異なる反例を同じコピーへ混ぜず、全ビルドが終わってからテストする。
@@ -279,3 +302,21 @@ Bash は待たせないので、状態とログは読めるが、ファイルを
 フックの上限は `verification.json` の `hook_timeout` と一致させ、全自動検査と事前確認の直列予算を覆うことを検査する。
 ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
 CI の自動検査一覧は `scripts/verification.json` から生成し、各ジョブが `--all --only ID` で分担する。全体の段階も CI の全件に含む。調査資料の収集は [デバッグ手順](debugging.md) を参照する。
+
+## 検査基盤で区別すること
+
+- **実 HAL と UI テストの TSan**: 実 HAL のバッファを再利用する時の TSan 警告の原因は未確定で、抑制はしない（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
+  `EchodeAppTests` のバンドルには実 HAL がなく、触れたテストは `make check-real-hal` が名指しで止める（[ADR 0209](decisions/0209-real-hal-guard.md)）。
+  UI テストからこの警告の経路はなくなったが、原因の解決ではない。
+- **サニタイザの Swift 全体実行の幅**: 合否は同時実行数 16 の実行で決め、TSan は全テスト同時の実行で競合だけを探す（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
+  幅は実験的な環境変数に頼るので、実際の幅をイベント列で確かめる。5 秒を超えるシステム全体の停止は、この対策でも吸収できない。
+- **errno の TSan 警告**: Darwin arm64 のスレッド固有領域の再利用による誤検出は、C だけでも再現する。
+  検査専用ランタイムで errno の寿命処理を直し、同じ errno を実際に共有する競合の検出は保つ（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
+- **継続の先行再開の TSan 誤検出**: 完了の継続が `await` より先に再開されると、Swift ランタイムの経路で TSan に順序が見えない。
+  検査ビルドだけの注釈で順序を示し、再開の後の書込みの検出は対照で保つ（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
+- **プラグインの発音のアタック**: Vital Init の無音からの発音は、48 / 96 kHz・複数のブロック長でプラグイン単体の出力と全サンプルが一致する。
+  ホスト由来の不連続は再現していない（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
+- **検査の段階**: `make verify` は作業の段階で、ASan・TSan・Miri と全反例は `make verify-full` の全体の段階にある。
+  作業の段階の合格は全体の段階の合格ではない。未確認の検査は `make agent-context` が表示する（[ADR 0212](decisions/0212-verification-tiers.md)）。
+- **検査の種別の境界**: 通常の回帰検査、負の対照（`negative_control`）、オフスクリーンの GPU 検査、実ウィンドウの `spike-playhead` は別の証拠である。
+  長時間の計測（[ADR 0096](decisions/0096-measurement-completion.md)）、フックの直接検査と実ホストでの発火、ローカルの検査とリモートの CI、ユーザーの聴感確認も区別する。

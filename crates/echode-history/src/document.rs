@@ -38,13 +38,28 @@ pub const AUTOSAVE_REF: &str = "refs/echode/autosave/main";
 #[derive(Debug)]
 pub struct PackageError {
     message: String,
+    durability_unknown: bool,
 }
 
 impl PackageError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            durability_unknown: false,
         }
+    }
+
+    pub(crate) fn durability_unknown() -> Self {
+        Self {
+            message: JOURNAL_DURABILITY_UNKNOWN.into(),
+            durability_unknown: true,
+        }
+    }
+
+    /// The journal line reached the file and a later sync or rollback did not
+    /// finish. Later edits stop until the package is opened again (AUD-03).
+    pub fn is_durability_unknown(&self) -> bool {
+        self.durability_unknown
     }
 }
 
@@ -146,13 +161,11 @@ pub fn append_journal(
         JournalFault::Sync | JournalFault::Uncertain => file
             .write_all(&bytes)
             .map_err(|error| io_error(&path, error))
-            .and(Err(PackageError::new(
-                if fault == JournalFault::Uncertain {
-                    JOURNAL_DURABILITY_UNKNOWN
-                } else {
-                    "journal sync failed"
-                },
-            ))),
+            .and(Err(if fault == JournalFault::Uncertain {
+                PackageError::durability_unknown()
+            } else {
+                PackageError::new("journal sync failed")
+            })),
         JournalFault::None => file
             .write_all(&bytes)
             .map_err(|error| io_error(&path, error)),
@@ -168,7 +181,7 @@ pub fn append_journal(
     if let Err(error) = file.sync_all() {
         match file.set_len(end).and_then(|()| file.sync_all()) {
             Ok(()) => return Err(io_error(&path, error)),
-            Err(_) => return Err(PackageError::new(JOURNAL_DURABILITY_UNKNOWN)),
+            Err(_) => return Err(PackageError::durability_unknown()),
         }
     }
     Ok(())

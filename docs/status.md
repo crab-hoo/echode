@@ -1,409 +1,148 @@
 # 現在の範囲と制約
 
-更新: 2026-11-02。
-製品の完成状況を案内する文書であり、最新ソースの合格証ではない。
+更新: 2026-11-03。
+利用者に今も残る制約と、未確認・未接続の項目だけを置く。最新ソースの合格証ではない。
 合否は `make verify` の結果、実操作は日付付きの監査記録で確認する。
+実装の経緯は ADR、Phase 2 の単位ごとの進み具合と受入条件は [Phase 2 の進め方](phase2.md)、監査の対応は各監査にある。
+ここへ経緯を書き足さず、制約が変わった時だけ該当する項目を書き換える。
+ユーザーの確認待ちは `UC-番号` で示し、内容と手順は [ユーザー確認の一覧](user-checks.md) にある。
 
-対象方針は macOS 27 以降、M4 ファミリー以降の Apple Silicon（[ADR 0112](decisions/0112-m4-minimum.md)）。
-Rust・C / C++・Swift と補助コードの M4 向けコンパイル設定、製品・依存・検査の最低 OS 27.0 を接続した（[ADR 0114](decisions/0114-m4-build-baseline.md)）。
-チップ名による起動時の機種判定と SME 最適化、実機性能の改善量は未確認である。
+対象は macOS 27 以降、M4 ファミリー以降の Apple Silicon である（[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)）。
+起動時のチップ名による機種判定と SME 最適化は未実装で、実機性能の改善量は未確認である。
 
 ## 進捗
 
 - **Phase 0（S1〜S5）**: 確定済み。
 - **Phase 1**: 完了（[最終照合](reviews/2026-10-17-phase1-acceptance.md)）。
-  モデルとアクション、保存・復旧、CLI / API、音声出力、CLAP の隔離、3 ペインの開発用アプリまで接続した。
-  履歴復帰、音声取り込み、Metal のアレンジとピアノロール、トラックの音量・パン・ミュート・ソロ・ピークと音声クリップのゲイン・フェード（[ADR 0107](decisions/0107-mix-controls.md)）、ループ先頭の保持とフェーダー前の差し替え口（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）を製品へ接続し、2026-10-17 にユーザーの聴感確認を受領した。
-- **監査記録**: 2026-10-13 の AUD / PRO の修正は各監査の対応欄と ADR に残す。
-  2026-10-08 の設計・計測の未着手項目は元の一覧が正本で、後続の監査で指摘がなかったことを理由に完了へ変えない。
-- **Phase 2（進行中）**: [進め方](phase2.md) に実装順と各単位の受入条件を置く。
-  - **P2-01（ヘッドレス MCP）**: 完了。既存のヘッドレスセッションへ接続する `echode mcp SOCKET` を実装し、アクション登録簿からのツール生成、単一 Undo の編集、Undo / Redo、概要とトラックのリソースを接続した（[ADR 0115](decisions/0115-phase2-mcp.md)）。GUI アプリへの接続・再生操作・外部クライアント登録は未接続。
-  - **P2-02（デバイスビューとチェイン操作）**: 着手中。
-    トラックの FX ボタン、下部の FX ビュー、非モーダルの候補パネル、同一チェインの並べ替え・Command 複製・別トラックへのコピーを保存・Undo / Redo・再読込へ接続した（[ADR 0118](decisions/0118-track-fx-chain-editing.md)）。
-    CLAP のホストバイパスも FX 行から保存・Undo・再生・書出しへ接続した（[ADR 0120](decisions/0120-device-bypass.md)）。
-    FX 行のオフライン切替を記録済み設定の保持・隔離グラフからの除去・再生成・保存形式 5 へ接続した
-    （[ADR 0125](decisions/0125-device-offline.md)）。
-    ヘッダの複数選択と候補の右メニューからの全選択トラックへの一括追加を、単一 Undo・保存へ接続した
-    （[ADR 0124](decisions/0124-selected-track-fx-batches.md)）。
-    共通サンプルブラウザの登録フォルダ全体の名前検索と、操作時のトラック・ライブ位置を保持する配置を接続した
-    （[ADR 0122](decisions/0122-sample-library-search-and-placement.md)）。
-    選択時の単発試聴は、文書ワーカーを通らない試聴スレッドと専用の IOProc で、素の音を先頭から 1 回鳴らす。
-    新しい選択は前の音を 5 ms で消し、曲の再生に重ねる。プラグインのヘルパーは起動しない
-    （[ADR 0135](decisions/0135-sample-audition.md)）。
-    ブラウザの一覧は押した時点で選択とフォーカスを移し、2 回目のクリックと Return で配置する。
-    試聴は利用者のクリックとキーだけで変わり、要求ごとの操作の種類と各段の時刻をアプリの記録と `make debug-report` に残す
-    （[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
-    稼働中の CLAP のパラメーター一覧・ドラッグ中の試聴・終了時の単一 Undo を接続した。
-    値はプラグイン状態として記録し、Undo / Redo は同じヘルパーへ状態を戻す。停止中は再生せずに出力とヘルパーを開く
-    （[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
-    最初の出力準備（ヘルパー起動・素材）は準備スレッドで行い、文書ワーカーは後続の編集を続ける。
-    デバイス要求だけが投入順に準備の終わりを待ち、準備中の変更は導入時に反映する
-    （[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
-    未取得のデバイス列は、出力の準備中と準備後の一覧の応答待ちを区別して表示する
-    （[ADR 0141](decisions/0141-device-output-preparation-status.md)）。
-    下部は選択トラックのデバイスを横に並べ、各列に全パラメーターの一覧・検索・ピン留めを持つ。
-    一覧は画面内の行だけを作り、ピン留めは保存形式 6 でデバイスごとに記録する。
-    一覧・値の往復は文書ワーカーの外で待ち、選択と無関係な編集はプラグインの応答を待たない
-    （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
-    一覧の読込みに失敗した列から、対象だけを再試行できる。連打は集約し、検索・選択・履歴を変えず他の編集を続ける
-    （[ADR 0140](decisions/0140-device-parameter-list-retry.md)）。
-    プラグイン独自のウィンドウをヘルパーが持ち、列の名前とインスペクターの名前のクリック、候補からの単体追加で開く。
-    開く・前面化のどちらもフォーカスを取らず、Echode とそのヘルパー以外が最前面の間は隠す。
-    プラグイン側のジェスチャーは終了時に 1 回の Undo、窓が開いている間のジェスチャーなしの変更は静止後に記録する
-    （[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
-    オートメーションは未接続。
-    トラック追加は、コマンドでは選択の下（展開フォルダは最後の子）、一覧末尾のボタンでは最上位末尾へ接続した。
-    単一 Undo と保存再読込を持つ
-    （[ADR 0127](decisions/0127-positioned-track-insertion.md)）。
-    フォルダの開閉、表示行に沿った選択・ミックス・FX ドロップと、折りたたみ中の部分木の外側への追加も接続した。
-    開閉は保存・Undo の対象外で、再オープン時は展開に戻る
-    （[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)）。
-    トラックの通常複製を、メニュー・パレット・ヘッダの右メニューから部分木単位で接続した。
-    音源・FX・クリップ・ミキサー値を写し、中身とノートは元と独立させ、単一 Undo・保存へつなぐ
-    （[ADR 0129](decisions/0129-track-duplication.md)）。オートメーションとルーティングの引き継ぎは各単位で扱う。
-    デバイス列の開閉を、名前と操作を残す幅の縮小・可変幅の FX ドロップへ接続した。
-    開閉は文書内だけの表示状態で、トラックやエディタの切替では保持し、音・保存・Undo を変更しない
-    （[ADR 0137](decisions/0137-device-disclosure.md)）。
-    デバイス列とインスペクターの名前の横へ、独自ウィンドウが開いていることを示すアイコンを接続した。
-    一時非表示と閉鎖を区別する寿命通知で更新し、表示状態は保存・Undo の対象にしない
-    （[ADR 0138](decisions/0138-plugin-window-status.md)）。
-    トラックヘッダにも挿入済みの先頭名と残りのチェインのメニューを追加し、独自 GUI の入口と候補を開く FX 追加ボタンを分けた
-    （[ADR 0139](decisions/0139-track-header-fx-names.md)）。狭い幅・低い行・深い字下げで名前を隠す場合は、下部とインスペクターで全チェインを扱う。
-    FX 候補の一覧を AppKit の表にし、押した時点で選択して行のどこでも 2 回目のクリックで追加する。再走査中も表示中の候補を追加できる
-    （[ADR 0162](decisions/0162-plugin-candidate-table.md)）。
-    インスペクターの一覧末尾にも FX 追加ボタンを接続した。空のチェインでも、そのトラックを入力先に既存の候補を開く
-    （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。実画面と VoiceOver はユーザー確認待ちである。
-  - **P2-06（ミックス）**: 先行分として、ヘッダとインスペクターのミュート・ソロを全選択トラックへ一括適用した。
-    入力時の対象を保持し、連打は現行値から順に反転し、単一 Undo / Redo・保存へ接続した。選択外のソロは解除しない。
-    ピアノロールの行ボタンは単一トラックのまま（[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
-    音量・パンの数値入力も、入力時の対象保持・共通差分と上下限・単一 Undo / Redo・保存へ接続した。
-    無音からの音量比が決まらない場合は理由を示し、有限の変更は他の無音を保つ（[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
-    ヘッダの読み上げの増減も、現行値からの 1 dB・5% の共通差分と限界、単一 Undo・保存へ接続した。
-    複数対象は表示下端で無音にせず、旧文書の要素を拒否する（[ADR 0192](decisions/0192-selected-track-accessibility-steps.md)）。
-    ヘッダの押下・リセット待ち・数値欄は文書交換で取り消す。旧操作が新文書の試聴・履歴を変更しないよう、押下時のコールバックを保持する
-    （[ADR 0193](decisions/0193-header-mix-gesture-document-scope.md)）。
-    ヘッダの横移動がゼロのドラッグは、表示下限未満の音量も元の Float をそのまま保ち、Undo / Redo を変えない
-    （[ADR 0153 の後続修正](decisions/0153-value-control-clicks-and-typed-entry.md)）。
-    ヘッダのドラッグ・既定値リセットも、押下時の対象保持・共通差分・全対象の試聴と単一 Undo・保存へ接続した。
-    取消・3 回目のクリック・原点復帰は履歴を変えず、音声側は集合を 1 コマンドで受け渡す
-    （[ADR 0228](decisions/0228-selected-track-live-mix.md)）。コンソール表示は未接続で、実画面・VoiceOver・聴感はユーザー確認待ち。
+- **Phase 2**: 進行中。単位ごとの状態・受入条件・関連 ADR は [進め方](phase2.md) にある。
+  - **P2-01（ヘッドレス MCP）**: 完了。GUI アプリへの接続・再生操作・外部クライアントの登録は未接続（[ADR 0115](decisions/0115-phase2-mcp.md)）。
+  - **P2-02（デバイスビューとチェイン操作）**: 着手中。オートメーションは未接続で、P2-04 で扱う。
+  - **P2-06（ミックス）**: 先行分だけを接続した。コンソール表示は未接続（[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
   - **P2-07（マーカー・録音・ピアノロール）**: 着手中。
-    クリップ本体の移動・Command の複製移動を置き換えとして接続した（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
-    記憶した再生開始位置を接続した。停止は開始位置へ戻り、一時停止はその場から再開し、Space は再生／停止とした。
-    停止は時計だけを戻し、プラグインの余韻を切らない。ピアノロールのルーラーのクリックで開始位置を変え、パッケージの `transport.json` に保存する
-    （[ADR 0155](decisions/0155-remembered-playback-start.md)）。
-    ピアノロールのルーラードラッグによる範囲指定、クリックとの分離、有効／無効の帯と範囲欄の同期を接続した。
-    ループ前からの進入と、終端ちょうど・以降からの開始／シークでの通常進行も接続した
-    （[ADR 0156](decisions/0156-ruler-loop-range-and-entry.md)）。
-    アレンジにも開始位置と範囲のルーラーを接続した。両エディタとトランスポートで値を共有する
-    （[ADR 0157](decisions/0157-arrange-ruler.md)）。
-    両ルーラーの既存ループ端も、反対端を固定したドラッグ・吸着と Shift・取消・単一送信へ接続した
-    （[ADR 0158](decisions/0158-ruler-loop-edge-handles.md)）。
-    両エディタの再生ヘッドへの追従を接続した。範囲外へ出るとページ送りし、横方向の手動スクロールで止まる。
-    トランスポートのトグル・再生メニュー・パレットで再びオンにし、文書を開くたびにオンで始まる
-    （[ADR 0159](decisions/0159-playhead-follow.md)）。Return の一時停止／再開も接続した（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
-    開始位置・ループ・メトロノーム等の送信中もボタン・ルーラー・コマンドを無効にせず、要求を順に送る
-    （[ADR 0160](decisions/0160-ordered-transport-requests.md)）。
-    ノートの終端ちょうどからの再生で、そのノートを追いかけて鳴らさない（[ADR 0164](decisions/0164-note-end-chase.md)）。
-    アレンジの MIDI クリップの音高表示も接続した。中身ごとの音域で高い音ほど上へ置き、狭い音域は中央寄せにする
-    （[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。実画面と VoiceOver はユーザー確認待ちである。
-    単一ノートの移動・左右端の伸縮は Shift で吸着を解除し、解放時の座標・修飾キーで 1 回確定する。
-    最短 1 tick の伸縮と既存の Undo・保存へ接続した（[ADR 0167](decisions/0167-piano-note-drag-snapping.md)）。
-    自動クリップは、小節未満の移動・複製でも自動のまま、中身の原点から数えた小節でノートを覆う範囲へ伸縮する。
-    旧ジャーナルの移動・複製は従来の固定化を保つ（[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。
-    手動で端を決めた固定クリップは、ノートの時刻編集で窓を越す時はノート全体を含むまで対象の窓を広げる。
-    単一 Undo / Redo・保存と確定フレームへ接続した（[ADR 0168](decisions/0168-note-edit-clip-growth.md)）。
-    所属替えと隣のクリップで止める処理は未接続で、[ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md) の草案に残る。
-    空白の左ドラッグも、開始位置の保持・横の長さと縦の音高・Shift の吸着解除・解放時の単一追加へ接続した。
-    新規の最短長はグリッド幅とし、取消・Undo / Redo・保存を持つ（[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
-    単クリックの記憶長入力も接続した。長さは全トラックで共有し、追加・長さ変更の Undo / Redo で戻り、再オープン時に初期化する
-    （[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。実画面の操作感はユーザー確認待ちである。
-    単一ノートの Option＋上下ドラッグも、幾何を変えないベロシティ専用編集・仮表示・解放時の単一確定へ接続した。
-    単一選択と調整の値を全トラックの次回入力へ引き継ぎ、Undo / Redo・保存を持つ。
-    下部の棒も同じ値と仮表示・単一確定へ接続した（[ADR 0175](decisions/0175-piano-velocity-lane.md)）。
-    選択した複数ノートも、同量増減・強弱差を保つ上下限・単一 Undo・つかんだ音の入力値記憶へ接続した
-    （[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。実画面・VoiceOver・聴感はユーザー確認待ちである。
-    編集トラックの切替とエディタの再生成では、時間・音域・両軸の倍率を文書内で共有する。
-    切替先の選択ノートへ自動移動せず、別文書では初期化する（[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
-    実画面と VoiceOver はユーザー確認待ちである。
-    単一トラック内の右ドラッグ枠選択・Command＋クリックの追加と解除・右クリックの削除メニューも接続した。
-    Delete は選択全体を単一 Undo で削除し、リンク配置の中身を重複して削除しない。
-    選択済みノートの本体ドラッグによる一括移動も、共通の時刻差・半音差と上下限、単一 Undo / Redo・保存へ接続した。
-    入力長と入力ベロシティを変えず、リンクした同じノートは一度だけ編集する（[ADR 0178](decisions/0178-piano-batch-note-movement.md)）。
-    選択済みノートの端ドラッグによる一括伸縮も、共通の端の差分・最短 1 tick・反対端の保持と単一 Undo へ接続した。
-    入力長と入力ベロシティを変えず、画面外とリンクを含む全対象を検証する（[ADR 0179](decisions/0179-piano-batch-note-resizing.md)）。
-    矢印とキーリピートも、手番の現行幾何から選択全体を同じ差分で移動・移調・右端伸縮し、共通境界と単一 Undo を保つ。
-    アレンジ選択から独立したピアノ入力先、ダブルクリックでの明示オープンと位置、他トラックの参照ノート、右側の表示・編集・Solo/Mute を接続した
-    （[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
-    Command＋ドラッグの複製移動も、元を残す単一／複数の複製・複製側の選択・単一 Undo と保存へ接続した。
-    長さと 16 bit の強弱を保ち、共有内容の同じノートは一度だけ複製する（[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
-    自動グリッドと固定音価の切替も、共通の吸着幅・細分線・押下の取消と表示状態の共有へ接続した
-    （[ADR 0185](decisions/0185-piano-auto-and-fixed-grid.md)）。固定の三連符・付点も同じ入力と表示へ接続した
-    （[ADR 0186](decisions/0186-piano-triplet-and-dotted-grids.md)）。
-    拍・4 拍ごとの目印は吸着幅と独立させ、粗い固定幅と縮小時も保つ
-    （[ADR 0187](decisions/0187-piano-independent-time-guides.md)）。
-    複数トラックの同時編集・試聴・ドラム入力は残り、実画面と VoiceOver はユーザー確認待ちである。
-    選択と削除は [ADR 0176](decisions/0176-piano-note-selection-and-deletion.md) を参照する。
-    進行中の操作は 1 つの状態にまとめ、押下は解放の届かなかった前の操作を確定せずに終える（[ADR 0206](decisions/0206-piano-interaction-state.md)、SPG-08）。
-    解放が届かない製品の経路は未確認で、実画面はユーザー確認待ちである。
+    複数トラックの同時編集・試聴・ドラム入力は未接続（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)、[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
+- **監査記録**: 2026-10-08 の設計・計測の未着手項目は [元の一覧](reviews/2026-10-08-audit.md) が正本である。
+  後続の監査で指摘がなかったことを理由に完了へ変えない。
 
 ## 利用時に残る制約
 
-- **保存のクラッシュ耐久性（XCA-01〜03、HIS-A1）**: コミットのオブジェクト・参照と保管物を同期してから、
-  ジャーナルを短縮し、保管物を名指す行を書く。参照の更新が失われた時はコミットチェーンの最新から続ける。
-  連番の欠けと状態の保管物の欠落は、読めない先端と同じく同意まで書込みを拒否する（[ADR 0230](decisions/0230-save-durability.md)）。
-  作業ツリーの JSON は同期せず、実際の電源断は未実施である。Swift の警告は原因をまだ言い分けない。
+### 保存・復旧・パッケージ
 
-- **プラグインの窓での変更（DOC-A1・A2）**: 窓での `dirty`、活動の縮退、元の値へ戻したドラッグも記録を待つ変更として扱う。
-  無関係な編集と別デバイスの確定はヘルパーと未記録の変更を保ち、Undo / Redo は静止を待つ変更を先に記録する。
-  そのデバイス自身の Undo が画面の知らない途中の変更を読み込み直すことと、出力の開き直しでの作り直しは残る
-  （[ADR 0229](decisions/0229-plugin-window-live-edits.md)）。実画面と第三者プラグインはユーザー確認待ち。
-
-- **プラグインを使うオフライン書き出し（CLI-A1）**: 実時間の期限から外し、ヘルパーの完了を待つ。
-  応答しなくなったヘルパーは 1 ブロック 60 秒で書き出しを止める。走査キャッシュは置換で書き、走査の出力に上限を置いた
-  （[ADR 0231](decisions/0231-offline-export-and-scan-cache.md)）。
-
-- **プラグインのヘルパーの時間切れ（SPG-01）**:
-  メインスレッド要求を型付きの専有領域へ分離し、実行中の次の要求は busy で拒否する。
-  制御ソケットの応答も要求番号で照合し、遅れた応答を後続の保存・復元へ渡さない。
-  時間切れは結果不明であり、プラグインの実行自体の取消・自動再送はしない。
-  再現は通常回帰へ移し、完了後の正しい復元と状態保存・発音も検査する
-  （[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。実機の期限と聴感はユーザー担当である。
-
-- **プラグイン制御の通り道（SPG-06）**:
-  一覧・変更・文字解釈・状態の取得と復元・GUI の型付き操作を、制御専用ハンドルへ直接集めた。
-  ホストの保存・復元の別経路と未使用の素通しを除き、状態導入・再起動と回帰も同じハンドルを使う。
-  通信形式・期限・DSP は変更しない（[ADR 0227](decisions/0227-control-only-plugin-operations.md)）。
-
-- **JSON-RPC の不正な要求**:
-  真偽値・配列・オブジェクトの ID と、スカラーの params を編集前に拒否する。
-  版やメソッドの不正は、ID がなくても通知と扱わず `-32600` を返す。
-  正しい通知・null を含む正当な ID・メソッド引数の `-32602` と区別する
-  （[ADR 0020 の後続修正](decisions/0020-json-rpc.md#要求の外枠の検証-2026-10-29)）。
-  ソケットの改行前に切断した要求も編集せず接続を閉じる。完了済みの前方の編集は保持する
-  （[ADR 0073 の改行境界](decisions/0073-socket-path.md#改行前の切断の拒否-2026-10-29)）。
-  JSON 外の空白（垂直タブ・ノーブレークスペース等）を前後に付けた入力は、編集前に `-32700` で拒否する。
-  正しい空白・通知・文字列内の Unicode は保持する（[ADR 0020 の空白検証](decisions/0020-json-rpc.md#json-の空白だけを除去する2026-10-29)）。
-
-- **MCP の接続先の不正なエラー応答**:
-  error がオブジェクトで整数 code・文字列 message を持つことを検証する。
-  不正なら結果不明と再送前の確認を案内し、確定済みの編集を再送・巻戻ししない。
-  正当な error と result は保持する（[ADR 0115 の応答検証](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
-
-- **文書の寿命と古い入力**:
-  文書の寿命の状態を `DocumentSession` へまとめ、開く・閉じるで丸ごと差し替える。
-  編集・値操作の入口は省略できない `DocumentID` を受け、照合は 1 か所に集めた。
-  古い文書のドラッグ・音声応答・履歴復元が次の文書へ影響する不具合を修正した。
-  閉じる間は、ヘルパーの終了を待たず文書なしの画面を `busy` のまま表示する。
-  実画面での文書切替・VoiceOver・聴感はユーザー確認待ちである
-  （[ADR 0203](decisions/0203-document-session.md)、SPG-02）。
-
-- **文書の手番の調停**:
-  ワーカー・デバイスレーン・保存の取込みを `echode-document` へ移し、FFI は C のコールバックの変換と表示の問い合わせだけを持つ。
-  投入した要求は、ワーカーの異常終了でも 1 回完了する。デバイスの完了コールバックから文書を止めても join の循環は起きない。
-  C の関数と JSON の報告の形は変えていない。CLI と MCP はこのサービスを使わず、従来どおり `DocumentHost` へ直接つなぐ
-  （[ADR 0204](decisions/0204-document-service.md)、SPG-05）。
-
-- **Swift の型付き編集入口**:
-  Rust の登録簿とスキーマから全アクションの `EditAction` を生成し、単一／一括の `Document.perform` へ接続した。
-  生成鮮度・両言語の wire 表記・単一 Undo / Redo・拒否時の保持と再オープンを回帰で照合する。
-  ピアノロールとトラック・デバイス・ミキサーの単一／一括編集は生成型へ移行し、順序・文書照合・履歴と入力記憶の適用を共通化した。
-  クリップ移動・複製と、ブラウザ・ドロップの音声取込みも生成型へ移行した。
-  新規トラックへのドロップの結果参照も型で表し、controller の辞書の入口を除いた。
-  互換の raw JSON 入口だけが残る（[ADR 0202](decisions/0202-generated-swift-edit-actions.md)、SPG-03）。
-
-- **モデルの時間単位と値の範囲**:
-  Swift のアレンジ・ピアノロール・トランスポートは、Rust から渡す単位と `Tick` の共通変換を使う。
-  ミキサー・配置ゲイン・フェード・MIDI の範囲もモデル正本から受け取る。
-  丸め・保存形式は変更せず、ループの UI 下書きも整数で共有する。
-  未変更の拍入力欄は元の端点を保ち、編集した欄だけを tick へ変換する
-  （[ADR 0200](decisions/0200-shared-model-units-and-limits.md)、[ADR 0201](decisions/0201-integer-loop-drafts.md)、SPG-04）。
-
-- **パッケージの浮動小数点の精度**:
-  小数点以下 9 桁の丸めで、小さい配置ゲイン・ミキサーの音量・パンが保存後に変わる不具合を修正した。
-  正確な既存表記は保ち、精度を失う時だけ元の Float へ戻せる表記へ変える（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
-  スキーマは 6 のままで、既に丸められた保存値の復元は行わない。
-
-- **素材とキャッシュの Git 除外**:
-  `.gitignore` のパスを含むコメント・似たパスを既存規則と誤認せず、足りない正確な規則だけを追記する。
-  取込みとホスト開始で既存のテキスト・CRLF・再実行時のバイトを保つ。
-  任意の Git パターンの正規化はしない（[ADR 0031 の後続修正](decisions/0031-content-addressed-store.md#除外規則の行単位の照合-2026-10-29)）。
-
-- **波形キャッシュの破損**:
-  フレーム数から導く段構成と実バイト長、有限で順序の正しい最小・最大を検査する。
-  壊れたキャッシュは元の PCM から再生成し、素材が読めなければ波形を出さない（[ADR 0058](decisions/0058-waveform-peaks.md)）。
-  正常なキャッシュの省読込みとマップ経路は維持し、素材に対する全列の認証は行わない。
-  有限ステレオの平均は構築・マップとも `f64` で加算・除算し、極大値の桁あふれと非正規化数の途中の丸めを避ける。
-  旧 `ECHDPK01` は誤った無音を保持し得るため再生成し、現在のキャッシュ識別子は `ECHDPK02` とする。
-  PCM・保存スキーマ・再生は変えない（[ADR 0058 の後続修正](decisions/0058-waveform-peaks.md)）。
-  素材前・EOF 後・配置外の無音をまたぐ表示列も、包絡に 0 を含める。
-  境界が 1 列の途中にある場合の欠落を修正し、既存のキャッシュ形式と再生音は変更しない。
-
-- **保存済み音声の有限性**:
-  正しいハッシュを持つ PCM も、全読込み時に NaN・無限大を拒否する。
-  トリムや SRC より前に素材全体を検証し、有限値と原本は変更しない（[ADR 0056 の後続修正](decisions/0056-audio-import.md)）。
-  波形キャッシュのマップ読込みと実機の聴感は別の範囲である。
-  外部音声の一括復号と取込みも全サンプルを検査し、非有限値を保存前に拒否する。
-  拒否時は原本・保管庫・索引・ピークを変えず、一括編集の巻戻しと Undo / Redo を保つ。
-  逐次復号で既にあった検証を、一括経路にもそろえた
-  （[ADR 0056 の取込み検証](decisions/0056-audio-import.md#外部音声の一括復号と取込みの検証-2026-10-29)）。
-
-- **復旧と保存の信頼境界（2026-10-27 監査）**:
-  ジャーナルの各行の適用後に不変条件を検査し、破損を検知したら連番と理由を返してオープンを拒否する。
-  原本を黙って切り捨てず、不正な状態を公開・自動保存しない（ADV-01、[ADR 0180](decisions/0180-journal-replay-invariants.md)）。
-  読めない先端から親のコミットへ戻る復旧は、文書公開・編集前に警告し、明示同意まで書込みを拒否する。
-  同意時は復旧状態を同期保存してから編集を解放する（ADV-02、[ADR 0183](decisions/0183-recovery-consent.md)）。
-  取消時は既存文書を保持し、壊れた先端・プロジェクト JSON・完結したジャーナルを変更しない。
-  失われた編集の復元は対象外で、警告の実画面・VoiceOver はユーザー確認待ちである。
-  API / MCP の無変更の編集は成功とし、Undo・Redo・ジャーナル・自動保存を変えない（ADV-04、[ADR 0182](decisions/0182-noop-edits.md)）。
-  ADV-01・04 は通常回帰へ移し、当時の失敗は [敵対的監査](reviews/2026-10-27-adversarial-audit.md) に保持する。
-  監査証拠は追跡する要約を残し、新しい `target/` リンクは検査で拒否する（ADV-03）。
+- **保存のクラッシュ耐久性（XCA-01〜03、HIS-A1）**: 連番の欠けと状態の保管物の欠落は、読めない先端と同じく同意まで書込みを拒否する。
+  作業ツリーの JSON は同期しない。実際の電源断は未実施で、Swift の警告は原因をまだ言い分けない（[ADR 0230](decisions/0230-save-durability.md)）。
+- **復旧と保存の信頼境界（2026-10-27 監査）**: ジャーナル適用後に不変条件が壊れていれば、連番と理由を返してオープンを拒否する（ADV-01、[ADR 0180](decisions/0180-journal-replay-invariants.md)）。
+  読めない先端から親へ戻る復旧は、明示の同意まで書込みを拒否する（ADV-02、[ADR 0183](decisions/0183-recovery-consent.md)）。
+  失われた編集は復元しない。警告の実画面・VoiceOver はユーザー確認待ち（UC-30）。
   消失済みの過去の完全ログ・画像は復元していない（[証拠の保全](evidence/README.md)）。
+- **プロジェクトの開始**: 前回プロジェクトの復元に失敗した後の実画面の操作はユーザー確認待ち（UC-31）。
+  最初に Git の初期化が失敗した理由は未確定である（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
+- **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない。スキーマは 6 のまま（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
+- **素材とキャッシュの Git 除外**: 任意の Git パターンの正規化はしない（[ADR 0031](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
+- **保存済み音声の有限性**: 保存済み PCM と外部音声の取込みは、NaN・無限大を含めば拒否する。
+  波形キャッシュのマップ読込みと実機の聴感は、この検証の範囲外である（[ADR 0056](decisions/0056-audio-import.md#外部音声の一括復号と取込みの検証2026-10-29)）。
+- **波形キャッシュの破損**: 壊れたキャッシュは元の PCM から作り直し、素材が読めなければ波形を出さない。
+  素材に対する全列の認証はしない。旧 `ECHDPK01` は作り直し、現在の識別子は `ECHDPK02` である（[ADR 0058](decisions/0058-waveform-peaks.md)）。
 
-- **操作の報告への対応（2026-10-25）**:
-  開始位置の変更時の暗転、サンプル一覧での Space、ブラウザの波形、置いた音声の自動フェード、FX 候補の一覧、
-  ノートの終端からの再生で鳴り続ける音を、機器なしの製品経路の回帰で再現して直した（[照合](reviews/2026-10-25-user-feedback.md)）。
-  Space が製品のどこで止まっていたかは再現しておらず、一覧が直接「再生／停止」を呼ぶ形で対応した。
-  実画面と聴感での解消はユーザー確認待ちである。
+### API・MCP・文書の入口
 
-- **現行コード監査への対応（2026-10-25）**:
-  不正 PCM の長さは確保前にエラーへ変え、波形は列ごとの tick 境界をテンポ積分して素材終端後を無音に保つ。
-  API の読込みだけでなく応答の書込みにも 30 秒の待機上限を設け、その接続だけを終了する。
-  送信失敗前に成立した編集は再実行しない。
-  当時の再現と対応の範囲は [現行コード監査](reviews/2026-10-25-code-audit.md)（CUR-01〜04）を参照する。
+- **JSON-RPC の不正な要求**: 真偽値・配列・オブジェクトの ID とスカラーの params は、編集前に拒否する。
+  版やメソッドの不正は、ID がなくても `-32600` を返す（[ADR 0020](decisions/0020-json-rpc.md#要求の外枠の検証2026-10-29)）。
+  JSON 外の空白を前後に付けた入力は、編集前に `-32700` で拒否する（[ADR 0020](decisions/0020-json-rpc.md#json-の空白だけを除去する2026-10-29)）。
+  改行前に切断した要求は編集せず、接続を閉じる（[ADR 0073](decisions/0073-socket-path.md#改行前の切断の拒否2026-10-29)）。
+- **API の応答の書込み**: 応答の書込みが 30 秒進まない接続は閉じる。送信失敗の前に成立した編集は再実行しない（[ADR 0073](decisions/0073-socket-path.md)）。
+- **MCP の接続先の不正なエラー応答**: 不正な error 応答は結果不明として、再送前の確認を案内する。
+  確定済みの編集を再送・巻戻ししない（[ADR 0115](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
+- **文書の寿命と古い入力（SPG-02）**: 閉じる間はヘルパーの終了を待たず、文書なしの画面を `busy` のまま表示する（[ADR 0203](decisions/0203-document-session.md)）。
+  実画面での文書切替・VoiceOver・聴感はユーザー確認待ち（UC-29）。
+- **文書の手番の調停（SPG-05）**: CLI と MCP はこのサービスを使わず、`DocumentHost` へ直接つなぐ（[ADR 0204](decisions/0204-document-service.md)）。
+- **Swift の型付き編集入口（SPG-03）**: 互換の raw JSON の入口が残る（[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
 
-- **デバイスビューと GUI 応答性**:
-  2026-10-20 に報告された、プラグイン付きトラックを選ぶたびの GUI 停止とパラメーター画面の重さは、機器なしで再現した。
-  旧欄が全パラメーターの行を一括生成していたこと（800 個で約 0.68 秒、3000 個で約 2.7 秒）と、デバイス要求が文書ワーカーを塞いでいたことに対応した。
-  実機と第三者プラグインでの解消はユーザー確認待ちである
-  （[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
-  パラメーター確定・バイパス・オフライン操作で全ボタンが一瞬無効になる経路は、編集順序と文書交換の排他を分けて修正した。
-  実画面での暗転解消はユーザー確認待ちである（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
-  停止中の最初の表示・再生で出力とヘルパーを準備する間も、後続の編集は待たない（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
-  開いた出力への FX 追加・オフライン解除・コピーで必要なヘルパーは、置換用の準備スレッドで起動する。
-  準備中も編集・Undo・停止を続け、最新の計画へ交換する（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
-  停止中の編集の素材は別スレッドで読む（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
-  再生中の編集の素材と保存済み状態の読込み、初回導入時の差分による追加、文書終了時の初期化待ちは残る。
-  複数選択時の表示対象は未決である。列の開閉と下部の個別開閉・積み方は接続済みだが、実画面の操作感と VoiceOver はユーザー確認待ちである
-  （[ADR 0146](decisions/0146-independent-editor-stack.md)、[作業継続](interaction-design.md#処理中も作業を続ける)）。
-- **プロジェクトの開始**: 起動直後も「新規プロジェクト」と「開く」を利用できる。
-  前回プロジェクトの復元で Git 準備に失敗すると「変更を保存中」のまま止まる不具合を修正し、エラーを返して新規作成へ戻れるようにした。
-  エラー後の有効化と別プロジェクトの作成は機器・ウィンドウなしの回帰で確認し、実画面の操作確認はユーザー担当とする。
-- **プラグイン GUI・パラメーター編集**: デバイスビューの一覧はプラグインが `clap.params` で公開する値だけを扱う。
-  プラグイン画面で変えた値は一覧へ即時に反映し、ジェスチャーと窓が開いている間の変更を Undo に記録する。
-  窓が閉じている時のプラグイン自身の変化は自動保存だけである。
-  GUI にフォーカス中の Space と既存の DAW キーを中継し、文字入力中はプラグインに渡す。
-  一時非表示を閉鎖とみなさず、ループ切替でヘルパーと未保存状態を保つ。
-  FX 追加ボタンは最後のデバイスの右に置く
-  （[ADR 0134](decisions/0134-plugin-window-lifetime-and-shortcuts.md)）。
-  窓アイコンの実画面・VoiceOver、実ウィンドウの表示・アプリ切替時の隠れ方・第三者プラグインの GUI と聴感は未確認でユーザー担当である
-  （[設計 §9.5](ARCHITECTURE.md#95-gui-とデバイスビュー)、[ADR 0130](decisions/0130-clap-parameter-editing.md)、[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
-- **操作の要望（2026-10-21）**: ペインのリサイズ時のアレンジの伸縮とヘッダ幅の縮小、ブラウザとクリップの D&D、
-  値の既定値・入力のクリック、試聴の遅れ、下部の積み方を照合し、2026-10-22 に操作を決めて操作要件へ移した。
-  修正の 1 番目（ブラウザのクリック経路と試聴の診断、UIF-05 の①・09・10）を接続した（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
-  実画面でクリックの遅れとフォーカスが直ったかはユーザー確認待ちで、遅れの量は未計測である。
-  2 番目のペインのリサイズ（UIF-01）は、見た目の左上に固定するレイヤー配置・描画サイズの即時更新と、指定ヘッダ幅の保持を接続した。
-  実画面のドラッグ中の見え方はユーザー確認待ちである（[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
-  2026-10-22 の監査で確認した、古い絵を見た目の左下に固定する誤り（JNK-01）と、再生準備中の状態行・再生ボタンの寸法変化（JNK-02）を修正した。
-  反転した表示面は AppKit の変換に任せ、状態行と再生ボタンは準備中も同じ寸法を保つ。
-  アレンジの指定縦位置は高さの往復で保ち、ピアノロールのアクセシビリティ要素は問い合わせ時に作る
-  （[ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
-  実画面で上下のずれ・再生開始時のがくつき・VoiceOver が解消したかはユーザー確認待ちである
-  （[GUI のがくつきの監査](reviews/2026-10-22-gui-jank-audit.md)）。
-  単位 4（サイズ不一致の drawable への描画）は、入力と同じ画素位置での描画・入力の外の背景保持・
-  行ラベルを含む入力境界のクリップ・版を消費しない再試行・レイヤー背景色を接続した（[ADR 0150](decisions/0150-stale-drawable-frame.md)）。
-  実画面のちらつきの有無はユーザー確認待ちである。単位 6（分割線ドラッグの計測）は未着手である。
-  3 番目の制作向けファイルの一覧・検索と未対応 MIDI の表示、ブラウザ・Finder 共通の音声ドロップを接続した。
-  ポインターの表示行と tick、拍グリッド・Shift 解除、最上位末尾へのトラック追加と取込みの単一 Undo を持つ
-  （[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
-  5 番目の下部の独立した開閉・固定高のデバイス・アレンジ非表示を接続した（[ADR 0146](decisions/0146-independent-editor-stack.md)）。
-  4 番目の出力の常駐・試聴の操作も接続した（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
-  6 番目の値の操作子（UIF-04）は、単クリックで値を変えない相対ドラッグ、ダブルクリックの既定値、トリプルクリックの入力欄を
-  ヘッダの音量・パン、クリップのハンドル、パラメーター欄へ接続した。プラグインの値は `text_to_value` で表示単位のまま入力する
-  （[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。実画面の操作感・VoiceOver・第三者プラグインの変換はユーザー確認待ちである。
-  クリップのゲイン・フェード操作も文書交換で取り消し、旧押下・数値欄が新文書の履歴と保存へ漏れないようにした
-  （[ADR 0194](decisions/0194-clip-mix-gesture-document-scope.md)）。実画面の文書切替・VoiceOver はユーザー確認待ちである。
-  試聴のループ（UIF-10）は再現しておらず、原因は未確定である（[照合](reviews/2026-10-21-ui-feedback-audit.md)）。
-  7 番目のクリップの移動（UIF-03）は、本体ドラッグの別トラックへの移動・四分音符の吸着と Shift の解除・Command の複製を単一 Undo で接続した。
-  移動先で重なる配置は置き換え（削除・切詰め・分割）、複製の中身は元と独立する（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
-  単一クリップの ⌘D は、現在の窓の直後への独立した複製・複製側の選択・単一 Undo と保存へ接続した
-  （[ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)）。アレンジ自身のフォーカス時だけ有効で、押し続けの自動反復はしない。
-  重ねるモード・自動クロスフェード・複数クリップは未接続で、実画面の操作感と VoiceOver はユーザー確認待ちである。
-  音声の複数ファイル同時ドロップ・自動スクロール・配置予定の波形と、同トラックの配置重複は未接続である。
-  ドラッグの実操作・見え方・VoiceOver はユーザー確認待ちである。
-- **サンプルの試聴**: 長い素材を少しずつ復号・SRC し、有限の先読みリングから全復号前に鳴らす。
-  同じ読込みから作る部分波形・長さ・読込み状態は、全体の波形の読込み中だけ代わりに表示する
-  （[ADR 0151](decisions/0151-streaming-sample-audition.md)）。
-  ブラウザの一覧の下の波形は、選択で素材の全体を試聴と別に読み、試聴の停止後も保つ。直近 256 件は戻った時に読み直さない。
+### 音声・再生・トランスポート
+
+- **停止と一時停止**: 停止は記憶した開始位置へ戻り、一時停止はその場に保つ（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
+  Return は、入力欄とブラウザ一覧の確定・配置を優先する（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
+  実画面の操作感と、停止で戻る時の聴感はユーザー確認待ち（UC-17）。
+- **再生ヘッドの追従**: 追従は保存しない表示状態で、キーの割当はない。
+  停止中のズームで範囲外になった再生ヘッドは、次の再生・停止・位置移動まで表示しない（[ADR 0159](decisions/0159-playhead-follow.md)）。
+  ページ送りの見え方とトグルの VoiceOver はユーザー確認待ち（UC-18）。
+- **開いた時の出力準備**: 開いた直後の準備が終わる前の再生は、準備の残りを待つ。
+  開いた出力は停止中もプラグインを処理するので、その負荷は開いた時点から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
+  実機での待ちの改善量と操作感はユーザー確認待ち（UC-19）。
+- **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する。
+  開いた出力の停止中の処理負荷は残る（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。
+- **位置移動と準備の取消**: 位置移動・未発音の準備の取消とオフラインの停止では、以前の発音状態を消す（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
+- **停止診断**: 停止診断の減衰位置は素材側を示し、マスター出力の無音化を示さない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+- **バス・ループ・ゲイン・メーター**: 暗黙のステレオ→モノ変換はエラーにする（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
+  ディスクストリーミング、Phase 3 のレンダリングキャッシュの生成本体、Ogg、プラグインのサムネイルは未実装（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。
+  クリップゲインは `0..=1_048_576`（音声クリップのみ）で、負の配置オフセットはファイル前の無音として扱う（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
+  トラックメーターはフェーダー後の左右最大ピークで、LUFS やトゥルーピークではない（[ADR 0107](decisions/0107-mix-controls.md)）。
+- **Sine Pad と音源の選択**: 音源のないトラックのノートは無音で、旧プロジェクトへ暗黙の音源を補わない。
+  従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
+- **Phase 0 の別モデル・計測の分離（SPG-10）**: 分離は完了したが、並列の CPU グラフを製品へ接続したものではない（[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
+
+### プラグイン・デバイスビュー
+
+- **CLAP バンドルの互換性**: 音源とエフェクトは同じ隔離チェインを通る。macOS のディレクトリ形式のバンドルも走査・処理できる。
+  全メーカーの互換性と実機の聴感は保証しない（[ADR 0093](decisions/0093-product-contract-gate.md)）。
+- **プラグインを使うオフライン書き出し（CLI-A1）**: 応答しなくなったヘルパーは、1 ブロック 60 秒で書き出しを止める。
+  走査の出力には上限がある（[ADR 0231](decisions/0231-offline-export-and-scan-cache.md)）。
+- **ヘルパーの時間切れ（SPG-01）**: 実行中の制御要求があれば、次の要求は busy で拒否する。
+  時間切れは結果不明で、プラグインの実行自体の取消・自動再送はしない（[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
+  実機の期限と聴感はユーザー確認待ち（UC-28）。
+- **プラグインの窓での変更（DOC-A1・A2）**: そのデバイス自身の Undo が、画面の知らない途中の変更を読み込み直すことは残る。
+  出力を開き直すと、ヘルパーは記録した状態から作り直される（[ADR 0229](decisions/0229-plugin-window-live-edits.md)）。
+  実画面と第三者プラグインはユーザー確認待ち（UC-21）。
+- **プラグイン GUI・パラメーターの編集**: デバイスビューの一覧は、プラグインが `clap.params` で公開する値だけを扱う（[ADR 0130](decisions/0130-clap-parameter-editing.md)）。
+  窓が閉じている時のプラグイン自身の変化は、自動保存だけで記録する（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
+  窓アイコンの実画面・VoiceOver、実ウィンドウの表示、アプリ切替時の隠れ方、第三者プラグインの GUI と聴感はユーザー確認待ち（UC-22）。
+- **デバイスビューと GUI の応答性**: 実機と第三者プラグインでの GUI の停止の解消はユーザー確認待ち（UC-23）。
+  複数選択時のデバイスビューの表示対象は未決（[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
+  実画面での暗転の解消はユーザー確認待ち（UC-24、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+  出力の準備中の編集、一覧の再試行と状態の表示、FX の追加中の再生もユーザー確認待ち（UC-43〜46）。
+  再生中の編集の素材と、保存済み状態の読込みは同期のまま残る（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
+  初回導入時の差分による追加と、文書終了時の初期化待ちは残る（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+  列の開閉と下部の積み方の実画面の操作感と VoiceOver はユーザー確認待ち（UC-26、[ADR 0146](decisions/0146-independent-editor-stack.md)）。
+- **デバイスチェインの表示**: フォルダとデバイス列の開閉は文書内の表示状態で、保存・Undo の対象外である（[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)、[ADR 0137](decisions/0137-device-disclosure.md)）。
+  再オープン時はフォルダを展開に戻す。トラックの複製でオートメーションとルーティングは引き継がない（[ADR 0129](decisions/0129-track-duplication.md)）。
+  狭い幅・低い行・深い字下げでヘッダの FX 名を隠す時は、下部とインスペクターで全チェインを扱う（[ADR 0139](decisions/0139-track-header-fx-names.md)）。
+  インスペクターの FX 追加ボタンの実画面と VoiceOver はユーザー確認待ち（UC-27、[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
+- **隔離・Workgroup・キャッシュ**: AUv3 の二重隔離の回避、走査の Seatbelt、Workgroup ポートの 2 ms ポーリングの置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
+  CPU の並列グラフ、メーカー単位のヘルパーの集約、SME、Metal 4 は未実装（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
+
+### ピアノロール
+
+- **入力長**: 記憶した入力長は全トラック共有で、再オープン時に初期化される（[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
+  実画面の操作感はユーザー確認待ち（UC-07）。
+- **複数ノートのベロシティ**: 一括調整の実画面・VoiceOver・聴感はユーザー確認待ち（UC-08、[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
+- **表示範囲の共有**: 実画面と VoiceOver はユーザー確認待ち（UC-09、[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
+- **ノートの編集**: 吸着・追加・ベロシティ・枠選択と、選択・移動・複製・グリッドの実画面・VoiceOver・聴感はユーザー確認待ち（UC-10、UC-32〜37）。
+- **操作の状態の一本化（SPG-08）**: 解放が届かない製品の経路は未確認で、実画面はユーザー確認待ち（UC-11、[ADR 0206](decisions/0206-piano-interaction-state.md)）。
+- **クリップの大きさ**: 旧ジャーナルの移動・複製は、従来の固定化の規則で再生する（[ADR 0170](decisions/0170-content-relative-auto-bars.md)）。
+  ノートの所属替えと、隣のクリップで止める処理は未接続で、草案に残る（[ADR 0169](decisions/0169-clip-growth-follows-notes-and-stops-at-walls.md)）。
+
+### アレンジ・ブラウザ・ミックス・画面
+
+- **MIDI クリップの音高表示**: 実画面と VoiceOver はユーザー確認待ち（UC-01、[ADR 0165](decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
+- **クリップの移動と複製（UIF-03）**: 移動先で重なる配置は置き換え（削除・切詰め・分割）になる（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
+  ⌘D はアレンジにフォーカスがある時だけ有効で、押し続けの自動反復はしない（[ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)）。
+  重ねるモード・自動クロスフェード・複数クリップは未接続。実画面の操作感と VoiceOver はユーザー確認待ち（UC-05）。
+- **クリップのミックス操作の文書交換**: 実画面の文書切替・VoiceOver はユーザー確認待ち（UC-14、[ADR 0194](decisions/0194-clip-mix-gesture-document-scope.md)）。
+- **音声のドロップ**: 複数ファイルの同時ドロップ・自動スクロール・配置予定の波形と、同じトラックでの配置の重複は未接続（[ADR 0145](decisions/0145-sample-browser-file-drops.md)）。
+  ドラッグの実操作・見え方・VoiceOver はユーザー確認待ち（UC-06）。
+- **サンプルブラウザのクリック（UIF-05・09）**: クリックの遅れとフォーカスが直ったかはユーザー確認待ち（UC-15）。
+  遅れの量は未計測である（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
+- **サンプルの試聴**: 選択時の試聴は素の音で、プラグインのヘルパーを起動しない（[ADR 0135](decisions/0135-sample-audition.md)）。
+  表示中は無音の試聴出力を保つ（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
   隣の行の先読みと、長いファイルの読込み時間の計測はしていない（[ADR 0163](decisions/0163-sample-overview.md)）。
-  表示中は無音の試聴出力を保持する。音量の補間、自動試聴の切替、右矢印・再生／停止ボタンと波形クリックの開始位置を接続した。
-  音量と自動試聴の設定はプロジェクトの履歴から独立して記憶する（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
-  2 つの IOProc の加算と機器切替時の挙動、聴感は実機でのユーザー確認待ちである
-  （[ADR 0135](decisions/0135-sample-audition.md)）。
-- **Sine Pad と音源の選択**: Sine Pad は同梱 CLAP として通常の FX 一覧から追加・削除・バイパスできる。
-  音源のないトラックのノートは無音とし、旧プロジェクトへ暗黙の音源を補わない。
-  従来の既定音を使う場合は Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
-- **CLAP バンドル互換性**: 音源とエフェクトは同じ隔離チェインを通る。macOS のディレクトリ形式バンドルも走査・処理できるが、全メーカーの互換性や実機の聴感を保証するものではない。
-- **トランスポートと状態保持**:
-  - 再生開始時の位置巻き戻り（CU-04）とトラックヘッダの Space 転送（CU-05）は必須契約で回帰検査している。
-  - 停止は記憶した開始位置へ戻り、一時停止はその場に保つ。開始位置はルーラーと「開始拍」欄で変え、パッケージに保存する。
-    Return もメニューの「一時停止」と同じその場での一時停止／再開へ接続し、入力欄とブラウザ一覧の確定・配置を優先する。
-    実画面の操作感と、停止で戻る時の聴感はユーザー確認待ちである（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
-  - 再生ヘッドの追従は保存しない表示状態で、キーの割当はない。停止中のズームで範囲外になった再生ヘッドは、次の再生・停止・位置移動まで表示しない。
-    実画面のページ送りの見え方・トグルの VoiceOver はユーザー確認待ちである（[ADR 0159](decisions/0159-playhead-follow.md)）。
-  - 再生準備中の停止は投入時に音声側へ伝え、停止後は準備済み出力を再利用する（[ADR 0097](decisions/0097-cancellable-retained-transport.md)）。
-  - 製品アプリはプロジェクトを開いた時に出力・ヘルパー・素材を停止のまま準備し、最初の再生は保持した出力を再開する。
-    停止中の編集で増えた素材の読込み・SRC は別スレッドで行い、読込み中の再生はその残りだけ待つ
-    （[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
-    開いた直後の準備が終わる前の再生は、準備の残りを待つ。開いた出力は停止中もプラグインを処理するため、その負荷が開いた時点から生じる。
-    実機での待ちの改善量・操作感はユーザー確認待ちである。
-  - ライブ停止・一時停止はノートオフを送り、素材だけを最大 5 ms で減衰する。
-    停止中も無音入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する。
-    開いた出力の停止中の処理負荷は残る。実機と第三者プラグインの聴感はユーザー確認待ちである
-    （[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
-  - 位置移動・未発音の準備取消とオフライン停止では、以前の発音状態を消去する（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
-  - 音声グラフは音声側が排他所有し、構造更新中も現在の計画で再生を続けて準備完了後に交換する（[ADR 0102](decisions/0102-exclusive-audio-graph.md)）。
-  - 位置移動・準備取消の後片付けはヘルパーの完了を待たずに返る。
-    停止診断の減衰位置は素材側を示し、マスター出力の無音化を示さない
-    （[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
-- **音声バス・ループ・キャッシュ・描画**:
-  - 素材・CLAP 間・書き出しのステレオ保持、配置音声のループ継ぎ目、5 ms のフェーダー補間と f64 加算を接続済み（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。暗黙のステレオ→モノ変換はエラーにする。
-  - ループ先頭は全素材を事前準備して保持し、フェーダー前の出力元の差し替え口（`CachedTrack`）も接続済み（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。ディスクストリーミング、Phase 3 のレンダリングキャッシュ生成本体、Ogg、プラグインのサムネイルは未実装。
-  - クリップゲインは `0..=1_048_576`（音声クリップのみ）。負の配置オフセットはファイル前の無音として扱い、内容位置 0 は `start - offset` のテンポ積分に置かれる（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
-  - トラックメーターはフェーダー後の左右最大ピークであり、LUFS やトゥルーピークではない。
-  - 表示リンクは画面の最大リフレッシュレートに追従し、波形バッファ再利用、ピークキャッシュの部分読出、再生・書き出し・ヘルパー処理中の App Nap 抑止を備える（[ADR 0110](decisions/0110-apple-silicon-draw-and-peaks.md)）。ペイン縮小時の描画クリップも接続済み（[ADR 0098](decisions/0098-pane-render-boundaries.md)）。
-- **プラグイン隔離・Workgroup・キャッシュ**:
-  - ヘルパーは `SIGABRT` / `SIGSEGV` / `SIGBUS` / `SIGILL` で共有領域にクラッシュ印を書く。AUv3 の二重隔離回避、スキャンの Seatbelt、Workgroup ポートの 2 ms ポーリング置換は未実装（[ADR 0111](decisions/0111-macos-helper-notices.md)）。
-  - 選択デバイスの Workgroup をヘルパーの追加・保持・再起動へ引き継ぎ、変更通知で出力を再準備する。同一素材・同一配置結果の PCM 共有と、版・カメラによる可視列キャッシュを接続済み（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。CPU 並列グラフ、メーカー単位のヘルパー集約、SME、Metal 4 は未実装。
-- **Phase 0 の別モデル・計測の分離**: 履歴の別モデル・JSON 形式・Git 保存と、エンジンの固定グラフ・計測器を、各 crate の非既定の `spike` feature へ分離した。
-  製品は従来どおり `echode_model::Project` と `Autosave`・`DocumentHost`、製品の `playback` と機器問い合わせを使う。
-  通常回帰と `make spike-history`・`make spike-engine`・`make spike-engine-smoke` は維持する。
-  SPG-10 の分離は完了だが、並列 CPU グラフの製品接続ではない
-  （[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
-- **モデル項目の共有（SPG-09）**: 対応済み。
-  全オブジェクトとプロジェクト拍子の項目表を、モデル宣言・変更セット・保存の Serde と変換で共有した。
-  ジャーナルのプロパティ名と値の種類も登録簿へ集め、FFI 内のスカラー問い合わせ・配置値の転記も生成する。
-  保存スキーマ 6・キー順・改行・数値表記・旧版の互換と、公開 ABI・借用の寿命を保つ。
-  子の解決・同一性・階層・派生値と編集規則は別に保ち、構造整理を理由に検証を省略しない。
-  オブジェクト別の性質テストに加え、公開保存・全値のジャーナル表記・保持したスナップショットの回帰を補強した
-  （[ADR 0226](decisions/0226-model-field-registry-completion.md)）。実機性能・聴感の改善を主張する変更ではない。
-
-## 検査基盤で区別すること
-
-- **実 HAL と UI テストの TSan**: 2026-10-17 に UI テストが実 HAL を開いた際の TSan 警告は、UI テスト側を機器なし応答へ修正して分離したが、実 HAL バッファ再利用時の警告原因自体は未確定であり、抑制は行わない（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
-  2026-10-29 の同種の警告では、単体候補の追加が窓を開く既存 UI 回帰のデバイス要求を機器なしへ分離した。
-  フェーダー入力の変更とは別の検査基盤の修正であり、実 HAL の警告原因の解決とは扱わない。
-  2026-10-31 にも、`FolderDisclosureTests` の FX のドロップが開く窓の要求を機器なしへ分離した。警告の原因が未確定であることは変わらない。
-  2026-11-01 からは `EchodeAppTests` のバンドルに実 HAL がなく、触れたテストは `make check-real-hal` が名指しで止める（[ADR 0209](decisions/0209-real-hal-guard.md)）。
-  UI テストからこの警告の経路はなくなったが、原因の解決ではない。
-- **サニタイザの Swift 全体実行の幅**: 合否は同時実行数 16 の実行で決め、TSan は全テスト同時の実行で競合だけを探す（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
-  幅は実験的な環境変数に頼るので、実際の幅をイベント列で確かめる。5 秒を超えるシステム全体の停止は、この対策でも吸収できない。
-- **errno TSan 警告**: Darwin arm64 のスレッド固有領域の再利用が、C だけの再現でも誤検出された。
-  検査専用ランタイムで errno の寿命処理を修正し、同じ errno を実際に共有する競合の検出も保つ（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
-  正式な合否は検査レポートを参照する。
-- **継続の先行再開の TSan 誤検出**: 完了の継続が `await` より先に再開されると、Swift ランタイムの経路で TSan に順序が見えない。
-  検査ビルドだけの注釈で順序を示し、再開の後の書込みの検出は対照で保つ（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
-- **プラグイン発音アタック**: Vital Init の無音からの発音は 48 / 96 kHz・複数ブロック長でプラグイン単体出力と全サンプル一致しており、ホスト由来の不連続は再現していない（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
-- **検査の段階**: `make verify` は作業の段階で、ASan・TSan・Miri と全反例は `make verify-full` の全体の段階にある。
-  作業の段階の合格は全体の段階の合格ではない。未確認の検査は `make agent-context` が表示する（[ADR 0212](decisions/0212-verification-tiers.md)）。
-- **検査種別の境界**: 通常の回帰検査、負の対照（`negative_control`）、オフスクリーン GPU 検査、実ウィンドウの `spike-playhead`、長時間計測（[ADR 0096](decisions/0096-measurement-completion.md)）、フックの直接検査と実ホスト発火、ローカル検査とリモート CI、ユーザーの聴感確認はそれぞれ別の証拠として区別する。
+  2 つの IOProc の加算と機器切替時の挙動、聴感は実機でのユーザー確認待ち（UC-16、[ADR 0135](decisions/0135-sample-audition.md)）。
+  長い素材の読込み中の試聴と、表示中の試聴の操作もユーザー確認待ち（UC-41・42）。
+  試聴のループ（UIF-10）は再現しておらず、原因は未確定である（[照合](reviews/2026-10-21-ui-feedback-audit.md)）。
+- **2026-10-25 の操作の報告**: サンプル一覧の Space が製品のどこで止まっていたかは再現していない（[照合](reviews/2026-10-25-user-feedback.md)）。
+  実画面と聴感での解消はユーザー確認待ち（UC-20）。
+- **選択トラックのミックス（P2-06）**: ピアノロールの行の Solo / Mute ボタンは単一トラックのまま。選択外のソロは解除しない（[ADR 0189](decisions/0189-selected-track-mute-and-solo.md)）。
+  無音の基準からの音量比が定まらない一括入力は、理由を示して拒否する（[ADR 0191](decisions/0191-selected-track-numeric-mix.md)）。
+  一括の切替・読み上げの増減・文書切替・ドラッグとリセットの実画面・VoiceOver・聴感はユーザー確認待ち（UC-12、UC-38〜40、[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
+- **値の操作子（UIF-04）**: 実画面の操作感・VoiceOver・第三者プラグインの変換はユーザー確認待ち（UC-13、[ADR 0153](decisions/0153-value-control-clicks-and-typed-entry.md)）。
+- **ペインのリサイズと描画（UIF-01、JNK-01・02）**: リサイズ中の見え方はユーザー確認待ち（UC-02、[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
+  上下のずれ・再生開始時のがくつき・VoiceOver の解消はユーザー確認待ち（UC-03、[ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
+  ちらつきの有無はユーザー確認待ち（UC-04、[ADR 0150](decisions/0150-stale-drawable-frame.md)）。
+  分割線ドラッグの計測（単位 6、JNK-05）は未着手（[GUI のがくつきの監査](reviews/2026-10-22-gui-jank-audit.md)）。

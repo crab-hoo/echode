@@ -50,6 +50,12 @@ impl std::fmt::Display for HostError {
 
 impl std::error::Error for HostError {}
 
+impl HostError {
+    fn durability_unknown(&self) -> bool {
+        matches!(self, Self::Package(error) if error.is_durability_unknown())
+    }
+}
+
 /// Recent edits may be missing from the opened document: a readable ancestor
 /// was used instead of the autosave tip, or the journal could not be replayed
 /// to its end. Editing requires consent (ADR 0183). `tip` equals `base` when
@@ -682,7 +688,7 @@ struct Publish<'a> {
 }
 
 fn note_failure(halted: &mut Option<String>, error: &HostError) {
-    if error.to_string().contains(JOURNAL_DURABILITY_UNKNOWN) {
+    if error.durability_unknown() {
         *halted = Some(error.to_string());
     }
 }

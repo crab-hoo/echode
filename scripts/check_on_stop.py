@@ -17,7 +17,7 @@ FOLLOWUP = (
     "target/verification/report.md と target/verification/product-contracts.json を読み、失敗を直してください。"
     "必須の回帰テストを削除・無視したり、0件実行を合格にして終えてはいけません。"
     "その後 make verify を実行してください。"
-    "実機・計測を実行しない場合は scripts/verify.py --defer ID --reason 理由で記録してください。"
+    "実機・計測を実行しない場合は scripts/verify.py --record-only --defer ID=理由 で検査ごとに理由を記録してください。"
 )
 
 

@@ -21,6 +21,8 @@ mod note_edges;
 mod plugin_gui;
 #[path = "hosted_playback/stopped_processing.rs"]
 mod stopped_processing;
+#[path = "hosted_playback/track_events.rs"]
+mod track_events;
 
 fn host_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"))

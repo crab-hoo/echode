@@ -391,13 +391,23 @@ def toolchain_paths():
     return {name: shutil.which(name) or "" for name in names}
 
 
+# -s and -w only change what make echoes; `make -s verify` must not discard
+# every result (XCA-09). -i, -k and -n stay: they change outcomes.
+DISPLAY_ONLY_MAKE_LETTERS = "sw"
+DISPLAY_ONLY_MAKE_OPTIONS = {"--silent", "--quiet", "--print-directory", "--no-print-directory"}
+
+
 def make_flags_identity(value):
     # GNU make escapes whitespace with backslashes; quotes are literal here.
     # Selection/deferral arguments cannot affect a build and must not invalidate
     # evidence when the next invocation is plain `make verify` or `make doctor`.
     # A jobserver handle names a per-invocation pipe; the -j value stays recorded.
     tokens = [re.sub(r"\\(.)", r"\1", token) for token in re.findall(r"(?:\\.|[^\s\\])+", value)]
-    return [token for token in tokens if token != "--" and not token.startswith("VERIFY_ARGS=")
+    # make writes single-letter flags as one leading word without a dash ("sk").
+    if tokens and re.fullmatch(r"[A-Za-z]+", tokens[0]):
+        tokens[0] = "".join(letter for letter in tokens[0] if letter not in DISPLAY_ONLY_MAKE_LETTERS)
+    return [token for token in tokens if token and token != "--" and not token.startswith("VERIFY_ARGS=")
+            and token not in DISPLAY_ONLY_MAKE_OPTIONS
             and not token.startswith(("--jobserver-auth=", "--jobserver-fds="))]
 
 
@@ -748,27 +758,56 @@ def run_check(root, check, log, force=False, base=None):
                       log, check["timeout"], env)
 
 
+def deferral_reasons(args):
+    """Map each deferred check to its own reason (XCA-08).
+
+    One reason shared by several checks ends up describing none of them, so
+    `--reason` names exactly one plain `--defer ID`; the rest use `ID=理由`.
+    """
+    reasons, plain = {}, []
+    for value in args.defer:
+        name, separator, reason = value.partition("=")
+        if not separator:
+            plain.append(name)
+            reason = args.reason or ""
+        if name in reasons:
+            raise ValueError(f"{name} is deferred twice")
+        if not reason.strip():
+            raise ValueError("--defer requires a nonempty reason: --defer ID=理由")
+        reasons[name] = reason.strip()
+    if args.reason is not None and len(plain) != 1:
+        raise ValueError("--reason belongs to exactly one --defer ID; give each check its own reason with --defer ID=理由")
+    return reasons
+
+
+def print_deferrals(requested, results):
+    for name in sorted(name for name in requested if results[name]["status"] == "deferred"):
+        recorded = results[name].get("deferred_at", "記録日時なし")
+        print(f"見送り {name}: {results[name]['reason']}（記録 {recorded}）", flush=True)
+
+
 def verify(root, args):
     started = time.monotonic()
     policy = load_policy(root)
     changed = changed_paths(root, args.base)
     selected = plan_checks(root, policy, changed, args.base, args.all, args.full)
     checks = {check["id"]: check for check in policy["checks"]}
+    deferred = deferral_reasons(args)
+    if args.record_only and (not deferred or args.only or args.run or args.force or args.plan):
+        raise ValueError("--record-only takes --defer and nothing that runs or narrows checks")
     for name in args.run:
         if name in checks and checks[name].get("extended"):
             selected[name] = ["explicit --run"]
-    for name in args.only + args.run + args.defer:
+    for name in args.only + args.run + list(deferred):
         if name not in selected:
             raise ValueError(f"{name} is not selected; use --full or --all to select an otherwise unrelated check")
-    for name in args.run + args.defer:
+    for name in args.run + list(deferred):
         if checks[name]["mode"] != "manual":
             raise ValueError("--run/--defer accepts only manual measurements")
-    if args.defer and not (args.reason and args.reason.strip()):
-        raise ValueError("--defer requires a nonempty --reason")
-    if set(args.run) & set(args.defer):
+    if set(args.run) & set(deferred):
         raise ValueError("cannot run and defer the same check")
     requested = set(args.only or selected)
-    if args.only and not set(args.run + args.defer).issubset(requested):
+    if args.only and not set(args.run + list(deferred)).issubset(requested):
         raise ValueError("--run/--defer must be included in --only")
     if args.plan:
         from verification_display import print_plan
@@ -793,13 +832,23 @@ def verify(root, args):
                     or (previous.get("status") == "passed" and checks[name].get("device_context")
                         and contexts.get("audio-output") is None)):
                 report["results"][name] = {"status": status, "fingerprint": stamps[name]}
-        for name in args.defer:
-            report["results"][name] = {"status": "deferred", "reason": args.reason.strip(), "fingerprint": stamps[name]}
+        for name, reason in deferred.items():
+            report["results"][name] = {"status": "deferred", "reason": reason, "fingerprint": stamps[name],
+                                       "deferred_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        report["tools_fingerprint"] = hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest()
+        if args.record_only:
+            # Bookkeeping only: no preflight, build or check runs, and no timing entry.
+            report["execution"] = {"order": [], "first_failure": None, "checks": {}, "reused": [], "status": "recorded"}
+            report["preflight"] = {}
+            report["full_tier_unverified"] = unverified_full_tier(policy, report["results"], stamps)
+            save_report(directory, report, policy, selected)
+            print_deferrals(requested, report["results"])
+            print("見送りだけを記録しました。自動検査は実行していません。完了の判定には make verify を実行してください。", flush=True)
+            return 0
         ordered = execution_order(policy, requested)
         scheduled = [check for check in ordered
                      if (args.force or report["results"][check["id"]]["status"] != "passed")
                      and (check["mode"] == "automatic" or check["id"] in args.run)]
-        report["tools_fingerprint"] = hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest()
         report["execution"] = {"order": [check["id"] for check in scheduled], "first_failure": None,
                                "checks": {}, "reused": [], "status": "running", "resources_start": resource_snapshot(root)}
         report["preflight"] = {}
@@ -891,12 +940,13 @@ def verify(root, args):
         pending = [name for name in requested
                    if report["results"][name]["status"] not in ("passed", "deferred")]
         print("結果: target/verification/report.md", flush=True)
+        print_deferrals(requested, report["results"])
         unverified = unverified_full_tier(policy, report["results"], stamps)
         if unverified:
             print("全体検査で未確認（作業の完了条件ではない。節目に make verify-full）: " + ", ".join(unverified), flush=True)
         if pending:
             print("完了していない検査: " + ", ".join(sorted(pending)), file=sys.stderr)
-            print("失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID --reason 理由を使います。", file=sys.stderr)
+            print("失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID=理由 を検査ごとに使います。", file=sys.stderr)
             return finish(1)
         return finish(0)
 
@@ -908,8 +958,11 @@ def main():
     parser.add_argument("--full", action="store_true", help="every automatic check, including the full tier")
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument("--run", action="append", default=[])
-    parser.add_argument("--defer", action="append", default=[])
-    parser.add_argument("--reason")
+    parser.add_argument("--defer", action="append", default=[], metavar="ID=理由",
+                        help="record why a selected manual check is not run; one reason per check")
+    parser.add_argument("--reason", help="reason for a single plain --defer ID")
+    parser.add_argument("--record-only", action="store_true",
+                        help="record the --defer entries without running any check")
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--github-matrix", action="store_true")

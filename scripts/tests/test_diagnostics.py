@@ -18,7 +18,7 @@ with patch.object(sys, "path", [str(ROOT / "scripts"), *sys.path]):
     spec = importlib.util.spec_from_file_location("diagnose", ROOT / "scripts/diagnose.py")
     diagnose = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(diagnose)
-    from documentation import local_link_errors
+    from documentation import anchor_errors, heading_anchors, local_link_errors
 
 
 class DiagnosticTests(unittest.TestCase):
@@ -317,6 +317,9 @@ class DeveloperDocumentationTests(unittest.TestCase):
             "docs/development.md",
             "docs/agent-workflow.md",
             "docs/debugging.md",
+            *sorted(f"docs/debugging/{path.name}" for path in (ROOT / "docs/debugging").glob("*.md")),
+            "docs/reviews/README.md",
+            "docs/user-checks.md",
             "docs/verification.md",
             "docs/PLAN.md",
             "docs/ARCHITECTURE.md",
@@ -355,6 +358,46 @@ class DeveloperDocumentationTests(unittest.TestCase):
         for path in paths:
             with self.subTest(document=str(path.relative_to(ROOT))):
                 self.assertEqual(local_link_errors(ROOT, path, path.read_text(), legacy), [])
+                # A moved or renamed heading must not leave a link that silently lands at the top.
+                self.assertEqual(anchor_errors(ROOT, path, path.read_text()), [])
+
+    def test_heading_anchors_follow_the_github_rules(self):
+        text = ("# 要求の外枠の検証（2026-10-29）\n## UI・描画・入力\n## `make verify` の所要時間\n"
+                "## [リンク](x.md) の見出し\n## 重複\n## 重複\n```\n# fenced\n```\n")
+        self.assertEqual(heading_anchors(text), {"要求の外枠の検証2026-10-29", "ui描画入力", "make-verify-の所要時間",
+                                                 "リンク-の見出し", "重複", "重複-1"})
+
+    def test_missing_heading_anchors_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs").mkdir()
+            (root / "docs/guide.md").write_text("# Guide\n\n## 保存・復旧\n")
+            path = root / "docs/review.md"
+            content = "# Review\n[ok](guide.md#保存復旧) [self](#review) [web](https://example.org/#x)\n"
+            self.assertEqual(anchor_errors(root, path, content), [])
+            for link in ("[gone](guide.md#保存-復旧)", "[gone](#missing)", "[gone](guide.md#)"):
+                with self.subTest(link=link):
+                    self.assertTrue(anchor_errors(root, path, content + link))
+
+    def test_debugging_index_lists_every_symptom_heading(self):
+        index = (ROOT / "docs/debugging.md").read_text()
+        listed = set(re.findall(r"^  - (.+)$", index, re.MULTILINE))
+        files = sorted((ROOT / "docs/debugging").glob("*.md"))
+        self.assertTrue(files)
+        symptoms = set()
+        for path in files:
+            with self.subTest(area=path.name):
+                self.assertIn(f"](debugging/{path.name})", index, "area file missing from the index")
+                symptoms |= set(re.findall(r"^### (.+)$", path.read_text(), re.MULTILINE))
+        self.assertEqual(listed, symptoms, "the symptom index and the area files differ")
+
+    def test_makefile_comments_stay_short(self):
+        # XCA-10: per-feature comment logs grew above recipes; contracts live in verification.json.
+        run = 0
+        for lineno, line in enumerate((ROOT / "Makefile").read_text().splitlines(), start=1):
+            run = run + 1 if line.startswith("#") else 0
+            with self.subTest(line=lineno):
+                self.assertLessEqual(run, 3, "Makefile comment block exceeds 3 lines")
 
 
 if __name__ == "__main__":

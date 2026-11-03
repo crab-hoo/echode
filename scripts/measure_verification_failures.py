@@ -47,7 +47,8 @@ def measure(policy, scenario, reordered, delay):
         (root / "Makefile").write_text("\n".join(recipes) + "\n")
         subprocess.run(["git", "init", "--quiet", str(root)], check=True)
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
-        options = argparse.Namespace(base=None, all=True, only=[], run=[], defer=[], reason=None, plan=False, force=False)
+        options = argparse.Namespace(base=None, all=True, full=False, only=[], run=[], defer=[], reason=None,
+                                     record_only=False, plan=False, force=False)
         with patch.object(verify, "tool_identity", return_value={"fixture": "same-tools"}), \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = verify.verify(root, options)

@@ -566,6 +566,7 @@ impl From<std::io::Error> for SessionError {
 
 impl PluginHost {
     pub fn spawn(mut options: SpawnOptions<'_>) -> Result<Self, SessionError> {
+        crate::descriptors::raise_descriptor_limit();
         let workgroup = options
             .workgroup
             .take()
