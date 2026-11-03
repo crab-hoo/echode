@@ -272,6 +272,9 @@ PDC と `clap.log`・`clap.thread-check` 等の拡張は残り、実画面・第
 追加対応: [ADR 0247](../decisions/0247-pcm24-wav-export.md) で、CLI の 24 bit PCM 選択と飽和・丸め・出力保全を接続した。
 RF64・16 bit・ディザは残り、当時の指摘全体の完了とはしない。
 
+追加対応: [ADR 0248](../decisions/0248-pcm16-wav-export.md) で、CLI の 16 bit PCM と同じ出力保全を接続した。
+RF64・ディザは未接続であり、過去の観測を変更せず一部対応のままとする。
+
 ### FCA-17: Swift のポーリングとラベル
 
 - `observeAudio`（ProjectController.swift 568 行）は、表示中は 50 ms ごとに文書ワーカーへ状態の要求を送り、JSON で往復する。変化がなくても止まらない。

@@ -201,7 +201,7 @@ fn pcm24_cli_rejects_invalid_options_and_oversized_riff_without_replacing_output
     let wav = directory.0.join("keep.wav");
     std::fs::write(&wav, b"keep").unwrap();
     for (rate, frames, format, message) in [
-        (48_000, 1, "pcm16", "expected wav format"),
+        (48_000, 1, "pcm32", "expected wav format"),
         (48_000, 1, "", "expected wav format"),
         (0, 1, "pcm24", "invalid sample rate"),
         (u32::MAX / 6 + 1, 0, "pcm24", "sample rate does not fit"),

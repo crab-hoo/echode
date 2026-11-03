@@ -1,4 +1,4 @@
-//! `echode render` writes a project package to a stereo float or 24-bit PCM WAV.
+//! `echode render` writes a project package to a stereo float, 16-bit PCM, or 24-bit PCM WAV.
 //!
 //! A project with no instrument does not synthesize notes. Placed audio uses
 //! the same buffers and faders as product playback. A project with
@@ -39,6 +39,7 @@ const OFFLINE_BLOCK_WAIT: Duration = Duration::from_secs(60);
 #[derive(Clone, Copy)]
 enum WavFormat {
     Float32,
+    Pcm16,
     Pcm24,
 }
 
@@ -46,9 +47,10 @@ impl WavFormat {
     fn parse(text: &str) -> Result<Self, CliError> {
         match text {
             "float32" => Ok(Self::Float32),
+            "pcm16" => Ok(Self::Pcm16),
             "pcm24" => Ok(Self::Pcm24),
             _ => Err(CliError::new(format!(
-                "expected wav format float32 or pcm24, got {text}"
+                "expected wav format float32, pcm16, or pcm24, got {text}"
             ))),
         }
     }
@@ -56,6 +58,7 @@ impl WavFormat {
     fn frame_bytes(self) -> u16 {
         match self {
             Self::Float32 => 8,
+            Self::Pcm16 => 4,
             Self::Pcm24 => 6,
         }
     }
@@ -427,7 +430,7 @@ fn parse_u32(text: &str) -> Result<u32, CliError> {
 
 fn usage() -> CliError {
     CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N] [--format float32|pcm24]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
+        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N] [--format float32|pcm16|pcm24]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
     )
 }
 
@@ -511,16 +514,21 @@ impl WavFile {
         for sample in interleaved {
             match self.format {
                 WavFormat::Float32 => self.bytes.extend_from_slice(&sample.to_le_bytes()),
-                WavFormat::Pcm24 => {
+                WavFormat::Pcm16 | WavFormat::Pcm24 => {
+                    let bits = self.format.frame_bytes() * 4;
                     if !sample.is_finite() {
-                        return Err(CliError::new("non-finite sample in PCM24 export"));
+                        return Err(CliError::new(format!(
+                            "non-finite sample in PCM{bits} export"
+                        )));
                     }
                     // Quantize once, at the file boundary. No dither or noise shaping.
                     // f64 preserves the half-LSB rounding boundary near full scale.
-                    let integer = (f64::from(*sample) * 8_388_608.0)
+                    let scale = f64::from(1u32 << (bits - 1));
+                    let integer = (f64::from(*sample) * scale)
                         .round()
-                        .clamp(-8_388_608.0, 8_388_607.0) as i32;
-                    self.bytes.extend_from_slice(&integer.to_le_bytes()[..3]);
+                        .clamp(-scale, scale - 1.0) as i32;
+                    self.bytes
+                        .extend_from_slice(&integer.to_le_bytes()[..usize::from(bits / 8)]);
                 }
             }
         }
@@ -564,6 +572,7 @@ fn wav_header(sample_rate: u32, frames: u32, format: WavFormat) -> Result<Vec<u8
     let frame_bytes = u32::from(format.frame_bytes());
     let header_length = match format {
         WavFormat::Float32 => 58usize,
+        WavFormat::Pcm16 => 44,
         WavFormat::Pcm24 => 68,
     };
     let data_bytes = frames
@@ -593,6 +602,12 @@ fn wav_header(sample_rate: u32, frames: u32, format: WavFormat) -> Result<Vec<u8
             header[38..42].copy_from_slice(b"fact");
             header[42..46].copy_from_slice(&4u32.to_le_bytes());
             header[46..50].copy_from_slice(&frames.to_le_bytes());
+        }
+        WavFormat::Pcm16 => {
+            // Canonical WAVE_FORMAT_PCM needs no extension or fact chunk.
+            header[16..20].copy_from_slice(&16u32.to_le_bytes());
+            header[20..22].copy_from_slice(&1u16.to_le_bytes());
+            header[34..36].copy_from_slice(&16u16.to_le_bytes());
         }
         WavFormat::Pcm24 => {
             // WAVEFORMATEXTENSIBLE makes >16-bit PCM and the stereo layout explicit.

@@ -83,6 +83,41 @@ fn pcm24_riff_and_byte_rate_limits_use_six_bytes_per_frame() {
     );
 }
 
+#[test]
+fn pcm16_riff_and_byte_rate_limits_use_four_bytes_per_frame() {
+    let frames = (u32::MAX - 36) / 4;
+    let header = wav_header(48_000, frames, WavFormat::Pcm16).unwrap();
+    assert_eq!(header.len(), 44);
+    assert_eq!(
+        u32::from_le_bytes(header[4..8].try_into().unwrap()),
+        frames * 4 + 36
+    );
+    assert_eq!(
+        u32::from_le_bytes(header[40..44].try_into().unwrap()),
+        frames * 4
+    );
+    for too_many in [frames + 1, u32::MAX] {
+        assert!(
+            wav_header(48_000, too_many, WavFormat::Pcm16)
+                .unwrap_err()
+                .to_string()
+                .contains("wav data does not fit in a 32-bit chunk")
+        );
+    }
+    let rate = u32::MAX / 4;
+    let header = wav_header(rate, 0, WavFormat::Pcm16).unwrap();
+    assert_eq!(
+        u32::from_le_bytes(header[28..32].try_into().unwrap()),
+        rate * 4
+    );
+    assert!(
+        wav_header(rate + 1, 0, WavFormat::Pcm16)
+            .unwrap_err()
+            .to_string()
+            .contains("sample rate does not fit in the wav header")
+    );
+}
+
 fn scratch() -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let directory = std::env::temp_dir().join(format!(
@@ -143,29 +178,87 @@ fn pcm24_rounds_half_steps_away_from_zero_and_saturates_without_wrapping() {
 }
 
 #[test]
-fn pcm24_nonfinite_samples_preserve_the_destination_and_remove_partial_files() {
+fn pcm16_rounds_half_steps_saturates_and_encodes_every_integer_independent_of_partition() {
     let _guard = WRITER.lock().unwrap();
     let directory = scratch();
-    let destination = directory.join("keep.wav");
-    std::fs::write(&destination, b"keep").unwrap();
-    for sample in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-        let mut writer = WavFile::create(&destination, 48_000, 2, WavFormat::Pcm24).unwrap();
-        writer.write_block(&[0.5, -0.5]).unwrap();
-        let error = writer.write_block(&[0.0, sample]).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("non-finite sample in PCM24 export")
-        );
-        drop(writer);
-        assert_eq!(std::fs::read(&destination).unwrap(), b"keep");
-        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+    let destination = directory.join("out.wav");
+    let lsb = 1.0 / 32_768.0;
+    let mut samples = vec![
+        -f32::MAX,
+        -1.0,
+        -0.5,
+        -1.5 * lsb,
+        -0.5 * lsb,
+        -0.49 * lsb,
+        -0.0,
+        0.0,
+        0.49 * lsb,
+        0.5 * lsb,
+        1.5 * lsb,
+        0.5,
+        1.0 - lsb,
+        1.0,
+        2.0,
+        f32::MAX,
+        -1.0 + 0.5 * lsb,
+        1.0 - 0.5 * lsb,
+    ];
+    let mut integers: Vec<i16> = vec![
+        -32768, -32768, -16384, -2, -1, 0, 0, 0, 0, 1, 2, 16384, 32767, 32767, 32767, 32767,
+        -32768, 32767,
+    ];
+    // The finite range here enumerates the encoding, not a product capacity limit.
+    for integer in i16::MIN..=i16::MAX {
+        samples.push(f32::from(integer) * lsb);
+        integers.push(integer);
+    }
+    let expected: Vec<_> = integers
+        .iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect();
+    let frames = u32::try_from(samples.len() / 2).unwrap();
+    let mut writer = WavFile::create(&destination, 48_000, frames, WavFormat::Pcm16).unwrap();
+    writer.write_block(&samples).unwrap();
+    writer.finish().unwrap();
+    let bytes = std::fs::read(&destination).unwrap();
+    assert_eq!(&bytes[44..], expected);
+    // These partitions only exercise the writer; they do not cap render block sizes.
+    for size in [2, 14, 128, 1024] {
+        let mut writer = WavFile::create(&destination, 48_000, frames, WavFormat::Pcm16).unwrap();
+        for block in samples.chunks(size) {
+            writer.write_block(block).unwrap();
+        }
+        writer.finish().unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), bytes);
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
-fn pcm24_keeps_transactional_publication_on_write_flush_rename_and_sync_failures() {
+fn pcm_nonfinite_samples_preserve_the_destination_and_remove_partial_files() {
+    let _guard = WRITER.lock().unwrap();
+    let directory = scratch();
+    let destination = directory.join("keep.wav");
+    std::fs::write(&destination, b"keep").unwrap();
+    for (format, name) in [(WavFormat::Pcm16, "PCM16"), (WavFormat::Pcm24, "PCM24")] {
+        for sample in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut writer = WavFile::create(&destination, 48_000, 2, format).unwrap();
+            writer.write_block(&[0.5, -0.5]).unwrap();
+            let error = writer.write_block(&[0.0, sample]).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("non-finite sample in {name} export")
+            );
+            drop(writer);
+            assert_eq!(std::fs::read(&destination).unwrap(), b"keep");
+            assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn pcm_keeps_transactional_publication_on_write_flush_rename_and_sync_failures() {
     use super::{
         WAV_FAULT_DIR_SYNC, WAV_FAULT_FLUSH, WAV_FAULT_RENAME, WAV_FAULT_WRITE, arm_wav_fault,
     };
@@ -173,29 +266,34 @@ fn pcm24_keeps_transactional_publication_on_write_flush_rename_and_sync_failures
     let _guard = WRITER.lock().unwrap();
     let directory = scratch();
     let destination = directory.join("keep.wav");
-    for kind in [
-        WAV_FAULT_WRITE,
-        WAV_FAULT_FLUSH,
-        WAV_FAULT_RENAME,
-        WAV_FAULT_DIR_SYNC,
+    for (format, expected_length) in [
+        (WavFormat::Pcm16, 44 + 2 * 4),
+        (WavFormat::Pcm24, 68 + 2 * 6),
     ] {
-        std::fs::write(&destination, b"keep").unwrap();
-        let mut writer = WavFile::create(&destination, 48_000, 2, WavFormat::Pcm24).unwrap();
-        writer.write_block(&[0.5, -0.5]).unwrap();
-        arm_wav_fault(kind, 0);
-        let result = writer
-            .write_block(&[0.0, 0.25])
-            .and_then(|()| writer.finish());
-        let error = result.unwrap_err();
-        assert_eq!(error.is_durability_unknown(), kind == WAV_FAULT_DIR_SYNC);
-        let bytes = std::fs::read(&destination).unwrap();
-        if kind == WAV_FAULT_DIR_SYNC {
-            assert_eq!(bytes.len(), 68 + 2 * 6);
-            assert_eq!(&bytes[..4], b"RIFF");
-        } else {
-            assert_eq!(bytes, b"keep");
+        for kind in [
+            WAV_FAULT_WRITE,
+            WAV_FAULT_FLUSH,
+            WAV_FAULT_RENAME,
+            WAV_FAULT_DIR_SYNC,
+        ] {
+            std::fs::write(&destination, b"keep").unwrap();
+            let mut writer = WavFile::create(&destination, 48_000, 2, format).unwrap();
+            writer.write_block(&[0.5, -0.5]).unwrap();
+            arm_wav_fault(kind, 0);
+            let result = writer
+                .write_block(&[0.0, 0.25])
+                .and_then(|()| writer.finish());
+            let error = result.unwrap_err();
+            assert_eq!(error.is_durability_unknown(), kind == WAV_FAULT_DIR_SYNC);
+            let bytes = std::fs::read(&destination).unwrap();
+            if kind == WAV_FAULT_DIR_SYNC {
+                assert_eq!(bytes.len(), expected_length);
+                assert_eq!(&bytes[..4], b"RIFF");
+            } else {
+                assert_eq!(bytes, b"keep");
+            }
+            assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
         }
-        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
     }
     std::fs::remove_dir_all(directory).unwrap();
 }

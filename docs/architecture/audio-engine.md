@@ -98,9 +98,11 @@ P2 の通常書出しは曲全体のミックス 1 ファイルを初期選択�
 同梱 Sine Pad も同じ経路で処理する（[ADR 0123](../decisions/0123-explicit-sine-pad-plugin.md)）。
 Phase 2 のクリップ FX バウンスはクリップチェインの出力と余韻を新しいオーディオの中身・配置として取り込み、トラック FX の二重適用を防ぐ。
 
-現在の CLI はステレオの 32 bit float（既定）と 24 bit PCM を選べる。
-float は 18 バイトの `fmt` とフレーム数の `fact`、PCM は 40 バイトの WAVEFORMATEXTENSIBLE を持つ。
-PCM の丸め・飽和と出力保全は [ADR 0247](../decisions/0247-pcm24-wav-export.md)、float の基準音声の保持は [ADR 0243](../decisions/0243-float-wav-metadata.md) に定める。
+現在の CLI はステレオの 32 bit float（既定）と 16 / 24 bit PCM を選べる。
+float は 18 バイトの `fmt` とフレーム数の `fact`、PCM24 は 40 バイトの WAVEFORMATEXTENSIBLE を持つ。
+PCM16 は形式コード 1・16 バイトの `fmt` を持ち、拡張と `fact` は付けない。
+PCM の丸め・飽和と出力保全は [ADR 0247](../decisions/0247-pcm24-wav-export.md)・[ADR 0248](../decisions/0248-pcm16-wav-export.md)、
+float の基準音声の保持は [ADR 0243](../decisions/0243-float-wav-metadata.md) に定める。
 
 ### 7.8 プレビュー用キャッシュ
 
