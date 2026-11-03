@@ -214,6 +214,16 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 [ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md) 以降は素材をプラグインの手前で減衰し、マスターの停止フェードは使わない。
 `stop_fade_offset` は素材の減衰位置である。停止後も余韻・自発的な発音が出ることは正常で、停止中の `plugin_missed_blocks` も実際の処理失敗を表す。
 
+### プラグインの取りこぼしで段差が出る・復帰後も無音になる
+
+`plugin_missed_blocks` の増加と `plugin_failure()` のデバイス・理由を先に見る。フェードしても取りこぼしは成功にならない。
+`plugin-deadline-fade` は実ヘルパーの 2 回目の処理を `process-wait:` のソケットで保留し、対象トラックだけの 5 ms の減衰・復帰を PCM で照合する。
+この故障はテスト専用であり、実機を開かず過去の期限を渡す。`process reached` / `process release` の失敗はソケットの到達・解放を調べる。
+計画交換の後だけ段差が出る時は `Prepared::carry` の `plugin_declick` の引継ぎ、左右が変わる時は失敗した段でなく最終段のバス形を確認する。
+復帰後も失敗回数が増えるなら補間の問題ではなく、ヘルパーの終了・保留・再起動要求を切り分ける。
+`block_size/plugin_deadline.rs` は途中の反転と連続失敗を標本数で照合する。実機の聴感は UC-50 に残す
+（[ADR 0245](../decisions/0245-plugin-deadline-fades.md)）。
+
 ### 停止中にプラグインの時間・鍵盤の発音が止まる、または余韻が切れる
 
 `playing = false` とライブ処理の停止を混同しない。保持した出力は無音入力の処理を続ける。

@@ -21,6 +21,7 @@ mod mix;
 mod outputs;
 mod plan;
 mod playback;
+mod plugin_declick;
 mod plugins;
 mod realtime;
 mod render;
@@ -57,6 +58,7 @@ pub use playback::{
     CachedTrack, ClipLoader, ClockSource, InternalClock, LoadedClip, MediaInputs, PlaybackAudio,
     PlaybackCommand, PlaybackControl, PlaybackOptions, PlaybackStatus, playback,
 };
+pub use plugin_declick::PluginDeclick;
 pub use plugins::{PluginRoute, PluginWorkgroup};
 pub use realtime::ForbidAlloc;
 #[cfg(debug_assertions)]

@@ -9,6 +9,8 @@
 mod clip_gain;
 #[path = "block_size/folder_mix.rs"]
 mod folder_mix;
+#[path = "block_size/plugin_deadline.rs"]
+mod plugin_deadline;
 use echode_engine::{
     AudioClip, Event, PlayedSpan, SynthVoice, TrackFader, Transport, fade_loop_seam, mix_tracks,
     render_audio_clips, render_metronome, render_test_synth, schedule, seam_fade_frames,

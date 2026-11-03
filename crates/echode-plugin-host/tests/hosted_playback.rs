@@ -11,6 +11,8 @@ use echode_model::{AudioRef, Id, NoteDraft, NoteGeometry, Project, Tick};
 
 #[path = "hosted_playback/background_graph.rs"]
 mod background_graph;
+#[path = "hosted_playback/deadline_fade.rs"]
+mod deadline_fade;
 #[path = "hosted_playback/device_offline.rs"]
 mod device_offline;
 #[path = "hosted_playback/device_params.rs"]

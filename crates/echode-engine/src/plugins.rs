@@ -1,8 +1,9 @@
 //! One helper process per CLAP device, prepared on the control thread.
 //!
 //! The callback submits every independent track, then collects them until one
-//! deadline. A missed deadline silences that track for the block. Main mono and
-//! stereo buses preserve their layout through the chain and into the fader.
+//! deadline. Missed plugin output fades to silence and recovered output fades
+//! back in. Main mono and stereo buses preserve their layout through the chain
+//! and into the fader.
 //!
 //! Effects hear the upstream devices and placed audio. The first instrument
 //! hears silence and the track's notes; placed audio is added to its output,
@@ -65,7 +66,7 @@ pub(crate) struct HostGraph {
     /// A block tried to send more events than the routed buffer can hold.
     dropped_events: bool,
     /// Device whose plugin missed this block. Zero reason means none.
-    /// Live playback still silences that block. Export reads the reason.
+    /// Live playback still fades out that track. Export reads the reason.
     export_reason: u8,
     cleanup_remaining: usize,
 }
@@ -407,7 +408,7 @@ impl HostGraph {
 
     /// Why a plugin did not produce this block, including its device id.
     /// `None` when every submitted plugin finished. A live deadline miss is
-    /// still silence for that block; this is what export refuses to call success.
+    /// still concealed by a fade; this is what export refuses to call success.
     pub(crate) fn export_failure(&self) -> Option<String> {
         for stage in self.tracks.iter().flat_map(|track| &track.stages) {
             if stage.bypassed {
@@ -912,26 +913,32 @@ impl HostGraph {
         restart
     }
 
-    /// Writes the collected plugin audio back. A miss silences the block.
-    pub(crate) fn apply(&self, key: u32, left: &mut [f32], right: &mut [f32]) -> Option<bool> {
+    /// Writes collected plugin audio back, concealing misses before the fader.
+    pub(crate) fn apply(
+        &self,
+        key: u32,
+        left: &mut [f32],
+        right: &mut [f32],
+        declick: &mut crate::PluginDeclick,
+    ) -> Option<bool> {
         let track = self.tracks.get(self.tracks.position(key)?)?;
         let frames = left.len().min(right.len()).min(track.frames);
-        let stage = track.stages.get(track.stage)?;
-        let output = stage.rendered();
-        let stereo = output.len() == 2;
+        // A failed intermediate mono stage must not change the final bus shape.
+        let stereo = track.stages.last()?.rendered().len() == 2;
         match track.run {
             Run::Heard => {
+                let output = track.stages.get(track.stage)?.rendered();
                 left[..frames].copy_from_slice(&output[0][..frames]);
-                if stereo {
-                    right[..frames].copy_from_slice(&output[1][..frames]);
-                }
+                right[..frames].copy_from_slice(&output[usize::from(stereo)][..frames]);
             }
-            Run::Missed => {
-                left[..frames].fill(0.0);
-                right[..frames].fill(0.0);
-            }
+            Run::Missed => {}
             Run::Idle | Run::Pending => return None,
         }
+        declick.process(
+            &mut left[..frames],
+            &mut right[..frames],
+            track.run == Run::Missed,
+        );
         Some(stereo)
     }
 

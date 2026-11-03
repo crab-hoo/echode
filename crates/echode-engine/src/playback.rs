@@ -136,6 +136,7 @@ struct Track {
     clip_right: Vec<f32>,
     clip_stereo: bool,
     stereo: bool,
+    plugin_declick: crate::PluginDeclick,
     fader: FaderState,
     base_fader: TrackFader,
     meter: Arc<TrackMeter>,
@@ -334,6 +335,7 @@ impl Prepared {
                 clip_right: vec![0.0; frames],
                 clip_stereo,
                 stereo: clip_stereo,
+                plugin_declick: crate::PluginDeclick::new(rate),
                 fader: FaderState::new(fader, rate),
                 base_fader: fader,
                 cache: sources.caches.get(&track.track).cloned(),
@@ -515,6 +517,7 @@ impl Prepared {
                 .and_then(|index| previous.track_indices.get(index))
                 .map(|entry| entry.1);
             if let Some(old) = old_index.and_then(|index| previous.tracks.get_mut(index)) {
+                track.plugin_declick = old.plugin_declick;
                 if playing {
                     track.fader.carry(old.fader);
                 }
@@ -755,9 +758,12 @@ impl Prepared {
                 .get_mut(..right.len())
                 .ok_or(PlaybackError::BufferTooSmall)?;
             if track.cache.is_none()
-                && let Some(stereo) = hosts.apply(track.key, plane, track_right)
+                && let Some(stereo) =
+                    hosts.apply(track.key, plane, track_right, &mut track.plugin_declick)
             {
                 track.stereo = stereo;
+            } else {
+                track.plugin_declick.reset();
             }
             let peak = track.fader.add(
                 Signal {

@@ -3,6 +3,8 @@
 //! `ECHODE_TEST_FAULT=crash` aborts inside `process`. `ECHODE_TEST_FAULT=segfault`
 //! stores through a null pointer there. `ECHODE_TEST_FAULT=hang`
 //! never returns from `process`. Both take down only this plugin's process.
+//! `ECHODE_TEST_FAULT=process-wait:<socket>` holds the second process call until
+//! a test releases it. The connection is created during activation, off RT.
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -353,6 +355,9 @@ pub struct TestGainProcessor<'a> {
     // regression. Socket setup is off RT; only this fault blocks in reset.
     reset_gate: Option<std::os::unix::net::UnixStream>,
     reset_gate_used: bool,
+    // Off-RT connection; this deliberately broken plugin holds its second block.
+    process_gate: Option<std::os::unix::net::UnixStream>,
+    process_gate_ready: bool,
 }
 
 impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
@@ -382,6 +387,16 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 .and_then(|fault| fault.strip_prefix("reset-wait:").map(str::to_owned))
                 .map(|path| std::os::unix::net::UnixStream::connect(path).expect("reset gate")),
             reset_gate_used: false,
+            process_gate: std::env::var("ECHODE_TEST_FAULT")
+                .ok()
+                .and_then(|fault| fault.strip_prefix("process-wait:").map(str::to_owned))
+                .map(|path| {
+                    let gate = std::os::unix::net::UnixStream::connect(path).expect("process gate");
+                    gate.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                        .expect("process gate timeout");
+                    gate
+                }),
+            process_gate_ready: false,
         })
     }
 
@@ -409,6 +424,16 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
+        if self.process_gate_ready
+            && let Some(mut gate) = self.process_gate.take()
+        {
+            use std::io::{Read, Write};
+            gate.write_all(&[1]).expect("process reached");
+            let mut release = [0];
+            gate.read_exact(&mut release).expect("process release");
+            gate.write_all(&[2]).expect("process finished");
+        }
+        self.process_gate_ready = true;
         match self.fault {
             Fault::Process => return Err(PluginError::Message("process refused")),
             Fault::Crash => std::process::abort(),

@@ -101,6 +101,7 @@
 | UC-44 | パラメーター一覧の読込みに失敗した時、デバイス列から再試行できる | 画面・VO | [ADR 0140](decisions/0140-device-parameter-list-retry.md) | 2026-10-21 |
 | UC-45 | デバイス列が、出力の準備中と一覧の応答待ちを区別して表示する | 画面・VO | [ADR 0141](decisions/0141-device-output-preparation-status.md) | 2026-10-21 |
 | UC-46 | 開いた出力への FX 追加・オフライン解除・コピーの間も編集が続き、音が途切れない | 実機・聴感 | [ADR 0142](decisions/0142-background-plugin-graph-preparation.md) | 2026-10-21 |
+| UC-50 | プラグインが実時間の処理に遅れた時と復帰時に、短い減衰でクリックが和らぎ、別トラックは途切れない。自動の PCM 比較では実機の遅れ方と聴感は分からない | 実機・第三者・聴感 | [ADR 0245](decisions/0245-plugin-deadline-fades.md) | 2026-11-03 |
 
 ## G. 文書とプロジェクト
 

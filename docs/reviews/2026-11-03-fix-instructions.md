@@ -83,6 +83,7 @@ FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-ref
 
 2026-11-03: FCA-06 のミュート・ソロの子孫への反映と入れ子の回帰を [ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md) で接続した。
 音量・パンの意味はユーザーの判断を待ち、バス化とともに残す。
+FCA-08 のトラックごとの 5 ms の減衰・復帰は [ADR 0245](../decisions/0245-plugin-deadline-fades.md) で接続した。実機の聴感は UC-50 に残す。
 
 - FCA-06: エンジンの `Prepared::new` のミュートとソロの計算に、モデルの親子（`Track::parent`）を使う。
   既定は、フォルダのミュートで子孫を無音にし、フォルダのソロで子孫をソロとして扱う。`audit_fca06` を通し、入れ子のフォルダの回帰も足す。

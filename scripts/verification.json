@@ -814,6 +814,25 @@
     {"id": "transport-declick", "runner": "rust", "package": "echode-audio-io", "target": ["--lib"], "test": "stream::tests::contract_stop_preserves_waveform_while_fading_under_rtsan", "timeout": 240, "purpose": "停止・一時停止・取消で素材の実波形をプラグインの手前で5ms減衰し、時計停止とブロック長からの独立性を確認", "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "let gain = crate::declick::stop_gain(u64::from(offset) + index as u64, frames);", "new": "let gain = 1.0 + 0.0 * crate::declick::stop_gain(u64::from(offset) + index as u64, frames);"}},
     {"id": "stop-cleanup", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"], "test": "contract_live_discontinuity_cleanup_never_waits_for_a_reset", "timeout": 240, "purpose": "位置移動と続く停止で破棄するリセット処理を待たず、保留中は時計と新規発音を進めず完了後に再開する", "negative_control": {"file": "crates/echode-engine/src/playback.rs", "old": "let cleanup_deadline = if live { None } else { Some(deadline) };", "new": "let cleanup_deadline = Some(deadline);"}},
     {"id": "plugin-onset", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "hosted_playback"], "test": "contract_plugin_note_onsets_preserve_source_samples_under_rtsan", "timeout": 240, "purpose": "無音からの自然な発音・再発音で、イベント時刻とステレオ波形がプラグイン単体と一致し、ブロック分割でも変わらないことを確認", "negative_control": {"file": "crates/echode-plugin-host/src/events.rs", "old": "buffer.push(&NoteOnEvent::new(\n                    note.time,", "new": "buffer.push(&NoteOnEvent::new(\n                    0,"}},
+    {
+      "id": "plugin-deadline-fade", "runner": "rust", "package": "echode-plugin-host",
+      "target": ["--test", "hosted_playback"],
+      "test": "deadline_fade::contract_a_missed_plugin_block_fades_only_its_track_and_recovers_across_plan_changes",
+      "timeout": 240,
+      "purpose": "隔離ヘルパーの保留で取りこぼしを確定し、対象トラックだけの5msの減衰と復帰、計画交換中の継続と書出しの失敗通知を製品バッファで確認",
+      "negative_controls": [
+        {
+          "file": "crates/echode-engine/src/plugins.rs",
+          "old": "            Run::Missed => {}",
+          "new": "            Run::Missed => { declick.reset(); }"
+        },
+        {
+          "file": "crates/echode-engine/src/playback.rs",
+          "old": "                track.plugin_declick = old.plugin_declick;",
+          "new": "                track.plugin_declick.reset();"
+        }
+      ]
+    },
     {"id": "track-mix-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "MixControlTests", "test": "contractHeaderMixerGesturesPersistOnceAndUndo", "timeout": 240, "purpose": "ヘッダの実マウス入力で、単クリックで値を変えず相対ドラッグで音量・パンを変更し、ミュート・ソロ、ドラッグ1回のUndoと保存・再読込を確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeHeaderView.swift", "old": "mixActions.set(id, field, mix[field].value == 0 ? 1 : 0)", "new": "mixActions.set(id, field, mix[field].value)"}},
     {"id": "clip-mix-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "MixControlTests", "test": "contractClipHandlesPersistGainAndFadesInDocumentTime", "timeout": 240, "purpose": "クリップの実ドラッグからゲインと両端フェードを変更し、時間単位・Undo・保存を確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ArrangeView.swift", "old": "clipDraft = draft; refresh()", "new": "clipDraft = nil; refresh()"}},
     {"id": "mix-clicks-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests", "suite": "ValueControlTests", "test": "contractHeaderDoubleClickResetsAndTripleClickTypesWithOneUndo", "timeout": 240, "purpose": "ヘッダの音量・パンのダブルクリックで既定値を仮表示して間隔後に1回記録し、トリプルクリックで元の値へ戻して入力欄を開き、Return・Escape・Spaceの入力と1回のUndo・保存を確認", "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ValueControl.swift", "old": "            finish(false)\n            type(target)", "new": "            finish(true)\n            type(target)"}},

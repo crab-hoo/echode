@@ -264,6 +264,9 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 イベントの局所的な容量上界は `playback_capacity.rs`、通常の境界回帰は `playback_capacity_tests.rs` と `tests/audit_scale_and_mix.rs` に置く。
 共有領域の密度・拡張・旧発音の解放は `hosted_playback/event_capacity.rs` で製品バッファへ通す（[ADR 0240](decisions/0240-block-local-event-capacity.md)）。
 
+取りこぼしの継ぎ目は `plugin_declick.rs`、実ヘルパーの保留と復帰は `hosted_playback/deadline_fade.rs`、分割長比較は `tests/block_size/plugin_deadline.rs` に置く
+（[ADR 0245](decisions/0245-plugin-deadline-fades.md)）。
+
 ヘルパーの記述子の上限を上げる処理は `echode-sandbox/src/descriptors.rs` に置き、回帰は上限を変えるため専用のバイナリ `tests/descriptor_limit.rs` にする（[ADR 0237](decisions/0237-helper-descriptor-limit.md)）。
 
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
