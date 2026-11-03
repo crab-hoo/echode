@@ -436,14 +436,14 @@ fn usage() -> CliError {
 
 /// Stereo 32-bit IEEE float WAV with WAVEFORMATEX and a frame-count `fact` chunk.
 ///
-/// The complete RIFF chunk, including format metadata, must fit in 4 GiB.
+/// Exports beyond RIFF's 4 GiB size field use RF64 with 64-bit chunk sizes.
 /// Samples are converted in groups and written through [`BufWriter`].
 pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(), CliError> {
     if !interleaved.len().is_multiple_of(2) {
         return Err(CliError::new("wav data must be stereo"));
     }
     let frames = u32::try_from(interleaved.len() / 2)
-        .map_err(|_| CliError::new("wav data does not fit in a 32-bit chunk"))?;
+        .map_err(|_| CliError::new("wav frame count exceeds the renderer's u32 range"))?;
     let mut wav = WavFile::create(path, sample_rate, frames, WavFormat::Float32)?;
     for block in interleaved.chunks(64 * 2) {
         wav.write_block(block)?;
@@ -570,61 +570,71 @@ impl WavFile {
 
 fn wav_header(sample_rate: u32, frames: u32, format: WavFormat) -> Result<Vec<u8>, CliError> {
     let frame_bytes = u32::from(format.frame_bytes());
-    let header_length = match format {
-        WavFormat::Float32 => 58usize,
-        WavFormat::Pcm16 => 44,
-        WavFormat::Pcm24 => 68,
+    let (riff_header_length, bits, subtype) = match format {
+        WavFormat::Float32 => (58u64, 32u16, 3u16),
+        WavFormat::Pcm16 => (44, 16, 1),
+        WavFormat::Pcm24 => (68, 24, 1),
     };
-    let data_bytes = frames
-        .checked_mul(frame_bytes)
-        .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
-    let riff_size = data_bytes
-        .checked_add(header_length as u32 - 8)
-        .ok_or_else(|| CliError::new("wav data does not fit in a 32-bit chunk"))?;
+    // The renderer's u32 frame count times a stereo frame always fits u64.
+    let data_bytes = u64::from(frames) * u64::from(frame_bytes);
+    let rf64 = data_bytes + riff_header_length - 8 > u64::from(u32::MAX);
+    let float = matches!(format, WavFormat::Float32);
+    let extensible = rf64 || matches!(format, WavFormat::Pcm24);
+    let header_length = if rf64 {
+        if float { 116 } else { 104 }
+    } else {
+        riff_header_length
+    };
+    let riff_size = data_bytes + header_length - 8;
     let byte_rate = sample_rate
         .checked_mul(frame_bytes)
         .ok_or_else(|| CliError::new("sample rate does not fit in the wav header"))?;
-    let mut header = vec![0u8; header_length];
-    header[0..4].copy_from_slice(b"RIFF");
-    header[4..8].copy_from_slice(&riff_size.to_le_bytes());
-    header[8..12].copy_from_slice(b"WAVE");
-    header[12..16].copy_from_slice(b"fmt ");
-    header[22..24].copy_from_slice(&2u16.to_le_bytes());
-    header[24..28].copy_from_slice(&sample_rate.to_le_bytes());
-    header[28..32].copy_from_slice(&byte_rate.to_le_bytes());
-    header[32..34].copy_from_slice(&format.frame_bytes().to_le_bytes());
-    match format {
-        WavFormat::Float32 => {
-            header[16..20].copy_from_slice(&18u32.to_le_bytes());
-            header[20..22].copy_from_slice(&3u16.to_le_bytes());
-            header[34..36].copy_from_slice(&32u16.to_le_bytes());
-            // WAVEFORMATEX cbSize remains zero.
-            header[38..42].copy_from_slice(b"fact");
-            header[42..46].copy_from_slice(&4u32.to_le_bytes());
-            header[46..50].copy_from_slice(&frames.to_le_bytes());
-        }
-        WavFormat::Pcm16 => {
-            // Canonical WAVE_FORMAT_PCM needs no extension or fact chunk.
-            header[16..20].copy_from_slice(&16u32.to_le_bytes());
-            header[20..22].copy_from_slice(&1u16.to_le_bytes());
-            header[34..36].copy_from_slice(&16u16.to_le_bytes());
-        }
-        WavFormat::Pcm24 => {
-            // WAVEFORMATEXTENSIBLE makes >16-bit PCM and the stereo layout explicit.
-            header[16..20].copy_from_slice(&40u32.to_le_bytes());
-            header[20..22].copy_from_slice(&0xfffeu16.to_le_bytes());
-            header[34..36].copy_from_slice(&24u16.to_le_bytes());
-            header[36..38].copy_from_slice(&22u16.to_le_bytes()); // cbSize.
-            header[38..40].copy_from_slice(&24u16.to_le_bytes()); // Valid bits.
-            header[40..44].copy_from_slice(&3u32.to_le_bytes()); // Front left/right.
-            header[44..60].copy_from_slice(&[
-                1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
-            ]); // KSDATAFORMAT_SUBTYPE_PCM.
-        }
+    let mut header = Vec::with_capacity(header_length as usize);
+    header.extend_from_slice(if rf64 { b"RF64" } else { b"RIFF" });
+    header.extend_from_slice(&(if rf64 { u32::MAX } else { riff_size as u32 }).to_le_bytes());
+    header.extend_from_slice(b"WAVE");
+    if rf64 {
+        // EBU Tech 3306: ds64 is first and replaces both 0xffffffff size sentinels.
+        header.extend_from_slice(b"ds64");
+        header.extend_from_slice(&28u32.to_le_bytes());
+        header.extend_from_slice(&riff_size.to_le_bytes());
+        header.extend_from_slice(&data_bytes.to_le_bytes());
+        header.extend_from_slice(&u64::from(frames).to_le_bytes());
+        header.extend_from_slice(&0u32.to_le_bytes()); // No additional large chunks.
     }
-    let data_chunk = header_length - 8;
-    header[data_chunk..data_chunk + 4].copy_from_slice(b"data");
-    header[data_chunk + 4..].copy_from_slice(&data_bytes.to_le_bytes());
+    header.extend_from_slice(b"fmt ");
+    let format_length = if extensible {
+        40u32
+    } else if float {
+        18
+    } else {
+        16
+    };
+    header.extend_from_slice(&format_length.to_le_bytes());
+    header.extend_from_slice(&(if extensible { 0xfffeu16 } else { subtype }).to_le_bytes());
+    header.extend_from_slice(&2u16.to_le_bytes());
+    header.extend_from_slice(&sample_rate.to_le_bytes());
+    header.extend_from_slice(&byte_rate.to_le_bytes());
+    header.extend_from_slice(&format.frame_bytes().to_le_bytes());
+    header.extend_from_slice(&bits.to_le_bytes());
+    if extensible {
+        // RF64 uses WAVEFORMATEXTENSIBLE for PCM and IEEE float alike.
+        header.extend_from_slice(&22u16.to_le_bytes()); // cbSize.
+        header.extend_from_slice(&bits.to_le_bytes()); // Valid bits.
+        header.extend_from_slice(&3u32.to_le_bytes()); // Front left/right.
+        header.extend_from_slice(&u32::from(subtype).to_le_bytes());
+        header.extend_from_slice(&[0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]);
+    } else if float {
+        header.extend_from_slice(&0u16.to_le_bytes()); // WAVEFORMATEX cbSize.
+    }
+    if float {
+        header.extend_from_slice(b"fact");
+        header.extend_from_slice(&4u32.to_le_bytes());
+        header.extend_from_slice(&(if rf64 { u32::MAX } else { frames }).to_le_bytes());
+    }
+    header.extend_from_slice(b"data");
+    header.extend_from_slice(&(if rf64 { u32::MAX } else { data_bytes as u32 }).to_le_bytes());
+    debug_assert_eq!(header.len(), header_length as usize);
     Ok(header)
 }
 
@@ -654,6 +664,10 @@ fn sync_parent(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 #[path = "wav_tests.rs"]
 mod wav_tests;
+
+#[cfg(test)]
+#[path = "rf64_tests.rs"]
+mod rf64_tests;
 
 #[cfg(test)]
 mod tail_tests {

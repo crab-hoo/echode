@@ -195,8 +195,12 @@ fn pcm16_cli_rejects_invalid_headers_without_replacing_output() {
     for (rate, frames, message) in [
         (0, 1, "invalid sample rate"),
         (u32::MAX / 4 + 1, 0, "sample rate does not fit"),
-        (48_000, (u32::MAX - 36) / 4 + 1, "wav data does not fit"),
-        (48_000, u32::MAX, "wav data does not fit"),
+        (
+            u32::MAX / 4 + 1,
+            (u32::MAX - 36) / 4 + 1,
+            "sample rate does not fit",
+        ),
+        (u32::MAX / 4 + 1, u32::MAX, "sample rate does not fit"),
     ] {
         let output = render(&directory.0, &wav, rate, frames, "pcm16");
         assert_eq!(output.status.code(), Some(2));

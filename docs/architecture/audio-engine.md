@@ -103,6 +103,8 @@ float は 18 バイトの `fmt` とフレーム数の `fact`、PCM24 は 40 バ�
 PCM16 は形式コード 1・16 バイトの `fmt` を持ち、拡張と `fact` は付けない。
 PCM の丸め・飽和と出力保全は [ADR 0247](../decisions/0247-pcm24-wav-export.md)・[ADR 0248](../decisions/0248-pcm16-wav-export.md)、
 float の基準音声の保持は [ADR 0243](../decisions/0243-float-wav-metadata.md) に定める。
+大容量は RF64 に自動切替し、64 bit の長さ・フレーム数を `ds64`、全形式の `fmt` を WAVEFORMATEXTENSIBLE にする。
+RIFF 範囲内のバイト列は変えず、レンダラーの u32 フレーム数は拡張しない（[ADR 0249](../decisions/0249-rf64-wav-export.md)）。
 
 ### 7.8 プレビュー用キャッシュ
 

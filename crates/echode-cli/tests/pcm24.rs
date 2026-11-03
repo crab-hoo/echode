@@ -195,7 +195,7 @@ fn compare_formats(package: &Path, project: &Project, frames: u32) {
 }
 
 #[test]
-fn pcm24_cli_rejects_invalid_options_and_oversized_riff_without_replacing_output() {
+fn pcm24_cli_rejects_invalid_options_and_headers_without_replacing_output() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
     let wav = directory.0.join("keep.wav");
@@ -206,10 +206,10 @@ fn pcm24_cli_rejects_invalid_options_and_oversized_riff_without_replacing_output
         (0, 1, "pcm24", "invalid sample rate"),
         (u32::MAX / 6 + 1, 0, "pcm24", "sample rate does not fit"),
         (
-            48_000,
+            u32::MAX / 6 + 1,
             (u32::MAX - 60) / 6 + 1,
             "pcm24",
-            "wav data does not fit",
+            "sample rate does not fit",
         ),
     ] {
         let output = render(&directory.0, &wav, rate, frames, Some(format));

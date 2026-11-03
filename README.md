@@ -154,7 +154,8 @@ target/release/echode render Song.echode mix.wav --format pcm24 --sample-rate 48
 PCM はフルスケールで飽和し、ディザやノーマライズはしません。
 `--frames N` を省略すると曲の終端とプラグインの申告する余韻を含めます。無限の余韻には明示した長さが必要です。
 失敗時は既存の出力を保ち、完成後のディレクトリ同期だけが失敗した場合は出力を残して耐久性不明を返します。
-4 GiB 超の RIFF、GUI の書出し画面、設定保存は未対応です（[ADR 0248](docs/decisions/0248-pcm16-wav-export.md)）。
+RIFF の長さが 4 GiB のサイズ欄を超えると、拡張子はそのままで RF64 へ自動で切り替えます。
+フレーム数は最大 `u32::MAX` のままで、GUI の書出し画面、設定保存は未対応です（[ADR 0249](docs/decisions/0249-rf64-wav-export.md)）。
 
 ## MCP でヘッドレスのセッションへ接続する
 

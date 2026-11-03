@@ -3,7 +3,7 @@
 use super::{WavFile, WavFormat, wav_header};
 
 // Fault injection is process-wide; every file-writing test must hold this lock.
-static WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) static WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn riff_size_includes_the_extended_format_and_fact_chunks_at_the_limit() {
@@ -22,14 +22,6 @@ fn riff_size_includes_the_extended_format_and_fact_chunks_at_the_limit() {
         u32::from_le_bytes(header[54..58].try_into().unwrap()),
         frames * 8
     );
-    for too_many in [frames + 1, u32::MAX] {
-        assert!(
-            wav_header(48_000, too_many, WavFormat::Float32)
-                .unwrap_err()
-                .to_string()
-                .contains("wav data does not fit in a 32-bit chunk")
-        );
-    }
 }
 
 #[test]
@@ -61,14 +53,6 @@ fn pcm24_riff_and_byte_rate_limits_use_six_bytes_per_frame() {
         u32::from_le_bytes(header[64..68].try_into().unwrap()),
         frames * 6
     );
-    for too_many in [frames + 1, u32::MAX] {
-        assert!(
-            wav_header(48_000, too_many, WavFormat::Pcm24)
-                .unwrap_err()
-                .to_string()
-                .contains("wav data does not fit in a 32-bit chunk")
-        );
-    }
     let rate = u32::MAX / 6;
     let header = wav_header(rate, 0, WavFormat::Pcm24).unwrap();
     assert_eq!(
@@ -96,14 +80,6 @@ fn pcm16_riff_and_byte_rate_limits_use_four_bytes_per_frame() {
         u32::from_le_bytes(header[40..44].try_into().unwrap()),
         frames * 4
     );
-    for too_many in [frames + 1, u32::MAX] {
-        assert!(
-            wav_header(48_000, too_many, WavFormat::Pcm16)
-                .unwrap_err()
-                .to_string()
-                .contains("wav data does not fit in a 32-bit chunk")
-        );
-    }
     let rate = u32::MAX / 4;
     let header = wav_header(rate, 0, WavFormat::Pcm16).unwrap();
     assert_eq!(

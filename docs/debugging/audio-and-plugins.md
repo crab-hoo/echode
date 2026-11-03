@@ -157,19 +157,29 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 
 ### float WAV を読み手が拒否する・ヘッダ変更後に音声の比較がずれる
 
-`wav_header` の `fmt` は形式コード 3・18 バイト・`cbSize=0`、`fact` は 4 バイトのフレーム数である。
+RIFF 範囲の float の `fmt` は形式コード 3・18 バイト・`cbSize=0`、`fact` は 4 バイトのフレーム数である。
 `audit_wav` は RIFF のサイズと空・短い・複数ブロックの書き出しを調べる。固定の 44 バイトを飛ばして読むと、追加したメタデータを音声と誤認する。
 `tests/support/mod.rs::chunk` で `data` を取り出し、コミット済み基準の全バイトと比較する。差がコンテナだけなら `make bless` は不要。
-長い書き出しの `wav data does not fit in a 32-bit chunk` は、メタデータ込みの RIFF 長の上限であり、RF64 への切替は未実装である。
-再現時はフレーム数・サンプルレート・読み手の名称とエラーを残し、音声の差・形式の拒否・容量超過を分ける（[ADR 0243](../decisions/0243-float-wav-metadata.md)）。
+再現時はフレーム数・サンプルレート・読み手の名称とエラーを残し、音声の差と形式の拒否を分ける（[ADR 0243](../decisions/0243-float-wav-metadata.md)）。
 
-`--format pcm24` の `fmt` は 40 バイト・形式コード `0xfffe`・24 bit・PCM subtype で、`fact` はない。
-`--format pcm16` は 16 バイトの `fmt`・形式コード 1・16 bit で、拡張と `fact` はない。
+RIFF 範囲の `--format pcm24` の `fmt` は 40 バイト・形式コード `0xfffe`・24 bit・PCM subtype で、`fact` はない。
+RIFF 範囲の `--format pcm16` は 16 バイトの `fmt`・形式コード 1・16 bit で、拡張と `fact` はない。
 `tests/pcm16.rs`・`tests/pcm24.rs` は実 CLI の形式と独立した AudioToolbox の読込み、float との差を比較する。
 PCM の飽和と半 LSB の丸めは仕様で、ディザはしない。非有限値の拒否・上限・出力保全は `src/wav_tests.rs` も確認する。
 形式が違う出力を float として比較せず、再現には `--format` も残す（[ADR 0248](../decisions/0248-pcm16-wav-export.md)）。
 単体テストで正常系が `export durability is unknown` になり、故障系が予想外に成功する場合は、`arm_wav_fault` の共有を確認する。
-故障はプロセス全体に効くため、`wav_tests.rs` の全ファイル書込みは同じ `WRITER` mutex を取り、故障テストと直列化する。
+故障はプロセス全体に効くため、`wav_tests.rs` / `rf64_tests.rs` の全ファイル書込みは同じ `WRITER` mutex を取り、故障テストと直列化する。
+
+### 大きな WAV が RF64 になる・読み手が長さを誤認する
+
+メタデータ込みの RIFF 長が u32 を超えると、全形式が RF64 に自動切替する。拡張子は変えない。
+先頭の `ds64` に 64 bit の RIFF 長・データ長・フレーム数を置き、32 bit の RIFF 長と `data` 長は `0xffffffff` とする。
+`fmt` は全形式で 40 バイトの WAVEFORMATEXTENSIBLE、float の `fact` は `0xffffffff` とし、実フレーム数は `ds64` を使う。
+古い読み手が RF64 に対応しない時は、RIFF の上限内まで長さを短くして形式の拒否と音声の差を区別する。
+`src/rf64_tests.rs` は 4 GiB 超の疎ファイルを `AudioFileReader` で開き、先頭・中間・末尾の左右と EOF を検査する。
+`tests/rf64.rs` は CLI の最初のブロック後に書込み失敗を入れ、巨大な出力なしで原本と `.part` の除去を確認する。
+大容量の拒否を期待した古いテストをそのまま走らせると、RF64 では数 GiB の実書込みになる。長さだけの拒否は期待せず、故障注入か疎ファイルへ置き換える。
+容量計算は u64 だが、レンダラーのフレーム数は `u32::MAX` のままである（[ADR 0249](../decisions/0249-rf64-wav-export.md)）。
 
 ### オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
 

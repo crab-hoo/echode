@@ -124,18 +124,18 @@ fn zero_frame_exports_keep_float_metadata_with_and_without_plugins() {
 }
 
 #[test]
-fn oversized_riff_export_preserves_the_existing_destination() {
+fn invalid_rf64_byte_rate_preserves_the_existing_destination() {
     let directory = scratch();
     write_package(&directory, &Project::new()).unwrap();
     let wav = directory.join("too-long.wav");
     std::fs::write(&wav, b"keep").unwrap();
-    // The data fits u32; the complete RIFF chunk does not. No huge buffer is made.
+    // The complete RIFF chunk overflows; RF64 still must reject an invalid byte rate.
     let frames = (u32::MAX - 50) / 8 + 1;
-    let error = render_to_wav(&directory, &wav, 48_000, Some(frames)).unwrap_err();
+    let error = render_to_wav(&directory, &wav, u32::MAX, Some(frames)).unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("wav data does not fit in a 32-bit chunk")
+            .contains("sample rate does not fit in the wav header")
     );
     assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
     assert!(part_files(&directory).is_empty());
@@ -908,8 +908,10 @@ fn audit_rea06_failed_plugin_export_preserves_existing_output() {
     let error = render_to_wav(&directory, &wav, u32::MAX, Some(16)).unwrap_err();
     assert!(error.to_string().contains("sample rate"), "{error}");
     assert_eq!(std::fs::read(&wav).unwrap(), prior);
+    // RF64 accepts this length; abort streaming rather than render hours of plugin audio.
+    arm_wav_fault(WAV_FAULT_WRITE, 1);
     let error = render_to_wav(&directory, &wav, 48_000, Some(u32::MAX)).unwrap_err();
-    assert!(error.to_string().contains("32-bit"), "{error}");
+    assert_eq!(error.to_string(), "wav write failed");
     assert_eq!(std::fs::read(&wav).unwrap(), prior);
     assert_eq!(export_lines_for_test(), lines);
 

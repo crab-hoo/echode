@@ -117,6 +117,7 @@ PDC と log・thread-check 等は残り、実画面と第三者の報告値は U
   `crates/echode-cli/tests/render.rs` などの 44 バイトのヘッダの期待値も直す。RF64 と整数形式は別の作業単位にする。
   2026-11-03: ヘッダと回帰は [ADR 0243](../decisions/0243-float-wav-metadata.md) で対応した。RF64・整数形式は未着手。
   追加対応: CLI の 24 bit PCM は [ADR 0247](../decisions/0247-pcm24-wav-export.md)。RF64・16 bit・ディザは別の単位として残す。
+  追加対応: PCM16 は [ADR 0248](../decisions/0248-pcm16-wav-export.md)、RF64 は [ADR 0249](../decisions/0249-rf64-wav-export.md)。ディザは未接続である。
 - FCA-17〜20: 監査の修正方針に従う。FCA-18 の保管の形式、FCA-19 のメモリの予算、FCA-20 の走査の期限は、ADR とユーザーの確認を先にする。
 
 ## 実行役が決めないこと
