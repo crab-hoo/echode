@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -188,6 +188,8 @@ pub fn append_journal(
 }
 
 /// Drops an incomplete trailing record and syncs that shorter file.
+/// Complete logs need only a one-byte check; torn tails are scanned backwards
+/// in bounded scratch without buffering the whole log.
 pub(crate) fn repair_journal(directory: &Path) -> Result<(), PackageError> {
     let root = open_package(directory)?;
     let path = directory.join("journal.jsonl");
@@ -200,13 +202,32 @@ pub(crate) fn repair_journal(directory: &Path) -> Result<(), PackageError> {
     let mut file = root
         .open_file("journal.jsonl", true, false)
         .map_err(|error| io_error(&path, error))?;
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|error| io_error(&path, error))?;
-    let committed = committed_journal(&bytes);
-    if committed.len() == bytes.len() {
+    let end = file
+        .seek(SeekFrom::End(0))
+        .map_err(|error| io_error(&path, error))?;
+    let mut committed = end;
+    // This is scan scratch, not a limit on the journal or a record's length.
+    let mut scratch = [0u8; 4096];
+    let mut count = 1;
+    while committed > 0 {
+        let start = committed.saturating_sub(count);
+        let bytes = &mut scratch[..(committed - start) as usize];
+        file.seek(SeekFrom::Start(start))
+            .and_then(|_| file.read_exact(bytes))
+            .map_err(|error| io_error(&path, error))?;
+        #[cfg(test)]
+        journal_tests::record_read(bytes.len());
+        if let Some(index) = bytes.iter().rposition(|byte| *byte == b'\n') {
+            committed = start + index as u64 + 1;
+            break;
+        }
+        committed = start;
+        count = scratch.len() as u64;
+    }
+    if committed == end {
         return Ok(());
     }
-    file.set_len(committed.len() as u64)
+    file.set_len(committed)
         .map_err(|error| io_error(&path, error))?;
     file.sync_all().map_err(|error| io_error(&path, error))?;
     Ok(())
@@ -1577,6 +1598,10 @@ struct ExpressionPointFile {
     at: i64,
     value: i32,
 }
+
+#[cfg(test)]
+#[path = "journal_tests.rs"]
+mod journal_tests;
 
 #[cfg(test)]
 mod tests {

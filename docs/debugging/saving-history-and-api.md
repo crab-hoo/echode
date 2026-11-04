@@ -118,6 +118,15 @@ ABI の値だけが違う場合は FFI の `snapshot_fields_tests.rs` と `Snaps
 子の解決・不変条件の検証を迂回して値の一致だけを合格にしない。新しいログや収集先はない
 （[ADR 0226](../decisions/0226-model-field-registry-completion.md)）。
 
+### 編集を重ねるとジャーナルの追記前確認が遅くなる
+
+原本をコピーして保全し、`journal.jsonl` のバイト数と、末尾が改行で終わるかを記録する。中身を診断へ自動収集しない。
+`document.rs` の `repair_journal` は通常は 1 バイトだけを読み、未完の末尾があれば 4 KiB ずつ後ろへ探す（[ADR 0252](../decisions/0252-bounded-journal-tail-repair.md)）。
+改行のない長い末尾はその長さに比例して読むが、完全なログの全件読込みは不要である。
+`cargo test -q -p echode-history --lib document::journal_tests` は製品の追記経路で読取バイト数と修復後の復旧を確認する。
+これは経過時間の計測ではない。1 編集ごとの `File::sync_all`（macOS の `F_FULLFSYNC`）の待ちや、計画の全体再生成（FCA-04）とは分ける。
+完結した不正行は消さず、次の復旧の節で調べる。同期を省略したり、原本のジャーナルを手で短縮したりして応答を速めない。
+
 ### 開き直すと確定済みの編集が消えている・古い状態で開く・開けない
 
 警告または C ABI の `historyReport.recovery` の `tip`・`base`・`applied_seq` で、先端からの後退を確認する。

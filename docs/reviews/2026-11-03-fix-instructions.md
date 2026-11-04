@@ -112,6 +112,7 @@ PDC と log・thread-check 等は残り、実画面と第三者の報告値は U
   `scripts/check-ffi.sh` を関数名の単位にする時は、検査のスクリプトの変更として全自動検査が選ばれる。
 - FCA-13: 時間の換算を依存のない 1 つの crate にまとめる。丸めの結果が変わらないことを、既存の時間のテストと `block_size.rs` で確かめる。
 - FCA-14: `repair_journal` は末尾だけを読む。続く編集のまとめ書きは確定の意味に触れるので、ADR とユーザーの確認を先にする。
+  2026-11-03: 末尾確認は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で対応した。編集ごとの同期は維持し、まとめ書きは行わない。
 - FCA-15: Sine Pad の DSP を Sine Pad の crate か小さな DSP の crate へ移し、`TestSynth` の名前を直す。Sine Pad の状態と音は変えない。
 - FCA-16: `crates/echode-cli/src/lib.rs` の `wav_header` を 18 バイトの `fmt` と `fact` にし、`audit_fca16` を通す。
   `crates/echode-cli/tests/render.rs` などの 44 バイトのヘッダの期待値も直す。RF64 と整数形式は別の作業単位にする。
