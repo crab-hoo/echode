@@ -335,6 +335,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
 - 設定とパッケージ内の記憶・旧パス設定の読取りは `ExportSettings.swift`、専用パッケージの準備と別プロセスの寿命は `ExportJob.swift`、画面は `WorkspaceExportView.swift`。
 - 数値入力の下書きと全入力の検証は `ExportSettingsDraft.swift`。`ExportInputTests` が実シートのフィールドエディターを通し、`ExportSettingsDraftTests` がロケール・有限性・丸め境界を確認する。
   必須契約は `export-input-ui`（[ADR 0262](decisions/0262-export-numeric-drafts.md)）。既存の `check-swift`・`check-product-contracts` から実行する。
+- 共通の既定設定も `ExportSettings.swift` が版付きで保持する。`WorkspaceExportView` の保存・適用・初期化は共通値と下書きだけを変え、前回値・履歴を変えない。
+  `ExportDefaultsTests` と必須契約 `export-defaults-ui` が優先順・不正値・文書交換を検査する（[ADR 0263](decisions/0263-common-export-defaults.md)）。
 - `HistoryCommand.exportSnapshot` が文書ワーカーへ渡り、`echode-history/src/export.rs` が記録済みの `Project` と参照するオブジェクトだけをコピーする。
 - `ExportTests.swift`・`ExportBoundaryTests.swift` と履歴の `tests/export.rs` が、元文書との独立・設定・拒否・失敗時の保持を検査する。
   必須契約は `export-snapshot-ui`、判断と残る範囲は [ADR 0254](decisions/0254-gui-snapshot-export.md)。

@@ -48,15 +48,36 @@ struct ExportSettings: Codable, Sendable, Equatable {
         return stored.settings
     }
 
+    private static let commonDefaultKey = "workspace.export.default.v1"
+
+    static func factoryDefault(initialRate: UInt32 = 48_000) -> Self {
+        var settings = Self()
+        settings.sampleRate = initialRate > 0 ? initialRate : 48_000
+        return settings
+    }
+
+    static func commonDefault(defaults: UserDefaults = .standard, initialRate: UInt32 = 48_000) -> Self {
+        decodeStored(defaults.string(forKey: commonDefaultKey)) ?? factoryDefault(initialRate: initialRate)
+    }
+
+    @discardableResult
+    func saveAsDefault(defaults: UserDefaults = .standard) -> Bool {
+        guard let json = storedJSON else { return false }
+        defaults.set(json, forKey: Self.commonDefaultKey)
+        return true
+    }
+
+    static func resetCommonDefault(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: commonDefaultKey)
+    }
+
     private static func key(_ project: URL) -> String {
         "workspace.export.v1." + project.resolvingSymlinksInPath().path
     }
     static func load(project: URL, defaults: UserDefaults = .standard, initialRate: UInt32 = 48_000) -> Self {
         if let data = defaults.data(forKey: key(project)),
            let settings = try? JSONDecoder().decode(Self.self, from: data), settings.isValid { return settings }
-        var settings = Self()
-        settings.sampleRate = initialRate > 0 ? initialRate : 48_000
-        return settings
+        return commonDefault(defaults: defaults, initialRate: initialRate)
     }
     func save(project: URL, defaults: UserDefaults = .standard) {
         guard isValid, let data = try? JSONEncoder().encode(self) else { return }

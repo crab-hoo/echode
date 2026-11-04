@@ -342,6 +342,7 @@ CLI の出力先も元パッケージの外へ限定し、復旧前に原本の�
 GUI もスナップショット準備前に出力の親を解決・固定し、リンクの切替による元パッケージへの転送を防ぐ（[ADR 0260](decisions/0260-pinned-gui-export-destination.md)）。
 完了後の明示的な Finder 表示を接続した（[ADR 0261](decisions/0261-reveal-export-output.md)）。実画面・VoiceOver は UC-58 の確認待ちである。
 数値欄は入力中の文字列を保持し、不正な有効欄は理由を示して開始を拒否する（[ADR 0262](decisions/0262-export-numeric-drafts.md)）。
+この Mac の共通既定設定の保存・適用・初期化を接続した。プロジェクトの前回値を優先し、共通値は別の Mac へ移さない（[ADR 0263](decisions/0263-common-export-defaults.md)）。
 
 - 各種形式、ステム、LUFS 等のノーマライズ、SRC の選択、プリセット、テンプレート、再リンク、収集して保存、履歴 UI（一覧・復帰・変更要約・タグ）、定期バックアップを接続する。
 - 初期の書出しは曲全体のミックス 1 ファイル（ミュート・ソロ・関連 FX・末尾の余韻調整を反映、初回は WAV・24 bit・プロジェクトのサンプルレート、以後は前回の設定を保持）とし、CLI の別プロセスで処理する（[書き出し](interaction-design.md#書き出し)）。

@@ -76,6 +76,16 @@
   ],
   "product_contracts": [
     {
+      "id": "export-defaults-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportDefaultsTests", "test": "contractDefaultsUseValidatedInputWithoutChangingProjectHistory", "timeout": 180,
+      "purpose": "書出しシートの検証済み入力だけを共通既定設定へ保存し、別プロジェクトへの適用・前回値と履歴からの独立・古い文書の拒否を機器なしで確認する",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportSettings.swift", "old": "defaults.set(json, forKey: Self.commonDefaultKey)", "new": "_ = json"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceExportView.swift", "old": "let settings = validatedSettings, settings.saveAsDefault", "new": "let settings = Optional(draft.options), settings.saveAsDefault"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportSettings.swift", "old": "return commonDefault(defaults: defaults, initialRate: initialRate)", "new": "return factoryDefault(initialRate: initialRate)"}
+      ]
+    },
+    {
       "id": "export-input-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportInputTests", "test": "contractInvalidNumericTextCannotExportThePreviousValue", "timeout": 180,
       "purpose": "実シートのネイティブ入力から不正なレート・余韻・ピーク目標を拒否し、修正した値だけを CLI 引数へ渡すことを機器なしで確認する",

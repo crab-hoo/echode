@@ -1,6 +1,34 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Use Default": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Use Default" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "既定設定を使う" } }
+    } },
+    "Save as Default": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Save as Default" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "既定設定として保存" } }
+    } },
+    "Reset Default": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Reset Default" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "既定設定を初期化" } }
+    } },
+    "Defaults apply on this Mac to projects without previous export settings.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Defaults apply on this Mac to projects without previous export settings." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "この Mac で、前回の書出し設定がないプロジェクトに適用します。" } }
+    } },
+    "Default export settings loaded.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Default export settings loaded." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しの既定設定を読み込みました。" } }
+    } },
+    "Default export settings saved on this Mac.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Default export settings saved on this Mac." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "この Mac に書出しの既定設定を保存しました。" } }
+    } },
+    "Factory export defaults restored on this Mac.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Factory export defaults restored on this Mac." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "この Mac の書出しの既定設定を初期化しました。" } }
+    } },
     "Details": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Details" } },
       "ja": { "stringUnit": { "state": "translated", "value": "詳細" } }

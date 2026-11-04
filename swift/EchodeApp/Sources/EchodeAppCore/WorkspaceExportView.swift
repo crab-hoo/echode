@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Observation
 import UniformTypeIdentifiers
 
 @MainActor
@@ -9,18 +10,28 @@ struct WorkspaceExportView: View {
     let close: () -> Void
     private let document: DocumentID?
     private let project: URL?
+    private let defaults: UserDefaults
+    private let initialRate: UInt32
     @Environment(\.locale) private var locale
     @State private var draft: ExportSettingsDraft
-    @State private var choosingOutput = false
-    @State private var loadingSettings = true
+    @MainActor @Observable
+    fileprivate final class Presentation {
+        var choosingOutput = false
+        var loadingSettings = true
+        var defaultsMessage: String?
+    }
+    @State private var presentation: Presentation
 
-    init(controller: ProjectController, job: ExportJob, close: @escaping () -> Void) {
-        self.controller = controller; self.job = job; self.close = close
+    init(controller: ProjectController, job: ExportJob, defaults: UserDefaults = .standard, close: @escaping () -> Void) {
+        self.controller = controller; self.job = job; self.defaults = defaults; self.close = close
         document = controller.documentID; project = controller.projectURL
+        let rate = controller.audio.activeDevice?.sampleRate ?? 48_000
+        initialRate = rate
         let settings = controller.projectURL.map {
-            ExportSettings.load(project: $0, initialRate: controller.audio.activeDevice?.sampleRate ?? 48_000)
-        } ?? ExportSettings()
+            ExportSettings.load(project: $0, defaults: defaults, initialRate: rate)
+        } ?? ExportSettings.commonDefault(defaults: defaults, initialRate: rate)
         _draft = State(initialValue: ExportSettingsDraft(settings: settings))
+        _presentation = State(initialValue: Presentation())
     }
 
     var validatedSettings: ExportSettings? { try? draft.resolve(locale: locale).get() }
@@ -34,7 +45,7 @@ struct WorkspaceExportView: View {
             HStack {
                 Text(text("Export Audio")).font(.headline)
                 Spacer()
-                if loadingSettings { ProgressView().controlSize(.small).accessibilityLabel(text("Loading export settings")) }
+                if presentation.loadingSettings { ProgressView().controlSize(.small).accessibilityLabel(text("Loading export settings")) }
             }.frame(height: 20)
             Text(text("Whole song · Stereo WAV · Recorded mix and effects")).foregroundStyle(.secondary)
             Form {
@@ -54,28 +65,58 @@ struct WorkspaceExportView: View {
                 )).accessibilityIdentifier("export.normalize")
                 TextField(text("Peak target (dBFS, −120…0)"), text: $draft.peakDb)
                     .disabled(draft.options.normalizePeakDb == nil).accessibilityIdentifier("export.peak")
-            }.disabled(loadingSettings)
-            if !loadingSettings, let validationMessage {
+            }.disabled(presentation.loadingSettings)
+            if !presentation.loadingSettings, let validationMessage {
                 Text(validationMessage).font(.caption).foregroundStyle(.red)
                     .accessibilityIdentifier("export.validation")
             }
+            HStack {
+                Button(text("Use Default"), action: useCommonDefault).accessibilityIdentifier("export.defaults.load")
+                Button(text("Save as Default"), action: saveCommonDefault)
+                    .disabled(validatedSettings == nil).accessibilityIdentifier("export.defaults.save")
+                Button(text("Reset Default"), action: resetCommonDefault).accessibilityIdentifier("export.defaults.reset")
+            }.controlSize(.small).disabled(!canChangeDefaults)
+            Text(text(presentation.defaultsMessage ?? "Defaults apply on this Mac to projects without previous export settings."))
+                .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("export.defaults.status")
             Text(text("Export uses a private snapshot. Editing and playback can continue after preparation."))
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button(text("Cancel"), action: close).keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(text("Export Audio"), action: chooseOutput).keyboardShortcut(.defaultAction)
-                    .disabled(loadingSettings || validatedSettings == nil || choosingOutput || job.running || !controller.acceptsInput(document))
+                    .disabled(presentation.loadingSettings || validatedSettings == nil || presentation.choosingOutput || job.running || !controller.acceptsInput(document))
                     .accessibilityIdentifier("export.start")
             }
         }.padding(24).frame(width: 460)
             .onChange(of: draft.options.format) { _, format in if format == .float32 { draft.options.tpdf = false } }
-            .interactiveDismissDisabled(choosingOutput)
+            .interactiveDismissDisabled(presentation.choosingOutput)
             .task {
-                guard let document, let loaded = await controller.loadExportSettings(documentID: document) else { return }
+                guard let document, let loaded = await controller.loadExportSettings(documentID: document, defaults: defaults) else { return }
                 draft.reset(settings: loaded, locale: locale)
-                loadingSettings = false
+                presentation.loadingSettings = false
             }
+    }
+
+    private var canChangeDefaults: Bool {
+        !presentation.loadingSettings && !presentation.choosingOutput && controller.acceptsInput(document)
+    }
+
+    func useCommonDefault() {
+        guard canChangeDefaults else { return }
+        draft.reset(settings: .commonDefault(defaults: defaults, initialRate: initialRate), locale: locale)
+        presentation.defaultsMessage = "Default export settings loaded."
+    }
+
+    func saveCommonDefault() {
+        guard canChangeDefaults, let settings = validatedSettings, settings.saveAsDefault(defaults: defaults) else { return }
+        presentation.defaultsMessage = "Default export settings saved on this Mac."
+    }
+
+    func resetCommonDefault() {
+        guard canChangeDefaults else { return }
+        ExportSettings.resetCommonDefault(defaults: defaults)
+        draft.reset(settings: .factoryDefault(initialRate: initialRate), locale: locale)
+        presentation.defaultsMessage = "Factory export defaults restored on this Mac."
     }
 
     private func chooseOutput() {
@@ -84,12 +125,12 @@ struct WorkspaceExportView: View {
         panel.title = text("Export Audio"); panel.allowedContentTypes = [.wav]
         panel.nameFieldStringValue = project.deletingPathExtension().lastPathComponent + ".wav"
         panel.canCreateDirectories = true
-        choosingOutput = true
+        presentation.choosingOutput = true
         panel.begin { response in
-            choosingOutput = false
+            presentation.choosingOutput = false
             guard response == .OK, let output = panel.url else { return }
             close()
-            job.start(controller: controller, document: document, project: project, output: output, settings: captured)
+            job.start(controller: controller, document: document, project: project, output: output, settings: captured, defaults: defaults)
         }
     }
 }
