@@ -88,6 +88,18 @@
       "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "await onProgress(update)", "new": "_ = update"}
     },
     {
+      "id": "export-cancellation-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportCancellationTests", "test": "contractCancellationSurvivesClosedProgressAndDocumentExchange", "timeout": 180,
+      "purpose": "GUI の取消を stdout 閉鎖後も実 CLI へ届け、文書交換との独立・原本保持・一時物の片付け・次回の成功を機器なしで確認する",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "try? controlPipe.fileHandleForWriting.close()\n                cancellationSent = true", "new": "cancellationSent = true"}
+    },
+    {
+      "id": "export-cancellation-publish", "runner": "rust", "package": "echode-cli", "target": ["--lib"],
+      "test": "cancellation::tests::cancellation_before_publication_keeps_the_original_and_removes_the_partial", "timeout": 180,
+      "purpose": "公開前の取消が既存 WAV を保持して一時出力を除き、成功へ進まないことを確認する",
+      "negative_control": {"file": "crates/echode-cli/src/cancellation.rs", "old": "if self.0.load(Ordering::Acquire) {", "new": "if false {"}
+    },
+    {
       "id": "document-session-drag-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "DocumentSessionTests", "test": "contractADragInANewDocumentReachesThatDocument", "timeout": 180,
       "purpose": "古い文書の値の応答が残ったまま文書を開き直し、新しい文書のドラッグの値がその文書へ届き、エラーなしで単一 Undo になることを確認する",

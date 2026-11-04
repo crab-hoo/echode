@@ -12,7 +12,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("echode: {error}");
-            ExitCode::from(2)
+            ExitCode::from(if error.is_cancelled() { 130 } else { 2 })
         }
     }
 }

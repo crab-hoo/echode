@@ -13,10 +13,17 @@ struct ExportError: LocalizedError, Sendable {
 @MainActor @Observable
 final class ExportJob {
     private(set) var running = false
+    private(set) var cancelRequested = false
     private(set) var fractionCompleted: Double?
     private(set) var message: String?
     private(set) var detail = ""
     @ObservationIgnored var executable: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("echode-cli")
+
+    func cancel() {
+        guard running, !cancelRequested else { return }
+        cancelRequested = true
+        message = text("Cancelling export")
+    }
 
     @discardableResult
     func start(controller: ProjectController, document: DocumentID, project: URL,
@@ -31,11 +38,13 @@ final class ExportJob {
         }
         running = true; message = text("Preparing export"); detail = ""
         fractionCompleted = nil
+        cancelRequested = false
         let executable = self.executable
         return Task {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-export-\(UUID())")
             var ownsRoot = false
             do {
+                if cancelRequested { throw CancellationError() }
                 guard let executable, FileManager.default.isExecutableFile(atPath: executable.path) else {
                     throw ExportError(message: "Export CLI is missing from the app bundle")
                 }
@@ -43,22 +52,27 @@ final class ExportJob {
                     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
                 }.value
                 ownsRoot = true
+                if cancelRequested { throw CancellationError() }
                 let frozen = root.appendingPathComponent("Snapshot.echode")
                 try await controller.freezeExport(to: frozen, documentID: document)
+                if cancelRequested { throw CancellationError() }
                 settings.save(project: project, defaults: defaults)
                 message = text("Exporting audio")
                 let result = try await Task.detached {
-                    try await Self.render(executable: executable, package: frozen, output: output, arguments: arguments, work: root) { progress in
+                    try await Self.render(executable: executable, package: frozen, output: output, arguments: arguments, work: root,
+                                          isCancelled: { self.cancelRequested }) { progress in
+                        guard !self.cancelRequested else { return }
                         self.fractionCompleted = progress.fraction
                         self.message = text(progress.phase == .rendering ? "Exporting audio" : "Finalizing export")
                     }
                 }.value
                 if result.success { fractionCompleted = 1 }
                 detail = "Source: \(project.path)\nOutput: \(output.path)\nOptions: \(arguments.joined(separator: " "))\n" + result.detail
-                message = text(result.success ? "Export complete" : "Export failed") + ": " + output.lastPathComponent
+                let status = result.success ? "Export complete" : (result.cancelled ? "Export cancelled" : "Export failed")
+                message = text(status) + ": " + output.lastPathComponent
             } catch {
                 detail = (error as? BridgeError)?.message ?? error.localizedDescription
-                message = text("Export failed") + ": " + output.lastPathComponent
+                message = text(error is CancellationError ? "Export cancelled" : "Export failed") + ": " + output.lastPathComponent
             }
             if ownsRoot {
                 let cleanup = await Task.detached { Result { try FileManager.default.removeItem(at: root) } }.value
@@ -69,7 +83,8 @@ final class ExportJob {
     }
 
     nonisolated static func render(executable: URL, package: URL, output: URL, arguments: [String], work: URL,
-                                   onProgress: @MainActor @Sendable (ExportProgress) -> Void = { _ in }) async throws -> (success: Bool, detail: String) {
+                                   isCancelled: @MainActor @Sendable () -> Bool = { false },
+                                   onProgress: @MainActor @Sendable (ExportProgress) -> Void = { _ in }) async throws -> (success: Bool, cancelled: Bool, detail: String) {
         let log = work.appendingPathComponent("render.log")
         guard FileManager.default.createFile(atPath: log.path, contents: nil) else {
             throw ExportError(message: "Could not create export log")
@@ -78,14 +93,20 @@ final class ExportJob {
         defer { try? handle.close() }
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["render", package.path, output.path] + arguments + ["--progress-json"]
-        process.standardInput = FileHandle.nullDevice
+        process.arguments = ["render", package.path, output.path] + arguments + ["--progress-json", "--cancel-stdin"]
+        let controlPipe = Pipe()
+        process.standardInput = controlPipe
+        defer {
+            try? controlPipe.fileHandleForReading.close()
+            try? controlPipe.fileHandleForWriting.close()
+        }
         let progressPipe = Pipe()
         process.standardOutput = progressPipe
         // A file rather than a pipe: even a verbose failing helper cannot fill
         // a pipe while the parent waits for termination off the main actor.
         process.standardError = handle
         try process.run()
+        try? controlPipe.fileHandleForReading.close()
         // Drain progress while the child runs, before waiting for exit. POSIX read
         // returns available bytes without waiting to fill a whole 4 KiB record.
         try? progressPipe.fileHandleForWriting.close()
@@ -95,12 +116,23 @@ final class ExportJob {
         var bytes = [UInt8](repeating: 0, count: 4096)
         var progressError = ""
         var descriptor = pollfd(fd: readerHandle.fileDescriptor, events: Int16(POLLIN), revents: 0)
+        var cancellationSent = false
         while true {
+            if !cancellationSent, await isCancelled() {
+                // EOF is a cooperative cancellation request. The CLI still owns
+                // cleanup, helper shutdown, and the atomic publication boundary.
+                try? controlPipe.fileHandleForWriting.close()
+                cancellationSent = true
+            }
             // A plugin descendant may inherit stdout. Its open descriptor must
             // not hold the GUI job after the CLI itself has already exited.
             let ready = Darwin.poll(&descriptor, 1, 100)
             if ready < 0 && errno == EINTR { continue }
-            if ready < 0 { progressError = "\nProgress stream poll failed: errno \(errno)"; break }
+            if ready < 0 {
+                progressError = "\nProgress stream poll failed: errno \(errno)"
+                descriptor.fd = -1
+                continue
+            }
             if ready == 0 {
                 if !process.isRunning { break }
                 continue
@@ -108,8 +140,11 @@ final class ExportJob {
             let count = Darwin.read(readerHandle.fileDescriptor, &bytes, bytes.count)
             if count < 0 && errno == EINTR { continue }
             if count <= 0 {
+                if !process.isRunning { break }
                 if count < 0 { progressError = "\nProgress stream read failed: errno \(errno)" }
-                break
+                // Continue polling cancellation even if progress closes early.
+                descriptor.fd = -1
+                continue
             }
             for update in decoder.append(Data(bytes.prefix(count))) { await onProgress(update) }
             if !process.isRunning { break }
@@ -120,6 +155,7 @@ final class ExportJob {
         defer { try? reader.close() }
         let data = try reader.read(upToCount: 65_536) ?? Data()
         return (process.terminationReason == .exit && process.terminationStatus == 0,
+                process.terminationReason == .exit && process.terminationStatus == 130,
                 "Exit: \(process.terminationStatus) (\(process.terminationReason))\n" + String(decoding: data, as: UTF8.self) + progressError)
     }
 }

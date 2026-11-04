@@ -67,6 +67,19 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(source.count(fault["old"]), 1)
         self.assertIn("document.history(.list)", fault["new"])
 
+    def test_export_cancellation_contracts_cover_control_and_publication(self):
+        contracts = {c["id"]: c for c in self.policy["product_contracts"]}
+        ui = contracts["export-cancellation-ui"]
+        publish = contracts["export-cancellation-publish"]
+        self.assertEqual((ui["runner"], ui["suite"]), ("swift", "ExportCancellationTests"))
+        self.assertEqual((publish["runner"], publish["package"]), ("rust", "echode-cli"))
+        for path in ["crates/echode-cli/src/cancellation.rs",
+                     "swift/EchodeApp/Tests/EchodeAppTests/ExportCancellationTests.swift"]:
+            self.assertTrue({"check", "check-swift", "check-product-contracts"} <= self.selected(path))
+        for contract in [ui, publish]:
+            fault = contract["negative_control"]
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+
     def test_gui_export_progress_contract_covers_the_transport_and_cli(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "export-progress-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "ExportProgressTests"))
@@ -1632,7 +1645,7 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("check-product-contracts", self.selected(path))
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
-                         {"export-snapshot-ui", "export-progress-ui", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                         {"export-snapshot-ui", "export-progress-ui", "export-cancellation-ui", "export-cancellation-publish", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "document-session-drag-ui", "document-session-audio-ui", "document-session-restore-ui", "document-session-stale-ui",
                           "document-worker-completion", "document-lane-completion",
                           "typed-clip-controller", "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",

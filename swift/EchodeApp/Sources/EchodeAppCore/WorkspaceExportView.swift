@@ -83,6 +83,10 @@ struct ExportStatusView: View {
                 }
                 Text(message).font(.caption)
                 Spacer()
+                if job.running {
+                    Button(text("Cancel export")) { job.cancel() }
+                        .disabled(job.cancelRequested).accessibilityIdentifier("export.cancel")
+                }
                 if !job.detail.isEmpty {
                     Button(text("Details")) { details.toggle() }
                         .popover(isPresented: $details) {

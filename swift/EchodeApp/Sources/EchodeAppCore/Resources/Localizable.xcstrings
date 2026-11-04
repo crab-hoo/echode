@@ -73,6 +73,18 @@
       "en": { "stringUnit": { "state": "translated", "value": "Export complete" } },
       "ja": { "stringUnit": { "state": "translated", "value": "書出しが完了しました" } }
     } },
+    "Cancel export": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Cancel export" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しを取り消す" } }
+    } },
+    "Cancelling export": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Cancelling export" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しを取消中" } }
+    } },
+    "Export cancelled": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export cancelled" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しを取り消しました" } }
+    } },
     "Export failed": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Export failed" } },
       "ja": { "stringUnit": { "state": "translated", "value": "書出しに失敗しました" } }

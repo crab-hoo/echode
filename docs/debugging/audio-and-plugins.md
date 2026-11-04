@@ -164,7 +164,25 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 文書ワーカーはコピー中に次の要求を待たせる。準備後の CLI は独立したパッケージを開き、元の文書のロックを取り直さない。
 `export-snapshot-ui` は PCM のコピー後に元の文書を編集・終了・削除し、次の文書を開いたまま実 CLI を完走させる。
 設定は UserDefaults の `workspace.export.v1.<正規化したパス>` にあり、別のパスへ移したプロジェクトや別の Mac へは引き継がない。
-途中取消は未対応。アプリ終了・強制終了の後に残った一時パッケージは再開せず、ユーザーの同意なしに探して削除しない（[ADR 0254](../decisions/0254-gui-snapshot-export.md)）。
+途中取消は専用の制御パイプで要求する。アプリ終了・強制終了の後の一時物は再開せず、ユーザーの同意なしに探して削除しない（[ADR 0256](../decisions/0256-export-cancellation.md)）。
+
+### ノート終端の回帰だけが `control.status().playing` で止まる
+
+2026-11-04 の書出し取消の検査で、`hosted_playback` 全体の `note_edges` がこのアサーションで 2 回失敗した。
+単独実行と、状態・ブロック長・チェイン・rewind・`plugin_failure()` の診断を加えた後の反復では再現していない。根因は未確定で、診断の追加を製品の修正とは扱わない。
+失敗の完全ログは `target/export-cancel-hosted-recheck/2.log`、診断後の実行は `target/export-cancel-hosted-diagnostic/` と `target/export-cancel-hosted-repeat/`。
+CLI の取消はこのテストから呼ばれない。再発時は拡張したアサーションの `playing`・`failed`・適用済みのコマンドと計画・位置・ヘルパーの失敗を残す。
+同じビルドの単独と全体を比較し、無視・期限延長・アサーション削除で通さない。正式な合否は最新の `target/verification/report.md` で区別する。
+
+### 書出しの取消中が続く・取消を押しても完了になる
+
+`ExportJob.cancelRequested` は要求であって成功の証拠ではない。取消の制御は stdout でなく stdin の EOF で、進捗が閉じても poll を続ける。
+準備のコピー・復号・初期化・ファイル同期や、最大 60 秒のヘルパーブロック待ちは区切りまで続く。強制終了や自動再送で代用しない。
+「詳細」の終了コード 130 と `export cancelled` は公開前の取消、0 と `exported` は公開が先に成立した完了である。
+他の終了コード・公開後の耐久性不明を取消へ書き換えず、原本や完成ファイルを無条件に削除しない。
+`ExportCancellationTests` と CLI の `tests/export_cancellation.rs` で、閉じた stdout・文書交換・原本と一時物を切り分ける。
+制御する Rust テストで `Child::wait` を使う時は、先に `child.stdin.take()` のハンドルを保持する。`wait` 自身が stdin を閉じると意図せず取り消す。
+再現には要求時の準備／処理／仕上げの表示・終了コード・詳細を残す。音声・専用パッケージは debug-report へ自動収集しない。
 
 ### 書出しの進捗が出ない・99% で止まる
 

@@ -26,6 +26,9 @@ use echode_engine::{
 use echode_history::DocumentHost;
 use echode_model::Project;
 
+mod cancellation;
+use cancellation::Cancellation;
+
 mod dither;
 use dither::{Dither, Tpdf};
 
@@ -75,6 +78,7 @@ impl WavFormat {
 pub struct CliError {
     message: String,
     durability_unknown: bool,
+    cancelled: bool,
 }
 
 impl CliError {
@@ -82,7 +86,21 @@ impl CliError {
         Self {
             message: message.into(),
             durability_unknown: false,
+            cancelled: false,
         }
+    }
+
+    fn cancelled() -> Self {
+        Self {
+            message: "export cancelled".into(),
+            durability_unknown: false,
+            cancelled: true,
+        }
+    }
+
+    /// Cancellation was acknowledged before publishing the output file.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
     }
 
     /// The WAV was renamed into place, then the parent directory could not be
@@ -91,6 +109,7 @@ impl CliError {
         Self {
             message: message.into(),
             durability_unknown: true,
+            cancelled: false,
         }
     }
 
@@ -192,6 +211,7 @@ where
     let mut format = WavFormat::Float32;
     let mut dither = Dither::None;
     let mut progress = RenderProgress::new(false);
+    let mut cancel_stdin = false;
     while let Some(flag) = args.next() {
         match flag.as_ref() {
             "--sample-rate" => {
@@ -225,9 +245,15 @@ where
                 dither = Dither::parse(value.as_ref())?;
             }
             "--progress-json" => progress = RenderProgress::new(true),
+            "--cancel-stdin" => cancel_stdin = true,
             _ => return Err(usage()),
         }
     }
+    let cancellation = if cancel_stdin {
+        Cancellation::from_stdin()?
+    } else {
+        Cancellation::default()
+    };
     render_to_wav_format(
         Path::new(package.as_ref()),
         Path::new(wav.as_ref()),
@@ -237,6 +263,7 @@ where
         format,
         dither,
         &mut progress,
+        &cancellation,
     )
 }
 
@@ -298,6 +325,7 @@ pub fn render_to_wav(
         WavFormat::Float32,
         Dither::None,
         &mut RenderProgress::new(false),
+        &Cancellation::default(),
     )
 }
 
@@ -311,7 +339,9 @@ fn render_to_wav_format(
     format: WavFormat,
     dither: Dither,
     progress: &mut RenderProgress,
+    cancellation: &Cancellation,
 ) -> Result<(), CliError> {
+    cancellation.check()?;
     dither.validate(format)?;
     if sample_rate == 0 {
         return Err(CliError::new("invalid sample rate"));
@@ -342,6 +372,7 @@ fn render_to_wav_format(
     if ids.is_empty() {
         let clips = load_placed_clips(package, &project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?;
+        cancellation.check()?;
         let mut wav =
             WavFile::create_with_dither(wav, sample_rate, minimum_frames, format, dither)?;
         progress.start(minimum_frames);
@@ -352,14 +383,18 @@ fn render_to_wav_format(
             64,
             &clips,
             |block| {
+                cancellation.check()?;
                 wav.write_block(block)?;
                 progress.advance((block.len() / 2) as u32);
                 Ok::<_, CliError>(())
             },
         )
-        .map_err(|error| CliError::new(error.to_string()))?;
+        .map_err(|error| match error {
+            echode_engine::OfflineError::Write(error) => error,
+            echode_engine::OfflineError::Playback(error) => CliError::new(error.to_string()),
+        })?;
         progress.finalizing();
-        wav.finish()?;
+        wav.finish_cancellable(cancellation)?;
         progress.complete();
         note_export(&revision, seq);
         return Ok(());
@@ -396,6 +431,7 @@ fn render_to_wav_format(
         &host,
         &routes,
         progress,
+        cancellation,
     )?;
     progress.complete();
     note_export(&revision, seq);
@@ -415,12 +451,14 @@ fn render_with_plugins(
     host: &Path,
     routes: &[PluginRoute],
     progress: &mut RenderProgress,
+    cancellation: &Cancellation,
 ) -> Result<(), CliError> {
+    cancellation.check()?;
     if frames == 0 && matches!(tail, RenderTail::Automatic | RenderTail::Frames(0)) {
         let wav = WavFile::create_with_dither(wav, sample_rate, 0, format, dither)?;
         progress.start(0);
         progress.finalizing();
-        return wav.finish();
+        return wav.finish_cancellable(cancellation);
     }
     let block = PLUGIN_CALLBACK_FRAMES;
     let (mut control, mut audio) = playback(
@@ -442,6 +480,7 @@ fn render_with_plugins(
     control
         .command(PlaybackCommand::Play)
         .map_err(|error| CliError::new(error.to_string()))?;
+    cancellation.check()?;
     let mut wav = WavFile::create_with_dither(wav, sample_rate, frames, format, dither)?;
     progress.start(frames);
     let mut left = vec![0.0; block];
@@ -449,12 +488,14 @@ fn render_with_plugins(
     let mut interleaved = vec![0.0; block.saturating_mul(2)];
     let mut rendered = 0usize;
     while rendered < total {
+        cancellation.check()?;
         let count = (total - rendered).min(block);
         audio.render_until(
             &mut left[..count],
             &mut right[..count],
             Instant::now() + OFFLINE_BLOCK_WAIT,
         );
+        cancellation.check()?;
         if let Some(reason) = control.plugin_failure() {
             return Err(CliError::new(reason));
         }
@@ -478,7 +519,7 @@ fn render_with_plugins(
         progress.advance(count as u32);
     }
     progress.finalizing();
-    wav.finish()
+    wav.finish_cancellable(cancellation)
 }
 
 #[derive(Clone, Copy)]
@@ -513,7 +554,7 @@ fn parse_u32(text: &str) -> Result<u32, CliError> {
 
 fn usage() -> CliError {
     CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf] [--progress-json]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
+        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf] [--progress-json] [--cancel-stdin]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
     )
 }
 
@@ -634,12 +675,17 @@ impl WavFile {
             .map_err(|error| CliError::new(error.to_string()))
     }
 
-    fn finish(mut self) -> Result<(), CliError> {
-        self.publish()
+    fn finish(self) -> Result<(), CliError> {
+        self.finish_cancellable(&Cancellation::default())
+    }
+
+    fn finish_cancellable(mut self, cancellation: &Cancellation) -> Result<(), CliError> {
+        self.publish(cancellation)
     }
 
     /// Header, PCM, flush, and file sync succeed before the same-directory rename.
-    fn publish(&mut self) -> Result<(), CliError> {
+    fn publish(&mut self, cancellation: &Cancellation) -> Result<(), CliError> {
+        cancellation.check()?;
         if consume_wav_fault(WAV_FAULT_FLUSH) {
             return Err(CliError::new("wav flush failed"));
         }
@@ -653,6 +699,9 @@ impl WavFile {
         if consume_wav_fault(WAV_FAULT_RENAME) {
             return Err(CliError::new("wav rename failed"));
         }
+        // This is the commit boundary. A later cancellation must not delete or
+        // relabel a successfully published file (nor hide a directory-sync error).
+        cancellation.check()?;
         std::fs::rename(&self.temporary, &self.destination)
             .map_err(|error| CliError::new(error.to_string()))?;
         self.published = true;

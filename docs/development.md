@@ -338,6 +338,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
   必須契約は `export-snapshot-ui`、判断と残る範囲は [ADR 0254](decisions/0254-gui-snapshot-export.md)。
 - 進捗の通知は CLI の `progress.rs`、改行の復号と後退拒否は `ExportProgress.swift`。
   `ExportProgressTests` の `export-progress-ui` が終了前の UI 更新・診断との分離・失敗時の 100% 拒否を検査する。
+- 途中取消は CLI の `cancellation.rs` と `ExportJob.cancel()`。`ExportCancellationTests` と CLI の `tests/export_cancellation.rs` が原本保持・文書交換・閉じた進捗を通す。
+  公開前の保全と GUI の制御の引渡しは必須契約 `export-cancellation-publish`・`export-cancellation-ui`（[ADR 0256](decisions/0256-export-cancellation.md)）。
 
 ### ループ・値の操作子・ミックス・ヘッダ
 

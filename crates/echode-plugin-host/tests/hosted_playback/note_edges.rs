@@ -37,7 +37,12 @@ fn contract_a_start_at_a_note_end_does_not_hold_that_note_under_rtsan() {
                         "a note ending at the start sounded: {frames}/{chain}/{rewind}"
                     );
                 }
-                assert!(control.status().playing);
+                assert!(
+                    control.status().playing,
+                    "playback stopped at note end: {frames}/{chain}/{rewind}, {:?}, {:?}",
+                    control.status(),
+                    control.plugin_failure()
+                );
                 assert!(control.status().sample >= end);
                 assert_eq!(control.status().plugin_missed_blocks, 0);
             }
