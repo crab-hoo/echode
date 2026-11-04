@@ -166,6 +166,16 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 前回設定の記憶と移行は、下記の「書出し設定が移動先で戻らない・保存の警告が出る」で切り分ける。
 途中取消は専用の制御パイプで要求する。アプリ終了・強制終了の後の一時物は再開せず、ユーザーの同意なしに探して削除しない（[ADR 0256](../decisions/0256-export-cancellation.md)）。
 
+### 書出しの数値欄を変更しても開始できない・前の値が使われる
+
+数値欄は `ExportSettingsDraft` が文字列で保持し、`WorkspaceExportView.validatedSettings` を開始ボタンと保存パネルの入口で共有する。
+空欄・後ろの単位・桁区切り・非有限値・範囲外は `export.validation` に理由を出し、前の有効値を採用しない。
+余韻とピーク目標の小数点は表示ロケールに従う。無効欄は無視するが、再度有効にすれば下書きを検証し直す。
+読込み待ちは `Loading export settings`、入力不正はその下の理由、CLI 起動後の失敗は下部の「詳細」で区別する。
+`export-input-ui` は非表示の実シートのフィールドエディターを使い、修正後の引数と設定未保存を検査する。
+`ExportSettingsDraftTests` はロケール・u32 の丸め境界を検査する。実画面・VoiceOver は UC-59 に残す（[ADR 0262](../decisions/0262-export-numeric-drafts.md)）。
+ユーザーが入力した文字列を診断の自動収集へ追加しない。
+
 ### 書出し後の Finder 表示が出ない・別のファイルが選ばれる
 
 「Finder で表示」は CLI が正常終了し、後片付けが終わった時だけ現れる。失敗・取消・出力先の拒否では前回の出力を案内しない。
@@ -233,6 +243,10 @@ CLI が終了したのに表示が残る場合は、子孫が stdout を引き�
 終了後の読取りは 64 KiB までとし、子孫が stdout へ書き続けてもジョブを保持しない。
 `ExportProgressExitTests` が UI 通知を保留したまま子を終了させ、この境界を決定的に再現する。
 `ExportProgressTests` の `export-progress-ui` が終了前の受信と記述子の引継ぎを検査する（[ADR 0255](../decisions/0255-export-progress.md)）。
+2026-11-04 の数値入力の変更中に、通常の並列 Swift 全体で 50% の待機だけが 1 回失敗した。
+入力と進捗の組合せ、および同じ全体の再実行では再現しておらず、原因は未確定である。
+初回の抜粋は `target/focused-checks/export-progress-first-failure.log`、切分けは `target/focused-checks/export-input-progress/` に残す。
+このアサーションには `running`・率・メッセージ・詳細を追加した。再発時は準備中・起動失敗・受信待ちを区別し、期限・アサーション・並列性を緩めない。
 
 ### 書出しの回帰が直列実行だけで `waitUntilExit` に止まる
 

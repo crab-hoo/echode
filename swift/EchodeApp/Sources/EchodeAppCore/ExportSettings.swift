@@ -21,7 +21,7 @@ struct ExportSettings: Codable, Sendable, Equatable {
 
     var isValid: Bool {
         sampleRate > 0 && tailSeconds.isFinite && tailSeconds >= 0 &&
-        tailSeconds * Double(sampleRate) < Double(UInt32.max) + 0.5 &&
+        (automaticTail || tailSeconds * Double(sampleRate) < Double(UInt32.max) + 0.5) &&
         !(format == .float32 && tpdf) &&
         (normalizePeakDb.map { $0.isFinite && (-120...0).contains($0) } ?? true)
     }

@@ -76,6 +76,12 @@
   ],
   "product_contracts": [
     {
+      "id": "export-input-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportInputTests", "test": "contractInvalidNumericTextCannotExportThePreviousValue", "timeout": 180,
+      "purpose": "実シートのネイティブ入力から不正なレート・余韻・ピーク目標を拒否し、修正した値だけを CLI 引数へ渡すことを機器なしで確認する",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceExportView.swift", "old": "try? draft.resolve(locale: locale).get()", "new": "draft.options.isValid ? draft.options : nil"}
+    },
+    {
       "id": "export-reveal-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportRevealTests", "test": "contractRevealUsesOnlyTheCompletedJobsPinnedDestination", "timeout": 180,
       "purpose": "完了した実 CLI 書出しの固定パスだけを明示操作へ渡し、文書交換と親・葉リンクから独立することを機器なしで確認する",

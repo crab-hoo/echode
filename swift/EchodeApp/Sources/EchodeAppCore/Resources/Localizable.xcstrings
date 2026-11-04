@@ -5,6 +5,22 @@
       "en": { "stringUnit": { "state": "translated", "value": "Details" } },
       "ja": { "stringUnit": { "state": "translated", "value": "詳細" } }
     } },
+    "Enter a sample rate from 1 to 4294967295 Hz (no grouping).": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Enter a sample rate from 1 to 4294967295 Hz (no grouping)." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "サンプルレートは 1〜4294967295 Hz の整数で、桁区切りなしで入力してください。" } }
+    } },
+    "Enter a finite, nonnegative tail that fits in 4294967295 frames.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Enter a finite, nonnegative tail that fits in 4294967295 frames." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "余韻は 0 秒以上の有限値で、4294967295 フレームに収まる長さを入力してください。" } }
+    } },
+    "Enter a finite peak target from -120 to 0 dBFS.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Enter a finite peak target from -120 to 0 dBFS." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "ピーク目標は −120〜0 dBFS の有限値を入力してください。" } }
+    } },
+    "TPDF dither requires an integer PCM format.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "TPDF dither requires an integer PCM format." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "TPDF ディザには整数 PCM 形式を選んでください。" } }
+    } },
     "Export Audio": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Export Audio" } },
       "ja": { "stringUnit": { "state": "translated", "value": "音声を書き出す" } }

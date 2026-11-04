@@ -79,7 +79,7 @@ struct ExportProgressTests {
         while job.fractionCompleted == nil, job.running, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(job.running && job.fractionCompleted == 0.5, "Live export progress was not delivered before process exit")
+        #expect(job.running && job.fractionCompleted == 0.5, "Live export progress was not delivered before process exit; running=\(job.running), fraction=\(String(describing: job.fractionCompleted)), message=\(job.message ?? "nil"), detail=\(job.detail)")
         try Data().write(to: release)
         await task.value
         #expect(!job.running && job.fractionCompleted == 0.99)
