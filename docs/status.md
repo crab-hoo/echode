@@ -85,7 +85,7 @@
 - **CLAP バンドルの互換性**: 音源とエフェクトは同じ隔離チェインを通る。macOS のディレクトリ形式のバンドルも走査・処理できる。
   全メーカーの互換性と実機の聴感は保証しない（[ADR 0093](decisions/0093-product-contract-gate.md)）。
 - **オフライン書出し（CLI-A1）**: ヘルパーのブロック期限は 60 秒、WAV はステレオ・u32 フレームまで（[ADR 0231](decisions/0231-offline-export-and-scan-cache.md)）。
-  取消は処理の区切りを待つ。設定の持ち運びは未対応。画面・VO は UC-53〜55、聴感は UC-52（[ADR 0256](decisions/0256-export-cancellation.md)）。
+  取消は処理の区切りを待つ。画面・VO は UC-53〜56、聴感は UC-52（[ADR 0257](decisions/0257-portable-export-settings.md)）。
 - **プラグインの取りこぼし**: 5 ms の減衰・復帰で失われた処理は復元しない。実機の聴感は未確認（UC-50）。
 - **ヘルパーの時間切れ（SPG-01）**: 実行中の制御要求があれば、次の要求は busy で拒否する。
   時間切れは結果不明で、プラグインの実行自体の取消・自動再送はしない（[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。

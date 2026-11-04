@@ -163,8 +163,18 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 準備で止まる場合は進行中のジェスチャー、参照する `media/objects` の欠落と BLAKE3 不一致、専用ディレクトリの作成失敗を区別する。
 文書ワーカーはコピー中に次の要求を待たせる。準備後の CLI は独立したパッケージを開き、元の文書のロックを取り直さない。
 `export-snapshot-ui` は PCM のコピー後に元の文書を編集・終了・削除し、次の文書を開いたまま実 CLI を完走させる。
-設定は UserDefaults の `workspace.export.v1.<正規化したパス>` にあり、別のパスへ移したプロジェクトや別の Mac へは引き継がない。
+前回設定の記憶と移行は、下記の「書出し設定が移動先で戻らない・保存の警告が出る」で切り分ける。
 途中取消は専用の制御パイプで要求する。アプリ終了・強制終了の後の一時物は再開せず、ユーザーの同意なしに探して削除しない（[ADR 0256](../decisions/0256-export-cancellation.md)）。
+
+### 書出し設定が移動先で戻らない・保存の警告が出る
+
+`export.json` の版 1 と設定値、旧 UserDefaults の `workspace.export.v1.<正規化したパス>` を区別する。
+正常なパッケージ内の設定を優先し、欠落・未知の版・不正値・16 KiB 超過では旧値、なければ初期値へ戻す。読取りだけでは修復しない。
+旧版の設定は次の書出しの準備が成功した時に移す。それ以前に移動したパッケージは旧パスの値を持たない。
+「詳細」の `Export settings were not saved in the package` は、書出し自体の成功／失敗とは別の警告である。
+パッケージの書込み権限・`export.json` と旧一時名のリンクや種別・復旧への同意を調べる。リンク先を削除して直さない。
+`ExportSettingsTests`・履歴の `tests/export_settings.rs`・`RecoveryConsentTests` で移行と拒否を確認する。
+再現には元／移動先の区別・設定の版・警告を残し、ユーザー文書や設定を debug-report へ自動収集しない（[ADR 0257](../decisions/0257-portable-export-settings.md)）。
 
 ### ノート終端の回帰だけが `control.status().playing` で止まる
 
@@ -192,7 +202,18 @@ stdout をパイプへ渡す観測者は実行中に排出する。GUI は `Expo
 99% は全フレームの処理後もファイルの flush・同期・公開が残っている状態で、`complete` 通知だけでも成功にしない。
 最終的には下部の詳細の終了コードと診断を確認する。同期失敗で完成ファイルが残る場合は、再送や削除を自動化しない。
 CLI が終了したのに表示が残る場合は、子孫が stdout を引き継いでも EOF を待ち続けていないか確認する。
+子が UI 通知の間に終了しても、既に pipe にある末尾の通知は排出する。
+終了後の読取りは 64 KiB までとし、子孫が stdout へ書き続けてもジョブを保持しない。
+`ExportProgressExitTests` が UI 通知を保留したまま子を終了させ、この境界を決定的に再現する。
 `ExportProgressTests` の `export-progress-ui` が終了前の受信と記述子の引継ぎを検査する（[ADR 0255](../decisions/0255-export-progress.md)）。
+
+### 書出しの回帰が直列実行だけで `waitUntilExit` に止まる
+
+2026-11-04 の `check-real-hal` は HAL の呼出しではなく、新しい `ExportProgressExitTests` の終了待ちで 300 秒の期限を超えた。
+イベント列はそのテストの開始を示す一方、通常ログの末尾は出力のバッファで前のテストに留まることがある。
+`sample` の `ExportJob.render` → `NSConcreteTask waitUntilExit` を確認する。証拠は `target/export-settings-hal-timeout.sample`。
+終了後の pipe の排出は上限付きで行い、poll が終了を確認した後に Foundation の run loop 待ちへ入り直さない。
+回帰は `ExportProgressExitTests` を `--no-parallel` でも実行する。HAL の防護を無効にしたり、期限を延ばしたりして通さない。
 
 ### float WAV を読み手が拒否する・ヘッダ変更後に音声の比較がずれる
 

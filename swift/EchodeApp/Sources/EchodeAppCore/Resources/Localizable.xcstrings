@@ -53,6 +53,10 @@
       "en": { "stringUnit": { "state": "translated", "value": "Choose an output outside the project package" } },
       "ja": { "stringUnit": { "state": "translated", "value": "プロジェクトの外に書出し先を選んでください" } }
     } },
+    "Loading export settings": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Loading export settings" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出し設定を読込み中" } }
+    } },
     "Preparing export": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Preparing export" } },
       "ja": { "stringUnit": { "state": "translated", "value": "書出しを準備中" } }

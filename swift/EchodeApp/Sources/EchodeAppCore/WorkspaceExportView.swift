@@ -11,6 +11,7 @@ struct WorkspaceExportView: View {
     private let project: URL?
     @State private var settings: ExportSettings
     @State private var choosingOutput = false
+    @State private var loadingSettings = true
 
     init(controller: ProjectController, job: ExportJob, close: @escaping () -> Void) {
         self.controller = controller; self.job = job; self.close = close
@@ -22,7 +23,11 @@ struct WorkspaceExportView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(text("Export Audio")).font(.headline)
+            HStack {
+                Text(text("Export Audio")).font(.headline)
+                Spacer()
+                if loadingSettings { ProgressView().controlSize(.small).accessibilityLabel(text("Loading export settings")) }
+            }.frame(height: 20)
             Text(text("Whole song · Stereo WAV · Recorded mix and effects")).foregroundStyle(.secondary)
             Form {
                 Picker(text("Format"), selection: $settings.format) {
@@ -35,19 +40,24 @@ struct WorkspaceExportView: View {
                     .disabled(settings.automaticTail).accessibilityIdentifier("export.tail")
                 Toggle(text("TPDF dither"), isOn: $settings.tpdf).disabled(settings.format == .float32)
                     .accessibilityIdentifier("export.dither")
-            }
+            }.disabled(loadingSettings)
             Text(text("Export uses a private snapshot. Editing and playback can continue after preparation."))
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button(text("Cancel"), action: close).keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(text("Export Audio"), action: chooseOutput).keyboardShortcut(.defaultAction)
-                    .disabled(!settings.isValid || choosingOutput || job.running || !controller.acceptsInput(document))
+                    .disabled(loadingSettings || !settings.isValid || choosingOutput || job.running || !controller.acceptsInput(document))
                     .accessibilityIdentifier("export.start")
             }
         }.padding(24).frame(width: 460)
             .onChange(of: settings.format) { _, format in if format == .float32 { settings.tpdf = false } }
             .interactiveDismissDisabled(choosingOutput)
+            .task {
+                guard let document, let loaded = await controller.loadExportSettings(documentID: document) else { return }
+                settings = loaded
+                loadingSettings = false
+            }
     }
 
     private func chooseOutput() {

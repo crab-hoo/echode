@@ -34,7 +34,7 @@ pub enum Operation {
     Perform(Vec<u8>),
     /// A session command. Neither Undo nor the journal records it.
     Audio(Vec<u8>),
-    /// A history list, restore or recovery consent.
+    /// History, recovery consent, export snapshots or GUI export preferences.
     History(Vec<u8>),
     /// A request a running device answers. See [`device`].
     Device(Vec<u8>),
@@ -51,7 +51,7 @@ pub struct Publication<'a> {
     pub directory: &'a Path,
     /// JSON of the session state.
     pub audio: Vec<u8>,
-    /// JSON `{revisions, changed, recovery}`.
+    /// JSON `{revisions, changed, recovery?, export_settings?}`.
     pub history: Vec<u8>,
     /// JSON report of a device request, or [`EMPTY_DEVICE_REPORT`].
     pub device: Vec<u8>,

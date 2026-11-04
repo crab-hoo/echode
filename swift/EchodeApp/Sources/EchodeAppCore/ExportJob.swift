@@ -54,7 +54,7 @@ final class ExportJob {
                 ownsRoot = true
                 if cancelRequested { throw CancellationError() }
                 let frozen = root.appendingPathComponent("Snapshot.echode")
-                try await controller.freezeExport(to: frozen, documentID: document)
+                let settingsWarning = try await controller.freezeExport(to: frozen, documentID: document, settings: settings)
                 if cancelRequested { throw CancellationError() }
                 settings.save(project: project, defaults: defaults)
                 message = text("Exporting audio")
@@ -67,7 +67,7 @@ final class ExportJob {
                     }
                 }.value
                 if result.success { fractionCompleted = 1 }
-                detail = "Source: \(project.path)\nOutput: \(output.path)\nOptions: \(arguments.joined(separator: " "))\n" + result.detail
+                detail = "Source: \(project.path)\nOutput: \(output.path)\nOptions: \(arguments.joined(separator: " "))\n" + result.detail + (settingsWarning.map { "\n" + $0 } ?? "")
                 let status = result.success ? "Export complete" : (result.cancelled ? "Export cancelled" : "Export failed")
                 message = text(status) + ": " + output.lastPathComponent
             } catch {
@@ -84,7 +84,7 @@ final class ExportJob {
 
     nonisolated static func render(executable: URL, package: URL, output: URL, arguments: [String], work: URL,
                                    isCancelled: @MainActor @Sendable () -> Bool = { false },
-                                   onProgress: @MainActor @Sendable (ExportProgress) -> Void = { _ in }) async throws -> (success: Bool, cancelled: Bool, detail: String) {
+                                   onProgress: @MainActor @Sendable (ExportProgress) async -> Void = { _ in }) async throws -> (success: Bool, cancelled: Bool, detail: String) {
         let log = work.appendingPathComponent("render.log")
         guard FileManager.default.createFile(atPath: log.path, contents: nil) else {
             throw ExportError(message: "Could not create export log")
@@ -117,6 +117,9 @@ final class ExportJob {
         var progressError = ""
         var descriptor = pollfd(fd: readerHandle.fileDescriptor, events: Int16(POLLIN), revents: 0)
         var cancellationSent = false
+        // Bound only post-exit observer data, never audio or project size. A
+        // descendant that keeps writing stdout cannot hold an already-finished job.
+        var exitDrainRemaining = 65_536
         while true {
             if !cancellationSent, await isCancelled() {
                 // EOF is a cooperative cancellation request. The CLI still owns
@@ -126,7 +129,9 @@ final class ExportJob {
             }
             // A plugin descendant may inherit stdout. Its open descriptor must
             // not hold the GUI job after the CLI itself has already exited.
-            let ready = Darwin.poll(&descriptor, 1, 100)
+            let processRunning = process.isRunning
+            if !processRunning && exitDrainRemaining == 0 { break }
+            let ready = Darwin.poll(&descriptor, 1, processRunning ? 100 : 0)
             if ready < 0 && errno == EINTR { continue }
             if ready < 0 {
                 progressError = "\nProgress stream poll failed: errno \(errno)"
@@ -134,7 +139,7 @@ final class ExportJob {
                 continue
             }
             if ready == 0 {
-                if !process.isRunning { break }
+                if !processRunning { break }
                 continue
             }
             let count = Darwin.read(readerHandle.fileDescriptor, &bytes, bytes.count)
@@ -146,11 +151,14 @@ final class ExportJob {
                 descriptor.fd = -1
                 continue
             }
+            if !processRunning { exitDrainRemaining = max(0, exitDrainRemaining - count) }
             for update in decoder.append(Data(bytes.prefix(count))) { await onProgress(update) }
-            if !process.isRunning { break }
+            // Drain buffered records even if the CLI exited during the UI update.
+            // Once exited, a zero-time poll avoids waiting on inherited stdout.
         }
         try? readerHandle.close()
-        process.waitUntilExit()
+        // Every exit above has observed termination. Do not re-enter Foundation's
+        // run-loop wait after this async task may have resumed on another thread.
         let reader = try FileHandle(forReadingFrom: log)
         defer { try? reader.close() }
         let data = try reader.read(upToCount: 65_536) ?? Data()
@@ -161,22 +169,29 @@ final class ExportJob {
 }
 
 extension ProjectController {
-    func freezeExport(to destination: URL, documentID: DocumentID) async throws {
+    @discardableResult
+    func freezeExport(to destination: URL, documentID: DocumentID, settings: ExportSettings? = nil) async throws -> String? {
         guard let captured = inputSession(for: documentID), captured.faderPreview == nil,
               captured.parameterGesture == nil, captured.pluginGestures.isEmpty else {
             throw ExportError(message: "Finish the current gesture before exporting")
         }
+        guard settings == nil || settings?.storedJSON != nil else { throw ExportError(message: "Invalid export settings") }
         await recordWaitingPluginEdits(in: captured)
-        let result: Result<Void, any Error> = await edits.run {
+        let result: Result<String?, any Error> = await edits.run {
             guard self.session === captured, captured.faderPreview == nil, captured.parameterGesture == nil, captured.pluginGestures.isEmpty,
                   let document = captured.document else {
                 return .failure(ExportError(message: "The export document is no longer open"))
             }
             do {
                 _ = try await document.history(.exportSnapshot(path: destination.path))
-                return .success(())
+                if let settings {
+                    guard let json = settings.storedJSON else { throw ExportError(message: "Invalid export settings") }
+                    do { _ = try await document.history(.exportSettings(json: json)) }
+                    catch { return .success("Export settings were not saved in the package: \(error.localizedDescription)") }
+                }
+                return .success(nil)
             } catch { return .failure(error) }
         }
-        try result.get()
+        return try result.get()
     }
 }

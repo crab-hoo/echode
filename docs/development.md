@@ -332,7 +332,7 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
 
 ### GUI の書出し
 
-- 設定とパスごとの記憶は `ExportSettings.swift`、専用パッケージの準備と別プロセスの寿命は `ExportJob.swift`、画面は `WorkspaceExportView.swift`。
+- 設定とパッケージ内の記憶・旧パス設定の読取りは `ExportSettings.swift`、専用パッケージの準備と別プロセスの寿命は `ExportJob.swift`、画面は `WorkspaceExportView.swift`。
 - `HistoryCommand.exportSnapshot` が文書ワーカーへ渡り、`echode-history/src/export.rs` が記録済みの `Project` と参照するオブジェクトだけをコピーする。
 - `ExportTests.swift`・`ExportBoundaryTests.swift` と履歴の `tests/export.rs` が、元文書との独立・設定・拒否・失敗時の保持を検査する。
   必須契約は `export-snapshot-ui`、判断と残る範囲は [ADR 0254](decisions/0254-gui-snapshot-export.md)。
@@ -340,6 +340,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
   `ExportProgressTests` の `export-progress-ui` が終了前の UI 更新・診断との分離・失敗時の 100% 拒否を検査する。
 - 途中取消は CLI の `cancellation.rs` と `ExportJob.cancel()`。`ExportCancellationTests` と CLI の `tests/export_cancellation.rs` が原本保持・文書交換・閉じた進捗を通す。
   公開前の保全と GUI の制御の引渡しは必須契約 `export-cancellation-publish`・`export-cancellation-ui`（[ADR 0256](decisions/0256-export-cancellation.md)）。
+- 前回設定の保存は `echode-history/src/export_settings.rs`、文書の入口は `history.export_settings`。
+  `ExportSettingsTests` と履歴の `tests/export_settings.rs`、必須契約 `export-settings-ui` が移動・移行・履歴からの独立を検査する（[ADR 0257](decisions/0257-portable-export-settings.md)）。
 
 ### ループ・値の操作子・ミックス・ヘッダ
 

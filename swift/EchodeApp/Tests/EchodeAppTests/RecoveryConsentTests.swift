@@ -74,6 +74,22 @@ struct RecoveryConsentTests {
         document.shutdown()
     }
 
+    @Test func unconfirmedRecoveryAllowsPreferenceReadsButRejectsWrites() async throws {
+        let fixture = try await damagedProject()
+        defer { removeTestFile(fixture.url) }
+        let document = try Document(opening: fixture.url.path)
+        let read = try await document.history(.exportSettings())
+        #expect(try read.historyReport().export_settings == nil)
+        do {
+            _ = try await document.history(.exportSettings(json: "{}"))
+            Issue.record("Unconfirmed recovery accepted an export preference write")
+        } catch {
+            #expect((error as? BridgeError)?.message.contains("recovery") == true)
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.url.appendingPathComponent("export.json").path))
+        document.shutdown()
+    }
+
     private actor PrepareCalls {
         var count = 0
         func receive(_ command: AudioCommand) -> AudioState {

@@ -82,6 +82,12 @@
       "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "document.history(.exportSnapshot(path: destination.path))", "new": "document.history(.list)"}
     },
     {
+      "id": "export-settings-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportSettingsTests", "test": "contractExportSettingsTravelWithThePackage", "timeout": 180,
+      "purpose": "GUI の書出しで設定をパッケージへ保持し、移動・ローカル設定消去後の再読込、別文書と履歴からの独立を機器なしで確認する",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "do { _ = try await document.history(.exportSettings(json: json)) }", "new": "do { _ = json; _ = try await document.history(.list) }"}
+    },
+    {
       "id": "export-progress-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportProgressTests", "test": "contractExportProgressArrivesBeforeExitAndFailureCannotReachOneHundred", "timeout": 180,
       "purpose": "GUI の進捗を子プロセスの終了前に受け取り、stderr の大量出力と独立し、完了通知後の失敗も 100% にしないことを機器なしで確認する",

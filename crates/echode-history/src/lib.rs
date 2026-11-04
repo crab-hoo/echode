@@ -8,6 +8,7 @@
 mod autosave;
 mod document;
 mod export;
+mod export_settings;
 #[cfg(feature = "spike")]
 mod format;
 mod host;
@@ -32,6 +33,7 @@ pub use document::{
     recover, write_package,
 };
 pub use export::freeze_export;
+pub use export_settings::{read_export_settings, write_export_settings};
 pub use gix::ObjectId;
 pub use host::{DocumentHost, HostError, RecoveryNotice};
 pub use media::{

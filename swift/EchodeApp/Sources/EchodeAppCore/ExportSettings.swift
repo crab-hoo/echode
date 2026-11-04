@@ -1,3 +1,4 @@
+import EchodeBridge
 import Foundation
 
 struct ExportSettings: Codable, Sendable, Equatable {
@@ -29,6 +30,21 @@ struct ExportSettings: Codable, Sendable, Equatable {
         return result
     }
 
+    private struct Stored: Codable {
+        var version = 1
+        let settings: ExportSettings
+    }
+    var storedJSON: String? {
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        guard isValid, let data = try? encoder.encode(Stored(settings: self)) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+    static func decodeStored(_ json: String?) -> Self? {
+        guard let json, let stored = try? JSONDecoder().decode(Stored.self, from: Data(json.utf8)),
+              stored.version == 1, stored.settings.isValid else { return nil }
+        return stored.settings
+    }
+
     private static func key(_ project: URL) -> String {
         "workspace.export.v1." + project.resolvingSymlinksInPath().path
     }
@@ -42,5 +58,18 @@ struct ExportSettings: Codable, Sendable, Equatable {
     func save(project: URL, defaults: UserDefaults = .standard) {
         guard isValid, let data = try? JSONEncoder().encode(self) else { return }
         defaults.set(data, forKey: Self.key(project))
+    }
+}
+
+@MainActor
+extension ProjectController {
+    /// Read on the owning worker; a late result cannot seed another document's sheet.
+    func loadExportSettings(documentID: DocumentID, defaults: UserDefaults = .standard) async -> ExportSettings? {
+        guard let captured = inputSession(for: documentID), let document = captured.document, let project = projectURL else { return nil }
+        let fallback = ExportSettings.load(project: project, defaults: defaults, initialRate: audio.activeDevice?.sampleRate ?? 48_000)
+        let snapshot = try? await document.history(.exportSettings())
+        guard inputSession(for: documentID) === captured else { return nil }
+        let report = try? snapshot?.historyReport()
+        return ExportSettings.decodeStored(report?.export_settings) ?? fallback
     }
 }

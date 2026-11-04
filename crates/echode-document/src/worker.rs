@@ -422,6 +422,23 @@ fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> 
     let before = host.snapshot();
     match kind {
         "history.list" if object.len() == 1 => {}
+        "history.export_settings" if object.len() == 1 || object.len() == 2 => {
+            if object.len() == 2 {
+                let settings = object
+                    .get("settings")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| "export settings must be a JSON string".to_string())?;
+                host.require_recovery_confirmation()
+                    .map_err(|error| error.to_string())?;
+                echode_history::write_export_settings(host.directory(), settings)
+                    .map_err(|error| error.to_string())?;
+            }
+            return serde_json::to_vec(&serde_json::json!({
+                "revisions": [], "changed": false,
+                "export_settings": echode_history::read_export_settings(host.directory()),
+            }))
+            .map_err(|error| error.to_string());
+        }
         "history.export_snapshot" if object.len() == 2 => {
             host.require_recovery_confirmation()
                 .map_err(|error| error.to_string())?;

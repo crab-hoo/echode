@@ -17,6 +17,8 @@ public struct HistoryReport: Decodable, Sendable, Equatable {
     public let recovery: RecoveryNotice?
     public let revisions: [SavedRevision]
     public let changed: Bool
+    /// Versioned GUI preferences; absent on unrelated history responses.
+    public let export_settings: String?
 }
 
 public enum HistoryCommand: Encodable, Sendable {
@@ -25,12 +27,17 @@ public enum HistoryCommand: Encodable, Sendable {
     case acceptRecovery(RecoveryNotice)
     /// Freezes the recorded project and its objects into a new private package.
     case exportSnapshot(path: String)
+    /// Reads preferences, or atomically replaces them on the document worker.
+    case exportSettings(json: String? = nil)
 
-    enum CodingKeys: String, CodingKey { case type, revision, tip, base, path }
+    enum CodingKeys: String, CodingKey { case type, revision, tip, base, path, settings }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .exportSettings(let json):
+            try container.encode("history.export_settings", forKey: .type)
+            try container.encodeIfPresent(json, forKey: .settings)
         case .exportSnapshot(let path):
             try container.encode("history.export_snapshot", forKey: .type)
             try container.encode(path, forKey: .path)
