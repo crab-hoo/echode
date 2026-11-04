@@ -348,6 +348,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
   既存の CLI 回帰の独立した出力先と後片付けは `tests/support/output.rs` が所有する（[ADR 0259](decisions/0259-export-destination-boundary.md)）。
 - GUI の出力先は `ExportJob.start` が準備前に固定する。`ExportDestinationTests` と必須契約 `export-destination-ui` がフォルダのリンク切替・内外の葉リンク・原本保持を検査する
   （[ADR 0260](decisions/0260-pinned-gui-export-destination.md)）。
+- 完了後の Finder 表示は `ExportJob.completedOutput` と `revealOutput`、操作子は `ExportStatusView`。
+  `ExportRevealTests` と必須契約 `export-reveal-ui` が固定パス・文書交換・再試行の境界を機器なしで確認する（[ADR 0261](decisions/0261-reveal-export-output.md)）。
 
 ### ループ・値の操作子・ミックス・ヘッダ
 

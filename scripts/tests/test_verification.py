@@ -54,6 +54,17 @@ class PolicyTests(unittest.TestCase):
         # Which checks a path concerns. The task tier narrows this for full-tier checks.
         return set(verify.select_checks(self.policy, list(paths), full=True))
 
+    def test_export_reveal_contract_covers_the_completed_job_and_action(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "export-reveal-ui")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "ExportRevealTests"))
+        self.assertEqual(contract["test"], "contractRevealUsesOnlyTheCompletedJobsPinnedDestination")
+        for path in ["swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceExportView.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/ExportRevealTests.swift"]:
+            self.assertTrue({"check-swift", "check-product-contracts", "check-real-hal"} <= self.selected(path))
+        for fault in contract["negative_controls"]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+
     def test_gui_export_destination_contract_covers_capture_before_async_preparation(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "export-destination-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "ExportDestinationTests"))
@@ -1690,7 +1701,7 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("check-product-contracts", self.selected(path))
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
-                         {"export-destination-ui", "export-destination-cli", "export-normalization-cli", "export-normalization-ui", "export-settings-ui", "export-snapshot-ui", "export-progress-ui", "export-cancellation-ui", "export-cancellation-publish", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                         {"export-reveal-ui", "export-destination-ui", "export-destination-cli", "export-normalization-cli", "export-normalization-ui", "export-settings-ui", "export-snapshot-ui", "export-progress-ui", "export-cancellation-ui", "export-cancellation-publish", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "document-session-drag-ui", "document-session-audio-ui", "document-session-restore-ui", "document-session-stale-ui",
                           "document-worker-completion", "document-lane-completion",
                           "typed-clip-controller", "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",

@@ -106,6 +106,10 @@ struct ExportStatusView: View {
                     Button(text("Cancel export")) { job.cancel() }
                         .disabled(job.cancelRequested).accessibilityIdentifier("export.cancel")
                 }
+                if !job.running, let output = job.completedOutput {
+                    Button(text("Show in Finder")) { job.revealOutput() }
+                        .help(output.path).accessibilityIdentifier("export.reveal")
+                }
                 if !job.detail.isEmpty {
                     Button(text("Details")) { details.toggle() }
                         .popover(isPresented: $details) {

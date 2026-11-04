@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import EchodeBridge
 import Foundation
@@ -16,8 +17,14 @@ final class ExportJob {
     private(set) var cancelRequested = false
     private(set) var fractionCompleted: Double?
     private(set) var message: String?
+    private(set) var completedOutput: URL?
     private(set) var detail = ""
     @ObservationIgnored var executable: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("echode-cli")
+
+    func revealOutput(using reveal: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }) {
+        guard !running, let completedOutput else { return }
+        reveal(completedOutput)
+    }
 
     func cancel() {
         guard running, !cancelRequested else { return }
@@ -30,6 +37,7 @@ final class ExportJob {
                output: URL, settings: ExportSettings, defaults: UserDefaults = .standard) -> Task<Void, Never>? {
         guard !running, controller.acceptsInput(document),
               controller.projectURL?.resolvingSymlinksInPath() == project.resolvingSymlinksInPath(), let arguments = settings.arguments else { return nil }
+        completedOutput = nil
         // Resolve the parent before any suspension, but keep the leaf: publication
         // replaces an external symlink itself, never the file it points to.
         let destination = output.deletingLastPathComponent().resolvingSymlinksInPath()
@@ -69,7 +77,10 @@ final class ExportJob {
                         self.message = text(progress.phase == .rendering ? "Exporting audio" : "Finalizing export")
                     }
                 }.value
-                if result.success { fractionCompleted = 1 }
+                if result.success {
+                    fractionCompleted = 1
+                    completedOutput = destination
+                }
                 detail = "Source: \(project.path)\nOutput: \(destination.path)\nOptions: \(arguments.joined(separator: " "))\n" + result.detail + (settingsWarning.map { "\n" + $0 } ?? "")
                 let status = result.success ? "Export complete" : (result.cancelled ? "Export cancelled" : "Export failed")
                 message = text(status) + ": " + output.lastPathComponent

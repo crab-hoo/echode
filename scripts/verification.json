@@ -76,6 +76,15 @@
   ],
   "product_contracts": [
     {
+      "id": "export-reveal-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportRevealTests", "test": "contractRevealUsesOnlyTheCompletedJobsPinnedDestination", "timeout": 180,
+      "purpose": "完了した実 CLI 書出しの固定パスだけを明示操作へ渡し、文書交換と親・葉リンクから独立することを機器なしで確認する",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "completedOutput = destination", "new": "completedOutput = output"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "reveal(completedOutput)", "new": "_ = completedOutput"}
+      ]
+    },
+    {
       "id": "export-destination-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportDestinationTests", "test": "contractExportPinsTheDestinationBeforePreparingItsSnapshot", "timeout": 180,
       "purpose": "GUI が準備前に出力先を固定し、リンクの切替後も元パッケージを保全して選択した外のフォルダへ実 CLI で書き出す",

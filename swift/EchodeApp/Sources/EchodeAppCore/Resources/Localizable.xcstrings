@@ -81,6 +81,10 @@
       "en": { "stringUnit": { "state": "translated", "value": "Export progress" } },
       "ja": { "stringUnit": { "state": "translated", "value": "書出しの進捗" } }
     } },
+    "Show in Finder": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Show in Finder" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "Finder で表示" } }
+    } },
     "Export complete": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Export complete" } },
       "ja": { "stringUnit": { "state": "translated", "value": "書出しが完了しました" } }
