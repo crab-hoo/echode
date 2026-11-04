@@ -338,6 +338,7 @@ WAV の形式・レート・余韻・ディザを選ぶ GUI と、プロジェ�
 途中取消も接続した（[ADR 0256](decisions/0256-export-cancellation.md)）。
 前回設定をパッケージへ保持し、移動・コピー先へ引き継ぐ（[ADR 0257](decisions/0257-portable-export-settings.md)）。実画面・VoiceOver は UC-53〜56 の確認待ちである。
 任意のサンプルピークノーマライズを CLI・GUI へ接続した（[ADR 0258](decisions/0258-peak-export-normalization.md)）。LUFS・トゥルーピークの処理ではなく、画面・VO・聴感は UC-57 に残す。
+CLI の出力先も元パッケージの外へ限定し、復旧前に原本の上書きを拒否する（[ADR 0259](decisions/0259-export-destination-boundary.md)）。
 
 - 各種形式、ステム、LUFS 等のノーマライズ、SRC の選択、プリセット、テンプレート、再リンク、収集して保存、履歴 UI（一覧・復帰・変更要約・タグ）、定期バックアップを接続する。
 - 初期の書出しは曲全体のミックス 1 ファイル（ミュート・ソロ・関連 FX・末尾の余韻調整を反映、初回は WAV・24 bit・プロジェクトのサンプルレート、以後は前回の設定を保持）とし、CLI の別プロセスで処理する（[書き出し](interaction-design.md#書き出し)）。

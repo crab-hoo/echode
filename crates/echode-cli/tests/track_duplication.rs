@@ -1,4 +1,7 @@
+#[path = "support/output.rs"]
+mod output;
 mod support;
+use output::output_path;
 
 use std::process::Command;
 
@@ -40,11 +43,12 @@ fn a_duplicated_audio_track_exports_as_a_second_identical_voice() {
         .unwrap();
     write_package(&directory, &project).unwrap();
     let render = |name: &str| {
+        let wav = output_path(name);
         let output = Command::new(env!("CARGO_BIN_EXE_echode"))
             .args([
                 "render",
                 directory.to_str().unwrap(),
-                directory.join(name).to_str().unwrap(),
+                wav.to_str().unwrap(),
                 "--frames",
                 "256",
             ])
@@ -55,7 +59,7 @@ fn a_duplicated_audio_track_exports_as_a_second_identical_voice() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        samples(&std::fs::read(directory.join(name)).unwrap())
+        samples(&std::fs::read(wav).unwrap())
     };
     let single = render("single.wav");
     assert!(single.iter().any(|sample| *sample != 0.0));

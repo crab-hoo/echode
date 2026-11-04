@@ -1,4 +1,7 @@
+#[path = "support/output.rs"]
+mod output;
 mod support;
+use output::output_path;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -75,7 +78,7 @@ fn assert_pcm24(bytes: &[u8], rate: u32, frames: u32) -> Vec<i32> {
 fn pcm24_cli_exports_stereo_silence_at_multiple_rates_and_block_boundaries() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
-    let wav = directory.0.join("out.wav");
+    let wav = output_path("out.wav");
     for rate in [44_100, 48_000, 96_000] {
         // These lengths exercise empty, short, full, and partial writer blocks only.
         for frames in [0, 1, 64, 65, 513] {
@@ -142,7 +145,7 @@ fn pcm24_cli_uses_the_same_isolated_instrument_output_as_float() {
         .unwrap()
         .0;
     write_package(&directory.0, &project).unwrap();
-    let empty = directory.0.join("empty.wav");
+    let empty = output_path("empty.wav");
     let output = render(&directory.0, &empty, 48_000, 0, Some("pcm24"));
     assert!(
         output.status.success(),
@@ -155,8 +158,8 @@ fn pcm24_cli_uses_the_same_isolated_instrument_output_as_float() {
 
 fn compare_formats(package: &Path, project: &Project, frames: u32) {
     write_package(package, project).unwrap();
-    let float = package.join("float.wav");
-    let pcm = package.join("pcm.wav");
+    let float = output_path("float.wav");
+    let pcm = output_path("pcm.wav");
     for (wav, format) in [(&float, None), (&pcm, Some("pcm24"))] {
         let output = render(package, wav, 48_000, frames, format);
         assert!(
@@ -167,8 +170,8 @@ fn compare_formats(package: &Path, project: &Project, frames: u32) {
         assert!(String::from_utf8_lossy(&output.stderr).contains("exported "));
     }
     let float = std::fs::read(float).unwrap();
-    let pcm = std::fs::read(pcm).unwrap();
-    let decoded = assert_pcm24(&pcm, 48_000, frames);
+    let pcm_bytes = std::fs::read(&pcm).unwrap();
+    let decoded = assert_pcm24(&pcm_bytes, 48_000, frames);
     assert!(decoded.iter().any(|value| *value != 0));
     for (sample, integer) in support::chunk(&float, b"data")
         .chunks_exact(4)
@@ -187,7 +190,7 @@ fn compare_formats(package: &Path, project: &Project, frames: u32) {
         .map(|sample| *sample as f32 / 8_388_608.0)
         .collect();
     // The product's independent CoreAudio file reader must accept the container.
-    let decoded = echode_history::decode_audio_file(&package.join("pcm.wav"), &|| true).unwrap();
+    let decoded = echode_history::decode_audio_file(&pcm, &|| true).unwrap();
     assert_eq!(decoded.sample_rate, 48_000);
     assert_eq!(decoded.channels, 2);
     assert_eq!(decoded.frames, u64::from(frames));
@@ -198,7 +201,7 @@ fn compare_formats(package: &Path, project: &Project, frames: u32) {
 fn pcm24_cli_rejects_invalid_options_and_headers_without_replacing_output() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
-    let wav = directory.0.join("keep.wav");
+    let wav = output_path("keep.wav");
     std::fs::write(&wav, b"keep").unwrap();
     for (rate, frames, format, message) in [
         (48_000, 1, "pcm32", "expected wav format"),
@@ -229,21 +232,25 @@ fn pcm24_cli_rejects_invalid_options_and_headers_without_replacing_output() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("usage:"));
     assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
-    assert!(std::fs::read_dir(&directory.0).unwrap().all(|entry| {
-        !entry
+    assert!(
+        std::fs::read_dir(wav.parent().unwrap())
             .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .ends_with(".part")
-    }));
+            .all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".part")
+            })
+    );
 }
 
 #[test]
 fn explicit_float32_keeps_the_default_wav_bytes() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
-    let default = directory.0.join("default.wav");
-    let explicit = directory.0.join("explicit.wav");
+    let default = output_path("default.wav");
+    let explicit = output_path("explicit.wav");
     for (wav, format) in [(&default, None), (&explicit, Some("float32"))] {
         let output = render(&directory.0, wav, 48_000, 65, format);
         assert!(

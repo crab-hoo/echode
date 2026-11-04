@@ -76,6 +76,12 @@
   ],
   "product_contracts": [
     {
+      "id": "export-destination-cli", "runner": "rust", "package": "echode-cli", "target": ["--test", "export_destination"],
+      "test": "contract_render_refuses_package_destinations_without_changing_the_source", "timeout": 180,
+      "purpose": "実 CLI が元パッケージ内への書出しを復旧前に拒否し、全ファイルと成功通知の境界を守ることを確認する",
+      "negative_control": {"file": "crates/echode-cli/src/destination.rs", "old": "if inside {", "new": "if false && inside {"}
+    },
+    {
       "id": "export-normalization-cli", "runner": "rust", "package": "echode-cli", "target": ["--test", "export_normalization"],
       "test": "contract_peak_normalization_uses_the_whole_stereo_mix_before_quantization", "timeout": 180,
       "purpose": "CLI の全ミックスのピークから左右共通のゲインを決め、float / PCM16 / PCM24 の量子化前に適用することを確認する",

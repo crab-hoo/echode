@@ -54,6 +54,17 @@ class PolicyTests(unittest.TestCase):
         # Which checks a path concerns. The task tier narrows this for full-tier checks.
         return set(verify.select_checks(self.policy, list(paths), full=True))
 
+    def test_export_destination_contract_covers_source_protection_and_fixture_paths(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "export-destination-cli")
+        self.assertEqual((contract["runner"], contract["package"]), ("rust", "echode-cli"))
+        self.assertEqual(contract["target"], ["--test", "export_destination"])
+        for path in ["crates/echode-cli/src/destination.rs",
+                     "crates/echode-cli/tests/export_destination.rs",
+                     "crates/echode-cli/tests/support/output.rs"]:
+            self.assertTrue({"check", "check-swift", "check-product-contracts"} <= self.selected(path))
+        fault = contract["negative_control"]
+        self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+
     def test_peak_normalization_contracts_cover_cli_output_and_gui_handoff(self):
         contracts = {c["id"]: c for c in self.policy["product_contracts"]}
         cli = contracts["export-normalization-cli"]
@@ -1669,7 +1680,7 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("check-product-contracts", self.selected(path))
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
-                         {"export-normalization-cli", "export-normalization-ui", "export-settings-ui", "export-snapshot-ui", "export-progress-ui", "export-cancellation-ui", "export-cancellation-publish", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                         {"export-destination-cli", "export-normalization-cli", "export-normalization-ui", "export-settings-ui", "export-snapshot-ui", "export-progress-ui", "export-cancellation-ui", "export-cancellation-publish", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "document-session-drag-ui", "document-session-audio-ui", "document-session-restore-ui", "document-session-stale-ui",
                           "document-worker-completion", "document-lane-completion",
                           "typed-clip-controller", "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",

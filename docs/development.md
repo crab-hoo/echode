@@ -344,6 +344,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
   `export_normalization.rs`・`normalization_tests.rs` と `ExportNormalizationTests` が、左右比・分割・設定互換・実 CLI への引渡しを検査する。
 - 前回設定の保存は `echode-history/src/export_settings.rs`、文書の入口は `history.export_settings`。
   `ExportSettingsTests` と履歴の `tests/export_settings.rs`、必須契約 `export-settings-ui` が移動・移行・履歴からの独立を検査する（[ADR 0257](decisions/0257-portable-export-settings.md)）。
+- CLI の出力先の境界は `echode-cli/src/destination.rs`。`tests/export_destination.rs` と必須契約 `export-destination-cli` が復旧前の拒否と全ファイル保持を確認する。
+  既存の CLI 回帰の独立した出力先と後片付けは `tests/support/output.rs` が所有する（[ADR 0259](decisions/0259-export-destination-boundary.md)）。
 
 ### ループ・値の操作子・ミックス・ヘッダ
 

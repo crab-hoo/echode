@@ -1,6 +1,10 @@
 //! Exercise RF64 selection through the CLI parser and product renderer without
 //! writing gigabytes: fail the second streamed block and check atomic cleanup.
 
+#[path = "support/output.rs"]
+mod output;
+use output::output_path;
+
 use echode_cli::{WAV_FAULT_WRITE, arm_wav_fault, run};
 use echode_history::write_package;
 use echode_model::{Id, Project};
@@ -9,7 +13,7 @@ use echode_model::{Id, Project};
 fn rf64_cli_streams_large_exports_and_preserves_the_destination_on_failure() {
     let directory = std::env::temp_dir().join(format!("echode-rf64-cli-{}", Id::generate()));
     write_package(&directory, &Project::new()).unwrap();
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     for (format, riff_overhead, frame_bytes) in
         [("float32", 50u32, 8u32), ("pcm16", 36, 4), ("pcm24", 60, 6)]
     {
@@ -39,13 +43,17 @@ fn rf64_cli_streams_large_exports_and_preserves_the_destination_on_failure() {
             );
             assert!(!error.is_durability_unknown());
             assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
-            assert!(std::fs::read_dir(&directory).unwrap().all(|entry| {
-                !entry
+            assert!(
+                std::fs::read_dir(wav.parent().unwrap())
                     .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .ends_with(".part")
-            }));
+                    .all(|entry| {
+                        !entry
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .ends_with(".part")
+                    })
+            );
         }
     }
     std::fs::remove_dir_all(directory).unwrap();

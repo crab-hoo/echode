@@ -83,6 +83,7 @@ make debug-report
   - GUI の書出しが始まらない・文書を切り替えると内容が違う
   - 書出しの進捗が出ない・99% で止まる
   - 書出しの取消中が続く・取消を押しても完了になる
+  - CLI が `choose an output outside the project package` で止まる
   - 書出し設定が移動先で戻らない・保存の警告が出る
   - 書出しの回帰が直列実行だけで `waitUntilExit` に止まる
   - ノート終端の回帰だけが `control.status().playing` で止まる

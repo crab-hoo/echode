@@ -1,4 +1,7 @@
+#[path = "support/output.rs"]
+mod output;
 mod support;
+use output::output_path;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -75,7 +78,7 @@ fn explicit_tails_render_empty_projects_in_every_wav_format() {
     {
         let package = directory.0.join(index.to_string());
         write_package(&package, &project).unwrap();
-        let wav = package.join("tail.wav");
+        let wav = output_path("tail.wav");
         for (format, frame_bytes) in [("float32", 8), ("pcm16", 4), ("pcm24", 6)] {
             // These lengths bound this fixture only and cross the plugin callback boundary.
             for tail in [0, 257] {
@@ -97,7 +100,7 @@ fn explicit_tails_replace_the_device_tail_without_changing_the_rendered_samples(
     let directory = Scratch::new();
     let project = instrument_project(true);
     write_package(&directory.0, &project).unwrap();
-    let wav = directory.0.join("tail.wav");
+    let wav = output_path("tail.wav");
     for rate in [44_100, 48_000] {
         let rate_text = rate.to_string();
         let body = echode_engine::render_span_frames(&project, rate).unwrap();
@@ -166,7 +169,7 @@ fn a_placed_audio_export_appends_exactly_the_requested_silence() {
         )
         .unwrap();
     write_package(&directory.0, &project).unwrap();
-    let wav = directory.0.join("tail.wav");
+    let wav = output_path("tail.wav");
     let automatic = exported(&directory.0, &wav, &[]);
     let body = support::chunk(&automatic, b"data");
     assert!(body.iter().any(|byte| *byte != 0));
@@ -204,7 +207,7 @@ fn explicit_tails_use_the_recovered_edit_end_without_rewriting_the_project() {
     let (revision, seq) = recovered.recovered_label().unwrap();
     assert_eq!(*recovered.snapshot(), *snapshot);
     drop(recovered);
-    let wav = directory.0.join("journal.wav");
+    let wav = output_path("journal.wav");
     let output = render(&directory.0, &wav, &["--tail-frames", "65"]);
     assert!(output.status.success(), "{output:?}");
     assert!(
@@ -224,7 +227,7 @@ fn explicit_tails_use_the_recovered_edit_end_without_rewriting_the_project() {
 fn invalid_or_conflicting_tail_lengths_preserve_the_destination() {
     let directory = Scratch::new();
     write_package(&directory.0, &instrument_project(true)).unwrap();
-    let wav = directory.0.join("keep.wav");
+    let wav = output_path("keep.wav");
     std::fs::write(&wav, b"keep").unwrap();
     for (args, expected) in [
         (vec!["--tail-frames"], "usage:"),
@@ -255,12 +258,16 @@ fn invalid_or_conflicting_tail_lengths_preserve_the_destination() {
         assert!(stderr.contains(expected), "{args:?}: {stderr}");
         assert!(!stderr.contains("exported "));
         assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
-        assert!(std::fs::read_dir(&directory.0).unwrap().all(|entry| {
-            !entry
+        assert!(
+            std::fs::read_dir(wav.parent().unwrap())
                 .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".part")
-        }));
+                .all(|entry| {
+                    !entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(".part")
+                })
+        );
     }
 }

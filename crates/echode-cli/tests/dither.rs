@@ -1,4 +1,7 @@
+#[path = "support/output.rs"]
+mod output;
 mod support;
+use output::output_path;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -65,7 +68,7 @@ fn successful_bytes(package: &Path, wav: &Path, frames: u32, flags: &[&str]) -> 
 fn dither_cli_reproducible_tpdf_at_both_integer_depths() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
-    let wav = directory.0.join("out.wav");
+    let wav = output_path("out.wav");
     for (format, bits) in [("pcm16", 16), ("pcm24", 24)] {
         let flags = ["--format", format, "--dither", "tpdf"];
         // This population bounds the deterministic distribution check, not exports.
@@ -108,7 +111,7 @@ fn dither_cli_reproducible_tpdf_at_both_integer_depths() {
 fn explicit_none_preserves_default_bytes_for_all_formats() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
-    let wav = directory.0.join("out.wav");
+    let wav = output_path("out.wav");
     for format in ["float32", "pcm16", "pcm24"] {
         let default = successful_bytes(&directory.0, &wav, 513, &["--format", format]);
         let explicit = successful_bytes(
@@ -169,7 +172,7 @@ fn tpdf_quantizes_the_same_placed_audio_and_isolated_instrument_as_float() {
 
 fn compare_to_float(package: &Path, project: &Project) {
     write_package(package, project).unwrap();
-    let wav = package.join("out.wav");
+    let wav = output_path("out.wav");
     let float = successful_bytes(package, &wav, 513, &["--format", "float32"]);
     let samples: Vec<_> = support::chunk(&float, b"data")
         .chunks_exact(4)

@@ -1,4 +1,7 @@
+#[path = "support/output.rs"]
+mod output;
 mod support;
+use output::output_path;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -65,7 +68,7 @@ fn assert_pcm16(bytes: &[u8], rate: u32, frames: u32) -> Vec<i16> {
 fn pcm16_cli_exports_stereo_silence_at_multiple_rates_and_block_boundaries() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
-    let wav = directory.0.join("out.wav");
+    let wav = output_path("out.wav");
     for rate in [44_100, 48_000, 96_000] {
         // These lengths exercise empty, short, full, and partial writer blocks only.
         for frames in [0, 1, 64, 65, 513] {
@@ -134,7 +137,7 @@ fn pcm16_cli_quantizes_the_same_isolated_instrument_output_as_float() {
         .unwrap()
         .0;
     write_package(&directory.0, &project).unwrap();
-    let empty = directory.0.join("empty.wav");
+    let empty = output_path("empty.wav");
     let output = render(&directory.0, &empty, 48_000, 0, "pcm16");
     assert!(
         output.status.success(),
@@ -147,8 +150,8 @@ fn pcm16_cli_quantizes_the_same_isolated_instrument_output_as_float() {
 
 fn compare_with_float(package: &Path, project: &Project, frames: u32) {
     write_package(package, project).unwrap();
-    let float = package.join("float.wav");
-    let pcm = package.join("pcm.wav");
+    let float = output_path("float.wav");
+    let pcm = output_path("pcm.wav");
     for (wav, format) in [(&float, "float32"), (&pcm, "pcm16")] {
         let output = render(package, wav, 48_000, frames, format);
         assert!(
@@ -190,7 +193,7 @@ fn compare_with_float(package: &Path, project: &Project, frames: u32) {
 fn pcm16_cli_rejects_invalid_headers_without_replacing_output() {
     let directory = Scratch::new();
     write_package(&directory.0, &Project::new()).unwrap();
-    let wav = directory.0.join("keep.wav");
+    let wav = output_path("keep.wav");
     std::fs::write(&wav, b"keep").unwrap();
     for (rate, frames, message) in [
         (0, 1, "invalid sample rate"),
@@ -209,11 +212,15 @@ fn pcm16_cli_rejects_invalid_headers_without_replacing_output() {
         assert!(!stderr.contains("exported "));
         assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
     }
-    assert!(std::fs::read_dir(&directory.0).unwrap().all(|entry| {
-        !entry
+    assert!(
+        std::fs::read_dir(wav.parent().unwrap())
             .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .ends_with(".part")
-    }));
+            .all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".part")
+            })
+    );
 }

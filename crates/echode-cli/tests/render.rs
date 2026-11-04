@@ -1,4 +1,7 @@
+#[path = "support/output.rs"]
+mod output;
 mod support;
+use output::output_path;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,7 +51,7 @@ fn reference_wav() -> PathBuf {
 
 fn render_reference(directory: &std::path::Path) -> Vec<u8> {
     write_package(directory, &reference_project()).unwrap();
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     render_to_wav(directory, &wav, 48_000, Some(128)).unwrap();
     std::fs::read(wav).unwrap()
 }
@@ -92,7 +95,7 @@ fn default_export_uses_the_declared_device_tail_and_respects_bypass() {
     ] {
         let package = directory.join(index.to_string());
         write_package(&package, &project).unwrap();
-        let wav = package.join("tail.wav");
+        let wav = output_path("tail.wav");
         render_to_wav(&package, &wav, 48_000, None).unwrap();
         assert_eq!(
             std::fs::metadata(wav).unwrap().len() as usize,
@@ -112,7 +115,7 @@ fn zero_frame_exports_keep_float_metadata_with_and_without_plugins() {
     {
         let package = directory.join(index.to_string());
         write_package(&package, &project).unwrap();
-        let wav = package.join("empty.wav");
+        let wav = output_path("empty.wav");
         render_to_wav(&package, &wav, 48_000, Some(0)).unwrap();
         let bytes = std::fs::read(&wav).unwrap();
         assert_eq!(bytes.len(), 58);
@@ -127,7 +130,7 @@ fn zero_frame_exports_keep_float_metadata_with_and_without_plugins() {
 fn invalid_rf64_byte_rate_preserves_the_existing_destination() {
     let directory = scratch();
     write_package(&directory, &Project::new()).unwrap();
-    let wav = directory.join("too-long.wav");
+    let wav = output_path("too-long.wav");
     std::fs::write(&wav, b"keep").unwrap();
     // The complete RIFF chunk overflows; RF64 still must reject an invalid byte rate.
     let frames = (u32::MAX - 50) / 8 + 1;
@@ -138,7 +141,7 @@ fn invalid_rf64_byte_rate_preserves_the_existing_destination() {
             .contains("sample rate does not fit in the wav header")
     );
     assert_eq!(std::fs::read(&wav).unwrap(), b"keep");
-    assert!(part_files(&directory).is_empty());
+    assert!(part_files(wav.parent().unwrap()).is_empty());
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -146,7 +149,7 @@ fn invalid_rf64_byte_rate_preserves_the_existing_destination() {
 fn a_zero_sample_rate_and_a_negative_frame_count_leave_the_output() {
     let directory = scratch();
     write_package(&directory, &reference_project()).unwrap();
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     std::fs::write(&wav, b"keep").unwrap();
     for frames in [None, Some(0), Some(16)] {
         let error = render_to_wav(&directory, &wav, 0, frames).unwrap_err();
@@ -198,7 +201,7 @@ fn a_placed_file_is_audible_in_the_wav() {
         )
         .unwrap();
     write_package(&directory, &project).unwrap();
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     render_to_wav(&directory, &wav, 48_000, Some(128)).unwrap();
     let rendered = std::fs::read(&wav).unwrap();
     let _ = std::fs::remove_dir_all(directory);
@@ -212,7 +215,7 @@ fn a_placed_file_is_audible_in_the_wav() {
 fn a_minute_of_stereo_silence_is_written_in_bulk() {
     let directory = scratch();
     std::fs::create_dir_all(&directory).unwrap();
-    let wav = directory.join("minute.wav");
+    let wav = output_path("minute.wav");
     let samples = vec![0.0f32; 48_000 * 60 * 2];
     let started = Instant::now();
     write_wav(&wav, 48_000, &samples).unwrap();
@@ -319,7 +322,7 @@ fn export_middle(package: &Path, project: &Project, clip: Id, frames: usize) -> 
     let _ = std::fs::remove_file(package.join("save.pending"));
     let recovered = echode_history::recover(package).unwrap();
     assert!((clip_gain(&recovered, clip) - clip_gain(project, clip)).abs() < 1e-6);
-    let wav = package.join("out.wav");
+    let wav = output_path("out.wav");
     render_to_wav(package, &wav, 48_000, Some(u32::try_from(frames).unwrap())).unwrap();
     let bytes = std::fs::read(wav).unwrap();
     let bytes = support::chunk(&bytes, b"data");
@@ -375,7 +378,7 @@ fn audit_aud11_a_journaled_note_exports_and_a_pending_save_is_not_mixed() {
     let raw = echode_history::read_package(&directory).unwrap();
     assert!(raw.tracks().is_empty());
 
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     render_to_wav(&directory, &wav, 48_000, Some(128)).unwrap();
     let exported = std::fs::read(&wav).unwrap();
     assert!(
@@ -410,7 +413,7 @@ fn audit_aud11_a_journaled_note_exports_and_a_pending_save_is_not_mixed() {
         .0;
     write_package(&dirty, &noted).unwrap();
     echode_history::mark_save_pending(&dirty).unwrap();
-    let dirty_wav = dirty.join("out.wav");
+    let dirty_wav = output_path("out.wav");
     render_to_wav(&dirty, &dirty_wav, 48_000, Some(128)).unwrap();
     let silent = std::fs::read(&dirty_wav).unwrap();
     assert!(
@@ -427,7 +430,7 @@ fn audit_aud11_a_journaled_note_exports_and_a_pending_save_is_not_mixed() {
     std::fs::create_dir_all(&unfinished).unwrap();
     write_package(&unfinished, &noted).unwrap();
     echode_history::mark_save_pending(&unfinished).unwrap();
-    let unfinished_wav = unfinished.join("out.wav");
+    let unfinished_wav = output_path("out.wav");
     let error = render_to_wav(&unfinished, &unfinished_wav, 48_000, Some(128)).unwrap_err();
     assert!(!unfinished_wav.exists());
     let _ = std::fs::remove_dir_all(directory);
@@ -546,7 +549,7 @@ fn contract_phase1_project_survives_crash_history_and_cli_export() {
     drop(host);
 
     let export = |name: &str| {
-        let wav = directory.join(name);
+        let wav = output_path(name);
         let output = Process::new(env!("CARGO_BIN_EXE_echode"))
             .arg("render")
             .arg(&directory)
@@ -600,7 +603,7 @@ fn bypass_export_matches_dry_effects_and_silent_instruments() {
     write_plugin_cache(&cache, &plugin_dylib());
     let project = reference_project();
     write_package(&directory, &project).unwrap();
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     render_to_wav(&directory, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap();
     let dry = wav_lefts(&wav, PLUGIN_FRAMES);
     assert!(dry.iter().any(|sample| *sample != 0.0));
@@ -624,7 +627,7 @@ fn bypass_export_matches_dry_effects_and_silent_instruments() {
             .unwrap();
         let package = directory.join(if instrument { "instrument" } else { "effect" });
         write_package(&package, &bypassed).unwrap();
-        let wav = package.join("out.wav");
+        let wav = output_path("out.wav");
         render_to_wav(&package, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap();
         let exported = wav_lefts(&wav, PLUGIN_FRAMES);
         assert_eq!(exported, play_plugins(&package, &bypassed));
@@ -680,7 +683,7 @@ fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     write_package(&directory, &project).unwrap();
 
     let played = play_plugins(&directory, &project);
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     render_to_wav(&directory, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap();
     let exported = wav_lefts(&wav, PLUGIN_FRAMES);
     let expected = 0.25 * 2.0;
@@ -701,7 +704,7 @@ fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     write_package(&missing_dir, &missing).unwrap();
     let error = render_to_wav(
         &missing_dir,
-        &missing_dir.join("out.wav"),
+        &output_path("out.wav"),
         48_000,
         Some(PLUGIN_FRAMES as u32),
     )
@@ -736,7 +739,7 @@ fn audit_aud10_plugin_export_matches_playback_and_names_a_missing_plugin() {
     let _hostless = PluginEnv::without_host(&hostless.join("clap-scan.jsonl"));
     let error = render_to_wav(
         &hostless,
-        &hostless.join("out.wav"),
+        &output_path("out.wav"),
         48_000,
         Some(PLUGIN_FRAMES as u32),
     )
@@ -777,7 +780,7 @@ fn audit_pro07_a_failed_plugin_does_not_leave_a_finished_wav() {
         ("hang", "did not finish before the deadline"),
     ] {
         let _fault = FaultFile::set("dev.echode.test-gain", fault);
-        let wav = directory.join(format!("{fault}.wav"));
+        let wav = output_path(format!("{fault}.wav"));
         let error =
             render_to_wav(&directory, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap_err();
         let text = error.to_string();
@@ -795,7 +798,7 @@ fn audit_pro07_a_failed_plugin_does_not_leave_a_finished_wav() {
     std::fs::create_dir_all(&later_dir).unwrap();
     write_package(&later_dir, &later).unwrap();
     let _fault = FaultFile::set("dev.echode.test-instrument", "process");
-    let wav = later_dir.join("later.wav");
+    let wav = output_path("later.wav");
     let error = render_to_wav(&later_dir, &wav, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap_err();
     let text = error.to_string();
     assert!(text.contains("42"), "{text}");
@@ -838,7 +841,7 @@ fn audit_rea06_failed_plugin_export_preserves_existing_output() {
         .unwrap();
     write_package(&directory, &project).unwrap();
     let prior = b"existing-finished-wav".to_vec();
-    let wav = directory.join("out.wav");
+    let wav = output_path("out.wav");
     std::fs::write(&wav, &prior).unwrap();
     let lines = export_lines_for_test();
     let _fault = FaultFile::set("dev.echode.test-gain", "process");
@@ -851,17 +854,17 @@ fn audit_rea06_failed_plugin_export_preserves_existing_output() {
     assert!(!error.is_durability_unknown());
     assert_eq!(std::fs::read(&wav).unwrap(), prior);
     assert_eq!(export_lines_for_test(), lines);
-    assert!(part_files(&directory).is_empty());
+    assert!(part_files(wav.parent().unwrap()).is_empty());
 
     let fresh = scratch();
     std::fs::create_dir_all(&fresh).unwrap();
     write_package(&fresh, &project).unwrap();
     write_plugin_cache(&fresh.join("clap-scan.jsonl"), &plugin);
-    let missing = fresh.join("new.wav");
+    let missing = output_path("new.wav");
     let error = render_to_wav(&fresh, &missing, 48_000, Some(PLUGIN_FRAMES as u32)).unwrap_err();
     assert!(error.to_string().contains("41"), "{error}");
     assert!(!missing.exists());
-    assert!(part_files(&fresh).is_empty());
+    assert!(part_files(missing.parent().unwrap()).is_empty());
     drop(_fault);
 
     let lines = export_lines_for_test();
@@ -876,7 +879,7 @@ fn audit_rea06_failed_plugin_export_preserves_existing_output() {
             render_to_wav(&directory, &wav, 48_000, Some((PLUGIN_FRAMES * 2) as u32)).unwrap_err();
         assert!(!error.is_durability_unknown(), "{kind}: {error}");
         assert_eq!(std::fs::read(&wav).unwrap(), prior, "{kind}");
-        assert!(part_files(&directory).is_empty(), "{kind}");
+        assert!(part_files(wav.parent().unwrap()).is_empty(), "{kind}");
     }
     assert_eq!(export_lines_for_test(), lines);
     arm_wav_fault(0, 0);
@@ -1151,7 +1154,7 @@ fn audit_cli_a1_a_one_frame_plugin_export_completes() {
     let _lock = PLUGIN_ENV.lock().unwrap();
     let directory = scratch();
     write_package(&directory, &reference_project()).unwrap();
-    let wav = directory.join("one.wav");
+    let wav = output_path("one.wav");
     render_to_wav(&directory, &wav, 48_000, Some(1)).unwrap();
     assert_eq!(std::fs::metadata(&wav).unwrap().len(), 58 + 8);
     let _ = std::fs::remove_dir_all(directory);
@@ -1176,7 +1179,7 @@ fn a_plugin_slower_than_real_time_still_exports() {
     // Several blocks, so the slowdown adds up beyond one block's time.
     let frames = PLUGIN_FRAMES * 8;
     let render = |name: &str| {
-        let wav = directory.join(name);
+        let wav = output_path(name);
         render_to_wav(&directory, &wav, 48_000, Some(frames as u32))
             .map(|()| wav_lefts(&wav, frames))
     };

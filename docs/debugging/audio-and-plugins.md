@@ -166,6 +166,15 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 前回設定の記憶と移行は、下記の「書出し設定が移動先で戻らない・保存の警告が出る」で切り分ける。
 途中取消は専用の制御パイプで要求する。アプリ終了・強制終了の後の一時物は再開せず、ユーザーの同意なしに探して削除しない（[ADR 0256](../decisions/0256-export-cancellation.md)）。
 
+### CLI が `choose an output outside the project package` で止まる
+
+出力先が元パッケージ自身・内部のファイル・内部を指すリンクなら、復旧や発音を始めず拒否する。
+新規 WAV も外へ出す。元／出力のパスと、親フォルダ・既存ファイルのリンクを確認し、外の出力先を指定し直す。
+`cannot resolve export output directory` は親がないか解決できない場合で、フォルダを自動作成しない。
+`export_destination.rs` は実 CLI・相対パス・リンク・全原本のバイトを照合する。
+失敗した要求に `exported` や完了の進捗があれば、そのログを保全する。ユーザーのパッケージは自動収集しない
+（[ADR 0259](../decisions/0259-export-destination-boundary.md)）。
+
 ### 書出し設定が移動先で戻らない・保存の警告が出る
 
 `export.json` の版 1 と設定値、旧 UserDefaults の `workspace.export.v1.<正規化したパス>` を区別する。

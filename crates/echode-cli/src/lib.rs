@@ -26,6 +26,9 @@ use echode_engine::{
 use echode_history::DocumentHost;
 use echode_model::Project;
 
+mod destination;
+use destination::RenderPaths;
+
 mod cancellation;
 use cancellation::Cancellation;
 
@@ -366,6 +369,9 @@ fn render_to_wav_format(
     } else {
         tail_frames.map_or(RenderTail::Automatic, RenderTail::Frames)
     };
+    let paths = RenderPaths::resolve(package, wav)?;
+    let package = paths.package.as_path();
+    let wav = paths.output.as_path();
     let _activity = echode_audio_io::UserActivity::begin("Echode is writing audio");
     let host = DocumentHost::open(package).map_err(|error| CliError::new(error.to_string()))?;
     let project = host.snapshot();
