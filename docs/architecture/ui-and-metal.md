@@ -58,6 +58,7 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0053](../decisions/0053-workspace-ui-foundation.md)）
 - **書出し**: 設定シートを閉じた後はウィンドウ所有の `ExportJob` が状態を保持し、文書交換で対象を差し替えない。
   記録済みの曲を準備した後、同梱 CLI を別プロセスで実行する（[ADR 0254](../decisions/0254-gui-snapshot-export.md)）。
+  出力先の親は準備前に解決し、元パッケージ内を拒否した固定パスを CLI へ渡す。外向きの葉リンクは参照先でなくリンク自身を置換する（[ADR 0260](../decisions/0260-pinned-gui-export-destination.md)）。
   CLI の任意の進捗を受け、率と仕上げ中を表示する。完了通知だけでは成功にしない（[ADR 0255](../decisions/0255-export-progress.md)）。
   途中取消は専用の制御パイプで要求し、CLI が公開前に認めた時だけ取消済みにする（[ADR 0256](../decisions/0256-export-cancellation.md)）。
   前回の設定は文書ワーカー経由で `export.json` へ保持し、移動・コピー先でも読み戻す。モデル・履歴には入れない（[ADR 0257](../decisions/0257-portable-export-settings.md)）。

@@ -76,6 +76,12 @@
   ],
   "product_contracts": [
     {
+      "id": "export-destination-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportDestinationTests", "test": "contractExportPinsTheDestinationBeforePreparingItsSnapshot", "timeout": 180,
+      "purpose": "GUI が準備前に出力先を固定し、リンクの切替後も元パッケージを保全して選択した外のフォルダへ実 CLI で書き出す",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "package: frozen, output: destination, arguments: arguments", "new": "package: frozen, output: output, arguments: arguments"}
+    },
+    {
       "id": "export-destination-cli", "runner": "rust", "package": "echode-cli", "target": ["--test", "export_destination"],
       "test": "contract_render_refuses_package_destinations_without_changing_the_source", "timeout": 180,
       "purpose": "実 CLI が元パッケージ内への書出しを復旧前に拒否し、全ファイルと成功通知の境界を守ることを確認する",

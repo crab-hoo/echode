@@ -30,10 +30,13 @@ final class ExportJob {
                output: URL, settings: ExportSettings, defaults: UserDefaults = .standard) -> Task<Void, Never>? {
         guard !running, controller.acceptsInput(document),
               controller.projectURL?.resolvingSymlinksInPath() == project.resolvingSymlinksInPath(), let arguments = settings.arguments else { return nil }
-        // Do not let an export overwrite a source package or one of its objects.
+        // Resolve the parent before any suspension, but keep the leaf: publication
+        // replaces an external symlink itself, never the file it points to.
+        let destination = output.deletingLastPathComponent().resolvingSymlinksInPath()
+            .appendingPathComponent(output.lastPathComponent)
         let sourcePath = project.resolvingSymlinksInPath().path
-        let outputPath = output.resolvingSymlinksInPath().path
-        guard outputPath != sourcePath, !outputPath.hasPrefix(sourcePath + "/") else {
+        let outputPaths = [destination.path, destination.resolvingSymlinksInPath().path]
+        guard !outputPaths.contains(where: { $0 == sourcePath || $0.hasPrefix(sourcePath + "/") }) else {
             message = text("Choose an output outside the project package"); return nil
         }
         running = true; message = text("Preparing export"); detail = ""
@@ -59,7 +62,7 @@ final class ExportJob {
                 settings.save(project: project, defaults: defaults)
                 message = text("Exporting audio")
                 let result = try await Task.detached {
-                    try await Self.render(executable: executable, package: frozen, output: output, arguments: arguments, work: root,
+                    try await Self.render(executable: executable, package: frozen, output: destination, arguments: arguments, work: root,
                                           isCancelled: { self.cancelRequested }) { progress in
                         guard !self.cancelRequested else { return }
                         self.fractionCompleted = progress.fraction
@@ -67,7 +70,7 @@ final class ExportJob {
                     }
                 }.value
                 if result.success { fractionCompleted = 1 }
-                detail = "Source: \(project.path)\nOutput: \(output.path)\nOptions: \(arguments.joined(separator: " "))\n" + result.detail + (settingsWarning.map { "\n" + $0 } ?? "")
+                detail = "Source: \(project.path)\nOutput: \(destination.path)\nOptions: \(arguments.joined(separator: " "))\n" + result.detail + (settingsWarning.map { "\n" + $0 } ?? "")
                 let status = result.success ? "Export complete" : (result.cancelled ? "Export cancelled" : "Export failed")
                 message = text(status) + ": " + output.lastPathComponent
             } catch {
