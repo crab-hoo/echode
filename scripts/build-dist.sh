@@ -9,7 +9,7 @@ if [[ -z "${ECHODE_KEYCHAIN:-}" ]] && ! python3 scripts/distribution.py identity
     exit 1
 fi
 
-cargo build --locked --offline --release -p echode-ffi -p echode-plugin-host
+cargo build --locked --offline --release -p echode-ffi -p echode-plugin-host -p echode-cli
 bash scripts/build-bundled-plugins.sh release
 header="$(find target/release/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"
 test -n "$header"
@@ -33,6 +33,7 @@ assemble=(
     --executable "$app_bin/Echode"
     --helper target/release/echode-plugin-host
     --plugin target/release/plugins/EchodeSinePad.clap
+    --cli target/release/echode
     --info swift/EchodeApp/Info.plist
     --xcframework target/dist/EchodeFFI.xcframework
 )

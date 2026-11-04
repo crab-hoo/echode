@@ -127,6 +127,10 @@ class SignedBundle(unittest.TestCase):
                 distribution.create_signing_keychain(keychain, password)
                 app = self.signed_app(root, keychain)
                 self.assertTrue((app / "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host").is_file())
+                cli = app / "Contents/MacOS/echode-cli"
+                self.assertTrue(cli.is_file())
+                subprocess.run(["codesign", "--verify", "--strict", str(cli)], check=True)
+                self.assertNotIn("disable-library-validation", self.entitlements(cli))
                 self.assertTrue((app / "Contents/Frameworks/EchodeFFI.xcframework").is_dir())
                 self.assertFalse((app / "Contents/MacOS/echode-plugin-host").exists())
                 subprocess.run(["codesign", "--verify", "--strict", str(app)], check=True)
@@ -176,7 +180,7 @@ class SignedBundle(unittest.TestCase):
         binary.parent.mkdir(parents=True)
         shutil.copy2(self.foreign_library(root), binary)
         shutil.copy2(ROOT / "Packaging/EchodeSinePad-Info.plist", plugin / "Contents/Info.plist")
-        distribution.assemble_app(app, executable, helper, ROOT / "swift/EchodeApp/Info.plist", framework, plugins=[plugin])
+        distribution.assemble_app(app, executable, helper, ROOT / "swift/EchodeApp/Info.plist", framework, plugins=[plugin], cli=executable)
         distribution.sign_app(app, keychain=keychain)
         return app
 

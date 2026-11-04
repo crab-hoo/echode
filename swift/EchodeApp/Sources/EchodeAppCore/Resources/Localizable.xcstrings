@@ -1,6 +1,74 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Details": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Details" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "詳細" } }
+    } },
+    "Export Audio": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export Audio" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "音声を書き出す" } }
+    } },
+    "Whole song · Stereo WAV · Recorded mix and effects": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Whole song · Stereo WAV · Recorded mix and effects" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "曲全体・ステレオ WAV・確定済みのミックスと FX" } }
+    } },
+    "Format": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Format" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "形式" } }
+    } },
+    "WAV · 24-bit PCM": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "WAV · 24-bit PCM" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "WAV・24 bit PCM" } }
+    } },
+    "WAV · 16-bit PCM": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "WAV · 16-bit PCM" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "WAV・16 bit PCM" } }
+    } },
+    "WAV · 32-bit Float": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "WAV · 32-bit Float" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "WAV・32 bit 浮動小数点" } }
+    } },
+    "Sample rate (Hz)": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Sample rate (Hz)" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "サンプルレート（Hz）" } }
+    } },
+    "Use plugin tail length": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Use plugin tail length" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "プラグインの余韻の長さを使う" } }
+    } },
+    "Tail (seconds)": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Tail (seconds)" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "余韻（秒）" } }
+    } },
+    "TPDF dither": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "TPDF dither" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "TPDF ディザ" } }
+    } },
+    "Export uses a private snapshot. Editing and playback can continue after preparation.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export uses a private snapshot. Editing and playback can continue after preparation." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "専用のスナップショットから書き出します。準備後は編集と再生を続けられます。" } }
+    } },
+    "Choose an output outside the project package": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Choose an output outside the project package" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "プロジェクトの外に書出し先を選んでください" } }
+    } },
+    "Preparing export": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Preparing export" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しを準備中" } }
+    } },
+    "Exporting audio": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Exporting audio" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "音声を書出し中" } }
+    } },
+    "Export complete": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export complete" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しが完了しました" } }
+    } },
+    "Export failed": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export failed" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しに失敗しました" } }
+    } },
     "Select a non-silent track to adjust the group's relative volume, or select this track alone.": {
       "localizations": {
         "en": { "stringUnit": { "state": "translated", "value": "Select a non-silent track to adjust the group's relative volume, or select this track alone." } },

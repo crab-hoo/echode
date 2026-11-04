@@ -3,12 +3,13 @@ import Foundation
 import Observation
 
 enum WorkspacePresentation: Identifiable, Equatable {
-    case palette, output, history
+    case palette, output, history, exportAudio
     var id: String {
         switch self {
         case .palette: "palette"
         case .output: "output"
         case .history: "history"
+        case .exportAudio: "exportAudio"
         }
     }
 }
@@ -19,6 +20,7 @@ public final class WorkspaceState {
     var layout: WorkspaceLayout
     var displayKey = DisplayKey()
     var presentation: WorkspacePresentation?
+    let exportJob = ExportJob()
     var pluginBrowserDocument: DocumentID?
     var showsDevices: Bool { layout.devices }
     var showsEditor: Bool { layout.editor }

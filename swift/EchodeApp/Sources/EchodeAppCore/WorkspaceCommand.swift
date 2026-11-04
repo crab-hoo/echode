@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
     case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track", duplicateTrack = "Duplicate Track"
+    case exportAudio = "Export Audio"
     case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Devices", maximizeEditors = "Maximize Editors"
     case playback = "Play / Stop", pause = "Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", followPlayhead = "Follow Playhead"
     case plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
@@ -22,6 +23,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         switch self {
         case .newProject: "doc.badge.plus"
         case .openProject: "folder"
+        case .exportAudio: "square.and.arrow.up"
         case .addTrack: "plus"
         case .duplicateTrack: "plus.square.on.square"
         case .undo: "arrow.uturn.backward"
@@ -47,6 +49,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         switch self {
         case .newProject: KeyboardShortcut("n")
         case .openProject: KeyboardShortcut("o")
+        case .exportAudio: KeyboardShortcut("e", modifiers: [.command, .shift])
         case .addTrack: KeyboardShortcut("t")
         case .undo: KeyboardShortcut("z")
         case .redo: KeyboardShortcut("z", modifiers: [.command, .shift])
@@ -66,6 +69,7 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
         switch self {
         case .newProject: "⌘N"
         case .openProject: "⌘O"
+        case .exportAudio: "⇧⌘E"
         case .addTrack: "⌘T"
         case .undo: "⌘Z"
         case .redo: "⇧⌘Z"
@@ -96,6 +100,7 @@ final class WorkspaceSession {
         let editable = controller.snapshot != nil && !controller.busy
         switch command {
         case .newProject, .openProject: return !controller.busy
+        case .exportAudio: return editable && !state.exportJob.running && controller.faderPreview == nil && controller.session.parameterGesture == nil && controller.session.pluginGestures.isEmpty
         case .undo: return editable && controller.undoCount > 0
         case .redo: return editable && controller.redoCount > 0
         case .history: return editable
@@ -125,6 +130,7 @@ final class WorkspaceSession {
         switch command {
         case .newProject: chooseProject(creating: true)
         case .openProject: chooseProject(creating: false)
+        case .exportAudio: state.presentation = .exportAudio
         case .addTrack:
             addTrack()
         case .duplicateTrack: duplicateTracks()

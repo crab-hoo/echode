@@ -330,6 +330,13 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
 クリップ移動・複製と音声配置は `TypedClipEditTests.swift` で、整数 tick・入力先・選択・結果参照・履歴・拒否と再オープンを検査する。
 一括編集内で前の結果を使う要求は `ReferencingEditAction` で組み、`EditText.result` と `performActions(referencing:)` で送る。
 
+### GUI の書出し
+
+- 設定とパスごとの記憶は `ExportSettings.swift`、専用パッケージの準備と別プロセスの寿命は `ExportJob.swift`、画面は `WorkspaceExportView.swift`。
+- `HistoryCommand.exportSnapshot` が文書ワーカーへ渡り、`echode-history/src/export.rs` が記録済みの `Project` と参照するオブジェクトだけをコピーする。
+- `ExportTests.swift`・`ExportBoundaryTests.swift` と履歴の `tests/export.rs` が、元文書との独立・設定・拒否・失敗時の保持を検査する。
+  必須契約は `export-snapshot-ui`、判断と残る範囲は [ADR 0254](decisions/0254-gui-snapshot-export.md)。
+
 ### ループ・値の操作子・ミックス・ヘッダ
 
 ループの下書きは `ProjectController.loopRange` の整数範囲を両ルーラーと送信で共有する。

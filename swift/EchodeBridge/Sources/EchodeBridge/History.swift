@@ -23,12 +23,17 @@ public enum HistoryCommand: Encodable, Sendable {
     case list
     case restore(revision: String)
     case acceptRecovery(RecoveryNotice)
+    /// Freezes the recorded project and its objects into a new private package.
+    case exportSnapshot(path: String)
 
-    enum CodingKeys: String, CodingKey { case type, revision, tip, base }
+    enum CodingKeys: String, CodingKey { case type, revision, tip, base, path }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .exportSnapshot(let path):
+            try container.encode("history.export_snapshot", forKey: .type)
+            try container.encode(path, forKey: .path)
         case .list:
             try container.encode("history.list", forKey: .type)
         case .acceptRecovery(let notice):

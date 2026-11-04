@@ -73,7 +73,7 @@
   （[ADR 0112](../decisions/0112-m4-minimum.md)、[ADR 0114](../decisions/0114-m4-build-baseline.md)）
 - **XCFramework と XcodeGen**: Rust を静的ライブラリとして XCFramework にまとめ、`project.yml` から XcodeGen でプロジェクトを生成する（`.xcodeproj` は手編集しない）
 - **署名と配布**: 開発でも配布でも自己署名証明書 `Echode Local` で署名し、マイク等の TCC 許可を維持する（証明書未作成時の `make app` のみアドホック署名）。
-  配布バンドルは `Echode.app/Contents/MacOS/Echode`、`Contents/Helpers/EchodePluginHost.app`（`LSUIElement`、このヘルパーのみ library validation 無効化）、`Contents/Frameworks/EchodeFFI.xcframework` で構成する
+  配布バンドルは `Echode.app/Contents/MacOS/Echode`、`Contents/Helpers/EchodePluginHost.app`（`LSUIElement`、このヘルパーのみ library validation 無効化）、`Contents/MacOS/echode-cli`、`Contents/Frameworks/EchodeFFI.xcframework` で構成する
   （[ADR 0061](../decisions/0061-distribution-signing.md)）
 - **GPL-3.0-or-later**: リリースごとに同一版のソースを公開し、同梱ライブラリのライセンス表記をアプリ内から読めるようにする。
   任意のプラグインを読み込むため App Sandbox は使わない

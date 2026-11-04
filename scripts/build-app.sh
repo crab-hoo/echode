@@ -3,14 +3,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 build_source="$(python3 -B scripts/diagnose.py --source-stamp)"
-cargo build --locked --offline -p echode-ffi -p echode-plugin-host
+cargo build --locked --offline -p echode-ffi -p echode-plugin-host -p echode-cli
 bash scripts/build-bundled-plugins.sh
 header="$(find target/debug/build -path '*echode-ffi-*/out/echode.h' -print0 | xargs -0 ls -t | head -1)"
 test -n "$header"
 cp "$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 swift build --package-path swift/EchodeApp --scratch-path target/echode-app
 app_bin="$(swift build --package-path swift/EchodeApp --scratch-path target/echode-app --show-bin-path)"
-python3 - "$app_bin/Echode" target/debug/echode-plugin-host <<'PY'
+python3 - "$app_bin/Echode" target/debug/echode-plugin-host target/debug/echode <<'PY'
 import sys
 from scripts.distribution import validate_binary
 for binary in sys.argv[1:]:
@@ -20,6 +20,7 @@ app_dir=target/Echode.app
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$app_bin/Echode" "$app_dir/Contents/MacOS/Echode"
 cp target/debug/echode-plugin-host "$app_dir/Contents/MacOS/echode-plugin-host"
+cp target/debug/echode "$app_dir/Contents/MacOS/echode-cli"
 mkdir -p "$app_dir/Contents/PlugIns"
 cp -R target/debug/plugins/*.clap "$app_dir/Contents/PlugIns/"
 cp swift/EchodeApp/Info.plist "$app_dir/Contents/Info.plist"

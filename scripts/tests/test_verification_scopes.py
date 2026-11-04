@@ -47,7 +47,8 @@ class VerificationScopeTests(unittest.TestCase):
         for name, dependency in (("echode-model", None), ("echode-history", "echode-model"),
                                  ("echode-engine", "echode-model"), ("echode-sine-pad", "echode-engine"),
                                  ("echode-test-plugin", None), ("echode-plugin-host", "echode-engine"),
-                                 ("echode-ffi", "echode-history"), ("echode-api", "echode-history")):
+                                 ("echode-ffi", "echode-history"), ("echode-api", "echode-history"),
+                                 ("echode-cli", "echode-history")):
             folder = root / "crates" / name
             (folder / "src").mkdir(parents=True)
             (folder / "tests").mkdir()

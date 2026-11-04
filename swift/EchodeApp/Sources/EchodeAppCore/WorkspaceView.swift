@@ -18,6 +18,7 @@ public struct WorkspaceView: View {
             Divider()
             WorkspaceStatusBar(projectName: controller.projectURL?.lastPathComponent, busy: controller.busy,
                                pendingPlayback: controller.pendingPlayback, hasProject: controller.snapshot != nil)
+            ExportStatusView(job: state.exportJob)
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) { command(.newProject); command(.openProject) }
@@ -34,6 +35,7 @@ public struct WorkspaceView: View {
             case .palette: WorkspacePalette(session: session)
             case .output: WorkspaceOutputView(controller: controller) { if state.presentation == presentation { state.presentation = nil } }
             case .history: WorkspaceHistoryView(controller: controller) { if state.presentation == presentation { state.presentation = nil } }
+            case .exportAudio: WorkspaceExportView(controller: controller, job: state.exportJob) { if state.presentation == presentation { state.presentation = nil } }
             }
         }
         .background(WorkspacePluginPanel(controller: controller, document: state.pluginBrowserDocument) { state.pluginBrowserDocument = nil })

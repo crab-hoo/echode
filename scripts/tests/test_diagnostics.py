@@ -165,6 +165,12 @@ class DiagnosticTests(unittest.TestCase):
         result = diagnose.build_status(self.root, stamp)
         self.assertEqual(result["status"], "stale")
         self.assertFalse(result["binaries_match"])
+        (self.root / "target/Echode.app" / diagnose.BUILD_FILES[0]).write_bytes(b"fixture binary")
+        cli = self.root / "target/Echode.app/Contents/MacOS/echode-cli"
+        cli.write_bytes(b"different export CLI")
+        self.assertFalse(diagnose.build_status(self.root, stamp)["binaries_match"])
+        cli.unlink()
+        self.assertFalse(diagnose.build_status(self.root, stamp)["binaries_match"])
 
     def test_record_build_without_an_expected_source_is_a_usage_error(self):
         result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/diagnose.py"), "--record-build"],

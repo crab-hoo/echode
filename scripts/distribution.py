@@ -153,9 +153,11 @@ def import_identity(keychain, p12_password, keychain_password):
         )
 
 
-def assemble_app(app, executable, helper, info_plist, xcframework=None, resources=(), plugins=()):
+def assemble_app(app, executable, helper, info_plist, xcframework=None, resources=(), plugins=(), cli=None):
     validate_binary(executable)
     validate_binary(helper)
+    if cli is not None:
+        validate_binary(cli)
     for plugin in plugins:
         validate_binary(plugin_binary(plugin))
     if app.exists():
@@ -163,6 +165,8 @@ def assemble_app(app, executable, helper, info_plist, xcframework=None, resource
     macos = app / "Contents" / "MacOS"
     macos.mkdir(parents=True)
     _install_executable(executable, macos / "Echode")
+    if cli is not None:
+        _install_executable(cli, macos / "echode-cli")
     shutil.copy2(info_plist, app / "Contents" / "Info.plist")
     embed_helper(app, helper)
     if xcframework is not None:
@@ -238,6 +242,9 @@ def sign_app(app, identity=IDENTITY, keychain=None):
     sibling = app / "Contents" / "MacOS" / HELPER_EXECUTABLE
     if sibling.is_file():
         _codesign(sibling, identity, keychain, None)
+    cli = app / "Contents" / "MacOS" / "echode-cli"
+    if cli.is_file():
+        _codesign(cli, identity, keychain, None)
     framework = app / "Contents" / "Frameworks" / "EchodeFFI.xcframework"
     if framework.is_dir():
         _codesign(framework, identity, keychain, None)
@@ -257,6 +264,9 @@ def sign_development(app):
     for plugin in sorted((app / "Contents" / "PlugIns").glob("*.clap")):
         run(["codesign", "--force", "--sign", "-", str(plugin_binary(plugin))])
         run(["codesign", "--force", "--sign", "-", str(plugin)])
+    cli = app / "Contents" / "MacOS" / "echode-cli"
+    if cli.is_file():
+        run(["codesign", "--force", "--sign", "-", str(cli)])
     run(["codesign", "--force", "--sign", "-", str(app)])
     return "adhoc"
 
@@ -288,6 +298,7 @@ def main(argv):
     assembled.add_argument("--app", type=Path, required=True)
     assembled.add_argument("--executable", type=Path, required=True)
     assembled.add_argument("--helper", type=Path, required=True)
+    assembled.add_argument("--cli", type=Path)
     assembled.add_argument("--info", type=Path, required=True)
     assembled.add_argument("--xcframework", type=Path)
     assembled.add_argument("--resource", type=Path, action="append", default=[])
@@ -326,6 +337,7 @@ def main(argv):
             args.xcframework,
             args.resource,
             args.plugin,
+            args.cli,
         )
     elif args.command == "embed-helper":
         embed_helper(args.app, args.helper)

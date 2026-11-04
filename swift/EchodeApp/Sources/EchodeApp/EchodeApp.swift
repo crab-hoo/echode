@@ -58,6 +58,7 @@ struct WorkspaceCommands: Commands {
     @FocusedValue(\.workspaceTextEntry) private var textEntry
     var body: some Commands {
         CommandGroup(replacing: .newItem) { item(.newProject); item(.openProject) }
+        CommandGroup(after: .importExport) { item(.exportAudio) }
         CommandGroup(replacing: .undoRedo) { item(.undo); item(.redo); item(.history) }
         CommandMenu(text("Track")) { item(.addTrack); item(.duplicateTrack); item(.plugins) }
         CommandMenu(text("Playback")) { item(.playback); item(.pause); item(.stop); item(.loop); item(.metronome); item(.followPlayhead); item(.output) }

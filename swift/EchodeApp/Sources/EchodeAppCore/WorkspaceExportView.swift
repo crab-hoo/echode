@@ -1,0 +1,90 @@
+import AppKit
+import SwiftUI
+import UniformTypeIdentifiers
+
+@MainActor
+struct WorkspaceExportView: View {
+    let controller: ProjectController
+    let job: ExportJob
+    let close: () -> Void
+    private let document: DocumentID?
+    private let project: URL?
+    @State private var settings: ExportSettings
+    @State private var choosingOutput = false
+
+    init(controller: ProjectController, job: ExportJob, close: @escaping () -> Void) {
+        self.controller = controller; self.job = job; self.close = close
+        document = controller.documentID; project = controller.projectURL
+        _settings = State(initialValue: controller.projectURL.map {
+            ExportSettings.load(project: $0, initialRate: controller.audio.activeDevice?.sampleRate ?? 48_000)
+        } ?? ExportSettings())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(text("Export Audio")).font(.headline)
+            Text(text("Whole song · Stereo WAV · Recorded mix and effects")).foregroundStyle(.secondary)
+            Form {
+                Picker(text("Format"), selection: $settings.format) {
+                    ForEach(ExportSettings.Format.allCases, id: \.self) { Text(text($0.title)).tag($0) }
+                }.accessibilityIdentifier("export.format")
+                TextField(text("Sample rate (Hz)"), value: $settings.sampleRate, format: .number.grouping(.never))
+                    .accessibilityIdentifier("export.rate")
+                Toggle(text("Use plugin tail length"), isOn: $settings.automaticTail)
+                TextField(text("Tail (seconds)"), value: $settings.tailSeconds, format: .number)
+                    .disabled(settings.automaticTail).accessibilityIdentifier("export.tail")
+                Toggle(text("TPDF dither"), isOn: $settings.tpdf).disabled(settings.format == .float32)
+                    .accessibilityIdentifier("export.dither")
+            }
+            Text(text("Export uses a private snapshot. Editing and playback can continue after preparation."))
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button(text("Cancel"), action: close).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(text("Export Audio"), action: chooseOutput).keyboardShortcut(.defaultAction)
+                    .disabled(!settings.isValid || choosingOutput || job.running || !controller.acceptsInput(document))
+                    .accessibilityIdentifier("export.start")
+            }
+        }.padding(24).frame(width: 460)
+            .onChange(of: settings.format) { _, format in if format == .float32 { settings.tpdf = false } }
+            .interactiveDismissDisabled(choosingOutput)
+    }
+
+    private func chooseOutput() {
+        guard let document, let project, settings.isValid else { return }
+        let captured = settings
+        let panel = NSSavePanel()
+        panel.title = text("Export Audio"); panel.allowedContentTypes = [.wav]
+        panel.nameFieldStringValue = project.deletingPathExtension().lastPathComponent + ".wav"
+        panel.canCreateDirectories = true
+        choosingOutput = true
+        panel.begin { response in
+            choosingOutput = false
+            guard response == .OK, let output = panel.url else { return }
+            close()
+            job.start(controller: controller, document: document, project: project, output: output, settings: captured)
+        }
+    }
+}
+
+@MainActor
+struct ExportStatusView: View {
+    let job: ExportJob
+    @State private var details = false
+    var body: some View {
+        if let message = job.message {
+            HStack {
+                if job.running { ProgressView().controlSize(.small) }
+                Text(message).font(.caption)
+                Spacer()
+                if !job.detail.isEmpty {
+                    Button(text("Details")) { details.toggle() }
+                        .popover(isPresented: $details) {
+                            ScrollView { Text(job.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled).padding() }
+                                .frame(width: 520, height: 240)
+                        }
+                }
+            }.padding(.horizontal, 10).padding(.vertical, 4)
+        }
+    }
+}

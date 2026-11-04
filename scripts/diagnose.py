@@ -20,7 +20,8 @@ import verify
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_FILES = ("Contents/MacOS/Echode", "Contents/MacOS/echode-plugin-host",
                "Contents/PlugIns/EchodeSinePad.clap/Contents/MacOS/EchodeSinePad",
-               "Contents/PlugIns/EchodeSinePad.clap/Contents/Info.plist")
+               "Contents/PlugIns/EchodeSinePad.clap/Contents/Info.plist",
+               "Contents/MacOS/echode-cli")
 LOG_LIMIT = 2 * 1024 * 1024  # Diagnostic copies only; never a product capacity limit.
 # The app's own diagnostic records (ADR 0143), never user projects.
 APP_LOG_DIR = Path.home() / "Library/Logs/Echode"

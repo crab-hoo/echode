@@ -7,7 +7,7 @@
   "product_contract_inputs": {
     "common": {"inputs": ["scripts/check_product_contracts.py"], "packages": []},
     "rust": {"inputs": [], "packages": []},
-    "swift": {"inputs": ["swift/EchodeApp/**", "swift/EchodeBridge/**", "scripts/swift_contract_runner.py", "scripts/build-bundled-plugins.sh", "Packaging/EchodeSinePad-Info.plist"], "packages": ["echode-ffi", "echode-plugin-host", "echode-test-plugin", "echode-sine-pad"]},
+    "swift": {"inputs": ["swift/EchodeApp/**", "swift/EchodeBridge/**", "scripts/swift_contract_runner.py", "scripts/build-bundled-plugins.sh", "Packaging/EchodeSinePad-Info.plist"], "packages": ["echode-ffi", "echode-plugin-host", "echode-test-plugin", "echode-sine-pad", "echode-cli"]},
     "rust:echode-engine": {"inputs": ["scripts/build-bundled-plugins.sh", "Packaging/EchodeSinePad-Info.plist"], "packages": ["echode-plugin-host", "echode-test-plugin", "echode-sine-pad"]},
     "rust:echode-audio-io": {"inputs": ["scripts/build-bundled-plugins.sh", "Packaging/EchodeSinePad-Info.plist"], "packages": ["echode-plugin-host", "echode-test-plugin", "echode-sine-pad"]},
     "rust:echode-plugin-host": {"inputs": ["scripts/build-bundled-plugins.sh", "Packaging/EchodeSinePad-Info.plist"], "packages": ["echode-test-plugin", "echode-sine-pad"]},
@@ -75,6 +75,12 @@
     {"id": "spike-verification-failures", "mode": "manual", "extended": true, "areas": [], "timeout": 120, "purpose": "同じ選択集合へ失敗を注入し、旧配置と優先順・事前確認の検出遅延を比較。製品の実行時間とは区別", "inputs": ["scripts/measure_verification_failures.py", "scripts/verification.json", "scripts/checked_commands.py"]}
   ],
   "product_contracts": [
+    {
+      "id": "export-snapshot-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportTests", "test": "contractExportKeepsItsSnapshotWhileTheDocumentChanges", "timeout": 180,
+      "purpose": "GUI の書出し要求を実 CLI で処理し、記録済み PCM と設定の固定、編集・位置移動・文書交換との独立、原本削除後の完走を機器なしで確認する",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "document.history(.exportSnapshot(path: destination.path))", "new": "document.history(.list)"}
+    },
     {
       "id": "document-session-drag-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "DocumentSessionTests", "test": "contractADragInANewDocumentReachesThatDocument", "timeout": 180,
