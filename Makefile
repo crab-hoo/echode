@@ -211,6 +211,7 @@ check-input:
 # Timing belongs in release measurements, not in the normal correctness checks.
 spike-render:
 	cargo test -q --release -p echode-cli --test render a_minute_of_stereo_silence_is_written_in_bulk -- --ignored --exact
+	cargo test -q --release -p echode-cli --lib dither_tests::a_minute_of_pcm_with_and_without_tpdf_is_written_in_bulk -- --ignored --exact --nocapture
 
 # UI-2: regenerate UniFFI and cbindgen bindings; Swift 6 strict concurrency.
 # check-bridge has no timing assertions. spike-bridge also prints measurements.

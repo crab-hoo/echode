@@ -26,6 +26,9 @@ use echode_engine::{
 use echode_history::DocumentHost;
 use echode_model::Project;
 
+mod dither;
+use dither::{Dither, Tpdf};
+
 /// One product callback while exporting plugins. Scratch for the helper, not a
 /// limit on the export. 256 frames at 48 kHz is about 5.3 ms. The block does
 /// not depend on the export's length or tail; the last one is shorter.
@@ -182,7 +185,9 @@ where
     };
     let mut sample_rate = 48_000u32;
     let mut frames = None;
+    let mut tail_frames = None;
     let mut format = WavFormat::Float32;
+    let mut dither = Dither::None;
     while let Some(flag) = args.next() {
         match flag.as_ref() {
             "--sample-rate" => {
@@ -197,11 +202,23 @@ where
                 };
                 frames = Some(parse_u32(value.as_ref())?);
             }
+            "--tail-frames" => {
+                let Some(value) = args.next() else {
+                    return Err(usage());
+                };
+                tail_frames = Some(parse_u32(value.as_ref())?);
+            }
             "--format" => {
                 let Some(value) = args.next() else {
                     return Err(usage());
                 };
                 format = WavFormat::parse(value.as_ref())?;
+            }
+            "--dither" => {
+                let Some(value) = args.next() else {
+                    return Err(usage());
+                };
+                dither = Dither::parse(value.as_ref())?;
             }
             _ => return Err(usage()),
         }
@@ -211,7 +228,9 @@ where
         Path::new(wav.as_ref()),
         sample_rate,
         frames,
+        tail_frames,
         format,
+        dither,
     )
 }
 
@@ -264,7 +283,15 @@ pub fn render_to_wav(
     sample_rate: u32,
     frames: Option<u32>,
 ) -> Result<(), CliError> {
-    render_to_wav_format(package, wav, sample_rate, frames, WavFormat::Float32)
+    render_to_wav_format(
+        package,
+        wav,
+        sample_rate,
+        frames,
+        None,
+        WavFormat::Float32,
+        Dither::None,
+    )
 }
 
 fn render_to_wav_format(
@@ -272,11 +299,22 @@ fn render_to_wav_format(
     wav: &Path,
     sample_rate: u32,
     frames: Option<u32>,
+    tail_frames: Option<u32>,
     format: WavFormat,
+    dither: Dither,
 ) -> Result<(), CliError> {
+    dither.validate(format)?;
     if sample_rate == 0 {
         return Err(CliError::new("invalid sample rate"));
     }
+    if frames.is_some() && tail_frames.is_some() {
+        return Err(CliError::new("cannot combine --frames and --tail-frames"));
+    }
+    let tail = if frames.is_some() {
+        RenderTail::Frames(0)
+    } else {
+        tail_frames.map_or(RenderTail::Automatic, RenderTail::Frames)
+    };
     let _activity = echode_audio_io::UserActivity::begin("Echode is writing audio");
     let host = DocumentHost::open(package).map_err(|error| CliError::new(error.to_string()))?;
     let project = host.snapshot();
@@ -284,20 +322,27 @@ fn render_to_wav_format(
         .recovered_label()
         .map_err(|error| CliError::new(error.to_string()))?;
     drop(host);
-    let include_tail = frames.is_none();
     let frames = match frames {
         Some(frames) => frames,
         None => render_span_frames(&project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?,
     };
+    // Validate explicit length overflow before loading media or starting helpers.
+    let minimum_frames = tail.total_frames(frames, 0)?;
     let ids = project_plugin_ids(&project);
     if ids.is_empty() {
         let clips = load_placed_clips(package, &project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?;
-        let mut wav = WavFile::create(wav, sample_rate, frames, format)?;
-        render_offline_blocks_with_clips(&project, sample_rate, frames, 64, &clips, |block| {
-            wav.write_block(block)
-        })
+        let mut wav =
+            WavFile::create_with_dither(wav, sample_rate, minimum_frames, format, dither)?;
+        render_offline_blocks_with_clips(
+            &project,
+            sample_rate,
+            minimum_frames,
+            64,
+            &clips,
+            |block| wav.write_block(block),
+        )
         .map_err(|error| CliError::new(error.to_string()))?;
         wav.finish()?;
         note_export(&revision, seq);
@@ -329,8 +374,9 @@ fn render_to_wav_format(
         &project,
         sample_rate,
         frames,
-        include_tail,
+        tail,
         format,
+        dither,
         &host,
         &routes,
     )?;
@@ -345,13 +391,14 @@ fn render_with_plugins(
     project: &Project,
     sample_rate: u32,
     frames: u32,
-    include_tail: bool,
+    tail: RenderTail,
     format: WavFormat,
+    dither: Dither,
     host: &Path,
     routes: &[PluginRoute],
 ) -> Result<(), CliError> {
-    if frames == 0 {
-        return WavFile::create(wav, sample_rate, 0, format)?.finish();
+    if frames == 0 && matches!(tail, RenderTail::Automatic | RenderTail::Frames(0)) {
+        return WavFile::create_with_dither(wav, sample_rate, 0, format, dither)?.finish();
     }
     let block = PLUGIN_CALLBACK_FRAMES;
     let (mut control, mut audio) = playback(
@@ -361,12 +408,7 @@ fn render_with_plugins(
         PlaybackOptions::default().plugins(host, routes),
     )
     .map_err(|error| CliError::new(error.to_string()))?;
-    let tail = if include_tail {
-        control.tail_samples()
-    } else {
-        0
-    };
-    let frames = frames_with_device_tail(frames, tail)?;
+    let frames = tail.total_frames(frames, control.tail_samples())?;
     let total = frames as usize;
     let package = package.to_path_buf();
     control.set_clip_loader(Arc::new(move |project, rate| {
@@ -378,7 +420,7 @@ fn render_with_plugins(
     control
         .command(PlaybackCommand::Play)
         .map_err(|error| CliError::new(error.to_string()))?;
-    let mut wav = WavFile::create(wav, sample_rate, frames, format)?;
+    let mut wav = WavFile::create_with_dither(wav, sample_rate, frames, format, dither)?;
     let mut left = vec![0.0; block];
     let mut right = vec![0.0; block];
     let mut interleaved = vec![0.0; block.saturating_mul(2)];
@@ -414,13 +456,29 @@ fn render_with_plugins(
     wav.finish()
 }
 
-fn frames_with_device_tail(frames: u32, tail: u32) -> Result<u32, CliError> {
-    if tail >= i32::MAX as u32 {
-        return Err(CliError::new("infinite plugin tail; specify --frames"));
+#[derive(Clone, Copy)]
+enum RenderTail {
+    Automatic,
+    Frames(u32),
+}
+
+impl RenderTail {
+    fn total_frames(self, frames: u32, device_tail: u32) -> Result<u32, CliError> {
+        let tail = match self {
+            Self::Automatic => {
+                if device_tail >= i32::MAX as u32 {
+                    return Err(CliError::new(
+                        "infinite plugin tail; specify --tail-frames or --frames",
+                    ));
+                }
+                device_tail
+            }
+            Self::Frames(tail) => tail,
+        };
+        frames
+            .checked_add(tail)
+            .ok_or_else(|| CliError::new("export length overflowed"))
     }
-    frames
-        .checked_add(tail)
-        .ok_or_else(|| CliError::new("export length overflowed"))
 }
 
 fn parse_u32(text: &str) -> Result<u32, CliError> {
@@ -430,7 +488,7 @@ fn parse_u32(text: &str) -> Result<u32, CliError> {
 
 fn usage() -> CliError {
     CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N] [--format float32|pcm16|pcm24]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
+        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
     )
 }
 
@@ -455,6 +513,7 @@ struct WavFile {
     writer: BufWriter<File>,
     bytes: Vec<u8>,
     format: WavFormat,
+    dither: Option<Tpdf>,
     temporary: PathBuf,
     destination: PathBuf,
     /// Set once `rename` has replaced the destination. Drop must not delete it.
@@ -476,6 +535,17 @@ impl WavFile {
         frames: u32,
         format: WavFormat,
     ) -> Result<Self, CliError> {
+        Self::create_with_dither(path, sample_rate, frames, format, Dither::None)
+    }
+
+    fn create_with_dither(
+        path: &Path,
+        sample_rate: u32,
+        frames: u32,
+        format: WavFormat,
+        dither: Dither,
+    ) -> Result<Self, CliError> {
+        dither.validate(format)?;
         let header = wav_header(sample_rate, frames, format)?;
         let destination = path.to_path_buf();
         let temporary = temporary_wav_path(&destination)?;
@@ -495,6 +565,7 @@ impl WavFile {
             writer,
             bytes: Vec::with_capacity(64 * 2 * 4),
             format,
+            dither: dither.generator(),
             temporary,
             destination,
             published: false,
@@ -521,10 +592,11 @@ impl WavFile {
                             "non-finite sample in PCM{bits} export"
                         )));
                     }
-                    // Quantize once, at the file boundary. No dither or noise shaping.
+                    // Quantize once, at the file boundary. No noise shaping.
                     // f64 preserves the half-LSB rounding boundary near full scale.
                     let scale = f64::from(1u32 << (bits - 1));
-                    let integer = (f64::from(*sample) * scale)
+                    let noise = self.dither.as_mut().map_or(0.0, Tpdf::sample_lsb);
+                    let integer = (f64::from(*sample) * scale + noise)
                         .round()
                         .clamp(-scale, scale - 1.0) as i32;
                     self.bytes
@@ -670,20 +742,63 @@ mod wav_tests;
 mod rf64_tests;
 
 #[cfg(test)]
+#[path = "dither_tests.rs"]
+mod dither_tests;
+
+#[cfg(test)]
 mod tail_tests {
     #[test]
     fn every_clap_infinite_tail_value_requires_an_explicit_length() {
         for tail in [i32::MAX as u32, i32::MAX as u32 + 1, u32::MAX] {
             assert!(
-                super::frames_with_device_tail(1, tail)
+                super::RenderTail::Automatic
+                    .total_frames(1, tail)
                     .unwrap_err()
                     .to_string()
                     .contains("infinite plugin tail")
             );
         }
         assert_eq!(
-            super::frames_with_device_tail(1, i32::MAX as u32 - 1).unwrap(),
+            super::RenderTail::Automatic
+                .total_frames(1, i32::MAX as u32 - 1)
+                .unwrap(),
             i32::MAX as u32
+        );
+    }
+
+    #[test]
+    fn explicit_tails_ignore_infinite_device_reports_but_check_total_length() {
+        use super::RenderTail;
+
+        for device_tail in [0, i32::MAX as u32, u32::MAX] {
+            for tail in [0, 1, i32::MAX as u32, u32::MAX - 1] {
+                assert_eq!(
+                    RenderTail::Frames(tail)
+                        .total_frames(1, device_tail)
+                        .unwrap(),
+                    tail + 1
+                );
+            }
+            assert_eq!(
+                RenderTail::Frames(u32::MAX)
+                    .total_frames(0, device_tail)
+                    .unwrap(),
+                u32::MAX
+            );
+            assert!(
+                RenderTail::Frames(u32::MAX)
+                    .total_frames(1, device_tail)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("export length overflowed")
+            );
+        }
+        assert!(
+            RenderTail::Automatic
+                .total_frames(u32::MAX, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("export length overflowed")
         );
     }
 }

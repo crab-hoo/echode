@@ -4,6 +4,8 @@ use std::time::Instant;
 
 #[path = "playback_preparation_tests.rs"]
 mod background;
+#[path = "playback_command_tests.rs"]
+mod commands;
 #[path = "playback_media_tests.rs"]
 mod media_loading;
 #[test]

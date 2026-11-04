@@ -15,12 +15,13 @@
   FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-references.md) を参照する。残りは未着手。
   WAV（FCA-16）は [ADR 0243](../decisions/0243-float-wav-metadata.md) の float ヘッダと、
   [ADR 0247](../decisions/0247-pcm24-wav-export.md) の PCM24 と [ADR 0248](../decisions/0248-pcm16-wav-export.md) の PCM16 を接続した。
-  大容量の RF64 は [ADR 0249](../decisions/0249-rf64-wav-export.md) で接続した。ディザは残る。
+  大容量の RF64 は [ADR 0249](../decisions/0249-rf64-wav-export.md)、TPDF ディザは [ADR 0251](../decisions/0251-tpdf-export-dither.md) で接続した。聴感は UC-52 に残す。
   フォルダのミュート・ソロ（FCA-06）は [ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md) で子孫へ反映した。音量・パンとバス化は残る。
   取りこぼしの減衰・復帰（FCA-08）は [ADR 0245](../decisions/0245-plugin-deadline-fades.md) で接続した。実機の聴感は UC-50 に残す。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
   遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)。PDC と残るホスト拡張は未接続。
   ジャーナルの末尾確認（FCA-14）は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で全件読込みをなくした。編集ごとの同期とまとめ書きの判断待ちは残す。
+  未使用の計画受渡しと音声側へ届かない命令（FCA-11）は [ADR 0253](../decisions/0253-product-only-playback-commands.md) で削除した。
 - [2026-11-03 コード全体の監査の実行指示](2026-11-03-fix-instructions.md): 上の監査の作業単位 W1〜W5、再現 4 件と `make spike-scale`、境界と完了条件。
 - [2026-11-02 コード品質とエージェント環境の横断監査](2026-11-02-cross-cutting-audit.md): XCA-01〜22。
   保存の同期の順序、ソースと CI の継続性、エージェントごとの防護、資料の量。

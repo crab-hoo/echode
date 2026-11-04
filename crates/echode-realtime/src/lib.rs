@@ -139,28 +139,9 @@ pub struct NoteSpan {
     pub velocity: u16,
 }
 
-/// Which mixer value a live update writes. The document model is not involved.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MixerKey {
-    Gain,
-    Pan,
-    Mute,
-    Solo,
-}
-
-/// One mixer write. It is `Copy` so the audio thread can take it without a heap.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MixerChange {
-    pub track: u128,
-    pub key: MixerKey,
-    pub value: f32,
-}
-
 /// One track's notes. `notes` is sorted by start. `by_off` indexes `notes` by end.
-///
-/// The mixer fields are the values at the moment the control thread built the
-/// plan. A later [`MixerChange`] overwrites the field on the plan the audio
-/// thread is holding.
+/// Mixer values are the snapshot the control thread used to build this plan.
+/// Transient previews live in the product playback bank, not in this score.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrackPlan {
     pub track: u128,
@@ -185,23 +166,6 @@ pub struct ClipSpan {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
     pub tracks: Vec<TrackPlan>,
-}
-
-impl Plan {
-    /// Writes one mixer value into the track the control thread named.
-    /// Unknown tracks are left alone.
-    pub fn write_mixer(&mut self, track: u128, key: MixerKey, value: f32) -> bool {
-        let Some(slot) = self.tracks.iter_mut().find(|slot| slot.track == track) else {
-            return false;
-        };
-        match key {
-            MixerKey::Gain => slot.gain = value,
-            MixerKey::Pan => slot.pan = value,
-            MixerKey::Mute => slot.mute = value,
-            MixerKey::Solo => slot.solo = value,
-        }
-        true
-    }
 }
 
 impl Plan {

@@ -18,6 +18,8 @@ echode-engine = { path = "../echode-engine" }
 echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }
 echode-plugin-host = { path = "../echode-plugin-host" }
+rand_chacha = { version = "0.9", default-features = false }
+rand_distr = { version = "0.5", default-features = false, features = ["std_math"] }
 
 [dev-dependencies]
 echode-actions = { path = "../echode-actions" }

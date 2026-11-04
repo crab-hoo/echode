@@ -709,6 +709,14 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue({"check", "check-product-contracts"}
                         <= self.selected("swift/EchodeApp/Sources/EchodeAppCore/ProjectController.swift"))
 
+    def test_cli_dither_changes_select_the_export_measurement_without_realtime_checks(self):
+        for path in ("crates/echode-cli/src/dither.rs", "crates/echode-cli/src/dither_tests.rs",
+                     "crates/echode-cli/tests/dither.rs"):
+            checks = self.selected(path)
+            self.assertTrue({"check", "check-product-contracts", "spike-render"} <= checks)
+            self.assertNotIn("rtsan", checks)
+            self.assertNotIn("spike-audio", checks)
+
     def test_bundled_instrument_selects_audio_isolation_and_export_regressions(self):
         for path in ("crates/echode-sine-pad/src/lib.rs", "crates/echode-sine-pad/Cargo.toml"):
             self.assertTrue({"check", "check-product-contracts", "rtsan", "spike-isolation", "spike-render"}

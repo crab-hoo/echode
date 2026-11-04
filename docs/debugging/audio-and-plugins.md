@@ -165,10 +165,18 @@ RIFF 範囲の float の `fmt` は形式コード 3・18 バイト・`cbSize=0`�
 RIFF 範囲の `--format pcm24` の `fmt` は 40 バイト・形式コード `0xfffe`・24 bit・PCM subtype で、`fact` はない。
 RIFF 範囲の `--format pcm16` は 16 バイトの `fmt`・形式コード 1・16 bit で、拡張と `fact` はない。
 `tests/pcm16.rs`・`tests/pcm24.rs` は実 CLI の形式と独立した AudioToolbox の読込み、float との差を比較する。
-PCM の飽和と半 LSB の丸めは仕様で、ディザはしない。非有限値の拒否・上限・出力保全は `src/wav_tests.rs` も確認する。
+PCM の飽和と半 LSB の丸めは仕様で、既定のディザはなし。非有限値の拒否・上限・出力保全は `src/wav_tests.rs` も確認する。
 形式が違う出力を float として比較せず、再現には `--format` も残す（[ADR 0248](../decisions/0248-pcm16-wav-export.md)）。
 単体テストで正常系が `export durability is unknown` になり、故障系が予想外に成功する場合は、`arm_wav_fault` の共有を確認する。
-故障はプロセス全体に効くため、`wav_tests.rs` / `rf64_tests.rs` の全ファイル書込みは同じ `WRITER` mutex を取り、故障テストと直列化する。
+故障はプロセス全体に効くため、`wav_tests.rs` / `rf64_tests.rs` / `dither_tests.rs` の全ファイル書込みは同じ `WRITER` mutex を取る。
+
+### ディザ付きの整数 WAV が毎回違う・無音がゼロでない・float と誤差が増える
+
+`--dither tpdf` は 16 / 24 bit PCM の量子化直前に ±1 LSB の三角分布を加える。無音も整数 ±1 / 0 になり、非クリップ領域の差は最大 1.5 LSB になる。
+`none`（既定）の半 LSB と混同しない。float との併用は、プロジェクトや出力を開く前に拒否する。
+同じ版と入力なら再書出しは一致する。差がある場合は `--format`・`--dither`・フレーム数・`exported` の版と Cargo.lock を保存する。
+`src/dither_tests.rs` は分布・分数 LSB の誤差・左右の相関・分割不変性・故障注入、`tests/dither.rs` は実 CLI と独立した復号を検査する。
+`make spike-render` は float と整数 PCM・ディザ有無の release 書込みを計測する。実機の聴感は UC-52（[ADR 0251](../decisions/0251-tpdf-export-dither.md)）。
 
 ### 大きな WAV が RF64 になる・読み手が長さを誤認する
 
@@ -180,6 +188,16 @@ PCM の飽和と半 LSB の丸めは仕様で、ディザはしない。非有�
 `tests/rf64.rs` は CLI の最初のブロック後に書込み失敗を入れ、巨大な出力なしで原本と `.part` の除去を確認する。
 大容量の拒否を期待した古いテストをそのまま走らせると、RF64 では数 GiB の実書込みになる。長さだけの拒否は期待せず、故障注入か疎ファイルへ置き換える。
 容量計算は u64 だが、レンダラーのフレーム数は `u32::MAX` のままである（[ADR 0249](../decisions/0249-rf64-wav-export.md)）。
+
+### 書出しの余韻が短い・`infinite plugin tail` / `export length overflowed` で止まる
+
+長さの省略時だけ初期化時の CLAP tail を使う。`--tail-frames N` はその値へ加算せず、出力レートの N フレームで置き換える。
+`--frames N` は曲末からの長さではなく総フレーム数なので、短い値では曲も途中で切れる。両オプションは併用できない。
+CLAP の `>= i32::MAX` の申告値は無限として明示指定を求めるが、明示した tail の値は無限と解釈しない。
+曲末との和が `u32::MAX` を超える場合は RF64 でも拒否し、既存の出力は保つ。ヘッダの byte rate エラーとは分ける。
+再現には指定したレートと両オプションの有無、復旧した `exported` の版を残す。
+`tests/tail.rs` は実 CLI と隔離 Sine Pad の自動・短縮・延長・ゼロ、空の曲と配置音声、復旧した編集の曲末、入力の拒否を検査する。
+無限の申告値と明示値の区別・加算の上限は `tail_tests` で検査する（[ADR 0250](../decisions/0250-explicit-export-tail.md)）。
 
 ### オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
 
@@ -226,6 +244,15 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 ### 再生開始が遅い・準備中に停止できない
 
 `pending-transport`（UI 受付）、`queued-stop`（ABI 投入時取消）、`transport-cancellation`（HAL 初回発音禁止）の 3 境界を切り分ける（[ADR 0097](../decisions/0097-cancellable-retained-transport.md)）。
+
+### トランスポートや試聴が受理されたのに反映されない
+
+`PlaybackControl::command_revision` と `PlaybackStatus::applied_command` で、制御側の受付とコールバックの適用を分ける。
+`BufferTooSmall` で拒否された要求は受領番号を進めず、自動再送もしない。
+命令や試聴集合の返却が滞る時は `PlaybackControl::service` の継続と、`playback.rs` の往路・復路の空きを調べる。
+ループは命令リングではなく計画の交換なので `pending_plan` と準備エラーを確認する。
+単一の `PreviewFader` も制御側で検証済みの集合へ変換し、音声側は `QueuedCommand::Faders` だけを受け取る。
+回帰は `playback_command_tests.rs`、試聴の PCM・確定計画待ち・分割長は既存の `mixer-group-audio` で切り分ける。
 
 ### 再生が `audio callback panicked` で止まる・アプリが理由を残さず落ちる
 

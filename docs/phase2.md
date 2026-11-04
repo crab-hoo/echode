@@ -331,8 +331,10 @@ CLAP の遅延の取得とデバイス列の表示は接続済みだが、音の
 
 ### P2-08: 書出しとプロジェクト管理
 
-CLI の 16 / 24 bit PCM 選択と大容量の RF64 だけを先行して接続した（[ADR 0249](decisions/0249-rf64-wav-export.md)）。
-GUI・前回設定の保存・ディザは未接続で、省略時の CLI は既存の float を保つ。
+CLI の 16 / 24 bit PCM 選択と大容量の RF64 を先行して接続した（[ADR 0249](decisions/0249-rf64-wav-export.md)）。
+末尾の余韻の調整は CLI の `--tail-frames` で接続した（[ADR 0250](decisions/0250-explicit-export-tail.md)）。
+CLI の `--dither none|tpdf` を接続した（[ADR 0251](decisions/0251-tpdf-export-dither.md)）。
+GUI・前回設定の保存は未接続で、省略時の CLI は既存の float・ディザなしを保つ。
 
 - 各種形式、ステム、ノーマライズ、ディザ、SRC の選択、プリセット、テンプレート、再リンク、収集して保存、履歴 UI（一覧・復帰・変更要約・タグ）、定期バックアップを接続する。
 - 初期の書出しは曲全体のミックス 1 ファイル（ミュート・ソロ・関連 FX・末尾の余韻調整を反映、初回は WAV・24 bit・プロジェクトのサンプルレート、以後は前回の設定を保持）とし、CLI の別プロセスで処理する（[書き出し](interaction-design.md#書き出し)）。

@@ -151,8 +151,13 @@ target/release/echode render Song.echode mix.wav --format pcm24 --sample-rate 48
 
 `--format pcm16` は 16 bit PCM、`--format pcm24` は 24 bit PCM、`--format float32` は 32 bit float のステレオ WAV です。
 省略時は従来どおり float です。
-PCM はフルスケールで飽和し、ディザやノーマライズはしません。
-`--frames N` を省略すると曲の終端とプラグインの申告する余韻を含めます。無限の余韻には明示した長さが必要です。
+PCM はフルスケールで飽和します。`--dither tpdf` で量子化前に TPDF ディザを加えられます（既定は `--dither none`）。
+同じ版・入力・設定なら繰り返し書出しのバイト列は一致し、無音にも微小なノイズを加えます。float への TPDF は拒否します。
+ノイズシェーピングとノーマライズはしません（[ADR 0251](docs/decisions/0251-tpdf-export-dither.md)）。
+長さの指定がなければ曲の終端とプラグインの申告する余韻を含めます。
+`--tail-frames N` は申告値の代わりに出力レートの N フレームを曲末へ足します（48 kHz の `96000` は 2 秒、`0` は余韻なし）。
+無限の余韻にも使え、プラグインがなければ指定分の無音を足します。
+`--frames N` は従来どおり先頭からの総フレーム数で、`--tail-frames` とは併用できません（[ADR 0250](docs/decisions/0250-explicit-export-tail.md)）。
 失敗時は既存の出力を保ち、完成後のディレクトリ同期だけが失敗した場合は出力を残して耐久性不明を返します。
 RIFF の長さが 4 GiB のサイズ欄を超えると、拡張子はそのままで RF64 へ自動で切り替えます。
 フレーム数は最大 `u32::MAX` のままで、GUI の書出し画面、設定保存は未対応です（[ADR 0249](docs/decisions/0249-rf64-wav-export.md)）。

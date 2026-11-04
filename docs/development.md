@@ -120,6 +120,8 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 通常回帰は `cargo test -q -p echode-engine --features spike --lib`、実機計測は `make spike-engine-smoke`・`make spike-engine` を使う。
 製品の `playback`・機器一覧・`IoWorkgroup` は feature なしで使える
 （[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
+製品の命令変換とリングの境界回帰は `playback.rs::QueuedCommand` と `playback_command_tests.rs` に置く。
+未使用だった別系統の `handoff.rs` と専用の公開型は削除した（[ADR 0253](decisions/0253-product-only-playback-commands.md)）。
 
 ### モデルの項目表と変更セット
 

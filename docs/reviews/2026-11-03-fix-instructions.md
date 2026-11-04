@@ -108,6 +108,7 @@ PDC と log・thread-check 等は残り、実画面と第三者の報告値は U
 ## W5: 整理（FCA-11〜20）— P3
 
 - FCA-11: `crates/echode-engine/src/handoff.rs` とそのテストを消し、`lib.rs` の公開をやめる。リングの命令を別の列挙型にし、`PreviewFader` の `abort` と届かない分岐を型から消す。
+  2026-11-03: [ADR 0253](../decisions/0253-product-only-playback-commands.md) で対応した。公開命令から音声側の専用型へ網羅的に変換し、受領番号と満杯時の回帰を製品経路へ追加した。
 - FCA-12: `crates/echode-sandbox/src/sync.rs` の `os_sync_*` と `pthread_set_qos_class_self_np` を `libc` へ置き換える。
   `scripts/check-ffi.sh` を関数名の単位にする時は、検査のスクリプトの変更として全自動検査が選ばれる。
 - FCA-13: 時間の換算を依存のない 1 つの crate にまとめる。丸めの結果が変わらないことを、既存の時間のテストと `block_size.rs` で確かめる。

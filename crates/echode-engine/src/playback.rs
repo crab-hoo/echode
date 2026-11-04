@@ -71,6 +71,8 @@ impl ClockSource for InternalClock {
     }
 }
 
+/// Control-side requests. Loop changes prepare plans and scalar previews become
+/// owned groups before publication; this is not the audio ring's command type.
 #[derive(Clone, Copy, Debug)]
 pub enum PlaybackCommand {
     Play,
@@ -1168,8 +1170,16 @@ struct Pending {
 
 type FaderGroup = Box<[(u128, f32, f32)]>;
 
+/// Only commands ready for the audio thread may enter the ring. Loop changes
+/// prepare plans and scalar fader requests become validated groups on control.
 enum QueuedCommand {
-    Transport(PlaybackCommand),
+    Play,
+    Pause,
+    Stop,
+    Locate(i64),
+    Rewind(i64),
+    SetMetronome(bool),
+    ClearFaderPreview { after_plan: u64 },
     Faders(FaderGroup),
 }
 
@@ -1559,23 +1569,32 @@ impl PlaybackControl {
     }
 
     pub fn command(&mut self, command: PlaybackCommand) -> Result<(), PlaybackError> {
-        match command {
+        let command = match command {
             PlaybackCommand::PreviewFader { track, gain, pan } => {
-                self.preview_faders(&[(track, gain, pan)])
+                return self.preview_faders(&[(track, gain, pan)]);
             }
             PlaybackCommand::SetLoop { start, end } if end > start => {
-                self.set_loop(Some((start, end)))
+                return self.set_loop(Some((start, end)));
             }
-            PlaybackCommand::SetLoop { .. } | PlaybackCommand::ClearLoop => self.set_loop(None),
-            other => {
-                let revision = self.command_revision.wrapping_add(1);
-                self.commands
-                    .push((revision, QueuedCommand::Transport(other)))
-                    .map_err(|_| PlaybackError::BufferTooSmall)?;
-                self.command_revision = revision;
-                Ok(())
+            PlaybackCommand::SetLoop { .. } | PlaybackCommand::ClearLoop => {
+                return self.set_loop(None);
             }
-        }
+            PlaybackCommand::Play => QueuedCommand::Play,
+            PlaybackCommand::Pause => QueuedCommand::Pause,
+            PlaybackCommand::Stop => QueuedCommand::Stop,
+            PlaybackCommand::Locate(sample) => QueuedCommand::Locate(sample),
+            PlaybackCommand::Rewind(sample) => QueuedCommand::Rewind(sample),
+            PlaybackCommand::SetMetronome(enabled) => QueuedCommand::SetMetronome(enabled),
+            PlaybackCommand::ClearFaderPreview { after_plan } => {
+                QueuedCommand::ClearFaderPreview { after_plan }
+            }
+        };
+        let revision = self.command_revision.wrapping_add(1);
+        self.commands
+            .push((revision, command))
+            .map_err(|_| PlaybackError::BufferTooSmall)?;
+        self.command_revision = revision;
+        Ok(())
     }
 
     /// Receipt for the most recently queued transport command.
@@ -2247,32 +2266,21 @@ impl PlaybackAudio {
             let Ok((revision, command)) = self.commands.pop() else {
                 break;
             };
-            let command = match command {
-                QueuedCommand::Transport(command) => command,
-                QueuedCommand::Faders(values) => {
-                    self.restore_fader_preview(live);
-                    self.fader_preview = Some(values);
-                    self.clear_preview_after = None;
-                    faders_changed = true;
-                    self.applied_command = revision;
-                    continue;
-                }
-            };
             match command {
-                PlaybackCommand::Play => {
+                QueuedCommand::Play => {
                     self.stop_tail = None;
                     self.output_revision = self.output_revision.wrapping_add(1);
                     self.playing = true;
                     self.failed = false;
                     self.current.place(self.clock.position(), false)?;
                 }
-                PlaybackCommand::Pause | PlaybackCommand::Stop => {
+                QueuedCommand::Pause | QueuedCommand::Stop => {
                     if !live {
                         self.output_revision = self.output_revision.wrapping_add(1);
                     }
                     self.begin_stop(live)?;
                 }
-                PlaybackCommand::Rewind(sample) => {
+                QueuedCommand::Rewind(sample) => {
                     if self.playing {
                         if !live {
                             self.output_revision = self.output_revision.wrapping_add(1);
@@ -2285,7 +2293,7 @@ impl PlaybackAudio {
                     self.arm_loop();
                     self.current.place(sample, true)?;
                 }
-                PlaybackCommand::Locate(sample) => {
+                QueuedCommand::Locate(sample) => {
                     if self.stop_tail.is_some() {
                         self.finish_stop()?;
                     }
@@ -2295,21 +2303,15 @@ impl PlaybackAudio {
                     self.current.place(sample, true)?;
                     self.reset_plugins = true;
                 }
-                PlaybackCommand::SetLoop { start, end } if end > start => {
-                    self.loop_start = Some(start);
-                    self.loop_end = Some(end);
-                    self.arm_loop();
-                }
-                PlaybackCommand::SetLoop { .. } | PlaybackCommand::ClearLoop => {
-                    self.loop_start = None;
-                    self.loop_end = None;
-                    self.loop_armed = false;
-                }
-                PlaybackCommand::SetMetronome(enabled) => self.metronome = enabled,
-                // Public single-track previews are converted on the control thread.
-                PlaybackCommand::PreviewFader { .. } => std::process::abort(),
-                PlaybackCommand::ClearFaderPreview { after_plan } => {
+                QueuedCommand::SetMetronome(enabled) => self.metronome = enabled,
+                QueuedCommand::ClearFaderPreview { after_plan } => {
                     self.clear_preview_after = Some(after_plan)
+                }
+                QueuedCommand::Faders(values) => {
+                    self.restore_fader_preview(live);
+                    self.fader_preview = Some(values);
+                    self.clear_preview_after = None;
+                    faders_changed = true;
                 }
             }
             self.applied_command = revision;
