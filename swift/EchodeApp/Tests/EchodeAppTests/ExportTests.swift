@@ -73,6 +73,7 @@ struct ExportTests {
         try Data().write(to: release)
         await task.value
         #expect(!job.running && job.detail.contains("exported "), "Export did not finish: \(job.detail)")
+        #expect(job.fractionCompleted == 1)
         let rendered = try Data(contentsOf: output)
         // The initial GUI format is PCM24; nonzero PCM proves referenced media survived source removal.
         #expect(rendered[34] == 24 && rendered.count > 480 * 6)

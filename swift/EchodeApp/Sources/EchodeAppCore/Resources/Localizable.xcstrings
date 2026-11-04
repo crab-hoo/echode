@@ -61,6 +61,14 @@
       "en": { "stringUnit": { "state": "translated", "value": "Exporting audio" } },
       "ja": { "stringUnit": { "state": "translated", "value": "音声を書出し中" } }
     } },
+    "Finalizing export": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Finalizing export" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しを仕上げ中" } }
+    } },
+    "Export progress": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export progress" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しの進捗" } }
+    } },
     "Export complete": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Export complete" } },
       "ja": { "stringUnit": { "state": "translated", "value": "書出しが完了しました" } }

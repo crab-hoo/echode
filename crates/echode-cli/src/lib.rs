@@ -29,6 +29,9 @@ use echode_model::Project;
 mod dither;
 use dither::{Dither, Tpdf};
 
+mod progress;
+use progress::RenderProgress;
+
 /// One product callback while exporting plugins. Scratch for the helper, not a
 /// limit on the export. 256 frames at 48 kHz is about 5.3 ms. The block does
 /// not depend on the export's length or tail; the last one is shorter.
@@ -188,6 +191,7 @@ where
     let mut tail_frames = None;
     let mut format = WavFormat::Float32;
     let mut dither = Dither::None;
+    let mut progress = RenderProgress::new(false);
     while let Some(flag) = args.next() {
         match flag.as_ref() {
             "--sample-rate" => {
@@ -220,6 +224,7 @@ where
                 };
                 dither = Dither::parse(value.as_ref())?;
             }
+            "--progress-json" => progress = RenderProgress::new(true),
             _ => return Err(usage()),
         }
     }
@@ -231,6 +236,7 @@ where
         tail_frames,
         format,
         dither,
+        &mut progress,
     )
 }
 
@@ -291,9 +297,11 @@ pub fn render_to_wav(
         None,
         WavFormat::Float32,
         Dither::None,
+        &mut RenderProgress::new(false),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_to_wav_format(
     package: &Path,
     wav: &Path,
@@ -302,6 +310,7 @@ fn render_to_wav_format(
     tail_frames: Option<u32>,
     format: WavFormat,
     dither: Dither,
+    progress: &mut RenderProgress,
 ) -> Result<(), CliError> {
     dither.validate(format)?;
     if sample_rate == 0 {
@@ -335,16 +344,23 @@ fn render_to_wav_format(
             .map_err(|error| CliError::new(error.to_string()))?;
         let mut wav =
             WavFile::create_with_dither(wav, sample_rate, minimum_frames, format, dither)?;
+        progress.start(minimum_frames);
         render_offline_blocks_with_clips(
             &project,
             sample_rate,
             minimum_frames,
             64,
             &clips,
-            |block| wav.write_block(block),
+            |block| {
+                wav.write_block(block)?;
+                progress.advance((block.len() / 2) as u32);
+                Ok::<_, CliError>(())
+            },
         )
         .map_err(|error| CliError::new(error.to_string()))?;
+        progress.finalizing();
         wav.finish()?;
+        progress.complete();
         note_export(&revision, seq);
         return Ok(());
     }
@@ -379,7 +395,9 @@ fn render_to_wav_format(
         dither,
         &host,
         &routes,
+        progress,
     )?;
+    progress.complete();
     note_export(&revision, seq);
     Ok(())
 }
@@ -396,9 +414,13 @@ fn render_with_plugins(
     dither: Dither,
     host: &Path,
     routes: &[PluginRoute],
+    progress: &mut RenderProgress,
 ) -> Result<(), CliError> {
     if frames == 0 && matches!(tail, RenderTail::Automatic | RenderTail::Frames(0)) {
-        return WavFile::create_with_dither(wav, sample_rate, 0, format, dither)?.finish();
+        let wav = WavFile::create_with_dither(wav, sample_rate, 0, format, dither)?;
+        progress.start(0);
+        progress.finalizing();
+        return wav.finish();
     }
     let block = PLUGIN_CALLBACK_FRAMES;
     let (mut control, mut audio) = playback(
@@ -421,6 +443,7 @@ fn render_with_plugins(
         .command(PlaybackCommand::Play)
         .map_err(|error| CliError::new(error.to_string()))?;
     let mut wav = WavFile::create_with_dither(wav, sample_rate, frames, format, dither)?;
+    progress.start(frames);
     let mut left = vec![0.0; block];
     let mut right = vec![0.0; block];
     let mut interleaved = vec![0.0; block.saturating_mul(2)];
@@ -452,7 +475,9 @@ fn render_with_plugins(
         wav.write_block(interleaved.get(..samples).unwrap_or(&[]))?;
         control.service();
         rendered += count;
+        progress.advance(count as u32);
     }
+    progress.finalizing();
     wav.finish()
 }
 
@@ -488,7 +513,7 @@ fn parse_u32(text: &str) -> Result<u32, CliError> {
 
 fn usage() -> CliError {
     CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
+        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf] [--progress-json]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
     )
 }
 

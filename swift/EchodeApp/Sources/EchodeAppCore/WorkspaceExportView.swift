@@ -74,7 +74,13 @@ struct ExportStatusView: View {
     var body: some View {
         if let message = job.message {
             HStack {
-                if job.running { ProgressView().controlSize(.small) }
+                if job.running {
+                    ProgressView(value: job.fractionCompleted).frame(width: 90).controlSize(.small)
+                        .accessibilityLabel(text("Export progress"))
+                    if let fraction = job.fractionCompleted {
+                        Text(fraction, format: .percent.precision(.fractionLength(0))).font(.caption.monospacedDigit())
+                    }
+                }
                 Text(message).font(.caption)
                 Spacer()
                 if !job.detail.isEmpty {

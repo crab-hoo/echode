@@ -82,6 +82,12 @@
       "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "document.history(.exportSnapshot(path: destination.path))", "new": "document.history(.list)"}
     },
     {
+      "id": "export-progress-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportProgressTests", "test": "contractExportProgressArrivesBeforeExitAndFailureCannotReachOneHundred", "timeout": 180,
+      "purpose": "GUI の進捗を子プロセスの終了前に受け取り、stderr の大量出力と独立し、完了通知後の失敗も 100% にしないことを機器なしで確認する",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportJob.swift", "old": "await onProgress(update)", "new": "_ = update"}
+    },
+    {
       "id": "document-session-drag-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "DocumentSessionTests", "test": "contractADragInANewDocumentReachesThatDocument", "timeout": 180,
       "purpose": "古い文書の値の応答が残ったまま文書を開き直し、新しい文書のドラッグの値がその文書へ届き、エラーなしで単一 Undo になることを確認する",

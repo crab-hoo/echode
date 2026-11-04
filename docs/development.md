@@ -336,6 +336,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
 - `HistoryCommand.exportSnapshot` が文書ワーカーへ渡り、`echode-history/src/export.rs` が記録済みの `Project` と参照するオブジェクトだけをコピーする。
 - `ExportTests.swift`・`ExportBoundaryTests.swift` と履歴の `tests/export.rs` が、元文書との独立・設定・拒否・失敗時の保持を検査する。
   必須契約は `export-snapshot-ui`、判断と残る範囲は [ADR 0254](decisions/0254-gui-snapshot-export.md)。
+- 進捗の通知は CLI の `progress.rs`、改行の復号と後退拒否は `ExportProgress.swift`。
+  `ExportProgressTests` の `export-progress-ui` が終了前の UI 更新・診断との分離・失敗時の 100% 拒否を検査する。
 
 ### ループ・値の操作子・ミックス・ヘッダ
 

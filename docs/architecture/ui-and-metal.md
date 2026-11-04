@@ -58,6 +58,7 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0053](../decisions/0053-workspace-ui-foundation.md)）
 - **書出し**: 設定シートを閉じた後はウィンドウ所有の `ExportJob` が状態を保持し、文書交換で対象を差し替えない。
   記録済みの曲を準備した後、同梱 CLI を別プロセスで実行する（[ADR 0254](../decisions/0254-gui-snapshot-export.md)）。
+  CLI の任意の進捗を受け、率と仕上げ中を表示する。完了通知だけでは成功にしない（[ADR 0255](../decisions/0255-export-progress.md)）。
 - **文書の寿命**: 文書と同じ寿命の状態は `DocumentSession` に置き、開く・閉じるで丸ごと差し替える。
   非同期の処理は開始時のセッションを保持し、古い文書の処理が次の文書の状態へ届かない。
   文書への操作は省略できない `DocumentID` を受け、`ProjectController.session(for:)` だけが現行の文書と比べる
