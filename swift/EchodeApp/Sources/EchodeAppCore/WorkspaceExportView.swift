@@ -40,6 +40,15 @@ struct WorkspaceExportView: View {
                     .disabled(settings.automaticTail).accessibilityIdentifier("export.tail")
                 Toggle(text("TPDF dither"), isOn: $settings.tpdf).disabled(settings.format == .float32)
                     .accessibilityIdentifier("export.dither")
+                Toggle(text("Normalize sample peak"), isOn: Binding(
+                    get: { settings.normalizePeakDb != nil },
+                    set: { settings.normalizePeakDb = $0 ? -1 : nil }
+                )).accessibilityIdentifier("export.normalize")
+                TextField(text("Peak target (dBFS, −120…0)"), value: Binding(
+                    get: { settings.normalizePeakDb ?? -1 },
+                    set: { settings.normalizePeakDb = $0 }
+                ), format: .number)
+                    .disabled(settings.normalizePeakDb == nil).accessibilityIdentifier("export.peak")
             }.disabled(loadingSettings)
             Text(text("Export uses a private snapshot. Editing and playback can continue after preparation."))
                 .font(.caption).foregroundStyle(.secondary)

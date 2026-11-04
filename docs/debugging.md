@@ -87,6 +87,7 @@ make debug-report
   - 書出しの回帰が直列実行だけで `waitUntilExit` に止まる
   - ノート終端の回帰だけが `control.status().playing` で止まる
   - float WAV を読み手が拒否する・ヘッダ変更後に音声の比較がずれる
+  - ノーマライズの音量が違う・`normalization scratch I/O failed` で止まる
   - ディザ付きの整数 WAV が毎回違う・無音がゼロでない・float と誤差が増える
   - 大きな WAV が RF64 になる・読み手が長さを誤認する
   - 書出しの余韻が短い・`infinite plugin tail` / `export length overflowed` で止まる

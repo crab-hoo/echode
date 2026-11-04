@@ -17,16 +17,19 @@ struct ExportSettings: Codable, Sendable, Equatable {
     var automaticTail = true
     var tailSeconds = 2.0
     var tpdf = false
+    var normalizePeakDb: Double? = nil
 
     var isValid: Bool {
         sampleRate > 0 && tailSeconds.isFinite && tailSeconds >= 0 &&
         tailSeconds * Double(sampleRate) < Double(UInt32.max) + 0.5 &&
-        !(format == .float32 && tpdf)
+        !(format == .float32 && tpdf) &&
+        (normalizePeakDb.map { $0.isFinite && (-120...0).contains($0) } ?? true)
     }
     var arguments: [String]? {
         guard isValid else { return nil }
         var result = ["--format", format.rawValue, "--sample-rate", String(sampleRate), "--dither", tpdf ? "tpdf" : "none"]
         if !automaticTail { result += ["--tail-frames", String(UInt32((tailSeconds * Double(sampleRate)).rounded()))] }
+        if let target = normalizePeakDb { result += ["--normalize-peak-db", String(target)] }
         return result
     }
 

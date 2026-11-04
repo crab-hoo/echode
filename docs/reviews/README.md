@@ -16,6 +16,7 @@
   WAV（FCA-16）は [ADR 0243](../decisions/0243-float-wav-metadata.md) の float ヘッダと、
   [ADR 0247](../decisions/0247-pcm24-wav-export.md) の PCM24 と [ADR 0248](../decisions/0248-pcm16-wav-export.md) の PCM16 を接続した。
   大容量の RF64 は [ADR 0249](../decisions/0249-rf64-wav-export.md)、TPDF ディザは [ADR 0251](../decisions/0251-tpdf-export-dither.md) で接続した。聴感は UC-52 に残す。
+  任意のサンプルピークノーマライズは [ADR 0258](../decisions/0258-peak-export-normalization.md) で接続した。LUFS・トゥルーピークは含めない。
   フォルダのミュート・ソロ（FCA-06）は [ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md) で子孫へ反映した。音量・パンとバス化は残る。
   取りこぼしの減衰・復帰（FCA-08）は [ADR 0245](../decisions/0245-plugin-deadline-fades.md) で接続した。実機の聴感は UC-50 に残す。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。

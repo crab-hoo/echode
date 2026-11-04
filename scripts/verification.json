@@ -76,6 +76,18 @@
   ],
   "product_contracts": [
     {
+      "id": "export-normalization-cli", "runner": "rust", "package": "echode-cli", "target": ["--test", "export_normalization"],
+      "test": "contract_peak_normalization_uses_the_whole_stereo_mix_before_quantization", "timeout": 180,
+      "purpose": "CLI の全ミックスのピークから左右共通のゲインを決め、float / PCM16 / PCM24 の量子化前に適用することを確認する",
+      "negative_control": {"file": "crates/echode-cli/src/normalization.rs", "old": "self.target.0 / self.peak", "new": "1.0"}
+    },
+    {
+      "id": "export-normalization-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportNormalizationTests", "test": "contractPeakNormalizationReachesTheCLIAndStaysWithTheProject", "timeout": 180,
+      "purpose": "GUI のピーク目標が実 CLI の出力へ届き、文書の前回設定に保持されて Undo を消費しないことを機器なしで確認する",
+      "negative_control": {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportSettings.swift", "old": "result += [\"--normalize-peak-db\", String(target)]", "new": "_ = target"}
+    },
+    {
       "id": "export-snapshot-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportTests", "test": "contractExportKeepsItsSnapshotWhileTheDocumentChanges", "timeout": 180,
       "purpose": "GUI の書出し要求を実 CLI で処理し、記録済み PCM と設定の固定、編集・位置移動・文書交換との独立、原本削除後の完走を機器なしで確認する",

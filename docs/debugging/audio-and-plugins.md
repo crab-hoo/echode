@@ -199,7 +199,7 @@ CLI の取消はこのテストから呼ばれない。再発時は拡張した�
 準備中は素材のコピーやプラグイン初期化で総長が未確定のため、不定の進捗になる。
 CLI の `--progress-json` の stdout と stderr を別々に保存し、`version: 1` と改行で完了したレコードを確認する。
 stdout をパイプへ渡す観測者は実行中に排出する。GUI は `ExportJob.render` で排出し、不正・版違い・後退した通知は無視する。
-99% は全フレームの処理後もファイルの flush・同期・公開が残っている状態で、`complete` 通知だけでも成功にしない。
+99% は全フレームの処理後もノーマライズの後段変換・ファイルの flush・同期・公開が残っている状態で、`complete` 通知だけでも成功にしない。
 最終的には下部の詳細の終了コードと診断を確認する。同期失敗で完成ファイルが残る場合は、再送や削除を自動化しない。
 CLI が終了したのに表示が残る場合は、子孫が stdout を引き継いでも EOF を待ち続けていないか確認する。
 子が UI 通知の間に終了しても、既に pipe にある末尾の通知は排出する。
@@ -229,6 +229,17 @@ PCM の飽和と半 LSB の丸めは仕様で、既定のディザはなし。�
 形式が違う出力を float として比較せず、再現には `--format` も残す（[ADR 0248](../decisions/0248-pcm16-wav-export.md)）。
 単体テストで正常系が `export durability is unknown` になり、故障系が予想外に成功する場合は、`arm_wav_fault` の共有を確認する。
 故障はプロセス全体に効くため、`wav_tests.rs` / `rf64_tests.rs` / `dither_tests.rs` の全ファイル書込みは同じ `WRITER` mutex を取る。
+
+### ノーマライズの音量が違う・`normalization scratch I/O failed` で止まる
+
+`--normalize-peak-db DB` は余韻込みの左右最大サンプルから共通ゲインを決める。LUFS やトゥルーピークではない。
+無音を増幅せず、ディザは後で加える。PCM の 0 dBFS では正側が飽和し、ディザ後の標本には丸めの差も出る。
+比較には `--format`・`--dither`・目標・長さと `exported` の版を残し、同じ設定の無効時の WAV と `data` を比較する。
+一時保存は出力と同じフォルダで、最終 WAV に加えてステレオ float の 1 フレーム 8 バイトを使う。空き容量と権限を先に確認する。
+`normalization scratch I/O failed` は一時保存・再読込みの失敗で、元の出力は置き換えない。99% の間にはこの再読込みと量子化も含む。
+一時音声は開いた直後にリンクを外し、終了時に破棄する。診断収集へ音声を追加しない。
+`normalization_tests.rs` と `tests/export_normalization.rs` が分割・TPDF・非有限値・読取り失敗・原本保持・隔離音源を検査する。
+GUI の設定引渡しは `ExportNormalizationTests`。実画面・VO・聴感は UC-57（[ADR 0258](../decisions/0258-peak-export-normalization.md)）。
 
 ### ディザ付きの整数 WAV が毎回違う・無音がゼロでない・float と誤差が増える
 

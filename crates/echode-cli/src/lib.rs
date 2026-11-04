@@ -5,9 +5,9 @@
 //! a CLAP device uses that same isolated playback chain, and refuses the
 //! export when a plugin or the helper is missing. The project is the document
 //! host's recovered snapshot, so a journaled edit is included and a save that
-//! is still rewriting the worktree is not mixed in. Each render block is written
-//! as it is produced, through a buffered file, so a long export is not one
-//! syscall per sample and not one buffer for the whole file.
+//! is still rewriting the worktree is not mixed in. Render blocks are buffered,
+//! not kept in one whole-song buffer. Optional peak normalization spools the
+//! mixed float samples once, then applies one linked gain before WAV quantization.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -31,6 +31,8 @@ use cancellation::Cancellation;
 
 mod dither;
 use dither::{Dither, Tpdf};
+mod normalization;
+use normalization::{ExportOutput, PeakTarget};
 
 mod progress;
 use progress::RenderProgress;
@@ -210,6 +212,7 @@ where
     let mut tail_frames = None;
     let mut format = WavFormat::Float32;
     let mut dither = Dither::None;
+    let mut peak_target = None;
     let mut progress = RenderProgress::new(false);
     let mut cancel_stdin = false;
     while let Some(flag) = args.next() {
@@ -244,6 +247,12 @@ where
                 };
                 dither = Dither::parse(value.as_ref())?;
             }
+            "--normalize-peak-db" => {
+                let Some(value) = args.next() else {
+                    return Err(usage());
+                };
+                peak_target = Some(PeakTarget::parse(value.as_ref())?);
+            }
             "--progress-json" => progress = RenderProgress::new(true),
             "--cancel-stdin" => cancel_stdin = true,
             _ => return Err(usage()),
@@ -262,6 +271,7 @@ where
         tail_frames,
         format,
         dither,
+        peak_target,
         &mut progress,
         &cancellation,
     )
@@ -324,6 +334,7 @@ pub fn render_to_wav(
         None,
         WavFormat::Float32,
         Dither::None,
+        None,
         &mut RenderProgress::new(false),
         &Cancellation::default(),
     )
@@ -338,6 +349,7 @@ fn render_to_wav_format(
     tail_frames: Option<u32>,
     format: WavFormat,
     dither: Dither,
+    peak_target: Option<PeakTarget>,
     progress: &mut RenderProgress,
     cancellation: &Cancellation,
 ) -> Result<(), CliError> {
@@ -373,8 +385,14 @@ fn render_to_wav_format(
         let clips = load_placed_clips(package, &project, sample_rate)
             .map_err(|error| CliError::new(error.to_string()))?;
         cancellation.check()?;
-        let mut wav =
-            WavFile::create_with_dither(wav, sample_rate, minimum_frames, format, dither)?;
+        let mut wav = ExportOutput::create(
+            wav,
+            sample_rate,
+            minimum_frames,
+            format,
+            dither,
+            peak_target,
+        )?;
         progress.start(minimum_frames);
         render_offline_blocks_with_clips(
             &project,
@@ -428,6 +446,7 @@ fn render_to_wav_format(
         tail,
         format,
         dither,
+        peak_target,
         &host,
         &routes,
         progress,
@@ -448,6 +467,7 @@ fn render_with_plugins(
     tail: RenderTail,
     format: WavFormat,
     dither: Dither,
+    peak_target: Option<PeakTarget>,
     host: &Path,
     routes: &[PluginRoute],
     progress: &mut RenderProgress,
@@ -455,7 +475,7 @@ fn render_with_plugins(
 ) -> Result<(), CliError> {
     cancellation.check()?;
     if frames == 0 && matches!(tail, RenderTail::Automatic | RenderTail::Frames(0)) {
-        let wav = WavFile::create_with_dither(wav, sample_rate, 0, format, dither)?;
+        let wav = ExportOutput::create(wav, sample_rate, 0, format, dither, peak_target)?;
         progress.start(0);
         progress.finalizing();
         return wav.finish_cancellable(cancellation);
@@ -481,7 +501,7 @@ fn render_with_plugins(
         .command(PlaybackCommand::Play)
         .map_err(|error| CliError::new(error.to_string()))?;
     cancellation.check()?;
-    let mut wav = WavFile::create_with_dither(wav, sample_rate, frames, format, dither)?;
+    let mut wav = ExportOutput::create(wav, sample_rate, frames, format, dither, peak_target)?;
     progress.start(frames);
     let mut left = vec![0.0; block];
     let mut right = vec![0.0; block];
@@ -554,7 +574,7 @@ fn parse_u32(text: &str) -> Result<u32, CliError> {
 
 fn usage() -> CliError {
     CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf] [--progress-json] [--cancel-stdin]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
+        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf] [--normalize-peak-db DB] [--progress-json] [--cancel-stdin]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
     )
 }
 

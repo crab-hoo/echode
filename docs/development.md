@@ -340,6 +340,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
   `ExportProgressTests` の `export-progress-ui` が終了前の UI 更新・診断との分離・失敗時の 100% 拒否を検査する。
 - 途中取消は CLI の `cancellation.rs` と `ExportJob.cancel()`。`ExportCancellationTests` と CLI の `tests/export_cancellation.rs` が原本保持・文書交換・閉じた進捗を通す。
   公開前の保全と GUI の制御の引渡しは必須契約 `export-cancellation-publish`・`export-cancellation-ui`（[ADR 0256](decisions/0256-export-cancellation.md)）。
+- 任意のサンプルピークノーマライズは CLI の `normalization.rs` が 1 回のミックスを一時保存し、共通ゲインを量子化前に適用する。
+  `export_normalization.rs`・`normalization_tests.rs` と `ExportNormalizationTests` が、左右比・分割・設定互換・実 CLI への引渡しを検査する。
 - 前回設定の保存は `echode-history/src/export_settings.rs`、文書の入口は `history.export_settings`。
   `ExportSettingsTests` と履歴の `tests/export_settings.rs`、必須契約 `export-settings-ui` が移動・移行・履歴からの独立を検査する（[ADR 0257](decisions/0257-portable-export-settings.md)）。
 

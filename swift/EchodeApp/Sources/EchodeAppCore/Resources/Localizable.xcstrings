@@ -45,6 +45,14 @@
       "en": { "stringUnit": { "state": "translated", "value": "TPDF dither" } },
       "ja": { "stringUnit": { "state": "translated", "value": "TPDF ディザ" } }
     } },
+    "Normalize sample peak": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Normalize sample peak" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "サンプルピークをノーマライズ" } }
+    } },
+    "Peak target (dBFS, −120…0)": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Peak target (dBFS, −120…0)" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "ピーク目標（dBFS、−120〜0）" } }
+    } },
     "Export uses a private snapshot. Editing and playback can continue after preparation.": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Export uses a private snapshot. Editing and playback can continue after preparation." } },
       "ja": { "stringUnit": { "state": "translated", "value": "専用のスナップショットから書き出します。準備後は編集と再生を続けられます。" } }
