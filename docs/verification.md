@@ -11,11 +11,17 @@
 - `make verify`（作業の段階）: 作業ごとの完了条件。今回の変更で壊れていないかを調べる。終了フックもこれを呼ぶ。
 - `make verify-full`（全体の段階）: 自動検査の全件。ASan、TSan、Miri、全契約の反例を含む。
 
-全体の段階は次の節目で実行する。依頼なしに作業の完了条件へ足さない。
+全体の段階は GitHub Actions の `full` ワークフローが、`main` へのプッシュごとに実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
+`docs/` と Markdown だけの変更では起動しない。依頼なしに作業の完了条件へ足さない。
+次の節目では、対象のコミットで `full` が合格したことを確かめる。
 
 - ユーザーの依頼。
 - 配布の前（`make dist`）。
 - Phase の単位の受入完了の前。
+
+確かめるには `gh run list -R crab-hoo/echode --workflow full --commit <SHA>` を使う。
+手元の `make verify-full` は、依頼された時か、CI で再現しない失敗を調べる時に実行する。
+CI の合格は `report.md` に記録しないので、手元の表示では全体の段階が未確認のまま残る。
 
 全体の段階の検査は、作業の段階でも次の時だけ選ばれる。
 
@@ -305,9 +311,13 @@ Bash は待たせないので、状態とログは読めるが、ファイルを
 `.codex/hooks.json` もアダプターを備えるが、設定ファイルの存在だけでホスト側のフック発火済みとは扱わない。フックのない環境でも `make verify` は必須である。
 フックの上限は `verification.json` の `hook_timeout` と一致させ、全自動検査と事前確認の直列予算を覆うことを検査する。
 ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
-GitHub Actions は M4 を要らない `make check-portable` と `make advisories` だけを実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
-GitHub の macOS ランナーは M1 / M2 で、ネイティブの検査は通らない。
-CI の合格は `make verify` の合格ではなく、`report.md` にも記録しない。M4 のない環境の協力者も同じ入口を使える。
+GitHub Actions の `check` は、M4 を要らない `make check-portable` と `make advisories` を実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
+M4 のない環境の協力者も同じ入口を使える。
+`full` は全体の段階の 5 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
+反例は `ECHODE_CONTRACT_SHARD=I/N` で 4 つのジョブに分け、各ジョブは必須テストを全部実行してから自分の分の反例を実行する。
+全体の段階の検査を足したら `full.yml` にも足す。登録簿との差は `check-verification` のテストが止める。
+作業の段階のネイティブ検査は CI になく、手元の `make verify` で行う。
+CI の合格は `make verify` の合格ではなく、`report.md` にも記録しない。
 調査資料の収集は [デバッグ手順](debugging.md) を参照する。
 
 ## 検査基盤で区別すること

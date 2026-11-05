@@ -46,7 +46,8 @@ def render_report(report, policy, selected, summarize):
     unverified = report.get("full_tier_unverified")
     if unverified:
         lines += ["", "## 全体検査で未確認", "",
-                  "現在の入力で合格の記録がない。作業の完了条件ではないが合格でもない。節目に `make verify-full` で実行する。", ""]
+                  "現在の入力で合格の記録がない。作業の完了条件ではないが合格でもない。"
+                  "main へのプッシュごとに GitHub の `full` ワークフローが実行する（ADR 0269）。", ""]
         lines += [f"- `{name}`（前回の合格: {report['results'].get(name, {}).get('finished_at', '記録なし')}）" for name in unverified]
     lines += ["", "## 対象の変更", ""] + [f"- `{path}`" for path in report["changed_paths"]]
     lines += ["", "passed と deferred は各検査の入力・ツールが一致する間だけ有効。全体の識別値は変更監視用。not_run は実行か理由の記録が必要。deferred は合格ではない。", ""]

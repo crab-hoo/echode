@@ -341,6 +341,41 @@ class ContractEvidenceTests(unittest.TestCase):
                     self.assertEqual(report["reused"], 2 - len(expected))
                     self.assertEqual(len(report["tests"]), 2)
 
+    def test_shards_split_every_counterexample_once(self):
+        # ADR 0269: the full tier runs its counterexamples in several GitHub jobs.
+        cases = [{"id": name} for name in "abcdefg"]
+        for count in range(1, 5):
+            with self.subTest(count=count):
+                shards = [contracts.shard_contracts(cases, f"{index}/{count}") for index in range(count)]
+                self.assertEqual(set().union(*shards), set("abcdefg"))
+                self.assertEqual(sum(len(shard) for shard in shards), len(cases))
+        for value in ("", "1", "2/2", "-1/2", "0/0", "01/2", "0/2/3", "a/2"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                contracts.shard_contracts(cases, value)
+
+    def test_a_shard_runs_every_test_but_only_its_own_counterexamples(self):
+        cases = [{"id": name, "runner": "rust", "package": "p", "target": ["--lib"], "test": name,
+                  "timeout": 5, "purpose": "fixture", "negative_control": {"file": "src/lib.rs"}} for name in "abc"]
+        invoked, controlled = [], []
+        def good(args, **kwargs):
+            invoked.append(args[-6])
+            return subprocess.CompletedProcess(args, 0, f"test {args[-6]} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", "")
+        def controls(root, pending, fingerprints, evidence, record):
+            for contract in pending:
+                controlled.append(contract["id"])
+                record(contracts.control_result(contract, fingerprints[contract["id"]], True, evidence / "x.log", 0))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: {"a": "1", "b": "2", "c": "3"}), \
+                 patch.object(contracts, "control_sites", return_value=({}, set())), \
+                 patch.object(contracts.verify, "tool_identity", return_value={}), \
+                 patch.object(contracts, "negative_controls", side_effect=controls), \
+                 redirect_stdout(io.StringIO()):
+                self.assertEqual(contracts.run(root, cases, good, policy={}, shard="1/2"), 0)
+                with self.assertRaises(ValueError):
+                    contracts.run(root, cases, good, policy={}, shard="1/2", changed_only=True)
+        self.assertEqual((invoked, controlled), (["a", "b", "c"], ["b"]))
+
     def test_an_edit_during_the_run_leaves_no_reusable_result(self):
         case = {"id": "a", "runner": "rust", "package": "p", "target": ["--lib"], "test": "a", "timeout": 5,
                 "purpose": "fixture", "negative_control": {"file": "src/lib.rs"}}
@@ -511,6 +546,8 @@ class ContractEvidenceTests(unittest.TestCase):
             self.assertFalse(contracts.rejected_behavior(case, 1, "compiler error"))
             self.assertFalse(contracts.rejected_behavior(case, 1, "missing compiler"))
             self.assertFalse(contracts.rejected_behavior(case, 0, "passed"))
+            # An M1 runner that cannot execute an M4 instruction crashes the test; that is no detection.
+            self.assertFalse(contracts.rejected_behavior(case, -4, "Illegal instruction: 4"))
 
     def test_mutations_cannot_follow_a_symlink_outside_the_copy(self):
         with tempfile.TemporaryDirectory() as directory:

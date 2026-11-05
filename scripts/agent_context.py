@@ -190,7 +190,7 @@ def render(data):
         warning = "INVALID deferral: missing reason" if status == "deferred" and not reason.strip() else reason
         lines.append(f"Manual {status} (fresh={fresh}): {', '.join(names)}" + (f" — {warning}" if warning else ""))
     if verification["full_tier_unverified"]:
-        lines.append("Full tier without a pass on current inputs (not required per task; make verify-full at milestones): "
+        lines.append("Full tier without a pass on current inputs (not required per task; GitHub's full workflow runs it on each push to main): "
                      + ", ".join(verification["full_tier_unverified"]))
     reading = data["reading"]
     largest = reading["largest_section"]

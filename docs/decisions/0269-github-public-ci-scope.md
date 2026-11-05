@@ -1,7 +1,7 @@
-# 0269. GitHub で公開し、CI は M4 を要らない静的検査に限る
+# 0269. GitHub で公開し、CI の範囲を決める
 
 - 日付: 2026-11-05
-- 状態: 採用
+- 状態: 採用。同日の[追記](#2026-11-05-追記-全体の段階を-github-で実行する)で、全体の段階を CI へ移した
 - 関連: [ADR 0044](0044-swift-bridge.md)、[ADR 0114](0114-m4-build-baseline.md)、[ADR 0212](0212-verification-tiers.md)、
   [横断監査](../reviews/2026-11-02-cross-cutting-audit.md) の XCA-04・05・22
 - 置き換え: ADR 0044 の CI の節と、ADR 0114 の「CI のネイティブ検査」の記述
@@ -87,3 +87,64 @@
 - `test_published_files_name_no_home_directory` が、追跡・未追跡のファイルにある `/Users/<名前>` を拒否する。
   プレースホルダーの `/Users/someone` と `/Users/Shared` だけを許す。置き換え前の作業ツリーで失敗することを確かめた。
 - ローカルでは `make check-portable` を M4 の上で実行した。M1 / M2 での実行は CI の初回で確かめる。
+
+## 2026-11-05 追記: 全体の段階を GitHub で実行する
+
+### 背景
+
+手元の Mac は空きが 14 GB（使用率 97%）で、`target/` が 39 GB を使っていた。
+内訳は `target/debug` 19 GB、反例用の `target/product-contract-mutations` 8.5 GB、サニタイザ用の `target/bridge` 7.3 GB。
+ユーザーから「GitHub でできる検査はできるだけそちらで行い、手元の容量を抑えたい」と指定された。
+次の検査が速くなるなら、ある程度の容量は許すとも指定された。
+
+### 決定
+
+- `.github/workflows/full.yml` が全体の段階の 5 件を実行する。
+  ASan、TSan と errno の検査用ランタイム、Miri、全契約の反例である。
+  `main` へのプッシュ（`docs/` と Markdown だけの変更を除く）と手動起動で動く。
+- ビルドは ADR 0114 の apple-m4 のままにし、M1 のランナーで実行する。
+  手元の M4 で作った Mach-O 150 個を `llvm-objdump -d --mcpu=apple-m1` で逆アセンブルした。
+  Rust のテストと製品バイナリが 125 個、Swift のアプリ・テストバンドル・プローブとモジュールのオブジェクトが 25 個である。
+  `--mcpu=apple-m4` より `<unknown>` が多いものはなかった。
+  対照として、I8MM の `vmmlaq_s32` と BF16 の `vcvt_bf16_f32` を apple-m4 でコンパイルすると、apple-m1 では `<unknown>` になった。
+- CI だけ apple-m1 でビルドする案は採らない。
+  Package.swift 4 個、`build-platform.env`、`force = true` の `CFLAGS`、TSan のランタイムなど 15 か所以上に切替えが要る。
+  そのうえ、CI が手元と違うバイナリを検査することになる。
+- M4 にしかない命令が後で入ると、そのテストは `Illegal instruction` で落ちる。黙って合格にはならない。
+  反例の判定はテスト本体の失敗（Rust の `FAILED` 行、Swift の `Expectation failed`）を要求するので、この落ち方を検出とは数えない。
+  その時は、CI だけ apple-m1 でビルドする切替えを足す。
+- 反例は `ECHODE_CONTRACT_SHARD=I/N` で 4 つのジョブに分ける。
+  各ジョブは必須テストを全部実行してから、契約の並びで I 番目から N 個おきの反例を実行する。
+  手元の M4 では全件で 2,481 秒だった。
+- サニタイザは 3 つのジョブに分け、それぞれで `make setup-bridge` を実行する。
+  TSan のランタイムは毎回ビルドする。キャッシュにするかは、実行時間を見て決める。
+- `scripts/check_build_host.py` は変えない。全体の段階の make の入口はこれを呼ばず、CI では `verify.py` を使わない。
+  ADR 0114 の「CI のネイティブ検査は実行前にチップを調べる」は、この追記で置き換える。
+- CI の合格は、引き続き `report.md` に記録しない。
+  節目（依頼・配布前・受入）では、対象のコミットで `full` が合格したことを `gh run list` で確かめる。
+  手元の `make verify-full` は、依頼された時か、CI で再現しない失敗を調べる時に使う。
+- 作業の段階（`make verify` と停止フック）は手元のままにする。
+  エージェントは頼まれない限りプッシュしないので、CI に任せると完了の前に検査できない。
+
+### 手元の容量
+
+- `Cargo.toml` に `[profile.dev.package."*"] debug = "line-tables-only"` を足した。
+  依存ライブラリは、バックトレースのファイルと行だけを残す。ワークスペースの crate は、lldb のために完全なデバッグ情報を残す。
+  `libechode_ffi.a` は 350 MB から 271 MB に、そのうちのデバッグ情報は 228 MB から 149 MB に減った。
+  ワークスペースのテスト一式のビルドは 4.0 GB で、M4 で 1 分 49 秒だった。
+- 古い成果物は別のハッシュになり再利用されないので、`target/debug`、`target/product-contract-mutations/cargo`、`target/bridge` を消した（約 34 GB）。
+  TSan のランタイム（`target/toolchains`）、検査の記録（`target/verification`）、反例のソースのコピーは残した。
+
+### 結果と制約
+
+- 標準のランナーは 3 vCPU で、待機期限が 5 秒のテストがサニタイザの下で遅れるおそれがある。
+- ランナーで Metal を使えるかは確かめていない。描画を使う必須テストが落ちたら、まずこれを疑う。
+- 作業の段階でも、`unsafe` の変更や検査自身のスクリプトの変更では、全体の段階の検査が手元で選ばれる。この選択は変えていない。
+
+### 回帰・検査基盤
+
+- `test_full_ci_runs_every_full_tier_check_with_complete_shards` が、`full.yml` の検査と `tier: full` の登録の一致、シャードの番号の抜けを検査する。
+  検査を 1 件外した時と、シャードを 3 個にした時に失敗することを確かめた。
+- `test_public_ci_installs_the_pinned_toolchain_before_cargo` は全ワークフローを対象にした。
+- `test_shards_split_every_counterexample_once` と `test_a_shard_runs_every_test_but_only_its_own_counterexamples` が、シャードの分け方と実行範囲を検査する。
+- `test_negative_controls_must_fail_in_the_test_body` に、`Illegal instruction` の終了を検出と数えない場合を足した。

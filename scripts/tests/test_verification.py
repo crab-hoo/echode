@@ -1914,8 +1914,11 @@ class PolicyTests(unittest.TestCase):
     def test_public_ci_installs_the_pinned_toolchain_before_cargo(self):
         # ADR 0269: rustup does not install the rust-toolchain.toml pin on demand, so on a fresh runner
         # every cargo call (cargo-deny's included) fails until the job installs it.
-        workflow = (ROOT / ".github/workflows/check.yml").read_text()
-        jobs = re.findall(r"(?m)^  ([\w-]+):\n((?:(?:    .*)?\n)*)", workflow.split("\njobs:\n", 1)[1])
+        jobs = []
+        for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            workflow = path.read_text()
+            jobs += [(path.name + ":" + name, body) for name, body in
+                     re.findall(r"(?m)^  ([\w-]+):\n((?:(?:    .*)?\n)*)", workflow.split("\njobs:\n", 1)[1])]
         self.assertTrue(jobs)
         for name, body in jobs:
             with self.subTest(job=name):
@@ -1923,6 +1926,26 @@ class PolicyTests(unittest.TestCase):
                 cargo = [index for index, run in enumerate(runs) if re.match(r"(cargo|make) ", run)]
                 self.assertTrue(cargo, "a job without cargo needs no Rust toolchain")
                 self.assertIn("rustup toolchain install", runs[:cargo[0]])
+
+    def test_full_ci_runs_every_full_tier_check_with_complete_shards(self):
+        # ADR 0269: the full tier runs on GitHub, so the workflow must track the registry's full tier.
+        workflow = (ROOT / ".github/workflows/full.yml").read_text()
+        self.assertRegex(workflow, r"(?m)^permissions:\n  contents: read$")
+        self.assertNotIn("pull_request_target", workflow)
+        for action in re.findall(r"uses: (\S+)", workflow):
+            self.assertRegex(action, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
+        self.assertNotIn("verify.py", workflow)
+        matrix = re.search(r"(?m)^        check: \[([^\]]+)\]$", workflow)
+        self.assertIsNotNone(matrix)
+        targets = set(re.findall(r"(?m)run: make ([\w-]+)$", workflow)) - {"setup-bridge"}
+        targets |= {name.strip() for name in matrix[1].split(",")}
+        full = {check["id"] for check in self.policy["checks"] if check.get("tier") == "full"}
+        self.assertEqual(targets, full)
+        shards = re.search(r"(?m)^        shard: \[([^\]]+)\]$", workflow)
+        self.assertIsNotNone(shards)
+        count = re.search(r"ECHODE_CONTRACT_SHARD: \$\{\{ matrix\.shard \}\}/([0-9]+)$", workflow, re.MULTILINE)
+        self.assertIsNotNone(count)
+        self.assertEqual([int(index) for index in shards[1].split(",")], list(range(int(count[1]))))
 
     def test_published_files_name_no_home_directory(self):
         # ADR 0269: the public repository is anonymous; a home path names the machine's user.

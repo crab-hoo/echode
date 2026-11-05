@@ -29,6 +29,8 @@ SWIFT_BUILD_WORKERS = 3
 SWIFT_COPY_BUILD_TIMEOUT = 1200
 # Lines around a mutated text that belong to its site, on each side.
 SITE_CONTEXT_LINES = 20
+# `I/N` runs every N-th counterexample from I, so CI jobs split the full tier (ADR 0269).
+SHARD_VARIABLE = "ECHODE_CONTRACT_SHARD"
 
 
 def load_verify():
@@ -196,6 +198,15 @@ def test_body(text, contract):
         return None
     end = re.compile("^" + start[1] + r"\}", re.MULTILINE).search(text, start.end())
     return text[start.start():end.end() if end else len(text)]
+
+
+def shard_contracts(contracts, shard):
+    """The ids one CI job checks. Every contract is in exactly one of the N shards."""
+    match = re.fullmatch(r"(0|[1-9][0-9]*)/([1-9][0-9]*)", shard)
+    if not match or int(match[1]) >= int(match[2]):
+        raise ValueError(f"{SHARD_VARIABLE} must be I/N with 0 <= I < N, got {shard!r}")
+    index, count = int(match[1]), int(match[2])
+    return {contract["id"] for position, contract in enumerate(contracts) if position % count == index}
 
 
 def control_definition(contract):
@@ -656,12 +667,19 @@ def run_tests(root, contracts, invoke, fingerprints, evidence, record):
             print(output[-5000:], file=sys.stderr)
 
 
-def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=None, changed_only=False, base=None):
-    """Every required test, then every counterexample or, with `changed_only`, those whose site changed."""
+def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=None, changed_only=False, base=None,
+        shard=None):
+    """Every required test, then every counterexample or, with `changed_only`, those whose site changed.
+
+    With `shard`, only that share of the counterexamples runs; every required test still runs.
+    """
     started = time.monotonic()
     execution = {}
     if not contracts or len({c["id"] for c in contracts}) != len(contracts):
         raise ValueError("required product contracts must be nonempty and unique")
+    if shard is not None and changed_only:
+        raise ValueError(f"{SHARD_VARIABLE} splits the full tier; --changed-controls already narrows the controls")
+    in_shard = shard_contracts(contracts, shard) if shard is not None else None
     directory = (evidence or root / "target/verification") / "product-contracts"
     directory.mkdir(parents=True, exist_ok=True)
     report = directory.parent / "product-contracts.json"
@@ -674,6 +692,8 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
     test_stamps = contract_fingerprints(root, policy, contracts, tools, "tests") if policy is not None else {}
     sites, targets = control_sites(root, policy, contracts, base) if policy is not None else ({}, set())
     required = targets if changed_only else {contract["id"] for contract in contracts}
+    if in_shard is not None:
+        required &= in_shard
     tests = {} if fresh else reusable_phase(previous, "tests", test_stamps)
     if changed_only:
         # Passes outside this run's targets stay on record for the full tier, which rechecks each fingerprint.
@@ -714,7 +734,7 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
     execution["pending"] = len(contracts) - len(reused)
     execution["normal_pending"] = len(pending)
     execution["negative_pending"] = len(pending_controls)
-    execution["control_scope"] = "changed" if changed_only else "all"
+    execution["control_scope"] = "changed" if changed_only else f"shard {shard}" if shard is not None else "all"
     execution["changed_sites"] = len(targets)
     execution["reused_tests"] = len(reused_tests)
     execution["reused_controls"] = len(reused_controls)
@@ -740,7 +760,10 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
           and all(controls.get(name, {}).get("status") == "passed" for name in required))
     if ok and changed_only:
         print(f"product contracts: {len(tests)} passed, {len(required)} negative controls with a changed site"
-              f" rejected defects ({len(reused_controls)} reused); make verify-full runs the rest", flush=True)
+              f" rejected defects ({len(reused_controls)} reused); the full tier runs the rest", flush=True)
+    elif ok and shard is not None:
+        print(f"product contracts: {len(tests)} passed, {len(required)} negative controls of shard {shard}"
+              f" rejected defects ({len(reused & required)} reused for unchanged inputs)", flush=True)
     elif ok:
         print(f"product contracts: {len(tests)} passed, {len(controls)} negative controls rejected defects"
               f" ({len(reused)} reused for unchanged inputs)", flush=True)
@@ -754,7 +777,8 @@ def main():
         reject_unmatched_controls(ROOT, policy["product_contracts"])
         return run(ROOT, policy["product_contracts"], policy=policy,
                    fresh=os.environ.get("ECHODE_VERIFY_FORCE") == "1",
-                   changed_only="--changed-controls" in sys.argv[1:], base=os.environ.get("VERIFY_BASE"))
+                   changed_only="--changed-controls" in sys.argv[1:], base=os.environ.get("VERIFY_BASE"),
+                   shard=os.environ.get(SHARD_VARIABLE) or None)
     except (OSError, ValueError, KeyError) as error:
         report = ROOT / "target/verification/product-contracts.json"
         report.parent.mkdir(parents=True, exist_ok=True)

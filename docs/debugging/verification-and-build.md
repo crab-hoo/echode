@@ -144,8 +144,9 @@ release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT s
 
 ### GitHub Actions の失敗
 
-CI は `make check-portable` と `make advisories` だけを実行する（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）。
+`check` は `make check-portable` と `make advisories`、`full` は全体の段階を実行する（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）。
 ログは `gh run view <実行ID> -R crab-hoo/echode --log-failed` で読む。
+`full` の失敗は、同じ make の入口を手元で実行して再現する。反例の 1 シャードは `ECHODE_CONTRACT_SHARD=<I>/4 make check-contract-controls`。
 
 - `toolchain '<版>-aarch64-apple-darwin' is not installed`: ランナーの rustup は `rust-toolchain.toml` の固定版を自動では入れない。
   手元の rustup は既定で自動導入するので、そのままでは再現しない。
@@ -158,7 +159,10 @@ CI は `make check-portable` と `make advisories` だけを実行する（[ADR 
   手元の Mac で同じ文言が失敗として出たら、そのマシンがライブラリ検証を強制していない（`csrutil status` を確認する）。
   対照が拒否されたのに主アプリが読み込んだ時は、署名か entitlement の誤りで、`dlerror()` の出力が stderr に出る。
 - `Native verification requires macOS 27+ on M4 or later; got ..., Apple M1 (Virtual)`: ホスト型ランナーに M4 はない。
-  ネイティブの検査を CI へ戻さず、手元の `make verify` で行う。
+  作業の段階のネイティブ検査を CI へ戻さず、手元の `make verify` で行う。`full` の make の入口はこの判定を呼ばない。
+- `full` の `Illegal instruction`（終了コード 132、シグナル 4）: apple-m4 のビルドに、M1 にない命令が入った。製品の不具合ではない。
+  `xcrun llvm-objdump -d --mcpu=apple-m1 <バイナリ>` の `<unknown>` が、`--mcpu=apple-m4` より多いかで確かめる。
+  増えていたら、CI だけ apple-m1 でビルドする切替えを足す（ADR 0269 の追記で見送った案）。反例はこの落ち方を検出と数えない。
 
 ### 実行環境の権限制限（共有メモリ・キーチェーン）
 
@@ -186,8 +190,9 @@ macOS 標準 make 3.81 は `.SHELLFLAGS` を無視する。厳密なレシピ実
 
 ### `全体検査で未確認` の表示
 
-失敗ではなく、現在の入力で全体の段階の合格の記録がないことを示す。節目に `make verify-full` を実行する。
-ただし未実行の間に入った不具合は、節目まで検出されない。発生時期は `timing-history.jsonl` と `report.json` の `finished_at` で絞る。
+失敗ではなく、現在の入力で手元に全体の段階の合格の記録がないことを示す。CI の `full` の合格はここに出ない。
+対象のコミットの `full` の結果は `gh run list -R crab-hoo/echode --workflow full --commit <SHA>` で見る。
+`full` は `main` へのプッシュで動くので、プッシュ前の不具合はそれまで検出されない。手元での発生時期は `timing-history.jsonl` と `report.json` の `finished_at` で絞る。
 
 ### `negative control no longer matches`
 

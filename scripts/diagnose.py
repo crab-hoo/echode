@@ -181,7 +181,7 @@ def render(data):
         reason = f" — {check['reason']}" if check.get("reason") else ""
         lines.append(f"- {check['id']}: {check['status']}{reason}")
     if verification["full_tier_unverified"]:
-        lines += ["", "全体検査で未確認（作業の完了条件ではない。節目に make verify-full）: "
+        lines += ["", "全体検査で未確認（作業の完了条件ではない。main へのプッシュごとに GitHub の full が実行）: "
                   + ", ".join(verification["full_tier_unverified"])]
     lines += ["", "検査の詳細: target/verification/report.md",
               "アプリが stale / unknown なら make app。検査が stale / partial / unavailable なら make verify。",

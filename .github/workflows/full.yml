@@ -1,0 +1,65 @@
+# The full tier of `make verify-full` on GitHub's M1 runners, so a local Mac need not
+# build and keep the sanitizer and counterexample trees (ADR 0269). The binaries keep
+# the apple-m4 baseline of ADR 0114: none of them used an instruction the M1 lacks.
+# An "Illegal instruction" crash here is a new M4-only instruction, not a product bug
+# (docs/debugging/verification-and-build.md). Results are not recorded in report.md.
+name: full
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitizer:
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [check-bridge-asan, check-bridge-tsan, check-bridge-miri]
+    runs-on: xcode-27
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Install Ninja for the pinned TSan runtime
+        run: command -v ninja || brew install ninja
+      - run: make setup-bridge
+      - if: matrix.check == 'check-bridge-tsan'
+        run: make check-tsan-runtime
+      - run: make ${{ matrix.check }}
+      - if: always()
+        run: df -h .
+
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: xcode-27
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - run: cargo fetch --locked
+      # Every shard runs all required tests, then its own counterexamples.
+      - run: make check-contract-controls
+        env:
+          ECHODE_CONTRACT_SHARD: ${{ matrix.shard }}/4
+      - if: always()
+        run: df -h .

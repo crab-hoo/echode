@@ -24,7 +24,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
   - [プラグイン隔離・内蔵デバイス](architecture/plugins-and-devices.md)（§9、§10）
   - [GPU・UI・Metal・ピアノロール](architecture/ui-and-metal.md)（§12〜§14）
   - [API / MCP・品質保証・ビルド配布](architecture/api-qa-and-distribution.md)（§15〜§17）
-- [ADR](decisions/): 設計判断と実装の経緯の記録。番号は時系列であり、置き換えた判断は後の ADR を参照する。
+- [ADR](decisions/): 設計判断の記録。番号は時系列であり、置き換えた判断は後の ADR を参照する。
 - [監査の索引](reviews/README.md): 監査と対応の ADR を領域ごとに並べた一覧。
 - [スパイク](spikes/): 条件付きの測定結果（S1〜S5）。測定当時の機器・版・入力の範囲に限る。
 

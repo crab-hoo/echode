@@ -84,7 +84,7 @@ Phase 0 は確定済み、Phase 1 の完了範囲は [現在の制約](docs/stat
 `make verify` は、フォーマット、clippy、Rust / Swift、FFI、ライセンス、必須契約の通常テストに加え、変更に応じて RTSan、入力の単体テスト、橋渡しの全 feature を選びます。
 ASan・TSan・Miri と全契約の反例は全体検査の段階です。
 作業ごとには、変更行に `unsafe` の脱出口がある時、検査自身のスクリプトが変わった時、定義・置換箇所・テスト本体が変わった契約の反例だけを実行します。
-全体検査は `make verify-full` で、ユーザーの依頼・配布前・受入の節目に実行します。依頼なしに作業の完了条件へ足しません。
+全体検査は GitHub の `full` が main へのプッシュごとに実行し、節目（依頼・配布前・受入）ではその合格を確かめます。作業の完了条件へ足しません。
 `make verify` の合格を全体検査の合格と言いません。未確認の検査は `make verify` と `make agent-context` が表示します。
 実行方法と検査範囲は `docs/verification.md` を読んでください（[ADR 0212](docs/decisions/0212-verification-tiers.md)）。
 

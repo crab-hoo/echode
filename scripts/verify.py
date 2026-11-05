@@ -943,7 +943,7 @@ def verify(root, args):
         print_deferrals(requested, report["results"])
         unverified = unverified_full_tier(policy, report["results"], stamps)
         if unverified:
-            print("全体検査で未確認（作業の完了条件ではない。節目に make verify-full）: " + ", ".join(unverified), flush=True)
+            print("全体検査で未確認（作業の完了条件ではない。main へのプッシュごとに GitHub の full が実行）: " + ", ".join(unverified), flush=True)
         if pending:
             print("完了していない検査: " + ", ".join(sorted(pending)), file=sys.stderr)
             print("失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID=理由 を検査ごとに使います。", file=sys.stderr)
