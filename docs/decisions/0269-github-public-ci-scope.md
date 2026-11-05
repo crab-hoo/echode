@@ -67,7 +67,14 @@
     出力は `got 27.0.1, arm64, Apple M1 (Virtual)` で、背景の前提どおりである。
   - advisory は `macos-15` の上で `toolchain '1.96.1-aarch64-apple-darwin' is not installed` により失敗した。
     新しいワークフローにも同じ欠落があったので、上の導入手順を足した。
-- 新しいワークフローの GitHub 上での実行は未確認である。
+- 新しいワークフローの初回（`34fb2da`、実行 41992484857）では、advisory が合格した。
+  `check-portable` は `scripts/tests` の署名の検査 1 件で止まり、以降の FFI・ライセンス・clippy は動かなかった。
+  主アプリ（hardened runtime、`disable-library-validation` なし）がアドホック署名のライブラリを読み込んだためである。
+  ランナーの VM はライブラリ検証を強制していないとみられるが、ランナー上では確かめていない。
+- そのため署名の検査に対照を入れた。hardened runtime でアドホック署名した読込み役が同じライブラリを読み込めたら、そのホストは検証を強制していない。
+  GitHub Actions ではその時だけ、主アプリの拒否の部分を理由付きで skip する。手元の Mac では失敗にする。
+  CI はこの拒否を検査せず、手元の M4 の `make verify` だけが検査する。
+- 修正後の GitHub 上での実行は未確認である。
 
 ## 回帰・検査基盤
 

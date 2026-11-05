@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -151,10 +152,16 @@ class SignedBundle(unittest.TestCase):
                 foreign = self.foreign_library(root)
                 main = app / "Contents/MacOS/Echode"
                 helper_bin = app / "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host"
-                rejected = subprocess.run([str(main), str(foreign)], capture_output=True, text=True)
                 accepted = subprocess.run([str(helper_bin), str(foreign)], capture_output=True, text=True)
-                self.assertNotEqual(rejected.returncode, 0, rejected.stderr)
                 self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                with self.subTest("the main app refuses the library at load time"):
+                    if not self.host_enforces_library_validation(root, foreign):
+                        # ADR 0269: a hosted runner VM may not enforce it; a developer's Mac must.
+                        if os.environ.get("GITHUB_ACTIONS") != "true":
+                            self.fail("this Mac does not enforce library validation, so the main app cannot be checked")
+                        self.skipTest("the runner does not enforce library validation")
+                    rejected = subprocess.run([str(main), str(foreign)], capture_output=True, text=True)
+                    self.assertEqual(rejected.returncode, 1, rejected.stderr)
             finally:
                 subprocess.run(["security", "delete-keychain", str(keychain)], check=False)
 
@@ -186,9 +193,11 @@ class SignedBundle(unittest.TestCase):
 
     def compile_loader(self, source, executable):
         source.write_text(
-            "#include <dlfcn.h>\nint main(int argc, char **argv) {\n"
+            "#include <dlfcn.h>\n#include <stdio.h>\nint main(int argc, char **argv) {\n"
             "    if (argc < 2) return 0;\n"
-            "    return dlopen(argv[1], RTLD_NOW) == 0 ? 1 : 0;\n"
+            "    if (dlopen(argv[1], RTLD_NOW) != 0) return 0;\n"
+            "    fprintf(stderr, \"%s\\n\", dlerror());\n"
+            "    return 1;\n"
             "}\n",
             encoding="utf-8",
         )
@@ -196,6 +205,16 @@ class SignedBundle(unittest.TestCase):
             CLANG + ["-o", str(executable), str(source)],
             check=True,
         )
+
+    def host_enforces_library_validation(self, root, library):
+        # Control: a hardened, ad-hoc signed loader must refuse an ad-hoc library ("different Team IDs").
+        control = root / "control"
+        self.compile_loader(root / "control.c", control)
+        subprocess.run(["codesign", "--force", "--sign", "-", "--options", "runtime", str(control)],
+                       check=True, capture_output=True)
+        completed = subprocess.run([str(control), str(library)], capture_output=True, text=True)
+        self.assertIn(completed.returncode, (0, 1), completed.stderr)
+        return completed.returncode == 1
 
     def foreign_library(self, root):
         source = root / "foreign.c"

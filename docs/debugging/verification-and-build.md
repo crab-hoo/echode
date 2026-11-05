@@ -153,6 +153,10 @@ CI は `make check-portable` と `make advisories` だけを実行する（[ADR 
   cargo を呼ぶジョブは、その前に `rustup toolchain install` を実行する。
 - 空の `RUSTUP_HOME` で `rustup toolchain install` を実行すると、rustup 本体の自己更新も走る。
   先に `RUSTUP_HOME=<同じディレクトリ> rustup set auto-self-update disable` を実行する。
+- `test_a_temporary_identity_signs_the_helper_app_and_leaves_the_main_app_strict` の skip `the runner does not enforce library validation`:
+  hardened runtime の対照がアドホック署名のライブラリを読み込めた。CI のホストの性質で、署名の誤りではない。
+  手元の Mac で同じ文言が失敗として出たら、そのマシンがライブラリ検証を強制していない（`csrutil status` を確認する）。
+  対照が拒否されたのに主アプリが読み込んだ時は、署名か entitlement の誤りで、`dlerror()` の出力が stderr に出る。
 - `Native verification requires macOS 27+ on M4 or later; got ..., Apple M1 (Virtual)`: ホスト型ランナーに M4 はない。
   ネイティブの検査を CI へ戻さず、手元の `make verify` で行う。
 
