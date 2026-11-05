@@ -94,6 +94,7 @@
 次はユーザーの判断であり、指示があるまで行わない。
 
 - リモートへのプッシュ（XCA-04）。著者メール（XCA-22）は 2026-11-02 にユーザーの指定で設定済みで、変えない。
+  2026-11-05、ユーザーの判断で全履歴の作者と `user.name`・`user.email` を `crab hoo` と GitHub の noreply アドレスへ変えた（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）。
 - CI の有無（XCA-05）と、worktree を使うかどうか（XCA-07）。
 - Codex のフックの修正（XCA-06）。設定を変えると Codex がフックを再び信頼する手順が要る。
 - `target/` のキャッシュの削除、`make verify-full`、実機・聴感の検査。

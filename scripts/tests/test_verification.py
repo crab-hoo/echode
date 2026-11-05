@@ -919,11 +919,6 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("target/toolchains/tsan/manifest.json", inputs)
             for variant in ("baseline", "fixed"):
                 self.assertTrue(any(f"/{variant}/libclang_rt.tsan_" in path for path in inputs))
-        workflow = (ROOT / ".github/workflows/check.yml").read_text()
-        setup = [json.loads(value) for value in re.findall(r"fromJSON\('([^']+)'\)", workflow)]
-        self.assertTrue(any("check-tsan-runtime" in group and "check-bridge-tsan" in group for group in setup))
-        self.assertIn("target/toolchains/tsan/manifest.json", workflow)
-        self.assertIn("target/bridge/thread/errno/*.log", workflow)
 
     def test_bridge_changes_do_not_launch_unrelated_hardware(self):
         checks = self.selected("spikes/bridge/swift/CBridge.swift")
@@ -1895,15 +1890,47 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("bless", ids)
         self.assertNotIn("known-bugs", ids)
 
-    def test_github_matrix_is_generated_from_the_automatic_checks(self):
-        with tempfile.TemporaryDirectory(prefix="echode-matrix-") as temporary:
-            output = Path(temporary) / "github-output"
-            result = subprocess.run([sys.executable, str(ROOT / "scripts/verify.py"), "--github-matrix"],
-                                    env={**os.environ, "GITHUB_OUTPUT": str(output)},
-                                    capture_output=True, text=True, check=True)
-            expected = [check["id"] for check in self.policy["checks"] if check["mode"] == "automatic"]
-            self.assertEqual(json.loads(result.stdout), expected)
-            self.assertEqual(json.loads(output.read_text().removeprefix("checks=")), expected)
+    def test_public_ci_runs_only_pinned_static_checks(self):
+        # ADR 0269: hosted runners are M1 / M2, and fork pull requests must not get a writable token.
+        workflow = (ROOT / ".github/workflows/check.yml").read_text()
+        self.assertRegex(workflow, r"(?m)^permissions:\n  contents: read$")
+        self.assertNotIn("pull_request_target", workflow)
+        uses = re.findall(r"uses: (\S+)", workflow)
+        self.assertTrue(uses)
+        for action in uses:
+            self.assertRegex(action, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
+        self.assertIn("run: make check-portable", workflow)
+        self.assertNotIn("verify.py", workflow)
+        recipe = subprocess.run(["make", "-n", "check-portable"], cwd=ROOT, capture_output=True, text=True,
+                                check=True).stdout
+        for native in ("cargo test", "cargo build", "check_build_host", "verify.py"):
+            self.assertNotIn(native, recipe)
+        clippy = [line for line in recipe.splitlines() if line.startswith("cargo clippy")]
+        self.assertEqual(len(clippy), 3)
+        for line in clippy:
+            self.assertIn("target-cpu=apple-m1", line)
+            self.assertIn("--target-dir target/portable", line)
+
+    def test_public_ci_installs_the_pinned_toolchain_before_cargo(self):
+        # ADR 0269: rustup does not install the rust-toolchain.toml pin on demand, so on a fresh runner
+        # every cargo call (cargo-deny's included) fails until the job installs it.
+        workflow = (ROOT / ".github/workflows/check.yml").read_text()
+        jobs = re.findall(r"(?m)^  ([\w-]+):\n((?:(?:    .*)?\n)*)", workflow.split("\njobs:\n", 1)[1])
+        self.assertTrue(jobs)
+        for name, body in jobs:
+            with self.subTest(job=name):
+                runs = re.findall(r"run: (.+)", body)
+                cargo = [index for index, run in enumerate(runs) if re.match(r"(cargo|make) ", run)]
+                self.assertTrue(cargo, "a job without cargo needs no Rust toolchain")
+                self.assertIn("rustup toolchain install", runs[:cargo[0]])
+
+    def test_published_files_name_no_home_directory(self):
+        # ADR 0269: the public repository is anonymous; a home path names the machine's user.
+        result = subprocess.run(["git", "grep", "--untracked", "-I", "-n", "-o", "-E", r"/Users/[A-Za-z0-9._-]+"],
+                                cwd=ROOT, capture_output=True, text=True)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        leaks = [line for line in result.stdout.splitlines() if not line.endswith(("/Users/someone", "/Users/Shared"))]
+        self.assertEqual(leaks, [], "write <repo> or a relative path instead of a home directory")
 
     def test_aggregate_check_contains_the_contract_gate_once_and_base_does_not(self):
         for target, count in (("check", 1), ("check-base", 0)):

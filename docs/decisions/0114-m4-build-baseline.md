@@ -25,6 +25,7 @@ Swift の指定に `-Xcc -mcpu=apple-m4` を併せ、Clang の依存モジュー
 - 直接の swiftc と rustc は `scripts/build-platform.env` を共通の入口にする。ASan / TSan の正しさを確かめる検査用プログラムも同じ CPU を使う。配布・隔離用の小さい C の fixture も揃える。古い最低 OS を拒否する負の検査だけは意図的に古い OS を指定する。
 - `project.yml` の Xcode の Swift / C / C++ と architecture を揃える。生成されたプロジェクトを手で編集しない。
 - ローカルの通常検査と CI のネイティブ検査は、実行前に報告されたチップ・OS・architecture が M4 以降 / macOS 27以降 / arm64 か調べる。CI のラベルだけでチップを保証したとしない。選択や advisory のメタデータだけを処理するジョブには、M4 バイナリの実行がない。リモート CI の実行・機種の確認は今回のローカル合格と区別する。製品アプリの起動時判定を追加した意味ではない。
+  2026-11-05、GitHub に M4 のランナーがないため、CI はネイティブ検査をせず静的検査だけにした（[ADR 0269](0269-github-public-ci-scope.md)）。
 
 ## 性能の比較
 

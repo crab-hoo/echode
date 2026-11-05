@@ -3,7 +3,7 @@
 > 証拠の `target/` 参照は当時のローカル記録であり、消失し得る。現在の検査結果ではない。
 > 保存方針と欠落時の扱いは [証拠の保全](../evidence/README.md) を参照。
 
-この指示書は[再監査の10件](2026-10-14-phase1-fix-reaudit.md)を解消するための作業契約である。対象は b7df046 と監査時の未コミット修正。実行時のソースが変わっているなら[再現資料](2026-10-14-phase1-fix-reaudit-reproduction.json)のファイル別SHA-256と照合し、対象条件を再確認する。行番号だけで機械的に置換しない。
+この指示書は[再監査の10件](2026-10-14-phase1-fix-reaudit.md)を解消するための作業契約である。対象は e65eacf と監査時の未コミット修正。実行時のソースが変わっているなら[再現資料](2026-10-14-phase1-fix-reaudit-reproduction.json)のファイル別SHA-256と照合し、対象条件を再確認する。行番号だけで機械的に置換しない。
 
 ## 最初に行うことと作業順
 
@@ -158,7 +158,7 @@ stream.rsのHAL callback入口でInstantを取る。実フレーム数の検証�
 
 - 再現資料にある修正前の結果→新しい回帰の失敗→修正後の成功を各IDで示す。REA-02/03は[正規のnote-portsを加えた追検査](../../target/verification/phase1-fix-reaudit-note-ports.json)でも同じ不具合が出ている。
 - 容量、時刻、音、状態、ファイル保護をassertする。正常終了・件数だけを意味の違う成功へ読み替えない。
-- make verifyを完了時に実行する。コミット済み変更も対象へ入れる場合はVERIFY_BASEを変更前に設定する。今回の基点は134611b09a0ea626f3934da67a0198f17c8d04c1。
+- make verifyを完了時に実行する。コミット済み変更も対象へ入れる場合はVERIFY_BASEを変更前に設定する。今回の基点は7d287c15877e909252f421022ead6db47a293bac。
 - check、RTSan、入力単体、橋渡し全feature、ASan、TSan、Miriを影響範囲で実行する。イベント/CLAP変更はspike-isolation、性能はspike-engine（必要なら時間計測と実機の範囲を正確に記録）、保存はspike-history、出力はspike-render、波形はspike-arrange-frame等を選ぶ。
 - 新しい検査はMakefileとverification.jsonだけに対応を登録し、選択テストも更新する。隔離を変えたらS3の数値を実測で更新する。未実行は名前と理由を残し、自動検査の失敗を見送らない。
 - 手元で実画面・入力・聴感・実用CLAPを確認していない範囲を、完了したと報告しない。C-01/C-02等の候補も、未確認のままPhase 1完了へ拡張しない。

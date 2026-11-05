@@ -142,6 +142,20 @@ Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する
 release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT string pool`）は `.cargo/config.toml` の `strip = "none"` を確認する（[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）。
 `scripts/check_build_host.py` が `sysctl machdep.cpu.brand_string` を読めない隔離環境では、CPU 情報の読取が許される環境で再実行する。
 
+### GitHub Actions の失敗
+
+CI は `make check-portable` と `make advisories` だけを実行する（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）。
+ログは `gh run view <実行ID> -R crab-hoo/echode --log-failed` で読む。
+
+- `toolchain '<版>-aarch64-apple-darwin' is not installed`: ランナーの rustup は `rust-toolchain.toml` の固定版を自動では入れない。
+  手元の rustup は既定で自動導入するので、そのままでは再現しない。
+  `RUSTUP_HOME=<空のディレクトリ> RUSTUP_AUTO_INSTALL=0 make advisories` で同じ失敗になる。
+  cargo を呼ぶジョブは、その前に `rustup toolchain install` を実行する。
+- 空の `RUSTUP_HOME` で `rustup toolchain install` を実行すると、rustup 本体の自己更新も走る。
+  先に `RUSTUP_HOME=<同じディレクトリ> rustup set auto-self-update disable` を実行する。
+- `Native verification requires macOS 27+ on M4 or later; got ..., Apple M1 (Virtual)`: ホスト型ランナーに M4 はない。
+  ネイティブの検査を CI へ戻さず、手元の `make verify` で行う。
+
 ### 実行環境の権限制限（共有メモリ・キーチェーン）
 
 `shm_open: Operation not permitted` や `SecKeychainCreate` の失敗はサンドボックス制限によるため、許可された環境で再実行する。
@@ -263,7 +277,7 @@ TSan の同じ待ちの所要は 1.4〜2.9 秒になった。修正前は通常�
 この停止では監視スレッド自身も 3 標本しか取れず（通常は 1 秒に約 3.5 標本）、特定のテストの占有より CPU の飽和とみられる。
 同じ実行では `MixerStepTests` と `MixerValueBatchTests` も同じ 5 秒の待ちで失敗した。こちらは `undoCount` の不一致として出る。
 修正後の最長の停止は ASan で 1.6〜3.0 秒、TSan は 2.5〜6.7 秒である。
-3.1 秒を超える回は 2026-10-31 の main（05dda77）の上でだけ見えた。差の原因は調べていない。
+3.1 秒を超える回は 2026-10-31 の main（5f03b80）の上でだけ見えた。差の原因は調べていない。
 長い停止は実行直後の AppKit の遅延読込みと初回のビュー構築で、入力欄のフォーカスや `NSMenuItem` の実行を契機に数百のフレームワークが主スレッドで読み込まれる。
 長い停止の標本には複数のテストが並ぶので、1 つのテストの占有とは限らない。TSan の負荷なしで 6.7 秒の停止があった回も合格したので、停止の長さだけで判断せず標本の主を見る。
 `DYLD_PRINT_LIBRARIES` の出力は原因ではない。外しても同じように失敗し、占有の長さも変わらなかった。

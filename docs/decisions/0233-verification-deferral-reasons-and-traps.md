@@ -6,7 +6,7 @@
 
 ## 背景
 
-開始時の HEAD は `3dea61a`。
+開始時の HEAD は `2ecc601`。
 
 - XCA-08: `scripts/verify.py` の `--defer` は複数指定でき、`--reason` は 1 つだけだった。
   10 件が同じ理由を持ち、`spike-isolation` や `spike-audio` の理由がその検査の目的を説明していなかった。

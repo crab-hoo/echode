@@ -67,6 +67,8 @@ C のヘッダ生成だけでは所有権や寿命は検査できない。完了
 
 ASan の接続には制約がある。この nightly の LLVM は 23.1.3、Xcode の Clang は 21.0.0 で、Rust は `__asan_version_mismatch_check_v8`、Xcode は `__asan_version_mismatch_check_apple_clang_2100` を要求する。同じプロセスへそのままリンクできることは確認できず、バージョン確認を消したり、偽の関数を追加して通すことはしない。Rust の C ABI と Rust のコールバックは、Rust の実行時ライブラリで標準ライブラリと依存も含めて検査する。Swift の実際の C ABI の往復は、Xcode の実行時ライブラリで Swift に検査を入れ、Rust の通常の静的ライブラリにつなぐ。両言語の意図的な解放後参照もそれぞれの実行時ライブラリで検出する。これは両側を一つのプロセスで同時に ASan 検査した証拠にはならない。製品の橋渡しを公開する前にも、ツールチェーンの接続とこの検査範囲を確認する。
 
+（2026-11-05 追記: この段落の CI の範囲は [ADR 0269](0269-github-public-ci-scope.md) で置き換えた。GitHub のランナーは M4 ではない。）
+
 CI の通常の検査は Swift の検査を含む。ASan、TSan、Miri は別ジョブにし、失敗もログを保存する。macOS 27 と Xcode 27 の arm64 環境には GitHub の `xcode-27` ラベルを使う。公開プレビューなので、実行環境の提供状況とバージョンは更新時に確認する。
 
 追加した検査はこの Mac で通った。`make check`、生成器を含む全 feature の clippy とライセンス検査、`make check-bridge-asan`、`make check-bridge-tsan`、`make check-bridge-miri` を実行した。Rust の ASan は 11 件、Miri は 6 件を各 seed で実行した。両言語の意図的な不具合の診断も確認した。Swift の保持数の確認は、先行する完了の終了を待ち、検査の Task 自身が結果のハンドルを保持し続けないようにしている。検査のドライバーは期限を超えると Cargo の子のテストも含めて終了し、その経路も別の子プロセスで確認した。CI の設定の構文は確認したが、GitHub 上での実行はまだ確認していない。

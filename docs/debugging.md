@@ -43,6 +43,7 @@ make debug-report
   - Swift の編集型の生成鮮度が不一致になる
   - Rust に追加したアクションを Swift が `unknown variant` として拒否する
   - macOS 27 / M4 ビルド基準の不一致
+  - GitHub Actions の失敗
   - 実行環境の権限制限（共有メモリ・キーチェーン）
 - 検査の結果と記録
   - 長時間検査の前の準備不足

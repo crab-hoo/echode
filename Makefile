@@ -140,6 +140,24 @@ verification-profile:
 check-verification:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 
+# Static checks that need no M4, for contributors and GitHub Actions (ADR 0269).
+# Hosted macOS runners are M1 / M2: clippy compiles for apple-m1 there, so build scripts and
+# proc macros never execute M4 instructions. Not a substitute for `make check`.
+.PHONY: check-portable
+check-portable:
+	cargo fmt --all --check
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
+	scripts/check-ffi.sh
+	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
+	cargo deny -L error check licenses bans sources
+	cargo clippy -q --locked --workspace --all-targets $(PORTABLE_BUILD) -- -D warnings
+	cargo clippy -q --locked -p echode-history --features spike --all-targets $(PORTABLE_BUILD) -- -D warnings
+	cargo clippy -q --locked -p echode-engine --features spike --all-targets $(PORTABLE_BUILD) -- -D warnings
+
+# Appended after .cargo/config.toml's target-cpu, so rustc uses this last value.
+# A separate target directory keeps a local run from invalidating the M4 build.
+PORTABLE_BUILD := --target-dir target/portable --config 'target.aarch64-apple-darwin.rustflags=["-C", "target-cpu=apple-m1"]'
+
 doctor:
 	@python3 -B scripts/diagnose.py
 

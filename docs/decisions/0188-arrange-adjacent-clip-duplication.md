@@ -7,7 +7,7 @@
 
 ## 背景と再現
 
-開始時の HEAD は `8f118f6`。クリップ本体の Command＋ドラッグは既存の `clip.duplicate` へ接続済みだが、
+開始時の HEAD は `292e307`。クリップ本体の Command＋ドラッグは既存の `clip.duplicate` へ接続済みだが、
 Command＋D の直後への複製は未接続だった。
 製品の `ArrangePaneView.timeline.keyDown` へ入力する回帰を先に追加し、複製要求が 0 件になることを確認した。
 期待終了コード 1 と固有のアサーションを `target/focused-checks/clip-duplicate-red/` で照合した。

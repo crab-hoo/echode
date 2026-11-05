@@ -2,7 +2,7 @@
 
 本文は監査時の発見と証拠を保持する。M4 以降への前提変更に続き、M27-01 / 02 / 03 と M27-04 の一部へ対応した。現在の実装は末尾の「後日対応」と [ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)、合否は検査レポートを参照する。
 
-- 対象: `e01bffbd08094224355334b0e34e7feb612d9685` の製品実装、PLAN、ARCHITECTURE、関連 ADR。監査開始時の作業ツリーは変更なし
+- 対象: `276792b1a0d0d84e296fcaa638a4406f56426da1` の製品実装、PLAN、ARCHITECTURE、関連 ADR。監査開始時の作業ツリーは変更なし
 - 開始時の前提: macOS 27.0 以降、Apple Silicon 専用。旧 OS、Intel、Rosetta への対応は追加しない。その後のユーザー指定により、現方針は M4 ファミリー以降（末尾の追記、[ADR 0112](../decisions/0112-m4-minimum.md)）
 - 環境: macOS 27.0（26A428）、arm64、Xcode 27.1（27A9275）、macOS SDK 27.0、Rust 1.96.1
 - 範囲: 静的な製品経路の照合、生成したバイナリの確認、機器を開かない PCM 再現と隔離回帰。製品コードは変更しない

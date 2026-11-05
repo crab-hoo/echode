@@ -26,7 +26,7 @@ macOS 27 の `libswift_Concurrency` を `dyld_info -disassemble` で読むと、
 
 | ビルド | 実行回数 | `Document.swift:59` の報告が出た回数 |
 | --- | --- | --- |
-| 注釈なし（`01e09aa`） | 3 | 3 |
+| 注釈なし（`76d00a4`） | 3 | 3 |
 | 注釈あり | 14 | 0 |
 
 `DevicePreparationTests` の調査でも、注釈なしの同じ報告が負荷下で 6 回中 6 回、負荷なしで 49 回中 1 回出ている。

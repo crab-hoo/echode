@@ -965,16 +965,8 @@ def main():
                         help="record the --defer entries without running any check")
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--github-matrix", action="store_true")
     args = parser.parse_args()
     try:
-        if args.github_matrix:
-            automatic = [check["id"] for check in load_policy(ROOT)["checks"] if check["mode"] == "automatic"]
-            matrix = json.dumps(automatic)
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-                output.write("checks=" + matrix + "\n")
-            print(matrix)
-            return 0
         return verify(ROOT, args)
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         print("検査の選択または実行に失敗しました: " + str(error), file=sys.stderr)

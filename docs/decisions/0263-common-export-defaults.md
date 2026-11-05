@@ -8,7 +8,7 @@
 操作要件で未決だった共通デフォルトの保存先を、プロジェクトごとの前回設定とは分けて決める。
 [ADR 0257](0257-portable-export-settings.md) のパッケージ設定は移動先でも戻るが、新しいプロジェクトへ同じ設定を使うには毎回入力する必要があった。
 
-変更前の `5d9e69a` に、共通設定を用意して製品の `ProjectController.loadExportSettings` から新しい文書の設定を読む回帰を追加した。
+変更前の `68b723b` に、共通設定を用意して製品の `ProjectController.loadExportSettings` から新しい文書の設定を読む回帰を追加した。
 `A fresh project must use this Mac's common export defaults` と終了コード 1 を照合した（`target/export-defaults-red/`）。
 最初のコンパイル診断はこの red の証拠に含めない。
 

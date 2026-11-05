@@ -9,7 +9,7 @@
 従来の CLI は初期化時の CLAP tail を使うか、`--frames` で先頭からの総長を指定するだけで、曲末に対する長さを指定できなかった。
 無限の余韻では利用者が曲の長さも計算する必要があった。
 
-`a77ae25` に実 CLI の `explicit_tails_render_empty_projects_in_every_wav_format` を追加し、
+`e897538` に実 CLI の `explicit_tails_render_empty_projects_in_every_wav_format` を追加し、
 `--tail-frames 0` が `explicit tail export failed: echode: usage: echode render` で失敗することを先に確認した。
 終了コード 101 と回帰固有のアサーションを照合し、構文の未対応を製品の入口から再現した。
 

@@ -1,82 +1,55 @@
-# Every automatic check is selected from the same policy that agents use.
+# Static checks that need no M4 (ADR 0269). GitHub's hosted macOS runners are M1 / M2,
+# so the native checks of `make verify` run only on a local M4 and are not recorded here.
 name: check
 
 on:
   push:
+    branches: [main]
   pull_request:
+  schedule:
+    # The advisory database changes without any commit.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  verification-plan:
-    runs-on: macos-15
-    outputs:
-      checks: ${{ steps.plan.outputs.checks }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: plan
-        run: python3 scripts/verify.py --github-matrix
-
-  verify:
-    needs: verification-plan
-    # Apple Silicon, macOS 27 / Xcode 27 (GitHub's current preview label).
+  portable:
+    if: github.event_name != 'schedule'
+    # macOS 27 / Xcode 27: .cargo/config.toml links build scripts for macOS 27.
     runs-on: xcode-27
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        check: ${{ fromJSON(needs.verification-plan.outputs.checks) }}
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - name: Check the native M4 and macOS 27 baseline
-        run: python3 -B scripts/check_build_host.py
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install the toolchain in rust-toolchain.toml
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
         with:
-          key: verify-${{ matrix.check }}-nightly-2026-10-09
-      - uses: taiki-e/install-action@v2
+          workspaces: ". -> target/portable"
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-deny@0.20.2
       - run: cargo fetch --locked
-      - if: contains(fromJSON('["check-bridge-asan", "check-bridge-tsan", "check-bridge-miri", "check-tsan-runtime"]'), matrix.check)
-        run: |
-          for tool in cmake ninja; do
-            command -v "$tool" >/dev/null || brew install "$tool"
-          done
-          make setup-bridge
-      - run: python3 scripts/verify.py --all --only '${{ matrix.check }}'
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: verify-${{ matrix.check }}-logs
-          path: |
-            target/verification/report.*
-            target/verification/*.log
-            target/verification/product-contracts.json
-            target/verification/product-contracts/**
-            target/bridge/address/*.log
-            target/bridge/address/*.txt
-            target/bridge/address/control/*.log
-            target/bridge/thread/*.log
-            target/bridge/thread/*.txt
-            target/bridge/thread/control/*.log
-            target/bridge/thread/errno/*.log
-            target/bridge/*/product/*.log
-            target/toolchains/tsan/manifest.json
-            target/bridge/miri/*.log
-            target/bridge/miri/*.txt
+      - run: make check-portable
 
   advisories:
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # cargo-deny runs cargo, and rustup refuses the uninstalled pin in rust-toolchain.toml.
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-deny@0.20.2
-      - run: python3 scripts/verify.py --all --only advisories --run advisories
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: verify-advisories-logs
-          path: |
-            target/verification/report.*
-            target/verification/*.log
+      - run: make advisories

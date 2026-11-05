@@ -9,7 +9,7 @@
 正常な追記でも、読取量と一時メモリが過去の編集の長さに比例して増えていた。
 [監査の実行指示](../reviews/2026-11-03-fix-instructions.md) は、この確認を末尾だけにするよう求めている。
 
-`a77ae25` と既存の書出し変更を保持した作業ツリーに、テスト時だけの読取バイト数の集計と
+`e897538` と既存の書出し変更を保持した作業ツリーに、テスト時だけの読取バイト数の集計と
 `audit_fca14_complete_journal_append_reads_only_the_last_byte` を先に追加した。
 実パッケージへ `append_journal` で追記すると、長さ 1 のトラック名の入力でも 3,293 バイトを読み、期待値の 1 と不一致になった。
 `checked_commands.py` で終了コード 101 と固有の `a complete journal must inspect only its final byte` を照合した。

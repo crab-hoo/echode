@@ -7,7 +7,7 @@
 
 [ADR 0247](0247-pcm24-wav-export.md) の後も、CLI は 16 bit PCM を選べなかった。
 FCA-16 の残る形式対応のうち、今回は標準的なステレオ PCM16 の符号化だけを追加する。
-`5866001` に実 CLI の `pcm16_cli_exports_stereo_silence_at_multiple_rates_and_block_boundaries` を追加し、
+`ad21f2d` に実 CLI の `pcm16_cli_exports_stereo_silence_at_multiple_rates_and_block_boundaries` を追加し、
 `--format pcm16` が形式エラーで拒否されることを先に確認した。
 終了コード 101 と回帰固有の `PCM16 CLI export failed: ... expected wav format` を照合した。
 

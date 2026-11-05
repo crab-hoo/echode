@@ -1,6 +1,6 @@
 {
   "audit_date": "2026-10-13",
-  "commit": "cf43ef2910a4500046ba3e8e2db0f95e40795592",
+  "commit": "d82089cf09a9ed3f9d43022a65afdda12f538f4e",
   "description": "今回の監査の再現コードと観測結果。検査対象の製品コードは変更していない。通常検査への登録ではない。",
   "sources": {
     "Cargo.toml": "[package]\nname = \"echode-audit-20261013\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nechode-model = { path = \"/Users/someone/Echode/crates/echode-model\" }\nechode-actions = { path = \"/Users/someone/Echode/crates/echode-actions\" }\nechode-history = { path = \"/Users/someone/Echode/crates/echode-history\" }\nechode-engine = { path = \"/Users/someone/Echode/crates/echode-engine\" }\nechode-audio-io = { path = \"/Users/someone/Echode/crates/echode-audio-io\" }\nechode-cli = { path = \"/Users/someone/Echode/crates/echode-cli\" }\nechode-realtime = { path = \"/Users/someone/Echode/crates/echode-realtime\" }\nechode-api = { path = \"/Users/someone/Echode/crates/echode-api\" }\n",

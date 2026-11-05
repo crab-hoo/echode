@@ -6,7 +6,7 @@
 ## 背景と再現
 
 [ADR 0254](0254-gui-snapshot-export.md) は、不正なレート・余韻・換算超過を開始前に拒否するとした。
-変更前の `9cef367` では、数値を直接束縛した SwiftUI の `TextField(value:format:)` を使っていた。
+変更前の `a6ac2e5` では、数値を直接束縛した SwiftUI の `TextField(value:format:)` を使っていた。
 解析できない文字列は数値モデルへ届かず、画面に不正な入力が残っていても前の有効値で開始できた。
 
 非表示の実 `WorkspaceExportView` と AppKit のフィールドエディターで、レート欄に非数値を入力する回帰を作った。

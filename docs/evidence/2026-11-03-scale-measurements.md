@@ -4,7 +4,7 @@
 
 ## 条件
 
-- 対象: `c0d6204` と未コミット変更 23 件（別セッションの ADR 0238 の作業。計測した経路は変えていない）。
+- 対象: `5565b4d` と未コミット変更 23 件（別セッションの ADR 0238 の作業。計測した経路は変えていない）。
 - 機器: Apple M4、24 GB、10 コア、macOS 27.0（26A428）。Rust 1.96.1、release。
 - リポジトリの外の Cargo プロジェクトから、`echode-engine` と `echode-model` を path 依存で使った。リポジトリのファイルは計測に使っていない。
 - 呼んだのは製品の公開 API だけである: `Project::try_assemble`、`Project::edit_note`、`Project::add_track`、

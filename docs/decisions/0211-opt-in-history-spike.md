@@ -7,7 +7,7 @@
 
 ## 背景
 
-開始時の HEAD は `ae9e7db`。
+開始時の HEAD は `2f8667e`。
 `echode-history` の `project.rs`・`format.rs`・`store.rs` は、Phase 0 の測定用の別モデルと Git 保存を持つ。
 製品は `echode_model::Project` と `Autosave`・`DocumentHost` を使い、この別モデルの呼出しは `tests/roundtrip.rs` だけだった。
 別の時間単位・JSON 形式・履歴が、製品の通常ビルドでもコンパイルされていた。

@@ -6,7 +6,7 @@
 
 ## 背景
 
-開始時の HEAD は `3dea61a`。
+開始時の HEAD は `2ecc601`。
 
 `crates/echode-history/src/host.rs` の `note_failure` は、`error.to_string().contains(JOURNAL_DURABILITY_UNKNOWN)` で文書を止めていた。
 ジャーナルの行がファイルに届き、その後の同期か巻戻しが終わらなかった時に、以後の編集を拒否する仕組みである（AUD-03）。

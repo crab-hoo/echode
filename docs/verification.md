@@ -64,7 +64,7 @@ make verify
 10分計測は `make verify VERIFY_ARGS='--run spike-engine'` でも追加できる。
 スケジューラー・リアルタイム処理の大きな変更、長時間でだけ起きる不具合、リリース前など、目的がある時に実行する。
 
-`--only ID` は作業中の個別検査か CI の分割用で、完了報告前には使わない。
+`--only ID` は作業中の個別検査用で、完了報告前には使わない。
 無関係な検査を追加実行する時は `python3 scripts/verify.py --full --only ID`、手動検査は `--all --only ID --run ID` を使う。
 自動検査の失敗は見送れない。手動検査の見送りも合格ではなく、最終報告に名前と理由を残す。
 
@@ -305,7 +305,10 @@ Bash は待たせないので、状態とログは読めるが、ファイルを
 `.codex/hooks.json` もアダプターを備えるが、設定ファイルの存在だけでホスト側のフック発火済みとは扱わない。フックのない環境でも `make verify` は必須である。
 フックの上限は `verification.json` の `hook_timeout` と一致させ、全自動検査と事前確認の直列予算を覆うことを検査する。
 ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
-CI の自動検査一覧は `scripts/verification.json` から生成し、各ジョブが `--all --only ID` で分担する。全体の段階も CI の全件に含む。調査資料の収集は [デバッグ手順](debugging.md) を参照する。
+GitHub Actions は M4 を要らない `make check-portable` と `make advisories` だけを実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
+GitHub の macOS ランナーは M1 / M2 で、ネイティブの検査は通らない。
+CI の合格は `make verify` の合格ではなく、`report.md` にも記録しない。M4 のない環境の協力者も同じ入口を使える。
+調査資料の収集は [デバッグ手順](debugging.md) を参照する。
 
 ## 検査基盤で区別すること
 

@@ -10,7 +10,7 @@ ADR 0169 の検討で、ノート入力時の窓をタイムラインではな�
 従来は、タイムラインの小節に一致しない移動を `fixed` にすることで、不変条件を満たしていた
 （[ADR 0022](0022-clip-content-and-placement.md)、[ADR 0154](0154-clip-move-and-duplicate.md)）。
 
-`6418128` の製品コマンドを通す回帰で、1 小節の自動クリップを小節未満だけ動かすと固定になることを再現した。
+`864e7a4` の製品コマンドを通す回帰で、1 小節の自動クリップを小節未満だけ動かすと固定になることを再現した。
 `clip_bar_basis` の固有のアサーション `a sub-bar move must preserve the automatic content-bar window` と
 期待終了コード 101 を照合した記録は `target/focused-checks/content-bars-red/` にある。
 

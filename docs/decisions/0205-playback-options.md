@@ -7,7 +7,7 @@
 
 ## 背景
 
-開始時の HEAD は `e813452`。
+開始時の HEAD は `46866f2`。
 再生の生成関数が `playback_pair`・`playback_pair_at`・`playback_with_plugins`・`playback_with_plugins_at`・
 `playback_with_plugins_in_workgroup_at`・`playback_with_clock` の 6 種類あった。
 ワークグループの有無だけが違う 2 関数は本体を複製し、`too_many_arguments` を許していた。

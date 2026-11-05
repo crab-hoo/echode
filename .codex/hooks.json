@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "'/Users/someone/Echode/.codex/hooks/wait-for-verify.sh'",
+            "command": "\"$(git rev-parse --show-toplevel)/.codex/hooks/wait-for-verify.sh\"",
             "timeout": 15600
           }
         ]

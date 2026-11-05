@@ -6,7 +6,7 @@
 ## 背景と再現
 
 [ADR 0248](0248-pcm16-wav-export.md) の後も、全形式でメタデータ込みの RIFF 長が u32 を超えると書出しを拒否していた。
-`f7dff92` に `rf64_replaces_the_riff_size_limit_for_every_export_format` を追加し、
+`fd1c0b2` に `rf64_replaces_the_riff_size_limit_for_every_export_format` を追加し、
 最大 RIFF の次のフレームで `RF64 export must replace the RIFF size limit` と失敗することを先に確認した。
 終了コード 101 と、そのアサーションに続く既存の `wav data does not fit in a 32-bit chunk` を照合した。
 

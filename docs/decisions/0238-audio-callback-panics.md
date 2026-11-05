@@ -6,7 +6,7 @@
 
 ## 背景
 
-開始時の HEAD は `c0d6204`。
+開始時の HEAD は `5565b4d`。
 
 XCA-14 は読解から次を挙げた。
 出力と試聴の `render` は `extern "C-unwind"` で `catch_unwind` がなく、release も `panic = unwind` なので、panic は CoreAudio のフレームへ伝わる。

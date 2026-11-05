@@ -29,7 +29,7 @@
 - [2026-11-03 コード全体の監査の実行指示](2026-11-03-fix-instructions.md): 上の監査の作業単位 W1〜W5、再現 4 件と `make spike-scale`、境界と完了条件。
 - [2026-11-02 コード品質とエージェント環境の横断監査](2026-11-02-cross-cutting-audit.md): XCA-01〜22。
   保存の同期の順序、ソースと CI の継続性、エージェントごとの防護、資料の量。
-  XCA-01〜03 は [ADR 0230](../decisions/0230-save-durability.md) で修正した。XCA-04 は 2026-11-02 にプッシュした。P1 の XCA-05 は未着手。
+  XCA-01〜03 は [ADR 0230](../decisions/0230-save-durability.md) で修正した。XCA-04 は 2026-11-02 にプッシュし、2026-11-05 に GitHub（非公開）へ移した。XCA-05 は 2026-11-05 に CI を静的検査へ限った（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）。
   XCA-08・09 は [ADR 0233](../decisions/0233-verification-deferral-reasons-and-traps.md) で対応した（Swift の期限を除く）。
   XCA-11 は共通の運用の知識を各手順へ移し、XCA-12 は確認待ちを [ユーザー確認の一覧](../user-checks.md) へ集めた。
   XCA-16 は保存の不確定の判定を型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。

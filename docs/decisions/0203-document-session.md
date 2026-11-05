@@ -7,7 +7,7 @@
 
 ## 背景と再現
 
-開始時の HEAD は `1a05111`。
+開始時の HEAD は `946d9dc`。
 `ProjectController` は文書の寿命の状態を約 60 個の項目で持ち、`open` と `close` が手で初期化していた。
 初期化の漏れと、編集の入口の `documentID: UUID? = nil`（`nil` は照合を省く）が残っていた。
 読解で疑った 4 点を、修正前のコードで `DocumentSessionTests` を実行して再現した。
