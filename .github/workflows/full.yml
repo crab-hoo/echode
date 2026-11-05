@@ -40,6 +40,13 @@ jobs:
       - if: matrix.check == 'check-bridge-tsan'
         run: make check-tsan-runtime
       - run: make ${{ matrix.check }}
+      # The job log keeps only the tail of a failed validation log, which can be dyld output.
+      - name: Show the findings of failed validation logs
+        if: failure()
+        run: >-
+          find target/bridge -name '*.failed.log' -print -exec grep -h -E
+          'recorded an issue|Expectation failed|Caught error|ERROR: AddressSanitizer|WARNING: ThreadSanitizer|SUMMARY:|Fatal error|Test run with'
+          {} + || true
       - if: always()
         run: df -h .
 

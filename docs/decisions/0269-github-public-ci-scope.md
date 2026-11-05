@@ -139,6 +139,18 @@
 
 - 標準のランナーは 3 vCPU で、待機期限が 5 秒のテストがサニタイザの下で遅れるおそれがある。
 - ランナーで Metal を使えるかは確かめていない。描画を使う必須テストが落ちたら、まずこれを疑う。
+- 初回（`dcb047a`、実行 42005867712）では、反例の 4 シャードが 24.9〜27.9 分、Miri が 3.2 分で合格した。
+  反例のジョブでは、Rust 110 件と Swift 146 件の必須テストも M1 のランナーで合格した。
+  ランナーのディスクは 180 GB で、TSan のジョブの後も 32 GB 空いていた。
+- 同じ実行で、ASan は EchodeApp のテストが `Export CLI is missing from the app bundle` で失敗した。
+  サニタイザの入口は `target/debug` の CLI・プラグインヘルパー・検査用プラグイン・同梱プラグインをビルドしていなかった。
+  手元では、先に `check-swift` が作った物がいつも残っていたので表に出なかった。
+  `check-bridge-asan` と `check-bridge-tsan` の入口で、`check-swift` と同じ物を先にビルドするようにした。
+  入力には、新しく使う `scripts/build-bundled-plugins.sh` と同梱プラグインの plist を足した。
+  CLI などの crate は入力に足さない。サニタイザはそれらを計装しないので、そこでの `unsafe` の変更で選ばれても検査にならない。
+  その crate の変更で手元の合格の記録は失効しないが、`full` は `main` へのプッシュごとに作り直して実行する。
+- TSan も同じ Swift のテストで失敗したが、ジョブのログには失敗ログの末尾の dyld の出力しか残らず、原因を確定できなかった。
+  失敗した時に、失敗ログから問題の行だけをジョブのログへ出す手順を足した。
 - 作業の段階でも、`unsafe` の変更や検査自身のスクリプトの変更では、全体の段階の検査が手元で選ばれる。この選択は変えていない。
 
 ### 回帰・検査基盤
@@ -148,3 +160,5 @@
 - `test_public_ci_installs_the_pinned_toolchain_before_cargo` は全ワークフローを対象にした。
 - `test_shards_split_every_counterexample_once` と `test_a_shard_runs_every_test_but_only_its_own_counterexamples` が、シャードの分け方と実行範囲を検査する。
 - `test_negative_controls_must_fail_in_the_test_body` に、`Illegal instruction` の終了を検出と数えない場合を足した。
+- `test_sanitizer_checks_build_what_their_swift_tests_launch` が、サニタイザの入口がテストの起動する物を先にビルドすることを検査する。
+  修正前の Makefile で `echode-cli` の欠落により失敗することを確かめた。

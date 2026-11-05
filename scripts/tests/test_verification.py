@@ -1660,7 +1660,8 @@ class PolicyTests(unittest.TestCase):
         # A shared sub-make target belongs to every check that calls it.
         plugins = makefile.replace("bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh",
                                    "bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh debug")
-        self.assertEqual(redefined(text=plugins), {"check", "check-swift", "check-product-contracts", "check-contract-controls", "rtsan"})
+        self.assertEqual(redefined(text=plugins), {"check", "check-swift", "check-product-contracts", "check-contract-controls", "rtsan",
+                                                   "check-bridge-asan", "check-bridge-tsan"})
         policy = json.loads(json.dumps(self.policy))
         policy["product_contracts"].append(dict(policy["product_contracts"][0], id="another-contract"))
         self.assertEqual(redefined(policy), {"check-product-contracts", "check-contract-controls"})
@@ -1946,6 +1947,19 @@ class PolicyTests(unittest.TestCase):
         count = re.search(r"ECHODE_CONTRACT_SHARD: \$\{\{ matrix\.shard \}\}/([0-9]+)$", workflow, re.MULTILINE)
         self.assertIsNotNone(count)
         self.assertEqual([int(index) for index in shards[1].split(",")], list(range(int(count[1]))))
+
+    def test_sanitizer_checks_build_what_their_swift_tests_launch(self):
+        # ADR 0269: on a fresh runner the ASan product tests failed with "Export CLI is missing from the
+        # app bundle"; locally an earlier check-swift had always left target/debug/echode behind.
+        for target in ("check-bridge-asan", "check-bridge-tsan"):
+            with self.subTest(target=target):
+                recipe = subprocess.run(["make", "-n", target], cwd=ROOT, capture_output=True, text=True,
+                                        check=True).stdout
+                builds = [line for line in recipe.splitlines() if line.startswith("cargo build")]
+                for package in ("echode-cli", "echode-plugin-host", "echode-test-plugin"):
+                    self.assertTrue(any("-p " + package in line for line in builds), package)
+                self.assertIn("scripts/build-bundled-plugins.sh", recipe)
+                self.assertLess(recipe.index("cargo build"), recipe.index("scripts/check-bridge-sanitizer.sh"))
 
     def test_published_files_name_no_home_directory(self):
         # ADR 0269: the public repository is anonymous; a home path names the machine's user.

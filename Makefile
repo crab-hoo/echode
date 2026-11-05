@@ -248,10 +248,19 @@ check-bridge-features:
 	cargo test -q --locked -p echode-bridge-spike --lib --all-features
 	cargo deny -L error --all-features check licenses bans sources
 
+# The product Swift tests under a sanitizer launch the plugin helper, the test plugin and the
+# CLI from target/debug, as in check-swift. A fresh checkout, like GitHub's full workflow, has none.
+.PHONY: sanitizer-prerequisites
+sanitizer-prerequisites:
+	$(MAKE) bundled-plugins
+	cargo build -q --locked --offline -p echode-plugin-host -p echode-test-plugin -p echode-cli
+
 check-bridge-asan:
+	$(MAKE) sanitizer-prerequisites
 	bash scripts/check-bridge-sanitizer.sh address
 
 check-bridge-tsan:
+	$(MAKE) sanitizer-prerequisites
 	bash scripts/check-bridge-sanitizer.sh thread
 
 # No Echode code: require the errno lifetime fix and detection of a real race.

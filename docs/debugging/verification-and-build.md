@@ -160,6 +160,8 @@ release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT s
   対照が拒否されたのに主アプリが読み込んだ時は、署名か entitlement の誤りで、`dlerror()` の出力が stderr に出る。
 - `Native verification requires macOS 27+ on M4 or later; got ..., Apple M1 (Virtual)`: ホスト型ランナーに M4 はない。
   作業の段階のネイティブ検査を CI へ戻さず、手元の `make verify` で行う。`full` の make の入口はこの判定を呼ばない。
+- `full` のサニタイザで `Export CLI is missing from the app bundle`: テストが起動する CLI などが `target/debug` にない。
+  入口の `make sanitizer-prerequisites` が先に動いたかを確かめる。手元では前の検査の残りで隠れる。
 - `full` の `Illegal instruction`（終了コード 132、シグナル 4）: apple-m4 のビルドに、M1 にない命令が入った。製品の不具合ではない。
   `xcrun llvm-objdump -d --mcpu=apple-m1 <バイナリ>` の `<unknown>` が、`--mcpu=apple-m4` より多いかで確かめる。
   増えていたら、CI だけ apple-m1 でビルドする切替えを足す（ADR 0269 の追記で見送った案）。反例はこの落ち方を検出と数えない。
