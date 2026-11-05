@@ -127,6 +127,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check-format`: 従来 `check-base` のビルド後に行っていた Rust フォーマットを独立して先に検査する。
 - `check` (`check-base`): Rust のビルドと全テスト、ランダムな編集の不変条件・Undo / Redo・保存往復、基準音声、保存形式、ブロック長比較、プラグインのクラッシュ・ハング、clippy、FFI、ライセンス。
   `make check-swift-actions` で登録簿・公開スキーマと Swift の生成編集型を照合し、古い生成物を変更せず拒否する。
+  FFI の例外はパスとシンボルの組に限り、既存の許可ファイルへの新しい宣言も拒否する（[ADR 0265](decisions/0265-symbol-scoped-foreign-declarations.md)）。
   履歴の Phase 0 モデルとエンジンの固定グラフ・計測器は既定ではビルドせず、別の Cargo 呼出しで `spike` feature のビルド・lint・通常回帰も維持する。
   履歴は非計測の往復回帰、エンジンはスケジューラと計測の制御ループの単体テストを含む。
   既定の workspace の依存解決で両 crate のこの feature が有効でないことは `check-verification` で照合する。

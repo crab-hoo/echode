@@ -50,27 +50,12 @@ unsafe extern "C" {
         timeout: u32,
         notify: u32,
     ) -> i32;
-    pub(crate) fn pthread_set_qos_class_self_np(class: u32, relative: i32) -> i32;
-
-    fn os_sync_wait_on_address(
-        addr: *mut std::ffi::c_void,
-        value: u64,
-        size: usize,
-        flags: u32,
-    ) -> i32;
-    fn os_sync_wait_on_address_with_timeout(
-        addr: *mut std::ffi::c_void,
-        value: u64,
-        size: usize,
-        flags: u32,
-        clockid: u32,
-        timeout_ns: u64,
-    ) -> i32;
-    fn os_sync_wake_by_address_any(addr: *mut std::ffi::c_void, size: usize, flags: u32) -> i32;
 }
 
-/// `OS_CLOCK_MACH_ABSOLUTE_TIME` from `<os/clock.h>`.
-const CLOCK_MACH_ABSOLUTE_TIME: u32 = 32;
+use libc::{
+    OS_CLOCK_MACH_ABSOLUTE_TIME, os_sync_wait_on_address, os_sync_wait_on_address_with_timeout,
+    os_sync_wake_by_address_any,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct SyncFlags {
@@ -180,7 +165,7 @@ fn wait_while_eq(
                 expected,
                 WORD,
                 flags.wait,
-                CLOCK_MACH_ABSOLUTE_TIME,
+                OS_CLOCK_MACH_ABSOLUTE_TIME,
                 ns,
             )
         }

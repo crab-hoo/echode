@@ -1,8 +1,26 @@
-//! Shared CoreAudio output queries and legacy HAL declarations.
+//! Shared CoreAudio output queries using the same bindings as product audio I/O.
 //!
 //! The Phase 0 measurement is only compiled with the `spike` feature.
 
+// libc keeps the Mach clock bindings deprecated in favor of mach2.
+#![allow(deprecated)]
+
 use std::ffi::c_void;
+use std::ptr::NonNull;
+
+#[cfg(feature = "spike")]
+use libc::mach_absolute_time;
+use libc::{mach_timebase_info, mach_timebase_info as Timebase};
+#[cfg(feature = "spike")]
+use objc2_core_audio::{
+    AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart,
+    AudioDeviceStop, AudioObjectSetPropertyData,
+};
+use objc2_core_audio::{
+    AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
+};
+#[cfg(feature = "spike")]
+use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp};
 
 #[cfg(feature = "spike")]
 #[path = "device_measurement.rs"]
@@ -16,41 +34,6 @@ const DEFAULT_OUTPUT: u32 = u32::from_be_bytes(*b"dOut");
 const SAMPLE_RATE: u32 = u32::from_be_bytes(*b"nsrt");
 const BUFFER_FRAMES: u32 = u32::from_be_bytes(*b"fsiz");
 const WORKGROUP: u32 = u32::from_be_bytes(*b"oswg");
-
-#[repr(C)]
-struct PropAddress {
-    selector: u32,
-    scope: u32,
-    element: u32,
-}
-
-#[cfg(feature = "spike")]
-#[repr(C)]
-struct AudioBuffer {
-    number_channels: u32,
-    data_byte_size: u32,
-    data: *mut c_void,
-}
-
-#[cfg(feature = "spike")]
-#[repr(C)]
-struct AudioBufferList {
-    number_buffers: u32,
-    buffers: [AudioBuffer; 1],
-}
-
-#[cfg(feature = "spike")]
-#[repr(C)]
-struct AudioTimeStamp {
-    _sample_time: f64,
-    host_time: u64,
-}
-
-#[repr(C)]
-struct Timebase {
-    numer: u32,
-    denom: u32,
-}
 
 fn default_output() -> Result<u32, i32> {
     get_u32(SYSTEM_OBJECT, DEFAULT_OUTPUT)
@@ -154,8 +137,16 @@ pub fn output_inventory() -> Result<OutputInventory, i32> {
 fn get_u32s(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, i32> {
     let mut size = 0u32;
     let addr = address(selector, scope);
-    let status =
-        unsafe { AudioObjectGetPropertyDataSize(object, &addr, 0, std::ptr::null(), &mut size) };
+    // SAFETY: the address and size out-parameter are live for this call.
+    let status = unsafe {
+        AudioObjectGetPropertyDataSize(
+            object,
+            NonNull::from(&addr),
+            0,
+            std::ptr::null(),
+            NonNull::from(&mut size),
+        )
+    };
     if status != 0 {
         return Err(status);
     }
@@ -169,14 +160,15 @@ fn get_u32s(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, i32> {
         return Err(-1);
     }
     let mut values = vec![0u32; size as usize / 4];
+    // SAFETY: values holds `size` writable bytes and both parameters are live.
     let status = unsafe {
         AudioObjectGetPropertyData(
             object,
-            &addr,
+            NonNull::from(&addr),
             0,
             std::ptr::null(),
-            &mut size,
-            values.as_mut_ptr().cast(),
+            NonNull::from(&mut size),
+            NonNull::new(values.as_mut_ptr().cast()).expect("nonempty property buffer"),
         )
     };
     if status != 0 {
@@ -186,11 +178,11 @@ fn get_u32s(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, i32> {
     Ok(values)
 }
 
-fn address(selector: u32, scope: u32) -> PropAddress {
-    PropAddress {
-        selector,
-        scope,
-        element: ELEMENT_MAIN,
+fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
+    AudioObjectPropertyAddress {
+        mSelector: selector,
+        mScope: scope,
+        mElement: ELEMENT_MAIN,
     }
 }
 
@@ -203,14 +195,15 @@ fn get_u32_scoped(object: u32, selector: u32, scope: u32) -> Result<u32, i32> {
     let mut value = 0u32;
     let mut size = std::mem::size_of::<u32>() as u32;
     let addr = address(selector, scope);
+    // SAFETY: value holds `size` writable bytes; address and size stay live.
     let status = unsafe {
         AudioObjectGetPropertyData(
             object,
-            &addr,
+            NonNull::from(&addr),
             0,
             std::ptr::null(),
-            &mut size,
-            (&raw mut value).cast(),
+            NonNull::from(&mut size),
+            NonNull::from(&mut value).cast(),
         )
     };
     if status == 0 { Ok(value) } else { Err(status) }
@@ -219,14 +212,15 @@ fn get_u32_scoped(object: u32, selector: u32, scope: u32) -> Result<u32, i32> {
 #[cfg(feature = "spike")]
 fn set_u32(object: u32, selector: u32, scope: u32, value: u32) -> Result<(), i32> {
     let addr = address(selector, scope);
+    // SAFETY: address and value stay live, with exactly the advertised byte size.
     let status = unsafe {
         AudioObjectSetPropertyData(
             object,
-            &addr,
+            NonNull::from(&addr),
             0,
             std::ptr::null(),
             std::mem::size_of::<u32>() as u32,
-            (&value as *const u32).cast(),
+            NonNull::from(&value).cast(),
         )
     };
     if status == 0 { Ok(()) } else { Err(status) }
@@ -236,28 +230,30 @@ fn get_f64(object: u32, selector: u32) -> Result<f64, i32> {
     let mut value = 0f64;
     let mut size = std::mem::size_of::<f64>() as u32;
     let addr = address(selector, SCOPE_GLOBAL);
+    // SAFETY: value holds `size` writable bytes; address and size stay live.
     let status = unsafe {
         AudioObjectGetPropertyData(
             object,
-            &addr,
+            NonNull::from(&addr),
             0,
             std::ptr::null(),
-            &mut size,
-            (&raw mut value).cast(),
+            NonNull::from(&mut size),
+            NonNull::from(&mut value).cast(),
         )
     };
     if status == 0 {
         Ok(value)
     } else {
         let addr = address(selector, SCOPE_OUTPUT);
+        // SAFETY: same scalar storage and lifetime as the global-scope query.
         let status = unsafe {
             AudioObjectGetPropertyData(
                 object,
-                &addr,
+                NonNull::from(&addr),
                 0,
                 std::ptr::null(),
-                &mut size,
-                (&raw mut value).cast(),
+                NonNull::from(&mut size),
+                NonNull::from(&mut value).cast(),
             )
         };
         if status == 0 { Ok(value) } else { Err(status) }
@@ -268,70 +264,21 @@ fn get_pointer(object: u32, selector: u32) -> Result<*mut c_void, i32> {
     let mut value: *mut c_void = std::ptr::null_mut();
     let mut size = std::mem::size_of::<*mut c_void>() as u32;
     let addr = address(selector, SCOPE_GLOBAL);
+    // SAFETY: value holds one writable pointer; address and size stay live.
     let status = unsafe {
         AudioObjectGetPropertyData(
             object,
-            &addr,
+            NonNull::from(&addr),
             0,
             std::ptr::null(),
-            &mut size,
-            (&raw mut value).cast(),
+            NonNull::from(&mut size),
+            NonNull::from(&mut value).cast(),
         )
     };
     if status == 0 { Ok(value) } else { Err(status) }
 }
 
-#[link(name = "CoreAudio", kind = "framework")]
+#[link(name = "System")]
 unsafe extern "C" {
-    fn AudioObjectGetPropertyData(
-        object: u32,
-        address: *const PropAddress,
-        qualifier_size: u32,
-        qualifier: *const c_void,
-        size: *mut u32,
-        data: *mut c_void,
-    ) -> i32;
-    fn AudioObjectGetPropertyDataSize(
-        object: u32,
-        address: *const PropAddress,
-        qualifier_size: u32,
-        qualifier: *const c_void,
-        size: *mut u32,
-    ) -> i32;
-    #[cfg(feature = "spike")]
-    fn AudioObjectSetPropertyData(
-        object: u32,
-        address: *const PropAddress,
-        qualifier_size: u32,
-        qualifier: *const c_void,
-        size: u32,
-        data: *const c_void,
-    ) -> i32;
-    #[cfg(feature = "spike")]
-    fn AudioDeviceCreateIOProcID(
-        device: u32,
-        proc: unsafe extern "C" fn(
-            u32,
-            *const AudioTimeStamp,
-            *const AudioBufferList,
-            *const AudioTimeStamp,
-            *mut AudioBufferList,
-            *const AudioTimeStamp,
-            *mut c_void,
-        ) -> i32,
-        client: *mut c_void,
-        proc_id: *mut *mut c_void,
-    ) -> i32;
-    #[cfg(feature = "spike")]
-    fn AudioDeviceDestroyIOProcID(device: u32, proc_id: *mut c_void) -> i32;
-    #[cfg(feature = "spike")]
-    fn AudioDeviceStart(device: u32, proc_id: *mut c_void) -> i32;
-    #[cfg(feature = "spike")]
-    fn AudioDeviceStop(device: u32, proc_id: *mut c_void) -> i32;
-    fn mach_timebase_info(info: *mut Timebase) -> i32;
-    #[cfg(feature = "spike")]
-    fn mach_absolute_time() -> u64;
     fn os_release(object: *mut c_void);
-    #[cfg(feature = "spike")]
-    fn signal(sig: i32, handler: unsafe extern "C" fn(i32)) -> *mut c_void;
 }

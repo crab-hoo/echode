@@ -38,6 +38,7 @@ make debug-report
   - 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
 - ツール・ビルド・生成物
   - ツール不足・ビルド失敗
+  - `check-ffi` が外部シンボルを拒否する
   - Cargo の依存メタデータが欠ける
   - Swift の編集型の生成鮮度が不一致になる
   - Rust に追加したアクションを Swift が `unknown variant` として拒否する
@@ -51,6 +52,7 @@ make debug-report
   - `the unmutated source copy does not build`
   - 自動検査・製品契約の失敗
   - ASan / TSan の Swift 検査で `Status did not arrive`（復旧の警告待ちの期限切れを含む）
+  - Swift のミキサー回帰で `Expectation failed: overlapped`
   - 中断後に `running` が残る・全結果が一度に `stale` になる
   - 負の対照の `NOT rejected` / `Build failed`
   - 基準コミット（`VERIFY_BASE`）エラー

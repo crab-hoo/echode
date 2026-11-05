@@ -1,0 +1,15 @@
+[package]
+name = "echode-dsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Host-independent DSP for bundled instruments and allocation guards"
+
+[dependencies]
+echode-realtime = { path = "../echode-realtime" }
+wavesynth = "=0.1.0"
+
+[lints]
+workspace = true

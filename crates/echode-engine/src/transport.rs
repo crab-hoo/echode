@@ -46,6 +46,17 @@ impl std::fmt::Display for PlaybackError {
 
 impl std::error::Error for PlaybackError {}
 
+impl From<echode_dsp::DspError> for PlaybackError {
+    fn from(error: echode_dsp::DspError) -> Self {
+        match error {
+            echode_dsp::DspError::InvalidSampleRate => Self::InvalidSampleRate,
+            echode_dsp::DspError::BufferTooSmall => Self::BufferTooSmall,
+            echode_dsp::DspError::Time => Self::Time,
+            echode_dsp::DspError::InvalidState => Self::InvalidDevice,
+        }
+    }
+}
+
 /// One continuous run of samples inside a block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlayedSpan {

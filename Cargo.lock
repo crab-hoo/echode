@@ -740,20 +740,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "echode-dsp"
+version = "0.0.0"
+dependencies = [
+ "echode-realtime",
+ "wavesynth",
+]
+
+[[package]]
 name = "echode-engine"
 version = "0.0.0"
 dependencies = [
  "dasp_interpolate",
  "dasp_ring_buffer",
+ "echode-dsp",
  "echode-model",
  "echode-realtime",
  "echode-sandbox",
  "libc",
  "libm",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
  "rtrb",
  "rtsan-standalone",
  "rubato",
- "wavesynth",
 ]
 
 [[package]]
@@ -850,7 +860,7 @@ version = "0.0.0"
 dependencies = [
  "clack-plugin",
  "clap-sys",
- "echode-engine",
+ "echode-dsp",
  "echode-realtime",
 ]
 

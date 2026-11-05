@@ -464,6 +464,28 @@ class ContractEvidenceTests(unittest.TestCase):
                        good + "\nknown issue"):
             self.assertFalse(contracts.passed(case, 0, output))
 
+    def test_swift_parameterized_contracts_require_executed_cases(self):
+        case = {"runner": "swift", "test": "contractDiagnostics"}
+        for count, label in ((1, "case"), (2, "cases")):
+            good = (f"✔ Test contractDiagnostics(status:) with {count} test {label} passed after 0.01 seconds.\n"
+                    "✔ Test run with 1 test in 1 suite passed after 0.02 seconds.")
+            self.assertTrue(contracts.passed(case, 0, good), "parameterized required test was not recognized")
+            failed = "Expectation failed\n" + good.replace("passed", "failed")
+            self.assertTrue(contracts.rejected_behavior(case, 1, failed))
+            self.assertFalse(contracts.passed(case, 1, good))
+            self.assertFalse(contracts.rejected_behavior(case, 0, failed))
+            for output in (good.replace("contractDiagnostics", "otherTest"),
+                           good.replace(f"with {count} test {label} ", ""),
+                           good.replace(f"with {count} test {label}", "with 0 test cases"),
+                           good.replace("passed", "skipped"), good + "\nknown issue",
+                           good.replace("run with 1 test", "run with 0 tests"),
+                           good.replace("run with 1 test", "run with 2 tests")):
+                self.assertFalse(contracts.passed(case, 0, output))
+            for output in (failed.replace("contractDiagnostics", "otherTest"),
+                           failed.replace(f"with {count} test {label}", "with 0 test cases"),
+                           failed.replace("Expectation failed", "compiler error")):
+                self.assertFalse(contracts.rejected_behavior(case, 1, output))
+
     def test_missing_test_stops_the_gate_and_preserves_evidence(self):
         case = {"id": "required", "runner": "rust", "package": "p", "target": ["--lib"],
                 "test": "contract", "timeout": 1, "purpose": "test the gate"}

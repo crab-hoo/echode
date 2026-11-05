@@ -69,7 +69,7 @@ flowchart LR
 | `echode-actions` | アクションの定義と登録簿、トランザクション、Undo、ジャーナル、マクロ |
 | `echode-history` | Git との連携（`gix`）、自動コミット、セマンティック差分とマージ、メディアの保管庫 |
 | `echode-engine` | グラフの組み立てと差し替え、スケジューラ、トランスポート、PDC、変調の評価、クリップの再生 |
-| `echode-dsp` | 内蔵 DSP（EQ、ダイナミクス、モジュレーター、サンプルレート変換、ストレッチのラッパー） |
+| `echode-dsp` | 同梱 Sine Pad と確保の検出（実装済み）。EQ、ダイナミクス、変調、SRC・ストレッチのラッパーは将来の範囲 |
 | `echode-media` | デコード、ストリーミング、ピークの生成、解析（テンポ、キー、トランジェント） |
 | `echode-gpu` | Metal Compute のカーネル（`objc2-metal`） |
 | `echode-audio-io` | CoreAudio（HAL）と CoreMIDI |

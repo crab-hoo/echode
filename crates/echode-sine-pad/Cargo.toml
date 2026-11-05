@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 clack-plugin = { workspace = true }
 clap-sys = "=0.5.0"
-echode-engine = { path = "../echode-engine" }
+echode-dsp = { path = "../echode-dsp" }
 echode-realtime = { path = "../echode-realtime" }
 
 [lints]

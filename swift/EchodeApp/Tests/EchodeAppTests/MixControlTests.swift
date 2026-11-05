@@ -317,7 +317,7 @@ struct MixControlTests {
         #expect(!step.pending)
     }
 
-    @Test func repeatedMixerStepsLandWhileTheFirstEditIsStillBusy() async throws {
+    @Test func repeatedMixerStepsQueueWhileAnEditTurnIsBusy() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-steps-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
@@ -327,18 +327,24 @@ struct MixControlTests {
         let before = controller.undoCount
         let step1 = MixScale.adjusted(.gain, value: 1, direction: 1)
         let step2 = MixScale.adjusted(.gain, value: step1, direction: 1)
-        let first = Task { await controller.setMixer(track, field: .gain, value: step1) }
-        var overlapped = false
-        for _ in 0..<1000 {
-            if controller.edits.busy { overlapped = true; break }
-            await Task.yield()
-        }
-        let second = Task { await controller.setMixer(track, field: .gain, value: step2) }
+        let gate = TurnGate()
+        defer { gate.resume() }
+        let held = Task { await controller.edits.run { await gate.wait() } }
+        await gate.entered()
+        let actions = controller.arrangeMixActions(document: controller.documentID)
+        let adjust = try #require(actions.adjust)
+        adjust(track, .gain, 1)
+        let first = try #require(controller.mixerSwitchTail)
+        adjust(track, .gain, 1)
+        let second = try #require(controller.mixerSwitchTail)
+        #expect(controller.edits.busy && controller.undoCount == before)
+        #expect(controller.mixer(track)?.gain.value == 1)
+        gate.resume()
+        await held.value
         #expect(await first.value)
         #expect(await second.value)
         #expect(abs(try #require(controller.mixer(track)).gain.value - step2) < 0.0001)
         #expect(controller.undoCount == before + 2)
-        #expect(overlapped)
         await controller.close()
     }
 

@@ -17,7 +17,6 @@ use std::os::fd::FromRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
-const QOS_USER_INTERACTIVE: u32 = 0x21;
 static NAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A retained OS workgroup. Keep this owner on the control thread; helpers
@@ -561,9 +560,9 @@ struct Received {
 }
 
 fn prepare_thread(period_ticks: u32) -> Result<(), String> {
-    // libc 0.2.190 does not re-export this call. 0x21 is QOS_CLASS_USER_INTERACTIVE.
+    // SAFETY: setting the calling thread's QoS has no pointer preconditions.
     unsafe {
-        sync::pthread_set_qos_class_self_np(QOS_USER_INTERACTIVE, 0);
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
     }
     if !apply_time_constraint(period_ticks) {
         return Err(format!(

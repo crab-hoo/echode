@@ -11,13 +11,13 @@ use clack_plugin::prelude::*;
 use clap_sys::ext::audio_ports::*;
 use clap_sys::ext::note_ports::*;
 use clap_sys::plugin::clap_plugin;
-use echode_engine::{Device, TestSynth};
+use echode_dsp::SinePad as SinePadDsp;
 use echode_realtime::Event;
 use echode_realtime::plugin_capacity::{PLUGIN_EVENT_CAPACITY, PluginEventCapacity};
 
 #[cfg(debug_assertions)]
 #[global_allocator]
-static ALLOC: echode_engine::GuardAlloc = echode_engine::GuardAlloc;
+static ALLOC: echode_dsp::GuardAlloc = echode_dsp::GuardAlloc;
 
 pub struct SinePad;
 
@@ -53,7 +53,7 @@ impl DefaultPluginFactory for SinePad {
 }
 
 struct Bank {
-    synth: TestSynth,
+    synth: SinePadDsp,
     events: Vec<Event>,
     next: *mut Bank,
 }
@@ -63,7 +63,7 @@ unsafe impl Send for Bank {}
 
 impl Bank {
     fn new(rate: u32, capacity: usize) -> Result<Box<Self>, PluginError> {
-        let mut synth = TestSynth::new(rate).map_err(|_| PluginError::Message("invalid rate"))?;
+        let mut synth = SinePadDsp::new(rate).map_err(|_| PluginError::Message("invalid rate"))?;
         synth
             .prepare(capacity, rate)
             .map_err(|_| PluginError::Message("voice preparation failed"))?;
@@ -155,7 +155,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, ()> for Processor<'a> {
         // The helper performs its initial start before the realtime loop.
         // Resolve this dylib's debug allocator TLS on that thread before process.
         // Subsequent starts reuse the same thread and initialized TLS.
-        let _guard = echode_engine::ForbidAlloc::enter();
+        let _guard = echode_dsp::ForbidAlloc::enter();
         Ok(())
     }
 
@@ -165,7 +165,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, ()> for Processor<'a> {
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
-        let _guard = echode_engine::ForbidAlloc::enter();
+        let _guard = echode_dsp::ForbidAlloc::enter();
         let pending = self.shared.pending.swap(ptr::null_mut(), Ordering::AcqRel);
         if !pending.is_null() {
             // SAFETY: the atomic swap transfers this prepared bank to audio.

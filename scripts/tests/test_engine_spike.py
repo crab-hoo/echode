@@ -34,18 +34,21 @@ class EngineSpikeTests(unittest.TestCase):
             r'#\[cfg\(feature = "spike"\)\]\s+'
             r'#\[path = "device_measurement.rs"\]\s+pub\(crate\) mod measurement;',
         )
-        for item in ("AudioBuffer", "AudioBufferList", "AudioTimeStamp"):
-            with self.subTest(item=item):
-                self.assertRegex(
-                    device,
-                    rf'#\[cfg\(feature = "spike"\)\]\s+#\[repr\(C\)\]\s+struct {item} \{{',
-                )
+        self.assertRegex(
+            device,
+            r'#\[cfg\(feature = "spike"\)\]\s+use objc2_core_audio_types::'
+            r'\{AudioBuffer, AudioBufferList, AudioTimeStamp\};',
+        )
         self.assertRegex(device, r'#\[cfg\(feature = "spike"\)\]\s+fn set_u32\(')
         for function in ("AudioObjectSetPropertyData", "AudioDeviceCreateIOProcID",
-                         "AudioDeviceDestroyIOProcID", "AudioDeviceStart", "AudioDeviceStop",
-                         "mach_absolute_time", "signal"):
+                         "AudioDeviceDestroyIOProcID", "AudioDeviceStart", "AudioDeviceStop"):
             with self.subTest(function=function):
-                self.assertRegex(device, rf'#\[cfg\(feature = "spike"\)\]\s+fn {function}\(')
+                self.assertRegex(
+                    device,
+                    rf'#\[cfg\(feature = "spike"\)\]\s+use objc2_core_audio::\{{[^}}]*\b{function}\b',
+                )
+                self.assertNotRegex(device, rf'fn {function}\(')
+        self.assertRegex(device, r'#\[cfg\(feature = "spike"\)\]\s+use libc::mach_absolute_time;')
 
     def test_default_workspace_does_not_enable_the_spike(self):
         result = subprocess.run(

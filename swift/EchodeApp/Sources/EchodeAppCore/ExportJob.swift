@@ -173,12 +173,25 @@ final class ExportJob {
         try? readerHandle.close()
         // Every exit above has observed termination. Do not re-enter Foundation's
         // run-loop wait after this async task may have resumed on another thread.
-        let reader = try FileHandle(forReadingFrom: log)
-        defer { try? reader.close() }
-        let data = try reader.read(upToCount: 65_536) ?? Data()
+        let diagnostics = try readDiagnostics(from: log)
         return (process.terminationReason == .exit && process.terminationStatus == 0,
                 process.terminationReason == .exit && process.terminationStatus == 130,
-                "Exit: \(process.terminationStatus) (\(process.terminationReason))\n" + String(decoding: data, as: UTF8.self) + progressError)
+                "Exit: \(process.terminationStatus) (\(process.terminationReason))\n" + diagnostics + progressError)
+    }
+
+    nonisolated static func readDiagnostics(from log: URL) throws -> String {
+        // Limit only displayed diagnostics, never audio, project size, or the file on disk.
+        let budget = 65_536
+        let reader = try FileHandle(forReadingFrom: log)
+        defer { try? reader.close() }
+        let size = try reader.seekToEnd()
+        try reader.seek(toOffset: 0)
+        let truncated = size > UInt64(budget)
+        let head = try reader.read(upToCount: truncated ? budget / 2 : budget) ?? Data()
+        guard truncated else { return String(decoding: head, as: UTF8.self) }
+        try reader.seek(toOffset: size - UInt64(budget / 2))
+        let tail = try reader.read(upToCount: budget / 2) ?? Data()
+        return String(decoding: head, as: UTF8.self) + "\n[... diagnostics omitted ...]\n" + String(decoding: tail, as: UTF8.self)
     }
 }
 

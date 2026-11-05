@@ -31,6 +31,30 @@ class WidthTests(unittest.TestCase):
         self.assertEqual(check.peak_live_tests(STREAM), 2)
         self.assertEqual(check.peak_live_tests(""), 0)
 
+    def test_parameterized_function_containers_do_not_consume_execution_slots(self):
+        records = [
+            {"kind": "test", "payload": {"id": "a", "kind": "function"}},
+            {"kind": "test", "payload": {"id": "p", "kind": "function", "isParameterized": True}},
+            {"kind": "test", "payload": {"id": "q", "kind": "function", "isParameterized": True}},
+        ]
+        for kind, test_id in [("testStarted", "a"), ("testStarted", "p"), ("testStarted", "q"),
+                              ("testCaseStarted", "p"), ("testCaseEnded", "p"),
+                              ("testEnded", "p"), ("testEnded", "q"), ("testEnded", "a")]:
+            records.append({"kind": "event", "payload": {"kind": kind, "testID": test_id}})
+        stream = "\n".join(map(json.dumps, records))
+        self.assertEqual(check.peak_live_tests(stream), 2, "parameterized containers inflated the width")
+        self.assertEqual(self.verdict(stream, "--at-most", "2")[0], 0)
+
+    def test_concurrent_cases_of_one_parameterized_function_count_separately(self):
+        records = [{"kind": "test", "payload": {"id": "p", "kind": "function", "isParameterized": True}}]
+        for kind in ["testStarted", "testCaseStarted", "testCaseStarted",
+                     "testCaseEnded", "testCaseEnded", "testEnded"]:
+            records.append({"kind": "event", "payload": {"kind": kind, "testID": "p"}})
+        stream = "\n".join(map(json.dumps, records))
+        self.assertEqual(check.peak_live_tests(stream), 2, "concurrent parameter cases escaped the width check")
+        self.assertEqual(self.verdict(stream, "--at-most", "1")[0], 1)
+        self.assertEqual(self.verdict(stream, "--more-than", "1")[0], 0)
+
     def verdict(self, text, *limit):
         with tempfile.TemporaryDirectory() as directory:
             events = Path(directory) / "run.events"

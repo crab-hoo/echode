@@ -90,6 +90,8 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 計画の親バッファには、直前の公開計画の声を解放するための一時的な余地も含まれる。
 通常の境界は `playback_capacity_tests`、共有領域の密度・拡張・一括削除は `hosted_playback` の `event_capacity` を使う。
 `make spike-scale` の `reserved_events` と `replace_p50_ms` は別の問題であり、容量減少を全体の作り直しの解消と扱わない。
+編集を繰り返した後の親の ID 表は `plan_tests::audit_fca19` で確認する。
+現在の計画から消えた対応は解放するが、ヘルパーの予約容量・保持中の旧計画・Undo とジャーナルは別の寿命を持つ（[ADR 0267](../decisions/0267-current-playback-id-mappings.md)）。
 
 ### フォルダのミュート・ソロと子の音が一致しない
 
@@ -122,6 +124,8 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 一覧にない時は `make bundled-plugins` とヘルパー隣の `plugins/`、アプリ内の `Contents/PlugIns/`、同梱用走査キャッシュを確認する。
 `host event capacity was not prepared` はイベント領域の準備漏れであり、音声側の確保や固定発音数で回避しない
 （[ADR 0123](../decisions/0123-explicit-sine-pad-plugin.md)）。
+音色・声の継続だけが違う時は `echode-dsp/src/sine_pad_tests.rs`、隔離後の経路は `hosted_playback` を使う。
+DSP の状態と CLAP の保存ペイロードは別の形式なので、どちらの入口で差が出たかを記録する（[ADR 0266](../decisions/0266-host-independent-sine-pad-dsp.md)）。
 
 ### 同梱 CLAP の初回だけ RTSan が malloc を検出する
 
@@ -160,6 +164,9 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 同梱 `Contents/MacOS/echode-cli` の欠落は `Export CLI is missing from the app bundle` になる。`make app` で同版をそろえる。
 大文字小文字を区別しないボリュームで `Echode` と衝突しないよう、CLI のバンドル名は `echode-cli` である。
 下部の「詳細」から元のパス・出力先・オプション・終了コード・`exported` の行を保存する。自動収集はユーザー文書・専用スナップショットを含めない。
+2026-11-05 に、TSan のロード証拠が大量の標準エラーになり、先頭 64 KiB だけの表示から末尾の `exported` が落ちることを確認した。
+現行の読込みは先頭・末尾各 32 KiB と省略表示を残す。成功判定は終了コードから行い、文字列の存在で成功を作らない。
+`export-diagnostics-ui` は同じ `ExportJob.render` に大量の診断を渡し、末尾と表示予算を照合する（[ADR 0268](../decisions/0268-bounded-export-diagnostics.md)）。
 準備で止まる場合は進行中のジェスチャー、参照する `media/objects` の欠落と BLAKE3 不一致、専用ディレクトリの作成失敗を区別する。
 文書ワーカーはコピー中に次の要求を待たせる。準備後の CLI は独立したパッケージを開き、元の文書のロックを取り直さない。
 `export-snapshot-ui` は PCM のコピー後に元の文書を編集・終了・削除し、次の文書を開いたまま実 CLI を完走させる。
@@ -242,6 +249,11 @@ GUI の CLI は専用スナップショットだけを入力にするため、CL
 失敗の完全ログは `target/export-cancel-hosted-recheck/2.log`、診断後の実行は `target/export-cancel-hosted-diagnostic/` と `target/export-cancel-hosted-repeat/`。
 CLI の取消はこのテストから呼ばれない。再発時は拡張したアサーションの `playing`・`failed`・適用済みのコマンドと計画・位置・ヘルパーの失敗を残す。
 同じビルドの単独と全体を比較し、無視・期限延長・アサーション削除で通さない。正式な合否は最新の `target/verification/report.md` で区別する。
+2026-11-05 の必須契約でも再発し、64 フレーム・チェイン 1・Locate 後の状態は `playing: false, sample: 48000, failed: false, applied_command: 2` で、ヘルパーの失敗・ミスはなかった。
+今回の経路は、live cleanup の受領待ちで時計が保持される間に、回帰が決め打ちのコールバック数を使い切っていた。
+`publish_status` は cleanup 中に `playing` を false として公開する。無音の callback 数を実際に再生したフレーム数として数えない。
+回帰はサンプル位置が必要量進むまで全 callback の無音を照合し、cleanup 中だけ検査ドライバーを休ませる。5 秒の hung-helper guard と、失敗・ミスを許さない条件を維持する。
+初回のログは `target/focused-checks/note-end-cleanup-first-failure/` に保持する。
 
 ### 書出しの取消中が続く・取消を押しても完了になる
 

@@ -111,16 +111,19 @@ PDC と log・thread-check 等は残り、実画面と第三者の報告値は U
   2026-11-03: [ADR 0253](../decisions/0253-product-only-playback-commands.md) で対応した。公開命令から音声側の専用型へ網羅的に変換し、受領番号と満杯時の回帰を製品経路へ追加した。
 - FCA-12: `crates/echode-sandbox/src/sync.rs` の `os_sync_*` と `pthread_set_qos_class_self_np` を `libc` へ置き換える。
   `scripts/check-ffi.sh` を関数名の単位にする時は、検査のスクリプトの変更として全自動検査が選ばれる。
+  2026-11-05: [ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md) で対応した。CoreAudio の型と機器 API も objc2 へ移し、未提供の既存宣言だけを個別許可する。
 - FCA-13: 時間の換算を依存のない 1 つの crate にまとめる。丸めの結果が変わらないことを、既存の時間のテストと `block_size.rs` で確かめる。
 - FCA-14: `repair_journal` は末尾だけを読む。続く編集のまとめ書きは確定の意味に触れるので、ADR とユーザーの確認を先にする。
   2026-11-03: 末尾確認は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で対応した。編集ごとの同期は維持し、まとめ書きは行わない。
 - FCA-15: Sine Pad の DSP を Sine Pad の crate か小さな DSP の crate へ移し、`TestSynth` の名前を直す。Sine Pad の状態と音は変えない。
+  2026-11-05: [ADR 0266](../decisions/0266-host-independent-sine-pad-dsp.md) で対応した。CLAP はホスト非依存の `echode-dsp::SinePad` を直接使う。
 - FCA-16: `crates/echode-cli/src/lib.rs` の `wav_header` を 18 バイトの `fmt` と `fact` にし、`audit_fca16` を通す。
   `crates/echode-cli/tests/render.rs` などの 44 バイトのヘッダの期待値も直す。RF64 と整数形式は別の作業単位にする。
   2026-11-03: ヘッダと回帰は [ADR 0243](../decisions/0243-float-wav-metadata.md) で対応した。RF64・整数形式は未着手。
   追加対応: CLI の 24 bit PCM は [ADR 0247](../decisions/0247-pcm24-wav-export.md)。RF64・16 bit・ディザは別の単位として残す。
   追加対応: PCM16 は [ADR 0248](../decisions/0248-pcm16-wav-export.md)、RF64 は [ADR 0249](../decisions/0249-rf64-wav-export.md)。ディザは未接続である。
 - FCA-17〜20: 監査の修正方針に従う。FCA-18 の保管の形式、FCA-19 のメモリの予算、FCA-20 の走査の期限は、ADR とユーザーの確認を先にする。
+  2026-11-05: FCA-19 の再生 ID 表だけは [ADR 0267](../decisions/0267-current-playback-id-mappings.md) で現在の計画に限定した。Undo とジャーナルの予算は変えない。
 
 ## 実行役が決めないこと
 

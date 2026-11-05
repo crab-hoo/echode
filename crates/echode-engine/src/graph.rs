@@ -328,10 +328,9 @@ pub fn workgroup_parallel_threads(workgroup: *mut std::ffi::c_void) -> i32 {
 
 fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void, period_ticks: u32) {
     // Parked workers stay at user-interactive QoS so the first wake is not
-    // scheduled from the default priority. libc 0.2.190 does not re-export this
-    // call; the value 0x21 is QOS_CLASS_USER_INTERACTIVE.
+    // scheduled from the default priority. This call has no preconditions.
     unsafe {
-        pthread_set_qos_class_self_np(0x21, 0);
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
     }
     let mut token = WorkgroupToken {
         sig: 0,
@@ -411,7 +410,6 @@ unsafe extern "C" {
         workgroup: *mut std::ffi::c_void,
         attr: *mut std::ffi::c_void,
     ) -> i32;
-    fn pthread_set_qos_class_self_np(class: u32, relative: i32) -> i32;
 }
 
 pub struct WorkerGuard {

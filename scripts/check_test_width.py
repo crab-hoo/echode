@@ -12,8 +12,8 @@ import sys
 
 
 def peak_live_tests(text):
-    """The most test functions alive at once. Suites span their members, so they do not count."""
-    functions, live, peak = set(), 0, 0
+    """Count ordinary test bodies and parameterized cases, not their containers."""
+    functions, live, peak = {}, 0, 0
     for line in text.splitlines():
         try:
             record = json.loads(line)
@@ -21,12 +21,18 @@ def peak_live_tests(text):
             continue
         payload = record.get("payload", {})
         if record.get("kind") == "test" and payload.get("kind") == "function":
-            functions.add(payload.get("id"))
+            functions[payload.get("id")] = payload.get("isParameterized", False)
         elif record.get("kind") == "event" and payload.get("testID") in functions:
-            if payload.get("kind") == "testStarted":
+            # A parameterized function starts before its cases acquire execution
+            # slots and ends after all of them finish. Counting that container
+            # inflates the width, while counting it once misses parallel cases.
+            parameterized = functions[payload["testID"]]
+            started = "testCaseStarted" if parameterized else "testStarted"
+            ended = "testCaseEnded" if parameterized else "testEnded"
+            if payload.get("kind") == started:
                 live += 1
                 peak = max(peak, live)
-            elif payload.get("kind") == "testEnded":
+            elif payload.get("kind") == ended:
                 live -= 1
     return peak
 

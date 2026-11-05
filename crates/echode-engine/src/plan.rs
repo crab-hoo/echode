@@ -84,8 +84,9 @@ fn div_round(numerator: i128, denominator: i128) -> Option<i128> {
 
 /// Note and track numbers for one playback. Built on the control thread.
 ///
-/// Numbers stay with the model id that first received them. Rebuilding a plan
-/// does not renumber a note that is already in this table.
+/// Surviving model IDs keep their numbers across successful rebuilds. Removed
+/// mappings are released on the control thread, but their numbers are never
+/// reused while older plans may still be in flight.
 #[derive(Debug, Default)]
 pub struct PlaybackIds {
     notes: HashMap<u128, u32>,
@@ -129,8 +130,11 @@ pub fn build_plan(
 ) -> Result<Plan, PlaybackError> {
     let index = tempo_index(tempo)?;
     let mut tracks = Vec::with_capacity(project.tracks().len());
+    let mut current_notes = HashMap::new();
+    let mut current_tracks = HashMap::new();
     for track in project.tracks() {
         let track_key = ids.track(track.id.raw())?;
+        current_tracks.insert(track.id.raw(), track_key);
         let mut notes = Vec::new();
         for clip in &track.clips {
             let Some(content) = project.content(clip.content) else {
@@ -149,11 +153,13 @@ pub fn build_plan(
                 if on >= off {
                     continue;
                 }
+                let note_id = ids.note(note.id.raw())?;
+                current_notes.insert(note.id.raw(), note_id);
                 notes.push(NoteSpan {
                     on,
                     off,
                     note: note.id.raw(),
-                    note_id: ids.note(note.id.raw())?,
+                    note_id,
                     pitch: note.pitch,
                     velocity: note.velocity,
                 });
@@ -186,6 +192,10 @@ pub fn build_plan(
             solo: mixer.3,
         });
     }
+    // Publish only after the complete build succeeds. Dropping superseded hash
+    // storage here also releases capacity left by large, since-deleted scores.
+    ids.notes = current_notes;
+    ids.tracks = current_tracks;
     Ok(Plan { tracks })
 }
 
@@ -209,3 +219,7 @@ fn mixer_values(track: &echode_model::Track) -> Result<(f32, f32, f32, f32), Pla
         value(ParamKey::Solo)?,
     ))
 }
+
+#[cfg(test)]
+#[path = "plan_tests.rs"]
+mod tests;

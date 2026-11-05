@@ -135,30 +135,75 @@ class RegisteredAuditReproductions(unittest.TestCase):
 
 
 class ForeignDeclarations(unittest.TestCase):
-    """ENV-05: every form of a hand-written foreign block is found."""
+    """ENV-05 / FCA-12: foreign declarations are checked by path and symbol."""
+
+    def check_sources(self, sources, allowlist):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "scripts").mkdir()
+            for name in ("check-ffi.sh", "check_ffi.py"):
+                source = ROOT / "scripts" / name
+                if source.exists():
+                    (directory / "scripts" / name).write_text(source.read_text())
+            (directory / "scripts/ffi-allowlist.txt").write_text(allowlist)
+            (directory / "crates/x/src").mkdir(parents=True)
+            for name, text in sources.items():
+                (directory / "crates/x/src" / name).write_text(text)
+            return subprocess.run(["bash", str(directory / "scripts/check-ffi.sh")],
+                                  capture_output=True, text=True)
 
     def test_extern_blocks_without_an_abi_with_another_abi_or_a_split_brace_are_found(self):
-        directory = Path(tempfile.mkdtemp())
-        (directory / "scripts").mkdir()
-        (directory / "scripts/check-ffi.sh").write_text((ROOT / "scripts/check-ffi.sh").read_text())
-        # The script reads at least one listed file; an allowlist with none stops its grep.
-        (directory / "scripts/ffi-allowlist.txt").write_text("crates/x/src/listed.rs\n")
-        sources = {
+        result = self.check_sources({
             "listed.rs": 'extern "C" {\n    fn f();\n}\n',
             "plain.rs": 'unsafe extern {\n    fn f();\n}\n',
             "system.rs": 'extern "system" {\n    fn f();\n}\n',
             "split.rs": 'unsafe extern "C"\n{\n    fn f();\n}\n',
             "callback.rs": 'pub extern "C" fn f() {}\nextern crate core;\n',
-        }
-        (directory / "crates/x/src").mkdir(parents=True)
-        for name, text in sources.items():
-            (directory / "crates/x/src" / name).write_text(text)
-        result = subprocess.run(["bash", str(directory / "scripts/check-ffi.sh")], capture_output=True, text=True)
+        }, "crates/x/src/listed.rs f\n")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         for name in ("plain.rs", "system.rs", "split.rs"):
             self.assertIn("crates/x/src/" + name, result.stdout)
         self.assertNotIn("callback.rs", result.stdout, "a definition is not a declaration")
 
+    def test_a_new_symbol_in_a_listed_file_is_rejected(self):
+        result = self.check_sources({
+            "listed.rs": 'unsafe extern "C" { fn f(); fn added(); }\n',
+        }, "crates/x/src/listed.rs f\n")
+        self.assertEqual(result.returncode, 1, "an added foreign symbol bypassed the allowlist")
+        self.assertIn("added", result.stdout)
+
+    def test_stale_symbols_are_rejected_even_when_the_file_still_declares_others(self):
+        result = self.check_sources({
+            "listed.rs": 'extern "C" { fn f(); }\n',
+        }, "crates/x/src/listed.rs f\ncrates/x/src/listed.rs removed\n")
+        self.assertEqual(result.returncode, 1, "a stale foreign symbol remained allowed")
+        self.assertIn("removed", result.stdout)
+
+    def test_static_items_comments_strings_and_callback_types_are_distinguished(self):
+        result = self.check_sources({
+            "listed.rs": '''
+                // extern "C" { fn imaginary(); }
+                /* nested /* extern { fn fake(); } */ comment */
+                const EXAMPLE: &str = r#"extern { fn quoted(); }"#;
+                extern "C" {
+                    pub(crate) static mut port: u32;
+                    fn f(callback: unsafe extern "C" fn(i32)) -> i32;
+                    fn r#type();
+                }
+            ''',
+        }, "crates/x/src/listed.rs f\ncrates/x/src/listed.rs port\ncrates/x/src/listed.rs type\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_an_empty_allowlist_and_foreign_free_sources_are_valid(self):
+        result = self.check_sources({"local.rs": 'pub extern "C" fn f() {}\n'}, "# no exceptions\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_link_name_cannot_redirect_an_allowed_declaration(self):
+        result = self.check_sources({
+            "listed.rs": 'extern "C" { #[link_name = "unexpected"] fn f(); }\n',
+        }, "crates/x/src/listed.rs f\n")
+        self.assertEqual(result.returncode, 1, "an allowed name concealed another foreign symbol")
+        self.assertIn("link_name", result.stdout)
 
 if __name__ == "__main__":
     unittest.main()

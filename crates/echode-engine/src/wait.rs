@@ -10,16 +10,7 @@ const EINTR: i32 = 4;
 const EFAULT: i32 = 14;
 const ENOMEM: i32 = 12;
 
-#[link(name = "System")]
-unsafe extern "C" {
-    fn os_sync_wait_on_address(
-        addr: *mut std::ffi::c_void,
-        value: u64,
-        size: usize,
-        flags: u32,
-    ) -> i32;
-    fn os_sync_wake_by_address_all(addr: *mut std::ffi::c_void, size: usize, flags: u32) -> i32;
-}
+use libc::{os_sync_wait_on_address, os_sync_wake_by_address_all};
 
 pub fn wake_all(addr: &AtomicU64) {
     // SAFETY: `addr` is an aligned 8-byte atomic that stays mapped for the call.

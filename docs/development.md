@@ -98,6 +98,7 @@
 | 共有メモリ・IPC | `crates/echode-sandbox` | `region.rs`（共有メモリ・`arm_abort_notice`）、`session.rs`（`PluginControl`）、`workgroup.rs`、`wire.rs` |
 | プラグインヘルパー | `crates/echode-plugin-host` | `scan.rs`（バンドル走査）、`catalog.rs`（キャッシュ）、`threads.rs` / `events.rs`（CLAP 処理・リセット）、`awake.rs` |
 | 同梱音源 | `crates/echode-sine-pad` | Sine Pad CLAP、事前領域拡張、状態と余韻。`scripts/build-bundled-plugins.sh` で通常の走査用バンドルを作る |
+| 同梱 DSP・確保の検出 | `crates/echode-dsp` | `sine_pad.rs`（ホストに依存しない `SinePad`）、`allocation.rs`（`ForbidAlloc` / `GuardAlloc`）。エンジンの `TestSynth` は単体検査用のアダプター |
 | 故障注入プラグイン | `crates/echode-test-plugin` | クラッシュ・ハング・ステレオ・残響・MIDI 検証用 CLAP プラグイン |
 | 描画クエリ・可視列 | `crates/echode-draw` | `query.rs`（アレンジ・ピアノロールの可視列抽出・空間インデックス） |
 | JSON-RPC・MCP | `crates/echode-api` | `rpc.rs` / `serve.rs`（Unix ソケット RPC）、`mcp.rs`（MCP stdio ブリッジ） |

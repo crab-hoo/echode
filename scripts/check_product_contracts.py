@@ -92,6 +92,12 @@ def swift_build(contract):
     return ["swift", "build", *selection, *swift_package(contract)]
 
 
+def swift_test_result(test, outcome, output):
+    # Argument-bearing functions prove coverage only after at least one case ran.
+    signature = r"(?:\(\)|\([^)\r\n]+\) with [1-9][0-9]* test cases?)"
+    return bool(re.search(r"Test " + re.escape(test) + signature + " " + outcome, output))
+
+
 def passed(contract, returncode, output):
     if returncode != 0:
         return False
@@ -100,7 +106,7 @@ def passed(contract, returncode, output):
         return bool(re.search(r"^test " + name + r" \.\.\. ok$", output, re.MULTILINE)
                     and re.search(r"test result: ok\. 1 passed; 0 failed; 0 ignored;", output))
     # Swift Testing is separate from the empty XCTest summary SwiftPM also emits.
-    return bool(re.search(r"Test " + name + r"\(\) passed", output)
+    return bool(swift_test_result(contract["test"], "passed", output)
                 and re.search(r"Test run with 1 test .*passed", output)
                 and "known issue" not in output.lower())
 
@@ -113,7 +119,7 @@ def rejected_behavior(contract, returncode, output):
     if contract["runner"] == "rust":
         return bool(re.search(r"^test " + name + r" \.\.\. FAILED$", output, re.MULTILINE)
                     and "0 passed; 1 failed; 0 ignored;" in output)
-    return bool(re.search(r"Test " + name + r"\(\) failed", output)
+    return bool(swift_test_result(contract["test"], "failed", output)
                 and re.search(r"Test run with 1 test .*failed", output)
                 and "Expectation failed" in output)
 

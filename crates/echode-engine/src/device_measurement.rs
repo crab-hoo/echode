@@ -335,13 +335,13 @@ fn run_measurement(
         denom: u64::from(timebase.denom.max(1)),
     });
 
-    let mut proc_id: *mut c_void = std::ptr::null_mut();
+    let mut proc_id: AudioDeviceIOProcID = None;
     let status = unsafe {
         AudioDeviceCreateIOProcID(
             device,
-            io_proc,
+            Some(io_proc),
             std::ptr::from_ref(&*session).cast_mut().cast(),
-            &mut proc_id,
+            NonNull::from(&mut proc_id),
         )
     };
     if status != 0 {
@@ -427,26 +427,23 @@ fn run_measurement(
     })
 }
 
-unsafe extern "C" fn io_proc(
+unsafe extern "C-unwind" fn io_proc(
     _device: u32,
-    _now: *const AudioTimeStamp,
-    _input_data: *const AudioBufferList,
-    _input_time: *const AudioTimeStamp,
-    output_data: *mut AudioBufferList,
-    output_time: *const AudioTimeStamp,
+    _now: NonNull<AudioTimeStamp>,
+    _input_data: NonNull<AudioBufferList>,
+    _input_time: NonNull<AudioTimeStamp>,
+    output_data: NonNull<AudioBufferList>,
+    output_time: NonNull<AudioTimeStamp>,
     client: *mut c_void,
 ) -> i32 {
     let session = unsafe { &*(client as *const Session) };
     // SAFETY: `mach_absolute_time` has no preconditions.
     let started = unsafe { mach_absolute_time() };
     let _energy = session.engine.render_block();
-    silence(output_data);
+    silence(output_data.as_ptr());
     let elapsed = unsafe { mach_absolute_time() }.wrapping_sub(started);
-    let host_time = if output_time.is_null() {
-        0
-    } else {
-        unsafe { (*output_time).host_time }
-    };
+    // SAFETY: HAL provides a live timestamp for the duration of the callback.
+    let host_time = unsafe { output_time.as_ref().mHostTime };
     session.record(elapsed, host_time);
     0
 }
@@ -457,12 +454,12 @@ fn silence(list: *mut AudioBufferList) {
     }
     // SAFETY: CoreAudio passes a live variable-length buffer list for this callback.
     unsafe {
-        let count = (*list).number_buffers as isize;
-        let first = std::ptr::addr_of_mut!((*list).buffers).cast::<AudioBuffer>();
+        let count = (*list).mNumberBuffers as isize;
+        let first = std::ptr::addr_of_mut!((*list).mBuffers).cast::<AudioBuffer>();
         for index in 0..count {
             let buffer = &*first.offset(index);
-            if !buffer.data.is_null() && buffer.data_byte_size > 0 {
-                std::ptr::write_bytes(buffer.data.cast::<u8>(), 0, buffer.data_byte_size as usize);
+            if !buffer.mData.is_null() && buffer.mDataByteSize > 0 {
+                std::ptr::write_bytes(buffer.mData.cast::<u8>(), 0, buffer.mDataByteSize as usize);
             }
         }
     }
@@ -476,7 +473,7 @@ static STOP: AtomicU32 = AtomicU32::new(0);
 
 pub fn install_stop_handler() {
     unsafe {
-        signal(2, handle_stop);
+        libc::signal(libc::SIGINT, handle_stop as *const () as libc::sighandler_t);
     }
 }
 

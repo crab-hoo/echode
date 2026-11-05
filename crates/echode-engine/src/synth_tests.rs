@@ -19,7 +19,7 @@ fn a_sine_pad_starts_silent_and_then_sounds() {
     render_test_synth(&[on(0, 2, 69)], &mut voices, 48_000, &mut output).unwrap();
     assert_eq!(output[0], 0.0);
     assert!(output[32].is_finite() && output[32] != 0.0);
-    assert!(voices.iter().any(|voice| voice.inner.is_active()));
+    assert!(voices.iter().any(|voice| voice.is_active()));
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn note_off_keeps_the_voice_until_the_release_ends() {
     let mut voices = slots::<1>(48_000);
     let mut output = [0.0; 8];
     render_test_synth(&[on(0, 2, 60), off(1, 2)], &mut voices, 48_000, &mut output).unwrap();
-    assert!(voices[0].inner.is_active());
+    assert!(voices[0].is_active());
     assert_eq!(
         render_test_synth(&[on(0, 3, 64)], &mut voices, 48_000, &mut output).unwrap_err(),
         PlaybackError::BufferTooSmall

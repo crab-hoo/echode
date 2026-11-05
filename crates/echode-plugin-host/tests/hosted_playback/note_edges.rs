@@ -30,12 +30,32 @@ fn contract_a_start_at_a_note_end_does_not_hold_that_note_under_rtsan() {
                 control.command(PlaybackCommand::Play).unwrap();
                 let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
                 let drain = 8192usize + control.tail_samples() as usize;
-                for _ in 0..drain.div_ceil(frames) {
+                // Live cleanup holds the clock while its helper receipts are
+                // pending. Silent callbacks then consume no score frames, so
+                // count actual progress rather than ending the check early.
+                let target = end + i64::try_from(drain).unwrap();
+                let until = Instant::now() + Duration::from_secs(5);
+                while control.status().sample < target {
                     live(&mut audio, &mut left, &mut right);
                     assert!(
                         left.iter().chain(&right).all(|value| *value == 0.0),
                         "a note ending at the start sounded: {frames}/{chain}/{rewind}"
                     );
+                    let status = control.status();
+                    assert!(
+                        !status.failed && (status.playing || audio.cleanup_pending()),
+                        "playback failed while draining the note edge: {frames}/{chain}/{rewind}, {status:?}, {:?}",
+                        control.plugin_failure()
+                    );
+                    assert!(
+                        Instant::now() < until,
+                        "note-edge cleanup/progress did not finish: {frames}/{chain}/{rewind}, {status:?}, {:?}",
+                        control.plugin_failure()
+                    );
+                    if audio.cleanup_pending() {
+                        // Only the synthetic callback driver waits, never RT.
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
                 }
                 assert!(
                     control.status().playing,

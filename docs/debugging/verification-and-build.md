@@ -67,6 +67,11 @@ Swift Testing は始めた全テストの終わりを待つ。再開されない
 `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 worktree ごとの `target` が大きい。Claude Code のデスクトップアプリでは、セッションのアーカイブで変更のない worktree が `target` ごと再利用の置き場へ移るので、アーカイブだけでは空かない（2026-10-31 に 25 GB）。
 どのキャッシュを消すかはユーザーと決める。作業は `main` の作業ツリーにまとめ、使い終えた worktree の再生成できる `target` を消す。
+2026-11-05 には空き 227 MiB の状態で、Swift が `internal error in Code Signing subsystem` だけを返して署名で止まった。
+この表示でも `df -h` と、`swift build --build-tests` の署名の診断を採る。署名を無効にせず、容量の確保後に同じ経路で再実行する。
+増分コンパイルのキャッシュだけを整理する場合も、検査ロックとコンパイラーの停止を確認する。
+`target/debug/incremental` と、再利用する成果物・鮮度情報の `deps`・`build`・`.fingerprint` を区別し、後者と反例・サニタイザ専用のビルド先、検査記録は残す。
+既に鮮度のある同じ Cargo ビルドを再実行し、成果物のサイズ・更新時刻が変わらないことを照合する。ソースの再ビルドが要る場合は遅くなるため、影響なしとは扱わない。
 
 ### 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
 
@@ -86,6 +91,13 @@ Xcode・CMake・Ninja の版と合わない。この時 TSan の検査はソー�
 Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量のコンパイルコマンドは会話へ展開しない。
 `-Zbuild-std --offline` が `failed to download addr2line` 等で止まる場合は、製品の依存とは別の固定 nightly の標準ライブラリ用キャッシュが不足している。
 `make setup-bridge` の Miri sysroot 準備で取得してから検査を再実行する。ツールの存在確認だけでは、このキャッシュ不足は分からない。
+
+### `check-ffi` が外部シンボルを拒否する
+
+`scripts/check-ffi.sh` はファイルではなく、パスと関数・静的変数名の組を照合する。
+`not allowed` は新しい宣言、`stale entries` は置換済みの許可行である。
+`libc` / objc2 の公開宣言へ置き換え、古い行だけを除く。既存モジュールへの追記で回避しない。
+`<link_name>` は許可済みの Rust 名の差替えを示す。通常のバインディングを使う（[ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md)）。
 
 ### Cargo の依存メタデータが欠ける
 
@@ -177,6 +189,9 @@ Swift の反例ビルドは Rust ABI を作り直さない。Rust の差分を S
 `check-product-contracts`・`check-contract-controls` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
 前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
 `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
+`missing, skipped, or failed required test` なのに Swift が成功を表示する場合は、指定した関数名とケース数の表示を確認する。
+引数付きの関数は `with N test cases`（N は 1 以上）まで照合する。引数なしだけを認識していた判定は 2026-11-05 に修正した。
+正例・反例とも同じ表示形式を認識し、0 ケース・スキップ・別関数・複数の関数・ビルド失敗を合格や不具合の検出に数えない。
 一括予算は `scripts/verification.json` の各検査の `timeout`、各契約の期限は別の値である。
 Swift のコピーの初回ビルドは `SWIFT_COPY_BUILD_TIMEOUT` の範囲で行い、契約の期限に算入しない。
 検査自身の時間切れより先にフックが終了する場合は、静的なフック設定と `verification.json` の `hook_timeout` の一致を確認する。
@@ -262,7 +277,9 @@ TSan の同じ待ちの所要は 1.4〜2.9 秒になった。修正前は通常�
 ただし、その負荷の後でも任意の 5 秒の中の停止の合計は 3.9〜4.85 秒に達する。
 全テスト同時の実行は TSan の競合を探すために残し、テストの失敗を判定しない。
 `race-swift-tests.failed.log` のテストの失敗は、サニタイザの報告がなければこの検査の失敗ではない。
-`check_test_width: N tests ran at once, above 16` は、環境変数が効かなくなったことを示す。比較の前提が崩れるので、ADR 0210 に戻って手段を決める。
+`check_test_width: N tests ran at once, above 16` は、実行した本体の幅が上限を超えたことを示す。ADR 0210 の前提とツールチェーンを調べる。
+引数付きテストは親の関数ではなく `testCaseStarted` / `testCaseEnded` を数える。
+2026-11-05 に親 6 件と通常の本体 16 件を足した誤検出を修正した。同じイベント列の実際の本体の最大は 16 件だった。
 `at most N tests at once ... went unchecked for races` は、競合を探す実行が絞られたことを示す。呼出し元の環境やツールチェーンの変更を疑う。
 残る候補は、システム全体の 5 秒を超える停止である。全テスト同時で 124 秒、幅 16 で 1 テスト 116 秒の実行が、`mdworker` などの動く約 5 分の間に 1 回ずつあった。
 監視スレッドも止まるのが目印で（`watcher gap`）、原因は確かめていない。この種類は同時実行数を絞っても吸収できない。
@@ -281,6 +298,14 @@ TSan の同じ待ちの所要は 1.4〜2.9 秒になった。修正前は通常�
 期限の延長、検査の無効化、対象の除外で合格にしない。
 復旧の警告待ちの期限切れ（2026-10-28）も同じ占有が原因とみられるが、再現はしていない。
 `RecoveryConsentTests` の別プロセス実行はそのまま残し、失敗は各 `product/recovery-swift-tests.failed.log` に残る。
+
+### Swift のミキサー回帰で `Expectation failed: overlapped`
+
+旧 `repeatedMixerStepsLandWhileTheFirstEditIsStillBusy` は `Task.yield()` 1000 回の間に編集の `busy` を観測しようとしていた。
+編集が主アクターへ制御を返す前に完了すると、値と Undo が正しくても観測だけを取り逃す。2026-11-05 の ASan 全体で再現した。
+現行の `repeatedMixerStepsQueueWhileAnEditTurnIsBusy` は `TurnGate` で実際の `EditTurn` を保持し、UI と同じ `arrangeMixActions.adjust` を 2 回送る。
+保持中にモデルと Undo が変わらないこと、解放後に両操作が成功して二段進み、Undo が 2 件増えることを確かめる。
+回数や期限を増やして偶然の重なりを待たず、同じ不具合はゲートで順序を固定して検査する。
 
 ### 中断後に `running` が残る・全結果が一度に `stale` になる
 

@@ -12,18 +12,14 @@ use dasp_interpolate::linear::Linear;
 use dasp_interpolate::sinc::Sinc;
 use dasp_ring_buffer::Fixed;
 use echode_realtime::Event;
-use wavesynth::engine::voice::Voice;
-use wavesynth::instrument::Instrument;
 
 use crate::realtime::ForbidAlloc;
 use crate::transport::PlaybackError;
 
-/// wavesynth crate version used for the test synth.
-pub const TEST_SYNTH_ID: &str = "wavesynth";
-/// Pinned crate version.
-pub const TEST_SYNTH_VERSION: &str = "0.1.0";
-/// Preset rendered by [`render_test_synth`].
-pub const TEST_SYNTH_INSTRUMENT: &str = "SinePad";
+pub use echode_dsp::{
+    INSTRUMENT as TEST_SYNTH_INSTRUMENT, SYNTH_ID as TEST_SYNTH_ID,
+    SYNTH_VERSION as TEST_SYNTH_VERSION, SynthVoice,
+};
 /// dasp interpolators used by the test sampler.
 pub const TEST_SAMPLER_ID: &str = "dasp_interpolate";
 /// Pinned dasp_interpolate version.
@@ -44,29 +40,6 @@ pub enum SamplerInterpolation {
 /// Ring length for dasp's sinc. Depth is half of this. The window belongs to
 /// the interpolator; it is not a limit on how long a recording may be.
 const SINC_FRAMES: usize = 16;
-
-/// One wavesynth voice, built for a single sample rate.
-pub struct SynthVoice {
-    inner: Voice,
-    sample_rate: u32,
-    note_id: Option<u32>,
-    releasing: bool,
-}
-
-impl SynthVoice {
-    /// Builds a silent Sine Pad voice. `sample_rate` must be above zero.
-    pub fn new(sample_rate: u32) -> Result<Self, PlaybackError> {
-        if sample_rate == 0 {
-            return Err(PlaybackError::InvalidSampleRate);
-        }
-        Ok(Self {
-            inner: Voice::new(sample_rate as f32, Instrument::SinePad),
-            sample_rate,
-            note_id: None,
-            releasing: false,
-        })
-    }
-}
 
 /// One sampler voice. The sinc window is only used for [`SamplerInterpolation::Sinc`].
 pub struct SamplerVoice {
@@ -97,52 +70,21 @@ impl SamplerVoice {
 pub const SAMPLER_INTERPOLATION: u32 = 0;
 
 const STATE_VERSION: u8 = 1;
-const SINE_PAD_RELEASE_MS: u64 = 400;
 
-/// Test synth. Voices are sized by [`Device::prepare`], not during `process`.
-pub struct TestSynth {
-    voices: Vec<SynthVoice>,
-    sample_rate: u32,
-}
+/// Engine fixture adapter for the host-independent Sine Pad DSP.
+pub struct TestSynth(echode_dsp::SinePad);
 
 impl TestSynth {
     pub fn new(sample_rate: u32) -> Result<Self, PlaybackError> {
-        if sample_rate == 0 {
-            return Err(PlaybackError::InvalidSampleRate);
-        }
-        Ok(Self {
-            voices: Vec::new(),
-            sample_rate,
-        })
+        Ok(Self(echode_dsp::SinePad::new(sample_rate)?))
     }
 
     pub fn silence(&mut self) {
-        self.voices.clear();
+        self.0.silence();
     }
 
-    /// Transfers only active DSP voices into prepared storage, without allocation.
     pub fn carry_from(&mut self, old: &mut Self, covers: impl Fn(u32) -> Option<bool>) {
-        old.voices.retain_mut(|old| {
-            let Some(held) = old.note_id.and_then(&covers) else {
-                return true;
-            };
-            if self.voices.len() == self.voices.capacity() {
-                return true;
-            }
-            let fresh = SynthVoice {
-                inner: Voice::new(self.sample_rate as f32, Instrument::SinePad),
-                sample_rate: self.sample_rate,
-                note_id: None,
-                releasing: false,
-            };
-            let mut voice = std::mem::replace(old, fresh);
-            if !held && !voice.releasing {
-                voice.inner.note_off();
-                voice.releasing = true;
-            }
-            self.voices.push(voice);
-            false
-        });
+        self.0.carry_from(&mut old.0, covers);
     }
 }
 
@@ -186,11 +128,7 @@ pub fn render_test_synth(
     sample_rate: u32,
     output: &mut [f32],
 ) -> Result<(), PlaybackError> {
-    if sample_rate == 0 || voices.iter().any(|voice| voice.sample_rate != sample_rate) {
-        return Err(PlaybackError::InvalidSampleRate);
-    }
-    let _guard = ForbidAlloc::enter();
-    drive(events, output, voices, note_on_synth, mix_synth)
+    echode_dsp::render_sine(events, voices, sample_rate, output).map_err(Into::into)
 }
 
 /// Adds a one-shot sampler into `output`.
@@ -252,38 +190,6 @@ fn check_events(events: &[Event], frames: usize) -> Result<(), PlaybackError> {
     Ok(())
 }
 
-fn note_on_synth(voices: &mut [SynthVoice], event: &Event) -> Result<(), PlaybackError> {
-    let (Event::NoteOff(note) | Event::NoteOn(note)) = event else {
-        return Ok(());
-    };
-    let Some(note_id) = note.target.note_id else {
-        return Ok(());
-    };
-    let Some(key) = note.target.key else {
-        return Ok(());
-    };
-    if matches!(event, Event::NoteOff(_)) {
-        release_synth(voices, note_id);
-        return Ok(());
-    }
-    let velocity = midi7(note.velocity);
-    if let Some(voice) = voices
-        .iter_mut()
-        .find(|voice| voice.inner.is_active() && voice.note_id == Some(note_id))
-    {
-        voice.inner.note_on(key, velocity);
-        voice.releasing = false;
-        return Ok(());
-    }
-    let Some(slot) = voices.iter_mut().find(|voice| !voice.inner.is_active()) else {
-        return Err(PlaybackError::BufferTooSmall);
-    };
-    slot.note_id = Some(note_id);
-    slot.releasing = false;
-    slot.inner.note_on(key, velocity);
-    Ok(())
-}
-
 fn midi7(velocity: f64) -> u8 {
     let stored = (velocity.clamp(0.0, 1.0) * 65535.0).round() as u16;
     echode_model::velocity_to_midi7(stored)
@@ -334,31 +240,12 @@ fn armed_sampler(note_id: u32, pitch: u8, velocity: u8, root: u8) -> SamplerVoic
     }
 }
 
-fn release_synth(voices: &mut [SynthVoice], note_id: u32) {
-    for voice in voices.iter_mut() {
-        if voice.inner.is_active() && voice.note_id == Some(note_id) {
-            voice.inner.note_off();
-            voice.releasing = true;
-        }
-    }
-}
-
 fn release_sampler(voices: &mut [SamplerVoice], note_id: u32) {
     for voice in voices.iter_mut() {
         if voice.active && voice.note_id == Some(note_id) {
             voice.active = false;
         }
     }
-}
-
-fn mix_synth(voices: &mut [SynthVoice]) -> f32 {
-    let mut sum = 0.0;
-    for voice in voices.iter_mut() {
-        if voice.inner.is_active() {
-            sum += voice.inner.next_sample();
-        }
-    }
-    sum
 }
 
 fn mix_sampler(
@@ -408,83 +295,29 @@ impl crate::builtin::Device for TestSynth {
         events: &[Event],
         sample_rate: u32,
     ) -> Result<(), PlaybackError> {
-        let _guard = crate::realtime::ForbidAlloc::enter();
-        if sample_rate == 0 || sample_rate != self.sample_rate {
-            return Err(PlaybackError::InvalidSampleRate);
-        }
-        let Some((first, rest)) = planes.split_first_mut() else {
-            return Ok(());
-        };
-        let frames = first.len();
-        if rest.iter().any(|plane| plane.len() != frames) {
-            return Err(PlaybackError::BufferTooSmall);
-        }
-        // Reserved capacity can cover a long score. Walk only sounding voices,
-        // so callback work never scales with the number of future notes.
-        drive(
-            events,
-            first,
-            self,
-            |synth, event| {
-                if event.is_note_on()
-                    && event.note_id().is_some()
-                    && !synth
-                        .voices
-                        .iter()
-                        .any(|voice| voice.note_id == event.note_id())
-                {
-                    if synth.voices.len() == synth.voices.capacity() {
-                        return Err(PlaybackError::BufferTooSmall);
-                    }
-                    synth.voices.push(SynthVoice::new(sample_rate)?);
-                }
-                note_on_synth(&mut synth.voices, event)
-            },
-            |synth| {
-                let sample = mix_synth(&mut synth.voices);
-                synth.voices.retain(|voice| voice.inner.is_active());
-                sample
-            },
-        )?;
-        for plane in rest.iter_mut() {
-            for (sample, source) in plane.iter_mut().zip(first.iter()) {
-                *sample += *source;
-            }
-        }
-        Ok(())
+        self.0
+            .process(planes, events, sample_rate)
+            .map_err(Into::into)
     }
 
     fn prepare(&mut self, voices: usize, sample_rate: u32) -> Result<(), PlaybackError> {
-        if sample_rate == 0 {
-            return Err(PlaybackError::InvalidSampleRate);
-        }
-        let count = voices.max(1);
-        self.voices.clear();
-        self.voices.reserve(count);
-        self.sample_rate = sample_rate;
-        Ok(())
+        self.0.prepare(voices, sample_rate).map_err(Into::into)
     }
 
     fn save(&self, out: &mut Vec<u8>) {
-        out.push(STATE_VERSION);
-        out.extend_from_slice(TEST_SYNTH_INSTRUMENT.as_bytes());
+        self.0.save(out);
     }
 
     fn restore(&mut self, bytes: &[u8]) -> Result<(), PlaybackError> {
-        if bytes.first() == Some(&STATE_VERSION) && &bytes[1..] == TEST_SYNTH_INSTRUMENT.as_bytes()
-        {
-            Ok(())
-        } else {
-            Err(PlaybackError::InvalidDevice)
-        }
+        self.0.restore(bytes).map_err(Into::into)
     }
 
     fn latency_samples(&self) -> u32 {
-        0
+        self.0.latency_samples()
     }
 
     fn tail_samples(&self, sample_rate: u32) -> u32 {
-        sine_pad_tail(sample_rate).unwrap_or(0)
+        self.0.tail_samples(sample_rate)
     }
 }
 
@@ -566,11 +399,6 @@ impl TestSampler<'_> {
         }
         note_on_sampler(&mut self.voices, event, self.root)
     }
-}
-
-fn sine_pad_tail(sample_rate: u32) -> Result<u32, PlaybackError> {
-    u32::try_from(u64::from(sample_rate) * SINE_PAD_RELEASE_MS / 1_000)
-        .map_err(|_| PlaybackError::Time)
 }
 
 fn interpolation_from_code(code: u8) -> Result<SamplerInterpolation, PlaybackError> {
