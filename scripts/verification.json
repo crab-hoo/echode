@@ -76,6 +76,17 @@
   ],
   "product_contracts": [
     {
+      "id": "export-presets-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+      "suite": "ExportPresetTests", "test": "contractPresetsUseValidatedFieldsAndRemainIndependentOfDocumentDefaults", "timeout": 180,
+      "purpose": "名前付き書出しプリセットの検証済み入力・適用・保存の持続・削除・重複拒否を実シートで確認し、前回値・共通既定値・履歴と文書交換から分離する",
+      "negative_controls": [
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportPresets.swift", "old": "defaults.set(String(decoding: data, as: UTF8.self), forKey: storageKey)", "new": "_ = data"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportPresetControls.swift", "old": "let settings = validatedSettings else", "new": "let settings = Optional(draft.options) else"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/ExportPresetControls.swift", "old": "draft.reset(settings: settings, locale: locale)", "new": "_ = settings"},
+        {"file": "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceExportView.swift", "old": "canEdit: { canChangeDefaults }", "new": "canEdit: { true }"}
+      ]
+    },
+    {
       "id": "export-defaults-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "ExportDefaultsTests", "test": "contractDefaultsUseValidatedInputWithoutChangingProjectHistory", "timeout": 180,
       "purpose": "書出しシートの検証済み入力だけを共通既定設定へ保存し、別プロジェクトへの適用・前回値と履歴からの独立・古い文書の拒否を機器なしで確認する",

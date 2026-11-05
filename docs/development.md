@@ -337,6 +337,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
   必須契約は `export-input-ui`（[ADR 0262](decisions/0262-export-numeric-drafts.md)）。既存の `check-swift`・`check-product-contracts` から実行する。
 - 共通の既定設定も `ExportSettings.swift` が版付きで保持する。`WorkspaceExportView` の保存・適用・初期化は共通値と下書きだけを変え、前回値・履歴を変えない。
   `ExportDefaultsTests` と必須契約 `export-defaults-ui` が優先順・不正値・文書交換を検査する（[ADR 0263](decisions/0263-common-export-defaults.md)）。
+- 名前付き書出しプリセットの保存と検証は `ExportPresets.swift`、シートの操作と表示状態は `ExportPresetControls.swift`。
+  `ExportPresetTests`・`ExportPresetStorageTests` と必須契約 `export-presets-ui` が入力・重複拒否・削除・不正保存物の保持・文書交換を検査する（[ADR 0264](decisions/0264-named-export-presets.md)）。
 - `HistoryCommand.exportSnapshot` が文書ワーカーへ渡り、`echode-history/src/export.rs` が記録済みの `Project` と参照するオブジェクトだけをコピーする。
 - `ExportTests.swift`・`ExportBoundaryTests.swift` と履歴の `tests/export.rs` が、元文書との独立・設定・拒否・失敗時の保持を検査する。
   必須契約は `export-snapshot-ui`、判断と残る範囲は [ADR 0254](decisions/0254-gui-snapshot-export.md)。

@@ -54,6 +54,18 @@ class PolicyTests(unittest.TestCase):
         # Which checks a path concerns. The task tier narrows this for full-tier checks.
         return set(verify.select_checks(self.policy, list(paths), full=True))
 
+    def test_export_presets_contract_covers_validated_commands_and_document_boundary(self):
+        contract = next(c for c in self.policy["product_contracts"] if c["id"] == "export-presets-ui")
+        self.assertEqual((contract["runner"], contract["suite"]), ("swift", "ExportPresetTests"))
+        self.assertEqual(contract["test"], "contractPresetsUseValidatedFieldsAndRemainIndependentOfDocumentDefaults")
+        for path in ["swift/EchodeApp/Sources/EchodeAppCore/ExportPresets.swift",
+                     "swift/EchodeApp/Sources/EchodeAppCore/ExportPresetControls.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/ExportPresetTests.swift",
+                     "swift/EchodeApp/Tests/EchodeAppTests/ExportPresetStorageTests.swift"]:
+            self.assertTrue({"check-swift", "check-product-contracts", "check-real-hal"} <= self.selected(path))
+        for fault in contract["negative_controls"]:
+            self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+
     def test_export_defaults_contract_covers_precedence_and_validated_sheet_commands(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "export-defaults-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "ExportDefaultsTests"))
@@ -1724,7 +1736,7 @@ class PolicyTests(unittest.TestCase):
             self.assertIn("check-product-contracts", self.selected(path))
         contracts = self.policy["product_contracts"]
         self.assertEqual({c["id"] for c in contracts},
-                         {"export-defaults-ui", "export-input-ui", "export-reveal-ui", "export-destination-ui", "export-destination-cli", "export-normalization-cli", "export-normalization-ui", "export-settings-ui", "export-snapshot-ui", "export-progress-ui", "export-cancellation-ui", "export-cancellation-publish", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
+                         {"export-presets-ui", "export-defaults-ui", "export-input-ui", "export-reveal-ui", "export-destination-ui", "export-destination-cli", "export-normalization-cli", "export-normalization-ui", "export-settings-ui", "export-snapshot-ui", "export-progress-ui", "export-cancellation-ui", "export-cancellation-publish", "explicit-sine-pad", "no-implicit-instrument", "startup-position", "macos-plugin-bundle", "header-key-routing",
                           "document-session-drag-ui", "document-session-audio-ui", "document-session-restore-ui", "document-session-stale-ui",
                           "document-worker-completion", "document-lane-completion",
                           "typed-clip-controller", "typed-mixer-controller", "typed-track-device-controller", "typed-piano-controller", "typed-edit-bridge", "model-constants-abi", "model-units-ui", "integer-loop-draft-ui",

@@ -19,6 +19,8 @@ struct WorkspaceExportView: View {
         var choosingOutput = false
         var loadingSettings = true
         var defaultsMessage: String?
+        let presets: ExportPresetState
+        init(defaults: UserDefaults) { presets = ExportPresetState(defaults: defaults) }
     }
     @State private var presentation: Presentation
 
@@ -31,7 +33,7 @@ struct WorkspaceExportView: View {
             ExportSettings.load(project: $0, defaults: defaults, initialRate: rate)
         } ?? ExportSettings.commonDefault(defaults: defaults, initialRate: rate)
         _draft = State(initialValue: ExportSettingsDraft(settings: settings))
-        _presentation = State(initialValue: Presentation())
+        _presentation = State(initialValue: Presentation(defaults: defaults))
     }
 
     var validatedSettings: ExportSettings? { try? draft.resolve(locale: locale).get() }
@@ -76,6 +78,7 @@ struct WorkspaceExportView: View {
                     .disabled(validatedSettings == nil).accessibilityIdentifier("export.defaults.save")
                 Button(text("Reset Default"), action: resetCommonDefault).accessibilityIdentifier("export.defaults.reset")
             }.controlSize(.small).disabled(!canChangeDefaults)
+            presetControls
             Text(text(presentation.defaultsMessage ?? "Defaults apply on this Mac to projects without previous export settings."))
                 .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("export.defaults.status")
             Text(text("Export uses a private snapshot. Editing and playback can continue after preparation."))
@@ -95,6 +98,10 @@ struct WorkspaceExportView: View {
                 draft.reset(settings: loaded, locale: locale)
                 presentation.loadingSettings = false
             }
+    }
+
+    var presetControls: ExportPresetControls {
+        ExportPresetControls(state: presentation.presets, draft: draft, defaults: defaults, canEdit: { canChangeDefaults })
     }
 
     private var canChangeDefaults: Bool {

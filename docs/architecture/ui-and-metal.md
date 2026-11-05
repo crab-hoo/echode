@@ -64,6 +64,7 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   前回の設定は文書ワーカー経由で `export.json` へ保持し、移動・コピー先でも読み戻す。モデル・履歴には入れない（[ADR 0257](../decisions/0257-portable-export-settings.md)）。
   数値欄は文字列の下書きを保持し、有効欄全体の検証に通った設定だけを開始と CLI 引数へ渡す（[ADR 0262](../decisions/0262-export-numeric-drafts.md)）。
   共通既定設定は明示操作で UserDefaults へ保存し、パッケージ・旧パス設定のない時だけ適用する（[ADR 0263](../decisions/0263-common-export-defaults.md)）。
+  名前付き書出しプリセットは別の版付き UserDefaults に保持し、明示適用だけで現在の下書きを変える（[ADR 0264](../decisions/0264-named-export-presets.md)）。
 - **文書の寿命**: 文書と同じ寿命の状態は `DocumentSession` に置き、開く・閉じるで丸ごと差し替える。
   非同期の処理は開始時のセッションを保持し、古い文書の処理が次の文書の状態へ届かない。
   文書への操作は省略できない `DocumentID` を受け、`ProjectController.session(for:)` だけが現行の文書と比べる

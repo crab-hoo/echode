@@ -1,6 +1,70 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Export Presets": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export Presets" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しプリセット" } }
+    } },
+    "Preset": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Preset" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "プリセット" } }
+    } },
+    "Choose a preset": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Choose a preset" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "プリセットを選択" } }
+    } },
+    "Apply Preset": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Apply Preset" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "適用" } }
+    } },
+    "Delete Preset": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Delete Preset" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "削除" } }
+    } },
+    "Preset name": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Preset name" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "プリセット名" } }
+    } },
+    "Save Preset": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Save Preset" } },
+      "ja": { "stringUnit": { "state": "translated", "value": "保存" } }
+    } },
+    "Presets stay on this Mac. Applying changes only the current fields.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Presets stay on this Mac. Applying changes only the current fields." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "この Mac に保存します。適用は現在の入力欄だけを変更します。" } }
+    } },
+    "Export preset saved on this Mac.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export preset saved on this Mac." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "この Mac に書出しプリセットを保存しました。" } }
+    } },
+    "Export preset applied to the current fields.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export preset applied to the current fields." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "現在の入力欄に書出しプリセットを適用しました。" } }
+    } },
+    "Export preset deleted from this Mac.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export preset deleted from this Mac." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "この Mac の書出しプリセットを削除しました。" } }
+    } },
+    "Export presets cannot be read. Existing presets have not been changed.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Export presets cannot be read. Existing presets have not been changed." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出しプリセットを読めません。保存済みのプリセットは変更していません。" } }
+    } },
+    "Enter a nonempty preset name without control characters.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Enter a nonempty preset name without control characters." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "制御文字を含まない、空でないプリセット名を入力してください。" } }
+    } },
+    "Correct the export settings before saving a preset.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "Correct the export settings before saving a preset." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "書出し設定を修正してからプリセットを保存してください。" } }
+    } },
+    "That preset name already exists. Choose another name or delete the existing preset first.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "That preset name already exists. Choose another name or delete the existing preset first." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "同名のプリセットがあります。別の名前にするか、既存のプリセットを先に削除してください。" } }
+    } },
+    "That export preset no longer exists.": { "localizations": {
+      "en": { "stringUnit": { "state": "translated", "value": "That export preset no longer exists." } },
+      "ja": { "stringUnit": { "state": "translated", "value": "その書出しプリセットは既に削除されています。" } }
+    } },
     "Use Default": { "localizations": {
       "en": { "stringUnit": { "state": "translated", "value": "Use Default" } },
       "ja": { "stringUnit": { "state": "translated", "value": "既定設定を使う" } }
