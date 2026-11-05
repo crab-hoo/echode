@@ -166,6 +166,19 @@ release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT s
   `xcrun llvm-objdump -d --mcpu=apple-m1 <バイナリ>` の `<unknown>` が、`--mcpu=apple-m4` より多いかで確かめる。
   増えていたら、CI だけ apple-m1 でビルドする切替えを足す（ADR 0269 の追記で見送った案）。反例はこの落ち方を検出と数えない。
 
+### Dependabot のアラートがあるのに `make advisories` が合格する
+
+`make advisories` は RustSec の DB だけを照会し、Dependabot は GitHub Advisory Database を照会する。
+GitHub だけにある勧告では、この 2 つが食い違う（[ADR 0270](../decisions/0270-gix-0-90-and-github-advisories.md)）。
+
+- アラートは `gh api 'repos/crab-hoo/echode/dependabot/alerts?state=open'` で一覧する。
+  `--jq '.[] | {n: .number, ghsa: .security_advisory.ghsa_id, pkg: .dependency.package.name, patched: .security_vulnerability.first_patched_version.identifier}'` で要点だけを読む。
+- RustSec に載っているかは、`~/.cargo/advisory-dbs/*/crates/<crate>/` の `aliases` を GHSA の ID で `grep` する。
+  無ければ、cargo-deny が合格するのは正しい挙動で、DB の取得の失敗ではない。
+- 修正版は `cargo info <crate>@<版>` と crates.io の依存要求で、上位の crate のどの版が修正版を引くかを調べる。
+  更新後の lockfile は `gh api -X GET advisories -f ecosystem=rust -f affects='<crate>@<版>,...'` で照会し直す。
+- 各勧告が Echode から到達するかは、勧告が挙げる API を Echode が呼ぶかで判断し、その理由を ADR に残す。
+
 ### 実行環境の権限制限（共有メモリ・キーチェーン）
 
 `shm_open: Operation not permitted` や `SecKeychainCreate` の失敗はサンドボックス制限によるため、許可された環境で再実行する。

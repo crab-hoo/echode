@@ -231,6 +231,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `spike-bridge`: スナップショットと配列の受け渡しの release 計測。
 - `spike-render`: WAV の一括書き出しの release 計測。
 - `advisories`: ネットワークで依存ライブラリの脆弱性情報を確認する。
+  照会するのは cargo-deny の RustSec の DB だけで、GitHub Advisory Database（Dependabot）だけにある勧告は検出しない。
+  依存を更新した時は Dependabot のアラートも確かめる（[ADR 0270](decisions/0270-gix-0-90-and-github-advisories.md)）。
 
 `make known-bugs` は登録済みの未解決の再現（`audit_*`）を実行する入口であり、`make bless` は意図した音の変更だけに使う。両方とも自動検査には含めない。
 

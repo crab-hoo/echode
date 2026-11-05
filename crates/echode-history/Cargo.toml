@@ -20,7 +20,10 @@ echode-actions = { path = "../echode-actions" }
 echode-model = { path = "../echode-model" }
 flate2 = "1"
 gix = { workspace = true }
-gix-pack = "=0.65.0"
+# gix enables gix-pack without default features; thinning needs
+# `streaming-input` for `Bundle::write_to_directory`. Keep this the exact
+# version gix resolves, so both share one gix-pack (ADR 0046, ADR 0270).
+gix-pack = "=0.77.0"
 libc = "=0.2.190"
 memmap2 = { workspace = true }
 objc2-audio-toolbox = { version = "=0.3.2", default-features = false, features = ["std", "AudioFile", "ExtendedAudioFile", "objc2-core-audio-types", "objc2-core-foundation"] }

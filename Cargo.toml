@@ -30,7 +30,7 @@ rust-version = "1.96"
 clack-host = "0.2"
 clack-plugin = "0.2"
 memmap2 = "0.9"
-gix = "0.78"
+gix = "0.90"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

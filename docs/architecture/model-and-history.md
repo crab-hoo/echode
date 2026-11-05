@@ -229,7 +229,9 @@ MySong.echode/
   完結した行は削らず、短縮の同期と編集ごとの同期は保持する（[ADR 0252](../decisions/0252-bounded-journal-tail-repair.md)）。
   Git の初期化失敗中も終了要求を受け付ける。初回保存を拒否した後の破棄で待ち続けず、開く処理へエラーを返してパッケージのロックを解放する。
 - **Cmd+S と間引き**: `refs/heads/<オルタネイト>` の保存ポイントは間引かず、自動保存だけを `gix-pack` で間引く
-  （[ADR 0046](../decisions/0046-history-thin.md)）
+  （[ADR 0046](../decisions/0046-history-thin.md)）。
+  `gix-pack` は `streaming-input` 機能を入れるための直接の依存で、gix が解決する版と完全一致で固定する
+  （[ADR 0270](../decisions/0270-gix-0-90-and-github-advisories.md)）
 
 ### 6.5〜6.7 要約・履歴 UI・オルタネイト
 

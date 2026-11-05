@@ -183,7 +183,8 @@ fn repack_reachable(repo: &Repository) -> Result<(), String> {
         Some(pack_dir.as_path()),
         &mut progress,
         &interrupt,
-        None::<NoFind>,
+        None::<gix::objs::find::Never>,
+        repo.object_hash(),
         gix_pack::bundle::write::Options::default(),
     )
     .map_err(|error| error.to_string())?;
@@ -206,18 +207,6 @@ fn repack_reachable(repo: &Repository) -> Result<(), String> {
     }
     delete_loose(repo.git_dir().join("objects").as_path())?;
     Ok(())
-}
-
-struct NoFind;
-
-impl gix::objs::Find for NoFind {
-    fn try_find<'a>(
-        &self,
-        _id: &gix::oid,
-        _buffer: &'a mut Vec<u8>,
-    ) -> Result<Option<gix::objs::Data<'a>>, gix::objs::find::Error> {
-        Ok(None)
-    }
 }
 
 fn reference_tips(repo: &Repository) -> Result<Vec<ObjectId>, String> {
@@ -292,7 +281,7 @@ fn encode_pack(repo: &Repository, ids: &HashSet<ObjectId>) -> Result<Vec<u8>, St
             .map_err(|error| error.to_string())?;
         body.extend(encoder.finish().map_err(|error| error.to_string())?);
     }
-    let mut hasher = gix::hash::hasher(gix::hash::Kind::Sha1);
+    let mut hasher = gix::hash::hasher(repo.object_hash());
     hasher.update(&body);
     let digest = hasher.try_finalize().map_err(|error| error.to_string())?;
     body.extend_from_slice(digest.as_bytes());
