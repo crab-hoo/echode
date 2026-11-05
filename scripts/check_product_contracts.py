@@ -41,6 +41,7 @@ def load_verify():
 
 
 verify = load_verify()
+from swift_contract_runner import batch_invocation as swift_batch_invocation
 from swift_contract_runner import invocation as swift_invocation
 
 
@@ -94,10 +95,43 @@ def swift_build(contract):
     return ["swift", "build", *selection, *swift_package(contract)]
 
 
+# Argument-bearing functions prove coverage only after at least one case ran.
+SWIFT_SIGNATURE = r"(?:\(\)|\([^)\r\n]+\) with [1-9][0-9]* test cases?)"
+
+
 def swift_test_result(test, outcome, output):
-    # Argument-bearing functions prove coverage only after at least one case ran.
-    signature = r"(?:\(\)|\([^)\r\n]+\) with [1-9][0-9]* test cases?)"
-    return bool(re.search(r"Test " + re.escape(test) + signature + " " + outcome, output))
+    return bool(re.search(r"Test " + re.escape(test) + SWIFT_SIGNATURE + " " + outcome, output))
+
+
+def batch_key(contract):
+    """The test process that can prove this contract together with others, or None for its own process."""
+    if contract["runner"] == "rust":
+        return ("rust", contract["package"], *contract["target"])
+    if contract["runner"] == "swift" and contract.get("build_product") == "EchodeAppTests":
+        return ("swift", contract["package_path"], contract["build_product"])
+    return None
+
+
+def batch_command(contracts):
+    """One libtest run of every named test in one binary. Without --nocapture each result line stays whole."""
+    first = contracts[0]
+    names = list(dict.fromkeys(contract["test"] for contract in contracts))
+    return ["cargo", "test", "--locked", "--offline", "-p", first["package"], *first["target"], "--",
+            *names, "--exact", "--color", "never"]
+
+
+def proven_in_batch(contract, output):
+    """This test's own single pass line, from a batch that ran to its summary.
+
+    An ignored, skipped, failed, missing or doubly matched test is not proven; it then runs alone.
+    """
+    if contract["runner"] == "rust":
+        results = re.findall(r"^test " + re.escape(contract["test"]) + r" \.\.\. (\S+)$", output, re.MULTILINE)
+        return results == ["ok"] and re.search(r"^test result: ", output, re.MULTILINE) is not None
+    results = [match.group(0) for match in re.finditer(
+        r"Test " + re.escape(contract["test"]) + SWIFT_SIGNATURE + r" (?:passed|failed|skipped)[^\r\n]*", output)]
+    return (len(results) == 1 and " passed" in results[0] and "known issue" not in results[0]
+            and re.search(r"Test run with [1-9][0-9]* tests?", output) is not None)
 
 
 def passed(contract, returncode, output):
@@ -629,7 +663,57 @@ def build_swift_package(root, contracts, contract, invoke):
         return False, str(error)
 
 
-def run_tests(root, contracts, invoke, fingerprints, evidence, record):
+def run_batches(root, contracts, invoke, fingerprints, evidence, record):
+    """Prove a task's required tests with one process per test binary (ADR 0270). Returns the rest.
+
+    The same tests already ran in check and check-swift; this keeps the evidence of each one
+    without one process per test. The full tier still runs each test alone.
+    """
+    groups, alone = {}, []
+    for contract in contracts:
+        key = batch_key(contract)
+        if key is None:
+            alone.append(contract)
+        else:
+            groups.setdefault(key, []).append(contract)
+    for key, group in groups.items():
+        if len(group) == 1:
+            alone += group
+            continue
+        started = time.monotonic()
+        log = evidence / ("batch-" + re.sub(r"[^A-Za-z0-9_.-]+", "-", "-".join(key).strip("-")) + ".log")
+        args, env, code = None, None, None
+        try:
+            if key[0] == "swift":
+                built, output = build_swift_package(root, contracts, group[0], invoke)
+                if not built:
+                    log.write_text(output)
+                    alone += group
+                    continue
+                args, env = swift_batch_invocation(root, group, SWIFT_SCRATCH)
+            else:
+                args = batch_command(group)
+            completed = invoke(args, cwd=root, capture_output=True, text=True,
+                               timeout=sum(contract["timeout"] for contract in group),
+                               **({"env": env} if env is not None else {}))
+            output, code = completed.stdout + completed.stderr, completed.returncode
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            output = str(error)
+        log.write_text(output)
+        seconds = round(time.monotonic() - started, 3)
+        for contract in group:
+            if proven_in_batch(contract, output):
+                record({"id": contract["id"], "status": "passed", "exit_code": code, "test": contract["test"],
+                        "command": args, "log": str(log), "purpose": contract["purpose"],
+                        "fingerprint": fingerprints.get(contract["id"]), "seconds": seconds, "isolation": "batch"})
+            else:
+                alone.append(contract)
+    return alone
+
+
+def run_tests(root, contracts, invoke, fingerprints, evidence, record, batched=False):
+    if batched:
+        contracts = run_batches(root, contracts, invoke, fingerprints, evidence, record)
     builds = {}
     for contract in contracts:
         name = contract["id"]
@@ -695,6 +779,9 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
     if in_shard is not None:
         required &= in_shard
     tests = {} if fresh else reusable_phase(previous, "tests", test_stamps)
+    if not changed_only:
+        # The full tier proves each test in its own process; a task's batch is not that evidence.
+        tests = {name: item for name, item in tests.items() if item.get("isolation") != "batch"}
     if changed_only:
         # Passes outside this run's targets stay on record for the full tier, which rechecks each fingerprint.
         controls = {name: dict(item, reused=True) for name, item in passed_controls(previous).items()}
@@ -740,8 +827,9 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
     execution["reused_controls"] = len(reused_controls)
     save("running")
     normal_started = time.monotonic()
-    run_tests(root, pending, invoke, test_stamps, directory, record_test)
+    run_tests(root, pending, invoke, test_stamps, directory, record_test, batched=changed_only)
     execution["normal_seconds"] = round(time.monotonic() - normal_started, 3)
+    execution["normal_batched"] = sum(tests.get(c["id"], {}).get("isolation") == "batch" for c in pending)
     if pending_controls and all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts):
         control_started = time.monotonic()
         execution["negative"] = negative_controls(root, pending_controls, fingerprints, directory, record_control)

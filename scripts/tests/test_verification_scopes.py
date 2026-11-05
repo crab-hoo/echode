@@ -117,7 +117,7 @@ class VerificationScopeTests(unittest.TestCase):
             (root / ".gitignore").write_text("/target\n")
             policy, cases = self.fixture(root)
             normal, negative = [], []
-            def run_tests(_root, pending, _invoke, stamps, _evidence, record):
+            def run_tests(_root, pending, _invoke, stamps, _evidence, record, **_options):
                 for case in pending:
                     normal.append(case["id"])
                     record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})

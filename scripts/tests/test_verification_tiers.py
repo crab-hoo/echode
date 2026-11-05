@@ -342,7 +342,7 @@ class ControlSiteTests(unittest.TestCase):
 
     def run_gate(self, root, changed_only=True, fresh=False):
         tested, controlled = [], []
-        def run_tests(_root, pending, _invoke, stamps, _evidence, record):
+        def run_tests(_root, pending, _invoke, stamps, _evidence, record, **_options):
             for case in pending:
                 tested.append(case["id"])
                 record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})
@@ -391,7 +391,7 @@ class ControlSiteTests(unittest.TestCase):
             padding = self.fixture(root)
             self.generation = 1
             (root / "src/lib.rs").write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
-            def run_tests(_root, pending, _invoke, stamps, _evidence, record):
+            def run_tests(_root, pending, _invoke, stamps, _evidence, record, **_options):
                 for case in pending:
                     record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})
             def failing(_root, pending, stamps, _evidence, record):

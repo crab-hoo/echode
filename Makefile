@@ -121,6 +121,11 @@ check-real-hal:
 	cmp -s "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h || cp "$$header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 	python3 -B scripts/check_real_hal.py
 
+# Runs every EchodeApp test one at a time and names each that reaches the real HAL (ADR 0271).
+.PHONY: check-real-hal-names
+check-real-hal-names:
+	python3 -B scripts/check_real_hal.py --name-tests
+
 # Selection and evidence are shared by agents, the stop hook, and CI.
 verify:
 	python3 scripts/verify.py $(VERIFY_ARGS)
@@ -138,7 +143,7 @@ verification-profile:
 	python3 -B scripts/verification_metrics.py
 
 check-verification:
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
+	python3 -B scripts/run_unit_tests.py
 
 # Static checks that need no M4, for contributors and GitHub Actions (ADR 0269).
 # Hosted macOS runners are M1 / M2: clippy compiles for apple-m1 there, so build scripts and
@@ -146,7 +151,7 @@ check-verification:
 .PHONY: check-portable
 check-portable:
 	cargo fmt --all --check
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
+	python3 -B scripts/run_unit_tests.py
 	scripts/check-ffi.sh
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
 	cargo deny -L error check licenses bans sources

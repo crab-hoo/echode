@@ -1974,7 +1974,7 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(target=target):
                 result = subprocess.run(["make", "-n", target], cwd=ROOT, capture_output=True, text=True, check=True)
                 self.assertEqual(result.stdout.count("python3 scripts/check_product_contracts.py"), count)
-                self.assertEqual(result.stdout.count("python3 -m unittest discover"), count)
+                self.assertEqual(result.stdout.count("python3 -B scripts/run_unit_tests.py"), count)
         check = next(check for check in self.policy["checks"] if check["id"] == "check")
         self.assertEqual(check["make_target"], "check-base")
 

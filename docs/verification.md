@@ -126,6 +126,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 `scripts/verify.py` では JSON の `make_target` により、結果 ID `check` が `check-base` を実行し、Rust、Swift、製品契約は別の結果として記録する。
 
 - `check-verification`: 検査選択、依存入力の失効、診断、署名、作業資料のリンクと行長整合、ADR・監査・スパイクを含む全文書のローカルリンク。
+  `scripts/run_unit_tests.py` が `scripts/tests` の各モジュールを別プロセスで同時に実行する（[ADR 0271](decisions/0271-task-tier-duplicate-runs.md)）。
+  失敗・取込みの誤り・0 件のモジュールは、その出力全体を表示して失敗にする。
   既存のローカル証拠は文書・宛先の例外一覧と注意書きを要求し、新しい `target/` リンクは拒否する（[証拠の保全](evidence/README.md)）。
   macOS 27 / M4 のビルド基準と生成物も検査する（[ADR 0114](decisions/0114-m4-build-baseline.md)）。
   文書だけの変更ではこれを再実行し、入力が変わっていない製品検査は再利用する。
@@ -140,8 +142,12 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check-swift`: Swift のビルドと全テスト（Swift 6 の厳密な並行性）と、橋渡しスパイクの ABI 検証。
   Swift だけの変更では `check` を再利用する。リンク先の Rust が変われば両方を実行する。
   テストが起動するヘルパー・検査用プラグイン・CLI は、このレシピ自身がビルドする。
+  `EchodeAppTests` の実行に HAL の代役の報告（`Real HAL reached:`）があれば、テストが合格していても失敗にする。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
+  作業の段階では、通常テストをテストのバイナリごとに 1 プロセスでまとめて実行する（[ADR 0271](decisions/0271-task-tier-duplicate-runs.md)）。
+  各テストの合格の行が 1 回だけあることを証拠にし、示せなかったテストは単独で、各契約の期限のもとで実行し直す。
+  まとめた実行のログは `product-contracts/batch-*.log` に残る。
   全反例が現在のソースへ適用できること（置換元が 1 回だけ現れること）を、ビルドせずに確認する。
   反例は、差分の基準と比べて次のいずれかが変わった契約だけ実行する。
   契約の定義（`purpose` を除く）、置換元とその前後 20 行、テストの関数本体。
@@ -152,7 +158,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   コンパイル失敗は検出の証拠にしない。
   コピーは `target/product-contract-mutations/checkouts/` に残し、変わったファイルだけを新しい時刻で書き換える（[ADR 0148](decisions/0148-verification-pipeline-speed.md)）。
   Rust の反例は変えるクレートの依存の浅い順にまとめ、Swift の反例は 3 コピーで同時にビルドしてからテストを 1 件ずつ実行する。
-  通常の実行は 1 契約 1 プロセスを保ち、Swift はテスト製品のビルド後に同じ SwiftPM の Testing ヘルパーを直接起動する。
+  全体の段階の通常の実行は 1 契約 1 プロセスを保ち、作業の段階のまとめた実行の記録を再利用しない。
+  Swift はテスト製品のビルド後に同じ SwiftPM の Testing ヘルパーを直接起動する。
   パッケージ解析・テスト探索の反復を省くが、一件判定・個別期限・反例ビルド時間の減算は維持する。
   Rust の同じ置換はソース遷移を共用し、対象の Cargo コマンドとテストプロセスは一件ずつ維持する。
   通常テストと反例は別の識別値で再利用し、契約全体の合格には両段階の合格を要求する。
@@ -168,8 +175,10 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-tsan-runtime`（全体の段階）: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
   作業の段階で `check-bridge-tsan` が選ばれれば一緒に選ばれる。
-- `check-real-hal`: `EchodeAppTests` を 1 件ずつ実行し、実 HAL に触れたテストの名前を示して失敗する。機器は開かない（[ADR 0209](decisions/0209-real-hal-guard.md)）。
-  バンドルに実物の HAL の参照がないこと、製品とプローブに実物が残っていること、既定の `ProjectController()` の再生が名指しで止まることも毎回確かめる。
+- `check-real-hal`: バンドルに実物の HAL の参照がないこと、製品とプローブに実物が残っていること、既定の `ProjectController()` の再生が名指しで止まることを確かめる。
+  機器は開かない（[ADR 0209](decisions/0209-real-hal-guard.md)）。
+  テストが実 HAL に触れたかは、`check-swift` が自分の全体実行で止める（[ADR 0271](decisions/0271-task-tier-duplicate-runs.md)）。
+  触れたテストの名前は、`make check-real-hal-names` が 1 件ずつの実行で示す。
   結果は `target/real-hal/` に残す。
 - `check-bridge-asan`（全体の段階）: 製品 ABI・音声出力バッファの Rust 検査と、Swift の編集・保存・再読込を別プロセスでメモリ検査する。
 - `check-bridge-tsan`（全体の段階）: 標準ライブラリを含む製品の Rust と Swift を、同じ固定ランタイムで競合検査する。
@@ -323,7 +332,7 @@ CI の合格は `make verify` の合格ではなく、`report.md` にも記録�
 ## 検査基盤で区別すること
 
 - **実 HAL と UI テストの TSan**: 実 HAL のバッファを再利用する時の TSan 警告の原因は未確定で、抑制はしない（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
-  `EchodeAppTests` のバンドルには実 HAL がなく、触れたテストは `make check-real-hal` が名指しで止める（[ADR 0209](decisions/0209-real-hal-guard.md)）。
+  `EchodeAppTests` のバンドルには実 HAL がなく、触れたテストは `check-swift` が止め、`make check-real-hal-names` が名指しする（[ADR 0209](decisions/0209-real-hal-guard.md)）。
   UI テストからこの警告の経路はなくなったが、原因の解決ではない。
 - **サニタイザの Swift 全体実行の幅**: 合否は同時実行数 16 の実行で決め、TSan は全テスト同時の実行で競合だけを探す（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
   幅は実験的な環境変数に頼るので、実際の幅をイベント列で確かめる。5 秒を超えるシステム全体の停止は、この対策でも吸収できない。

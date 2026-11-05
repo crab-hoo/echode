@@ -21,7 +21,7 @@ private let marker = "Real HAL reached:"
 private func refuse(_ function: StaticString) -> Int32 {
     // A worker thread cannot tell which test it serves, so this issue has none.
     let thread = Thread.current.name.flatMap { $0.isEmpty ? nil : $0 } ?? "an unnamed thread"
-    let report = "\(marker) \(function) on \(thread). Inject sendDevice, sendAudio or sendAudition; `make check-real-hal` names the test."
+    let report = "\(marker) \(function) on \(thread). Inject sendDevice, sendAudio or sendAudition; `make check-real-hal-names` names the test."
     FileHandle.standardError.write(Data((report + "\n").utf8))
     Issue.record(Comment(rawValue: report))
     return refused

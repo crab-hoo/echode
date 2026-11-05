@@ -53,6 +53,7 @@ Swift は CoreAudio も AVFoundation も import していない。
   `EchodeBridgeTests` は別パッケージで、`Document.audio` を直接使う検査は実物のままである。
 - **テスト名**: 代役は文書の作業スレッドで呼ばれ、どのテストの要求かを知らない。Swift Testing の issue にも「unknown」と出る。
   `make check-real-hal` は全テストを `--no-parallel` で実行し、イベント列からその時に実行中のテストを出す。
+  2026-11-05 追記: 毎回の直列の全体実行はやめ、`check-swift` が並列の実行で報告を探して止める。名前は `make check-real-hal-names` が出す（[ADR 0271](0271-task-tier-duplicate-runs.md)）。
 - **束縛の確認**: 検査は最初に `nm -u` で、バンドルに実物の参照がないことと、製品に実物が残っていることを確かめる。
   新しい HAL の関数を Rust で使うと、ここで止まる。
 - **正の対照**: `RealHALGuardTests` は環境変数 `ECHODE_REAL_HAL_CONTROL` がある時だけ動き、既定の `ProjectController()` で再生を要求する。

@@ -33,5 +33,20 @@ run_swift_tests() {
     fi
 }
 
+# RealHALGuard.swift writes this to stderr whenever a test reaches the HAL it replaces,
+# also from a thread no test owns. Naming the test needs one test at a time (ADR 0271).
+reject_real_hal() {
+    local log="target/echode-app-tests/swift-test.log"
+    if grep -q 'Real HAL reached:' "$log"; then
+        grep 'Real HAL reached:' "$log" >&2
+        echo "check-shell: a test reached the real HAL; name it with: make check-real-hal-names" >&2
+        return 1
+    fi
+}
+
 run_swift_tests swift/EchodeBridge target/echode-bridge-tests
-run_swift_tests swift/EchodeApp target/echode-app-tests
+if ! run_swift_tests swift/EchodeApp target/echode-app-tests; then
+    reject_real_hal || true
+    exit 1
+fi
+reject_real_hal

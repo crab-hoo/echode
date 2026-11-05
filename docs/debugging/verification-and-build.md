@@ -214,6 +214,9 @@ Swift の反例ビルドは Rust ABI を作り直さない。Rust の差分を S
 `check-product-contracts`・`check-contract-controls` 全体の `VERIFICATION TIMEOUT` と、個別契約のタイムアウトを区別する。
 前者では `product-contracts.json` の各記録の `seconds` と `reused` で進んでいた契約を確認する。
 `reused: true` は同じ識別値で前回合格した記録であり、それ以外の古いログを今回の完了証拠にしない。
+作業の段階の通常テストは、バイナリごとのまとめた実行の記録（`isolation: "batch"`、`batch-*.log`）と単独の記録が混ざる。
+まとめた実行で示せなかったテストは単独で実行し直すので、失敗の調査には単独のログ（`<契約ID>.log`）を読む。
+まとめて落ち、単独で通るテストは、並列の負荷か他のテストとの干渉を疑う。全体の段階は単独の実行だけを使う。
 `missing, skipped, or failed required test` なのに Swift が成功を表示する場合は、指定した関数名とケース数の表示を確認する。
 引数付きの関数は `with N test cases`（N は 1 以上）まで照合する。引数なしだけを認識していた判定は 2026-11-05 に修正した。
 正例・反例とも同じ表示形式を認識し、0 ケース・スキップ・別関数・複数の関数・ビルド失敗を合格や不具合の検出に数えない。
@@ -364,7 +367,8 @@ Swift の負の対照を同じ位置まで何度もやり直す場合は、契�
 
 1. UI テストは機器なしの応答差し替え口を使い、実 HAL を開かない（`target/macos27-audit/tsan-hal-before.log`）。
    `EchodeAppTests` のバンドルでは `RealHALGuard.swift` が HAL の関数をリンク時に置き換え、機器を開かずに失敗させる（[ADR 0209](../decisions/0209-real-hal-guard.md)）。
-   `Real HAL reached:` で全体実行が失敗し、Swift Testing がテストを「unknown」と示したら、`make check-real-hal` がテスト名を示す。
+   `Real HAL reached:` で全体実行が失敗し、Swift Testing がテストを「unknown」と示したら、`make check-real-hal-names` がテスト名を示す。
+   `check-swift` は、テストが合格していてもこの報告があれば止まる（[ADR 0271](../decisions/0271-task-tier-duplicate-runs.md)）。
    そのテストに `sendDevice`、`sendAudio`、`sendAudition` のいずれかを注入する。
    名前のテストに心当たりがなければ、併記された直前のテストが待たずに残した要求を調べる。
    単体候補の追加は `opensWindow` からデバイス要求も送るため、再生なし・`preparesOutput = false` でも実 HAL へ到達し得る。

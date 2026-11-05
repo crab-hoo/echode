@@ -341,6 +341,94 @@ class ContractEvidenceTests(unittest.TestCase):
                     self.assertEqual(report["reused"], 2 - len(expected))
                     self.assertEqual(len(report["tests"]), 2)
 
+    def test_a_batch_proves_only_a_test_with_its_own_single_pass(self):
+        # ADR 0270: a task proves its required tests with one process per binary.
+        rust = {"runner": "rust", "test": "a::b"}
+        summary = "\ntest result: ok. 2 passed; 0 failed; 0 ignored;"
+        self.assertTrue(contracts.proven_in_batch(rust, "test a::b ... ok\ntest a::c ... ok" + summary))
+        for output in ("test a::b ... ignored" + summary, "test a::c ... ok" + summary, "test a::b ... ok",
+                       "test a::b ... FAILED" + summary, "test a::b ... ok\ntest a::b ... ok" + summary):
+            with self.subTest(output=output):
+                self.assertFalse(contracts.proven_in_batch(rust, output))
+        swift = {"runner": "swift", "test": "contract"}
+        run = "\nTest run with 2 tests in 2 suites passed"
+        self.assertTrue(contracts.proven_in_batch(swift, "Test contract() passed after 0.1 seconds." + run))
+        self.assertTrue(contracts.proven_in_batch(swift, "Test contract(case:) with 2 test cases passed after 0.1 seconds." + run))
+        for output in ("Test contract() skipped" + run, "Test contract() passed after 0.1 seconds with 1 known issue." + run,
+                       "Test contractTwo() passed after 0.1 seconds." + run, "Test contract() failed after 0.1 seconds." + run,
+                       "Test contract() passed after 0.1 seconds.",
+                       "Test contract() passed after 0.1 seconds.\nTest contract() passed after 0.1 seconds." + run):
+            with self.subTest(output=output):
+                self.assertFalse(contracts.proven_in_batch(swift, output))
+
+    def test_a_task_runs_one_process_per_binary_and_retries_what_it_did_not_prove_alone(self):
+        cases = [{"id": name, "runner": "rust", "package": "p", "target": ["--test", "t"], "test": name,
+                  "timeout": 5, "purpose": "fixture"} for name in ("a", "b", "c")]
+        cases.append({"id": "d", "runner": "rust", "package": "p", "target": ["--lib"], "test": "d",
+                      "timeout": 5, "purpose": "fixture"})
+        invoked = []
+        def selected(args):
+            # A batch names its tests after "--"; a single test names itself before it.
+            return args[args.index("--") + 1:args.index("--exact")] or [args[args.index("--") - 1]]
+        def fake(args, **kwargs):
+            invoked.append(args)
+            names = selected(args)
+            lines = [f"test {name} ... {'FAILED' if name == 'b' and len(names) > 1 else 'ok'}" for name in names]
+            return subprocess.CompletedProcess(args, 0, "\n".join(lines) + "\ntest result: ok. 1 passed; 0 failed; 0 ignored;", "")
+        with tempfile.TemporaryDirectory() as directory:
+            results = []
+            contracts.run_tests(ROOT, cases, fake, {}, Path(directory), results.append, batched=True)
+        self.assertEqual([selected(args) for args in invoked], [["a", "b", "c"], ["b"], ["d"]])
+        self.assertEqual({result["id"]: (result["status"], result.get("isolation")) for result in results},
+                         {"a": ("passed", "batch"), "c": ("passed", "batch"), "d": ("passed", None), "b": ("passed", None)})
+
+    def test_a_swift_batch_builds_once_and_filters_every_test_in_one_helper_run(self):
+        cases = [{"id": name, "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
+                  "suite": "S", "test": name, "timeout": 5, "purpose": "fixture"} for name in ("one", "two")]
+        invoked = []
+        def fake(args, **kwargs):
+            invoked.append(args)
+            if args[:2] == ["swift", "build"]:
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return subprocess.CompletedProcess(args, 0, "Test one() passed after 0.1 seconds.\n"
+                                               "Test two() passed after 0.1 seconds.\nTest run with 2 tests in 1 suite passed", "")
+        def batch(root, group, scratch):
+            return ["helper", *[argument for case in group for argument in ("--filter", "S/" + case["test"])]], {}
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(contracts, "swift_batch_invocation", side_effect=batch), \
+             patch.object(contracts, "test_invocation", return_value=(["unused"], None)):
+            results = []
+            contracts.run_tests(ROOT, cases, fake, {}, Path(directory), results.append, batched=True)
+        self.assertEqual([args[0] if args[0] == "helper" else " ".join(args[:2]) for args in invoked], ["swift build", "helper"])
+        self.assertEqual(invoked[1].count("--filter"), 2)
+        self.assertEqual([(result["id"], result["status"], result["isolation"]) for result in results],
+                         [("one", "passed", "batch"), ("two", "passed", "batch")])
+
+    def test_the_full_tier_does_not_reuse_a_tasks_batch_evidence(self):
+        cases = [{"id": name, "runner": "rust", "package": "p", "target": ["--lib"], "test": name,
+                  "timeout": 5, "purpose": "fixture", "negative_control": {"file": "src/lib.rs"}} for name in ("a", "b")]
+        tested = []
+        def run_tests(_root, pending, _invoke, stamps, _evidence, record, batched=False):
+            for case in pending:
+                tested.append((case["id"], batched))
+                record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]],
+                        **({"isolation": "batch"} if batched else {})})
+        def controls(root, pending, fingerprints, evidence, record):
+            for contract in pending:
+                record(contracts.control_result(contract, fingerprints[contract["id"]], True, evidence / "x.log", 0))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: {"a": "1", "b": "2"}), \
+                 patch.object(contracts, "control_sites", return_value=({}, set())), \
+                 patch.object(contracts.verify, "tool_identity", return_value={}), \
+                 patch.object(contracts, "run_tests", side_effect=run_tests), \
+                 patch.object(contracts, "negative_controls", side_effect=controls), \
+                 redirect_stdout(io.StringIO()):
+                self.assertEqual(contracts.run(root, cases, policy={}, changed_only=True), 0)
+                self.assertEqual(contracts.run(root, cases, policy={}, changed_only=True), 0)
+                self.assertEqual(contracts.run(root, cases, policy={}), 0)
+        self.assertEqual(tested, [("a", True), ("b", True), ("a", False), ("b", False)])
+
     def test_shards_split_every_counterexample_once(self):
         # ADR 0269: the full tier runs its counterexamples in several GitHub jobs.
         cases = [{"id": name} for name in "abcdefg"]

@@ -24,11 +24,26 @@ def runtime(root, package, product, scratch):
     return str(helper), str(bundle), str(frameworks), str(libraries)
 
 
-def invocation(root, contract, scratch):
-    helper, bundle, frameworks, libraries = runtime(str(root), contract["package_path"], contract["build_product"], scratch)
+def environment(frameworks, libraries):
     env = dict(os.environ)
     for name, value in (("DYLD_FRAMEWORK_PATH", frameworks), ("DYLD_LIBRARY_PATH", libraries)):
         env[name] = value + (os.pathsep + env[name] if env.get(name) else "")
+    return env
+
+
+def batch_invocation(root, contracts, scratch):
+    """One helper run selecting every given test of one bundle, for a task's normal phase (ADR 0270)."""
+    first = contracts[0]
+    helper, bundle, frameworks, libraries = runtime(str(root), first["package_path"], first["build_product"], scratch)
+    filters = [argument for contract in contracts
+               for argument in ("--filter", re.escape(contract["suite"] + "/" + contract["test"]))]
+    return [helper, "--test-bundle-path", bundle, *filters, bundle, "--testing-library", "swift-testing"], \
+        environment(frameworks, libraries)
+
+
+def invocation(root, contract, scratch):
+    helper, bundle, frameworks, libraries = runtime(str(root), contract["package_path"], contract["build_product"], scratch)
+    env = environment(frameworks, libraries)
     # The filter still must yield exactly one assertion-bearing test. The
     # evidence parser rejects zero, multiple, skipped, and known-issue results.
     selection = re.escape(contract["suite"] + "/" + contract["test"])

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Fail, naming the test, when an EchodeApp test reaches the real HAL (ADR 0209).
+"""Keep the EchodeApp test bundle off the real HAL (ADR 0209).
 
 RealHALGuard.swift replaces CoreAudio's HAL functions inside the test bundle, so
-no device opens and any run that reaches one fails. A worker thread cannot tell
-which test it serves, so this runs one test at a time and takes the name from
-the event stream.
+no device opens and any run that reaches one fails. By default this checks the
+binding and that the guard stops its control by name; check-shell.sh fails
+check-swift when its own run of the tests reaches the HAL (ADR 0271).
+A worker thread cannot tell which test it serves, so `--name-tests` runs one test
+at a time and takes the name from the event stream.
 """
+
+import argparse
 
 import json
 import os
@@ -108,7 +112,11 @@ def run_tests(name, *arguments, environment=None):
     return result["exit_code"], refusals(text, log.read_text(errors="replace"))
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--name-tests", action="store_true",
+                        help="also run every test one at a time and name each that reaches the real HAL")
+    arguments = parser.parse_args(argv)
     shutil.rmtree(OUTPUT, ignore_errors=True)
     OUTPUT.mkdir(parents=True)
     subprocess.run(["swift", "build", "-q", "--build-tests", *PACKAGE], cwd=ROOT, check=True)
@@ -124,6 +132,10 @@ def main():
     if code == 0 or not any(running and CONTROL_SUITE in running for running, _, _ in found):
         print(f"The guard did not stop {CONTROL_SUITE} by name (exit {code}); see {OUTPUT / 'control.log'}", file=sys.stderr)
         return 1
+    if not arguments.name_tests:
+        print("check-real-hal: only the test bundle replaces the HAL, and the guard stops by name;"
+              " check-swift fails when its run reaches the HAL")
+        return 0
 
     environment = {name: value for name, value in os.environ.items() if name != CONTROL_ENVIRONMENT}
     code, found = run_tests("all", "--no-parallel", environment=environment)
