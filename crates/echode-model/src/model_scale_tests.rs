@@ -1,4 +1,4 @@
-//! Deterministic work counts for content lookup and reference validation (FCA-05).
+//! Deterministic work counts for content lookup, reference validation and shared-note bounds (FCA-05).
 //! Counts and fixture sizes bound these tests only, not product projects.
 
 use std::cell::Cell;
@@ -11,6 +11,7 @@ struct Work {
     content_keys: usize,
     references: usize,
     overlaps: usize,
+    note_validations: usize,
 }
 
 thread_local! {
@@ -35,6 +36,10 @@ pub(crate) fn reference() {
 
 pub(crate) fn overlap() {
     record(|work| work.overlaps += 1);
+}
+
+pub(crate) fn note_validation() {
+    record(|work| work.note_validations += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -218,4 +223,49 @@ fn reclamation_keeps_shared_content_until_its_last_placement_is_gone() {
     crate::placement::drop_unreferenced(&mut contents, &tracks);
     assert!(contents.is_empty());
     project.check_invariants().unwrap();
+}
+
+fn shared_fixture(notes: usize, placements: usize) -> (Project, Vec<Content>, Vec<Track>) {
+    let template = fixture(1);
+    let mut content = Content::clone(&template.contents()[0]);
+    let note = content.notes[0].clone();
+    content.notes = (0..notes)
+        .map(|index| {
+            let mut note = note.clone();
+            note.id = Id::from_raw(20_000 + index as u128);
+            note.start = Tick::new(index as i64 * 10 - 100);
+            note.length = Tick::new((notes - index) as i64 * 20);
+            note
+        })
+        .collect();
+    let mut track = Track::clone(&template.tracks()[0]);
+    let clip = track.clips[0].clone();
+    track.clips = (0..placements)
+        .map(|index| {
+            let mut clip = clip.clone();
+            clip.id = Id::from_raw(10_000 + index as u128);
+            clip.start = Tick::new(index as i64 * 100);
+            clip
+        })
+        .collect();
+    (template, vec![content], vec![track])
+}
+
+#[test]
+fn shared_content_validation_does_not_rescan_notes_per_placement() {
+    // These sizes constrain work in this regression, not product projects.
+    for (notes, placements) in [(64, 256), (256, 64)] {
+        let (template, contents, tracks) = shared_fixture(notes, placements);
+        let (project, assembly) = measured(|| {
+            Project::try_assemble(template.meter(), template.tempo().clone(), contents, tracks)
+                .unwrap()
+        });
+        let (_, validation) = measured(|| project.check_invariants().unwrap());
+        assert!(
+            assembly.note_validations <= notes * 2 && validation.note_validations <= notes,
+            "shared content validation visited notes {} times during assembly and {} times during validation for {notes} notes and {placements} placements",
+            assembly.note_validations,
+            validation.note_validations,
+        );
+    }
 }

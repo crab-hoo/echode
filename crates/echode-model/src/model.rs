@@ -1382,6 +1382,8 @@ impl Project {
                 return Err(ModelError::InvalidNote);
             }
             for note in &content.notes {
+                #[cfg(test)]
+                crate::model_scale_tests::note_validation();
                 if !seen.insert(note.id) {
                     return Err(ModelError::DuplicateId);
                 }

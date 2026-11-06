@@ -44,6 +44,7 @@ impl Project {
         let mut ids = HashSet::new();
         let mut parents = HashMap::new();
         let mut auto_counts: HashMap<Id, usize> = HashMap::new();
+        let mut content_bounds = HashMap::new();
         for content in self.contents() {
             if !ids.insert(content.id) {
                 return broken(format!("id {} is used twice", content.id));
@@ -51,7 +52,10 @@ impl Project {
             if content.takes.contains(&content.id) {
                 return broken(format!("content {} lists itself as a take", content.id));
             }
+            let mut bounds: Option<(i64, i64)> = None;
             for note in &content.notes {
+                #[cfg(test)]
+                crate::model_scale_tests::note_validation();
                 if !ids.insert(note.id) {
                     return broken(format!("id {} is used twice", note.id));
                 }
@@ -61,9 +65,16 @@ impl Project {
                 {
                     return broken(format!("note {} is not usable", note.id));
                 }
-                if note.start.get().checked_add(note.length.get()).is_none() {
+                let Some(end) = note.start.get().checked_add(note.length.get()) else {
                     return broken(format!("note {} ends past the time range", note.id));
-                }
+                };
+                let last = end - 1;
+                bounds = Some(match bounds {
+                    Some((first, previous_last)) => {
+                        (first.min(note.start.get()), previous_last.max(last))
+                    }
+                    None => (note.start.get(), last),
+                });
             }
             if !content.expressions.is_empty() {
                 return broken(format!(
@@ -81,6 +92,7 @@ impl Project {
                     pair[0].id, pair[1].id, content.id
                 ));
             }
+            content_bounds.insert(content.id, (content, bounds));
         }
         for track in self.tracks() {
             if !ids.insert(track.id) {
@@ -152,7 +164,7 @@ impl Project {
                 let Some(end) = start.checked_add(clip.length.get()) else {
                     return broken(format!("clip {} ends past the time range", clip.id));
                 };
-                let Some(content) = self.content(clip.content) else {
+                let Some((content, bounds)) = content_bounds.get(&clip.content) else {
                     return broken(format!("clip {} names a missing content", clip.id));
                 };
                 let Some(origin) = start.checked_sub(clip.offset.get()) else {
@@ -180,30 +192,27 @@ impl Project {
                     ));
                 }
                 previous_end = Some(end);
-                let mut bars: Option<(i64, i64)> = None;
                 if clip.kind == ClipKind::Auto {
                     *auto_counts.entry(clip.content).or_insert(0) += 1;
                 }
-                for note in &content.notes {
-                    let Some(absolute) = origin.checked_add(note.start.get()) else {
-                        return broken(format!("note {} starts past the time range", note.id));
-                    };
-                    let Some(span) = note.length.get().checked_sub(1) else {
-                        return broken(format!("note {} ends past the time range", note.id));
-                    };
-                    let Some(_) = absolute.checked_add(span) else {
-                        return broken(format!("note {} ends past the time range", note.id));
-                    };
-                    let local_last = note.start.get().checked_add(span).ok_or_else(|| {
-                        InvariantError(format!("note {} ends past the content time range", note.id))
-                    })?;
-                    let (first_bar, last_bar) =
-                        (note.start.get().div_euclid(bar), local_last.div_euclid(bar));
-                    bars = Some(match bars {
-                        Some((low, high)) => (low.min(first_bar), high.max(last_bar)),
-                        None => (first_bar, last_bar),
-                    });
+                // Validated local extrema suffice for every note at this origin.
+                // Only invalid placements rescan to preserve the first-note diagnostic.
+                if bounds.is_some_and(|(first, last)| {
+                    origin.checked_add(first).is_none() || origin.checked_add(last).is_none()
+                }) {
+                    for note in &content.notes {
+                        #[cfg(test)]
+                        crate::model_scale_tests::note_validation();
+                        let Some(absolute) = origin.checked_add(note.start.get()) else {
+                            return broken(format!("note {} starts past the time range", note.id));
+                        };
+                        if absolute.checked_add(note.length.get() - 1).is_none() {
+                            return broken(format!("note {} ends past the time range", note.id));
+                        }
+                    }
                 }
+                let bars =
+                    bounds.map(|(first, last)| (first.div_euclid(bar), last.div_euclid(bar)));
                 if clip.kind == ClipKind::Auto {
                     let Some((low, high)) = bars else {
                         return broken(format!("auto clip {} has no notes", clip.id));

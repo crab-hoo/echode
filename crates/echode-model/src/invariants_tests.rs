@@ -234,3 +234,113 @@ fn a_broken_snapshot_panics_where_apply_checks() {
     let broken = project(vec![content], vec![track(1, None, vec![placement])]);
     broken.debug_assert_invariants();
 }
+
+#[test]
+fn placement_note_bounds_match_scalar_checks_at_integer_limits() {
+    // These cases exercise full content even when notes lie outside the clip window.
+    let cases: &[&[(i64, i64)]] = &[
+        &[],
+        &[(i64::MIN, 1)],
+        &[(i64::MAX - 1, 1)],
+        &[(-2, 1), (-1, 1), (0, 1), (1, 1)],
+        &[(-100, 200), (-1, 1), (0, 1)],
+        &[(i64::MIN, 1), (i64::MAX - 1, 1)],
+    ];
+    for &origin in &[i64::MIN, -100, -1, 0, 1, 100, i64::MAX] {
+        for &notes in cases {
+            let (mut content, mut placement) = clip(2, ClipKind::Fixed, 0, 1);
+            let template = content.notes[0].clone();
+            content.notes = notes
+                .iter()
+                .enumerate()
+                .map(|(index, &(start, length))| {
+                    let mut note = template.clone();
+                    note.id = Id::from_raw(100 + index as u128);
+                    note.start = Tick::new(start);
+                    note.length = Tick::new(length);
+                    note
+                })
+                .collect();
+            placement.start = Tick::new(origin.min(0));
+            placement.offset = Tick::new(if origin > 0 { -origin } else { 0 });
+            placement.length = Tick::new(1);
+            let expected = content
+                .notes
+                .iter()
+                .find_map(|note| {
+                    // A wider integer oracle is independent of the bounds fast path.
+                    let start = i128::from(origin) + i128::from(note.start.get());
+                    let last = start + i128::from(note.length.get()) - 1;
+                    let range = i128::from(i64::MIN)..=i128::from(i64::MAX);
+                    if !range.contains(&start) {
+                        Some(format!("note {} starts past the time range", note.id))
+                    } else if !range.contains(&last) {
+                        Some(format!("note {} ends past the time range", note.id))
+                    } else {
+                        None
+                    }
+                })
+                .map_or(Ok(()), Err);
+            let tracks = vec![track(1, None, vec![placement])];
+            let direct = project(vec![content.clone()], tracks.clone())
+                .check_invariants()
+                .map_err(|error| error.to_string());
+            assert_eq!(direct, expected, "origin {origin}, notes {notes:?}");
+            let assembled = match assemble(vec![content], tracks) {
+                Ok(_) => Ok(()),
+                Err(ModelError::Invariant(message)) => Err(message),
+                Err(error) => panic!("unexpected assembly error: {error}"),
+            };
+            assert_eq!(assembled, expected, "origin {origin}, notes {notes:?}");
+        }
+    }
+}
+
+#[test]
+fn auto_bars_use_the_earliest_start_and_latest_end_of_shared_content() {
+    let bar = Meter::four_four().bar_ticks().unwrap().get();
+    let (mut content, mut auto) = clip(2, ClipKind::Auto, 0, 1);
+    let template = content.notes[0].clone();
+    content.notes[0].start = Tick::new(-bar + 1);
+    content.notes[0].length = Tick::new(3 * bar);
+    for (id, start) in [(100, 0), (101, bar)] {
+        let mut note = template.clone();
+        note.id = Id::from_raw(id);
+        note.start = Tick::new(start);
+        note.length = Tick::new(1);
+        content.notes.push(note);
+    }
+    // The first note has the latest inclusive end, in local bar 2.
+    auto.start = Tick::new(37 - bar);
+    auto.offset = Tick::new(-bar);
+    auto.length = Tick::new(4 * bar);
+    let mut fixed = auto.clone();
+    fixed.id = Id::from_raw(3);
+    fixed.kind = ClipKind::Fixed;
+    fixed.start = Tick::new(37 + 3 * bar);
+    fixed.offset = Tick::new(10);
+    fixed.length = Tick::new(1);
+    let mut tracks = vec![track(1, None, vec![auto, fixed])];
+    assemble(vec![content.clone()], tracks.clone()).unwrap();
+    tracks[0].clips[0].length = Tick::new(3 * bar);
+    assert!(matches!(
+        assemble(vec![content], tracks),
+        Err(ModelError::Invariant(message)) if message.contains("notes cover bars -1..=2")
+    ));
+}
+
+#[test]
+fn empty_content_is_valid_only_for_fixed_placements() {
+    let (mut content, mut placement) = clip(2, ClipKind::Fixed, 0, 1);
+    content.notes.clear();
+    assemble(
+        vec![content.clone()],
+        vec![track(1, None, vec![placement.clone()])],
+    )
+    .unwrap();
+    placement.kind = ClipKind::Auto;
+    assert!(matches!(
+        assemble(vec![content], vec![track(1, None, vec![placement])]),
+        Err(ModelError::Invariant(message)) if message.contains("has no notes")
+    ));
+}
