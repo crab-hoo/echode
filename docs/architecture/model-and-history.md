@@ -160,6 +160,8 @@ Phase 2 で配置ごとの非破壊デバイスチェインを追加する（[AD
   連続ドラッグは 1 つの Undo 単位にまとめる（[ADR 0008](../decisions/0008-actions-undo-journal.md)）
   外部音声の取込みもトランザクション内で PCM 保存と `audio.place` へ解決し、トラック追加と 1 回の Undo にできる
   （[ADR 0145](../decisions/0145-sample-browser-file-drops.md)）。
+  PCM は一時の名前で同期して待たせ、編集が受理された時だけハッシュへ改名して索引とピークを作る。
+  拒否した編集は一時の名前を消すので、素材を残さない（[ADR 0272](../decisions/0272-staged-import-media.md)）。
   記録する `audio.place` は両端のフェードを持ち、新しい配置は 0 を書く。欄のない以前のジャーナルは 5 ms で再生する
   （[ADR 0161](../decisions/0161-placed-audio-without-fades.md)）。
   無変更の単一編集と、正味の変更が残らない束は成功として返し、Undo・Redo・公開・ジャーナル・自動保存を変えない

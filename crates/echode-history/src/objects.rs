@@ -33,27 +33,123 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
 /// journal line that names the object is written next, and Git commits do not
 /// hold the store (XCA-03).
 pub fn write_object(package: &Path, bytes: &[u8]) -> Result<String, PackageError> {
+    stage_object(package, bytes)?
+        .publish(package)
+        .map(|published| published.hash)
+}
+
+/// Bytes written beside `media/objects/<hash>` that the store does not name yet.
+///
+/// An import stages its PCM before the edit that places it is checked. Only an
+/// accepted edit publishes the object; dropping the stage removes the
+/// temporary entry, so a rejected import leaves nothing in the store (EXT-02).
+pub(crate) struct StagedObject {
+    /// Taken by [`Self::publish`]; `Drop` then has nothing to remove.
+    objects: Option<Directory>,
+    hash: String,
+    /// `None` when the store already held matching bytes.
+    temporary: Option<String>,
+}
+
+impl StagedObject {
+    pub(crate) fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    /// Renames the staged bytes to their hash and syncs the directory entry,
+    /// which the journal line written next relies on (XCA-03).
+    pub(crate) fn publish(mut self, package: &Path) -> Result<PublishedObject, PackageError> {
+        let hash = std::mem::take(&mut self.hash);
+        let (Some(objects), Some(temporary)) = (self.objects.take(), self.temporary.take()) else {
+            return Ok(PublishedObject {
+                created: None,
+                hash,
+            });
+        };
+        let directory = package.join("media").join("objects");
+        let renamed = objects.has_file(&hash).and_then(|present| {
+            objects.rename_into(&temporary, &hash)?;
+            Ok(!present)
+        });
+        let created = match renamed {
+            Ok(created) => created,
+            Err(error) => {
+                let _ = objects.remove(&temporary);
+                return Err(io_error(&directory, error));
+            }
+        };
+        if let Err(error) = objects.sync() {
+            if created {
+                let _ = objects.remove(&hash);
+            }
+            return Err(io_error(&directory, error));
+        }
+        Ok(PublishedObject {
+            created: created.then_some(objects),
+            hash,
+        })
+    }
+}
+
+/// A store entry named by an accepted stage.
+pub(crate) struct PublishedObject {
+    /// The store directory, kept only when publishing created the name.
+    created: Option<Directory>,
+    hash: String,
+}
+
+impl PublishedObject {
+    pub(crate) fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    /// Removes the name again when the edit that needed it failed after
+    /// publishing. An entry that existed before the stage is kept.
+    pub(crate) fn withdraw(self) {
+        if let Some(objects) = self.created {
+            let _ = objects.remove(&self.hash);
+        }
+    }
+}
+
+impl Drop for StagedObject {
+    fn drop(&mut self) {
+        if let (Some(objects), Some(temporary)) = (&self.objects, self.temporary.take()) {
+            let _ = objects.remove(temporary);
+        }
+    }
+}
+
+/// Writes `bytes` beside the store, synced, without naming them yet. A store
+/// entry that already matches is kept; a damaged one is replaced on publish.
+pub(crate) fn stage_object(package: &Path, bytes: &[u8]) -> Result<StagedObject, PackageError> {
     let hash = hash_bytes(bytes);
     let directory = package.join("media").join("objects");
-    let owned = Directory::create(package)
+    let objects = Directory::create(package)
         .and_then(|root| root.child("media"))
         .and_then(|media| media.child("objects"))
         .map_err(|error| io_error(&directory, error))?;
-    if owned
+    let current = objects
         .has_file(&hash)
         .map_err(|error| io_error(&directory, error))?
-        && owned
+        && objects
             .read(&hash)
             .map_err(|error| io_error(&directory, error))?
-            == bytes
-    {
-        return Ok(hash);
-    }
-    owned
-        .write_atomic(&hash, bytes, true)
-        .and_then(|()| owned.sync())
-        .map_err(|error| io_error(&directory, error))?;
-    Ok(hash)
+            == bytes;
+    let temporary = if current {
+        None
+    } else {
+        Some(
+            objects
+                .write_temporary(&hash, bytes, true)
+                .map_err(|error| io_error(&directory, error))?,
+        )
+    };
+    Ok(StagedObject {
+        objects: Some(objects),
+        hash,
+        temporary,
+    })
 }
 
 /// Writes the ignore rules for the object store. Existing rules are kept.

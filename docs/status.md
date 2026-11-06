@@ -35,7 +35,7 @@
   最初に Git の初期化が失敗した理由は未確定である（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
 - **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない。スキーマは 6 のまま（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
 - **素材とキャッシュの Git 除外**: 任意の Git パターンの正規化はしない（[ADR 0031](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
-- **素材の回収（EXT-02）**: 素材は消さず、配置に失敗した取込みの分も残る（[ADR 0031](decisions/0031-content-addressed-store.md)）。
+- **素材の回収**: 保管庫の掃除はなく、Undo や削除で参照が消えた素材は残る（[ADR 0272](decisions/0272-staged-import-media.md)）。
 - **保存済み音声の有限性**: 保存済み PCM と外部音声の取込みは、NaN・無限大を含めば拒否する。
   波形キャッシュのマップ読込みと実機の聴感は、この検証の範囲外である（[ADR 0056](decisions/0056-audio-import.md#外部音声の一括復号と取込みの検証2026-10-29)）。
 - **波形キャッシュの破損**: 壊れたキャッシュは元の PCM から作り直し、素材が読めなければ波形を出さない。
@@ -77,10 +77,10 @@
 - **Sine Pad と音源の選択**: 音源のないトラックのノートは無音で、旧プロジェクトへ暗黙の音源を補わない。
   従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
 - **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
-- **規模・ミックスと履歴（FCA-04〜07・19）**: 計画の採用は機器なしでも期限を超え得る。
-  全体再構築・モデル ID の線形探索・履歴のメモリ予算は残る（[ADR 0239](decisions/0239-live-note-cursor-work.md)）。
+- **規模・ミックスと履歴（FCA-05〜07・19）**: 計画の採用は機器なしでも期限を超え得る。
+  モデル ID の線形探索と履歴のメモリ予算は残る（[ADR 0274](decisions/0274-reused-track-plans.md)）。
   フォルダの音量・パンは子に効かず、遅延は未補正。ループとミックスの聴感は UC-47・49、遅延表示は UC-51（[ADR 0246](decisions/0246-plugin-latency-reporting.md)）。
-- **長い素材（EXT-01）**: 全体を復号し、トリムの形ごとに PCM を複製する（[精査](reviews/2026-11-06-assessment-review.md)）。
+- **長い素材**: 全体を復号して 1 コピーを常駐させ、逐次読込みはない（[ADR 0273](decisions/0273-shared-source-clip-windows.md)）。
 
 ### プラグイン・デバイスビュー
 

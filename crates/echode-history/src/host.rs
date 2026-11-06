@@ -485,8 +485,9 @@ fn worker(
                         }
                     }
                     Command::ImportAudio { track, start, path } => {
-                        match crate::media::import_audio(&directory, Path::new(&path)) {
-                            Ok(stored) => {
+                        match crate::media::stage_audio(&directory, Path::new(&path)) {
+                            Ok(staged) => {
+                                let stored = staged.stored().clone();
                                 let parked = session.park_redo();
                                 match session.perform(Command::PlaceAudio {
                                     track,
@@ -497,14 +498,17 @@ fn worker(
                                     frames: stored.frames,
                                 }) {
                                     Ok(action) => {
-                                        let saved = publish_edit(&mut Publish {
-                                            directory: &directory,
-                                            snapshot: &snapshot,
-                                            autosave: &autosave,
-                                            inflight: &mut inflight,
-                                            next_seq: &mut next_seq,
-                                            session: &session,
-                                        });
+                                        let saved = publish_with_media(
+                                            &mut Publish {
+                                                directory: &directory,
+                                                snapshot: &snapshot,
+                                                autosave: &autosave,
+                                                inflight: &mut inflight,
+                                                next_seq: &mut next_seq,
+                                                session: &session,
+                                            },
+                                            vec![staged],
+                                        );
                                         settle(&mut session, parked, &mut halted, saved)
                                             .map(|()| action)
                                     }
@@ -548,20 +552,25 @@ fn worker(
             Request::Apply { actions, reply } => {
                 let journal_len = session.journal().len();
                 let parked = session.park_redo();
-                let result = match apply_transaction(&mut session, &directory, actions) {
+                let mut staged = Vec::new();
+                let result = match apply_transaction(&mut session, &directory, actions, &mut staged)
+                {
                     Ok(applied) if session.journal().len() == journal_len => {
                         session.unpark_redo(parked);
                         Ok(applied)
                     }
                     Ok(applied) => {
-                        let saved = publish_edit(&mut Publish {
-                            directory: &directory,
-                            snapshot: &snapshot,
-                            autosave: &autosave,
-                            inflight: &mut inflight,
-                            next_seq: &mut next_seq,
-                            session: &session,
-                        });
+                        let saved = publish_with_media(
+                            &mut Publish {
+                                directory: &directory,
+                                snapshot: &snapshot,
+                                autosave: &autosave,
+                                inflight: &mut inflight,
+                                next_seq: &mut next_seq,
+                                session: &session,
+                            },
+                            std::mem::take(&mut staged),
+                        );
                         settle(&mut session, parked, &mut halted, saved).map(|()| applied)
                     }
                     Err(error) => {
@@ -775,6 +784,40 @@ fn connecting_changeset(from: &Project, to: &Project, stored: ChangeSet) -> Chan
     }
 }
 
+/// Publishes the media an accepted edit imported, then its journal line.
+///
+/// The objects and their directory entries are synced before the line that
+/// names them (XCA-03). When the line is cleanly not written, objects this
+/// edit created are removed again; when its durability is unknown they stay,
+/// because reopening may replay the line (EXT-02).
+fn publish_with_media(
+    commit: &mut Publish<'_>,
+    staged: Vec<crate::media::StagedAudio>,
+) -> Result<(), HostError> {
+    let mut published = Vec::with_capacity(staged.len());
+    for audio in staged {
+        match audio.publish(commit.directory) {
+            Ok(audio) => published.push(audio),
+            Err(error) => {
+                published
+                    .into_iter()
+                    .for_each(crate::media::PublishedAudio::withdraw);
+                return Err(HostError::Package(error));
+            }
+        }
+    }
+    let saved = publish_edit(commit);
+    if saved
+        .as_ref()
+        .is_err_and(|error| !error.durability_unknown())
+    {
+        published
+            .into_iter()
+            .for_each(crate::media::PublishedAudio::withdraw);
+    }
+    saved
+}
+
 fn publish_edit(commit: &mut Publish<'_>) -> Result<(), HostError> {
     let entry = commit
         .session
@@ -811,10 +854,13 @@ fn publish(
     Ok(())
 }
 
+/// Applies `actions` as one edit group. Imports are staged into `staged`;
+/// the caller publishes them only when the group is accepted.
 fn apply_transaction(
     session: &mut Session,
     directory: &Path,
     actions: Vec<Value>,
+    staged: &mut Vec<crate::media::StagedAudio>,
 ) -> Result<Vec<Action>, HostError> {
     let mut applied = Vec::with_capacity(actions.len());
     let mut prior = Vec::with_capacity(actions.len());
@@ -842,8 +888,9 @@ fn apply_transaction(
                 }
             };
             // Import external media on the document thread, then commit only a
-            // durable PCM reference. A failure rolls back the whole edit group.
-            let command = match import_command(directory, command) {
+            // durable PCM reference. A failure rolls back the whole edit group
+            // and drops every stage, so no media remains (EXT-02).
+            let command = match import_command(directory, command, staged) {
                 Ok(command) => command,
                 Err(error) => {
                     failure = Some(HostError::Element {
@@ -877,9 +924,15 @@ fn apply_transaction(
     }
 }
 
-fn import_command(directory: &Path, command: Command) -> Result<Command, PackageError> {
+fn import_command(
+    directory: &Path,
+    command: Command,
+    staged: &mut Vec<crate::media::StagedAudio>,
+) -> Result<Command, PackageError> {
     if let Command::ImportAudio { track, start, path } = command {
-        let stored = crate::media::import_audio(directory, Path::new(&path))?;
+        let audio = crate::media::stage_audio(directory, Path::new(&path))?;
+        let stored = audio.stored().clone();
+        staged.push(audio);
         Ok(Command::PlaceAudio {
             track,
             start,

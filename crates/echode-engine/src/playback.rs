@@ -12,7 +12,7 @@
 )]
 
 use crate::TrackMeter;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
@@ -156,9 +156,24 @@ struct StoredClip {
     start_sample: i64,
     samples: Arc<[f32]>,
     right: Option<Arc<[f32]>>,
+    /// Resolved [`ClipWindow`]: the plane index of the first frame, and the
+    /// placement's length in frames.
+    lead: i64,
+    frames: usize,
     gain: f32,
     fade_in: u32,
     fade_out: u32,
+}
+
+/// The frames of a clip's planes that its placement plays.
+///
+/// Placement frame `i` reads plane index `lead + i`. Indices before the
+/// planes or after their end are silence, so a trim, a negative offset, and
+/// a tail past the source share one copy of the source PCM (EXT-01).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClipWindow {
+    pub lead: i64,
+    pub frames: usize,
 }
 
 /// One placement's samples at the device rate, ready for the control thread to store.
@@ -170,11 +185,50 @@ pub struct LoadedClip {
     /// The right plane of a stereo placement. `samples` is its left plane.
     /// `None` describes mono. Both stereo planes must have the same length.
     pub right: Option<Arc<[f32]>>,
+    /// The part of the planes this placement plays. `None` plays every
+    /// frame from index 0, so the placement is as long as its planes.
+    pub window: Option<ClipWindow>,
     /// Linear placement gain, applied before mono promotion and edge fades.
     /// The sample planes are unscaled and may be shared by other placements.
     pub gain: f32,
     pub fade_in: u32,
     pub fade_out: u32,
+}
+
+impl LoadedClip {
+    /// The window this placement plays, with `None` resolved to the planes.
+    pub fn played(&self) -> ClipWindow {
+        self.window.unwrap_or(ClipWindow {
+            lead: 0,
+            frames: self.samples.len(),
+        })
+    }
+
+    /// The unscaled left (or mono) sample at placement frame `index`.
+    pub fn left_at(&self, index: usize) -> f32 {
+        window_sample(&self.samples, self.played(), index)
+    }
+
+    /// The unscaled right sample at placement frame `index`; mono repeats left.
+    pub fn right_at(&self, index: usize) -> f32 {
+        window_sample(
+            self.right.as_deref().unwrap_or(&self.samples),
+            self.played(),
+            index,
+        )
+    }
+}
+
+fn window_sample(plane: &[f32], window: ClipWindow, index: usize) -> f32 {
+    if index >= window.frames {
+        return 0.0;
+    }
+    i64::try_from(index)
+        .ok()
+        .and_then(|index| window.lead.checked_add(index))
+        .and_then(|at| usize::try_from(at).ok())
+        .and_then(|at| plane.get(at).copied())
+        .unwrap_or(0.0)
 }
 
 /// A ready device-output plane, before the track fader. The provider owns
@@ -274,49 +328,69 @@ impl Prepared {
             return Err(PlaybackError::InvalidSampleRate);
         }
         let loaded = sources.clips;
+        let present: HashSet<u128> = project
+            .tracks()
+            .iter()
+            .map(|track| track.id.raw())
+            .collect();
         if loaded.iter().any(|clip| {
             !echode_model::clip_gain_allowed(clip.gain)
                 || clip
                     .right
                     .as_ref()
                     .is_some_and(|right| right.len() != clip.samples.len())
-                || !project
-                    .tracks()
-                    .iter()
-                    .any(|track| track.id.raw() == clip.track)
+                || !present.contains(&clip.track)
         }) {
             return Err(PlaybackError::Media);
         }
-        let plan = crate::plan::build_plan(project, project.tempo(), rate, ids)?;
-        let cursor = plan.cursor();
+        // Unchanged tracks keep their plan, cursor lookups and demand (FCA-04).
+        let crate::plan::Built { plan, derived } =
+            crate::plan::build(project, project.tempo(), rate, ids)?;
+        let cursor = plan
+            .cursor_with(
+                derived
+                    .iter()
+                    .map(|lookups| Arc::clone(&lookups.index))
+                    .collect(),
+            )
+            .ok_or(PlaybackError::Time)?;
         let tempo = crate::plan::tempo_index(project.tempo())?;
         let faders = track_faders(project, &plan)?;
+        // Group the clips once, in loaded order, rather than filtering per track.
+        let mut placed = HashMap::<u128, Vec<StoredClip>>::new();
+        for clip in loaded {
+            placed.entry(clip.track).or_default().push(StoredClip {
+                start_sample: clip.start_sample,
+                samples: Arc::clone(&clip.samples),
+                right: clip.right.clone(),
+                lead: clip.played().lead,
+                frames: clip.played().frames,
+                gain: clip.gain,
+                fade_in: clip.fade_in,
+                fade_out: clip.fade_out,
+            });
+        }
         let mut tracks = Vec::with_capacity(plan.tracks.len());
         let mut event_count = 1usize;
         let mut chase_count = 0usize;
         let mut demands = Vec::with_capacity(plan.tracks.len());
-        for (track, fader) in plan.tracks.iter().zip(faders) {
-            let mut notes: Vec<_> = track
-                .notes
-                .iter()
-                .map(|note| (note.note_id, note.on, note.off))
-                .collect();
-            notes.sort_unstable_by_key(|note| note.0);
-            let mut clips: Vec<StoredClip> = loaded
-                .iter()
-                .filter(|clip| clip.track == track.track)
-                .map(|clip| StoredClip {
-                    start_sample: clip.start_sample,
-                    samples: Arc::clone(&clip.samples),
-                    right: clip.right.clone(),
-                    gain: clip.gain,
-                    fade_in: clip.fade_in,
-                    fade_out: clip.fade_out,
-                })
-                .collect();
+        for ((track, fader), lookups) in plan.tracks.iter().zip(faders).zip(&derived) {
+            let mut clips = placed.remove(&track.track).unwrap_or_default();
             clips.sort_by_key(|clip| clip.start_sample);
             let clip_stereo = clips.iter().any(|clip| clip.right.is_some());
-            let demand = track_event_demand(track, loop_bounds, frames)?;
+            let demand = match ids.demand(track.track, loop_bounds, frames) {
+                Some((events, chase)) => TrackEventDemand {
+                    key: track.track_key,
+                    events,
+                    chase,
+                    previous_chase: 0,
+                },
+                None => {
+                    let demand = track_event_demand(track, loop_bounds, frames)?;
+                    ids.remember_demand(track, loop_bounds, frames, demand.events, demand.chase);
+                    demand
+                }
+            };
             event_count = event_count
                 .checked_add(demand.events)
                 .ok_or(PlaybackError::Time)?;
@@ -343,7 +417,7 @@ impl Prepared {
                 cache: sources.caches.get(&track.track).cloned(),
                 carried_notes: None,
                 carried_at: None,
-                notes: notes.into(),
+                notes: Arc::clone(&lookups.by_number),
                 clips,
             });
         }
@@ -1041,6 +1115,8 @@ fn add_stored_clips(
             let mut view = [crate::voice::FadedClip {
                 start_sample: clip.start_sample,
                 samples: clip.samples.as_ref(),
+                lead: clip.lead,
+                frames: clip.frames,
                 fade_in: clip.fade_in,
                 fade_out: clip.fade_out,
             }];
@@ -1092,7 +1168,7 @@ fn add_stored_clips(
 
 fn stored_end(clip: &StoredClip) -> i64 {
     clip.start_sample
-        .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX))
+        .saturating_add(i64::try_from(clip.frames).unwrap_or(i64::MAX))
 }
 
 fn chain_of(project: &Project, prepared: &Prepared) -> Vec<TrackChain> {

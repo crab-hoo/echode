@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use objc2_audio_toolbox::{
     ExtAudioFileDispose, ExtAudioFileGetProperty, ExtAudioFileOpenURL, ExtAudioFileRead,
@@ -21,7 +21,7 @@ use objc2_core_audio_types::{
 use objc2_core_foundation::{CFIndex, CFURL};
 
 use crate::document::PackageError;
-use crate::objects::{ensure_store_gitignore, read_object, write_object};
+use crate::objects::{StagedObject, ensure_store_gitignore, read_object, stage_object};
 
 pub(crate) const PCM_MAGIC: &[u8; 8] = b"ECHDPCM1";
 const MAGIC: &[u8; 8] = PCM_MAGIC;
@@ -50,6 +50,26 @@ pub struct DecodedPcm {
 /// The same bytes are not written twice. The index keeps the first file name
 /// for a hash.
 pub fn import_audio(package: &Path, source: &Path) -> Result<StoredAudio, PackageError> {
+    let staged = stage_audio(package, source)?;
+    let stored = staged.stored().clone();
+    staged.publish(package)?;
+    Ok(stored)
+}
+
+/// A decoded import whose PCM is written beside the store but not named.
+///
+/// The document host stages an import, checks the edit that places it, and
+/// publishes the stage only when that edit is accepted. Dropping it instead
+/// removes the staged bytes, so a rejected import leaves no media, index
+/// entry, or peaks in the package (EXT-02).
+pub(crate) struct StagedAudio {
+    object: StagedObject,
+    stored: StoredAudio,
+    source: PathBuf,
+}
+
+/// Decodes and validates `source`, then writes its PCM beside the store.
+pub(crate) fn stage_audio(package: &Path, source: &Path) -> Result<StagedAudio, PackageError> {
     let decoded = decode_file(source, &|| true)?;
     let bytes = encode_pcm(
         decoded.sample_rate,
@@ -57,16 +77,53 @@ pub fn import_audio(package: &Path, source: &Path) -> Result<StoredAudio, Packag
         decoded.frames,
         &decoded.samples,
     )?;
-    ensure_store_gitignore(package)?;
-    let hash = write_object(package, &bytes)?;
-    remember_name(package, &hash, source, &decoded)?;
-    let _ = crate::peaks::cache_peaks(package, &hash);
-    Ok(StoredAudio {
-        hash,
+    let stored = StoredAudio {
+        hash: String::new(),
         sample_rate: decoded.sample_rate,
         channels: decoded.channels,
         frames: decoded.frames,
+    };
+    drop(decoded);
+    ensure_store_gitignore(package)?;
+    let object = stage_object(package, &bytes)?;
+    Ok(StagedAudio {
+        stored: StoredAudio {
+            hash: object.hash().to_string(),
+            ..stored
+        },
+        object,
+        source: source.to_path_buf(),
     })
+}
+
+impl StagedAudio {
+    pub(crate) fn stored(&self) -> &StoredAudio {
+        &self.stored
+    }
+
+    /// Names the object, records the source name, and caches peaks. A failed
+    /// index write takes back a name this call created.
+    pub(crate) fn publish(self, package: &Path) -> Result<PublishedAudio, PackageError> {
+        let object = self.object.publish(package)?;
+        if let Err(error) = remember_name(package, object.hash(), &self.source, &self.stored) {
+            object.withdraw();
+            return Err(error);
+        }
+        let _ = crate::peaks::cache_peaks(package, object.hash());
+        Ok(PublishedAudio(object))
+    }
+}
+
+/// A published import. The edit that names it is not durable yet.
+pub(crate) struct PublishedAudio(crate::objects::PublishedObject);
+
+impl PublishedAudio {
+    /// Removes an object this import created, for an edit whose journal line
+    /// was not written. The index entry and peaks stay: both are rebuilt or
+    /// ignored without the object.
+    pub(crate) fn withdraw(self) {
+        self.0.withdraw();
+    }
 }
 
 /// Reads a blob written by [`import_audio`].
@@ -454,7 +511,7 @@ fn remember_name(
     package: &Path,
     hash: &str,
     source: &Path,
-    audio: &DecodedPcm,
+    audio: &StoredAudio,
 ) -> Result<(), PackageError> {
     let directory = package.join("media");
     let owned = crate::package_io::Directory::open(package)

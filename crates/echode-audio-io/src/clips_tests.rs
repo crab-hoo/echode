@@ -639,14 +639,18 @@ fn a_negative_offset_is_silence_until_the_media_origin() {
         .unwrap();
     assert!(project.tracks()[0].clips[0].offset.get() < 0);
     let loaded = load_placed_clips(&fixture.0, &project, rate).unwrap();
-    assert_eq!(loaded[0].samples[0], 0.0);
-    assert!((loaded[0].samples[48_000] - 0.5).abs() < 1.0e-3);
+    assert_eq!(loaded[0].left_at(0), 0.0);
+    assert!((loaded[0].left_at(48_000) - 0.5).abs() < 1.0e-3);
+    // The silent lead is read from a window, not stored as zeros.
+    assert_eq!(loaded[0].samples.len(), 48_000);
+    assert_eq!(loaded[0].played().lead, -48_000);
 }
 
 /// PCM bytes the prepared media keeps, counting each shared plane once.
 fn resident_bytes(prepared: &PreparedMedia) -> usize {
     let mut seen: Vec<Arc<[f32]>> = Vec::new();
-    for planes in prepared.sources.values().chain(prepared.windows.values()) {
+    let windows = prepared.windows.values().map(|window| &window.planes);
+    for planes in prepared.sources.values().chain(windows) {
         for plane in std::iter::once(&planes.left).chain(planes.right.as_ref()) {
             if !seen.iter().any(|kept| Arc::ptr_eq(kept, plane)) {
                 seen.push(Arc::clone(plane));
@@ -659,10 +663,9 @@ fn resident_bytes(prepared: &PreparedMedia) -> usize {
 }
 
 /// EXT-01 (docs/reviews/2026-11-06-assessment-review.md): every distinct trim
-/// of one source keeps its own copy of the PCM, so long overlapping trims of a
-/// long take multiply its memory. One shared copy of the source would do.
+/// of one source kept its own copy of the PCM, so long overlapping trims of a
+/// long take multiplied its memory. They now read windows of one shared copy.
 #[test]
-#[ignore = "EXT-01: each trim of one source copies its PCM"]
 fn audit_ext01_long_trims_of_one_source_hold_one_copy_of_its_pcm() {
     let fixture =
         Fixture(std::env::temp_dir().join(format!("echode-trim-copies-{}", Id::generate().raw())));

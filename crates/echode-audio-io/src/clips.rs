@@ -6,13 +6,18 @@
 //! render uses the same clips.
 //! The live loader retains one preparation across loop and transport changes,
 //! so every loop head is resident before its plan can be adopted.
+//!
+//! Each source keeps at most one copy of its device-rate PCM. Short trims copy
+//! only the frames they play and release the decoded file (M27-03). When the
+//! distinct trims of a source add up to at least the source itself, every
+//! placement reads a window of one shared copy instead (EXT-01).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use echode_engine::{
-    ClipLoader, LoadedClip, MediaInputs, PlaybackError, resample_into, tick_to_sample,
+    ClipLoader, ClipWindow, LoadedClip, MediaInputs, PlaybackError, resample_into, tick_to_sample,
 };
 use echode_history::{DecodedPcm, read_pcm};
 use echode_model::{AudioRef, Project, Tick, clip_gain_allowed, fade_frames, placement_media_lead};
@@ -35,8 +40,9 @@ impl MediaKey {
 struct PreparedMedia {
     key: MediaKey,
     clips: Vec<LoadedClip>,
+    /// Whole-source planes that windows of a shared source read.
     sources: HashMap<SourceKey, Planes>,
-    windows: HashMap<WindowKey, Planes>,
+    windows: HashMap<WindowKey, Window>,
     #[cfg(test)]
     peak_sources: usize,
 }
@@ -65,6 +71,18 @@ impl Planes {
     }
 }
 
+/// The planes one placement shape reads.
+#[derive(Clone)]
+struct Window {
+    /// The shared source, or a copy of just the frames played.
+    planes: Planes,
+    /// Where the placement reads a shared source. `None` plays all of `planes`.
+    view: Option<ClipWindow>,
+    /// The peak of the frames played, so a gain is judged by what it scales.
+    peak: f32,
+    shared: bool,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct SourceKey {
     hash: String,
@@ -91,20 +109,116 @@ fn source_key(audio: &AudioRef, rate: u32) -> SourceKey {
     }
 }
 
-fn finish_source(
-    key: &SourceKey,
-    remaining: &mut HashMap<SourceKey, usize>,
-    sources: &mut HashMap<SourceKey, Planes>,
-    published: &HashSet<SourceKey>,
-) -> Result<(), PlaybackError> {
-    let count = remaining.get_mut(key).ok_or(PlaybackError::Media)?;
-    *count = count.checked_sub(1).ok_or(PlaybackError::Media)?;
-    // Release temporary whole-file storage at its last placement, rather than
-    // accumulating it across unrelated short trims. Published planes stay owned.
-    if *count == 0 && !published.contains(key) {
-        sources.remove(key);
+/// One audio placement with a nonzero window, in project order.
+struct Placed<'a> {
+    track: u128,
+    audio: &'a AudioRef,
+    window: WindowKey,
+    start: i64,
+    gain: f32,
+    fade_in: u32,
+    fade_out: u32,
+}
+
+fn placed_audio<'a>(project: &'a Project, rate: u32) -> Result<Vec<Placed<'a>>, PlaybackError> {
+    let mut placed = Vec::new();
+    for track in project.tracks() {
+        for placement in &track.clips {
+            let Some(audio) = project
+                .content(placement.content)
+                .and_then(|content| content.audio.as_ref())
+            else {
+                continue;
+            };
+            let gain = placement.gain;
+            if !clip_gain_allowed(gain) {
+                return Err(PlaybackError::Media);
+            }
+            if !matches!(audio.channels, 1 | 2) {
+                return Err(PlaybackError::Unsupported(
+                    "audio placement requires a mono or stereo layout".into(),
+                ));
+            }
+            let start = tick_to_sample(placement.start, project.tempo(), rate)
+                .ok_or(PlaybackError::Time)?;
+            let end_tick = placement
+                .start
+                .get()
+                .checked_add(placement.length.get())
+                .ok_or(PlaybackError::Time)?;
+            let end = tick_to_sample(Tick::new(end_tick), project.tempo(), rate)
+                .ok_or(PlaybackError::Time)?;
+            let frames = end.checked_sub(start).ok_or(PlaybackError::Time)?;
+            let frames = usize::try_from(frames).map_err(|_| PlaybackError::Time)?;
+            if frames == 0 {
+                continue;
+            }
+            // Content position 0 is anchored at start - offset. The skipped
+            // media is that interval's duration, not the interval after start.
+            let lead = placement_media_lead(
+                placement.start.get(),
+                placement.offset.get(),
+                project.tempo(),
+                rate,
+            )
+            .ok_or(PlaybackError::Time)?;
+            placed.push(Placed {
+                track: track.id.raw(),
+                audio,
+                window: WindowKey {
+                    source: source_key(audio, rate),
+                    lead,
+                    frames,
+                },
+                start,
+                gain,
+                fade_in: fade_frames(placement.fade_in, rate).ok_or(PlaybackError::Time)?,
+                fade_out: fade_frames(placement.fade_out, rate).ok_or(PlaybackError::Time)?,
+            });
+        }
     }
-    Ok(())
+    Ok(placed)
+}
+
+/// Sources whose distinct windows would copy at least the source's own
+/// length. Those keep one copy and every placement reads a window of it.
+fn shared_sources(placed: &[Placed<'_>]) -> Result<HashSet<SourceKey>, PlaybackError> {
+    let mut copied = HashMap::<&SourceKey, u128>::new();
+    let mut seen = HashSet::<&WindowKey>::new();
+    for placement in placed {
+        if seen.insert(&placement.window) {
+            *copied.entry(&placement.window.source).or_default() += placement.window.frames as u128;
+        }
+    }
+    let mut shared = HashSet::new();
+    for (source, frames) in copied {
+        let file = usize::try_from(source.frames).map_err(|_| PlaybackError::Time)?;
+        let own = device_frames(file, source.file_rate, source.rate)?;
+        if frames >= own as u128 {
+            shared.insert(source.clone());
+        }
+    }
+    Ok(shared)
+}
+
+/// The largest magnitude among the frames `window` plays; silence outside
+/// the plane adds nothing.
+fn window_peak(planes: &Planes, window: ClipWindow) -> f32 {
+    let len = planes.left.len();
+    let from = usize::try_from(window.lead.max(0))
+        .unwrap_or(usize::MAX)
+        .min(len);
+    let to = i64::try_from(window.frames)
+        .ok()
+        .and_then(|frames| window.lead.checked_add(frames))
+        .map_or(len, |end| {
+            usize::try_from(end.max(0)).unwrap_or(usize::MAX).min(len)
+        })
+        .max(from);
+    std::iter::once(&planes.left)
+        .chain(planes.right.as_ref())
+        .flat_map(|plane| plane[from..to].iter())
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
 }
 
 pub(crate) fn media_loader(package: PathBuf) -> ClipLoader {
@@ -145,128 +259,96 @@ fn prepare_media(
     if device_rate == 0 {
         return Err(PlaybackError::InvalidSampleRate);
     }
-    let mut loaded = Vec::new();
-    let mut sources = HashMap::<SourceKey, Planes>::new();
-    let mut windows = HashMap::<WindowKey, Planes>::new();
-    let mut remaining = HashMap::<SourceKey, usize>::new();
-    let mut published = HashSet::new();
-    for track in project.tracks() {
-        for placement in &track.clips {
-            if let Some(audio) = project
-                .content(placement.content)
-                .and_then(|content| content.audio.as_ref())
-            {
-                *remaining.entry(source_key(audio, device_rate)).or_default() += 1;
-            }
-        }
+    let placed = placed_audio(project, device_rate)?;
+    let shared = shared_sources(&placed)?;
+    let mut remaining = HashMap::<&SourceKey, usize>::new();
+    for placement in &placed {
+        *remaining.entry(&placement.window.source).or_default() += 1;
     }
+    let mut loaded = Vec::with_capacity(placed.len());
+    let mut sources = HashMap::<SourceKey, Planes>::new();
+    let mut windows = HashMap::<WindowKey, Window>::new();
     #[cfg(test)]
     let mut peak_sources = 0;
-    for track in project.tracks() {
-        for placement in &track.clips {
-            let Some(content) = project.content(placement.content) else {
-                continue;
-            };
-            let Some(audio) = content.audio.as_ref() else {
-                continue;
-            };
-            let source_key = source_key(audio, device_rate);
-            let gain = placement.gain;
-            if !clip_gain_allowed(gain) {
-                return Err(PlaybackError::Media);
-            }
-            if !matches!(audio.channels, 1 | 2) {
-                return Err(PlaybackError::Unsupported(
-                    "audio placement requires a mono or stereo layout".into(),
-                ));
-            }
-            let start = tick_to_sample(placement.start, project.tempo(), device_rate)
-                .ok_or(PlaybackError::Time)?;
-            let end_tick = placement
-                .start
-                .get()
-                .checked_add(placement.length.get())
-                .ok_or(PlaybackError::Time)?;
-            let end = tick_to_sample(Tick::new(end_tick), project.tempo(), device_rate)
-                .ok_or(PlaybackError::Time)?;
-            let window = end.checked_sub(start).ok_or(PlaybackError::Time)?;
-            let window = usize::try_from(window).map_err(|_| PlaybackError::Time)?;
-            if window == 0 {
-                finish_source(&source_key, &mut remaining, &mut sources, &published)?;
-                continue;
-            }
-            // Content position 0 is anchored at start - offset. The skipped
-            // media is that interval's duration, not the interval after start.
-            let lead = placement_media_lead(
-                placement.start.get(),
-                placement.offset.get(),
-                project.tempo(),
-                device_rate,
-            )
-            .ok_or(PlaybackError::Time)?;
-            if let Some(kept) = previous.and_then(|p| p.sources.get(&source_key)) {
-                sources
-                    .entry(source_key.clone())
-                    .or_insert_with(|| kept.clone());
-            }
-            let window_key = WindowKey {
-                source: source_key.clone(),
-                lead,
-                frames: window,
-            };
-            let planes = if let Some(planes) = windows.get(&window_key) {
-                planes.clone()
-            } else {
-                let planes = if let Some(kept) = previous.and_then(|p| p.windows.get(&window_key)) {
-                    kept.clone()
-                } else {
-                    if !sources.contains_key(&source_key) {
-                        sources.insert(
-                            source_key.clone(),
-                            source_planes(package, audio, device_rate)?,
-                        );
-                        #[cfg(test)]
-                        {
-                            peak_sources = peak_sources.max(sources.len());
-                        }
-                    }
-                    let source = sources.get(&source_key).ok_or(PlaybackError::Media)?;
-                    if lead == 0 && source.left.len() == window {
-                        source.clone()
-                    } else {
-                        Planes::new(
-                            placed_plane(&source.left, lead, window)?,
-                            source
-                                .right
-                                .as_ref()
-                                .map(|plane| placed_plane(plane, lead, window))
-                                .transpose()?,
-                        )?
-                    }
-                };
-                windows.insert(window_key, planes.clone());
-                planes
-            };
-            if !(planes.peak * gain).is_finite() {
-                return Err(PlaybackError::Media);
-            }
-            if sources
-                .get(&source_key)
-                .is_some_and(|source| Arc::ptr_eq(&source.left, &planes.left))
+    for placement in &placed {
+        let key = &placement.window;
+        let is_shared = shared.contains(&key.source);
+        if let Some(kept) = previous.and_then(|p| p.sources.get(&key.source)) {
+            sources
+                .entry(key.source.clone())
+                .or_insert_with(|| kept.clone());
+        }
+        let window = if let Some(window) = windows.get(key) {
+            window.clone()
+        } else {
+            // A window of the other kind would hold a second copy of the source.
+            let window = if let Some(kept) = previous
+                .and_then(|p| p.windows.get(key))
+                .filter(|kept| kept.shared == is_shared)
             {
-                published.insert(source_key.clone());
-            }
-            loaded.push(LoadedClip {
-                track: track.id.raw(),
-                start_sample: start,
-                samples: planes.left,
-                right: planes.right,
-                gain,
-                fade_in: fade_frames(placement.fade_in, device_rate).ok_or(PlaybackError::Time)?,
-                fade_out: fade_frames(placement.fade_out, device_rate)
-                    .ok_or(PlaybackError::Time)?,
-            });
-            finish_source(&source_key, &mut remaining, &mut sources, &published)?;
+                kept.clone()
+            } else {
+                if !sources.contains_key(&key.source) {
+                    sources.insert(
+                        key.source.clone(),
+                        source_planes(package, placement.audio, device_rate)?,
+                    );
+                    #[cfg(test)]
+                    {
+                        peak_sources = peak_sources.max(sources.len());
+                    }
+                }
+                let source = sources.get(&key.source).ok_or(PlaybackError::Media)?;
+                if is_shared {
+                    let view = ClipWindow {
+                        lead: key.lead,
+                        frames: key.frames,
+                    };
+                    Window {
+                        peak: window_peak(source, view),
+                        planes: source.clone(),
+                        view: (key.lead != 0 || key.frames != source.left.len()).then_some(view),
+                        shared: true,
+                    }
+                } else {
+                    let planes = Planes::new(
+                        placed_plane(&source.left, key.lead, key.frames)?,
+                        source
+                            .right
+                            .as_ref()
+                            .map(|plane| placed_plane(plane, key.lead, key.frames))
+                            .transpose()?,
+                    )?;
+                    Window {
+                        peak: planes.peak,
+                        planes,
+                        view: None,
+                        shared: false,
+                    }
+                }
+            };
+            windows.insert(key.clone(), window.clone());
+            window
+        };
+        if !(window.peak * placement.gain).is_finite() {
+            return Err(PlaybackError::Media);
+        }
+        loaded.push(LoadedClip {
+            track: placement.track,
+            start_sample: placement.start,
+            samples: window.planes.left,
+            right: window.planes.right,
+            window: window.view,
+            gain: placement.gain,
+            fade_in: placement.fade_in,
+            fade_out: placement.fade_out,
+        });
+        let count = remaining.get_mut(&key.source).ok_or(PlaybackError::Media)?;
+        *count = count.checked_sub(1).ok_or(PlaybackError::Media)?;
+        // Release a copied source's whole-file planes at its last placement,
+        // rather than accumulating them across unrelated short trims.
+        if *count == 0 && !is_shared {
+            sources.remove(&key.source);
         }
     }
     Ok(PreparedMedia {

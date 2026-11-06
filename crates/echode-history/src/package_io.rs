@@ -178,6 +178,22 @@ impl Directory {
     }
 
     pub(crate) fn write_atomic(&self, name: &str, bytes: &[u8], sync: bool) -> io::Result<()> {
+        let temporary = self.write_temporary(name, bytes, sync)?;
+        let result = self.rename_into(&temporary, name);
+        if result.is_err() {
+            let _ = self.remove(&temporary);
+        }
+        result
+    }
+
+    /// Writes `bytes` to a new temporary entry beside `name` and returns the
+    /// entry's name. `name` itself is untouched until [`Self::rename_into`].
+    pub(crate) fn write_temporary(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        sync: bool,
+    ) -> io::Result<String> {
         self.has_file(name)?;
         let legacy = format!("{name}.tmp");
         // Remove an old regular temporary entry without truncating a possible hard link.
@@ -189,7 +205,6 @@ impl Directory {
             TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         );
         let temporary = entry_name(temporary_name.as_ref())?;
-        let destination = entry_name(name.as_ref())?;
         // SAFETY: O_EXCL creates a new inode and rejects any racing file or link.
         let mut file = owned_file(unsafe {
             libc::openat(
@@ -204,24 +219,34 @@ impl Directory {
             if sync {
                 file.sync_all()?;
             }
-            // SAFETY: both names are single components relative to the retained parent.
-            if unsafe {
-                libc::renameat(
-                    self.0.as_raw_fd(),
-                    temporary.as_ptr(),
-                    self.0.as_raw_fd(),
-                    destination.as_ptr(),
-                )
-            } != 0
-            {
-                return Err(io::Error::last_os_error());
-            }
             Ok(())
         })();
-        if result.is_err() {
-            let _ = self.remove(&temporary_name);
+        match result {
+            Ok(()) => Ok(temporary_name),
+            Err(error) => {
+                let _ = self.remove(&temporary_name);
+                Err(error)
+            }
         }
-        result
+    }
+
+    /// Renames the entry `temporary` over `name` in this directory.
+    pub(crate) fn rename_into(&self, temporary: &str, name: &str) -> io::Result<()> {
+        let temporary = entry_name(temporary.as_ref())?;
+        let destination = entry_name(name.as_ref())?;
+        // SAFETY: both names are single components relative to the retained parent.
+        if unsafe {
+            libc::renameat(
+                self.0.as_raw_fd(),
+                temporary.as_ptr(),
+                self.0.as_raw_fd(),
+                destination.as_ptr(),
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     pub(crate) fn sync(&self) -> io::Result<()> {

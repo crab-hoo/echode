@@ -521,3 +521,130 @@ fn a_captured_plugin_state_keeps_redo_and_does_not_add_an_undo_step() {
     let _ = std::fs::remove_dir_all(directory);
     assert_eq!(clap(&project).state, saved);
 }
+
+/// Writes one second of mono float WAV at 8 kHz; the length only has to make
+/// a real object, not exercise a decoder boundary.
+fn write_wav(path: &std::path::Path, value: f32) {
+    const RATE: u32 = 8_000;
+    let data = RATE * 4;
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend_from_slice(&(36 + data).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&3u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&RATE.to_le_bytes());
+    bytes.extend_from_slice(&(RATE * 4).to_le_bytes());
+    bytes.extend_from_slice(&4u16.to_le_bytes());
+    bytes.extend_from_slice(&32u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data.to_le_bytes());
+    for _ in 0..RATE {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// Every entry in `media/objects`, temporaries included.
+fn object_entries(directory: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(directory.join("media").join("objects"))
+        .map(|entries| {
+            entries
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// EXT-02: an import's object is named only with an accepted edit. A journal
+/// line that cleanly failed takes the new object back; one whose durability is
+/// unknown keeps it, because reopening replays that line.
+#[test]
+fn an_import_keeps_its_object_only_while_its_journal_line_can_name_it() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let first = directory.with_extension("first.wav");
+    let second = directory.with_extension("second.wav");
+    write_wav(&first, 0.25);
+    write_wav(&second, 0.5);
+    let host = DocumentHost::open(&directory).unwrap();
+    for name in ["a", "b", "c"] {
+        host.perform(Command::AddTrack { name: name.into() })
+            .unwrap();
+    }
+    let tracks: Vec<_> = host
+        .snapshot()
+        .tracks()
+        .iter()
+        .map(|track| track.id)
+        .collect();
+    let track = tracks[0];
+    // Each import goes to its own track, so no placement overlaps and every
+    // failure below comes from the injected journal fault.
+    let import_to = |track: echode_model::Id, path: &std::path::Path| serde_json::json!({"type": "audio.import", "track": track, "start": 0, "path": path});
+    let import = |path: &std::path::Path| import_to(track, path);
+    for fault in [JournalFault::BeforeWrite, JournalFault::Sync] {
+        crate::document::fail_next_journal(host.directory(), fault);
+        assert!(host.apply(vec![import(&first)]).is_err(), "{fault:?}");
+        crate::document::fail_next_journal(host.directory(), fault);
+        assert!(
+            host.perform(Command::ImportAudio {
+                track,
+                start: echode_model::Tick::new(0),
+                path: first.to_string_lossy().into_owned(),
+            })
+            .is_err(),
+            "{fault:?}"
+        );
+        assert_eq!(
+            object_entries(&directory),
+            Vec::<String>::new(),
+            "{fault:?}"
+        );
+    }
+    host.apply(vec![import(&first)]).unwrap();
+    let kept = object_entries(&directory);
+    assert_eq!(kept.len(), 1);
+    // A failed edit must not take back an object an accepted edit uses.
+    crate::document::fail_next_journal(host.directory(), JournalFault::BeforeWrite);
+    let failed = host.apply(vec![
+        import_to(tracks[1], &first),
+        import_to(tracks[2], &second),
+    ]);
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("journal write failed")
+    );
+    assert_eq!(object_entries(&directory), kept);
+    crate::document::fail_next_journal(host.directory(), JournalFault::Uncertain);
+    let failed = host.apply(vec![import_to(tracks[1], &second)]);
+    assert!(
+        failed
+            .unwrap_err()
+            .to_string()
+            .contains("journal durability is unknown")
+    );
+    let landed = object_entries(&directory);
+    assert_eq!(landed.len(), 2);
+    drop(host);
+    let again = DocumentHost::open(&directory).unwrap();
+    let clips: usize = again
+        .snapshot()
+        .tracks()
+        .iter()
+        .map(|track| track.clips.len())
+        .sum();
+    drop(again);
+    let readable = landed
+        .iter()
+        .all(|hash| crate::read_pcm(&directory, hash).is_ok());
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_file(&first);
+    let _ = std::fs::remove_file(&second);
+    assert_eq!(clips, 2, "the uncertain line is replayed on reopening");
+    assert!(readable, "every replayed clip names a stored object");
+}

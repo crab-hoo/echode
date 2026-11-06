@@ -49,9 +49,17 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 ### クリップゲインの変更で素材の準備に失敗する
 
 保存済み PCM 自体の有限性と、窓のピークにゲインを掛けた結果の桁あふれを区別する。
-`clips.rs` の `Planes::peak` は未スケールの左右の最大絶対値で、ゲイン変更時には PCM 全体を走査し直さない。
+`clips.rs` の `Window::peak` は配置が読むフレームの未スケールの左右の最大絶対値で、ゲイン変更時には PCM 全体を走査し直さない。
 `cached_window_peaks_reject_gain_overflow_without_rereading_pcm` は、極大値を含む窓の拒否、失敗後の準備の保持、極大値がトリム外の場合の受入を確認する。
 ゲインとモノの昇格を二重に掛けた疑いは `tests/block_size/clip_gain.rs` の焼込みとの比較で調べる（[ADR 0241](../decisions/0241-unscaled-placement-pcm.md)）。
+
+### 同じ素材の長いトリムを並べるとメモリが素材の何倍にも増える
+
+素材ごとの常駐は、素材と異なる窓の和の小さい方までである（[ADR 0273](../decisions/0273-shared-source-clip-windows.md)）。
+`LoadedClip::window` が `Some` の配置は共有の面を読み、`None` の配置は複写した窓か面の全体を読む。
+窓の和が素材以上なのに `None` の複写が並ぶなら、`shared_sources` の判定か、前回の窓の種類の照合を調べる。
+`clips::tests::audit_ext01_*` は面の `Arc` を 1 回ずつ数えて、素材 1 つ分を超えないことを確かめる。
+準備中は素材の全体を復号・変換するので、その一時的な増加は別であり、逐次読込みは未実装である。
 
 ### 波形が消える・キャッシュ破損後に表示が変わる
 
@@ -77,6 +85,8 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 
 `make spike-scale` でノート数を変えた折り返しと、100 / 3,500 ブロック後の採用を比べる（[ADR 0239](../decisions/0239-live-note-cursor-work.md)）。
 `wrap_p50_us` と `adoption_p50_us` は音声側、`replace_p50_ms` は制御側であり、混ぜない。
+1 トラックの編集で `replace_p50_ms` がノート総数に比例して増えるなら、使い回しが外れている（[ADR 0274](../decisions/0274-reused-track-plans.md)）。
+`PlaybackIds` の `planned_notes` と `derived_notes`（テストだけの欄）で、その編集が計画・派生したノート数を数え、`Arc` の同一性かテンポ・レートの変化を調べる。
 時間に依らない訪問数は `echode-realtime` の `cursor_tests` で確認する。
 プラグインありは `make spike-plugin-tracks` の `plugin-loop` / `plugin-edits` の CPU と実時間の最大値を見る。
 この計測は機器なし・期限 1 秒なので、実機の締め切り内という証拠にはしない（UC-47）。
@@ -89,7 +99,7 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 和音の増加や短いループの周回で増えることは正常で、共有領域は同じヘルパーの寿命では縮めない。
 計画の親バッファには、直前の公開計画の声を解放するための一時的な余地も含まれる。
 通常の境界は `playback_capacity_tests`、共有領域の密度・拡張・一括削除は `hosted_playback` の `event_capacity` を使う。
-`make spike-scale` の `reserved_events` と `replace_p50_ms` は別の問題であり、容量減少を全体の作り直しの解消と扱わない。
+`make spike-scale` の `reserved_events` と `replace_p50_ms` は別の問題であり、容量の減少を計画の使い回しの効果と扱わない。
 編集を繰り返した後の親の ID 表は `plan_tests::audit_fca19` で確認する。
 現在の計画から消えた対応は解放するが、ヘルパーの予約容量・保持中の旧計画・Undo とジャーナルは別の寿命を持つ（[ADR 0267](../decisions/0267-current-playback-id-mappings.md)）。
 

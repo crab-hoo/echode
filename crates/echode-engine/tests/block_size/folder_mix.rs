@@ -47,6 +47,7 @@ fn clips(ids: [Id; 5], frames: usize) -> Vec<LoadedClip> {
             start_sample: 0,
             samples: vec![level; frames].into(),
             right: Some(vec![-level / 2.0; frames].into()),
+            window: None,
             gain: 1.0,
             fade_in: 0,
             fade_out: 0,

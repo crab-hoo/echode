@@ -454,6 +454,12 @@ impl Project {
         content_index(&self.contents, id).map(|index| self.contents[index].as_ref())
     }
 
+    /// The shared content `id`. A caller that keeps the `Arc` can reuse work
+    /// derived from it while a later snapshot still holds the same one.
+    pub fn shared_content(&self, id: Id) -> Option<&Arc<Content>> {
+        content_index(&self.contents, id).map(|index| &self.contents[index])
+    }
+
     pub fn meter(&self) -> Meter {
         self.meter
     }

@@ -110,6 +110,7 @@ fn loudest(project: &Project, child: Id) -> f32 {
             start_sample: 0,
             samples: Arc::from(vec![0.5f32; RATE as usize]),
             right: None,
+            window: None,
             gain: 1.0,
             fade_in: 0,
             fade_out: 0,

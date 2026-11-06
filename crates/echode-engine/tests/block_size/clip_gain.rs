@@ -1,7 +1,7 @@
 use super::*;
 use echode_engine::{LoadedClip, PlaybackCommand, PlaybackOptions, playback};
 
-fn render(
+pub(super) fn render(
     project: &Project,
     rate: u32,
     block: usize,
@@ -41,7 +41,7 @@ fn render(
     heard
 }
 
-fn assert_samples(actual: &[(f32, f32)], expected: &[(f32, f32)], context: &str) {
+pub(super) fn assert_samples(actual: &[(f32, f32)], expected: &[(f32, f32)], context: &str) {
     assert_eq!(actual.len(), expected.len());
     for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
         assert_eq!(actual, expected, "{context}, frame {index}");
@@ -72,6 +72,7 @@ fn unscaled_clip_gain_and_mono_promotion_match_baked_pcm_under_rtsan() {
                             right: (stereo && index == 1)
                                 .then(|| samples.iter().map(|sample| -sample * 0.53).collect()),
                             samples,
+                            window: None,
                             gain,
                             fade_in: 127,
                             fade_out: 109,
@@ -100,6 +101,7 @@ fn unscaled_clip_gain_and_mono_promotion_match_baked_pcm_under_rtsan() {
                         LoadedClip {
                             samples: Arc::clone(&left),
                             right: right.or_else(|| stereo.then(|| Arc::clone(&left))),
+                            window: None,
                             gain: 1.0,
                             ..clip.clone()
                         }

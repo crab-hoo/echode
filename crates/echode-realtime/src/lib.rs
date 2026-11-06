@@ -7,6 +7,8 @@
 mod event;
 pub mod plugin_capacity;
 
+use std::sync::Arc;
+
 pub use event::{
     ChokeEvent, Event, ExpressionEvent, ExpressionKind, NoteEvent, ParamEvent, Target, Transport,
     event_cmp, sort_events,
@@ -170,6 +172,29 @@ pub struct Plan {
 
 impl Plan {
     pub fn cursor(&self) -> Cursor {
+        let indices = self
+            .tracks
+            .iter()
+            .map(|track| Arc::new(NoteIndex::new(track)))
+            .collect();
+        self.cursor_with(indices)
+            .expect("indices built from these tracks match them")
+    }
+
+    /// A cursor that reads `indices[i]` for track `i`. Each index must have
+    /// been built from notes equal to that track's, which a control thread can
+    /// ensure by reusing it only with an unchanged track plan. `None` when the
+    /// count or a note count does not match.
+    pub fn cursor_with(&self, indices: Vec<Arc<NoteIndex>>) -> Option<Cursor> {
+        if indices.len() != self.tracks.len()
+            || self
+                .tracks
+                .iter()
+                .zip(&indices)
+                .any(|(track, index)| index.notes != track.notes.len())
+        {
+            return None;
+        }
         let mut track_indices: Vec<_> = self
             .tracks
             .iter()
@@ -177,17 +202,11 @@ impl Plan {
             .map(|(index, track)| (track.track, index))
             .collect();
         track_indices.sort_unstable_by_key(|entry| entry.0);
-        Cursor {
-            tracks: self
-                .tracks
-                .iter()
-                .map(|track| {
-                    let count = track.notes.len();
-                    let mut by_id: Vec<_> = (0..count as u32).collect();
-                    by_id.sort_unstable_by_key(|index| {
-                        let note = &track.notes[*index as usize];
-                        (note.note, note.on)
-                    });
+        Some(Cursor {
+            tracks: indices
+                .into_iter()
+                .map(|index| {
+                    let count = index.notes;
                     TrackCursor {
                         on_index: 0,
                         off_index: 0,
@@ -195,13 +214,40 @@ impl Plan {
                         sounding_len: 0,
                         live_key: vec![0; count],
                         sounding_slots: vec![usize::MAX; count],
-                        by_id,
-                        ends: EndIndex::new(&track.notes),
+                        index,
                     }
                 })
                 .collect(),
             position: None,
             track_indices,
+        })
+    }
+}
+
+/// Read-only lookups a cursor derives from one track's notes.
+///
+/// Built on the control thread. Cursors of later plans share it while that
+/// track's notes are unchanged, so an edit elsewhere does not sort them again.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NoteIndex {
+    notes: usize,
+    /// Note model ID then onset. Repeated placements may share a model ID.
+    by_id: Vec<u32>,
+    ends: EndIndex,
+}
+
+impl NoteIndex {
+    pub fn new(track: &TrackPlan) -> Self {
+        let count = track.notes.len();
+        let mut by_id: Vec<_> = (0..count as u32).collect();
+        by_id.sort_unstable_by_key(|index| {
+            let note = &track.notes[*index as usize];
+            (note.note, note.on)
+        });
+        Self {
+            notes: count,
+            by_id,
+            ends: EndIndex::new(&track.notes),
         }
     }
 }
@@ -240,14 +286,14 @@ struct TrackCursor {
     live_key: Vec<u8>,
     /// Reverse index into the dense live set; a stopped note has no slot.
     sounding_slots: Vec<usize>,
-    /// Note model ID then onset. Repeated placements may share a model ID.
-    by_id: Vec<u32>,
-    ends: EndIndex,
+    /// Shared with other cursors. Retired cursors return to the control
+    /// thread, so the audio thread never drops the last reference.
+    index: Arc<NoteIndex>,
 }
 
 /// Built on the control thread. A seek visits overlapping notes, rather than
 /// every note that has ever started before the playhead.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct EndIndex {
     leaves: usize,
     maxima: Vec<i64>,
@@ -472,11 +518,11 @@ impl Cursor {
 
 impl TrackCursor {
     fn covering(&self, track: &TrackPlan, id: u128, sample: i64) -> Option<usize> {
-        let end = self.by_id.partition_point(|index| {
+        let end = self.index.by_id.partition_point(|index| {
             let note = &track.notes[*index as usize];
             (note.note, note.on) < (id, sample)
         });
-        let index = *self.by_id.get(end.checked_sub(1)?)? as usize;
+        let index = *self.index.by_id.get(end.checked_sub(1)?)? as usize;
         visit_note();
         let note = track.notes.get(index)?;
         (note.note == id && note.on < sample && note.off >= sample).then_some(index)
@@ -495,11 +541,18 @@ impl TrackCursor {
         if !chase {
             return;
         }
-        self.chase(track, sample, 1, 0, self.ends.leaves);
+        self.chase(track, sample, 1, 0, self.index.ends.leaves);
     }
 
     fn chase(&mut self, track: &TrackPlan, sample: i64, node: usize, start: usize, end: usize) {
-        if start >= self.on_index || self.ends.maxima.get(node).is_none_or(|max| *max < sample) {
+        if start >= self.on_index
+            || self
+                .index
+                .ends
+                .maxima
+                .get(node)
+                .is_none_or(|max| *max < sample)
+        {
             return;
         }
         if end - start == 1 {

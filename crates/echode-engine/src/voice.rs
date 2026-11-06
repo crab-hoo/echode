@@ -62,8 +62,27 @@ pub fn render_track(
 pub struct FadedClip<'a> {
     pub start_sample: i64,
     pub samples: &'a [f32],
+    /// Index in `samples` of the clip's first frame. Indices outside
+    /// `samples` are silence.
+    pub lead: i64,
+    /// The clip's length; the fades are measured on it.
+    pub frames: usize,
     pub fade_in: u32,
     pub fade_out: u32,
+}
+
+impl<'a> FadedClip<'a> {
+    /// A clip that plays all of `samples` from its first frame.
+    pub fn whole(start_sample: i64, samples: &'a [f32], fade_in: u32, fade_out: u32) -> Self {
+        Self {
+            start_sample,
+            samples,
+            lead: 0,
+            frames: samples.len(),
+            fade_in,
+            fade_out,
+        }
+    }
 }
 
 /// Adds clips into `output` using each clip's fade lengths.
@@ -93,9 +112,7 @@ pub(crate) fn render_scaled_faded_clips(
             .checked_add(i64::from(span.frames))
             .ok_or(PlaybackError::Time)?;
         for clip in faded_overlapping(clips, span.start_sample, end) {
-            let clip_end = clip
-                .start_sample
-                .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX));
+            let clip_end = faded_end(clip);
             let from = span.start_sample.max(clip.start_sample);
             let to = end.min(clip_end);
             let mut project = from;
@@ -127,17 +144,22 @@ fn faded_overlapping<'a>(
 
 fn faded_end(clip: &FadedClip<'_>) -> i64 {
     clip.start_sample
-        .saturating_add(i64::try_from(clip.samples.len()).unwrap_or(i64::MAX))
+        .saturating_add(i64::try_from(clip.frames).unwrap_or(i64::MAX))
 }
 
 fn faded_sample(clip: &FadedClip<'_>, project: i64, gain: f32, promotion: f32) -> f32 {
     let Some(pos) = project.checked_sub(clip.start_sample) else {
         return 0.0;
     };
-    if pos < 0 {
+    let length = i64::try_from(clip.frames).unwrap_or(i64::MAX);
+    if pos < 0 || pos >= length {
         return 0.0;
     }
-    let Some(index) = usize::try_from(pos).ok() else {
+    let Some(index) = clip
+        .lead
+        .checked_add(pos)
+        .and_then(|at| usize::try_from(at).ok())
+    else {
         return 0.0;
     };
     let Some(sample) = clip.samples.get(index).copied() else {
@@ -148,7 +170,7 @@ fn faded_sample(clip: &FadedClip<'_>, project: i64, gain: f32, promotion: f32) -
         * promotion
         * pair_gain(
             pos,
-            clip.samples.len() as i64,
+            length,
             i64::from(clip.fade_in),
             i64::from(clip.fade_out),
         )

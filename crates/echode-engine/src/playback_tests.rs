@@ -62,6 +62,7 @@ fn placed(track: u128, start: i64, value: f32, frames: usize) -> LoadedClip {
         start_sample: start,
         samples: Arc::from(vec![value; frames]),
         right: None,
+        window: None,
         gain: 1.0,
         fade_in: 0,
         fade_out: 0,
@@ -634,4 +635,52 @@ fn grouping_events_into_too_little_room_fails_instead_of_dropping_any() {
     let mut grouped = vec![Event::note_off(0, 0, 0, 0); 1];
     let mut ends = vec![0; indices.len() + 1];
     assert!(!group_events(&events, &indices, &mut grouped, &mut ends));
+}
+
+/// FCA-04 (docs/reviews/2026-11-03-full-code-audit.md): every replace rebuilt
+/// the plan, cursor lookups, and event demand of every track. An edit to one
+/// track must recompute only that track's notes, and a loop change none.
+#[test]
+fn audit_fca04_an_edit_replans_only_the_track_it_changed() {
+    use echode_model::{NoteDraft, TICKS_PER_QUARTER, Tick};
+    let draft = |index: i64| NoteDraft {
+        pitch: 60 + (index % 12) as u8,
+        velocity: 100,
+        start: Tick::new(index * TICKS_PER_QUARTER / 4),
+        length: Tick::new(TICKS_PER_QUARTER / 8),
+    };
+    // 16 tracks of 64 notes are this check's sizes, not playback limits.
+    let mut project = Project::new();
+    let mut tracks = Vec::new();
+    for index in 0..16 {
+        let (next, track) = project.add_track(format!("track {index}"));
+        project = next;
+        for note in 0..64 {
+            project = project.insert_note(track, draft(note)).unwrap().0;
+        }
+        tracks.push(track);
+    }
+    let (mut control, _audio) = playback(&project, 48_000, 64, PlaybackOptions::default()).unwrap();
+    assert_eq!(control.ids.planned_notes, 16 * 64);
+    let (edited, _) = project.insert_note(tracks[5], draft(64)).unwrap();
+    control.replace(&edited).unwrap();
+    assert_eq!(
+        control.ids.planned_notes, 65,
+        "one edited track replanned every track"
+    );
+    assert!(
+        control.ids.derived_notes <= 2 * 65,
+        "one edited track rederived {} notes",
+        control.ids.derived_notes
+    );
+    control
+        .command(PlaybackCommand::SetLoop {
+            start: 0,
+            end: 48_000,
+        })
+        .unwrap();
+    assert_eq!(
+        control.ids.planned_notes, 0,
+        "a loop change replanned the score"
+    );
 }

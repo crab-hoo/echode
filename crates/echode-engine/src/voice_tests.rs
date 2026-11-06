@@ -80,21 +80,11 @@ fn clip_edges_and_the_loop_jump_fade_over_five_milliseconds() {
     assert_eq!(output[10], 1.0);
     assert_eq!(output[15], 1.0);
     assert_eq!(output[19], 0.0);
-    let faded = FadedClip {
-        start_sample: 0,
-        samples: &ones,
-        fade_in: 5,
-        fade_out: 5,
-    };
+    let faded = FadedClip::whole(0, &ones, 5, 5);
     let mut matched = [0.0; 20];
     render_faded_clips(&[faded], &[span(0, 20, 0, None)], &mut matched).unwrap();
     assert_eq!(matched, output);
-    let full = FadedClip {
-        start_sample: 0,
-        samples: &ones,
-        fade_in: 0,
-        fade_out: 0,
-    };
+    let full = FadedClip::whole(0, &ones, 0, 0);
     let mut open = [0.0; 20];
     render_faded_clips(&[full], &[span(0, 20, 0, None)], &mut open).unwrap();
     assert_eq!(open[0], 1.0);

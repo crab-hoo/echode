@@ -53,8 +53,8 @@ pub use meter::TrackMeter;
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
 pub use playback::{
-    CachedTrack, ClipLoader, ClockSource, InternalClock, LoadedClip, MediaInputs, PlaybackAudio,
-    PlaybackCommand, PlaybackControl, PlaybackOptions, PlaybackStatus, playback,
+    CachedTrack, ClipLoader, ClipWindow, ClockSource, InternalClock, LoadedClip, MediaInputs,
+    PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions, PlaybackStatus, playback,
 };
 pub use plugin_declick::PluginDeclick;
 pub use plugins::{PluginRoute, PluginWorkgroup};

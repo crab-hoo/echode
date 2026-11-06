@@ -252,18 +252,19 @@ fn contract_audio_import_rejects_nonfinite_before_writing_and_preserves_history(
     finite_samples_roundtrip();
 }
 
+/// Objects, temporaries, the media index, and peaks.
 fn media_files(package: &Path) -> Vec<PathBuf> {
     package_files(package)
         .into_keys()
-        .filter(|path| path.starts_with("media"))
+        .filter(|path| path.starts_with("media") || path.starts_with("cache"))
         .collect()
 }
 
-/// EXT-02 (docs/reviews/2026-11-06-assessment-review.md): an import stores its
-/// media before the placement is checked, and nothing removes the object when
-/// the placement or its transaction is rejected.
+/// EXT-02 (docs/reviews/2026-11-06-assessment-review.md): an import stored its
+/// media before the placement was checked, and nothing removed the object when
+/// the placement or its transaction was rejected. Imports are now staged and
+/// published only with an accepted edit.
 #[test]
-#[ignore = "EXT-02: a rejected import leaves its media in the package"]
 fn audit_ext02_a_rejected_import_leaves_no_media_in_the_package() {
     let fixture = Fixture::new();
     let other = fixture.root.join("other.wav");
