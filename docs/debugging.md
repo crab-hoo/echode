@@ -68,6 +68,7 @@ make debug-report
 
 - エンジン・素材・波形
   - 監視の即時破棄回帰が `drop did not return within 3 s` で落ちる
+  - 原点前のテンポ点で表示と再生位置がずれる・テンポ点の数で換算が遅くなる
   - ノートの端から再生すると、その音が鳴り続ける
   - 壊れた素材を読むと `attempt to multiply with overflow` / `capacity overflow` で文書が使えなくなる
   - 保存済み素材だけが `audio contains a non-finite sample` になる

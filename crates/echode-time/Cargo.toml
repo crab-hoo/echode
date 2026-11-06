@@ -1,0 +1,11 @@
+[package]
+name = "echode-time"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Shared integer time conversion and immutable tempo index"
+
+[lints]
+workspace = true

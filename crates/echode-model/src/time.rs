@@ -2,27 +2,18 @@
 //!
 //! One quarter note is [`TICKS_PER_QUARTER`] ticks. One second is
 //! [`FLICKS_PER_SECOND`] flicks. Both divide the sample rates and tuplets the
-//! sequencer needs, so a conversion at a rational tempo rounds at most half a
-//! flick for the whole span.
+//! sequencer needs, so a rational-tempo conversion rounds at most half a flick
+//! per constant-tempo segment.
 
 use std::borrow::Cow;
 use std::fmt;
+use std::sync::Arc;
+
+pub use echode_time::{FLICKS_PER_SECOND, TICKS_PER_QUARTER};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-/// Ticks in one quarter note. `2^6 * 3^2 * 5^2 * 7^2`.
-pub const TICKS_PER_QUARTER: i64 = 705_600;
-
-/// Flicks in one second.
-pub const FLICKS_PER_SECOND: i64 = 705_600_000;
-
-/// `FLICKS_PER_SECOND * 60 / TICKS_PER_QUARTER`.
-///
-/// A span of `ticks` at `n/d` quarters per minute lasts
-/// `ticks * 60_000 * d / n` flicks.
-const FLICKS_PER_TICK_AT_ONE_BPM: i128 = 60_000;
 
 /// Musical position. Zero is the project origin. Negative values are before it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -151,17 +142,18 @@ crate::tempo_fields::tempo_fields!(define_tempo_point);
 /// starts from constant sections.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TempoMap {
-    points: Vec<TempoPoint>,
+    points: Arc<[TempoPoint]>,
+    index: echode_time::TempoIndex,
 }
 
 impl TempoMap {
     pub fn new(tempo: Tempo) -> Self {
-        Self {
-            points: vec![TempoPoint {
-                at: Tick::new(0),
-                tempo,
-            }],
-        }
+        // A single validated tempo at zero always forms a valid index.
+        Self::try_from_points(vec![TempoPoint {
+            at: Tick::new(0),
+            tempo,
+        }])
+        .expect("a validated tempo makes a valid index")
     }
 
     pub fn points(&self) -> &[TempoPoint] {
@@ -177,40 +169,45 @@ impl TempoMap {
         if points.windows(2).any(|pair| pair[0].at == pair[1].at) {
             return None;
         }
-        Some(Self { points })
+        let index = echode_time::TempoIndex::from_tempos(points.iter().map(|point| {
+            (
+                point.at.get(),
+                point.tempo.numerator(),
+                point.tempo.denominator(),
+            )
+        }))?;
+        Some(Self {
+            points: points.into(),
+            index,
+        })
     }
 
     /// Inserts or replaces the tempo that starts at `at`.
     #[must_use]
     pub fn with_tempo(&self, at: Tick, tempo: Tempo) -> Self {
-        let mut points = self.points.clone();
-        if let Some(index) = points.iter().position(|point| point.at == at) {
-            points[index].tempo = tempo;
-        } else {
-            points.push(TempoPoint { at, tempo });
-            points.sort_by_key(|point| point.at);
+        let mut points = self.points.to_vec();
+        match points.binary_search_by_key(&at, |point| point.at) {
+            Ok(index) => points[index].tempo = tempo,
+            Err(index) => points.insert(index, TempoPoint { at, tempo }),
         }
-        Self { points }
+        Self::try_from_points(points).expect("editing a validated tempo preserves the index")
     }
 
     /// Real time of a musical position.
     pub fn flicks_at(&self, tick: Tick) -> Option<Flick> {
-        let flicks = if tick.0 >= 0 {
-            integrate(self, 0, tick.0)?
-        } else {
-            -integrate(self, tick.0, 0)?
-        };
-        i64::try_from(flicks).ok().map(Flick)
+        i64::try_from(self.index.tick_to_flick(tick.0)?)
+            .ok()
+            .map(Flick)
     }
 
     /// Musical position of a real time. Exact when the forward conversion was exact.
     pub fn ticks_at(&self, flick: Flick) -> Option<Tick> {
-        let tick = if flick.0 >= 0 {
-            invert_forward(self, flick.0)?
-        } else {
-            invert_backward(self, flick.0)?
-        };
-        Some(Tick(tick))
+        self.index.flick_to_tick(i128::from(flick.0)).map(Tick)
+    }
+
+    /// Shared conversion index, also used by playback without rebuilding it.
+    pub fn index(&self) -> &echode_time::TempoIndex {
+        &self.index
     }
 }
 
@@ -269,117 +266,6 @@ fn gcd(mut left: u32, mut right: u32) -> u32 {
         (left, right) = (right, left % right);
     }
     left
-}
-
-fn div_round(numerator: i128, denominator: i128) -> Option<i128> {
-    if denominator <= 0 {
-        return None;
-    }
-    let half = denominator / 2;
-    let adjusted = if numerator >= 0 {
-        numerator.checked_add(half)?
-    } else {
-        numerator.checked_sub(half)?
-    };
-    Some(adjusted / denominator)
-}
-
-fn flicks_for_ticks(ticks: i128, tempo: Tempo) -> Option<i128> {
-    let scale = FLICKS_PER_TICK_AT_ONE_BPM.checked_mul(i128::from(tempo.denominator))?;
-    div_round(ticks.checked_mul(scale)?, i128::from(tempo.numerator))
-}
-
-fn ticks_for_flicks(flicks: i128, tempo: Tempo) -> Option<i128> {
-    let scale = FLICKS_PER_TICK_AT_ONE_BPM.checked_mul(i128::from(tempo.denominator))?;
-    div_round(flicks.checked_mul(i128::from(tempo.numerator))?, scale)
-}
-
-fn tempo_covering(map: &TempoMap, tick: i64) -> Tempo {
-    let mut tempo = map.points[0].tempo;
-    for point in &map.points {
-        if point.at.0 <= tick {
-            tempo = point.tempo;
-        } else {
-            break;
-        }
-    }
-    tempo
-}
-
-fn next_boundary(map: &TempoMap, tick: i64) -> Option<i64> {
-    map.points
-        .iter()
-        .map(|point| point.at.0)
-        .find(|&at| at > tick)
-}
-
-fn previous_boundary(map: &TempoMap, tick: i64) -> Option<i64> {
-    map.points
-        .iter()
-        .map(|point| point.at.0)
-        .rfind(|&at| at < tick)
-}
-
-/// Flicks from `from` to `to`, with `from <= to`.
-fn integrate(map: &TempoMap, from: i64, to: i64) -> Option<i128> {
-    let mut cursor = from;
-    let mut accumulated = 0i128;
-    while cursor < to {
-        let tempo = tempo_covering(map, cursor);
-        let end = next_boundary(map, cursor).unwrap_or(to).min(to);
-        let span = i128::from(end) - i128::from(cursor);
-        accumulated = accumulated.checked_add(flicks_for_ticks(span, tempo)?)?;
-        cursor = end;
-    }
-    Some(accumulated)
-}
-
-fn add_ticks(tick: i64, delta: i128) -> Option<i64> {
-    i64::try_from(i128::from(tick).checked_add(delta)?).ok()
-}
-
-fn invert_forward(map: &TempoMap, target: i64) -> Option<i64> {
-    let target = i128::from(target);
-    let mut tick = 0i64;
-    let mut flick = 0i128;
-    loop {
-        let tempo = tempo_covering(map, tick);
-        let remain = target - flick;
-        if let Some(end) = next_boundary(map, tick) {
-            let span = i128::from(end) - i128::from(tick);
-            let segment = flicks_for_ticks(span, tempo)?;
-            if flick + segment >= target {
-                return add_ticks(tick, ticks_for_flicks(remain, tempo)?);
-            }
-            flick += segment;
-            tick = end;
-        } else {
-            return add_ticks(tick, ticks_for_flicks(remain, tempo)?);
-        }
-    }
-}
-
-fn invert_backward(map: &TempoMap, target: i64) -> Option<i64> {
-    let target = i128::from(target);
-    let mut tick_end = 0i64;
-    let mut flick_end = 0i128;
-    loop {
-        let tempo = tempo_covering(map, tick_end.checked_sub(1)?);
-        if let Some(start) = previous_boundary(map, tick_end) {
-            let span = i128::from(tick_end) - i128::from(start);
-            let segment = flicks_for_ticks(span, tempo)?;
-            let flick_start = flick_end - segment;
-            if flick_start <= target {
-                let into = target - flick_start;
-                return add_ticks(start, ticks_for_flicks(into, tempo)?);
-            }
-            flick_end = flick_start;
-            tick_end = start;
-        } else {
-            let delta = flick_end - target;
-            return add_ticks(tick_end, -ticks_for_flicks(delta, tempo)?);
-        }
-    }
 }
 
 impl Serialize for Tick {
@@ -498,15 +384,7 @@ impl JsonSchema for Tempo {
 
 /// Sample index of `tick` at `sample_rate`, rounded once from the flick position.
 pub fn tick_to_sample(tick: Tick, tempo: &TempoMap, sample_rate: u32) -> Option<i64> {
-    if sample_rate == 0 {
-        return None;
-    }
-    let flicks = tempo.flicks_at(tick)?;
-    let samples = div_round(
-        i128::from(flicks.get()) * i128::from(sample_rate),
-        i128::from(FLICKS_PER_SECOND),
-    )?;
-    i64::try_from(samples).ok()
+    echode_time::flick_to_sample(i128::from(tempo.flicks_at(tick)?.get()), sample_rate)
 }
 
 /// Sample offset of timeline `tick` from content position 0 at `origin`.

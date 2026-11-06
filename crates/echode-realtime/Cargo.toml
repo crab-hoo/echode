@@ -8,6 +8,7 @@ publish = false
 description = "Playback plan the audio thread can read without the document model"
 
 [dependencies]
+echode-time = { path = "../echode-time" }
 
 [lints]
 workspace = true

@@ -868,6 +868,14 @@ class PolicyTests(unittest.TestCase):
                          "check-bridge-tsan", "check-bridge-miri", "spike-engine-smoke",
                          "spike-history", "spike-draw", "spike-bridge", "spike-render"} <= checks)
 
+    def test_shared_time_changes_keep_model_audio_and_isolation_checks_selected(self):
+        expected = self.selected("crates/echode-model/src/time.rs") | {"spike-isolation", "spike-plugin-tracks"}
+        for path in ("crates/echode-time/src/lib.rs", "crates/echode-time/src/time_tests.rs",
+                     "crates/echode-time/Cargo.toml"):
+            with self.subTest(path=path):
+                self.assertTrue(expected <= self.selected(path))
+                self.assertNotIn("spike-scale", self.selected(path))
+
     def test_startup_failure_uses_the_product_history_path_and_a_shutdown_negative_control(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "startup-recovery")
         self.assertEqual(contract["package"], "echode-history")

@@ -8,8 +8,8 @@ fn period_ticks(frames: u32, rate: u32, numer: u32, denom: u32) -> Result<u32, S
     if frames == 0 || rate == 0 || numer == 0 || denom == 0 {
         return Err("invalid device workgroup period".into());
     }
-    let ticks = u128::from(frames) * 1_000_000_000 * u128::from(denom)
-        / (u128::from(rate) * u128::from(numer));
+    let ticks = echode_time::block_period_ticks(frames, u128::from(rate), numer, denom)
+        .ok_or_else(|| "device workgroup period is out of range".to_string())?;
     u32::try_from(ticks)
         .ok()
         .filter(|ticks| *ticks > 0)

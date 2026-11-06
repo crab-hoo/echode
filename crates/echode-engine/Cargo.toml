@@ -8,6 +8,7 @@ publish = false
 description = "Realtime audio graph, transport, and MIDI playback"
 
 [dependencies]
+echode-time = { path = "../echode-time" }
 echode-dsp = { path = "../echode-dsp" }
 dasp_interpolate = { version = "=0.11.0", features = ["floor", "linear", "sinc"] }
 dasp_ring_buffer = "=0.11.0"

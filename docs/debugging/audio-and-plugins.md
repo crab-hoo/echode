@@ -5,6 +5,17 @@
 
 ## エンジン・素材・波形
 
+### 原点前のテンポ点で表示と再生位置がずれる・テンポ点の数で換算が遅くなる
+
+保存したテンポ点の整数 tick と分数、出力サンプルレート、問題の tick / sample を記録する。
+`TempoMap::flicks_at` / `ticks_at` と、同じ `TempoMap::index` のサンプル換算を比べる。
+原点が入力にない場合も時刻ゼロは tick ゼロである。負の部分区間は右端からの積分で丸めるので、左端との差だけで計算し直さない。
+`echode-time` の `indexed_conversions_preserve_the_pre_index_model_rounding` は旧モデルの独立計算、
+`conversions_search_logarithmically_and_clones_share_the_index` は訪問数と共有を検査する。
+製品の照合は engine の `audit_fca13_playback_and_model_agree_before_and_after_zero` と `block_size/tempo.rs` を使う。
+モデルの flick は i64、再生索引の内部積分は i128 のため、i64 を超えた位置の拒否と、通常位置の換算不一致を分ける。
+保存形式・診断の収集先は変わらない。遅い場合は索引構築と問合せを分け、音声コールバックに構築・確保を移さない。
+
 ### 監視の即時破棄回帰が `drop did not return within 3 s` で落ちる
 
 2026-11-02 の W1〜W4 の検査で、`make verify` の `check` がこのテストだけで 8 回落ちた。

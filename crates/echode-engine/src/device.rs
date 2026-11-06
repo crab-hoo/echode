@@ -76,7 +76,13 @@ impl IoWorkgroup {
         let numer = u128::from(timebase.numer.max(1));
         let denom = u128::from(timebase.denom.max(1));
         let rate = sample_rate.round().max(1.0) as u128;
-        let ticks = (u128::from(frames) * 1_000_000_000 * denom) / (rate * numer);
+        let ticks = echode_time::block_period_ticks(
+            frames,
+            rate,
+            timebase.numer.max(1),
+            timebase.denom.max(1),
+        )
+        .unwrap_or(u128::MAX);
         let period_ticks = u32::try_from(ticks).unwrap_or(u32::MAX).max(1);
         let period_ns = (u128::from(period_ticks) * numer / denom) as u64;
         Ok(Self {

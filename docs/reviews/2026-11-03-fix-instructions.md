@@ -113,6 +113,7 @@ PDC と log・thread-check 等は残り、実画面と第三者の報告値は U
   `scripts/check-ffi.sh` を関数名の単位にする時は、検査のスクリプトの変更として全自動検査が選ばれる。
   2026-11-05: [ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md) で対応した。CoreAudio の型と機器 API も objc2 へ移し、未提供の既存宣言だけを個別許可する。
 - FCA-13: 時間の換算を依存のない 1 つの crate にまとめる。丸めの結果が変わらないことを、既存の時間のテストと `block_size.rs` で確かめる。
+  2026-11-06: [ADR 0275](../decisions/0275-shared-integer-tempo-index.md) で丸め・単位・積分索引・ブロック期間を共通化し、モデルから再生へ索引を共有した。原点前の不一致も回帰で固定した。
 - FCA-14: `repair_journal` は末尾だけを読む。続く編集のまとめ書きは確定の意味に触れるので、ADR とユーザーの確認を先にする。
   2026-11-03: 末尾確認は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で対応した。編集ごとの同期は維持し、まとめ書きは行わない。
 - FCA-15: Sine Pad の DSP を Sine Pad の crate か小さな DSP の crate へ移し、`TestSynth` の名前を直す。Sine Pad の状態と音は変えない。

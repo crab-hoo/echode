@@ -1,9 +1,9 @@
 # 現在の範囲と制約
 
 更新: 2026-11-06。
-利用者に残る制約と未確認・未接続だけを置く。合格証ではない。
-合否は `make verify` の結果、実操作は日付付きの監査記録で確認する。
-ユーザーの確認待ちは `UC-番号` で示し、内容と手順は [ユーザー確認の一覧](user-checks.md) にある。
+制約と未確認・未接続を置く。合格証ではない。
+合否は `make verify`、実操作は日付付きの監査記録で確認する。
+実機等の確認待ちは [ユーザー確認の一覧](user-checks.md) の UC-番号で示す。
 
 対象は macOS 27 以降、M4 ファミリー以降の Apple Silicon である（[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)）。
 起動時のチップ名による機種判定と SME 最適化は未実装で、実機性能の改善量は未確認である。
@@ -18,8 +18,8 @@
   - **P2-06（ミックス）**: 先行分だけを接続した。コンソール表示は未接続（[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
   - **P2-07（マーカー・録音・ピアノロール）**: 着手中。
     複数トラックの同時編集・試聴・ドラム入力は未接続（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)、[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
-- **監査記録**: 2026-10-08 の設計・計測の未着手項目は [元の一覧](reviews/2026-10-08-audit.md) が正本である。
-  後続の監査で指摘がなかったことを理由に完了へ変えない。
+- **監査記録**: 2026-10-08 の未着手項目は [元の一覧](reviews/2026-10-08-audit.md) が正本。
+  後続の監査で指摘がなくても完了にはしない。
 
 ## 利用時に残る制約
 
@@ -57,6 +57,7 @@
 
 ### 音声・再生・トランスポート
 
+- **テンポ境界**: 原点前後の実機・聴感は UC-62（[ADR 0275](decisions/0275-shared-integer-tempo-index.md)）。
 - **停止と一時停止**: 停止は記憶した開始位置へ戻り、一時停止はその場に保つ（[ADR 0155](decisions/0155-remembered-playback-start.md)）。
   Return は、入力欄とブラウザ一覧の確定・配置を優先する（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)）。
   実画面の操作感と、停止で戻る時の聴感はユーザー確認待ち（UC-17）。

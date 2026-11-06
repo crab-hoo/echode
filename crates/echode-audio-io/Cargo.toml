@@ -8,6 +8,7 @@ publish = false
 description = "Product CoreAudio output and device notifications"
 
 [dependencies]
+echode-time = { path = "../echode-time" }
 echode-engine = { path = "../echode-engine" }
 echode-history = { path = "../echode-history" }
 echode-model = { path = "../echode-model" }

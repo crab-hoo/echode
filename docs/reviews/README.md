@@ -24,6 +24,7 @@
   フォルダのミュート・ソロ（FCA-06）は [ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md) で子孫へ反映した。音量・パンとバス化は残る。
   取りこぼしの減衰・復帰（FCA-08）は [ADR 0245](../decisions/0245-plugin-deadline-fades.md) で接続した。実機の聴感は UC-50 に残す。
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
+  時間換算の重複とテンポ境界ごとの再探索（FCA-13）は [ADR 0275](../decisions/0275-shared-integer-tempo-index.md) で共通の不変索引へ集めた。
   遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)。PDC と残るホスト拡張は未接続。
   ジャーナルの末尾確認（FCA-14）は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で全件読込みをなくした。編集ごとの同期とまとめ書きの判断待ちは残す。
   未使用の計画受渡しと音声側へ届かない命令（FCA-11）は [ADR 0253](../decisions/0253-product-only-playback-commands.md) で削除した。

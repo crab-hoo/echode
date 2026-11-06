@@ -694,6 +694,7 @@ dependencies = [
  "echode-history",
  "echode-model",
  "echode-plugin-host",
+ "echode-time",
  "libc",
  "objc2-core-audio",
  "objc2-core-audio-types",
@@ -771,6 +772,7 @@ dependencies = [
  "echode-model",
  "echode-realtime",
  "echode-sandbox",
+ "echode-time",
  "libc",
  "libm",
  "objc2-core-audio",
@@ -824,6 +826,7 @@ name = "echode-model"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "echode-time",
  "fractional_index",
  "schemars",
  "serde",
@@ -858,6 +861,9 @@ dependencies = [
 [[package]]
 name = "echode-realtime"
 version = "0.0.0"
+dependencies = [
+ "echode-time",
+]
 
 [[package]]
 name = "echode-sandbox"
@@ -885,6 +891,10 @@ dependencies = [
  "clack-plugin",
  "clap-sys",
 ]
+
+[[package]]
+name = "echode-time"
+version = "0.0.0"
 
 [[package]]
 name = "encode_unicode"

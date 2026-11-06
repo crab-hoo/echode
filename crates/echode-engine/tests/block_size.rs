@@ -13,6 +13,8 @@ mod clip_window;
 mod folder_mix;
 #[path = "block_size/plugin_deadline.rs"]
 mod plugin_deadline;
+#[path = "block_size/tempo.rs"]
+mod tempo;
 use echode_engine::{
     AudioClip, Event, PlayedSpan, SynthVoice, TrackFader, Transport, fade_loop_seam, mix_tracks,
     render_audio_clips, render_metronome, render_test_synth, schedule, seam_fade_frames,

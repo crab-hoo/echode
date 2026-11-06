@@ -3,34 +3,15 @@
 //! Rounding happens once for the whole position, using the tempo map's flick
 //! value. Exact tempos stay on whole samples.
 
-use echode_model::{FLICKS_PER_SECOND, Flick, TempoMap, Tick};
+use echode_model::{Flick, TempoMap, Tick};
 
 pub fn tick_to_sample(tick: Tick, tempo: &TempoMap, sample_rate: u32) -> Option<i64> {
     echode_model::tick_to_sample(tick, tempo, sample_rate)
 }
 
 pub fn sample_to_tick(sample: i64, tempo: &TempoMap, sample_rate: u32) -> Option<Tick> {
-    if sample_rate == 0 {
-        return None;
-    }
-    let flicks = div_round(
-        i128::from(sample) * i128::from(FLICKS_PER_SECOND),
-        i128::from(sample_rate),
-    )?;
+    let flicks = echode_time::sample_to_flick(sample, sample_rate)?;
     tempo.ticks_at(Flick::new(i64::try_from(flicks).ok()?))
-}
-
-fn div_round(numerator: i128, denominator: i128) -> Option<i128> {
-    if denominator <= 0 {
-        return None;
-    }
-    let half = denominator / 2;
-    let adjusted = if numerator >= 0 {
-        numerator.checked_add(half)?
-    } else {
-        numerator.checked_sub(half)?
-    };
-    Some(adjusted / denominator)
 }
 
 #[cfg(test)]

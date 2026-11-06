@@ -4,83 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use echode_model::{Content, Project, TempoMap, Track};
-use echode_realtime::{NoteIndex, NoteSpan, Plan, TempoIndex, TempoSegment, TrackPlan};
+use echode_realtime::{NoteIndex, NoteSpan, Plan, TempoIndex, TrackPlan};
 
 use crate::transport::PlaybackError;
 
 pub fn tempo_index(tempo: &TempoMap) -> Result<TempoIndex, PlaybackError> {
-    let points = tempo.points();
-    let mut boundaries = Vec::with_capacity(points.len() + 1);
-    if points.first().is_none_or(|point| point.at.get() != 0) {
-        boundaries.push(0);
-    }
-    for point in points {
-        if boundaries.last().copied() != Some(point.at.get()) {
-            boundaries.push(point.at.get());
-        }
-    }
-    let mut flick = 0i128;
-    let mut segments = Vec::with_capacity(boundaries.len());
-    for (index, start) in boundaries.iter().copied().enumerate() {
-        let tempo = tempo_at(tempo, start);
-        segments.push(TempoSegment {
-            start_tick: start,
-            start_flick: flick,
-            numerator: tempo.numerator(),
-            denominator: tempo.denominator(),
-        });
-        let end = boundaries.get(index + 1).copied().unwrap_or(start);
-        if end > start {
-            flick = flick
-                .checked_add(flicks_between(
-                    start,
-                    end,
-                    tempo.numerator(),
-                    tempo.denominator(),
-                )?)
-                .ok_or(PlaybackError::Time)?;
-        }
-    }
-    TempoIndex::new(segments).ok_or(PlaybackError::Time)
-}
-
-fn tempo_at(map: &TempoMap, tick: i64) -> echode_model::Tempo {
-    let mut tempo = map.points()[0].tempo;
-    for point in map.points() {
-        if point.at.get() <= tick {
-            tempo = point.tempo;
-        } else {
-            break;
-        }
-    }
-    tempo
-}
-
-fn flicks_between(
-    from: i64,
-    to: i64,
-    numerator: u32,
-    denominator: u32,
-) -> Result<i128, PlaybackError> {
-    let ticks = i128::from(to) - i128::from(from);
-    let scale = 60_000i128
-        .checked_mul(i128::from(denominator))
-        .ok_or(PlaybackError::Time)?;
-    let numerator_product = ticks.checked_mul(scale).ok_or(PlaybackError::Time)?;
-    div_round(numerator_product, i128::from(numerator)).ok_or(PlaybackError::Time)
-}
-
-fn div_round(numerator: i128, denominator: i128) -> Option<i128> {
-    if denominator <= 0 {
-        return None;
-    }
-    let half = denominator / 2;
-    let adjusted = if numerator >= 0 {
-        numerator.checked_add(half)?
-    } else {
-        numerator.checked_sub(half)?
-    };
-    Some(adjusted / denominator)
+    Ok(tempo.index().clone())
 }
 
 /// Note and track numbers for one playback, and the last plan of each track.
@@ -455,3 +384,7 @@ fn mixer_values(track: &echode_model::Track) -> Result<(f32, f32, f32, f32), Pla
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tempo_tests.rs"]
+mod tempo_tests;
