@@ -344,3 +344,56 @@ fn empty_content_is_valid_only_for_fixed_placements() {
         Err(ModelError::Invariant(message)) if message.contains("has no notes")
     ));
 }
+
+#[test]
+fn parent_validation_keeps_product_errors_for_self_links_disconnected_cycles_and_orphans() {
+    let cases = [
+        (vec![track(1, Some(1), Vec::new())], ModelError::Cycle),
+        (
+            vec![
+                track(1, None, Vec::new()),
+                track(2, Some(3), Vec::new()),
+                track(3, Some(2), Vec::new()),
+            ],
+            ModelError::Cycle,
+        ),
+        (
+            vec![
+                track(1, Some(2), Vec::new()),
+                track(2, Some(3), Vec::new()),
+                track(3, Some(2), Vec::new()),
+            ],
+            ModelError::Cycle,
+        ),
+        (
+            vec![
+                track(1, Some(2), Vec::new()),
+                track(2, Some(3), Vec::new()),
+                track(3, Some(99), Vec::new()),
+            ],
+            ModelError::MissingTrack,
+        ),
+    ];
+    for (tracks, expected) in cases {
+        assert_eq!(assemble(Vec::new(), tracks.clone()).unwrap_err(), expected);
+        let message = broken_rule(&project(Vec::new(), tracks));
+        match expected {
+            ModelError::Cycle => assert!(message.contains("is its own ancestor"), "{message}"),
+            ModelError::MissingTrack => assert!(message.contains("missing parent"), "{message}"),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn separate_roots_and_branches_can_share_resolved_ancestors() {
+    let tracks = vec![
+        track(1, None, Vec::new()),
+        track(2, Some(1), Vec::new()),
+        track(3, Some(2), Vec::new()),
+        track(4, Some(1), Vec::new()),
+        track(5, None, Vec::new()),
+    ];
+    assemble(Vec::new(), tracks.clone()).unwrap();
+    project(Vec::new(), tracks).check_invariants().unwrap();
+}

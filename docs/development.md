@@ -99,7 +99,7 @@
 | 領域 | パス | 役割・主な入口 |
 | :--- | :--- | :--- |
 | 共通整数時間 | `crates/echode-time` | `TempoIndex`・区間丸め・tick / flick / sample 換算・Workgroup 期間。モデルと再生カーソルで共有し、外部依存を持たない |
-| モデル・時間・不変条件 | `crates/echode-model` | `model.rs`（`Project`）、`time.rs`（`Tick` / `Flicks` / `TempoMap`）、`invariants.rs`、`changeset.rs`、`duplicate.rs`（部分木の複製と導出 ID） |
+| モデル・時間・不変条件 | `crates/echode-model` | `model.rs`（`Project`）、`time.rs`（`Tick` / `Flicks` / `TempoMap`）、`invariants.rs`、`hierarchy.rs`（親の検証）、`changeset.rs`、`duplicate.rs`（部分木の複製と導出 ID） |
 | アクション・編集セッション | `crates/echode-actions` | `action.rs`（`Action` / 登録簿）、`session.rs`（`Session` の Undo / Redo 履歴） |
 | Git 履歴・パッケージ・ピーク | `crates/echode-history` | `host.rs`（`DocumentHost`・ジャーナル・復旧）、`store.rs`（CAS）、`peaks.rs`（ピークキャッシュ） |
 | 再生計画・カーソル | `crates/echode-realtime` | `lib.rs`（サンプル時刻の計画・鳴っている集合・ID の索引）、`event.rs`（イベント列）、`cursor_tests.rs`（境界の訪問数） |

@@ -42,7 +42,6 @@ impl Project {
         }
         let referenced = crate::model::referenced_contents(self.tracks());
         let mut ids = HashSet::new();
-        let mut parents = HashMap::new();
         let mut auto_counts: HashMap<Id, usize> = HashMap::new();
         let mut content_bounds = HashMap::new();
         for content in self.contents() {
@@ -154,7 +153,6 @@ impl Project {
                     ));
                 }
             }
-            parents.insert(track.id, track.parent);
             let mut previous_end = None;
             for clip in &track.clips {
                 if !ids.insert(clip.id) {
@@ -255,19 +253,16 @@ impl Project {
                 ));
             }
         }
-        for (&track, &parent) in &parents {
-            let mut cursor = parent;
-            let mut steps = 0;
-            while let Some(id) = cursor {
-                let Some(next) = parents.get(&id) else {
-                    return broken(format!("track {track} names a missing parent {id}"));
-                };
-                steps += 1;
-                if id == track || steps > parents.len() {
-                    return broken(format!("track {track} is its own ancestor"));
+        if let Err(error) = crate::hierarchy::check_forest(self.tracks()) {
+            let message = match error {
+                crate::hierarchy::ForestError::MissingParent { track, parent } => {
+                    format!("track {track} names a missing parent {parent}")
                 }
-                cursor = *next;
-            }
+                crate::hierarchy::ForestError::Cycle { track } => {
+                    format!("track {track} is its own ancestor")
+                }
+            };
+            return broken(message);
         }
         if let Some(message) = arrange_fault(self.tracks()) {
             return broken(message);

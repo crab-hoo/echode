@@ -43,6 +43,7 @@ mod content_fields;
 mod device;
 mod device_fields;
 mod duplicate;
+mod hierarchy;
 mod id;
 mod invariants;
 mod model;

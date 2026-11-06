@@ -1,4 +1,4 @@
-//! Deterministic work counts for content lookup, reference validation and shared-note bounds (FCA-05).
+//! Deterministic work counts for content lookup, references, note bounds and parent links (FCA-05).
 //! Counts and fixture sizes bound these tests only, not product projects.
 
 use std::cell::Cell;
@@ -12,6 +12,7 @@ struct Work {
     references: usize,
     overlaps: usize,
     note_validations: usize,
+    parent_links: usize,
 }
 
 thread_local! {
@@ -36,6 +37,10 @@ pub(crate) fn reference() {
 
 pub(crate) fn overlap() {
     record(|work| work.overlaps += 1);
+}
+
+pub(crate) fn parent_link() {
+    record(|work| work.parent_links += 1);
 }
 
 pub(crate) fn note_validation() {
@@ -266,6 +271,83 @@ fn shared_content_validation_does_not_rescan_notes_per_placement() {
             "shared content validation visited notes {} times during assembly and {} times during validation for {notes} notes and {placements} placements",
             assembly.note_validations,
             validation.note_validations,
+        );
+    }
+}
+
+fn nested_tracks(count: usize) -> Vec<Track> {
+    (0..count)
+        .map(|index| {
+            let id = index as u128 + 1;
+            Track {
+                id: Id::from_raw(id),
+                name: format!("level {index}"),
+                parent: index
+                    .checked_sub(1)
+                    .map(|parent| Id::from_raw(parent as u128 + 1)),
+                order: crate::initial_order(),
+                devices: vec![crate::test_mixer(id)],
+                clips: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn nested_forest_validation_does_not_revisit_resolved_ancestors() {
+    // These depths constrain this regression, not product folder nesting.
+    for count in [64, 256] {
+        let template = Project::new();
+        let (project, assembly) = measured(|| {
+            Project::try_assemble(
+                template.meter(),
+                template.tempo().clone(),
+                Vec::new(),
+                nested_tracks(count),
+            )
+            .unwrap()
+        });
+        let (_, validation) = measured(|| project.check_invariants().unwrap());
+        assert!(
+            assembly.parent_links <= count * 2 && validation.parent_links <= count,
+            "nested forest validation inspected parent links {} times during assembly and {} times during validation for {count} tracks",
+            assembly.parent_links,
+            validation.parent_links,
+        );
+    }
+}
+
+#[test]
+fn reverse_ordered_forest_validation_is_linear_before_order_rejection() {
+    // These depths bound only this regression; unordered input must not
+    // trigger repeated ancestor walks before its arrange order is rejected.
+    for count in [64, 256] {
+        let template = Project::new();
+        let mut tracks = nested_tracks(count);
+        tracks.reverse();
+        let broken = Project::unchecked(
+            template.meter(),
+            template.tempo().clone(),
+            Vec::new(),
+            tracks.clone(),
+        );
+        let (error, assembly) = measured(|| {
+            Project::try_assemble(
+                template.meter(),
+                template.tempo().clone(),
+                Vec::new(),
+                tracks,
+            )
+            .unwrap_err()
+        });
+        assert_eq!(error, crate::ModelError::BadOrder);
+        let (error, validation) = measured(|| broken.check_invariants().unwrap_err());
+        assert!(error.to_string().contains("out of arrange order"));
+        assert!(
+            assembly.parent_links <= count && validation.parent_links <= count,
+            "reverse forest validation inspected parent links {} times during assembly and {} times during validation for {count} tracks",
+            assembly.parent_links,
+            validation.parent_links,
         );
     }
 }

@@ -52,10 +52,13 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 
 `make spike-scale` の `model_edit` にある `assemble_ms` と `edit_note_ms` を、64 / 128 トラック × 64 クリップで比べる。
 機器・プラグインは使わない。編集の操作感全体ではなく、モデル単体の時間である。
-時間に依らない回帰は `cargo test -q -p echode-model model_scale_tests` で、内容のキー・配置の参照・重なりの比較を数える。
+時間に依らない回帰は `cargo test -q -p echode-model model_scale_tests` で、内容のキー・配置の参照・重なりの比較・親の探索を数える。
 共有 MIDI 内容の配置数だけで遅くなる時は、同じ回帰の `shared_content_validation_does_not_rescan_notes_per_placement` を確認する。
 ノートの検証回数も数え、内容のノート数と配置数の積に増えないことを検査する。
 `invariants::tests` の整数上下端と自動小節の回帰で、両端の集計によって範囲外のノートを見逃していないかを切り分ける。
+深いフォルダだけで遅くなる時は、`model_scale_tests` の `nested_forest_validation_does_not_revisit_resolved_ancestors` と逆順入力の回帰で親の訪問回数を確認する。
+親の存在・循環は `hierarchy::check_forest`、順序キーと配列の並びは `model::arrange_fault` が検証する。
+`hierarchy::tests` は小さい親グラフの全列挙と深い逆順の鎖を調べ、順序違反と循環を切り分ける。
 `content id order` の拒否は二分探索の前提の破れであり、保存入力を整列する組立てと、変更セット復元の内容の順を調べる。
 モデルが速くても `replace_p50_ms` が遅ければ計画の使い回し（ADR 0274）、保存で待つなら FCA-14 を別に調べる。
 ID 重複の線形探索と、毎回全配置から作る参照集合は残る（[ADR 0242](../decisions/0242-model-content-lookup-and-references.md)）。

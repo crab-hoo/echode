@@ -1540,24 +1540,19 @@ fn parent_chain_contains(tracks: &[Arc<Track>], start: Id, target: Id) -> bool {
 fn parent_of(tracks: &[Arc<Track>], id: Id) -> Option<Id> {
     tracks
         .iter()
-        .find(|track| track.id == id)
+        .find(|track| {
+            #[cfg(test)]
+            crate::model_scale_tests::parent_link();
+            track.id == id
+        })
         .and_then(|track| track.parent)
 }
 
 fn validate_forest(tracks: &[Arc<Track>]) -> Result<(), ModelError> {
-    let ids: HashSet<Id> = tracks.iter().map(|track| track.id).collect();
-    for track in tracks {
-        let Some(parent) = track.parent else {
-            continue;
-        };
-        if !ids.contains(&parent) {
-            return Err(ModelError::MissingTrack);
-        }
-        if parent_chain_contains(tracks, parent, track.id) {
-            return Err(ModelError::Cycle);
-        }
-    }
-    Ok(())
+    crate::hierarchy::check_forest(tracks).map_err(|error| match error {
+        crate::hierarchy::ForestError::MissingParent { .. } => ModelError::MissingTrack,
+        crate::hierarchy::ForestError::Cycle { .. } => ModelError::Cycle,
+    })
 }
 
 /// Fractional index of the first sibling in a group.
