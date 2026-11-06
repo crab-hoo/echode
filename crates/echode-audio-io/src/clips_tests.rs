@@ -642,3 +642,72 @@ fn a_negative_offset_is_silence_until_the_media_origin() {
     assert_eq!(loaded[0].samples[0], 0.0);
     assert!((loaded[0].samples[48_000] - 0.5).abs() < 1.0e-3);
 }
+
+/// PCM bytes the prepared media keeps, counting each shared plane once.
+fn resident_bytes(prepared: &PreparedMedia) -> usize {
+    let mut seen: Vec<Arc<[f32]>> = Vec::new();
+    for planes in prepared.sources.values().chain(prepared.windows.values()) {
+        for plane in std::iter::once(&planes.left).chain(planes.right.as_ref()) {
+            if !seen.iter().any(|kept| Arc::ptr_eq(kept, plane)) {
+                seen.push(Arc::clone(plane));
+            }
+        }
+    }
+    seen.iter()
+        .map(|plane| plane.len() * size_of::<f32>())
+        .sum()
+}
+
+/// EXT-01 (docs/reviews/2026-11-06-assessment-review.md): every distinct trim
+/// of one source keeps its own copy of the PCM, so long overlapping trims of a
+/// long take multiply its memory. One shared copy of the source would do.
+#[test]
+#[ignore = "EXT-01: each trim of one source copies its PCM"]
+fn audit_ext01_long_trims_of_one_source_hold_one_copy_of_its_pcm() {
+    let fixture =
+        Fixture(std::env::temp_dir().join(format!("echode-trim-copies-{}", Id::generate().raw())));
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    let source = fixture.0.join("take.wav");
+    std::fs::write(&source, stereo_wav(48000, 48000)).unwrap();
+    let stored = echode_history::import_audio(&fixture.0, &source).unwrap();
+    let audio = AudioRef::try_new(
+        stored.hash,
+        stored.sample_rate,
+        stored.channels,
+        stored.frames,
+    )
+    .unwrap();
+    let (mut project, track) = Project::new().add_track("takes");
+    // Eight placements are this fixture's count, not a product limit.
+    for index in 1..=8i64 {
+        let clip = Id::generate();
+        let start = Tick::quarters(4 * index).unwrap();
+        project = project
+            .place_audio(track, clip, Id::generate(), start, audio.clone())
+            .unwrap();
+        let length = project.tracks()[0]
+            .clips
+            .iter()
+            .find(|placement| placement.id == clip)
+            .unwrap()
+            .length
+            .get();
+        // A different head on each placement gives each window its own key.
+        let trim = index * echode_model::TICKS_PER_QUARTER / 32;
+        project = project
+            .resize_clip(
+                track,
+                clip,
+                Tick::new(start.get() + trim),
+                Tick::new(length - trim),
+            )
+            .unwrap();
+    }
+    let prepared = prepare_media(&fixture.0, &project, 48000, None).unwrap();
+    let source_bytes = 48000 * 2 * size_of::<f32>();
+    let resident = resident_bytes(&prepared);
+    assert!(
+        resident <= source_bytes,
+        "eight trims of a {source_bytes}-byte source keep {resident} bytes of PCM"
+    );
+}

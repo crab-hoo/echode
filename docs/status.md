@@ -1,6 +1,6 @@
 # 現在の範囲と制約
 
-更新: 2026-11-05。
+更新: 2026-11-06。
 利用者に残る制約と未確認・未接続だけを置く。合格証ではない。
 合否は `make verify` の結果、実操作は日付付きの監査記録で確認する。
 ユーザーの確認待ちは `UC-番号` で示し、内容と手順は [ユーザー確認の一覧](user-checks.md) にある。
@@ -35,6 +35,7 @@
   最初に Git の初期化が失敗した理由は未確定である（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。
 - **パッケージの浮動小数点の精度**: 既に丸められた保存値は復元しない。スキーマは 6 のまま（[ADR 0196](decisions/0196-lossless-package-floats.md)）。
 - **素材とキャッシュの Git 除外**: 任意の Git パターンの正規化はしない（[ADR 0031](decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
+- **素材の回収（EXT-02）**: 素材は消さず、配置に失敗した取込みの分も残る（[ADR 0031](decisions/0031-content-addressed-store.md)）。
 - **保存済み音声の有限性**: 保存済み PCM と外部音声の取込みは、NaN・無限大を含めば拒否する。
   波形キャッシュのマップ読込みと実機の聴感は、この検証の範囲外である（[ADR 0056](decisions/0056-audio-import.md#外部音声の一括復号と取込みの検証2026-10-29)）。
 - **波形キャッシュの破損**: 壊れたキャッシュは元の PCM から作り直し、素材が読めなければ波形を出さない。
@@ -68,7 +69,7 @@
 - **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する。
   開いた出力の停止中の処理負荷は残る（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。
 - **位置移動と準備の取消**: 位置移動・未発音の準備の取消とオフラインの停止では、以前の発音状態を消す（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
-- **停止診断**: 停止診断の減衰位置は素材側を示し、マスター出力の無音化を示さない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+- **停止診断**: 減衰位置は素材側を示し、マスター出力の無音化を示さない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - **バス・ループ・ゲイン・メーター**: 暗黙のステレオ→モノ変換はエラーにする（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
   ディスクストリーミング、Phase 3 のレンダリングキャッシュの生成本体、Ogg、プラグインのサムネイルは未実装（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。
   クリップゲインは `0..=1_048_576`（音声クリップのみ）で、負の配置オフセットはファイル前の無音として扱う（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
@@ -79,7 +80,7 @@
 - **規模・ミックスと履歴（FCA-04〜07・19）**: 計画の採用は機器なしでも期限を超え得る。
   全体再構築・モデル ID の線形探索・履歴のメモリ予算は残る（[ADR 0239](decisions/0239-live-note-cursor-work.md)）。
   フォルダの音量・パンは子に効かず、遅延は未補正。ループとミックスの聴感は UC-47・49、遅延表示は UC-51（[ADR 0246](decisions/0246-plugin-latency-reporting.md)）。
-- **Phase 0 の別モデル・計測の分離（SPG-10）**: 分離は完了したが、並列の CPU グラフを製品へ接続したものではない（[ADR 0211](decisions/0211-opt-in-history-spike.md)、[ADR 0213](decisions/0213-opt-in-engine-spike.md)）。
+- **長い素材（EXT-01）**: 全体を復号し、トリムの形ごとに PCM を複製する（[精査](reviews/2026-11-06-assessment-review.md)）。
 
 ### プラグイン・デバイスビュー
 
@@ -113,7 +114,7 @@
 
 ### ピアノロール
 
-- **入力長**: 記憶した入力長は全トラック共有で、再オープン時に初期化される（[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
+- **入力長**: 記憶した値は全トラック共有で、再オープン時に初期化される（[ADR 0172](decisions/0172-piano-click-and-input-length.md)）。
   実画面の操作感はユーザー確認待ち（UC-07）。
 - **複数ノートのベロシティ**: 一括調整の実画面・VoiceOver・聴感はユーザー確認待ち（UC-08、[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
 - **表示範囲の共有**: 実画面と VoiceOver はユーザー確認待ち（UC-09、[ADR 0174](decisions/0174-shared-piano-viewport.md)）。
@@ -133,7 +134,7 @@
   ドラッグの実操作・見え方・VoiceOver はユーザー確認待ち（UC-06）。
 - **サンプルブラウザのクリック（UIF-05・09）**: クリックの遅れとフォーカスが直ったかはユーザー確認待ち（UC-15）。
   遅れの量は未計測である（[ADR 0143](decisions/0143-browser-click-and-audition-timing.md)）。
-- **サンプルの試聴**: 選択時の試聴は素の音で、プラグインのヘルパーを起動しない（[ADR 0135](decisions/0135-sample-audition.md)）。
+- **サンプルの試聴**: 選択時は素の音で、プラグインのヘルパーを起動しない（[ADR 0135](decisions/0135-sample-audition.md)）。
   表示中は無音の試聴出力を保つ（[ADR 0152](decisions/0152-browser-audition-controls.md)）。
   隣の行の先読みと、長いファイルの読込み時間の計測はしていない（[ADR 0163](decisions/0163-sample-overview.md)）。
   2 つの IOProc の加算と機器切替時の挙動、聴感は実機でのユーザー確認待ち（UC-16、[ADR 0135](decisions/0135-sample-audition.md)）。

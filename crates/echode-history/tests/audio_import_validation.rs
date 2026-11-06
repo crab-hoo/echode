@@ -251,3 +251,50 @@ fn contract_audio_import_rejects_nonfinite_before_writing_and_preserves_history(
     failed_transaction_preserves_redo();
     finite_samples_roundtrip();
 }
+
+fn media_files(package: &Path) -> Vec<PathBuf> {
+    package_files(package)
+        .into_keys()
+        .filter(|path| path.starts_with("media"))
+        .collect()
+}
+
+/// EXT-02 (docs/reviews/2026-11-06-assessment-review.md): an import stores its
+/// media before the placement is checked, and nothing removes the object when
+/// the placement or its transaction is rejected.
+#[test]
+#[ignore = "EXT-02: a rejected import leaves its media in the package"]
+fn audit_ext02_a_rejected_import_leaves_no_media_in_the_package() {
+    let fixture = Fixture::new();
+    let other = fixture.root.join("other.wav");
+    fixture.write_source(&vec![0.5; FRAMES * 2], 2);
+    fs::copy(&fixture.source, &other).unwrap();
+    fixture.write_source(&vec![0.25; FRAMES * 2], 2);
+    let host = DocumentHost::open(&fixture.package).unwrap();
+    let before = host.snapshot();
+    let media = media_files(&fixture.package);
+    let missing = Id::generate();
+    let placed = host.apply(vec![
+        json!({"type": "audio.import", "track": missing, "start": 0, "path": fixture.source}),
+    ]);
+    assert!(
+        placed.is_err(),
+        "an import into a missing track was accepted"
+    );
+    let rolled_back = host.apply(vec![
+        json!({"type": "track.add", "name": "rolled back"}),
+        json!({"type": "audio.import", "track": {"ref": 0, "field": "id"}, "start": 0, "path": other}),
+        json!({"type": "audio.import", "track": missing, "start": 0, "path": fixture.source}),
+    ]);
+    assert!(
+        rolled_back.is_err(),
+        "a transaction with a missing track was accepted"
+    );
+    assert_eq!(*host.snapshot(), *before);
+    drop(host);
+    assert_eq!(
+        media_files(&fixture.package),
+        media,
+        "rejected imports left media in the package"
+    );
+}
