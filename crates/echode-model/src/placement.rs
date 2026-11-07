@@ -215,26 +215,33 @@ fn check_shared_notes(
     current: &Track,
     content: Id,
 ) -> Result<(), ModelError> {
-    let found = notes(contents, content)?;
+    let index = crate::model::content_index(contents, content).ok_or(ModelError::MissingClip)?;
+    let mut bounds: Option<(i64, i64)> = None;
+    for note in &contents[index].notes {
+        #[cfg(test)]
+        crate::model_scale_tests::shared_note_validation();
+        let end = note
+            .start
+            .get()
+            .checked_add(note.length.get())
+            .ok_or(ModelError::InvalidNote)?;
+        let last = end.checked_sub(1).ok_or(ModelError::InvalidNote)?;
+        bounds = Some(match bounds {
+            Some((first, previous_last)) => (first.min(note.start.get()), previous_last.max(last)),
+            None => (note.start.get(), last),
+        });
+    }
     let visit = |clip: &Placement| -> Result<(), ModelError> {
         if clip.content != content {
             return Ok(());
         }
         let origin = origin(clip)?;
-        for note in &found {
-            let absolute = origin
-                .checked_add(note.start.get())
-                .ok_or(ModelError::InvalidNote)?;
-            let span = note
-                .length
-                .get()
-                .checked_sub(1)
-                .ok_or(ModelError::InvalidNote)?;
-            absolute.checked_add(span).ok_or(ModelError::InvalidNote)?;
-            note.start
-                .get()
-                .checked_add(note.length.get())
-                .ok_or(ModelError::InvalidNote)?;
+        // Translation preserves order, so validated local extrema cover every
+        // note, including notes outside this placement's fixed window.
+        if bounds.is_some_and(|(first, last)| {
+            origin.checked_add(first).is_none() || origin.checked_add(last).is_none()
+        }) {
+            return Err(ModelError::InvalidNote);
         }
         Ok(())
     };
@@ -658,3 +665,7 @@ pub(super) fn drop_unreferenced(contents: &mut Vec<Arc<Content>>, tracks: &[Arc<
     let referenced = crate::model::referenced_contents(tracks);
     contents.retain(|content| referenced.contains(&content.id));
 }
+
+#[cfg(test)]
+#[path = "placement_tests.rs"]
+mod tests;

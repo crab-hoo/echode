@@ -56,6 +56,8 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 共有 MIDI 内容の配置数だけで遅くなる時は、同じ回帰の `shared_content_validation_does_not_rescan_notes_per_placement` を確認する。
 ノートの検証回数も数え、内容のノート数と配置数の積に増えないことを検査する。
 `invariants::tests` の整数上下端と自動小節の回帰で、両端の集計によって範囲外のノートを見逃していないかを切り分ける。
+共有内容の追加・編集・複製だけが遅い時は、`shared_content_edits_do_not_rescan_notes_per_placement` の検証回数を確認する。
+`placement::check_shared_notes` は変更後の内容を一度集計する。`placement::tests` の独立した i128 の照合と整数上下端の製品編集で、配置ごとの両端検証の範囲を調べる。
 深いフォルダだけで遅くなる時は、`model_scale_tests` の `nested_forest_validation_does_not_revisit_resolved_ancestors` と逆順入力の回帰で親の訪問回数を確認する。
 親の存在・循環は `hierarchy::check_forest`、順序キーと配列の並びは `model::arrange_fault` が検証する。
 `hierarchy::tests` は小さい親グラフの全列挙と深い逆順の鎖を調べ、順序違反と循環を切り分ける。

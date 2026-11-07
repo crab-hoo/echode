@@ -13,6 +13,7 @@ struct Work {
     overlaps: usize,
     note_validations: usize,
     parent_links: usize,
+    shared_note_validations: usize,
 }
 
 thread_local! {
@@ -45,6 +46,10 @@ pub(crate) fn parent_link() {
 
 pub(crate) fn note_validation() {
     record(|work| work.note_validations += 1);
+}
+
+pub(crate) fn shared_note_validation() {
+    record(|work| work.shared_note_validations += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -272,6 +277,78 @@ fn shared_content_validation_does_not_rescan_notes_per_placement() {
             assembly.note_validations,
             validation.note_validations,
         );
+    }
+}
+
+#[test]
+fn shared_content_edits_do_not_rescan_notes_per_placement() {
+    // These sizes constrain this regression, not product notes or placements.
+    for (notes, placements) in [(64, 256), (256, 64)] {
+        let (template, contents, mut tracks) = shared_fixture(notes, placements);
+        let (template, _) = template.add_track("linked");
+        let mut linked = Track::clone(&template.tracks()[1]);
+        linked.clips = tracks[0].clips.split_off(placements / 2);
+        tracks.push(linked);
+        let project =
+            Project::try_assemble(template.meter(), template.tempo().clone(), contents, tracks)
+                .unwrap();
+        let track = &project.tracks()[0];
+        let clip = &track.clips[0];
+        let content = project.content(clip.content).unwrap();
+        let note = &content.notes[0];
+        for operation in ["edit", "insert", "duplicate"] {
+            let (edited, work) = measured(|| match operation {
+                "edit" => project.edit_note(
+                    track.id,
+                    clip.id,
+                    note.id,
+                    NoteGeometry {
+                        pitch: 61,
+                        start: note.start,
+                        length: note.length,
+                    },
+                ),
+                "insert" => project
+                    .insert_note(
+                        track.id,
+                        NoteDraft {
+                            pitch: 62,
+                            velocity: 100,
+                            start: Tick::new(1),
+                            length: Tick::new(1),
+                        },
+                    )
+                    .map(|(project, _)| project),
+                "duplicate" => project.duplicate_note(
+                    track.id,
+                    clip.id,
+                    content.notes.last().unwrap().id,
+                    Id::from_raw(30_000),
+                    63,
+                    Tick::new(1),
+                ),
+                _ => unreachable!(),
+            });
+            let edited = edited.unwrap();
+            assert!(
+                work.shared_note_validations > 0 && work.shared_note_validations <= notes + 1,
+                "shared content {operation} visited notes {} times for {notes} notes and {placements} placements",
+                work.shared_note_validations,
+            );
+            edited.check_invariants().unwrap();
+            assert!(Arc::ptr_eq(&project.tracks()[1], &edited.tracks()[1]));
+            assert_eq!(project.content(clip.content).unwrap().notes.len(), notes);
+            assert_eq!(project.content(clip.content).unwrap().notes[0].pitch, 60);
+            let expected_notes = if operation == "edit" {
+                notes
+            } else {
+                notes + 1
+            };
+            assert_eq!(
+                edited.content(clip.content).unwrap().notes.len(),
+                expected_notes
+            );
+        }
     }
 }
 
