@@ -85,6 +85,15 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 モデルが速くても `replace_p50_ms` が遅ければ計画の使い回し（ADR 0274）、保存で待つなら FCA-14 を別に調べる。
 ID 重複の線形探索と、毎回全配置から作る参照集合は残る（[ADR 0242](../decisions/0242-model-content-lookup-and-references.md)）。
 
+### テンポ点が多いと無関係な編集の確定も遅くなる
+
+テンポ点が多い時だけ確定が遅い場合は、`cargo test -q -p echode-model model_scale_tests::tempo_diff` で点の訪問数を確認する。
+`changeset::tempo::diff_tempo` は共有点配列を省略し、別配列の時だけ時刻順に一度マージする。
+修正前は同じ 64 点の別組立ての比較が 320 回訪問し、共有された単一点でも 5 回訪問していた。
+通常回帰は共有を 0 回、別配列を前後の点数の和以内に制限し、独立した時刻マップで変更順と正逆適用を照合する。
+整数の上下端・分数テンポとジャーナルの互換は履歴の `tests/tempo_changesets.rs` でも確認する。
+この計数は差分生成だけで、テンポ編集時の索引の構築・配置の再適合・保存同期の時間を含まない。
+
 ### FX が増えるとチェインやミキサーの編集確定が遅くなる
 
 `cargo test -q -p echode-model model_scale_tests::device_diff` は、製品の `Project::diff` でデバイスキーの検査数を数える。

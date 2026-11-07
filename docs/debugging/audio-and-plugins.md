@@ -302,6 +302,9 @@ CLI が終了したのに表示が残る場合は、子孫が stdout を引き�
 入力と進捗の組合せ、および同じ全体の再実行では再現しておらず、原因は未確定である。
 初回の抜粋は `target/focused-checks/export-progress-first-failure.log`、切分けは `target/focused-checks/export-input-progress/` に残す。
 このアサーションには `running`・率・メッセージ・詳細を追加した。再発時は準備中・起動失敗・受信待ちを区別し、期限・アサーション・並列性を緩めない。
+2026-11-07 のテンポ差分生成の変更時にも通常の並列 Swift 全体で再発し、`running=true`・率 `nil`・`message=Exporting audio`・詳細は空だった。
+同じ入口の次の実行では再現せず、期限・判定・並列性と書出しの製品コードは変更していない。原因は引き続き未確定である。
+今回の抜粋は `target/tempo-diff-verification-retry.log` に残す。再試行の成功で初回の失敗を取り消さない。
 
 ### 書出しの回帰が直列実行だけで `waitUntilExit` に止まる
 

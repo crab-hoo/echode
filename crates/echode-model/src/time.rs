@@ -160,6 +160,11 @@ impl TempoMap {
         &self.points
     }
 
+    /// Whether both maps retain the same immutable point array.
+    pub(crate) fn shares_points(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.points, &other.points)
+    }
+
     /// Stores points in tick order. An empty list, or two points at the same tick, is refused.
     pub fn try_from_points(mut points: Vec<TempoPoint>) -> Option<Self> {
         if points.is_empty() {

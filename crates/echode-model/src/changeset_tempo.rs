@@ -4,7 +4,7 @@ use super::{
     Change, Field, ModelError, ObjectKey, ObjectKind, Project, Property, Tempo, TempoPoint, Tick,
     Value, update,
 };
-use std::collections::HashMap;
+use std::cmp::Ordering;
 
 // Tick is the point's identity, not a writable field. Draft validates the map.
 macro_rules! define_tempo_changes {
@@ -74,43 +74,46 @@ pub(super) fn diff_tempo(
     updates: &mut Vec<Change>,
     deletes: &mut Vec<Change>,
 ) {
-    let previous: HashMap<i64, &TempoPoint> = before
-        .tempo()
-        .points()
-        .iter()
-        .map(|point| (point.at.get(), point))
-        .collect();
-    let next: HashMap<i64, &TempoPoint> = after
-        .tempo()
-        .points()
-        .iter()
-        .map(|point| (point.at.get(), point))
-        .collect();
-    let mut created: Vec<i64> = next
-        .keys()
-        .filter(|tick| !previous.contains_key(tick))
-        .copied()
-        .collect();
-    created.sort_unstable();
-    for tick in created {
-        creates.push(tempo_change(true, next[&tick]));
+    if before.tempo().shares_points(after.tempo()) {
+        return;
     }
-    let mut revised: Vec<i64> = next
-        .iter()
-        .filter(|(tick, point)| previous.get(tick).is_some_and(|before| before != *point))
-        .map(|(tick, _)| *tick)
-        .collect();
-    revised.sort_unstable();
-    for tick in revised {
-        diff_tempo_fields(previous[&tick], next[&tick], updates);
+    // Both maps are already sorted by signed tick. Keep the existing separate
+    // create/update/delete buffers, without rebuilding or sorting identity maps.
+    let mut previous = tempo_points(before).peekable();
+    let mut next = tempo_points(after).peekable();
+    loop {
+        match (previous.peek(), next.peek()) {
+            (Some(left), Some(right)) => match left.at.cmp(&right.at) {
+                Ordering::Less => {
+                    deletes.push(tempo_change(false, left));
+                    previous.next();
+                }
+                Ordering::Greater => {
+                    creates.push(tempo_change(true, right));
+                    next.next();
+                }
+                Ordering::Equal => {
+                    diff_tempo_fields(left, right, updates);
+                    previous.next();
+                    next.next();
+                }
+            },
+            (Some(_), None) => {
+                deletes.extend(previous.map(|point| tempo_change(false, point)));
+                break;
+            }
+            (None, Some(_)) => {
+                creates.extend(next.map(|point| tempo_change(true, point)));
+                break;
+            }
+            (None, None) => break,
+        }
     }
-    let mut removed: Vec<i64> = previous
-        .keys()
-        .filter(|tick| !next.contains_key(tick))
-        .copied()
-        .collect();
-    removed.sort_unstable();
-    for tick in removed {
-        deletes.push(tempo_change(false, previous[&tick]));
-    }
+}
+
+fn tempo_points(project: &Project) -> impl Iterator<Item = &TempoPoint> {
+    project.tempo().points().iter().inspect(|_| {
+        #[cfg(test)]
+        crate::model_scale_tests::diff_tempo_visit();
+    })
 }

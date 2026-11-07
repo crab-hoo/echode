@@ -24,6 +24,7 @@ struct Work {
     id_check_notes: usize,
     diff_note_visits: usize,
     diff_device_keys: usize,
+    diff_tempo_visits: usize,
     merge_placement_probes: usize,
     merge_content_probes: usize,
     refit_host_probes: usize,
@@ -104,6 +105,10 @@ pub(crate) fn diff_note_visit() {
 
 pub(crate) fn diff_device_key() {
     record(|work| work.diff_device_keys += 1);
+}
+
+pub(crate) fn diff_tempo_visit() {
+    record(|work| work.diff_tempo_visits += 1);
 }
 
 pub(crate) fn merge_placement_probe() {
@@ -704,3 +709,6 @@ mod merge;
 
 #[path = "model_device_diff_tests.rs"]
 mod device_diff;
+
+#[path = "model_tempo_diff_tests.rs"]
+mod tempo_diff;

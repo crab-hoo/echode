@@ -186,6 +186,8 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 履歴の `tests/tempo_changesets.rs` に置く。必須項目・型・未知の tick・二重作成・空マップと旧作成規則も検査する。
 操作列は負の位置・グリッド外の位置と分数テンポからも始める。実時間変換・素材・機器はこの回帰の対象外とする
 （[ADR 0220](decisions/0220-tempo-changeset-fields.md)）。
+テンポ点の訪問数は `echode-model/src/model_tempo_diff_tests.rs`（`model_scale_tests::tempo_diff`）で数える。
+共有配列は 0 回、別配列は前後の点数の和以内とし、独立した時刻マップとの変更順の照合と正逆往復を検査する。
 
 プロジェクトの拍子の表は `echode-model/src/project_fields.rs`、独立した分子・分母と更新順の回帰は
 履歴の `tests/project_changesets.rs` に置く。型・キーの拒否と旧トラック ID 配列の無変更互換も検査する。
