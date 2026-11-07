@@ -68,6 +68,15 @@ EOF 超過と途中のテンポ変化は独立した条件である（[CUR-02 / 
 `ArrangeView.performKeyEquivalent` と `keyDown`、`ClipMoveTarget.adjacentStart`、送信後の `clipFocus` を確認する
 （[ADR 0188](../decisions/0188-arrange-adjacent-clip-duplication.md)）。
 
+### クリップ移動だけが無関係なノート数で遅くなる
+
+移動と複製、配置の全置換・片側の切詰め・内側への着地による分割を区別する。
+`clip_move::land` は分割の右片に ID が必要な時だけ予約を呼び、移動側はその時に `used_ids` を一度作る。
+`cargo test -q -p echode-model --lib model_scale_tests::clip_move` で、分割なしの ID 集合収集が 0 回、分割ありで 1 回かを調べる。
+テスト用のノート ID 訪問数と集合の作成回数で区別し、実時間の閾値にしない。
+分割・複製の全 ID 収集、配置の探索・置換と未参照内容の除去、保存待ちは別の費用として残る。
+`DuplicateId` で拒否される時は `split_piece_ids_cannot_reuse_any_stored_identity` と `seed` を確認し、再送で別 ID を暗黙に作らない。
+
 ### フォルダ開閉後に行・ミックス値・FX の対象がずれる
 
 元スナップショットと表示用ハンドルの行数・ID、`TrackTreeInfo` と `row_map` を区別する。

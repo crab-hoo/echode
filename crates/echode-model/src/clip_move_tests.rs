@@ -472,3 +472,81 @@ fn refused_moves_name_the_reason() {
     );
     assert!(early.move_clip(clip, track, Tick::new(BAR), seed).is_ok());
 }
+
+#[test]
+fn split_piece_ids_cannot_reuse_any_stored_identity() {
+    let (project, first, second) = two_tracks();
+    let (project, unrelated) = project.add_track("unrelated identities");
+    let source = Id::from_raw(60);
+    let target = Id::from_raw(62);
+    let project = project
+        .place_audio(first, source, Id::from_raw(61), Tick::new(0), audio(1))
+        .unwrap()
+        .place_audio(second, target, Id::from_raw(63), Tick::new(0), audio(4))
+        .unwrap();
+    let (project, _) = project.insert_note(unrelated, note(0, 1)).unwrap();
+    let seed = Id::from_raw(64);
+    let collision = derived_id(SPLIT_CONTEXT, seed, target);
+    for kind in [
+        "content",
+        "take",
+        "note",
+        "track",
+        "clip",
+        "device",
+        "parameter",
+    ] {
+        let mut contents: Vec<_> = project
+            .contents()
+            .iter()
+            .map(|item| (**item).clone())
+            .collect();
+        let mut tracks: Vec<_> = project
+            .tracks()
+            .iter()
+            .map(|item| (**item).clone())
+            .collect();
+        let track = tracks
+            .iter_mut()
+            .find(|track| track.id == unrelated)
+            .unwrap();
+        let content = contents
+            .iter_mut()
+            .find(|content| content.id == track.clips[0].content)
+            .unwrap();
+        match kind {
+            "content" => {
+                content.id = collision;
+                track.clips[0].content = collision;
+            }
+            "take" => content.takes.push(collision),
+            "note" => content.notes[0].id = collision,
+            "track" => track.id = collision,
+            "clip" => track.clips[0].id = collision,
+            "device" => track.devices[0].id = collision,
+            "parameter" => track.devices[0].parameters[0].id = collision,
+            _ => unreachable!(),
+        }
+        let before =
+            Project::try_assemble(project.meter(), project.tempo().clone(), contents, tracks)
+                .unwrap();
+        let original = before.clone();
+        for edit in [
+            Project::move_clip,
+            Project::move_clip_legacy,
+            Project::duplicate_clip,
+            Project::duplicate_clip_legacy,
+        ] {
+            assert_eq!(
+                edit(&before, source, second, Tick::new(TICKS_PER_QUARTER), seed),
+                Err(ModelError::DuplicateId),
+                "split reused a {kind} ID",
+            );
+            assert_eq!(before, original);
+            before.check_invariants().unwrap();
+            // The same seed is valid when no split piece is needed.
+            let moved = edit(&before, source, second, Tick::new(BAR * 2), seed).unwrap();
+            moved.check_invariants().unwrap();
+        }
+    }
+}

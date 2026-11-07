@@ -111,11 +111,17 @@ impl Project {
 
     /// Every id the snapshot holds, including content takes.
     pub(crate) fn used_ids(&self) -> HashSet<Id> {
+        #[cfg(test)]
+        crate::model_scale_tests::used_id_collection();
         let mut used = HashSet::new();
         for content in self.contents() {
             used.insert(content.id);
             used.extend(content.takes.iter().copied());
-            used.extend(content.notes.iter().map(|note| note.id));
+            used.extend(content.notes.iter().map(|note| {
+                #[cfg(test)]
+                crate::model_scale_tests::used_id_note();
+                note.id
+            }));
         }
         for track in self.tracks() {
             used.insert(track.id);

@@ -1,6 +1,5 @@
 //! Moving and copying a placement onto a track in replace mode (ADR 0154).
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::duplicate::derived_id;
@@ -56,12 +55,14 @@ impl Project {
         let (source, placement) = self.locate_clip(clip)?;
         let landed = self.landing(placement, start, content_bars)?;
         let target = self.track_index(track)?;
-        let mut used = self.used_ids();
+        let mut used = None;
         let mut tracks = self.tracks().to_vec();
         let mut origin = Track::clone(&tracks[source]);
         origin.clips.retain(|placement| placement.id != clip);
         tracks[source] = Arc::new(origin);
-        land(&mut tracks, target, landed, seed, &mut used)?;
+        land(&mut tracks, target, landed, seed, |id| {
+            used.get_or_insert_with(|| self.used_ids()).insert(id)
+        })?;
         let mut contents = self.contents().to_vec();
         crate::placement::drop_unreferenced(&mut contents, &tracks);
         Ok(self.with_parts(contents, tracks))
@@ -132,7 +133,7 @@ impl Project {
         contents.push(Arc::new(content));
         contents.sort_by_key(|content| content.id);
         let mut tracks = self.tracks().to_vec();
-        land(&mut tracks, target, landed, seed, &mut used)?;
+        land(&mut tracks, target, landed, seed, |id| used.insert(id))?;
         crate::placement::drop_unreferenced(&mut contents, &tracks);
         Ok(self.with_parts(contents, tracks))
     }
@@ -191,12 +192,13 @@ impl Project {
 /// piece gets an id derived from `seed`. Kept parts stay on the same content
 /// and origin, become fixed, and take the default short fade on each new cut.
 /// Uncut edges keep their fades.
+/// `reserve_id` is called only for a split; true reserves the id, false reports a collision.
 fn land(
     tracks: &mut [Arc<Track>],
     target: usize,
     landed: Placement,
     seed: Id,
-    used: &mut HashSet<Id>,
+    mut reserve_id: impl FnMut(Id) -> bool,
 ) -> Result<(), ModelError> {
     let start = landed.start.get();
     let end = start
@@ -225,7 +227,7 @@ fn land(
             let mut right = clip;
             if split {
                 let id = derived_id(SPLIT_CONTEXT, seed, right.id);
-                if !used.insert(id) {
+                if !reserve_id(id) {
                     return Err(ModelError::DuplicateId);
                 }
                 right.id = id;

@@ -17,6 +17,8 @@ struct Work {
     note_lookups: usize,
     refit_sync_probes: usize,
     refit_track_copies: usize,
+    used_id_collections: usize,
+    used_id_notes: usize,
 }
 
 thread_local! {
@@ -65,6 +67,14 @@ pub(crate) fn refit_sync_probe() {
 
 pub(crate) fn refit_track_copy() {
     record(|work| work.refit_track_copies += 1);
+}
+
+pub(crate) fn used_id_collection() {
+    record(|work| work.used_id_collections += 1);
+}
+
+pub(crate) fn used_id_note() {
+    record(|work| work.used_id_notes += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -630,3 +640,6 @@ fn note_edits_do_not_search_unrelated_contents_after_refitting() {
 
 #[path = "model_refit_tests.rs"]
 mod refit;
+
+#[path = "model_clip_move_tests.rs"]
+mod clip_move;

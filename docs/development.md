@@ -446,6 +446,8 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 クリップの移動と複製移動のモデルは `crates/echode-model/src/clip_move.rs`（置き換えの `land` と導出 ID）、
 画面のドラッグ・影・要求（`ClipMove`）と controller の編集は `ArrangeClipMove.swift`、押下の振り分けは `ArrangeView.swift` に置く。
 回帰は `clip_move_tests.rs`、履歴と CLI の `clip_move`、`ClipMoveTests.swift`（[ADR 0154](decisions/0154-clip-move-and-duplicate.md)）。
+移動時の ID 集合の収集回数と共有保持は `model_clip_move_tests.rs`（`model_scale_tests::clip_move`）で時間に依らず検査する。
+分割 ID のテイク・ノート・内容・トラック・配置・デバイス・パラメーターとの衝突は `clip_move_tests.rs` で検査する。
 単一クリップの ⌘D は `ArrangeView` のローカルなキー入力と `ClipMoveTarget.adjacentStart` を通す。
 回帰は `ClipDuplicationTests.swift`・`ClipDuplicationBoundaryTests.swift`
 （[ADR 0188](decisions/0188-arrange-adjacent-clip-duplication.md)）。
