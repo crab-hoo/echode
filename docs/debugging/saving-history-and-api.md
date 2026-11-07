@@ -95,6 +95,15 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 モデルが速くても `replace_p50_ms` が遅ければ計画の使い回し（ADR 0274）、保存で待つなら FCA-14 を別に調べる。
 ID 重複の線形探索と、毎回全配置から作る参照集合は残る（[ADR 0242](../decisions/0242-model-content-lookup-and-references.md)）。
 
+### ノート複製・ベロシティ変更が内容数に応じて遅くなる
+
+`cargo test -q -p echode-model model_scale_tests::note_lookup` で、両入口の内容キーの比較回数を調べる。
+`duplicate_note` と `set_note_velocity` は、配置が指す内容を `model::content_index` で二分探索する。
+回帰は二つの共有トラックの異なる原点から先頭・末尾を編集し、固定窓・16 bit の強弱・共有・変更セットの正逆適用も確認する。
+`MissingClip` が返る時は、トラック内の配置と内容参照の両方を調べ、二分探索の前提である内容の ID 順を不変条件で検査する。
+比較回数が予算内でも、配列の複製・対象内のノート探索・複製の ID 重複確認・再適合・保存待ちは別に残る。
+既存の `spike-scale` はベロシティ変更を測らず、この回帰の代用にはならない。
+
 ### トラック追加が既存ノート数に応じて遅くなる
 
 `model_scale_tests::track_insert` は末尾・子・指定位置への追加で、既存ノートの ID 訪問数と全体走査の回数を数える。

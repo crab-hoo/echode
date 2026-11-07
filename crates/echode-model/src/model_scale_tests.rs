@@ -726,3 +726,6 @@ mod track_insert;
 
 #[path = "model_audio_insert_tests.rs"]
 mod audio_insert;
+
+#[path = "model_note_lookup_tests.rs"]
+mod note_lookup;

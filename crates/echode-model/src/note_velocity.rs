@@ -25,11 +25,10 @@ impl Project {
             .iter()
             .find(|item| item.id == clip)
             .ok_or(ModelError::MissingClip)?;
-        let mut contents = self.contents().to_vec();
-        let content = contents
-            .iter_mut()
-            .find(|item| item.id == placement.content)
+        let content_index = crate::model::content_index(self.contents(), placement.content)
             .ok_or(ModelError::MissingClip)?;
+        let mut contents = self.contents().to_vec();
+        let content = &mut contents[content_index];
         let target = Arc::make_mut(content)
             .notes
             .iter_mut()

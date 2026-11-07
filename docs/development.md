@@ -186,6 +186,9 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 ノートは `model_insert_tests.rs`（`model_scale_tests::insert`）で、通常・衝突・エラー順・変更セットの正逆適用と走査回数を検査する。
 `spike-scale` の `model_edit.place_audio_p50_ms`・`new_midi_clip_p50_ms` は、同じ版への各 20 回の追加を測り、素材・機器は開かない。
 
+ノート複製・ベロシティ変更の内容探索は `model_note_lookup_tests.rs`（`model_scale_tests::note_lookup`）で比較回数を数える。
+先頭・末尾の共有内容、異なる配置原点、欠けた内容・対象、未変更の共有と変更セットの正逆適用を検査する。
+
 中身の音声参照・テイク ID 列の表は `echode-model/src/content_fields.rs`、独立したメタデータ・ID 列と順序の回帰は
 履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。
 操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない
