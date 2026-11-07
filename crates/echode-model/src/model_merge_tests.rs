@@ -239,6 +239,124 @@ fn multi_clip_merge_retargets_links_and_prunes_contents_in_one_pass() {
     }
 }
 
+#[test]
+fn multi_clip_merge_membership_uses_one_probe_per_auto_per_pass() {
+    // The counts bound this regression, not the number of product placements.
+    for count in [64, 256] {
+        let project = merge_project(count, true);
+        for operation in ["insert", "edit", "linked edit"] {
+            let (edited, work) = measured(|| merge_edit(&project, count, operation).unwrap());
+            edited.check_invariants().unwrap();
+            assert!(
+                work.refit_host_probes <= 2 * count,
+                "multi-clip merge searched {} host indices for {count} auto placements ({operation})",
+                work.refit_host_probes
+            );
+        }
+    }
+}
+
+#[test]
+fn multi_clip_merge_membership_keeps_reverse_chains_and_fixed_walls() {
+    // Adjacent auto windows require repeated discovery passes from right to left.
+    // These fixture sizes do not impose any limit on product projects.
+    for count in [1, 4, 64] {
+        for wall in [false, true] {
+            if wall && count == 1 {
+                continue;
+            }
+            let template = merge_project(count, true);
+            let bar = template.meter().bar_ticks().unwrap().get();
+            let mut tracks: Vec<_> = template
+                .tracks()
+                .iter()
+                .map(|track| (**track).clone())
+                .collect();
+            for (index, clip) in tracks[0].clips.iter_mut().take(count).enumerate() {
+                clip.start = Tick::new(index as i64 * bar);
+                if wall && index == count / 2 {
+                    clip.kind = ClipKind::Fixed;
+                }
+            }
+            let project = Project::try_assemble(
+                template.meter(),
+                template.tempo().clone(),
+                template
+                    .contents()
+                    .iter()
+                    .map(|content| (**content).clone())
+                    .collect(),
+                tracks,
+            )
+            .unwrap();
+            let original = project.clone();
+            let clip = &project.tracks()[0].clips[count - 1];
+            let note = &project.content(clip.content).unwrap().notes[0];
+            let (edited, work) = measured(|| {
+                project
+                    .edit_note(
+                        Id::from_raw(OWNER),
+                        clip.id,
+                        note.id,
+                        NoteGeometry {
+                            pitch: 61,
+                            start: clip.sounding_start(note).unwrap(),
+                            length: note.length,
+                        },
+                    )
+                    .unwrap()
+            });
+            let first = if wall { count / 2 + 1 } else { 0 };
+            let merged_count = count - first;
+            assert_eq!(
+                work.refit_host_probes,
+                (count - usize::from(wall)) * merged_count
+            );
+            edited.check_invariants().unwrap();
+            assert!(project.diff(&original).is_empty());
+            let owner = &edited.tracks()[0];
+            assert_eq!(owner.clips.len(), 2 * count - merged_count + 1);
+            assert_eq!(owner.clips[..first], project.tracks()[0].clips[..first]);
+            let primary = &owner.clips[first];
+            assert_eq!(primary.id, project.tracks()[0].clips[first].id);
+            assert_eq!(primary.start, Tick::new(first as i64 * bar));
+            assert_eq!(primary.length, Tick::new(merged_count as i64 * bar));
+            let merged = edited.content(primary.content).unwrap();
+            assert_eq!(merged.notes.len(), merged_count);
+            for (index, note) in merged.notes.iter().enumerate() {
+                let old = &project.contents()[first + index].notes[0];
+                assert_eq!(note.id, old.id);
+                assert_eq!(note.start, Tick::new(index as i64 * bar));
+                assert_eq!(note.velocity, old.velocity);
+                assert_eq!(note.release, old.release);
+                assert_eq!(
+                    note.pitch,
+                    if index + 1 == merged_count {
+                        61
+                    } else {
+                        old.pitch
+                    }
+                );
+            }
+            let diff = project.diff(&edited);
+            assert!(
+                project
+                    .apply_changeset(&diff)
+                    .unwrap()
+                    .diff(&edited)
+                    .is_empty()
+            );
+            assert!(
+                edited
+                    .apply_changeset(&diff.invert())
+                    .unwrap()
+                    .diff(&project)
+                    .is_empty()
+            );
+        }
+    }
+}
+
 fn shifted_project() -> Project {
     let project = merge_project(4, true);
     let bar = project.meter().bar_ticks().unwrap().get();

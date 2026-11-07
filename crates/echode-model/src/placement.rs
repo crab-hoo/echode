@@ -497,15 +497,24 @@ fn refit_current(
         .ok_or(ModelError::MissingClip)?;
     let mut span = note_bars(contents, &current.clips[index], bar)?;
     let mut hosts = vec![index];
+    // Clip indices stay stable until discovery finishes and merge removes hosts.
+    let mut selected = vec![false; current.clips.len()];
+    selected[index] = true;
     loop {
         let before = hosts.len();
         for (slot, clip) in current.clips.iter().enumerate() {
-            if clip.kind != ClipKind::Auto || hosts.contains(&slot) {
+            if clip.kind != ClipKind::Auto {
+                continue;
+            }
+            #[cfg(test)]
+            crate::model_scale_tests::refit_host_probe();
+            if selected[slot] {
                 continue;
             }
             let candidate = occupied_bars(clip.start.get(), clip.length.get(), bar)
                 .ok_or(ModelError::InvalidNote)?;
             if bars_touch(span, candidate) && !fixed_blocks(&current.clips, span, candidate, bar) {
+                selected[slot] = true;
                 hosts.push(slot);
                 span = (span.0.min(candidate.0), span.1.max(candidate.1));
             }

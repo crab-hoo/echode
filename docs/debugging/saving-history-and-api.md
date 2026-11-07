@@ -63,6 +63,8 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 固定リンクから別トラックの自動配置を編集した時だけ遅い場合は、`model_scale_tests::refit::linked_refit` の同期キー訪問とトラック複製回数を調べる。
 `placement::refit_auto` は配置 ID の一時索引で付替えを戻し、`retarget` と共に無関係なトラックを検査のために複製しない。
 この計数は再適合・付替えの範囲だけであり、ID 重複の探索・参照集合・保存待ちの費用とは分ける。
+結合数が多い時だけ遅い場合は、`model_scale_tests::merge::multi_clip_merge_membership` で選択済み配置の所属確認回数を調べる。
+`refit_current` は配置の削除前だけインデックスの一時フラグを使う。左向きの連鎖による反復回数と、固定配置の壁の探索はこの回数の改善とは分ける。
 深いフォルダだけで遅くなる時は、`model_scale_tests` の `nested_forest_validation_does_not_revisit_resolved_ancestors` と逆順入力の回帰で親の訪問回数を確認する。
 親の存在・循環は `hierarchy::check_forest`、順序キーと配列の並びは `model::arrange_fault` が検証する。
 `hierarchy::tests` は小さい親グラフの全列挙と深い逆順の鎖を調べ、順序違反と循環を切り分ける。
