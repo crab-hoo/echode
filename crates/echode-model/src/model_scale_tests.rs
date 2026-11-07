@@ -14,6 +14,7 @@ struct Work {
     note_validations: usize,
     parent_links: usize,
     shared_note_validations: usize,
+    note_lookups: usize,
 }
 
 thread_local! {
@@ -50,6 +51,10 @@ pub(crate) fn note_validation() {
 
 pub(crate) fn shared_note_validation() {
     record(|work| work.shared_note_validations += 1);
+}
+
+pub(crate) fn note_lookup() {
+    record(|work| work.note_lookups += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -534,5 +539,81 @@ fn nested_reparent_rejects_cycles_without_repeated_ancestor_searches() {
             crate::ModelError::MissingTrack,
         );
         project.check_invariants().unwrap();
+    }
+}
+
+#[test]
+fn note_edits_do_not_search_unrelated_contents_after_refitting() {
+    // These sizes bound this regression only, not product notes or contents.
+    for count in [64, 256] {
+        let project = fixture(count);
+        let track = &project.tracks()[0];
+        let clip = track.clips.last().unwrap();
+        let note = &project.content(clip.content).unwrap().notes[0];
+        let start = clip.sounding_start(note).unwrap();
+        for operation in ["edit", "insert", "duplicate"] {
+            let (edited, work) = measured(|| match operation {
+                "edit" => project.edit_note(
+                    track.id,
+                    clip.id,
+                    note.id,
+                    NoteGeometry {
+                        pitch: 61,
+                        start,
+                        length: note.length,
+                    },
+                ),
+                "insert" => project.insert_note_with_id(
+                    track.id,
+                    Id::from_raw(40_000),
+                    Id::from_raw(40_001),
+                    Id::from_raw(40_002),
+                    NoteDraft {
+                        pitch: 61,
+                        velocity: 100,
+                        start,
+                        length: Tick::new(1),
+                    },
+                ),
+                "duplicate" => project.duplicate_note(
+                    track.id,
+                    clip.id,
+                    note.id,
+                    Id::from_raw(40_000),
+                    61,
+                    start,
+                ),
+                _ => unreachable!(),
+            });
+            let edited = edited.unwrap();
+            let expected_lookups = match operation {
+                "edit" => 1,
+                "insert" => 0,
+                "duplicate" => 2,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                work.note_lookups, expected_lookups,
+                "{operation} searched {} notes with {count} independent contents",
+                work.note_lookups,
+            );
+            edited.check_invariants().unwrap();
+            assert_eq!(project.content(clip.content).unwrap().notes.len(), 1);
+            assert_eq!(project.content(clip.content).unwrap().notes[0].pitch, 60);
+            assert!(
+                edited
+                    .content(clip.content)
+                    .unwrap()
+                    .notes
+                    .iter()
+                    .any(|note| note.pitch == 61)
+            );
+            for (old, new) in project.contents()[..count - 1]
+                .iter()
+                .zip(&edited.contents()[..count - 1])
+            {
+                assert!(Arc::ptr_eq(old, new));
+            }
+        }
     }
 }

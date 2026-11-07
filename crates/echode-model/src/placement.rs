@@ -33,13 +33,8 @@ pub(super) fn insert(
         let owner = track.clips[index].content;
         let local = content_local(&track.clips[index], draft.start.get())?;
         push_note(contents, owner, fresh.note, local, draft)?;
-        refit_auto(contents, tracks, track, owner, bar)?;
-        return check_shared_notes(
-            contents,
-            tracks,
-            track,
-            content_of_note(contents, fresh.note).unwrap_or(owner),
-        );
+        let owner = refit_auto(contents, tracks, track, owner, bar)?;
+        return check_shared_notes(contents, tracks, track, owner);
     }
     let note_bars =
         occupied_bars(draft.start.get(), draft.length.get(), bar).ok_or(ModelError::InvalidNote)?;
@@ -67,13 +62,8 @@ pub(super) fn insert(
     let owner = track.clips[primary].content;
     let local = content_local(&track.clips[primary], draft.start.get())?;
     push_note(contents, owner, fresh.note, local, draft)?;
-    merge(contents, tracks, track, &hosts, bar)?;
-    check_shared_notes(
-        contents,
-        tracks,
-        track,
-        content_of_note(contents, fresh.note).unwrap_or(owner),
-    )
+    let owner = merge(contents, tracks, track, &hosts, bar)?;
+    check_shared_notes(contents, tracks, track, owner)
 }
 
 pub(super) fn delete(
@@ -105,7 +95,7 @@ pub(super) fn delete(
         remove_auto(tracks, track, owner);
         return Ok(());
     }
-    refit_auto(contents, tracks, track, owner, bar)
+    refit_auto(contents, tracks, track, owner, bar).map(|_| ())
 }
 
 pub(super) fn edit(
@@ -132,23 +122,22 @@ pub(super) fn edit(
     let note = content
         .notes
         .iter_mut()
-        .find(|note| note.id == note_id)
+        .find(|note| {
+            #[cfg(test)]
+            crate::model_scale_tests::note_lookup();
+            note.id == note_id
+        })
         .ok_or(ModelError::MissingNote)?;
     let time_changed = note.start.get() != local || note.length != geometry.length;
     note.pitch = geometry.pitch;
     note.start = Tick::new(local);
     note.length = geometry.length;
     crate::model::sort_notes(&mut content.notes);
-    refit_auto(contents, tracks, track, owner, bar)?;
+    let owner = refit_auto(contents, tracks, track, owner, bar)?;
     if time_changed && grow_window {
         grow_edited_window(&mut track.clips, clip_id, geometry)?;
     }
-    check_shared_notes(
-        contents,
-        tracks,
-        track,
-        content_of_note(contents, note_id).unwrap_or(owner),
-    )
+    check_shared_notes(contents, tracks, track, owner)
 }
 
 /// A time edit explicitly requests that the whole note sound in this window.
@@ -195,16 +184,6 @@ fn grow_edited_window(
         return Err(ModelError::Overlap);
     }
     Ok(())
-}
-
-fn content_of_note(contents: &[Arc<Content>], note: Id) -> Option<Id> {
-    contents.iter().find_map(|content| {
-        content
-            .notes
-            .iter()
-            .any(|item| item.id == note)
-            .then_some(content.id)
-    })
 }
 
 /// Every placement of `content`, including fixed links on other tracks, must
@@ -321,7 +300,7 @@ fn merge(
     track: &mut Track,
     hosts: &[usize],
     bar: i64,
-) -> Result<(), ModelError> {
+) -> Result<Id, ModelError> {
     let mut order = hosts.to_vec();
     order.sort_by(|&left, &right| {
         track.clips[left]
@@ -376,7 +355,7 @@ fn merge(
         .position(|clip| clip.id == primary_id)
         .ok_or(ModelError::MissingClip)?;
     refit_one(contents, &mut track.clips, index, bar)?;
-    Ok(())
+    Ok(primary_content)
 }
 
 fn retarget(
@@ -421,13 +400,14 @@ fn retarget(
     Ok(())
 }
 
+/// Returns the surviving content, which may change when auto clips merge.
 fn refit_auto(
     contents: &mut Vec<Arc<Content>>,
     tracks: &mut [Arc<Track>],
     current: &mut Track,
     content: Id,
     bar: i64,
-) -> Result<(), ModelError> {
+) -> Result<Id, ModelError> {
     if current
         .clips
         .iter()
@@ -445,7 +425,7 @@ fn refit_auto(
             .iter()
             .any(|clip| clip.content == content && clip.kind == ClipKind::Auto)
         {
-            refit_current(contents, tracks, &mut owned, content, bar)?;
+            let owner = refit_current(contents, tracks, &mut owned, content, bar)?;
             crate::model::sort_clips(&mut owned.clips);
             // Merge may have retargeted fixed windows on the edited track too.
             for clip in &mut current.clips {
@@ -460,10 +440,10 @@ fn refit_auto(
                 }
             }
             tracks[slot] = Arc::new(owned);
-            return Ok(());
+            return Ok(owner);
         }
     }
-    Ok(())
+    Ok(content)
 }
 
 fn refit_current(
@@ -472,7 +452,7 @@ fn refit_current(
     current: &mut Track,
     content: Id,
     bar: i64,
-) -> Result<(), ModelError> {
+) -> Result<Id, ModelError> {
     let index = current
         .clips
         .iter()
@@ -498,7 +478,8 @@ fn refit_current(
         }
     }
     if hosts.len() == 1 {
-        refit_one(contents, &mut current.clips, index, bar)
+        refit_one(contents, &mut current.clips, index, bar)?;
+        Ok(content)
     } else {
         merge(contents, tracks, current, &hosts, bar)
     }

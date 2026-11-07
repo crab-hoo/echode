@@ -1,6 +1,175 @@
 use super::*;
 use crate::{Lane, Project, test_mixer};
 
+fn merging_project(edge_link: bool) -> Project {
+    let template = Project::new();
+    let bar = template.meter().bar_ticks().unwrap().get();
+    let contents = [(10, 11), (20, 21)]
+        .into_iter()
+        .map(|(id, note)| Content {
+            id: Id::from_raw(id),
+            audio: None,
+            takes: Vec::new(),
+            notes: vec![Note {
+                id: Id::from_raw(note),
+                start: Tick::new(0),
+                length: Tick::new(1),
+                pitch: 60,
+                velocity: 12345,
+                release: 23456,
+                articulation: None,
+            }],
+            expressions: Vec::new(),
+        })
+        .collect();
+    let mut auto = track(1000, Vec::new());
+    for (id, content, start) in [(12, 10, 0), (22, 20, 2 * bar)] {
+        let mut clip = placement(Id::from_raw(content), 0);
+        clip.id = Id::from_raw(id);
+        clip.start = Tick::new(start);
+        clip.length = Tick::new(bar);
+        clip.kind = ClipKind::Auto;
+        auto.clips.push(clip);
+    }
+    let mut link = placement(Id::from_raw(20), 0);
+    link.id = Id::from_raw(32);
+    link.start = Tick::new(-bar);
+    link.length = Tick::new(2 * bar);
+    link.offset = Tick::new(-bar);
+    let mut linked = track(2000, vec![link]);
+    linked.order = crate::model::sibling_order(1);
+    let mut tracks = vec![auto, linked];
+    if edge_link {
+        let mut link = placement(Id::from_raw(10), i64::MAX - 1);
+        link.id = Id::from_raw(42);
+        link.start = Tick::new(i64::MAX - 1);
+        link.offset = Tick::new(0);
+        let mut edge = track(3000, vec![link]);
+        edge.order = crate::model::sibling_order(2);
+        tracks.push(edge);
+    }
+    Project::try_assemble(template.meter(), template.tempo().clone(), contents, tracks).unwrap()
+}
+
+fn merge_edit(
+    project: &Project,
+    through_link: bool,
+    operation: &str,
+) -> Result<Project, ModelError> {
+    let bar = project.meter().bar_ticks().unwrap().get();
+    let (track, clip, start) = if through_link {
+        (Id::from_raw(2000), Id::from_raw(32), -bar)
+    } else {
+        (Id::from_raw(1000), Id::from_raw(22), bar)
+    };
+    match operation {
+        "edit" => project.edit_note(
+            track,
+            clip,
+            Id::from_raw(21),
+            NoteGeometry {
+                pitch: 61,
+                start: Tick::new(start),
+                length: Tick::new(1),
+            },
+        ),
+        "duplicate" => project.duplicate_note(
+            track,
+            clip,
+            Id::from_raw(21),
+            Id::from_raw(40000),
+            61,
+            Tick::new(start),
+        ),
+        "insert" | "insert_existing" => project.insert_note_with_id(
+            track,
+            Id::from_raw(40000),
+            Id::from_raw(40001),
+            Id::from_raw(40002),
+            NoteDraft {
+                pitch: 61,
+                velocity: 100,
+                start: Tick::new(if operation == "insert_existing" && !through_link {
+                    0
+                } else {
+                    start
+                }),
+                length: Tick::new(if operation == "insert_existing" {
+                    2 * bar + 1
+                } else {
+                    1
+                }),
+            },
+        ),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn merged_note_edits_validate_the_surviving_content_on_either_track() {
+    for through_link in [false, true] {
+        for operation in ["edit", "duplicate", "insert", "insert_existing"] {
+            let project = merging_project(false);
+            let edited = merge_edit(&project, through_link, operation).unwrap();
+            edited.check_invariants().unwrap();
+            project.check_invariants().unwrap();
+            assert!(edited.content(Id::from_raw(20)).is_none());
+            assert_eq!(edited.tracks()[0].clips.len(), 1);
+            let primary = &edited.tracks()[0].clips[0];
+            assert_eq!(primary.id, Id::from_raw(12));
+            assert_eq!(primary.content, Id::from_raw(10));
+            let linked = &edited.tracks()[1].clips[0];
+            assert_eq!(linked.content, primary.content);
+            assert_eq!(linked.start, project.tracks()[1].clips[0].start);
+            assert_eq!(linked.length, project.tracks()[1].clips[0].length);
+            let content = edited.content(primary.content).unwrap();
+            let note = content.notes.iter().find(|note| note.pitch == 61).unwrap();
+            let bar = project.meter().bar_ticks().unwrap().get();
+            let local = if operation == "insert_existing" && !through_link {
+                0
+            } else {
+                bar
+            };
+            assert_eq!(note.start.get(), local);
+            assert_eq!(primary.sounding_start(note).unwrap().get(), local);
+            assert_eq!(linked.sounding_start(note).unwrap().get(), local - 2 * bar);
+            if operation == "duplicate" {
+                assert_eq!(note.velocity, 12345);
+                assert_eq!(note.release, 23456);
+            }
+            assert_eq!(project.contents().len(), 2);
+            assert_eq!(project.content(Id::from_raw(20)).unwrap().notes.len(), 1);
+            assert_eq!(
+                project.content(Id::from_raw(20)).unwrap().notes[0].pitch,
+                60
+            );
+        }
+    }
+}
+
+#[test]
+fn merged_note_edits_reject_overflow_in_links_of_the_surviving_content() {
+    for through_link in [false, true] {
+        for operation in ["edit", "duplicate", "insert", "insert_existing"] {
+            let project = merging_project(true);
+            assert_eq!(
+                merge_edit(&project, through_link, operation).unwrap_err(),
+                ModelError::InvalidNote,
+                "{operation}, through_link={through_link}",
+            );
+            project.check_invariants().unwrap();
+            assert_eq!(project.contents().len(), 2);
+            assert_eq!(project.tracks()[0].clips.len(), 2);
+            assert_eq!(
+                project.content(Id::from_raw(20)).unwrap().notes[0]
+                    .start
+                    .get(),
+                0
+            );
+        }
+    }
+}
+
 fn placement(content: Id, origin: i64) -> Placement {
     Placement {
         id: Id::from_raw(2),
