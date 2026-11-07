@@ -152,6 +152,10 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 履歴の `tests/device_package.rs` に置く。保存の配置だけを扱う formatter は `src/document_device.rs` に残す
 （[ADR 0223](decisions/0223-device-package-fields.md)）。
 
+所属数の復元検証は `echode-model/src/model_device_apply_tests.rs`（`model_scale_tests::device_apply`）でデバイスの訪問数を数える。
+`Project::apply_changeset` の作成・削除・値変更・チェインの並替えと正逆適用で、適用後のデバイス数以内に制限する。
+子の未列挙・欠けた ID・誤った所有者・所有者だけの削除の拒否と原本保持も検査し、プラグインや機器は開かない。
+
 ノートのスカラー項目の表は `echode-model/src/note_fields.rs`、独立した整数・参照・フィールド順の回帰は
 履歴の `tests/note_changesets.rs` に置く。所属と中身の順序、必須項目・型・未知の ID の拒否とジャーナルも検査する。
 操作列は共有内容と 16 bit の発音・リリースの強弱を持つ初期状態からも始める。

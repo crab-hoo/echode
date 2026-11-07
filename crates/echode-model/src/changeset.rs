@@ -765,6 +765,13 @@ impl Draft {
             }
             contents.push(Arc::new(content.finish(content_id, notes)));
         }
+        // Count owners once; each track still validates its ordered child list below.
+        let mut devices_per_track = HashMap::<Id, usize>::new();
+        for device in self.devices.values() {
+            #[cfg(test)]
+            crate::model_scale_tests::apply_device_owner_visit();
+            *devices_per_track.entry(device.track).or_default() += 1;
+        }
         let mut tracks = Vec::with_capacity(self.tracks.len());
         let mut used_clips = 0;
         let mut used_devices = 0;
@@ -806,11 +813,7 @@ impl Draft {
                 }
                 devices.push(device.finish(*device_id, parameters)?);
             }
-            let owned = self
-                .devices
-                .values()
-                .filter(|device| device.track == *track_id)
-                .count();
+            let owned = devices_per_track.get(track_id).copied().unwrap_or(0);
             if owned != devices.len() {
                 return Err(ModelError::InvalidChange);
             }
