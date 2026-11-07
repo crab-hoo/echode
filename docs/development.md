@@ -178,6 +178,10 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 保存ヘッダの配置だけを扱う formatter は `src/document_track.rs` に残し、ID・子・階層の検証は省略しない
 （[ADR 0225](decisions/0225-track-package-fields.md)）。
 
+トラック追加の一括 ID 照合は `model.rs::track_ids_free`、訪問数と衝突の回帰は
+`model_track_insert_tests.rs`（`model_scale_tests::track_insert`）に置く。
+末尾・子・指定位置への追加で、既存ノートの ID を一度だけ訪ね、候補内と全種の既存 ID との衝突拒否を保つ。
+
 中身の音声参照・テイク ID 列の表は `echode-model/src/content_fields.rs`、独立したメタデータ・ID 列と順序の回帰は
 履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。
 操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない

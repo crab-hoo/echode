@@ -50,10 +50,6 @@ impl MixerIds {
             solo: Id::from_raw(base + 4),
         }
     }
-
-    fn all(self) -> [Id; 5] {
-        [self.device, self.gain, self.pan, self.mute, self.solo]
-    }
 }
 
 /// What a device on a track is.
@@ -368,10 +364,4 @@ pub(crate) fn validate_mixer(
         }
     }
     Ok(())
-}
-
-pub(crate) fn mixer_ids_free(ids: MixerIds, occupied: impl Fn(Id) -> bool) -> bool {
-    let all = ids.all();
-    all.iter().all(|id| !occupied(*id))
-        && all.iter().collect::<std::collections::HashSet<_>>().len() == all.len()
 }

@@ -512,11 +512,7 @@ impl Project {
         name: impl Into<String>,
         mixer: MixerIds,
     ) -> Result<Self, ModelError> {
-        if self.id_in_use(id)
-            || !crate::device::mixer_ids_free(mixer, |candidate| {
-                self.id_in_use(candidate) || candidate == id
-            })
-        {
+        if !self.track_ids_free(id, mixer) {
             return Err(ModelError::DuplicateId);
         }
         let order = next_order(&self.tracks, None)?;
@@ -552,11 +548,7 @@ impl Project {
         if into_folder && self.tracks.iter().any(|track| track.parent == Some(after)) {
             return self.add_child_with_id(id, after, name, mixer);
         }
-        if self.id_in_use(id)
-            || !crate::device::mixer_ids_free(mixer, |candidate| {
-                self.id_in_use(candidate) || candidate == id
-            })
-        {
+        if !self.track_ids_free(id, mixer) {
             return Err(ModelError::DuplicateId);
         }
         let order = self.order_after(anchor)?;
@@ -828,11 +820,7 @@ impl Project {
         name: impl Into<String>,
         mixer: MixerIds,
     ) -> Result<Self, ModelError> {
-        if self.id_in_use(id)
-            || !crate::device::mixer_ids_free(mixer, |candidate| {
-                self.id_in_use(candidate) || candidate == id
-            })
-        {
+        if !self.track_ids_free(id, mixer) {
             return Err(ModelError::DuplicateId);
         }
         self.track_index(parent)?;
@@ -1311,22 +1299,47 @@ impl Project {
             .ok_or(ModelError::MissingTrack)
     }
 
+    fn track_ids_free(&self, id: Id, mixer: MixerIds) -> bool {
+        // Keep only the incoming IDs, not every ID in the project.
+        let mut candidates = [
+            id,
+            mixer.device,
+            mixer.gain,
+            mixer.pan,
+            mixer.mute,
+            mixer.solo,
+        ];
+        candidates.sort_unstable();
+        if candidates.windows(2).any(|pair| pair[0] == pair[1]) {
+            return false;
+        }
+        !self.any_id_matches(|candidate| candidates.binary_search(&candidate).is_ok())
+    }
+
     fn id_in_use(&self, id: Id) -> bool {
+        self.any_id_matches(|candidate| candidate == id)
+    }
+
+    fn any_id_matches(&self, matches: impl Fn(Id) -> bool) -> bool {
         #[cfg(test)]
         crate::model_scale_tests::id_check();
         self.contents.iter().any(|content| {
-            content.id == id
-                || content.takes.contains(&id)
+            matches(content.id)
+                || content.takes.iter().copied().any(&matches)
                 || content.notes.iter().any(|note| {
                     #[cfg(test)]
                     crate::model_scale_tests::id_check_note();
-                    note.id == id
+                    matches(note.id)
                 })
         }) || self.tracks.iter().any(|track| {
-            track.id == id
-                || track.clips.iter().any(|clip| clip.id == id)
+            matches(track.id)
+                || track.clips.iter().any(|clip| matches(clip.id))
                 || track.devices.iter().any(|device| {
-                    device.id == id || device.parameters.iter().any(|parameter| parameter.id == id)
+                    matches(device.id)
+                        || device
+                            .parameters
+                            .iter()
+                            .any(|parameter| matches(parameter.id))
                 })
         })
     }

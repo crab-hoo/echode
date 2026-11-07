@@ -720,3 +720,6 @@ mod tempo_diff;
 
 #[path = "model_device_apply_tests.rs"]
 mod device_apply;
+
+#[path = "model_track_insert_tests.rs"]
+mod track_insert;
