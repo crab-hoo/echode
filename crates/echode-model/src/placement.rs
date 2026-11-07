@@ -340,23 +340,31 @@ fn merge(
                 ..note
             });
         }
-        retired.push((placement.id, placement.content, from_origin));
+        retired.push((placement.id, placement.content, delta));
     }
     {
         let content = content_mut(contents, primary_content)?;
         content.notes.extend(absorbed);
         crate::model::sort_notes(&mut content.notes);
     }
-    let removed: Vec<Id> = retired.iter().map(|(id, _, _)| *id).collect();
-    track.clips.retain(|clip| !removed.contains(&clip.id));
-    for (_, content, from_origin) in &retired {
-        let delta = from_origin
-            .checked_sub(primary_origin)
-            .ok_or(ModelError::InvalidNote)?;
-        retarget(tracks, track, *content, primary_content, delta)?;
-        if !referenced(tracks, track, *content) {
-            contents.retain(|item| item.id != *content);
-        }
+    let removed: HashSet<Id> = retired.iter().map(|(id, _, _)| *id).collect();
+    track.clips.retain(|clip| {
+        #[cfg(test)]
+        crate::model_scale_tests::merge_placement_probe();
+        !removed.contains(&clip.id)
+    });
+    let retired: HashMap<Id, i64> = retired
+        .into_iter()
+        .map(|(_, content, delta)| (content, delta))
+        .collect();
+    if !retired.is_empty() {
+        retarget(tracks, track, &retired, primary_content)?;
+        // All links to retired contents were retargeted, so prune those contents once.
+        contents.retain(|content| {
+            #[cfg(test)]
+            crate::model_scale_tests::merge_content_probe();
+            !retired.contains_key(&content.id)
+        });
     }
     let index = track
         .clips
@@ -370,14 +378,15 @@ fn merge(
 fn retarget(
     tracks: &mut [Arc<Track>],
     current: &mut Track,
-    from: Id,
+    retired: &HashMap<Id, i64>,
     to: Id,
-    delta: i64,
 ) -> Result<(), ModelError> {
     let edit = |clip: &mut Placement| -> Result<(), ModelError> {
-        if clip.content != from {
+        #[cfg(test)]
+        crate::model_scale_tests::merge_placement_probe();
+        let Some(&delta) = retired.get(&clip.content) else {
             return Ok(());
-        }
+        };
         clip.offset = Tick::new(
             clip.offset
                 .get()
@@ -391,7 +400,13 @@ fn retarget(
         edit(clip)?;
     }
     for track in tracks.iter_mut() {
-        if track.id == current.id || !track.clips.iter().any(|clip| clip.content == from) {
+        if track.id == current.id
+            || !track.clips.iter().any(|clip| {
+                #[cfg(test)]
+                crate::model_scale_tests::merge_placement_probe();
+                retired.contains_key(&clip.content)
+            })
+        {
             continue;
         }
         #[cfg(test)]
@@ -644,13 +659,6 @@ fn content_mut(contents: &mut [Arc<Content>], id: Id) -> Result<&mut Content, Mo
 fn insert_content(contents: &mut Vec<Arc<Content>>, content: Content) {
     contents.push(Arc::new(content));
     contents.sort_by_key(|content| content.id);
-}
-
-fn referenced(tracks: &[Arc<Track>], current: &Track, content: Id) -> bool {
-    current.clips.iter().any(|clip| clip.content == content)
-        || tracks.iter().any(|track| {
-            track.id != current.id && track.clips.iter().any(|clip| clip.content == content)
-        })
 }
 
 fn contains(clip: &Placement, at: i64) -> bool {

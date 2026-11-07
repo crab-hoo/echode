@@ -22,6 +22,8 @@ struct Work {
     delete_track_copies: usize,
     id_checks: usize,
     id_check_notes: usize,
+    merge_placement_probes: usize,
+    merge_content_probes: usize,
 }
 
 thread_local! {
@@ -90,6 +92,14 @@ pub(crate) fn id_check() {
 
 pub(crate) fn id_check_note() {
     record(|work| work.id_check_notes += 1);
+}
+
+pub(crate) fn merge_placement_probe() {
+    record(|work| work.merge_placement_probes += 1);
+}
+
+pub(crate) fn merge_content_probe() {
+    record(|work| work.merge_content_probes += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -664,3 +674,6 @@ mod delete;
 
 #[path = "model_insert_tests.rs"]
 mod insert;
+
+#[path = "model_merge_tests.rs"]
+mod merge;

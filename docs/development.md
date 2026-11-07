@@ -496,6 +496,8 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 回帰は `PianoInsertionTests.swift` に置く（[ADR 0171](decisions/0171-piano-blank-drag-insertion.md)）。
 モデルの追加時の ID 検査の遅延・候補の衝突と未使用時の互換・時間に依らない探索回数は
 `crates/echode-model/src/model_insert_tests.rs`（`model_scale_tests::insert`）で検査する。
+自動配置の多重結合・リンクの一括付替えと整数境界・時間に依らない訪問と複製の回数は
+`crates/echode-model/src/model_merge_tests.rs`（`model_scale_tests::merge`）で検査する。
 
 単クリックの記憶長入力も同じ `PianoInsertion` を使い、長さと非永続の履歴枠は `NoteInputLength.swift` に置く。
 `DocumentSession.recordEdit` が全モデル編集の枠をそろえ、ノート選択・追加・長さ変更だけが長さを更新する。

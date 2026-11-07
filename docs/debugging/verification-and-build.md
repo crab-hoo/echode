@@ -200,6 +200,12 @@ Swift のマニフェスト読込時に `ModuleCache: Operation not permitted` �
 `bridge-nightly` / `bridge-miri` は固定 nightly・rust-src・Miri、`cargo-offline` はローカルの依存不足を切り分ける。
 事前確認を飛ばして合格にせず、復旧後に同じ `make verify` を再実行する。
 
+### `spike-scale` が結果の書込みで `No such file or directory` になる
+
+外部の `CARGO_TARGET_DIR` を使った新しい worktree では、コンパイル先だけが作られ、作業ツリー内の `target/` がない場合がある。
+`scale.rs` の結果の書込みが失敗したら、モデルや再生の失敗と区別し、その worktree で `mkdir -p target` を行って同じ計測を再実行する。
+結果はコンパイル先ではなく、その worktree の `target/spike-scale.json` に書く。途中の出力だけを計測の合格にしない。
+
 ### コマンドは成功扱いなのにログに失敗がある
 
 `echo`、`;`、`grep` / `head` のパイプによる終了コードの置換を調べる。
