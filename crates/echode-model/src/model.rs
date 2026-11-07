@@ -863,9 +863,6 @@ impl Project {
         let index = self.track_index(track_id)?;
         if let Some(parent_id) = parent {
             self.track_index(parent_id)?;
-            if parent_chain_contains(&self.tracks, parent_id, track_id) {
-                return Err(ModelError::Cycle);
-            }
         }
         if self.tracks[index].parent == parent {
             return Ok(self.clone());
@@ -876,6 +873,9 @@ impl Project {
         track.parent = parent;
         track.order = order;
         tracks[index] = Arc::new(track);
+        // Validate the changed forest once instead of searching the whole track
+        // list at every ancestor of the destination folder.
+        validate_forest(&tracks)?;
         Ok(Self {
             meter: self.meter,
             tempo: self.tempo.clone(),
@@ -1523,29 +1523,6 @@ pub(crate) fn referenced_contents(tracks: &[Arc<Track>]) -> HashSet<Id> {
             clip.content
         })
         .collect()
-}
-
-fn parent_chain_contains(tracks: &[Arc<Track>], start: Id, target: Id) -> bool {
-    let mut cursor = Some(start);
-    let mut seen = HashSet::new();
-    while let Some(id) = cursor {
-        if id == target || !seen.insert(id) {
-            return true;
-        }
-        cursor = parent_of(tracks, id);
-    }
-    false
-}
-
-fn parent_of(tracks: &[Arc<Track>], id: Id) -> Option<Id> {
-    tracks
-        .iter()
-        .find(|track| {
-            #[cfg(test)]
-            crate::model_scale_tests::parent_link();
-            track.id == id
-        })
-        .and_then(|track| track.parent)
 }
 
 fn validate_forest(tracks: &[Arc<Track>]) -> Result<(), ModelError> {

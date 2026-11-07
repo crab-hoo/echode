@@ -59,6 +59,8 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 深いフォルダだけで遅くなる時は、`model_scale_tests` の `nested_forest_validation_does_not_revisit_resolved_ancestors` と逆順入力の回帰で親の訪問回数を確認する。
 親の存在・循環は `hierarchy::check_forest`、順序キーと配列の並びは `model::arrange_fault` が検証する。
 `hierarchy::tests` は小さい親グラフの全列挙と深い逆順の鎖を調べ、順序違反と循環を切り分ける。
+親を変える操作だけで遅い時は `model_scale_tests::nested_reparent` で、移動と循環の拒否の親訪問回数を確認する。
+`set_parent` は変更後のグラフを同じ `check_forest` で検証し、同じ親ならグラフの検証を行わずに返す。
 `content id order` の拒否は二分探索の前提の破れであり、保存入力を整列する組立てと、変更セット復元の内容の順を調べる。
 モデルが速くても `replace_p50_ms` が遅ければ計画の使い回し（ADR 0274）、保存で待つなら FCA-14 を別に調べる。
 ID 重複の線形探索と、毎回全配置から作る参照集合は残る（[ADR 0242](../decisions/0242-model-content-lookup-and-references.md)）。

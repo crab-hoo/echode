@@ -351,3 +351,111 @@ fn reverse_ordered_forest_validation_is_linear_before_order_rejection() {
         );
     }
 }
+
+fn reparent_fixture(depth: usize) -> (Project, Id, Id) {
+    let template = Project::new();
+    let mut chain = nested_tracks(depth);
+    chain[0].order = crate::model::sibling_order(1);
+    let source = Id::from_raw(depth as u128 + 1);
+    let child = Id::from_raw(depth as u128 + 2);
+    let mut tracks: Vec<_> = [(source, None), (child, Some(source))]
+        .into_iter()
+        .map(|(id, parent)| Track {
+            id,
+            name: format!("moving {id}"),
+            parent,
+            order: crate::initial_order(),
+            devices: vec![crate::test_mixer(id.raw())],
+            clips: Vec::new(),
+        })
+        .collect();
+    tracks.extend(chain);
+    let project = Project::try_assemble(
+        template.meter(),
+        template.tempo().clone(),
+        Vec::new(),
+        tracks,
+    )
+    .unwrap();
+    (project, source, child)
+}
+
+#[test]
+fn nested_reparent_does_not_search_all_tracks_for_each_ancestor() {
+    // These depths bound this regression only, not product folder nesting.
+    for depth in [64, 256] {
+        let (project, source, child) = reparent_fixture(depth);
+        let destination = Id::from_raw(depth as u128);
+        let (moved, work) = measured(|| project.set_parent(source, Some(destination)).unwrap());
+        assert!(
+            work.parent_links <= project.tracks().len(),
+            "nested reparent inspected parent links {} times for {} tracks",
+            work.parent_links,
+            project.tracks().len(),
+        );
+        moved.check_invariants().unwrap();
+        project.check_invariants().unwrap();
+        assert_eq!(project.parent(source).unwrap(), None);
+        assert_eq!(moved.parent(source).unwrap(), Some(destination));
+        assert_eq!(moved.parent(child).unwrap(), Some(source));
+        let expected: Vec<_> = (1..=depth)
+            .map(|id| Id::from_raw(id as u128))
+            .chain([source, child])
+            .collect();
+        assert_eq!(
+            moved
+                .tracks()
+                .iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>(),
+            expected,
+        );
+        for original in project.tracks().iter().filter(|track| track.id != source) {
+            let retained = moved
+                .tracks()
+                .iter()
+                .find(|track| track.id == original.id)
+                .unwrap();
+            assert!(Arc::ptr_eq(original, retained));
+        }
+        let (unchanged, work) = measured(|| moved.set_parent(source, Some(destination)).unwrap());
+        assert_eq!(work.parent_links, 0, "unchanged parent walked ancestors");
+        for (old, new) in moved.tracks().iter().zip(unchanged.tracks()) {
+            assert!(Arc::ptr_eq(old, new));
+        }
+        let detached = moved.set_parent(source, None).unwrap();
+        detached.check_invariants().unwrap();
+        assert_eq!(detached.parent(source).unwrap(), None);
+        assert_eq!(detached.parent(child).unwrap(), Some(source));
+    }
+}
+
+#[test]
+fn nested_reparent_rejects_cycles_without_repeated_ancestor_searches() {
+    // These depths bound this regression only, not product folder nesting.
+    for depth in [64, 256] {
+        let (project, source, child) = reparent_fixture(depth);
+        let root = Id::from_raw(1);
+        let leaf = Id::from_raw(depth as u128);
+        for (track, parent) in [(root, leaf), (root, root), (source, child)] {
+            let (error, work) = measured(|| project.set_parent(track, Some(parent)).unwrap_err());
+            assert_eq!(error, crate::ModelError::Cycle);
+            assert!(
+                work.parent_links <= project.tracks().len(),
+                "nested reparent cycle check inspected parent links {} times for {} tracks",
+                work.parent_links,
+                project.tracks().len(),
+            );
+        }
+        let missing = Id::from_raw(0);
+        assert_eq!(
+            project.set_parent(source, Some(missing)).unwrap_err(),
+            crate::ModelError::MissingTrack,
+        );
+        assert_eq!(
+            project.set_parent(missing, Some(leaf)).unwrap_err(),
+            crate::ModelError::MissingTrack,
+        );
+        project.check_invariants().unwrap();
+    }
+}
