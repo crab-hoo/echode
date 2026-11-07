@@ -171,8 +171,9 @@ fn new_auto_clips_check_and_preserve_all_three_ids() {
                 .insert_note_with_id(track.id, NOTE, CLIP, CONTENT, draft(2 * bar, 10))
                 .unwrap()
         });
-        assert_eq!(work.id_checks, 3);
-        assert_eq!(work.id_check_notes, 3 * count);
+        assert_eq!(work.id_checks, 2);
+        assert_eq!(work.id_check_notes, 2 * count);
+        assert_eq!(work.used_id_collections, 0);
         let created = inserted.tracks()[0]
             .clips
             .iter()
@@ -197,7 +198,7 @@ fn new_auto_clips_check_and_preserve_all_three_ids() {
             .insert_note_with_id(track, NOTE, CLIP, CONTENT, draft(0, 10))
             .unwrap()
     });
-    assert_eq!(work.id_checks, 3);
+    assert_eq!(work.id_checks, 2);
     assert_eq!(work.id_check_notes, 0);
     assert_eq!(inserted.tracks()[0].clips[0].id, CLIP);
     assert_roundtrip(&empty, &inserted);

@@ -923,13 +923,7 @@ impl Project {
             },
             &draft,
             bar,
-            || {
-                clip_id != note_id
-                    && clip_id != content_id
-                    && note_id != content_id
-                    && !self.id_in_use(clip_id)
-                    && !self.id_in_use(content_id)
-            },
+            || clip_id != note_id && note_id != content_id && self.ids_free([clip_id, content_id]),
         )?;
         sort_clips(&mut track.clips);
         tracks[index] = Arc::new(track);
@@ -978,7 +972,7 @@ impl Project {
         if !fade_allowed(fade_in) || !fade_allowed(fade_out) {
             return Err(ModelError::InvalidClip);
         }
-        if self.id_in_use(clip_id) || self.id_in_use(content_id) {
+        if !self.ids_free([clip_id, content_id]) {
             return Err(ModelError::DuplicateId);
         }
         let index = self.track_index(track_id)?;
@@ -1300,15 +1294,18 @@ impl Project {
     }
 
     fn track_ids_free(&self, id: Id, mixer: MixerIds) -> bool {
-        // Keep only the incoming IDs, not every ID in the project.
-        let mut candidates = [
+        self.ids_free([
             id,
             mixer.device,
             mixer.gain,
             mixer.pan,
             mixer.mute,
             mixer.solo,
-        ];
+        ])
+    }
+
+    fn ids_free<const N: usize>(&self, mut candidates: [Id; N]) -> bool {
+        // Keep only the incoming IDs, not every ID in the project.
         candidates.sort_unstable();
         if candidates.windows(2).any(|pair| pair[0] == pair[1]) {
             return false;

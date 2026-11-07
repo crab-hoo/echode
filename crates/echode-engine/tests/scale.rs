@@ -3,8 +3,8 @@
 //!
 //! Without plugins or a device, it times the block that wraps a loop, the block
 //! that adopts an edit while playing, the control thread's replacement, and one
-//! model edit, load, changeset diff, and repeated track insertions. At a fixed
-//! track count, a block that slows as notes are added still does work proportional
+//! model edit, load, changeset diff, and repeated track/audio/MIDI clip insertions.
+//! At a fixed track count, a block that slows as notes are added still does work proportional
 //! to the score on the audio thread. Counts and rounds bound this measurement
 //! only, not the product.
 //!
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use echode_engine::{PlaybackAudio, PlaybackCommand, PlaybackOptions, playback};
 use echode_model::{
-    ClipKind, Content, Id, NoteDraft, NoteGeometry, Placement, Project, Tick, Track,
+    AudioRef, ClipKind, Content, Id, NoteDraft, NoteGeometry, Placement, Project, Tick, Track,
 };
 
 const RATE: u32 = 48_000;
@@ -202,7 +202,7 @@ fn edit_adoption(tracks: usize, notes: usize, played: usize) -> String {
     row
 }
 
-/// One load check and one note edit, with each clip on its own content.
+/// Load, edit, and insert into a project with each clip on its own content.
 fn model_edit(tracks: usize, clips: usize) -> String {
     let project = build(&template(tracks), clips, 8, 3_000);
     let contents: Vec<Content> = project.contents().iter().map(|c| (**c).clone()).collect();
@@ -237,13 +237,44 @@ fn model_edit(tracks: usize, clips: usize) -> String {
         std::hint::black_box(added);
     }
     additions.sort();
+    let bar = project.meter().bar_ticks().unwrap().get();
+    let last = track.clips.last().unwrap();
+    let start = Tick::new(((last.start.get() + last.length.get()) / bar + 1) * bar);
+    let audio = AudioRef::try_new("ab".repeat(32), RATE, 2, u64::from(RATE)).unwrap();
+    let draft = NoteDraft {
+        pitch: 60,
+        velocity: 100,
+        start,
+        length: Tick::new(1_000),
+    };
+    let mut audio_insertions = Vec::new();
+    let mut midi_insertions = Vec::new();
+    for _ in 0..20 {
+        // Metadata only: no media is read. Exclude cloning it, as for the note draft.
+        let reference = audio.clone();
+        let started = Instant::now();
+        let added = project
+            .place_audio(track.id, Id::generate(), Id::generate(), start, reference)
+            .unwrap();
+        audio_insertions.push(started.elapsed());
+        std::hint::black_box(added);
+        let started = Instant::now();
+        let added = project.insert_note(track.id, draft).unwrap();
+        midi_insertions.push(started.elapsed());
+        std::hint::black_box(added);
+    }
+    audio_insertions.sort();
+    midi_insertions.sort();
     let row = format!(
         "{{\"case\": \"model_edit\", \"tracks\": {tracks}, \"clips_per_track\": {clips}, \
-         \"assemble_ms\": {:.2}, \"edit_note_ms\": {:.2}, \"diff_ms\": {:.2}, \"add_track_p50_ms\": {:.2}}}",
+         \"assemble_ms\": {:.2}, \"edit_note_ms\": {:.2}, \"diff_ms\": {:.2}, \"add_track_p50_ms\": {:.2}, \
+         \"place_audio_p50_ms\": {:.2}, \"new_midi_clip_p50_ms\": {:.2}}}",
         us(load) / 1e3,
         us(edit) / 1e3,
         us(diff) / 1e3,
         us(percentile(&additions, 0.5)) / 1e3,
+        us(percentile(&audio_insertions, 0.5)) / 1e3,
+        us(percentile(&midi_insertions, 0.5)) / 1e3,
     );
     println!("{row}");
     row

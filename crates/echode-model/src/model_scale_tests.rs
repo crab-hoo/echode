@@ -723,3 +723,6 @@ mod device_apply;
 
 #[path = "model_track_insert_tests.rs"]
 mod track_insert;
+
+#[path = "model_audio_insert_tests.rs"]
+mod audio_insert;
