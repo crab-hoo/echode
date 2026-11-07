@@ -537,45 +537,69 @@ fn refit_current(
         .iter()
         .position(|clip| clip.content == content && clip.kind == ClipKind::Auto)
         .ok_or(ModelError::MissingClip)?;
-    let mut span = note_bars(contents, &current.clips[index], bar)?;
-    let mut fixed = None;
-    let mut hosts = vec![index];
-    // Clip indices stay stable until discovery finishes and merge removes hosts.
-    let mut selected = vec![false; current.clips.len()];
-    selected[index] = true;
-    loop {
-        let before = hosts.len();
-        for (slot, clip) in current.clips.iter().enumerate() {
-            if clip.kind != ClipKind::Auto {
-                continue;
-            }
-            #[cfg(test)]
-            crate::model_scale_tests::refit_host_probe();
-            if selected[slot] {
-                continue;
-            }
-            let candidate = occupied_bars(clip.start.get(), clip.length.get(), bar)
-                .ok_or(ModelError::InvalidNote)?;
-            if bars_touch(span, candidate)
-                && !fixed
-                    .get_or_insert_with(|| FixedBars::new(&current.clips, bar))
-                    .blocks(span, candidate)
-            {
-                selected[slot] = true;
-                hosts.push(slot);
-                span = (span.0.min(candidate.0), span.1.max(candidate.1));
-            }
-        }
-        if before == hosts.len() {
-            break;
-        }
-    }
+    let span = note_bars(contents, &current.clips[index], bar)?;
+    let hosts = refit_hosts(&current.clips, index, span, bar)?;
     if hosts.len() == 1 {
         refit_one(contents, &mut current.clips, index, bar)?;
         Ok(content)
     } else {
         merge(contents, tracks, current, &hosts, bar)
     }
+}
+
+/// Discover against published, start-sorted, non-overlapping windows. Their bar
+/// starts and ends are monotone too, even for sub-bar moves and negative times.
+fn refit_hosts(
+    clips: &[Placement],
+    index: usize,
+    mut span: (i64, i64),
+    bar: i64,
+) -> Result<Vec<usize>, ModelError> {
+    let mut candidates = Vec::new();
+    let mut split = 0;
+    for (slot, clip) in clips.iter().enumerate() {
+        if slot == index || clip.kind != ClipKind::Auto {
+            continue;
+        }
+        #[cfg(test)]
+        crate::model_scale_tests::refit_host_probe();
+        let range = occupied_bars(clip.start.get(), clip.length.get(), bar)
+            .ok_or(ModelError::InvalidNote)?;
+        split += usize::from(range.0 < span.0);
+        candidates.push((slot, range));
+    }
+    let mut hosts = vec![index];
+    let mut fixed = None;
+    let mut visit = |&(slot, candidate): &(usize, (i64, i64))| {
+        #[cfg(test)]
+        crate::model_scale_tests::refit_host_probe();
+        if !bars_touch(span, candidate) {
+            return false;
+        }
+        if fixed
+            .get_or_insert_with(|| FixedBars::new(clips, bar))
+            .blocks(span, candidate)
+        {
+            return true;
+        }
+        hosts.push(slot);
+        span = (span.0.min(candidate.0), span.1.max(candidate.1));
+        true
+    };
+    // Expand left first: a containing window can extend the right frontier too.
+    // Only a gap stops a side. A blocked window can share a bar with a farther
+    // candidate that still touches the span without crossing the fixed wall.
+    for candidate in candidates[..split].iter().rev() {
+        if !visit(candidate) {
+            break;
+        }
+    }
+    for candidate in &candidates[split..] {
+        if !visit(candidate) {
+            break;
+        }
+    }
+    Ok(hosts)
 }
 
 fn note_bars(
@@ -732,3 +756,7 @@ pub(super) fn drop_unreferenced(contents: &mut Vec<Arc<Content>>, tracks: &[Arc<
 #[cfg(test)]
 #[path = "placement_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "placement_host_tests.rs"]
+mod host_tests;

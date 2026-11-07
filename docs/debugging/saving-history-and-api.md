@@ -63,12 +63,15 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 固定リンクから別トラックの自動配置を編集した時だけ遅い場合は、`model_scale_tests::refit::linked_refit` の同期キー訪問とトラック複製回数を調べる。
 `placement::refit_auto` は配置 ID の一時索引で付替えを戻し、`retarget` と共に無関係なトラックを検査のために複製しない。
 この計数は再適合・付替えの範囲だけであり、ID 重複の探索・参照集合・保存待ちの費用とは分ける。
-結合数が多い時だけ遅い場合は、`model_scale_tests::merge::multi_clip_merge_membership` で選択済み配置の所属確認回数を調べる。
-`refit_current` は配置の削除前だけインデックスの一時フラグを使う。左向きの連鎖による反復回数はこの回数の改善とは分ける。
+結合数が多い時だけ遅い場合は、`model_scale_tests::merge::multi_clip_merge_discovery_visits_autos_at_most_twice`
+と逆向きの連鎖の回帰で候補の収集・探索回数を調べる。
+`refit_current` は開始順・非重複の窓から候補を集め、左右の前線を各一度進める。
+`merge::hosts::reverse_chain_discovery` は追加・編集・複製・削除・別トラックのリンクからの経路も検査する。
 固定窓が多い時は `model_scale_tests::merge::multi_clip_merge_wall_queries_do_not_rescan_placements` の壁索引の構築・問い合わせの訪問数を確認する。
-`placement::FixedBars` は固定窓を一度集めて二分探索する。計数には整列の比較や探索の反復数を含めず、編集全体の費用とは区別する。
+`placement::FixedBars` は固定窓を一度集めて二分探索する。計数には整列の比較を含めず、編集全体の費用とは区別する。
 接する候補のない編集で索引を作らないことは、同じ回帰群の `multi_clip_merge_wall_index_is_lazy_without_touching_autos` で検査する。
 負の位置・同じ小節の短い窓・包含する窓・整数上下端の照合は `placement::tests::fixed_bar_index_matches_scalar_overlap_queries` を使う。
+候補の前線探索は `placement::host_tests` の反復走査との独立照合で確認する。窓が初期範囲を含む場合・窓外へのノート移動・小節を共有する壁・整数上下端も調べる。
 深いフォルダだけで遅くなる時は、`model_scale_tests` の `nested_forest_validation_does_not_revisit_resolved_ancestors` と逆順入力の回帰で親の訪問回数を確認する。
 親の存在・循環は `hierarchy::check_forest`、順序キーと配列の並びは `model::arrange_fault` が検証する。
 `hierarchy::tests` は小さい親グラフの全列挙と深い逆順の鎖を調べ、順序違反と循環を切り分ける。

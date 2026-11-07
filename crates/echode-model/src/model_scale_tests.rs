@@ -104,6 +104,7 @@ pub(crate) fn merge_content_probe() {
     record(|work| work.merge_content_probes += 1);
 }
 
+// Count both range collection and frontier visits, not only selected hosts.
 pub(crate) fn refit_host_probe() {
     record(|work| work.refit_host_probes += 1);
 }

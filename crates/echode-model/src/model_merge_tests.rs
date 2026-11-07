@@ -1,5 +1,8 @@
 //! Link retargeting and pruning scale with placements and contents, not their product.
 
+#[path = "model_host_tests.rs"]
+mod hosts;
+
 use super::{fixture, measured};
 use crate::{ClipKind, Id, ModelError, NoteDraft, NoteGeometry, Project, Tick, Track};
 use std::sync::Arc;
@@ -240,7 +243,7 @@ fn multi_clip_merge_retargets_links_and_prunes_contents_in_one_pass() {
 }
 
 #[test]
-fn multi_clip_merge_membership_uses_one_probe_per_auto_per_pass() {
+fn multi_clip_merge_discovery_visits_autos_at_most_twice() {
     // The counts bound this regression, not the number of product placements.
     for count in [64, 256] {
         let project = merge_project(count, true);
@@ -385,37 +388,15 @@ fn multi_clip_merge_wall_queries_do_not_rescan_placements() {
 
 #[test]
 fn multi_clip_merge_membership_keeps_reverse_chains_and_fixed_walls() {
-    // Adjacent auto windows require repeated discovery passes from right to left.
+    // Reverse chains must not rescan the whole track after each absorbed window.
     // These fixture sizes do not impose any limit on product projects.
-    for count in [1, 4, 64] {
+    for count in [1, 4, 64, 256] {
         for wall in [false, true] {
             if wall && count == 1 {
                 continue;
             }
-            let template = merge_project(count, true);
-            let bar = template.meter().bar_ticks().unwrap().get();
-            let mut tracks: Vec<_> = template
-                .tracks()
-                .iter()
-                .map(|track| (**track).clone())
-                .collect();
-            for (index, clip) in tracks[0].clips.iter_mut().take(count).enumerate() {
-                clip.start = Tick::new(index as i64 * bar);
-                if wall && index == count / 2 {
-                    clip.kind = ClipKind::Fixed;
-                }
-            }
-            let project = Project::try_assemble(
-                template.meter(),
-                template.tempo().clone(),
-                template
-                    .contents()
-                    .iter()
-                    .map(|content| (**content).clone())
-                    .collect(),
-                tracks,
-            )
-            .unwrap();
+            let project = hosts::reverse_project(count, wall, 0);
+            let bar = project.meter().bar_ticks().unwrap().get();
             let original = project.clone();
             let clip = &project.tracks()[0].clips[count - 1];
             let note = &project.content(clip.content).unwrap().notes[0];
@@ -441,9 +422,10 @@ fn multi_clip_merge_membership_keeps_reverse_chains_and_fixed_walls() {
             );
             let first = if wall { count / 2 + 1 } else { 0 };
             let merged_count = count - first;
-            assert_eq!(
-                work.refit_host_probes,
-                (count - usize::from(wall)) * merged_count
+            assert!(
+                work.refit_host_probes <= 2 * count,
+                "reverse merge searched {} host indices for {count} auto placements (wall={wall})",
+                work.refit_host_probes
             );
             edited.check_invariants().unwrap();
             assert!(project.diff(&original).is_empty());
