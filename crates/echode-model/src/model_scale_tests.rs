@@ -1,4 +1,4 @@
-//! Deterministic work counts for content lookup, references, note bounds and parent links (FCA-05).
+//! Deterministic work counts for lookups, references, note bounds, parent links and refits (FCA-05).
 //! Counts and fixture sizes bound these tests only, not product projects.
 
 use std::cell::Cell;
@@ -15,6 +15,8 @@ struct Work {
     parent_links: usize,
     shared_note_validations: usize,
     note_lookups: usize,
+    refit_sync_probes: usize,
+    refit_track_copies: usize,
 }
 
 thread_local! {
@@ -55,6 +57,14 @@ pub(crate) fn shared_note_validation() {
 
 pub(crate) fn note_lookup() {
     record(|work| work.note_lookups += 1);
+}
+
+pub(crate) fn refit_sync_probe() {
+    record(|work| work.refit_sync_probes += 1);
+}
+
+pub(crate) fn refit_track_copy() {
+    record(|work| work.refit_track_copies += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -617,3 +627,6 @@ fn note_edits_do_not_search_unrelated_contents_after_refitting() {
         }
     }
 }
+
+#[path = "model_refit_tests.rs"]
+mod refit;

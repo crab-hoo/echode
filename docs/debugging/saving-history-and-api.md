@@ -60,6 +60,9 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 `placement::check_shared_notes` は変更後の内容を一度集計する。`placement::tests` の独立した i128 の照合と整数上下端の製品編集で、配置ごとの両端検証の範囲を調べる。
 共有配置の検証前の所属探索は `note_edits_do_not_search_unrelated_contents_after_refitting` で、関係のない内容のノート数に増えないことを調べる。
 再適合・結合の戻り値が残った内容を指すかは `placement::tests::merged_note_edits` で確認し、結合先のリンクの範囲外を見落とす不具合と分ける。
+固定リンクから別トラックの自動配置を編集した時だけ遅い場合は、`model_scale_tests::refit::linked_refit` の同期キー訪問とトラック複製回数を調べる。
+`placement::refit_auto` は配置 ID の一時索引で付替えを戻し、`retarget` と共に無関係なトラックを検査のために複製しない。
+この計数は再適合・付替えの範囲だけであり、ID 重複の探索・参照集合・保存待ちの費用とは分ける。
 深いフォルダだけで遅くなる時は、`model_scale_tests` の `nested_forest_validation_does_not_revisit_resolved_ancestors` と逆順入力の回帰で親の訪問回数を確認する。
 親の存在・循環は `hierarchy::check_forest`、順序キーと配列の並びは `model::arrange_fault` が検証する。
 `hierarchy::tests` は小さい親グラフの全列挙と深い逆順の鎖を調べ、順序違反と循環を切り分ける。

@@ -1,5 +1,6 @@
 //! Placing and deleting notes once a clip is a window onto shared content.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::id::Id;
@@ -382,20 +383,16 @@ fn retarget(
         edit(clip)?;
     }
     for track in tracks.iter_mut() {
-        if track.id == current.id {
+        if track.id == current.id || !track.clips.iter().any(|clip| clip.content == from) {
             continue;
         }
+        #[cfg(test)]
+        crate::model_scale_tests::refit_track_copy();
         let mut owned = (**track).clone();
-        let mut changed = false;
         for clip in &mut owned.clips {
-            if clip.content == from {
-                edit(clip)?;
-                changed = true;
-            }
+            edit(clip)?;
         }
-        if changed {
-            *track = Arc::new(owned);
-        }
+        *track = Arc::new(owned);
     }
     Ok(())
 }
@@ -419,24 +416,41 @@ fn refit_auto(
         if tracks[slot].id == current.id {
             continue;
         }
-        let mut owned = (*tracks[slot]).clone();
-        if owned
+        if tracks[slot]
             .clips
             .iter()
             .any(|clip| clip.content == content && clip.kind == ClipKind::Auto)
         {
+            #[cfg(test)]
+            crate::model_scale_tests::refit_track_copy();
+            let mut owned = (*tracks[slot]).clone();
             let owner = refit_current(contents, tracks, &mut owned, content, bar)?;
             crate::model::sort_clips(&mut owned.clips);
             // Merge may have retargeted fixed windows on the edited track too.
-            for clip in &mut current.clips {
-                if let Some(retargeted) = tracks
+            // Index once: each fixed window may hold local edits we must retain.
+            if let Some(retargeted) = tracks.iter().find(|track| {
+                #[cfg(test)]
+                crate::model_scale_tests::refit_sync_probe();
+                track.id == current.id
+            }) {
+                let placements: HashMap<_, _> = retargeted
+                    .clips
                     .iter()
-                    .find(|track| track.id == current.id)
-                    .and_then(|track| track.clips.iter().find(|old| old.id == clip.id))
-                    && clip.content != retargeted.content
-                {
-                    clip.content = retargeted.content;
-                    clip.offset = retargeted.offset;
+                    .map(|clip| {
+                        #[cfg(test)]
+                        crate::model_scale_tests::refit_sync_probe();
+                        (clip.id, clip)
+                    })
+                    .collect();
+                for clip in &mut current.clips {
+                    #[cfg(test)]
+                    crate::model_scale_tests::refit_sync_probe();
+                    if let Some(retargeted) = placements.get(&clip.id)
+                        && clip.content != retargeted.content
+                    {
+                        clip.content = retargeted.content;
+                        clip.offset = retargeted.offset;
+                    }
                 }
             }
             tracks[slot] = Arc::new(owned);
