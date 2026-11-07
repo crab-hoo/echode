@@ -340,3 +340,85 @@ fn shared_note_edits_keep_inclusive_time_limits_and_reject_overflow_atomically()
         }
     }
 }
+
+#[test]
+fn fixed_bar_index_matches_scalar_overlap_queries() {
+    // The cases bound this helper regression, not product time or clip counts.
+    // Include unsorted, nested and invalid intermediate windows to preserve the
+    // old predicate independently of snapshot ordering and final validation.
+    let windows = [
+        (5, 20, ClipKind::Fixed),
+        (-20, 9, ClipKind::Fixed),
+        (0, 1, ClipKind::Auto),
+        (i64::MIN, 1, ClipKind::Fixed),
+        (i64::MAX, 1, ClipKind::Fixed),
+        (i64::MAX, 2, ClipKind::Fixed),
+        (3, 0, ClipKind::Fixed),
+        (8, -1, ClipKind::Fixed),
+        (-5, 1, ClipKind::Fixed),
+        (7, 1, ClipKind::Fixed),
+    ];
+    let queries = [
+        (-30, -21),
+        (-20, -20),
+        (-3, -1),
+        (0, 0),
+        (1, 1),
+        (2, 4),
+        (5, 7),
+        (-12, -12),
+        (-11, -11),
+        (20, 20),
+        (24, 24),
+        (25, 25),
+        (26, 30),
+        (i64::MIN, i64::MIN),
+        (i64::MAX, i64::MAX),
+        (i64::MIN, i64::MAX),
+    ];
+    let mut clips: Vec<_> = windows
+        .into_iter()
+        .map(|(start, length, kind)| {
+            let mut clip = placement(Id::from_raw(1), 0);
+            clip.start = Tick::new(start);
+            clip.length = Tick::new(length);
+            clip.kind = kind;
+            clip
+        })
+        .collect();
+    for bar in [1, 4, 100, Project::new().meter().bar_ticks().unwrap().get()] {
+        for _ in 0..clips.len() {
+            clips.rotate_left(1);
+            let fixed = FixedBars::new(&clips, bar);
+            for left in queries {
+                for right in queries {
+                    let low = left.0.min(right.0);
+                    let high = left.1.max(right.1);
+                    let expected = clips.iter().any(|clip| {
+                        let start = i128::from(clip.start.get());
+                        let last = start + i128::from(clip.length.get()) - 1;
+                        clip.kind == ClipKind::Fixed
+                            && clip.length.get() > 0
+                            && last <= i128::from(i64::MAX)
+                            && start.div_euclid(i128::from(bar)) <= i128::from(high)
+                            && i128::from(low) <= last.div_euclid(i128::from(bar))
+                    });
+                    assert_eq!(
+                        fixed.blocks(left, right),
+                        expected,
+                        "bar {bar}, left {left:?}, right {right:?}"
+                    );
+                }
+            }
+        }
+    }
+    for clips in [
+        Vec::new(),
+        clips
+            .into_iter()
+            .filter(|clip| clip.kind == ClipKind::Auto)
+            .collect(),
+    ] {
+        assert!(!FixedBars::new(&clips, 1).blocks((i64::MIN, 0), (0, i64::MAX)));
+    }
+}

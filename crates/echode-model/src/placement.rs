@@ -6,9 +6,48 @@ use std::sync::Arc;
 use crate::id::Id;
 use crate::model::{
     ClipKind, Content, ModelError, Note, NoteDraft, NoteGeometry, Placement, Track, bars_touch,
-    fixed_blocks, occupied_bars, overlaps_others, overlaps_span,
+    occupied_bars, overlaps_others, overlaps_span,
 };
 use crate::time::Tick;
+
+// Derived from immutable placement windows during host discovery.
+struct FixedBars(Vec<(i64, i64)>);
+
+impl FixedBars {
+    fn new(clips: &[Placement], bar: i64) -> Self {
+        let mut ranges: Vec<_> = clips
+            .iter()
+            .filter_map(|clip| {
+                #[cfg(test)]
+                crate::model_scale_tests::fixed_wall_probe();
+                (clip.kind == ClipKind::Fixed)
+                    .then(|| occupied_bars(clip.start.get(), clip.length.get(), bar))
+                    .flatten()
+            })
+            .collect();
+        ranges.sort_unstable();
+        // Prefix maxima allow overlap queries even if fixed windows are not ordered
+        // or overlap temporarily during an edit that will later be rejected.
+        let mut end = i64::MIN;
+        for range in &mut ranges {
+            end = end.max(range.1);
+            range.1 = end;
+        }
+        Self(ranges)
+    }
+
+    fn blocks(&self, left: (i64, i64), right: (i64, i64)) -> bool {
+        let low = left.0.min(right.0);
+        let high = left.1.max(right.1);
+        let end = self.0.partition_point(|range| {
+            #[cfg(test)]
+            crate::model_scale_tests::fixed_wall_probe();
+            range.0 <= high
+        });
+        end.checked_sub(1)
+            .is_some_and(|index| low <= self.0[index].1)
+    }
+}
 
 pub(super) struct FreshIds {
     pub(super) note: Id,
@@ -38,6 +77,7 @@ pub(super) fn insert(
     }
     let note_bars =
         occupied_bars(draft.start.get(), draft.length.get(), bar).ok_or(ModelError::InvalidNote)?;
+    let mut fixed = None;
     let mut hosts = Vec::new();
     for (index, clip) in track.clips.iter().enumerate() {
         if clip.kind != ClipKind::Auto {
@@ -47,7 +87,9 @@ pub(super) fn insert(
             continue;
         };
         if bars_touch(clip_bars, note_bars)
-            && !fixed_blocks(&track.clips, clip_bars, note_bars, bar)
+            && !fixed
+                .get_or_insert_with(|| FixedBars::new(&track.clips, bar))
+                .blocks(clip_bars, note_bars)
         {
             hosts.push(index);
         }
@@ -496,6 +538,7 @@ fn refit_current(
         .position(|clip| clip.content == content && clip.kind == ClipKind::Auto)
         .ok_or(ModelError::MissingClip)?;
     let mut span = note_bars(contents, &current.clips[index], bar)?;
+    let mut fixed = None;
     let mut hosts = vec![index];
     // Clip indices stay stable until discovery finishes and merge removes hosts.
     let mut selected = vec![false; current.clips.len()];
@@ -513,7 +556,11 @@ fn refit_current(
             }
             let candidate = occupied_bars(clip.start.get(), clip.length.get(), bar)
                 .ok_or(ModelError::InvalidNote)?;
-            if bars_touch(span, candidate) && !fixed_blocks(&current.clips, span, candidate, bar) {
+            if bars_touch(span, candidate)
+                && !fixed
+                    .get_or_insert_with(|| FixedBars::new(&current.clips, bar))
+                    .blocks(span, candidate)
+            {
                 selected[slot] = true;
                 hosts.push(slot);
                 span = (span.0.min(candidate.0), span.1.max(candidate.1));

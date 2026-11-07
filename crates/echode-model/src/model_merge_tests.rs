@@ -257,6 +257,133 @@ fn multi_clip_merge_membership_uses_one_probe_per_auto_per_pass() {
 }
 
 #[test]
+fn multi_clip_merge_wall_index_is_lazy_without_touching_autos() {
+    // These fixture sizes bound only this regression, not product projects.
+    for count in [1, 64, 256] {
+        let project = merge_project(count, true);
+        let clip = &project.tracks()[0].clips[0];
+        let note = &project.content(clip.content).unwrap().notes[0];
+        for operation in ["insert", "edit", "duplicate"] {
+            let (edited, work) = measured(|| match operation {
+                "insert" => project.insert_note_with_id(
+                    Id::from_raw(OWNER),
+                    Id::from_raw(3_000_000),
+                    Id::from_raw(3_000_001),
+                    Id::from_raw(3_000_002),
+                    NoteDraft {
+                        pitch: 61,
+                        velocity: 100,
+                        start: Tick::new(0),
+                        length: Tick::new(1),
+                    },
+                ),
+                "edit" => project.edit_note(
+                    Id::from_raw(OWNER),
+                    clip.id,
+                    note.id,
+                    NoteGeometry {
+                        pitch: 61,
+                        start: Tick::new(0),
+                        length: Tick::new(1),
+                    },
+                ),
+                _ => project.duplicate_note(
+                    Id::from_raw(OWNER),
+                    clip.id,
+                    note.id,
+                    Id::from_raw(3_000_000),
+                    61,
+                    Tick::new(0),
+                ),
+            });
+            edited.unwrap().check_invariants().unwrap();
+            assert_eq!(work.fixed_wall_probes, 0, "isolated auto {operation}");
+        }
+        let fixed = fixture(count);
+        let bar = fixed.meter().bar_ticks().unwrap().get();
+        let (edited, work) = measured(|| {
+            fixed.insert_note_with_id(
+                fixed.tracks()[0].id,
+                Id::from_raw(3_000_000),
+                Id::from_raw(3_000_001),
+                Id::from_raw(3_000_002),
+                NoteDraft {
+                    pitch: 61,
+                    velocity: 100,
+                    start: Tick::new(2 * count as i64 * bar),
+                    length: Tick::new(1),
+                },
+            )
+        });
+        edited.unwrap().check_invariants().unwrap();
+        assert_eq!(work.fixed_wall_probes, 0, "no auto candidates");
+    }
+}
+
+#[test]
+fn multi_clip_merge_wall_queries_do_not_rescan_placements() {
+    // Counts bound this regression only; fixed windows must not be scanned per candidate.
+    for count in [64, 256] {
+        let project = merge_project(count, true);
+        let original = project.clone();
+        let bar = project.meter().bar_ticks().unwrap().get();
+        let placements = project.tracks()[0].clips.len();
+        for operation in ["insert", "edit", "linked edit", "gap insert"] {
+            let (edited, work) = measured(|| {
+                if operation == "gap insert" {
+                    project
+                        .insert_note_with_id(
+                            Id::from_raw(OWNER),
+                            Id::from_raw(3_000_000),
+                            Id::from_raw(3_000_001),
+                            Id::from_raw(3_000_002),
+                            NoteDraft {
+                                pitch: 61,
+                                velocity: 100,
+                                start: Tick::new(bar),
+                                length: Tick::new(2 * count as i64 * bar),
+                            },
+                        )
+                        .unwrap()
+                } else {
+                    merge_edit(&project, count, operation).unwrap()
+                }
+            });
+            assert!(
+                work.fixed_wall_probes <= placements + 2 * count * (count.ilog2() as usize + 2),
+                "merge wall lookup inspected {} placements for {count} auto placements ({operation})",
+                work.fixed_wall_probes
+            );
+            edited.check_invariants().unwrap();
+            assert!(project.diff(&original).is_empty());
+            if operation == "gap insert" {
+                assert_eq!(edited.tracks()[0].clips.len(), count + 1);
+                let merged = edited.content(edited.tracks()[0].clips[0].content).unwrap();
+                assert_eq!(merged.notes.len(), count + 1);
+                assert_eq!(merged.notes[1].start, Tick::new(bar));
+                let changes = project.diff(&edited);
+                assert!(
+                    project
+                        .apply_changeset(&changes)
+                        .unwrap()
+                        .diff(&edited)
+                        .is_empty()
+                );
+                assert!(
+                    edited
+                        .apply_changeset(&changes.invert())
+                        .unwrap()
+                        .diff(&project)
+                        .is_empty()
+                );
+            } else {
+                assert_merged(&project, &edited, count, operation);
+            }
+        }
+    }
+}
+
+#[test]
 fn multi_clip_merge_membership_keeps_reverse_chains_and_fixed_walls() {
     // Adjacent auto windows require repeated discovery passes from right to left.
     // These fixture sizes do not impose any limit on product projects.
@@ -306,6 +433,12 @@ fn multi_clip_merge_membership_keeps_reverse_chains_and_fixed_walls() {
                     )
                     .unwrap()
             });
+            assert!(
+                work.fixed_wall_probes
+                    <= 2 * count + work.refit_host_probes * (count.ilog2() as usize + 2),
+                "reverse merge wall lookup inspected {} placements for {count} clips (wall={wall})",
+                work.fixed_wall_probes
+            );
             let first = if wall { count / 2 + 1 } else { 0 };
             let merged_count = count - first;
             assert_eq!(

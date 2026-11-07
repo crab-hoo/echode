@@ -22,6 +22,9 @@ Swift 契約の直接起動で `missing helper, test bundle, or Testing framewor
 選択した Xcode の `swiftpm-testing-helper` と SDK の Testing.framework、`--show-bin-path` の scratch を照合する。
 ロード失敗・終了コード 69 は期待値での反例検出ではない。古いバンドルへ戻したり 0 件を合格にしない。
 ヘルパーの実パス・バイト変更もツール識別に入り、現在の版で再検査する（[ADR 0198](../decisions/0198-verification-launch-and-cache-cost.md)）。
+外側の実行ツールの期限だけで `make verify` が止まると、レポートが `running` のまま、子の `make check-base` が PPID 1 で残ることがある。
+検査ログ・ロックの保持者・PID を照合し、残った自分の子プロセスの終了を待ってから同じ入口で再実行する。並列に重ねず、途中のログだけで合格を記録しない。
+実行ツールの待機時間は検査全体を収める値にし、検査自身の期限は延ばさない。今回実行の所要時間と、終了済みの検査結果の再利用を区別する。
 
 ### `check-verification` の `VERIFICATION TIMEOUT`
 

@@ -1699,10 +1699,6 @@ fn spans_overlap(left: (i64, i64), right: (i64, i64)) -> bool {
     left.0 < right.1 && right.0 < left.1
 }
 
-fn clip_bars(clip: &Placement, bar: i64) -> Option<(i64, i64)> {
-    occupied_bars(clip.start.get(), clip.length.get(), bar)
-}
-
 pub(crate) fn occupied_bars(start: i64, length: i64, bar: i64) -> Option<(i64, i64)> {
     if length <= 0 || bar <= 0 {
         return None;
@@ -1715,20 +1711,6 @@ pub(crate) fn occupied_bars(start: i64, length: i64, bar: i64) -> Option<(i64, i
 
 pub(crate) fn bars_touch(left: (i64, i64), right: (i64, i64)) -> bool {
     left.0 <= right.1.saturating_add(1) && right.0 <= left.1.saturating_add(1)
-}
-
-pub(crate) fn fixed_blocks(
-    clips: &[Placement],
-    left: (i64, i64),
-    right: (i64, i64),
-    bar: i64,
-) -> bool {
-    let low = left.0.min(right.0);
-    let high = left.1.max(right.1);
-    clips.iter().any(|clip| {
-        clip.kind == ClipKind::Fixed
-            && clip_bars(clip, bar).is_some_and(|bars| bars.0 <= high && low <= bars.1)
-    })
 }
 
 fn audio_length(

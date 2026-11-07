@@ -25,6 +25,7 @@ struct Work {
     merge_placement_probes: usize,
     merge_content_probes: usize,
     refit_host_probes: usize,
+    fixed_wall_probes: usize,
 }
 
 thread_local! {
@@ -105,6 +106,10 @@ pub(crate) fn merge_content_probe() {
 
 pub(crate) fn refit_host_probe() {
     record(|work| work.refit_host_probes += 1);
+}
+
+pub(crate) fn fixed_wall_probe() {
+    record(|work| work.fixed_wall_probes += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
