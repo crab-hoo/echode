@@ -2,7 +2,7 @@
 
 use super::{
     Change, Field, Id, ModelError, ObjectKey, ObjectKind, Property, Value, diff_parameter_fields,
-    field_id, field_ids, field_optional_text, field_text, update,
+    field_id, field_ids, field_optional_text, field_text, parameter_change, update,
 };
 use crate::device::{Device, DeviceKind, Parameter, valid_pins, valid_state_hash};
 use crate::device_fields::device_fields;
@@ -55,7 +55,13 @@ macro_rules! define_device_changeset {
             }
         }
 
-        pub(super) fn diff_device_fields(before: &Device, after: &Device, updates: &mut Vec<Change>) {
+        pub(super) fn diff_device_fields(
+            before: &Device,
+            after: &Device,
+            creates: &mut Vec<Change>,
+            updates: &mut Vec<Change>,
+            deletes: &mut Vec<Change>,
+        ) {
             $(DeviceField::$diff.diff(before, after, updates);)+
             let before_order = parameter_order(before);
             let after_order = parameter_order(after);
@@ -66,6 +72,13 @@ macro_rules! define_device_changeset {
             for parameter in &after.parameters {
                 if let Some(previous) = before.parameters.iter().find(|item| item.id == parameter.id) {
                     diff_parameter_fields(previous, parameter, updates);
+                } else {
+                    creates.push(parameter_change(true, after.id, parameter));
+                }
+            }
+            for parameter in before.parameters.iter().rev() {
+                if !after.parameters.iter().any(|item| item.id == parameter.id) {
+                    deletes.push(parameter_change(false, before.id, parameter));
                 }
             }
         }

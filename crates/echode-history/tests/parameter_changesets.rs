@@ -5,7 +5,8 @@
 
 use echode_actions::{JournalLine, JournalOp, decode_line, encode_line};
 use echode_model::{
-    Change, ChangeSet, Field, Id, ModelError, ObjectKey, ObjectKind, Project, Property, Value,
+    Change, ChangeSet, Field, Id, ModelError, ObjectKey, ObjectKind, Parameter, Project, Property,
+    Value,
 };
 use proptest::prelude::*;
 
@@ -234,4 +235,169 @@ fn parameter_changesets_reject_missing_fields_wrong_variants_and_immutable_keys(
         );
     }
     base.check_invariants().unwrap();
+}
+
+fn parameter_record(create: bool, owner: Id, parameter: &Parameter) -> Change {
+    let mut fields = vec![
+        Field {
+            property: Property::Owner,
+            value: Value::Id(owner),
+        },
+        Field {
+            property: Property::Key,
+            value: Value::Text(parameter.key.as_str().into()),
+        },
+    ];
+    fields.extend(
+        FIELDS
+            .into_iter()
+            .zip([
+                parameter.min,
+                parameter.max,
+                parameter.default,
+                parameter.value,
+            ])
+            .map(|(property, value)| Field {
+                property,
+                value: Value::Bits(value.to_bits()),
+            }),
+    );
+    if create {
+        Change::Create {
+            kind: ObjectKind::Parameter,
+            id: ObjectKey::Id(parameter.id),
+            fields,
+        }
+    } else {
+        Change::Delete {
+            kind: ObjectKind::Parameter,
+            id: ObjectKey::Id(parameter.id),
+            fields,
+        }
+    }
+}
+
+#[test]
+fn parameter_identity_replacements_are_recorded_for_surviving_mixers() {
+    let (before, track) = Project::new().add_track("first mixer");
+    let before = before
+        .add_clap_device(track, Id::generate(), "org.example.fx")
+        .unwrap();
+    let (before, _) = before.add_track("second mixer");
+    let original = before.clone();
+    // Exhaust these two four-parameter fixtures, not a product parameter limit.
+    for mask in 0..16 {
+        for edit_values in [false, true] {
+            let mut tracks: Vec<_> = before
+                .tracks()
+                .iter()
+                .map(|track| (**track).clone())
+                .collect();
+            for track in &mut tracks {
+                let mixer = track.devices.last_mut().unwrap();
+                for (index, parameter) in mixer.parameters.iter_mut().enumerate() {
+                    if mask & (1 << index) != 0 {
+                        parameter.id = Id::generate();
+                    }
+                    if edit_values {
+                        parameter.value = [0.5, -0.25, 1.0, 1.0][index];
+                    }
+                }
+            }
+            let after =
+                Project::try_assemble(before.meter(), before.tempo().clone(), Vec::new(), tracks)
+                    .unwrap();
+            let mut creates = Vec::new();
+            let mut updates = Vec::new();
+            let mut deletes = Vec::new();
+            for (old_track, new_track) in before.tracks().iter().zip(after.tracks()) {
+                let old = old_track.devices.last().unwrap();
+                let new = new_track.devices.last().unwrap();
+                let order = |parameters: &[Parameter]| {
+                    parameters
+                        .iter()
+                        .map(|parameter| parameter.id)
+                        .collect::<Vec<_>>()
+                };
+                if mask != 0 {
+                    updates.push(Change::Update {
+                        id: ObjectKey::Id(new.id),
+                        property: Property::ParamOrder,
+                        before: Value::Ids(order(&old.parameters)),
+                        after: Value::Ids(order(&new.parameters)),
+                    });
+                }
+                for (index, (previous, parameter)) in
+                    old.parameters.iter().zip(&new.parameters).enumerate()
+                {
+                    if mask & (1 << index) != 0 {
+                        creates.push(parameter_record(true, new.id, parameter));
+                    } else if edit_values {
+                        updates.push(Change::Update {
+                            id: ObjectKey::Id(parameter.id),
+                            property: Property::Value,
+                            before: Value::Bits(previous.value.to_bits()),
+                            after: Value::Bits(parameter.value.to_bits()),
+                        });
+                    }
+                }
+                for (index, parameter) in old.parameters.iter().enumerate().rev() {
+                    if mask & (1 << index) != 0 {
+                        deletes.push(parameter_record(false, old.id, parameter));
+                    }
+                }
+            }
+            creates.extend(updates);
+            creates.extend(deletes);
+            let changes = before.diff(&after);
+            assert_eq!(
+                changes.changes(),
+                creates,
+                "parameter replacement was not recorded: mask={mask}, edit_values={edit_values}"
+            );
+            assert_eq!(replay(&before, &changes), after);
+            assert_eq!(replay(&after, &changes.invert()), before);
+            assert_eq!(changes.invert().invert(), changes);
+            before.check_invariants().unwrap();
+            after.check_invariants().unwrap();
+            assert_eq!(before, original);
+        }
+    }
+}
+
+#[test]
+fn replaced_parameter_records_keep_arbitrary_float_bits() {
+    let (base, _) = Project::new().add_track("replacement bits");
+    let old = base.tracks()[0].devices[0].parameters[0].id;
+    let before = update(&base, old, [0x8000_0000, 1, 0xff80_0000, 0x7fc0_0123]);
+    let mut track = (*base.tracks()[0]).clone();
+    let new = Id::generate();
+    track.devices[0].parameters[0].id = new;
+    let after =
+        Project::try_assemble(base.meter(), base.tempo().clone(), Vec::new(), vec![track]).unwrap();
+    let after = update(
+        &after,
+        new,
+        [0x7f80_0000, 0x8000_0001, 0x7f7f_ffff, 0x7fc0_0456],
+    );
+    // Low-level replay preserves bits; these are intentionally not valid mixers.
+    let changes = before.diff(&after);
+    assert_eq!(
+        changes.changes().first(),
+        Some(&parameter_record(
+            true,
+            after.tracks()[0].devices[0].id,
+            &after.tracks()[0].devices[0].parameters[0]
+        ))
+    );
+    assert_eq!(
+        changes.changes().last(),
+        Some(&parameter_record(
+            false,
+            before.tracks()[0].devices[0].id,
+            &before.tracks()[0].devices[0].parameters[0]
+        ))
+    );
+    assert_eq!(replay(&before, &changes), after);
+    assert_eq!(replay(&after, &changes.invert()), before);
 }

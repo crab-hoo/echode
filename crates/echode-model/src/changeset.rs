@@ -347,7 +347,7 @@ fn diff_devices(
                     creates.push(parameter_change(true, device.id, parameter));
                 }
             }
-            Some(previous) => diff_device_fields(previous, device, updates),
+            Some(previous) => diff_device_fields(previous, device, creates, updates, deletes),
         }
     }
     for device in before_devices {

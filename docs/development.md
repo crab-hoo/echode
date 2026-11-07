@@ -139,6 +139,8 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 パラメーターの変更セットの生成器は `echode-model/src/changeset_parameter.rs`、
 ビット単位の差分・作成・削除・逆適用とジャーナルの回帰は履歴の `tests/parameter_changesets.rs` に置く。
 任意のビットを扱う低水準 API と、公開前の不変条件・保存時のゼロの正規化を区別する。
+同じミキサー内のパラメーター ID の一部・全部の置換も、同じ回帰で作成・順序更新・逆順の削除と正逆適用を検査する。
+2 ミキサーの全置換パターンと同時の値変更、置換レコードの任意ビットを、独立したフィールド列とジャーナルで照合する。
 操作列全体の往復は `tests/properties.rs` で検査する（[ADR 0214](decisions/0214-parameter-changeset-fields.md)）。
 パラメーターの項目表は `echode-model/src/parameter_fields.rs` でモデル宣言・等価比較・Serde とも共有する。
 公開パッケージのキー順・拒否時の保持・旧版の移行とコミット再読込みは履歴の `tests/parameter_package.rs` に置く。

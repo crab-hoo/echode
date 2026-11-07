@@ -48,6 +48,15 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 
 ## 保存・パッケージ・復旧
 
+### ミキサーのパラメーター ID を置換した差分が `InvalidChange` になる
+
+`Project::diff` の前後でデバイス ID が同じでも、子のパラメーター ID が変わる場合は、`ParamOrder` の更新だけでは再生できない。
+新 ID の `Parameter` の作成と旧 ID の削除が含まれるか、`changeset::device::diff_device_fields` を確認する。
+`cargo test -q -p echode-history --test parameter_changesets` は、公開の組立てから一部・全部の置換を再現する。
+独立した期待順序、2 ミキサー、値変更との混在、任意の浮動小数点ビットとジャーナル経由の正逆適用で切り分ける。
+これはモデルの子の ID であり、CLAP が公開するパラメーター番号やプラグイン GUI の変更とは別である。
+既に作成レコードのないログから失われた値を推測せず、未列挙の子・不明な所有者の拒否は維持する。
+
 ### クリップが増えると読込み・ノートの編集が急に遅くなる
 
 `make spike-scale` の `model_edit` にある `assemble_ms` と `edit_note_ms` を、64 / 128 トラック × 64 クリップで比べる。
