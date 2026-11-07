@@ -362,8 +362,13 @@ fn diff_devices(
     let Some(owner) = owner else {
         return;
     };
+    // Consume matches, but emit changes in chain order rather than hash order.
+    let mut unmatched: HashMap<Id, &Device> = before_devices
+        .iter()
+        .map(|device| (diff_device_key(device), device))
+        .collect();
     for device in after_devices {
-        match before_devices.iter().find(|item| item.id == device.id) {
+        match unmatched.remove(&diff_device_key(device)) {
             None => {
                 creates.push(device_change(true, owner, device));
                 for parameter in &device.parameters {
@@ -374,7 +379,7 @@ fn diff_devices(
         }
     }
     for device in before_devices {
-        if after_devices.iter().any(|item| item.id == device.id) {
+        if !unmatched.contains_key(&diff_device_key(device)) {
             continue;
         }
         for parameter in device.parameters.iter().rev() {
@@ -382,6 +387,12 @@ fn diff_devices(
         }
         deletes.push(device_change(false, owner, device));
     }
+}
+
+fn diff_device_key(device: &Device) -> Id {
+    #[cfg(test)]
+    crate::model_scale_tests::diff_device_key();
+    device.id
 }
 
 fn diff_clips(

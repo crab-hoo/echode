@@ -85,6 +85,15 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 モデルが速くても `replace_p50_ms` が遅ければ計画の使い回し（ADR 0274）、保存で待つなら FCA-14 を別に調べる。
 ID 重複の線形探索と、毎回全配置から作る参照集合は残る（[ADR 0242](../decisions/0242-model-content-lookup-and-references.md)）。
 
+### FX が増えるとチェインやミキサーの編集確定が遅くなる
+
+`cargo test -q -p echode-model model_scale_tests::device_diff` は、製品の `Project::diff` でデバイスキーの検査数を数える。
+`changeset::diff_devices` の旧チェイン索引は照合時に一致分を除き、作成・更新を次順、削除を旧順で出す。
+長いチェインのバイパス・ミキサー値・並べ替えだけでなく、チェイン内の全 ID の交換と別組立ての同値の版も検査する。
+変更順と保存・Undo の不整合は、同じ回帰の正逆往復と履歴の `tests/device_changesets.rs` で切り分ける。
+この検査はプラグインを起動せず、ヘルパーの通信・状態取得・再生計画・ジャーナル同期の遅延は含まない。
+`spike-scale` の既存の `model_edit` に長い FX チェインはないため、その時間を本症状の再現に代用しない。
+
 ### 素材やキャッシュが Git の除外対象にならない
 
 パッケージ直下の `.gitignore` に `/media/objects/` と `/cache/` の正確な規則行があるかを確認する。

@@ -23,6 +23,7 @@ struct Work {
     id_checks: usize,
     id_check_notes: usize,
     diff_note_visits: usize,
+    diff_device_keys: usize,
     merge_placement_probes: usize,
     merge_content_probes: usize,
     refit_host_probes: usize,
@@ -99,6 +100,10 @@ pub(crate) fn id_check_note() {
 
 pub(crate) fn diff_note_visit() {
     record(|work| work.diff_note_visits += 1);
+}
+
+pub(crate) fn diff_device_key() {
+    record(|work| work.diff_device_keys += 1);
 }
 
 pub(crate) fn merge_placement_probe() {
@@ -696,3 +701,6 @@ mod insert;
 
 #[path = "model_merge_tests.rs"]
 mod merge;
+
+#[path = "model_device_diff_tests.rs"]
+mod device_diff;
