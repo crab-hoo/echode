@@ -126,6 +126,13 @@ Delete は `deleteNotes` の待機列の手番で全 ID を検証する。リン
 古い描画・異なる配置での押下は受けず、文書・トラック・カメラの変更と終了後の解放も追加しない
 （[ADR 0171](../decisions/0171-piano-blank-drag-insertion.md)）。
 
+### ノート追加が無関係な内容の増加で遅くなる
+
+`Project::insert_note_with_id` は新しいノート ID を常に検証するが、クリップ・内容の候補 ID は新規配置を作る時だけ検証する。
+`placement::insert` の既存窓・拡張・結合の経路で `new_clip_ids_available` を呼んでいないか確認する。
+`cargo test -q -p echode-model --lib model_scale_tests::insert` は ID 探索の回数と訪問ノート数を測り、候補の衝突・未使用時の互換・変更セットの往復も検査する。
+この回帰は保存・描画・実機の時間を測らず、残るノート ID の線形探索と配列の複製・参照集合の費用は別に調べる。
+
 ### ズームでノートの吸着幅が変わる・固定幅が変わる・線と吸着が一致しない
 
 `PianoCamera.gridMode` と実効 `grid` を区別する。自動は横倍率で変わり、固定は音価を保つ。

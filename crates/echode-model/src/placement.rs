@@ -14,8 +14,6 @@ pub(super) struct FreshIds {
     pub(super) note: Id,
     pub(super) clip: Id,
     pub(super) content: Id,
-    pub(super) clip_free: bool,
-    pub(super) content_free: bool,
 }
 
 pub(super) fn insert(
@@ -25,6 +23,7 @@ pub(super) fn insert(
     fresh: FreshIds,
     draft: &NoteDraft,
     bar: i64,
+    new_clip_ids_available: impl FnOnce() -> bool,
 ) -> Result<(), ModelError> {
     if let Some(index) = track
         .clips
@@ -54,6 +53,10 @@ pub(super) fn insert(
         }
     }
     if hosts.is_empty() {
+        // Existing and merged placements never consume the proposed clip/content IDs.
+        if !new_clip_ids_available() {
+            return Err(ModelError::DuplicateId);
+        }
         return create_auto(contents, track, fresh, draft, note_bars, bar);
     }
     let primary = *hosts
@@ -255,9 +258,6 @@ fn create_auto(
     note_bars: (i64, i64),
     bar: i64,
 ) -> Result<(), ModelError> {
-    if !fresh.clip_free || !fresh.content_free {
-        return Err(ModelError::DuplicateId);
-    }
     let start = note_bars
         .0
         .checked_mul(bar)

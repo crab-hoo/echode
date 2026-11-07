@@ -921,11 +921,6 @@ impl Project {
             .bar_ticks()
             .ok_or(ModelError::InvalidMeter)?
             .get();
-        let clip_free = clip_id != note_id
-            && clip_id != content_id
-            && note_id != content_id
-            && !self.id_in_use(clip_id);
-        let content_free = !self.id_in_use(content_id);
         let mut contents = self.contents.clone();
         let mut tracks = self.tracks.clone();
         let mut track = (*tracks[index]).clone();
@@ -937,11 +932,16 @@ impl Project {
                 note: note_id,
                 clip: clip_id,
                 content: content_id,
-                clip_free,
-                content_free,
             },
             &draft,
             bar,
+            || {
+                clip_id != note_id
+                    && clip_id != content_id
+                    && note_id != content_id
+                    && !self.id_in_use(clip_id)
+                    && !self.id_in_use(content_id)
+            },
         )?;
         sort_clips(&mut track.clips);
         tracks[index] = Arc::new(track);
@@ -1312,10 +1312,16 @@ impl Project {
     }
 
     fn id_in_use(&self, id: Id) -> bool {
+        #[cfg(test)]
+        crate::model_scale_tests::id_check();
         self.contents.iter().any(|content| {
             content.id == id
                 || content.takes.contains(&id)
-                || content.notes.iter().any(|note| note.id == id)
+                || content.notes.iter().any(|note| {
+                    #[cfg(test)]
+                    crate::model_scale_tests::id_check_note();
+                    note.id == id
+                })
         }) || self.tracks.iter().any(|track| {
             track.id == id
                 || track.clips.iter().any(|clip| clip.id == id)

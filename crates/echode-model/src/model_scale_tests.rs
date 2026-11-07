@@ -1,4 +1,4 @@
-//! Deterministic work counts for lookups, references, bounds, parent links, refits and deletion.
+//! Deterministic work counts for lookups, references, bounds, parents, refits, deletion and IDs.
 //! Counts and fixture sizes bound these tests only, not product projects.
 
 use std::cell::Cell;
@@ -20,6 +20,8 @@ struct Work {
     used_id_collections: usize,
     used_id_notes: usize,
     delete_track_copies: usize,
+    id_checks: usize,
+    id_check_notes: usize,
 }
 
 thread_local! {
@@ -80,6 +82,14 @@ pub(crate) fn used_id_note() {
 
 pub(crate) fn delete_track_copy() {
     record(|work| work.delete_track_copies += 1);
+}
+
+pub(crate) fn id_check() {
+    record(|work| work.id_checks += 1);
+}
+
+pub(crate) fn id_check_note() {
+    record(|work| work.id_check_notes += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -651,3 +661,6 @@ mod clip_move;
 
 #[path = "model_delete_tests.rs"]
 mod delete;
+
+#[path = "model_insert_tests.rs"]
+mod insert;
