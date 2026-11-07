@@ -1,4 +1,4 @@
-//! Deterministic work counts for lookups, references, note bounds, parent links and refits (FCA-05).
+//! Deterministic work counts for lookups, references, bounds, parent links, refits and deletion.
 //! Counts and fixture sizes bound these tests only, not product projects.
 
 use std::cell::Cell;
@@ -19,6 +19,7 @@ struct Work {
     refit_track_copies: usize,
     used_id_collections: usize,
     used_id_notes: usize,
+    delete_track_copies: usize,
 }
 
 thread_local! {
@@ -75,6 +76,10 @@ pub(crate) fn used_id_collection() {
 
 pub(crate) fn used_id_note() {
     record(|work| work.used_id_notes += 1);
+}
+
+pub(crate) fn delete_track_copy() {
+    record(|work| work.delete_track_copies += 1);
 }
 
 fn measured<T>(run: impl FnOnce() -> T) -> (T, Work) {
@@ -643,3 +648,6 @@ mod refit;
 
 #[path = "model_clip_move_tests.rs"]
 mod clip_move;
+
+#[path = "model_delete_tests.rs"]
+mod delete;

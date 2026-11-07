@@ -1,6 +1,6 @@
 //! Placing and deleting notes once a clip is a window onto shared content.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::id::Id;
@@ -74,25 +74,33 @@ pub(super) fn delete(
     note_id: Id,
     bar: i64,
 ) -> Result<(), ModelError> {
+    // Linked windows share one note list; search each content only once.
+    let mut searched = HashSet::new();
     let owner = track
         .clips
         .iter()
         .find_map(|clip| {
-            notes(contents, clip.content)
-                .ok()
-                .filter(|found| found.iter().any(|note| note.id == note_id))
-                .map(|_| clip.content)
+            if !searched.insert(clip.content) {
+                return None;
+            }
+            let index = crate::model::content_index(contents, clip.content)?;
+            contents[index]
+                .notes
+                .iter()
+                .any(|note| {
+                    #[cfg(test)]
+                    crate::model_scale_tests::note_lookup();
+                    note.id == note_id
+                })
+                .then_some(clip.content)
         })
         .ok_or(ModelError::MissingNote)?;
-    {
+    let empty = {
         let content = content_mut(contents, owner)?;
-        let before = content.notes.len();
         content.notes.retain(|note| note.id != note_id);
-        if content.notes.len() == before {
-            return Err(ModelError::MissingNote);
-        }
-    }
-    if notes(contents, owner)?.is_empty() {
+        content.notes.is_empty()
+    };
+    if empty {
         remove_auto(tracks, track, owner);
         return Ok(());
     }
@@ -567,21 +575,17 @@ fn refit_one(
 }
 
 fn remove_auto(tracks: &mut [Arc<Track>], current: &mut Track, content: Id) {
-    current
-        .clips
-        .retain(|clip| !(clip.content == content && clip.kind == ClipKind::Auto));
+    let remove = |clip: &Placement| clip.content == content && clip.kind == ClipKind::Auto;
+    current.clips.retain(|clip| !remove(clip));
     for track in tracks.iter_mut() {
-        if track.id == current.id {
+        if track.id == current.id || !track.clips.iter().any(remove) {
             continue;
         }
+        #[cfg(test)]
+        crate::model_scale_tests::delete_track_copy();
         let mut owned = (**track).clone();
-        let before = owned.clips.len();
-        owned
-            .clips
-            .retain(|clip| !(clip.content == content && clip.kind == ClipKind::Auto));
-        if owned.clips.len() != before {
-            *track = Arc::new(owned);
-        }
+        owned.clips.retain(|clip| !remove(clip));
+        *track = Arc::new(owned);
     }
 }
 

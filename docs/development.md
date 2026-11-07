@@ -513,6 +513,8 @@ IEEE float WAV の異常値・有限値のビット保持・原本とパッケ�
 入力・右メニュー・取消は `PianoGridView`、一括削除は `ProjectController.deleteNotes` の単一トランザクションを通す。
 回帰は `PianoSelectionTests.swift`・`PianoSelectionDeletionTests.swift`
 （[ADR 0176](decisions/0176-piano-note-selection-and-deletion.md)）。
+モデルの削除の所属探索・最後のノートの自動配置除去・固定リンクの保持と、時間に依らない費用の回帰は
+`crates/echode-model/src/model_delete_tests.rs`（`model_scale_tests::delete`）に置く。
 一括ベロシティの対象検証とアクション生成は `NoteVelocityBatch.swift`、共通差分と仮表示は `NoteVelocity.swift` に置く。
 回帰は `NoteVelocityBatchTests.swift`・`NoteVelocityBatchBoundaryTests.swift`
 （[ADR 0177](decisions/0177-piano-batch-note-velocity.md)）。
