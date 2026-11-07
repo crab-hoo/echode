@@ -174,6 +174,8 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。
 操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない
 （[ADR 0218](decisions/0218-content-changeset-fields.md)）。
+内容同一性の探索量と未変更ノートの読み飛ばしは `echode-model/src/model_diff_tests.rs`（`model_scale_tests::diff`）で数える。
+`spike-scale` の `model_edit.diff_ms` は変更セット生成だけを測り、モデル編集・適用・保存と区別する。
 
 配置の項目表は `echode-model/src/placement_fields.rs`、独立した整数・ゲインビット・フィールド順の回帰は
 履歴の `tests/placement_changesets.rs` に置く。所属とトラックの配置 ID 列、中身の存在・異常入力・レーンの互換も検査する。

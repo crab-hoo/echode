@@ -3,8 +3,8 @@
 //!
 //! Without plugins or a device, it times the block that wraps a loop, the block
 //! that adopts an edit while playing, the control thread's replacement, and one
-//! model edit and load. At a fixed track count, a block that slows as notes are
-//! added still does work proportional to the score on the audio thread.
+//! model edit, load and changeset diff. At a fixed track count, a block that slows
+//! as notes are added still does work proportional to the score on the audio thread.
 //! The note and clip counts bound this measurement only, not the product.
 //!
 //! `make spike-scale` runs this and writes `target/spike-scale.json`. It is not
@@ -218,15 +218,20 @@ fn model_edit(tracks: usize, clips: usize) -> String {
         length: note.length,
     };
     let started = Instant::now();
-    project
+    let after = project
         .edit_note(track.id, clip.id, note.id, geometry)
         .unwrap();
     let edit = started.elapsed();
+    let started = Instant::now();
+    let changes = project.diff(&after);
+    let diff = started.elapsed();
+    std::hint::black_box(changes);
     let row = format!(
         "{{\"case\": \"model_edit\", \"tracks\": {tracks}, \"clips_per_track\": {clips}, \
-         \"assemble_ms\": {:.2}, \"edit_note_ms\": {:.2}}}",
+         \"assemble_ms\": {:.2}, \"edit_note_ms\": {:.2}, \"diff_ms\": {:.2}}}",
         us(load) / 1e3,
         us(edit) / 1e3,
+        us(diff) / 1e3,
     );
     println!("{row}");
     row

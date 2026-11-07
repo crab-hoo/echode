@@ -88,7 +88,15 @@ macro_rules! define_content_changes {
 crate::content_fields::content_fields!(define_content_changes);
 
 fn note_order(content: &Content) -> Vec<Id> {
-    content.notes.iter().map(|note| note.id).collect()
+    content
+        .notes
+        .iter()
+        .map(|note| {
+            #[cfg(test)]
+            crate::model_scale_tests::diff_note_visit();
+            note.id
+        })
+        .collect()
 }
 
 fn audio_field(fields: &[Field], property: Property) -> Result<Option<AudioRef>, ModelError> {

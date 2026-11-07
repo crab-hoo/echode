@@ -52,6 +52,10 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 
 `make spike-scale` の `model_edit` にある `assemble_ms` と `edit_note_ms` を、64 / 128 トラック × 64 クリップで比べる。
 機器・プラグインは使わない。編集の操作感全体ではなく、モデル単体の時間である。
+モデルの編集が速くても確定が遅い時は、同じ行の `diff_ms` で変更セット生成を分ける。適用・保存・通知はこの値に含まない。
+`model_scale_tests::diff` は同一性のキー検査を内容数 × 対数に制限し、共有内容のノートを辿らないことも数える。
+`changeset::content_same` は `shared_content` の二分探索と `Arc::ptr_eq` を使う。
+別組立ての同値内容や、作成・削除を誤って省略する不具合は同じ回帰の往復で切り分ける。
 時間に依らない回帰は `cargo test -q -p echode-model model_scale_tests` で、内容のキー・配置の参照・重なりの比較・親の探索を数える。
 共有 MIDI 内容の配置数だけで遅くなる時は、同じ回帰の `shared_content_validation_does_not_rescan_notes_per_placement` を確認する。
 ノートの検証回数も数え、内容のノート数と配置数の積に増えないことを検査する。

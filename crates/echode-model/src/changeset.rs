@@ -255,8 +255,8 @@ impl Project {
 }
 
 fn content_same(before: &Project, after: &Project, id: Id) -> bool {
-    let left = before.contents().iter().find(|content| content.id == id);
-    let right = after.contents().iter().find(|content| content.id == id);
+    let left = before.shared_content(id);
+    let right = after.shared_content(id);
     matches!((left, right), (Some(left), Some(right)) if Arc::ptr_eq(left, right))
 }
 
@@ -453,6 +453,8 @@ fn diff_notes(
             continue;
         }
         for note in &content.notes {
+            #[cfg(test)]
+            crate::model_scale_tests::diff_note_visit();
             if let Some((owner, previous)) = before_notes.get(&note.id) {
                 diff_note_fields(*owner, content.id, previous, note, updates);
             } else {
@@ -465,6 +467,8 @@ fn diff_notes(
             continue;
         }
         for note in &content.notes {
+            #[cfg(test)]
+            crate::model_scale_tests::diff_note_visit();
             if !after_notes.contains_key(&note.id) {
                 deletes.push(note_change(false, content.id, note));
             }
@@ -479,6 +483,8 @@ fn notes_of<'a>(project: &'a Project, other: &Project) -> HashMap<Id, (Id, &'a N
             continue;
         }
         for note in &content.notes {
+            #[cfg(test)]
+            crate::model_scale_tests::diff_note_visit();
             notes.insert(note.id, (content.id, note));
         }
     }
