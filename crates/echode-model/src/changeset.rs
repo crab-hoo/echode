@@ -14,7 +14,11 @@ use crate::time::{Meter, Tempo, TempoMap, TempoPoint, Tick};
 
 #[path = "changeset_content.rs"]
 mod content;
-use content::{ContentState, content_change, diff_content_fields};
+use content::ContentState;
+
+#[path = "changeset_content_diff.rs"]
+mod content_diff;
+use content_diff::ChangedContents;
 
 #[path = "changeset_device.rs"]
 mod device;
@@ -236,9 +240,16 @@ impl Project {
         let mut deletes = Vec::new();
         diff_tempo(self, after, &mut creates, &mut updates, &mut deletes);
         diff_project_fields(self, after, &mut updates);
-        diff_content_shells(self, after, &mut creates, &mut updates);
-        diff_tracks(self, after, &mut creates, &mut updates, &mut deletes);
-        push_content_deletes(self, after, &mut deletes);
+        let contents = ChangedContents::between(self, after, &mut creates, &mut updates);
+        diff_tracks(
+            self,
+            after,
+            &contents,
+            &mut creates,
+            &mut updates,
+            &mut deletes,
+        );
+        contents.push_deletes(&mut deletes);
         creates.extend(updates);
         creates.extend(deletes);
         ChangeSet { changes: creates }
@@ -254,41 +265,10 @@ impl Project {
     }
 }
 
-fn content_same(before: &Project, after: &Project, id: Id) -> bool {
-    let left = before.shared_content(id);
-    let right = after.shared_content(id);
-    matches!((left, right), (Some(left), Some(right)) if Arc::ptr_eq(left, right))
-}
-
-fn diff_content_shells(
-    before: &Project,
-    after: &Project,
-    creates: &mut Vec<Change>,
-    updates: &mut Vec<Change>,
-) {
-    for content in after.contents() {
-        if let Some(previous) = before.content(content.id) {
-            if content_same(before, after, content.id) {
-                continue;
-            }
-            diff_content_fields(previous, content, updates);
-        } else {
-            creates.push(content_change(true, content));
-        }
-    }
-}
-
-fn push_content_deletes(before: &Project, after: &Project, deletes: &mut Vec<Change>) {
-    for content in before.contents() {
-        if after.content(content.id).is_none() {
-            deletes.push(content_change(false, content));
-        }
-    }
-}
-
 fn diff_tracks(
     before: &Project,
     after: &Project,
+    contents: &ChangedContents<'_>,
     creates: &mut Vec<Change>,
     updates: &mut Vec<Change>,
     deletes: &mut Vec<Change>,
@@ -317,15 +297,7 @@ fn diff_tracks(
         updates,
         deletes,
     );
-    diff_notes(
-        before,
-        after,
-        &before_by_id,
-        &after_by_id,
-        creates,
-        updates,
-        deletes,
-    );
+    diff_notes(&contents.before, &contents.after, creates, updates, deletes);
     for track in before.tracks() {
         if !after_by_id.contains_key(&track.id) {
             diff_devices(Some(track), None, creates, updates, deletes);
@@ -448,21 +420,15 @@ fn clips_outside_unchanged<'a>(
 }
 
 fn diff_notes(
-    before: &Project,
-    after: &Project,
-    before_tracks: &HashMap<Id, &Arc<Track>>,
-    after_tracks: &HashMap<Id, &Arc<Track>>,
+    before: &[&Content],
+    after: &[&Content],
     creates: &mut Vec<Change>,
     updates: &mut Vec<Change>,
     deletes: &mut Vec<Change>,
 ) {
-    let before_notes = notes_of(before, after);
-    let after_notes = notes_of(after, before);
-    let _ = (before_tracks, after_tracks);
-    for content in after.contents() {
-        if content_same(before, after, content.id) {
-            continue;
-        }
+    let before_notes = notes_of(before);
+    let after_notes = notes_of(after);
+    for content in after {
         for note in &content.notes {
             #[cfg(test)]
             crate::model_scale_tests::diff_note_visit();
@@ -473,10 +439,7 @@ fn diff_notes(
             }
         }
     }
-    for content in before.contents() {
-        if content_same(before, after, content.id) {
-            continue;
-        }
+    for content in before {
         for note in &content.notes {
             #[cfg(test)]
             crate::model_scale_tests::diff_note_visit();
@@ -487,12 +450,9 @@ fn diff_notes(
     }
 }
 
-fn notes_of<'a>(project: &'a Project, other: &Project) -> HashMap<Id, (Id, &'a Note)> {
+fn notes_of<'a>(contents: &[&'a Content]) -> HashMap<Id, (Id, &'a Note)> {
     let mut notes = HashMap::new();
-    for content in project.contents() {
-        if content_same(project, other, content.id) {
-            continue;
-        }
+    for content in contents {
         for note in &content.notes {
             #[cfg(test)]
             crate::model_scale_tests::diff_note_visit();
