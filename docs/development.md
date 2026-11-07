@@ -143,6 +143,8 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 パラメーターの項目表は `echode-model/src/parameter_fields.rs` でモデル宣言・等価比較・Serde とも共有する。
 公開パッケージのキー順・拒否時の保持・旧版の移行とコミット再読込みは履歴の `tests/parameter_package.rs` に置く。
 形の復号とプロジェクトの受入を区別し、保存の formatter は履歴に残す（[ADR 0222](decisions/0222-parameter-package-fields.md)）。
+所属と子の列の完全性は `tests/parameter_ownership.rs` で、不明な所有者・未列挙・重複・ID 衝突を検査する。
+復旧と `DocumentHost::open` の拒否、edit / undo / redo、原本と先端・ロック解放・明示修復後の再オープンも同じ回帰に置く。
 
 デバイスのスカラー項目の表は `echode-model/src/device_fields.rs` でモデル宣言・Serde とも共有する。
 変更セットの生成器は `echode-model/src/changeset_device.rs`、独立したフィールド順・省略値・異常入力の回帰は

@@ -190,6 +190,9 @@ ABI の値だけが違う場合は FFI の `snapshot_fields_tests.rs` と `Snaps
 `DocumentHost::recovered_label` は従来どおり、オープン時の基点と復旧済み連番を返す。
 先端が読めない原因は、オブジェクトの破損と、不変条件を破ったモデルのコミット（読込みで拒否される）を区別する。
 破損ジャーナルは `journal seq <連番> violates model invariants: <理由>` でオープンを拒否する（[ADR 0180](../decisions/0180-journal-replay-invariants.md)）。
+適用自体の失敗は `journal seq <連番> cannot apply changes: <理由>` と区別する。
+`tests/parameter_ownership.rs` は、未列挙のパラメーターを復元時に捨てる経路を調べ、適用後の不変条件検査だけでは発見できない消失を検査する。
+`changeset::Draft::finish` の全体 ID 集合・所有者・使用数を確認し、原本を保全したまま該当する行の作成・削除と `param_order` を照合する。
 `audit_adv01_*` は通常回帰で、先端なし・ありと、明示修復後に確定した編集の保持を検査する。
 原本をコピーして保全し、連番・不変条件の理由・基点と先端を記録する。自動で行を削除したり、繰り返し保存して直そうとしない。
 旧版では不正な状態をコミットし、debug では最初の編集が panic する経路もあった。

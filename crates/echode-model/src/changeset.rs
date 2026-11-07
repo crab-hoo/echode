@@ -775,6 +775,7 @@ impl Draft {
         let mut tracks = Vec::with_capacity(self.tracks.len());
         let mut used_clips = 0;
         let mut used_devices = 0;
+        let mut used_parameters = 0;
         for (track_id, track) in &self.tracks {
             if seen.insert(*track_id, ()).is_some() {
                 return Err(ModelError::DuplicateId);
@@ -798,7 +799,7 @@ impl Draft {
                 let Some(device) = self.devices.get(device_id) else {
                     return Err(ModelError::InvalidChange);
                 };
-                if device.track != *track_id {
+                if device.track != *track_id || seen.insert(*device_id, ()).is_some() {
                     return Err(ModelError::InvalidChange);
                 }
                 let mut parameters = Vec::with_capacity(device.parameters.len());
@@ -806,9 +807,10 @@ impl Draft {
                     let Some(parameter) = self.parameters.get(parameter_id) else {
                         return Err(ModelError::InvalidChange);
                     };
-                    if parameter.device != *device_id {
+                    if parameter.device != *device_id || seen.insert(*parameter_id, ()).is_some() {
                         return Err(ModelError::InvalidChange);
                     }
+                    used_parameters += 1;
                     parameters.push(parameter.finish(*parameter_id)?);
                 }
                 devices.push(device.finish(*device_id, parameters)?);
@@ -823,6 +825,7 @@ impl Draft {
         if used_clips != self.clips.len()
             || used_notes != self.notes.len()
             || used_devices != self.devices.len()
+            || used_parameters != self.parameters.len()
         {
             return Err(ModelError::InvalidChange);
         }

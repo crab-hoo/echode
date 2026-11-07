@@ -1413,9 +1413,12 @@ fn replay_suffix(
             }
         };
         let before = project;
-        project = before
-            .apply_changeset(&changes)
-            .map_err(|error| PackageError::new(error.to_string()))?;
+        project = before.apply_changeset(&changes).map_err(|error| {
+            PackageError::new(format!(
+                "journal seq {} cannot apply changes: {error}",
+                line.seq
+            ))
+        })?;
         // A journal is external input, not a trusted in-memory undo step.
         // Check each complete transaction before accepting any later line.
         project.check_invariants().map_err(|error| {
