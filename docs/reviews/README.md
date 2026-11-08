@@ -8,6 +8,9 @@
 
 ## 1. 全体横断・Phase 1 最終照合
 
+- [2026-11-08 監査の未完了項目の統合](2026-11-08-open-items-register.md): 10/8・SPG・XCA・外部監査・FCA ほかの未完了を束ねた。
+  重複と古い状態を整理し、残りを堅牢性・保守性・効率・機能に付随・ユーザーの担当の 38 行に分けた。
+  順番と FCA-05 の区切りは [ADR 0278](../decisions/0278-audit-backlog-order.md) で決めた。最優先は FCA-02 の採用の固定費用（R1）。
 - [2026-11-08 構造の評価の精査](2026-11-08-structure-assessment-review.md): モデルの検査の分担と placement.rs の構造の判定。
   漏れ得るのは `Draft::finish` の消費の検査だけで、ID 探索と検証基盤の規模は既知（FCA-05、2026-11-06 の精査）。
 - [2026-11-06 課題一覧の精査](2026-11-06-assessment-review.md): 検証基盤と製品の課題一覧の判定。gix-pack は解決済み、CI の待ちの主因は同時実行数。
@@ -18,7 +21,7 @@
   イベント容量の FCA-03 は [ADR 0240](../decisions/0240-block-local-event-capacity.md) で対応した。
   配置の PCM の複製（FCA-10）は [ADR 0241](../decisions/0241-unscaled-placement-pcm.md) で対応した。
   FCA-04 は [ADR 0274](../decisions/0274-reused-track-plans.md) で、変わらないトラックの計画を使い回すようにした。
-  FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-references.md) を参照する。残りは未着手。
+  FCA-05 の先行分は [ADR 0242](../decisions/0242-model-content-lookup-and-references.md) と監査の追記を参照する。残りは [ADR 0278](../decisions/0278-audit-backlog-order.md) で区切った。
   WAV（FCA-16）は [ADR 0243](../decisions/0243-float-wav-metadata.md) の float ヘッダと、
   [ADR 0247](../decisions/0247-pcm24-wav-export.md) の PCM24 と [ADR 0248](../decisions/0248-pcm16-wav-export.md) の PCM16 を接続した。
   大容量の RF64 は [ADR 0249](../decisions/0249-rf64-wav-export.md)、TPDF ディザは [ADR 0251](../decisions/0251-tpdf-export-dither.md) で接続した。聴感は UC-52 に残す。

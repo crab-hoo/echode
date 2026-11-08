@@ -67,6 +67,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
 - プラグインは本体外、RT の確保・ロック・待機は禁止。固定したトラック数やチャンネル数、階層の深さを上限にしない。
 - 実機・聴感はユーザー担当。未解決の HAL / errno の TSan 条件は [検査手順](verification.md#検査基盤で区別すること) に残す。
 - 通常の確認は `make verify`、単位の受入完了の前に `make verify-full`。各単位の受入完了と Phase 2 全体の完了を区別する。
+- 監査の残りは [ADR 0278](decisions/0278-audit-backlog-order.md) の順に行い、堅牢性の R 群と保守性の P2 を終えるまで新しい単位に着手しない。
+  機能に付随する項目（[統合表](reviews/2026-11-08-open-items-register.md) の F1〜F13）は、該当する単位の受入条件に含める。
 
 ## 実装順と受入条件
 

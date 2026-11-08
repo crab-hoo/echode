@@ -18,7 +18,7 @@
   - **P2-06（ミックス）**: 先行分だけを接続した。コンソール表示は未接続（[ADR 0228](decisions/0228-selected-track-live-mix.md)）。
   - **P2-07（マーカー・録音・ピアノロール）**: 着手中。
     複数トラックの同時編集・試聴・ドラム入力は未接続（[ADR 0181](decisions/0181-piano-reference-workflow-and-keys.md)、[ADR 0184](decisions/0184-piano-note-duplicate-drag.md)）。
-- **監査記録**: 2026-10-08 の未着手項目は [元の一覧](reviews/2026-10-08-audit.md) が正本。
+- **監査記録**: 状態は各監査の表が正本。未完了の束ねは [統合表](reviews/2026-11-08-open-items-register.md)。
   後続の監査で指摘がなくても完了にはしない。
 
 ## 利用時に残る制約
