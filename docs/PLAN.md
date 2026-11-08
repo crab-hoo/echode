@@ -16,6 +16,8 @@ Echode は macOS 専用の、フリーかつオープンソースの DAW です�
    読込み・保存・解析・レンダリングなどの処理中も GUI の応答と無関係な編集を保ち、作業を続けられることを目指します。
    描画の継続だけで達成とせず、入力・編集の受付も確認します
    （[操作要件](interaction-design.md#処理中も作業を続ける)）。
+   障害が起きた時は、最小の範囲で静かに安全側へ倒し、何が起きて何をしたかを隠さず、普段の操作で戻せるようにします
+   （Calm Technology・Fail-Safe・Frictionless Recovery・Transparent、[ADR 0281](decisions/0281-calm-transparent-failure.md)）。
 2. **履歴を意識しなくてよい。**
    プロジェクトはプレーンテキストで保存し、裏で Git が管理しますが、ユーザーに Git は見せません。
    Time Machine のような画面で過去の状態を試聴して戻せ、別アレンジは「オルタネイト」として並べて管理できます。
