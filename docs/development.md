@@ -192,6 +192,10 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 ベロシティの同値設定・欠けた対象での複製回避は `model_note_velocity_tests.rs`（`model_scale_tests::note_velocity`）で内容とノートの複写数を数える。
 16 bit 値の差・共有配置・元の版の保持・変更セットの正逆適用、履歴の `tests/note_velocity.rs` で同値設定後の Undo / Redo とジャーナルを検査する。
 
+ノート複製の実際の内容複写は `model_note_duplicate_tests.rs`（`model_scale_tests::note_duplicate`）で数える。
+単体テスト専用の `Content::clone` は項目表から同じフィールドを複写し、製品ビルドは従来の導出実装を保つ。
+結合しない固定・自動配置と別トラックの固定リンクで、内容は一度だけ複写し、窓の拡張・原点・正逆適用を保つ。
+
 中身の音声参照・テイク ID 列の表は `echode-model/src/content_fields.rs`、独立したメタデータ・ID 列と順序の回帰は
 履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。
 操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない

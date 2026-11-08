@@ -227,13 +227,28 @@ macro_rules! define_content {
     ($($property:ident => $field:ident: $type:ty, $value:ident, $read:ident;)+) => {
         /// Notes and metadata shared by one or more placements.
         /// Content time zero is fixed; notes before it have negative starts.
-        #[derive(Clone, Debug, PartialEq, Eq)]
+        #[cfg_attr(not(test), derive(Clone))]
+        #[derive(Debug, PartialEq, Eq)]
         pub struct Content {
             pub id: Id,
             $(pub $field: $type,)+
             pub notes: Vec<Note>,
             /// Reserved curves, empty until expression editing is implemented.
             pub expressions: Vec<Expression>,
+        }
+
+        // Mirror derived Clone in unit tests to count actual copy-on-write costs.
+        #[cfg(test)]
+        impl Clone for Content {
+            fn clone(&self) -> Self {
+                crate::model_scale_tests::content_copy(self.notes.len());
+                Self {
+                    id: self.id,
+                    $($field: self.$field.clone(),)+
+                    notes: self.notes.clone(),
+                    expressions: self.expressions.clone(),
+                }
+            }
         }
 
         /// Package scalars; decoding does not validate references or a project.
@@ -1038,7 +1053,8 @@ impl Project {
         if self.id_in_use(copy) {
             return Err(ModelError::DuplicateId);
         }
-        let owner = &self.tracks[self.track_index(track)?];
+        let index = self.track_index(track)?;
+        let owner = &self.tracks[index];
         let placement = owner
             .clips
             .iter()
@@ -1060,6 +1076,12 @@ impl Project {
             start,
             length: copied.length,
         };
+        validate_note(&NoteDraft {
+            pitch: geometry.pitch,
+            velocity: 0,
+            start: geometry.start,
+            length: geometry.length,
+        })?;
         let expressions: Vec<_> = content
             .expressions
             .iter()
@@ -1073,8 +1095,12 @@ impl Project {
         let content = Arc::make_mut(content);
         content.notes.push(copied);
         content.expressions.extend(expressions);
-        self.with_parts(contents, self.tracks.clone())
-            .edit_note(track, clip, copy, geometry)
+        let bar = self
+            .meter
+            .bar_ticks()
+            .ok_or(ModelError::InvalidMeter)?
+            .get();
+        self.edit_note_in_contents(contents, index, clip, copy, geometry, bar)
     }
 
     /// Edits shared content without replacing the note id or its expression data.
@@ -1099,7 +1125,27 @@ impl Project {
             .bar_ticks()
             .ok_or(ModelError::InvalidMeter)?
             .get();
-        let mut contents = self.contents.clone();
+        self.edit_note_in_contents(
+            self.contents.clone(),
+            index,
+            clip_id,
+            note_id,
+            geometry,
+            bar,
+        )
+    }
+
+    // Consume the caller's content array so a freshly copied note is not cloned
+    // again when applying geometry and refitting its shared placements.
+    fn edit_note_in_contents(
+        &self,
+        mut contents: Vec<Arc<Content>>,
+        index: usize,
+        clip_id: Id,
+        note_id: Id,
+        geometry: NoteGeometry,
+        bar: i64,
+    ) -> Result<Self, ModelError> {
         let mut tracks = self.tracks.clone();
         let mut track = (*tracks[index]).clone();
         crate::placement::edit(

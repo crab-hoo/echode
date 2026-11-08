@@ -54,6 +54,26 @@ bundle のない実行ファイルでは、置かれたフォルダが主 bundle
 `sample` は `ExtAudioFileOpenURL` → `AudioAnalytics` → `_CFCopySystemVersionDictionary` → `CFBundleGetMainBundle` → `_CFIterateDirectory` の列挙を示した。
 テスト本体の失敗と混同せず、期限を延ばす前に置き場所を比較する。キャッシュの削除は同意を得て行い、検査ログを消す `cargo clean` 全体実行は避ける。
 
+#### 蓄積した `.rcgu.o` だけを整理する
+
+2026-11-08 は、テストが始まった後に採った sample で、次の列挙を確認した。
+`ExtAudioFileOpenURL` → `AudioAnalytics` → `CFBundleGetMainBundle` → `_CFIterateDirectory` → `readdir`。
+起動直後だけの sample は `_dyld_start` しか示さない場合がある。`running 1 test` の後の処理を採り、起動待ちと本体の列挙を分ける。
+
+ユーザーの許可、検査ロックの取得、Cargo / rustc の停止確認の後、`target/debug/deps` 直下の通常ファイル `*.rcgu.o` だけを削除した。
+対象はリンク後に残った再生成可能なオブジェクトで、`incremental` 内や `.rlib` 内のオブジェクトまで広げない。
+770,638 件（論理サイズ約 46.6 GB）を除き、直下は 6,300 件、ディスクの空きは約 6.9 → 22 GiB になった。
+`.rlib`・`.rmeta`・`.d`・実行ファイル・動的ライブラリ・`.a`・鮮度情報・検査記録は残した。
+比較したテストの SHA-256 は整理前後で一致し、同じ Cargo の `--no-run` は再コンパイルなしで既存成果物を再利用した。
+
+比較には同一の CLI 回帰 `contract_offline_missing_plugin_exports_dry_audio_and_keeps_its_state` を使った。
+整理前の後続 2 回が 12.63 / 4.94 秒、整理後 3 回が 0.25〜0.27 秒だった。
+同じバイナリ・入力・期待値での環境切分けであり、製品の性能改善率や最悪時間の保証には使わない。
+診断と整理の集計は `target/focused-checks/cache-cleanup.json`、比較と sample は `target/focused-checks/cache-startup-before/` に記録した。
+
+オブジェクトは再ビルドで再び増えるので、今回の整理を恒久的な自動掃除と扱わない。
+期限を延ばしたりテストを省略せず、整理後も通常の `make verify` で正式な結果を取り直す。
+
 ### `swift test` が出力なしで止まる（Swift Testing の待ち続け）
 
 Swift Testing は始めた全テストの終わりを待つ。再開されない `await` が 1 つあると、全スレッドが休んだまま実行が続き、遅いだけに見える。
