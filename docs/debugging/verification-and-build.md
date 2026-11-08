@@ -36,7 +36,7 @@ Swift 契約の直接起動で `missing helper, test bundle, or Testing framewor
 これより大幅に長ければ、`python3 -m unittest discover -s scripts/tests -v --durations 12` で遅いテストを確かめる。
 実リポジトリの識別計算のテストが上位に戻った時は、範囲の共有が外れていないかを見る。
 `contract_fingerprints` 1 回は約 0.6 秒で、`scope_entries` は契約 236 件に 11 回だけ呼ばれる。
-短縮で足りなければ、測定値を添えて期限の変更をユーザーに相談する。
+短縮で足りなければ期限を変え、測定値と理由を ADR に書く（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。
 
 ### Rust のテストで最初の音声ファイルの読込みが数秒〜十数秒かかる（`audition stalled at ... phase: Loading`）
 

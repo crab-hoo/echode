@@ -41,6 +41,7 @@ Echode は macOS 専用の、フリーかつオープンソースの DAW です�
 
 | 項目 | 決定 | 補足 |
 |---|---|---|
+| 優先順位 | 堅牢性 > 保守性 > 効率 > 見た目・機能 | 音切れ・停止・データの消失は堅牢性に数える。ユーザーに予約した事項の外は、エージェントがこの順で決めて ADR に書く（[ADR 0276](decisions/0276-priority-order-and-delegated-decisions.md)） |
 | 対象 OS / チップ | macOS 27 以降、M4 ファミリー以降の Apple Silicon（arm64）のみ | M1〜M3 は対象外。Rosetta は使わず、Intel 専用プラグインは非対応と表示する。自前のビルド対象は M4 基準（[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)） |
 | ライセンス | GPL-3.0-or-later | 作者が使えるライブラリが最も多くなる形。GPL や LGPL のライブラリも同梱できる（§2.1、[ADR 0004](decisions/0004-license-gpl.md)） |
 | 既存の実装 | 定番の実装がある処理は、自作する前に既存の実装を調べて測る | ほかに完全に劣るもの以外はユーザーが選べる選択肢にする（§2.1、[ADR 0014](decisions/0014-existing-implementations-as-options.md)） |
@@ -247,7 +248,8 @@ Phase 1 期間中の各機能の設計判断と監査対応は [ADR 0048](decisi
 
 ## 9. 後で決めること
 
-- 製品名とロゴ（Echode はコードネーム）、ショートカット詳細とテーマ配色、拡張子（仮 `.echode`）、自動保存と履歴間引きの初期値。
+- 製品名とロゴはユーザーが決める。決まるまで Echode を仮名、`.echode` を仮の拡張子とする。
+- ショートカットの詳細、テーマ配色、自動保存と履歴の間引きの初期値は、エージェントが決める（[ADR 0276](decisions/0276-priority-order-and-delegated-decisions.md)）。
 - GitHub での公開は 2026-11-05 に決めた（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。製品名は公開後も未定のまま。
 - オフライン専用の高音質タイムストレッチを Phase 3/4 のプレビュー用キャッシュ生成時にも選べるようにするか（Phase 4 前の比較測定で判断する）。
 

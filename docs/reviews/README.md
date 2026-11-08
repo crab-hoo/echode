@@ -26,7 +26,7 @@
   監査時の計測は [規模の計測](../evidence/2026-11-03-scale-measurements.md) に置く。
   時間換算の重複とテンポ境界ごとの再探索（FCA-13）は [ADR 0275](../decisions/0275-shared-integer-tempo-index.md) で共通の不変索引へ集めた。
   遅延の取得・通知・表示（FCA-07）の先行分は [ADR 0246](../decisions/0246-plugin-latency-reporting.md)。PDC と残るホスト拡張は未接続。
-  ジャーナルの末尾確認（FCA-14）は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で全件読込みをなくした。編集ごとの同期とまとめ書きの判断待ちは残す。
+  ジャーナルの末尾確認（FCA-14）は [ADR 0252](../decisions/0252-bounded-journal-tail-repair.md) で全件読込みをなくした。まとめ書きは行わず、編集ごとの同期を保つ（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。
   未使用の計画受渡しと音声側へ届かない命令（FCA-11）は [ADR 0253](../decisions/0253-product-only-playback-commands.md) で削除した。
   手書き FFI（FCA-12）は [ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md) で既存バインディングへ移し、許可をシンボル単位にした。
   同梱音源のホスト依存（FCA-15）は [ADR 0266](../decisions/0266-host-independent-sine-pad-dsp.md) で分離した。

@@ -1,6 +1,6 @@
 # 現在の範囲と制約
 
-更新: 2026-11-06。
+更新: 2026-11-08。
 制約と未確認・未接続を置く。合格証ではない。
 合否は `make verify`、実操作は日付付きの監査記録で確認する。
 実機等の確認待ちは [ユーザー確認の一覧](user-checks.md) の UC-番号で示す。
@@ -100,7 +100,6 @@
   窓が閉じている時のプラグイン自身の変化は、自動保存だけで記録する（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
   窓アイコンの実画面・VoiceOver、実ウィンドウの表示、アプリ切替時の隠れ方、第三者プラグインの GUI と聴感はユーザー確認待ち（UC-22）。
 - **デバイスビューと GUI の応答性**: 実機と第三者プラグインでの GUI の停止の解消はユーザー確認待ち（UC-23）。
-  複数選択時のデバイスビューの表示対象は未決（[ADR 0131](decisions/0131-device-view-and-responsive-parameters.md)）。
   実画面での暗転の解消はユーザー確認待ち（UC-24、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
   出力の準備中の編集、一覧の再試行と状態の表示、FX の追加中の再生もユーザー確認待ち（UC-43〜46）。
   再生中の編集の素材と、保存済み状態の読込みは同期のまま残る（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
