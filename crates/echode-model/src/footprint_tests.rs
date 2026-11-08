@@ -47,15 +47,117 @@ fn an_identical_version_shares_every_object() {
 }
 
 #[test]
-fn a_note_edit_keeps_only_the_replaced_content() {
+fn a_note_edit_keeps_only_the_replaced_content_and_run() {
     let (before, first) = project_with_notes(8);
     let clip = before.tracks()[0].clips[0].id;
     let note = before.contents()[0].notes[3].id;
     let after = before.set_note_velocity(first, clip, note, 1).unwrap();
     for (older, newer) in [(&before, &after), (&after, &before)] {
         let kept = older.footprint_beyond(newer);
-        assert_eq!((kept.tracks, kept.contents, kept.notes), (0, 1, 8));
-        assert!(kept.bytes >= 8 * size_of::<Note>() as u64);
+        let run = run_holding(older, note);
+        assert_eq!((kept.tracks, kept.contents, kept.notes), (0, 1, run as u64));
+        assert!(kept.bytes >= (run * size_of::<Note>()) as u64);
+    }
+}
+
+fn run_holding(project: &Project, note: Id) -> usize {
+    project.contents()[0]
+        .notes
+        .runs()
+        .iter()
+        .find(|run| run.iter().any(|item| item.id == note))
+        .map_or(0, |run| run.len())
+}
+
+/// One track with one clip of `count` notes in its first bar. Ids count up,
+/// so the runs are the same on every run of the test.
+fn project_with_many_notes(count: u128) -> (Project, Id) {
+    let (project, track) = project_with_notes(1);
+    let mut content = crate::Content::clone(&project.contents()[0]);
+    let template = content.notes[0].clone();
+    let mut notes: Vec<Note> = (0..count)
+        .map(|index| Note {
+            id: Id::from_raw(1_000_000 + index),
+            start: Tick::new((index % 3_000) as i64),
+            pitch: (index % 128) as u8,
+            ..template.clone()
+        })
+        .collect();
+    crate::model::sort_notes(&mut notes);
+    content.notes = notes.into();
+    let tracks = project
+        .tracks()
+        .iter()
+        .map(|track| crate::Track::clone(track))
+        .collect();
+    let project = Project::try_assemble(
+        project.meter(),
+        project.tempo().clone(),
+        vec![content],
+        tracks,
+    )
+    .unwrap();
+    (project, track)
+}
+
+#[test]
+fn a_one_note_edit_of_ten_thousand_notes_keeps_a_few_runs_not_the_content() {
+    // FCA-19: one undo step of this edit held all 10,000 notes (801 KB). The
+    // count fixes the scenario; it is not a product limit.
+    let (before, track) = project_with_many_notes(10_000);
+    let clip = before.tracks()[0].clips[0].id;
+    let target = before.contents()[0].notes[5_000].clone();
+    let fresh = Id::from_raw(9_000_000);
+    let edits: Vec<(&str, Project)> = vec![
+        (
+            "velocity",
+            before.set_note_velocity(track, clip, target.id, 1).unwrap(),
+        ),
+        (
+            "move",
+            before
+                .edit_note(
+                    track,
+                    clip,
+                    target.id,
+                    crate::NoteGeometry {
+                        pitch: 1,
+                        start: Tick::new(7),
+                        length: target.length,
+                    },
+                )
+                .unwrap(),
+        ),
+        (
+            "duplicate",
+            before
+                .duplicate_note(track, clip, target.id, fresh, 2, Tick::new(2_999))
+                .unwrap(),
+        ),
+        ("delete", before.delete_note(track, target.id).unwrap()),
+    ];
+    let longest = before.contents()[0]
+        .notes
+        .runs()
+        .iter()
+        .map(|run| run.len())
+        .max()
+        .unwrap();
+    assert!(longest < 1_000, "runs of up to {longest} notes");
+    for (name, after) in edits {
+        after.check_invariants().unwrap();
+        for (older, newer) in [(&before, &after), (&after, &before)] {
+            let kept = older.footprint_beyond(newer);
+            // A note edit may also refit the clip, which replaces its track.
+            assert!(kept.tracks <= 1 && kept.contents == 1, "{name}: {kept:?}");
+            assert!(
+                kept.notes as usize <= 3 * (longest + 1),
+                "{name} kept {} of 10,000 notes",
+                kept.notes
+            );
+            // The run list itself stays: about 16 bytes for each of ~156 runs.
+            assert!(kept.bytes < 64 * 1_024, "{name} kept {} bytes", kept.bytes);
+        }
     }
 }
 

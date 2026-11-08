@@ -540,21 +540,35 @@ fn set_velocity(session: &mut Session, index: usize, velocity: u8) {
         .unwrap();
 }
 
+/// Notes in the run that holds the note at `index` of the first content.
+fn run_holding(session: &Session, index: usize) -> usize {
+    let notes = &session.project().contents()[0].notes;
+    let note = notes[index].id;
+    notes
+        .runs()
+        .iter()
+        .find(|run| run.iter().any(|item| item.id == note))
+        .map_or(0, |run| run.len())
+}
+
 #[test]
 fn usage_counts_each_replaced_content_once_wherever_current_is() {
     let notes = 64;
     let mut session = session_with_notes(notes);
     assert_eq!(session.usage(), HistoryUsage::default());
+    let mut kept = 0;
     for step in 0..6 {
+        kept += run_holding(&session, step);
         set_velocity(&mut session, step, 1 + step as u8);
     }
     let edited = session.usage();
     assert_eq!((edited.undo_steps, edited.redo_steps), (6, 0));
-    // A velocity edit copies the whole content, so each step keeps all notes.
+    // A velocity edit copies the content's run list and the run holding the
+    // note, so each step keeps that run and shares the others (ADR 0287).
     assert_eq!(edited.versions.contents, 6);
-    assert_eq!(edited.versions.notes, 6 * notes as u64);
+    assert_eq!(edited.versions.notes, kept as u64);
     assert_eq!(edited.versions.tracks, 0);
-    assert!(edited.versions.bytes >= 6 * notes as u64 * size_of::<echode_model::Note>() as u64);
+    assert!(edited.versions.bytes >= kept as u64 * size_of::<echode_model::Note>() as u64);
     assert_eq!(edited.journal_changes, 6);
 
     // Moving `current` changes which version is live, not what the chain holds.

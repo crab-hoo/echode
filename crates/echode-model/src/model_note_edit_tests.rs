@@ -1,7 +1,7 @@
 //! Copy budgets and fixture sizes constrain these tests, not product projects.
 
-use super::measured;
 use super::note_duplicate::linked_fixture;
+use super::{assert_runs_copied, measured};
 use crate::{ClipKind, Content, Id, ModelError, NoteGeometry, Project, Tick};
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ fn unchanged_geometry_does_not_copy_shared_content() {
                         "unchanged geometry cloned {} contents for {count} notes ({kind:?})",
                         work.content_copies
                     );
-                    assert_eq!(work.content_note_copies, 0);
+                    assert_eq!(work.content_run_copies, 0);
                     assert!(work.note_lookups <= count);
                     for (before, retained) in project.contents().iter().zip(after.contents()) {
                         assert!(Arc::ptr_eq(before, retained));
@@ -82,7 +82,7 @@ fn missing_geometry_target_is_rejected_before_copying_content() {
                     "missing geometry target cloned {} contents for {count} notes",
                     work.content_copies
                 );
-                assert_eq!(work.content_note_copies, 0);
+                assert_eq!(work.content_run_copies, 0);
                 assert_eq!(work.note_lookups, count);
             }
         }
@@ -122,15 +122,17 @@ fn changed_geometry_copies_content_once_and_preserves_other_fields() {
                             .unwrap()
                     });
                     assert_eq!(work.content_copies, 1);
-                    assert_eq!(work.content_note_copies, count);
+                    assert_runs_copied(&work, content);
                     assert_eq!(work.note_lookups, count);
                     let mut expected = Content::clone(content);
-                    let target = expected.notes.last_mut().unwrap();
-                    target.pitch = updated.pitch;
-                    target.start =
-                        Tick::new(note.start.get() + updated.start.get() - current.start.get());
-                    target.length = updated.length;
-                    crate::model::sort_notes(&mut expected.notes);
+                    expected.notes.edit(|notes| {
+                        let target = notes.last_mut().unwrap();
+                        target.pitch = updated.pitch;
+                        target.start =
+                            Tick::new(note.start.get() + updated.start.get() - current.start.get());
+                        target.length = updated.length;
+                    });
+                    expected.notes.edit(|notes| crate::model::sort_notes(notes));
                     assert_eq!(after.content(content.id), Some(&expected));
                     assert!(Arc::ptr_eq(&project.contents()[1], &after.contents()[1]));
                     assert_roundtrip(&project, &after);
@@ -249,7 +251,7 @@ fn geometry_rejection_keeps_validation_order_and_does_not_copy_content() {
         let (result, work) = measured(|| project.edit_note(owner, placement, target, updated));
         assert_eq!(result, Err(error));
         assert_eq!(work.content_copies, 0);
-        assert_eq!(work.content_note_copies, 0);
+        assert_eq!(work.content_run_copies, 0);
         assert_eq!(project, original);
     }
     project.check_invariants().unwrap();

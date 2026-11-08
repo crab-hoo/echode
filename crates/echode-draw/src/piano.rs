@@ -83,12 +83,15 @@ impl ArrangeIndex {
                     if pitch >= view.top_pitch + 1. || pitch <= low {
                         continue;
                     }
+                    let mut notes = index.content.notes.cursor();
                     row.ends.visit(
                         from,
                         to,
-                        |n| index.content.notes[row.notes[n]].start.get(),
+                        |n| index.starts[row.notes[n]],
                         |n| {
-                            let note = &index.content.notes[row.notes[n]];
+                            let Some(note) = notes.get(row.notes[n]) else {
+                                return;
+                            };
                             let Some((start, finish)) = audible_in_view(clip, note, origin, end)
                             else {
                                 return;

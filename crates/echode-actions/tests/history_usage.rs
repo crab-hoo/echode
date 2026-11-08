@@ -61,7 +61,8 @@ fn project(tracks: usize, notes: i64) -> Project {
 #[test]
 #[ignore = "memory measurement; `make spike-history` runs it"]
 fn measure_history_usage() {
-    // One long clip: every velocity edit replaces the whole content.
+    // One long clip: a velocity edit replaces the run that holds the note
+    // (ADR 0287). Before the runs, it replaced the whole content.
     let mut session = Session::open(project(1, 10_000));
     let (track, clip) = {
         let track = &session.project().tracks()[0];
@@ -80,6 +81,32 @@ fn measure_history_usage() {
             .unwrap();
     }
     report("velocity_10000_notes", &session);
+
+    // The same clip, moving notes in time and pitch: each move leaves one run
+    // and enters another.
+    let mut session = Session::open(project(1, 10_000));
+    let (track, clip) = {
+        let track = &session.project().tracks()[0];
+        (track.id, track.clips[0].id)
+    };
+    for step in 0..STEPS {
+        let project = session.project();
+        let note = &project.contents()[0].notes[(step * 7_919) % 10_000];
+        let (note, pitch, start, length) = (note.id, note.pitch, note.start, note.length);
+        session
+            .perform(Command::EditNote {
+                track,
+                clip,
+                note,
+                pitch: 36 + (pitch - 36 + 1) % 48,
+                start: Tick::new(
+                    (start.get() + TICKS_PER_QUARTER * 4) % (10_000 * TICKS_PER_QUARTER / 4),
+                ),
+                length,
+            })
+            .unwrap();
+    }
+    report("move_10000_notes", &session);
 
     // A mix pass over many tracks: every gain edit replaces one track.
     let mut session = Session::open(project(128, 64));

@@ -8,10 +8,12 @@ const MISSING: Id = Id::from_raw(1_000_000);
 
 fn linked_fixture(notes: usize, velocity: u16) -> Project {
     let (template, mut contents, mut tracks) = shared_fixture(notes, 4);
-    for note in &mut contents[0].notes {
-        note.velocity = velocity;
-        note.release = 54_321;
-    }
+    contents[0].notes.edit(|notes| {
+        for note in notes.iter_mut() {
+            note.velocity = velocity;
+            note.release = 54_321;
+        }
+    });
     let (template, _) = template.add_track("linked");
     let mut linked = Track::clone(&template.tracks()[1]);
     linked.clips = tracks[0].clips.split_off(2);
@@ -48,9 +50,9 @@ fn same_velocity_keeps_shared_content_without_copying_notes() {
                             .unwrap()
                     });
                     assert_eq!(
-                        work.velocity_note_copies, 0,
+                        work.note_copies, 0,
                         "same velocity copied {} notes for {count} notes",
-                        work.velocity_note_copies
+                        work.note_copies
                     );
                     assert_eq!(work.velocity_content_copies, 0);
                     assert!(Arc::ptr_eq(content, &after.contents()[0]));
@@ -79,7 +81,7 @@ fn missing_velocity_target_is_rejected_before_copying_notes() {
                 "missing velocity target copied {} contents for {count} notes",
                 work.velocity_content_copies
             );
-            assert_eq!(work.velocity_note_copies, 0);
+            assert_eq!(work.note_copies, 0);
         }
         assert_eq!(project, original);
         project.check_invariants().unwrap();
@@ -106,10 +108,14 @@ fn changed_velocity_copies_once_and_compares_full_resolution_values() {
                         .unwrap()
                 });
                 assert_eq!(work.velocity_content_copies, 1);
-                assert_eq!(work.velocity_note_copies, count);
+                // The note and the run that holds it, not the whole content (ADR 0287).
+                let run = content.notes.runs().last().unwrap().len();
+                assert_eq!(work.note_copies, run + 1, "{count} notes, last run {run}");
                 assert!(!Arc::ptr_eq(content, &after.contents()[0]));
                 let mut expected = Content::clone(content);
-                expected.notes.last_mut().unwrap().velocity = midi7_to_velocity(velocity);
+                expected
+                    .notes
+                    .edit(|notes| notes.last_mut().unwrap().velocity = midi7_to_velocity(velocity));
                 assert_eq!(after.content(content.id), Some(&expected));
                 for (before, after) in project.tracks().iter().zip(after.tracks()) {
                     assert!(Arc::ptr_eq(before, after));

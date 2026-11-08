@@ -1,7 +1,7 @@
 //! Actual note-copy budgets and fixture sizes constrain these tests, not product projects.
 
-use super::measured;
 use super::note_duplicate::linked_fixture;
+use super::{assert_note_copies_bounded_by_runs, measured};
 use crate::{ClipKind, Content, Id, NoteDraft, NoteGeometry, Project, Tick, Track};
 use std::sync::Arc;
 
@@ -166,40 +166,38 @@ fn auto_refit_copies_only_notes_needed_for_the_edit() {
                         }
                         .unwrap()
                     });
-                    assert_eq!(
-                        work.note_copies,
-                        count + usize::from(operation == "duplicate"),
-                        "{operation} auto refit copied {} notes for {count} stored notes at origin {origin}",
-                        work.note_copies
-                    );
+                    // The runs the edit touches, not the whole content (ADR 0287).
+                    assert_note_copies_bounded_by_runs(&work, content);
                     let mut expected = Content::clone(content);
                     match operation {
                         "edit" => {
-                            expected.notes[0].pitch = 67;
-                            expected.notes[0].start = Tick::new(-1);
+                            expected.notes.edit(|notes| notes[0].pitch = 67);
+                            expected.notes.edit(|notes| notes[0].start = Tick::new(-1));
                         }
-                        "insert" => expected.notes.push(crate::Note {
-                            id: NOTE,
-                            pitch: 67,
-                            velocity: crate::midi7_to_velocity(91),
-                            release: 0,
-                            start: Tick::new(1),
-                            length: bar,
-                            articulation: None,
+                        "insert" => expected.notes.edit(|notes| {
+                            notes.push(crate::Note {
+                                id: NOTE,
+                                pitch: 67,
+                                velocity: crate::midi7_to_velocity(91),
+                                release: 0,
+                                start: Tick::new(1),
+                                length: bar,
+                                articulation: None,
+                            })
                         }),
                         "duplicate" => {
                             let mut copied = note.clone();
                             copied.id = NOTE;
                             copied.pitch = 67;
                             copied.start = Tick::new(-1);
-                            expected.notes.push(copied);
+                            expected.notes.edit(|notes| notes.push(copied));
                         }
                         "delete" => {
                             expected.notes.remove(0);
                         }
                         _ => unreachable!(),
                     }
-                    crate::model::sort_notes(&mut expected.notes);
+                    expected.notes.edit(|notes| crate::model::sort_notes(notes));
                     assert_eq!(after.content(content.id), Some(&expected));
                     assert!(Arc::ptr_eq(&project.contents()[1], &after.contents()[1]));
                     let link = &project.tracks()[1].clips[0];
@@ -262,7 +260,7 @@ fn merged_auto_refit_copies_each_original_note_once() {
             let mut expected = Content::clone(&project.contents()[0]);
             let mut absorbed = other.clone();
             absorbed.start = bar;
-            expected.notes.push(absorbed);
+            expected.notes.edit(|notes| notes.push(absorbed));
             assert_eq!(after.contents().len(), 1);
             assert_eq!(after.content(expected.id), Some(&expected));
             assert_auto_bounds(&after, 0);

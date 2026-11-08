@@ -142,7 +142,9 @@ pub(super) fn delete(
         .ok_or(ModelError::MissingNote)?;
     let empty = {
         let content = content_mut(contents, owner)?;
-        content.notes.retain(|note| note.id != note_id);
+        if let Some(index) = content.notes.iter().position(|note| note.id == note_id) {
+            content.notes.remove(index);
+        }
         content.notes.is_empty()
     };
     if empty {
@@ -187,16 +189,14 @@ pub(super) fn edit(
     let note = &content.notes[note_index];
     let time_changed = note.start.get() != local || note.length != geometry.length;
     if time_changed || note.pitch != geometry.pitch {
-        let content = Arc::make_mut(&mut contents[content_index]);
-        let note = &mut content.notes[note_index];
-        note.pitch = geometry.pitch;
-        note.start = Tick::new(local);
-        note.length = geometry.length;
-    }
-    // Shared unchanged contents are already sorted. Duplication can instead
-    // pass an unshared content with a newly appended note of the same geometry.
-    if let Some(content) = Arc::get_mut(&mut contents[content_index]) {
-        crate::model::sort_notes(&mut content.notes);
+        let mut moved = note.clone();
+        moved.pitch = geometry.pitch;
+        moved.start = Tick::new(local);
+        moved.length = geometry.length;
+        // Only the runs the note leaves and enters are copied (ADR 0287).
+        Arc::make_mut(&mut contents[content_index])
+            .notes
+            .replace_sorted(note_index, moved);
     }
     // Even unchanged geometry can refit and merge adjacent auto placements.
     let owner = refit_auto(contents, tracks, track, owner, bar)?;
@@ -336,7 +336,7 @@ fn create_auto(
             id: fresh.content,
             audio: None,
             takes: Vec::new(),
-            notes: vec![Note {
+            notes: crate::Notes::from(vec![Note {
                 id: fresh.note,
                 start: Tick::new(local),
                 length: draft.length,
@@ -344,7 +344,7 @@ fn create_auto(
                 velocity: crate::model::midi7_to_velocity(draft.velocity),
                 release: 0,
                 articulation: None,
-            }],
+            }]),
             expressions: Vec::new(),
         },
     );
@@ -398,8 +398,10 @@ fn merge(
     }
     {
         let content = content_mut(contents, primary_content)?;
-        content.notes.extend(absorbed);
-        crate::model::sort_notes(&mut content.notes);
+        content.notes.edit(|notes| {
+            notes.extend(absorbed);
+            crate::model::sort_notes(notes);
+        });
     }
     let removed: HashSet<Id> = retired.iter().map(|(id, _, _)| *id).collect();
     track.clips.retain(|clip| {
@@ -710,8 +712,7 @@ fn push_note(
     {
         return Err(ModelError::InvalidNote);
     }
-    let notes = &mut content_mut(contents, content)?.notes;
-    notes.push(Note {
+    content_mut(contents, content)?.notes.insert_sorted(Note {
         id: note_id,
         start: Tick::new(local),
         length: draft.length,
@@ -720,7 +721,6 @@ fn push_note(
         release: 0,
         articulation: None,
     });
-    crate::model::sort_notes(notes);
     Ok(())
 }
 
@@ -738,7 +738,7 @@ fn origin(clip: &Placement) -> Result<i64, ModelError> {
         .ok_or(ModelError::InvalidNote)
 }
 
-fn notes(contents: &[Arc<Content>], id: Id) -> Result<&[Note], ModelError> {
+fn notes(contents: &[Arc<Content>], id: Id) -> Result<&crate::Notes, ModelError> {
     let index = crate::model::content_index(contents, id).ok_or(ModelError::MissingClip)?;
     Ok(&contents[index].notes)
 }

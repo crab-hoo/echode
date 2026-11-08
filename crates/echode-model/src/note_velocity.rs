@@ -39,9 +39,11 @@ impl Project {
         let mut contents = self.contents().to_vec();
         let content = &mut contents[content_index];
         #[cfg(test)]
-        crate::model_scale_tests::velocity_content_copy(content.notes.len());
-        let target = &mut Arc::make_mut(content).notes[note_index];
-        target.velocity = midi7_to_velocity(velocity);
+        crate::model_scale_tests::velocity_content_copy();
+        // Only the run that holds the note is copied (ADR 0287).
+        Arc::make_mut(content).notes.update(note_index, |target| {
+            target.velocity = midi7_to_velocity(velocity)
+        });
         Ok(self.with_parts(contents, self.tracks().to_vec()))
     }
 }

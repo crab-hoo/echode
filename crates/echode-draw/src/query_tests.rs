@@ -277,7 +277,7 @@ fn sparse_long_notes_do_not_walk_the_whole_content() {
         id: content_id,
         audio: None,
         takes: Vec::new(),
-        notes,
+        notes: notes.into(),
         expressions: Vec::new(),
     };
     let clip = Placement {

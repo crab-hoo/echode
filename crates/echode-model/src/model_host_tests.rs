@@ -43,7 +43,9 @@ fn reverse_chain_discovery_is_bounded_from_each_note_edit_entry() {
             let mut extra = contents[count - 1].notes[0].clone();
             extra.id = Id::from_raw(8_000_000);
             extra.start = Tick::new(1);
-            contents[count - 1].notes.push(extra.clone());
+            contents[count - 1]
+                .notes
+                .edit(|notes| notes.push(extra.clone()));
             let project = Project::try_assemble(
                 template.meter(),
                 template.tempo().clone(),

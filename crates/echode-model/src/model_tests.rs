@@ -276,7 +276,8 @@ fn assembled_auto_clips_fit_their_notes() {
             velocity: 100,
             release: 0,
             articulation: None,
-        }],
+        }]
+        .into(),
         expressions: Vec::new(),
     };
     let project = Project::try_assemble(
@@ -323,7 +324,7 @@ fn assembled_clips_refuse_overlap_and_duplicate_ids() {
         id: Id::from_raw(id),
         audio: None,
         takes: Vec::new(),
-        notes: Vec::new(),
+        notes: Vec::new().into(),
         expressions: Vec::new(),
     };
     let error = Project::try_assemble(
@@ -590,7 +591,8 @@ fn content_with(id: u128, note: u128, start: i64) -> Content {
             velocity: 100,
             release: 0,
             articulation: None,
-        }],
+        }]
+        .into(),
         expressions: Vec::new(),
     }
 }
@@ -813,7 +815,8 @@ fn unsorted_notes_are_rejected() {
                 release: 0,
                 articulation: None,
             },
-        ],
+        ]
+        .into(),
         expressions: Vec::new(),
     };
     let track = Track {

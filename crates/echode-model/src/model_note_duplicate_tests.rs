@@ -1,6 +1,6 @@
 //! Copy budgets and fixture sizes constrain these tests, not product projects.
 
-use super::{fixture, measured};
+use super::{assert_runs_copied, fixture, measured};
 use crate::{ClipKind, Content, Id, ModelError, Project, Tick, Track};
 use std::sync::Arc;
 
@@ -76,14 +76,14 @@ fn duplication_copies_shared_content_only_once_before_refitting() {
                             "duplication cloned {} contents for {count} notes ({kind:?})",
                             work.content_copies
                         );
-                        assert_eq!(work.content_note_copies, count);
+                        assert_runs_copied(&work, content);
                         let mut expected = Content::clone(content);
                         let mut copied = source.clone();
                         copied.id = COPY;
                         copied.pitch = 67;
                         copied.start = Tick::new(local);
-                        expected.notes.push(copied);
-                        crate::model::sort_notes(&mut expected.notes);
+                        expected.notes.edit(|notes| notes.push(copied));
+                        expected.notes.edit(|notes| crate::model::sort_notes(notes));
                         assert_eq!(after.content(content.id), Some(&expected));
                         assert!(!Arc::ptr_eq(
                             content,
@@ -224,15 +224,15 @@ fn identical_geometry_duplication_still_sorts_the_new_note() {
                     let mut expected = Content::clone(content);
                     let mut copied = source.clone();
                     copied.id = COPY;
-                    expected.notes.push(copied);
-                    crate::model::sort_notes(&mut expected.notes);
+                    expected.notes.edit(|notes| notes.push(copied));
+                    expected.notes.edit(|notes| crate::model::sort_notes(notes));
                     assert_eq!(
                         after.content(content.id),
                         Some(&expected),
                         "identical geometry duplication must sort the appended note"
                     );
                     assert_eq!(work.content_copies, 1);
-                    assert_eq!(work.content_note_copies, count);
+                    assert_runs_copied(&work, content);
                     after.check_invariants().unwrap();
                     let changes = project.diff(&after);
                     assert_eq!(project.apply_changeset(&changes), Ok(after.clone()));

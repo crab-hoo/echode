@@ -81,14 +81,15 @@ impl Project {
                     content.id
                 ));
             }
-            if let Some(pair) = content
+            if let Some((first, second)) = content
                 .notes
-                .windows(2)
-                .find(|pair| note_ord(&pair[0], &pair[1]).is_gt())
+                .iter()
+                .zip(content.notes.iter().skip(1))
+                .find(|(first, second)| note_ord(first, second).is_gt())
             {
                 return broken(format!(
                     "notes {} then {} in content {} are out of start, pitch, id order",
-                    pair[0].id, pair[1].id, content.id
+                    first.id, second.id, content.id
                 ));
             }
             content_bounds.insert(content.id, (content, bounds));

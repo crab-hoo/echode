@@ -19,15 +19,17 @@ fn search_fixture(notes: usize, placements: usize) -> Project {
     let (template, mut contents, mut tracks) = shared_fixture(notes, placements);
     let mut second = contents[0].clone();
     second.id = Id::from_raw(4);
-    for (index, note) in second.notes.iter_mut().enumerate() {
-        note.id = Id::from_raw(30_000 + index as u128);
-    }
+    second.notes.edit(|notes| {
+        for (index, note) in notes.iter_mut().enumerate() {
+            note.id = Id::from_raw(30_000 + index as u128);
+        }
+    });
     let mut last = contents[0].clone();
     last.id = Id::from_raw(7);
-    last.notes.truncate(1);
-    last.notes[0].id = Id::from_raw(40_000);
-    last.notes[0].velocity = 23_123;
-    last.notes[0].release = 54_321;
+    last.notes.edit(|notes| notes.truncate(1));
+    last.notes.edit(|notes| notes[0].id = Id::from_raw(40_000));
+    last.notes.edit(|notes| notes[0].velocity = 23_123);
+    last.notes.edit(|notes| notes[0].release = 54_321);
     contents.extend([second, last]);
     for (index, clip) in tracks[0].clips.iter_mut().enumerate() {
         if index % 2 == 1 {
@@ -83,7 +85,9 @@ fn deletion_search_visits_each_shared_content_once() {
                 let remaining = deleted.shared_content(original.id).unwrap();
                 if original.id == owner {
                     let mut expected = Content::clone(original);
-                    expected.notes.retain(|item| item.id != note);
+                    expected
+                        .notes
+                        .edit(|notes| notes.retain(|item| item.id != note));
                     assert_eq!(remaining.as_ref(), &expected);
                     assert_eq!(
                         original.notes.len(),

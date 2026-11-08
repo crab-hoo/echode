@@ -625,7 +625,8 @@ fn schema_1_project() -> Project {
                 velocity: midi7_to_velocity(100),
                 release: 0,
                 articulation: None,
-            }],
+            }]
+            .into(),
             expressions: Vec::new(),
         }],
         vec![Track {

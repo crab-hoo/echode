@@ -69,6 +69,9 @@ pub struct ArrangeIndex {
 #[derive(Debug)]
 struct ContentIndex {
     content: Arc<Content>,
+    /// Note starts by index. Notes live in shared runs (ADR 0287), so reading
+    /// one by index is a search; the visits below compare starts many times.
+    starts: Vec<i64>,
     ends: MaxEnd,
     pitches: Vec<PitchIndex>,
     by_id: BTreeMap<Id, usize>,
@@ -477,7 +480,7 @@ impl ArrangeIndex {
         let visits = index.ends.visit(
             query_start,
             query_end,
-            |note_index| content.notes[note_index].start.get(),
+            |note_index| index.starts[note_index],
             |_| hits = hits.saturating_add(1),
         );
         (hits, visits)
@@ -507,6 +510,7 @@ impl ArrangeIndex {
 
 impl ContentIndex {
     fn build(content: Arc<Content>) -> Self {
+        let starts: Vec<i64> = content.notes.iter().map(|note| note.start.get()).collect();
         let ends: Vec<i64> = content
             .notes
             .iter()
@@ -525,12 +529,7 @@ impl ContentIndex {
         let pitches = by_pitch
             .into_iter()
             .map(|(pitch, notes)| {
-                let ends: Vec<_> = notes
-                    .iter()
-                    .map(|&i| {
-                        range_end(content.notes[i].start.get(), content.notes[i].length.get())
-                    })
-                    .collect();
+                let ends: Vec<_> = notes.iter().map(|&i| ends[i]).collect();
                 PitchIndex {
                     pitch,
                     notes,
@@ -544,6 +543,7 @@ impl ContentIndex {
         }
         Self {
             content,
+            starts,
             ends: MaxEnd::build(&ends),
             pitches,
             by_id,
@@ -647,13 +647,15 @@ impl NoteQuery<'_> {
         };
         let layout = PitchLayout::new(index.range, self.view.pixels_per_track);
         let ends = &index.ends;
-        let notes = &index.content.notes;
+        let mut notes = index.content.notes.cursor();
         ends.visit(
             query_start,
             query_end,
-            |note_index| notes[note_index].start.get(),
+            |note_index| index.starts[note_index],
             |note_index| {
-                let note = &notes[note_index];
+                let Some(note) = notes.get(note_index) else {
+                    return;
+                };
                 let Some((start, end)) =
                     audible_in_view(self.clip, note, self.origin, self.view_end)
                 else {

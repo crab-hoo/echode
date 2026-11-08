@@ -173,10 +173,11 @@ fn content_matching_keeps_note_moves_between_existing_contents() {
     for count in [64, 256] {
         let before = fixture(count);
         let mut contents = before.contents().to_vec();
-        let moved = Arc::make_mut(&mut contents[0]).notes.remove(0);
+        let moved = Arc::make_mut(&mut contents[0]).notes.remove(0).unwrap();
         let note = moved.id;
-        Arc::make_mut(&mut contents[count - 1]).notes.push(moved);
-        crate::model::sort_notes(&mut Arc::make_mut(&mut contents[count - 1]).notes);
+        Arc::make_mut(&mut contents[count - 1])
+            .notes
+            .insert_sorted(moved);
         // Fixture setup retains the unrelated contents and every track. The
         // product diff must still find a note's changed content ownership.
         let after = Project::from_arcs(

@@ -52,6 +52,7 @@ mod model;
 mod model_scale_tests;
 mod note_fields;
 mod note_velocity;
+mod notes;
 mod package_fields;
 mod parameter_fields;
 mod placement;
@@ -75,6 +76,7 @@ pub use model::{
     NoteGeometry, Placement, Project, ProjectMetadata, Track, TrackMetadata, clip_gain_allowed,
     fade_allowed, fade_frames, initial_order, is_media_hash, midi7_to_velocity, velocity_to_midi7,
 };
+pub use notes::{Cursor as NoteCursor, MEAN_RUN, Notes};
 pub use time::{
     FLICKS_PER_SECOND, Flick, Meter, TICKS_PER_QUARTER, Tempo, TempoMap, TempoPoint, Tick,
     media_sample_at, placement_media_lead, tick_to_sample,

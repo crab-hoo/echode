@@ -23,9 +23,8 @@ struct Work {
     id_checks: usize,
     id_check_notes: usize,
     velocity_content_copies: usize,
-    velocity_note_copies: usize,
     content_copies: usize,
-    content_note_copies: usize,
+    content_run_copies: usize,
     note_copies: usize,
     diff_note_visits: usize,
     apply_device_owner_visits: usize,
@@ -105,22 +104,45 @@ pub(crate) fn id_check_note() {
     record(|work| work.id_check_notes += 1);
 }
 
-pub(crate) fn velocity_content_copy(notes: usize) {
-    record(|work| {
-        work.velocity_content_copies += 1;
-        work.velocity_note_copies += notes;
-    });
+pub(crate) fn velocity_content_copy() {
+    record(|work| work.velocity_content_copies += 1);
 }
 
-pub(crate) fn content_copy(notes: usize) {
+/// A content copy shares its note runs; `runs` counts the `Arc`s it clones.
+pub(crate) fn content_copy(runs: usize) {
     record(|work| {
         work.content_copies += 1;
-        work.content_note_copies += notes;
+        work.content_run_copies += runs;
     });
 }
 
 pub(crate) fn note_copy() {
     record(|work| work.note_copies += 1);
+}
+
+/// One copy of a shared content clones its run list (ADR 0287).
+fn assert_runs_copied(work: &Work, content: &Content) {
+    assert_eq!(work.content_run_copies, content.notes.runs().len());
+    assert_note_copies_bounded_by_runs(work, content);
+}
+
+/// A note edit copies the runs it touches, not the content: the run a note
+/// leaves, the run it enters, a neighbor joined at a boundary, and the note.
+/// Duplication adds the copy and its own run, hence the factor four.
+fn assert_note_copies_bounded_by_runs(work: &Work, content: &Content) {
+    let longest = content
+        .notes
+        .runs()
+        .iter()
+        .map(|run| run.len())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        work.note_copies <= 4 * (longest + 1),
+        "copied {} notes; the longest of {} runs has {longest}",
+        work.note_copies,
+        content.notes.runs().len()
+    );
 }
 
 pub(crate) fn diff_note_visit() {
@@ -182,7 +204,9 @@ fn fixture(count: usize) -> Project {
     for index in 0..count {
         let mut content = Content::clone(&project.contents()[0]);
         content.id = Id::from_raw(index as u128 * 3 + 1);
-        content.notes[0].id = Id::from_raw(index as u128 * 3 + 2);
+        content
+            .notes
+            .edit(|notes| notes[0].id = Id::from_raw(index as u128 * 3 + 2));
         let mut clip = template.clone();
         clip.id = Id::from_raw(index as u128 * 3 + 3);
         clip.content = content.id;

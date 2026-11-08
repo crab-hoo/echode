@@ -520,7 +520,7 @@ fn split_piece_ids_cannot_reuse_any_stored_identity() {
                 track.clips[0].content = collision;
             }
             "take" => content.takes.push(collision),
-            "note" => content.notes[0].id = collision,
+            "note" => content.notes.edit(|notes| notes[0].id = collision),
             "track" => track.id = collision,
             "clip" => track.clips[0].id = collision,
             "device" => track.devices[0].id = collision,

@@ -18,7 +18,8 @@ fn merging_project(edge_link: bool) -> Project {
                 velocity: 12345,
                 release: 23456,
                 articulation: None,
-            }],
+            }]
+            .into(),
             expressions: Vec::new(),
         })
         .collect();

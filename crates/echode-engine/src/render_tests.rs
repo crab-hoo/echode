@@ -216,7 +216,7 @@ fn crowded(extra: usize) -> Project {
             audio: None,
             takes: Vec::new(),
             expressions: Vec::new(),
-            notes,
+            notes: notes.into(),
         }],
         vec![Track {
             id: Id::from_raw(1),

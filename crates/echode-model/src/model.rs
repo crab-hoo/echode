@@ -245,7 +245,8 @@ macro_rules! define_content {
         pub struct Content {
             pub id: Id,
             $(pub $field: $type,)+
-            pub notes: Vec<Note>,
+            /// Shared runs, so an edit copies only the runs it touches (ADR 0287).
+            pub notes: crate::Notes,
             /// Reserved curves, empty until expression editing is implemented.
             pub expressions: Vec<Expression>,
         }
@@ -254,7 +255,7 @@ macro_rules! define_content {
         #[cfg(test)]
         impl Clone for Content {
             fn clone(&self) -> Self {
-                crate::model_scale_tests::content_copy(self.notes.len());
+                crate::model_scale_tests::content_copy(self.notes.runs().len());
                 Self {
                     id: self.id,
                     $($field: self.$field.clone(),)+
@@ -276,7 +277,7 @@ macro_rules! define_content {
         }
         impl ContentMetadata {
             pub fn into_content(self, id: Id, notes: Vec<Note>, expressions: Vec<Expression>) -> Content {
-                Content { id, $($field: self.$field,)+ notes, expressions }
+                Content { id, $($field: self.$field,)+ notes: notes.into(), expressions }
             }
         }
     };
@@ -1027,7 +1028,7 @@ impl Project {
             id: content_id,
             audio: Some(audio),
             takes: Vec::new(),
-            notes: Vec::new(),
+            notes: crate::Notes::new(),
             expressions: Vec::new(),
         }));
         contents.sort_by_key(|content| content.id);
@@ -1106,7 +1107,8 @@ impl Project {
             })
             .collect();
         let content = Arc::make_mut(content);
-        content.notes.push(copied);
+        // The copy lands at the source's place; the geometry edit then moves it.
+        content.notes.insert_sorted(copied);
         content.expressions.extend(expressions);
         let bar = self
             .meter
@@ -1716,10 +1718,11 @@ pub(crate) fn note_ord(left: &Note, right: &Note) -> std::cmp::Ordering {
         .then(left.id.cmp(&right.id))
 }
 
-pub(crate) fn notes_in_order(notes: &[Note]) -> bool {
+pub(crate) fn notes_in_order(notes: &crate::Notes) -> bool {
     notes
-        .windows(2)
-        .all(|pair| note_ord(&pair[0], &pair[1]).is_le())
+        .iter()
+        .zip(notes.iter().skip(1))
+        .all(|(first, second)| note_ord(first, second).is_le())
 }
 
 pub(crate) fn sort_notes(notes: &mut [Note]) {

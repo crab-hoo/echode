@@ -39,7 +39,8 @@ fn clip(id: u128, kind: ClipKind, first: i64, bars: i64) -> (Content, Placement)
             velocity: 100,
             release: 0,
             articulation: None,
-        }],
+        }]
+        .into(),
         expressions: Vec::new(),
     };
     let placement = Placement {
@@ -110,14 +111,16 @@ fn each_broken_rule_is_reported() {
     assert!(broken_rule(&cycle).contains("own ancestor"));
 
     let (mut content, placement) = clip(2, ClipKind::Fixed, 0, 1);
-    content.notes.push(Note {
-        id: Id::from_raw(8),
-        start: Tick::quarters(-1).unwrap(),
-        length: Tick::quarters(1).unwrap(),
-        release: 0,
-        articulation: None,
-        pitch: 60,
-        velocity: 100,
+    content.notes.edit(|notes| {
+        notes.push(Note {
+            id: Id::from_raw(8),
+            start: Tick::quarters(-1).unwrap(),
+            length: Tick::quarters(1).unwrap(),
+            release: 0,
+            articulation: None,
+            pitch: 60,
+            velocity: 100,
+        })
     });
     let unsorted = project(vec![content], vec![track(1, None, vec![placement])]);
     assert!(broken_rule(&unsorted).contains("out of start, pitch, id order"));
@@ -172,8 +175,10 @@ fn assembly_rejects_a_window_a_reversed_pair_an_overflow_and_a_self_take() {
     );
 
     let (mut content, placement) = clip(2, ClipKind::Fixed, 0, 1);
-    content.notes[0].start = Tick::new(i64::MAX - 1);
-    content.notes[0].length = Tick::new(2);
+    content
+        .notes
+        .edit(|notes| notes[0].start = Tick::new(i64::MAX - 1));
+    content.notes.edit(|notes| notes[0].length = Tick::new(2));
     let error = assemble(vec![content], vec![track(1, None, vec![placement])]).unwrap_err();
     assert_eq!(error, ModelError::InvalidNote);
 
@@ -196,8 +201,10 @@ fn the_shared_check_sees_gain_fade_overflow_takes_and_mixer_ends() {
     assert!(broken_rule(&negative_fade).contains("fade"));
 
     let (mut content, placement) = clip(2, ClipKind::Fixed, 0, 1);
-    content.notes[0].start = Tick::new(i64::MAX - 1);
-    content.notes[0].length = Tick::new(2);
+    content
+        .notes
+        .edit(|notes| notes[0].start = Tick::new(i64::MAX - 1));
+    content.notes.edit(|notes| notes[0].length = Tick::new(2));
     let overflow = project(vec![content], vec![track(1, None, vec![placement])]);
     assert!(broken_rule(&overflow).contains("ends past the time range"));
 
@@ -301,14 +308,18 @@ fn auto_bars_use_the_earliest_start_and_latest_end_of_shared_content() {
     let bar = Meter::four_four().bar_ticks().unwrap().get();
     let (mut content, mut auto) = clip(2, ClipKind::Auto, 0, 1);
     let template = content.notes[0].clone();
-    content.notes[0].start = Tick::new(-bar + 1);
-    content.notes[0].length = Tick::new(3 * bar);
+    content
+        .notes
+        .edit(|notes| notes[0].start = Tick::new(-bar + 1));
+    content
+        .notes
+        .edit(|notes| notes[0].length = Tick::new(3 * bar));
     for (id, start) in [(100, 0), (101, bar)] {
         let mut note = template.clone();
         note.id = Id::from_raw(id);
         note.start = Tick::new(start);
         note.length = Tick::new(1);
-        content.notes.push(note);
+        content.notes.edit(|notes| notes.push(note));
     }
     // The first note has the latest inclusive end, in local bar 2.
     auto.start = Tick::new(37 - bar);
@@ -332,7 +343,7 @@ fn auto_bars_use_the_earliest_start_and_latest_end_of_shared_content() {
 #[test]
 fn empty_content_is_valid_only_for_fixed_placements() {
     let (mut content, mut placement) = clip(2, ClipKind::Fixed, 0, 1);
-    content.notes.clear();
+    content.notes = crate::Notes::new();
     assemble(
         vec![content.clone()],
         vec![track(1, None, vec![placement.clone()])],

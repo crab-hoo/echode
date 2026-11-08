@@ -20,10 +20,10 @@ fn merge_project(count: usize, owner_first: bool) -> Project {
         .map(|item| (**item).clone())
         .collect();
     for content in &mut contents {
-        content.notes[0].start = Tick::new(0);
-        content.notes[0].length = Tick::new(1);
-        content.notes[0].velocity = 40_001;
-        content.notes[0].release = 32_001;
+        content.notes.edit(|notes| notes[0].start = Tick::new(0));
+        content.notes.edit(|notes| notes[0].length = Tick::new(1));
+        content.notes.edit(|notes| notes[0].velocity = 40_001);
+        content.notes.edit(|notes| notes[0].release = 32_001);
     }
     let track = |id, name: &str| Track {
         id: Id::from_raw(id),
@@ -491,7 +491,9 @@ fn shifted_project() -> Project {
         .unwrap();
     for (index, content) in contents.iter_mut().enumerate().take(4).skip(1) {
         let shift = if index % 2 == 0 { -16 * bar } else { 16 * bar };
-        content.notes[0].start = Tick::new(shift);
+        content
+            .notes
+            .edit(|notes| notes[0].start = Tick::new(shift));
         owner.clips[index].offset = Tick::new(shift);
     }
     Project::try_assemble(project.meter(), project.tempo().clone(), contents, tracks).unwrap()

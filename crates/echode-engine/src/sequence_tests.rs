@@ -29,7 +29,8 @@ fn project() -> Project {
                 velocity: echode_model::midi7_to_velocity(100),
                 release: 0,
                 articulation: None,
-            }],
+            }]
+            .into(),
         }],
         vec![Track {
             id: Id::from_raw(1),
@@ -97,7 +98,8 @@ fn two_tracks() -> Project {
                     velocity: echode_model::midi7_to_velocity(100),
                     release: 0,
                     articulation: None,
-                }],
+                }]
+                .into(),
             },
             Content {
                 id: Id::from_raw(22),
@@ -112,7 +114,8 @@ fn two_tracks() -> Project {
                     velocity: echode_model::midi7_to_velocity(80),
                     release: 0,
                     articulation: None,
-                }],
+                }]
+                .into(),
             },
         ],
         vec![
@@ -300,7 +303,7 @@ fn a_hundred_thousand_notes_schedule_one_block_under_the_engine_budget() {
             audio: None,
             takes: Vec::new(),
             expressions: Vec::new(),
-            notes,
+            notes: notes.into(),
         }],
         vec![Track {
             id: Id::from_raw(1),
@@ -372,7 +375,7 @@ fn same_start_tracks(count: usize) -> Project {
             audio: None,
             takes: Vec::new(),
             expressions: Vec::new(),
-            notes: vec![Note {
+            notes: (vec![Note {
                 id: Id::from_raw(2_000 + index as u128),
                 start: Tick::new(0),
                 length: quarter,
@@ -380,7 +383,8 @@ fn same_start_tracks(count: usize) -> Project {
                 velocity: echode_model::midi7_to_velocity(100),
                 release: 0,
                 articulation: None,
-            }],
+            }])
+            .into(),
         })
         .collect();
     let tracks = (0..count)

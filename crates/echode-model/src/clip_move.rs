@@ -122,12 +122,15 @@ impl Project {
             };
             landed.id = fresh(placement.id)?;
             content.id = fresh(original.id)?;
-            for note in &mut content.notes {
-                note.id = fresh(note.id)?;
-            }
+            content.notes.edit(|notes| {
+                for note in notes.iter_mut() {
+                    note.id = fresh(note.id)?;
+                }
+                // Notes tie-break on id, so new ids can change their order.
+                sort_notes(notes);
+                Ok::<_, ModelError>(())
+            })?;
         }
-        // Notes tie-break on id, so new ids can change their order.
-        sort_notes(&mut content.notes);
         landed.content = content.id;
         let mut contents = self.contents().to_vec();
         contents.push(Arc::new(content));

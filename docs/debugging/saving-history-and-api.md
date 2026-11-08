@@ -246,8 +246,9 @@ ABI の値だけが違う場合は FFI の `snapshot_fields_tests.rs` と `Snaps
 Undo と Redo は段ごとに編集前の版を持ち、段数の上限はない。まず履歴の分かを切り分ける。
 ヘッドレスでは JSON-RPC の `history.usage`（MCP は `echode.history.usage`）が、段数と、段だけが持つトラック・中身・ノートの件数と推定のバイト数を返す（[ADR 0286](../decisions/0286-history-usage-diagnostics.md)）。
 推定は割当器の丸めと値の中の文字列を含まないので、プロセスの使用量より小さい。GUI のアプリからはまだ読めない。
-ノートの編集は中身全体を写すので、大きなクリップを何度も直すと 1 段がその中身の大きさを持つ（1 万ノートで約 0.8 MB）。
-`make spike-history` の `measure_history_usage` が場面ごとの値を出す。段を捨てて減らさない。予算は R6 の残りで、古い段を Git の履歴へ移す方式に限る。
+ノートの編集は触れた run だけを写す（1 万ノートで 1 段約 13 KB、[ADR 0287](../decisions/0287-shared-note-runs.md)）。1 段が大きい時は、多くのノートを変える編集か、run が共有されていないかを疑う。
+1 段の `notes` が、変えたノートを含む run の和より大きい時は、`Notes` の外で中身を組み直した経路（`edit` の多用、`Draft` の適用）を探す。
+`make spike-history` の `measure_history_usage` が場面ごとの値を出す。段を捨てて減らさない。予算は ADR 0287 の再開の条件まで入れず、入れる時は古い段を Git の履歴へ移す方式と比べる。
 
 ### 開き直すと確定済みの編集が消えている・古い状態で開く・開けない
 

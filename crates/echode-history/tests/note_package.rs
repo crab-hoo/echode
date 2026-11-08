@@ -62,7 +62,8 @@ impl Package {
                         release: u16::MAX,
                         articulation: None,
                     },
-                ],
+                ]
+                .into(),
                 expressions: Vec::new(),
             }],
             vec![track],
@@ -82,7 +83,7 @@ impl Package {
 
     fn with_notes(&self, notes: Vec<Note>) -> Project {
         let mut content = (*self.project.contents()[0]).clone();
-        content.notes = notes;
+        content.notes = notes.into();
         Project::try_assemble(
             self.project.meter(),
             self.project.tempo().clone(),
@@ -179,7 +180,7 @@ fn note_package_keeps_scalar_order_integers_and_canonical_bytes() {
     let package = Package::new();
     // These masks bound only this regression, not the number of stored notes.
     for mask in 0..32 {
-        let mut notes = package.project.contents()[0].notes.clone();
+        let mut notes = package.project.contents()[0].notes.to_vec();
         let note = &mut notes[0];
         if mask & 1 != 0 {
             note.start = Tick::new(-17);
@@ -198,7 +199,7 @@ fn note_package_keeps_scalar_order_integers_and_canonical_bytes() {
         }
         package.check_bytes(&package.with_notes(notes));
     }
-    let mut notes = package.project.contents()[0].notes.clone();
+    let mut notes = package.project.contents()[0].notes.to_vec();
     notes[0].start = Tick::new(i64::MIN);
     notes[0].length = Tick::new(1);
     notes[0].pitch = 0;
@@ -206,7 +207,7 @@ fn note_package_keeps_scalar_order_integers_and_canonical_bytes() {
     notes[1].start = Tick::new(i64::MAX - 1);
     notes[1].length = Tick::new(1);
     package.check_bytes(&package.with_notes(notes));
-    let mut notes = package.project.contents()[0].notes.clone();
+    let mut notes = package.project.contents()[0].notes.to_vec();
     notes[0].length = Tick::new(i64::MAX);
     package.check_bytes(&package.with_notes(notes));
     package.check_bytes(&package.with_notes(Vec::new()));

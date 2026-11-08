@@ -79,7 +79,7 @@ macro_rules! define_content_changes {
             }
 
             pub fn finish(&self, id: Id, notes: Vec<Note>) -> Content {
-                Content { id, $($field: self.$field.to_owned(),)+ notes, expressions: Vec::new() }
+                Content { id, $($field: self.$field.to_owned(),)+ notes: notes.into(), expressions: Vec::new() }
             }
         }
     };

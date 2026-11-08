@@ -89,11 +89,14 @@ impl Project {
                         let original = self.content(clip.content).ok_or(ModelError::MissingClip)?;
                         let mut content = Content::clone(original);
                         content.id = fresh(original.id)?;
-                        for note in &mut content.notes {
-                            note.id = fresh(note.id)?;
-                        }
-                        // Notes tie-break on id, so new ids can change their order.
-                        sort_notes(&mut content.notes);
+                        content.notes.edit(|notes| {
+                            for note in notes.iter_mut() {
+                                note.id = fresh(note.id)?;
+                            }
+                            // Notes tie-break on id, so new ids can change their order.
+                            sort_notes(notes);
+                            Ok::<_, ModelError>(())
+                        })?;
                         copied_contents.insert(original.id, content.id);
                         let id = content.id;
                         contents.push(Arc::new(content));

@@ -14,7 +14,7 @@ fn linked_project(count: usize, auto_first: bool, has_auto: bool) -> Project {
         .map(|item| (**item).clone())
         .collect();
     for content in &mut contents {
-        content.notes[0].length = Tick::new(1);
+        content.notes.edit(|notes| notes[0].length = Tick::new(1));
     }
     let track = |id: u128| Track {
         id: Id::from_raw(id),

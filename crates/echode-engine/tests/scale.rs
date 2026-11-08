@@ -79,7 +79,7 @@ fn build(template: &Template, clips: usize, notes: usize, step: i64) -> Project 
                 .collect();
             content
                 .notes
-                .sort_by_key(|note| (note.start, note.pitch, note.id));
+                .edit(|notes| notes.sort_by_key(|note| (note.start, note.pitch, note.id)));
             let mut clip = template.clip.clone();
             clip.id = Id::generate();
             clip.content = content.id;

@@ -45,8 +45,8 @@ fn linked_fixture(count: usize) -> Project {
         .iter()
         .map(|content| {
             let mut content = Content::clone(content);
-            content.notes[0].velocity = 23_123;
-            content.notes[0].release = 54_321;
+            content.notes.edit(|notes| notes[0].velocity = 23_123);
+            content.notes.edit(|notes| notes[0].release = 54_321);
             content
         })
         .collect();
@@ -115,9 +115,13 @@ fn check_lookup(operation: Operation) {
                         copy.id = COPY;
                         copy.pitch = 67;
                         copy.start = Tick::new(1);
-                        expected.notes.push(copy);
+                        expected.notes.edit(|notes| notes.push(copy));
                     }
-                    Operation::Velocity => expected.notes[0].velocity = midi7_to_velocity(91),
+                    Operation::Velocity => {
+                        expected
+                            .notes
+                            .edit(|notes| notes[0].velocity = midi7_to_velocity(91));
+                    }
                 }
                 assert_eq!(changed, &expected);
                 for old in project.contents() {

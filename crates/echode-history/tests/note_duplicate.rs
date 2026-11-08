@@ -122,5 +122,5 @@ fn contract_note_copies_preserve_sources_attributes_and_history() {
     write_package(&directory, session.project()).unwrap();
     assert_eq!(read_package(&directory).unwrap(), *session.project());
     std::fs::remove_dir_all(directory).unwrap();
-    assert_eq!(base.content(content).unwrap().notes, vec![original]);
+    assert_eq!(base.content(content).unwrap().notes, vec![original].into());
 }
