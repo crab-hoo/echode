@@ -80,7 +80,7 @@
 | UC-18 | 再生ヘッドの追従のページ送りの見え方と、トグルの VoiceOver | 画面・VO | [ADR 0159](decisions/0159-playhead-follow.md) | 2026-10-25 |
 | UC-19 | 開いた直後の最初の再生の待ちが減った量と操作感 | 実機・画面 | [ADR 0147](decisions/0147-output-prewarm-and-background-media.md) | 2026-10-22 |
 | UC-20 | 2026-10-25 の報告（開始位置の変更時の暗転、一覧での Space、ブラウザの波形、自動フェード、FX 候補、ノートの終端からの再生）が直った | 画面・聴感 | [照合](reviews/2026-10-25-user-feedback.md) | 2026-10-26 |
-| UC-47 | 多数のノートがある曲を短区間で繰り返し、長く再生した後のノート編集・位置移動でも音切れ・余韻の不自然な再開・鳴りっぱなしがない。機器・バッファ長・プラグインと取りこぼし数を記録する | 実機・聴感・第三者 | [ADR 0239](decisions/0239-live-note-cursor-work.md)、[ADR 0240](decisions/0240-block-local-event-capacity.md) | 2026-11-03 |
+| UC-47 | 多数のノートがある曲を短区間で繰り返し、長く再生した後のノート編集・テンポの変更・位置移動でも音切れ・余韻の不自然な再開・鳴りっぱなしがない。ループの前から続くノートが編集で鳴り直さない。機器・バッファ長・プラグインと取りこぼし数を記録する | 実機・聴感・第三者 | [ADR 0239](decisions/0239-live-note-cursor-work.md)、[ADR 0240](decisions/0240-block-local-event-capacity.md)、[ADR 0280](decisions/0280-placed-cursor-and-voice-matching.md) | 2026-11-03 |
 | UC-48 | 長い音声と短いトリム、モノとステレオが混在するトラックでクリップゲインを変更し、音量・フェード・ループの聴感が保たれ、操作の待ちが問題ない。機器・素材長・バッファ長を記録する | 実機・聴感 | [ADR 0241](decisions/0241-unscaled-placement-pcm.md) | 2026-11-03 |
 | UC-62 | 原点の前後に分数テンポの点を置き、位置移動・再生・メトロノームで表示位置とクリックが一致する。機器ごとのバッファ長を変えても段差やずれが増えない。機器・サンプルレート・バッファ長を記録する | 実機・聴感 | [ADR 0275](decisions/0275-shared-integer-tempo-index.md) | 2026-11-06 |
 

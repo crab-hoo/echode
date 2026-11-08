@@ -38,6 +38,7 @@ SPG-06 の検査でも単独実行は約 100 秒で完走した一方、全 audi
 その時刻のノートオフだけを出す（[ADR 0164](../decisions/0164-note-end-chase.md)）。
 同じ時刻ではノートオフがノートオンより先に並ぶため、追いかけのノートオンがあると鳴り続ける。
 必須契約 `note-end-start` は実ヘルパーで位置移動と停止の復帰を確認する。計画の交換中の場合は `Cursor::take_over` を別に調べる。変わらないトラックは前の声を引き継ぎ、追いかけ直さない（[ADR 0279](../decisions/0279-unchanged-track-voice-handover.md)）。
+作り直したトラックは前の声とノート ID で照合し、制御側で置いた位置が使えない時だけ探索で置く。採用のブロックが遅い時は `make spike-scale` の `tempo_adoption`・`marker_adoption` の行と比べる（[ADR 0280](../decisions/0280-placed-cursor-and-voice-matching.md)）。
 
 ### 壊れた素材を読むと `attempt to multiply with overflow` / `capacity overflow` で文書が使えなくなる
 

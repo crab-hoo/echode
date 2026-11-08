@@ -14,16 +14,24 @@ pub use event::{
     event_cmp, sort_events,
 };
 
-// Count inspected note payloads only in unit tests; release has no counter.
+// Count inspected note payloads and searched placements only in unit tests;
+// release has no counter.
 #[cfg(test)]
 std::thread_local! {
     static NOTE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PLACEMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[inline(always)]
 fn visit_note() {
     #[cfg(test)]
     NOTE_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
+#[inline(always)]
+fn search_placement() {
+    #[cfg(test)]
+    PLACEMENTS.with(|placements| placements.set(placements.get() + 1));
 }
 
 #[cfg(test)]
@@ -127,6 +135,7 @@ impl Plan {
                 })
                 .collect(),
             position: None,
+            chase_from: None,
             track_indices,
         })
     }
@@ -139,26 +148,21 @@ impl Plan {
 #[derive(Debug, PartialEq, Eq)]
 pub struct NoteIndex {
     notes: usize,
-    /// Note model ID then onset. Repeated placements may share a model ID.
-    by_id: Vec<u32>,
     ends: EndIndex,
 }
 
 impl NoteIndex {
     pub fn new(track: &TrackPlan) -> Self {
-        let count = track.notes.len();
-        let mut by_id: Vec<_> = (0..count as u32).collect();
-        by_id.sort_unstable_by_key(|index| {
-            let note = &track.notes[*index as usize];
-            (note.note, note.on)
-        });
         Self {
-            notes: count,
-            by_id,
+            notes: track.notes.len(),
             ends: EndIndex::new(&track.notes),
         }
     }
 }
+
+/// Edges a pre-placed track may advance over when a plan is adopted. Past
+/// this a search is cheaper, so the adoption block stays bounded either way.
+const ADVANCE_EDGES: usize = 32;
 
 /// One continuous piece of a block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,6 +185,10 @@ pub struct Cursor {
     tracks: Vec<TrackCursor>,
     track_indices: Vec<(u128, usize)>,
     position: Option<i64>,
+    /// Where the current stretch of playback chases from. `None` chased every
+    /// note covering its landing; `Some(landing)` is a loop restart, which
+    /// does not chase notes from before the loop (ADR 0239).
+    chase_from: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -238,7 +246,23 @@ impl Cursor {
     /// Does not allocate and does not emit note-ons. The cursor buffers were
     /// allocated when the control thread built this cursor.
     pub fn catch_up(&mut self, plan: &Plan, sample: i64) {
-        self.place(plan, sample, true);
+        self.place(plan, sample, None);
+    }
+
+    /// Like [`Self::catch_up`], but chases only notes that start at `from` or
+    /// later when it is `Some`, as playback does after a loop restart.
+    ///
+    /// The control thread places a cursor this way at the last published
+    /// position and [`Self::chase_from`], so [`Self::take_over`] only advances
+    /// it over the notes since. Any other sample is correct, only slower.
+    pub fn catch_up_from(&mut self, plan: &Plan, sample: i64, from: Option<i64>) {
+        self.place(plan, sample, from);
+    }
+
+    /// Where the current stretch of playback chases from (see
+    /// [`Self::catch_up_from`]).
+    pub fn chase_from(&self) -> Option<i64> {
+        self.chase_from
     }
 
     /// Note-ons for the chased set, for an instrument starting in mid-note.
@@ -284,20 +308,25 @@ impl Cursor {
     }
 
     /// Takes over from `previous`, the cursor of `previous_plan`, at `sample`.
-    /// `self` must have been built from `plan` and not played.
+    /// `self` must have been built from `plan` and not played; the control
+    /// thread may have placed it with [`Self::catch_up_from`].
     ///
     /// A track whose note index is shared with the same track of `previous`
     /// takes that track's state as is when `previous` stands at `sample`:
     /// nothing is searched, released or chased again, so the edit leaves its
-    /// events as they would have been (R1). Every other track is placed at
-    /// `sample` with a chase and keeps the key of each note `previous` still
-    /// sounds, because a replaced plan may store a new pitch.
+    /// events as they would have been. Every other track stands at `sample`,
+    /// chased by `previous`'s rule, so a loop restart still does not chase
+    /// notes from before the loop. A track placed in advance by the same rule
+    /// only advances over the notes since, when there are few.
     ///
-    /// `delivered` says the instruments heard `previous`'s sounding notes.
-    /// Only then are the offs for the notes `plan` no longer covers at
-    /// `sample` written to `out` (at offset 0), and the chased notes the
-    /// previous plan covered are marked inherited for [`Self::chase_events`].
-    /// Returns the number of offs. On an error neither cursor has changed.
+    /// The voices of a replaced track are matched to `previous`'s by model
+    /// note ID. A matched note keeps the key it started with, because the new
+    /// plan may store a new pitch. When `delivered` (the instruments heard
+    /// `previous`'s sounding notes), each unmatched voice of `previous` is
+    /// released into `out` at offset 0, and each matched one is marked
+    /// inherited for [`Self::chase_events`]. Returns the number of offs.
+    ///
+    /// On an error `previous` keeps its voices and `self` must be discarded.
     pub fn take_over(
         &mut self,
         plan: &Plan,
@@ -307,47 +336,63 @@ impl Cursor {
         delivered: bool,
         out: &mut [Event],
     ) -> Result<usize, PlayError> {
-        let mut count = 0;
-        if delivered {
-            self.release_uncovered(plan, previous, previous_plan, sample, out, &mut count)?;
-        }
+        let from = previous.chase_from;
+        let placed = self.position.filter(|at| {
+            self.chase_from == from && from.is_none_or(|from| from <= *at) && *at <= sample
+        });
         for slot in 0..self.tracks.len() {
             let Some(track) = plan.tracks.get(slot) else {
                 continue;
             };
-            let old = previous.track_slot(track.track);
-            if let Some(old) = old.filter(|old| self.inherits(slot, previous, *old, sample)) {
-                std::mem::swap(&mut self.tracks[slot], &mut previous.tracks[old]);
-                let cursor = &mut self.tracks[slot];
-                cursor.inherited = if delivered { cursor.sounding_len } else { 0 };
+            if previous
+                .track_slot(track.track)
+                .is_some_and(|old| self.inherits(slot, previous, old, sample))
+            {
                 continue;
             }
             let cursor = &mut self.tracks[slot];
-            cursor.place(track, sample, true);
-            let Some((old_cursor, old_track)) =
-                old.and_then(|old| previous.tracks.get(old).zip(previous_plan.tracks.get(old)))
+            if placed.is_none() || !cursor.advance(track, sample) {
+                cursor.place(track, sample, from);
+            }
+            cursor.sort_live(track);
+        }
+        let mut count = 0;
+        for old in 0..previous.tracks.len() {
+            let Some(old_track) = previous_plan.tracks.get(old) else {
+                continue;
+            };
+            let next = self.track_slot(old_track.track);
+            if next.is_some_and(|slot| self.inherits(slot, previous, old, sample)) {
+                continue;
+            }
+            previous.tracks[old].sort_live(old_track);
+            let old_cursor = &previous.tracks[old];
+            match next.and_then(|slot| self.tracks.get_mut(slot).zip(plan.tracks.get(slot))) {
+                Some((cursor, track)) => {
+                    cursor.match_voices(track, old_cursor, old_track, delivered, out, &mut count)?
+                }
+                None if delivered => {
+                    old_cursor.release_live(old_track, 0, out, &mut count)?;
+                }
+                None => {}
+            }
+        }
+        // Nothing below can fail, so a failed release leaves `previous` whole.
+        for slot in 0..self.tracks.len() {
+            let Some(old) = plan
+                .tracks
+                .get(slot)
+                .and_then(|track| previous.track_slot(track.track))
+                .filter(|old| self.inherits(slot, previous, *old, sample))
             else {
                 continue;
             };
-            for live in 0..cursor.sounding_len {
-                visit_note();
-                let index = cursor.sounding[live] as usize;
-                let Some(note) = track.notes.get(index) else {
-                    continue;
-                };
-                if let Some(old_index) = previous
-                    .position
-                    .and_then(|at| old_cursor.covering(old_track, note.note, at))
-                    .filter(|old_index| old_cursor.sounding(*old_index))
-                {
-                    cursor.live_key[index] = old_cursor.live_key[old_index];
-                }
-                if delivered && old_cursor.covering(old_track, note.note, sample).is_some() {
-                    cursor.inherit(live);
-                }
-            }
+            std::mem::swap(&mut self.tracks[slot], &mut previous.tracks[old]);
+            let cursor = &mut self.tracks[slot];
+            cursor.inherited = if delivered { cursor.sounding_len } else { 0 };
         }
         self.position = Some(sample);
+        self.chase_from = from;
         Ok(count)
     }
 
@@ -360,53 +405,6 @@ impl Cursor {
                 .get(slot)
                 .zip(previous.tracks.get(old))
                 .is_some_and(|(next, old)| Arc::ptr_eq(&next.index, &old.index))
-    }
-
-    /// Note-offs for notes `previous` is sounding that `plan` does not cover
-    /// at `sample`. A note that still covers that sample stays, including when
-    /// only its pitch changed. A track `self` inherits as is releases nothing.
-    /// `self`'s immutable indexes are ready before it is positioned.
-    fn release_uncovered(
-        &self,
-        plan: &Plan,
-        previous: &Cursor,
-        previous_plan: &Plan,
-        sample: i64,
-        out: &mut [Event],
-        count: &mut usize,
-    ) -> Result<(), PlayError> {
-        for (old, (cursor, track)) in previous
-            .tracks
-            .iter()
-            .zip(&previous_plan.tracks)
-            .enumerate()
-        {
-            let next = self.track_slot(track.track);
-            if next.is_some_and(|slot| self.inherits(slot, previous, old, sample)) {
-                continue;
-            }
-            for slot in 0..cursor.sounding_len {
-                visit_note();
-                let index = cursor.sounding[slot] as usize;
-                let Some(note) = track.notes.get(index) else {
-                    continue;
-                };
-                if next.is_some_and(|slot| {
-                    self.tracks[slot]
-                        .covering(&plan.tracks[slot], note.note, sample)
-                        .is_some()
-                }) {
-                    continue;
-                }
-                let key = cursor.live_key.get(index).copied().unwrap_or(note.pitch);
-                push_event(
-                    out,
-                    count,
-                    Event::note_off(0, track.track_key, note.note_id, key),
-                )?;
-            }
-        }
-        Ok(())
     }
 
     /// Plays `spans` into `out` and returns how many edges were written.
@@ -433,9 +431,9 @@ impl Cursor {
             let continued = self.position == Some(span.start);
             if span.release_at.is_some() {
                 self.release_all_into(plan, span.block_offset, out, &mut count)?;
-                self.place(plan, span.start, false);
+                self.place(plan, span.start, Some(span.start));
             } else if !continued {
-                self.place(plan, span.start, true);
+                self.place(plan, span.start, None);
             }
             self.emit(plan, span, end, out, &mut count)?;
             self.position = Some(end);
@@ -446,11 +444,12 @@ impl Cursor {
         Ok(count)
     }
 
-    fn place(&mut self, plan: &Plan, sample: i64, chase: bool) {
+    fn place(&mut self, plan: &Plan, sample: i64, from: Option<i64>) {
         for (cursor, track) in self.tracks.iter_mut().zip(&plan.tracks) {
-            cursor.place(track, sample, chase);
+            cursor.place(track, sample, from);
         }
         self.position = Some(sample);
+        self.chase_from = from;
     }
 
     /// Stops only live voices, without searching the score or testing a sentinel
@@ -474,16 +473,7 @@ impl Cursor {
         count: &mut usize,
     ) -> Result<(), PlayError> {
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
-            for &index in &cursor.sounding[..cursor.sounding_len] {
-                visit_note();
-                let note = &track.notes[index as usize];
-                let key = cursor.live_key[index as usize];
-                push_event(
-                    out,
-                    count,
-                    Event::note_off(block_offset, track.track_key, note.note_id, key),
-                )?;
-            }
+            cursor.release_live(track, block_offset, out, count)?;
         }
         Ok(())
     }
@@ -504,18 +494,29 @@ impl Cursor {
 }
 
 impl TrackCursor {
-    fn covering(&self, track: &TrackPlan, id: u128, sample: i64) -> Option<usize> {
-        let end = self.index.by_id.partition_point(|index| {
-            let note = &track.notes[*index as usize];
-            (note.note, note.on) < (id, sample)
-        });
-        let index = *self.index.by_id.get(end.checked_sub(1)?)? as usize;
-        visit_note();
-        let note = track.notes.get(index)?;
-        (note.note == id && note.on < sample && note.off >= sample).then_some(index)
+    /// Note-offs for every live voice, with the keys they started with.
+    fn release_live(
+        &self,
+        track: &TrackPlan,
+        block_offset: u32,
+        out: &mut [Event],
+        count: &mut usize,
+    ) -> Result<(), PlayError> {
+        for &index in &self.sounding[..self.sounding_len] {
+            visit_note();
+            let note = &track.notes[index as usize];
+            let key = self.live_key[index as usize];
+            push_event(
+                out,
+                count,
+                Event::note_off(block_offset, track.track_key, note.note_id, key),
+            )?;
+        }
+        Ok(())
     }
 
-    fn place(&mut self, track: &TrackPlan, sample: i64, chase: bool) {
+    fn place(&mut self, track: &TrackPlan, sample: i64, from: Option<i64>) {
+        search_placement();
         self.inherited = 0;
         self.on_index = track.notes.partition_point(|note| note.on < sample);
         self.off_index = track
@@ -526,14 +527,26 @@ impl TrackCursor {
             let index = self.sounding[self.sounding_len - 1] as usize;
             self.clear(index);
         }
-        if !chase {
-            return;
-        }
-        self.chase(track, sample, 1, 0, self.index.ends.leaves);
+        let first = match from {
+            None => 0,
+            Some(from) if from >= sample => return,
+            Some(from) => track.notes.partition_point(|note| note.on < from),
+        };
+        self.chase(track, sample, first, 1, 0, self.index.ends.leaves);
     }
 
-    fn chase(&mut self, track: &TrackPlan, sample: i64, node: usize, start: usize, end: usize) {
+    /// Holds the notes in `[first, on_index)` of `[start, end)` that cover `sample`.
+    fn chase(
+        &mut self,
+        track: &TrackPlan,
+        sample: i64,
+        first: usize,
+        node: usize,
+        start: usize,
+        end: usize,
+    ) {
         if start >= self.on_index
+            || end <= first
             || self
                 .index
                 .ends
@@ -551,8 +564,117 @@ impl TrackCursor {
             return;
         }
         let middle = start + (end - start) / 2;
-        self.chase(track, sample, node * 2, start, middle);
-        self.chase(track, sample, node * 2 + 1, middle, end);
+        self.chase(track, sample, first, node * 2, start, middle);
+        self.chase(track, sample, first, node * 2 + 1, middle, end);
+    }
+
+    /// Moves a placed track forward to `end` as a placement with the same
+    /// chase rule would leave it. `false`, unchanged, when more than
+    /// [`ADVANCE_EDGES`] onsets or ends lie before `end`.
+    fn advance(&mut self, track: &TrackPlan, end: i64) -> bool {
+        let onsets = track
+            .notes
+            .get(self.on_index + ADVANCE_EDGES)
+            .is_some_and(|note| note.on < end);
+        let ends = track
+            .by_off
+            .get(self.off_index + ADVANCE_EDGES)
+            .is_some_and(|index| track.notes[*index as usize].off < end);
+        if onsets || ends {
+            return false;
+        }
+        self.inherited = 0;
+        while let Some(note) = track.notes.get(self.on_index).filter(|note| note.on < end) {
+            visit_note();
+            self.hold(self.on_index, note.pitch);
+            self.on_index += 1;
+        }
+        while let Some(index) = track
+            .by_off
+            .get(self.off_index)
+            .map(|index| *index as usize)
+            .filter(|index| track.notes[*index].off < end)
+        {
+            visit_note();
+            self.clear(index);
+            self.off_index += 1;
+        }
+        true
+    }
+
+    /// Orders the live set by model note ID for [`Self::match_voices`].
+    fn sort_live(&mut self, track: &TrackPlan) {
+        let live = &mut self.sounding[..self.sounding_len];
+        live.sort_unstable_by_key(|index| {
+            visit_note();
+            track.notes[*index as usize].note
+        });
+        for (slot, index) in live.iter().enumerate() {
+            self.sounding_slots[*index as usize] = slot;
+        }
+    }
+
+    /// Pairs this track's live set with `previous`'s, both sorted by model
+    /// note ID, one voice to one voice. See [`Cursor::take_over`].
+    fn match_voices(
+        &mut self,
+        track: &TrackPlan,
+        previous: &TrackCursor,
+        previous_track: &TrackPlan,
+        delivered: bool,
+        out: &mut [Event],
+        count: &mut usize,
+    ) -> Result<(), PlayError> {
+        let old_live = &previous.sounding[..previous.sounding_len];
+        let old_id = |slot: usize| {
+            old_live.get(slot).map(|index| {
+                visit_note();
+                (*index as usize, previous_track.notes[*index as usize].note)
+            })
+        };
+        let release = |index: usize, out: &mut [Event], count: &mut usize| {
+            let note = &previous_track.notes[index];
+            push_event(
+                out,
+                count,
+                Event::note_off(
+                    0,
+                    previous_track.track_key,
+                    note.note_id,
+                    previous.live_key[index],
+                ),
+            )
+        };
+        let mut next_old = 0;
+        // Entries before `live` are done. Inheriting swaps one of them, so the
+        // rest stays sorted.
+        for live in 0..self.sounding_len {
+            let index = self.sounding[live] as usize;
+            visit_note();
+            let id = track.notes[index].note;
+            while let Some((old, old_note)) = old_id(next_old)
+                && old_note < id
+            {
+                if delivered {
+                    release(old, out, count)?;
+                }
+                next_old += 1;
+            }
+            if let Some((old, _)) = old_id(next_old).filter(|(_, old_note)| *old_note == id) {
+                self.live_key[index] = previous.live_key[old];
+                next_old += 1;
+                if delivered {
+                    self.inherit(live);
+                }
+            }
+        }
+        if delivered {
+            while let Some((old, _)) = old_id(next_old) {
+                release(old, out, count)?;
+                next_old += 1;
+            }
+        }
+        Ok(())
     }
 
     fn hold(&mut self, index: usize, key: u8) {

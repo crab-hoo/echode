@@ -2,7 +2,8 @@
 //! docs/reviews/2026-11-03-full-code-audit.md).
 //!
 //! Without plugins or a device, it times the block that wraps a loop, the block
-//! that adopts an edit while playing, the control thread's replacement, and one
+//! that adopts an edit while playing (one note, or the tempo, which plans every
+//! track again), the control thread's replacement, and one
 //! model edit, load, changeset diff, and repeated track/audio/MIDI clip insertions.
 //! At a fixed track count, a block that slows as notes are added still does work proportional
 //! to the score on the audio thread. Counts and rounds bound this measurement
@@ -16,7 +17,8 @@ use std::time::{Duration, Instant};
 
 use echode_engine::{PlaybackAudio, PlaybackCommand, PlaybackOptions, playback};
 use echode_model::{
-    AudioRef, ClipKind, Content, Id, NoteDraft, NoteGeometry, Placement, Project, Tick, Track,
+    AudioRef, ClipKind, Content, Id, NoteDraft, NoteGeometry, Placement, Project, Tempo, Tick,
+    Track,
 };
 
 const RATE: u32 = 48_000;
@@ -164,8 +166,20 @@ fn loop_wrap(tracks: usize, notes: usize) -> String {
     row
 }
 
+/// What an edit changes while playing.
+#[derive(Clone, Copy)]
+enum Edit {
+    /// One note of track 0: every other track keeps its plan.
+    Note,
+    /// The base tempo: every note moves and every track is planned again.
+    Tempo,
+    /// A tempo marker after the notes: every track is planned again, though
+    /// no note moves, so every voice continues.
+    Marker,
+}
+
 /// Edits while playing, after `played` blocks since the last locate.
-fn edit_adoption(tracks: usize, notes: usize, played: usize) -> String {
+fn edit_adoption(tracks: usize, notes: usize, played: usize, edit: Edit) -> String {
     let project = build(&template(tracks), 1, notes, STEP);
     let (mut control, mut audio) =
         playback(&project, RATE, FRAMES, PlaybackOptions::default()).unwrap();
@@ -178,7 +192,17 @@ fn edit_adoption(tracks: usize, notes: usize, played: usize) -> String {
     }
     let (mut adoptions, mut replacements) = (Vec::new(), Vec::new());
     for round in 0..20 {
-        let next = edited(&project, round);
+        let next = match edit {
+            Edit::Note => edited(&project, round),
+            Edit::Tempo => project.with_tempo(
+                Tick::new(0),
+                Tempo::quarters_per_minute(121 + round % 2).unwrap(),
+            ),
+            Edit::Marker => project.with_tempo(
+                Tick::new((notes as i64 + 2) * STEP),
+                Tempo::quarters_per_minute(121 + round % 2).unwrap(),
+            ),
+        };
         let started = Instant::now();
         control.replace(&next).unwrap();
         replacements.push(started.elapsed());
@@ -189,9 +213,14 @@ fn edit_adoption(tracks: usize, notes: usize, played: usize) -> String {
     adoptions.sort();
     replacements.sort();
     let row = format!(
-        "{{\"case\": \"edit_adoption\", \"tracks\": {tracks}, \"notes_per_track\": {notes}, \
+        "{{\"case\": \"{}\", \"tracks\": {tracks}, \"notes_per_track\": {notes}, \
          \"played_blocks\": {played}, \"normal_p50_us\": {:.1}, \"adoption_p50_us\": {:.1}, \
          \"adoption_max_us\": {:.1}, \"replace_p50_ms\": {:.1}, \"reserved_events\": {}}}",
+        match edit {
+            Edit::Note => "edit_adoption",
+            Edit::Tempo => "tempo_adoption",
+            Edit::Marker => "marker_adoption",
+        },
         us(percentile(&normal, 0.5)),
         us(percentile(&adoptions, 0.5)),
         us(*adoptions.last().unwrap()),
@@ -288,8 +317,10 @@ fn measure_playback_scale() {
         rows.push(loop_wrap(64, notes));
     }
     rows.push(loop_wrap(256, 4_000));
-    for played in [100, 3_500] {
-        rows.push(edit_adoption(256, 4_000, played));
+    for edit in [Edit::Note, Edit::Tempo, Edit::Marker] {
+        for played in [100, 3_500] {
+            rows.push(edit_adoption(256, 4_000, played, edit));
+        }
     }
     for (tracks, clips) in [(64, 64), (128, 64)] {
         rows.push(model_edit(tracks, clips));

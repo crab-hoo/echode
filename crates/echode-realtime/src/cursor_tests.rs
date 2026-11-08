@@ -306,6 +306,24 @@ fn play_spans(cursor: &mut Cursor, plan: &Plan, spans: &[Span]) -> Vec<Event> {
     events
 }
 
+fn live_set(track: &TrackCursor) -> Vec<u32> {
+    let mut live = track.sounding[..track.sounding_len].to_vec();
+    live.sort_unstable();
+    live
+}
+
+/// `(model ID, key)` of each live voice of track `slot`.
+fn live_keys(cursor: &Cursor, plan: &Plan, slot: usize) -> Vec<(u128, u8)> {
+    let track = &cursor.tracks[slot];
+    track.sounding[..track.sounding_len]
+        .iter()
+        .map(|index| {
+            let index = *index as usize;
+            (plan.tracks[slot].notes[index].note, track.live_key[index])
+        })
+        .collect()
+}
+
 fn of_track(events: &[Event], key: u32) -> Vec<Event> {
     events
         .iter()
@@ -317,6 +335,7 @@ fn of_track(events: &[Event], key: u32) -> Vec<Event> {
 #[test]
 fn an_unchanged_track_plays_as_if_no_plan_had_been_adopted() {
     let (mut handed_over, mut replaced, mut wraps) = (0, 0, 0);
+    let (mut advanced, mut searched) = (0, 0);
     // The seed and round counts bound this regression's run time.
     for seed in 1..=40u64 {
         let mut steps = Steps(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
@@ -371,6 +390,14 @@ fn an_unchanged_track_plays_as_if_no_plan_had_been_adopted() {
                     if let Some(note) = track.notes.first_mut() {
                         note.pitch = note.pitch.wrapping_add(1) % 128;
                     }
+                    // A tempo change moves every note; the order is unchanged.
+                    if steps.next(3) == 0 {
+                        let shift = steps.next(60) as i64 - 30;
+                        for note in &mut track.notes {
+                            note.on += shift;
+                            note.off += shift;
+                        }
+                    }
                     if steps.next(2) == 0 && !track.notes.is_empty() {
                         let removed = steps.next(track.notes.len() as u64) as u32;
                         track.notes.remove(removed as usize);
@@ -385,10 +412,51 @@ fn an_unchanged_track_plays_as_if_no_plan_had_been_adopted() {
                 }
             }
             let mut adopted = next.cursor_with(lookups).unwrap();
+            // As the control thread would: at an earlier or later sample, by
+            // the current or a stale chase rule, or not at all.
+            let from = cursor.chase_from();
+            let ahead = steps.next(200) as i64;
+            let placement = match steps.next(4) {
+                0 => None,
+                1 => Some((position - ahead, from)),
+                2 => Some((position - ahead, from.xor(Some(loop_start)))),
+                _ => Some((position + 1 + ahead, from)),
+            };
+            if let Some((at, rule)) = placement {
+                adopted.catch_up_from(&next, at, rule);
+                if rule == from && from.is_none_or(|from| from <= at) && at <= position {
+                    advanced += 1;
+                } else {
+                    searched += 1;
+                }
+            }
+            let old_keys = live_keys(&cursor, &plan, edited);
             let mut offs = vec![SILENT; 64];
             let count = adopted
                 .take_over(&next, &mut cursor, &plan, position, true, &mut offs)
                 .unwrap();
+            // An edited track stands as a placement by the same chase rule,
+            // keeping the key of each voice that continues.
+            let mut placed = next.cursor();
+            placed.catch_up_from(&next, position, from);
+            let (mine, theirs) = (&adopted.tracks[edited], &placed.tracks[edited]);
+            assert_eq!(
+                (mine.on_index, mine.off_index, live_set(mine)),
+                (theirs.on_index, theirs.off_index, live_set(theirs)),
+                "seed {seed}: an edited track was placed differently"
+            );
+            let new_keys = live_keys(&adopted, &next, edited);
+            let once = |keys: &[(u128, u8)], id| {
+                keys.iter().filter(|(other, _)| *other == id).count() == 1
+            };
+            for &(id, key) in &new_keys {
+                if let Some(old) = old_keys.iter().find(|(old, _)| *old == id)
+                    && once(&old_keys, id)
+                    && once(&new_keys, id)
+                {
+                    assert_eq!(key, old.1, "seed {seed}: a continuing voice changed key");
+                }
+            }
             assert!(
                 of_track(&offs[..count], 0).is_empty(),
                 "seed {seed}: an unchanged track was released"
@@ -407,8 +475,11 @@ fn an_unchanged_track_plays_as_if_no_plan_had_been_adopted() {
             plan = next;
         }
     }
-    // The regression must reach held voices, released edits and loop wraps.
+    // The regression must reach held voices, released edits, loop wraps and
+    // both kinds of placement.
     assert!(handed_over > 20, "too few inherited voices: {handed_over}");
+    assert!(advanced > 20, "too few usable placements: {advanced}");
+    assert!(searched > 20, "too few stale placements: {searched}");
     assert!(replaced > 20, "too few edited voices: {replaced}");
     assert!(wraps > 20, "too few loop wraps: {wraps}");
 }
@@ -477,4 +548,124 @@ fn a_take_over_without_room_for_its_offs_leaves_both_cursors() {
         cursor.position, None,
         "a failed take-over placed the next cursor"
     );
+}
+
+#[test]
+fn an_edited_track_does_not_chase_notes_the_loop_did_not_restart() {
+    // One note from before the loop start lasts past its end; one starts inside.
+    let notes = vec![
+        NoteSpan {
+            on: 0,
+            off: 1_000,
+            note: 5,
+            note_id: 0,
+            pitch: 60,
+            velocity: 65_535,
+        },
+        NoteSpan {
+            on: 150,
+            off: 900,
+            note: 6,
+            note_id: 1,
+            pitch: 62,
+            velocity: 65_535,
+        },
+    ];
+    let plan = Plan {
+        tracks: vec![TrackPlan {
+            track: 51,
+            track_key: 7,
+            by_off: vec![1, 0],
+            notes,
+            gain: 1.0,
+            pan: 0.0,
+            mute: 0.0,
+            solo: 0.0,
+        }],
+    };
+    let mut previous = plan.cursor();
+    previous.catch_up(&plan, 120);
+    play_spans(&mut previous, &plan, &[span(120, 80)]);
+    // The loop [100, 200) restarts without the note from before it.
+    play_spans(
+        &mut previous,
+        &plan,
+        &[Span {
+            release_at: Some(200),
+            ..span(100, 100)
+        }],
+    );
+    assert_eq!(previous.chase_from(), Some(100));
+    let mut next = plan.clone();
+    next.tracks[0].notes[1].pitch = 64;
+    let mut cursor = next.cursor();
+    let mut offs = [SILENT; 4];
+    assert_eq!(
+        cursor
+            .take_over(&next, &mut previous, &plan, 200, true, &mut offs)
+            .unwrap(),
+        0
+    );
+    let (mut fresh, mut inherited) = ([SILENT; 4], [SILENT; 4]);
+    assert_eq!(
+        cursor
+            .chase_events(&next, &mut fresh, &mut inherited)
+            .unwrap(),
+        (0, 1),
+        "only the note the loop restarted is held"
+    );
+    assert_eq!(inherited[0].note_id(), Some(1));
+    let events = play_spans(&mut cursor, &next, &[span(200, 900)]);
+    assert_eq!(
+        events,
+        vec![Event::note_off(700, 7, 1, 62)],
+        "no off for the note that was not restarted; the voice keeps its first key"
+    );
+}
+
+#[test]
+fn a_placed_cursor_adopts_a_moved_score_without_reading_it() {
+    let mut work = Vec::new();
+    for count in [64, 1_024] {
+        let plan = score(count);
+        let mut previous = plan.cursor();
+        let end = count as i64 * 10 + 50;
+        play(&mut previous, &plan, span(0, end as u32));
+        // Every note moves, as with a tempo change, so no index is shared.
+        let mut next = plan.clone();
+        for note in &mut next.tracks[0].notes {
+            note.on += 3;
+            note.off += 3;
+        }
+        let mut cursor = next.cursor();
+        cursor.catch_up_from(&next, end - 40, previous.chase_from());
+        let mut offs = [SILENT; 4];
+        PLACEMENTS.with(|placements| placements.set(0));
+        work.push(visits(|| {
+            assert_eq!(
+                cursor
+                    .take_over(&next, &mut previous, &plan, end, true, &mut offs)
+                    .unwrap(),
+                0,
+                "both long voices continue"
+            );
+        }));
+        assert_eq!(
+            PLACEMENTS.with(|placements| placements.get()),
+            0,
+            "a placed track was searched again"
+        );
+        let (mut fresh, mut inherited) = ([SILENT; 4], [SILENT; 4]);
+        assert_eq!(
+            cursor
+                .chase_events(&next, &mut fresh, &mut inherited)
+                .unwrap(),
+            (0, 2)
+        );
+    }
+    assert_eq!(
+        work[0], work[1],
+        "a placed adoption inspected score-sized notes: {work:?}"
+    );
+    assert!(work[0] <= 24, "a placed adoption read too much: {work:?}");
 }

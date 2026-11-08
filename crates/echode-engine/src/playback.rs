@@ -120,6 +120,9 @@ struct Status {
     generation: AtomicU32,
     playing: AtomicBool,
     sample: AtomicI64,
+    /// The current cursor's `chase_from`, `i64::MIN` for `None`. With `sample`
+    /// it places the next plan in advance; a stale pair is only slower.
+    chase_from: AtomicI64,
     tick: AtomicI64,
     failed: AtomicBool,
     applied_command: AtomicU64,
@@ -1394,6 +1397,7 @@ fn transport_pair(
         generation: AtomicU32::new(0),
         playing: AtomicBool::new(false),
         sample: AtomicI64::new(clock.position()),
+        chase_from: AtomicI64::new(i64::MIN),
         tick: AtomicI64::new(
             current
                 .tempo
@@ -1898,8 +1902,15 @@ impl PlaybackControl {
         self.publish_graph(pending)
     }
 
-    fn publish_graph(&mut self, pending: Pending) -> Result<(), PlaybackError> {
+    fn publish_graph(&mut self, mut pending: Pending) -> Result<(), PlaybackError> {
         self.save_controls = self.hosts.save_controls();
+        // Place the cursor where the callback last stood, so adopting it only
+        // advances over the notes since (R1). The callback checks the rule.
+        let sample = self.status.sample.load(Ordering::SeqCst);
+        let from =
+            Some(self.status.chase_from.load(Ordering::SeqCst)).filter(|from| *from != i64::MIN);
+        let Prepared { plan, cursor, .. } = &mut *pending.prepared;
+        cursor.catch_up_from(plan, sample, from);
         self.previous_chases = pending
             .prepared
             .demands
@@ -2194,6 +2205,10 @@ impl PlaybackAudio {
         self.status
             .sample
             .store(self.clock.position(), Ordering::SeqCst);
+        self.status.chase_from.store(
+            self.current.cursor.chase_from().unwrap_or(i64::MIN),
+            Ordering::SeqCst,
+        );
         self.status.tick.store(
             self.current
                 .tempo
