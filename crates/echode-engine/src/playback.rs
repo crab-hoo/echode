@@ -143,12 +143,6 @@ struct Track {
     base_fader: TrackFader,
     meter: Arc<TrackMeter>,
     cache: Option<CachedTrack>,
-    /// Note ids and bounds, sorted for bounded lookup during plan adoption.
-    notes: Arc<[(u32, i64, i64)]>,
-    /// Keep the previous index alive until control retires this bank. Audio
-    /// queries only chased notes and never scans the score or drops its index.
-    carried_notes: Option<Arc<[(u32, i64, i64)]>>,
-    carried_at: Option<i64>,
     clips: Vec<StoredClip>,
 }
 
@@ -279,7 +273,9 @@ struct Prepared {
     plugin_holds: bool,
     /// Note-ons chased from the previous plan. Retained helpers hold these voices.
     /// A plugin that was just spawned still needs them. Timeline note-ons stay in `events`.
+    /// Fixed length; the block's are `chased_ons[..chased_len]`.
     chased_ons: Vec<Event>,
+    chased_len: usize,
     /// `chased_ons` grouped by track position, like `filtered` and `event_ends`.
     chased_grouped: Vec<Event>,
     chased_ends: Vec<usize>,
@@ -374,7 +370,7 @@ impl Prepared {
         let mut event_count = 1usize;
         let mut chase_count = 0usize;
         let mut demands = Vec::with_capacity(plan.tracks.len());
-        for ((track, fader), lookups) in plan.tracks.iter().zip(faders).zip(&derived) {
+        for (track, fader) in plan.tracks.iter().zip(faders) {
             let mut clips = placed.remove(&track.track).unwrap_or_default();
             clips.sort_by_key(|clip| clip.start_sample);
             let clip_stereo = clips.iter().any(|clip| clip.right.is_some());
@@ -415,9 +411,6 @@ impl Prepared {
                 fader: FaderState::new(fader, rate),
                 base_fader: fader,
                 cache: sources.caches.get(&track.track).cloned(),
-                carried_notes: None,
-                carried_at: None,
-                notes: Arc::clone(&lookups.by_number),
                 clips,
             });
         }
@@ -455,7 +448,8 @@ impl Prepared {
             meter: project.meter(),
             chase: true,
             plugin_holds: false,
-            chased_ons: Vec::with_capacity(chase_count.max(1)),
+            chased_ons: vec![Event::note_off(0, 0, 0, 0); chase_count.max(1)],
+            chased_len: 0,
             chased_grouped: vec![Event::note_off(0, 0, 0, 0); chase_count.max(1)],
             chased_ends: vec![0; plan_tracks + 1],
             loop_start: loop_bounds.map(|(start, _)| start),
@@ -502,11 +496,6 @@ impl Prepared {
         }
         self.cursor.catch_up(&self.plan, sample);
         self.chase = true;
-        if silence {
-            for track in &mut self.tracks {
-                track.carried_at = None;
-            }
-        }
         Ok(())
     }
 
@@ -558,27 +547,6 @@ impl Prepared {
         Ok(())
     }
 
-    /// Note-offs for notes the previous plan was holding that `self` does not cover.
-    fn queue_replaced(&mut self, previous: &Self, sample: i64) -> Result<(), PlaybackError> {
-        let start = self.released;
-        let Prepared {
-            events,
-            plan,
-            released,
-            cursor,
-            ..
-        } = self;
-        let rest = events
-            .get_mut(start..)
-            .ok_or(PlaybackError::BufferTooSmall)?;
-        let count = previous
-            .cursor
-            .release_replaced(&previous.plan, plan, cursor, sample, 0, rest)
-            .map_err(play_error)?;
-        *released = start + count;
-        Ok(())
-    }
-
     fn carry(
         &mut self,
         previous: &mut Self,
@@ -597,73 +565,35 @@ impl Prepared {
                 if playing {
                     track.fader.carry(old.fader);
                 }
-                track.carried_notes = Some(Arc::clone(&old.notes));
-                track.carried_at = previous.plugin_holds.then_some(sample);
             }
         }
-        if previous.plugin_holds {
-            self.queue_replaced(previous, sample)?;
-        }
-        self.place(sample, false)?;
-        self.cursor
-            .keep_live_keys(&self.plan, &previous.cursor, &previous.plan);
+        // Unchanged tracks take the previous cursor's voices without a search.
+        // Retained helpers hold the inherited chase; only new helpers strike it.
+        let start = self.released;
+        let Prepared {
+            events,
+            cursor,
+            plan,
+            released,
+            ..
+        } = self;
+        let rest = events
+            .get_mut(start..)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        let count = cursor
+            .take_over(
+                plan,
+                &mut previous.cursor,
+                &previous.plan,
+                sample,
+                previous.plugin_holds,
+                rest,
+            )
+            .map_err(play_error)?;
+        *released = start + count;
+        self.chase = true;
         self.plugin_holds = previous.plugin_holds;
         Ok(())
-    }
-
-    /// Chased notes belong only to newly created helpers. Retained helpers
-    /// already own their DSP voices and must not retrigger their envelopes.
-    fn take_carried_note_ons(&mut self, count: usize) -> Result<usize, PlaybackError> {
-        self.chased_ons.clear();
-        let mut kept = 0;
-        for index in 0..count {
-            let event = *self
-                .events
-                .get(index)
-                .ok_or(PlaybackError::BufferTooSmall)?;
-            if event.is_note_on() && self.note_was_carried(event) {
-                if self.chased_ons.len() == self.chased_ons.capacity() {
-                    return Err(PlaybackError::BufferTooSmall);
-                }
-                self.chased_ons.push(event);
-            } else {
-                *self
-                    .events
-                    .get_mut(kept)
-                    .ok_or(PlaybackError::BufferTooSmall)? = event;
-                kept += 1;
-            }
-        }
-        for track in &mut self.tracks {
-            track.carried_at = None;
-        }
-        Ok(kept)
-    }
-
-    fn note_was_carried(&self, event: Event) -> bool {
-        let Some((key, id)) = event.track_key().zip(event.note_id()) else {
-            return false;
-        };
-        self.track_indices
-            .binary_search_by_key(&key, |entry| entry.0)
-            .ok()
-            .and_then(|index| self.track_indices.get(index))
-            .and_then(|entry| self.tracks.get(entry.1))
-            .is_some_and(|track| {
-                let Some(sample) = track.carried_at else {
-                    return false;
-                };
-                track
-                    .carried_notes
-                    .as_ref()
-                    .and_then(|notes| {
-                        notes
-                            .binary_search_by_key(&id, |note| note.0)
-                            .ok()
-                            .and_then(|index| notes.get(index))
-                    })
-                    .is_some_and(|note| note.1 < sample && note.2 >= sample)
-            })
     }
 
     fn render(
@@ -681,18 +611,20 @@ impl Prepared {
         let count = if range.started_before.is_some() {
             count
         } else {
+            self.chased_len = 0;
             if self.chase {
                 self.chase = false;
                 let rest = self
                     .events
                     .get_mut(count..)
                     .ok_or(PlaybackError::BufferTooSmall)?;
-                count += self
+                let (fresh, inherited) = self
                     .cursor
-                    .chase_events(&self.plan, rest)
+                    .chase_events(&self.plan, rest, &mut self.chased_ons)
                     .map_err(play_error)?;
+                count += fresh;
+                self.chased_len = inherited;
             }
-            count = self.take_carried_note_ons(count)?;
             let rest = self
                 .events
                 .get_mut(count..)
@@ -723,7 +655,9 @@ impl Prepared {
             .get(..count)
             .ok_or(PlaybackError::BufferTooSmall)?;
         let chased: &[Event] = if range.started_before.is_none() {
-            &self.chased_ons
+            self.chased_ons
+                .get(..self.chased_len)
+                .ok_or(PlaybackError::BufferTooSmall)?
         } else {
             &[]
         };

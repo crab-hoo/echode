@@ -1,7 +1,7 @@
 # ADR 0239: 境界の処理を鳴っているノートと索引に限定する
 
 日付: 2026-11-03
-状態: 採用。実機の聴感は UC-47 が未確認。
+状態: 採用。実機の聴感は UC-47 が未確認。差替えの手順は [ADR 0279](0279-unchanged-track-voice-handover.md) で `Cursor::take_over` にまとめた。
 対象: [監査 FCA-01・02](../reviews/2026-11-03-full-code-audit.md)、[実行指示 W1](../reviews/2026-11-03-fix-instructions.md)。
 
 ## 背景

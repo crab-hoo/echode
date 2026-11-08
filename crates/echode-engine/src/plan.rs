@@ -72,23 +72,15 @@ struct CachedDemand {
 /// Lookups a prepared plan reads, shared while a track's notes are unchanged.
 #[derive(Clone, Debug)]
 pub(crate) struct TrackDerived {
-    /// The cursor's note lookups for this track.
+    /// The cursor's note lookups for this track. Sharing it tells the cursor
+    /// the notes are unchanged, so it takes over that track's voices (R1).
     pub(crate) index: Arc<NoteIndex>,
-    /// `(note_id, on, off)` sorted by playback note number.
-    pub(crate) by_number: Arc<[(u32, i64, i64)]>,
 }
 
 impl TrackDerived {
     fn new(plan: &TrackPlan) -> Self {
-        let mut by_number: Vec<_> = plan
-            .notes
-            .iter()
-            .map(|note| (note.note_id, note.on, note.off))
-            .collect();
-        by_number.sort_unstable_by_key(|note| note.0);
         Self {
             index: Arc::new(NoteIndex::new(plan)),
-            by_number: by_number.into(),
         }
     }
 }

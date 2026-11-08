@@ -78,7 +78,7 @@
 - **Sine Pad と音源の選択**: 音源のないトラックのノートは無音で、旧プロジェクトへ暗黙の音源を補わない。
   従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
 - **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
-- **規模・ミックスと履歴（FCA-05〜07・19）**: 計画の採用は機器なしでも期限を超え得る。
+- **規模・ミックスと履歴（FCA-05〜07・19）**: 全トラックの作り直しで採用が期限を超え得る。
   モデル ID の線形探索と履歴のメモリ予算は残る（[ADR 0274](decisions/0274-reused-track-plans.md)）。
   フォルダの音量・パンは子に効かず、遅延は未補正。ループとミックスの聴感は UC-47・49、遅延表示は UC-51（[ADR 0246](decisions/0246-plugin-latency-reporting.md)）。
 - **長い素材**: 全体を復号して 1 コピーを常駐させ、逐次読込みはない（[ADR 0273](decisions/0273-shared-source-clip-windows.md)）。

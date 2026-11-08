@@ -200,11 +200,6 @@ fn reused_track_plans_match_full_rebuilds_across_edits_and_undo() {
         {
             assert_eq!(spans(planned), spans(rebuilt), "step {step}");
             assert_eq!(*derived.index, NoteIndex::new(planned), "step {step}");
-            assert_eq!(
-                derived.by_number,
-                TrackDerived::new(planned).by_number,
-                "step {step}"
-            );
             for note in &planned.notes {
                 // One model note has one number in a plan and keeps it while it plays.
                 assert_eq!(*seen.entry(note.note).or_insert(note.note_id), note.note_id);

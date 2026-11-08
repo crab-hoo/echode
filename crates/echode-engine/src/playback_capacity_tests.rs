@@ -78,7 +78,9 @@ fn cursor_events_fit_for_all_small_loop_windows_and_landings() {
                     cursor.catch_up(&plan, landing);
                     let mut events =
                         vec![Event::note_off(0, 0, 0, 0); demand.events + demand.chase];
-                    let chase = cursor.chase_events(&plan, &mut events).unwrap();
+                    let (chase, inherited) =
+                        cursor.chase_events(&plan, &mut events, &mut []).unwrap();
+                    assert_eq!(inherited, 0, "a placed cursor inherits nothing");
                     assert!(chase <= demand.chase);
                     let mut order = vec![0; events.len()];
                     let mut scratch = events.clone();
