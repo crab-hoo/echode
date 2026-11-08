@@ -61,6 +61,7 @@ fn rejected_arguments() -> Vec<(Value, Option<&'static str>)> {
     for name in [
         "echode.edit.undo",
         "echode.edit.redo",
+        "echode.history.usage",
         "echode.project.summary",
     ] {
         for arguments in [json!({"extra":null}), json!({"actions":[]})] {
@@ -86,6 +87,7 @@ fn rejected_arguments() -> Vec<(Value, Option<&'static str>)> {
         "echode.actions.transaction",
         "echode.edit.undo",
         "echode.edit.redo",
+        "echode.history.usage",
         "echode.project.summary",
     ] {
         for arguments in [

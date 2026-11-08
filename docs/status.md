@@ -43,8 +43,6 @@
 
 ### API・MCP・文書の入口
 
-- **JSON-RPC の不正な要求**: ID・params・版・メソッドの不正と JSON 外の空白は、編集前に拒否する（[ADR 0020](decisions/0020-json-rpc.md#要求の外枠の検証2026-10-29)）。
-  改行前に切断した要求は編集せず、接続を閉じる（[ADR 0073](decisions/0073-socket-path.md#改行前の切断の拒否2026-10-29)）。
 - **API の応答の書込み**: 応答の書込みが 30 秒進まない接続は閉じる。送信失敗の前に成立した編集は再実行しない（[ADR 0073](decisions/0073-socket-path.md)）。
 - **MCP の接続先の不正なエラー応答**: 不正な error 応答は結果不明として、再送前の確認を案内する。
   確定済みの編集を再送・巻戻ししない（[ADR 0115](decisions/0115-phase2-mcp.md#接続先のエラー応答の形の検証2026-10-29)）。
@@ -77,6 +75,7 @@
   従来の既定音を使うには Sine Pad を挿す（[ADR 0123](decisions/0123-explicit-sine-pad-plugin.md)）。
 - **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
 - **規模・ミックスと履歴（FCA-05〜07・19）**: モデル ID の線形探索と履歴のメモリ予算は残る（[ADR 0274](decisions/0274-reused-track-plans.md)）。
+  大きなクリップのノート編集は 1 段が中身全体を持つ（1 万ノートで約 0.8 MB）。使用量は GUI からは読めない（[ADR 0286](decisions/0286-history-usage-diagnostics.md)）。
   フォルダの音量・パンは子に効かず、遅延は未補正。ループとミックスの聴感は UC-47・49、遅延表示は UC-51（[ADR 0246](decisions/0246-plugin-latency-reporting.md)）。
 - **長い素材**: 全体を復号して 1 コピーを常駐させ、逐次読込みはない（[ADR 0273](decisions/0273-shared-source-clip-windows.md)）。
 

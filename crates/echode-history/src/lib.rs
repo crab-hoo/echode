@@ -32,6 +32,7 @@ pub use document::{
     AUTOSAVE_REF, PackageError, append_journal, compact_journal, mark_save_pending, read_package,
     recover, write_package,
 };
+pub use echode_actions::HistoryUsage;
 pub use export::freeze_export;
 pub use export_settings::{read_export_settings, write_export_settings};
 pub use gix::ObjectId;

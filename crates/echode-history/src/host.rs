@@ -9,7 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use echode_actions::{
-    Action, ActionError, Command, JournalLine, JournalOp, Session, parameter_message,
+    Action, ActionError, Command, HistoryUsage, JournalLine, JournalOp, Session, parameter_message,
 };
 use echode_model::{ChangeSet, Id, Project};
 use gix::ObjectId;
@@ -91,6 +91,10 @@ enum Request {
     },
     Revisions {
         reply: Sender<Result<Vec<SavedRevision>, HostError>>,
+    },
+    /// Read-only, so a halted thread still answers it.
+    Usage {
+        reply: Sender<Result<HistoryUsage, HostError>>,
     },
     AcceptRecovery {
         reply: Sender<Result<(), HostError>>,
@@ -396,6 +400,20 @@ impl DocumentHost {
             .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
     }
 
+    /// What undo and redo keep in memory beyond the current project (ADR 0286).
+    ///
+    /// The document thread walks its history, so the time grows with the
+    /// number of steps. Call it for diagnosis, not on every frame.
+    pub fn history_usage(&self) -> Result<HistoryUsage, HostError> {
+        let (reply, incoming) = mpsc::channel();
+        self.request
+            .send(Request::Usage { reply })
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+        incoming
+            .recv()
+            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+    }
+
     /// Redoes the newest undone step and appends a `redo` journal line.
     pub fn redo(&self) -> Result<(), HostError> {
         self.require_recovery_confirmation()
@@ -436,7 +454,12 @@ fn worker(
     let mut halted: Option<String> = None;
     while let Ok(request) = incoming.recv() {
         finish_saves(&directory, &mut inflight);
-        if halted.is_some() && !matches!(request, Request::Shutdown | Request::Revisions { .. }) {
+        if halted.is_some()
+            && !matches!(
+                request,
+                Request::Shutdown | Request::Revisions { .. } | Request::Usage { .. }
+            )
+        {
             reply_halted(request, &halted);
             continue;
         }
@@ -609,6 +632,9 @@ fn worker(
                 wait_for_saves(&directory, &mut inflight);
                 let _ = reply.send(autosave.revisions().map_err(HostError::Package));
             }
+            Request::Usage { reply } => {
+                let _ = reply.send(Ok(session.usage()));
+            }
             Request::Redo { reply } => {
                 let before = session.project().clone();
                 let result = match session.redo() {
@@ -764,6 +790,9 @@ fn reply_halted(request: Request, halted: &Option<String>) {
             let _ = reply.send(Err(error));
         }
         Request::Revisions { reply } => {
+            let _ = reply.send(Err(error));
+        }
+        Request::Usage { reply } => {
             let _ = reply.send(Err(error));
         }
         Request::AcceptRecovery { reply } => {

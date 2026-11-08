@@ -302,6 +302,10 @@ MCP の要求 ID と通知は `McpSession::reply` が接続前に振り分ける
 メタデータの省略時に直前の新 MCP 要求から版や準備完了を引き継がないことも検査する
 （[ADR 0115 のメタデータ回帰](decisions/0115-phase2-mcp.md#新-mcp-の要求ごとのメタデータの回帰補強2026-10-29)）。
 
+Undo の段が持つ分の推定は `echode-model/src/footprint.rs`、段の並びをたどる集計は `echode-actions` の `Session::usage` に置く。
+`history.usage` は `DocumentHost::history_usage` を文書のスレッドで答え、場面ごとの計測は `crates/echode-actions/tests/history_usage.rs` にある
+（[ADR 0286](decisions/0286-history-usage-diagnostics.md)）。
+
 MCP のツール名によるアクション種別の決定と引数のローカル拒否は `mcp.rs::call_tool` に置く。
 `tests/mcp_arguments.rs` は旧・新 MCP で種別上書き・余分な引数・不正な型と未知のツールを接続前に拒否し、
 ジャーナル・既存 Redo・後続の正当な編集の単一 Undo / Redo と再オープンを検査する

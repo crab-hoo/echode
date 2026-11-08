@@ -35,7 +35,7 @@
   未使用の計画受渡しと音声側へ届かない命令（FCA-11）は [ADR 0253](../decisions/0253-product-only-playback-commands.md) で削除した。
   手書き FFI（FCA-12）は [ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md) で既存バインディングへ移し、許可をシンボル単位にした。
   同梱音源のホスト依存（FCA-15）は [ADR 0266](../decisions/0266-host-independent-sine-pad-dsp.md) で分離した。
-  再生 ID 表（FCA-19）の先行分は [ADR 0267](../decisions/0267-current-playback-id-mappings.md)。Undo とジャーナルの予算は残る。
+  再生 ID 表（FCA-19）の先行分は [ADR 0267](../decisions/0267-current-playback-id-mappings.md)。Undo の段の使用量の診断は [ADR 0286](../decisions/0286-history-usage-diagnostics.md)。予算は残る。
 - [2026-11-03 コード全体の監査の実行指示](2026-11-03-fix-instructions.md): 上の監査の作業単位 W1〜W5、再現 4 件と `make spike-scale`、境界と完了条件。
 - [2026-11-02 コード品質とエージェント環境の横断監査](2026-11-02-cross-cutting-audit.md): XCA-01〜22。
   保存の同期の順序、ソースと CI の継続性、エージェントごとの防護、資料の量。

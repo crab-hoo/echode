@@ -60,6 +60,7 @@ impl ApiSession {
             "actions.transaction" => outcome(&id, transaction(&self.host, &params)),
             "edit.undo" => outcome(&id, undo(&self.host)),
             "edit.redo" => outcome(&id, redo(&self.host)),
+            "history.usage" => outcome(&id, usage(&self.host)),
             _ => error_response(Some(&id), -32601, "method not found", None),
         };
         respond(has_id, body)
@@ -187,6 +188,15 @@ fn undo(host: &DocumentHost) -> Result<Value, PerformError> {
 
 fn redo(host: &DocumentHost) -> Result<Value, PerformError> {
     host.redo().map(|()| json!({})).map_err(from_host)
+}
+
+/// What undo and redo keep in memory (ADR 0286). Byte counts are estimates.
+fn usage(host: &DocumentHost) -> Result<Value, PerformError> {
+    let usage = host.history_usage().map_err(from_host)?;
+    serde_json::to_value(usage).map_err(|error| PerformError::Rejected {
+        message: error.to_string(),
+        index: None,
+    })
 }
 
 fn parameter_error(error: serde_json::Error) -> PerformError {

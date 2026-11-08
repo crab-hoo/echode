@@ -394,6 +394,37 @@ fn audit_aud03_unknown_durability_stops_later_edits_until_recovery() {
 }
 
 #[test]
+fn history_usage_follows_undo_and_redo_and_answers_after_a_halt() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let host = DocumentHost::open(&directory).unwrap();
+    assert_eq!(host.history_usage().unwrap(), HistoryUsage::default());
+    for name in ["a", "b", "c"] {
+        host.perform(Command::AddTrack { name: name.into() })
+            .unwrap();
+    }
+    let edited = host.history_usage().unwrap();
+    host.undo().unwrap();
+    let usage = host.history_usage().unwrap();
+    assert_eq!((usage.undo_steps, usage.redo_steps), (2, 1));
+    // Undo moves its entry to the redo side; the journal keeps both.
+    assert_eq!(usage.journal_changes, edited.journal_changes);
+    // The redo version holds the track that undo removed.
+    assert_eq!(usage.versions.tracks, 1);
+
+    crate::document::fail_next_journal(host.directory(), JournalFault::Uncertain);
+    assert!(host.redo().is_err());
+    assert!(
+        host.perform(Command::AddTrack { name: "d".into() })
+            .is_err()
+    );
+    let halted = host.history_usage().unwrap();
+    assert_eq!(halted.undo_steps + halted.redo_steps, 3);
+    drop(host);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
 fn only_the_typed_durability_error_halts_later_edits() {
     // A path or an OS message can contain the same words (XCA-16).
     let mut halted = None;

@@ -291,7 +291,9 @@ Phase 2 で配置ごとの非破壊デバイスチェインを追加する（[AD
 モデルを変えるアクションは Rust 側（`echode-actions`）、UI だけのアクションは Swift 側に実装し、同じ登録簿に載せる。
 
 - **トランザクションと Undo**: 操作前のスナップショットを積み、未変更トラックは `Arc` で共有する。
-  連続ドラッグは 1 つの Undo 単位にまとめる（[ADR 0008](../decisions/0008-actions-undo-journal.md)）
+  連続ドラッグは 1 つの Undo 単位にまとめる（[ADR 0008](../decisions/0008-actions-undo-journal.md)）。
+  段数の上限はなく、段を捨てない。段だけが持つ分は、隣の版と同じ `Arc` でない物として `Session::usage` が数える。
+  ノートの編集は中身全体を写すので、大きなクリップの編集が段を最も重くする（[ADR 0286](../decisions/0286-history-usage-diagnostics.md)）
   外部音声の取込みもトランザクション内で PCM 保存と `audio.place` へ解決し、トラック追加と 1 回の Undo にできる
   （[ADR 0145](../decisions/0145-sample-browser-file-drops.md)）。
   PCM は一時の名前で同期して待たせ、編集が受理された時だけハッシュへ改名して索引とピークを作る。

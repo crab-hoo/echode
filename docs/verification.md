@@ -215,6 +215,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 - `spike-app`: 製品のアレンジとピアノロールを実表示し、メインスレッドの 0.5 秒の負荷中も描画することとアクセシビリティ ID を確認する（`target/spike-app.json`）。
 - `spike-playhead`: 専用 AppKit プローブ（`EchodePlayheadProbe`）で実ウィンドウのプレイヘッド移動・再生・一時停止・休止・破棄・文書交換を確認する（`target/spike-playhead.json`）。
 - `spike-history`: 大きい文書の保存・復元と、無関係なノートを増やしたゲイン差分の release 計測（[S4](spikes/S4-history.md)）。
+  Undo の段が持つメモリの場面ごとの推定も出す（[ADR 0286](decisions/0286-history-usage-diagnostics.md)）。
 - `spike-input`: 確認ウィンドウでピンチ・触覚・感圧を実機確認する（[S5](spikes/S5-input.md)）。
 - `spike-engine-smoke`: 現在の音声機器のレートで 1,000 ノードの処理を 10 秒確認する（`target/spike-s2-smoke.txt`）。
 - `spike-engine`: 明示実行用の 10 分計測（600 秒）と逆順イベント整列の release 計測（[S2](spikes/S2-engine.md)、[ADR 0096](decisions/0096-measurement-completion.md)）。途中停止・機器変更・中断は不合格とする。

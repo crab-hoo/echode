@@ -37,3 +37,4 @@ make spike-history
 2026-11-01 から、この入口は履歴の非既定の `spike` feature を明示する。
 製品の通常ビルドからの分離であり、上記の過去の計測値を新しい版での合格と扱わない
 （[ADR 0211](../decisions/0211-opt-in-history-spike.md)）。
+2026-11-09 から、製品の `Session` で Undo の段が持つメモリの推定も出す。値と場面は [ADR 0286](../decisions/0286-history-usage-diagnostics.md) にある。

@@ -241,6 +241,14 @@ ABI の値だけが違う場合は FFI の `snapshot_fields_tests.rs` と `Snaps
 これは経過時間の計測ではない。1 編集ごとの `File::sync_all`（macOS の `F_FULLFSYNC`）の待ちや、計画の全体再生成（FCA-04）とは分ける。
 完結した不正行は消さず、次の復旧の節で調べる。同期を省略したり、原本のジャーナルを手で短縮したりして応答を速めない。
 
+### 長い作業でメモリが増え続ける
+
+Undo と Redo は段ごとに編集前の版を持ち、段数の上限はない。まず履歴の分かを切り分ける。
+ヘッドレスでは JSON-RPC の `history.usage`（MCP は `echode.history.usage`）が、段数と、段だけが持つトラック・中身・ノートの件数と推定のバイト数を返す（[ADR 0286](../decisions/0286-history-usage-diagnostics.md)）。
+推定は割当器の丸めと値の中の文字列を含まないので、プロセスの使用量より小さい。GUI のアプリからはまだ読めない。
+ノートの編集は中身全体を写すので、大きなクリップを何度も直すと 1 段がその中身の大きさを持つ（1 万ノートで約 0.8 MB）。
+`make spike-history` の `measure_history_usage` が場面ごとの値を出す。段を捨てて減らさない。予算は R6 の残りで、古い段を Git の履歴へ移す方式に限る。
+
 ### 開き直すと確定済みの編集が消えている・古い状態で開く・開けない
 
 警告または C ABI の `historyReport.recovery` の `tip`・`base`・`applied_seq` で、先端からの後退を確認する。

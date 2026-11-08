@@ -43,6 +43,37 @@ fn the_catalog_lists_track_add() {
 }
 
 #[test]
+fn history_usage_reports_the_kept_steps_without_editing() {
+    let (_cleanup, session) = open_session();
+    for name in ["a", "b"] {
+        response(
+            &session,
+            &format!(
+                r#"{{"jsonrpc":"2.0","method":"actions.perform","params":{{"type":"track.add","name":"{name}"}},"id":"{name}"}}"#
+            ),
+        );
+    }
+    response(&session, r#"{"jsonrpc":"2.0","method":"edit.undo","id":3}"#);
+    let body = response(
+        &session,
+        r#"{"jsonrpc":"2.0","method":"history.usage","id":4}"#,
+    );
+    let usage = &body["result"];
+    assert_eq!(usage["undo_steps"], 1);
+    assert_eq!(usage["redo_steps"], 1);
+    assert_eq!(usage["versions"]["tracks"], 1);
+    assert!(usage["versions"]["bytes"].as_u64().unwrap() > 0);
+    assert!(usage["journal_changes"].as_u64().unwrap() > 0);
+    // Reading the usage is not an edit: redo still restores the undone track.
+    response(&session, r#"{"jsonrpc":"2.0","method":"edit.redo","id":5}"#);
+    let summary = response(
+        &session,
+        r#"{"jsonrpc":"2.0","method":"project.summary","id":6}"#,
+    );
+    assert_eq!(summary["result"]["tracks"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn performing_an_action_shows_up_in_the_summary() {
     let (_cleanup, session) = open_session();
     let added = response(

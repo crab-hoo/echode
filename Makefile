@@ -224,6 +224,7 @@ spike-arrange-query:
 spike-history:
 	cargo test -q --release -p echode-history --features spike --test roundtrip -- --include-ignored --test-threads=1
 	cargo test -q --release -p echode-model --lib a_gain_edit_stays_cheap_as_unrelated_notes_grow -- --ignored
+	cargo test -q --release -p echode-actions --test history_usage measure_history_usage -- --ignored --exact --nocapture
 
 # Trackpad pinch, haptics, and chord pressure. See docs/spikes/S5-input.md.
 spike-input:

@@ -8,8 +8,9 @@
 ## 15. 外部制御・API・AI
 
 - **JSON-RPC**: ユーザー本人だけが読み書きできる Unix ドメインソケットで 1 行 1 件の JSON-RPC 2.0 を提供する。
-  `actions.list`、`actions.perform`、`actions.transaction`、`edit.undo`、`edit.redo`、`project.summary`、`protocol.version` を受ける
-  （[ADR 0020](../decisions/0020-json-rpc.md)、[ADR 0034](../decisions/0034-api-transaction.md)）
+  `actions.list`、`actions.perform`、`actions.transaction`、`edit.undo`、`edit.redo`、`history.usage`、`project.summary`、`protocol.version` を受ける
+  （[ADR 0020](../decisions/0020-json-rpc.md)、[ADR 0034](../decisions/0034-api-transaction.md)）。
+  `history.usage` と MCP の `echode.history.usage` は、Undo・Redo の段数と段だけが持つメモリの推定を返す（[ADR 0286](../decisions/0286-history-usage-diagnostics.md)）
   要求の版・メソッド・ID・params の外枠を編集前に検証し、不正なら ID の省略時も `-32600` を返す。
   正しい通知だけ応答を省略し、不正な型の ID は null として返す
   （[ADR 0020 の後続修正](../decisions/0020-json-rpc.md#要求の外枠の検証2026-10-29)）。

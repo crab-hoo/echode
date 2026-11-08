@@ -1,10 +1,14 @@
 //! Undo stack and transactions.
 //!
 //! The undo stack keeps a project snapshot per committed group. There is no
-//! fixed depth: memory is the only limit. Unchanged tracks stay shared through
-//! the `Arc` inside `Project`.
+//! fixed depth: memory is the only limit, and [`Session::usage`] reports what
+//! history holds (ADR 0286). Unchanged tracks stay shared through the `Arc`
+//! inside `Project`.
 
-use echode_model::{ChangeSet, Project};
+use std::mem::size_of;
+
+use echode_model::{ChangeSet, Footprint, Project};
+use serde::Serialize;
 
 use crate::action::{Action, ActionError, Command};
 use crate::journal::JournalEntry;
@@ -28,6 +32,19 @@ pub fn replay(base: &Project, journal: &[JournalEntry]) -> Result<Project, Actio
         };
     }
     Ok(project)
+}
+
+/// What undo and redo keep in memory beyond the current project (FCA-19).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct HistoryUsage {
+    pub undo_steps: u64,
+    pub redo_steps: u64,
+    /// Tracks, contents and notes that only undo and redo versions hold.
+    pub versions: Footprint,
+    /// Change records the in-memory journal keeps for undo and redo.
+    pub journal_changes: u64,
+    /// Estimate of those journal entries; text and ID lists are not counted.
+    pub journal_bytes: u64,
 }
 
 /// The editable session: current project, undo, redo, and the journal that
@@ -59,6 +76,45 @@ impl Session {
     /// Edits that rebuild [`Self::project`] from the project passed to [`Self::open`].
     pub fn journal(&self) -> &[JournalEntry] {
         &self.journal
+    }
+
+    /// Estimates what undo and redo keep in memory.
+    ///
+    /// Each version counts what it does not share with its neighbor toward
+    /// the current project, so an object kept by several versions counts once.
+    /// Time is O(steps × (tracks + contents)); call it off the audio thread.
+    pub fn usage(&self) -> HistoryUsage {
+        let mut versions = Footprint::default();
+        let mut newer = &self.current;
+        for older in self.undo.iter().rev() {
+            versions += older.footprint_beyond(newer);
+            newer = older;
+        }
+        // Redo pushes the newest undone version last, next to `current`.
+        let mut older = &self.current;
+        for newer in self.redo.iter().rev() {
+            versions += newer.footprint_beyond(older);
+            older = newer;
+        }
+        let entries = self.journal.iter().chain(&self.journal_redo);
+        let mut journal_changes = 0u64;
+        let mut journal_bytes =
+            ((self.journal.len() + self.journal_redo.len()) * size_of::<JournalEntry>()) as u64;
+        for entry in entries {
+            let changes = entry.changes.as_ref();
+            journal_changes = journal_changes
+                .saturating_add(changes.map_or(0, |changes| changes.changes().len()) as u64);
+            let bytes = entry.actions.len() * size_of::<crate::Action>()
+                + changes.map_or(0, ChangeSet::estimated_bytes);
+            journal_bytes = journal_bytes.saturating_add(bytes as u64);
+        }
+        HistoryUsage {
+            undo_steps: self.undo.len() as u64,
+            redo_steps: self.redo.len() as u64,
+            versions,
+            journal_changes,
+            journal_bytes,
+        }
     }
 
     /// A command with an empty changeset succeeds without recording history.

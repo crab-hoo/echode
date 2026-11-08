@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use super::*;
 use crate::action::{Action, ActionError};
 use crate::journal::{decode, encode};
@@ -511,4 +513,90 @@ fn audit_rea07_a_refused_shared_edit_leaves_the_journal() {
     assert_eq!(session.project(), &before);
     assert_eq!(session.journal().len(), journal);
     assert!(session.project().check_invariants().is_ok());
+}
+
+/// One track with `notes` quarter notes, and nothing on the undo stack.
+fn session_with_notes(notes: i64) -> Session {
+    let (project, track) = Project::new().add_track("a");
+    let mut project = project;
+    for start in 0..notes {
+        project = project.insert_note(track, quarter(start)).unwrap().0;
+    }
+    Session::open(project)
+}
+
+fn set_velocity(session: &mut Session, index: usize, velocity: u8) {
+    let project = session.project();
+    let track = project.tracks()[0].id;
+    let clip = project.tracks()[0].clips[0].id;
+    let note = project.contents()[0].notes[index].id;
+    session
+        .perform(Command::SetNoteVelocity {
+            track,
+            clip,
+            note,
+            velocity,
+        })
+        .unwrap();
+}
+
+#[test]
+fn usage_counts_each_replaced_content_once_wherever_current_is() {
+    let notes = 64;
+    let mut session = session_with_notes(notes);
+    assert_eq!(session.usage(), HistoryUsage::default());
+    for step in 0..6 {
+        set_velocity(&mut session, step, 1 + step as u8);
+    }
+    let edited = session.usage();
+    assert_eq!((edited.undo_steps, edited.redo_steps), (6, 0));
+    // A velocity edit copies the whole content, so each step keeps all notes.
+    assert_eq!(edited.versions.contents, 6);
+    assert_eq!(edited.versions.notes, 6 * notes as u64);
+    assert_eq!(edited.versions.tracks, 0);
+    assert!(edited.versions.bytes >= 6 * notes as u64 * size_of::<echode_model::Note>() as u64);
+    assert_eq!(edited.journal_changes, 6);
+
+    // Moving `current` changes which version is live, not what the chain holds.
+    let total = |session: &Session| {
+        let mut sum = session.usage().versions;
+        sum += session.project().footprint();
+        sum
+    };
+    let whole = total(&session);
+    for _ in 0..4 {
+        session.undo().unwrap();
+        assert_eq!(total(&session), whole);
+    }
+    let undone = session.usage();
+    assert_eq!((undone.undo_steps, undone.redo_steps), (2, 4));
+    assert_eq!(undone.journal_changes, edited.journal_changes);
+    session.redo().unwrap();
+    assert_eq!(total(&session), whole);
+
+    // A new edit drops the redo branch, and its versions leave the count.
+    set_velocity(&mut session, 10, 99);
+    let branched = session.usage();
+    assert_eq!((branched.undo_steps, branched.redo_steps), (4, 0));
+    assert_eq!(branched.versions.contents, 4);
+}
+
+#[test]
+fn usage_of_a_track_edit_keeps_the_track_and_shares_the_notes() {
+    let mut session = session_with_notes(32);
+    session
+        .perform(Command::AddTrack { name: "b".into() })
+        .unwrap();
+    // The first parameter of the first track's mixer is its gain.
+    let gain = session.project().tracks()[0].devices[0].parameters[0].id;
+    session
+        .perform(Command::SetParameter {
+            parameter: gain,
+            value: 0.5,
+        })
+        .unwrap();
+    let usage = session.usage();
+    assert_eq!(usage.undo_steps, 2);
+    assert_eq!(usage.versions.tracks, 1);
+    assert_eq!((usage.versions.contents, usage.versions.notes), (0, 0));
 }

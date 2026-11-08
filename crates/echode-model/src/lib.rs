@@ -43,6 +43,7 @@ mod content_fields;
 mod device;
 mod device_fields;
 mod duplicate;
+mod footprint;
 mod hierarchy;
 mod id;
 mod invariants;
@@ -65,6 +66,7 @@ pub use device::{
     Device, DeviceKind, GAIN_MAX, MixerIds, PAN_MAX, PAN_MIN, ParamKey, Parameter, test_mixer,
     valid_plugin_id,
 };
+pub use footprint::Footprint;
 pub use id::Id;
 pub use invariants::InvariantError;
 pub use model::{
