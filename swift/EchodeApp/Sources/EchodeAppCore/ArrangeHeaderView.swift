@@ -23,6 +23,8 @@ final class ArrangeHeaderView: NSView {
     var onOpenFX: ((UUID) -> Void)?
     var onOpenPlugin: ((UUID, UUID) -> Void)?
     var pluginNames: [String: String] = [:]
+    /// Auto-muted tracks and why. VoiceOver hears them as muted, with the reason.
+    var autoMutes: [UUID: String] = [:]
     func headerDevices(on track: UUID) -> [TrackDevice] { snapshot?.devices(on: track) ?? [] }
     var onToggleFolder: ((UUID) -> Void)?
     var onDropFX: ((UUID, TrackFXDrop) -> Void)?
@@ -276,6 +278,10 @@ final class ArrangeHeaderView: NSView {
                     control.setAccessibilityValue(NSNumber(value: shown))
                     if let spoken = MixScale.spokenValue(field, shown) {
                         control.setAccessibilityValueDescription(spoken)
+                    }
+                    if field == .mute, let reason = autoMutes[id] {
+                        control.setAccessibilityValue(NSNumber(value: 1))
+                        control.setAccessibilityValueDescription(reason)
                     }
                     control.setAccessibilityMinValue(NSNumber(value: field == .pan ? ModelLimits.pan.lowerBound : ModelLimits.gain.lowerBound))
                     control.setAccessibilityMaxValue(NSNumber(value: field == .gain ? ModelLimits.gain.upperBound : ModelLimits.pan.upperBound))

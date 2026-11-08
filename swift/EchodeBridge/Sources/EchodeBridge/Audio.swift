@@ -31,9 +31,14 @@ public struct AudioState: Decodable, Sendable, Equatable {
     public let metronome: Bool
     /// The sample audition beside the project output, when one was ever requested.
     public let audition: AuditionStatus?
+    /// Tracks the output muted by itself because a plugin returned a NaN or an
+    /// infinity. Not the tracks' own mute: starting playback clears it (ADR 0282).
+    public let autoMutedTracks: [TrackAutoMute]
+    /// The output muted the master because it ran past +18 dBFS (ADR 0282).
+    public let masterAutoMute: MasterAutoMute?
     public init() {
         playing = false; running = false; opening = false; tick = 0; start = 0; paused = false; selectedUID = nil; activeDevice = nil; devices = []; error = nil
-        loopStart = nil; loopEnd = nil; metronome = false; audition = nil
+        loopStart = nil; loopEnd = nil; metronome = false; audition = nil; autoMutedTracks = []; masterAutoMute = nil
     }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -52,11 +57,35 @@ public struct AudioState: Decodable, Sendable, Equatable {
         loopEnd = try container.decodeIfPresent(Int64.self, forKey: .loopEnd)
         metronome = try container.decode(Bool.self, forKey: .metronome)
         audition = try container.decodeIfPresent(AuditionStatus.self, forKey: .audition)
+        // Stand-in replies written before automatic mutes were reported omit these.
+        autoMutedTracks = try container.decodeIfPresent([TrackAutoMute].self, forKey: .autoMutedTracks) ?? []
+        masterAutoMute = try container.decodeIfPresent(MasterAutoMute.self, forKey: .masterAutoMute)
     }
     enum CodingKeys: String, CodingKey {
         case playing, running, opening, tick, start, paused, devices, error, metronome, audition, selectedUID = "selected_uid", activeDevice = "active_device"
         case loopStart = "loop_start", loopEnd = "loop_end"
+        case autoMutedTracks = "auto_muted_tracks", masterAutoMute = "master_auto_mute"
     }
+}
+
+/// Why the output muted one track by itself (ADR 0282).
+public struct TrackAutoMute: Decodable, Sendable, Equatable {
+    public let track: UUID
+    /// The device that returned the NaN or infinity.
+    public let device: UUID
+    /// The project sample of the first such value.
+    public let sample: Int64
+    public init(track: UUID, device: UUID, sample: Int64) {
+        self.track = track; self.device = device; self.sample = sample
+    }
+}
+
+/// Why the output muted the master by itself (ADR 0282).
+public struct MasterAutoMute: Decodable, Sendable, Equatable {
+    /// The first amplitude past the guard; `nil` for a NaN.
+    public let peak: Float?
+    public let sample: Int64
+    public init(peak: Float?, sample: Int64) { self.peak = peak; self.sample = sample }
 }
 
 /// The newest audition request and what became of it.

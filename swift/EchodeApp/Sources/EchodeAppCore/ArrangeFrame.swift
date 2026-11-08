@@ -15,6 +15,8 @@ struct ArrangeHeaderInput: Sendable, Equatable {
     var selectedTracks: Set<UUID>? = nil
     var collapsedTracks: Set<UUID> = []
     var pluginNames: [String: String] = [:]
+    /// Lit like a mute, though not the track's own (ADR 0282).
+    var autoMuted: Set<UUID> = []
 }
 
 struct ArrangeHeaderRow: Sendable {
@@ -152,7 +154,8 @@ struct ArrangeFrame: Sendable {
                 func add(_ rect: CGRect, _ color: SIMD4<Float>) {
                     instances.append(Instance(rect: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)) * Float(input.scale), color: color))
                 }
-                add(layout.mute, mix.mute.value != 0 ? SIMD4(0.75, 0.25, 0.20, 1) : palette.separator)
+                let muted = mix.mute.value != 0 || header.autoMuted.contains(row.id)
+                add(layout.mute, muted ? SIMD4(0.75, 0.25, 0.20, 1) : palette.separator)
                 add(layout.solo, mix.solo.value != 0 ? SIMD4(0.70, 0.55, 0.13, 1) : palette.separator)
                 let preview = input.faderPreview?.values(on: row.id)
                 for (rect, value) in [(layout.gain, MixScale.position(preview?.gain ?? mix.gain.value)),

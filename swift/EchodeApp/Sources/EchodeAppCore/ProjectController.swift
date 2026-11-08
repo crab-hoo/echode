@@ -255,6 +255,39 @@ public final class ProjectController {
         }
     }
 
+    /// Why each auto-muted track is silent, for its mute control (ADR 0282).
+    var autoMuteReasons: [UUID: String] {
+        var reasons: [UUID: String] = [:]
+        for mute in audio.autoMutedTracks where reasons[mute.track] == nil {
+            reasons[mute.track] = String(format: text("Auto-Mute Reason"), autoMutedPlugin(mute))
+        }
+        return reasons
+    }
+
+    /// One calm line beside the transport while the output muted something by
+    /// itself. No alert: playback goes on, and starting it again unmutes.
+    var autoMuteNotice: String? {
+        if let master = audio.masterAutoMute {
+            let level = master.peak.map { String(format: "%+.1f dBFS", 20 * log10(Double($0))) } ?? "NaN"
+            return String(format: text("Master Auto-Muted"), level)
+        }
+        guard let first = audio.autoMutedTracks.first else { return nil }
+        if audio.autoMutedTracks.count > 1 {
+            return String(format: text("Tracks Auto-Muted"), audio.autoMutedTracks.count)
+        }
+        return String(format: text("Track Auto-Muted"), autoMutedTrackName(first.track), autoMutedPlugin(first))
+    }
+
+    private func autoMutedPlugin(_ mute: TrackAutoMute) -> String {
+        deviceRows(on: mute.track).first { $0.id == mute.device }?.title ?? text("Unknown Plugin")
+    }
+
+    private func autoMutedTrackName(_ id: UUID) -> String {
+        guard let snapshot else { return "" }
+        return (0..<snapshot.trackCount).first { snapshot.trackID(at: $0) == id }
+            .flatMap { snapshot.trackName(at: $0) } ?? ""
+    }
+
     func rememberPluginNames(_ listings: [PluginListing]) {
         for plugin in listings where !plugin.name.isEmpty { pluginNames[plugin.id] = plugin.name }
         pluginNamesLoaded = true

@@ -118,6 +118,7 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   現在の窓の終端と複製終端を整数で検査し、拍へ丸めず、複製側を選択する。
   入力欄・他ペイン・未確定ジェスチャー・文書交換中・キーの自動反復は対象外とする
   （[ADR 0188](../decisions/0188-arrange-adjacent-clip-duplication.md)）。
+- **自動ミュートの表示**: `AudioState` の自動ミュートを、ヘッダのミュートの点灯と VoiceOver の理由、トランスポートの横の 1 行で示す。警告にはしない（[ADR 0282](../decisions/0282-plugin-nan-and-master-auto-mute.md)）。
 - **選択トラックのミュート・ソロ**: ヘッダとインスペクターは `arrangeMixActions` を共有し、操作時の文書・トラック ID 群を捕捉する。
   ヘッダの反転は待ち列で順序を保ち、編集の手番の現行値から決める。インスペクターの絶対値は no-op で履歴を変えない。
   `MixerSwitchBatch` が既存の `param.set` 配列を単一 Undo・保存へ渡し、選択外のソロを保つ。

@@ -41,6 +41,9 @@ struct WorkspaceTransportView: View {
                 Label(WorkspaceCommand.followPlayhead.title, systemImage: WorkspaceCommand.followPlayhead.icon)
             }.toggleStyle(.button).accessibilityIdentifier("transport.follow")
             Spacer()
+            if let notice = controller.autoMuteNotice {
+                Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(notice)
+            }
             Text(controller.audio.activeDevice?.name ?? text("System Output")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }.disabled(controller.transportLocked)
             .padding(.horizontal, 12).padding(.vertical, 8)

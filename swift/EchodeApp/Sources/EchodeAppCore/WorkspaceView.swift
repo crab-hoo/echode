@@ -105,7 +105,7 @@ public struct WorkspaceView: View {
                               }, onDuplicateTracks: { _ = session.duplicateTracks() }, onOpenPlugin: { _, device in
                                   guard let document = controller.documentID else { return }
                                   Task { _ = await controller.openPluginWindow(device, documentID: document) }
-                              }, pluginNames: controller.pluginNames, onDropAudio: { session.importDroppedAudio($0) != nil },
+                              }, pluginNames: controller.pluginNames, autoMutes: controller.autoMuteReasons, onDropAudio: { session.importDroppedAudio($0) != nil },
                               onMoveClip: { _ = session.moveClip($0) },
                               start: controller.playbackStart, loop: controller.rulerLoop, busy: controller.transportLocked,
                               onSetStart: setStart, onSetLoop: setLoop,

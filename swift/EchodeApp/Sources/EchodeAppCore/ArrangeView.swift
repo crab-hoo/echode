@@ -19,6 +19,8 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var onOpenFX: ((UUID) -> Void)?
     public var onOpenPlugin: ((UUID, UUID) -> Void)?
     public var pluginNames: [String: String] = [:]
+    /// Auto-muted tracks and why, drawn and spoken like a mute (ADR 0282).
+    public var autoMutes: [UUID: String] = [:]
     public var onDropFX: ((UUID, TrackFXDrop) -> Void)?
     public var selectedTracks: Set<UUID>?
     public var onSelectTrack: ((UUID, TrackSelectionChange) -> Void)?
@@ -36,7 +38,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
     public var onManualScroll: (() -> Void)?
 
     public init(snapshot: Snapshot, selection: Binding<UUID?>, playback: PlaybackFeed? = nil, transportGeneration: UInt64 = 0, navigation: CanvasNavigationState? = nil, documentID: DocumentID? = nil, selectedClip: UUID? = nil, faderPreview: FaderPreview? = nil, mixActions: MixActions? = nil, onSelectClip: ((UUID?) -> Void)? = nil, onClipEdit: ((ClipMixEdit) -> Void)? = nil, onOpenFX: ((UUID) -> Void)? = nil, onDropFX: ((UUID, TrackFXDrop) -> Void)? = nil, selectedTracks: Set<UUID>? = nil, onSelectTrack: ((UUID, TrackSelectionChange) -> Void)? = nil,
-                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil, onMoveClip: ((ClipMove) -> Void)? = nil,
+                collapsedTracks: Set<UUID> = [], onFolderDisclosure: ((UUID, Bool) -> Void)? = nil, onDuplicateTracks: (() -> Void)? = nil, onOpenPlugin: ((UUID, UUID) -> Void)? = nil, pluginNames: [String: String] = [:], autoMutes: [UUID: String] = [:], onDropAudio: ((AudioFileDrop) -> Bool)? = nil, onMoveClip: ((ClipMove) -> Void)? = nil,
                 start: Int64? = nil, loop: RulerLoop? = nil, busy: Bool = false,
                 onSetStart: ((Int64) -> Void)? = nil, onSetLoop: ((LoopRange) -> Void)? = nil,
                 followsPlayhead: Bool = false, onManualScroll: (() -> Void)? = nil, onOpenPiano: ((UUID, Int64) -> Void)? = nil) {
@@ -57,6 +59,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         self.onDuplicateTracks = onDuplicateTracks
         self.onOpenPlugin = onOpenPlugin
         self.pluginNames = pluginNames
+        self.autoMutes = autoMutes
         self.onDropAudio = onDropAudio
         self.onMoveClip = onMoveClip
         self.start = start; self.loop = loop; self.busy = busy
@@ -79,6 +82,7 @@ public struct ArrangeCanvas: NSViewRepresentable {
         view.onOpenFX = onOpenFX
         view.onOpenPlugin = onOpenPlugin
         view.pluginNames = pluginNames
+        view.autoMutes = autoMutes
         view.onDropFX = onDropFX
         view.onFolderDisclosure = onFolderDisclosure
         view.onDuplicateTracks = onDuplicateTracks

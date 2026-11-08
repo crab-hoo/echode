@@ -37,6 +37,12 @@ public final class ArrangePaneView: NSView {
             headers.pluginNames = pluginNames; updateViewport()
         }
     }
+    var autoMutes: [UUID: String] = [:] {
+        didSet {
+            guard oldValue != autoMutes else { return }
+            headers.autoMutes = autoMutes; updateViewport()
+        }
+    }
     var onDropFX: ((UUID, TrackFXDrop) -> Void)? { didSet { headers.onDropFX = onDropFX } }
     var onDuplicateTracks: (() -> Void)? { didSet { headers.onDuplicateTracks = onDuplicateTracks } }
     var onFolderDisclosure: ((UUID, Bool) -> Void)?
@@ -218,7 +224,7 @@ public final class ArrangePaneView: NSView {
             palette.selectedForeground = rgba(.alternateSelectedControlTextColor)
             palette.separator = rgba(.separatorColor)
         }
-        timeline.setViewport(display, header: ArrangeHeaderInput(width: constrainedHeaderWidth(headerWidth), palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames))
+        timeline.setViewport(display, header: ArrangeHeaderInput(width: constrainedHeaderWidth(headerWidth), palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames, autoMuted: Set(autoMutes.keys)))
         if bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument) == true {
             navigation?.arrange = camera; navigation?.headerWidth = headerWidth
         }
