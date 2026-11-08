@@ -112,6 +112,11 @@ ID 重複の線形探索と、毎回全配置から作る参照集合は残る�
 `Project::edit_note_in_contents` が追加済みの内容配列を消費することを確認し、中間スナップショットを経由した再共有を調べる。
 この計数は内容全体の複写だけであり、結合・作業用ノート列・ID 探索・保存や実画面の時間とは区別する。
 
+位置・音高の同じ値の再設定や欠けた対象で複写する場合は、`cargo test -q -p echode-model model_scale_tests::note_edit` の内容・ノートの複写数を調べる。
+`placement::edit` は借用で対象を確認し、値が変わる時だけ内容を複製する。同じ幾何でも再適合・結合は必要で、早期 return で省略しない。
+複製ノートの順序違反は `model_scale_tests::note_duplicate::identical_geometry_duplication_still_sorts_the_new_note` で切り分ける。
+追加済みの未共有内容は幾何が同じでも整列する必要があり、公開済みの共有内容と区別する。
+
 ### トラック追加が既存ノート数に応じて遅くなる
 
 `model_scale_tests::track_insert` は末尾・子・指定位置への追加で、既存ノートの ID 訪問数と全体走査の回数を数える。

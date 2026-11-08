@@ -196,6 +196,10 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 単体テスト専用の `Content::clone` は項目表から同じフィールドを複写し、製品ビルドは従来の導出実装を保つ。
 結合しない固定・自動配置と別トラックの固定リンクで、内容は一度だけ複写し、窓の拡張・原点・正逆適用を保つ。
 
+幾何編集の内容複写は `model_note_edit_tests.rs`（`model_scale_tests::note_edit`）で、同値と欠けた対象を 0 回、結合しない値変更を 1 回に制限する。
+別原点の固定リンク・強弱・窓と正逆適用、同じ幾何でも自動配置の再適合と結合が残ることを検査する。
+`model_scale_tests::note_duplicate` は同じ幾何で追加したノートの整列も検査し、コピー回避で新規ノートの順序を壊さないことを確認する。
+
 中身の音声参照・テイク ID 列の表は `echode-model/src/content_fields.rs`、独立したメタデータ・ID 列と順序の回帰は
 履歴の `tests/content_changesets.rs` に置く。ノートの単一差分・全 ID 列、旧 null 音声・`Lane` の無変更互換、子の解決も検査する。
 操作列は共有ノート・音声参照・空でないテイク列からも始める。音声・プラグイン・機器は開かない

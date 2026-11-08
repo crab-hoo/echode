@@ -753,3 +753,6 @@ mod note_velocity;
 
 #[path = "model_note_duplicate_tests.rs"]
 mod note_duplicate;
+
+#[path = "model_note_edit_tests.rs"]
+mod note_edit;

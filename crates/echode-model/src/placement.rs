@@ -172,21 +172,33 @@ pub(super) fn edit(
     local
         .checked_add(geometry.length.get())
         .ok_or(ModelError::InvalidNote)?;
-    let content = content_mut(contents, owner)?;
-    let note = content
+    let content_index =
+        crate::model::content_index(contents, owner).ok_or(ModelError::MissingClip)?;
+    let content = &contents[content_index];
+    let note_index = content
         .notes
-        .iter_mut()
-        .find(|note| {
+        .iter()
+        .position(|note| {
             #[cfg(test)]
             crate::model_scale_tests::note_lookup();
             note.id == note_id
         })
         .ok_or(ModelError::MissingNote)?;
+    let note = &content.notes[note_index];
     let time_changed = note.start.get() != local || note.length != geometry.length;
-    note.pitch = geometry.pitch;
-    note.start = Tick::new(local);
-    note.length = geometry.length;
-    crate::model::sort_notes(&mut content.notes);
+    if time_changed || note.pitch != geometry.pitch {
+        let content = Arc::make_mut(&mut contents[content_index]);
+        let note = &mut content.notes[note_index];
+        note.pitch = geometry.pitch;
+        note.start = Tick::new(local);
+        note.length = geometry.length;
+    }
+    // Shared unchanged contents are already sorted. Duplication can instead
+    // pass an unshared content with a newly appended note of the same geometry.
+    if let Some(content) = Arc::get_mut(&mut contents[content_index]) {
+        crate::model::sort_notes(&mut content.notes);
+    }
+    // Even unchanged geometry can refit and merge adjacent auto placements.
     let owner = refit_auto(contents, tracks, track, owner, bar)?;
     if time_changed && grow_window {
         grow_edited_window(&mut track.clips, clip_id, geometry)?;

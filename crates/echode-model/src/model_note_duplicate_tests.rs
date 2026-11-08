@@ -7,7 +7,7 @@ use std::sync::Arc;
 const COPY: Id = Id::from_raw(1_000_000);
 const MISSING: Id = Id::from_raw(1_000_001);
 
-fn linked_fixture(notes: usize, kind: ClipKind) -> Project {
+pub(super) fn linked_fixture(notes: usize, kind: ClipKind) -> Project {
     let template = fixture(2);
     let bar = template.meter().bar_ticks().unwrap().get();
     let mut contents: Vec<_> = template
@@ -198,4 +198,51 @@ fn duplication_still_rejects_invalid_targets_without_changing_the_source() {
         assert_eq!(project, original);
     }
     project.check_invariants().unwrap();
+}
+
+#[test]
+fn identical_geometry_duplication_still_sorts_the_new_note() {
+    for count in [1, 64, 256] {
+        for kind in [ClipKind::Fixed, ClipKind::Auto] {
+            let project = linked_fixture(count, kind);
+            let content = &project.contents()[0];
+            for track in project.tracks() {
+                let clip = &track.clips[0];
+                for source in [&content.notes[0], content.notes.last().unwrap()] {
+                    let (after, work) = measured(|| {
+                        project
+                            .duplicate_note(
+                                track.id,
+                                clip.id,
+                                source.id,
+                                COPY,
+                                source.pitch,
+                                clip.sounding_start(source).unwrap(),
+                            )
+                            .unwrap()
+                    });
+                    let mut expected = Content::clone(content);
+                    let mut copied = source.clone();
+                    copied.id = COPY;
+                    expected.notes.push(copied);
+                    crate::model::sort_notes(&mut expected.notes);
+                    assert_eq!(
+                        after.content(content.id),
+                        Some(&expected),
+                        "identical geometry duplication must sort the appended note"
+                    );
+                    assert_eq!(work.content_copies, 1);
+                    assert_eq!(work.content_note_copies, count);
+                    after.check_invariants().unwrap();
+                    let changes = project.diff(&after);
+                    assert_eq!(project.apply_changeset(&changes), Ok(after.clone()));
+                    assert_eq!(
+                        after.apply_changeset(&changes.invert()),
+                        Ok(project.clone())
+                    );
+                }
+            }
+            project.check_invariants().unwrap();
+        }
+    }
 }
