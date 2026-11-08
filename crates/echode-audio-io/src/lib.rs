@@ -5,6 +5,7 @@ mod activity;
 mod audition;
 mod clips;
 mod hardware;
+mod io_cycle;
 mod opening;
 mod panic_log;
 mod session;

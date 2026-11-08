@@ -68,6 +68,7 @@
 | UC-15 | 一覧のクリックの遅れとフォーカスが直った | 画面 | [ADR 0143](decisions/0143-browser-click-and-audition-timing.md) | 2026-10-22 |
 | UC-16 | 試聴と曲の再生の 2 つの IOProc の加算、機器の切替時の挙動 | 実機・聴感 | [ADR 0135](decisions/0135-sample-audition.md) | 2026-10-21 |
 | UC-41 | 長い素材を全部読む前に試聴が始まり、読込み中は部分の波形が出る | 実機・聴感・画面 | [ADR 0151](decisions/0151-streaming-sample-audition.md) | 2026-10-24 |
+| UC-64 | プラグインの重い曲を小さいバッファ（64 フレーム以下）で再生しながら試聴し、曲も試聴も途切れず、取りこぼしの減衰が以前より増えない。自動検査は HAL の実際の書込み時間と同じ機器の 2 つの IOProc の順番を測れない | 実機・聴感 | [ADR 0283](decisions/0283-output-time-callback-deadline.md) | 2026-11-08 |
 | UC-42 | ブラウザ表示中の試聴出力の保持、音量、自動試聴の切替、右矢印と波形クリックでの試聴の開始時間 | 実機・聴感・画面 | [ADR 0152](decisions/0152-browser-audition-controls.md) | 2026-10-24 |
 
 ## E. トランスポートと再生

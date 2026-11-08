@@ -58,7 +58,7 @@ pub use playback::{
     PlaybackStatus, playback,
 };
 pub use plugin_declick::PluginDeclick;
-pub use plugins::{PluginRoute, PluginWorkgroup};
+pub use plugins::{PluginRoute, PluginWorkgroup, block_duration};
 pub use realtime::ForbidAlloc;
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;

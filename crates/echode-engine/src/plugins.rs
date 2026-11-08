@@ -1341,7 +1341,7 @@ impl HostGraph {
 }
 
 /// How long one block of `frames` lasts at `sample_rate`.
-pub(crate) fn block_duration(frames: usize, sample_rate: u32) -> Duration {
+pub fn block_duration(frames: usize, sample_rate: u32) -> Duration {
     if sample_rate == 0 || frames == 0 {
         return Duration::ZERO;
     }

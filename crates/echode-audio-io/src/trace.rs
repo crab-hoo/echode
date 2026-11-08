@@ -19,6 +19,8 @@ pub(crate) struct Block {
     pub elapsed_ns: u64,
     pub render_ns: u64,
     pub output_host_time: u64,
+    /// The block's deadline after entry (ADR 0283); 0 for a block left silent.
+    pub deadline_ns: u64,
     pub transport_revision: u64,
     pub output_revision: u64,
     pub authorized: bool,

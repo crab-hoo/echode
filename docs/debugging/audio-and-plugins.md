@@ -453,6 +453,7 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 この故障はテスト専用であり、実機を開かず過去の期限を渡す。`process reached` / `process release` の失敗はソケットの到達・解放を調べる。
 計画交換の後だけ段差が出る時は `Prepared::carry` の `plugin_declick` の引継ぎ、左右が変わる時は失敗した段でなく最終段のバス形を確認する。
 復帰後も失敗回数が増えるなら補間の問題ではなく、ヘルパーの終了・保留・再起動要求を切り分ける。
+ヘルパーが遅くないのに小さいバッファでだけ取りこぼすなら、停止の診断の `deadline_ns` を見る。入口の遅れと機器の安全余白（`OutputDevice::safety_frames`）で待ちが縮む（[ADR 0283](../decisions/0283-output-time-callback-deadline.md)）。
 `block_size/plugin_deadline.rs` は途中の反転と連続失敗を標本数で照合する。実機の聴感は UC-50 に残す
 （[ADR 0245](../decisions/0245-plugin-deadline-fades.md)）。
 

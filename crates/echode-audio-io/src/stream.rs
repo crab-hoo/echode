@@ -13,7 +13,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use echode_engine::{
     ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions,
@@ -22,8 +22,9 @@ use echode_engine::{
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
-use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp};
+use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp, AudioTimeStampFlags};
 
+use crate::io_cycle::{IoCycle, host_now};
 use crate::panic_log::CallbackPanic;
 use crate::{OutputDevice, TransportCancellation, hardware};
 
@@ -44,8 +45,8 @@ struct Callback {
     callbacks: AtomicU64,
     trace: UnsafeCell<Option<crate::trace::Writer>>,
     channels: u32,
-    /// Prepared output rate. The callback does not ask the device.
-    sample_rate: u32,
+    /// Prepared output rate and safety offset. The callback does not ask the device.
+    cycle: IoCycle,
     silent: bool,
     hardware_epoch: Arc<AtomicU64>,
     observed_epoch: AtomicU64,
@@ -315,7 +316,7 @@ impl OutputStream {
             callbacks: AtomicU64::new(0),
             trace: UnsafeCell::new(trace),
             channels: device.channels,
-            sample_rate: device.sample_rate,
+            cycle: IoCycle::new(device.sample_rate, device.safety_frames),
             silent: start.silent,
             hardware_epoch: start.hardware_epoch,
             observed_epoch: AtomicU64::new(start.observed_epoch),
@@ -682,18 +683,6 @@ fn routes_with_states(
     Ok(routes)
 }
 
-fn block_budget(frames: usize, sample_rate: u32) -> Duration {
-    if sample_rate == 0 || frames == 0 {
-        return Duration::ZERO;
-    }
-    Duration::from_nanos(
-        u64::try_from(frames)
-            .unwrap_or(u64::MAX)
-            .saturating_mul(1_000_000_000)
-            / u64::from(sample_rate),
-    )
-}
-
 /// The exact preparation used before HAL registers its callback. Keeping it
 /// separate lets tests hold the first callback without an audio device.
 #[cfg(test)]
@@ -799,9 +788,22 @@ unsafe extern "C-unwind" fn render(
     output_time: NonNull<AudioTimeStamp>,
     context: *mut c_void,
 ) -> i32 {
-    let entered = Instant::now();
+    // Read the host clock after `Instant`, so mapping the output time onto
+    // the instant can only end the block earlier.
+    let at = Instant::now();
+    let host = host_now();
     let Some(callback) = (unsafe { context.cast::<Callback>().as_ref() }) else {
         return 0;
+    };
+    // SAFETY: HAL passes a valid output time for this call.
+    let time = unsafe { output_time.as_ref() };
+    let entry = Entry {
+        at,
+        host,
+        output_host: time
+            .mFlags
+            .contains(AudioTimeStampFlags::HostTimeValid)
+            .then_some(time.mHostTime),
     };
     // SAFETY: HAL supplies the entire flexible buffer array, not merely the
     // one-element prefix represented in the SDK struct.
@@ -809,28 +811,45 @@ unsafe extern "C-unwind" fn render(
     let count = unsafe { (*list).mNumberBuffers } as usize;
     let pointer = unsafe { std::ptr::addr_of_mut!((*list).mBuffers).cast::<AudioBuffer>() };
     let buffers = unsafe { std::slice::from_raw_parts_mut(pointer, count) };
-    unsafe { block(callback, buffers, entered, output_time.as_ref().mHostTime) };
+    unsafe { block(callback, buffers, entry) };
     0
+}
+
+/// When HAL entered this block, and its output time.
+#[derive(Clone, Copy)]
+struct Entry {
+    at: Instant,
+    /// The host clock at `at`, in HAL's time stamp units.
+    host: u64,
+    /// When the device reaches this block, or `None` when HAL marked it invalid.
+    output_host: Option<u64>,
+}
+
+impl Entry {
+    /// An entry without an output time, as owned test buffers have.
+    #[cfg(test)]
+    fn untimed(at: Instant) -> Self {
+        Self {
+            at,
+            host: 0,
+            output_host: None,
+        }
+    }
 }
 
 /// This function also runs with owned test buffers; no HAL calls occur here.
 #[cfg(test)]
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 unsafe fn fill(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instant) {
-    unsafe { block(callback, buffers, entered, 0) };
+    unsafe { block(callback, buffers, Entry::untimed(entered)) };
 }
 
 /// One HAL block. A panic in its body leaves this and every later block
 /// silent, and the control thread reports it (ADR 0238).
-unsafe fn block(
-    callback: &Callback,
-    buffers: &mut [AudioBuffer],
-    entered: Instant,
-    host_time: u64,
-) {
+unsafe fn block(callback: &Callback, buffers: &mut [AudioBuffer], entry: Entry) {
     let finished = callback
         .panic
-        .run(|| unsafe { fill_with_time(callback, buffers, entered, host_time) });
+        .run(|| unsafe { fill_with_time(callback, buffers, entry) });
     if !finished {
         callback.failed.store(true, Ordering::Release);
         // SAFETY: the same buffers the body was given; it may have written part of them.
@@ -839,15 +858,11 @@ unsafe fn block(
 }
 
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
-unsafe fn fill_with_time(
-    callback: &Callback,
-    buffers: &mut [AudioBuffer],
-    entered: Instant,
-    host_time: u64,
-) {
+unsafe fn fill_with_time(callback: &Callback, buffers: &mut [AudioBuffer], entry: Entry) {
     let _guard = ForbidAlloc::enter();
+    let entered = entry.at;
     let was_live = unsafe { &*callback.render.get() }.player.has_live_output();
-    unsafe { fill_inner(callback, buffers, entered) };
+    let deadline = unsafe { fill_inner(callback, buffers, entry) };
     let Some(trace) = (unsafe { &mut *callback.trace.get() }).as_mut() else {
         return;
     };
@@ -860,7 +875,13 @@ unsafe fn fill_with_time(
             frames: frames.unwrap_or(0),
             sample: state.player.current_sample(),
             render_ns: entered.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
-            output_host_time: host_time,
+            output_host_time: entry.output_host.unwrap_or(0),
+            deadline_ns: deadline.map_or(0, |deadline| {
+                deadline
+                    .saturating_duration_since(entered)
+                    .as_nanos()
+                    .min(u128::from(u64::MAX)) as u64
+            }),
             transport_revision: revision,
             output_revision: state.player.output_revision(),
             authorized,
@@ -1012,32 +1033,38 @@ pub(crate) unsafe fn write_planes(
     }
 }
 
-unsafe fn fill_inner(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instant) {
+/// Renders one block and returns the deadline it gave the player, or `None`
+/// when the block was left silent before rendering.
+unsafe fn fill_inner(
+    callback: &Callback,
+    buffers: &mut [AudioBuffer],
+    entry: Entry,
+) -> Option<Instant> {
     let (frames, valid) = unsafe { clear_buffers(buffers) };
     // Notifications never query HAL here. Leave bytes zeroed and hold the
     // clock until the control thread has checked the notified configuration.
     if callback.hardware_epoch.load(Ordering::Acquire)
         != callback.observed_epoch.load(Ordering::Acquire)
     {
-        return;
+        return None;
     }
-    let Some(frames) = frames else {
-        return;
-    };
+    let frames = frames?;
     if frames == 0 {
-        return;
+        return None;
     }
     let state = unsafe { &mut *callback.render.get() };
     let (Some(left), Some(right)) = (state.left.get_mut(..frames), state.right.get_mut(..frames))
     else {
         callback.failed.store(true, Ordering::Release);
-        return;
+        return None;
     };
     if !valid {
         callback.failed.store(true, Ordering::Release);
-        return;
+        return None;
     }
-    let deadline = entered + block_budget(frames, callback.sample_rate);
+    let deadline = callback
+        .cycle
+        .deadline(entry.at, entry.host, entry.output_host, frames);
     let revision = callback.transport_revision.load(Ordering::Acquire);
     let enabled = callback.cancellation.is_current(revision);
     let had_output = state.player.has_live_output();
@@ -1064,10 +1091,10 @@ unsafe fn fill_inner(callback: &Callback, buffers: &mut [AudioBuffer], entered: 
     state.declick.process(left, right, changed);
     state.output_revision = output_revision;
     state.enabled = effective;
-    if callback.silent {
-        return;
+    if !callback.silent {
+        unsafe { write_planes(buffers, left, right, callback.channels == 1) };
     }
-    unsafe { write_planes(buffers, left, right, callback.channels == 1) };
+    Some(deadline)
 }
 
 #[cfg(test)]

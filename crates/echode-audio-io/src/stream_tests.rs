@@ -70,7 +70,7 @@ fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_r
                 callbacks: AtomicU64::new(0),
                 trace: UnsafeCell::new(Some(trace)),
                 channels: if layout == 2 { 1 } else { 2 },
-                sample_rate: rate,
+                cycle: crate::io_cycle::IoCycle::new(rate, 0),
                 silent: false,
                 hardware_epoch: Arc::new(AtomicU64::new(0)),
                 observed_epoch: AtomicU64::new(0),
@@ -101,8 +101,11 @@ fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_r
                     fill_with_time(
                         &callback,
                         &mut buffers,
-                        Instant::now(),
-                        history.len() as u64 + 1,
+                        Entry {
+                            at: Instant::now(),
+                            host: 0,
+                            output_host: Some(history.len() as u64 + 1),
+                        },
                     )
                 };
                 for frame in 0..frames {
@@ -224,7 +227,7 @@ fn contract_transport_discontinuities_declick_hal_output_under_rtsan() {
                     callbacks: AtomicU64::new(0),
                     trace: UnsafeCell::new(None),
                     channels: 2,
-                    sample_rate: rate,
+                    cycle: crate::io_cycle::IoCycle::new(rate, 0),
                     silent: false,
                     hardware_epoch: Arc::new(AtomicU64::new(0)),
                     observed_epoch: AtomicU64::new(0),
@@ -337,7 +340,7 @@ fn contract_stop_preserves_waveform_while_fading_under_rtsan() {
                         callbacks: AtomicU64::new(0),
                         trace: UnsafeCell::new(None),
                         channels: 2,
-                        sample_rate: rate,
+                        cycle: crate::io_cycle::IoCycle::new(rate, 0),
                         silent: false,
                         hardware_epoch: Arc::new(AtomicU64::new(0)),
                         observed_epoch: AtomicU64::new(0),
@@ -463,7 +466,7 @@ fn in_flight_stop_preserves_heard_audio_and_cancels_unheard_starts_under_rtsan()
             callbacks: AtomicU64::new(0),
             trace: UnsafeCell::new(None),
             channels: 2,
-            sample_rate: rate,
+            cycle: crate::io_cycle::IoCycle::new(rate, 0),
             silent: false,
             hardware_epoch: Arc::new(AtomicU64::new(0)),
             observed_epoch: AtomicU64::new(0),
@@ -533,6 +536,7 @@ fn retained_stream_publishes_a_stopped_locate_before_its_callback() {
             name: "fixture".into(),
             sample_rate: 48000,
             buffer_frames: 64,
+            safety_frames: 0,
             channels: 2,
             formats: Vec::new(),
         },
@@ -603,7 +607,7 @@ fn contract_stop_during_preparation_gates_callbacks_under_rtsan() {
         callbacks: AtomicU64::new(0),
         trace: UnsafeCell::new(None),
         channels: 2,
-        sample_rate: 48000,
+        cycle: crate::io_cycle::IoCycle::new(48000, 0),
         silent: false,
         hardware_epoch: Arc::new(AtomicU64::new(0)),
         observed_epoch: AtomicU64::new(0),
@@ -755,7 +759,7 @@ fn interleaved_and_planar_hal_buffers_match_under_rtsan() {
                 callbacks: AtomicU64::new(0),
                 trace: UnsafeCell::new(None),
                 channels: 2,
-                sample_rate: 48_000,
+                cycle: crate::io_cycle::IoCycle::new(48_000, 0),
                 silent: false,
                 hardware_epoch: Arc::new(AtomicU64::new(0)),
                 observed_epoch: AtomicU64::new(0),
@@ -817,8 +821,8 @@ fn interleaved_and_planar_hal_buffers_match_under_rtsan() {
 fn the_hal_deadline_starts_when_the_callback_is_entered() {
     let entered = Instant::now();
     std::thread::sleep(Duration::from_millis(30));
-    let spent = entered + block_budget(64, 48_000);
-    let restarted = Instant::now() + block_budget(64, 48_000);
+    let spent = entered + echode_engine::block_duration(64, 48_000);
+    let restarted = Instant::now() + echode_engine::block_duration(64, 48_000);
     assert!(spent < Instant::now());
     assert!(restarted > spent + Duration::from_millis(20));
     let (project, track) = Project::new().add_track("pad");
@@ -852,7 +856,7 @@ fn the_hal_deadline_starts_when_the_callback_is_entered() {
         callbacks: AtomicU64::new(0),
         trace: UnsafeCell::new(None),
         channels: 2,
-        sample_rate: 48_000,
+        cycle: crate::io_cycle::IoCycle::new(48_000, 0),
         silent: false,
         hardware_epoch: Arc::new(AtomicU64::new(0)),
         observed_epoch: AtomicU64::new(0),
@@ -867,6 +871,74 @@ fn the_hal_deadline_starts_when_the_callback_is_entered() {
     };
     unsafe { fill(&callback, &mut [buffer], entered) };
     assert!(stereo.iter().any(|sample| *sample != 0.0));
+    assert!(!callback.failed.load(Ordering::Acquire));
+}
+
+/// A playing callback whose device keeps `safety_frames` ahead, where one
+/// host tick is one nanosecond.
+fn timed_callback(safety_frames: u32) -> (Callback, PlaybackControl) {
+    let (project, track) = Project::new().add_track("pad");
+    let (mut control, player) = playback(&project, 48_000, 64, PlaybackOptions::default()).unwrap();
+    control.set_clip_loader(Arc::new(move |_, _| Ok(fixture_clips(track.raw(), 48_000))));
+    control.replace(&project).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    let callback = Callback {
+        render: UnsafeCell::new(Render {
+            player,
+            declick: echode_engine::OutputDeclick::new(48000),
+            output_revision: 0,
+            enabled: true,
+            left: vec![0.0; 64],
+            right: vec![0.0; 64],
+        }),
+        failed: AtomicBool::new(false),
+        panic: CallbackPanic::new("output callback"),
+        callbacks: AtomicU64::new(0),
+        trace: UnsafeCell::new(None),
+        channels: 2,
+        cycle: crate::io_cycle::IoCycle::with_timebase(48_000, safety_frames, Some((1, 1))),
+        silent: false,
+        hardware_epoch: Arc::new(AtomicU64::new(0)),
+        observed_epoch: AtomicU64::new(0),
+        cancellation: TransportCancellation::default(),
+        transport_revision: AtomicU64::new(0),
+    };
+    (callback, control)
+}
+
+#[test]
+fn contract_the_output_block_ends_before_the_device_safety_offset() {
+    // 48 frames of safety are 1 ms at 48 kHz.
+    let (callback, _control) = timed_callback(48);
+    let block = echode_engine::block_duration(64, 48_000);
+    let host = 5_000_000_000;
+    let render = |output_host| {
+        let mut stereo = [0.0f32; 128];
+        let at = Instant::now();
+        let entry = Entry {
+            at,
+            host,
+            output_host,
+        };
+        let buffer = AudioBuffer {
+            mNumberChannels: 2,
+            mDataByteSize: std::mem::size_of_val(&stereo) as u32,
+            mData: stereo.as_mut_ptr().cast(),
+        };
+        let deadline = unsafe { fill_inner(&callback, &mut [buffer], entry) };
+        assert!(stereo.iter().any(|sample| *sample != 0.0));
+        deadline.map(|deadline| deadline.saturating_duration_since(at))
+    };
+    // HAL entered late, 2 ms before the output time: the device needs the
+    // block 1 ms before it, and the audition and HAL keep 1/16 of the block.
+    assert_eq!(
+        render(Some(host + 2_000_000)),
+        Some(Duration::from_millis(1) - block / 16)
+    );
+    // Already inside the safety offset: polling once is all that can help.
+    assert_eq!(render(Some(host + 500_000)), Some(Duration::ZERO));
+    // An output time HAL marked invalid keeps one block from entry.
+    assert_eq!(render(None), Some(block));
     assert!(!callback.failed.load(Ordering::Acquire));
 }
 
@@ -1022,7 +1094,7 @@ fn a_panic_in_the_render_leaves_the_output_silent_and_reports_its_location() {
         callbacks: AtomicU64::new(0),
         trace: UnsafeCell::new(None),
         channels: 2,
-        sample_rate: rate,
+        cycle: crate::io_cycle::IoCycle::new(rate, 0),
         silent: false,
         hardware_epoch: Arc::new(AtomicU64::new(0)),
         observed_epoch: AtomicU64::new(0),
@@ -1037,6 +1109,7 @@ fn a_panic_in_the_render_leaves_the_output_silent_and_reports_its_location() {
             name: "fixture".into(),
             sample_rate: rate,
             buffer_frames: frames as u32,
+            safety_frames: 0,
             channels: 2,
             formats: Vec::new(),
         },

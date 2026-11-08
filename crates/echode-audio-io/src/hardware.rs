@@ -15,6 +15,9 @@ pub struct OutputDevice {
     pub name: String,
     pub sample_rate: u32,
     pub buffer_frames: u32,
+    /// Output frames HAL keeps ahead of the device's position. The output
+    /// callback must be done that far before the block's output time.
+    pub safety_frames: u32,
     pub channels: u32,
     #[serde(skip)]
     pub(crate) formats: Vec<(u32, AudioStreamBasicDescription)>,
@@ -182,12 +185,21 @@ pub fn inventory() -> Result<Inventory, String> {
         if buffer_frames == 0 {
             continue;
         }
+        // Every HAL device reports this. A failed read counts as no offset:
+        // the callback still ends within one block of entry (ADR 0283).
+        let safety_frames = get(
+            id,
+            kAudioDevicePropertySafetyOffset,
+            kAudioObjectPropertyScopeOutput,
+        )
+        .unwrap_or(0);
         devices.push(OutputDevice {
             id,
             uid: string(id, kAudioDevicePropertyDeviceUID)?,
             name: string(id, kAudioObjectPropertyName)?,
             sample_rate: rate as u32,
             buffer_frames,
+            safety_frames,
             channels,
             formats,
         });
@@ -290,6 +302,13 @@ impl Notifications {
                 kAudioDevicePropertyStreams,
                 kAudioObjectPropertyScopeOutput,
             )?;
+            // Like its read, an offset without a listener never blocks output;
+            // a missed change keeps the old offset until the next reopen.
+            let _ = value.add_scoped(
+                device.id,
+                kAudioDevicePropertySafetyOffset,
+                kAudioObjectPropertyScopeOutput,
+            );
             for (stream, _) in &device.formats {
                 value.add(*stream, kAudioStreamPropertyVirtualFormat)?;
             }

@@ -243,6 +243,7 @@ impl HeadlessOutput {
             name: "Headless".into(),
             sample_rate: 48_000,
             buffer_frames: 128,
+            safety_frames: 0,
             channels: 2,
             formats: Vec::new(),
         }

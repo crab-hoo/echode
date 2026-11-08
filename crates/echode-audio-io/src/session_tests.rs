@@ -19,6 +19,7 @@ fn device(id: u32, uid: &str) -> OutputDevice {
         name: uid.into(),
         sample_rate: 48000,
         buffer_frames: 128,
+        safety_frames: 0,
         channels: 2,
         formats: Vec::new(),
     }

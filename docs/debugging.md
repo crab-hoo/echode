@@ -247,6 +247,7 @@ make debug-report
 
 - `ECHODE_STOP_TRACE_DIR` を指定した診断実行では、停止から 50 ms 後までの HAL 実出力を `.f32le` と `.json` に記録する（通常ビルドは記録無効、[ADR 0104](decisions/0104-stop-output-diagnostics.md)）。
   `stop_frame - first_frame`、位相の連続性、`stop_fade_offset`、`cleanup_pending`（ライブ後片付けの非待機保留、[ADR 0105](decisions/0105-nonblocking-stop-cleanup.md)）、`render_ns` / `elapsed_ns` と `output_host_time` の呼出間隔を照合する。
+  `deadline_ns` はそのブロックに与えた入口からの期限で、`render_ns` が近づいていれば HAL の締め切りの手前で待ちを打ち切っている（[ADR 0283](decisions/0283-output-time-callback-deadline.md)）。
   ユーザーの再生音が含まれるため、通常の `debug-report` には自動収集しない。
 - 無音からの発音アタックは、別プロセスでの直接出力と製品の再生・出力補正後の全サンプルを比較し、音源本来のアタックとホストの追加変化を区別する（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
 
