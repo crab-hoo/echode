@@ -121,7 +121,7 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 祖先のミュートは子のソロより優先する。親のソロは子孫を開くが、子だけのソロは兄弟や親自身の素材を開かない。
 実効フェーダーの解決は `playback_faders.rs::track_faders`、交換後の補間は `FaderState::carry`、メーターは各トラック自身のフェーダー後を見る。
 `cargo test -q -p echode-engine --test block_size folder_mix::` で入れ子・複数ソロ・親の付替え・5 ms の補間・左右・キャッシュを機器なしで照合する。
-親の音量・パン・FX が子へ効かないのは、未実装のフォルダバスの境界である（[ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md)）。
+親の音量・パン・FX が子へ効かないのは、未実装のフォルダバスの境界である（[ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md)、[ADR 0277](../decisions/0277-reaper-style-folder-bus.md)）。
 実機だけで起きる段差は、機器・バッファ長・切替順・プラグインと取りこぼし数を UC-49 へ記録する。
 
 ## プラグイン

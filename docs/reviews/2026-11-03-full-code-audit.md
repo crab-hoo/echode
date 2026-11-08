@@ -434,7 +434,7 @@ Apple M4・release・64 / 128 トラック × 64 クリップ（各 8 ノート�
 2026-11-03 の先行対応: [ADR 0244](../decisions/0244-folder-mute-and-solo-gates.md) で、ミュート・ソロを子孫の実効フェーダーへ反映した。
 監査の再現を通常テストへ戻し、`block_size/folder_mix.rs` で入れ子・複数ソロ・ミュート優先・親の付替え・補間と書出しを照合する。
 音量・パンとバス化は残す。上の監査時の挙動は保持する。
-2026-11-08: 音量・パンは、祖先の係数を子孫の実効フェーダーへ掛ける向きに [ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md) で決めた。未実装である。
+2026-11-08: 音量・パン・FX は、Reaper と同じく子の音を親トラックへ通すバスで掛けると [ADR 0277](../decisions/0277-reaper-style-folder-bus.md) で決めた（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md) の暫定案を置き換え）。未実装である。
 
 ### FCA-07: プラグインの遅延と主要なホスト拡張
 
