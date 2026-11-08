@@ -27,13 +27,20 @@ impl Project {
             .ok_or(ModelError::MissingClip)?;
         let content_index = crate::model::content_index(self.contents(), placement.content)
             .ok_or(ModelError::MissingClip)?;
+        let content = &self.contents()[content_index];
+        let note_index = content
+            .notes
+            .iter()
+            .position(|item| item.id == note)
+            .ok_or(ModelError::MissingNote)?;
+        if content.notes[note_index].velocity == midi7_to_velocity(velocity) {
+            return Ok(self.clone());
+        }
         let mut contents = self.contents().to_vec();
         let content = &mut contents[content_index];
-        let target = Arc::make_mut(content)
-            .notes
-            .iter_mut()
-            .find(|item| item.id == note)
-            .ok_or(ModelError::MissingNote)?;
+        #[cfg(test)]
+        crate::model_scale_tests::velocity_content_copy(content.notes.len());
+        let target = &mut Arc::make_mut(content).notes[note_index];
         target.velocity = midi7_to_velocity(velocity);
         Ok(self.with_parts(contents, self.tracks().to_vec()))
     }

@@ -79,8 +79,31 @@ fn contract_velocity_preserves_shared_content_windows_and_round_trips_history() 
         );
         assert_eq!(stored(session.project(), other), &untouched);
         let edited = session.project().clone();
+        let journal_len = session.journal().len();
+        session
+            .perform(Command::SetNoteVelocity {
+                track: linked_track,
+                clip: link,
+                note,
+                velocity,
+            })
+            .unwrap();
+        assert_eq!(session.journal().len(), journal_len);
+        assert!(std::sync::Arc::ptr_eq(
+            &edited.contents()[0],
+            &session.project().contents()[0]
+        ));
         session.undo().unwrap();
         assert_eq!(session.project(), &before);
+        session
+            .perform(Command::SetNoteVelocity {
+                track,
+                clip,
+                note,
+                velocity: echode_model::velocity_to_midi7(stored(&before, note).velocity),
+            })
+            .unwrap();
+        // A no-op after Undo must leave the real edit available to Redo.
         session.redo().unwrap();
         assert_eq!(session.project(), &edited);
     }

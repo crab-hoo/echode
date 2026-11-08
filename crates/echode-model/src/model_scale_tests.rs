@@ -22,6 +22,8 @@ struct Work {
     delete_track_copies: usize,
     id_checks: usize,
     id_check_notes: usize,
+    velocity_content_copies: usize,
+    velocity_note_copies: usize,
     diff_note_visits: usize,
     apply_device_owner_visits: usize,
     diff_device_keys: usize,
@@ -98,6 +100,13 @@ pub(crate) fn id_check() {
 
 pub(crate) fn id_check_note() {
     record(|work| work.id_check_notes += 1);
+}
+
+pub(crate) fn velocity_content_copy(notes: usize) {
+    record(|work| {
+        work.velocity_content_copies += 1;
+        work.velocity_note_copies += notes;
+    });
 }
 
 pub(crate) fn diff_note_visit() {
@@ -729,3 +738,6 @@ mod audio_insert;
 
 #[path = "model_note_lookup_tests.rs"]
 mod note_lookup;
+
+#[path = "model_note_velocity_tests.rs"]
+mod note_velocity;
