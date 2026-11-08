@@ -4,16 +4,6 @@
 //! the block's output time less its output safety offset. Other IOProcs on
 //! the same device (the sample audition) and HAL's own write of the mix run
 //! after this IOProc returns, inside that same interval.
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::indexing_slicing,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic
-    )
-)]
-
 use std::time::{Duration, Instant};
 
 use echode_engine::block_duration;

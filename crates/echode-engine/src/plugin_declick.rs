@@ -54,10 +54,9 @@ impl PluginDeclick {
             self.last = target;
             if self.remaining > 0 {
                 let gain = f64::from(self.frames - self.remaining) / f64::from(self.frames - 1);
-                for (channel, value) in self.last.iter_mut().enumerate() {
+                for (value, from) in self.last.iter_mut().zip(self.from) {
                     // Convex interpolation in f64 also keeps finite f32 extremes finite.
-                    *value = (f64::from(self.from[channel]) * (1.0 - gain)
-                        + f64::from(*value) * gain) as f32;
+                    *value = (f64::from(from) * (1.0 - gain) + f64::from(*value) * gain) as f32;
                 }
                 self.remaining -= 1;
             }

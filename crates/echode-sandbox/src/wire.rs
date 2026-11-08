@@ -283,8 +283,11 @@ fn read_flag(src: &[u8], at: usize) -> Option<bool> {
     }
 }
 
+// Offsets are the layout's constants, inside every record.
 fn write_u32(record: &mut [u8], at: usize, value: u32) {
-    record[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    if let Some(field) = record.get_mut(at..at + 4) {
+        field.copy_from_slice(&value.to_le_bytes());
+    }
 }
 
 fn read_u32(src: &[u8], at: usize) -> Option<u32> {
@@ -294,7 +297,9 @@ fn read_u32(src: &[u8], at: usize) -> Option<u32> {
 
 fn write_f64(record: &mut [u8], index: usize, value: f64) {
     let at = OFF_F64 + index * 8;
-    record[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    if let Some(field) = record.get_mut(at..at + 8) {
+        field.copy_from_slice(&value.to_le_bytes());
+    }
 }
 
 fn read_f64(src: &[u8], index: usize) -> Option<f64> {

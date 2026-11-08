@@ -895,9 +895,9 @@ impl MappedRegion {
             .min(self.layout.output_events as usize);
         let mut written = 0;
         for index in 0..count {
-            if written == delivered.len() {
+            let Some(slot) = delivered.get_mut(written) else {
                 break;
-            }
+            };
             let offset = self.event_offset(generation, true, index);
             let mut record = [0u8; RECORD_BYTES];
             unsafe {
@@ -908,7 +908,7 @@ impl MappedRegion {
                 );
             }
             if let Some(event) = decode_event(&record) {
-                delivered[written] = Delivered {
+                *slot = Delivered {
                     event,
                     device: device_index(&record).unwrap_or(0),
                 };
@@ -961,9 +961,9 @@ impl MappedRegion {
             .min(self.layout.output_events as usize);
         let mut written = 0;
         for index in 0..count {
-            if written == delivered.len() {
+            let Some(slot) = delivered.get_mut(written) else {
                 break;
-            }
+            };
             let offset = self.event_offset(generation, true, index);
             let mut record = [0u8; RECORD_BYTES];
             unsafe {
@@ -974,7 +974,7 @@ impl MappedRegion {
                 );
             }
             if let Some(event) = decode_event(&record) {
-                delivered[written] = Delivered {
+                *slot = Delivered {
                     event,
                     device: device_index(&record).unwrap_or(0),
                 };
@@ -1154,9 +1154,9 @@ impl MappedRegion {
             .min(self.layout.output_events as usize);
         let mut written = 0;
         for index in 0..count {
-            if written == events_out.len() {
+            let Some(slot) = events_out.get_mut(written) else {
                 break;
-            }
+            };
             let offset = self.event_offset(generation, true, index);
             let mut record = [0u8; RECORD_BYTES];
             // SAFETY: the record lies inside this generation's output event region.
@@ -1168,7 +1168,7 @@ impl MappedRegion {
                 );
             }
             if let Some(event) = decode_event(&record) {
-                events_out[written] = event;
+                *slot = event;
                 written += 1;
             }
         }

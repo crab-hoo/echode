@@ -1,5 +1,17 @@
 //! Integer time arithmetic shared by the model, planner, and audio cursor.
 //! Building an index allocates on control; querying it only searches and divides.
+
+// The audio thread converts time with this crate (ADR 0284).
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
+
 use std::sync::Arc;
 
 /// Ticks in one quarter note: `2^6 * 3^2 * 5^2 * 7^2`.
@@ -92,8 +104,8 @@ impl TempoIndex {
                 .iter()
                 .any(|s| !allowed(s.numerator, s.denominator))
             || segments.windows(2).any(|pair| {
-                pair[0].start_tick >= pair[1].start_tick
-                    || pair[0].start_flick >= pair[1].start_flick
+                matches!(pair, [left, right] if left.start_tick >= right.start_tick
+                    || left.start_flick >= right.start_flick)
             })
         {
             return None;
@@ -122,7 +134,7 @@ impl TempoIndex {
                 .any(|s| !allowed(s.numerator, s.denominator))
             || segments
                 .windows(2)
-                .any(|pair| pair[0].start_tick >= pair[1].start_tick)
+                .any(|pair| matches!(pair, [left, right] if left.start_tick >= right.start_tick))
         {
             return None;
         }
@@ -131,7 +143,7 @@ impl TempoIndex {
             .get(zero)
             .is_none_or(|segment| segment.start_tick != 0)
         {
-            let tempo = segments[zero.saturating_sub(1)];
+            let tempo = *segments.get(zero.saturating_sub(1))?;
             segments.insert(
                 zero,
                 TempoSegment {
@@ -140,9 +152,10 @@ impl TempoIndex {
                 },
             );
         }
-        for index in zero..segments.len() - 1 {
-            let start = segments[index];
-            let end = &mut segments[index + 1];
+        for index in zero..segments.len().saturating_sub(1) {
+            let [start, end] = segments.get_mut(index..index + 2)? else {
+                return None;
+            };
             end.start_flick = start.start_flick.checked_add(flicks_for_ticks(
                 i128::from(end.start_tick) - i128::from(start.start_tick),
                 start.numerator,
@@ -150,8 +163,9 @@ impl TempoIndex {
             )?)?;
         }
         for index in (0..zero).rev() {
-            let end = segments[index + 1];
-            let start = &mut segments[index];
+            let [start, end] = segments.get_mut(index..index + 2)? else {
+                return None;
+            };
             start.start_flick = end.start_flick.checked_sub(flicks_for_ticks(
                 i128::from(end.start_tick) - i128::from(start.start_tick),
                 start.numerator,
@@ -166,7 +180,7 @@ impl TempoIndex {
             visit_boundary();
             segment.start_tick <= tick
         });
-        let segment = &self.segments[after.saturating_sub(1)];
+        let segment = self.segments.get(after.saturating_sub(1))?;
         // The model integrates [tick, 0] backwards, rounding each segment before
         // negating. A negative partial interval must use its right boundary:
         // round(a + b) - round(a) is not always round(b).
@@ -195,7 +209,7 @@ impl TempoIndex {
                 segment.start_flick <= flick
             })
             .saturating_sub(1);
-        let segment = &self.segments[index];
+        let segment = self.segments.get(index)?;
         let ticks = ticks_for_flicks(
             flick.checked_sub(segment.start_flick)?,
             segment.numerator,

@@ -1,13 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::indexing_slicing,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic
-    )
-)]
-
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::ptr::NonNull;

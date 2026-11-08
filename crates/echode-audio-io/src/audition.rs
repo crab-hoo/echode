@@ -7,16 +7,6 @@
 //! audition has its own IOProc on the project's output device, and HAL mixes
 //! it with the project's callback. No plugin helper starts for it.
 
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::indexing_slicing,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic
-    )
-)]
-
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
 use std::ffi::c_void;

@@ -204,19 +204,24 @@ impl Event {
 #[must_use]
 pub fn sort_events(events: &mut [Event], order: &mut [usize], scratch: &mut [Event]) -> bool {
     let count = events.len();
-    if order.len() < count || scratch.len() < count {
+    let (Some(order), Some(scratch)) = (order.get_mut(..count), scratch.get_mut(..count)) else {
         return false;
-    }
-    let order = &mut order[..count];
+    };
     for (index, slot) in order.iter_mut().enumerate() {
         *slot = index;
     }
+    // Every entry of `order` is below `count`, so both lookups succeed.
     order.sort_unstable_by(|&left, &right| {
-        cmp_event(&events[left], &events[right]).then(left.cmp(&right))
+        events
+            .get(left)
+            .zip(events.get(right))
+            .map_or(Ordering::Equal, |(left, right)| cmp_event(left, right))
+            .then(left.cmp(&right))
     });
-    let scratch = &mut scratch[..count];
-    for (slot, source) in scratch.iter_mut().zip(order.iter().copied()) {
-        *slot = events[source];
+    for (slot, source) in scratch.iter_mut().zip(order.iter()) {
+        if let Some(event) = events.get(*source) {
+            *slot = *event;
+        }
     }
     events.copy_from_slice(scratch);
     true

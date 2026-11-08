@@ -1,8 +1,12 @@
 # The audio thread only advances cursors. Growing a buffer here would allocate.
+# This file replaces the workspace's clippy.toml for this crate, so it repeats
+# the workspace's rules too.
 disallowed-methods = [
     { path = "std::vec::Vec::push", reason = "the audio thread must not grow a buffer (ENG-1)" },
     { path = "std::vec::Vec::reserve", reason = "the audio thread must not grow a buffer (ENG-1)" },
     { path = "std::boxed::Box::new", reason = "the audio thread must not allocate (ENG-1)" },
     { path = "std::sync::Mutex::new", reason = "the audio thread must not lock (ENG-1)" },
     { path = "std::sync::RwLock::new", reason = "the audio thread must not lock (ENG-1)" },
+    { path = "std::sync::Arc::as_ptr", reason = "an address can be reused once the Arc is dropped; keep the Arc and compare with Arc::ptr_eq (audit HIS-1)" },
+    { path = "std::rc::Rc::as_ptr", reason = "an address can be reused once the Rc is dropped; keep the Rc and compare with Rc::ptr_eq (audit HIS-1)" },
 ]

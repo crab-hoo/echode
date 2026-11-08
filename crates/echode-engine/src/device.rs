@@ -174,7 +174,7 @@ fn get_u32s(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, i32> {
             0,
             std::ptr::null(),
             NonNull::from(&mut size),
-            NonNull::new(values.as_mut_ptr().cast()).expect("nonempty property buffer"),
+            NonNull::from(values.as_mut_slice()).cast(),
         )
     };
     if status != 0 {

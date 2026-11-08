@@ -38,6 +38,11 @@ impl RelayRing {
         }
     }
 
+    /// The slot for the running count `position`. `None` only for no slots.
+    fn slot(&self, position: usize) -> Option<&AtomicU64> {
+        self.slots.get(position.checked_rem(self.slots.len())?)
+    }
+
     /// Processing thread only. Never allocates, locks or waits.
     pub(crate) fn push(&self, id: u32, kind: ParamEventKind) {
         let tail = self.tail.load(Ordering::Relaxed);
@@ -50,7 +55,11 @@ impl RelayRing {
             ParamEventKind::Begin => 1,
             ParamEventKind::End => 2,
         };
-        self.slots[tail % self.slots.len()].store(code << 32 | u64::from(id), Ordering::Relaxed);
+        let Some(slot) = self.slot(tail) else {
+            self.lost.store(true, Ordering::Release);
+            return;
+        };
+        slot.store(code << 32 | u64::from(id), Ordering::Relaxed);
         self.tail.store(tail.wrapping_add(1), Ordering::Release);
     }
 
@@ -67,7 +76,9 @@ impl RelayRing {
         let tail = self.tail.load(Ordering::Acquire);
         let mut head = self.head.load(Ordering::Relaxed);
         while head != tail {
-            let code = self.slots[head % self.slots.len()].load(Ordering::Relaxed);
+            let code = self
+                .slot(head)
+                .map_or(0, |slot| slot.load(Ordering::Relaxed));
             let kind = match code >> 32 {
                 1 => ParamEventKind::Begin,
                 2 => ParamEventKind::End,

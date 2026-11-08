@@ -217,7 +217,7 @@ fn window_peak(planes: &Planes, window: ClipWindow) -> f32 {
         .max(from);
     std::iter::once(&planes.left)
         .chain(planes.right.as_ref())
-        .flat_map(|plane| plane[from..to].iter())
+        .flat_map(|plane| plane.get(from..to).unwrap_or_default())
         .fold(0.0f32, |peak, sample| peak.max(sample.abs()))
 }
 
@@ -382,7 +382,7 @@ pub(crate) fn device_planes(pcm: &DecodedPcm, rate: u32) -> Result<Planes, Playb
         let source: Vec<_> = pcm
             .samples
             .chunks_exact(usize::from(pcm.channels))
-            .map(|frame| frame[channel])
+            .map(|frame| frame.get(channel).copied().unwrap_or(0.0))
             .collect();
         let samples = if pcm.sample_rate == rate {
             source

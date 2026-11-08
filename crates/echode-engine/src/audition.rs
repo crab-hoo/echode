@@ -7,16 +7,6 @@
 //! first sample. Positions advance per sample, so the result does not depend
 //! on how the device cuts its blocks.
 
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::indexing_slicing,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic
-    )
-)]
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 

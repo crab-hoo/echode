@@ -91,7 +91,11 @@ pub fn scan_descriptors(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
 pub fn scan_report(plugins: &[ScannedPlugin]) -> String {
     let mut out = String::new();
     for plugin in plugins {
-        out.push_str(&serde_json::to_string(plugin).expect("plugin descriptor is json"));
+        // Strings and flags always serialize; nothing is skipped in practice.
+        let Ok(line) = serde_json::to_string(plugin) else {
+            continue;
+        };
+        out.push_str(&line);
         out.push('\n');
     }
     out
@@ -215,7 +219,7 @@ fn take_bytes(
             }
             return Err(format!("plugin scan output: {error}"));
         }
-        let chunk = &buf[..read as usize];
+        let chunk = buf.get(..read as usize).unwrap_or_default();
         match cap {
             Some(limit) if into.len() >= limit => *overflow = true,
             Some(limit) => {
@@ -223,7 +227,7 @@ fn take_bytes(
                 if chunk.len() > room {
                     *overflow = true;
                 }
-                into.extend_from_slice(&chunk[..room.min(chunk.len())]);
+                into.extend_from_slice(chunk.get(..room).unwrap_or(chunk));
             }
             None => into.extend_from_slice(chunk),
         }
@@ -329,12 +333,12 @@ pub fn scan_with_budget(
             revents: 0,
         }; 2];
         let mut count = 0;
-        if stdout_open {
-            polls[count].fd = stdout_pipe.as_raw_fd();
-            count += 1;
-        }
-        if stderr_open {
-            polls[count].fd = stderr_pipe.as_raw_fd();
+        let open = [
+            stdout_open.then(|| stdout_pipe.as_raw_fd()),
+            stderr_open.then(|| stderr_pipe.as_raw_fd()),
+        ];
+        for (poll, fd) in polls.iter_mut().zip(open.into_iter().flatten()) {
+            poll.fd = fd;
             count += 1;
         }
         let millis = i32::try_from(remaining.as_millis())
@@ -352,10 +356,9 @@ pub fn scan_with_budget(
             stop_scan(&mut child);
             return Err(format!("plugin scan output: {error}"));
         }
-        let mut slot = 0;
         if stdout_open {
             match take_bytes(
-                polls[slot].fd,
+                stdout_pipe.as_raw_fd(),
                 &mut stdout,
                 Some(STDOUT_CAP),
                 &mut stdout_overflow,
@@ -379,11 +382,10 @@ pub fn scan_with_budget(
                     return Err(error);
                 }
             }
-            slot += 1;
         }
         if stderr_open {
             match take_bytes(
-                polls[slot].fd,
+                stderr_pipe.as_raw_fd(),
                 &mut stderr,
                 Some(STDERR_CAP),
                 &mut stderr_overflow,

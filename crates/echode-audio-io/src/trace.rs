@@ -132,13 +132,15 @@ impl Writer {
             buffer.trigger = Some(buffer.total);
         }
         for frame in 0..block.frames {
-            let slot = (buffer.total % buffer.pcm.len() as u64) as usize;
-            buffer.pcm[slot] = sample(frame);
+            if let Some(slot) = ring_slot(&mut buffer.pcm, buffer.total) {
+                *slot = sample(frame);
+            }
             buffer.total += 1;
         }
         block.elapsed_ns = entered.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
-        let slot = (buffer.block_count % buffer.blocks.len() as u64) as usize;
-        buffer.blocks[slot] = block;
+        if let Some(slot) = ring_slot(&mut buffer.blocks, buffer.block_count) {
+            *slot = block;
+        }
         buffer.block_count += 1;
         if buffer.trigger.is_some_and(|trigger| {
             buffer.total.saturating_sub(trigger) >= self.post_frames || block.invalid_buffer
@@ -188,7 +190,9 @@ impl Files {
         let pcm_name = format!("{stem}.f32le");
         let mut pcm = BufWriter::new(std::fs::File::create(self.directory.join(&pcm_name))?);
         for index in first..buffer.total {
-            let sample = buffer.pcm[(index % buffer.pcm.len() as u64) as usize];
+            let Some(sample) = ring_at(&buffer.pcm, index) else {
+                continue;
+            };
             for value in sample {
                 pcm.write_all(&value.to_le_bytes())?;
             }
@@ -198,7 +202,7 @@ impl Files {
             .block_count
             .saturating_sub(buffer.blocks.len() as u64);
         let blocks: Vec<_> = (first_block..buffer.block_count)
-            .map(|index| buffer.blocks[(index % buffer.blocks.len() as u64) as usize])
+            .filter_map(|index| ring_at(&buffer.blocks, index).copied())
             .filter(|block| {
                 block.first_frame.saturating_add(block.frames as u64) > first
                     || block.first_frame >= first
@@ -225,6 +229,16 @@ impl Files {
         metadata.flush()?;
         std::fs::rename(temporary, path)
     }
+}
+
+/// The entry for the running count `count` in a ring. `None` only for an
+/// empty ring.
+fn ring_at<T>(ring: &[T], count: u64) -> Option<&T> {
+    ring.get(usize::try_from(count.checked_rem(ring.len() as u64)?).ok()?)
+}
+
+fn ring_slot<T>(ring: &mut [T], count: u64) -> Option<&mut T> {
+    ring.get_mut(usize::try_from(count.checked_rem(ring.len() as u64)?).ok()?)
 }
 
 #[cfg(test)]

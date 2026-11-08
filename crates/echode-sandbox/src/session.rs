@@ -845,10 +845,10 @@ impl PluginHost {
         events_out: &mut [Event],
         timeout: Duration,
     ) -> Result<usize, SessionError> {
-        let frames = if !input.is_empty() {
-            input[0].len()
-        } else if !output.is_empty() {
-            output[0].len()
+        let frames = if let Some(plane) = input.first() {
+            plane.len()
+        } else if let Some(plane) = output.first() {
+            plane.len()
         } else {
             return Err(RegionError::BadShape {
                 frames: 0,
@@ -1421,7 +1421,7 @@ fn spawn_stderr_reader(mut pipe: Box<dyn Read + Send>, slot: Arc<Mutex<String>>)
             match pipe.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let chunk = String::from_utf8_lossy(&buf[..n]);
+                    let chunk = String::from_utf8_lossy(buf.get(..n).unwrap_or_default());
                     if let Ok(mut text) = slot.lock() {
                         push_stderr(&mut text, &chunk);
                     }

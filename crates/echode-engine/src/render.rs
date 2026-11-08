@@ -93,7 +93,10 @@ pub fn render_offline(
     let mut written = 0usize;
     render_offline_blocks(project, sample_rate, frames, BLOCK_FRAMES, |block| {
         let end = written + block.len();
-        interleaved[written..end].copy_from_slice(block);
+        interleaved
+            .get_mut(written..end)
+            .ok_or(PlaybackError::BufferTooSmall)?
+            .copy_from_slice(block);
         written += block.len();
         Ok(())
     })
@@ -163,21 +166,23 @@ pub fn render_offline_blocks_with_clips<E>(
     let mut rendered = 0u32;
     while rendered < frames {
         let count = (frames - rendered).min(block_frames) as usize;
+        let (Some(left), Some(right), Some(interleaved)) = (
+            left.get_mut(..count),
+            right.get_mut(..count),
+            interleaved.get_mut(..count * 2),
+        ) else {
+            return Err(OfflineError::Playback(PlaybackError::BufferTooSmall));
+        };
         audio
-            .render_checked(
-                &mut left[..count],
-                &mut right[..count],
-                std::time::Instant::now(),
-            )
+            .render_checked(left, right, std::time::Instant::now())
             .map_err(OfflineError::Playback)?;
         for (pair, (left, right)) in interleaved
             .chunks_exact_mut(2)
-            .zip(left.iter().zip(&right))
-            .take(count)
+            .zip(left.iter().zip(&*right))
         {
             pair.copy_from_slice(&[*left, *right]);
         }
-        on_block(&interleaved[..count * 2]).map_err(OfflineError::Write)?;
+        on_block(interleaved).map_err(OfflineError::Write)?;
         rendered += count as u32;
     }
     Ok(())

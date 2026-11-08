@@ -177,10 +177,10 @@ pub(crate) fn show(plugin: &clap_plugin, title: &str) -> Result<GuiReport, Strin
     GUI.with(|cell| {
         let mut slot = cell.borrow_mut();
         let created = slot.as_ref().is_none_or(|host| !host.policy.is_open());
-        if created {
-            *slot = Some(open(plugin, gui, title)?);
-        }
-        let host = slot.as_mut().expect("window host");
+        let host = match slot.as_mut() {
+            Some(host) if !created => host,
+            _ => slot.insert(open(plugin, gui, title)?),
+        };
         let actions = host.policy.show(host.surface.parent_active());
         apply(plugin, gui, host, &actions);
         Ok(GuiReport {

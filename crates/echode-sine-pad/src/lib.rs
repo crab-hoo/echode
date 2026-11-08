@@ -1,5 +1,16 @@
 //! The fixed wavesynth Sine Pad preset as an ordinary, isolated CLAP instrument.
 
+// The helper runs this on the plugin's audio thread (ADR 0284).
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
+
 use std::ffi::{CStr, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
@@ -405,19 +416,18 @@ unsafe extern "C" fn save(
     let Some(write) = (unsafe { (*stream).write }) else {
         return false;
     };
-    let mut offset = 0;
-    while offset < PRESET_STATE.len() {
-        let wrote = unsafe {
-            write(
-                stream,
-                PRESET_STATE[offset..].as_ptr().cast(),
-                (PRESET_STATE.len() - offset) as u64,
-            )
-        };
-        if wrote <= 0 || wrote as usize > PRESET_STATE.len() - offset {
+    let mut rest = PRESET_STATE;
+    while !rest.is_empty() {
+        let wrote = unsafe { write(stream, rest.as_ptr().cast(), rest.len() as u64) };
+        // A count past what is left is a broken stream, like a failed write.
+        let Some(after) = usize::try_from(wrote)
+            .ok()
+            .filter(|wrote| *wrote > 0)
+            .and_then(|wrote| rest.get(wrote..))
+        else {
             return false;
-        }
-        offset += wrote as usize;
+        };
+        rest = after;
     }
     true
 }
@@ -433,19 +443,17 @@ unsafe extern "C" fn load(
     let Some(read) = (unsafe { (*stream).read }) else {
         return false;
     };
-    let mut offset = 0;
-    while offset < bytes.len() {
-        let count = unsafe {
-            read(
-                stream,
-                bytes[offset..].as_mut_ptr().cast(),
-                (bytes.len() - offset) as u64,
-            )
-        };
-        if count <= 0 || count as usize > bytes.len() - offset {
+    let mut rest: &mut [u8] = &mut bytes;
+    while !rest.is_empty() {
+        let count = unsafe { read(stream, rest.as_mut_ptr().cast(), rest.len() as u64) };
+        let Some(after) = usize::try_from(count)
+            .ok()
+            .filter(|count| *count > 0)
+            .and_then(|count| std::mem::take(&mut rest).get_mut(count..))
+        else {
             return false;
-        }
-        offset += count as usize;
+        };
+        rest = after;
     }
     bytes == PRESET_STATE
 }

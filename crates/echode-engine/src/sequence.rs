@@ -55,14 +55,14 @@ pub(crate) fn play_prepared(
         block_offset: 0,
         release_at: None,
     }; 2];
-    if spans.len() > converted.len() {
-        return Err(PlaybackError::BufferTooSmall);
-    }
-    for (index, span) in spans.iter().enumerate() {
-        converted[index] = to_span(*span);
+    let converted = converted
+        .get_mut(..spans.len())
+        .ok_or(PlaybackError::BufferTooSmall)?;
+    for (slot, span) in converted.iter_mut().zip(spans) {
+        *slot = to_span(*span);
     }
     cursor
-        .play(plan, &converted[..spans.len()], out, order, scratch)
+        .play(plan, converted, out, order, scratch)
         .map_err(play_error)
 }
 
@@ -128,10 +128,10 @@ pub(crate) fn render_metronome_index_before(
             .block_offset
             .checked_add(span.frames)
             .ok_or(PlaybackError::Time)?;
-        if span_end as usize > output.len() {
-            return Err(PlaybackError::BufferTooSmall);
-        }
-        for local in 0..span.frames {
+        let block = output
+            .get_mut(span.block_offset as usize..span_end as usize)
+            .ok_or(PlaybackError::BufferTooSmall)?;
+        for (local, sample) in (0..span.frames).zip(block) {
             let project = span
                 .start_sample
                 .checked_add(i64::from(local))
@@ -140,8 +140,7 @@ pub(crate) fn render_metronome_index_before(
             else {
                 continue;
             };
-            output[(span.block_offset + local) as usize] +=
-                click_sample(downbeat, age, sample_rate);
+            *sample += click_sample(downbeat, age, sample_rate);
         }
     }
     Ok(())

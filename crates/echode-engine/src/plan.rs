@@ -305,13 +305,10 @@ pub(crate) fn build(
                 .then(left.note.cmp(&right.note))
         });
         let mut by_off: Vec<u32> = (0..notes.len()).map(|index| index as u32).collect();
-        by_off.sort_by(|left, right| {
-            let left = &notes[*left as usize];
-            let right = &notes[*right as usize];
-            left.off
-                .cmp(&right.off)
-                .then(left.pitch.cmp(&right.pitch))
-                .then(left.note.cmp(&right.note))
+        by_off.sort_by_key(|index| {
+            notes
+                .get(*index as usize)
+                .map(|note| (note.off, note.pitch, note.note))
         });
         let mixer = mixer_values(track)?;
         let plan = TrackPlan {

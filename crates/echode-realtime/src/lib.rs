@@ -4,6 +4,18 @@
 //! and the cursor buffers. Filling a block only advances indexes and rewrites
 //! the live set in those buffers.
 
+// The audio thread runs this crate. Product code reaches data with `get` and
+// iterators, so a bad index is a skipped note, not a panic (ADR 0284).
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
+
 mod event;
 pub mod plugin_capacity;
 
@@ -89,8 +101,7 @@ impl Plan {
             .iter()
             .map(|track| Arc::new(NoteIndex::new(track)))
             .collect();
-        self.cursor_with(indices)
-            .expect("indices built from these tracks match them")
+        self.cursor_over(indices)
     }
 
     /// A cursor that reads `indices[i]` for track `i`. Each index must have
@@ -110,6 +121,11 @@ impl Plan {
         {
             return None;
         }
+        Some(self.cursor_over(indices))
+    }
+
+    /// The cursor for `indices`, which already match these tracks.
+    fn cursor_over(&self, indices: Vec<Arc<NoteIndex>>) -> Cursor {
         let mut track_indices: Vec<_> = self
             .tracks
             .iter()
@@ -117,7 +133,7 @@ impl Plan {
             .map(|(index, track)| (track.track, index))
             .collect();
         track_indices.sort_unstable_by_key(|entry| entry.0);
-        Some(Cursor {
+        Cursor {
             tracks: indices
                 .into_iter()
                 .map(|index| {
@@ -137,7 +153,7 @@ impl Plan {
             position: None,
             chase_from: None,
             track_indices,
-        })
+        }
     }
 }
 
@@ -223,22 +239,38 @@ impl EndIndex {
     fn new(notes: &[NoteSpan]) -> Self {
         let leaves = notes.len().max(1).next_power_of_two();
         let mut maxima = vec![i64::MIN; leaves * 2];
-        for (index, note) in notes.iter().enumerate() {
-            maxima[leaves + index] = note.off;
+        for (slot, note) in maxima.iter_mut().skip(leaves).zip(notes) {
+            *slot = note.off;
         }
+        // Node `n` holds the latest end of its children `2n` and `2n + 1`.
         for index in (1..leaves).rev() {
-            maxima[index] = maxima[index * 2].max(maxima[index * 2 + 1]);
+            let Some((parents, children)) = maxima.split_at_mut_checked(index * 2) else {
+                continue;
+            };
+            if let (Some(node), Some([left, right])) =
+                (parents.get_mut(index), children.first_chunk::<2>())
+            {
+                *node = (*left).max(*right);
+            }
         }
         Self { leaves, maxima }
     }
 }
 
+impl TrackPlan {
+    /// The end of `notes[index]`, where `index` is a `by_off` entry.
+    fn off_at(&self, index: u32) -> Option<i64> {
+        self.notes.get(index as usize).map(|note| note.off)
+    }
+}
+
 impl Cursor {
     fn track_slot(&self, id: u128) -> Option<usize> {
-        self.track_indices
+        let index = self
+            .track_indices
             .binary_search_by_key(&id, |entry| entry.0)
-            .ok()
-            .map(|index| self.track_indices[index].1)
+            .ok()?;
+        self.track_indices.get(index).map(|entry| entry.1)
     }
 
     /// Chases notes already covering `sample` into the sounding set.
@@ -282,7 +314,7 @@ impl Cursor {
     ) -> Result<(usize, usize), PlayError> {
         let (mut struck, mut kept) = (0, 0);
         for (cursor, track) in self.tracks.iter().zip(&plan.tracks) {
-            for (slot, index) in cursor.sounding[..cursor.sounding_len].iter().enumerate() {
+            for (slot, index) in cursor.live().iter().enumerate() {
                 visit_note();
                 let Some(note) = track.notes.get(*index as usize) else {
                     continue;
@@ -350,7 +382,9 @@ impl Cursor {
             {
                 continue;
             }
-            let cursor = &mut self.tracks[slot];
+            let Some(cursor) = self.tracks.get_mut(slot) else {
+                continue;
+            };
             if placed.is_none() || !cursor.advance(track, sample) {
                 cursor.place(track, sample, from);
             }
@@ -365,8 +399,11 @@ impl Cursor {
             if next.is_some_and(|slot| self.inherits(slot, previous, old, sample)) {
                 continue;
             }
-            previous.tracks[old].sort_live(old_track);
-            let old_cursor = &previous.tracks[old];
+            let Some(old_cursor) = previous.tracks.get_mut(old) else {
+                continue;
+            };
+            old_cursor.sort_live(old_track);
+            let old_cursor = &*old_cursor;
             match next.and_then(|slot| self.tracks.get_mut(slot).zip(plan.tracks.get(slot))) {
                 Some((cursor, track)) => {
                     cursor.match_voices(track, old_cursor, old_track, delivered, out, &mut count)?
@@ -387,8 +424,12 @@ impl Cursor {
             else {
                 continue;
             };
-            std::mem::swap(&mut self.tracks[slot], &mut previous.tracks[old]);
-            let cursor = &mut self.tracks[slot];
+            let (Some(cursor), Some(old_cursor)) =
+                (self.tracks.get_mut(slot), previous.tracks.get_mut(old))
+            else {
+                continue;
+            };
+            std::mem::swap(cursor, old_cursor);
             cursor.inherited = if delivered { cursor.sounding_len } else { 0 };
         }
         self.position = Some(sample);
@@ -438,7 +479,9 @@ impl Cursor {
             self.emit(plan, span, end, out, &mut count)?;
             self.position = Some(end);
         }
-        if !sort_events(&mut out[..count], order, scratch) {
+        // `push_event` keeps `count` within `out`.
+        let written = out.get_mut(..count).ok_or(PlayError::BufferTooSmall)?;
+        if !sort_events(written, order, scratch) {
             return Err(PlayError::BufferTooSmall);
         }
         Ok(count)
@@ -494,6 +537,11 @@ impl Cursor {
 }
 
 impl TrackCursor {
+    /// The note indexes of the live voices.
+    fn live(&self) -> &[u32] {
+        self.sounding.get(..self.sounding_len).unwrap_or_default()
+    }
+
     /// Note-offs for every live voice, with the keys they started with.
     fn release_live(
         &self,
@@ -502,17 +550,28 @@ impl TrackCursor {
         out: &mut [Event],
         count: &mut usize,
     ) -> Result<(), PlayError> {
-        for &index in &self.sounding[..self.sounding_len] {
+        for &index in self.live() {
             visit_note();
-            let note = &track.notes[index as usize];
-            let key = self.live_key[index as usize];
+            let Some(note) = track.notes.get(index as usize) else {
+                continue;
+            };
             push_event(
                 out,
                 count,
-                Event::note_off(block_offset, track.track_key, note.note_id, key),
+                Event::note_off(
+                    block_offset,
+                    track.track_key,
+                    note.note_id,
+                    self.key_of(index as usize, note),
+                ),
             )?;
         }
         Ok(())
+    }
+
+    /// The key the note at `index` started with.
+    fn key_of(&self, index: usize, note: &NoteSpan) -> u8 {
+        self.live_key.get(index).copied().unwrap_or(note.pitch)
     }
 
     fn place(&mut self, track: &TrackPlan, sample: i64, from: Option<i64>) {
@@ -521,12 +580,20 @@ impl TrackCursor {
         self.on_index = track.notes.partition_point(|note| note.on < sample);
         self.off_index = track
             .by_off
-            .partition_point(|index| track.notes[*index as usize].off < sample);
+            .partition_point(|index| track.off_at(*index).is_some_and(|off| off < sample));
         // Clear only the previous live set. No generation wrap can scan the score.
-        while self.sounding_len != 0 {
-            let index = self.sounding[self.sounding_len - 1] as usize;
-            self.clear(index);
+        let Self {
+            sounding,
+            sounding_len,
+            sounding_slots,
+            ..
+        } = self;
+        for &index in sounding.get(..*sounding_len).unwrap_or_default() {
+            if let Some(slot) = sounding_slots.get_mut(index as usize) {
+                *slot = usize::MAX;
+            }
         }
+        *sounding_len = 0;
         let first = match from {
             None => 0,
             Some(from) if from >= sample => return,
@@ -579,7 +646,7 @@ impl TrackCursor {
         let ends = track
             .by_off
             .get(self.off_index + ADVANCE_EDGES)
-            .is_some_and(|index| track.notes[*index as usize].off < end);
+            .is_some_and(|index| track.off_at(*index).is_some_and(|off| off < end));
         if onsets || ends {
             return false;
         }
@@ -592,11 +659,10 @@ impl TrackCursor {
         while let Some(index) = track
             .by_off
             .get(self.off_index)
-            .map(|index| *index as usize)
-            .filter(|index| track.notes[*index].off < end)
+            .filter(|index| track.off_at(**index).is_some_and(|off| off < end))
         {
             visit_note();
-            self.clear(index);
+            self.clear(*index as usize);
             self.off_index += 1;
         }
         true
@@ -604,13 +670,17 @@ impl TrackCursor {
 
     /// Orders the live set by model note ID for [`Self::match_voices`].
     fn sort_live(&mut self, track: &TrackPlan) {
-        let live = &mut self.sounding[..self.sounding_len];
+        let Some(live) = self.sounding.get_mut(..self.sounding_len) else {
+            return;
+        };
         live.sort_unstable_by_key(|index| {
             visit_note();
-            track.notes[*index as usize].note
+            track.notes.get(*index as usize).map(|note| note.note)
         });
         for (slot, index) in live.iter().enumerate() {
-            self.sounding_slots[*index as usize] = slot;
+            if let Some(entry) = self.sounding_slots.get_mut(*index as usize) {
+                *entry = slot;
+            }
         }
     }
 
@@ -625,15 +695,13 @@ impl TrackCursor {
         out: &mut [Event],
         count: &mut usize,
     ) -> Result<(), PlayError> {
-        let old_live = &previous.sounding[..previous.sounding_len];
-        let old_id = |slot: usize| {
-            old_live.get(slot).map(|index| {
-                visit_note();
-                (*index as usize, previous_track.notes[*index as usize].note)
-            })
+        let old_live = previous.live();
+        let old_note = |slot: usize| {
+            let index = *old_live.get(slot)? as usize;
+            visit_note();
+            previous_track.notes.get(index).map(|note| (index, note))
         };
-        let release = |index: usize, out: &mut [Event], count: &mut usize| {
-            let note = &previous_track.notes[index];
+        let release = |(index, note): (usize, &NoteSpan), out: &mut [Event], count: &mut usize| {
             push_event(
                 out,
                 count,
@@ -641,7 +709,7 @@ impl TrackCursor {
                     0,
                     previous_track.track_key,
                     note.note_id,
-                    previous.live_key[index],
+                    previous.key_of(index, note),
                 ),
             )
         };
@@ -649,19 +717,26 @@ impl TrackCursor {
         // Entries before `live` are done. Inheriting swaps one of them, so the
         // rest stays sorted.
         for live in 0..self.sounding_len {
-            let index = self.sounding[live] as usize;
+            let Some(index) = self.sounding.get(live).map(|index| *index as usize) else {
+                break;
+            };
             visit_note();
-            let id = track.notes[index].note;
-            while let Some((old, old_note)) = old_id(next_old)
-                && old_note < id
+            let Some(id) = track.notes.get(index).map(|note| note.note) else {
+                continue;
+            };
+            while let Some(old) = old_note(next_old)
+                && old.1.note < id
             {
                 if delivered {
                     release(old, out, count)?;
                 }
                 next_old += 1;
             }
-            if let Some((old, _)) = old_id(next_old).filter(|(_, old_note)| *old_note == id) {
-                self.live_key[index] = previous.live_key[old];
+            if let Some((old, note)) = old_note(next_old).filter(|(_, note)| note.note == id) {
+                let key = previous.key_of(old, note);
+                if let Some(entry) = self.live_key.get_mut(index) {
+                    *entry = key;
+                }
                 next_old += 1;
                 if delivered {
                     self.inherit(live);
@@ -669,7 +744,7 @@ impl TrackCursor {
             }
         }
         if delivered {
-            while let Some((old, _)) = old_id(next_old) {
+            while let Some(old) = old_note(next_old) {
                 release(old, out, count)?;
                 next_old += 1;
             }
@@ -678,21 +753,38 @@ impl TrackCursor {
     }
 
     fn hold(&mut self, index: usize, key: u8) {
-        if self.sounding(index) || self.sounding_len >= self.sounding.len() {
+        if self.sounding(index) {
             return;
         }
-        self.sounding[self.sounding_len] = index as u32;
-        self.sounding_slots[index] = self.sounding_len;
+        let (Some(entry), Some(slot), Some(live_key)) = (
+            self.sounding.get_mut(self.sounding_len),
+            self.sounding_slots.get_mut(index),
+            self.live_key.get_mut(index),
+        ) else {
+            return;
+        };
+        *entry = index as u32;
+        *slot = self.sounding_len;
+        *live_key = key;
         self.sounding_len += 1;
-        self.live_key[index] = key;
     }
 
     /// Moves the live entry at `slot` to the end of the inherited prefix.
     fn inherit(&mut self, slot: usize) {
         let front = self.inherited;
+        if front > slot || slot >= self.sounding_len {
+            return;
+        }
         self.sounding.swap(slot, front);
-        self.sounding_slots[self.sounding[slot] as usize] = slot;
-        self.sounding_slots[self.sounding[front] as usize] = front;
+        for at in [slot, front] {
+            if let Some(entry) = self
+                .sounding
+                .get(at)
+                .and_then(|index| self.sounding_slots.get_mut(*index as usize))
+            {
+                *entry = at;
+            }
+        }
         self.inherited += 1;
     }
 
@@ -703,15 +795,30 @@ impl TrackCursor {
     }
 
     fn clear(&mut self, index: usize) {
-        if !self.sounding(index) {
+        let Some(slot) = self
+            .sounding_slots
+            .get(index)
+            .copied()
+            .filter(|slot| *slot != usize::MAX)
+        else {
             return;
+        };
+        let Some(last_slot) = self.sounding_len.checked_sub(1) else {
+            return;
+        };
+        let Some(&last) = self.sounding.get(last_slot) else {
+            return;
+        };
+        if let Some(entry) = self.sounding.get_mut(slot) {
+            *entry = last;
         }
-        let slot = self.sounding_slots[index];
-        self.sounding_len -= 1;
-        let last = self.sounding[self.sounding_len];
-        self.sounding[slot] = last;
-        self.sounding_slots[last as usize] = slot;
-        self.sounding_slots[index] = usize::MAX;
+        if let Some(entry) = self.sounding_slots.get_mut(last as usize) {
+            *entry = slot;
+        }
+        if let Some(entry) = self.sounding_slots.get_mut(index) {
+            *entry = usize::MAX;
+        }
+        self.sounding_len = last_slot;
     }
 
     fn emit(
@@ -725,11 +832,13 @@ impl TrackCursor {
         // Clearing reorders the live set, so the inherited prefix ends here.
         self.inherited = 0;
         loop {
-            let on = track.notes.get(self.on_index).map(|note| note.on);
-            let off = track
+            let next_on = track.notes.get(self.on_index);
+            let next_off = track
                 .by_off
                 .get(self.off_index)
-                .map(|index| track.notes[*index as usize].off);
+                .and_then(|index| Some((*index as usize, track.notes.get(*index as usize)?)));
+            let on = next_on.map(|note| note.on);
+            let off = next_off.map(|(_, note)| note.off);
             let take_off = match (on, off) {
                 (None, None) => break,
                 (Some(on), _) if on >= end => match off {
@@ -742,36 +851,37 @@ impl TrackCursor {
                 (Some(_), None) => false,
             };
             if take_off {
-                let Some(off_at) = off else { break };
-                if off_at >= end {
+                let Some((index, note)) = next_off else { break };
+                if note.off >= end {
                     break;
                 }
-                let index = track.by_off[self.off_index] as usize;
                 self.off_index += 1;
-                if off_at >= span.start && self.sounding(index) {
-                    let note = &track.notes[index];
-                    let key = self.live_key.get(index).copied().unwrap_or(note.pitch);
+                if note.off >= span.start && self.sounding(index) {
                     push_event(
                         out,
                         count,
-                        Event::note_off(offset(span, off_at)?, track.track_key, note.note_id, key),
+                        Event::note_off(
+                            offset(span, note.off)?,
+                            track.track_key,
+                            note.note_id,
+                            self.key_of(index, note),
+                        ),
                     )?;
                     self.clear(index);
                 }
             } else {
-                let Some(on_at) = on else { break };
-                if on_at >= end {
+                let Some(note) = next_on else { break };
+                if note.on >= end {
                     break;
                 }
                 let index = self.on_index;
                 self.on_index += 1;
-                if on_at >= span.start {
-                    let note = &track.notes[index];
+                if note.on >= span.start {
                     push_event(
                         out,
                         count,
                         Event::note_on(
-                            offset(span, on_at)?,
+                            offset(span, note.on)?,
                             track.track_key,
                             note.note_id,
                             note.pitch,
@@ -796,10 +906,8 @@ fn unit_velocity(stored: u16) -> f64 {
 }
 
 fn push_event(out: &mut [Event], count: &mut usize, event: Event) -> Result<(), PlayError> {
-    if *count >= out.len() {
-        return Err(PlayError::BufferTooSmall);
-    }
-    out[*count] = event;
+    let slot = out.get_mut(*count).ok_or(PlayError::BufferTooSmall)?;
+    *slot = event;
     *count += 1;
     Ok(())
 }
@@ -810,11 +918,12 @@ fn push_event(out: &mut [Event], count: &mut usize, event: Event) -> Result<(), 
 /// than one clip when the block crosses a boundary.
 pub fn overlapping_clips(clips: &[ClipSpan], start: i64, end: i64) -> std::ops::Range<usize> {
     let first = clips.partition_point(|clip| clip.end <= start);
-    let mut last = first;
-    while last < clips.len() && clips[last].start < end {
-        last += 1;
-    }
-    first..last
+    let overlapping = clips
+        .iter()
+        .skip(first)
+        .take_while(|clip| clip.start < end)
+        .count();
+    first..first + overlapping
 }
 
 #[cfg(test)]

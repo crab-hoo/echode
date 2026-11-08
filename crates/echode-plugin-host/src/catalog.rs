@@ -384,8 +384,10 @@ fn binary_plist_dict(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
         return None;
     }
     let trailer = bytes.len() - 32;
-    let offset_size = usize::from(bytes[trailer + 6]);
-    let ref_size = usize::from(bytes[trailer + 7]);
+    let Some(&[offset_size, ref_size]) = bytes.get(trailer + 6..trailer + 8) else {
+        return None;
+    };
+    let (offset_size, ref_size) = (usize::from(offset_size), usize::from(ref_size));
     if offset_size == 0 || offset_size > 8 || ref_size == 0 || ref_size > 8 {
         return None;
     }
@@ -444,8 +446,10 @@ fn object_string(bytes: &[u8], table: usize, offset_size: usize, index: usize) -
             } else {
                 let raw = bytes.get(payload..payload.checked_add(count.checked_mul(2)?)?)?;
                 let units: Vec<u16> = raw
-                    .chunks_exact(2)
-                    .map(|unit| u16::from_be_bytes([unit[0], unit[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|unit| u16::from_be_bytes(*unit))
                     .collect();
                 String::from_utf16(&units).ok()
             }

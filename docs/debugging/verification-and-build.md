@@ -125,6 +125,12 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `libc` / objc2 の公開宣言へ置き換え、古い行だけを除く。既存モジュールへの追記で回避しない。
 `<link_name>` は許可済みの Rust 名の差替えを示す。通常のバインディングを使う（[ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md)）。
 
+### `check-audio-lints` が宣言や解除を拒否する
+
+`scripts/check_audio_lints.py` は、音声経路の crate の lib のルートに 4 つの lint の拒否があることと、局所の `allow`・`expect` がないことを確かめる。
+`does not deny` はルートの宣言が欠けたか lint が減った状態で、宣言を戻す。`allows clippy::...` は解除で、`get`・反復子・スライスのパターンへ書き換える。
+音声スレッドで動く crate を足した時は、スクリプトの `AUDIO_CRATES` に足す。spike 専用の `graph.rs` の解除だけは許す（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）。
+
 ### Cargo の依存メタデータが欠ける
 
 `extern location for <crate> does not exist` で `target/debug/deps/*.rmeta` が欠ける時は、まず別のビルドや整理処理との競合を確認する。

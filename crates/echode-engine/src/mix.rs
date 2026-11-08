@@ -84,7 +84,10 @@ impl FaderState {
 
     pub(crate) fn add(&mut self, signal: Signal<'_>, left: &mut [f64], right: &mut [f64]) -> f32 {
         let mut peak = 0.0f32;
-        for (frame, (left, right)) in left.iter_mut().zip(right).enumerate() {
+        let stereo = signal.right.is_some();
+        let sources = signal.left.iter().zip(signal.right.unwrap_or(signal.left));
+        for ((left, right), (source_left, source_right)) in left.iter_mut().zip(right).zip(sources)
+        {
             if self.current != self.target {
                 self.elapsed = self.elapsed.saturating_add(1).min(self.frames);
                 self.current = if self.elapsed == self.frames {
@@ -94,15 +97,16 @@ impl FaderState {
                         .interpolate(f64::from(self.elapsed) / f64::from(self.frames))
                 };
             }
-            let (l, r) = if let Some(source_right) = signal.right {
+            let [mono_left, mono_right, stereo_left, stereo_right] = self.current;
+            let (l, r) = if stereo {
                 (
-                    scaled(signal.left[frame], self.current[2]),
-                    scaled(source_right[frame], self.current[3]),
+                    scaled(*source_left, stereo_left),
+                    scaled(*source_right, stereo_right),
                 )
             } else {
                 (
-                    scaled(signal.left[frame], self.current[0]),
-                    scaled(signal.left[frame], self.current[1]),
+                    scaled(*source_left, mono_left),
+                    scaled(*source_left, mono_right),
                 )
             };
             *left += f64::from(l);
@@ -191,11 +195,11 @@ pub fn mix_buses(
     if tracks.len() != faders.len() || tracks.len() != track_peaks.len() {
         return Err(PlaybackError::BufferTooSmall);
     }
-    if master.len() != STEREO.len() {
+    let [left, right] = master else {
         return Err(PlaybackError::BufferTooSmall);
-    }
-    let frames = master[0].len();
-    if master[1].len() != frames {
+    };
+    let frames = left.len();
+    if right.len() != frames {
         return Err(PlaybackError::BufferTooSmall);
     }
     for fader in faders {
@@ -209,14 +213,12 @@ pub fn mix_buses(
         }
     }
 
-    master[0].fill(0.0);
-    master[1].fill(0.0);
+    left.fill(0.0);
+    right.fill(0.0);
     let any_solo = faders.iter().any(|fader| fader.solo);
-    let (left, rest) = master.split_first_mut().expect("stereo master");
-    let right = &mut *rest[0];
-    for (index, (track, fader)) in tracks.iter().zip(faders).enumerate() {
+    for ((track, fader), peak) in tracks.iter().zip(faders).zip(track_peaks) {
         let audible = !fader.mute && (!any_solo || fader.solo);
-        track_peaks[index] = if audible {
+        *peak = if audible {
             add_track(track, fader, left, right)
         } else {
             0.0
@@ -254,13 +256,13 @@ pub fn mix_tracks(
     left.fill(0.0);
     right.fill(0.0);
     let any_solo = faders.iter().any(|fader| fader.solo);
-    for (index, (plane, fader)) in planes.iter().zip(faders).enumerate() {
+    for ((plane, fader), peak) in planes.iter().zip(faders).zip(track_peaks) {
         let audible = !fader.mute && (!any_solo || fader.solo);
         let bus = InputBus {
             layout: MONO,
             channels: std::slice::from_ref(plane),
         };
-        track_peaks[index] = if audible {
+        *peak = if audible {
             add_track(&bus, fader, left, right)
         } else {
             0.0
@@ -275,20 +277,26 @@ fn supported(track: &InputBus<'_>, frames: usize) -> bool {
     (mono || stereo) && track.channels.iter().all(|plane| plane.len() == frames)
 }
 
+/// `track` is a shape [`supported`] accepts.
 fn add_track(track: &InputBus<'_>, fader: &TrackFader, left: &mut [f32], right: &mut [f32]) -> f32 {
-    if track.layout == MONO {
-        let (left_gain, right_gain) = pan_gains(fader.pan, fader.gain);
-        return add_mono(track.channels[0], left_gain, right_gain, left, right);
+    match track.channels {
+        [plane] if track.layout == MONO => {
+            let (left_gain, right_gain) = pan_gains(fader.pan, fader.gain);
+            add_mono(plane, left_gain, right_gain, left, right)
+        }
+        [source_left, source_right] => {
+            let (left_gain, right_gain) = balance(fader.pan, fader.gain);
+            add_stereo(
+                source_left,
+                source_right,
+                left_gain,
+                right_gain,
+                left,
+                right,
+            )
+        }
+        _ => 0.0,
     }
-    let (left_gain, right_gain) = balance(fader.pan, fader.gain);
-    add_stereo(
-        track.channels[0],
-        track.channels[1],
-        left_gain,
-        right_gain,
-        left,
-        right,
-    )
 }
 
 fn add_mono(
@@ -299,11 +307,11 @@ fn add_mono(
     right: &mut [f32],
 ) -> f32 {
     let mut peak = 0.0f32;
-    for (index, sample) in plane.iter().enumerate() {
+    for ((sample, left), right) in plane.iter().zip(left).zip(right) {
         let left_sample = sample * left_gain;
         let right_sample = sample * right_gain;
-        left[index] += left_sample;
-        right[index] += right_sample;
+        *left += left_sample;
+        *right += right_sample;
         peak = peak.max(left_sample.abs()).max(right_sample.abs());
     }
     peak
@@ -318,11 +326,12 @@ fn add_stereo(
     right: &mut [f32],
 ) -> f32 {
     let mut peak = 0.0f32;
-    for index in 0..source_left.len() {
-        let left_sample = source_left[index] * left_gain;
-        let right_sample = source_right[index] * right_gain;
-        left[index] += left_sample;
-        right[index] += right_sample;
+    let sources = source_left.iter().zip(source_right);
+    for ((source_left, source_right), (left, right)) in sources.zip(left.iter_mut().zip(right)) {
+        let left_sample = source_left * left_gain;
+        let right_sample = source_right * right_gain;
+        *left += left_sample;
+        *right += right_sample;
         peak = peak.max(left_sample.abs()).max(right_sample.abs());
     }
     peak

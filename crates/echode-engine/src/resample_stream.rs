@@ -81,9 +81,7 @@ impl ResampleStream {
         let target = u64::try_from(target).map_err(|_| PlaybackError::Time)?;
         let mut result = Vec::new();
         if self.converter.is_none() {
-            for frame in samples.chunks_exact(self.channels) {
-                result.push([frame[0], frame.get(1).copied().unwrap_or(frame[0])]);
-            }
+            result.extend(samples.chunks_exact(self.channels).map(stereo_frame));
         } else {
             self.convert(samples, frames, &mut result)?;
             while eof && self.output + (result.len() as u64) < target {
@@ -123,11 +121,21 @@ impl ResampleStream {
             .map_err(|_| PlaybackError::Media)?;
         let skip = self.trim.min(written);
         self.trim -= skip;
-        for frame in output.chunks_exact(self.channels).take(written).skip(skip) {
-            result.push([frame[0], frame.get(1).copied().unwrap_or(frame[0])]);
-        }
+        result.extend(
+            output
+                .chunks_exact(self.channels)
+                .take(written)
+                .skip(skip)
+                .map(stereo_frame),
+        );
         Ok(())
     }
+}
+
+/// The first two channels of `frame`. A mono frame plays on both.
+fn stereo_frame(frame: &[f32]) -> [f32; 2] {
+    let left = frame.first().copied().unwrap_or(0.0);
+    [left, frame.get(1).copied().unwrap_or(left)]
 }
 
 #[cfg(test)]

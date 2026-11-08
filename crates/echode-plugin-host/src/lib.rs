@@ -3,6 +3,19 @@
 //! Without `--plugin`, blocks are copied unchanged. That separates the cost of
 //! the crossing from the cost of calling into the plugin.
 
+// This process runs the plugin's audio thread. Product code checks every
+// index, so a bad count is an error or a skipped event, not a panic that
+// stops the helper (ADR 0284).
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
+
 use clack_host::prelude::*;
 use echode_sandbox::{MAX_CHANNELS, MAX_FRAMES, RegionError, SPIKE_SAMPLE_RATE};
 use std::os::fd::FromRawFd;
@@ -128,16 +141,16 @@ pub fn measure_in_process(
     for _ in 0..iterations {
         let input_audio = input_ports.with_input_buffers([AudioPortBuffer {
             latency: 0,
-            channels: AudioPortBufferType::f32_input_only(
-                input
-                    .iter_mut()
-                    .map(|channel| InputChannel::variable(&mut channel[..frames])),
-            ),
+            channels: AudioPortBufferType::f32_input_only(input.iter_mut().map(|channel| {
+                InputChannel::variable(channel.get_mut(..frames).unwrap_or_default())
+            })),
         }]);
         let mut output_audio = output_ports.with_output_buffers([AudioPortBuffer {
             latency: 0,
             channels: AudioPortBufferType::f32_output_only(
-                output.iter_mut().map(|channel| &mut channel[..frames]),
+                output
+                    .iter_mut()
+                    .map(|channel| channel.get_mut(..frames).unwrap_or_default()),
             ),
         }]);
         let input_events = InputEvents::empty();

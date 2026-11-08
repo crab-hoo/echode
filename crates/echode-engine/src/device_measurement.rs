@@ -202,8 +202,8 @@ impl Session {
         let index = self.sample_count.fetch_add(1, Ordering::Relaxed);
         // SAFETY: only this thread writes, and `index` is the slot it owns.
         let samples = unsafe { &mut *self.samples.get() };
-        if (index as usize) < samples.len() {
-            samples[index as usize] = u32::try_from(nanos).unwrap_or(u32::MAX);
+        if let Some(sample) = samples.get_mut(index as usize) {
+            *sample = u32::try_from(nanos).unwrap_or(u32::MAX);
         }
         self.max_ns.fetch_max(nanos, Ordering::Relaxed);
         if index < WARMUP_CALLBACKS {
@@ -397,12 +397,9 @@ fn run_measurement(
     let mut sorted = measured.to_vec();
     sorted.sort_unstable();
     let percentile = |p: f64| -> u64 {
-        if sorted.is_empty() {
-            0
-        } else {
-            let index = ((sorted.len() - 1) as f64 * p).round() as usize;
-            u64::from(sorted[index.min(sorted.len() - 1)])
-        }
+        let last = sorted.len().saturating_sub(1);
+        let index = (last as f64 * p).round() as usize;
+        sorted.get(index.min(last)).copied().map_or(0, u64::from)
     };
     let late = session.late.load(Ordering::Relaxed);
     let gaps = session.gaps.load(Ordering::Relaxed);

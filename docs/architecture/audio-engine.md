@@ -166,6 +166,10 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
 - **コールバックの panic**: 出力と試聴のコールバックは panic を捕まえ、そのブロック以降を無音にして出力の失敗として報告する。
   オーディオスレッドではフックが場所と文を前もって確保した領域へ写すだけで、記録へは制御スレッドが書く
   （[ADR 0238](../decisions/0238-audio-callback-panics.md)）
+- **panic を起こす書き方の禁止**: 音声スレッドで動くコードを持つ 8 crate（time・realtime・dsp・sine-pad・sandbox・plugin-host・engine・audio-io）は、
+  lib のルートの lint で製品コードの添字・スライス・`unwrap`・`expect`・`panic!` を拒否する。
+  届かない値は、そのサンプル・ノート・記録を飛ばすか既存のエラーにし、ヘルパーの段が見つからなければ取りこぼしとして減衰で隠す。
+  `scripts/check_audio_lints.py` が宣言の欠落と局所の解除を拒否する（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）
 - **出力のブロックの期限**: 出力の IOProc は、HAL の出力時刻から機器の出力側の安全余白とブロックの 1/16 を引いた時刻にブロックを終える。
   残りは同じ機器の試聴の IOProc と HAL の書込みの分で、入口から 1 ブロックを上限にする。ヘルパーの待ちはそこから 1/8 前まで
   （[ADR 0283](../decisions/0283-output-time-callback-deadline.md)、[ADR 0082](../decisions/0082-callback-deadline.md)）

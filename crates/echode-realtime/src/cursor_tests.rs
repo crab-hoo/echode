@@ -669,3 +669,32 @@ fn a_placed_cursor_adopts_a_moved_score_without_reading_it() {
     );
     assert!(work[0] <= 24, "a placed adoption read too much: {work:?}");
 }
+
+/// A plan the control thread got wrong costs its own notes, not the audio
+/// thread (ADR 0284): an end entry past the notes, and a plan with more notes
+/// than the cursor's buffers.
+#[test]
+fn a_plan_that_does_not_match_its_cursor_plays_what_it_can() {
+    let mut plan = score(2);
+    plan.tracks[0].by_off[1] = 99;
+    let mut cursor = plan.cursor();
+    let events = play(&mut cursor, &plan, span(0, 30));
+    let ons = events.iter().filter(|event| event.is_note_on()).count();
+    let offs: Vec<_> = events.iter().filter(|event| event.is_note_off()).collect();
+    assert_eq!(ons, 4, "every onset still plays: {events:?}");
+    assert_eq!(offs.len(), 1, "ends stop at the bad entry: {events:?}");
+    assert_eq!(offs[0].note_id(), Some(0));
+
+    let small = score(0);
+    let mut cursor = small.cursor();
+    let large = score(3);
+    cursor.catch_up(&large, 25);
+    let events = play(&mut cursor, &large, span(25, 100));
+    assert!(
+        events.iter().any(|event| event.is_note_on()),
+        "notes the buffers hold still play: {events:?}"
+    );
+    let mut fresh = vec![SILENT; 8];
+    cursor.chase_events(&large, &mut fresh, &mut []).unwrap();
+    cursor.release_all(&large, 0, &mut fresh).unwrap();
+}

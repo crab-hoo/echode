@@ -153,7 +153,7 @@ impl SinePad {
     }
 
     pub fn restore(&mut self, bytes: &[u8]) -> Result<(), DspError> {
-        if bytes.first() == Some(&STATE_VERSION) && &bytes[1..] == INSTRUMENT.as_bytes() {
+        if bytes.split_first() == Some((&STATE_VERSION, INSTRUMENT.as_bytes())) {
             Ok(())
         } else {
             Err(DspError::InvalidState)
@@ -201,12 +201,11 @@ fn drive<T: ?Sized>(
         }
         previous = Some(offset);
     }
-    let mut index = 0;
+    let mut events = events.iter().peekable();
     for (frame, sample) in output.iter_mut().enumerate() {
         let at = u32::try_from(frame).map_err(|_| DspError::Time)?;
-        while index < events.len() && events[index].time() == at {
-            handle(state, &events[index])?;
-            index += 1;
+        while let Some(event) = events.next_if(|event| event.time() == at) {
+            handle(state, event)?;
         }
         *sample += mix(state);
     }

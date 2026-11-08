@@ -119,11 +119,7 @@ pub(crate) fn render_scaled_faded_clips(
             while project < to {
                 let local =
                     u32::try_from(project - span.start_sample).map_err(|_| PlaybackError::Time)?;
-                let index = block_index(span, local)?;
-                if index >= output.len() {
-                    return Err(PlaybackError::BufferTooSmall);
-                }
-                output[index] += faded_sample(clip, project, gain, promotion);
+                *block_sample(output, span, local)? += faded_sample(clip, project, gain, promotion);
                 project += 1;
             }
         }
@@ -137,8 +133,9 @@ fn faded_overlapping<'a>(
     end: i64,
 ) -> impl Iterator<Item = &'a FadedClip<'a>> {
     let first = clips.partition_point(|clip| faded_end(clip) <= start);
-    clips[first..]
+    clips
         .iter()
+        .skip(first)
         .take_while(move |clip| clip.start_sample < end)
 }
 
@@ -225,11 +222,7 @@ pub fn render_audio_clips(
             while project < to {
                 let local =
                     u32::try_from(project - span.start_sample).map_err(|_| PlaybackError::Time)?;
-                let index = block_index(span, local)?;
-                if index >= output.len() {
-                    return Err(PlaybackError::BufferTooSmall);
-                }
-                output[index] += clip_sample(clip, project, fade);
+                *block_sample(output, span, local)? += clip_sample(clip, project, fade);
                 project += 1;
             }
         }
@@ -243,8 +236,9 @@ fn overlapping<'a>(
     end: i64,
 ) -> impl Iterator<Item = &'a AudioClip<'a>> {
     let first = clips.partition_point(|clip| clip_end(clip) <= start);
-    clips[first..]
+    clips
         .iter()
+        .skip(first)
         .take_while(move |clip| clip.start_sample < end)
 }
 
@@ -269,10 +263,7 @@ pub fn fade_loop_seam(
     let window = i64::from(fade_frames);
     for span in spans {
         for local in 0..span.frames {
-            let index = block_index(span, local)?;
-            if index >= output.len() {
-                return Err(PlaybackError::BufferTooSmall);
-            }
+            let sample = block_sample(output, span, local)?;
             let project = span
                 .start_sample
                 .checked_add(i64::from(local))
@@ -292,7 +283,7 @@ pub fn fade_loop_seam(
             {
                 gain *= age as f32 / denom;
             }
-            output[index] *= gain;
+            *sample *= gain;
         }
     }
     Ok(())
@@ -326,10 +317,10 @@ fn copy_block(live: &[f32], spans: &[PlayedSpan], output: &mut [f32]) -> Result<
     for span in spans {
         for local in 0..span.frames {
             let index = block_index(span, local)?;
-            if index >= output.len() || index >= live.len() {
+            let (Some(sample), Some(value)) = (output.get_mut(index), live.get(index)) else {
                 return Err(PlaybackError::BufferTooSmall);
-            }
-            output[index] = live[index];
+            };
+            *sample = *value;
         }
     }
     Ok(())
@@ -343,15 +334,12 @@ fn read_cache(
 ) -> Result<(), PlaybackError> {
     for span in spans {
         for local in 0..span.frames {
-            let index = block_index(span, local)?;
-            if index >= output.len() {
-                return Err(PlaybackError::BufferTooSmall);
-            }
+            let sample = block_sample(output, span, local)?;
             let project = span
                 .start_sample
                 .checked_add(i64::from(local))
                 .ok_or(PlaybackError::Time)?;
-            output[index] = cached_sample(samples, origin, project);
+            *sample = cached_sample(samples, origin, project);
         }
     }
     Ok(())
@@ -412,6 +400,16 @@ fn block_index(span: &PlayedSpan, local: u32) -> Result<usize, PlaybackError> {
         .checked_add(local)
         .map(|index| index as usize)
         .ok_or(PlaybackError::Time)
+}
+
+/// The output sample `local` frames into `span`.
+fn block_sample<'a>(
+    output: &'a mut [f32],
+    span: &PlayedSpan,
+    local: u32,
+) -> Result<&'a mut f32, PlaybackError> {
+    let index = block_index(span, local)?;
+    output.get_mut(index).ok_or(PlaybackError::BufferTooSmall)
 }
 
 #[cfg(test)]

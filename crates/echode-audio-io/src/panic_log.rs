@@ -11,16 +11,6 @@
 //! hook. An `extern "C"` entry aborts right after its hook, so in the app this
 //! line is the only record of such a panic.
 
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::indexing_slicing,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic
-    )
-)]
-
 use std::any::Any;
 use std::cell::UnsafeCell;
 use std::io::Write as _;

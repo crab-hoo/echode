@@ -13,8 +13,16 @@ pub fn copy_bypassed_audio<'a>(
         let source = input.next().unwrap_or_default();
         let end = frames.min(plane.len());
         let copied = end.min(source.len());
-        plane[..copied].copy_from_slice(&source[..copied]);
-        plane[copied..end].fill(0.0);
+        let (Some((copy, silence)), Some(source)) = (
+            plane
+                .get_mut(..end)
+                .and_then(|plane| plane.split_at_mut_checked(copied)),
+            source.get(..copied),
+        ) else {
+            continue;
+        };
+        copy.copy_from_slice(source);
+        silence.fill(0.0);
     }
 }
 

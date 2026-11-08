@@ -1,16 +1,6 @@
 //! Product playback. All score, instrument, and scratch storage is prepared by
 //! the control thread. The callback only moves prepared ownership through rings.
 
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::indexing_slicing,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic
-    )
-)]
-
 use crate::TrackMeter;
 use crate::meter::AutoMute;
 use std::collections::{BTreeMap, HashMap, HashSet};

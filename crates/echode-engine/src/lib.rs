@@ -4,6 +4,18 @@
 //! buffers. The Phase 0 graph and device measurement require the `spike` feature.
 
 #![cfg_attr(not(target_os = "macos"), allow(unused))]
+// The audio thread runs this crate. Product code reaches buffers with `get`,
+// iterators and slice patterns, so a bad index costs a block, not a panic
+// (ADR 0284). The Phase 0 graph opts out to keep its measurement comparable.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");

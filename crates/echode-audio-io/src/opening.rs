@@ -6,16 +6,6 @@
 //! Edits, transport commands and device requests keep their turns meanwhile;
 //! the session applies what changed when it installs the stream.
 
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::indexing_slicing,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic
-    )
-)]
-
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;

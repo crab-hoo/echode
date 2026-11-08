@@ -6,6 +6,18 @@
 //! this protocol.
 
 #![cfg_attr(not(target_os = "macos"), allow(unused))]
+// Audio crosses this crate on the realtime thread, and the control socket reads
+// an untrusted helper's bytes. Product code checks every index, so a bad length
+// is an error or a skipped record, not a panic (ADR 0284).
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");

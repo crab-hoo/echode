@@ -249,10 +249,10 @@ impl Socket {
     }
 
     fn parse_one(&mut self) -> io::Result<Option<(u64, ControlMessage)>> {
-        if self.incoming.len() < 4 {
+        let Some(header) = self.incoming.first_chunk::<4>() else {
             return Ok(None);
-        }
-        let len = u32::from_le_bytes(self.incoming[..4].try_into().expect("4 bytes")) as usize;
+        };
+        let len = u32::from_le_bytes(*header) as usize;
         if !(12..=MAX_MESSAGE).contains(&len) {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
@@ -273,7 +273,14 @@ impl Socket {
             }
             None => None,
         };
-        let id = u64::from_le_bytes(payload[4..12].try_into().expect("8 bytes"));
+        // `len` is at least 12, so the type and the id are both present.
+        let id = payload
+            .get(4..12)
+            .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
+            .ok_or_else(|| {
+                io::Error::new(ErrorKind::InvalidData, "control message has no request id")
+            })?;
+        let id = u64::from_le_bytes(id);
         payload.drain(4..12);
         Ok(decode(&payload, fd)?.map(|message| (id, message)))
     }
@@ -312,7 +319,8 @@ impl Socket {
             ));
         }
         let at = self.incoming.len();
-        self.incoming.extend_from_slice(&buf[..n as usize]);
+        self.incoming
+            .extend_from_slice(buf.get(..n as usize).unwrap_or_default());
         if let Some(fd) = take_rights(&msg) {
             if self.pending_fd.is_some() {
                 return Err(io::Error::new(
@@ -383,14 +391,13 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
 }
 
 fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessage>> {
-    if payload.len() < 4 {
+    let Some((typ, body)) = payload.split_first_chunk::<4>() else {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
             "control message has no type",
         ));
-    }
-    let typ = u32::from_le_bytes(payload[..4].try_into().expect("4 bytes"));
-    let body = &payload[4..];
+    };
+    let typ = u32::from_le_bytes(*typ);
     if typ == REMAP {
         let layout = read_layout(body)?;
         let fd = fd.ok_or_else(|| {
@@ -428,19 +435,15 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         CHAIN_READY => ControlMessage::ChainReady,
         CHAIN_REJECTED => ControlMessage::ChainRejected,
         PORTS => {
-            let split = body.len().checked_sub(8).ok_or_else(|| {
-                io::Error::new(ErrorKind::InvalidData, "port tail/latency is missing")
-            })?;
-            let (inputs, outputs) = read_ports(&body[..split])?;
-            let tail_samples =
-                u32::from_le_bytes(body[split..split + 4].try_into().expect("4 bytes"));
-            let latency_samples =
-                u32::from_le_bytes(body[split + 4..].try_into().expect("4 bytes"));
+            let missing = || io::Error::new(ErrorKind::InvalidData, "port tail/latency is missing");
+            let (rest, latency) = body.split_last_chunk::<4>().ok_or_else(missing)?;
+            let (ports, tail) = rest.split_last_chunk::<4>().ok_or_else(missing)?;
+            let (inputs, outputs) = read_ports(ports)?;
             ControlMessage::Ports {
                 inputs,
                 outputs,
-                tail_samples,
-                latency_samples,
+                tail_samples: u32::from_le_bytes(*tail),
+                latency_samples: u32::from_le_bytes(*latency),
             }
         }
         PORTS_REJECTED => ControlMessage::PortsRejected(
@@ -479,7 +482,9 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         }
         GUI_CLOSED if body.is_empty() => ControlMessage::GuiClosed,
         GUI_COMMAND if body.len() == 1 => ControlMessage::GuiCommand(
-            crate::PluginCommand::decode(body[0])
+            body.first()
+                .copied()
+                .and_then(crate::PluginCommand::decode)
                 .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "unknown plugin command"))?,
         ),
         PARAM_RELAY => ControlMessage::ParamRelay(read_relay(body)?),
@@ -521,31 +526,20 @@ fn read_ports(body: &[u8]) -> io::Result<(Vec<u32>, Vec<u32>)> {
 }
 
 fn read_counts(body: &[u8]) -> io::Result<(Vec<u32>, &[u8])> {
-    if body.len() < 4 {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            "port description is truncated",
-        ));
-    }
-    let count = u32::from_le_bytes(body[..4].try_into().expect("4 bytes")) as usize;
+    let truncated = || io::Error::new(ErrorKind::InvalidData, "port description is truncated");
+    let (count, rest) = body.split_first_chunk::<4>().ok_or_else(truncated)?;
+    let count = u32::from_le_bytes(*count) as usize;
     let bytes = count
         .checked_mul(4)
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "port description is too large"))?;
-    let rest = body
-        .get(4..)
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "port description is truncated"))?;
-    if rest.len() < bytes {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            "port description is truncated",
-        ));
-    }
-    let mut counts = Vec::with_capacity(count);
-    for chunk in rest[..bytes].chunks_exact(4) {
-        let channels = u32::from_le_bytes(chunk.try_into().expect("4 bytes"));
-        counts.push(channels);
-    }
-    Ok((counts, &rest[bytes..]))
+    let (ports, rest) = rest.split_at_checked(bytes).ok_or_else(truncated)?;
+    let counts = ports
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|word| u32::from_le_bytes(*word))
+        .collect();
+    Ok((counts, rest))
 }
 
 fn layout_bytes(layout: SessionLayout) -> [u8; 20] {
@@ -557,28 +551,35 @@ fn layout_bytes(layout: SessionLayout) -> [u8; 20] {
         layout.input_events,
         layout.output_events,
     ];
-    for (index, field) in fields.into_iter().enumerate() {
-        body[index * 4..index * 4 + 4].copy_from_slice(&field.to_le_bytes());
+    for (word, field) in body.as_chunks_mut::<4>().0.iter_mut().zip(fields) {
+        *word = field.to_le_bytes();
     }
     body
 }
 
 fn read_layout(body: &[u8]) -> io::Result<SessionLayout> {
-    if body.len() != 20 {
+    let (
+        [
+            max_frames,
+            input_channels,
+            output_channels,
+            input_events,
+            output_events,
+        ],
+        [],
+    ) = body.as_chunks::<4>()
+    else {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
             "remap layout is the wrong size",
         ));
-    }
-    let word = |index: usize| {
-        u32::from_le_bytes(body[index * 4..index * 4 + 4].try_into().expect("4 bytes"))
     };
     Ok(SessionLayout {
-        max_frames: word(0),
-        input_channels: word(1),
-        output_channels: word(2),
-        input_events: word(3),
-        output_events: word(4),
+        max_frames: u32::from_le_bytes(*max_frames),
+        input_channels: u32::from_le_bytes(*input_channels),
+        output_channels: u32::from_le_bytes(*output_channels),
+        input_events: u32::from_le_bytes(*input_events),
+        output_events: u32::from_le_bytes(*output_events),
     })
 }
 
@@ -601,9 +602,10 @@ fn frame_tagged(id: u64, typ: u32, body: &[u8]) -> io::Result<Vec<u8>> {
 fn send_bytes(socket: i32, bytes: &[u8], fd: Option<i32>) -> io::Result<()> {
     let mut sent = 0;
     while sent < bytes.len() {
+        let rest = bytes.get(sent..).unwrap_or_default();
         let mut iov = libc::iovec {
-            iov_base: bytes[sent..].as_ptr().cast_mut().cast(),
-            iov_len: bytes.len() - sent,
+            iov_base: rest.as_ptr().cast_mut().cast(),
+            iov_len: rest.len(),
         };
         let mut control = [0u8; 256];
         let pass = if sent == 0 { fd } else { None };

@@ -9,6 +9,11 @@
 //! audio thread and the workers take ready nodes from one stack, so a slow
 //! chain does not hold the others behind a level barrier.
 
+// The Phase 0 measurement as it was run (S2), built only with `spike`. The
+// product's audio-path lints do not apply, so its cost stays comparable
+// with the recorded results (ADR 0284).
+#![allow(clippy::indexing_slicing, clippy::expect_used)]
+
 use crate::wait::{self, wait_until_ge, wait_until_ne};
 use std::cell::UnsafeCell;
 use std::sync::Arc;

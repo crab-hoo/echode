@@ -132,12 +132,9 @@ where
             .map_err(|_| PlaybackError::Time)?;
         frames
     };
-    for (index, sample) in output.iter_mut().enumerate() {
-        *sample = if index < written {
-            produced[index]
-        } else {
-            0.0
-        };
+    let mut produced = produced.iter().take(written);
+    for sample in output.iter_mut() {
+        *sample = produced.next().copied().unwrap_or(0.0);
     }
     Ok(())
 }

@@ -53,8 +53,8 @@ impl OutputDeclick {
         if !self.last[1].is_finite() {
             self.last[1] = 0.0;
         }
-        if changed {
-            self.offset = [self.last[0] - left[0], self.last[1] - right[0]];
+        if changed && let (Some(first_left), Some(first_right)) = (left.first(), right.first()) {
+            self.offset = [self.last[0] - first_left, self.last[1] - first_right];
             self.remaining = self.frames;
         }
         for (left, right) in left.iter_mut().zip(right) {

@@ -1,5 +1,16 @@
 //! Host-independent instrument DSP shared by the bundled plugin and engine fixtures.
 
+// The bundled plugin runs this on its audio thread (ADR 0284).
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic
+    )
+)]
+
 mod allocation;
 mod sine_pad;
 

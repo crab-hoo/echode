@@ -262,30 +262,29 @@ impl<'a> Cursor<'a> {
     }
 
     fn take(&mut self, len: usize) -> io::Result<&'a [u8]> {
-        let end = self
-            .at
-            .checked_add(len)
-            .filter(|end| *end <= self.body.len())
+        let end = self.at.checked_add(len);
+        let bytes = end
+            .and_then(|end| self.body.get(self.at..end))
             .ok_or_else(|| invalid("parameter message is truncated"))?;
-        let bytes = &self.body[self.at..end];
-        self.at = end;
+        self.at += len;
         Ok(bytes)
     }
 
+    fn take_array<const N: usize>(&mut self) -> io::Result<[u8; N]> {
+        <[u8; N]>::try_from(self.take(N)?).map_err(|_| invalid("parameter message is truncated"))
+    }
+
     pub(crate) fn u8(&mut self) -> io::Result<u8> {
-        Ok(self.take(1)?[0])
+        let [byte] = self.take_array()?;
+        Ok(byte)
     }
 
     pub(crate) fn u32(&mut self) -> io::Result<u32> {
-        Ok(u32::from_le_bytes(
-            self.take(4)?.try_into().expect("4 bytes"),
-        ))
+        Ok(u32::from_le_bytes(self.take_array()?))
     }
 
     pub(crate) fn f64(&mut self) -> io::Result<f64> {
-        Ok(f64::from_bits(u64::from_le_bytes(
-            self.take(8)?.try_into().expect("8 bytes"),
-        )))
+        Ok(f64::from_bits(u64::from_le_bytes(self.take_array()?)))
     }
 
     pub(crate) fn text(&mut self) -> io::Result<String> {

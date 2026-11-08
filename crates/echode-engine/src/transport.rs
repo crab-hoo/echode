@@ -234,10 +234,7 @@ impl<C: ClockSource> Transport<C> {
             };
             span.block_offset = offset;
             offset = offset.checked_add(span.frames).ok_or(PlaybackError::Time)?;
-            if count >= spans.len() {
-                return Err(PlaybackError::BufferTooSmall);
-            }
-            spans[count] = span;
+            *spans.get_mut(count).ok_or(PlaybackError::BufferTooSmall)? = span;
             count += 1;
         }
         Ok(count)
@@ -326,16 +323,15 @@ fn beats(tick: i64) -> f64 {
     tick as f64 / TICKS_PER_QUARTER as f64
 }
 
+/// A map is never empty. Its first point also covers the ticks before it.
 fn tempo_bpm(map: &TempoMap, tick: i64) -> f64 {
-    let mut tempo = map.points()[0].tempo;
-    for point in map.points() {
-        if point.at.get() <= tick {
-            tempo = point.tempo;
-        } else {
-            break;
-        }
-    }
-    f64::from(tempo.numerator()) / f64::from(tempo.denominator())
+    let points = map.points();
+    let current = points
+        .partition_point(|point| point.at.get() <= tick)
+        .saturating_sub(1);
+    points.get(current).map_or(0.0, |point| {
+        f64::from(point.tempo.numerator()) / f64::from(point.tempo.denominator())
+    })
 }
 
 fn seconds_at<C: ClockSource>(transport: &Transport<C>, tick: i64) -> f64 {

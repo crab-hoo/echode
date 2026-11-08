@@ -877,10 +877,12 @@ fn serve_region(
             });
             tick_window(&bridge);
         }
-        audio
-            .join()
-            .expect("processing thread")
-            .and(control_handle.join().expect("control thread"))
+        // A thread that panicked has already printed why; the helper exits
+        // with an error, which the parent reads as the helper ending.
+        let joined = |name: &str, result: thread::Result<Result<(), HostError>>| {
+            result.unwrap_or_else(|_| Err(HostError::Plugin(format!("the {name} thread panicked"))))
+        };
+        joined("processing", audio.join()).and(joined("control", control_handle.join()))
     });
 
     if let Some(loaded) = loaded.as_ref() {

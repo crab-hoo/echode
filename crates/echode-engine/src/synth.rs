@@ -161,12 +161,11 @@ fn drive<T: ?Sized>(
     mut mix: impl FnMut(&mut T) -> f32,
 ) -> Result<(), PlaybackError> {
     check_events(events, output.len())?;
-    let mut index = 0;
+    let mut events = events.iter().peekable();
     for (frame, sample) in output.iter_mut().enumerate() {
         let at = u32::try_from(frame).map_err(|_| PlaybackError::Time)?;
-        while index < events.len() && events[index].time() == at {
-            handle(state, &events[index])?;
-            index += 1;
+        while let Some(event) = events.next_if(|event| event.time() == at) {
+            handle(state, event)?;
         }
         *sample += mix(state);
     }
@@ -259,16 +258,16 @@ fn mix_sampler(
             continue;
         }
         let index = usize::try_from(voice.position >> 32).unwrap_or(usize::MAX);
-        if index >= pcm.len() {
+        let Some(&current) = pcm.get(index) else {
             voice.active = false;
             continue;
-        }
+        };
         let fraction = (voice.position & 0xffff_ffff) as f64 / 4_294_967_296.0;
         let sample = match interpolation {
-            SamplerInterpolation::Floor => Floor::new(pcm[index]).interpolate(fraction),
+            SamplerInterpolation::Floor => Floor::new(current).interpolate(fraction),
             SamplerInterpolation::Linear => {
                 let next = pcm.get(index + 1).copied().unwrap_or(0.0);
-                Linear::new(pcm[index], next).interpolate(fraction)
+                Linear::new(current, next).interpolate(fraction)
             }
             SamplerInterpolation::Sinc => {
                 while voice.fed <= u64::try_from(index).unwrap_or(u64::MAX) {
@@ -340,16 +339,15 @@ impl crate::builtin::Device for TestSampler<'_> {
             return Err(PlaybackError::BufferTooSmall);
         }
         check_events(events, frames)?;
-        let mut index = 0;
+        let mut events = events.iter().peekable();
         for frame in 0..frames {
             let at = u32::try_from(frame).map_err(|_| PlaybackError::Time)?;
-            while index < events.len() && events[index].time() == at {
-                self.apply(&events[index])?;
-                index += 1;
+            while let Some(event) = events.next_if(|event| event.time() == at) {
+                self.apply(event)?;
             }
             let sample = mix_sampler(&mut self.voices, self.pcm, self.interpolation);
-            for plane in planes.iter_mut() {
-                plane[frame] += sample;
+            for value in planes.iter_mut().filter_map(|plane| plane.get_mut(frame)) {
+                *value += sample;
             }
         }
         Ok(())
