@@ -49,12 +49,13 @@ pub use echode_sandbox::{
     GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText,
     ParamValue, PluginActivity, PluginCommand, PluginControl, RetainedWorkgroup,
 };
-pub use meter::TrackMeter;
+pub use meter::{AutoMute, TrackMeter};
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
 pub use plan::PlaybackIds;
 pub use playback::{
-    CachedTrack, ClipLoader, ClipWindow, ClockSource, InternalClock, LoadedClip, MediaInputs,
-    PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions, PlaybackStatus, playback,
+    CachedTrack, ClipLoader, ClipWindow, ClockSource, InternalClock, LoadedClip, MASTER_GUARD_DBFS,
+    MasterAutoMute, MediaInputs, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions,
+    PlaybackStatus, playback,
 };
 pub use plugin_declick::PluginDeclick;
 pub use plugins::{PluginRoute, PluginWorkgroup};

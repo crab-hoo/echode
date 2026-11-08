@@ -92,6 +92,29 @@ pub struct AudioState {
     /// Helpers and media are being prepared for the output on another thread.
     /// The worker keeps taking edits; nothing sounds until this clears.
     pub opening: bool,
+    /// Tracks the output muted by itself because a plugin returned a NaN or an
+    /// infinity. Not the tracks' own mute: starting playback clears it (ADR 0282).
+    pub auto_muted_tracks: Vec<TrackAutoMute>,
+    /// The output muted the master because it ran past +18 dBFS (ADR 0282).
+    pub master_auto_mute: Option<MasterAutoMute>,
+}
+
+/// Why the output muted one track by itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct TrackAutoMute {
+    pub track: echode_model::Id,
+    /// The device that returned the value.
+    pub device: echode_model::Id,
+    /// The project sample of the first such value.
+    pub sample: i64,
+}
+
+/// Why the output muted the master by itself.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MasterAutoMute {
+    /// The first amplitude past the guard. `None` for a NaN.
+    pub peak: Option<f32>,
+    pub sample: i64,
 }
 
 /// A device view's way to its running plugin.
@@ -726,6 +749,26 @@ impl Session {
             pending_plan: status.is_some_and(|status| status.pending_plan),
             audition: self.audition.as_ref().map(crate::Audition::report),
             opening: self.opening.is_some(),
+            auto_muted_tracks: self.stream.as_ref().map_or_else(Vec::new, |stream| {
+                stream
+                    .meters()
+                    .iter()
+                    .filter_map(|meter| {
+                        let mute = meter.auto_mute()?;
+                        Some(TrackAutoMute {
+                            track: echode_model::Id::from_raw(meter.track),
+                            device: echode_model::Id::from_raw(mute.device),
+                            sample: mute.at,
+                        })
+                    })
+                    .collect()
+            }),
+            master_auto_mute: status
+                .and_then(|status| status.master_auto_mute)
+                .map(|mute| MasterAutoMute {
+                    peak: (!mute.peak.is_nan()).then_some(mute.peak),
+                    sample: mute.at,
+                }),
         }
     }
 

@@ -45,6 +45,7 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   連続した失敗では減衰をやり直さず、計画交換でも状態を保持する。失われた処理の復元や待ちの期限変更はしない
   （[ADR 0245](../decisions/0245-plugin-deadline-fades.md)）。
 - ヘルパー終了を `kqueue` で検知したら無音化し、デバイスビューに表示して再起動を提案する
+- 段の出力の NaN・無限大は、その標本から 0 にして次の段へ渡し、トラックを自動ミュートする。再生の開始で解除してリセットする（[ADR 0282](../decisions/0282-plugin-nan-and-master-auto-mute.md)）
 - `SIGABRT`、`SIGSEGV`、`SIGBUS`、`SIGILL` でヘルパーが共有領域へ印を書いてから信号を上げ直す
   （[ADR 0079](../decisions/0079-failed-export.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - 再起動ではヘルパーを起動し直して最後に取得した状態を復元する

@@ -12,6 +12,7 @@
 )]
 
 use crate::TrackMeter;
+use crate::meter::AutoMute;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
@@ -101,6 +102,24 @@ pub enum PlaybackCommand {
     },
 }
 
+/// Why a device output muted the master by itself (ADR 0282). Starting
+/// playback clears it. Offline rendering never sets it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MasterAutoMute {
+    /// The first sample past [`MASTER_GUARD_DBFS`], or a NaN.
+    pub peak: f32,
+    /// Its sample: the block's start plus its frame. A loop within the block
+    /// is not unwound; the value only tells the user where it happened.
+    pub at: i64,
+}
+
+/// The master level a device output treats as a fault: +18 dBFS, eight times
+/// full scale. The converter already clips at 0 dBFS, so only a signal that
+/// has run away reaches this (ADR 0282).
+pub const MASTER_GUARD_DBFS: f32 = 18.0;
+/// `MASTER_GUARD_DBFS` as a linear amplitude.
+const MASTER_GUARD: f32 = 7.943_282;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlaybackStatus {
     pub playing: bool,
@@ -114,6 +133,7 @@ pub struct PlaybackStatus {
     pub graph_unavailable_blocks: u64,
     /// Control has accepted a score whose prepared bank is not yet audible.
     pub pending_plan: bool,
+    pub master_auto_mute: Option<MasterAutoMute>,
 }
 
 struct Status {
@@ -130,6 +150,9 @@ struct Status {
     graph_unavailable_blocks: AtomicU64,
     requested_plan: AtomicU64,
     applied_plan: AtomicU64,
+    master_muted: AtomicBool,
+    master_mute_peak: AtomicU32,
+    master_mute_at: AtomicI64,
 }
 
 struct Track {
@@ -771,10 +794,21 @@ impl Prepared {
                 .get_mut(..right.len())
                 .ok_or(PlaybackError::BufferTooSmall)?;
             if track.cache.is_none()
-                && let Some(stereo) =
-                    hosts.apply(track.key, plane, track_right, &mut track.plugin_declick)
+                && let Some(applied) = hosts.apply(
+                    track.key,
+                    plane,
+                    track_right,
+                    &mut track.plugin_declick,
+                    track.meter.auto_muted(),
+                )
             {
-                track.stereo = stereo;
+                track.stereo = applied.stereo;
+                if let Some(fault) = applied.fault {
+                    track.meter.set_auto_mute(AutoMute {
+                        device: fault.device,
+                        at: block_sample(spans, range.started_before, fault.frame),
+                    });
+                }
             } else {
                 track.plugin_declick.reset();
             }
@@ -915,6 +949,21 @@ fn group_events(
         }
     }
     true
+}
+
+/// The project sample of block frame `frame`: from the span that holds it
+/// while playing, or the held position while stopped.
+fn block_sample(spans: &[Span], held: Option<i64>, frame: usize) -> i64 {
+    let frame = frame as i64;
+    spans
+        .iter()
+        .find(|span| {
+            let offset = i64::from(span.block_offset);
+            frame >= offset && frame < offset + i64::from(span.frames)
+        })
+        .map(|span| span.start + frame - i64::from(span.block_offset))
+        .or(held)
+        .unwrap_or(0)
 }
 
 fn track_events<'a>(grouped: &'a [Event], ends: &[usize], position: usize) -> Option<&'a [Event]> {
@@ -1273,6 +1322,9 @@ pub struct PlaybackAudio {
     played: Vec<PlayedSpan>,
     clicks: Vec<f32>,
     status: Arc<Status>,
+    /// See [`PlaybackOptions::guard_output`].
+    guard_output: bool,
+    master_mute: Option<MasterAutoMute>,
 }
 
 /// How [`playback`] starts. Every choice combines with the others, so a new
@@ -1281,6 +1333,7 @@ pub struct PlaybackOptions<'a> {
     clock: Box<dyn ClockSource>,
     plugins: Option<PluginSetup<'a>>,
     workgroup: Option<PluginWorkgroup>,
+    guard_output: bool,
 }
 
 struct PluginSetup<'a> {
@@ -1295,6 +1348,7 @@ impl Default for PlaybackOptions<'_> {
             clock: Box::<InternalClock>::default(),
             plugins: None,
             workgroup: None,
+            guard_output: false,
         }
     }
 }
@@ -1326,6 +1380,14 @@ impl<'a> PlaybackOptions<'a> {
         self.workgroup = Some(workgroup);
         self
     }
+
+    /// For a device output: mute the master from its first sample past
+    /// [`MASTER_GUARD_DBFS`] until playback starts again (ADR 0282). Offline
+    /// rendering leaves it off, so exported values never change.
+    pub fn guard_output(mut self) -> Self {
+        self.guard_output = true;
+        self
+    }
 }
 
 /// Prepares both sides of a transport. Nothing is shared with a device until
@@ -1340,11 +1402,13 @@ pub fn playback(
         clock,
         plugins,
         workgroup,
+        guard_output,
     } = options;
     if clock.position() < 0 {
         return Err(PlaybackError::Time);
     }
     let (mut control, mut audio) = transport_pair(project, rate, frames, clock)?;
+    audio.guard_output = guard_output;
     control.workgroup = workgroup;
     if let Some(PluginSetup { host_bin, routes }) = plugins {
         let chain = chain_of(project, &audio.current);
@@ -1410,6 +1474,9 @@ fn transport_pair(
         graph_unavailable_blocks: AtomicU64::new(0),
         requested_plan: AtomicU64::new(0),
         applied_plan: AtomicU64::new(0),
+        master_muted: AtomicBool::new(false),
+        master_mute_peak: AtomicU32::new(0),
+        master_mute_at: AtomicI64::new(0),
     });
     let control = PlaybackControl {
         workgroup: None,
@@ -1496,6 +1563,8 @@ fn transport_pair(
         ],
         clicks: vec![0.0; frames],
         status,
+        guard_output: false,
+        master_mute: None,
     };
     Ok((control, audio))
 }
@@ -2050,6 +2119,12 @@ impl PlaybackControl {
                     .status
                     .graph_unavailable_blocks
                     .load(Ordering::Relaxed),
+                master_auto_mute: self.status.master_muted.load(Ordering::SeqCst).then(|| {
+                    MasterAutoMute {
+                        peak: f32::from_bits(self.status.master_mute_peak.load(Ordering::SeqCst)),
+                        at: self.status.master_mute_at.load(Ordering::SeqCst),
+                    }
+                }),
             };
             if before == self.status.generation.load(Ordering::SeqCst) {
                 return value;
@@ -2183,7 +2258,11 @@ impl PlaybackAudio {
         right.fill(0.0);
         let release = TrackMeter::release(left.len(), self.current.sample_rate);
         self.current.meters_committed = false;
+        let start = self.clock.position();
         let result = self.step(left, right, deadline, enabled, live, release);
+        if self.guard_output {
+            self.guard_master(left, right, start);
+        }
         self.live_processed |= live && self.current.meters_committed;
         if !self.current.meters_committed {
             for track in &self.current.tracks {
@@ -2224,6 +2303,15 @@ impl PlaybackAudio {
         self.status
             .applied_command
             .store(self.applied_command, Ordering::SeqCst);
+        self.status
+            .master_muted
+            .store(self.master_mute.is_some(), Ordering::SeqCst);
+        if let Some(mute) = self.master_mute {
+            self.status
+                .master_mute_peak
+                .store(mute.peak.to_bits(), Ordering::SeqCst);
+            self.status.master_mute_at.store(mute.at, Ordering::SeqCst);
+        }
         self.status.generation.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -2297,6 +2385,7 @@ impl PlaybackAudio {
                     self.output_revision = self.output_revision.wrapping_add(1);
                     self.playing = true;
                     self.failed = false;
+                    self.release_auto_mutes();
                     self.current.place(self.clock.position(), false)?;
                 }
                 QueuedCommand::Pause | QueuedCommand::Stop => {
@@ -2463,6 +2552,53 @@ impl PlaybackAudio {
         self.clock.locate(end);
         self.live_output |= live;
         Ok(())
+    }
+
+    /// Starting playback is how the user asks to hear again (ADR 0282). The
+    /// plugins of an auto-muted track start afresh, so the state that faulted
+    /// does not fault again at once.
+    fn release_auto_mutes(&mut self) {
+        for track in &self.current.tracks {
+            if track.meter.auto_muted() {
+                track.meter.clear_auto_mute();
+                self.hosts.reset_track(track.key);
+            }
+        }
+        self.master_mute = None;
+    }
+
+    /// Mutes the device output from its first sample past the guard, or a NaN,
+    /// and keeps it muted (ADR 0282). The values are not limited.
+    fn guard_master(&mut self, left: &mut [f32], right: &mut [f32], start: i64) {
+        let from = if self.master_mute.is_some() {
+            0
+        } else {
+            let Some((first, peak)) =
+                left.iter()
+                    .zip(right.iter())
+                    .enumerate()
+                    .find_map(|(frame, (left, right))| {
+                        // `f32::max` drops a NaN, so test each channel for one first.
+                        let peak = [*left, *right]
+                            .into_iter()
+                            .find(|sample| sample.is_nan())
+                            .unwrap_or_else(|| left.abs().max(right.abs()));
+                        (peak.is_nan() || peak > MASTER_GUARD).then_some((frame, peak))
+                    })
+            else {
+                return;
+            };
+            self.master_mute = Some(MasterAutoMute {
+                peak,
+                at: start.saturating_add(first as i64),
+            });
+            first
+        };
+        for plane in [left, right] {
+            if let Some(rest) = plane.get_mut(from..) {
+                rest.fill(0.0);
+            }
+        }
     }
 
     fn arm_loop(&mut self) {

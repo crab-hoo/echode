@@ -771,7 +771,8 @@ fn open_playback(
         Some(_) => plugin_routes(project, package, |_| None)?,
         None => Vec::new(),
     };
-    let mut options = PlaybackOptions::default().at(sample);
+    // A device output mutes a runaway master instead of sending it (ADR 0282).
+    let mut options = PlaybackOptions::default().at(sample).guard_output();
     if let Some(host) = &host {
         options = options.plugins(host, &routes);
     }

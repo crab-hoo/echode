@@ -1,13 +1,30 @@
-//! Read-only UI tap after the track fader. Only the audio owner publishes.
-use std::sync::atomic::{AtomicU32, Ordering};
+//! Read-only UI tap after the track fader, and the track's automatic mute.
+//! Only the audio owner publishes.
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 /// Linear amplitude at -60 dB. Header meters, the inspector readout, and the
 /// display-link hold all treat this as silence (`MixScale.meterSilence`).
 const DISPLAY_FLOOR: f32 = 0.001;
 
+/// Why the callback muted a track by itself (ADR 0282). Not the track's own
+/// mute: it is never saved, undone or exported, and starting playback clears it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoMute {
+    /// The device whose output held a NaN or an infinity.
+    pub device: u128,
+    /// The project sample of the first such value.
+    pub at: i64,
+}
+
 pub struct TrackMeter {
     pub track: u128,
     peak: AtomicU32,
+    /// Odd while the callback writes the automatic mute. Readers retry until
+    /// the same even value brackets their read.
+    mute_generation: AtomicU64,
+    muted: AtomicBool,
+    mute_device: [AtomicU64; 2],
+    mute_at: AtomicI64,
     #[cfg(test)]
     publications: AtomicU32,
 }
@@ -17,9 +34,59 @@ impl TrackMeter {
         Self {
             track,
             peak: AtomicU32::new(0),
+            mute_generation: AtomicU64::new(0),
+            muted: AtomicBool::new(false),
+            mute_device: [AtomicU64::new(0), AtomicU64::new(0)],
+            mute_at: AtomicI64::new(0),
             #[cfg(test)]
             publications: AtomicU32::new(0),
         }
+    }
+
+    /// The callback's automatic mute of this track, if any.
+    pub fn auto_mute(&self) -> Option<AutoMute> {
+        loop {
+            let before = self.mute_generation.load(Ordering::SeqCst);
+            if !before.is_multiple_of(2) {
+                std::hint::spin_loop();
+                continue;
+            }
+            let mute = self.muted.load(Ordering::SeqCst).then(|| AutoMute {
+                device: u128::from(self.mute_device[0].load(Ordering::SeqCst)) << 64
+                    | u128::from(self.mute_device[1].load(Ordering::SeqCst)),
+                at: self.mute_at.load(Ordering::SeqCst),
+            });
+            if self.mute_generation.load(Ordering::SeqCst) == before {
+                return mute;
+            }
+        }
+    }
+
+    /// For the callback, which alone writes the record.
+    pub(crate) fn auto_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
+    }
+
+    /// Records the first fault only; later ones while muted change nothing.
+    pub(crate) fn set_auto_mute(&self, mute: AutoMute) {
+        if self.auto_muted() {
+            return;
+        }
+        self.mute_generation.fetch_add(1, Ordering::SeqCst);
+        self.mute_device[0].store((mute.device >> 64) as u64, Ordering::SeqCst);
+        self.mute_device[1].store(mute.device as u64, Ordering::SeqCst);
+        self.mute_at.store(mute.at, Ordering::SeqCst);
+        self.muted.store(true, Ordering::SeqCst);
+        self.mute_generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn clear_auto_mute(&self) {
+        if !self.auto_muted() {
+            return;
+        }
+        self.mute_generation.fetch_add(1, Ordering::SeqCst);
+        self.muted.store(false, Ordering::SeqCst);
+        self.mute_generation.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn peak(&self) -> f32 {

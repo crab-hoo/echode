@@ -140,6 +140,12 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 親とヘルパーは同じビルドでそろえ、古い起動済みアプリを新しいヘルパーだけに置き換えない
 （[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
 
+### トラックやマスターが急に無音になり、再生し直すと戻る
+
+自動ミュートを確かめる（[ADR 0282](../decisions/0282-plugin-nan-and-master-auto-mute.md)）。
+`AudioState` の `auto_muted_tracks` は NaN・無限大を返した装置と標本、`master_auto_mute` は +18 dBFS を超えた値と標本を示す。
+再生の開始で解除し、そのトラックのプラグインをリセットする。書出しでは `plugin_failure` が `returned a NaN or an infinity` を返す。
+
 ### 音源なしのノート・Sine Pad が鳴らない
 
 音源のないトラックは無音である。デバイス一覧に `dev.echode.sine-pad` があるかを確認する。

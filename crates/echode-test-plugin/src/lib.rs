@@ -5,6 +5,8 @@
 //! never returns from `process`. Both take down only this plugin's process.
 //! `ECHODE_TEST_FAULT=process-wait:<socket>` holds the second process call until
 //! a test releases it. The connection is created during activation, off RT.
+//! `ECHODE_TEST_FAULT=nan` writes 0.5, then NaN from frame 10 of its second
+//! block on, until a CLAP reset; afterwards it writes 0.5 again.
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -229,6 +231,8 @@ enum Fault {
     SlowSave,
     /// Reports a different latency after each activation.
     Latency,
+    /// A poisoned state: NaN from frame 10 of the second block until reset.
+    Nan,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -249,6 +253,7 @@ fn fault_code(text: &str) -> u8 {
         "slow-save" => 14,
         "slow-process" => 15,
         "latency" => 16,
+        "nan" => 17,
         _ => 0,
     }
 }
@@ -271,6 +276,7 @@ fn fault_from_code(code: u8) -> Fault {
         14 => Fault::SlowSave,
         15 => Fault::SlowProcess,
         16 => Fault::Latency,
+        17 => Fault::Nan,
         _ => Fault::None,
     }
 }
@@ -366,6 +372,9 @@ pub struct TestGainProcessor<'a> {
     // Off-RT connection; this deliberately broken plugin holds its second block.
     process_gate: Option<std::os::unix::net::UnixStream>,
     process_gate_ready: bool,
+    /// For [`Fault::Nan`]: blocks processed, and whether a reset cleared it.
+    nan_blocks: u32,
+    nan_cleared: bool,
 }
 
 impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
@@ -408,11 +417,14 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                     gate
                 }),
             process_gate_ready: false,
+            nan_blocks: 0,
+            nan_cleared: false,
         })
     }
 
     fn reset(&mut self) {
         self.onset = Onset::default();
+        self.nan_cleared = self.nan_blocks > 1;
         if !self.reset_gate_used
             && let Some(gate) = &mut self.reset_gate
         {
@@ -627,6 +639,28 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                             ChannelPair::OutputOnly(buffer) => buffer.fill(value),
                             ChannelPair::InputOutput(_, output) => output.fill(value),
                             ChannelPair::InPlace(buffer) => buffer.fill(value),
+                        }
+                    }
+                }
+                return Ok(ProcessStatus::Continue);
+            }
+            Fault::Nan => {
+                self.nan_blocks = self.nan_blocks.saturating_add(1);
+                let poisoned = !self.nan_cleared && self.nan_blocks > 1;
+                for mut port_pair in &mut audio {
+                    let Some(channel_pairs) = port_pair.channels()?.into_f32() else {
+                        continue;
+                    };
+                    for channel_pair in channel_pairs {
+                        let buffer = match channel_pair {
+                            ChannelPair::InputOnly(_) => continue,
+                            ChannelPair::OutputOnly(buffer) => buffer,
+                            ChannelPair::InputOutput(_, output) => output,
+                            ChannelPair::InPlace(buffer) => buffer,
+                        };
+                        buffer.fill(0.5);
+                        if poisoned && let Some(rest) = buffer.get_mut(10..) {
+                            rest.fill(f32::NAN);
                         }
                     }
                 }

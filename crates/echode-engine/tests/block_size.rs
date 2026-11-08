@@ -11,6 +11,8 @@ mod clip_gain;
 mod clip_window;
 #[path = "block_size/folder_mix.rs"]
 mod folder_mix;
+#[path = "block_size/master_guard.rs"]
+mod master_guard;
 #[path = "block_size/plugin_deadline.rs"]
 mod plugin_deadline;
 #[path = "block_size/tempo.rs"]

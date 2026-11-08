@@ -75,6 +75,22 @@ const MISS_PROCESS: u8 = 1;
 const MISS_DEADLINE: u8 = 2;
 const MISS_SUBMIT: u8 = 3;
 const MISS_EXITED: u8 = 4;
+/// Not a miss: the plugin answered, but with a NaN or an infinity (ADR 0282).
+const FAULT_NONFINITE: u8 = 5;
+
+/// The first stage of a track that returned a NaN or an infinity this block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StageFault {
+    pub(crate) device: u128,
+    /// Block frame of the first such sample. The stage's output is zero from here.
+    pub(crate) frame: usize,
+}
+
+/// A track's collected plugin audio, as [`HostGraph::apply`] wrote it.
+pub(crate) struct Applied {
+    pub(crate) stereo: bool,
+    pub(crate) fault: Option<StageFault>,
+}
 
 struct TrackHost {
     key: u32,
@@ -98,6 +114,8 @@ struct TrackHost {
     chased_ons: Vec<Event>,
     chase_order: Vec<usize>,
     chase_scratch: Vec<Event>,
+    /// Set by the first stage of this block that returned a non-finite sample.
+    fault: Option<StageFault>,
 }
 
 /// Live tracks in chain order, and an index by key rebuilt with every change
@@ -406,9 +424,10 @@ impl HostGraph {
         }
     }
 
-    /// Why a plugin did not produce this block, including its device id.
-    /// `None` when every submitted plugin finished. A live deadline miss is
-    /// still concealed by a fade; this is what export refuses to call success.
+    /// Why a plugin did not produce this block, or produced NaN or infinity,
+    /// including its device id. `None` when every submitted plugin finished
+    /// cleanly. Live playback conceals a miss by a fade and auto-mutes a
+    /// non-finite track; this is what export refuses to call success.
     pub(crate) fn export_failure(&self) -> Option<String> {
         for stage in self.tracks.iter().flat_map(|track| &track.stages) {
             if stage.bypassed {
@@ -425,6 +444,7 @@ impl HostGraph {
                 MISS_PROCESS => "process refused",
                 MISS_DEADLINE => "did not finish before the deadline",
                 MISS_SUBMIT => "could not submit audio",
+                FAULT_NONFINITE => "returned a NaN or an infinity",
                 _ => "plugin process has exited",
             };
             return Some(format!(
@@ -811,6 +831,7 @@ impl HostGraph {
         self.tracks[index].heard = false;
         self.tracks[index].stage = 0;
         self.tracks[index].run = Run::Idle;
+        self.tracks[index].fault = None;
         if self.tracks[index].stages.is_empty() || source.left.is_empty() {
             return false;
         }
@@ -914,13 +935,17 @@ impl HostGraph {
     }
 
     /// Writes collected plugin audio back, concealing misses before the fader.
+    ///
+    /// A track that is `muted`, or whose stage returned a non-finite sample
+    /// this block, fades out like a miss from that sample on (ADR 0282).
     pub(crate) fn apply(
         &self,
         key: u32,
         left: &mut [f32],
         right: &mut [f32],
         declick: &mut crate::PluginDeclick,
-    ) -> Option<bool> {
+        muted: bool,
+    ) -> Option<Applied> {
         let track = self.tracks.get(self.tracks.position(key)?)?;
         let frames = left.len().min(right.len()).min(track.frames);
         // A failed intermediate mono stage must not change the final bus shape.
@@ -934,12 +959,31 @@ impl HostGraph {
             Run::Missed => {}
             Run::Idle | Run::Pending => return None,
         }
+        let silent = if muted {
+            0
+        } else {
+            track.fault.map_or(frames, |fault| fault.frame.min(frames))
+        };
         declick.process(
-            &mut left[..frames],
-            &mut right[..frames],
+            &mut left[..silent],
+            &mut right[..silent],
             track.run == Run::Missed,
         );
-        Some(stereo)
+        declick.process(&mut left[silent..frames], &mut right[silent..frames], true);
+        Some(Applied {
+            stereo,
+            fault: track.fault,
+        })
+    }
+
+    /// Starts every plugin of the track at `key` afresh before its next block,
+    /// so the state that produced a fault does not repeat it.
+    pub(crate) fn reset_track(&mut self, key: u32) {
+        if let Some(index) = self.tracks.position(key) {
+            for stage in &mut self.tracks[index].stages {
+                stage.host.request_reset();
+            }
+        }
     }
 
     fn remember(&mut self, track: usize, events: &[Event], chased_ons: &[Event]) {
@@ -1156,6 +1200,7 @@ impl HostGraph {
         let frames = self.tracks[index].frames;
         let stage_index = self.tracks[index].stage;
         self.mix_injected(index, stage_index, frames);
+        self.contain_nonfinite(index, stage_index, frames);
         if let Some(stage) = self.tracks[index].stages.get_mut(stage_index) {
             if stage.block_complete {
                 stage.awaiting_notes = false;
@@ -1174,6 +1219,46 @@ impl HostGraph {
         }
         self.note_miss(index, self.tracks[index].stage, MISS_SUBMIT);
         self.tracks[index].run = Run::Missed;
+    }
+
+    /// Zeroes a stage's output from its first NaN or infinity, so the next
+    /// plugin and the track never receive one, and names the stage once.
+    fn contain_nonfinite(&mut self, index: usize, stage_index: usize, frames: usize) {
+        let track = &mut self.tracks[index];
+        let Some(stage) = track.stages.get_mut(stage_index) else {
+            return;
+        };
+        if stage.bypassed {
+            return;
+        }
+        let main = stage.main_outputs.min(stage.output.len());
+        let output = &mut stage.output[..main];
+        let frames = bounded(output, frames);
+        let Some(first) = output
+            .iter()
+            .filter_map(|plane| {
+                plane[..frames]
+                    .iter()
+                    .position(|sample| !sample.is_finite())
+            })
+            .min()
+        else {
+            return;
+        };
+        for plane in output.iter_mut() {
+            plane[first..frames].fill(0.0);
+        }
+        // Export refuses the block; live playback auto-mutes the track.
+        stage
+            .instance
+            .failure
+            .store(FAULT_NONFINITE, Ordering::Release);
+        if track.fault.is_none() {
+            track.fault = Some(StageFault {
+                device: stage.device,
+                frame: first,
+            });
+        }
     }
 
     /// Adds placed audio onto the first instrument, once, before the next effect
@@ -1304,6 +1389,7 @@ fn track_host(
         chased_ons: Vec::with_capacity(chase.max(1)),
         chase_order: vec![0; chase.max(1)],
         chase_scratch: vec![Event::note_off(0, 0, 0, 0); chase.max(1)],
+        fault: None,
     }
 }
 
