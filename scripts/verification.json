@@ -291,6 +291,16 @@
       ]
     },
     {
+      "id": "plugin-control-descriptors", "runner": "rust", "package": "echode-sandbox", "target": ["--lib"],
+      "test": "control::rights_tests::contract_received_descriptors_beyond_one_are_rejected_and_all_closed", "timeout": 180,
+      "purpose": "1つのメッセージに付いた2個以上の受信 FD を、カーネルが1回に渡せる最大の254個まで全部閉じ、そのメッセージを後の受信でも受理しない（SBX-A1 (2)、ADR 0288）",
+      "negative_controls": [
+        {"file": "crates/echode-sandbox/src/control.rs", "old": "for slot in 0..count {", "new": "for slot in 0..count.min(1) {"},
+        {"file": "crates/echode-sandbox/src/control.rs", "old": "const RECEIVE_CONTROL_WORDS: usize = 512;", "new": "const RECEIVE_CONTROL_WORDS: usize = 64;"},
+        {"file": "crates/echode-sandbox/src/control.rs", "old": "            self.broken = Some(reason);\n", "new": ""}
+      ]
+    },
+    {
       "id": "mcp-local-arguments", "runner": "rust", "package": "echode-api", "target": ["--test", "mcp_arguments"],
       "test": "contract_local_tool_arguments_preserve_backend_history_and_recovery", "timeout": 180,
       "purpose": "公開MCP入口と実ソケットでツール名による種別選択と引数のローカル拒否を検証し、不正な編集・Undo/Redoの未送信、ジャーナル・既存Redo・単一Undoと再オープンを保つ",

@@ -32,6 +32,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - **共有メモリと IPC**: オーディオバッファとイベント列は `shm_open`（作成後すぐ unlink し FD を渡す）の共有メモリに置き、ブロックは 2 スロット、入出力イベントは分離して検証してから読む。
   ヘルパーは `posix_spawn` で起動し、`fork` は使わない。状態・`mark_dirty`・再起動通知・段の順番はソケットで運ぶ
   （[ADR 0042](../decisions/0042-plugin-ipc.md)）
+  ソケットで渡す記述子は `Remap` の 1 メッセージに 1 個だけである。受け手は届いた記述子を全部持ち、2 個以上や切り詰めがあれば全部閉じて、そのソケットの受信を失敗させ続ける
+  （[ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md)）。
 - **一括投入と単一締め切り**: 独立したヘルパーには先に一括投入し、そのブロックの単一締め切りで完了したヘルパーから順に回収する。
   同じヘルパーで続くデバイスは 1 往復にまとめる（[ADR 0043](../decisions/0043-plugin-submit-collect.md)）
 - **Audio Workgroup の受け渡し**: ヘルパーが `bootstrap_check_in` した名前を制御スレッドが `bootstrap_look_up` し、`os_workgroup_copy_port` の送信権を Mach メッセージで渡す

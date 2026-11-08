@@ -318,6 +318,8 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 プラグインのメインスレッド要求の所有は `echode-plugin-host/src/main_requests.rs`、実行は `threads.rs::perform_main_request` に置く。
 要求番号付きの制御フレームは `echode-sandbox/src/control.rs`、親の応答照合と背景保存は `session.rs` に置く。
 回帰は `main_requests_tests.rs`・`session_correlation_tests.rs`・`control_tagged_tests.rs` と `tests/audit.rs` の SPG-01 を使う。
+受けた記述子の扱い（全部を持ち、2 個以上なら閉じて拒否する）の回帰は `control_rights_tests.rs` に置く。
+パイプの書込み側の写しを送り、読み側の終端で残りを判定する（[ADR 0288](decisions/0288-received-descriptors-are-all-owned.md)）。
 エンジンのテスト専用の素通しではなく、製品と同じ `device_control_handle` を通す
 （[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
 

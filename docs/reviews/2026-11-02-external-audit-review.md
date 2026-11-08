@@ -143,6 +143,8 @@ DOC-A1・DOC-A2・HIS-A1・CLI-A1 を `#[ignore]` 付きの `audit_*` テスト�
 - 2026-11-02: CLI-A1・PLG-A1 (b)(c) を [ADR 0231](../decisions/0231-offline-export-and-scan-cache.md) で修正し、CLI-A1 の `#[ignore]` を外した。
 - 2026-11-02: ENV-01・05・06・07 を [ADR 0232](../decisions/0232-verification-escapes-and-expected-red.md) で修正し、ENV-01・06 の `skip` を外した。ENV-02 は残した。
 - 2026-11-08: ENV-08 は CI の作り直し（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）で解消した。60 分の `check-contract-controls` は期限 330 分のジョブで動く。
+- 2026-11-09: SBX-A1 (2) を [ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md) で修正した。受けた記述子を全部持ち、2 個以上のメッセージは閉じて拒否する。
+  256 バイトの受信バッファに入らない記述子もカーネルの側で残っていたので、受信バッファを 2,048 バイトにした。回帰は製品契約 `plugin-control-descriptors`。
   残りの項目の束ねと順番は [統合表](2026-11-08-open-items-register.md) にある。
 
 ## 修正の進め方

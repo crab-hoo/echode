@@ -184,6 +184,8 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 親はヘルパー 1 つにつき記述子を 4 つ持ち、Finder から起動したアプリの soft の上限は 256 である（`launchctl limit maxfiles`）。
 最初のヘルパーの前に上限を上げるので、この文が出るなら上げられなかったか、hard の上限が低い（[ADR 0237](../decisions/0237-helper-descriptor-limit.md)）。
 そのプロセスの上限を `launchctl limit maxfiles` と、可能なら `lsof -p <pid> | wc -l` で記録する。回帰は `cargo test -p echode-plugin-host --test descriptor_limit` である。
+ヘルパーとの接続が `a control message carried more than one file descriptor`・`control data was truncated`・`a second file descriptor arrived before the first was consumed` で切れたなら、相手が記述子の規則を破っている。
+本体はその読込みの記述子を全部閉じて、そのソケットを使わなくなる。本体の記述子が増え続けるなら、`lsof -p <pid>` で種類を分け、`plugin-control-descriptors` の契約が通るかを確かめる（[ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md)）。
 
 ### バイパスの表示と音が一致しない・解除後に古い音が鳴る
 

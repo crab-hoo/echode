@@ -16,6 +16,12 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
+/// Ancillary data one `recvmsg` can hold: 2,048 bytes. Darwin refuses longer
+/// ancillary data on send (`MCLBYTES`) and, measured, more than 254 descriptors
+/// in one message (1,028 bytes received). The kernel installs every passed
+/// descriptor even when the buffer truncates them, so a smaller buffer would
+/// leave descriptors open that this process never sees (ADR 0288).
+const RECEIVE_CONTROL_WORDS: usize = 512;
 
 const HELLO: u32 = 1;
 const SAVE: u32 = 2;
@@ -150,6 +156,9 @@ pub struct Socket {
     fd: OwnedFd,
     incoming: Vec<u8>,
     pending_fd: Option<PendingFd>,
+    /// Set when the peer broke the descriptor rules. That read's bytes were
+    /// dropped and every later receive fails, so the message is never accepted.
+    broken: Option<&'static str>,
 }
 
 impl Socket {
@@ -175,6 +184,7 @@ impl Socket {
             fd,
             incoming: Vec::new(),
             pending_fd: None,
+            broken: None,
         })
     }
 
@@ -286,8 +296,12 @@ impl Socket {
     }
 
     fn read_some(&mut self, nonblock: bool) -> io::Result<bool> {
+        if let Some(reason) = self.broken {
+            return Err(io::Error::new(ErrorKind::InvalidData, reason));
+        }
         let mut buf = [0u8; 8192];
-        let mut control = [0u8; 256];
+        // `u32` words give the ancillary headers the 4-byte alignment Darwin uses.
+        let mut control = [0u32; RECEIVE_CONTROL_WORDS];
         let mut iov = libc::iovec {
             iov_base: buf.as_mut_ptr().cast(),
             iov_len: buf.len(),
@@ -298,7 +312,7 @@ impl Socket {
             msg_iov: &mut iov,
             msg_iovlen: 1,
             msg_control: control.as_mut_ptr().cast(),
-            msg_controllen: control.len() as libc::socklen_t,
+            msg_controllen: std::mem::size_of_val(&control) as libc::socklen_t,
             msg_flags: 0,
         };
         let flags = if nonblock { libc::MSG_DONTWAIT } else { 0 };
@@ -318,16 +332,26 @@ impl Socket {
                 "control socket closed",
             ));
         }
+        // Every received descriptor is owned before any check, so a rejected
+        // read closes them all (SBX-A1 (2), ADR 0288).
+        let mut fds = take_rights(&msg);
+        let violation = if msg.msg_flags & libc::MSG_CTRUNC != 0 {
+            Some("control data was truncated")
+        } else if fds.len() > 1 {
+            Some("a control message carried more than one file descriptor")
+        } else if !fds.is_empty() && self.pending_fd.is_some() {
+            Some("a second file descriptor arrived before the first was consumed")
+        } else {
+            None
+        };
+        if let Some(reason) = violation {
+            self.broken = Some(reason);
+            return Err(io::Error::new(ErrorKind::InvalidData, reason));
+        }
         let at = self.incoming.len();
         self.incoming
             .extend_from_slice(buf.get(..n as usize).unwrap_or_default());
-        if let Some(fd) = take_rights(&msg) {
-            if self.pending_fd.is_some() {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidData,
-                    "a second file descriptor arrived before the first was consumed",
-                ));
-            }
+        if let Some(fd) = fds.pop() {
             self.pending_fd = Some(PendingFd { at, fd });
         }
         Ok(true)
@@ -607,7 +631,7 @@ fn send_bytes(socket: i32, bytes: &[u8], fd: Option<i32>) -> io::Result<()> {
             iov_base: rest.as_ptr().cast_mut().cast(),
             iov_len: rest.len(),
         };
-        let mut control = [0u8; 256];
+        let mut control = [0u32; cmsg_space_fd() / 4];
         let pass = if sent == 0 { fd } else { None };
         let mut msg = libc::msghdr {
             msg_name: std::ptr::null_mut(),
@@ -687,11 +711,11 @@ fn configure(fd: i32) -> io::Result<()> {
 }
 
 /// Darwin aligns ancillary headers to 4 bytes (`__DARWIN_ALIGN32`).
-fn cmsg_align(len: usize) -> usize {
+const fn cmsg_align(len: usize) -> usize {
     len.saturating_add(3) & !3
 }
 
-fn cmsg_space_fd() -> usize {
+const fn cmsg_space_fd() -> usize {
     cmsg_align(std::mem::size_of::<libc::cmsghdr>()) + cmsg_align(std::mem::size_of::<i32>())
 }
 
@@ -700,8 +724,8 @@ fn cmsg_len_fd() -> libc::socklen_t {
         as libc::socklen_t
 }
 
-fn write_rights(buf: &mut [u8], fd: i32) {
-    debug_assert!(buf.len() >= cmsg_space_fd());
+fn write_rights(buf: &mut [u32], fd: i32) {
+    debug_assert!(std::mem::size_of_val(buf) >= cmsg_space_fd());
     let header = buf.as_mut_ptr().cast::<libc::cmsghdr>();
     // SAFETY: `buf` is large enough for one `SCM_RIGHTS` header and one fd.
     unsafe {
@@ -713,33 +737,60 @@ fn write_rights(buf: &mut [u8], fd: i32) {
     }
 }
 
-fn take_rights(msg: &libc::msghdr) -> Option<OwnedFd> {
-    // SAFETY: `msg` is the `recvmsg` header for this call. A null header means
-    // the datagram carried no descriptor.
-    let header = unsafe { libc::CMSG_FIRSTHDR(msg) };
-    if header.is_null() {
-        return None;
+/// Owns every descriptor one `recvmsg` delivered, so the caller closes any the
+/// protocol does not use by dropping them. Darwin refuses to send a second
+/// ancillary header on a Unix socket (EINVAL), but each header is read anyway.
+fn take_rights(msg: &libc::msghdr) -> Vec<OwnedFd> {
+    let data_offset = cmsg_align(std::mem::size_of::<libc::cmsghdr>());
+    let end = (msg.msg_control as usize).saturating_add(msg.msg_controllen as usize);
+    let mut fds = Vec::new();
+    // SAFETY: `msg` is the header `recvmsg` filled. `CMSG_FIRSTHDR` and
+    // `CMSG_NXTHDR` return null rather than a header past `msg_controllen`.
+    let mut header = unsafe { libc::CMSG_FIRSTHDR(msg) };
+    while !header.is_null() {
+        // SAFETY: `header` points at a whole `cmsghdr` inside the control buffer.
+        let (level, typ, len) = unsafe {
+            (
+                (*header).cmsg_level,
+                (*header).cmsg_type,
+                (*header).cmsg_len as usize,
+            )
+        };
+        if len < data_offset {
+            // A length that does not cover its own header would repeat it forever.
+            break;
+        }
+        if level == libc::SOL_SOCKET && typ == libc::SCM_RIGHTS {
+            // A truncated header's length can pass the end of what was copied.
+            let copied = len.min(end.saturating_sub(header as usize));
+            let count = copied.saturating_sub(data_offset) / std::mem::size_of::<i32>();
+            // SAFETY: the data follows this header inside the control buffer.
+            let data = unsafe { libc::CMSG_DATA(header) };
+            for slot in 0..count {
+                // SAFETY: slot `count - 1` ends within the copied control data.
+                let fd = unsafe {
+                    std::ptr::read_unaligned(
+                        data.add(slot * std::mem::size_of::<i32>()).cast::<i32>(),
+                    )
+                };
+                if fd < 0 {
+                    continue;
+                }
+                // SAFETY: `recvmsg` transferred this descriptor to this process.
+                let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+                let flags = unsafe { libc::fcntl(owned.as_raw_fd(), libc::F_GETFD) };
+                if flags >= 0 {
+                    unsafe {
+                        libc::fcntl(owned.as_raw_fd(), libc::F_SETFD, flags | libc::FD_CLOEXEC)
+                    };
+                }
+                fds.push(owned);
+            }
+        }
+        // SAFETY: as for `CMSG_FIRSTHDR`; `header` came from this `msg`.
+        header = unsafe { libc::CMSG_NXTHDR(msg, header) };
     }
-    let (level, typ) = unsafe { ((*header).cmsg_level, (*header).cmsg_type) };
-    if level != libc::SOL_SOCKET || typ != libc::SCM_RIGHTS {
-        return None;
-    }
-    let fd = unsafe {
-        let data = header
-            .cast::<u8>()
-            .add(cmsg_align(std::mem::size_of::<libc::cmsghdr>()));
-        std::ptr::read_unaligned(data.cast::<i32>())
-    };
-    if fd < 0 {
-        return None;
-    }
-    // SAFETY: `recvmsg` transferred this descriptor to us.
-    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
-    let flags = unsafe { libc::fcntl(owned.as_raw_fd(), libc::F_GETFD) };
-    if flags >= 0 {
-        unsafe { libc::fcntl(owned.as_raw_fd(), libc::F_SETFD, flags | libc::FD_CLOEXEC) };
-    }
-    Some(owned)
+    fds
 }
 
 #[cfg(test)]
@@ -912,3 +963,7 @@ mod tests {
 #[cfg(test)]
 #[path = "control_tagged_tests.rs"]
 mod tagged_tests;
+
+#[cfg(test)]
+#[path = "control_rights_tests.rs"]
+mod rights_tests;
