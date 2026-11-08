@@ -41,7 +41,7 @@ Echode は macOS 専用の、フリーかつオープンソースの DAW です�
 
 | 項目 | 決定 | 補足 |
 |---|---|---|
-| 優先順位 | 堅牢性 > 保守性 > 効率 > 見た目・機能 | 音切れ・停止・データの消失は堅牢性に数える。ユーザーに予約した事項の外は、エージェントがこの順で決めて ADR に書く（[ADR 0276](decisions/0276-priority-order-and-delegated-decisions.md)） |
+| 優先順位 | 堅牢性 > 保守性 > 効率 > 見た目・機能 | 音切れ・停止・データの消失は堅牢性に、入り組んだ構造は堅牢性の損失に数える。ユーザーに予約した事項の外は、エージェントがこの順で決めて ADR に書く（[ADR 0276](decisions/0276-priority-order-and-delegated-decisions.md)） |
 | 対象 OS / チップ | macOS 27 以降、M4 ファミリー以降の Apple Silicon（arm64）のみ | M1〜M3 は対象外。Rosetta は使わず、Intel 専用プラグインは非対応と表示する。自前のビルド対象は M4 基準（[ADR 0112](decisions/0112-m4-minimum.md)、[ADR 0114](decisions/0114-m4-build-baseline.md)） |
 | ライセンス | GPL-3.0-or-later | 作者が使えるライブラリが最も多くなる形。GPL や LGPL のライブラリも同梱できる（§2.1、[ADR 0004](decisions/0004-license-gpl.md)） |
 | 既存の実装 | 定番の実装がある処理は、自作する前に既存の実装を調べて測る | ほかに完全に劣るもの以外はユーザーが選べる選択肢にする（§2.1、[ADR 0014](decisions/0014-existing-implementations-as-options.md)） |
