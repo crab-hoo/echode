@@ -8,6 +8,8 @@
 
 ## 1. 全体横断・Phase 1 最終照合
 
+- [2026-11-08 構造の評価の精査](2026-11-08-structure-assessment-review.md): モデルの検査の分担と placement.rs の構造の判定。
+  漏れ得るのは `Draft::finish` の消費の検査だけで、ID 探索と検証基盤の規模は既知（FCA-05、2026-11-06 の精査）。
 - [2026-11-06 課題一覧の精査](2026-11-06-assessment-review.md): 検証基盤と製品の課題一覧の判定。gix-pack は解決済み、CI の待ちの主因は同時実行数。
   長尺音声の配置窓の PCM 複製（EXT-01）と、拒否した取込みの素材が残ること（EXT-02）を `audit_ext*` で再現した。
   EXT-01 は [ADR 0273](../decisions/0273-shared-source-clip-windows.md)、EXT-02 は [ADR 0272](../decisions/0272-staged-import-media.md) で対応した。
