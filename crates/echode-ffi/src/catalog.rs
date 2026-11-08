@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use echode_plugin_host::{
-    CatalogWaiter, LiveCatalog, SCAN_QUIET, catalog_bundles, catalog_roots, host_binary,
+    CatalogTiming, CatalogWaiter, LiveCatalog, catalog_bundles, catalog_roots, host_binary,
     refresh_catalog,
 };
 
@@ -41,7 +41,7 @@ pub(crate) fn start_watch() -> Result<(), String> {
         catalog_roots(),
         host,
         cache_path(),
-        SCAN_QUIET,
+        CatalogTiming::PRODUCT,
     )?);
     Ok(())
 }

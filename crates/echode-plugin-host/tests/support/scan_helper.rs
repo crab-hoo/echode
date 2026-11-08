@@ -1,10 +1,12 @@
 //! Native deadline fixtures. This executable is never included in Echode.app.
 
 use std::io::Write;
+use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
 const PLUGIN_LINE: &str = "{\"id\":\"dev.audit.scan\",\"name\":\"Scan\",\"vendor\":\"Echode\",\"version\":\"1\",\"features\":[],\"url\":\"\"}\n";
+const SLOW_LINE: &str = "{\"id\":\"dev.audit.slow\",\"name\":\"Slow\",\"vendor\":\"Echode\",\"version\":\"1\",\"features\":[],\"url\":\"\"}\n";
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -14,7 +16,13 @@ fn main() {
         return;
     }
     assert_eq!(command, "--scan");
-    match args.next().as_deref().expect("fixture mode") {
+    let bundle = args.next().expect("fixture bundle");
+    // The live catalog passes a folder's full path; the mode is the bundle's name.
+    let mode = Path::new(&bundle)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("fixture mode");
+    match mode {
         "exit.clap" => std::process::exit(23),
         "signal.clap" => {
             // SAFETY: only this disposable fixture process receives SIGTERM.
@@ -22,6 +30,13 @@ fn main() {
             std::process::exit(1);
         }
         "hang.clap" => std::thread::sleep(Duration::from_secs(30)),
+        // Longer than a test's first try and far shorter than its slow try.
+        "slow.clap" => {
+            std::thread::sleep(Duration::from_millis(500));
+            std::io::stdout()
+                .write_all(SLOW_LINE.as_bytes())
+                .expect("report");
+        }
         "bad.clap" => std::io::stdout().write_all(&[0xff]).expect("invalid UTF-8"),
         "failed.clap" => {
             eprintln!("boom");

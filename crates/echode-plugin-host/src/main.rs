@@ -54,6 +54,7 @@ fn main() -> ExitCode {
         }
     }
     if let Some(scan) = scan {
+        echode_plugin_host::exit_with_parent();
         return match echode_plugin_host::scan_path(Path::new(&scan)) {
             Ok(plugins) => {
                 print!("{}", echode_plugin_host::scan_report(&plugins));

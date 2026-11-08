@@ -334,7 +334,9 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 
 プラグイン走査の期限・パイプ排出は `crates/echode-plugin-host/src/scan.rs`、回帰は `tests/scan.rs` に置く。
 JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バイナリは `tests/support/scan_helper.rs` とし、製品へ同梱しない
-（[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。
+（[ADR 0190](decisions/0190-native-scan-deadline-fixtures.md)）。fixture はパスのファイル名で動作を選ぶ。
+何を壊れたと記録するかは `ScanError::is_verdict` の 1 か所で決め、常駐のカタログの 2 回の走査は `live.rs` の `scan_due`、その順番の回帰は `live_tests.rs` に置く
+（[ADR 0285](decisions/0285-scan-timeouts-are-not-verdicts.md)）。
 
 ### FFI・文書・復旧・編集型
 

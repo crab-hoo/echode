@@ -1,7 +1,8 @@
 //! The helper reads CLAP descriptors. The test plugin is not instantiated.
 
 use echode_plugin_host::{
-    cache_entry, cached_plugins, load_scan_cache, scan_descriptors, scan_report, store_scan_cache,
+    BundleFound, BundleRevision, CatalogTiming, ScanError, cache_entry, cached_plugins,
+    load_scan_cache, scan_descriptors, scan_report, store_scan_cache,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -240,7 +241,10 @@ fn a_folder_change_publishes_the_plugin_and_drops_it_when_the_bundle_goes_away()
         vec![root.clone()],
         host,
         cache,
-        std::time::Duration::from_millis(200),
+        CatalogTiming {
+            quiet: std::time::Duration::from_millis(200),
+            ..CatalogTiming::PRODUCT
+        },
     )
     .expect("watch");
     let revision = live.wait_after(0, std::time::Duration::from_secs(5));
@@ -327,6 +331,8 @@ fn failed_scans_report_exit_codes_and_signals_without_stderr() {
     ] {
         let error = echode_plugin_host::scan_out_of_process(host, Path::new(mode))
             .expect_err("scan must fail");
+        assert!(matches!(error, ScanError::Rejected(_)), "{error:?}");
+        let error = error.to_string();
         assert!(error.contains(status), "{error}");
         assert!(error.contains(mode), "{error}");
     }
@@ -360,6 +366,8 @@ fn audit_rea08_descendant_pipe_does_not_extend_deadline() {
     )
     .expect_err("grandchild holds the pipe");
     let elapsed = started.elapsed();
+    assert!(matches!(error, ScanError::TimedOut(_)), "{error:?}");
+    let error = error.to_string();
     assert!(error.contains("timed out"), "{error}");
     assert!(
         error.contains(&format!("stdout: {} bytes", PLUGIN_LINE.len())),
@@ -382,6 +390,8 @@ fn audit_rea08_descendant_pipe_does_not_extend_deadline() {
     )
     .expect_err("hang");
     let elapsed = started.elapsed();
+    assert!(matches!(error, ScanError::TimedOut(_)), "{error:?}");
+    let error = error.to_string();
     assert!(error.contains("timed out"), "{error}");
     assert!(error.contains(": running;"), "{error}");
     assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
@@ -392,7 +402,8 @@ fn audit_rea08_descendant_pipe_does_not_extend_deadline() {
         std::time::Duration::from_secs(2),
     )
     .expect_err("utf-8");
-    assert!(error.contains("UTF-8"), "{error}");
+    assert!(matches!(error, ScanError::Rejected(_)), "{error:?}");
+    assert!(error.to_string().contains("UTF-8"), "{error}");
 
     let error = echode_plugin_host::scan_with_budget(
         host,
@@ -400,8 +411,151 @@ fn audit_rea08_descendant_pipe_does_not_extend_deadline() {
         std::time::Duration::from_secs(2),
     )
     .expect_err("exit");
+    assert!(matches!(error, ScanError::Rejected(_)), "{error:?}");
+    let error = error.to_string();
     assert!(error.contains("failed"), "{error}");
     assert!(error.contains("boom"), "{error}");
+}
+
+fn fixture_bundle(path: &str) -> BundleFound {
+    BundleFound {
+        path: PathBuf::from(path),
+        revision: BundleRevision {
+            version: "1".to_string(),
+            executable_modified: std::time::SystemTime::UNIX_EPOCH,
+            executable_size: 1,
+        },
+    }
+}
+
+fn scratch(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "echode-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+/// FCA-20: a timeout says nothing about the bundle, so it is not cached as
+/// broken and the next refresh scans it again. A rejection is cached.
+#[test]
+fn contract_a_timed_out_scan_is_not_cached_as_broken() {
+    let host = Path::new(env!("CARGO_BIN_EXE_echode-scan-test-helper"));
+    let root = scratch("scan-timeout-cache");
+    let cache = root.join("scan.jsonl");
+    let bundles = ["bundle.clap", "failed.clap", "hang.clap"].map(fixture_bundle);
+    // The answering bundles are cached under a generous deadline first, so
+    // only the hung one meets the short deadline below, even on a loaded machine.
+    echode_plugin_host::refresh_catalog_within(
+        host,
+        &cache,
+        bundles.get(..2).unwrap(),
+        std::time::Duration::from_secs(20),
+    )
+    .expect("refresh");
+    let listed = echode_plugin_host::refresh_catalog_within(
+        host,
+        &cache,
+        &bundles,
+        std::time::Duration::from_millis(200),
+    )
+    .expect("refresh");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|plugin| plugin.id.as_str())
+            .collect::<Vec<_>>(),
+        ["dev.audit.scan"]
+    );
+    let rows = load_scan_cache(&cache).unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.path.as_str(), row.rejected))
+            .collect::<Vec<_>>(),
+        [("bundle.clap", false), ("failed.clap", true)],
+        "only an answer from the helper is cached"
+    );
+    let [_, failed, hung] = &bundles;
+    assert_eq!(
+        cached_plugins(&rows, &failed.path, &failed.revision),
+        Some(&[][..])
+    );
+    assert!(
+        cached_plugins(&rows, &hung.path, &hung.revision).is_none(),
+        "the timed-out bundle must be scanned again"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Rows written before timeouts were told apart may hold a slow bundle.
+#[test]
+fn an_empty_row_without_the_rejected_mark_is_scanned_again() {
+    let root = scratch("scan-old-row");
+    let cache = root.join("scan.jsonl");
+    std::fs::write(
+        &cache,
+        concat!(
+            r#"{"path":"old.clap","bundle_version":"1","modified_secs":0,"modified_nanos":0,"executable_size":1,"plugins":[]}"#,
+            "\n",
+            r#"{"path":"new.clap","bundle_version":"1","modified_secs":0,"modified_nanos":0,"executable_size":1,"plugins":[],"rejected":true}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let rows = load_scan_cache(&cache).unwrap();
+    let old = fixture_bundle("old.clap");
+    let new = fixture_bundle("new.clap");
+    assert!(cached_plugins(&rows, &old.path, &old.revision).is_none());
+    assert_eq!(
+        cached_plugins(&rows, &new.path, &new.revision),
+        Some(&[][..])
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// FCA-20 on the product path: a bundle slower than the first deadline is
+/// listed after its slow try, and cached like any other.
+#[test]
+fn contract_the_live_catalog_lists_a_bundle_slower_than_the_first_deadline() {
+    let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-scan-test-helper"));
+    let root = scratch("scan-live-slow");
+    let plugins = root.join("plugins");
+    for name in ["bundle.clap", "slow.clap"] {
+        std::fs::create_dir_all(plugins.join(name).join("Contents/MacOS")).unwrap();
+    }
+    let cache = root.join("scan.jsonl");
+    let live = echode_plugin_host::LiveCatalog::start(
+        vec![plugins],
+        host,
+        cache.clone(),
+        CatalogTiming {
+            quiet: std::time::Duration::ZERO,
+            // The fixture sleeps 500 ms, so its first try always times out.
+            first: std::time::Duration::from_millis(200),
+            // Far above the fixture's sleep, so a loaded machine still finishes.
+            slow: std::time::Duration::from_secs(20),
+        },
+    )
+    .expect("watch");
+    let both = wait_for(&live, live.revision(), |rows| {
+        rows.iter().any(|row| row.0 == "dev.audit.slow")
+            && rows.iter().any(|row| row.0 == "dev.audit.scan")
+    });
+    assert!(both, "got {:?}", listed(&live.json()));
+    drop(live);
+    let rows = load_scan_cache(&cache).unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row.path.ends_with("slow.clap") && row.plugins.len() == 1),
+        "{rows:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// Newest edit among the test plugin's sources, so a change to any module rebuilds it.
@@ -411,4 +565,35 @@ fn newest_source(dir: &Path) -> std::io::Result<std::time::SystemTime> {
         newest = newest.max(entry?.metadata()?.modified()?);
     }
     Ok(newest)
+}
+
+/// A scan helper whose parent is gone must not live on with a hung bundle.
+/// The shell starts the helper in the background and exits at once, so the
+/// helper is left with launchd, as when the app quits mid-scan.
+#[test]
+fn contract_an_orphaned_scan_helper_exits_while_the_bundle_hangs() {
+    let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"));
+    let output = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(r#""$0" --scan "$1" >/dev/null 2>&1 & echo $!"#)
+        .arg(&host)
+        .arg(plugin_dylib())
+        .env("ECHODE_TEST_FAULT", "entry-hang")
+        .output()
+        .expect("shell");
+    assert!(output.status.success(), "{output:?}");
+    let pid: i32 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("helper pid");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // SAFETY: signal 0 only asks whether the process exists.
+    while unsafe { libc::kill(pid, 0) } == 0 {
+        if std::time::Instant::now() >= deadline {
+            // SAFETY: the pid is the helper this test started.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            panic!("the orphaned scan helper {pid} was still running after 10 s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }

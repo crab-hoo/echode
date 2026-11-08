@@ -187,13 +187,14 @@ pub use catalog::{
     catalog_roots, clap_path_directories, list_bundles, list_bundles_including_clap_path,
 };
 pub use events::write_input;
-pub use live::{CatalogWaiter, LiveCatalog};
+pub use live::{CatalogTiming, CatalogWaiter, LiveCatalog};
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;
 pub use scan::{
-    ResolvedPlugin, SCAN_BUDGET, ScanCacheEntry, ScannedPlugin, cache_entry, cached_plugins,
-    host_binary, installed_clap_bundles, load_scan_cache, refresh_catalog, resolve_cached,
-    resolve_installed, scan_descriptors, scan_out_of_process, scan_path, scan_report,
-    scan_with_budget, shared_cache_path, store_scan_cache,
+    ResolvedPlugin, SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanCacheEntry, ScanError, ScannedPlugin,
+    cache_entry, cached_plugins, exit_with_parent, host_binary, installed_clap_bundles,
+    load_scan_cache, refresh_catalog, refresh_catalog_within, resolve_cached, resolve_installed,
+    scan_descriptors, scan_out_of_process, scan_path, scan_report, scan_with_budget,
+    shared_cache_path, store_scan_cache,
 };
 pub use watch::FolderWatch;

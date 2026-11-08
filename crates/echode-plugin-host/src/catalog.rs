@@ -31,9 +31,15 @@ pub struct BundleFound {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Status {
-    Pending { since: Instant },
+    Pending {
+        since: Instant,
+    },
     Ready(Vec<crate::ScannedPlugin>),
+    /// The helper rejected this revision. Cached, so it is not loaded again.
     Failed,
+    /// No answer this session (a timeout, or the helper could not be run).
+    /// Not cached, so a restart scans it again (ADR 0285).
+    Unanswered,
 }
 
 /// Bundles under the watched folders, and which of them are ready to scan.
@@ -60,8 +66,8 @@ impl PluginCatalog {
     }
 
     /// Replace the known bundles with `found`. A new or updated bundle waits
-    /// out the quiet period again. A failed bundle is retried when its
-    /// revision changes.
+    /// out the quiet period again. A failed or unanswered bundle is retried
+    /// when its revision changes.
     pub fn observe(&mut self, now: Instant, found: &[BundleFound]) {
         let mut next = BTreeMap::new();
         for bundle in found {
@@ -74,7 +80,7 @@ impl PluginCatalog {
         self.bundles = next;
     }
 
-    /// Bundles whose quiet period has elapsed and that are not in the failed list.
+    /// Bundles whose quiet period has elapsed and that have no answer yet.
     pub fn due(&self, now: Instant) -> Vec<PathBuf> {
         self.bundles
             .iter()
@@ -92,6 +98,26 @@ impl PluginCatalog {
     pub fn note_failed(&mut self, path: &Path) {
         if let Some((_, status)) = self.bundles.get_mut(path) {
             *status = Status::Failed;
+        }
+    }
+
+    /// Records a scan that ended without an answer about the bundle.
+    pub fn note_unanswered(&mut self, path: &Path) {
+        if let Some((_, status)) = self.bundles.get_mut(path) {
+            *status = Status::Unanswered;
+        }
+    }
+
+    /// Records the result of one scan by what it says about the bundle.
+    pub fn note_result(
+        &mut self,
+        path: &Path,
+        result: Result<Vec<crate::ScannedPlugin>, crate::ScanError>,
+    ) {
+        match result {
+            Ok(plugins) => self.note_scanned(path, plugins),
+            Err(error) if error.is_verdict() => self.note_failed(path),
+            Err(_) => self.note_unanswered(path),
         }
     }
 
@@ -146,7 +172,8 @@ impl PluginCatalog {
 
     /// Cache rows for bundles that have been scanned or have failed this revision.
     ///
-    /// A pending bundle is omitted so a restart does not treat an unread file as known.
+    /// A pending or unanswered bundle is omitted so a restart does not treat an
+    /// unread file, or one that was only slow, as known.
     pub fn cache_entries(&self) -> Vec<crate::ScanCacheEntry> {
         self.bundles
             .iter()
@@ -154,7 +181,7 @@ impl PluginCatalog {
                 let plugins = match status {
                     Status::Ready(plugins) => plugins.clone(),
                     Status::Failed => Vec::new(),
-                    Status::Pending { .. } => return None,
+                    Status::Pending { .. } | Status::Unanswered => return None,
                 };
                 Some(crate::scan::entry_from_revision(path, revision, plugins))
             })

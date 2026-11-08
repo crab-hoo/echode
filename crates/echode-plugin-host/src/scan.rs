@@ -40,11 +40,52 @@ pub struct ScanCacheEntry {
     pub modified_nanos: u32,
     pub executable_size: u64,
     pub plugins: Vec<ScannedPlugin>,
+    /// The helper finished and found no usable plugin at this revision.
+    /// An empty row without this mark was written before timeouts were told
+    /// apart (ADR 0285), so it may be a slow bundle and is scanned again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rejected: bool,
 }
 
-/// How long one helper scan may run. This is a deadline for a hung bundle, not
-/// a limit on how many plugins can be installed.
+/// How long a bundle's first scan may run. Installed bundles answer in well
+/// under a second (ADR 0285), so this only stops a hung or slow bundle from
+/// holding back the others. It is not a limit on how many plugins can be installed.
 pub const SCAN_BUDGET: Duration = Duration::from_secs(5);
+
+/// The second try for a bundle whose first scan timed out. It runs after every
+/// other bundle has been listed, so its length only bounds how late a slow
+/// bundle appears and how long a hung helper lives. It covers one blocked
+/// network connection (macOS gives up on a TCP connect after 75 seconds), as a
+/// first launch's licence or notarization check may wait on one (ADR 0285).
+pub const SLOW_SCAN_BUDGET: Duration = Duration::from_secs(120);
+
+/// Why one bundle's scan returned no plugins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScanError {
+    /// The helper ran to the end and the bundle has no usable plugin at this
+    /// revision. This is the only failure the cache keeps.
+    Rejected(String),
+    /// The deadline passed first. The bundle may only be slow (FCA-20).
+    TimedOut(String),
+    /// This process could not start or read the helper. Says nothing about the bundle.
+    Unread(String),
+}
+
+impl ScanError {
+    /// Whether the answer is about the bundle itself and holds until its revision changes.
+    pub fn is_verdict(&self) -> bool {
+        matches!(self, Self::Rejected(_))
+    }
+}
+
+impl std::fmt::Display for ScanError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (Self::Rejected(message) | Self::TimedOut(message) | Self::Unread(message)) = self;
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for ScanError {}
 
 /// Loads the factory and copies the descriptor fields. The plugin is not instantiated.
 ///
@@ -118,10 +159,13 @@ pub fn entry_from_revision(
         modified_secs,
         modified_nanos,
         executable_size: revision.executable_size,
+        rejected: plugins.is_empty(),
         plugins,
     }
 }
 
+/// The cached answer for this revision. `Some` of an empty list is a bundle
+/// the helper rejected; `None` means the bundle still needs a scan.
 pub fn cached_plugins<'a>(
     entries: &'a [ScanCacheEntry],
     path: &Path,
@@ -134,7 +178,8 @@ pub fn cached_plugins<'a>(
             && entry.modified_secs == key.modified_secs
             && entry.modified_nanos == key.modified_nanos
             && entry.executable_size == key.executable_size;
-        same.then_some(entry.plugins.as_slice())
+        let answered = entry.rejected || !entry.plugins.is_empty();
+        (same && answered).then_some(entry.plugins.as_slice())
     })
 }
 
@@ -151,6 +196,32 @@ pub fn load_scan_cache(path: &Path) -> std::io::Result<Vec<ScanCacheEntry>> {
         entries.push(entry);
     }
     Ok(entries)
+}
+
+/// Ends this scan helper once the process that started it is gone.
+///
+/// The helper runs in its own process group, so nothing stops it when the app
+/// quits mid-scan, and a hung bundle would keep it alive for good. The check
+/// has its own thread because the bundle's code may never return (ADR 0285).
+pub fn exit_with_parent() {
+    // SAFETY: `getppid` takes no arguments and cannot fail.
+    let parent = unsafe { libc::getppid() };
+    let _ = std::thread::Builder::new()
+        .name("echode-scan-parent".into())
+        .spawn(move || {
+            loop {
+                // SAFETY: as above.
+                let current = unsafe { libc::getppid() };
+                // A parent that exited before the first read already left this
+                // helper with launchd.
+                if parent == 1 || current != parent {
+                    // SAFETY: `_exit` ends the process without the bundle's exit
+                    // handlers, which may be as stuck as its loading.
+                    unsafe { libc::_exit(3) };
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
 }
 
 /// Resolves a bundle to its binary, then reads descriptors in this process.
@@ -237,16 +308,25 @@ fn take_bytes(
     }
 }
 
-fn wait_child(child: &mut Child, deadline: Instant) -> Result<std::process::ExitStatus, String> {
+fn wait_child(
+    child: &mut Child,
+    deadline: Instant,
+    bundle: &Path,
+) -> Result<std::process::ExitStatus, ScanError> {
     loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("plugin host wait failed: {error}"))?
-        {
+        if let Some(status) = child.try_wait().map_err(|error| {
+            ScanError::Unread(format!(
+                "plugin host wait failed: {error} ({})",
+                bundle.display()
+            ))
+        })? {
             return Ok(status);
         }
         if Instant::now() >= deadline {
-            return Err("plugin scan timed out".to_string());
+            return Err(ScanError::TimedOut(format!(
+                "plugin scan timed out ({})",
+                bundle.display()
+            )));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -269,7 +349,10 @@ fn stop_scan(child: &mut Child) {
 /// `sandbox_init` is not a public `libc` symbol. The deadline starts here and
 /// covers the child and both pipes. Stderr is kept only up to [`STDERR_CAP`];
 /// further bytes are discarded so a long report cannot fill the pipe.
-pub fn scan_out_of_process(host_bin: &Path, bundle: &Path) -> Result<Vec<ScannedPlugin>, String> {
+pub fn scan_out_of_process(
+    host_bin: &Path,
+    bundle: &Path,
+) -> Result<Vec<ScannedPlugin>, ScanError> {
     scan_with_budget(host_bin, bundle, SCAN_BUDGET)
 }
 
@@ -278,7 +361,7 @@ pub fn scan_with_budget(
     host_bin: &Path,
     bundle: &Path,
     budget: Duration,
-) -> Result<Vec<ScannedPlugin>, String> {
+) -> Result<Vec<ScannedPlugin>, ScanError> {
     let mut command = Command::new(host_bin);
     command
         .arg("--scan")
@@ -289,17 +372,17 @@ pub fn scan_with_budget(
         .process_group(0);
     let mut child = command
         .spawn()
-        .map_err(|error| format!("could not start plugin host: {error}"))?;
+        .map_err(|error| ScanError::Unread(format!("could not start plugin host: {error}")))?;
     let stdout_pipe = child
         .stdout
         .take()
-        .ok_or_else(|| "plugin scan output: missing stdout".to_string())?;
+        .ok_or_else(|| ScanError::Unread("plugin scan output: missing stdout".to_string()))?;
     let stderr_pipe = child
         .stderr
         .take()
-        .ok_or_else(|| "plugin scan output: missing stderr".to_string())?;
-    set_nonblocking(stdout_pipe.as_raw_fd())?;
-    set_nonblocking(stderr_pipe.as_raw_fd())?;
+        .ok_or_else(|| ScanError::Unread("plugin scan output: missing stderr".to_string()))?;
+    set_nonblocking(stdout_pipe.as_raw_fd()).map_err(ScanError::Unread)?;
+    set_nonblocking(stderr_pipe.as_raw_fd()).map_err(ScanError::Unread)?;
     let deadline = Instant::now() + budget;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -319,13 +402,13 @@ pub fn scan_with_budget(
             drop(stdout_pipe);
             drop(stderr_pipe);
             stop_scan(&mut child);
-            return Err(format!(
+            return Err(ScanError::TimedOut(format!(
                 "plugin scan timed out ({}) [child {}: {status}; stdout: {} bytes, open={stdout_open}; stderr: {} bytes, open={stderr_open}]",
                 bundle.display(),
                 child.id(),
                 stdout.len(),
                 stderr.len()
-            ));
+            )));
         }
         let mut polls = [libc::pollfd {
             fd: -1,
@@ -354,7 +437,7 @@ pub fn scan_with_budget(
             drop(stdout_pipe);
             drop(stderr_pipe);
             stop_scan(&mut child);
-            return Err(format!("plugin scan output: {error}"));
+            return Err(ScanError::Unread(format!("plugin scan output: {error}")));
         }
         if stdout_open {
             match take_bytes(
@@ -368,10 +451,10 @@ pub fn scan_with_budget(
                     drop(stdout_pipe);
                     drop(stderr_pipe);
                     stop_scan(&mut child);
-                    return Err(format!(
+                    return Err(ScanError::Rejected(format!(
                         "plugin scan output is larger than {STDOUT_CAP} bytes ({})",
                         bundle.display()
-                    ));
+                    )));
                 }
                 Ok(true) => stdout_open = false,
                 Ok(false) => {}
@@ -379,7 +462,7 @@ pub fn scan_with_budget(
                     drop(stdout_pipe);
                     drop(stderr_pipe);
                     stop_scan(&mut child);
-                    return Err(error);
+                    return Err(ScanError::Unread(error));
                 }
             }
         }
@@ -397,56 +480,74 @@ pub fn scan_with_budget(
                     drop(stdout_pipe);
                     drop(stderr_pipe);
                     stop_scan(&mut child);
-                    return Err(error);
+                    return Err(ScanError::Unread(error));
                 }
             }
         }
     }
     drop(stdout_pipe);
     drop(stderr_pipe);
-    let status = match wait_child(&mut child, deadline) {
+    let status = match wait_child(&mut child, deadline, bundle) {
         Ok(status) => status,
         Err(error) => {
             stop_scan(&mut child);
-            return Err(format!("{error} ({})", bundle.display()));
+            return Err(error);
         }
     };
     if !status.success() {
         let detail = stderr_text(&stderr, stderr_overflow);
         let detail = detail.trim();
-        return Err(if detail.is_empty() {
+        return Err(ScanError::Rejected(if detail.is_empty() {
             format!("plugin scan failed ({}, {status})", bundle.display())
         } else {
             format!(
                 "plugin scan failed ({}, {status}): {detail}",
                 bundle.display()
             )
-        });
+        }));
     }
-    let stdout =
-        String::from_utf8(stdout).map_err(|_| "plugin scan output: invalid UTF-8".to_string())?;
+    let stdout = String::from_utf8(stdout)
+        .map_err(|_| ScanError::Rejected("plugin scan output: invalid UTF-8".to_string()))?;
     let mut plugins = Vec::new();
     for line in stdout.lines() {
         if line.is_empty() {
             continue;
         }
         plugins.push(
-            serde_json::from_str(line).map_err(|error| format!("plugin scan output: {error}"))?,
+            serde_json::from_str(line)
+                .map_err(|error| ScanError::Rejected(format!("plugin scan output: {error}")))?,
         );
     }
     if plugins.is_empty() {
-        return Err(format!("{} does not contain a plugin", bundle.display()));
+        return Err(ScanError::Rejected(format!(
+            "{} does not contain a plugin",
+            bundle.display()
+        )));
     }
     Ok(plugins)
 }
 
 /// Reads the cache, scans bundles the cache does not already know, and returns
-/// every plugin. A failed bundle is remembered for that revision so the next
-/// refresh does not load it again.
+/// every plugin. A rejected bundle is remembered for that revision so the next
+/// refresh does not load it again. A timed-out or unread scan is not an answer
+/// about the bundle: it leaves no row, and the next refresh scans it again.
+///
+/// Callers wait for this, so each bundle gets [`SCAN_BUDGET`] only. The live
+/// catalog gives a timed-out bundle its slow second try.
 pub fn refresh_catalog(
     host_bin: &Path,
     cache_path: &Path,
     bundles: &[crate::BundleFound],
+) -> Result<Vec<ScannedPlugin>, String> {
+    refresh_catalog_within(host_bin, cache_path, bundles, SCAN_BUDGET)
+}
+
+/// [`refresh_catalog`] with a caller-chosen deadline per bundle.
+pub fn refresh_catalog_within(
+    host_bin: &Path,
+    cache_path: &Path,
+    bundles: &[crate::BundleFound],
+    budget: Duration,
 ) -> Result<Vec<ScannedPlugin>, String> {
     if !host_bin.is_file() {
         return Err(format!("plugin host is missing ({})", host_bin.display()));
@@ -459,7 +560,11 @@ pub fn refresh_catalog(
         {
             plugins.to_vec()
         } else {
-            scan_out_of_process(host_bin, &bundle.path).unwrap_or_default()
+            match scan_with_budget(host_bin, &bundle.path, budget) {
+                Ok(plugins) => plugins,
+                Err(error) if error.is_verdict() => Vec::new(),
+                Err(_) => continue,
+            }
         };
         listed.extend(plugins.iter().cloned());
         next.push(entry_from_revision(&bundle.path, &bundle.revision, plugins));
@@ -768,6 +873,7 @@ mod tests {
                 modified_secs: index,
                 modified_nanos: 0,
                 executable_size: 4096,
+                rejected: false,
                 plugins: vec![ScannedPlugin {
                     id: format!("dev.echode.plugin-{index}"),
                     name: format!("Plugin {index}"),
@@ -831,7 +937,8 @@ mod tests {
             Duration::from_secs(60),
         )
         .unwrap_err();
-        assert!(error.contains("larger than"), "{error}");
+        assert!(matches!(error, ScanError::Rejected(_)), "{error:?}");
+        assert!(error.to_string().contains("larger than"), "{error}");
         assert!(
             started.elapsed() < Duration::from_secs(50),
             "the scan ran to its deadline"

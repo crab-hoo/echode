@@ -14,9 +14,31 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::ScannedPlugin;
-use crate::catalog::{PluginCatalog, list_bundles_including_clap_path};
-use crate::scan::{cached_plugins, load_scan_cache, scan_out_of_process, store_scan_cache};
+use crate::catalog::{PluginCatalog, SCAN_QUIET, list_bundles_including_clap_path};
+use crate::scan::{
+    SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanError, cached_plugins, load_scan_cache, scan_with_budget,
+    store_scan_cache,
+};
 use crate::watch::FolderWatch;
+
+/// How the live catalog paces its scans.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CatalogTiming {
+    /// How long a changed bundle must sit still before it is scanned.
+    pub quiet: Duration,
+    /// The deadline for every bundle's first try.
+    pub first: Duration,
+    /// The deadline for the second try of a bundle whose first try timed out.
+    pub slow: Duration,
+}
+
+impl CatalogTiming {
+    pub const PRODUCT: Self = Self {
+        quiet: SCAN_QUIET,
+        first: SCAN_BUDGET,
+        slow: SLOW_SCAN_BUDGET,
+    };
+}
 
 struct Shared {
     revision: u64,
@@ -46,13 +68,13 @@ pub struct CatalogWaiter {
 impl LiveCatalog {
     /// Scans `roots` once, then watches them until dropped.
     ///
-    /// `quiet` is how long a changed bundle must sit still. The product passes
-    /// [`crate::SCAN_QUIET`].
+    /// The product passes [`CatalogTiming::PRODUCT`]. Dropping waits for the
+    /// scan in progress, at most `timing.slow`.
     pub fn start(
         roots: Vec<PathBuf>,
         host: PathBuf,
         cache: PathBuf,
-        quiet: Duration,
+        timing: CatalogTiming,
     ) -> Result<Self, String> {
         if !host.is_file() {
             return Err(format!("plugin host is missing ({})", host.display()));
@@ -70,7 +92,7 @@ impl LiveCatalog {
         let thread_stop = Arc::clone(&stop);
         let thread = thread::Builder::new()
             .name("echode-plugin-watch".into())
-            .spawn(move || watch(roots, host, cache, quiet, thread_state, thread_stop))
+            .spawn(move || watch(roots, host, cache, timing, thread_state, thread_stop))
             .map_err(|error| error.to_string())?;
         {
             let guard = state
@@ -163,10 +185,11 @@ fn watch(
     roots: Vec<PathBuf>,
     host: PathBuf,
     cache: PathBuf,
-    quiet: Duration,
+    timing: CatalogTiming,
     state: Arc<State>,
     stop: Arc<AtomicBool>,
 ) {
+    let quiet = timing.quiet;
     let mut catalog = PluginCatalog::new(quiet);
     let mut seen = BTreeSet::new();
     let mut announced = false;
@@ -187,20 +210,16 @@ fn watch(
         };
         catalog.observe(stamp, &found);
         restore_cached(&mut catalog, &cache, &found);
-        for path in catalog.due(Instant::now()) {
-            if stop.load(Ordering::Acquire) {
-                break;
-            }
-            match scan_out_of_process(&host, &path) {
-                Ok(plugins) => catalog.note_scanned(&path, plugins),
-                Err(_) => catalog.note_failed(&path),
-            }
-        }
-        if let Some(parent) = cache.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = store_scan_cache(&cache, &catalog.cache_entries());
-        publish(&state, &mut seen, &mut announced, &catalog.listed());
+        let due = catalog.due(Instant::now());
+        scan_due(
+            &mut catalog,
+            due,
+            timing,
+            &stop,
+            |path, budget| scan_with_budget(&host, path, budget),
+            |catalog| settle(&cache, catalog, &state, &mut seen, &mut announced),
+        );
+        settle(&cache, &catalog, &state, &mut seen, &mut announced);
         if stop.load(Ordering::Acquire) {
             break;
         }
@@ -210,6 +229,56 @@ fn watch(
             .min(Duration::from_millis(250));
         let _ = wait_for_change(&watches, pause);
     }
+}
+
+/// Scans the due bundles. A bundle whose first try times out gets a second
+/// try with `timing.slow`, after `settled` has stored and published every
+/// answer of the first round, so one slow or hung bundle does not hold back
+/// the rest (ADR 0285).
+fn scan_due(
+    catalog: &mut PluginCatalog,
+    due: Vec<PathBuf>,
+    timing: CatalogTiming,
+    stop: &AtomicBool,
+    mut scan: impl FnMut(&Path, Duration) -> Result<Vec<ScannedPlugin>, ScanError>,
+    mut settled: impl FnMut(&PluginCatalog),
+) {
+    let mut slow = Vec::new();
+    for path in due {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        match scan(&path, timing.first) {
+            Err(ScanError::TimedOut(_)) => slow.push(path),
+            result => catalog.note_result(&path, result),
+        }
+    }
+    if slow.is_empty() {
+        return;
+    }
+    settled(catalog);
+    for path in slow {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        let result = scan(&path, timing.slow);
+        catalog.note_result(&path, result);
+    }
+}
+
+/// Stores the answers so far and publishes the list.
+fn settle(
+    cache: &Path,
+    catalog: &PluginCatalog,
+    state: &State,
+    seen: &mut BTreeSet<String>,
+    announced: &mut bool,
+) {
+    if let Some(parent) = cache.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = store_scan_cache(cache, &catalog.cache_entries());
+    publish(state, seen, announced, &catalog.listed());
 }
 
 fn bundles_in(roots: &[PathBuf]) -> Vec<crate::BundleFound> {
@@ -305,3 +374,7 @@ fn publish(
     drop(shared);
     state.changed.notify_all();
 }
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod tests;

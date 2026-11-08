@@ -687,6 +687,9 @@
         {"file": "crates/echode-plugin-host/src/scan.rs", "old": "let mut stderr_open = true;", "new": "let mut stderr_open = false;"}
       ]
     },
+    {"id": "scan-timeout-not-cached", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "scan"], "test": "contract_a_timed_out_scan_is_not_cached_as_broken", "timeout": 180, "purpose": "走査の時間切れをバンドルの判定として扱わず、キャッシュへ壊れたと記録しない。ヘルパーが終わって拒んだバンドルだけを記録する（FCA-20）", "negative_control": {"file": "crates/echode-plugin-host/src/scan.rs", "old": "                Err(_) => continue,", "new": "                Err(_) => Vec::new(),"}},
+    {"id": "scan-orphan-exit", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "scan"], "test": "contract_an_orphaned_scan_helper_exits_while_the_bundle_hangs", "timeout": 180, "purpose": "読込みの終わらないバンドルを走査中に親が消えたヘルパーが、自分で終了して残らない（ADR 0285）", "negative_control": {"file": "crates/echode-plugin-host/src/main.rs", "old": "        echode_plugin_host::exit_with_parent();\n", "new": ""}},
+    {"id": "scan-slow-retry", "runner": "rust", "package": "echode-plugin-host", "target": ["--test", "scan"], "test": "contract_the_live_catalog_lists_a_bundle_slower_than_the_first_deadline", "timeout": 180, "purpose": "製品の常駐カタログで、最初の期限より遅いバンドルを長い期限の2回目で一覧とキャッシュへ載せる（FCA-20）", "negative_control": {"file": "crates/echode-plugin-host/src/live.rs", "old": "let result = scan(&path, timing.slow);", "new": "let result = scan(&path, timing.first);"}},
     {
       "id": "mixer-switch-batch-ui", "runner": "swift", "package_path": "swift/EchodeApp", "build_product": "EchodeAppTests",
       "suite": "MixerSwitchBatchTests", "test": "contractHeaderSwitchesSetTheCapturedSelectionAtomicallyAndPreserveOtherSolos", "timeout": 180,

@@ -767,6 +767,12 @@ struct TestEntry {
 
 impl Entry for TestEntry {
     fn new(_plugin_path: Option<&CStr>) -> Result<Self, EntryLoadError> {
+        // A bundle whose loading never returns, for the scan helper's orphan test.
+        if std::env::var("ECHODE_TEST_FAULT").is_ok_and(|fault| fault == "entry-hang") {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
+        }
         Ok(Self {
             factory: PluginFactoryWrapper::new(TestFactory::new()),
         })
