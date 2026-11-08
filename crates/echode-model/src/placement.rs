@@ -383,7 +383,7 @@ fn merge(
         let delta = from_origin
             .checked_sub(primary_origin)
             .ok_or(ModelError::InvalidNote)?;
-        for note in notes(contents, placement.content)? {
+        for note in notes(contents, placement.content)?.iter().cloned() {
             absorbed.push(Note {
                 start: Tick::new(
                     note.start
@@ -625,7 +625,7 @@ fn note_bars(
     }
     let origin = origin(clip)?;
     let mut span = (i64::MAX, i64::MIN);
-    for note in &found {
+    for note in found {
         let absolute = origin
             .checked_add(note.start.get())
             .ok_or(ModelError::InvalidNote)?;
@@ -649,7 +649,7 @@ fn refit_one(
     let origin = origin(&clips[index])?;
     let mut min_bar = i64::MAX;
     let mut max_bar = i64::MIN;
-    for note in &found {
+    for note in found {
         let (start_bar, end_bar) = occupied_bars(note.start.get(), note.length.get(), bar)
             .ok_or(ModelError::InvalidNote)?;
         min_bar = min_bar.min(start_bar);
@@ -738,9 +738,9 @@ fn origin(clip: &Placement) -> Result<i64, ModelError> {
         .ok_or(ModelError::InvalidNote)
 }
 
-fn notes(contents: &[Arc<Content>], id: Id) -> Result<Vec<Note>, ModelError> {
+fn notes(contents: &[Arc<Content>], id: Id) -> Result<&[Note], ModelError> {
     let index = crate::model::content_index(contents, id).ok_or(ModelError::MissingClip)?;
-    Ok(contents[index].notes.clone())
+    Ok(&contents[index].notes)
 }
 
 fn content_mut(contents: &mut [Arc<Content>], id: Id) -> Result<&mut Content, ModelError> {

@@ -26,6 +26,7 @@ struct Work {
     velocity_note_copies: usize,
     content_copies: usize,
     content_note_copies: usize,
+    note_copies: usize,
     diff_note_visits: usize,
     apply_device_owner_visits: usize,
     diff_device_keys: usize,
@@ -116,6 +117,10 @@ pub(crate) fn content_copy(notes: usize) {
         work.content_copies += 1;
         work.content_note_copies += notes;
     });
+}
+
+pub(crate) fn note_copy() {
+    record(|work| work.note_copies += 1);
 }
 
 pub(crate) fn diff_note_visit() {
@@ -756,3 +761,6 @@ mod note_duplicate;
 
 #[path = "model_note_edit_tests.rs"]
 mod note_edit;
+
+#[path = "model_note_refit_tests.rs"]
+mod note_refit;

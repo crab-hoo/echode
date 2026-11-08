@@ -108,11 +108,24 @@ macro_rules! define_note {
         /// `velocity` and `release` are 0..=65535. A MIDI 1.0 value `v` in 0..=127 is
         /// stored as `(v << 9) | (v << 2) | (v >> 5)`, so 127 becomes 65535.
         /// Serde decodes the stored shape; project assembly validates musical values.
-        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[cfg_attr(not(test), derive(Clone))]
+        #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
         #[serde(deny_unknown_fields)]
         pub struct Note {
             pub id: Id,
             $(pub $field: $type,)+
+        }
+
+        // Include temporary note buffers in the unit-test copy budget.
+        #[cfg(test)]
+        impl Clone for Note {
+            fn clone(&self) -> Self {
+                crate::model_scale_tests::note_copy();
+                Self {
+                    id: self.id,
+                    $($field: self.$field.to_owned(),)+
+                }
+            }
         }
     };
 }

@@ -117,6 +117,13 @@ ID 重複の線形探索と、毎回全配置から作る参照集合は残る�
 複製ノートの順序違反は `model_scale_tests::note_duplicate::identical_geometry_duplication_still_sorts_the_new_note` で切り分ける。
 追加済みの未共有内容は幾何が同じでも整列する必要があり、公開済みの共有内容と区別する。
 
+自動配置だけでノート数に応じた複写が増える場合は、`cargo test -q -p echode-model model_scale_tests::note_refit` の `note_copies` を調べる。
+単体テスト専用の `Note::clone` で、内容の copy-on-write と範囲計算用の一時コピーを両方数える。
+`placement::notes` は借用スライスを返し、`note_bars` と `refit_one` は読取りだけ、結合では吸収ノートの複写だけを明示する。
+結合しない同値編集は 0、結合しない変更は元のノート数（複製では +1）、結合は元の各ノート 1 回を上限とする。
+負・小節未満の原点や別トラックの固定リンクの回帰で、小節基準や窓の変化と不要コピーの再発を切り分ける。
+この計数はノートの実際の複写だけであり、走査・整列・結合用の領域・保存待ち・実画面の時間とは区別する。
+
 ### トラック追加が既存ノート数に応じて遅くなる
 
 `model_scale_tests::track_insert` は末尾・子・指定位置への追加で、既存ノートの ID 訪問数と全体走査の回数を数える。
