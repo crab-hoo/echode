@@ -1,6 +1,6 @@
 use super::*;
 use echode_engine::PlaybackError;
-use echode_sandbox::{ParamChange, ParamText, ParamValue, Refusal, SessionError};
+use echode_sandbox::{ParamChange, ParamText, ParamValue, PluginFailure, Refusal, SessionError};
 
 fn process_level(host: &mut PluginHost, input: f32) -> (f32, f32) {
     // One short block per check; this fixture length is not a host limit.
@@ -275,7 +275,7 @@ fn contract_parameter_edit_sounds_records_and_restores_under_rtsan() {
         );
         control.restore_device_state(device.raw(), &edited).unwrap();
         close(hear(&mut control, &mut audio, frames), 0.1875);
-        // ADR 0294: the plugin's refusal reaches the caller as the helper's
+        // ADR 0294, ADR 0295: the plugin's refusal reaches the caller as its
         // own kind, not as text, and the device keeps sounding as before.
         let refused = control.restore_device_state(device.raw(), &[0; 17]);
         assert!(
@@ -283,9 +283,17 @@ fn contract_parameter_edit_sounds_records_and_restores_under_rtsan() {
                 &refused,
                 Err(PlaybackError::Helper { device: failed, error })
                     if *failed == device.raw()
-                        && matches!(**error, SessionError::Refused(Refusal::Other(_)))
+                        && matches!(
+                            **error,
+                            SessionError::Refused(Refusal::Plugin(PluginFailure::LoadRefused))
+                        )
             ),
             "{refused:?}"
+        );
+        // The words are unchanged.
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "plugin refused to load state"
         );
         close(hear(&mut control, &mut audio, frames), 0.1875);
         assert!(matches!(

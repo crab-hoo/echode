@@ -57,6 +57,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   時間切れは取消ではなく結果不明で、自動再送はしない（[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
   ヘルパーの拒否は種類付きの `Refusal` で送る。busy（始めていない）と、ヘルパー自身の時間切れ・停止（結果不明）と、ほかの拒否（ヘルパーの文）を型で分ける。
   ホストではどれも `SessionError::Refused` になる（[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)）。
+  プラグイン自身の失敗（状態・窓・ポートの拡張がない、`false` で断った、ポートの記述が使えない）は `Refusal::Plugin(PluginFailure)` で、ヘルパーの内部と通信路で同じ型である。
+  文のまま送るのは、ローダーの文の起動の失敗と、設計上起きない食い違いだけである（[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
 
 - 制御専用の `PluginControl` は、`session_operations.rs` に型付きの操作と通信の実装を直接持つ。
   `ControlState` は要求番号・通知・保存の管理を共用し、ホスト経由の保存・復元の別経路は持たない。
@@ -133,7 +135,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - **キャッシュと除外**: バンドルパス・`CFBundleVersion`・実行ファイル更新日時とサイズをキーに JSON Lines でキャッシュする。
   ヘルパーが最後まで動いて拒んだ版だけを `rejected` の行で除外する。時間切れと本体側の失敗は記録せず、次に走査し直す。
   常駐のカタログは 5 秒で全部を走査して一覧を出した後、時間切れだけを 120 秒で走査し直す。
-  走査のヘルパーは親を失ったら終わる（[ADR 0285](../decisions/0285-scan-timeouts-are-not-verdicts.md)）
+  走査のヘルパーは親を失ったら終わる（[ADR 0285](../decisions/0285-scan-timeouts-are-not-verdicts.md)）。
+  `ScanError` の段（判定・時間切れ・読めない）は中身も型で、終了状態・stderr・管の量・`io::Error` を持つ（[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）
 - **ブラウザとチェイン操作（P2）**: ダブルクリック追加時のみ自動で閉じ、ドラッグや Return 追加時は開いたままにする。
   候補の右メニューから選択中の全トラックへ、単一トランザクションで追加する。
   フォーカスと複数選択を分け、操作時の文書・対象を保持する（[ADR 0124](../decisions/0124-selected-track-fx-batches.md)）。

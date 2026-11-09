@@ -16,8 +16,8 @@ use serde::Serialize;
 use crate::ScannedPlugin;
 use crate::catalog::{PluginCatalog, SCAN_QUIET, list_bundles_including_clap_path};
 use crate::scan::{
-    SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanError, cached_plugins, load_scan_cache, scan_with_budget,
-    store_scan_cache,
+    CatalogError, SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanError, cached_plugins, load_scan_cache,
+    scan_with_budget, store_scan_cache,
 };
 use crate::watch::FolderWatch;
 
@@ -75,9 +75,9 @@ impl LiveCatalog {
         host: PathBuf,
         cache: PathBuf,
         timing: CatalogTiming,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CatalogError> {
         if !host.is_file() {
-            return Err(format!("plugin host is missing ({})", host.display()));
+            return Err(CatalogError::MissingHost(host));
         }
         let state = Arc::new(State {
             shared: Mutex::new(Shared {
@@ -93,7 +93,7 @@ impl LiveCatalog {
         let thread = thread::Builder::new()
             .name("echode-plugin-watch".into())
             .spawn(move || watch(roots, host, cache, timing, thread_state, thread_stop))
-            .map_err(|error| error.to_string())?;
+            .map_err(CatalogError::Thread)?;
         {
             let guard = state
                 .shared

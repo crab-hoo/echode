@@ -16,10 +16,13 @@
     )
 )]
 
+use clack_host::entry::PluginEntryError;
 use clack_host::prelude::*;
-use echode_sandbox::{MAX_CHANNELS, MAX_FRAMES, RegionError, SPIKE_SAMPLE_RATE};
+use echode_sandbox::{
+    MAX_CHANNELS, MAX_FRAMES, PluginFailure, RegionError, SPIKE_SAMPLE_RATE, WorkgroupError,
+};
 use std::os::fd::FromRawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
@@ -30,17 +33,57 @@ mod main_requests;
 mod relay;
 pub use awake::HelperActivity;
 
+/// Why the helper could not load, start or serve its plugin (ADR 0295).
 #[derive(Debug)]
 pub enum HostError {
     Region(RegionError),
-    Plugin(String),
+    /// The bundle's library did not load, or its entry failed, in the loader's words.
+    Entry(PluginEntryError),
+    NoBinary(PathBuf),
+    NoFactory(PathBuf),
+    /// The bundle has no plugin, or none with the requested id.
+    NoPlugin(PathBuf),
+    NoPluginId,
+    /// Creating, activating or calling the instance failed.
+    Instance(PluginInstanceError),
+    /// The plugin lacks what the helper needs, or answered `false`.
+    Plugin(PluginFailure),
+    StartRefused,
+    ProcessRefused,
+    /// The control socket failed.
+    Socket(std::io::Error),
+    Workgroup(WorkgroupError),
+    RunLoopSource,
+    NoRunLoop,
+    /// The processing thread looked for the plugin's ports before the main
+    /// thread stored them. The launch order rules this out.
+    PortsUnpublished,
+    /// The named worker thread panicked. It has already printed why.
+    Panicked(&'static str),
+    /// A measurement asked for a block size the buffers cannot hold.
+    FrameCount(usize),
 }
 
 impl std::fmt::Display for HostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Region(error) => write!(f, "{error}"),
-            Self::Plugin(error) => write!(f, "{error}"),
+            Self::Entry(error) => write!(f, "{error}"),
+            Self::NoBinary(path) => write!(f, "{} has no plugin binary", path.display()),
+            Self::NoFactory(path) => write!(f, "{} has no plugin factory", path.display()),
+            Self::NoPlugin(path) => write!(f, "{} does not contain a plugin", path.display()),
+            Self::NoPluginId => f.write_str("plugin descriptor has no id"),
+            Self::Instance(error) => write!(f, "{error}"),
+            Self::Plugin(failure) => write!(f, "{failure}"),
+            Self::StartRefused => f.write_str("plugin refused to start processing"),
+            Self::ProcessRefused => f.write_str("process refused"),
+            Self::Socket(error) => write!(f, "{error}"),
+            Self::Workgroup(error) => write!(f, "{error}"),
+            Self::RunLoopSource => f.write_str("could not create the main run loop source"),
+            Self::NoRunLoop => f.write_str("the thread has no run loop"),
+            Self::PortsUnpublished => f.write_str("plugin ports were not published"),
+            Self::Panicked(thread) => write!(f, "the {thread} thread panicked"),
+            Self::FrameCount(frames) => write!(f, "unsupported frame count {frames}"),
         }
     }
 }
@@ -53,10 +96,26 @@ impl From<RegionError> for HostError {
     }
 }
 
+impl From<PluginFailure> for HostError {
+    fn from(failure: PluginFailure) -> Self {
+        Self::Plugin(failure)
+    }
+}
+
+/// The identity the helper gives every plugin. Fixed C strings, so it cannot fail.
+pub(crate) fn host_info() -> HostInfo {
+    HostInfo::new_from_cstring(
+        c"Echode".into(),
+        c"Echode".into(),
+        c"https://echode.invalid".into(),
+        c"0.0.0".into(),
+    )
+}
+
 pub(crate) fn load_entry(path: &Path) -> Result<PluginEntry, HostError> {
     // SAFETY: loading a plugin runs its static constructors in this process.
     // That is the reason this binary is a separate process from the DAW.
-    unsafe { PluginEntry::load(path) }.map_err(|error| HostError::Plugin(error.to_string()))
+    unsafe { PluginEntry::load(path) }.map_err(HostError::Entry)
 }
 
 pub fn serve(
@@ -94,31 +153,25 @@ pub fn measure_in_process(
     iterations: usize,
 ) -> Result<std::time::Duration, HostError> {
     if frames == 0 || frames > MAX_FRAMES {
-        return Err(HostError::Plugin(format!(
-            "unsupported frame count {frames}"
-        )));
+        return Err(HostError::FrameCount(frames));
     }
     let entry = load_entry(plugin)?;
     let factory = entry
         .get_plugin_factory()
-        .ok_or_else(|| HostError::Plugin("no factory".to_string()))?;
+        .ok_or_else(|| HostError::NoFactory(plugin.to_path_buf()))?;
     let descriptor = factory
         .plugin_descriptors()
         .next()
-        .ok_or_else(|| HostError::Plugin("no plugin".to_string()))?;
-    let plugin_id = descriptor
-        .id()
-        .ok_or_else(|| HostError::Plugin("plugin descriptor has no id".to_string()))?;
-    let host_info = HostInfo::new("Echode", "Echode", "https://echode.invalid", "0.0.0")
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
+        .ok_or_else(|| HostError::NoPlugin(plugin.to_path_buf()))?;
+    let plugin_id = descriptor.id().ok_or(HostError::NoPluginId)?;
     let mut instance = PluginInstance::<threads::EchodeHost>::new(
         |_| threads::HostShared::inert(),
         threads::host_main,
         &entry,
         plugin_id,
-        &host_info,
+        &host_info(),
     )
-    .map_err(|error| HostError::Plugin(error.to_string()))?;
+    .map_err(HostError::Instance)?;
     let stopped = instance
         .activate(
             |_, _| (),
@@ -128,10 +181,10 @@ pub fn measure_in_process(
                 max_frames_count: MAX_FRAMES as u32,
             },
         )
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
+        .map_err(HostError::Instance)?;
     let mut started = stopped
         .start_processing()
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
+        .map_err(|_| HostError::StartRefused)?;
     let mut input_ports = AudioPorts::with_capacity(MAX_CHANNELS, 1);
     let mut output_ports = AudioPorts::with_capacity(MAX_CHANNELS, 1);
     let mut input = [[0.25f32; MAX_FRAMES]; MAX_CHANNELS];
@@ -164,7 +217,7 @@ pub fn measure_in_process(
                 Some(steady),
                 None,
             )
-            .map_err(|error| HostError::Plugin(error.to_string()))?;
+            .map_err(HostError::Instance)?;
         steady += frames as u64;
     }
     let elapsed = started_at.elapsed();
@@ -191,10 +244,11 @@ pub use live::{CatalogTiming, CatalogWaiter, LiveCatalog};
 #[cfg(debug_assertions)]
 pub use realtime::GuardAlloc;
 pub use scan::{
-    ResolvedPlugin, SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanCacheEntry, ScanError, ScannedPlugin,
-    cache_entry, cached_plugins, exit_with_parent, host_binary, installed_clap_bundles,
-    load_scan_cache, refresh_catalog, refresh_catalog_within, resolve_cached, resolve_installed,
-    scan_descriptors, scan_out_of_process, scan_path, scan_report, scan_with_budget,
-    shared_cache_path, store_scan_cache,
+    CatalogError, ChildState, ResolvedPlugin, SCAN_BUDGET, SLOW_SCAN_BUDGET, ScanCacheEntry,
+    ScanError, ScanFailure, ScanProgress, ScanUnread, ScannedPlugin, cache_entry, cached_plugins,
+    exit_with_parent, host_binary, installed_clap_bundles, load_scan_cache, refresh_catalog,
+    refresh_catalog_within, resolve_cached, resolve_installed, scan_descriptors,
+    scan_out_of_process, scan_path, scan_report, scan_with_budget, shared_cache_path,
+    store_scan_cache,
 };
-pub use watch::FolderWatch;
+pub use watch::{FolderWatch, WatchError};

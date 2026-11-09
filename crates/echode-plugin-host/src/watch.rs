@@ -26,6 +26,27 @@ struct CallbackInfo {
     tx: std::sync::mpsc::Sender<()>,
 }
 
+/// Why a folder watch did not start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchError {
+    /// FSEvents takes a UTF-8 path.
+    NotUtf8,
+    Create,
+    Start,
+}
+
+impl std::fmt::Display for WatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotUtf8 => "plugin folder path is not utf-8",
+            Self::Create => "FSEventStreamCreate failed",
+            Self::Start => "FSEventStreamStart failed",
+        })
+    }
+}
+
+impl std::error::Error for WatchError {}
+
 /// Background watch. Dropping it stops the FSEvents stream.
 pub struct FolderWatch {
     stream: FSEventStreamRef,
@@ -36,9 +57,9 @@ pub struct FolderWatch {
 }
 
 impl FolderWatch {
-    pub fn start(root: &Path) -> Result<Self, String> {
+    pub fn start(root: &Path) -> Result<Self, WatchError> {
         let Some(path) = root.to_str() else {
-            return Err("plugin folder path is not utf-8".to_string());
+            return Err(WatchError::NotUtf8);
         };
         let cf_path = CFString::from_str(path);
         let paths = CFArray::from_objects(&[&*cf_path]);
@@ -69,7 +90,7 @@ impl FolderWatch {
         };
         if stream.is_null() {
             drop(unsafe { Box::from_raw(info) });
-            return Err("FSEventStreamCreate failed".to_string());
+            return Err(WatchError::Create);
         }
         let queue = DispatchQueue::new("dev.echode.plugin-watch", None);
         let started = unsafe {
@@ -83,7 +104,7 @@ impl FolderWatch {
                 FSEventStreamInvalidate(stream);
                 FSEventStreamRelease(stream);
             }
-            return Err("FSEventStreamStart failed".to_string());
+            return Err(WatchError::Start);
         }
         Ok(Self {
             stream,

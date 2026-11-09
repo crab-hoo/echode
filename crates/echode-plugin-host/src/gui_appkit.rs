@@ -1,4 +1,5 @@
 use super::{APPKIT, Surface};
+use echode_sandbox::PluginFailure;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyProtocol, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
@@ -41,8 +42,8 @@ pub(super) struct Panel {
 }
 
 impl Panel {
-    pub(super) fn new() -> Result<Self, String> {
-        let mtm = MainThreadMarker::new().ok_or("plugin windows need the main thread")?;
+    pub(super) fn new() -> Result<Self, PluginFailure> {
+        let mtm = MainThreadMarker::new().ok_or(PluginFailure::PanelNeedsMainThread)?;
         if !APPKIT.with(Cell::get) {
             let app = NSApplication::sharedApplication(mtm);
             // No Dock icon and no menu bar: Echode stays the app the user works in.
@@ -67,7 +68,7 @@ impl Surface for Panel {
         width: u32,
         height: u32,
         resizable: bool,
-    ) -> Result<*mut c_void, String> {
+    ) -> Result<*mut c_void, PluginFailure> {
         let mut style = NSWindowStyleMask::Titled
             | NSWindowStyleMask::Closable
             | NSWindowStyleMask::NonactivatingPanel;
@@ -98,9 +99,7 @@ impl Surface for Panel {
         unsafe { panel.setReleasedWhenClosed(false) };
         panel.setTitle(&NSString::from_str(title));
         panel.center();
-        let view = panel
-            .contentView()
-            .ok_or("the window has no content view")?;
+        let view = panel.contentView().ok_or(PluginFailure::PanelHasNoView)?;
         let pointer = Retained::as_ptr(&view).cast_mut().cast::<c_void>();
         self.panel = Some(panel);
         Ok(pointer)

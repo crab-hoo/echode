@@ -133,7 +133,9 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 メインスレッドに残る要求が完了するまで後続は busy で拒否し、自動再送しない。
 要求番号 N はヘルパー内部の呼出し番号で、ソケットの応答照合の番号とは別である。
 原因は文面でなく型で見る。ホストの待ちが先に切れた時は `SessionError::Timeout`、ヘルパーの待ちが先なら `Refused(TimedOut(MainCall(N)))` で、どちらも結果不明である。
-後続の拒否は `Refused(Busy)`、プラグイン自身の拒否は `Refused(Other(文))` になる（[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)）。
+後続の拒否は `Refused(Busy)` になる（[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)）。
+プラグイン自身の失敗は `Refused(Plugin(種類))` で、拡張がない（`NoState`・`NoWindow` など）か、プラグインが断った（`SaveRefused`・`LoadRefused`）かを型で見る。
+`Refused(Other(文))` は、起動時のローダーの失敗と、ヘルパーの設計上起きない食い違いだけである（[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
 `plugin-main-timeout-state` は機器なしの `slow-save` で再現し、`plugin-control-request-ids` は古い応答の破棄を検査する。
 完了後の復元バイトと新しい保存結果を比較し、実行中の拒否と、古い応答の取り違えを区別する。
 操作と通信の対応・Unicode と状態バイト・拒否理由は `session_operations_tests.rs` で切り分ける。

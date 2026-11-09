@@ -20,6 +20,7 @@ TYPED_CRATES = (
     'echode-audio-io',
     'echode-document',
     'echode-engine',
+    'echode-plugin-host',
     'echode-sandbox',
 )
 STRING = {'String', 'std::string::String', 'alloc::string::String'}

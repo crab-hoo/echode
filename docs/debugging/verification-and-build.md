@@ -96,6 +96,8 @@ worktree ごとの `target` が大きい。Claude Code のデスクトップア�
 最初の候補は、全体の段階の ASan・TSan・Miri が使う `target/bridge/address`・`thread`・`miri` である（2026-11-09 に合計 5.9 GB）。
 GitHub の `full` がプッシュごとに実行する。作業ごとの `make verify` も、その対象の crate で `unsafe` を足し引きした時は選ぶ（`task_unsafe`）。
 2026-11-09 は消した直後にこの条件に当たり、冷えた状態から ASan 432 秒・TSan 328 秒・Miri 75 秒かかった（温まった状態では 194・138・34 秒）。
+`make verify-plan` がこの 3 つを選んでいる時は、消しても同じ実行で作り直すので空きは増えない。
+その時の候補は `target/release` で、使うのは `spike-*` の release 計測だけである（Makefile の `--release`。2026-11-09 に 2.0 GB）。
 `target/debug/incremental` は、同じ日の作業ではほぼ全部が使われていて、古い分は残らなかった。
 2026-11-05 には空き 227 MiB の状態で、Swift が `internal error in Code Signing subsystem` だけを返して署名で止まった。
 この表示でも `df -h` と、`swift build --build-tests` の署名の診断を採る。署名を無効にせず、容量の確保後に同じ経路で再実行する。
@@ -140,9 +142,9 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `scripts/check_typed_errors.py` は、境界のエラーを列挙型にした crate の製品コードに `Result<_, String>` がないことを確かめる。
 署名・チャネル・クロージャの型を、複数行と入れ子も含めて見る。`*_tests.rs`、`tests/`、末尾の `#[cfg(test)] mod tests` は対象外である。
 `turns an error into text` は、`map_err` の中で受け取ったエラーを `.to_string()`・`format!` で文にした所である。元のエラーを変種に持たせ、文は `Display` で作る。
-拒否されたら、その crate のエラー型（`echode-audio-io` は `AudioError`、`echode-document` は `DocumentError`、`echode-sandbox` は `SessionError`・`WorkgroupError`・`SpawnError`、ヘルパーの拒否は `Refusal`、`echode-engine` は `PlaybackError`・`DeviceError`）の変種を使うか、原因に合う変種を足す。
+拒否されたら、その crate のエラー型（`echode-audio-io` は `AudioError`、`echode-document` は `DocumentError`、`echode-sandbox` は `SessionError`・`WorkgroupError`・`SpawnError`、ヘルパーの拒否は `Refusal`、プラグイン自身の失敗は `PluginFailure`、`echode-engine` は `PlaybackError`・`DeviceError`、`echode-plugin-host` は `HostError`・`ScanError`・`CatalogError`・`WatchError`）の変種を使うか、原因に合う変種を足す。
 `Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。
-文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0294](../decisions/0294-typed-engine-errors.md)）。
+文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
 
 ### Cargo の依存メタデータが欠ける
 

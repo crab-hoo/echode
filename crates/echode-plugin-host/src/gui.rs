@@ -14,7 +14,7 @@ use clap_sys::ext::gui::{
     CLAP_EXT_GUI, CLAP_WINDOW_API_COCOA, clap_plugin_gui, clap_window, clap_window_handle,
 };
 use clap_sys::plugin::clap_plugin;
-use echode_sandbox::GuiReport;
+use echode_sandbox::{GuiReport, PluginFailure};
 use std::cell::{Cell, RefCell};
 use std::ffi::{CString, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -128,7 +128,7 @@ trait Surface {
         width: u32,
         height: u32,
         resizable: bool,
-    ) -> Result<*mut c_void, String>;
+    ) -> Result<*mut c_void, PluginFailure>;
     fn order_front(&mut self, key: bool);
     fn order_out(&mut self);
     fn destroy(&mut self);
@@ -172,8 +172,8 @@ fn recorded() -> bool {
 }
 
 /// Opens or raises the plugin's window. Main thread only.
-pub(crate) fn show(plugin: &clap_plugin, title: &str) -> Result<GuiReport, String> {
-    let gui = extension(plugin).ok_or("the plugin has no window")?;
+pub(crate) fn show(plugin: &clap_plugin, title: &str) -> Result<GuiReport, PluginFailure> {
+    let gui = extension(plugin).ok_or(PluginFailure::NoWindow)?;
     GUI.with(|cell| {
         let mut slot = cell.borrow_mut();
         let created = slot.as_ref().is_none_or(|host| !host.policy.is_open());
@@ -264,7 +264,11 @@ pub(crate) fn run_once(seconds: f64, command: impl FnMut(echode_sandbox::PluginC
     }
 }
 
-fn open(plugin: &clap_plugin, gui: &clap_plugin_gui, title: &str) -> Result<GuiHost, String> {
+fn open(
+    plugin: &clap_plugin,
+    gui: &clap_plugin_gui,
+    title: &str,
+) -> Result<GuiHost, PluginFailure> {
     let supported = |floating: bool| {
         gui.is_api_supported.is_some_and(|supported| {
             // SAFETY: main thread; the API name is a static C string.
@@ -276,12 +280,12 @@ fn open(plugin: &clap_plugin, gui: &clap_plugin_gui, title: &str) -> Result<GuiH
     } else if supported(true) {
         true
     } else {
-        return Err("the plugin has no Cocoa window".to_string());
+        return Err(PluginFailure::NoCocoaWindow);
     };
-    let create = gui.create.ok_or("the plugin cannot create a window")?;
+    let create = gui.create.ok_or(PluginFailure::NoWindowCreate)?;
     // SAFETY: main thread, after the plugin was created.
     if !unsafe { create(plugin, CLAP_WINDOW_API_COCOA.as_ptr(), floating) } {
-        return Err("the plugin refused to create its window".to_string());
+        return Err(PluginFailure::WindowRefused);
     }
     let mut surface: Box<dyn Surface> = if recorded() {
         Box::new(Recorded::default())
@@ -306,12 +310,12 @@ fn open(plugin: &clap_plugin, gui: &clap_plugin_gui, title: &str) -> Result<GuiH
                     api: CLAP_WINDOW_API_COCOA.as_ptr(),
                     specific: clap_window_handle { cocoa: view },
                 };
-                let set_parent = gui.set_parent.ok_or("the plugin cannot be embedded")?;
+                let set_parent = gui.set_parent.ok_or(PluginFailure::NoEmbedding)?;
                 // SAFETY: main thread; the view outlives the plugin's window.
                 if unsafe { set_parent(plugin, &window) } {
                     Ok(())
                 } else {
-                    Err("the plugin refused the window".to_string())
+                    Err(PluginFailure::ParentRefused)
                 }
             });
         if let Err(error) = attached {
@@ -418,7 +422,13 @@ struct Recorded {
 }
 
 impl Surface for Recorded {
-    fn create(&mut self, _: &str, width: u32, height: u32, _: bool) -> Result<*mut c_void, String> {
+    fn create(
+        &mut self,
+        _: &str,
+        width: u32,
+        height: u32,
+        _: bool,
+    ) -> Result<*mut c_void, PluginFailure> {
         self.open = true;
         self.size = (width, height);
         Ok(std::ptr::from_mut(&mut *self.view).cast())

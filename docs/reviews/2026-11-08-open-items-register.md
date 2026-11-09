@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | `echode-audio-io`・`echode-document`・`echode-sandbox`・`echode-engine` は列挙型にした（ADR 0291〜0294）。残りは括弧を数えて 56 か所。最多は `echode-history` の 32。次は `echode-plugin-host` |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | `echode-audio-io`・`echode-document`・`echode-sandbox`・`echode-engine`・`echode-plugin-host` は列挙型にした（ADR 0291〜0295）。残りは括弧を数えて 36 か所。最多は `echode-history` の 32 で、次の境界 |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -101,6 +101,11 @@
 - 2026-11-09（ADR 0294）: `echode-engine` の `Result<_, String>` 5 か所と、`Unsupported(String)` の 13 か所（audio-io の 1 を含む）を原因ごとの変種にした。
   ヘルパーの起動・状態の復元・対応の失敗は `Arc<SessionError>` のまま持ち、busy・時間切れがエンジンを通っても型で届く。
   検査は、`map_err` でエラーを文にする書き方も拒否する。残りは 56 か所、文にする `map_err` は未着手の crate に 200 か所。次は `echode-plugin-host` である。
+- 2026-11-09（ADR 0295）: `echode-plugin-host` の 54 か所（`Result<_, String>` 20、文にする `map_err` 34）を型にした。
+  プラグイン自身の失敗（状態・窓・ポート・容量・パラメーターの適用）は `echode-sandbox` の `PluginFailure` で、通信路でも `Refusal::Plugin` の種類で届く。
+  実ヘルパーの状態の読込みの拒否は、前の `Refused(Other(文))` から `Refused(Plugin(LoadRefused))` になった。走査・目録・監視も原因を型で持つ。
+  `Refusal::Other` に残るのは、ローダーの文の起動の失敗と、設計上起きない食い違い、無効なパラメーター ID である。
+  残りは 36 か所、文にする `map_err` は 168 か所。次は `echode-history`（32 か所と 131 か所）である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

@@ -12,9 +12,52 @@ fn every_kind() -> [Refusal; 7] {
     ]
 }
 
+const INPUT: AudioPort = AudioPort {
+    input: true,
+    index: 0,
+};
+const OUTPUT: AudioPort = AudioPort {
+    input: false,
+    index: u32::MAX,
+};
+
+fn every_failure() -> [PluginFailure; 27] {
+    use PluginFailure::*;
+    [
+        NoState,
+        NoStateSave,
+        NoStateLoad,
+        SaveRefused,
+        LoadRefused,
+        CapacityRefused,
+        NoParameterFlush,
+        NoWindow,
+        NoCocoaWindow,
+        NoWindowCreate,
+        WindowRefused,
+        NoEmbedding,
+        ParentRefused,
+        PanelNeedsMainThread,
+        PanelHasNoView,
+        NoAudioPorts,
+        NoPortCount,
+        NoPortInfo,
+        PortUndescribed(INPUT),
+        PortUndescribed(OUTPUT),
+        PortWithoutChannels(INPUT),
+        PortWithoutChannels(OUTPUT),
+        NoPorts,
+        NoNotePortCount,
+        NoNotePortInfo,
+        NotePortUndescribed,
+        NotePortIndex,
+    ]
+}
+
 #[test]
 fn every_refusal_round_trips_with_its_kind() {
-    for refusal in every_kind() {
+    let failures = every_failure().map(Refusal::Plugin);
+    for refusal in every_kind().into_iter().chain(failures) {
         let bytes = write_refusal(&refusal);
         assert_eq!(read_refusal(&bytes).unwrap(), refusal);
     }
@@ -31,6 +74,37 @@ fn busy_is_not_text_that_happens_to_say_busy() {
 }
 
 #[test]
+fn every_failure_has_its_own_code_and_keeps_the_helpers_words() {
+    let mut codes = std::collections::BTreeSet::new();
+    for failure in every_failure() {
+        codes.insert(failure_code(failure));
+    }
+    // Two port kinds appear twice in the list, once for each side.
+    assert_eq!(codes.len(), every_failure().len() - 2);
+    // Every code the reader accepts writes back to the same bytes.
+    for code in 0..=u8::MAX {
+        let simple = [PLUGIN, code];
+        let port = [PLUGIN, code, 1, 4, 0, 0, 0];
+        for bytes in [&simple[..], &port[..]] {
+            if let Ok(refusal) = read_refusal(bytes) {
+                assert_eq!(write_refusal(&refusal), bytes);
+            }
+        }
+    }
+    let port = PluginFailure::PortWithoutChannels(INPUT);
+    assert_eq!(port.to_string(), "input port 0 has no channels");
+    let port = PluginFailure::PortUndescribed(OUTPUT);
+    assert_eq!(
+        port.to_string(),
+        format!("plugin did not describe output port {}", u32::MAX)
+    );
+    assert_eq!(
+        Refusal::Plugin(PluginFailure::NoState).to_string(),
+        "plugin does not declare state"
+    );
+}
+
+#[test]
 fn malformed_refusals_are_invalid_data() {
     let mut extra = write_refusal(&Refusal::Busy);
     extra.push(0);
@@ -42,7 +116,15 @@ fn malformed_refusals_are_invalid_data() {
         short,
         vec![STOPPED_PARAMETERS, 1],
         vec![OTHER, 0xff],
-        vec![STOPPED_PARAMETERS + 1],
+        vec![PLUGIN + 1],
+        // A plugin failure needs its code; a port kind needs its port.
+        vec![PLUGIN],
+        vec![PLUGIN, 18],
+        vec![PLUGIN, 18, 1, 0, 0, 0],
+        vec![PLUGIN, 18, 2, 0, 0, 0, 0],
+        vec![PLUGIN, 0, 1, 0, 0, 0, 0],
+        vec![PLUGIN, 0, 0],
+        vec![PLUGIN, u8::MAX],
     ] {
         let error = read_refusal(&bytes).expect_err("a malformed refusal was accepted");
         assert_eq!(error.kind(), ErrorKind::InvalidData, "{bytes:?}");

@@ -8,7 +8,7 @@ use crate::events::write_input;
 use crate::gui::GuiRequests;
 use crate::main_requests::{MainReply, MainRequest, MainRequests};
 use crate::relay::{RelayOutput, RelayRing};
-use crate::{HostError, gui, load_entry};
+use crate::{HostError, gui, host_info, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::events::{
     Pckn,
@@ -39,9 +39,9 @@ use clap_sys::plugin::clap_plugin;
 use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
-    CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn,
-    MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue, Pending,
-    Refusal, RegionError, Socket, SyncFlags, wake_one,
+    AudioPort, CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage,
+    FanIn, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue,
+    Pending, PluginFailure, Refusal, RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
@@ -354,8 +354,7 @@ impl Bridge {
         let Some((call, request)) = self.main_requests.take() else {
             return;
         };
-        // The plugin's own failures are text until this crate types them (ADR 0293).
-        let result = perform_main_request(self, request).map_err(Refusal::Other);
+        let result = perform_main_request(self, request);
         self.main_requests.complete(&call, result);
     }
 }
@@ -679,8 +678,7 @@ pub fn serve_fds(
     workgroup: Option<(&str, u32)>,
 ) -> Result<(), HostError> {
     let region = MappedRegion::from_fd(shm)?;
-    let socket =
-        Socket::from_owned(control).map_err(|error| HostError::Plugin(error.to_string()))?;
+    let socket = Socket::from_owned(control).map_err(HostError::Socket)?;
     let fan = match fan {
         Some(fd) => Some(FanIn::from_fd(fd)?),
         None => None,
@@ -773,11 +771,9 @@ fn serve_region(
         cancel: None,
         perform: Some(on_source),
     };
-    let source = unsafe { CFRunLoopSource::new(None, 0, &raw mut context) }.ok_or_else(|| {
-        HostError::Plugin("could not create the main run loop source".to_string())
-    })?;
-    let run_loop = CFRunLoop::current()
-        .ok_or_else(|| HostError::Plugin("the thread has no run loop".to_string()))?;
+    let source = unsafe { CFRunLoopSource::new(None, 0, &raw mut context) }
+        .ok_or(HostError::RunLoopSource)?;
+    let run_loop = CFRunLoop::current().ok_or(HostError::NoRunLoop)?;
     // SAFETY: the common-modes symbol is a process-wide constant.
     run_loop.add_source(Some(&source), unsafe { kCFRunLoopCommonModes });
     // Retained below so the pointers stay valid until the worker threads are joined.
@@ -795,7 +791,7 @@ fn serve_region(
         Some(path) => match load_plugin(path, plugin_id, Arc::clone(&bridge)) {
             Ok(plugin) => Some(plugin),
             Err(error) => {
-                reject_launch(control.as_mut(), &error.to_string());
+                reject_launch(control.as_mut(), &error);
                 return Err(error);
             }
         },
@@ -812,7 +808,7 @@ fn serve_region(
                 error: Some(error),
             },
         };
-        let rejected = shape.error.clone();
+        let rejected = shape.error;
         bridge
             .ports
             .store(Box::into_raw(Box::new(shape)), Ordering::Release);
@@ -820,14 +816,14 @@ fn serve_region(
             // Tell the parent before any worker starts. A worker that exits
             // first can close the socket and drop this reason.
             if let Some(socket) = control.as_mut() {
-                let _ = socket.send(&ControlMessage::PortsRejected(Refusal::Other(error)));
+                let _ = socket.send(&ControlMessage::PortsRejected(error.into()));
             }
             bridge.stop.store(true, Ordering::Release);
         } else {
             let stopped = match activate(&mut loaded.instance, sample_rate, max_frames) {
                 Ok(stopped) => stopped,
                 Err(error) => {
-                    reject_launch(control.as_mut(), &error.to_string());
+                    reject_launch(control.as_mut(), &error);
                     return Err(error);
                 }
             };
@@ -837,8 +833,13 @@ fn serve_region(
             bridge
                 .latency_samples
                 .store(query_latency(&loaded.instance), Ordering::Release);
-            prepare_event_capacity(&loaded.instance, bridge.root.layout().input_events)
-                .map_err(HostError::Plugin)?;
+            if let Err(failure) =
+                prepare_event_capacity(&loaded.instance, bridge.root.layout().input_events)
+            {
+                let error = HostError::Plugin(failure);
+                reject_launch(control.as_mut(), &error);
+                return Err(error);
+            }
             publish_stopped(&bridge.processor, stopped, false);
             bridge.need_start.store(true, Ordering::Release);
             bridge
@@ -880,8 +881,8 @@ fn serve_region(
         }
         // A thread that panicked has already printed why; the helper exits
         // with an error, which the parent reads as the helper ending.
-        let joined = |name: &str, result: thread::Result<Result<(), HostError>>| {
-            result.unwrap_or_else(|_| Err(HostError::Plugin(format!("the {name} thread panicked"))))
+        let joined = |name: &'static str, result: thread::Result<Result<(), HostError>>| {
+            result.unwrap_or(Err(HostError::Panicked(name)))
         };
         joined("processing", audio.join()).and(joined("control", control_handle.join()))
     });
@@ -968,21 +969,15 @@ fn load_plugin(
     let entry = load_entry(path)?;
     let factory = entry
         .get_plugin_factory()
-        .ok_or_else(|| HostError::Plugin(format!("{} has no plugin factory", path.display())))?;
+        .ok_or_else(|| HostError::NoFactory(path.to_path_buf()))?;
     let descriptor = factory
         .plugin_descriptors()
         .find(|descriptor| match plugin_id {
             None => true,
             Some(wanted) => descriptor.id().and_then(|id| id.to_str().ok()) == Some(wanted),
         })
-        .ok_or_else(|| {
-            HostError::Plugin(format!("{} does not contain a plugin", path.display()))
-        })?;
-    let plugin_id = descriptor
-        .id()
-        .ok_or_else(|| HostError::Plugin("plugin descriptor has no id".to_string()))?;
-    let host_info = HostInfo::new("Echode", "Echode", "https://echode.invalid", "0.0.0")
-        .map_err(|error| HostError::Plugin(error.to_string()))?;
+        .ok_or_else(|| HostError::NoPlugin(path.to_path_buf()))?;
+    let plugin_id = descriptor.id().ok_or(HostError::NoPluginId)?;
     let instance = PluginInstance::<EchodeHost>::new(
         move |_| HostShared {
             bridge: Some(Arc::clone(&bridge)),
@@ -990,9 +985,9 @@ fn load_plugin(
         host_main,
         &entry,
         plugin_id,
-        &host_info,
+        &host_info(),
     )
-    .map_err(|error| HostError::Plugin(error.to_string()))?;
+    .map_err(HostError::Instance)?;
     Ok(Loaded {
         _entry: entry,
         instance,
@@ -1013,7 +1008,7 @@ fn activate(
                 max_frames_count: max_frames.max(1),
             },
         )
-        .map_err(|error| HostError::Plugin(error.to_string()))
+        .map_err(HostError::Instance)
 }
 
 fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<(), HostError> {
@@ -1022,8 +1017,7 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
     }
     let _membership = match workgroup {
         Some((name, ticks)) => Some(
-            echode_sandbox::join_passed_workgroup(name, *ticks)
-                .map_err(|error| HostError::Plugin(error.to_string()))?,
+            echode_sandbox::join_passed_workgroup(name, *ticks).map_err(HostError::Workgroup)?,
         ),
         None => None,
     };
@@ -1165,8 +1159,8 @@ impl From<RegionError> for RtFail {
 fn explain(error: RtFail) -> HostError {
     match error {
         RtFail::Region(error) => HostError::Region(error),
-        RtFail::Process => HostError::Plugin("process refused".to_string()),
-        RtFail::Start => HostError::Plugin("plugin refused to start processing".to_string()),
+        RtFail::Process => HostError::ProcessRefused,
+        RtFail::Start => HostError::StartRefused,
         RtFail::Command(command) => HostError::Region(RegionError::UnknownCommand(command)),
     }
 }
@@ -1408,7 +1402,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
         && let Some(shape) = published_ports(bridge)
     {
         let message = if let Some(error) = &shape.error {
-            ControlMessage::PortsRejected(Refusal::Other(error.clone()))
+            ControlMessage::PortsRejected(Refusal::Plugin(*error))
         } else {
             ControlMessage::Ports {
                 inputs: shape.inputs.clone(),
@@ -1542,7 +1536,7 @@ fn handle_control(
             };
             socket
                 .send_tagged(request_id, &reply)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::Restore(bytes) => {
             let reply = match call_main(bridge, MainRequest::Load(bytes)) {
@@ -1552,7 +1546,7 @@ fn handle_control(
             };
             socket
                 .send_tagged(request_id, &reply)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::ParamsRequest => {
             let reply = match read_params(bridge) {
@@ -1561,7 +1555,7 @@ fn handle_control(
             };
             socket
                 .send_tagged(request_id, &reply)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::SetParams(changes) => {
             let reply = match apply_params(bridge, &changes) {
@@ -1570,7 +1564,7 @@ fn handle_control(
             };
             socket
                 .send_tagged(request_id, &reply)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::ParseParam { id, text } => {
             let reply = match parse_param(bridge, id, &text) {
@@ -1579,7 +1573,7 @@ fn handle_control(
             };
             socket
                 .send_tagged(request_id, &reply)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::GuiShow(title) => {
             let reply = match call_main(bridge, MainRequest::Show(title)) {
@@ -1589,7 +1583,7 @@ fn handle_control(
             };
             socket
                 .send_tagged(request_id, &reply)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::GuiClose => {
             let reply = match call_main(bridge, MainRequest::Close) {
@@ -1599,25 +1593,25 @@ fn handle_control(
             };
             socket
                 .send_tagged(request_id, &reply)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::SetChain(stages) => {
             if stages == 0 {
                 socket
                     .send_tagged(request_id, &ControlMessage::ChainRejected)
-                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+                    .map_err(HostError::Socket)?;
             } else {
                 bridge.stages.store(stages, Ordering::Release);
                 socket
                     .send_tagged(request_id, &ControlMessage::ChainReady)
-                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+                    .map_err(HostError::Socket)?;
             }
         }
         ControlMessage::CancelRemap => {
             if bridge.pending.load(Ordering::Acquire).is_null() {
                 socket
                     .send_tagged(request_id, &ControlMessage::RemapFailed)
-                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+                    .map_err(HostError::Socket)?;
                 return Ok(());
             }
             let target = bridge.switched.load(Ordering::Acquire) + 1;
@@ -1632,7 +1626,7 @@ fn handle_control(
             reclaim_retired(bridge);
             socket
                 .send_tagged(request_id, &ControlMessage::RemapCancelled)
-                .map_err(|error| HostError::Plugin(error.to_string()))?;
+                .map_err(HostError::Socket)?;
         }
         ControlMessage::Remap { layout, fd } => match MappedRegion::from_fd(fd) {
             Ok(region)
@@ -1644,7 +1638,7 @@ fn handle_control(
                 {
                     socket
                         .send_tagged(request_id, &ControlMessage::RemapFailed)
-                        .map_err(|error| HostError::Plugin(error.to_string()))?;
+                        .map_err(HostError::Socket)?;
                     return Ok(());
                 }
                 let buffers = if bridge.buffers_live.load(Ordering::Acquire) {
@@ -1659,18 +1653,18 @@ fn handle_control(
                 bridge.bump_audio();
                 socket
                     .send_tagged(request_id, &ControlMessage::Remapped)
-                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+                    .map_err(HostError::Socket)?;
             }
             Ok(region) => {
                 drop(region);
                 socket
                     .send_tagged(request_id, &ControlMessage::RemapFailed)
-                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+                    .map_err(HostError::Socket)?;
             }
             Err(_) => {
                 socket
                     .send_tagged(request_id, &ControlMessage::RemapFailed)
-                    .map_err(|error| HostError::Plugin(error.to_string()))?;
+                    .map_err(HostError::Socket)?;
             }
         },
         _ => {}
@@ -1678,12 +1672,17 @@ fn handle_control(
     Ok(())
 }
 
-fn reject_launch(socket: Option<&mut Socket>, reason: &str) {
-    if let Some(socket) = socket {
-        let _ = socket.send(&ControlMessage::PortsRejected(Refusal::Other(
-            reason.to_string(),
-        )));
-    }
+/// Tells the parent why the plugin did not launch. What the plugin lacks keeps
+/// its kind; a load or activation failure crosses in the loader's words.
+fn reject_launch(socket: Option<&mut Socket>, error: &HostError) {
+    let Some(socket) = socket else {
+        return;
+    };
+    let refusal = match error {
+        HostError::Plugin(failure) => Refusal::Plugin(*failure),
+        other => Refusal::Other(other.to_string()),
+    };
+    let _ = socket.send(&ControlMessage::PortsRejected(refusal));
 }
 
 fn pause(bridge: &Bridge, socket: Option<&Socket>, seen: u64) -> u64 {
@@ -1849,7 +1848,7 @@ struct PortShape {
     inputs: Vec<u32>,
     outputs: Vec<u32>,
     reset_midi: Vec<MidiEvent>,
-    error: Option<String>,
+    error: Option<PluginFailure>,
 }
 
 fn published_ports(bridge: &Bridge) -> Option<&PortShape> {
@@ -1874,9 +1873,7 @@ fn wait_for_layout(bridge: &Bridge) -> Result<(), HostError> {
             return Ok(());
         }
         let Some(shape) = published_ports(bridge) else {
-            return Err(HostError::Plugin(
-                "plugin ports were not published".to_string(),
-            ));
+            return Err(HostError::PortsUnpublished);
         };
         if shape.error.is_some() {
             let alarm = bridge.root.alarm();
@@ -1928,11 +1925,11 @@ fn call_main(bridge: &Bridge, request: MainRequest) -> Result<MainReply, Refusal
     }
 }
 
-fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainReply, String> {
+fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainReply, Refusal> {
     INSTANCE.with(|cell| {
         let instance = cell.get();
         if instance.is_null() {
-            return Err("plugin is not loaded".to_string());
+            return Err(Refusal::NoPlugin);
         }
         let instance = unsafe { &*instance };
         // Exhaustive: a new operation can never fall through to state loading.
@@ -2110,9 +2107,7 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
         .and_then(|params| params.flush)
         .is_none()
     {
-        return Err(Refusal::Other(
-            "plugin does not accept parameter changes".to_string(),
-        ));
+        return Err(PluginFailure::NoParameterFlush.into());
     }
     let mut events = EventBuffer::with_capacity(changes.len());
     let mut ids: Vec<u32> = Vec::with_capacity(changes.len());
@@ -2423,7 +2418,7 @@ fn query_tail(instance: &PluginInstance<EchodeHost>) -> u32 {
 fn prepare_event_capacity(
     instance: &PluginInstance<EchodeHost>,
     events: u32,
-) -> Result<(), String> {
+) -> Result<(), PluginFailure> {
     use echode_realtime::plugin_capacity::{PLUGIN_EVENT_CAPACITY, PluginEventCapacity};
     let plugin = instance.raw_instance();
     let Some(get) = plugin.get_extension else {
@@ -2438,28 +2433,24 @@ fn prepare_event_capacity(
     if unsafe { (extension.prepare)((plugin as *const clap_plugin).cast(), events) } {
         Ok(())
     } else {
-        Err("plugin refused event capacity preparation".into())
+        Err(PluginFailure::CapacityRefused)
     }
 }
 
-fn state_extension<'a>(plugin: *const clap_plugin) -> Result<&'a clap_plugin_state, String> {
-    if plugin.is_null() {
-        return Err("plugin is not loaded".to_string());
-    }
-    let get_extension = unsafe { (*plugin).get_extension }
-        .ok_or_else(|| "plugin does not declare state".to_string())?;
+fn state_extension(plugin: &clap_plugin) -> Result<&clap_plugin_state, PluginFailure> {
+    let get_extension = plugin.get_extension.ok_or(PluginFailure::NoState)?;
     let extension = unsafe { get_extension(plugin, CLAP_EXT_STATE.as_ptr()) };
     if extension.is_null() {
-        return Err("plugin does not declare state".to_string());
+        return Err(PluginFailure::NoState);
     }
     Ok(unsafe { &*(extension as *const clap_plugin_state) })
 }
 
-fn save_plugin_state(instance: &PluginInstance<EchodeHost>) -> Result<Vec<u8>, String> {
+fn save_plugin_state(instance: &PluginInstance<EchodeHost>) -> Result<Vec<u8>, PluginFailure> {
     let plugin = instance.raw_instance();
     let save = state_extension(plugin)?
         .save
-        .ok_or_else(|| "plugin state has no save".to_string())?;
+        .ok_or(PluginFailure::NoStateSave)?;
     let mut bytes = Vec::new();
     let stream = clap_ostream {
         ctx: (&mut bytes as *mut Vec<u8>).cast::<c_void>(),
@@ -2467,16 +2458,19 @@ fn save_plugin_state(instance: &PluginInstance<EchodeHost>) -> Result<Vec<u8>, S
     };
     let saved = unsafe { save(plugin, &stream) };
     if !saved {
-        return Err("plugin refused to save state".to_string());
+        return Err(PluginFailure::SaveRefused);
     }
     Ok(bytes)
 }
 
-fn load_plugin_state(instance: &PluginInstance<EchodeHost>, bytes: &[u8]) -> Result<(), String> {
+fn load_plugin_state(
+    instance: &PluginInstance<EchodeHost>,
+    bytes: &[u8],
+) -> Result<(), PluginFailure> {
     let plugin = instance.raw_instance();
     let load = state_extension(plugin)?
         .load
-        .ok_or_else(|| "plugin state has no load".to_string())?;
+        .ok_or(PluginFailure::NoStateLoad)?;
     let mut cursor = ReadCursor {
         bytes: bytes.as_ptr(),
         len: bytes.len(),
@@ -2488,7 +2482,7 @@ fn load_plugin_state(instance: &PluginInstance<EchodeHost>, bytes: &[u8]) -> Res
     };
     let loaded = unsafe { load(plugin, &stream) };
     if !loaded {
-        return Err("plugin refused to load state".to_string());
+        return Err(PluginFailure::LoadRefused);
     }
     Ok(())
 }
@@ -2542,28 +2536,22 @@ unsafe extern "C" fn state_read(
 }
 
 /// Reads `clap.audio-ports` while the plugin is inactive.
-fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape, String> {
+fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape, PluginFailure> {
     let plugin = instance.raw_instance();
-    let get_extension = plugin
-        .get_extension
-        .ok_or_else(|| "plugin does not declare audio ports".to_string())?;
+    let get_extension = plugin.get_extension.ok_or(PluginFailure::NoAudioPorts)?;
     // SAFETY: `get_extension` is the plugin's own function. The id is a static
     // C string. The plugin is inactive and this runs on the main thread.
     let extension = unsafe { get_extension(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr()) };
     if extension.is_null() {
-        return Err("plugin does not declare audio ports".to_string());
+        return Err(PluginFailure::NoAudioPorts);
     }
     let ports = unsafe { &*(extension as *const clap_plugin_audio_ports) };
-    let count = ports
-        .count
-        .ok_or_else(|| "plugin audio ports have no count".to_string())?;
-    let get = ports
-        .get
-        .ok_or_else(|| "plugin audio ports have no description".to_string())?;
+    let count = ports.count.ok_or(PluginFailure::NoPortCount)?;
+    let get = ports.get.ok_or(PluginFailure::NoPortInfo)?;
     let inputs = read_port_list(plugin, count, get, true)?;
     let outputs = read_port_list(plugin, count, get, false)?;
     if inputs.is_empty() && outputs.is_empty() {
-        return Err("plugin declares no audio ports".to_string());
+        return Err(PluginFailure::NoPorts);
     }
     Ok(PortShape {
         inputs,
@@ -2573,7 +2561,7 @@ fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape,
     })
 }
 
-fn query_midi_resets(plugin: &clap_plugin) -> Result<Vec<MidiEvent>, String> {
+fn query_midi_resets(plugin: &clap_plugin) -> Result<Vec<MidiEvent>, PluginFailure> {
     let mut result = Vec::new();
     let Some(get_extension) = plugin.get_extension else {
         return Ok(result);
@@ -2584,19 +2572,18 @@ fn query_midi_resets(plugin: &clap_plugin) -> Result<Vec<MidiEvent>, String> {
         return Ok(result);
     }
     let ports = unsafe { &*(raw as *const clap_plugin_note_ports) };
-    let count = ports.count.ok_or("plugin note ports have no count")?;
-    let get = ports.get.ok_or("plugin note ports have no description")?;
+    let count = ports.count.ok_or(PluginFailure::NoNotePortCount)?;
+    let get = ports.get.ok_or(PluginFailure::NoNotePortInfo)?;
     for index in 0..unsafe { count(plugin, true) } {
         let mut info = MaybeUninit::<clap_note_port_info>::zeroed();
         if !unsafe { get(plugin, index, true, info.as_mut_ptr()) } {
-            return Err("plugin rejected a note port description".into());
+            return Err(PluginFailure::NotePortUndescribed);
         }
         let info = unsafe { info.assume_init() };
         if info.supported_dialects & (CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_MIDI_MPE) == 0 {
             continue;
         }
-        let port =
-            u16::try_from(index).map_err(|_| "MIDI note port index cannot be represented")?;
+        let port = u16::try_from(index).map_err(|_| PluginFailure::NotePortIndex)?;
         // MIDI 1.0 defines sixteen channels per port. Port count is dynamic.
         for channel in 0..16 {
             result.push(MidiEvent::new(0, port, [0xB0 | channel, 120, 0]));
@@ -2618,7 +2605,7 @@ fn read_port_list(
         info: *mut clap_audio_port_info,
     ) -> bool,
     is_input: bool,
-) -> Result<Vec<u32>, String> {
+) -> Result<Vec<u32>, PluginFailure> {
     let port_count = unsafe { count(plugin, is_input) };
     let mut counts = Vec::with_capacity(port_count as usize);
     for index in 0..port_count {
@@ -2630,18 +2617,16 @@ fn read_port_list(
             port_type: ptr::null(),
             in_place_pair: u32::MAX,
         };
+        let port = AudioPort {
+            input: is_input,
+            index,
+        };
         let ok = unsafe { get(plugin, index, is_input, &mut info) };
         if !ok {
-            return Err(format!(
-                "plugin did not describe {} port {index}",
-                if is_input { "input" } else { "output" }
-            ));
+            return Err(PluginFailure::PortUndescribed(port));
         }
         if info.channel_count == 0 {
-            return Err(format!(
-                "{} port {index} has no channels",
-                if is_input { "input" } else { "output" }
-            ));
+            return Err(PluginFailure::PortWithoutChannels(port));
         }
         counts.push(info.channel_count);
     }

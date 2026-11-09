@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use super::*;
 use crate::catalog::{BundleFound, BundleRevision};
+use crate::scan::{ChildState, ScanFailure, ScanProgress, ScanUnread};
 
 fn found(name: &str) -> BundleFound {
     BundleFound {
@@ -39,10 +40,16 @@ const TIMING: CatalogTiming = CatalogTiming {
 fn answer(path: &Path, budget: Duration) -> Result<Vec<ScannedPlugin>, ScanError> {
     match (path.to_str().unwrap_or_default(), budget == TIMING.slow) {
         ("Fast.clap", _) => Ok(vec![plugin("fast")]),
-        ("Broken.clap", _) => Err(ScanError::Rejected("no factory".to_string())),
-        ("Unread.clap", _) => Err(ScanError::Unread("could not start".to_string())),
+        ("Broken.clap", _) => Err(ScanError::Rejected(ScanFailure::Empty(path.into()))),
+        ("Unread.clap", _) => Err(ScanError::Unread(ScanUnread::MissingStdout)),
         ("Slow.clap", true) => Ok(vec![plugin("slow")]),
-        _ => Err(ScanError::TimedOut("timed out".to_string())),
+        _ => Err(ScanError::TimedOut(ScanProgress {
+            bundle: path.into(),
+            child: 1,
+            state: ChildState::Running,
+            stdout: (0, true),
+            stderr: (0, true),
+        })),
     }
 }
 

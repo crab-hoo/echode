@@ -19,8 +19,9 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use echode_sandbox::{
-    ControlMessage, GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay,
-    ParamText, ParamValue, Pending, PluginCommand, Refusal, SessionLayout, Socket,
+    AudioPort, ControlMessage, GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo,
+    ParamRelay, ParamText, ParamValue, Pending, PluginCommand, PluginFailure, Refusal,
+    SessionLayout, Socket,
 };
 
 use crate::bytes::Bytes;
@@ -287,7 +288,14 @@ fn sample_messages() -> Vec<ControlMessage> {
             latency_samples: 32,
         },
         ControlMessage::PortsRejected(Refusal::Other("no audio ports".to_string())),
+        ControlMessage::PortsRejected(Refusal::Plugin(PluginFailure::PortWithoutChannels(
+            AudioPort {
+                input: false,
+                index: 1,
+            },
+        ))),
         ControlMessage::StateRejected(Refusal::Other("refused".to_string())),
+        ControlMessage::StateRejected(Refusal::Plugin(PluginFailure::NoState)),
         ControlMessage::StateRejected(Refusal::TimedOut(Pending::MainCall(9))),
         ControlMessage::StateRejected(Refusal::Stopped(Pending::MainCall(10))),
         ControlMessage::ParamsRequest,
@@ -325,6 +333,7 @@ fn sample_messages() -> Vec<ControlMessage> {
         ControlMessage::GuiClose,
         ControlMessage::GuiClosedReply,
         ControlMessage::GuiRejected(Refusal::Other("no window".to_string())),
+        ControlMessage::GuiRejected(Refusal::Plugin(PluginFailure::NoWindow)),
         ControlMessage::GuiClosed,
         ControlMessage::ParamRelay(ParamRelay {
             events: vec![

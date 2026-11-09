@@ -19,7 +19,9 @@ pub(crate) fn plugins_json() -> Result<Vec<u8>, String> {
         return Ok(json);
     }
     let host = require_host()?;
-    let plugins = refresh_catalog(&host, &cache_path(), &catalog_bundles())?;
+    // The C ABI reports text; the catalog's error is typed up to here.
+    let plugins = refresh_catalog(&host, &cache_path(), &catalog_bundles())
+        .map_err(|error| error.to_string())?;
     let mut listed = Vec::with_capacity(plugins.len());
     for plugin in &plugins {
         let mut value = serde_json::to_value(plugin).map_err(|error| error.to_string())?;
@@ -37,12 +39,10 @@ pub(crate) fn start_watch() -> Result<(), String> {
         return Ok(());
     }
     let host = require_host()?;
-    *slot = Some(LiveCatalog::start(
-        catalog_roots(),
-        host,
-        cache_path(),
-        CatalogTiming::PRODUCT,
-    )?);
+    *slot = Some(
+        LiveCatalog::start(catalog_roots(), host, cache_path(), CatalogTiming::PRODUCT)
+            .map_err(|error| error.to_string())?,
+    );
     Ok(())
 }
 

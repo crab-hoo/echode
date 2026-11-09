@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -59,16 +59,16 @@ pub const SCAN_BUDGET: Duration = Duration::from_secs(5);
 /// first launch's licence or notarization check may wait on one (ADR 0285).
 pub const SLOW_SCAN_BUDGET: Duration = Duration::from_secs(120);
 
-/// Why one bundle's scan returned no plugins.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Why one bundle's scan returned no plugins (ADR 0285, ADR 0295).
+#[derive(Debug)]
 pub enum ScanError {
     /// The helper ran to the end and the bundle has no usable plugin at this
     /// revision. This is the only failure the cache keeps.
-    Rejected(String),
+    Rejected(ScanFailure),
     /// The deadline passed first. The bundle may only be slow (FCA-20).
-    TimedOut(String),
+    TimedOut(ScanProgress),
     /// This process could not start or read the helper. Says nothing about the bundle.
-    Unread(String),
+    Unread(ScanUnread),
 }
 
 impl ScanError {
@@ -80,12 +80,161 @@ impl ScanError {
 
 impl std::fmt::Display for ScanError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (Self::Rejected(message) | Self::TimedOut(message) | Self::Unread(message)) = self;
-        formatter.write_str(message)
+        match self {
+            Self::Rejected(failure) => write!(formatter, "{failure}"),
+            Self::TimedOut(progress) => write!(formatter, "{progress}"),
+            Self::Unread(unread) => write!(formatter, "{unread}"),
+        }
     }
 }
 
 impl std::error::Error for ScanError {}
+
+/// The helper's answer about the bundle.
+#[derive(Debug)]
+pub enum ScanFailure {
+    /// The helper exited unsuccessfully. `stderr` is what it printed, up to
+    /// [`STDERR_CAP`] bytes and lossily decoded: the helper's own report.
+    Failed {
+        bundle: PathBuf,
+        status: ExitStatus,
+        stderr: String,
+    },
+    /// The helper wrote more than [`STDOUT_CAP`] bytes.
+    TooLarge(PathBuf),
+    NotText,
+    /// A line is not one plugin's description.
+    Malformed(serde_json::Error),
+    /// The helper listed no plugin.
+    Empty(PathBuf),
+}
+
+impl std::fmt::Display for ScanFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed {
+                bundle,
+                status,
+                stderr,
+            } => {
+                let detail = stderr.trim();
+                if detail.is_empty() {
+                    write!(f, "plugin scan failed ({}, {status})", bundle.display())
+                } else {
+                    write!(
+                        f,
+                        "plugin scan failed ({}, {status}): {detail}",
+                        bundle.display()
+                    )
+                }
+            }
+            Self::TooLarge(bundle) => write!(
+                f,
+                "plugin scan output is larger than {STDOUT_CAP} bytes ({})",
+                bundle.display()
+            ),
+            Self::NotText => f.write_str("plugin scan output: invalid UTF-8"),
+            Self::Malformed(error) => write!(f, "plugin scan output: {error}"),
+            Self::Empty(bundle) => write!(f, "{} does not contain a plugin", bundle.display()),
+        }
+    }
+}
+
+/// The helper and its pipes when the deadline passed.
+#[derive(Debug)]
+pub struct ScanProgress {
+    pub bundle: PathBuf,
+    pub child: u32,
+    pub state: ChildState,
+    /// Bytes read so far, and whether the pipe was still open.
+    pub stdout: (usize, bool),
+    pub stderr: (usize, bool),
+}
+
+impl std::fmt::Display for ScanProgress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "plugin scan timed out ({}) [child {}: {}; stdout: {} bytes, open={}; stderr: {} bytes, open={}]",
+            self.bundle.display(),
+            self.child,
+            self.state,
+            self.stdout.0,
+            self.stdout.1,
+            self.stderr.0,
+            self.stderr.1
+        )
+    }
+}
+
+/// The helper process as `try_wait` found it.
+#[derive(Debug)]
+pub enum ChildState {
+    Running,
+    Exited(ExitStatus),
+    /// `try_wait` itself failed.
+    Unknown(std::io::Error),
+}
+
+impl std::fmt::Display for ChildState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => f.write_str("running"),
+            Self::Exited(status) => write!(f, "{status}"),
+            Self::Unknown(error) => write!(f, "wait error: {error}"),
+        }
+    }
+}
+
+/// Why this process could not run or read the helper.
+#[derive(Debug)]
+pub enum ScanUnread {
+    Start(std::io::Error),
+    MissingStdout,
+    MissingStderr,
+    /// Setting up, polling or reading a pipe failed.
+    Pipe(std::io::Error),
+    Wait {
+        bundle: PathBuf,
+        error: std::io::Error,
+    },
+}
+
+impl std::fmt::Display for ScanUnread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Start(error) => write!(f, "could not start plugin host: {error}"),
+            Self::MissingStdout => f.write_str("plugin scan output: missing stdout"),
+            Self::MissingStderr => f.write_str("plugin scan output: missing stderr"),
+            Self::Pipe(error) => write!(f, "plugin scan output: {error}"),
+            Self::Wait { bundle, error } => {
+                write!(f, "plugin host wait failed: {error} ({})", bundle.display())
+            }
+        }
+    }
+}
+
+/// Why the catalog could not be listed or watched.
+#[derive(Debug)]
+pub enum CatalogError {
+    /// The helper binary is not at this path.
+    MissingHost(PathBuf),
+    /// The scan cache could not be written.
+    Cache(std::io::Error),
+    /// The watch thread did not start.
+    Thread(std::io::Error),
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingHost(path) => write!(f, "plugin host is missing ({})", path.display()),
+            Self::Cache(error) | Self::Thread(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for CatalogError {}
 
 /// Loads the factory and copies the descriptor fields. The plugin is not instantiated.
 ///
@@ -94,7 +243,7 @@ pub fn scan_descriptors(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
     let entry = crate::load_entry(path)?;
     let factory = entry
         .get_plugin_factory()
-        .ok_or_else(|| HostError::Plugin(format!("{} has no plugin factory", path.display())))?;
+        .ok_or_else(|| HostError::NoFactory(path.to_path_buf()))?;
     let mut plugins = Vec::new();
     for descriptor in factory.plugin_descriptors() {
         let Some(id) = cstr_text(descriptor.id()) else {
@@ -118,10 +267,7 @@ pub fn scan_descriptors(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
         });
     }
     if plugins.is_empty() {
-        return Err(HostError::Plugin(format!(
-            "{} does not contain a plugin",
-            path.display()
-        )));
+        return Err(HostError::NoPlugin(path.to_path_buf()));
     }
     plugins.sort_by(|left, right| left.id.cmp(&right.id));
     plugins.dedup_by(|left, right| left.id == right.id);
@@ -226,8 +372,8 @@ pub fn exit_with_parent() {
 
 /// Resolves a bundle to its binary, then reads descriptors in this process.
 pub fn scan_path(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
-    let binary = crate::bundle_binary(path)
-        .ok_or_else(|| HostError::Plugin(format!("{} has no plugin binary", path.display())))?;
+    let binary =
+        crate::bundle_binary(path).ok_or_else(|| HostError::NoBinary(path.to_path_buf()))?;
     scan_descriptors(&binary)
 }
 
@@ -246,21 +392,15 @@ fn stderr_text(bytes: &[u8], overflow: bool) -> String {
     text
 }
 
-fn set_nonblocking(fd: i32) -> Result<(), String> {
+fn set_nonblocking(fd: i32) -> std::io::Result<()> {
     // SAFETY: `fd` is a pipe this process owns.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 {
-        return Err(format!(
-            "plugin scan output: {}",
-            std::io::Error::last_os_error()
-        ));
+        return Err(std::io::Error::last_os_error());
     }
     // SAFETY: the new flags only change this owned pipe.
     if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Err(format!(
-            "plugin scan output: {}",
-            std::io::Error::last_os_error()
-        ));
+        return Err(std::io::Error::last_os_error());
     }
     Ok(())
 }
@@ -275,7 +415,7 @@ fn take_bytes(
     cap: Option<usize>,
     overflow: &mut bool,
     stop_at_cap: bool,
-) -> Result<bool, String> {
+) -> std::io::Result<bool> {
     let mut buf = [0u8; 8192];
     loop {
         // SAFETY: `buf` is a local buffer and `fd` is still open.
@@ -288,7 +428,7 @@ fn take_bytes(
             if error.kind() == std::io::ErrorKind::WouldBlock {
                 return Ok(false);
             }
-            return Err(format!("plugin scan output: {error}"));
+            return Err(error);
         }
         let chunk = buf.get(..read as usize).unwrap_or_default();
         match cap {
@@ -308,25 +448,14 @@ fn take_bytes(
     }
 }
 
-fn wait_child(
-    child: &mut Child,
-    deadline: Instant,
-    bundle: &Path,
-) -> Result<std::process::ExitStatus, ScanError> {
+/// The child's exit status, or `None` once `deadline` passed first.
+fn wait_child(child: &mut Child, deadline: Instant) -> std::io::Result<Option<ExitStatus>> {
     loop {
-        if let Some(status) = child.try_wait().map_err(|error| {
-            ScanError::Unread(format!(
-                "plugin host wait failed: {error} ({})",
-                bundle.display()
-            ))
-        })? {
-            return Ok(status);
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
         }
         if Instant::now() >= deadline {
-            return Err(ScanError::TimedOut(format!(
-                "plugin scan timed out ({})",
-                bundle.display()
-            )));
+            return Ok(None);
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -370,19 +499,20 @@ pub fn scan_with_budget(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
+    let unread = ScanError::Unread;
     let mut child = command
         .spawn()
-        .map_err(|error| ScanError::Unread(format!("could not start plugin host: {error}")))?;
+        .map_err(|error| unread(ScanUnread::Start(error)))?;
     let stdout_pipe = child
         .stdout
         .take()
-        .ok_or_else(|| ScanError::Unread("plugin scan output: missing stdout".to_string()))?;
+        .ok_or(unread(ScanUnread::MissingStdout))?;
     let stderr_pipe = child
         .stderr
         .take()
-        .ok_or_else(|| ScanError::Unread("plugin scan output: missing stderr".to_string()))?;
-    set_nonblocking(stdout_pipe.as_raw_fd()).map_err(ScanError::Unread)?;
-    set_nonblocking(stderr_pipe.as_raw_fd()).map_err(ScanError::Unread)?;
+        .ok_or(unread(ScanUnread::MissingStderr))?;
+    set_nonblocking(stdout_pipe.as_raw_fd()).map_err(|error| unread(ScanUnread::Pipe(error)))?;
+    set_nonblocking(stderr_pipe.as_raw_fd()).map_err(|error| unread(ScanUnread::Pipe(error)))?;
     let deadline = Instant::now() + budget;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -393,22 +523,21 @@ pub fn scan_with_budget(
     while stdout_open || stderr_open {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            let status = child
-                .try_wait()
-                .map(|status| {
-                    status.map_or_else(|| "running".to_string(), |status| status.to_string())
-                })
-                .unwrap_or_else(|error| format!("wait error: {error}"));
+            let state = match child.try_wait() {
+                Ok(Some(status)) => ChildState::Exited(status),
+                Ok(None) => ChildState::Running,
+                Err(error) => ChildState::Unknown(error),
+            };
             drop(stdout_pipe);
             drop(stderr_pipe);
             stop_scan(&mut child);
-            return Err(ScanError::TimedOut(format!(
-                "plugin scan timed out ({}) [child {}: {status}; stdout: {} bytes, open={stdout_open}; stderr: {} bytes, open={stderr_open}]",
-                bundle.display(),
-                child.id(),
-                stdout.len(),
-                stderr.len()
-            )));
+            return Err(ScanError::TimedOut(ScanProgress {
+                bundle: bundle.to_path_buf(),
+                child: child.id(),
+                state,
+                stdout: (stdout.len(), stdout_open),
+                stderr: (stderr.len(), stderr_open),
+            }));
         }
         let mut polls = [libc::pollfd {
             fd: -1,
@@ -437,7 +566,7 @@ pub fn scan_with_budget(
             drop(stdout_pipe);
             drop(stderr_pipe);
             stop_scan(&mut child);
-            return Err(ScanError::Unread(format!("plugin scan output: {error}")));
+            return Err(unread(ScanUnread::Pipe(error)));
         }
         if stdout_open {
             match take_bytes(
@@ -451,9 +580,8 @@ pub fn scan_with_budget(
                     drop(stdout_pipe);
                     drop(stderr_pipe);
                     stop_scan(&mut child);
-                    return Err(ScanError::Rejected(format!(
-                        "plugin scan output is larger than {STDOUT_CAP} bytes ({})",
-                        bundle.display()
+                    return Err(ScanError::Rejected(ScanFailure::TooLarge(
+                        bundle.to_path_buf(),
                     )));
                 }
                 Ok(true) => stdout_open = false,
@@ -462,7 +590,7 @@ pub fn scan_with_budget(
                     drop(stdout_pipe);
                     drop(stderr_pipe);
                     stop_scan(&mut child);
-                    return Err(ScanError::Unread(error));
+                    return Err(unread(ScanUnread::Pipe(error)));
                 }
             }
         }
@@ -480,49 +608,54 @@ pub fn scan_with_budget(
                     drop(stdout_pipe);
                     drop(stderr_pipe);
                     stop_scan(&mut child);
-                    return Err(ScanError::Unread(error));
+                    return Err(unread(ScanUnread::Pipe(error)));
                 }
             }
         }
     }
     drop(stdout_pipe);
     drop(stderr_pipe);
-    let status = match wait_child(&mut child, deadline, bundle) {
-        Ok(status) => status,
+    let status = match wait_child(&mut child, deadline) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            stop_scan(&mut child);
+            // Both pipes closed; only the exit was still awaited.
+            return Err(ScanError::TimedOut(ScanProgress {
+                bundle: bundle.to_path_buf(),
+                child: child.id(),
+                state: ChildState::Running,
+                stdout: (stdout.len(), false),
+                stderr: (stderr.len(), false),
+            }));
+        }
         Err(error) => {
             stop_scan(&mut child);
-            return Err(error);
+            return Err(unread(ScanUnread::Wait {
+                bundle: bundle.to_path_buf(),
+                error,
+            }));
         }
     };
+    let rejected = ScanError::Rejected;
     if !status.success() {
-        let detail = stderr_text(&stderr, stderr_overflow);
-        let detail = detail.trim();
-        return Err(ScanError::Rejected(if detail.is_empty() {
-            format!("plugin scan failed ({}, {status})", bundle.display())
-        } else {
-            format!(
-                "plugin scan failed ({}, {status}): {detail}",
-                bundle.display()
-            )
+        return Err(rejected(ScanFailure::Failed {
+            bundle: bundle.to_path_buf(),
+            status,
+            stderr: stderr_text(&stderr, stderr_overflow),
         }));
     }
-    let stdout = String::from_utf8(stdout)
-        .map_err(|_| ScanError::Rejected("plugin scan output: invalid UTF-8".to_string()))?;
+    let stdout = String::from_utf8(stdout).map_err(|_| rejected(ScanFailure::NotText))?;
     let mut plugins = Vec::new();
     for line in stdout.lines() {
         if line.is_empty() {
             continue;
         }
         plugins.push(
-            serde_json::from_str(line)
-                .map_err(|error| ScanError::Rejected(format!("plugin scan output: {error}")))?,
+            serde_json::from_str(line).map_err(|error| rejected(ScanFailure::Malformed(error)))?,
         );
     }
     if plugins.is_empty() {
-        return Err(ScanError::Rejected(format!(
-            "{} does not contain a plugin",
-            bundle.display()
-        )));
+        return Err(rejected(ScanFailure::Empty(bundle.to_path_buf())));
     }
     Ok(plugins)
 }
@@ -538,7 +671,7 @@ pub fn refresh_catalog(
     host_bin: &Path,
     cache_path: &Path,
     bundles: &[crate::BundleFound],
-) -> Result<Vec<ScannedPlugin>, String> {
+) -> Result<Vec<ScannedPlugin>, CatalogError> {
     refresh_catalog_within(host_bin, cache_path, bundles, SCAN_BUDGET)
 }
 
@@ -548,9 +681,9 @@ pub fn refresh_catalog_within(
     cache_path: &Path,
     bundles: &[crate::BundleFound],
     budget: Duration,
-) -> Result<Vec<ScannedPlugin>, String> {
+) -> Result<Vec<ScannedPlugin>, CatalogError> {
     if !host_bin.is_file() {
-        return Err(format!("plugin host is missing ({})", host_bin.display()));
+        return Err(CatalogError::MissingHost(host_bin.to_path_buf()));
     }
     let cached = load_scan_cache(cache_path).unwrap_or_default();
     let mut listed = Vec::new();
@@ -570,9 +703,9 @@ pub fn refresh_catalog_within(
         next.push(entry_from_revision(&bundle.path, &bundle.revision, plugins));
     }
     if let Some(parent) = cache_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(parent).map_err(CatalogError::Cache)?;
     }
-    store_scan_cache(cache_path, &next).map_err(|error| error.to_string())?;
+    store_scan_cache(cache_path, &next).map_err(CatalogError::Cache)?;
     listed.sort_by(|left, right| left.id.cmp(&right.id).then(left.name.cmp(&right.name)));
     listed.dedup_by(|left, right| left.id == right.id);
     Ok(listed)

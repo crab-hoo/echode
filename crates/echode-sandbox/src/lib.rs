@@ -44,7 +44,7 @@ pub use params::{
     PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,
     PARAM_STEPPED, ParamChange, ParamInfo, ParamText, ParamValue,
 };
-pub use refusal::{Pending, Refusal};
+pub use refusal::{AudioPort, Pending, PluginFailure, Refusal};
 pub use region::{
     Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout,
     arm_abort_notice, point_abort_notice,

@@ -59,11 +59,10 @@ impl MainRequests {
         if active.is_some() {
             return Err(Refusal::Busy);
         }
-        let id = self
-            .next
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
-            .map_err(|_| Refusal::Other("plugin main request ids exhausted".to_string()))?
-            + 1;
+        // The number only names the call in a refusal; completion matches the
+        // call itself. 2^64 calls cannot happen, and wrapping would only
+        // repeat a name, so there is no failure to report.
+        let id = self.next.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let call = Arc::new(MainCall {
             id,
             request: Mutex::new(Some(request)),
