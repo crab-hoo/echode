@@ -353,6 +353,11 @@ MySong.echode/
 コメントや部分一致を除外規則と見なさず、CRLF と末尾改行なしの正確な規則も保持する
 （[ADR 0031 の後続修正](../decisions/0031-content-addressed-store.md#除外規則の行単位の照合2026-10-29)）。
 
+保管庫・復号・ピークの失敗は `error.rs` の `PackageError` の変種で返す（[ADR 0296](../decisions/0296-typed-storage-errors.md)）。
+`Io` は元の `io::Error` と、従来表示していたパスを持ち、`Audio(MediaError)` は PCM 検証・取消・容量・AudioToolbox の状態コードとプロパティ番号を分ける。
+`MediaIndex` は元の JSON エラーを持つ。`Error::source` で原因を読め、表示の文は変えない。
+`Message` は未移行の Git・スキーマ・文書の経路だけに残し、crate 全体が型付け済みとは扱わない。
+
 ### 6.4 保存とコミット
 
 - **自動保存**: `refs/echode/autosave/<オルタネイト>`（Phase 1 は `refs/echode/autosave/main`）。

@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use echode_history::{
-    AudioFileReader, DocumentHost, HostError, decode_audio_file, import_audio, read_pcm,
-    write_package,
+    AudioFileReader, DocumentHost, HostError, MediaError, PackageError, decode_audio_file,
+    import_audio, read_pcm, write_package,
 };
 use echode_model::{Id, Project};
 use serde_json::json;
@@ -103,7 +103,12 @@ fn reject_nonfinite_sources() {
                     imported.is_err(),
                     "audio import must reject non-finite samples before writing: {bits:x}, {channels} channels, sample {index}"
                 );
-                assert_eq!(imported.unwrap_err().to_string(), NONFINITE);
+                let error = imported.unwrap_err();
+                assert!(matches!(
+                    error,
+                    PackageError::Audio(MediaError::NonFiniteSample)
+                ));
+                assert_eq!(error.to_string(), NONFINITE);
                 assert_eq!(
                     package_files(&fixture.package),
                     before,

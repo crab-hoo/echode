@@ -494,7 +494,7 @@
       "id": "audio-import-validation", "runner": "rust", "package": "echode-history", "target": ["--test", "audio_import_validation"],
       "test": "contract_audio_import_rejects_nonfinite_before_writing_and_preserves_history", "timeout": 180,
       "purpose": "外部WAVのNaN・無限大を一括復号と取込みで保存前に拒否し、有限値のビット保持・原本とパッケージの無変更・失敗時のUndo/Redoと再オープンを確認",
-      "negative_control": {"file": "crates/echode-history/src/media.rs", "old": "samples.shrink_to_fit();\n    if samples.iter().any(|sample| !sample.is_finite()) {\n        return Err(PackageError::new(\"audio contains a non-finite sample\"));\n    }", "new": "samples.shrink_to_fit();"}
+      "negative_control": {"file": "crates/echode-history/src/media.rs", "old": "samples.shrink_to_fit();\n    if samples.iter().any(|sample| !sample.is_finite()) {\n        return Err(MediaError::NonFiniteSample.into());\n    }", "new": "samples.shrink_to_fit();"}
     },
     {
       "id": "package-float-roundtrip", "runner": "rust", "package": "echode-history", "target": ["--test", "float_roundtrip"],

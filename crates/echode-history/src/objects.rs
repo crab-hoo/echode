@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use crate::document::PackageError;
+use crate::document::{PackageError, io_error};
 use crate::package_io::Directory;
 
 const GITIGNORE: &str = "/media/objects/\n/cache/\n";
@@ -192,9 +192,7 @@ pub(crate) fn ensure_store_gitignore(directory: &Path) -> Result<(), PackageErro
 /// Reads `media/objects/<hash>` after checking the name, the link, and the bytes.
 pub fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, PackageError> {
     if !is_content_hash(hash) {
-        return Err(PackageError::new(
-            "object hash must be 64 lowercase hex digits",
-        ));
+        return Err(PackageError::InvalidObjectHash);
     }
     let path = package.join("media").join("objects").join(hash);
     let bytes = Directory::open(package)
@@ -211,9 +209,7 @@ pub fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, PackageError> 
         .and_then(|objects| objects.read(hash))
         .map_err(|error| io_error(&path, error))?;
     if hash_bytes(&bytes) != hash {
-        return Err(PackageError::new(format!(
-            "object {hash} does not match its BLAKE3"
-        )));
+        return Err(PackageError::ObjectHashMismatch { hash: hash.into() });
     }
     Ok(bytes)
 }
@@ -228,10 +224,6 @@ pub(crate) fn unreferenced(present: &[String], referenced: &HashSet<String>) -> 
         .filter(|hash| !referenced.contains(hash.as_str()))
         .cloned()
         .collect()
-}
-
-fn io_error(path: &Path, error: std::io::Error) -> PackageError {
-    PackageError::new(format!("{}: {error}", path.display()))
 }
 
 #[cfg(test)]

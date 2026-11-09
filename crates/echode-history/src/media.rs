@@ -20,6 +20,7 @@ use objc2_core_audio_types::{
 use objc2_core_foundation::{CFIndex, CFURL};
 
 use crate::document::PackageError;
+use crate::error::MediaError;
 use crate::objects::{StagedObject, ensure_store_gitignore, read_object, stage_object};
 
 pub(crate) const PCM_MAGIC: &[u8; 8] = b"ECHDPCM1";
@@ -138,9 +139,9 @@ pub(crate) fn encode_pcm(
 ) -> Result<Vec<u8>, PackageError> {
     let count = frames
         .checked_mul(u64::from(channels))
-        .ok_or_else(|| PackageError::new("audio frame count overflowed"))?;
+        .ok_or(MediaError::FrameCountOverflow)?;
     if u64::try_from(samples.len()).ok() != Some(count) {
-        return Err(PackageError::new("audio sample count does not match"));
+        return Err(MediaError::SampleCountMismatch.into());
     }
     let mut bytes = Vec::with_capacity(HEADER + samples.len() * 4);
     bytes.extend_from_slice(MAGIC);
@@ -156,32 +157,32 @@ pub(crate) fn encode_pcm(
 
 fn decode_pcm(bytes: &[u8]) -> Result<DecodedPcm, PackageError> {
     if bytes.len() < HEADER || &bytes[..8] != MAGIC {
-        return Err(PackageError::new("audio object is not canonical PCM"));
+        return Err(MediaError::NotCanonicalPcm.into());
     }
     let sample_rate = u32::from_le_bytes(bytes[8..12].try_into().expect("four rate bytes"));
     let channels = u16::from_le_bytes(bytes[12..14].try_into().expect("two channel bytes"));
     let reserved = u16::from_le_bytes(bytes[14..16].try_into().expect("two reserved bytes"));
     let frames = u64::from_le_bytes(bytes[16..24].try_into().expect("eight frame bytes"));
     if reserved != 0 || sample_rate == 0 || !matches!(channels, 1 | 2) || frames == 0 {
-        return Err(PackageError::new("audio object header is unusable"));
+        return Err(MediaError::UnusableHeader.into());
     }
     let count = frames
         .checked_mul(u64::from(channels))
-        .ok_or_else(|| PackageError::new("audio frame count overflowed"))?;
-    let count = usize::try_from(count).map_err(|_| PackageError::new("audio is too large"))?;
+        .ok_or(MediaError::FrameCountOverflow)?;
+    let count = usize::try_from(count).map_err(|_| MediaError::TooLarge)?;
     let expected = count
         .checked_mul(4)
         .and_then(|payload| HEADER.checked_add(payload))
-        .ok_or_else(|| PackageError::new("audio byte count overflowed"))?;
+        .ok_or(MediaError::ByteCountOverflow)?;
     if bytes.len() != expected {
-        return Err(PackageError::new("audio object length does not match"));
+        return Err(MediaError::LengthMismatch.into());
     }
     let payload = &bytes[HEADER..];
     let mut samples = Vec::with_capacity(count);
     for chunk in payload.chunks_exact(4) {
         let sample = f32::from_le_bytes(chunk.try_into().expect("four sample bytes"));
         if !sample.is_finite() {
-            return Err(PackageError::new("audio contains a non-finite sample"));
+            return Err(MediaError::NonFiniteSample.into());
         }
         samples.push(sample);
     }
@@ -216,17 +217,14 @@ impl AudioFileReader {
     /// The next read begins at this source sample, including inside a packet.
     /// EOF is a valid seek; a position beyond the file is refused.
     pub fn seek(&mut self, frame: u64) -> Result<(), PackageError> {
-        let offset =
-            i64::try_from(frame).map_err(|_| PackageError::new("audio seek overflowed"))?;
+        let offset = i64::try_from(frame).map_err(|_| MediaError::SeekOverflow)?;
         if frame > self.frames {
-            return Err(PackageError::new("audio seek exceeds the file"));
+            return Err(MediaError::SeekPastEnd.into());
         }
         // SAFETY: this reader owns the valid file, on the opening thread.
         let status = unsafe { ExtAudioFileSeek(self.file.0, offset) };
         if status != 0 {
-            return Err(PackageError::new(format!(
-                "could not seek audio ({status})"
-            )));
+            return Err(MediaError::Seek(status).into());
         }
         Ok(())
     }
@@ -247,14 +245,12 @@ impl AudioFileReader {
             kExtAudioFileProperty_FileDataFormat,
         )?;
         if !matches!(format.mChannelsPerFrame, 1 | 2) {
-            return Err(PackageError::new(
-                "only mono and stereo audio can be imported",
-            ));
+            return Err(MediaError::UnsupportedChannels(format.mChannelsPerFrame).into());
         }
         let sample_rate = integer_rate(format.mSampleRate)?;
         let frames = audio_property::<i64>(file.0, kExtAudioFileProperty_FileLengthFrames)?;
         if frames <= 0 {
-            return Err(PackageError::new("audio file has no samples"));
+            return Err(MediaError::NoSamples.into());
         }
         set_audio_property(
             file.0,
@@ -272,12 +268,12 @@ impl AudioFileReader {
     /// Reads at most `frames` frames at the source rate. An empty result is EOF.
     pub fn read(&mut self, frames: u32) -> Result<DecodedPcm, PackageError> {
         if frames == 0 {
-            return Err(PackageError::new("audio read must request frames"));
+            return Err(MediaError::EmptyRead.into());
         }
         let bytes = frames
             .checked_mul(u32::from(self.channels))
             .and_then(|n| n.checked_mul(4))
-            .ok_or_else(|| PackageError::new("audio read is too large"))?;
+            .ok_or(MediaError::ReadTooLarge)?;
         let mut samples = vec![0.0f32; bytes as usize / 4];
         let mut got = frames;
         let mut list = AudioBufferList {
@@ -297,16 +293,14 @@ impl AudioFileReader {
             )
         };
         if status != 0 {
-            return Err(PackageError::new(format!(
-                "could not read audio ({status})"
-            )));
+            return Err(MediaError::Read(status).into());
         }
         if got > frames {
-            return Err(PackageError::new("audio decoder exceeded its buffer"));
+            return Err(MediaError::DecoderOverflow.into());
         }
         samples.truncate(got as usize * usize::from(self.channels));
         if samples.iter().any(|sample| !sample.is_finite()) {
-            return Err(PackageError::new("audio contains a non-finite sample"));
+            return Err(MediaError::NonFiniteSample.into());
         }
         Ok(DecodedPcm {
             sample_rate: self.sample_rate,
@@ -325,18 +319,16 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
     )?;
     let channels = file_format.mChannelsPerFrame;
     if !matches!(channels, 1 | 2) {
-        return Err(PackageError::new(
-            "only mono and stereo audio can be imported",
-        ));
+        return Err(MediaError::UnsupportedChannels(channels).into());
     }
     let sample_rate = integer_rate(file_format.mSampleRate)?;
     let client = client_format(file_format.mSampleRate, channels);
     set_audio_property(file.0, kExtAudioFileProperty_ClientDataFormat, &client)?;
     let frames = audio_property::<i64>(file.0, kExtAudioFileProperty_FileLengthFrames)?;
     if frames <= 0 {
-        return Err(PackageError::new("audio file has no samples"));
+        return Err(MediaError::NoSamples.into());
     }
-    let frames = u64::try_from(frames).map_err(|_| PackageError::new("audio is too large"))?;
+    let frames = u64::try_from(frames).map_err(|_| MediaError::TooLarge)?;
     let channels_usize = channels as usize;
     // The header's length is a claim: a 54-byte AIFF claimed 6.4 GB of samples
     // (ADR 0290). Reserve no more than the file's bytes can hold, grow with
@@ -344,26 +336,23 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
     let mut samples: Vec<f32> = Vec::new();
     samples
         .try_reserve_exact(reservation(source, &file_format, frames))
-        .map_err(|_| too_large_to_decode())?;
+        .map_err(MediaError::Allocation)?;
     let mut written = 0u64;
     while written < frames {
         if !keep_going() {
-            return Err(PackageError::new("audio decoding was cancelled"));
+            return Err(MediaError::Cancelled.into());
         }
         let ask = u32::try_from((frames - written).min(16_384)).unwrap_or(u32::MAX);
         let mut got = ask;
         let start = samples.len();
         let chunk = usize::try_from(ask).unwrap_or(0) * channels_usize;
-        samples
-            .try_reserve(chunk)
-            .map_err(|_| too_large_to_decode())?;
+        samples.try_reserve(chunk).map_err(MediaError::Allocation)?;
         samples.resize(start + chunk, 0.0);
         let mut list = AudioBufferList {
             mNumberBuffers: 1,
             mBuffers: [AudioBuffer {
                 mNumberChannels: channels,
-                mDataByteSize: u32::try_from(chunk * 4)
-                    .map_err(|_| PackageError::new("audio read is too large"))?,
+                mDataByteSize: u32::try_from(chunk * 4).map_err(|_| MediaError::ReadTooLarge)?,
                 mData: samples[start..].as_mut_ptr().cast(),
             }],
         };
@@ -376,12 +365,10 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
             )
         };
         if status != 0 {
-            return Err(PackageError::new(format!(
-                "could not read audio ({status})"
-            )));
+            return Err(MediaError::Read(status).into());
         }
         if got > ask {
-            return Err(PackageError::new("audio decoder exceeded its buffer"));
+            return Err(MediaError::DecoderOverflow.into());
         }
         samples.truncate(start + got as usize * channels_usize);
         if got == 0 {
@@ -390,12 +377,12 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
         written += u64::from(got);
     }
     if written == 0 {
-        return Err(PackageError::new("audio file has no samples"));
+        return Err(MediaError::NoSamples.into());
     }
     let frames = written;
     samples.shrink_to_fit();
     if samples.iter().any(|sample| !sample.is_finite()) {
-        return Err(PackageError::new("audio contains a non-finite sample"));
+        return Err(MediaError::NonFiniteSample.into());
     }
     Ok(DecodedPcm {
         sample_rate,
@@ -403,10 +390,6 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
         frames,
         samples,
     })
-}
-
-fn too_large_to_decode() -> PackageError {
-    PackageError::new("audio is too large to decode")
 }
 
 /// Samples to reserve before decoding: the claimed length, but no more frames
@@ -444,25 +427,21 @@ fn open_audio(source: &Path) -> Result<OpenAudio, PackageError> {
             false,
         )
     }
-    .ok_or_else(|| PackageError::new("audio path is not a file URL"))?;
+    .ok_or(MediaError::NotFileUrl)?;
     let mut opened: ExtAudioFileRef = core::ptr::null_mut();
     let status =
         unsafe { ExtAudioFileOpenURL(&url, core::ptr::NonNull::new_unchecked(&mut opened)) };
     if status != 0 || opened.is_null() {
-        return Err(PackageError::new(format!(
-            "could not open audio ({status})"
-        )));
+        return Err(MediaError::Open(status).into());
     }
     Ok(OpenAudio(opened))
 }
 
 fn integer_rate(rate: f64) -> Result<u32, PackageError> {
     if !rate.is_finite() || rate <= 0.0 || rate.fract() != 0.0 {
-        return Err(PackageError::new(
-            "audio sample rate is not a positive integer",
-        ));
+        return Err(MediaError::InvalidSampleRate(rate).into());
     }
-    u32::try_from(rate as u64).map_err(|_| PackageError::new("audio sample rate is too high"))
+    u32::try_from(rate as u64).map_err(|_| MediaError::SampleRateTooHigh(rate).into())
 }
 
 fn client_format(sample_rate: f64, channels: u32) -> AudioStreamBasicDescription {
@@ -492,9 +471,13 @@ fn audio_property<T>(file: ExtAudioFileRef, property: u32) -> Result<T, PackageE
         )
     };
     if status != 0 || size as usize != std::mem::size_of::<T>() {
-        return Err(PackageError::new(format!(
-            "could not read an audio property ({status})"
-        )));
+        return Err(MediaError::Property {
+            property,
+            status,
+            expected_size: u32::try_from(std::mem::size_of::<T>()).unwrap_or(u32::MAX),
+            actual_size: size,
+        }
+        .into());
     }
     Ok(unsafe { value.assume_init() })
 }
@@ -509,9 +492,7 @@ fn set_audio_property<T>(
         ExtAudioFileSetProperty(file, property, size, core::ptr::NonNull::from(value).cast())
     };
     if status != 0 {
-        return Err(PackageError::new(format!(
-            "could not set the audio client format ({status})"
-        )));
+        return Err(MediaError::SetProperty { property, status }.into());
     }
     Ok(())
 }
@@ -540,17 +521,13 @@ fn remember_name(
     let directory = package.join("media");
     let owned = crate::package_io::Directory::open(package)
         .and_then(|root| root.child("media"))
-        .map_err(|error| PackageError::new(format!("{}: {error}", directory.display())))?;
+        .map_err(|error| crate::document::io_error(&directory, error))?;
     let path = directory.join("index.json");
-    let mut index = if owned
-        .has_file("index.json")
-        .map_err(|error| PackageError::new(error.to_string()))?
-    {
+    let mut index = if owned.has_file("index.json").map_err(PackageError::from)? {
         let text = owned
             .read_text("index.json")
-            .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))?;
-        serde_json::from_str::<MediaIndex>(&text)
-            .map_err(|error| PackageError::new(format!("media index: {error}")))?
+            .map_err(|error| crate::document::io_error(&path, error))?;
+        serde_json::from_str::<MediaIndex>(&text).map_err(PackageError::MediaIndex)?
     } else {
         MediaIndex { files: Vec::new() }
     };
@@ -577,11 +554,10 @@ fn remember_name(
             .files
             .sort_by(|left, right| left.hash.cmp(&right.hash));
     }
-    let text = serde_json::to_string_pretty(&index)
-        .map_err(|error| PackageError::new(format!("media index: {error}")))?;
+    let text = serde_json::to_string_pretty(&index).map_err(PackageError::MediaIndex)?;
     owned
         .write_atomic("index.json", format!("{text}\n").as_bytes(), false)
-        .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))
+        .map_err(|error| crate::document::io_error(&path, error))
 }
 
 #[cfg(test)]

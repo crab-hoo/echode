@@ -8,6 +8,8 @@ Nor may a `map_err` turn the error it receives into text (ADR 0294): a variant
 that holds `error.to_string()` hides the cause the same way. Tests may, since
 a fixture's message is not a boundary. Text is still made where a report
 reaches the app; that is a `String` field, not a `Result`.
+A file in TYPED_FILES has the same checks while its crate is being migrated;
+there, constructing an untyped PackageError message is also rejected.
 """
 
 from pathlib import Path
@@ -23,6 +25,14 @@ TYPED_CRATES = (
     'echode-plugin-host',
     'echode-sandbox',
 )
+# A large crate may migrate one storage boundary at a time (ADR 0296).
+TYPED_FILES = (
+    'crates/echode-history/src/error.rs',
+    'crates/echode-history/src/media.rs',
+    'crates/echode-history/src/objects.rs',
+    'crates/echode-history/src/peaks.rs',
+)
+PACKAGE_MESSAGE = re.compile(r'\bPackageError\s*::\s*(?:new|Message)\s*\(')
 STRING = {'String', 'std::string::String', 'alloc::string::String'}
 RESULT = re.compile(r'\bResult\s*<')
 MAP_ERR = re.compile(r'\.map_err\s*\(')
@@ -105,31 +115,44 @@ def is_test(path):
 
 def problems(root):
     found = []
+    sources = []
     for crate in TYPED_CRATES:
         source = root / 'crates' / crate / 'src'
         if not source.is_dir():
             found.append(f'crates/{crate}/src: missing')
             continue
-        for path in sorted(source.rglob('*.rs')):
-            relative = path.relative_to(root)
-            if is_test(relative):
-                continue
-            text = path.read_text()
-            # An inline test module is a fixture too; product code precedes it.
-            inline = re.search(r'#\[cfg\(test\)\]\s*mod\s+tests\s*\{', text)
-            if inline:
-                text = text[:inline.start()]
-            for line in string_results(text):
-                found.append(f'{relative.as_posix()}:{line}: returns a String error')
-            for line in text_errors(text):
-                found.append(f'{relative.as_posix()}:{line}: turns an error into text')
+        sources.extend(sorted(source.rglob('*.rs')))
+    for relative in TYPED_FILES:
+        source = root / relative
+        if not source.is_file():
+            found.append(f'{relative}: missing')
+            continue
+        sources.append(source)
+    for path in sources:
+        relative = path.relative_to(root)
+        if is_test(relative):
+            continue
+        text = path.read_text()
+        # An inline test module is a fixture too; product code precedes it.
+        inline = re.search(r'#\[cfg\(test\)\]\s*mod\s+tests\s*\{', text)
+        if inline:
+            text = text[:inline.start()]
+        for line in string_results(text):
+            found.append(f'{relative.as_posix()}:{line}: returns a String error')
+        for line in text_errors(text):
+            found.append(f'{relative.as_posix()}:{line}: turns an error into text')
+        if relative.as_posix() in TYPED_FILES:
+            code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
+            for match in PACKAGE_MESSAGE.finditer(code):
+                line = code.count('\n', 0, match.start()) + 1
+                found.append(f'{relative.as_posix()}:{line}: returns an untyped package message')
     return found
 
 
 def main():
     found = problems(ROOT)
     if found:
-        print('check-typed-errors: these crates return error enums (ADR 0291):')
+        print('check-typed-errors: these boundaries return error enums (ADR 0291, 0296):')
         for problem in found:
             print(f'  {problem}')
     return int(bool(found))

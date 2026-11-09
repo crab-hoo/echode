@@ -7,6 +7,7 @@
 
 mod autosave;
 mod document;
+mod error;
 mod export;
 mod export_settings;
 #[cfg(feature = "spike")]
@@ -33,6 +34,7 @@ pub use document::{
     recover, write_package,
 };
 pub use echode_actions::HistoryUsage;
+pub use error::MediaError;
 pub use export::freeze_export;
 pub use export_settings::{read_export_settings, write_export_settings};
 pub use gix::ObjectId;

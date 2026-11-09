@@ -48,7 +48,15 @@ impl std::fmt::Display for HostError {
     }
 }
 
-impl std::error::Error for HostError {}
+impl std::error::Error for HostError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Action(error) => Some(error),
+            Self::Package(error) => Some(error),
+            Self::Element { .. } => None,
+        }
+    }
+}
 
 impl HostError {
     fn durability_unknown(&self) -> bool {

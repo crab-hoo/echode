@@ -34,42 +34,7 @@ mod track_json;
 /// Autosave commits land here until a project has more than one alternate.
 pub const AUTOSAVE_REF: &str = "refs/echode/autosave/main";
 
-/// A package or journal could not be read or written.
-#[derive(Debug)]
-pub struct PackageError {
-    message: String,
-    durability_unknown: bool,
-}
-
-impl PackageError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            durability_unknown: false,
-        }
-    }
-
-    pub(crate) fn durability_unknown() -> Self {
-        Self {
-            message: JOURNAL_DURABILITY_UNKNOWN.into(),
-            durability_unknown: true,
-        }
-    }
-
-    /// The journal line reached the file and a later sync or rollback did not
-    /// finish. Later edits stop until the package is opened again (AUD-03).
-    pub fn is_durability_unknown(&self) -> bool {
-        self.durability_unknown
-    }
-}
-
-impl std::fmt::Display for PackageError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for PackageError {}
+pub use crate::error::PackageError;
 
 pub(crate) struct PackageText {
     pub project_json: String,
@@ -1553,7 +1518,10 @@ fn canonical_track_ids(ids: Vec<String>) -> Result<Vec<String>, PackageError> {
 }
 
 pub(crate) fn io_error(path: &Path, error: std::io::Error) -> PackageError {
-    PackageError::new(format!("{}: {error}", path.display()))
+    PackageError::Io {
+        path: Some(path.to_path_buf()),
+        error,
+    }
 }
 
 #[derive(Deserialize)]

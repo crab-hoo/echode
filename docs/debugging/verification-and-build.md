@@ -146,6 +146,10 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。
 文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
 
+`echode-history` は保管庫・復号・ピークとエラー定義のファイルだけを `TYPED_FILES` に登録する（[ADR 0296](../decisions/0296-typed-storage-errors.md)）。
+その範囲の `returns an untyped package message` は、`PackageError::new`・`PackageError::Message` に戻している所である。`Io`・`Audio(MediaError)` など原因の変種を使う。
+Git・スキーマ・文書・間引きの未移行の範囲を、検査の対象へ一括して足したり、移行済みと記録したりしない。
+
 ### Cargo の依存メタデータが欠ける
 
 `extern location for <crate> does not exist` で `target/debug/deps/*.rmeta` が欠ける時は、まず別のビルドや整理処理との競合を確認する。

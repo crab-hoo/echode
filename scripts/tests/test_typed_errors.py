@@ -20,6 +20,10 @@ class TypedErrors(unittest.TestCase):
             source = directory / "crates" / crate / "src"
             source.mkdir(parents=True)
             (source / "lib.rs").write_text("pub fn ok() -> Result<(), Error> { Ok(()) }\n")
+        for relative in check_typed_errors.TYPED_FILES:
+            source = directory / relative
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("pub fn ok() -> Result<(), Error> { Ok(()) }\n")
         for relative, text in files.items():
             path = directory / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +74,34 @@ class TypedErrors(unittest.TestCase):
                     check_typed_errors.problems(root),
                     [f"{source}:{line}: turns an error into text" for line in lines],
                 )
+
+    def test_migrated_package_modules_reject_untyped_messages(self):
+        source = check_typed_errors.TYPED_FILES[1]
+        cases = [
+            'fn f() { PackageError::new("no samples") }\n',
+            'fn f() { PackageError::Message(message) }\n',
+            'fn f() { PackageError\n    ::new("no samples") }\n',
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                root = self.tree({source: text})
+                self.assertEqual(check_typed_errors.problems(root), [
+                    f"{source}:1: returns an untyped package message",
+                ])
+        root = self.tree({source: 'fn f() { PackageError::Audio(MediaError::NoSamples) }\n'})
+        self.assertEqual(check_typed_errors.problems(root), [])
+
+    def test_unmigrated_package_modules_are_not_claimed_as_typed(self):
+        root = self.tree({
+            'crates/echode-history/src/host.rs': 'fn f() -> Result<(), String> {}\n',
+        })
+        self.assertEqual(check_typed_errors.problems(root), [])
+
+    def test_a_missing_migrated_file_is_reported(self):
+        root = self.tree({})
+        source = check_typed_errors.TYPED_FILES[0]
+        (root / source).unlink()
+        self.assertEqual(check_typed_errors.problems(root), [f"{source}: missing"])
 
     def test_test_files_are_fixtures(self):
         crate = check_typed_errors.TYPED_CRATES[0]

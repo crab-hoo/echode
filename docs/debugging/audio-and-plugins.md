@@ -58,6 +58,11 @@ BLAKE3 が一致しても、PCM の形式まで有効とは限らない。
 逐次復号の `AudioFileReader::read` が拒否しても、一括の `decode_file` に同じ検証がある証拠にはならない。
 取込み時の拒否はパッケージへの書込み前、保存済み PCM の拒否は読込み時であり、同じエラーでも段階を区別する。
 
+Rust の直接の呼出しは `PackageError::Audio(MediaError::NonFiniteSample)` を返す。
+`storage_errors.rs` はヘッダ・長さ・非有限値の拒否の種類、I/O と JSON の `Error::source`、復号の取消とネイティブ状態コードを別々に照合する。
+AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は番号・状態コード・期待と実際のサイズを持つ。文面から番号を推定しない。
+文書のトランザクションの `HostError::Element` はまだ文だけを持つので、これを直接の素材の境界と混同しない。
+
 ### クリップゲインの変更で素材の準備に失敗する
 
 保存済み PCM 自体の有限性と、窓のピークにゲインを掛けた結果の桁あふれを区別する。

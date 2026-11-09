@@ -554,12 +554,12 @@ fn cache_path(package: &Path, hash: &str) -> Option<std::path::PathBuf> {
 
 fn write_cache(package: &Path, hash: &str, peaks: &Peaks) -> Result<(), PackageError> {
     let Some(path) = cache_path(package, hash) else {
-        return Err(PackageError::new("peak cache name is not a hash"));
+        return Err(PackageError::InvalidPeakHash);
     };
     let owned = crate::package_io::Directory::create(package)
         .and_then(|root| root.child("cache"))
         .and_then(|cache| cache.child("peaks"))
-        .map_err(|error| PackageError::new(error.to_string()))?;
+        .map_err(PackageError::from)?;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&peaks.bucket.to_le_bytes());
@@ -576,7 +576,7 @@ fn write_cache(package: &Path, hash: &str, peaks: &Peaks) -> Result<(), PackageE
     }
     owned
         .write_atomic(hash, &bytes, false)
-        .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))?;
+        .map_err(|error| crate::document::io_error(&path, error))?;
     Ok(())
 }
 
