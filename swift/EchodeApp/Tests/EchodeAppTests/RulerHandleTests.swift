@@ -52,7 +52,7 @@ struct RulerHandleTests {
             #expect(harness.displayedLoop == controller.rulerLoop)
             let grips = harness.rulerInstances.filter { $0.color == SIMD4<Float>(0.55, 0.94, 0.67, 1) }
             #expect(grips.count == 4)
-            #expect(controller.playbackStart == beat / 2 && controller.audio.tick == beat / 2)
+            #expect(controller.playbackStart == beat / 2 && controller.position == beat / 2)
             #expect(controller.undoCount == undo && controller.selection == track)
 
             // Returning to the original edge sends nothing, and cannot turn into a click.

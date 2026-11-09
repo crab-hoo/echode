@@ -61,8 +61,12 @@ struct ArrangeLabelRaster {
 
 /// Render-thread only. Published textures are immutable; command buffers retain
 /// old textures through completion when names, width or display scale change.
+/// Each frame calls `prepare` once with every label it draws: a second call
+/// would release the first call's textures and rasterize them again next frame.
 final class ArrangeLabelTextures {
     private var textures: [CanvasLabelKey: any MTLTexture] = [:]
+    /// Rasters made so far. Probes and tests read it to count cache misses.
+    private(set) var rasterized = 0
 
     func prepare(labels: [CanvasLabel], scale: Double, device: any MTLDevice) -> [CanvasLabelKey: any MTLTexture] {
         var visible: [CanvasLabelKey: any MTLTexture] = [:]
@@ -70,6 +74,7 @@ final class ArrangeLabelTextures {
             let key = label.key(scale: scale)
             if let texture = textures[key] ?? visible[key] { visible[key] = texture; continue }
             guard let raster = ArrangeLabelRaster(name: key.text, width: key.width, scale: scale, alignment: key.alignment) else { continue }
+            rasterized += 1
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: raster.width, height: raster.height, mipmapped: false)
             descriptor.storageMode = .shared
             descriptor.usage = .shaderRead

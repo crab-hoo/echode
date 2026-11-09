@@ -248,6 +248,9 @@ Swift の指摘なので `make known-bugs`（Rust の `audit_` テスト）の�
   画面なしでは、`WorkspaceView` 相当の階層を `NSHostingView` に載せ、配置の値を変えて `layoutSubtreeIfNeeded` までの時間を測る。
 - 決める: 1 イベントが数 ms を越えるなら、配置の状態を読む View を分けて、ドラッグで再評価される範囲を中央列と分割線に限る。
   越えないなら修正せず、測定値をこの単位の ADR か status に残す。
+- 結果（2026-11-09、[ADR 0289](../decisions/0289-split-audio-replies-and-one-label-pass.md)）: 128 トラックの画面なしの `WorkspaceView` で、`layoutSubtreeIfNeeded` までを測った（`make spike-main-thread`）。
+  1 イベントは p50 2.0〜3.0 ms、p95 3.5 ms 以下だった。エディタの境界は、新しい高さに初めて届いた 1 回だけが 12 ms だった。
+  数 ms を越えないので修正しない。p95 が 8.3 ms を超えた時か、ドラッグ中のがくつきの報告で戻る。
 
 ### 対象外
 

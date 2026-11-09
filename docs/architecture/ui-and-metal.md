@@ -70,6 +70,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   非同期の処理は開始時のセッションを保持し、古い文書の処理が次の文書の状態へ届かない。
   文書への操作は省略できない `DocumentID` を受け、`ProjectController.session(for:)` だけが現行の文書と比べる
   （[ADR 0203](../decisions/0203-document-session.md)）。
+- **出力の応答の観測**: 応答は位置・試聴・状態に分け、`DocumentSession.receive` だけが変わった部分を書く。
+  位置はトランスポートの位置の表示だけが、試聴はブラウザだけが読む。広い View は `controller.audio`（状態）だけを読むので、再生中の応答で再評価されない
+  （[ADR 0289](../decisions/0289-split-audio-replies-and-one-label-pass.md)）。
 - **固定した画面寸法**: 状態行は準備中だけ表示器を見せるが、その場所を常に確保する。
   再生ボタンは Play と Pause の広い方の幅を保つ。準備の開始と終了でペインの寸法を変えない
   （[ADR 0149](../decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
@@ -157,6 +160,9 @@ GPU は M4 の Apple9 ファミリーを基準とする（[ADR 0112](../decision
   （[ADR 0165](../decisions/0165-inspector-fx-add-and-arrange-note-pitch.md)）。
   入力の版とカメラが変わらない間は `CanvasGeometryCache` で再利用し、再生位置とピークだけを毎フレーム読む
   （[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）
+- **文字のテクスチャ**: 1 フレームの全部の文字を `ArrangeLabelTextures.prepare` の 1 回で用意し、そのフレームで見えた文字だけを次へ残す。
+  同じ画面の再描画では文字を描かない。幅が拍の間隔に従う目盛りの文字は、ズーム中に描き直す
+  （[ADR 0289](../decisions/0289-split-audio-replies-and-one-label-pass.md)）。
 
 ### 13.3 Rust と Swift の橋渡し
 
@@ -196,7 +202,7 @@ GUI 応答性の追加要件は [処理中も作業を続ける](../interaction-
 パラメーターのドラッグを止めるのは状態を読み込みうる履歴操作の間だけで、通常の編集中は止めない。
 停止中の最初の表示・再生で出力とヘルパーを準備する間も、ワーカーは後続の編集を続け、デバイス要求だけが投入順に待つ
 （[ADR 0136](../decisions/0136-output-opening-off-worker.md)）。
-Swift も `AudioState.opening` を受け取り、未取得のデバイス列は出力準備と一覧の応答待ちを分けて表示する
+Swift も `AudioStatus.opening` を受け取り、未取得のデバイス列は出力準備と一覧の応答待ちを分けて表示する
 （[ADR 0141](../decisions/0141-device-output-preparation-status.md)）。
 製品アプリは開いた直後に出力を準備するため、その間の未取得の列も出力準備を表示する
 （[ADR 0147](../decisions/0147-output-prewarm-and-background-media.md)）。

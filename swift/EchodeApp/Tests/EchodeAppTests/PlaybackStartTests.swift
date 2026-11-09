@@ -42,15 +42,15 @@ struct PlaybackStartTests {
         await controller.open(url, creating: true)
         #expect(controller.playbackStart == 0)
         await controller.setPlaybackStart(beat: 2)
-        #expect(controller.playbackStart == 2 * beat && controller.audio.tick == 2 * beat)
+        #expect(controller.playbackStart == 2 * beat && controller.position == 2 * beat)
         await controller.locate(beat: 3)
-        #expect(controller.playbackStart == 2 * beat && controller.audio.tick == 3 * beat)
+        #expect(controller.playbackStart == 2 * beat && controller.position == 3 * beat)
 
         await controller.togglePlayback()
         #expect(controller.playbackRequested)
         await controller.togglePlayback()
         #expect(sent.withLock { $0.last } == "stop")
-        #expect(!controller.playbackRequested && controller.audio.tick == 2 * beat)
+        #expect(!controller.playbackRequested && controller.position == 2 * beat)
 
         await controller.togglePause()
         await controller.togglePause()
@@ -63,7 +63,7 @@ struct PlaybackStartTests {
         #expect(controller.undoCount == 0)
         await controller.close()
         await controller.open(url)
-        #expect(controller.playbackStart == 2 * beat && controller.audio.tick == 2 * beat)
+        #expect(controller.playbackStart == 2 * beat && controller.position == 2 * beat)
         await controller.close()
     }
 

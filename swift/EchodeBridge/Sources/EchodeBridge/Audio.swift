@@ -11,10 +11,31 @@ public struct OutputDevice: Decodable, Sendable, Equatable, Identifiable {
     enum CodingKeys: String, CodingKey { case id, uid, name, channels, sampleRate = "sample_rate", bufferFrames = "buffer_frames" }
 }
 
+/// One reply of the output, in the three parts that change at different rates.
+/// Playback polls move the position; each sample audition request moves the
+/// audition; the status changes on commands, devices and automatic mutes.
+/// The app observes each part apart, so one part's readers ignore the others' changes (ADR 0289).
+@dynamicMemberLookup
 public struct AudioState: Decodable, Sendable, Equatable {
+    public let status: AudioStatus
+    /// The sample audition beside the project output, when one was ever requested.
+    public let audition: AuditionStatus?
+    public let tick: Int64
+    public init() { status = AudioStatus(); audition = nil; tick = 0 }
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tick = try container.decode(Int64.self, forKey: .tick)
+        audition = try container.decodeIfPresent(AuditionStatus.self, forKey: .audition)
+        status = try AudioStatus(from: decoder)
+    }
+    public subscript<Value>(dynamicMember keyPath: KeyPath<AudioStatus, Value>) -> Value { status[keyPath: keyPath] }
+    enum CodingKeys: String, CodingKey { case tick, audition }
+}
+
+/// What the output reports apart from the position and the audition.
+public struct AudioStatus: Decodable, Sendable, Equatable {
     public let playing: Bool
     public let running: Bool
-    public let tick: Int64
     /// The remembered playback start. Stop returns here (ADR 0155).
     public let start: Int64
     /// A pause holds the playhead away from the start until play or stop.
@@ -29,22 +50,19 @@ public struct AudioState: Decodable, Sendable, Equatable {
     public let loopStart: Int64?
     public let loopEnd: Int64?
     public let metronome: Bool
-    /// The sample audition beside the project output, when one was ever requested.
-    public let audition: AuditionStatus?
     /// Tracks the output muted by itself because a plugin returned a NaN or an
     /// infinity. Not the tracks' own mute: starting playback clears it (ADR 0282).
     public let autoMutedTracks: [TrackAutoMute]
     /// The output muted the master because it ran past +18 dBFS (ADR 0282).
     public let masterAutoMute: MasterAutoMute?
     public init() {
-        playing = false; running = false; opening = false; tick = 0; start = 0; paused = false; selectedUID = nil; activeDevice = nil; devices = []; error = nil
-        loopStart = nil; loopEnd = nil; metronome = false; audition = nil; autoMutedTracks = []; masterAutoMute = nil
+        playing = false; running = false; opening = false; start = 0; paused = false; selectedUID = nil; activeDevice = nil; devices = []; error = nil
+        loopStart = nil; loopEnd = nil; metronome = false; autoMutedTracks = []; masterAutoMute = nil
     }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         playing = try container.decode(Bool.self, forKey: .playing)
         running = try container.decode(Bool.self, forKey: .running)
-        tick = try container.decode(Int64.self, forKey: .tick)
         // Stand-in replies written before the start was reported omit these.
         start = try container.decodeIfPresent(Int64.self, forKey: .start) ?? 0
         paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? false
@@ -56,13 +74,12 @@ public struct AudioState: Decodable, Sendable, Equatable {
         loopStart = try container.decodeIfPresent(Int64.self, forKey: .loopStart)
         loopEnd = try container.decodeIfPresent(Int64.self, forKey: .loopEnd)
         metronome = try container.decode(Bool.self, forKey: .metronome)
-        audition = try container.decodeIfPresent(AuditionStatus.self, forKey: .audition)
         // Stand-in replies written before automatic mutes were reported omit these.
         autoMutedTracks = try container.decodeIfPresent([TrackAutoMute].self, forKey: .autoMutedTracks) ?? []
         masterAutoMute = try container.decodeIfPresent(MasterAutoMute.self, forKey: .masterAutoMute)
     }
     enum CodingKeys: String, CodingKey {
-        case playing, running, opening, tick, start, paused, devices, error, metronome, audition, selectedUID = "selected_uid", activeDevice = "active_device"
+        case playing, running, opening, start, paused, devices, error, metronome, selectedUID = "selected_uid", activeDevice = "active_device"
         case loopStart = "loop_start", loopEnd = "loop_end"
         case autoMutedTracks = "auto_muted_tracks", masterAutoMute = "master_auto_mute"
     }

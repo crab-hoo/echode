@@ -59,17 +59,19 @@ final class DocumentSession {
     @ObservationIgnored var previewFinishing = false
     @ObservationIgnored var previewFinishTask: Task<Void, Never>?
 
-    var audio: AudioState {
-        didSet {
-            if outputOpening != audio.opening { outputOpening = audio.opening }
-            if playbackStart != audio.start { playbackStart = audio.start }
-            if audio.audition != oldValue.audition { auditionLog.record(audio.audition) }
-        }
-    }
-    /// Observed separately so position polls do not rebuild the device strip.
+    /// The output's reply is kept in parts observed apart (ADR 0289). `receive`
+    /// is their only writer. `@Observable` does not notify for an equal value,
+    /// so a playback poll or an audition request leaves the other parts' readers alone.
+    private(set) var audio: AudioStatus
+    /// Each sample audition request changes this; the browser reads it.
+    private(set) var audition: AuditionStatus?
+    /// The polled position in ticks. Playback polls change only this, and only
+    /// the transport's position display reads it.
+    private(set) var position: Int64
+    /// Observed apart from the status so play and stop do not rebuild the device strip.
     private(set) var outputOpening: Bool
-    /// The remembered start in ticks, observed apart from position polls so
-    /// the rulers redraw only when it changes (ADR 0155).
+    /// The remembered start in ticks, observed apart so the rulers redraw only
+    /// when it changes (ADR 0155).
     private(set) var playbackStart: Int64
     /// An audio command is in flight. It never disables controls: commands
     /// keep their order instead (ADR 0160).
@@ -116,7 +118,7 @@ final class DocumentSession {
     init(auditionLog: AuditionLog) {
         id = nil; projectURL = nil; playback = nil; document = nil
         self.auditionLog = auditionLog
-        audio = AudioState()
+        audio = AudioStatus(); audition = nil; position = 0
         outputOpening = false
         playbackStart = 0
     }
@@ -124,9 +126,19 @@ final class DocumentSession {
     init(opening document: Document, at url: URL, audio: AudioState, auditionLog: AuditionLog) {
         id = DocumentID(); projectURL = url; playback = document.playbackFeed; self.document = document
         self.auditionLog = auditionLog
-        self.audio = audio
+        self.audio = audio.status; audition = audio.audition; position = audio.tick
         outputOpening = audio.opening
         playbackStart = audio.start
+    }
+
+    /// Takes one reply of the output. Every reply goes through here.
+    func receive(_ state: AudioState) {
+        audio = state.status
+        if audition != state.audition { auditionLog.record(state.audition) }
+        audition = state.audition
+        position = state.tick
+        outputOpening = state.opening
+        playbackStart = state.start
     }
 
     /// Stops what would otherwise keep running for a replaced document. Replies

@@ -147,4 +147,3 @@
 - **ペインのリサイズと描画（UIF-01、JNK-01・02）**: リサイズ中の見え方はユーザー確認待ち（UC-02、[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
   上下のずれ・再生開始時のがくつき・VoiceOver の解消はユーザー確認待ち（UC-03、[ADR 0149](decisions/0149-flipped-canvas-anchor-and-fixed-transport-chrome.md)）。
   ちらつきの有無はユーザー確認待ち（UC-04、[ADR 0150](decisions/0150-stale-drawable-frame.md)）。
-  分割線ドラッグの計測（単位 6、JNK-05）は未着手（[GUI のがくつきの監査](reviews/2026-10-22-gui-jank-audit.md)）。

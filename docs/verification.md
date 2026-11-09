@@ -212,6 +212,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   自動と固定の三連符・付点グリッドの細分線の画素も同じ倍率で比較し、`checkedGridLines` に採取数を記録する。
   吸着幅と独立した拍・4 拍の目印も、粗い幅と最小倍率で読み戻し、`checkedIndependentGuides` に採取数を記録する。
   両フレーム検査は描画部品の比較であり、提出・版の消費・休止・再試行は通常の必須契約で製品と同じ提出経路を検査する。
+- `spike-main-thread`: 128 トラックの `WorkspaceView` を画面なしで載せ、状態の応答と分割線のドラッグ 1 回の主スレッドの時間を release 計測する。
+  アレンジ 1 フレームの描画の CPU 時間と描き直した文字の数も出す（`target/spike-main-thread.json`、[ADR 0289](decisions/0289-split-audio-replies-and-one-label-pass.md)）。
+  機器・試聴出力・ヘルパーは開かない。`maxAt` は最大の回の番号で、0 はその場面の最初の回である。
 - `spike-app`: 製品のアレンジとピアノロールを実表示し、メインスレッドの 0.5 秒の負荷中も描画することとアクセシビリティ ID を確認する（`target/spike-app.json`）。
 - `spike-playhead`: 専用 AppKit プローブ（`EchodePlayheadProbe`）で実ウィンドウのプレイヘッド移動・再生・一時停止・休止・破棄・文書交換を確認する（`target/spike-playhead.json`）。
 - `spike-history`: 大きい文書の保存・復元と、無関係なノートを増やしたゲイン差分の release 計測（[S4](spikes/S4-history.md)）。

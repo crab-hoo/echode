@@ -44,7 +44,7 @@ struct DevicePreparationTests {
         state.query = "gain"
         let observing = Task { await controller.observeAudio() }
         defer { observing.cancel() }
-        try await wait("the initial audio status") { controller.audio.tick == 1 }
+        try await wait("the initial audio status") { controller.position == 1 }
 
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 900, height: 400))
         func refresh() {
@@ -68,7 +68,7 @@ struct DevicePreparationTests {
 
         // Output status changes independently of the still-held parameter reply.
         await audio.prepared()
-        try await wait("the prepared audio status") { controller.audio.tick == 2 }
+        try await wait("the prepared audio status") { controller.position == 2 }
         refresh()
         #expect(column.message.stringValue == text("Loading parameters"))
         #expect(state.loading && state.query == "gain")
@@ -95,7 +95,7 @@ struct DevicePreparationTests {
         withObservationTracking { _ = controller.outputOpening } onChange: { invalidated.withLock { $0 = true } }
         await audio.advance()
         await controller.refreshOutputs()
-        #expect(controller.audio.tick == 2 && controller.outputOpening)
+        #expect(controller.position == 2 && controller.outputOpening)
         #expect(!invalidated.withLock { $0 }, "Position polling must not invalidate the device strip")
         await audio.prepared()
         await controller.refreshOutputs()

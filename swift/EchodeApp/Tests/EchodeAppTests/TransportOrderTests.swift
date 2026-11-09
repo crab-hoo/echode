@@ -102,7 +102,7 @@ struct TransportOrderTests {
         await firstStart.value
         for task in [second, loop, ranged, metronomeOn, metronomeOff] { await task.value }
         #expect(sent.withLock { $0 } == ["start 1", "start 2", "loop 1 3", "loop 1 3", "metronome true", "metronome false"])
-        #expect(controller.playbackStart == beat * 2 && controller.audio.tick == beat * 2)
+        #expect(controller.playbackStart == beat * 2 && controller.position == beat * 2)
         #expect(controller.audio.loopStart == beat && controller.audio.loopEnd == beat * 3)
         #expect(!controller.audio.metronome && !controller.audioBusy)
         await controller.close()

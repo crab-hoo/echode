@@ -66,7 +66,7 @@ struct ExportTests {
         // Edits, transport and closing the source are independent of the child process.
         await controller.addTrack(name: "Later")
         await controller.locate(beat: 3)
-        #expect(controller.undoCount == undo + 1 && controller.audio.tick == 3 * 705_600)
+        #expect(controller.undoCount == undo + 1 && controller.position == 3 * 705_600)
         await controller.close()
         try FileManager.default.removeItem(at: source)
         await controller.open(root.appendingPathComponent("Other.echode"), creating: true)

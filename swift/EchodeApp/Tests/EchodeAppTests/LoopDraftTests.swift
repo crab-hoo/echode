@@ -32,7 +32,7 @@ struct LoopDraftTests {
         await controller.setLoopRange(range, documentID: document)
         await controller.toggleLoop()
         #expect(controller.rulerLoop?.range == range && controller.audio.loopStart == nil)
-        #expect(controller.playbackStart == 0 && controller.audio.tick == 0)
+        #expect(controller.playbackStart == 0 && controller.position == 0)
         #expect(controller.selection == selection && controller.undoCount == undo)
         await controller.close()
         await controller.open(url)

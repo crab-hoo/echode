@@ -605,6 +605,10 @@ Command 複製移動は `PianoMoveGesture.copies` と `PianoMoveChange.actions`�
 描画面の左上固定と drawable サイズの主スレッド更新は `CanvasSurface.swift`、対応する製品 View の回帰は `CanvasResizeTests.swift` に置く
 （[ADR 0144](decisions/0144-unscaled-canvas-resizing.md)）。
 
+出力の応答を位置・試聴・状態に分ける型は `Audio.swift`、部分ごとの書込みは `DocumentSession.receive`、回帰は `AudioReplyObservationTests.swift` に置く。
+1 フレーム 1 回の文字の用意は `ArrangeLabels.swift`・`ArrangePainter.swift`、回帰は `ArrangeLabelCacheTests.swift`。
+主スレッドと描画の計測は `MainThreadProbe.swift`（`make spike-main-thread`、[ADR 0289](decisions/0289-split-audio-replies-and-one-label-pass.md)）。
+
 下部の寸法と積み方は `WorkspaceLayout.swift` と製品の `WorkspaceCenterStack.swift`、
 開閉・移行とコマンドは `WorkspaceState.swift`・`WorkspaceCommand.swift` に置く。
 回帰は `WorkspaceLayoutTests.swift`（[ADR 0146](decisions/0146-independent-editor-stack.md)）。

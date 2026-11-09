@@ -94,6 +94,15 @@ EOF 超過と途中のテンポ変化は独立した条件である（[CUR-02 / 
 続けた操作が反映されない時は、`orderedAudioCommand` の順番待ちと、トグルが番の来た時の状態を読んでいるかを見る
 （[ADR 0160](../decisions/0160-ordered-transport-requests.md)、必須契約 `transport-order-ui`）。
 
+### 再生中・試聴中・ドラッグ中に画面全体が重い
+
+`make spike-main-thread` で、応答の部分ごとと分割線のドラッグ 1 回の主スレッドの時間、アレンジ 1 フレームの描画の時間を測る（`target/spike-main-thread.json`）。
+位置の応答（`positionPoll`）が状態の応答（`statusReply`）に近いなら、広い View が位置か試聴を読んでいる。
+`controller.audio` は状態だけで、位置は `position`、試聴は `audition` で読む。新しい読み手がどれを読むかを確かめる（[ADR 0289](../decisions/0289-split-audio-replies-and-one-label-pass.md)、必須契約 `audio-reply-observation-ui`）。
+同じ画面の `arrangeRasterized.steady` が 0 でなければ、1 フレームに文字を 2 回以上用意している（必須契約 `arrange-label-cache`）。
+内訳は `ECHODE_MAIN_THREAD_PROFILE_SECONDS=20` でプローブを動かし、標準エラーの `profiling` の後に `sample <pid> 8` で採る。
+`WorkspaceView` を載せるプローブやテストは `sendAuditionSettings` を差し替える。表示中の `WorkspaceView` は無音の試聴出力を開くからである。
+
 ### 直したのに画面が変わらない
 
 `doctor` でアプリが `stale` / `unknown` なら `make app` を実行し、`target/Echode.app` を開き直す。

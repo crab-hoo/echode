@@ -136,7 +136,7 @@ struct DocumentSessionTests {
         await play.value
         await toggle.value
         // The late answer describes the document it was sent to.
-        #expect(!controller.audio.playing && controller.audio.tick != state.tick)
+        #expect(!controller.audio.playing && controller.position != state.tick)
         await controller.close()
     }
 

@@ -1,6 +1,16 @@
 import EchodeBridge
 import SwiftUI
 
+/// The only reader of the polled position, so a playback poll re-evaluates
+/// this label and nothing else (ADR 0289).
+private struct TransportPosition: View {
+    let controller: ProjectController
+    var body: some View {
+        LabeledContent(text("Position (beats)"), value: (Double(controller.position) / Tick.perBeat).formatted(.number.precision(.fractionLength(2))))
+            .monospacedDigit()
+    }
+}
+
 struct WorkspaceTransportView: View {
     let controller: ProjectController
     @Binding var followsPlayhead: Bool
@@ -18,8 +28,7 @@ struct WorkspaceTransportView: View {
             Button { Task { await controller.toggleMetronome() } } label: {
                 Label(text("Metronome"), systemImage: controller.audio.metronome ? "metronome.fill" : "metronome")
             }
-            LabeledContent(text("Position (beats)"), value: (Double(controller.audio.tick) / Tick.perBeat).formatted(.number.precision(.fractionLength(2))))
-                .monospacedDigit()
+            TransportPosition(controller: controller)
             TextField(text("Start beat"), text: $seek).frame(width: 80)
                 .focused($startField).focusedValue(\.workspaceTextEntry, true)
                 .accessibilityLabel(text("Playback start beat")).onSubmit(setStart)

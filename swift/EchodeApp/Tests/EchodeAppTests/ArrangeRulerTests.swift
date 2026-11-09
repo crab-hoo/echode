@@ -55,7 +55,7 @@ struct ArrangeRulerTests {
         #expect(ranges == [expected] && starts.count == 2 && selections.isEmpty)
         await controller.setLoopRange(expected, documentID: document)
         #expect(controller.audio.loopStart == nil && controller.rulerLoop?.range == expected)
-        #expect(controller.playbackStart == beat && controller.audio.tick == beat)
+        #expect(controller.playbackStart == beat && controller.position == beat)
         await controller.toggleLoop()
         view.setRuler(start: controller.playbackStart, loop: controller.rulerLoop, busy: false)
         try down(4.3); try drag(2.2, flags: .shift); try up(2.2, flags: .shift)

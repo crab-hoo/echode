@@ -49,7 +49,7 @@ struct TransportRequestTests {
             await reply.finish(latePlay)
             await play.value
             #expect(!controller.audioBusy && !controller.audio.playing)
-            #expect(!controller.playbackRequested && controller.audio.tick == 0)
+            #expect(!controller.playbackRequested && controller.position == 0)
             await controller.close()
         }
     }

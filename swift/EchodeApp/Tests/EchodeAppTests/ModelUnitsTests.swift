@@ -32,7 +32,7 @@ struct ModelUnitsTests {
         let undo = controller.undoCount
         await controller.setPlaybackStart(beat: 1.25)
         await controller.locate(beat: 1.5)
-        #expect(controller.playbackStart == 882_000 && controller.audio.tick == 1_058_400)
+        #expect(controller.playbackStart == 882_000 && controller.position == 1_058_400)
         #expect(controller.undoCount == undo)
         await controller.setPlaybackStart(beat: .infinity)
         #expect(controller.playbackStart == 882_000)

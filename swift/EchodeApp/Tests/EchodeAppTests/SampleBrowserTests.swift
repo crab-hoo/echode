@@ -305,7 +305,7 @@ struct SampleBrowserTests {
         await controller.addTrack(name: "audio")
         await controller.locate(beat: 1.2345)
         let tick = try #require(controller.playback?.position.tick)
-        #expect(tick > 0 && controller.audio.tick == 0)
+        #expect(tick > 0 && controller.position == 0)
         #expect(await controller.importAudio(wav))
         let snapshot = try #require(controller.snapshot)
         let elements = snapshot.visibleElements(originTick: 0, widthTicks: 20_000_000,

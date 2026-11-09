@@ -83,7 +83,11 @@ public final class ProjectController {
         set { session.clipFocus = newValue }
     }
     public var faderPreview: FaderPreview? { session.faderPreview }
-    public var audio: AudioState { session.audio }
+    /// The output's status without the position or the audition (ADR 0289).
+    public var audio: AudioStatus { session.audio }
+    public var audition: AuditionStatus? { session.audition }
+    /// The polled playhead in ticks. Read it only where the position is shown.
+    public var position: Int64 { session.position }
     public var outputOpening: Bool { session.outputOpening }
     public var playbackStart: Int64 { session.playbackStart }
     public var audioBusy: Bool { session.audioBusy }
@@ -197,7 +201,7 @@ public final class ProjectController {
         let previous = session
         previous.retire()
         session = next
-        auditionLog.record(next.audio.audition)
+        auditionLog.record(next.audition)
         return previous
     }
 
@@ -567,7 +571,7 @@ public final class ProjectController {
 
     /// `enabled` runs on the command's turn, after earlier commands answered:
     /// true sends the bounds then current, false turns the loop off, nil sends nothing.
-    private func setLoop(_ enabled: @escaping @MainActor (AudioState) -> Bool?) async {
+    private func setLoop(_ enabled: @escaping @MainActor (AudioStatus) -> Bool?) async {
         await orderedAudioCommand { [self] in
             guard let on = enabled(audio) else { return nil }
             guard on else { return .loop(start: nil, end: nil) }
@@ -592,7 +596,7 @@ public final class ProjectController {
                 do {
                     let state = try await sendAudio(document, .status)
                     if revision == session.audioRevision, !session.audioBusy {
-                        if session.audio != state { session.audio = state }
+                        session.receive(state)
                         if let error = state.error, error != session.reportedAudioError { errorMessage = error }
                         session.reportedAudioError = state.error
                     }
@@ -649,7 +653,7 @@ public final class ProjectController {
         do {
             let state = try await sendAudio(document, command)
             if revision == session.audioRevision {
-                session.audio = state
+                session.receive(state)
                 if command.requestsPlayheadFrame { session.transportGeneration &+= 1 }
             }
         } catch { if revision == session.audioRevision { report(error) } }

@@ -8,6 +8,8 @@ public struct WorkspaceView: View {
     @Bindable private var controller: ProjectController
     @State private var state = WorkspaceState()
     public init(controller: ProjectController) { self.controller = controller }
+    /// Probes pass state saved to their own defaults, never the user's.
+    init(controller: ProjectController, state: WorkspaceState) { self.controller = controller; _state = State(initialValue: state) }
     private var session: WorkspaceSession { WorkspaceSession(controller: controller, state: state) }
 
     public var body: some View {

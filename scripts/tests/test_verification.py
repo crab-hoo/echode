@@ -1020,6 +1020,19 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue({"check", "check-product-contracts", "check-bridge-asan", "check-bridge-tsan",
                              "spike-arrange-frame", "spike-piano-frame", "spike-playhead"} <= checks)
 
+    def test_main_thread_load_contracts_and_probe_are_registered(self):
+        contracts = {contract["id"]: contract for contract in self.policy["product_contracts"]}
+        for name, suite in (("audio-reply-observation-ui", "AudioReplyObservationTests"), ("arrange-label-cache", "ArrangeLabelCacheTests")):
+            contract = contracts[name]
+            self.assertEqual((contract["runner"], contract["suite"]), ("swift", suite))
+            for fault in contract.get("negative_controls", [contract.get("negative_control")]):
+                self.assertEqual((ROOT / fault["file"]).read_text().count(fault["old"]), 1)
+        probe = next(check for check in self.policy["checks"] if check["id"] == "spike-main-thread")
+        self.assertEqual(probe["mode"], "manual")
+        self.assertIn("spike-main-thread:", (ROOT / "Makefile").read_text())
+        for name in ("ArrangePainter.swift", "WorkspaceView.swift"):
+            self.assertIn("spike-main-thread", self.selected("swift/EchodeApp/Sources/EchodeAppCore/" + name))
+
     def test_shared_piano_viewport_contract_covers_switches_and_document_lifetime(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "piano-shared-viewport-ui")
         self.assertEqual((contract["runner"], contract["suite"], contract["test"]),
@@ -1761,7 +1774,7 @@ class PolicyTests(unittest.TestCase):
                           "transport-cancellation", "queued-stop", "plugin-transport-reset", "plugin-midi-panic",
                           "plugin-state-poll", "transport-declick", "output-safety-deadline", "stop-cleanup", "plugin-onset", "plugin-deadline-fade", "track-mix-ui", "clip-mix-ui", "live-mix-meter",
                           "loop-head-residency", "pre-fader-source", "phase1-acceptance",
-                          "live-workgroup", "shared-placement-pcm", "cached-geometry", "mcp-edit", "fx-chain-ui",
+                          "live-workgroup", "shared-placement-pcm", "cached-geometry", "arrange-label-cache", "audio-reply-observation-ui", "mcp-edit", "fx-chain-ui",
                           "fx-bypass-ui", "fx-batch-ui", "fx-offline-ui", "plugin-offline", "offline-export",
                           "plugin-bypass", "startup-recovery", "sample-library-search", "sample-import-target",
                           "sample-audition", "sample-audition-ui", "sample-audition-resident", "sample-audition-position", "sample-audition-gain", "sample-audition-controls-ui", "sample-audition-stream", "sample-audition-loading", "sample-preview-ui", "sample-browser-click-ui", "sample-browser-content-ui", "sample-drop-ui", "sample-drop-entry-ui", "audio-import-transaction",

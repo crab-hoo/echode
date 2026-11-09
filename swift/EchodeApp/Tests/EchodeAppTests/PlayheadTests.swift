@@ -28,7 +28,7 @@ struct PlayheadTests {
         #expect(controller.transportGeneration == 0)
         await controller.locate(beat: 2)
         #expect(controller.transportGeneration == 1)
-        #expect(controller.audio.tick == 705_600 * 2)
+        #expect(controller.position == 705_600 * 2)
         await controller.togglePlayback()
         #expect(controller.transportGeneration == 2)
         #expect(controller.audio.playing && !controller.audio.running)

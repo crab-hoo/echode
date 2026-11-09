@@ -17,6 +17,7 @@ final class ArrangePainter {
     private let wavePipeline: any MTLRenderPipelineState
     private let labelPipeline: any MTLRenderPipelineState
     private let labels = ArrangeLabelTextures()
+    var rasterizedLabels: Int { labels.rasterized }
     private let device: any MTLDevice
     /// One pair per in-flight drawable. The probe uses slot 0 and waits.
     private var waveInstances: [MTLBuffer?] = [nil, nil, nil]
@@ -84,9 +85,12 @@ final class ArrangePainter {
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: rulerCount,
                                        baseInstance: timelineCount + headerCount - rulerCount)
             }
-            encodeLabels(frame.rulerLabels, scale: frame.input.scale, encoder: encoder, texture: texture,
-                         bounds: CGRect(x: 0, y: 0, width: frame.input.width, height: frame.input.arrangeTop))
-            encodeLabels(frame, encoder: encoder, texture: texture)
+            let ruler = frame.rulerLabels, arrange = arrangeLabels(frame)
+            let textures = labels.prepare(labels: ruler + arrange, scale: frame.input.scale, device: device)
+            drawLabels(ruler, textures: textures, scale: frame.input.scale, encoder: encoder, texture: texture,
+                       bounds: CGRect(x: 0, y: 0, width: frame.input.width, height: frame.input.arrangeTop))
+            drawLabels(arrange, textures: textures, scale: frame.input.scale, encoder: encoder, texture: texture,
+                       bounds: CGRect(x: 0, y: frame.input.arrangeTop, width: frame.input.width, height: frame.input.arrangeHeight))
         } else if let piano {
             let scale = piano.input.scale
             let rulerCount = piano.rulerInstances.count
@@ -109,8 +113,9 @@ final class ArrangePainter {
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: velocityCount,
                                        baseInstance: timelineCount + sidebarCount + rulerCount)
             }
-            encodeLabels(piano.labels, scale: scale, encoder: encoder, texture: texture,
-                         bounds: CGRect(x: 0, y: 0, width: piano.input.width, height: piano.input.height))
+            let text = piano.labels
+            drawLabels(text, textures: labels.prepare(labels: text, scale: scale, device: device), scale: scale, encoder: encoder,
+                       texture: texture, bounds: CGRect(x: 0, y: 0, width: piano.input.width, height: piano.input.height))
         } else {
             encoder.setScissorRect(MTLScissorRect(x: 0, y: 0, width: texture.width, height: texture.height))
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: timelineCount)
@@ -153,10 +158,9 @@ final class ArrangePainter {
         return buffer
     }
 
-    private func encodeLabels(_ frame: ArrangeFrame, encoder: any MTLRenderCommandEncoder, texture: any MTLTexture) {
-        guard let header = frame.input.header else { return }
-        let scale = frame.input.scale
-        let bounds = CGRect(x: 0, y: frame.input.arrangeTop, width: frame.input.width, height: frame.input.arrangeHeight)
+    /// Track header labels and the selected clip's gain, drawn over the arrange area.
+    private func arrangeLabels(_ frame: ArrangeFrame) -> [CanvasLabel] {
+        guard let header = frame.input.header else { return [] }
         let text = frame.headers.flatMap { row -> [CanvasLabel] in
             let layout = TrackControlLayout(row: CGRect(x: 0, y: Double(row.y), width: header.width, height: Double(row.height)))
             let fx = TrackFXLayout(row: layout.row)
@@ -189,20 +193,18 @@ final class ArrangePainter {
                         clip: SIMD4(Float(folder.titleX), row.y, Float(folder.titleWidth), max(0, row.height - 1)),
                         color: color)] + fxLabels + folderLabels + nameLabels
         }
-        encodeLabels(text, scale: scale, encoder: encoder, texture: texture, bounds: bounds)
-        if let layout = frame.clipControlLayout, let id = frame.input.selectedClip, let clip = frame.input.snapshot?.clipMix(id) {
-            let gain = frame.input.clipDraft?.gain ?? clip.gain
-            let rect = SIMD4(Float(layout.gain.midX - 35), Float(layout.gain.maxY + 2), 80, 18)
-            encodeLabels([CanvasLabel(text: MixScale.label(gain), rect: rect,
-                clip: SIMD4(Float(max(frame.timelineOrigin, layout.rect.minX)), Float(layout.rect.minY),
-                            Float(max(0, min(frame.input.width, layout.rect.maxX) - max(frame.timelineOrigin, layout.rect.minX))), Float(layout.rect.height)),
-                color: SIMD4(1, 1, 1, 1))], scale: scale, encoder: encoder, texture: texture, bounds: bounds)
-        }
+        guard let layout = frame.clipControlLayout, let id = frame.input.selectedClip, let clip = frame.input.snapshot?.clipMix(id) else { return text }
+        let gain = frame.input.clipDraft?.gain ?? clip.gain
+        let rect = SIMD4(Float(layout.gain.midX - 35), Float(layout.gain.maxY + 2), 80, 18)
+        return text + [CanvasLabel(text: MixScale.label(gain), rect: rect,
+            clip: SIMD4(Float(max(frame.timelineOrigin, layout.rect.minX)), Float(layout.rect.minY),
+                        Float(max(0, min(frame.input.width, layout.rect.maxX) - max(frame.timelineOrigin, layout.rect.minX))), Float(layout.rect.height)),
+            color: SIMD4(1, 1, 1, 1))]
     }
 
-    private func encodeLabels(_ text: [CanvasLabel], scale: Double, encoder: any MTLRenderCommandEncoder,
-                              texture: any MTLTexture, bounds: CGRect) {
-        let textures = labels.prepare(labels: text, scale: scale, device: device)
+    /// `textures` comes from the frame's one `prepare` call.
+    private func drawLabels(_ text: [CanvasLabel], textures: [CanvasLabelKey: any MTLTexture], scale: Double,
+                            encoder: any MTLRenderCommandEncoder, texture: any MTLTexture, bounds: CGRect) {
         encoder.setRenderPipelineState(labelPipeline)
         for item in text {
             let labelClip = CGRect(x: Double(item.clip.x), y: Double(item.clip.y),

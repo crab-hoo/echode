@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -49,6 +49,11 @@ spike-arrange-frame:
 spike-piano-frame:
 	cargo build -q -p echode-ffi
 	swift run --package-path swift/EchodeApp --scratch-path target/echode-app EchodeAppProbe --offscreen-piano "$(CURDIR)/target/spike-piano-frame.json"
+
+# Main-thread time of position polls and divider drags, and arrange label work (E2).
+spike-main-thread:
+	cargo build -q -p echode-ffi
+	swift run -q -c release --package-path swift/EchodeApp --scratch-path target/echode-app-release EchodeAppProbe --main-thread "$(CURDIR)/target/spike-main-thread.json"
 
 # Portable checks include required product regressions, once each.
 check:

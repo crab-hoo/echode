@@ -58,7 +58,7 @@ struct RulerLoopTests {
         #expect(ranges == [expected] && starts.isEmpty)
         await controller.setLoopRange(expected, documentID: document)
         #expect(controller.rulerLoop?.range == expected && controller.audio.loopStart == nil)
-        #expect(controller.playbackStart == 0 && controller.audio.tick == 0 && !controller.audio.running)
+        #expect(controller.playbackStart == 0 && controller.position == 0 && !controller.audio.running)
 
         // Reversed drags sort their endpoints. Shift frees both endpoints.
         try down(4.1)

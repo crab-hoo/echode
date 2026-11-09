@@ -53,7 +53,7 @@ struct WorkspaceFileBrowser: View {
                                onAudition: { session.auditionSelected(origin: $0) },
                                onPlayback: { session.perform(.playback) })
                 if let selected, selected.audio {
-                    SamplePreview(url: selected.url, status: session.controller.audio.audition,
+                    SamplePreview(url: selected.url, status: session.controller.audition,
                                   overview: browser.overviews.entry(for: selected.url),
                                   onSeek: { frame, origin in session.auditionSelected(origin: origin, from: frame, expected: selected.url) })
                 }
@@ -61,7 +61,7 @@ struct WorkspaceFileBrowser: View {
                     canPlay: selected?.audio == true && session.controller.document != nil,
                     onAutomatic: session.setAutomaticAudition, onGain: session.setAuditionGain,
                     onPlay: { session.auditionSelected() }, onStop: { session.controller.audition(nil) })
-                if let error = session.controller.audio.audition?.outputError {
+                if let error = session.controller.audition?.outputError {
                     Text(text("Sample output unavailable")).font(.caption).foregroundStyle(.secondary).help(error)
                 }
                 HStack {

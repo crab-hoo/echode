@@ -71,7 +71,7 @@ struct PianoWorkflowTests {
         timeline.mouseDown(with: event)
         #expect(opens == 1 && controller.pianoTrack == melody && state.showsEditor,
                 "a blank arrange double click must explicitly open that piano track and location")
-        #expect(controller.playbackStart == 123 && controller.audio.tick == 123 && controller.undoCount == undo)
+        #expect(controller.playbackStart == 123 && controller.position == 123 && controller.undoCount == undo)
         let location = try #require(controller.pianoLocation)
         #expect(location.tick == 3 * 705_600)
         let piano = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))

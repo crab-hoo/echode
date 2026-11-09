@@ -24,7 +24,7 @@ extension ProjectController {
     func captureAudioImport(_ url: URL, on track: UUID? = nil) -> AudioImportRequest? {
         guard let documentID, let target = track ?? selection,
               tracks.contains(where: { $0.id == target }) else { return nil }
-        let tick = playback?.position.tick ?? audio.tick
+        let tick = playback?.position.tick ?? position
         guard tick >= 0 else { return nil }
         return AudioImportRequest(url: url, document: documentID, track: target, tick: tick)
     }
