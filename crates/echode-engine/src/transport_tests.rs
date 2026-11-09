@@ -155,7 +155,7 @@ fn a_loop_that_does_not_move_is_rejected() {
             Tick::quarters(2).unwrap(),
         )))
         .unwrap_err();
-    assert_eq!(error, PlaybackError::InvalidLoop);
+    assert!(matches!(error, PlaybackError::InvalidLoop));
     assert!(Transport::new(0, TempoMap::new(Tempo::quarters_per_minute(120).unwrap())).is_err());
 }
 
@@ -174,10 +174,10 @@ fn an_undersized_span_buffer_does_not_move_the_playhead() {
         loop_end: None,
         wrap_from: None,
     }; 1];
-    assert_eq!(
+    assert!(matches!(
         transport.pull(24_064, &mut spans).unwrap_err(),
         PlaybackError::BufferTooSmall
-    );
+    ));
     assert_eq!(transport.position_sample(), 0);
     assert!(!transport.has_wrapped);
 }

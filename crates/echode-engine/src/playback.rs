@@ -1612,9 +1612,7 @@ impl PlaybackControl {
         if self.status.playing.load(Ordering::Acquire)
             || self.status.applied_command.load(Ordering::Acquire) != self.command_revision
         {
-            return Err(PlaybackError::Unsupported(
-                "cached sources require an idle transport".into(),
-            ));
+            return Err(PlaybackError::TransportBusy);
         }
         let mut next = BTreeMap::new();
         for cache in caches {
@@ -2033,7 +2031,7 @@ impl PlaybackControl {
             .iter()
             .find(|(id, _)| *id == device)
             .map(|(_, control)| control)
-            .ok_or_else(|| PlaybackError::Unsupported("the device has no running plugin".into()))
+            .ok_or(PlaybackError::NoRunningPlugin)
     }
 
     /// A control-only endpoint, so another thread can wait for a device reply.
@@ -2055,7 +2053,7 @@ impl PlaybackControl {
     pub fn restore_device_state(&self, device: u128, bytes: &[u8]) -> Result<(), PlaybackError> {
         self.device_control(device)?
             .restore_state(bytes)
-            .map_err(|error| PlaybackError::Unsupported(error.to_string()))
+            .map_err(|error| PlaybackError::helper(device, error))
     }
 
     /// Brings the running helpers of `devices` to their recorded bytes, for an

@@ -9,8 +9,8 @@
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Async, Fft, FixedAsync, FixedSync, Resampler, SincInterpolationParameters};
 
+use crate::PlaybackError;
 use crate::realtime::ForbidAlloc;
-use crate::transport::PlaybackError;
 
 /// Identity recorded in a project and in a preview-cache key.
 pub const CONVERTER_ID: &str = "rubato";
@@ -195,10 +195,10 @@ mod tests {
     fn a_zero_rate_is_rejected() {
         let input = [1.0; 8];
         let mut output = [0.0; 8];
-        assert_eq!(
+        assert!(matches!(
             resample_into(&input, 0, &mut output, 48_000).unwrap_err(),
             PlaybackError::InvalidSampleRate
-        );
+        ));
         assert_eq!(default_converter(), ConverterMode::Fft);
         assert_eq!(CONVERTER_ID, "rubato");
         assert_eq!(CONVERTER_VERSION, "5.0.1");

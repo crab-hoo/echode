@@ -113,9 +113,12 @@ fn contract_live_workgroup_failure_cannot_be_silent_offline_hosting() {
             .plugins(&host_bin(), &[route])
             .workgroup(group),
     );
-    assert!(
-        matches!(result, Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("device workgroup or period is invalid"))
-    );
+    assert!(matches!(
+        result,
+        Err(echode_engine::PlaybackError::Workgroup(
+            echode_engine::WorkgroupError::InvalidDevice
+        ))
+    ));
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
@@ -149,9 +152,12 @@ fn a_workgroup_given_without_helpers_reaches_helpers_started_later() {
     let edited = project
         .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
         .unwrap();
-    assert!(
-        matches!(control.replace(&edited), Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("device workgroup or period is invalid"))
-    );
+    assert!(matches!(
+        control.replace(&edited),
+        Err(echode_engine::PlaybackError::Workgroup(
+            echode_engine::WorkgroupError::InvalidDevice
+        ))
+    ));
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
@@ -395,8 +401,9 @@ fn contract_macos_bundle_scan_to_playback_and_load_errors() {
     }
     let broken = fixture.0.join("Broken.clap");
     std::fs::create_dir_all(&broken).unwrap();
+    let broken_device = Id::generate();
     let project = dry_project
-        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .add_clap_device(track, broken_device, "dev.echode.test-gain")
         .unwrap();
     let route = PluginRoute {
         clap_id: "dev.echode.test-gain".into(),
@@ -405,9 +412,25 @@ fn contract_macos_bundle_scan_to_playback_and_load_errors() {
         fault: None,
         state: None,
     };
-    assert!(
-        playback_with_plugins(&project, 48000, frames, &host_bin(), &[route]).is_err(),
-        "a broken installed bundle must not become a successful dry track"
+    // ADR 0294: the helper's own cause reaches the caller, not only its text.
+    let Err(error) = playback_with_plugins(&project, 48000, frames, &host_bin(), &[route]) else {
+        panic!("a broken installed bundle must not become a successful dry track");
+    };
+    let echode_engine::PlaybackError::Spawn {
+        device,
+        ref clap_id,
+        error: ref cause,
+    } = error
+    else {
+        panic!("a broken bundle is a spawn failure: {error:?}");
+    };
+    assert_eq!(
+        (device, clap_id.as_str()),
+        (broken_device.raw(), "dev.echode.test-gain")
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("device {device} (dev.echode.test-gain): {cause}")
     );
 }
 

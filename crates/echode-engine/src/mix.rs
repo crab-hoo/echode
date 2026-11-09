@@ -6,7 +6,7 @@
 //! The number of tracks and channels is the length of the slices the caller
 //! passes, not a fixed cap.
 
-use crate::transport::PlaybackError;
+use crate::PlaybackError;
 use dasp_interpolate::{Interpolator, linear::Linear};
 
 /// A supported track bus. A mono source is promoted at equal power when it

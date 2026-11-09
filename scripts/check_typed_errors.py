@@ -4,8 +4,10 @@
 A crate on this list has an error enum at its boundary (M1, ADR 0291), so its
 callers branch on the cause instead of on text. Product code in it must not
 name `Result<_, String>` anywhere: not in a signature, a channel or a closure.
-Tests may, since a fixture's message is not a boundary. Text is still made
-where a report reaches the app; that is a `String` field, not a `Result`.
+Nor may a `map_err` turn the error it receives into text (ADR 0294): a variant
+that holds `error.to_string()` hides the cause the same way. Tests may, since
+a fixture's message is not a boundary. Text is still made where a report
+reaches the app; that is a `String` field, not a `Result`.
 """
 
 from pathlib import Path
@@ -17,10 +19,13 @@ ROOT = Path(__file__).resolve().parent.parent
 TYPED_CRATES = (
     'echode-audio-io',
     'echode-document',
+    'echode-engine',
     'echode-sandbox',
 )
 STRING = {'String', 'std::string::String', 'alloc::string::String'}
 RESULT = re.compile(r'\bResult\s*<')
+MAP_ERR = re.compile(r'\.map_err\s*\(')
+TEXT = re.compile(r'\.to_string\s*\(\s*\)|\bformat!\s*\(')
 COMMENT = re.compile(r'//[^\n]*')
 OPEN = '<([{'
 CLOSE = '>)]}'
@@ -69,6 +74,30 @@ def string_results(text):
     return lines
 
 
+def closing(text, start):
+    """The index after the bracket that closes the one at `start`, or None."""
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] in OPEN:
+            depth += 1
+        elif text[index] in CLOSE:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def text_errors(text):
+    """Line numbers where a `map_err` makes text from the error it receives."""
+    code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
+    lines = []
+    for match in MAP_ERR.finditer(code):
+        end = closing(code, match.end() - 1)
+        if end is not None and TEXT.search(code, match.end(), end):
+            lines.append(code.count('\n', 0, match.start()) + 1)
+    return lines
+
+
 def is_test(path):
     return path.name.endswith('_tests.rs') or 'tests' in path.parts
 
@@ -91,6 +120,8 @@ def problems(root):
                 text = text[:inline.start()]
             for line in string_results(text):
                 found.append(f'{relative.as_posix()}:{line}: returns a String error')
+            for line in text_errors(text):
+                found.append(f'{relative.as_posix()}:{line}: turns an error into text')
     return found
 
 

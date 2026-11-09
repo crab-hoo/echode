@@ -5,7 +5,8 @@
 //! plane; the mixer repeats it per channel, so the channel count is not fixed.
 //! Audio here is already at the device rate. Sample-rate conversion is separate.
 
-use crate::transport::{PlaybackError, PlayedSpan};
+use crate::PlaybackError;
+use crate::transport::PlayedSpan;
 
 /// Five milliseconds. Long enough to hide a waveform step, short enough to
 /// leave the note intact.

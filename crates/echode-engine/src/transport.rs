@@ -7,55 +7,9 @@
 use echode_model::{Meter, TICKS_PER_QUARTER, TempoMap, Tick};
 use echode_realtime::Event;
 
+use crate::PlaybackError;
 use crate::clock::{sample_to_tick, tick_to_sample};
 use crate::{ClockSource, InternalClock};
-
-/// Why playback could not step.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PlaybackError {
-    InvalidSampleRate,
-    InvalidLoop,
-    InvalidFader,
-    Time,
-    BufferTooSmall,
-    IdSpace,
-    InvalidDevice,
-    Plugin,
-    /// The plugin loaded, but its audio ports are not a layout this host can run.
-    Unsupported(String),
-    Media,
-}
-
-impl std::fmt::Display for PlaybackError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let message = match self {
-            Self::InvalidSampleRate => "sample rate must be above zero",
-            Self::InvalidLoop => "loop end must be after its start",
-            Self::InvalidFader => "pan must be from -1 to 1 and gain must be finite",
-            Self::Time => "playback position overflowed",
-            Self::BufferTooSmall => "the caller buffer cannot hold this block",
-            Self::IdSpace => "playback note numbers are exhausted",
-            Self::InvalidDevice => "device state or parameter is not valid",
-            Self::Plugin => "plugin helper did not start",
-            Self::Unsupported(reason) => reason.as_str(),
-            Self::Media => "audio file could not be read",
-        };
-        formatter.write_str(message)
-    }
-}
-
-impl std::error::Error for PlaybackError {}
-
-impl From<echode_dsp::DspError> for PlaybackError {
-    fn from(error: echode_dsp::DspError) -> Self {
-        match error {
-            echode_dsp::DspError::InvalidSampleRate => Self::InvalidSampleRate,
-            echode_dsp::DspError::BufferTooSmall => Self::BufferTooSmall,
-            echode_dsp::DspError::Time => Self::Time,
-            echode_dsp::DspError::InvalidState => Self::InvalidDevice,
-        }
-    }
-}
 
 /// One continuous run of samples inside a block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

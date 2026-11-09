@@ -5,7 +5,7 @@
 
 use echode_realtime::Event;
 
-use crate::transport::PlaybackError;
+use crate::PlaybackError;
 
 /// A local DSP interface. Product instruments use the isolated CLAP graph.
 ///

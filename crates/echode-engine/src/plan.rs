@@ -6,7 +6,7 @@ use std::sync::Arc;
 use echode_model::{Content, Project, TempoMap, Track};
 use echode_realtime::{NoteIndex, NoteSpan, Plan, TempoIndex, TrackPlan};
 
-use crate::transport::PlaybackError;
+use crate::PlaybackError;
 
 pub fn tempo_index(tempo: &TempoMap) -> Result<TempoIndex, PlaybackError> {
     Ok(tempo.index().clone())

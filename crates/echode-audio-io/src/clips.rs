@@ -135,9 +135,7 @@ fn placed_audio<'a>(project: &'a Project, rate: u32) -> Result<Vec<Placed<'a>>, 
                 return Err(PlaybackError::Media);
             }
             if !matches!(audio.channels, 1 | 2) {
-                return Err(PlaybackError::Unsupported(
-                    "audio placement requires a mono or stereo layout".into(),
-                ));
+                return Err(PlaybackError::ClipChannels);
             }
             let start = tick_to_sample(placement.start, project.tempo(), rate)
                 .ok_or(PlaybackError::Time)?;

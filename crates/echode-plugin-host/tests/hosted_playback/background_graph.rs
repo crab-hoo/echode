@@ -148,7 +148,10 @@ fn contract_background_graph_keeps_control_turns_and_audio_under_rtsan() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(
-        control.device_control_handle(added_device.raw()).is_err(),
+        matches!(
+            control.device_control_handle(added_device.raw()),
+            Err(echode_engine::PlaybackError::NoRunningPlugin)
+        ),
         "deleted helper remained in the catalog"
     );
     assert!(control.device_control_handle(existing.raw()).is_ok());

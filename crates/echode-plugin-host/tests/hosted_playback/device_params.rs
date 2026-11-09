@@ -1,5 +1,6 @@
 use super::*;
-use echode_sandbox::{ParamChange, ParamText, ParamValue};
+use echode_engine::PlaybackError;
+use echode_sandbox::{ParamChange, ParamText, ParamValue, Refusal, SessionError};
 
 fn process_level(host: &mut PluginHost, input: f32) -> (f32, f32) {
     // One short block per check; this fixture length is not a host limit.
@@ -274,11 +275,23 @@ fn contract_parameter_edit_sounds_records_and_restores_under_rtsan() {
         );
         control.restore_device_state(device.raw(), &edited).unwrap();
         close(hear(&mut control, &mut audio, frames), 0.1875);
+        // ADR 0294: the plugin's refusal reaches the caller as the helper's
+        // own kind, not as text, and the device keeps sounding as before.
+        let refused = control.restore_device_state(device.raw(), &[0; 17]);
         assert!(
-            control
-                .device_control_handle(Id::from_raw(0x9B).raw())
-                .is_err()
+            matches!(
+                &refused,
+                Err(PlaybackError::Helper { device: failed, error })
+                    if *failed == device.raw()
+                        && matches!(**error, SessionError::Refused(Refusal::Other(_)))
+            ),
+            "{refused:?}"
         );
+        close(hear(&mut control, &mut audio, frames), 0.1875);
+        assert!(matches!(
+            control.device_control_handle(Id::from_raw(0x9B).raw()),
+            Err(PlaybackError::NoRunningPlugin)
+        ));
         if let Some(previous) = &recorded {
             assert_eq!(previous, &edited, "saved bytes depend on block length");
         }

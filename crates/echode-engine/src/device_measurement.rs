@@ -23,6 +23,72 @@ pub enum MeasurementEnd {
     ClockDiscontinuity,
 }
 
+/// Why the measurement could not start (ADR 0294). It ends early only by
+/// [`MeasurementEnd`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MeasurementError {
+    Device(DeviceError),
+    /// The output's nominal rate is not a positive finite number.
+    InvalidSampleRate,
+    /// The reference run needs [`TARGET_RATE`], and the device is at `rate`.
+    RateMismatch {
+        rate: f64,
+    },
+    /// One block at this rate is shorter than a nanosecond.
+    PeriodTooShort,
+    /// The run's sample storage cannot be addressed.
+    DurationTooLong,
+    /// The device refused the measurement's buffer size.
+    SetBuffer(i32),
+    /// The device accepted the request but kept this buffer size.
+    BufferKept(u32),
+    /// The workgroup allows this many threads, too few for automatic workers.
+    ParallelThreads(i32),
+    CreateIoProc(i32),
+    StartIo(i32),
+}
+
+impl From<DeviceError> for MeasurementError {
+    fn from(error: DeviceError) -> Self {
+        Self::Device(error)
+    }
+}
+
+impl std::fmt::Display for MeasurementError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Device(error) => error.fmt(formatter),
+            Self::InvalidSampleRate => formatter.write_str("invalid output sample rate"),
+            Self::RateMismatch { rate } => write!(
+                formatter,
+                "output device is at {rate} Hz; this spike requires {TARGET_RATE}"
+            ),
+            Self::PeriodTooShort => formatter.write_str("output period cannot be represented"),
+            Self::DurationTooLong => {
+                formatter.write_str("measurement duration cannot be represented")
+            }
+            Self::SetBuffer(status) => write!(
+                formatter,
+                "could not set buffer to {BLOCK_FRAMES} frames: {status}"
+            ),
+            Self::BufferKept(frames) => write!(
+                formatter,
+                "device kept a buffer of {frames} frames after requesting {BLOCK_FRAMES}"
+            ),
+            Self::ParallelThreads(count) => {
+                write!(
+                    formatter,
+                    "os_workgroup_max_parallel_threads returned {count}"
+                )
+            }
+            Self::CreateIoProc(status) => write!(formatter, "AudioDeviceCreateIOProcID: {status}"),
+            Self::StartIo(status) => write!(formatter, "AudioDeviceStart: {status}"),
+        }
+    }
+}
+
+impl std::error::Error for MeasurementError {}
+
 #[derive(Clone, Copy)]
 struct Observation {
     elapsed: Duration,
@@ -226,12 +292,15 @@ impl Session {
 }
 
 /// `workers` of `None` uses `os_workgroup_max_parallel_threads`, minus the IO thread.
-pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
+pub fn run(seconds: u64, workers: Option<usize>) -> Result<Report, MeasurementError> {
     run_measurement(seconds, workers, true)
 }
 
 /// Brief hardware checks use the current device rate without reconfiguring it.
-pub fn run_at_device_rate(seconds: u64, workers: Option<usize>) -> Result<Report, String> {
+pub fn run_at_device_rate(
+    seconds: u64,
+    workers: Option<usize>,
+) -> Result<Report, MeasurementError> {
     run_measurement(seconds, workers, false)
 }
 
@@ -239,18 +308,16 @@ fn measurement_geometry(
     sample_rate: f64,
     seconds: u64,
     require_reference_rate: bool,
-) -> Result<(u64, usize), String> {
+) -> Result<(u64, usize), MeasurementError> {
     if !sample_rate.is_finite() || sample_rate <= 0.0 {
-        return Err("invalid output sample rate".to_string());
+        return Err(MeasurementError::InvalidSampleRate);
     }
     if require_reference_rate && (sample_rate - TARGET_RATE).abs() > 1.0 {
-        return Err(format!(
-            "output device is at {sample_rate} Hz; this spike requires {TARGET_RATE}"
-        ));
+        return Err(MeasurementError::RateMismatch { rate: sample_rate });
     }
     let budget_ns = (BLOCK_FRAMES as f64 * 1_000_000_000.0 / sample_rate) as u64;
     if budget_ns == 0 {
-        return Err("output period cannot be represented".to_string());
+        return Err(MeasurementError::PeriodTooShort);
     }
     // Storage covers this measurement, including control-loop overshoot and
     // warmup. It is not a project limit, and scales with the actual IO rate.
@@ -259,7 +326,7 @@ fn measurement_geometry(
         .checked_mul(callbacks_per_second)
         .and_then(|count| count.checked_add(u128::from(WARMUP_CALLBACKS)))
         .and_then(|count| usize::try_from(count).ok())
-        .ok_or("measurement duration cannot be represented")?;
+        .ok_or(MeasurementError::DurationTooLong)?;
     Ok((budget_ns, capacity))
 }
 
@@ -267,28 +334,26 @@ fn run_measurement(
     seconds: u64,
     workers: Option<usize>,
     require_reference_rate: bool,
-) -> Result<Report, String> {
-    let device = default_output().map_err(|status| format!("default output device: {status}"))?;
+) -> Result<Report, MeasurementError> {
+    let device = default_output().map_err(|status| DeviceProperty::DefaultOutput.failed(status))?;
     let sample_rate =
-        get_f64(device, SAMPLE_RATE).map_err(|status| format!("sample rate: {status}"))?;
+        get_f64(device, SAMPLE_RATE).map_err(|status| DeviceProperty::SampleRate.failed(status))?;
     let (budget_ns, capacity) = measurement_geometry(sample_rate, seconds, require_reference_rate)?;
-    let original_buffer =
-        get_u32(device, BUFFER_FRAMES).map_err(|status| format!("buffer size: {status}"))?;
+    let original_buffer = get_u32(device, BUFFER_FRAMES)
+        .map_err(|status| DeviceProperty::BufferFrames.failed(status))?;
     let original_mute = get_u32(device, PROCESS_MUTE).ok();
     set_u32(device, BUFFER_FRAMES, SCOPE_GLOBAL, BLOCK_FRAMES as u32)
         .or_else(|_| set_u32(device, BUFFER_FRAMES, SCOPE_OUTPUT, BLOCK_FRAMES as u32))
-        .map_err(|status| format!("could not set buffer to {BLOCK_FRAMES} frames: {status}"))?;
+        .map_err(MeasurementError::SetBuffer)?;
     let _restore = Restore {
         device,
         buffer_frames: original_buffer,
         mute: original_mute,
     };
-    let actual_buffer =
-        get_u32(device, BUFFER_FRAMES).map_err(|status| format!("read buffer: {status}"))?;
+    let actual_buffer = get_u32(device, BUFFER_FRAMES)
+        .map_err(|status| DeviceProperty::BufferFrames.failed(status))?;
     if actual_buffer != BLOCK_FRAMES as u32 {
-        return Err(format!(
-            "device kept a buffer of {actual_buffer} frames after requesting {BLOCK_FRAMES}"
-        ));
+        return Err(MeasurementError::BufferKept(actual_buffer));
     }
     let _ = set_u32(device, PROCESS_MUTE, SCOPE_GLOBAL, 1);
     let _ = set_u32(device, PROCESS_MUTE, SCOPE_OUTPUT, 1);
@@ -299,10 +364,10 @@ fn run_measurement(
     let budget_ticks = (u128::from(budget_ns) * u128::from(timebase.denom)
         / u128::from(timebase.numer.max(1))) as u64;
 
-    let workgroup =
-        get_pointer(device, WORKGROUP).map_err(|status| format!("workgroup: {status}"))?;
+    let workgroup = get_pointer(device, WORKGROUP)
+        .map_err(|status| DeviceProperty::Workgroup.failed(status))?;
     if workgroup.is_null() {
-        return Err("device did not return an IO workgroup".to_string());
+        return Err(DeviceError::NoWorkgroup.into());
     }
 
     let workgroup_parallel = crate::graph::workgroup_parallel_threads(workgroup);
@@ -311,9 +376,7 @@ fn run_measurement(
         None => {
             if workgroup_parallel <= 1 {
                 unsafe { os_release(workgroup) };
-                return Err(format!(
-                    "os_workgroup_max_parallel_threads returned {workgroup_parallel}"
-                ));
+                return Err(MeasurementError::ParallelThreads(workgroup_parallel));
             }
             (workgroup_parallel as usize) - 1
         }
@@ -347,14 +410,14 @@ fn run_measurement(
     if status != 0 {
         drop(workers);
         unsafe { os_release(workgroup) };
-        return Err(format!("AudioDeviceCreateIOProcID: {status}"));
+        return Err(MeasurementError::CreateIoProc(status));
     }
     let status = unsafe { AudioDeviceStart(device, proc_id) };
     if status != 0 {
         unsafe { AudioDeviceDestroyIOProcID(device, proc_id) };
         drop(workers);
         unsafe { os_release(workgroup) };
-        return Err(format!("AudioDeviceStart: {status}"));
+        return Err(MeasurementError::StartIo(status));
     }
 
     let started = Instant::now();

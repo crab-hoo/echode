@@ -460,7 +460,7 @@ fn contract_a_first_device_view_opens_the_output_without_holding_edits_or_transp
     assert!(
         matches!(
             error,
-            AudioError::Playback(echode_engine::PlaybackError::Unsupported(_))
+            AudioError::Playback(echode_engine::PlaybackError::NoRunningPlugin)
         ),
         "{error}"
     );

@@ -645,7 +645,7 @@ impl HostGraph {
                     .instance
                     .host()
                     .cancel_mapping()
-                    .map_err(|_| PlaybackError::Plugin)?;
+                    .map_err(|error| PlaybackError::helper(stage.device, error))?;
             }
         }
         Ok(())
@@ -1456,7 +1456,7 @@ fn fit_stage(stage: &mut Stage, delivery: usize) -> Result<(), PlaybackError> {
     let mut next = layout;
     next.input_events = delivery;
     host.prepare_mapping(next)
-        .map_err(|error| PlaybackError::Unsupported(error.to_string()))?;
+        .map_err(|error| PlaybackError::helper(stage.device, error))?;
     Ok(())
 }
 
@@ -1493,9 +1493,8 @@ fn spawn_stage(
     let shared = if let Some(fan) = fan {
         Arc::clone(fan)
     } else {
-        let created = Arc::new(
-            FanIn::create().map_err(|error| PlaybackError::Unsupported(error.to_string()))?,
-        );
+        let created =
+            Arc::new(FanIn::create().map_err(|error| PlaybackError::FanIn(Arc::new(error)))?);
         *fan = Some(Arc::clone(&created));
         created
     };
@@ -1510,10 +1509,7 @@ fn spawn_stage(
         host_bin,
         plugin: Some(route.path.as_path()),
         fault: route.fault.as_deref(),
-        workgroup: workgroup
-            .map(|source| source())
-            .transpose()
-            .map_err(|error| PlaybackError::Unsupported(error.to_string()))?,
+        workgroup: workgroup.map(|source| source()).transpose()?,
         layout,
         fan_in: Some(shared),
         sample_rate,
@@ -1523,17 +1519,17 @@ fn spawn_stage(
             if let Some(bytes) = &route.state {
                 host.control_handle()
                     .restore_state(bytes)
-                    .map_err(|error| PlaybackError::Unsupported(error.to_string()))?;
+                    .map_err(|error| PlaybackError::helper(device.id, error))?;
             }
             host
         }
         Err(error) => {
-            let text = error.to_string();
             if route.path.exists() {
-                return Err(PlaybackError::Unsupported(format!(
-                    "device {} ({}): {text}",
-                    device.id, device.clap_id
-                )));
+                return Err(PlaybackError::Spawn {
+                    device: device.id,
+                    clap_id: device.clap_id.clone(),
+                    error: Arc::new(error),
+                });
             }
             return Ok(None);
         }
@@ -1752,10 +1748,10 @@ fn validate_chain(stages: &mut [Stage], clip_stereo: bool) -> Result<(), Playbac
             || (channels == 2 && stage.main_inputs == 1 && !(index == 0 && stage.instrument))
             || (index == 0 && stage.instrument && clip_stereo && stage.main_outputs == 1)
         {
-            return Err(PlaybackError::Unsupported(format!(
-                "device {} ({}): unsupported mono/stereo bus mapping",
-                stage.device, stage.clap_id
-            )));
+            return Err(PlaybackError::BusMapping {
+                device: stage.device,
+                clap_id: stage.clap_id.clone(),
+            });
         }
         channels = stage.main_outputs;
     }

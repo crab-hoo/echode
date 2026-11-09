@@ -1,4 +1,4 @@
-"""ADR 0291: crates with typed errors do not return `String` errors again."""
+"""ADR 0291, 0294: crates with typed errors do not return `String` errors again."""
 
 from pathlib import Path
 import sys
@@ -50,6 +50,25 @@ class TypedErrors(unittest.TestCase):
                 self.assertEqual(
                     check_typed_errors.problems(root),
                     [f"{source}:{line}: returns a String error" for line in lines],
+                )
+
+    def test_errors_turned_into_text_are_found(self):
+        crate = check_typed_errors.TYPED_CRATES[0]
+        source = f"crates/{crate}/src/lib.rs"
+        cases = {
+            "fn f() { g().map_err(|error| E::Other(error.to_string()))?; }\n": [1],
+            "fn f() {\n    g()\n        .map_err(|status| E::Io(format!(\"x: {status}\")))?;\n}\n": [3],
+            "fn f() { g().map_err(|e| E::A(Box::new(e.to_string ())))?; }\n": [1],
+            "fn f() { g().map_err(E::Io)?; let s = x.to_string(); }\n": [],
+            "fn f() { g().map_err(|error| E::Io(Arc::new(error)))?; }\n": [],
+            "// g().map_err(|e| e.to_string())\nfn f() {}\n": [],
+        }
+        for text, lines in cases.items():
+            with self.subTest(text=text):
+                root = self.tree({source: text})
+                self.assertEqual(
+                    check_typed_errors.problems(root),
+                    [f"{source}:{line}: turns an error into text" for line in lines],
                 )
 
     def test_test_files_are_fixtures(self):

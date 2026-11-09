@@ -49,7 +49,7 @@ fn unhosted_export_refuses_to_ignore_a_recorded_instrument() {
     let mut samples = [0.0; 128];
     assert!(matches!(
         render_offline(&project, 48_000, 64, &mut samples),
-        Err(PlaybackError::Unsupported(_))
+        Err(PlaybackError::NeedsPluginHost)
     ));
 }
 

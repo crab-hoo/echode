@@ -55,11 +55,11 @@ fn split_blocks_match_one_render_and_a_second_pass_matches() {
 fn the_synth_rejects_a_bad_rate_a_short_buffer_and_a_late_event() {
     let mut voices = slots::<1>(48_000);
     let mut output = [0.0; 4];
-    assert_eq!(
+    assert!(matches!(
         render_test_synth(&[on(0, 2, 60)], &mut voices, 0, &mut output).unwrap_err(),
         PlaybackError::InvalidSampleRate
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         render_test_synth(
             &[on(0, 2, 60)],
             &mut slots::<1>(44_100),
@@ -68,8 +68,8 @@ fn the_synth_rejects_a_bad_rate_a_short_buffer_and_a_late_event() {
         )
         .unwrap_err(),
         PlaybackError::InvalidSampleRate
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         render_test_synth(
             &[on(0, 2, 60), on(0, 3, 62)],
             &mut voices,
@@ -78,12 +78,12 @@ fn the_synth_rejects_a_bad_rate_a_short_buffer_and_a_late_event() {
         )
         .unwrap_err(),
         PlaybackError::BufferTooSmall
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         render_test_synth(&[on(4, 2, 60)], &mut voices, 48_000, &mut output).unwrap_err(),
         PlaybackError::BufferTooSmall
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         render_test_synth(
             &[on(2, 2, 60), on(1, 3, 62)],
             &mut voices,
@@ -92,7 +92,7 @@ fn the_synth_rejects_a_bad_rate_a_short_buffer_and_a_late_event() {
         )
         .unwrap_err(),
         PlaybackError::Time
-    );
+    ));
 }
 
 #[test]
@@ -116,10 +116,10 @@ fn note_off_keeps_the_voice_until_the_release_ends() {
     let mut output = [0.0; 8];
     render_test_synth(&[on(0, 2, 60), off(1, 2)], &mut voices, 48_000, &mut output).unwrap();
     assert!(voices[0].is_active());
-    assert_eq!(
+    assert!(matches!(
         render_test_synth(&[on(0, 3, 64)], &mut voices, 48_000, &mut output).unwrap_err(),
         PlaybackError::BufferTooSmall
-    );
+    ));
 }
 
 #[test]

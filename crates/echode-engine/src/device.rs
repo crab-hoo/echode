@@ -8,6 +8,8 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+use crate::{DeviceError, DeviceProperty};
+
 #[cfg(feature = "spike")]
 use libc::mach_absolute_time;
 use libc::{mach_timebase_info, mach_timebase_info as Timebase};
@@ -58,17 +60,17 @@ pub struct IoWorkgroup {
 }
 
 impl IoWorkgroup {
-    pub fn open() -> Result<Self, String> {
+    pub fn open() -> Result<Self, DeviceError> {
         let device =
-            default_output().map_err(|status| format!("default output device: {status}"))?;
-        let sample_rate =
-            get_f64(device, SAMPLE_RATE).map_err(|status| format!("sample rate: {status}"))?;
-        let frames =
-            get_u32(device, BUFFER_FRAMES).map_err(|status| format!("buffer size: {status}"))?;
-        let object =
-            get_pointer(device, WORKGROUP).map_err(|status| format!("workgroup: {status}"))?;
+            default_output().map_err(|status| DeviceProperty::DefaultOutput.failed(status))?;
+        let sample_rate = get_f64(device, SAMPLE_RATE)
+            .map_err(|status| DeviceProperty::SampleRate.failed(status))?;
+        let frames = get_u32(device, BUFFER_FRAMES)
+            .map_err(|status| DeviceProperty::BufferFrames.failed(status))?;
+        let object = get_pointer(device, WORKGROUP)
+            .map_err(|status| DeviceProperty::Workgroup.failed(status))?;
         if object.is_null() {
-            return Err("device did not return an IO workgroup".to_string());
+            return Err(DeviceError::NoWorkgroup);
         }
         let mut timebase = Timebase { numer: 0, denom: 1 };
         // SAFETY: `timebase` is a valid out-parameter.

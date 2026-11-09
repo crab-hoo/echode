@@ -53,7 +53,7 @@ impl GraphPreparation {
                 });
                 (hosts, pending, result)
             })
-            .map_err(|error| PlaybackError::Unsupported(error.to_string()))?;
+            .map_err(PlaybackError::thread)?;
         Ok(Self {
             thread: Some(thread),
             restore_states,

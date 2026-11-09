@@ -11,8 +11,9 @@
 use echode_model::{Meter, Project, TICKS_PER_QUARTER, TempoMap};
 use echode_realtime::{Event, TempoIndex};
 
+use crate::PlaybackError;
 use crate::plan::PlaybackIds;
-use crate::transport::{PlaybackError, PlayedSpan};
+use crate::transport::PlayedSpan;
 
 /// Writes note edges that fall in `spans`, then sorts them by time.
 ///

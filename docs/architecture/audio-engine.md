@@ -174,6 +174,9 @@ OS の数学ライブラリを使う実装では `sw_vers` のプロダクト版
   エンジン・パッケージを変種で区別する。セッションは最後の失敗を型のまま持ち、開けなかった出力の原因をデバイス要求へ返す。
   文字列にするのは状態・試聴の報告の欄と FFI の波形の概観だけで、文面は従来のままである。文書の手番は `DocumentError::Audio` として型のまま運ぶ。
   `scripts/check_typed_errors.py` が `Result<_, String>` の再導入を拒否する（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)）
+- **エンジンのエラー**: `PlaybackError` は原因ごとの変種で、ヘルパーの起動・状態の復元・対応の失敗は `Spawn`・`Helper` が `Arc<SessionError>` を型のまま持つ。
+  busy・ヘルパーの時間切れ（結果不明）は `SessionError::Refused` の種類で分かれる。文は `Display` だけで作り、従来の文面を保つ
+  （[ADR 0294](../decisions/0294-typed-engine-errors.md)）
 - **出力のブロックの期限**: 出力の IOProc は、HAL の出力時刻から機器の出力側の安全余白とブロックの 1/16 を引いた時刻にブロックを終える。
   残りは同じ機器の試聴の IOProc と HAL の書込みの分で、入口から 1 ブロックを上限にする。ヘルパーの待ちはそこから 1/8 前まで
   （[ADR 0283](../decisions/0283-output-time-callback-deadline.md)、[ADR 0082](../decisions/0082-callback-deadline.md)）

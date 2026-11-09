@@ -68,10 +68,10 @@ fn a_centered_stereo_track_keeps_its_sides_and_a_hard_left_drops_the_right() {
         channels: &odd_channels,
     };
     let mut master: [&mut [f32]; 2] = [&mut left, &mut right];
-    assert_eq!(
+    assert!(matches!(
         mix_buses(&[odd], &[TrackFader::unity()], &mut master, &mut peaks).unwrap_err(),
         PlaybackError::BufferTooSmall
-    );
+    ));
 }
 
 #[test]
@@ -146,12 +146,12 @@ fn two_tracks_sum_and_a_bad_fader_is_rejected() {
         pan: 1.5,
         ..TrackFader::unity()
     };
-    assert_eq!(
+    assert!(matches!(
         mix_tracks(&[&a], &[wild], &mut left, &mut right, &mut peaks[..1]).unwrap_err(),
         PlaybackError::InvalidFader
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         mix_tracks(&[&a, &b], &[half], &mut left, &mut right, &mut peaks).unwrap_err(),
         PlaybackError::BufferTooSmall
-    );
+    ));
 }

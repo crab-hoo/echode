@@ -13,8 +13,8 @@ use dasp_interpolate::sinc::Sinc;
 use dasp_ring_buffer::Fixed;
 use echode_realtime::Event;
 
+use crate::PlaybackError;
 use crate::realtime::ForbidAlloc;
-use crate::transport::PlaybackError;
 
 pub use echode_dsp::{
     INSTRUMENT as TEST_SYNTH_INSTRUMENT, SYNTH_ID as TEST_SYNTH_ID,

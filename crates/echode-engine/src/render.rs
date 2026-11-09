@@ -3,8 +3,8 @@
 
 use echode_model::Project;
 
+use crate::PlaybackError;
 use crate::clock::tick_to_sample;
-use crate::transport::PlaybackError;
 
 /// Scratch length for one offline block. The render can be any number of frames.
 const BLOCK_FRAMES: u32 = 64;
@@ -142,9 +142,7 @@ pub fn render_offline_blocks_with_clips<E>(
         .flat_map(|track| &track.devices)
         .any(|device| device.plugin.is_some() && !device.offline)
     {
-        return Err(OfflineError::Playback(PlaybackError::Unsupported(
-            "device rendering requires the isolated plugin host".into(),
-        )));
+        return Err(OfflineError::Playback(PlaybackError::NeedsPluginHost));
     }
     let scratch = block_frames as usize;
     let (mut control, mut audio) = crate::playback::playback(

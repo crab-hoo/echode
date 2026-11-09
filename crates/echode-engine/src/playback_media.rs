@@ -63,7 +63,7 @@ impl MediaPreparation {
                     clips,
                 }
             })
-            .map_err(|error| PlaybackError::Unsupported(error.to_string()))?;
+            .map_err(PlaybackError::thread)?;
         Ok(Self {
             thread: Some(thread),
         })

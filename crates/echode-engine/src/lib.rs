@@ -26,6 +26,7 @@ mod bypass;
 mod clock;
 mod declick;
 mod device;
+mod error;
 #[cfg(feature = "spike")]
 mod graph;
 mod mix;
@@ -55,6 +56,7 @@ pub use clock::{sample_to_tick, tick_to_sample};
 pub use declick::OutputDeclick;
 pub use device::{IoWorkgroup, OutputInventory, output_inventory};
 pub use echode_realtime::Event;
+pub use error::{DeviceError, DeviceProperty, PlaybackError};
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 mod meter;
 pub use echode_sandbox::{
@@ -89,7 +91,7 @@ pub use synth::{
     TEST_SAMPLER_VERSION, TEST_SYNTH_ID, TEST_SYNTH_INSTRUMENT, TEST_SYNTH_VERSION, TestSampler,
     TestSynth, render_test_sampler, render_test_synth,
 };
-pub use transport::{PlaybackError, PlayedSpan, Transport};
+pub use transport::{PlayedSpan, Transport};
 pub use voice::{
     AudioClip, FadedClip, LoopHead, TrackSource, fade_loop_seam, loop_head_prefetch,
     render_audio_clips, render_faded_clips, render_track, seam_fade_frames,
