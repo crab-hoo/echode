@@ -51,7 +51,7 @@ impl<V: Send + 'static> DocumentService<V> {
         let lane = DeviceLane::start(P::with_device_report)?;
         let lane_thread = lane.thread_id();
         let activity = Arc::new(ActivityHub::new());
-        let audition = Audition::start()?;
+        let audition = Audition::start().map_err(|error| error.to_string())?;
         let start = Start {
             host,
             presenter,

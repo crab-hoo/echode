@@ -38,7 +38,7 @@ pub(crate) fn overview_json(path: &Path, channel: u64, request: u64) -> Vec<u8> 
     let value = match echode_audio_io::sample_overview(path, &|| live(channel, request)) {
         Ok(Some(waveform)) => serde_json::json!({ "waveform": waveform }),
         Ok(None) => serde_json::json!({ "cancelled": true }),
-        Err(error) => serde_json::json!({ "error": error }),
+        Err(error) => serde_json::json!({ "error": error.to_string() }),
     };
     serde_json::to_vec(&value)
         .unwrap_or_else(|_| br#"{"error":"overview did not encode"}"#.to_vec())

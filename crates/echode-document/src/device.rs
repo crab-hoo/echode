@@ -154,10 +154,17 @@ pub(crate) fn dispatch(
         let control = audio.running_device_control(device);
         return Ok(Resolution::Ready(waiting.ready(control, editing)));
     }
-    Ok(match audio.device_control(device)? {
-        DeviceAccess::Ready(control) => Resolution::Ready(waiting.ready(Some(control), editing)),
-        DeviceAccess::Opening => Resolution::Waiting(waiting),
-    })
+    Ok(
+        match audio
+            .device_control(device)
+            .map_err(|error| error.to_string())?
+        {
+            DeviceAccess::Ready(control) => {
+                Resolution::Ready(waiting.ready(Some(control), editing))
+            }
+            DeviceAccess::Opening => Resolution::Waiting(waiting),
+        },
+    )
 }
 
 impl Waiting {
@@ -174,7 +181,11 @@ impl Waiting {
             audio.running_device_control(self.device)
         } else {
             hosted(host, self.device)?;
-            Some(audio.opened_device_control(self.device)?)
+            Some(
+                audio
+                    .opened_device_control(self.device)
+                    .map_err(|error| error.to_string())?,
+            )
         };
         Ok(self.ready(control, editing))
     }

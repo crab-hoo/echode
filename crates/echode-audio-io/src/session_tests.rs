@@ -71,12 +71,14 @@ fn transport_status_stop_and_seek_do_not_query_hardware_or_edit_the_project() {
     assert_eq!(session.state().start, 352_800, "a locate keeps the start");
     session.perform(AudioCommand::Stop).unwrap();
     assert_eq!(session.state().tick, 352_800);
-    assert!(session.perform(AudioCommand::Locate { tick: -1 }).is_err());
-    assert!(
-        session
-            .perform(AudioCommand::SetStart { tick: -1 })
-            .is_err()
-    );
+    assert!(matches!(
+        session.perform(AudioCommand::Locate { tick: -1 }),
+        Err(AudioError::Rejected(Rejected::NegativePosition))
+    ));
+    assert!(matches!(
+        session.perform(AudioCommand::SetStart { tick: -1 }),
+        Err(AudioError::Rejected(Rejected::NegativeStart))
+    ));
     assert_eq!(session.state().start, 352_800);
     session
         .perform(AudioCommand::Metronome { enabled: true })
@@ -90,14 +92,13 @@ fn transport_status_stop_and_seek_do_not_query_hardware_or_edit_the_project() {
     assert!(session.state().metronome);
     assert_eq!(session.state().loop_start, Some(0));
     assert_eq!(session.state().loop_end, Some(705_600));
-    assert!(
-        session
-            .perform(AudioCommand::Loop {
-                start: Some(4),
-                end: Some(4),
-            })
-            .is_err()
-    );
+    assert!(matches!(
+        session.perform(AudioCommand::Loop {
+            start: Some(4),
+            end: Some(4),
+        }),
+        Err(AudioError::Rejected(Rejected::Loop))
+    ));
     assert_eq!(session.state().loop_end, Some(705_600));
     session
         .perform(AudioCommand::Loop {
@@ -246,11 +247,10 @@ fn complete_mixer_groups_validate_before_replacing_the_previous_preview() {
         serde_json::json!([{"track": echode_model::Id::generate(), "gain": 1.0, "pan": 0.0}]),
     ] {
         let input = serde_json::json!({"type": "audio.preview_faders", "values": invalid});
-        assert!(
-            session
-                .perform(serde_json::from_value(input).unwrap())
-                .is_err()
-        );
+        assert!(matches!(
+            session.perform(serde_json::from_value(input).unwrap()),
+            Err(AudioError::Rejected(Rejected::MixerPreview))
+        ));
         assert_eq!(session.fader_preview, preview);
     }
     assert!(session.stream.is_none() && session.opening.is_none());
@@ -276,7 +276,10 @@ fn device_access_without_a_running_plugin_does_not_open_hardware() {
         let Err(error) = session.device_control(device) else {
             panic!("a project without a running plugin has no device control");
         };
-        assert!(error.contains("no running plugin"), "{error}");
+        assert!(
+            matches!(error, AudioError::Rejected(Rejected::NoRunningPlugin)),
+            "{error}"
+        );
         assert!(session.notifications.is_none() && session.stream.is_none());
         assert!(!session.engine_held && !session.state().playing);
     }
@@ -454,7 +457,13 @@ fn contract_a_first_device_view_opens_the_output_without_holding_edits_or_transp
     let Err(error) = session.opened_device_control(device) else {
         panic!("org.example.fx is not installed");
     };
-    assert!(!error.is_empty());
+    assert!(
+        matches!(
+            error,
+            AudioError::Playback(echode_engine::PlaybackError::Unsupported(_))
+        ),
+        "{error}"
+    );
     session.perform(AudioCommand::Stop).unwrap();
     assert!(!session.state().playing);
 }
@@ -557,20 +566,27 @@ fn a_failed_opening_reports_its_error_and_is_not_retried_by_service() {
     let mut session = Session::new(Arc::new(project));
     let output = crate::HeadlessOutput::default();
     session.use_headless_output(output.clone());
-    output.fail_next("helpers could not start");
+    output.fail_next(AudioError::Playback(echode_engine::PlaybackError::Plugin));
     assert!(matches!(
         session.device_control(device),
         Ok(DeviceAccess::Opening)
     ));
     until_opened(&mut session);
+    // The state shows the failure's text; the request keeps its cause.
     assert_eq!(
         session.state().error.as_deref(),
-        Some("helpers could not start")
+        Some("plugin helper did not start")
     );
     let Err(error) = session.opened_device_control(device) else {
         panic!("the output did not open");
     };
-    assert_eq!(error, "helpers could not start");
+    assert!(
+        matches!(
+            error,
+            AudioError::Playback(echode_engine::PlaybackError::Plugin)
+        ),
+        "{error}"
+    );
     for _ in 0..4 {
         session.service();
     }

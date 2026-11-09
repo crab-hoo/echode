@@ -17,7 +17,7 @@ use std::thread::JoinHandle;
 use echode_model::Project;
 
 use crate::stream::{Claim, Prepared, Target, TransportSetup};
-use crate::{Inventory, OutputDevice, OutputStream, hardware};
+use crate::{AudioError, Internal, Inventory, OutputDevice, OutputStream, ThreadFault, hardware};
 
 /// Where a session's devices, listeners and callback come from. The product
 /// uses HAL; tests use [`HeadlessOutput`] with the same preparation.
@@ -26,9 +26,9 @@ pub(crate) trait Outputs: Send + Sync {
     fn refresh(
         &self,
         epoch: &Arc<AtomicU64>,
-    ) -> Result<(Inventory, Option<hardware::Notifications>), String>;
+    ) -> Result<(Inventory, Option<hardware::Notifications>), AudioError>;
     /// Checks `device` before helpers start. Runs on the control thread.
-    fn claim(&self, device: OutputDevice) -> Result<Claim, String>;
+    fn claim(&self, device: OutputDevice) -> Result<Claim, AudioError>;
     /// Starts helpers and prepares media. Runs on the preparing thread.
     fn prepare(
         &self,
@@ -36,11 +36,11 @@ pub(crate) trait Outputs: Send + Sync {
         target: &Target,
         tick: i64,
         transport: &TransportSetup,
-    ) -> Result<Prepared, String> {
+    ) -> Result<Prepared, AudioError> {
         Prepared::new(project, target, tick, transport)
     }
     /// Starts callbacks for an assembled stream. Runs on the control thread.
-    fn register(&self, stream: &mut OutputStream) -> Result<(), String>;
+    fn register(&self, stream: &mut OutputStream) -> Result<(), AudioError>;
 }
 
 pub(crate) struct HalOutputs;
@@ -49,7 +49,7 @@ impl Outputs for HalOutputs {
     fn refresh(
         &self,
         epoch: &Arc<AtomicU64>,
-    ) -> Result<(Inventory, Option<hardware::Notifications>), String> {
+    ) -> Result<(Inventory, Option<hardware::Notifications>), AudioError> {
         let inventory = hardware::inventory()?;
         let notifications = hardware::Notifications::new(&inventory, Arc::clone(epoch))?;
         // Close the enumeration/registration gap. Subsequent changes are
@@ -60,11 +60,11 @@ impl Outputs for HalOutputs {
         Ok((inventory, Some(notifications)))
     }
 
-    fn claim(&self, device: OutputDevice) -> Result<Claim, String> {
+    fn claim(&self, device: OutputDevice) -> Result<Claim, AudioError> {
         Claim::hal(device)
     }
 
-    fn register(&self, stream: &mut OutputStream) -> Result<(), String> {
+    fn register(&self, stream: &mut OutputStream) -> Result<(), AudioError> {
         stream.register()
     }
 }
@@ -86,7 +86,7 @@ pub(crate) struct Basis {
 pub(crate) struct Opening {
     claim: Option<Claim>,
     basis: Option<Basis>,
-    result: Receiver<Result<Prepared, String>>,
+    result: Receiver<Result<Prepared, AudioError>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -96,7 +96,7 @@ impl Opening {
         claim: Claim,
         basis: Basis,
         transport: TransportSetup,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, AudioError> {
         let (sender, result) = mpsc::channel();
         let target = claim.target();
         let project = Arc::clone(&basis.project);
@@ -107,11 +107,11 @@ impl Opening {
                 let prepared = catch_unwind(AssertUnwindSafe(|| {
                     outputs.prepare(&project, &target, tick, &transport)
                 }))
-                .unwrap_or_else(|_| Err("output preparation panicked".into()));
+                .unwrap_or(Err(AudioError::Thread(ThreadFault::PreparationPanicked)));
                 // A session that gave up on this output drops the result.
                 let _ = sender.send(prepared);
             })
-            .map_err(|error| error.to_string())?;
+            .map_err(AudioError::spawn)?;
         Ok(Self {
             claim: Some(claim),
             basis: Some(basis),
@@ -129,11 +129,13 @@ impl Opening {
     }
 
     /// The prepared playback, once the thread is done. Never waits.
-    pub(crate) fn poll(&mut self) -> Option<Result<Prepared, String>> {
+    pub(crate) fn poll(&mut self) -> Option<Result<Prepared, AudioError>> {
         match self.result.try_recv() {
             Ok(result) => Some(result),
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Err("output preparation stopped".into())),
+            Err(TryRecvError::Disconnected) => {
+                Some(Err(AudioError::Thread(ThreadFault::PreparationStopped)))
+            }
         }
     }
 
@@ -143,15 +145,9 @@ impl Opening {
     }
 
     /// The claim and basis for installing a polled result.
-    pub(crate) fn finish(mut self) -> Result<(Claim, Basis), String> {
-        let claim = self
-            .claim
-            .take()
-            .ok_or("the output was already installed")?;
-        let basis = self
-            .basis
-            .take()
-            .ok_or("the output was already installed")?;
+    pub(crate) fn finish(mut self) -> Result<(Claim, Basis), AudioError> {
+        let claim = self.claim.take().ok_or(Internal::AlreadyInstalled)?;
+        let basis = self.basis.take().ok_or(Internal::AlreadyInstalled)?;
         Ok((claim, basis))
     }
 }
@@ -182,7 +178,7 @@ struct Gate {
     changed: std::sync::Condvar,
     waiting: AtomicU64,
     prepared: AtomicU64,
-    failure: std::sync::Mutex<Option<String>>,
+    failure: std::sync::Mutex<Option<AudioError>>,
 }
 
 #[cfg(any(test, feature = "headless-output"))]
@@ -211,12 +207,12 @@ impl HeadlessOutput {
     }
 
     /// The next preparation fails with `error`.
-    pub fn fail_next(&self, error: &str) {
+    pub fn fail_next(&self, error: AudioError) {
         *self
             .gate
             .failure
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error.into());
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error);
     }
 
     fn held(&self) -> std::sync::MutexGuard<'_, bool> {
@@ -245,7 +241,7 @@ impl Outputs for HeadlessOutput {
     fn refresh(
         &self,
         _epoch: &Arc<AtomicU64>,
-    ) -> Result<(Inventory, Option<hardware::Notifications>), String> {
+    ) -> Result<(Inventory, Option<hardware::Notifications>), AudioError> {
         let device = Self::device();
         Ok((
             Inventory {
@@ -256,7 +252,7 @@ impl Outputs for HeadlessOutput {
         ))
     }
 
-    fn claim(&self, device: OutputDevice) -> Result<Claim, String> {
+    fn claim(&self, device: OutputDevice) -> Result<Claim, AudioError> {
         Ok(Claim {
             device,
             listener: None,
@@ -270,7 +266,7 @@ impl Outputs for HeadlessOutput {
         target: &Target,
         tick: i64,
         transport: &TransportSetup,
-    ) -> Result<Prepared, String> {
+    ) -> Result<Prepared, AudioError> {
         self.gate.waiting.fetch_add(1, Ordering::AcqRel);
         let mut held = self.held();
         while *held {
@@ -297,7 +293,7 @@ impl Outputs for HeadlessOutput {
     }
 
     /// No device calls a headless stream. Tests drive its callback.
-    fn register(&self, _stream: &mut OutputStream) -> Result<(), String> {
+    fn register(&self, _stream: &mut OutputStream) -> Result<(), AudioError> {
         Ok(())
     }
 }

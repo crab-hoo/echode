@@ -16,7 +16,10 @@ use objc2_core_audio_types::{AudioBuffer, AudioBufferList, AudioTimeStamp, Audio
 
 use crate::io_cycle::{IoCycle, host_now};
 use crate::panic_log::CallbackPanic;
-use crate::{OutputDevice, TransportCancellation, hardware};
+use crate::{
+    AudioError, CoreAudioCall, Internal, OutputDevice, Rejected, Stopped, TransportCancellation,
+    hardware,
+};
 
 struct Render {
     player: PlaybackAudio,
@@ -100,7 +103,7 @@ pub(crate) struct Claim {
 
 impl Claim {
     /// The device's checks and workgroup. HAL calls only; helpers start later.
-    pub(crate) fn hal(device: OutputDevice) -> Result<Self, String> {
+    pub(crate) fn hal(device: OutputDevice) -> Result<Self, AudioError> {
         hardware::validate_streams(&device)?;
         let listener = hardware::Notifications::workgroup(device.id)?;
         let workgroup = crate::workgroup::selected(&device)?;
@@ -131,7 +134,7 @@ impl Prepared {
         target: &Target,
         tick: i64,
         transport: &TransportSetup,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, AudioError> {
         let (control, player) = prepare_playback_mode(
             project,
             target.sample_rate,
@@ -173,20 +176,16 @@ pub(crate) struct Start {
 }
 
 impl OutputStream {
-    pub(crate) fn preview_faders(&mut self, values: &[(u128, f32, f32)]) -> Result<(), String> {
-        self.control
-            .preview_faders(values)
-            .map_err(|error| error.to_string())
+    pub(crate) fn preview_faders(&mut self, values: &[(u128, f32, f32)]) -> Result<(), AudioError> {
+        Ok(self.control.preview_faders(values)?)
     }
-    pub(crate) fn clear_fader_preview(&mut self, committed: bool) -> Result<(), String> {
-        self.control
-            .clear_fader_preview(committed)
-            .map_err(|error| error.to_string())
+    pub(crate) fn clear_fader_preview(&mut self, committed: bool) -> Result<(), AudioError> {
+        Ok(self.control.clear_fader_preview(committed)?)
     }
     pub(crate) fn meters(&self) -> Vec<Arc<echode_engine::TrackMeter>> {
         self.control.meters()
     }
-    pub fn open(device: OutputDevice, project: &Project, tick: i64) -> Result<Self, String> {
+    pub fn open(device: OutputDevice, project: &Project, tick: i64) -> Result<Self, AudioError> {
         Self::open_mode(device, project, tick, false)
     }
 
@@ -196,7 +195,7 @@ impl OutputStream {
         project: &Project,
         tick: i64,
         silent: bool,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, AudioError> {
         let transport = TransportSetup::idle();
         let claim = Claim::hal(device)?;
         let prepared = Prepared::new(project, &claim.target(), tick, &transport)?;
@@ -215,7 +214,11 @@ impl OutputStream {
     }
 
     /// Registers and starts HAL's callback around prepared playback.
-    pub(crate) fn start(claim: Claim, prepared: Prepared, start: Start) -> Result<Self, String> {
+    pub(crate) fn start(
+        claim: Claim,
+        prepared: Prepared,
+        start: Start,
+    ) -> Result<Self, AudioError> {
         let mut value = Self::assemble(claim, prepared, start);
         value.register()?;
         value.prepare_in_background();
@@ -223,13 +226,13 @@ impl OutputStream {
     }
 
     /// Starts HAL's callback. Commands sent before this reach its first block.
-    pub(crate) fn register(&mut self) -> Result<(), String> {
+    pub(crate) fn register(&mut self) -> Result<(), AudioError> {
         if self.registered {
             return Ok(());
         }
         let mut proc = None;
         let Some(callback) = self.callback.as_mut() else {
-            return Err("the output callback is missing".into());
+            return Err(Internal::CallbackMissing.into());
         };
         let context = (&mut **callback as *mut Callback).cast();
         // SAFETY: the boxed context has a stable address and out_proc is SDK typed.
@@ -242,13 +245,19 @@ impl OutputStream {
             )
         };
         if status != 0 {
-            return Err(format!("could not open the output device ({status})"));
+            return Err(AudioError::CoreAudio {
+                call: CoreAudioCall::CreateOutputProc,
+                status,
+            });
         }
         self.proc = proc;
         self.registered = true;
         let status = unsafe { AudioDeviceStart(self.device.id, self.proc) };
         if status != 0 {
-            return Err(format!("could not start the output device ({status})"));
+            return Err(AudioError::CoreAudio {
+                call: CoreAudioCall::StartOutput,
+                status,
+            });
         }
         Ok(())
     }
@@ -345,7 +354,7 @@ impl OutputStream {
     /// `live` names devices whose helpers hold a change the document has not
     /// recorded yet. Their routes carry the bytes those helpers already have,
     /// so the replacement keeps them instead of restoring older bytes (ADR 0229).
-    pub fn replace(&mut self, project: &Project, live: &[u128]) -> Result<(), String> {
+    pub fn replace(&mut self, project: &Project, live: &[u128]) -> Result<(), AudioError> {
         if let Some(host) = echode_plugin_host::host_binary() {
             let held = |device: u128| {
                 live.contains(&device)
@@ -355,15 +364,11 @@ impl OutputStream {
             let routes = plugin_routes(project, self.package.as_deref(), held)?;
             self.control.set_routes(&host, &routes);
         }
-        self.control
-            .replace(project)
-            .map_err(|error| error.to_string())
+        Ok(self.control.replace(project)?)
     }
 
-    pub(crate) fn resume(&mut self, revision: u64) -> Result<(), String> {
-        self.control
-            .command(PlaybackCommand::Play)
-            .map_err(|error| error.to_string())?;
+    pub(crate) fn resume(&mut self, revision: u64) -> Result<(), AudioError> {
+        self.control.command(PlaybackCommand::Play)?;
         if let Some(callback) = &self.callback {
             callback
                 .transport_revision
@@ -372,56 +377,46 @@ impl OutputStream {
         Ok(())
     }
 
-    pub(crate) fn pause(&mut self) -> Result<(), String> {
-        self.control
-            .command(PlaybackCommand::Pause)
-            .map_err(|error| error.to_string())
+    pub(crate) fn pause(&mut self) -> Result<(), AudioError> {
+        Ok(self.control.command(PlaybackCommand::Pause)?)
     }
 
-    pub fn set_loop(&mut self, project: &Project, start: i64, end: i64) -> Result<(), String> {
+    pub fn set_loop(&mut self, project: &Project, start: i64, end: i64) -> Result<(), AudioError> {
         if end <= start {
-            return Err("loop end must be after its start".into());
+            return Err(Rejected::Loop.into());
         }
         let start = loop_sample(project, self.device.sample_rate, start)?;
         let end = loop_sample(project, self.device.sample_rate, end)?;
         if end <= start {
-            return Err("loop end must be after its start".into());
+            return Err(Rejected::Loop.into());
         }
-        self.control
-            .command(PlaybackCommand::SetLoop { start, end })
-            .map_err(|error| error.to_string())
+        Ok(self
+            .control
+            .command(PlaybackCommand::SetLoop { start, end })?)
     }
 
-    pub fn clear_loop(&mut self) -> Result<(), String> {
-        self.control
-            .command(PlaybackCommand::ClearLoop)
-            .map_err(|error| error.to_string())
+    pub fn clear_loop(&mut self) -> Result<(), AudioError> {
+        Ok(self.control.command(PlaybackCommand::ClearLoop)?)
     }
 
-    pub fn set_metronome(&mut self, enabled: bool) -> Result<(), String> {
-        self.control
-            .command(PlaybackCommand::SetMetronome(enabled))
-            .map_err(|error| error.to_string())
+    pub fn set_metronome(&mut self, enabled: bool) -> Result<(), AudioError> {
+        Ok(self
+            .control
+            .command(PlaybackCommand::SetMetronome(enabled))?)
     }
 
-    pub fn locate(&mut self, project: &Project, tick: i64) -> Result<(), String> {
-        let sample = tick_to_sample(Tick::new(tick), project.tempo(), self.device.sample_rate)
-            .ok_or("playback time overflow")?;
-        self.control
-            .command(PlaybackCommand::Locate(sample))
-            .map_err(|error| error.to_string())?;
+    pub fn locate(&mut self, project: &Project, tick: i64) -> Result<(), AudioError> {
+        let sample = project_sample(project, self.device.sample_rate, tick)?;
+        self.control.command(PlaybackCommand::Locate(sample))?;
         self.pending_locate = Some((self.control.command_revision(), tick, sample));
         Ok(())
     }
 
     /// Stops at `tick` without resetting plugins, for a stop that returns to
     /// the remembered start. Tails continue from where playback stopped.
-    pub(crate) fn rewind(&mut self, project: &Project, tick: i64) -> Result<(), String> {
-        let sample = tick_to_sample(Tick::new(tick), project.tempo(), self.device.sample_rate)
-            .ok_or("playback time overflow")?;
-        self.control
-            .command(PlaybackCommand::Rewind(sample))
-            .map_err(|error| error.to_string())?;
+    pub(crate) fn rewind(&mut self, project: &Project, tick: i64) -> Result<(), AudioError> {
+        let sample = project_sample(project, self.device.sample_rate, tick)?;
+        self.control.command(PlaybackCommand::Rewind(sample))?;
         self.pending_locate = Some((self.control.command_revision(), tick, sample));
         Ok(())
     }
@@ -435,10 +430,8 @@ impl OutputStream {
     }
 
     /// The control endpoint of the helper hosting `device`.
-    pub fn device_control(&self, device: u128) -> Result<PluginControl, String> {
-        self.control
-            .device_control_handle(device)
-            .map_err(|error| error.to_string())
+    pub fn device_control(&self, device: u128) -> Result<PluginControl, AudioError> {
+        Ok(self.control.device_control_handle(device)?)
     }
 
     /// Brings the helpers of `devices` to the project's recorded plugin states,
@@ -448,9 +441,9 @@ impl OutputStream {
         project: &Project,
         devices: &[u128],
         live: &[u128],
-    ) -> Result<(), String> {
+    ) -> Result<(), AudioError> {
         let package = self.package.clone();
-        let recorded = |device: u128| -> Result<Option<Vec<u8>>, String> {
+        let recorded = |device: u128| -> Result<Option<Vec<u8>>, AudioError> {
             let state = project
                 .tracks()
                 .iter()
@@ -459,10 +452,10 @@ impl OutputStream {
                 .and_then(|item| item.state.as_deref());
             match (state, package.as_deref()) {
                 (None, _) => Ok(None),
-                (Some(hash), Some(package)) => echode_history::read_object(package, hash)
-                    .map(Some)
-                    .map_err(|error| error.to_string()),
-                (Some(_), None) => Err("plugin state has no package".into()),
+                (Some(hash), Some(package)) => {
+                    Ok(Some(echode_history::read_object(package, hash)?))
+                }
+                (Some(_), None) => Err(AudioError::NoPackage),
             }
         };
         let replace = self.control.restore_recorded_states(devices, recorded);
@@ -473,25 +466,23 @@ impl OutputStream {
         }
     }
 
-    pub fn service(&mut self) -> Result<(), String> {
+    pub fn service(&mut self) -> Result<(), AudioError> {
         if self.workgroup_changed() {
-            return Err("the selected output device workgroup changed".into());
+            return Err(Stopped::WorkgroupChanged.into());
         }
         self.control.service();
         if let Some(files) = &mut self.trace_files {
             files.service(self.control.status());
         }
         if let Some(error) = self.control.take_preparation_error() {
-            return Err(error.to_string());
+            return Err(error.into());
         }
         if let Some(reason) = self
             .callback
             .as_ref()
             .and_then(|callback| callback.panic.reason())
         {
-            return Err(format!(
-                "audio playback stopped because the audio callback panicked: {reason}"
-            ));
+            return Err(Stopped::CallbackPanicked(reason.into()).into());
         }
         if self.control.status().failed
             || self
@@ -499,9 +490,7 @@ impl OutputStream {
                 .as_ref()
                 .is_some_and(|callback| callback.failed.load(Ordering::Acquire))
         {
-            return Err(
-                "audio playback stopped because the output buffer or device changed".into(),
-            );
+            return Err(Stopped::DeviceChanged.into());
         }
         Ok(())
     }
@@ -578,7 +567,7 @@ fn plugin_routes(
     project: &Project,
     package: Option<&std::path::Path>,
     live: impl Fn(u128) -> Option<Option<Vec<u8>>>,
-) -> Result<Vec<PluginRoute>, String> {
+) -> Result<Vec<PluginRoute>, AudioError> {
     match package {
         Some(package) => {
             routes_with_states(project, package, &installed_plugin_routes(project), live)
@@ -631,7 +620,7 @@ pub fn installed_plugin_routes(project: &Project) -> Vec<PluginRoute> {
 pub fn routes_with_saved_state(
     project: &Project,
     package: &std::path::Path,
-) -> Result<Vec<PluginRoute>, String> {
+) -> Result<Vec<PluginRoute>, AudioError> {
     routes_with_states(project, package, &installed_plugin_routes(project), |_| {
         None
     })
@@ -645,7 +634,7 @@ fn routes_with_states(
     package: &std::path::Path,
     installed: &[PluginRoute],
     live: impl Fn(u128) -> Option<Option<Vec<u8>>>,
-) -> Result<Vec<PluginRoute>, String> {
+) -> Result<Vec<PluginRoute>, AudioError> {
     let mut routes = Vec::new();
     for track in project.tracks() {
         for device in &track.devices {
@@ -662,10 +651,7 @@ fn routes_with_states(
             if let Some(held) = live(device.id.raw()) {
                 route.state = held;
             } else if let Some(hash) = &device.state {
-                route.state = Some(
-                    echode_history::read_object(package, hash)
-                        .map_err(|error| error.to_string())?,
-                );
+                route.state = Some(echode_history::read_object(package, hash)?);
             }
             routes.push(route);
         }
@@ -682,7 +668,7 @@ fn prepare_playback(
     frames: usize,
     tick: i64,
     transport: &TransportSetup,
-) -> Result<(PlaybackControl, PlaybackAudio), String> {
+) -> Result<(PlaybackControl, PlaybackAudio), AudioError> {
     prepare_playback_mode(project, sample_rate, frames, tick, transport, None)
 }
 
@@ -693,9 +679,8 @@ fn prepare_playback_mode(
     tick: i64,
     transport: &TransportSetup,
     workgroup: Option<PluginWorkgroup>,
-) -> Result<(PlaybackControl, PlaybackAudio), String> {
-    let sample = tick_to_sample(Tick::new(tick), project.tempo(), sample_rate)
-        .ok_or("playback time overflow")?;
+) -> Result<(PlaybackControl, PlaybackAudio), AudioError> {
+    let sample = project_sample(project, sample_rate, tick)?;
     let (mut control, player) = open_playback(
         project,
         sample_rate,
@@ -705,34 +690,22 @@ fn prepare_playback_mode(
         workgroup,
     )?;
     control.set_clip_loader(Arc::clone(&transport.clips));
-    control
-        .replace(project)
-        .map_err(|error| error.to_string())?;
-    control
-        .command(PlaybackCommand::Locate(sample))
-        .map_err(|error| error.to_string())?;
+    control.replace(project)?;
+    control.command(PlaybackCommand::Locate(sample))?;
     if let Some((start, end)) = transport.loop_ticks {
         let start = loop_sample(project, sample_rate, start)?;
         let end = loop_sample(project, sample_rate, end)?;
         if end <= start {
-            return Err("loop end must be after its start".into());
+            return Err(Rejected::Loop.into());
         }
-        control
-            .command(PlaybackCommand::SetLoop { start, end })
-            .map_err(|error| error.to_string())?;
+        control.command(PlaybackCommand::SetLoop { start, end })?;
     }
-    control
-        .command(PlaybackCommand::SetMetronome(transport.metronome))
-        .map_err(|error| error.to_string())?;
+    control.command(PlaybackCommand::SetMetronome(transport.metronome))?;
     if let Some(values) = &transport.fader_preview {
-        control
-            .preview_faders(values)
-            .map_err(|error| error.to_string())?;
+        control.preview_faders(values)?;
     }
     if transport.start {
-        control
-            .command(PlaybackCommand::Play)
-            .map_err(|error| error.to_string())?;
+        control.command(PlaybackCommand::Play)?;
     }
     Ok((control, player))
 }
@@ -744,7 +717,7 @@ fn open_playback(
     package: Option<&std::path::Path>,
     sample: i64,
     workgroup: Option<PluginWorkgroup>,
-) -> Result<(PlaybackControl, PlaybackAudio), String> {
+) -> Result<(PlaybackControl, PlaybackAudio), AudioError> {
     let host = echode_plugin_host::host_binary();
     let routes = match host {
         Some(_) => plugin_routes(project, package, |_| None)?,
@@ -758,15 +731,20 @@ fn open_playback(
     if let Some(workgroup) = workgroup {
         options = options.workgroup(workgroup);
     }
-    playback(project, sample_rate, frames, options).map_err(|error| error.to_string())
+    Ok(playback(project, sample_rate, frames, options)?)
 }
 
-fn loop_sample(project: &Project, sample_rate: u32, tick: i64) -> Result<i64, String> {
+fn loop_sample(project: &Project, sample_rate: u32, tick: i64) -> Result<i64, AudioError> {
     if tick < 0 {
-        return Err("loop end must be after its start".into());
+        return Err(Rejected::Loop.into());
     }
+    project_sample(project, sample_rate, tick)
+}
+
+/// The device sample of a project tick, or the engine's overflow error.
+fn project_sample(project: &Project, sample_rate: u32, tick: i64) -> Result<i64, AudioError> {
     tick_to_sample(Tick::new(tick), project.tempo(), sample_rate)
-        .ok_or("playback time overflow".into())
+        .ok_or(AudioError::Playback(echode_engine::PlaybackError::Time))
 }
 
 unsafe extern "C-unwind" fn render(

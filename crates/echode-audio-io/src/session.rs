@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::opening::{Basis, HalOutputs, Opening, Outputs};
 use crate::{
-    Inventory, OutputDevice, OutputStream, PluginActivity, PluginControl, TransportCancellation,
-    hardware,
+    AudioError, Internal, Inventory, OutputDevice, OutputStream, PluginActivity, PluginControl,
+    Rejected, Stopped, TransportCancellation, hardware,
 };
 
 #[derive(Debug, Deserialize)]
@@ -155,7 +155,8 @@ pub struct Session {
     metronome: bool,
     clips: ClipLoader,
     package: Option<PathBuf>,
-    error: Option<String>,
+    /// Why the output last failed to open or stopped. The state reports its text.
+    error: Option<AudioError>,
     fader_preview: Option<Vec<(u128, f32, f32)>>,
     activity: Option<crate::activity::UserActivity>,
     /// A device view asked for running plugins, or the app prepared the output.
@@ -237,7 +238,7 @@ impl Session {
         session
     }
 
-    fn preview_faders(&mut self, values: &[FaderValue]) -> Result<(), String> {
+    fn preview_faders(&mut self, values: &[FaderValue]) -> Result<(), AudioError> {
         let tracks: std::collections::BTreeSet<_> =
             self.project.tracks().iter().map(|track| track.id).collect();
         let mut seen = std::collections::BTreeSet::new();
@@ -251,7 +252,7 @@ impl Session {
                     || !(-1.0..=1.0).contains(&value.pan)
             })
         {
-            return Err("invalid mixer preview".into());
+            return Err(Rejected::MixerPreview.into());
         }
         let values: Vec<_> = values
             .iter()
@@ -264,7 +265,7 @@ impl Session {
         Ok(())
     }
 
-    pub fn perform(&mut self, command: AudioCommand) -> Result<(), String> {
+    pub fn perform(&mut self, command: AudioCommand) -> Result<(), AudioError> {
         let revision = self.cancellation.request(&command);
         self.perform_requested(command, revision)
     }
@@ -275,7 +276,7 @@ impl Session {
         &mut self,
         command: AudioCommand,
         revision: u64,
-    ) -> Result<(), String> {
+    ) -> Result<(), AudioError> {
         match command {
             AudioCommand::PreviewFader { track, gain, pan } => {
                 self.preview_faders(&[FaderValue { track, gain, pan }])?;
@@ -344,7 +345,7 @@ impl Session {
             }
             AudioCommand::Locate { tick } => {
                 if tick < 0 {
-                    return Err("playback position must not be negative".into());
+                    return Err(Rejected::NegativePosition.into());
                 }
                 if let Some(stream) = &mut self.stream {
                     stream.locate(&self.project, tick)?;
@@ -353,14 +354,13 @@ impl Session {
             }
             AudioCommand::SetStart { tick } => {
                 if tick < 0 {
-                    return Err("playback start must not be negative".into());
+                    return Err(Rejected::NegativeStart.into());
                 }
                 if let Some(package) = &self.package {
                     echode_history::write_transport_settings(
                         package,
                         echode_history::TransportSettings { start: tick },
-                    )
-                    .map_err(|error| error.to_string())?;
+                    )?;
                 }
                 self.start = tick;
                 self.paused = false;
@@ -410,7 +410,7 @@ impl Session {
     /// Starts the open output's transport at `play_revision`, or holds the
     /// start until media for a stopped edit is queued. An opening output
     /// starts when it is installed.
-    fn resume(&mut self) -> Result<(), String> {
+    fn resume(&mut self) -> Result<(), AudioError> {
         let Some(stream) = &mut self.stream else {
             return Ok(());
         };
@@ -431,7 +431,7 @@ impl Session {
         }
     }
 
-    fn set_loop(&mut self, start: Option<i64>, end: Option<i64>) -> Result<(), String> {
+    fn set_loop(&mut self, start: Option<i64>, end: Option<i64>) -> Result<(), AudioError> {
         match (start, end) {
             (Some(start), Some(end)) if start >= 0 && end > start => {
                 if let Some(stream) = &mut self.stream {
@@ -445,7 +445,7 @@ impl Session {
                 }
                 self.loop_ticks = None;
             }
-            _ => return Err("loop end must be after its start".into()),
+            _ => return Err(Rejected::Loop.into()),
         }
         Ok(())
     }
@@ -561,7 +561,7 @@ impl Session {
     ///
     /// The first request of a stopped session opens the output stopped at
     /// the current position. Helpers start on another thread meanwhile.
-    pub fn device_control(&mut self, device: echode_model::Id) -> Result<DeviceAccess, String> {
+    pub fn device_control(&mut self, device: echode_model::Id) -> Result<DeviceAccess, AudioError> {
         if let Some(stream) = &self.stream {
             return match stream.device_control(device.raw()) {
                 Ok(control) => Ok(DeviceAccess::Ready(control)),
@@ -577,7 +577,7 @@ impl Session {
                 .flat_map(|track| &track.devices)
                 .any(|device| device.plugin.is_some() && !device.offline)
             {
-                return Err("the project has no running plugin".into());
+                return Err(Rejected::NoRunningPlugin.into());
             }
             self.engine_held = true;
             if !self.refreshed || self.hardware_epoch.load(Ordering::Acquire) != self.observed_epoch
@@ -605,7 +605,10 @@ impl Session {
 
     /// For a request that waited on [`DeviceAccess::Opening`]: the helper
     /// hosting `device`, or why the output did not open. Never opens again.
-    pub fn opened_device_control(&self, device: echode_model::Id) -> Result<PluginControl, String> {
+    pub fn opened_device_control(
+        &self,
+        device: echode_model::Id,
+    ) -> Result<PluginControl, AudioError> {
         match &self.stream {
             Some(stream) => stream.device_control(device.raw()),
             None => Err(self.missing_output()),
@@ -618,10 +621,9 @@ impl Session {
         self.stream.as_ref()?.device_control(device.raw()).ok()
     }
 
-    fn missing_output(&self) -> String {
-        self.error
-            .clone()
-            .unwrap_or_else(|| "no output device is available".into())
+    /// Why the output is not open: the last failure, or no device.
+    fn missing_output(&self) -> AudioError {
+        self.error.clone().unwrap_or(AudioError::NoOutputDevice)
     }
 
     pub fn meters(&self) -> Vec<Arc<crate::TrackMeter>> {
@@ -630,7 +632,7 @@ impl Session {
             .map_or_else(Vec::new, OutputStream::meters)
     }
 
-    fn resend_loop(&mut self) -> Result<(), String> {
+    fn resend_loop(&mut self) -> Result<(), AudioError> {
         let Some((start, end)) = self.loop_ticks else {
             return Ok(());
         };
@@ -740,7 +742,7 @@ impl Session {
             selected_uid: self.selected_uid.clone(),
             active_device: desired(&self.inventory, self.selected_uid.as_deref()).cloned(),
             devices: self.inventory.devices.clone(),
-            error: self.error.clone(),
+            error: self.error.as_ref().map(ToString::to_string),
             loop_start: self.loop_ticks.map(|(start, _)| start),
             loop_end: self.loop_ticks.map(|(_, end)| end),
             metronome: self.metronome,
@@ -781,7 +783,7 @@ impl Session {
         )
     }
 
-    fn refresh(&mut self) -> Result<(), String> {
+    fn refresh(&mut self) -> Result<(), AudioError> {
         let epoch = self.hardware_epoch.load(Ordering::Acquire);
         let (inventory, notifications) = self.outputs.refresh(&self.hardware_epoch)?;
         self.notifications = notifications;
@@ -791,7 +793,7 @@ impl Session {
         Ok(())
     }
 
-    fn reconcile(&mut self) -> Result<(), String> {
+    fn reconcile(&mut self) -> Result<(), AudioError> {
         let device = desired(&self.inventory, self.selected_uid.as_deref()).cloned();
         if self.stream.as_ref().is_some_and(|stream| {
             Some(&stream.device) != device.as_ref() || stream.workgroup_changed()
@@ -810,7 +812,7 @@ impl Session {
             if let Some(device) = device {
                 self.opening = Some(self.begin(device)?);
             } else {
-                self.error = Some("no output device is available".into());
+                self.error = Some(AudioError::NoOutputDevice);
             }
         }
         if let Some(stream) = &self.stream {
@@ -822,7 +824,7 @@ impl Session {
 
     /// Claims `device` here and prepares its helpers and media on another
     /// thread, from the state at this turn.
-    fn begin(&mut self, device: OutputDevice) -> Result<Opening, String> {
+    fn begin(&mut self, device: OutputDevice) -> Result<Opening, AudioError> {
         let claim = self.outputs.claim(device)?;
         let transport = crate::stream::TransportSetup {
             loop_ticks: self.loop_ticks,
@@ -853,7 +855,7 @@ impl Session {
         &mut self,
         opening: Opening,
         prepared: crate::stream::Prepared,
-    ) -> Result<(), String> {
+    ) -> Result<(), AudioError> {
         let (claim, basis) = opening.finish()?;
         self.stream = Some(OutputStream::assemble(
             claim,
@@ -880,10 +882,7 @@ impl Session {
             }
         }
         let project = Arc::clone(&self.project);
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or("the output closed while it opened")?;
+        let stream = self.stream.as_mut().ok_or(Internal::ClosedWhileOpening)?;
         if self.tick != basis.tick {
             stream.locate(&project, self.tick)?;
         }
@@ -924,7 +923,7 @@ impl Session {
             let status = stream.close();
             self.tick = status.tick;
             if status.failed {
-                self.error = Some("the audio driver could not release its callback".into());
+                self.error = Some(Stopped::CallbackNotReleased.into());
             }
         }
     }

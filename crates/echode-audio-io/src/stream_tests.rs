@@ -1151,13 +1151,23 @@ fn a_panic_in_the_render_leaves_the_output_silent_and_reports_its_location() {
     let callback = stream.callback.as_deref().unwrap();
     assert!(callback.failed.load(Ordering::Acquire));
     let error = stream.service().unwrap_err();
+    let AudioError::Stopped(Stopped::CallbackPanicked(reason)) = &error else {
+        panic!("{error}");
+    };
     assert!(
-        error.starts_with("audio playback stopped because the audio callback panicked: ")
-            && error.contains("stream_tests.rs:")
-            && error.ends_with("render marker at sample 192"),
+        reason.contains("stream_tests.rs:") && reason.ends_with("render marker at sample 192"),
+        "{reason}"
+    );
+    assert!(
+        error
+            .to_string()
+            .starts_with("audio playback stopped because the audio callback panicked: "),
         "{error}"
     );
-    assert_eq!(stream.service().unwrap_err(), error);
+    assert!(matches!(
+        stream.service(),
+        Err(AudioError::Stopped(Stopped::CallbackPanicked(again))) if again == *reason
+    ));
     let lines: Vec<_> = std::fs::read_to_string(log)
         .unwrap()
         .lines()

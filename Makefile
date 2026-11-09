@@ -88,6 +88,7 @@ check-base:
 	cargo test -q -p echode-engine --features spike --lib
 	scripts/check-ffi.sh
 	python3 -B scripts/check_audio_lints.py
+	python3 -B scripts/check_typed_errors.py
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
 	cargo deny -L error check licenses bans sources
 
@@ -160,6 +161,7 @@ check-portable:
 	python3 -B scripts/run_unit_tests.py
 	scripts/check-ffi.sh
 	python3 -B scripts/check_audio_lints.py
+	python3 -B scripts/check_typed_errors.py
 	@command -v cargo-deny >/dev/null || { echo "cargo-deny is missing: run make setup"; exit 1; }
 	cargo deny -L error check licenses bans sources
 	cargo clippy -q --locked --workspace --all-targets $(PORTABLE_BUILD) -- -D warnings

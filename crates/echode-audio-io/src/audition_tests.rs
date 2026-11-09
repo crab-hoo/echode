@@ -79,9 +79,9 @@ struct TestOutputs {
 }
 
 impl AuditionOutputs for TestOutputs {
-    fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), String> {
+    fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), AudioError> {
         if self.probe.fail_open.load(Ordering::Acquire) {
-            return Err("output unavailable".into());
+            return Err(AudioError::NoOutputDevice);
         }
         lock(&self.probe.asked).push(uid.map(str::to_owned));
         while self.probe.hold.load(Ordering::Acquire) {
@@ -94,7 +94,7 @@ impl AuditionOutputs for TestOutputs {
         {
             return Ok((self.rate, false));
         }
-        let (control, audio) = audition_pair(self.rate).map_err(|error| error.to_string())?;
+        let (control, audio) = audition_pair(self.rate)?;
         let (notes, heard) = heard_notes();
         *lock(&self.probe.audio) = Some(audio);
         *lock(&self.probe.notes) = Some(notes);
@@ -729,7 +729,10 @@ fn browser_visibility_prepares_silence_without_a_play_and_settings_do_not_cancel
     assert_eq!(probe.opens.load(Ordering::Acquire), 1);
     assert_eq!(report.settings.gain, 0.0);
     for invalid in [f32::NAN, f32::INFINITY, -1.0, 1.1] {
-        assert!(audition.configure(false, invalid).is_err());
+        assert!(matches!(
+            audition.configure(false, invalid),
+            Err(AudioError::Rejected(Rejected::AuditionGain))
+        ));
     }
     assert!(audition.report().settings.visible);
     audition.stop();

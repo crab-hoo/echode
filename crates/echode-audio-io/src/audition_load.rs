@@ -1,7 +1,7 @@
 //! Bounded source reads, continuous SRC and progressive peaks for auditions.
 
 use super::*;
-use echode_engine::ResampleStream;
+use echode_engine::{PlaybackError, ResampleStream};
 use echode_history::AudioFileReader;
 
 /// Display resolution, not a limit on file length or sound storage.
@@ -49,16 +49,14 @@ fn load(
     start_frame: u64,
     alive: &Weak<()>,
     sounding: &mut Option<(u64, u64)>,
-) -> Result<(), String> {
+) -> Result<(), AudioError> {
     let current = || shared.current(request) && alive.strong_count() != 0;
     if !current() {
         return Ok(());
     }
-    let mut reader = AudioFileReader::open(path).map_err(|error| error.to_string())?;
+    let mut reader = AudioFileReader::open(path)?;
     let start_frame = start_frame.min(reader.frames().saturating_sub(1));
-    reader
-        .seek(start_frame)
-        .map_err(|error| error.to_string())?;
+    reader.seek(start_frame)?;
     shared.stage(request, |entry, _| {
         entry.start_frame = start_frame;
         entry.source_frames = Some(reader.frames());
@@ -78,11 +76,9 @@ fn load(
     if !current() {
         return Ok(());
     }
-    let mut converter = ResampleStream::new(reader.sample_rate(), rate, reader.channels())
-        .map_err(|error| error.to_string())?;
+    let mut converter = ResampleStream::new(reader.sample_rate(), rate, reader.channels())?;
     // Half a second is a bounded handoff window, not a limit on sample duration.
-    let (mut writer, sound) =
-        AuditionSound::streaming((rate as usize / 2).max(1)).map_err(|error| error.to_string())?;
+    let (mut writer, sound) = AuditionSound::streaming((rate as usize / 2).max(1))?;
     let mut waiting = Some(sound);
     let mut supplied = 0usize;
     let mut waveform = AuditionWaveform {
@@ -98,8 +94,9 @@ fn load(
         if !current() {
             return Ok(());
         }
-        let ask = u32::try_from(converter.input_frames()).map_err(|error| error.to_string())?;
-        let pcm = reader.read(ask).map_err(|error| error.to_string())?;
+        let ask = u32::try_from(converter.input_frames())
+            .map_err(|_| AudioError::Playback(PlaybackError::BufferTooSmall))?;
+        let pcm = reader.read(ask)?;
         shared.stage(request, |entry, at| {
             entry.first_decoded_us.get_or_insert(at);
         });
@@ -116,9 +113,7 @@ fn load(
                 report.waveform = Some(waveform.clone());
             }
         }
-        let frames = converter
-            .process(&pcm.samples, eof)
-            .map_err(|error| error.to_string())?;
+        let frames = converter.process(&pcm.samples, eof)?;
         if !frames.is_empty() {
             shared.stage(request, |entry, at| {
                 entry.converted_us.get_or_insert(at);
@@ -129,12 +124,12 @@ fn load(
                 if !current() {
                     return Ok(());
                 }
-                if writer.push(frame).map_err(|error| error.to_string())? {
+                if writer.push(frame)? {
                     break;
                 }
                 service(shared, outputs, sounding, &mut idle_since);
                 if !outputs.is_open() {
-                    return Err("the audition output closed during loading".into());
+                    return Err(AuditionFault::ClosedWhileLoading.into());
                 }
                 // Backpressure waits only on this control thread. Selection and
                 // document closure cancel it without waiting for the callback.
@@ -159,7 +154,7 @@ fn load(
                     shared.update(request, AuditionPhase::Ended, None);
                     return Ok(());
                 }
-                return Err("audio file has no output samples".into());
+                return Err(AuditionFault::NoSamples.into());
             }
             // EOF is published before the callback can see a short sound.
             drop(writer);
@@ -168,7 +163,7 @@ fn load(
         }
         service(shared, outputs, sounding, &mut idle_since);
         if !outputs.is_open() {
-            return Err("the audition output closed during loading".into());
+            return Err(AuditionFault::ClosedWhileLoading.into());
         }
     }
 }
@@ -179,12 +174,12 @@ fn hand_over(
     request: u64,
     waiting: &mut Option<AuditionSound>,
     sounding: &mut Option<(u64, u64)>,
-) -> Result<(), String> {
+) -> Result<(), AudioError> {
     if let Some(sound) = waiting.take() {
         if !shared.current(request) {
             return Ok(());
         }
-        let control = outputs.control().ok_or("no audition output is open")?;
+        let control = outputs.control().ok_or(AuditionFault::NotOpen)?;
         let _ = control.set_gain(lock(&shared.report).settings.gain);
         let id = control.play(sound);
         *sounding = Some((request, id));
@@ -204,8 +199,8 @@ const OVERVIEW_READ: u32 = 65_536;
 pub fn sample_overview(
     path: &std::path::Path,
     live: &dyn Fn() -> bool,
-) -> Result<Option<AuditionWaveform>, String> {
-    let mut reader = AudioFileReader::open(path).map_err(|error| error.to_string())?;
+) -> Result<Option<AuditionWaveform>, AudioError> {
+    let mut reader = AudioFileReader::open(path)?;
     let mut waveform = AuditionWaveform {
         frames: reader.frames(),
         sample_rate: reader.sample_rate(),
@@ -216,9 +211,7 @@ pub fn sample_overview(
         if !live() {
             return Ok(None);
         }
-        let pcm = reader
-            .read(OVERVIEW_READ)
-            .map_err(|error| error.to_string())?;
+        let pcm = reader.read(OVERVIEW_READ)?;
         add_peaks(&mut waveform, &pcm);
         if pcm.frames < u64::from(OVERVIEW_READ) {
             waveform.frames = waveform.loaded_frames;

@@ -24,7 +24,9 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
 
 use crate::panic_log::CallbackPanic;
-use crate::{OutputDevice, hardware};
+use crate::{
+    AudioError, AuditionFault, CoreAudioCall, HardwareFault, OutputDevice, Rejected, hardware,
+};
 
 /// How often an open output frees returned sounds and checks its device.
 const SERVICE: Duration = Duration::from_millis(25);
@@ -217,7 +219,8 @@ impl Shared {
 
     /// Changes the report only while `request` is still the newest. Its
     /// history entry keeps the phase either way.
-    fn update(&self, request: u64, phase: AuditionPhase, error: Option<String>) {
+    fn update(&self, request: u64, phase: AuditionPhase, error: Option<AudioError>) {
+        let error = error.map(|error| error.to_string());
         let mut report = lock(&self.report);
         if let Some(entry) = report.entry(request) {
             entry.phase = phase;
@@ -262,13 +265,13 @@ pub struct Audition {
 
 impl Audition {
     /// Starts the thread. A request opens its file before preparing the output.
-    pub fn start() -> Result<Self, String> {
+    pub fn start() -> Result<Self, AudioError> {
         Self::spawn(|| Box::new(HalOutputs::default()))
     }
 
     pub(crate) fn spawn(
         outputs: impl FnOnce() -> Box<dyn AuditionOutputs> + Send + 'static,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, AudioError> {
         let (requests, incoming) = mpsc::channel();
         let shared = Arc::new(Shared::default());
         let worker = Arc::clone(&shared);
@@ -277,7 +280,7 @@ impl Audition {
         std::thread::Builder::new()
             .name("echode-audition".into())
             .spawn(move || run(&worker, &incoming, outputs(), &alive))
-            .map_err(|error| error.to_string())?;
+            .map_err(AudioError::spawn)?;
         Ok(Self {
             shared,
             requests,
@@ -313,9 +316,9 @@ impl Audition {
 
     /// Keeps the silent output while the browser is visible. Does not start a
     /// sound, change the request generation, or wait for an output to open.
-    pub fn configure(&self, visible: bool, gain: f32) -> Result<(), String> {
+    pub fn configure(&self, visible: bool, gain: f32) -> Result<(), AudioError> {
         if !gain.is_finite() || !(0.0..=1.0).contains(&gain) {
-            return Err("audition gain must be between zero and one".into());
+            return Err(Rejected::AuditionGain.into());
         }
         lock(&self.shared.report).settings = AuditionSettings { visible, gain };
         let _ = self.requests.send(Request::Refresh);
@@ -413,7 +416,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub(crate) trait AuditionOutputs {
     /// Opens or keeps an output on `uid`, or on the system output. Its rate,
     /// and whether it had to open.
-    fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), String>;
+    fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), AudioError>;
     fn control(&mut self) -> Option<&mut AuditionControl>;
     fn is_open(&self) -> bool;
     /// False once the device changed or the callback failed.
@@ -550,7 +553,7 @@ fn prepare_visible(shared: &Shared, outputs: &mut dyn AuditionOutputs) {
         Err(error) => {
             let mut report = lock(&shared.report);
             report.sample_rate = None;
-            report.output_error = Some(error);
+            report.output_error = Some(error.to_string());
         }
     }
 }
@@ -567,14 +570,13 @@ fn service(
     }
     if !outputs.healthy() {
         // Read before closing, which frees the callback with its reason.
-        let error = outputs.panic().map_or_else(
-            || "the output device changed".into(),
-            |reason| format!("the audition callback panicked: {reason}"),
-        );
+        let error = outputs
+            .panic()
+            .map_or(AuditionFault::DeviceChanged, AuditionFault::Panicked);
         outputs.close();
         shared.set_rate(None);
         if let Some((request, _)) = sounding.take() {
-            shared.update(request, AuditionPhase::Stopped, Some(error));
+            shared.update(request, AuditionPhase::Stopped, Some(error.into()));
         }
         *idle_since = None;
         return;
@@ -626,7 +628,7 @@ struct HalOutputs {
 }
 
 impl AuditionOutputs for HalOutputs {
-    fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), String> {
+    fn prepare(&mut self, uid: Option<&str>) -> Result<(u32, bool), AudioError> {
         if self.healthy()
             && let Some((asked, stream)) = &self.open
             && asked.as_deref() == uid
@@ -645,12 +647,12 @@ impl AuditionOutputs for HalOutputs {
             }
             attempts += 1;
             if attempts >= ENUMERATION_ATTEMPTS {
-                return Err("the output devices kept changing".into());
+                return Err(HardwareFault::DevicesKeptChanging.into());
             }
         };
         let device = crate::session::desired(&inventory, uid)
             .cloned()
-            .ok_or("no output device is available")?;
+            .ok_or(AudioError::NoOutputDevice)?;
         let stream = AuditionStream::open(device, Arc::clone(&self.epoch), observed)?;
         let rate = stream.device.sample_rate;
         self.notifications = Some(notifications);
@@ -755,10 +757,13 @@ struct AuditionStream {
 }
 
 impl AuditionStream {
-    fn open(device: OutputDevice, epoch: Arc<AtomicU64>, observed: u64) -> Result<Self, String> {
+    fn open(
+        device: OutputDevice,
+        epoch: Arc<AtomicU64>,
+        observed: u64,
+    ) -> Result<Self, AudioError> {
         hardware::validate_streams(&device)?;
-        let (control, audio) =
-            audition_pair(device.sample_rate).map_err(|error| error.to_string())?;
+        let (control, audio) = audition_pair(device.sample_rate)?;
         let (notes, heard) = heard_notes();
         let mut callback = Box::new(AuditionCallback::new(
             audio,
@@ -775,7 +780,10 @@ impl AuditionStream {
             AudioDeviceCreateIOProcID(device.id, Some(render), context, NonNull::from(&mut proc))
         };
         if status != 0 {
-            return Err(format!("could not open the audition output ({status})"));
+            return Err(AudioError::CoreAudio {
+                call: CoreAudioCall::CreateAuditionProc,
+                status,
+            });
         }
         let value = Self {
             device,
@@ -787,7 +795,10 @@ impl AuditionStream {
         };
         let status = unsafe { AudioDeviceStart(value.device.id, value.proc) };
         if status != 0 {
-            return Err(format!("could not start the audition output ({status})"));
+            return Err(AudioError::CoreAudio {
+                call: CoreAudioCall::StartAudition,
+                status,
+            });
         }
         Ok(value)
     }

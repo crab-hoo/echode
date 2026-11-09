@@ -338,8 +338,10 @@ fn recorded_states_load_into_the_running_helper_or_request_replacement_under_rts
     close(hear(&mut control, &mut audio, frames), 0.0);
 
     let id = device.raw();
-    assert!(!control.restore_recorded_states(&[id], |_| Ok(Some(edited.clone()))));
-    assert!(!control.restore_recorded_states(&[id], |_| Ok(Some(before.clone()))));
+    // The engine only tells a readable recorded state from an unreadable one.
+    type Recorded = Result<Option<Vec<u8>>, &'static str>;
+    assert!(!control.restore_recorded_states(&[id], |_| -> Recorded { Ok(Some(edited.clone())) }));
+    assert!(!control.restore_recorded_states(&[id], |_| -> Recorded { Ok(Some(before.clone())) }));
     close(hear(&mut control, &mut audio, frames), 0.25);
     // Same helper: the unsaved hidden value survived the load.
     assert_eq!(
@@ -351,10 +353,10 @@ fn recorded_states_load_into_the_running_helper_or_request_replacement_under_rts
             .value,
         0.5
     );
-    assert!(!control.restore_recorded_states(&[0x9D], |_| Ok(None)));
-    assert!(control.restore_recorded_states(&[id], |_| Ok(None)));
-    assert!(control.restore_recorded_states(&[id], |_| Err("missing object".into())));
-    assert!(control.restore_recorded_states(&[id], |_| Ok(Some(vec![1, 2, 3]))));
+    assert!(!control.restore_recorded_states(&[0x9D], |_| -> Recorded { Ok(None) }));
+    assert!(control.restore_recorded_states(&[id], |_| -> Recorded { Ok(None) }));
+    assert!(control.restore_recorded_states(&[id], |_| -> Recorded { Err("missing object") }));
+    assert!(control.restore_recorded_states(&[id], |_| -> Recorded { Ok(Some(vec![1, 2, 3])) }));
     // A refused load leaves the plugin as it was.
     close(hear(&mut control, &mut audio, frames), 0.25);
 }

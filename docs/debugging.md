@@ -40,6 +40,7 @@ make debug-report
   - ツール不足・ビルド失敗
   - `check-ffi` が外部シンボルを拒否する
   - `check-audio-lints` が宣言や解除を拒否する
+  - `check-typed-errors` が文字列のエラーを拒否する
   - Cargo の依存メタデータが欠ける
   - Swift の編集型の生成鮮度が不一致になる
   - Rust に追加したアクションを Swift が `unknown variant` として拒否する

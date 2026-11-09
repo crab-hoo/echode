@@ -2065,10 +2065,10 @@ impl PlaybackControl {
     /// caller must replace the graph: defaults need a fresh plugin, and an
     /// unreadable or refused load needs a helper spawned with the bytes.
     /// A device without a helper is left to that replacement too.
-    pub fn restore_recorded_states(
+    pub fn restore_recorded_states<E>(
         &self,
         devices: &[u128],
-        recorded: impl Fn(u128) -> Result<Option<Vec<u8>>, String>,
+        recorded: impl Fn(u128) -> Result<Option<Vec<u8>>, E>,
     ) -> bool {
         let mut replace = false;
         for &device in devices {

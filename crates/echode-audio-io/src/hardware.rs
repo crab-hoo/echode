@@ -8,6 +8,8 @@ use objc2_core_audio_types::*;
 use objc2_core_foundation::{CFRetained, CFString};
 use serde::Serialize;
 
+use crate::{AudioError, CoreAudioCall, HardwareFault};
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct OutputDevice {
     pub id: u32,
@@ -37,21 +39,22 @@ pub(crate) fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
     }
 }
 
-fn checked(status: i32) -> Result<(), String> {
+fn checked(call: CoreAudioCall, status: i32) -> Result<(), AudioError> {
     if status == 0 {
         Ok(())
     } else {
-        Err(format!("CoreAudio error {status}"))
+        Err(AudioError::CoreAudio { call, status })
     }
 }
 
-pub(crate) fn get<T: Copy>(object: u32, selector: u32, scope: u32) -> Result<T, String> {
+pub(crate) fn get<T: Copy>(object: u32, selector: u32, scope: u32) -> Result<T, AudioError> {
     let mut value = std::mem::MaybeUninit::<T>::uninit();
     let mut property = address(selector, scope);
-    let mut size = u32::try_from(size_of::<T>()).map_err(|_| "property size overflow")?;
+    let mut size =
+        u32::try_from(size_of::<T>()).map_err(|_| AudioError::from(HardwareFault::PropertySize))?;
     // SAFETY: typed out storage is correctly sized and aligned. Only SDK-defined
     // POD types and pointer-valued properties are read with this helper.
-    checked(unsafe {
+    checked(CoreAudioCall::Property, unsafe {
         AudioObjectGetPropertyData(
             object,
             NonNull::from(&mut property),
@@ -62,17 +65,17 @@ pub(crate) fn get<T: Copy>(object: u32, selector: u32, scope: u32) -> Result<T, 
         )
     })?;
     if size as usize != size_of::<T>() {
-        return Err("CoreAudio property size changed".into());
+        return Err(HardwareFault::PropertySize.into());
     }
     Ok(unsafe { value.assume_init() })
 }
 
-pub(crate) fn list(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, String> {
+pub(crate) fn list(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, AudioError> {
     let mut property = address(selector, scope);
     // Device/stream lists can change between the size query and read.
     for _ in 0..3 {
         let mut size = 0;
-        checked(unsafe {
+        checked(CoreAudioCall::Property, unsafe {
             AudioObjectGetPropertyDataSize(
                 object,
                 NonNull::from(&mut property),
@@ -85,7 +88,7 @@ pub(crate) fn list(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, S
             return Ok(Vec::new());
         }
         if !(size as usize).is_multiple_of(size_of::<u32>()) {
-            return Err("invalid CoreAudio list size".into());
+            return Err(HardwareFault::ListSize.into());
         }
         let mut values = vec![0u32; size as usize / size_of::<u32>()];
         let Some(pointer) = NonNull::new(values.as_mut_ptr()) else {
@@ -104,26 +107,26 @@ pub(crate) fn list(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, S
         if status == kAudioHardwareBadPropertySizeError {
             continue;
         }
-        checked(status)?;
+        checked(CoreAudioCall::Property, status)?;
         if size as usize > values.len() * size_of::<u32>() {
-            return Err("CoreAudio list grew".into());
+            return Err(HardwareFault::ListSize.into());
         }
         values.truncate(size as usize / size_of::<u32>());
         return Ok(values);
     }
-    Err("CoreAudio device list kept changing".into())
+    Err(HardwareFault::ListKeptChanging.into())
 }
 
-fn string(object: u32, selector: u32) -> Result<String, String> {
+fn string(object: u32, selector: u32) -> Result<String, AudioError> {
     let pointer: *mut CFString = get(object, selector, kAudioObjectPropertyScopeGlobal)?;
-    let pointer = NonNull::new(pointer).ok_or("CoreAudio returned an empty name")?;
+    let pointer = NonNull::new(pointer).ok_or(HardwareFault::EmptyName)?;
     // HAL transfers a retained CFString for these properties; release it once
     // after copying the UTF-8 name/UID on the control thread.
     let value = unsafe { CFRetained::from_raw(pointer) };
     Ok(value.to_string())
 }
 
-pub fn inventory() -> Result<Inventory, String> {
+pub fn inventory() -> Result<Inventory, AudioError> {
     let default_device = get(
         kAudioObjectSystemObject as u32,
         kAudioHardwarePropertyDefaultOutputDevice,
@@ -163,7 +166,7 @@ pub fn inventory() -> Result<Inventory, String> {
             )?;
             channels = channels
                 .checked_add(format.mChannelsPerFrame)
-                .ok_or("channel count overflow")?;
+                .ok_or(HardwareFault::ChannelOverflow)?;
             formats.push((stream, format));
         }
         if channels == 0 {
@@ -175,7 +178,7 @@ pub fn inventory() -> Result<Inventory, String> {
             kAudioObjectPropertyScopeGlobal,
         )?;
         if !rate.is_finite() || rate < 1.0 || rate > f64::from(u32::MAX) || rate.fract() != 0.0 {
-            return Err("CoreAudio sample rate must be a positive whole number".into());
+            return Err(HardwareFault::SampleRate.into());
         }
         let buffer_frames = get(
             id,
@@ -210,7 +213,7 @@ pub fn inventory() -> Result<Inventory, String> {
     })
 }
 
-pub(crate) fn validate_streams(device: &OutputDevice) -> Result<(), String> {
+pub(crate) fn validate_streams(device: &OutputDevice) -> Result<(), AudioError> {
     for stream in list(
         device.id,
         kAudioDevicePropertyStreams,
@@ -233,7 +236,7 @@ pub(crate) fn validate_streams(device: &OutputDevice) -> Result<(), String> {
             || format.mBytesPerFrame != channels.saturating_mul(4)
             || format.mSampleRate != f64::from(device.sample_rate)
         {
-            return Err("the output device must provide native 32-bit float PCM".into());
+            return Err(HardwareFault::Format.into());
         }
     }
     Ok(())
@@ -248,7 +251,7 @@ pub(crate) struct Notifications {
 }
 
 impl Notifications {
-    pub(crate) fn workgroup(device: u32) -> Result<Self, String> {
+    pub(crate) fn workgroup(device: u32) -> Result<Self, AudioError> {
         let epoch = Arc::new(AtomicU64::new(0));
         let captured = Arc::clone(&epoch);
         let block = RcBlock::new(move |_: u32, _: NonNull<AudioObjectPropertyAddress>| {
@@ -267,7 +270,7 @@ impl Notifications {
         self.epoch.load(Ordering::Acquire) != 0
     }
 
-    pub(crate) fn new(inventory: &Inventory, epoch: Arc<AtomicU64>) -> Result<Self, String> {
+    pub(crate) fn new(inventory: &Inventory, epoch: Arc<AtomicU64>) -> Result<Self, AudioError> {
         let captured = Arc::clone(&epoch);
         let block = RcBlock::new(move |_: u32, _: NonNull<AudioObjectPropertyAddress>| {
             captured.fetch_add(1, Ordering::Release);
@@ -315,13 +318,13 @@ impl Notifications {
         }
         Ok(value)
     }
-    fn add(&mut self, id: u32, selector: u32) -> Result<(), String> {
+    fn add(&mut self, id: u32, selector: u32) -> Result<(), AudioError> {
         self.add_scoped(id, selector, kAudioObjectPropertyScopeGlobal)
     }
-    fn add_scoped(&mut self, id: u32, selector: u32, scope: u32) -> Result<(), String> {
+    fn add_scoped(&mut self, id: u32, selector: u32, scope: u32) -> Result<(), AudioError> {
         let mut property = address(selector, scope);
         let pointer = NonNull::from(&*self.block).as_ptr();
-        checked(unsafe {
+        checked(CoreAudioCall::Listener, unsafe {
             AudioObjectAddPropertyListenerBlock(id, NonNull::from(&mut property), None, pointer)
         })?;
         self.registered.push((id, property));

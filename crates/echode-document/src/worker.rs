@@ -294,7 +294,9 @@ impl<P: Presenter> Worker<P> {
                     .map_err(|error| error.to_string())?;
                 let command: AudioCommand =
                     serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-                self.audio.perform_requested(command, transport_revision)?;
+                self.audio
+                    .perform_requested(command, transport_revision)
+                    .map_err(|error| error.to_string())?;
                 None
             }
             Operation::History(bytes) => {

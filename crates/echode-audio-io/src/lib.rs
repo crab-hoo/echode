@@ -17,6 +17,7 @@
 mod activity;
 mod audition;
 mod clips;
+mod error;
 mod hardware;
 mod io_cycle;
 mod opening;
@@ -36,6 +37,10 @@ pub use clips::load_placed_clips;
 pub use echode_engine::{
     GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText,
     ParamValue, PluginActivity, PluginCommand, PluginControl, TrackMeter,
+};
+pub use error::{
+    AudioError, AuditionFault, CoreAudioCall, HardwareFault, Internal, Rejected, Stopped,
+    ThreadFault, WorkgroupFault,
 };
 pub use hardware::{Inventory, OutputDevice, inventory};
 #[cfg(any(test, feature = "headless-output"))]

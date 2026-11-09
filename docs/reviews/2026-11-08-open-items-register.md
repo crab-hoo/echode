@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | `Result<_, String>` 156 か所（10/30 は 141 関数）。最多は `echode-audio-io` の 68 |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | `echode-audio-io` は列挙型にした（ADR 0291）。残りは 101 か所（11/9 の開始時 169）。最多は `echode-history` の 32 |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -86,6 +86,10 @@
   どちらも直し、修正前に失敗する回帰を足した。
 - 2026-11-09（ADR 0290）: カバレッジは `make coverage` で明示に測り、合否にしない。製品の行は Rust 84.3%、Swift 72.9% で、最も低い crate は `echode-plugin-host` の 60.6% だった（helper 側は少なく数える）。
   M3 は終わり、次は ADR 0278 の順の M1（エラーを文字列で返す）である。
+- 2026-11-09（ADR 0291）: M1 の最初の境界として、`echode-audio-io` の 68 か所（複数行・入れ子を含めて 77）を `AudioError` にした。
+  要求の拒否・出力なし・CoreAudio の失敗・出力の停止・エンジン・パッケージを変種で分け、文面は従来のままアプリへ渡す。
+  `scripts/check_typed_errors.py` が、型付けを終えた crate への `Result<_, String>` の再導入を拒否する。
+  次の境界は `echode-document` で、ヘルパーの時間切れ（SPG-01）の区別と合わせて行う。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。
@@ -159,6 +163,7 @@
 | SBX-A1 (2) | 事実 | 対応済み。受けた記述子を全部閉じて拒否する | ADR 0288 |
 | FCA-17 | 未着手 | 対応済み。ズーム中の目盛りの文字と状態の応答は再開の条件付きで残す | ADR 0289 |
 | XCA-17 | 未着手 | 対応済み。fuzz の対象を置き、カバレッジを明示の計測にした | ADR 0290 |
+| XCA-16 | 一部対応 | `echode-audio-io` の境界を列挙型にした。ほかの crate は続ける | ADR 0291 |
 
 ### MOD-13 の照合
 
