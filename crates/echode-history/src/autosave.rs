@@ -18,6 +18,7 @@ use crate::document::{
     FilePlan, PackageError, clear_save_pending, commit_tree, mark_save_pending, read_commit,
     write_incremental,
 };
+use crate::error::{AutosaveError, GitOperation};
 
 /// One autosave commit, newest first when listed.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -39,7 +40,7 @@ impl PendingAutosave {
     pub fn wait(self) -> Result<ObjectId, PackageError> {
         self.reply
             .recv()
-            .map_err(|_| PackageError::new("autosave thread stopped"))?
+            .map_err(|_| PackageError::Autosave(AutosaveError::Stopped))?
     }
 
     pub fn try_wait(&self) -> Option<Result<ObjectId, PackageError>> {
@@ -47,7 +48,7 @@ impl PendingAutosave {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Some(Err(PackageError::new("autosave thread stopped")))
+                Some(Err(PackageError::Autosave(AutosaveError::Stopped)))
             }
         }
     }
@@ -84,7 +85,7 @@ impl Autosave {
         let thread = thread::Builder::new()
             .name("echode-autosave".to_string())
             .spawn(move || worker(directory, incoming))
-            .map_err(|error| PackageError::new(error.to_string()))?;
+            .map_err(PackageError::from)?;
         Ok(Self {
             request,
             thread: Some(thread),
@@ -106,7 +107,7 @@ impl Autosave {
                 journal_seq,
                 reply,
             })
-            .map_err(|_| PackageError::new("autosave thread stopped"))?;
+            .map_err(|_| PackageError::Autosave(AutosaveError::Stopped))?;
         Ok(PendingAutosave { reply: incoming })
     }
 
@@ -114,10 +115,10 @@ impl Autosave {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Load { revision, reply })
-            .map_err(|_| PackageError::new("autosave thread stopped"))?;
+            .map_err(|_| PackageError::Autosave(AutosaveError::Stopped))?;
         incoming
             .recv_timeout(Duration::from_secs(30))
-            .map_err(|_| PackageError::new("autosave thread stopped"))?
+            .map_err(|error| PackageError::Autosave(error.into()))?
     }
 
     /// Commits reachable from the autosave tip, newest first.
@@ -125,10 +126,10 @@ impl Autosave {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Revisions { reply })
-            .map_err(|_| PackageError::new("autosave thread stopped"))?;
+            .map_err(|_| PackageError::Autosave(AutosaveError::Stopped))?;
         incoming
             .recv_timeout(Duration::from_secs(30))
-            .map_err(|_| PackageError::new("autosave thread stopped"))?
+            .map_err(|error| PackageError::Autosave(error.into()))?
     }
 }
 
@@ -141,10 +142,12 @@ impl Drop for Autosave {
     }
 }
 
-fn open_or_init(directory: &Path) -> Result<Repository, String> {
+fn open_or_init(directory: &Path) -> Result<Repository, PackageError> {
     match gix::open(directory) {
         Ok(repo) => Ok(repo),
-        Err(_) => gix::init(directory).map_err(|error| error.to_string()),
+        Err(_) => {
+            gix::init(directory).map_err(|error| PackageError::git(GitOperation::Init, error))
+        }
     }
 }
 
@@ -162,7 +165,7 @@ fn follow_chain(repo: &Repository, parent: Option<ObjectId>) -> Result<(), Packa
     };
     let Some(current) = repo
         .try_find_reference(crate::document::AUTOSAVE_REF)
-        .map_err(|error| PackageError::new(error.to_string()))?
+        .map_err(|error| PackageError::git(GitOperation::FindReference, error))?
         .map(|reference| reference.id().detach())
     else {
         return Ok(());
@@ -179,18 +182,19 @@ fn follow_chain(repo: &Repository, parent: Option<ObjectId>) -> Result<(), Packa
         "autosave: follow the commit chain",
     )
     .map(|_| ())
-    .map_err(|error| PackageError::new(error.to_string()))
+    .map_err(|error| PackageError::git(GitOperation::UpdateReference, error))
 }
 
 fn worker(directory: PathBuf, incoming: Receiver<Request>) {
     let mut repo = match open_or_init(&directory) {
         Ok(repo) => repo,
         Err(error) => {
+            let error = error.into_shared();
             while let Ok(request) = incoming.recv() {
                 if matches!(request, Request::Shutdown) {
                     break;
                 }
-                fail(request, error.clone());
+                fail(request, PackageError::Shared(Arc::clone(&error)));
             }
             return;
         }
@@ -265,7 +269,7 @@ fn list_revisions(repo: &Repository, directory: &Path) -> Result<Vec<SavedRevisi
         };
         let time = commit
             .time()
-            .map_err(|error| PackageError::new(error.to_string()))?
+            .map_err(|error| PackageError::git(GitOperation::ReadCommitTime, error))?
             .seconds;
         revisions.push(SavedRevision {
             id: current.to_string(),
@@ -279,8 +283,7 @@ fn list_revisions(repo: &Repository, directory: &Path) -> Result<Vec<SavedRevisi
     Ok(revisions)
 }
 
-fn fail(request: Request, message: String) {
-    let error = PackageError::new(message);
+fn fail(request: Request, error: PackageError) {
     match request {
         Request::Save { reply, .. } => {
             let _ = reply.send(Err(error));
@@ -351,9 +354,9 @@ fn answer(
             }
         }
         Err(error) => {
-            let message = error.to_string();
+            let error = error.into_shared();
             for reply in replies {
-                let _ = reply.send(Err(PackageError::new(message.clone())));
+                let _ = reply.send(Err(PackageError::Shared(Arc::clone(&error))));
             }
         }
     }
@@ -390,7 +393,7 @@ fn save(
         None => {
             let blob = repo
                 .write_blob(written.project_json.as_bytes())
-                .map_err(|error| PackageError::new(error.to_string()))?
+                .map_err(|error| PackageError::git(GitOperation::WriteObject, error))?
                 .detach();
             blobs.push(blob);
             blob
@@ -407,17 +410,17 @@ fn save(
             let (cached, blob) = cache
                 .as_ref()
                 .and_then(|cache| cache.contents.get(&id))
-                .ok_or_else(|| PackageError::new("unchanged content is missing from the cache"))?;
+                .ok_or(PackageError::Autosave(AutosaveError::MissingCachedContent))?;
             content_blobs.push((filename, *blob));
             stored_contents.insert(id, (Arc::clone(cached), *blob));
             continue;
         }
         let json = changed_contents
             .get(&filename)
-            .ok_or_else(|| PackageError::new("a changed content was not written"))?;
+            .ok_or(PackageError::Autosave(AutosaveError::UnwrittenContent))?;
         let blob = repo
             .write_blob(json.as_bytes())
-            .map_err(|error| PackageError::new(error.to_string()))?
+            .map_err(|error| PackageError::git(GitOperation::WriteObject, error))?
             .detach();
         blobs.push(blob);
         content_blobs.push((filename, blob));
@@ -434,17 +437,17 @@ fn save(
             let (cached, blob) = cache
                 .as_ref()
                 .and_then(|cache| cache.tracks.get(&id))
-                .ok_or_else(|| PackageError::new("unchanged track is missing from the cache"))?;
+                .ok_or(PackageError::Autosave(AutosaveError::MissingCachedTrack))?;
             track_blobs.push((filename, *blob));
             stored.insert(id, (Arc::clone(cached), *blob));
             continue;
         }
         let json = changed_tracks
             .get(&filename)
-            .ok_or_else(|| PackageError::new("a changed track was not written"))?;
+            .ok_or(PackageError::Autosave(AutosaveError::UnwrittenTrack))?;
         let blob = repo
             .write_blob(json.as_bytes())
-            .map_err(|error| PackageError::new(error.to_string()))?
+            .map_err(|error| PackageError::git(GitOperation::WriteObject, error))?
             .detach();
         blobs.push(blob);
         track_blobs.push((filename, blob));
@@ -535,42 +538,5 @@ fn plan_files(cache: &Option<Cache>, project: &Project) -> SavePlan {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn queued_saves_collapse_to_the_latest() {
-        let (sender, incoming) = mpsc::channel();
-        let mut project = Project::new();
-        let mut first = None;
-        for seq in 1..=3 {
-            let (next, _) = project.add_track(format!("t{seq}"));
-            project = next;
-            let (reply, _) = mpsc::channel();
-            let request = Request::Save {
-                project: Arc::new(project.clone()),
-                journal_seq: seq,
-                reply,
-            };
-            if first.is_none() {
-                first = Some(request);
-            } else {
-                sender.send(request).unwrap();
-            }
-        }
-        sender.send(Request::Shutdown).unwrap();
-        let Request::Save {
-            project,
-            journal_seq,
-            reply,
-        } = first.unwrap()
-        else {
-            unreachable!("the first request is a save");
-        };
-        let coalesced = coalesce_save(project, journal_seq, reply, &incoming);
-        assert_eq!(coalesced.journal_seq, 3);
-        assert_eq!(coalesced.project.tracks().len(), 3);
-        assert_eq!(coalesced.replies.len(), 3);
-        assert!(matches!(coalesced.next, Some(Request::Shutdown)));
-    }
-}
+#[path = "autosave_tests.rs"]
+mod tests;

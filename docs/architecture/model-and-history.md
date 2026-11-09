@@ -375,6 +375,9 @@ MySong.echode/
   追記前の確認は末尾の 1 バイトだけを読み、未完の末尾がある時だけ一定の作業領域で後方へ探す。
   完結した行は削らず、短縮の同期と編集ごとの同期は保持する（[ADR 0252](../decisions/0252-bounded-journal-tail-repair.md)）。
   Git の初期化失敗中も終了要求を受け付ける。初回保存を拒否した後の破棄で待ち続けず、開く処理へエラーを返してパッケージのロックを解放する。
+  自動保存は失敗そのものを `PackageError::Shared(Arc<PackageError>)` で待ち手へ共有し、`original()` で元の変種を読める。
+  保存の不確定は共有後も同じ述語で判定する。Git は操作の種類と元の `gix::Error`、ワーカーの終了と期限は `AutosaveError` で分ける。
+  木の読込みと同期コミットは `document_git.rs` に置き、欠落・UTF-8・オブジェクトの種類の拒否も型で返す（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。
 - **Cmd+S と間引き**: `refs/heads/<オルタネイト>` の保存ポイントは間引かず、自動保存だけを `gix-pack` で間引く
   （[ADR 0046](../decisions/0046-history-thin.md)）。
   `gix-pack` は `streaming-input` 機能を入れるための直接の依存で、gix が解決する版と完全一致で固定する

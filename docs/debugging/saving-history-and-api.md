@@ -270,6 +270,15 @@ Undo と Redo は段ごとに編集前の版を持ち、段数の上限はない
 確認時の保存に失敗した場合は編集を解放しない。CLI / MCP には同意の入口がないため、アプリで確認する。
 確認の取消後も開く処理が残る場合は、要求の UUID と `RecoveryOpenRequest` の取消・`recoveryReply` の解放を調べる。
 
+### 自動保存の失敗の原因が文だけで分からない
+
+Rust の `PackageError::original()` で共有の配達の包みを除き、変種と `Error::source` を調べる。
+`Git` の `operation` は初期化・読書き・コミット・参照などの失敗した操作で、元の `gix::Error` から原因と分類を読める。
+`Io` のパス・errno、版の欠落・UTF-8・種類の拒否とは分ける。表示文を分岐条件にしない。
+`AutosaveError::TimedOut` は 30 秒の受信期限で、`Stopped` はチャネルの切断である。期限は要求の取消ではない。
+`tests/autosave_errors.rs` は公開入口、`autosave_tests.rs` は合流した待ち手と受信側の消失を切り分ける。
+共有の失敗も `is_durability_unknown()` で判定し、元のファイルを保全してから調べる（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。
+
 ### 起動直後から新規作成・開くが無効で「変更を保存中」のまま
 
 前回プロジェクトの自動復元と `ProjectController.busy` を確認する。

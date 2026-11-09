@@ -27,6 +27,8 @@ TYPED_CRATES = (
 )
 # A large crate may migrate one storage boundary at a time (ADR 0296).
 TYPED_FILES = (
+    'crates/echode-history/src/autosave.rs',
+    'crates/echode-history/src/document_git.rs',
     'crates/echode-history/src/error.rs',
     'crates/echode-history/src/media.rs',
     'crates/echode-history/src/objects.rs',

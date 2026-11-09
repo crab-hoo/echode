@@ -1,13 +1,14 @@
-//! Typed storage failures. Git, schema and document errors are migrated separately.
+//! Typed storage failures. Schema and document errors are migrated separately.
 
 use std::collections::TryReserveError;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// A package or journal could not be read or written.
 #[derive(Debug)]
 pub enum PackageError {
-    /// Package, Git and document paths not migrated to typed causes yet.
+    /// Schema and document paths not migrated to typed causes yet.
     Message(String),
     /// A journal write reached the file but its durability is unknown.
     JournalDurabilityUnknown,
@@ -15,6 +16,18 @@ pub enum PackageError {
         path: Option<PathBuf>,
         error: std::io::Error,
     },
+    /// One failure shared by coalesced autosave waiters without losing its cause.
+    Shared(Arc<PackageError>),
+    Git {
+        operation: GitOperation,
+        error: gix::Error,
+    },
+    Autosave(AutosaveError),
+    MissingWorkingDirectory,
+    MissingRevisionDirectory(String),
+    MissingRevisionFile(String),
+    MissingRevisionProject,
+    RevisionText(std::str::Utf8Error),
     Audio(MediaError),
     MediaIndex(serde_json::Error),
     InvalidObjectHash,
@@ -33,10 +46,30 @@ impl PackageError {
         Self::JournalDurabilityUnknown
     }
 
+    /// The original failure, independent of autosave's shared delivery envelope.
+    pub fn original(&self) -> &Self {
+        let mut error = self;
+        while let Self::Shared(shared) = error {
+            error = shared;
+        }
+        error
+    }
+
+    pub(crate) fn into_shared(self) -> Arc<Self> {
+        match self {
+            Self::Shared(error) => error,
+            error => Arc::new(error),
+        }
+    }
+
+    pub(crate) fn git(operation: GitOperation, error: gix::Error) -> Self {
+        Self::Git { operation, error }
+    }
+
     /// The journal line reached the file and a later sync or rollback did not
     /// finish. Later edits stop until the package is opened again (AUD-03).
     pub fn is_durability_unknown(&self) -> bool {
-        matches!(self, Self::JournalDurabilityUnknown)
+        matches!(self.original(), Self::JournalDurabilityUnknown)
     }
 }
 
@@ -53,6 +86,24 @@ impl fmt::Display for PackageError {
                 }
                 write!(f, "{error}")
             }
+            Self::Shared(error) => write!(f, "{error}"),
+            Self::Git {
+                operation: GitOperation::ObjectKind,
+                error,
+            } => write!(f, "{error:?}"),
+            Self::Git { error, .. } => write!(f, "{error}"),
+            Self::Autosave(error) => write!(f, "{error}"),
+            Self::MissingWorkingDirectory => {
+                f.write_str("package has no working directory for plugin state")
+            }
+            Self::MissingRevisionDirectory(folder) => {
+                write!(f, "{folder} directory is missing from the revision")
+            }
+            Self::MissingRevisionFile(path) => write!(f, "{path} is missing"),
+            Self::MissingRevisionProject => {
+                f.write_str("project.json is missing from the revision")
+            }
+            Self::RevisionText(error) => write!(f, "{error}"),
             Self::Audio(error) => write!(f, "{error}"),
             Self::MediaIndex(error) => write!(f, "media index: {error}"),
             Self::InvalidObjectHash => f.write_str("object hash must be 64 lowercase hex digits"),
@@ -70,6 +121,10 @@ impl std::error::Error for PackageError {
             Self::Io { error, .. } => Some(error),
             Self::Audio(error) => Some(error),
             Self::MediaIndex(error) => Some(error),
+            Self::Shared(error) => Some(error.as_ref()),
+            Self::Git { error, .. } => Some(error),
+            Self::Autosave(error) => Some(error),
+            Self::RevisionText(error) => Some(error),
             _ => None,
         }
     }
@@ -84,6 +139,59 @@ impl From<std::io::Error> for PackageError {
 impl From<MediaError> for PackageError {
     fn from(error: MediaError) -> Self {
         Self::Audio(error)
+    }
+}
+
+/// The Git operation whose original gix error is retained in `PackageError::Git`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitOperation {
+    Open,
+    Init,
+    FindObject,
+    ReadCommitTree,
+    LookupEntry,
+    ReadObject,
+    ObjectKind,
+    DecodeTree,
+    WriteObject,
+    Commit,
+    FindReference,
+    UpdateReference,
+    ReadCommitTime,
+}
+
+/// Autosave worker lifetime and internal incremental-save contract failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutosaveError {
+    Stopped,
+    TimedOut,
+    MissingCachedContent,
+    MissingCachedTrack,
+    UnwrittenContent,
+    UnwrittenTrack,
+}
+
+impl fmt::Display for AutosaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Stopped => "autosave thread stopped",
+            Self::TimedOut => "autosave request timed out",
+            Self::MissingCachedContent => "unchanged content is missing from the cache",
+            Self::MissingCachedTrack => "unchanged track is missing from the cache",
+            Self::UnwrittenContent => "a changed content was not written",
+            Self::UnwrittenTrack => "a changed track was not written",
+        })
+    }
+}
+
+impl std::error::Error for AutosaveError {}
+
+impl From<std::sync::mpsc::RecvTimeoutError> for AutosaveError {
+    fn from(error: std::sync::mpsc::RecvTimeoutError) -> Self {
+        match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => Self::TimedOut,
+            std::sync::mpsc::RecvTimeoutError::Disconnected => Self::Stopped,
+        }
     }
 }
 

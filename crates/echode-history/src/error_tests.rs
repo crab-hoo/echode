@@ -86,3 +86,41 @@ fn native_decoder_details_do_not_change_the_display_text() {
         "audio sample rate is too high"
     );
 }
+
+#[test]
+fn autosave_timeouts_are_not_worker_shutdowns() {
+    use std::sync::mpsc::RecvTimeoutError;
+    assert_eq!(
+        AutosaveError::from(RecvTimeoutError::Timeout),
+        AutosaveError::TimedOut
+    );
+    assert_eq!(
+        AutosaveError::from(RecvTimeoutError::Disconnected),
+        AutosaveError::Stopped
+    );
+    assert_eq!(
+        AutosaveError::TimedOut.to_string(),
+        "autosave request timed out"
+    );
+    assert_eq!(
+        AutosaveError::Stopped.to_string(),
+        "autosave thread stopped"
+    );
+}
+
+#[test]
+fn shared_delivery_keeps_native_codes_and_durability_without_nesting() {
+    let original =
+        PackageError::from(std::io::Error::from_raw_os_error(libc::EACCES)).into_shared();
+    let shared = PackageError::Shared(Arc::clone(&original)).into_shared();
+    assert!(Arc::ptr_eq(&original, &shared));
+    let delivered = PackageError::Shared(shared);
+    let PackageError::Io { error, .. } = delivered.original() else {
+        panic!("shared I/O cause was lost: {delivered:?}");
+    };
+    assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    let unknown = PackageError::Shared(PackageError::durability_unknown().into_shared());
+    assert!(unknown.is_durability_unknown());
+    let text = PackageError::Shared(PackageError::new(unknown.to_string()).into_shared());
+    assert!(!text.is_durability_unknown());
+}

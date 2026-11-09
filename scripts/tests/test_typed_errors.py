@@ -76,20 +76,20 @@ class TypedErrors(unittest.TestCase):
                 )
 
     def test_migrated_package_modules_reject_untyped_messages(self):
-        source = check_typed_errors.TYPED_FILES[1]
         cases = [
             'fn f() { PackageError::new("no samples") }\n',
             'fn f() { PackageError::Message(message) }\n',
             'fn f() { PackageError\n    ::new("no samples") }\n',
         ]
-        for text in cases:
-            with self.subTest(text=text):
-                root = self.tree({source: text})
-                self.assertEqual(check_typed_errors.problems(root), [
-                    f"{source}:1: returns an untyped package message",
-                ])
-        root = self.tree({source: 'fn f() { PackageError::Audio(MediaError::NoSamples) }\n'})
-        self.assertEqual(check_typed_errors.problems(root), [])
+        for source in check_typed_errors.TYPED_FILES:
+            for text in cases:
+                with self.subTest(source=source, text=text):
+                    root = self.tree({source: text})
+                    self.assertEqual(check_typed_errors.problems(root), [
+                        f"{source}:1: returns an untyped package message",
+                    ])
+            root = self.tree({source: 'fn f() { PackageError::Audio(MediaError::NoSamples) }\n'})
+            self.assertEqual(check_typed_errors.problems(root), [])
 
     def test_unmigrated_package_modules_are_not_claimed_as_typed(self):
         root = self.tree({
