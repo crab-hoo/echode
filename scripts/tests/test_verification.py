@@ -1682,7 +1682,7 @@ class PolicyTests(unittest.TestCase):
         plugins = makefile.replace("bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh",
                                    "bundled-plugins:\n\tbash scripts/build-bundled-plugins.sh debug")
         self.assertEqual(redefined(text=plugins), {"check", "check-swift", "check-product-contracts", "check-contract-controls", "rtsan",
-                                                   "check-bridge-asan", "check-bridge-tsan"})
+                                                   "check-bridge-asan", "check-bridge-tsan", "coverage"})
         policy = json.loads(json.dumps(self.policy))
         policy["product_contracts"].append(dict(policy["product_contracts"][0], id="another-contract"))
         self.assertEqual(redefined(policy), {"check-product-contracts", "check-contract-controls"})

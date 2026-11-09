@@ -1,9 +1,9 @@
-# ADR 0290: 外部入力に fuzz の対象を置き、見つかった 2 件を直す
+# ADR 0290: 外部入力に fuzz の対象を置き、カバレッジを測る
 
 - 日付: 2026-11-09
 - 状態: 採用。
-- 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の M3（[横断監査](../reviews/2026-11-02-cross-cutting-audit.md#xca-17-fuzz-とカバレッジ) の XCA-17）のうち fuzz。
-  カバレッジは同じ M3 の後続の作業で扱う。
+- 対象: [統合表](../reviews/2026-11-08-open-items-register.md) の M3（[横断監査](../reviews/2026-11-02-cross-cutting-audit.md#xca-17-fuzz-とカバレッジ) の XCA-17）。
+  fuzz と見つかった 2 件を先に、[カバレッジ](#カバレッジ) を後の作業で決めた。
 - 方針: [ADR 0278](0278-audit-backlog-order.md) の「M3 を先にする。見つかった欠陥は堅牢性の段へ戻る」。
 - 関連: [ADR 0212](0212-verification-tiers.md)（検査の段階）、[ADR 0269](0269-github-public-ci-scope.md)（CI）、[ADR 0288](0288-received-descriptors-are-all-owned.md)（記述子）。
 
@@ -104,3 +104,51 @@ libFuzzer のバイナリ（`fuzz_targets/`）と通常テスト（`tests/replay
 - JSON-RPC の入力、MIDI の解析、プラグインの走査結果、波形キャッシュの読込みには、まだ対象がない。
 - CI の M1 のランナーでは、libFuzzer の C++ も `.cargo/config.toml` の `-mcpu=apple-m4` でコンパイルされる。ADR 0269 と同じく、M4 だけの命令が出れば `Illegal instruction` で分かる。
 - fuzz のバイナリの Rust は、cargo-fuzz が `RUSTFLAGS` を置くので `target-cpu=apple-m4` なしでビルドされる。製品のバイナリではない。
+
+## カバレッジ
+
+### 比べた案
+
+| 案 | 内容 | 判定 |
+|---|---|---|
+| 1 | cargo-llvm-cov（rustc の `-C instrument-coverage`）と SwiftPM の `--enable-code-coverage` で行を測る明示の計測 | 採る |
+| 2 | 1 と同じ測り方で、割合の下限を合否にする | 採らない。分岐を通るだけのテストでも割合は上がり、性質を確かめるテストを増やす動機にならない |
+| 3 | grcov | 採らない。同じ LLVM の記録を読むだけで、テストの実行と記録の収集を別に組む必要がある |
+| 4 | GitHub の `full` で毎回測る | 採らない。Rust と Swift の全テストをもう一度動かす。割合は節目に見れば足りる |
+
+### 決定
+
+- `make coverage`（準備は `make setup-coverage`）は、Rust では `check` と同じ `cargo build --workspace` と `cargo test --workspace` を計装して動かす。
+  出力先は `target/llvm-cov-target` で、通常の `target/debug` は計装しない。
+  `build-bundled-plugins.sh` は `CARGO_TARGET_DIR` に従い、テストがバイナリの隣に同梱の CLAP を見つけられるようにした。
+- Swift は `EchodeBridge` と `EchodeApp` の `swift test --enable-code-coverage` を使う。Rust の静的ライブラリは計装しない `target/debug` のものをつなぐ。
+- `scripts/coverage_summary.py` が、製品のソースの行を crate・Swift モジュールごとに数え、`target/coverage/summary.md` に書く。
+  テストのディレクトリ、`*_tests.rs`、スパイク、例と、テストの道具の crate（`echode-fuzz`・`echode-test-plugin`）は数えない。
+- テストが 1 件でも失敗したら計測を止める。失敗したテストの割合は誤解を招く。
+- 登録簿では手動の `coverage` とし、どの変更でも選ばない。記録する時は `--run coverage` を使う。
+- 道具は cargo-llvm-cov 0.9.1（Apache-2.0 OR MIT）と、固定した Rust の `llvm-tools` である。製品に入らない。
+
+### 測定
+
+2026-11-09、`623c068` の後の作業ツリー（同じ機器）で、全テストが合格した状態の行の割合である。
+
+| 単位 | 行 | 実行した行 | 割合 |
+|---|---:|---:|---:|
+| Rust の製品の計（16 crate） | 36,579 | 30,828 | 84.3% |
+| 最も低い crate: `echode-plugin-host` | 4,584 | 2,780 | 60.6% |
+| `echode-audio-io` | 3,503 | 2,687 | 76.7% |
+| `echode-ffi` | 1,676 | 1,324 | 79.0% |
+| 最も高い crate: `echode-model` | 4,934 | 4,818 | 97.6% |
+| Swift の計 | 16,253 | 11,844 | 72.9% |
+| `EchodeAppCore` | 13,991 | 10,260 | 73.3% |
+| `EchodeBridge` | 2,262 | 1,584 | 70.0% |
+
+- 全 crate の値は `target/coverage/summary.md` にある。`make coverage` の実時間は 6 分 23 秒だった（計装した依存は前の実行のビルドを再利用）。
+- helper のプロセスで動く行（`echode-plugin-host` の helper 側と `echode-sine-pad` の 0%）は少なく数える。
+  本体は shutdown の応答の直後に待たずに確かめ、まだ終わっていない helper を SIGKILL で止める。helper は終了時に記録を書く前に止まる。
+  製品の振る舞いとしては正しいので、計測のためには変えない。helper 側の割合が要る時は、helper の終了を待つ計測を別に作る。
+
+### 結果と制約
+
+- 割合は実行した行を数え、その行で正しさを確かめたかは示さない。
+- 低い単位は、次にテストを足す場所の候補である。M1・M2 などで触る crate では、作業の前後に `make coverage` で比べられる。

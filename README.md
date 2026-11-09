@@ -19,6 +19,7 @@ make verify           # 作業ごとの完了確認。自動検査と実機検�
 make verify-full      # サニタイザと全反例を含む自動検査の全件。通常は GitHub の full が実行
 make check-portable   # M4 がなくても動く静的検査。GitHub の check と同じ内容
 make fuzz FUZZ_TARGET=audio  # 外部入力の fuzz の対象を 1 つ 300 秒探す
+make coverage         # テストが実行する製品の行の割合を target/coverage/summary.md に出す（make setup-coverage が先）
 make verification-profile  # 保存された検査時間・再利用・時間履歴を表示
 make debug-report     # 既存の検査ログと診断資料を収集
 ```

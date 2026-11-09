@@ -237,6 +237,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   検査基盤へ結果を記録する時は `python3 -B scripts/verify.py --all --only spike-scale --run spike-scale` とし、その後に通常の `make verify` を行う。
   通常選択に含まれないため `make verify VERIFY_ARGS='--run spike-scale'` だけでは拒否される。
 - `spike-audio`: 製品の CoreAudio 出力を無音で開き、コールバック、停止・再起動、機器一覧と通知登録、再生中の計画更新・位置移動を確認する。
+- `coverage`: Rust と Swift の通常テストが実行する製品の行を、crate・Swift モジュールごとに測る（`make coverage`、`target/coverage/summary.md`）。
+  合否の基準ではなく、どの変更でも選ばれない明示の計測である。Rust は `check` と同じビルドとテストを `target/llvm-cov-target` で計装して動かす（[ADR 0290](decisions/0290-fuzz-targets-for-external-input.md#カバレッジ)）。
+  計装したビルドと Swift の計測用ビルドで約 7 GB を使う。終わった後に `target/llvm-cov-target` と `target/coverage/swift-*/` を消しても、次の計測が作り直す。
 - `spike-bridge`: スナップショットと配列の受け渡しの release 計測。
 - `spike-render`: WAV の一括書き出しの release 計測。
 - `advisories`: ネットワークで依存ライブラリの脆弱性情報を確認する。
@@ -318,7 +321,7 @@ Swift の `build_product` はポリシーに宣言し、製品契約ではテス
 
 ## 環境、フックと CI
 
-新しい環境では `make setup`、動的検査には `make setup-bridge`、fuzz には `make setup-fuzz` を実行する。
+新しい環境では `make setup`、動的検査には `make setup-bridge`、fuzz には `make setup-fuzz`、カバレッジの計測には `make setup-coverage` を実行する。
 一つの fuzz の対象を長く探すには `make fuzz FUZZ_TARGET=名前 FUZZ_SECONDS=秒` を使う。名前は `crates/echode-fuzz/Cargo.toml` の `[[bin]]` である。
 製品のコンパイラーは `rust-toolchain.toml`、橋渡しの動的検査（ASan / TSan / Miri）は `scripts/bridge-toolchain.env` の固定 nightly を使う（[ADR 0044](decisions/0044-swift-bridge.md)）。
 TSan のセットアップには CMake と Ninja も必要で、固定した公式 LLVM のソースを取得する。

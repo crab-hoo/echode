@@ -56,7 +56,7 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 | XCA-14 | P2 | 音声・FFI | コールバックの panic が C のフレームへ伝わり、panic の記録もない | 対応済み（ADR 0238・0284） |
 | XCA-15 | P2 | unsafe | `unsafe` ブロックの根拠の注釈が約 3 割で、FFI は 0 件 | 未着手（FFI-A1 を含む） |
 | XCA-16 | P2 | エラー | 文字列のエラーが増え、文字列で分岐する製品コードがある | 一部対応（ADR 0234、SPG-11・DEV-7 と同じ） |
-| XCA-17 | P2 | テスト | fuzz とカバレッジの測定がない | 一部対応（fuzz は ADR 0290。カバレッジは未着手） |
+| XCA-17 | P2 | テスト | fuzz とカバレッジの測定がない | 対応済み（ADR 0290） |
 | XCA-18 | P2 | 静的検査 | Swift・Python・シェルに整形と lint がない | 未着手 |
 | XCA-19 | P2 | 診断 | ログの仕組みがなく、現場の不具合を追えない | 未着手（DEV-8 と同じ） |
 | XCA-20 | P3 | 整備 | 空振りする入口、古い入口、紛らわしい名前、重複の整理 | 一部対応（`make known-bugs`） |
@@ -309,7 +309,8 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 - 修正方針: 上の 5 つの入口に fuzz を置く。固定 nightly は既にある。
 - 後続対応（2026-11-09）: 5 つの入口に libFuzzer の対象を置いた（`crates/echode-fuzz`、[ADR 0290](../decisions/0290-fuzz-targets-for-external-input.md)）。
   最初の 60 秒で、共有領域の世代をヘルパーの書ける値から決める不具合と、音声の確保を主張された長さで決める不具合が見つかり、直した。
-  回帰は `region_tests.rs` の `a_forged_published_counter_does_not_number_the_hosts_blocks` と `echode-history/tests/audio_claimed_length.rs`。カバレッジは未着手である。
+  回帰は `region_tests.rs` の `a_forged_published_counter_does_not_number_the_hosts_blocks` と `echode-history/tests/audio_claimed_length.rs`。
+  カバレッジは `make coverage` の明示の計測にした。製品の行は Rust 84.3%、Swift 72.9% である（ADR 0290 の「カバレッジ」）。
 
 ### XCA-18: Rust 以外の整形と lint
 

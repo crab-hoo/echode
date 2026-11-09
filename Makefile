@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -203,6 +203,15 @@ fuzz:
 # Full tier: every fuzz target under ASan for 60 seconds, after its seeds and saved findings.
 check-fuzz:
 	bash scripts/fuzz.sh all 60
+
+# llvm-tools and the pinned cargo-llvm-cov for `make coverage`.
+setup-coverage:
+	bash scripts/coverage.sh setup
+
+# Product lines the Rust and Swift tests run, by crate and module, into target/coverage/. Not a gate.
+coverage:
+	$(MAKE) contract-prerequisites
+	bash scripts/coverage.sh run
 
 # Rewrites crates/echode-cli/tests/fixtures/sine-pad-a4-128.wav and appends REASON
 # to tests/fixtures/bless.log. Use this when a sound change is intentional.

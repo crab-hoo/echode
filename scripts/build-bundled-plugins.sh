@@ -8,9 +8,11 @@ case "$profile" in
     release) cargo build -q --locked --offline --release -p echode-sine-pad ;;
     *) echo "unsupported profile: $profile" >&2; exit 2 ;;
 esac
-mkdir -p "target/$profile/plugins"
-bundle="target/$profile/plugins/EchodeSinePad.clap"
+# Tests find the bundle beside their binaries, also in `make coverage`'s target directory.
+out="${CARGO_TARGET_DIR:-target}/$profile"
+mkdir -p "$out/plugins"
+bundle="$out/plugins/EchodeSinePad.clap"
 if [[ -f "$bundle" ]]; then rm "$bundle"; fi
 mkdir -p "$bundle/Contents/MacOS"
-cp "target/$profile/libechode_sine_pad.dylib" "$bundle/Contents/MacOS/EchodeSinePad"
+cp "$out/libechode_sine_pad.dylib" "$bundle/Contents/MacOS/EchodeSinePad"
 cp Packaging/EchodeSinePad-Info.plist "$bundle/Contents/Info.plist"

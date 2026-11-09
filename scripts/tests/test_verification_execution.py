@@ -227,8 +227,13 @@ class ExecutionTests(unittest.TestCase):
         for name, check in checks.items():
             if check["mode"] == "automatic" and name not in ("check-format", "check-verification", "check-tsan-runtime"):
                 with self.subTest(check=name):
-                    expected = "disk-space-mutations" if name in ("check-product-contracts", "check-contract-controls") else "disk-space"
+                    expected = {"check-product-contracts": "disk-space-mutations", "check-contract-controls": "disk-space-mutations",
+                                "check-fuzz": "disk-space-fuzz"}.get(name, "disk-space")
                     self.assertEqual(check["preflight"][0], expected)
+        # The fuzz build and the instrumented coverage build have their own cold sizes (ADR 0290).
+        self.assertIn("target/aarch64-apple-darwin=2", policy["preflights"]["disk-space-fuzz"]["command"])
+        self.assertEqual(checks["coverage"]["preflight"][0], "disk-space-coverage")
+        self.assertIn("target/llvm-cov-target=7", policy["preflights"]["disk-space-coverage"]["command"])
 
 
 class BridgeReadinessTests(unittest.TestCase):
