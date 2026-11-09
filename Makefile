@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -189,6 +189,20 @@ setup:
 # Fixed validation toolchain; never changes the product compiler/default.
 setup-bridge:
 	bash scripts/setup-bridge.sh
+
+# The validation nightly and the pinned cargo-fuzz for `make fuzz` and `check-fuzz`.
+setup-fuzz:
+	bash scripts/fuzz.sh setup
+
+# One target for FUZZ_SECONDS. A finding stops with its input under target/fuzz/artifacts/.
+FUZZ_SECONDS ?= 300
+fuzz:
+	@test -n "$(FUZZ_TARGET)" || { echo 'usage: make fuzz FUZZ_TARGET=NAME [FUZZ_SECONDS=300], NAME from crates/echode-fuzz/Cargo.toml'; exit 1; }
+	bash scripts/fuzz.sh run $(FUZZ_TARGET) $(FUZZ_SECONDS)
+
+# Full tier: every fuzz target under ASan for 60 seconds, after its seeds and saved findings.
+check-fuzz:
+	bash scripts/fuzz.sh all 60
 
 # Rewrites crates/echode-cli/tests/fixtures/sine-pad-a4-128.wav and appends REASON
 # to tests/fixtures/bless.log. Use this when a sound change is intentional.

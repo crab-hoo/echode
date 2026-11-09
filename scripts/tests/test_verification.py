@@ -1968,7 +1968,7 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("verify.py", workflow)
         matrix = re.search(r"(?m)^        check: \[([^\]]+)\]$", workflow)
         self.assertIsNotNone(matrix)
-        targets = set(re.findall(r"(?m)run: make ([\w-]+)$", workflow)) - {"setup-bridge"}
+        targets = {name for name in re.findall(r"(?m)run: make ([\w-]+)$", workflow) if not name.startswith("setup-")}
         targets |= {name.strip() for name in matrix[1].split(",")}
         full = {check["id"] for check in self.policy["checks"] if check.get("tier") == "full"}
         self.assertEqual(targets, full)

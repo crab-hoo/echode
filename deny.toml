@@ -3,6 +3,8 @@
 
 [graph]
 targets = ["aarch64-apple-darwin"]
+# The fuzz binaries' libFuzzer is optional, so name it to check its license too.
+features = ["echode-fuzz/libfuzzer"]
 
 [licenses]
 # Licenses that a GPL-3.0-or-later program can include (docs/PLAN.md §2.1).
@@ -30,6 +32,8 @@ allow = [
     "MIT",
     "MIT-0",
     "MPL-2.0",
+    # libFuzzer, through libfuzzer-sys (ADR 0290). The FSF lists it as GPL-compatible.
+    "NCSA",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",

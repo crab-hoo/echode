@@ -446,3 +446,21 @@ Swift の負の対照を同じ位置まで何度もやり直す場合は、契�
    失敗した実行のログは `target/bridge/<sanitizer>/product/swift-tests.failed.log` に残り、再実行で消えない。
    抜粋には dyld の行ではなく `WARNING`〜`SUMMARY` の報告を出す。
 いずれも抑制（suppression）や不要なロックで隠さず、スタックと対象アドレスを確認して製品データの競合と区別する。
+
+### fuzz の発見（`crash-`・`oom-`・`timeout-`）
+
+`check-fuzz` と `make fuzz` は、発見の入力を `target/fuzz/artifacts/<対象>/` に残して止まる（[ADR 0290](../decisions/0290-fuzz-targets-for-external-input.md)）。
+CI の `fuzz` ジョブは最後に `xxd` で表示する。`xxd -r` でバイト列に戻せる。
+
+1. 種類を見る。`crash-` は panic か ASan の報告、`oom-` は 2 GB を超える確保、`timeout-` は 1 入力 10 秒の超過である。
+   `oom-` は、外部の値（ヘッダーの長さ・件数）で確保の大きさを決めた跡であることが多い（ADR 0290 の音声の例）。
+2. 修正の前のバイナリで最小化する。修正後は再現しないので、先に行う。
+   `target/aarch64-apple-darwin/release/<対象> -minimize_crash=1 -max_total_time=60 -exact_artifact_path=<出力> <入力>` を使う。
+   `ECHODE_FUZZ_SCRATCH` を `target/fuzz/scratch` にすると、作業用のパッケージが一か所に集まる。
+3. どこが止めたかを分ける。
+   - `crates/echode-fuzz/src/` の主張（往復・保存と再読込・音声の形）: 製品が受け入れた入力で性質が崩れた。製品か対象の不備かを読む。
+   - 対象の不備（例: ファイルシステムが拒む名前）は対象を直し、入力は同じく保存する。
+   - 製品のコードの panic・ASan の報告: 堅牢性の不具合として直し、所属の crate に製品の境界を通す回帰を足す。
+   - スタックが AudioToolbox などの OS の中だけ: OS の不具合である。製品側で避けられるかを調べ、避けられなければ ADR に記録する。
+4. 最小化した入力を `crates/echode-fuzz/regressions/<対象>/` に分かる名前で置く。`tests/replay.rs` が `check` で毎回通す。
+   ASan だけが見つける報告は通常テストでは再現しないので、`make fuzz` の再実行で確かめる。

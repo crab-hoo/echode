@@ -90,9 +90,11 @@ fn a_full_pair_of_slots_is_not_overwritten() {
     let path = temp_path("busy");
     let _ = std::fs::remove_file(&path);
     let region = MappedRegion::create(&path).expect("region");
-    region.header().published.store(2, Ordering::Release);
-    region.header().completed.store(0, Ordering::Release);
     let input: [&[f32]; 2] = [&[0.0], &[0.0]];
+    // Two blocks no helper completes fill both slots.
+    for _ in 0..2 {
+        region.submit_block(1, &input, &[]).expect("submit");
+    }
     let mut left = [0.0f32];
     let mut right = [0.0f32];
     let mut output: [&mut [f32]; 2] = [&mut left, &mut right];
@@ -102,6 +104,7 @@ fn a_full_pair_of_slots_is_not_overwritten() {
         .expect_err("both slots are busy");
     assert!(matches!(error, RegionError::Busy));
     assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(region.issued(), 2);
     assert_eq!(region.published(), 2);
     drop(region);
     let _ = std::fs::remove_file(&path);
@@ -214,4 +217,30 @@ fn a_corrupt_output_record_is_skipped() {
     assert_eq!(region.read_output_events(1, &mut decoded), 0);
     drop(region);
     let _ = std::fs::remove_file(&path);
+}
+
+/// A plugin can overwrite the header. The host numbers its own blocks, so a
+/// forged `published` neither picks generation 0 nor skips the helper's next
+/// block (found by the region fuzz target, ADR 0290).
+#[test]
+fn a_forged_published_counter_does_not_number_the_hosts_blocks() {
+    let region = MappedRegion::create_shared(SessionLayout::stereo()).expect("region");
+    let silence = [0.0f32; 4];
+    let input = [&silence[..], &silence[..]];
+    // Each block completes before the next, so only `published` is forged.
+    for (forged, expected) in [(u64::MAX, 1), (7, 2)] {
+        region.header().published.store(forged, Ordering::Release);
+        let generation = region.submit_block(4, &input, &[]).expect("submit");
+        assert_eq!(generation, expected);
+        assert_eq!(region.published(), expected, "the helper's copy");
+        region.header().completed.store(expected, Ordering::Release);
+    }
+    region.header().published.store(u64::MAX, Ordering::Release);
+    assert_eq!(region.submit_activation().expect("activation"), 3);
+    region.reset_for_restart();
+    assert_eq!(region.published(), 0);
+    let generation = region
+        .submit_block(4, &input, &[])
+        .expect("submit after a restart");
+    assert_eq!(generation, 1);
 }

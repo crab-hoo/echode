@@ -50,6 +50,24 @@ jobs:
       - if: always()
         run: df -h .
 
+  # A finding fails the job; its input is printed so it can be saved under
+  # crates/echode-fuzz/regressions/ (docs/debugging/verification-and-build.md).
+  fuzz:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - run: make setup-fuzz
+      - run: make check-fuzz
+      - name: Show the inputs of fuzz findings
+        if: failure()
+        run: >-
+          find target/fuzz/artifacts -type f -print -exec xxd {} \; || true
+
   contracts:
     strategy:
       fail-fast: false

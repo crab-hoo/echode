@@ -4,7 +4,6 @@
 //! when the device rate differs. Ogg stays out of this slice: AudioToolbox
 //! covers WAV, AIFF, CAF, MP3, AAC, ALAC, and FLAC.
 
-#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -339,11 +338,13 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
     }
     let frames = u64::try_from(frames).map_err(|_| PackageError::new("audio is too large"))?;
     let channels_usize = channels as usize;
-    let count = frames
-        .checked_mul(channels_usize as u64)
-        .ok_or_else(|| PackageError::new("audio frame count overflowed"))?;
-    let count = usize::try_from(count).map_err(|_| PackageError::new("audio is too large"))?;
-    let mut samples = vec![0.0f32; count];
+    // The header's length is a claim: a 54-byte AIFF claimed 6.4 GB of samples
+    // (ADR 0290). Reserve no more than the file's bytes can hold, grow with
+    // what is decoded, and report a failed reservation instead of aborting.
+    let mut samples: Vec<f32> = Vec::new();
+    samples
+        .try_reserve_exact(reservation(source, &file_format, frames))
+        .map_err(|_| too_large_to_decode())?;
     let mut written = 0u64;
     while written < frames {
         if !keep_going() {
@@ -351,19 +352,22 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
         }
         let ask = u32::try_from((frames - written).min(16_384)).unwrap_or(u32::MAX);
         let mut got = ask;
-        let offset = usize::try_from(written)
-            .map_err(|_| PackageError::new("audio is too large"))?
-            * channels_usize;
-        let byte_size = usize::try_from(ask).unwrap_or(0) * channels_usize * 4;
+        let start = samples.len();
+        let chunk = usize::try_from(ask).unwrap_or(0) * channels_usize;
+        samples
+            .try_reserve(chunk)
+            .map_err(|_| too_large_to_decode())?;
+        samples.resize(start + chunk, 0.0);
         let mut list = AudioBufferList {
             mNumberBuffers: 1,
             mBuffers: [AudioBuffer {
                 mNumberChannels: channels,
-                mDataByteSize: u32::try_from(byte_size)
+                mDataByteSize: u32::try_from(chunk * 4)
                     .map_err(|_| PackageError::new("audio read is too large"))?,
-                mData: samples[offset..].as_mut_ptr().cast(),
+                mData: samples[start..].as_mut_ptr().cast(),
             }],
         };
+        // SAFETY: the buffer holds `ask` interleaved frames from `start`.
         let status = unsafe {
             ExtAudioFileRead(
                 file.0,
@@ -376,6 +380,10 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
                 "could not read audio ({status})"
             )));
         }
+        if got > ask {
+            return Err(PackageError::new("audio decoder exceeded its buffer"));
+        }
+        samples.truncate(start + got as usize * channels_usize);
         if got == 0 {
             break;
         }
@@ -385,8 +393,7 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
         return Err(PackageError::new("audio file has no samples"));
     }
     let frames = written;
-    let count = usize::try_from(frames).unwrap_or(0) * channels_usize;
-    samples.truncate(count);
+    samples.shrink_to_fit();
     if samples.iter().any(|sample| !sample.is_finite()) {
         return Err(PackageError::new("audio contains a non-finite sample"));
     }
@@ -396,6 +403,23 @@ fn decode_file(source: &Path, keep_going: &dyn Fn() -> bool) -> Result<DecodedPc
         frames,
         samples,
     })
+}
+
+fn too_large_to_decode() -> PackageError {
+    PackageError::new("audio is too large to decode")
+}
+
+/// Samples to reserve before decoding: the claimed length, but no more frames
+/// than the file's bytes can encode. A packet takes at least one byte, and PCM
+/// takes its frame size per frame. Decoding still grows past it if it must.
+fn reservation(source: &Path, format: &AudioStreamBasicDescription, frames: u64) -> usize {
+    let bytes = fs::metadata(source).map_or(0, |metadata| metadata.len());
+    let frames_per_packet = u64::from(format.mFramesPerPacket.max(1));
+    let bytes_per_frame = u64::from(format.mBytesPerFrame.max(1));
+    let possible = bytes.saturating_mul(frames_per_packet) / bytes_per_frame;
+    usize::try_from(frames.min(possible))
+        .unwrap_or(usize::MAX)
+        .saturating_mul(format.mChannelsPerFrame as usize)
 }
 
 struct OpenAudio(ExtAudioFileRef);

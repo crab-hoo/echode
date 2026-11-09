@@ -72,7 +72,7 @@
 |---|---|---|---|
 | M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | `Result<_, String>` 156 か所（10/30 は 141 関数）。最多は `echode-audio-io` の 68 |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
-| M3 | fuzz とカバレッジ | XCA-17 | どちらもない。PLAN は Phase 6 にファジングを置く |
+| M3 | fuzz とカバレッジ | XCA-17 | fuzz は対応済み（ADR 0290）。5 つの入口の対象を置き、見つかった 2 件を直した。カバレッジの測定は未着手 |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
 | M5 | Swift・Python・シェルの整形と lint | XCA-18 | どれもない |
 | M6 | Codex のフック | XCA-06・ENV-04 | Claude Code は対応済み。Codex の matcher は Cursor の道具名のまま |
@@ -81,6 +81,9 @@
 | M9 | 手書きの外部宣言と SDK の照合 | ENG-15 の残り | 許可一覧の 14 シンボル（`sync.rs` 10、`graph.rs` 3、`device.rs` 1） |
 | M10 | 全体の段階の `covered` が検査の識別値を見ない | ENV-02 | 理由付きで残置（ADR 0232） |
 
+- 2026-11-09（ADR 0290）: M3 の fuzz は、監査の 5 つの入口に libFuzzer の対象を置き、全体の段階の `check-fuzz` で各 60 秒動かす。
+  最初の実行で 2 件の堅牢性の不具合が見つかった。共有領域の世代をヘルパーが書ける `published` から決めていた件と、音声の確保をファイルが主張する長さで決めていた件である。
+  どちらも直し、修正前に失敗する回帰を足した。次は M3 のカバレッジである。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。
@@ -153,6 +156,7 @@
 | ENV-08 | 事実 | 解消。60 分の `check-contract-controls` は期限 330 分のジョブで動く | ADR 0269 |
 | SBX-A1 (2) | 事実 | 対応済み。受けた記述子を全部閉じて拒否する | ADR 0288 |
 | FCA-17 | 未着手 | 対応済み。ズーム中の目盛りの文字と状態の応答は再開の条件付きで残す | ADR 0289 |
+| XCA-17 | 未着手 | 一部対応。fuzz は対応済み、カバレッジは未着手 | ADR 0290 |
 
 ### MOD-13 の照合
 

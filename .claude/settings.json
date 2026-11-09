@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/wait-for-verify.sh",
-            "timeout": 15600
+            "timeout": 17460
           }
         ]
       }
@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/check-on-stop.sh",
-            "timeout": 15600
+            "timeout": 17460
           }
         ]
       }

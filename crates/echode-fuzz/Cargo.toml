@@ -1,0 +1,72 @@
+[package]
+name = "echode-fuzz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Fuzz targets for input from other processes and from disk (ADR 0290)"
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+# The libFuzzer binaries. `make fuzz` enables this; normal builds and tests
+# never compile libFuzzer.
+libfuzzer = ["dep:libfuzzer-sys"]
+
+[dependencies]
+echode-actions = { path = "../echode-actions" }
+echode-history = { path = "../echode-history" }
+echode-model = { path = "../echode-model" }
+echode-realtime = { path = "../echode-realtime" }
+echode-sandbox = { path = "../echode-sandbox" }
+libc = "=0.2.190"
+libfuzzer-sys = { version = "=0.4.13", optional = true }
+
+[[bin]]
+name = "control"
+path = "fuzz_targets/control.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "region"
+path = "fuzz_targets/region.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "journal"
+path = "fuzz_targets/journal.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "package"
+path = "fuzz_targets/package.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audio"
+path = "fuzz_targets/audio.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[example]]
+name = "seeds"
+test = false
+
+[lints]
+workspace = true

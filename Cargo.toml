@@ -18,6 +18,7 @@ members = [
     "crates/echode-api",
     "crates/echode-document",
     "crates/echode-ffi",
+    "crates/echode-fuzz",
     "spikes/bridge",
 ]
 

@@ -77,6 +77,8 @@
 - 製品ソースファイル内の単体テストが大きくなった場合（目安 100 行以上）は、`#[cfg(test)] #[path = "<module>_tests.rs"] mod tests;` で同ディレクトリの別ファイルへ分離し、製品コードの閲覧コストを抑える。
 - モジュール・依存・ツールチェーン・実行入口が変わったら、`scripts/verification.json`、`Makefile`、CI、実行手順を照合する。選択条件は `scripts/verification.json` だけに置く。
   Makefile のコメントは各規則の目的を 3 行以内で書き、機能ごとの経緯や契約の一覧を積まない。
+- 別プロセス・ディスク・利用者のファイルから読む入口を足したら、`crates/echode-fuzz` の既存の対象が通すか確かめ、通さなければ対象を足す。
+  fuzz の発見は最小化して `regressions/<対象>/` に置き、所属の crate にも製品の境界を通す回帰を足す（[デバッグ手順](debugging/verification-and-build.md)）。
 - 必須契約（`product_contracts`）は、正しいソースで実テストが 1 件通過し、誤りを戻したソースのコピーでは期待値で失敗することを確認する。
 - `@MainActor` のテストは同時に動き、主スレッドを交互に使う。長い同期処理は `await` で区切るか主アクターの外へ移し、他のテストの実時間の待ちを止めない。
   画素の全面走査は `CanvasReadback.scan` を使う（[デバッグ手順](debugging.md)の `Status did not arrive`）。
@@ -123,6 +125,7 @@
 | JSON-RPC・MCP | `crates/echode-api` | `rpc.rs` / `serve.rs`（Unix ソケット RPC）、`mcp.rs`（MCP stdio ブリッジ） |
 | CLI | `crates/echode-cli` | `render`、`serve`、`mcp` サブコマンド。統合テストは `tests/render.rs`、`tests/mcp.rs` |
 | 文書の手番 | `crates/echode-document` | `service.rs`（投入・取消・終了）、`worker.rs`（手番と保護）、`ticket.rs`（完了の 1 回の保証）、`saves.rs`（保存の取込み）、`lane.rs`（デバイスレーン）、`device.rs`、`activity.rs`、`live.rs` |
+| 外部入力の fuzz | `crates/echode-fuzz` | 制御ソケット・共有領域・ジャーナル・パッケージ・音声の対象。`Target::run` を libFuzzer の `fuzz_targets/` と `tests/replay.rs` が共有し、`regressions/` の発見を通常テストで再生する（[ADR 0290](decisions/0290-fuzz-targets-for-external-input.md)） |
 | 製品 C ABI | `crates/echode-ffi` | `lib.rs`、`document.rs`（C のコールバックと `Ticket`）、`snapshot.rs`（`Snapshot`・`SnapshotPresenter`）、`controls.rs`。ヘッダ生成は `cbindgen` |
 | Swift ブリッジ | `swift/EchodeBridge` | `Document.swift`、`Audio.swift`、`Controls.swift`（`echode-ffi` の Swift 6 ラッパー） |
 | 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`DocumentSession.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |

@@ -192,6 +192,9 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   ASan / TSan の Swift の全体実行は同時実行数を 16 に絞って合否を決める。実際の幅は `check_test_width.py` がイベント列で確かめる。
   TSan はその後、全テストを同時に動かす実行をもう一度行い、テストをまたぐ競合を探す。
   この実行はサニタイザの報告と途中の異常終了だけを判定し、テストの失敗は判定しない（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
+- `check-fuzz`（全体の段階）: `crates/echode-fuzz` の libFuzzer の対象を、固定 nightly の ASan で各 60 秒動かす。
+  対象は制御ソケット・共有領域・ジャーナル・パッケージ・音声で、先に種と `regressions/` の保存した発見を通す（[ADR 0290](decisions/0290-fuzz-targets-for-external-input.md)）。
+  発見は失敗にし、入力は `target/fuzz/artifacts/` に残る。種と保存した発見は ASan なしの通常テストとして `check` でも毎回動く。
 - `check-bridge-miri`（全体の段階）: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
   フォルダ開閉用の表示ハンドルの保持・再展開と可視行の容量境界も同じ経路で確認する。
 
@@ -315,7 +318,8 @@ Swift の `build_product` はポリシーに宣言し、製品契約ではテス
 
 ## 環境、フックと CI
 
-新しい環境では `make setup`、動的検査には `make setup-bridge` を実行する。
+新しい環境では `make setup`、動的検査には `make setup-bridge`、fuzz には `make setup-fuzz` を実行する。
+一つの fuzz の対象を長く探すには `make fuzz FUZZ_TARGET=名前 FUZZ_SECONDS=秒` を使う。名前は `crates/echode-fuzz/Cargo.toml` の `[[bin]]` である。
 製品のコンパイラーは `rust-toolchain.toml`、橋渡しの動的検査（ASan / TSan / Miri）は `scripts/bridge-toolchain.env` の固定 nightly を使う（[ADR 0044](decisions/0044-swift-bridge.md)）。
 TSan のセットアップには CMake と Ninja も必要で、固定した公式 LLVM のソースを取得する。
 検査専用ランタイムの準備・再生成は `make setup-bridge`、取得済みソースだけの再ビルドは `python3 scripts/tsan_runtime.py --prepare` を使う。
@@ -330,7 +334,7 @@ Bash は待たせないので、状態とログは読めるが、ファイルを
 ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
 GitHub Actions の `check` は、M4 を要らない `make check-portable` と `make advisories` を実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
 M4 のない環境の協力者も同じ入口を使える。
-`full` は全体の段階の 5 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
+`full` は全体の段階の 6 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
 反例は `ECHODE_CONTRACT_SHARD=I/N` で 4 つのジョブに分け、各ジョブは必須テストを全部実行してから自分の分の反例を実行する。
 全体の段階の検査を足したら `full.yml` にも足す。登録簿との差は `check-verification` のテストが止める。
 作業の段階のネイティブ検査は CI になく、手元の `make verify` で行う。

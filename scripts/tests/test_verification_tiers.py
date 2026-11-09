@@ -14,7 +14,7 @@ import test_verification as support
 verify = support.verify
 contracts = support.load_contracts()
 ROOT = support.ROOT
-FULL_TIER = {"check-bridge-asan", "check-bridge-tsan", "check-tsan-runtime", "check-bridge-miri", "check-contract-controls"}
+FULL_TIER = {"check-bridge-asan", "check-bridge-tsan", "check-tsan-runtime", "check-bridge-miri", "check-contract-controls", "check-fuzz"}
 
 
 def git(root, *arguments):
@@ -55,7 +55,9 @@ class RealPolicyTests(unittest.TestCase):
                                ("scripts/check-bridge-miri.sh", {"check-bridge-miri"}),
                                ("scripts/tsan_runtime.py", {"check-bridge-tsan", "check-tsan-runtime"}),
                                ("scripts/check_product_contracts.py", {"check-contract-controls"}),
-                               ("scripts/swift_contract_runner.py", {"check-contract-controls"})):
+                               ("scripts/swift_contract_runner.py", {"check-contract-controls"}),
+                               ("scripts/fuzz.sh", {"check-fuzz"}),
+                               ("crates/echode-fuzz/fuzz_targets/control.rs", {"check-fuzz"})):
             with self.subTest(path=path):
                 self.assertEqual(FULL_TIER & set(verify.select_checks(self.policy, [path])), expected)
 

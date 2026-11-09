@@ -63,6 +63,7 @@ make debug-report
   - 終了フック直後の不要な再実行
 - サニタイザー
   - TSan の既知の環境要因と製品不具合の切り分け
+  - fuzz の発見（`crash-`・`oom-`・`timeout-`）
 
 ### [音声・再生・プラグイン](debugging/audio-and-plugins.md)
 

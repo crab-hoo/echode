@@ -953,7 +953,7 @@ impl PluginHost {
         if self.region.is_ready() || self.previous_region.is_none() {
             return Ok(());
         }
-        if self.region.published() != 0 {
+        if self.region.issued() != 0 {
             return Err(SessionError::MappingPending);
         }
         let mut control = self.control.lock();
@@ -1518,7 +1518,7 @@ pub struct PluginAudio {
 impl PluginAudio {
     /// Callback publication also activates a bank while transport is stopped.
     pub fn activate_mapping(&mut self) -> Result<(), SessionError> {
-        if !self.region.is_ready() && self.region.published() == 0 {
+        if !self.region.is_ready() && self.region.issued() == 0 {
             self.region
                 .submit_activation()
                 .map_err(|error| self.report_inline(error))?;

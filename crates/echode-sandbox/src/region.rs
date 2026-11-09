@@ -242,6 +242,10 @@ pub struct MappedRegion {
     wake_target: Option<std::sync::Arc<MappedRegion>>,
     /// Parent-only. A generation stored here is not read if it completes late.
     abandoned: AtomicU64,
+    /// Parent-only. The last generation this process submitted. The header's
+    /// `published` is the helper's copy of it: a plugin can overwrite the
+    /// mapping, so the host never reads that copy back (ADR 0290).
+    issued: AtomicU64,
 }
 
 /// One word every helper bumps when it finishes a block, so the audio thread
@@ -406,8 +410,21 @@ impl MappedRegion {
         &raw const self.header().dead
     }
 
+    /// Helper-side: the last generation the host published. The host reads
+    /// [`Self::issued`] instead.
     pub fn published(&self) -> u64 {
         self.header().published.load(Ordering::Acquire)
+    }
+
+    /// Host-side: the last generation this process submitted, 0 before the first.
+    pub fn issued(&self) -> u64 {
+        self.issued.load(Ordering::Acquire)
+    }
+
+    /// Records `generation` as submitted and stores the helper's copy.
+    fn issue(&self, generation: u64) {
+        self.issued.store(generation, Ordering::Release);
+        self.header().published.store(generation, Ordering::Release);
     }
 
     /// Increment the alarm without waking a waiter.
@@ -480,14 +497,14 @@ impl MappedRegion {
         if self.is_dead() {
             return Err(RegionError::Dead);
         }
-        let generation = self.published().wrapping_add(1);
+        let generation = self.issued().wrapping_add(1);
         if generation.wrapping_sub(self.header().completed.load(Ordering::Acquire)) > SLOTS as u64 {
             return Err(RegionError::Busy);
         }
         self.slot_head(generation)
             .command
             .store(crate::CMD_ADOPT_MAPPING, Ordering::Release);
-        self.header().published.store(generation, Ordering::Release);
+        self.issue(generation);
         self.bump_alarm();
         Ok(generation)
     }
@@ -515,7 +532,7 @@ impl MappedRegion {
         header.ready.store(0, Ordering::Release);
         header.dead.store(0, Ordering::Release);
         header.fail_len.store(0, Ordering::Release);
-        header.published.store(0, Ordering::Release);
+        self.issue(0);
         header.completed.store(0, Ordering::Release);
         for index in 0..SLOTS {
             let head = self.slot_head_index(index);
@@ -713,7 +730,7 @@ impl MappedRegion {
             });
         }
         let header = self.header();
-        let published = header.published.load(Ordering::Acquire);
+        let published = self.issued();
         let completed = header.completed.load(Ordering::Acquire);
         if published.wrapping_sub(completed) >= SLOTS as u64 {
             return Err(RegionError::Busy);
@@ -754,7 +771,7 @@ impl MappedRegion {
             },
             Ordering::Release,
         );
-        header.published.store(generation, Ordering::Release);
+        self.issue(generation);
         self.bump_alarm();
         Ok(generation)
     }
@@ -797,7 +814,7 @@ impl MappedRegion {
             });
         }
         let header = self.header();
-        let published = header.published.load(Ordering::Acquire);
+        let published = self.issued();
         let completed = header.completed.load(Ordering::Acquire);
         if published.wrapping_sub(completed) >= SLOTS as u64 {
             return Err(RegionError::Busy);
@@ -838,7 +855,7 @@ impl MappedRegion {
             },
             Ordering::Release,
         );
-        header.published.store(generation, Ordering::Release);
+        self.issue(generation);
         self.bump_alarm();
         Ok(generation)
     }
@@ -1057,7 +1074,7 @@ impl MappedRegion {
             });
         }
         let header = self.header();
-        let published = header.published.load(Ordering::Acquire);
+        let published = self.issued();
         let completed = header.completed.load(Ordering::Acquire);
         if published.wrapping_sub(completed) >= SLOTS as u64 {
             return Err(RegionError::Busy);
@@ -1110,8 +1127,7 @@ impl MappedRegion {
     }
 
     fn publish_and_wait(&self, generation: u64, timeout: Duration) -> Result<(), RegionError> {
-        let header = self.header();
-        header.published.store(generation, Ordering::Release);
+        self.issue(generation);
         self.bump_alarm();
         self.wait_for_generation(generation, timeout)
     }
@@ -1268,6 +1284,7 @@ fn map_new(file: File, layout: SessionLayout) -> Result<MappedRegion, RegionErro
         layout,
         stride,
         abandoned: AtomicU64::new(0),
+        issued: AtomicU64::new(0),
         wake_target: None,
     };
     region.init_header();
@@ -1303,6 +1320,7 @@ fn map_existing(file: File) -> Result<MappedRegion, RegionError> {
         layout,
         stride,
         abandoned: AtomicU64::new(0),
+        issued: AtomicU64::new(0),
         wake_target: None,
     };
     region.lock_pages()?;
