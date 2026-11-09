@@ -13,10 +13,11 @@ use std::thread::{self, JoinHandle, ThreadId};
 
 use echode_model::Id;
 
-use crate::ticket::{STOPPED, Ticket};
+use crate::DocumentError;
+use crate::ticket::Ticket;
 
 /// A blocking exchange with one helper, prepared on the worker.
-pub(crate) type RoundTrip = Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>;
+pub(crate) type RoundTrip = Box<dyn FnOnce() -> Result<Vec<u8>, DocumentError> + Send>;
 
 /// Puts a device report on the view a request completes with.
 pub(crate) type AttachReport<V> = fn(V, Vec<u8>) -> V;
@@ -40,7 +41,7 @@ enum Work<V> {
 pub(crate) struct Returned<V> {
     pub(crate) ticket: Ticket<V>,
     pub(crate) device: Id,
-    pub(crate) reply: Result<Vec<u8>, String>,
+    pub(crate) reply: Result<Vec<u8>, DocumentError>,
 }
 
 pub(crate) struct DeviceLane<V> {
@@ -53,7 +54,7 @@ pub(crate) struct DeviceLane<V> {
 }
 
 impl<V: Send + 'static> DeviceLane<V> {
-    pub(crate) fn start(attach: AttachReport<V>) -> Result<Self, String> {
+    pub(crate) fn start(attach: AttachReport<V>) -> Result<Self, DocumentError> {
         let (jobs, incoming) = mpsc::channel();
         let (returning, returns) = mpsc::channel();
         let closing = Arc::new(AtomicBool::new(false));
@@ -61,7 +62,7 @@ impl<V: Send + 'static> DeviceLane<V> {
         let thread = thread::Builder::new()
             .name("echode-device".to_string())
             .spawn(move || run(incoming, returning, stop, attach))
-            .map_err(|error| error.to_string())?;
+            .map_err(DocumentError::Thread)?;
         Ok(Self {
             jobs: Some(jobs),
             returns,
@@ -148,10 +149,10 @@ fn run<V>(
 ) {
     let attempt = |round_trip: RoundTrip| {
         if closing.load(Ordering::Acquire) {
-            return Err(STOPPED.to_string());
+            return Err(DocumentError::Stopped);
         }
         catch_unwind(AssertUnwindSafe(round_trip))
-            .unwrap_or_else(|_| Err("device request panicked".to_string()))
+            .unwrap_or(Err(DocumentError::DeviceRequestPanicked))
     };
     for work in incoming {
         match work {

@@ -22,6 +22,9 @@ use echode_history::DocumentHost;
 use echode_model::Id;
 use serde::{Deserialize, Serialize};
 
+use crate::error::encode;
+use crate::{DocumentError, Rejected};
+
 #[derive(Deserialize)]
 #[serde(tag = "type", deny_unknown_fields)]
 enum DeviceCommand {
@@ -118,15 +121,14 @@ pub(crate) fn dispatch(
     editing: &mut BTreeSet<u128>,
     bytes: &[u8],
     behind: bool,
-) -> Result<Resolution, String> {
-    let command: DeviceCommand =
-        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+) -> Result<Resolution, DocumentError> {
+    let command: DeviceCommand = serde_json::from_slice(bytes).map_err(DocumentError::Malformed)?;
     let (device, request) = match command {
         DeviceCommand::Parameters { device } => (device, Request::Parameters),
         DeviceCommand::SetParameters { device, changes } => {
             hosted(host, device)?;
             if changes.is_empty() || changes.iter().any(|change| !change.value.is_finite()) {
-                return Err("parameter changes are empty or not finite".into());
+                return Err(Rejected::ParameterChanges.into());
             }
             let changes = changes
                 .iter()
@@ -154,17 +156,10 @@ pub(crate) fn dispatch(
         let control = audio.running_device_control(device);
         return Ok(Resolution::Ready(waiting.ready(control, editing)));
     }
-    Ok(
-        match audio
-            .device_control(device)
-            .map_err(|error| error.to_string())?
-        {
-            DeviceAccess::Ready(control) => {
-                Resolution::Ready(waiting.ready(Some(control), editing))
-            }
-            DeviceAccess::Opening => Resolution::Waiting(waiting),
-        },
-    )
+    Ok(match audio.device_control(device)? {
+        DeviceAccess::Ready(control) => Resolution::Ready(waiting.ready(Some(control), editing)),
+        DeviceAccess::Opening => Resolution::Waiting(waiting),
+    })
 }
 
 impl Waiting {
@@ -176,16 +171,12 @@ impl Waiting {
         host: &DocumentHost,
         audio: &Session,
         editing: &mut BTreeSet<u128>,
-    ) -> Result<Dispatch, String> {
+    ) -> Result<Dispatch, DocumentError> {
         let control = if matches!(self.request, Request::CloseGui) {
             audio.running_device_control(self.device)
         } else {
             hosted(host, self.device)?;
-            Some(
-                audio
-                    .opened_device_control(self.device)
-                    .map_err(|error| error.to_string())?,
-            )
+            Some(audio.opened_device_control(self.device)?)
         };
         Ok(self.ready(control, editing))
     }
@@ -202,37 +193,33 @@ impl Waiting {
     }
 }
 
-/// Runs on the device lane. Returns the JSON report, or captured bytes.
+/// Runs on the device lane. Returns the JSON report, or captured bytes. A
+/// helper's failure stays [`DocumentError::Helper`], so a timeout is told
+/// apart from a refusal.
 pub(crate) fn round_trip(
     control: Option<&PluginControl>,
     request: &Request,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, DocumentError> {
     let Some(control) = control else {
-        return serde_json::to_vec(&serde_json::json!({ "closed": true }))
-            .map_err(|error| error.to_string());
+        return encode(&serde_json::json!({ "closed": true }));
     };
     let report = match request {
         Request::Parameters => {
-            let infos = control.parameters().map_err(|error| error.to_string())?;
+            let infos = control.parameters()?;
             serde_json::json!({
                 "parameters": infos.iter().map(parameter).collect::<Vec<_>>(),
                 "latency_samples": control.latency_samples(),
             })
         }
         Request::Set(changes) => {
-            let values = control
-                .set_parameters(changes)
-                .map_err(|error| error.to_string())?;
+            let values = control.set_parameters(changes)?;
             serde_json::json!({ "values": values.iter().map(value).collect::<Vec<_>>() })
         }
-        Request::Capture => return control.capture_state().map_err(|error| error.to_string()),
+        Request::Capture => return Ok(control.capture_state()?),
         Request::Parse(id, text) => {
             // `converts` is false when the plugin has no `text_to_value`;
             // the host then reads a plain number in the plugin's units.
-            let (value, converts) = match control
-                .parse_parameter(*id, text)
-                .map_err(|error| error.to_string())?
-            {
+            let (value, converts) = match control.parse_parameter(*id, text)? {
                 ParamText::Value(value) => (Some(value), true),
                 ParamText::Refused => (None, true),
                 ParamText::Unsupported => (None, false),
@@ -244,15 +231,15 @@ pub(crate) fn round_trip(
                 created,
                 visible,
                 key,
-            } = control.show_gui(title).map_err(|error| error.to_string())?;
+            } = control.show_gui(title)?;
             serde_json::json!({ "window": { "created": created, "visible": visible, "key": key } })
         }
         Request::CloseGui => {
-            control.close_gui().map_err(|error| error.to_string())?;
+            control.close_gui()?;
             serde_json::json!({ "closed": true })
         }
     };
-    serde_json::to_vec(&report).map_err(|error| error.to_string())
+    encode(&report)
 }
 
 /// Records bytes the lane captured and ends the device's parameter edit.
@@ -262,34 +249,35 @@ pub(crate) fn commit(
     editing: &mut BTreeSet<u128>,
     device: Id,
     bytes: &[u8],
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, DocumentError> {
     let changed = record_state(host, device, bytes)?;
     editing.remove(&device.raw());
     audio.update(host.snapshot());
-    serde_json::to_vec(&serde_json::json!({ "changed": changed }))
-        .map_err(|error| error.to_string())
+    encode(&serde_json::json!({ "changed": changed }))
 }
 
 /// Writes the bytes and names them on `device` as an ordinary edit. Bytes
 /// equal to the recorded state leave history unchanged and return `false`.
-pub(crate) fn record_state(host: &DocumentHost, device: Id, bytes: &[u8]) -> Result<bool, String> {
-    let hash =
-        echode_history::write_object(host.directory(), bytes).map_err(|error| error.to_string())?;
+pub(crate) fn record_state(
+    host: &DocumentHost,
+    device: Id,
+    bytes: &[u8],
+) -> Result<bool, DocumentError> {
+    let hash = echode_history::write_object(host.directory(), bytes)?;
     let project = host.snapshot();
     let current = project
         .tracks()
         .iter()
         .flat_map(|track| &track.devices)
         .find(|item| item.id == device)
-        .ok_or("the device is no longer in the project")?;
+        .ok_or(Rejected::DeviceGone)?;
     if current.state.as_deref() == Some(hash.as_str()) {
         return Ok(false);
     }
     host.perform(Command::SetPluginState {
         device,
         state: Some(hash),
-    })
-    .map_err(|error| error.to_string())?;
+    })?;
     Ok(true)
 }
 
@@ -310,19 +298,19 @@ pub(crate) fn defers_saves(activity: &PluginActivity) -> bool {
 }
 
 /// A CLAP device in the current project that is not offline.
-fn hosted(host: &DocumentHost, device: Id) -> Result<(), String> {
+fn hosted(host: &DocumentHost, device: Id) -> Result<(), Rejected> {
     let project = host.snapshot();
     let found = project
         .tracks()
         .iter()
         .flat_map(|track| &track.devices)
         .find(|item| item.id == device)
-        .ok_or("the device is no longer in the project")?;
+        .ok_or(Rejected::DeviceGone)?;
     if found.plugin.is_none() {
-        return Err("the mixer has no plugin parameters".into());
+        return Err(Rejected::Mixer);
     }
     if found.offline {
-        return Err("the device is offline".into());
+        return Err(Rejected::DeviceOffline);
     }
     Ok(())
 }
@@ -372,7 +360,10 @@ mod tests {
         assert_eq!(state(&host), None);
         host.redo().unwrap();
         assert_eq!(state(&host), Some(hash));
-        assert!(record_state(&host, Id::from_raw(0xD1), b"gone").is_err());
+        assert!(matches!(
+            record_state(&host, Id::from_raw(0xD1), b"gone"),
+            Err(DocumentError::Rejected(Rejected::DeviceGone))
+        ));
         drop(host);
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -387,7 +378,10 @@ mod tests {
         let mut audio = Session::new(host.snapshot());
         let mut editing = BTreeSet::new();
         let unknown = br#"{"type":"device.parameters","device":"00000000-0000-0000-0000-0000000000d0","extra":1}"#;
-        assert!(dispatch(&host, &mut audio, &mut editing, unknown, false).is_err());
+        assert!(matches!(
+            dispatch(&host, &mut audio, &mut editing, unknown, false),
+            Err(DocumentError::Malformed(_))
+        ));
         let mixer_request = format!(r#"{{"type":"device.parameters","device":"{mixer}"}}"#);
         let Err(error) = dispatch(
             &host,
@@ -398,23 +392,68 @@ mod tests {
         ) else {
             panic!("the mixer has no helper");
         };
-        assert!(error.contains("mixer"), "{error}");
+        assert!(
+            matches!(error, DocumentError::Rejected(Rejected::Mixer)),
+            "{error}"
+        );
         let empty = format!(r#"{{"type":"device.parameter.set","device":"{mixer}","changes":[]}}"#);
-        assert!(dispatch(&host, &mut audio, &mut editing, empty.as_bytes(), false).is_err());
+        assert!(matches!(
+            dispatch(&host, &mut audio, &mut editing, empty.as_bytes(), false),
+            Err(DocumentError::Rejected(Rejected::Mixer))
+        ));
         let parse =
             format!(r#"{{"type":"device.parameter.parse","device":"{mixer}","id":1,"text":"1"}}"#);
         let Err(error) = dispatch(&host, &mut audio, &mut editing, parse.as_bytes(), false) else {
             panic!("the mixer has no plugin text");
         };
-        assert!(error.contains("mixer"), "{error}");
+        assert!(
+            matches!(error, DocumentError::Rejected(Rejected::Mixer)),
+            "{error}"
+        );
         let untyped = format!(r#"{{"type":"device.parameter.parse","device":"{mixer}","id":1}}"#);
-        assert!(dispatch(&host, &mut audio, &mut editing, untyped.as_bytes(), false).is_err());
+        assert!(matches!(
+            dispatch(&host, &mut audio, &mut editing, untyped.as_bytes(), false),
+            Err(DocumentError::Malformed(_))
+        ));
         let window = format!(r#"{{"type":"device.gui.show","device":"{mixer}","title":"Mix"}}"#);
         let Err(error) = dispatch(&host, &mut audio, &mut editing, window.as_bytes(), false) else {
             panic!("the mixer has no plugin window");
         };
-        assert!(error.contains("mixer"), "{error}");
+        assert!(
+            matches!(error, DocumentError::Rejected(Rejected::Mixer)),
+            "{error}"
+        );
         assert!(editing.is_empty());
+        drop(host);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Empty changes are refused as such on a plugin device, before the
+    /// output opens or the device counts as edited.
+    #[test]
+    fn empty_parameter_changes_are_refused_before_the_output_opens() {
+        let dir = std::env::temp_dir().join(format!("echode-document-device-{}", Id::generate()));
+        let (project, track) = echode_model::Project::new().add_track("fx");
+        let device = Id::from_raw(0xD3);
+        let project = project
+            .add_clap_device(track, device, "org.example.fx")
+            .unwrap();
+        echode_history::write_package(&dir, &project).unwrap();
+        let host = DocumentHost::open(&dir).unwrap();
+        let mut audio = Session::new(host.snapshot());
+        let mut editing = BTreeSet::new();
+        let empty =
+            format!(r#"{{"type":"device.parameter.set","device":"{device}","changes":[]}}"#);
+        let refused = dispatch(&host, &mut audio, &mut editing, empty.as_bytes(), false);
+        assert!(
+            matches!(
+                refused,
+                Err(DocumentError::Rejected(Rejected::ParameterChanges))
+            ),
+            "{:?}",
+            refused.err()
+        );
+        assert!(editing.is_empty() && !audio.opening());
         drop(host);
         let _ = std::fs::remove_dir_all(dir);
     }

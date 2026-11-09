@@ -1,11 +1,14 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+use echode_audio_io::SessionError;
+
 use super::*;
+use crate::Rejected;
 
 /// The view each test completes with: just the report it carried.
 type View = Vec<u8>;
-type Completion = Result<View, String>;
+type Completion = Result<View, DocumentError>;
 
 fn lane() -> DeviceLane<View> {
     DeviceLane::start(|_, report| report).unwrap()
@@ -20,7 +23,9 @@ fn ticket() -> (Ticket<View>, mpsc::Receiver<Completion>) {
 }
 
 /// A round trip that waits for the test, and tells it when it started.
-fn held(reply: Result<Vec<u8>, String>) -> (RoundTrip, mpsc::Receiver<()>, mpsc::Sender<()>) {
+fn held(
+    reply: Result<Vec<u8>, DocumentError>,
+) -> (RoundTrip, mpsc::Receiver<()>, mpsc::Sender<()>) {
     let (started, reached) = mpsc::channel();
     let (release, released) = mpsc::channel::<()>();
     let round_trip: RoundTrip = Box::new(move || {
@@ -45,8 +50,8 @@ fn a_held_round_trip_returns_to_the_worker_at_once_and_reports_later() {
     assert!(done.try_recv().is_err());
     release.send(()).unwrap();
     assert_eq!(
-        done.recv_timeout(WAIT).unwrap().as_deref(),
-        Ok(&br#"{"parameters":[]}"#[..])
+        done.recv_timeout(WAIT).unwrap().unwrap(),
+        br#"{"parameters":[]}"#
     );
 }
 
@@ -85,14 +90,16 @@ fn captures_return_to_the_worker_in_order_after_earlier_values() {
     assert_eq!(seen.try_iter().collect::<Vec<_>>(), ["set", "capture"]);
     assert!(set_done.recv_timeout(WAIT).unwrap().is_ok());
     assert_eq!(returned.device, device);
-    assert_eq!(returned.reply.as_deref(), Ok(&b"bytes"[..]));
+    assert_eq!(returned.reply.unwrap(), b"bytes");
     // Only the worker completes a capture, after recording it.
     assert!(commit_done.try_recv().is_err());
-    returned.ticket.finish(Err("recorded elsewhere".into()));
-    assert_eq!(
-        commit_done.recv_timeout(WAIT).unwrap().unwrap_err(),
-        "recorded elsewhere"
-    );
+    returned
+        .ticket
+        .finish(Err(DocumentError::Rejected(Rejected::DeviceGone)));
+    assert!(matches!(
+        commit_done.recv_timeout(WAIT).unwrap(),
+        Err(DocumentError::Rejected(Rejected::DeviceGone))
+    ));
 }
 
 #[test]
@@ -116,13 +123,21 @@ fn closing_refuses_queued_requests_and_unrecorded_captures() {
     // The request that was already waiting finishes; the rest are refused.
     assert!(running_done.recv_timeout(WAIT).unwrap().is_ok());
     for done in [queued_done, capture_done] {
-        assert_eq!(done.recv_timeout(WAIT).unwrap().unwrap_err(), STOPPED);
+        assert!(matches!(
+            done.recv_timeout(WAIT).unwrap(),
+            Err(DocumentError::Stopped)
+        ));
     }
     let (late, late_done) = ticket();
     lane.report(late, View::new(), Box::new(|| Ok(b"{}".to_vec())));
-    assert_eq!(late_done.recv_timeout(WAIT).unwrap().unwrap_err(), STOPPED);
+    assert!(matches!(
+        late_done.recv_timeout(WAIT).unwrap(),
+        Err(DocumentError::Stopped)
+    ));
 }
 
+/// A helper that timed out reaches the caller as that timeout, not as text,
+/// so it is told apart from a refusal: its outcome is unknown (ADR 0199).
 #[test]
 fn a_failed_or_panicking_round_trip_completes_with_an_error() {
     let mut lane = lane();
@@ -130,7 +145,13 @@ fn a_failed_or_panicking_round_trip_completes_with_an_error() {
     lane.report(
         failed,
         View::new(),
-        Box::new(|| Err("parameter changes timed out".into())),
+        Box::new(|| Err(SessionError::Timeout.into())),
+    );
+    let (refused, refused_done) = ticket();
+    lane.report(
+        refused,
+        View::new(),
+        Box::new(|| Err(SessionError::Protocol("plugin refused".to_string()).into())),
     );
     let (panicked, panicked_done) = ticket();
     lane.report(
@@ -140,14 +161,23 @@ fn a_failed_or_panicking_round_trip_completes_with_an_error() {
     );
     let (after, after_done) = ticket();
     lane.report(after, View::new(), Box::new(|| Ok(b"{}".to_vec())));
-    assert_eq!(
-        failed_done.recv_timeout(WAIT).unwrap().unwrap_err(),
-        "parameter changes timed out"
+    let timed_out = failed_done.recv_timeout(WAIT).unwrap().unwrap_err();
+    assert!(
+        matches!(timed_out, DocumentError::Helper(SessionError::Timeout)),
+        "{timed_out:?}"
     );
+    // The C ABI still reads the helper's own words.
     assert_eq!(
-        panicked_done.recv_timeout(WAIT).unwrap().unwrap_err(),
-        "device request panicked"
+        timed_out.to_string(),
+        "plugin process did not answer before the deadline"
     );
+    assert!(matches!(
+        refused_done.recv_timeout(WAIT).unwrap(),
+        Err(DocumentError::Helper(SessionError::Protocol(_)))
+    ));
+    let panicked = panicked_done.recv_timeout(WAIT).unwrap().unwrap_err();
+    assert!(matches!(panicked, DocumentError::DeviceRequestPanicked));
+    assert_eq!(panicked.to_string(), "device request panicked");
     // The lane keeps serving later requests.
     assert!(after_done.recv_timeout(WAIT).unwrap().is_ok());
 }

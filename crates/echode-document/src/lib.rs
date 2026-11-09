@@ -9,6 +9,7 @@
 
 mod activity;
 mod device;
+mod error;
 mod lane;
 mod live;
 mod saves;
@@ -21,6 +22,7 @@ use std::sync::Arc;
 
 use echode_model::Project;
 
+pub use error::{DocumentError, Rejected};
 pub use service::{Configure, DocumentService};
 pub use ticket::Ticket;
 

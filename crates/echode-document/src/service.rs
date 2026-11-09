@@ -13,7 +13,7 @@ use crate::activity::ActivityHub;
 use crate::lane::DeviceLane;
 use crate::live::LiveState;
 use crate::worker::{self, Job, Start};
-use crate::{Operation, Presenter, Ticket};
+use crate::{DocumentError, Operation, Presenter, Ticket};
 
 /// Runs on the worker once its session exists.
 pub type Configure = Box<dyn FnOnce(&mut Session) + Send>;
@@ -33,7 +33,7 @@ pub struct DocumentService<V> {
 }
 
 impl<V: Send + 'static> DocumentService<V> {
-    pub fn open<P: Presenter<View = V>>(path: &Path, presenter: P) -> Result<Self, String> {
+    pub fn open<P: Presenter<View = V>>(path: &Path, presenter: P) -> Result<Self, DocumentError> {
         Self::open_configured(path, presenter, Box::new(|_| {}))
     }
 
@@ -43,15 +43,15 @@ impl<V: Send + 'static> DocumentService<V> {
         path: &Path,
         presenter: P,
         configure: Configure,
-    ) -> Result<Self, String> {
-        let host = DocumentHost::open(path).map_err(|error| error.to_string())?;
+    ) -> Result<Self, DocumentError> {
+        let host = DocumentHost::open(path)?;
         let (sender, incoming) = mpsc::channel();
         let live = Arc::new(LiveState::default());
         let cancellation = TransportCancellation::default();
         let lane = DeviceLane::start(P::with_device_report)?;
         let lane_thread = lane.thread_id();
         let activity = Arc::new(ActivityHub::new());
-        let audition = Audition::start().map_err(|error| error.to_string())?;
+        let audition = Audition::start()?;
         let start = Start {
             host,
             presenter,
@@ -65,7 +65,7 @@ impl<V: Send + 'static> DocumentService<V> {
         let thread = thread::Builder::new()
             .name("echode-worker".to_string())
             .spawn(move || worker::run(start, incoming))
-            .map_err(|error| error.to_string())?;
+            .map_err(DocumentError::Thread)?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
             thread: Mutex::new(Some(thread)),

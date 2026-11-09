@@ -46,7 +46,10 @@ fn package() -> PathBuf {
     path
 }
 
-fn submit(service: &DocumentService<View>, operation: Operation) -> Receiver<Result<View, String>> {
+fn submit(
+    service: &DocumentService<View>,
+    operation: Operation,
+) -> Receiver<Result<View, DocumentError>> {
     let (sender, done) = channel();
     let ticket = Ticket::new(move |result| {
         let _ = sender.send(result);
@@ -55,7 +58,7 @@ fn submit(service: &DocumentService<View>, operation: Operation) -> Receiver<Res
     done
 }
 
-fn finish(service: &DocumentService<View>, operation: Operation) -> Result<View, String> {
+fn finish(service: &DocumentService<View>, operation: Operation) -> Result<View, DocumentError> {
     submit(service, operation).recv_timeout(WAIT).unwrap()
 }
 
@@ -80,10 +83,10 @@ fn edits_undo_and_device_requests_take_their_turns_without_a_c_abi() {
     assert_eq!(closed.tracks, 1);
     assert_eq!(finish(&service, Operation::Undo).unwrap().tracks, 0);
     assert_eq!(finish(&service, Operation::Redo).unwrap().tracks, 1);
-    assert_eq!(
-        finish(&service, Operation::Invalid).err().as_deref(),
-        Some("unknown document operation")
-    );
+    assert!(matches!(
+        finish(&service, Operation::Invalid),
+        Err(DocumentError::Rejected(crate::Rejected::UnknownOperation))
+    ));
     let unchanged = finish(&service, Operation::Snapshot).unwrap();
     assert_eq!(unchanged.history["changed"], false);
     assert_eq!(unchanged.device, crate::EMPTY_DEVICE_REPORT);
@@ -99,20 +102,20 @@ fn a_panicking_turn_fails_its_request_and_the_next_ones_are_refused() {
     let service = DocumentService::open(&path, presenter).unwrap();
     finish(&service, Operation::Snapshot).unwrap();
     panics.store(true, Ordering::SeqCst);
-    assert_eq!(
-        finish(&service, add_track("panics")).err().as_deref(),
-        Some("document thread panicked")
-    );
+    assert!(matches!(
+        finish(&service, add_track("panics")),
+        Err(DocumentError::Panicked)
+    ));
     panics.store(false, Ordering::SeqCst);
-    assert_eq!(
-        finish(&service, Operation::Snapshot).err().as_deref(),
-        Some(crate::ticket::STOPPED)
-    );
+    assert!(matches!(
+        finish(&service, Operation::Snapshot),
+        Err(DocumentError::Stopped)
+    ));
     service.shutdown();
-    assert_eq!(
-        finish(&service, Operation::Snapshot).err().as_deref(),
-        Some(crate::ticket::STOPPED)
-    );
+    assert!(matches!(
+        finish(&service, Operation::Snapshot),
+        Err(DocumentError::Stopped)
+    ));
     drop(service);
     let _ = std::fs::remove_dir_all(path);
 }
@@ -134,17 +137,17 @@ fn a_worker_that_dies_before_its_first_turn_ends_every_reader() {
     .unwrap();
     let queued = submit(&service, add_track("queued"));
     start.send(()).unwrap();
-    assert_eq!(
-        queued.recv_timeout(WAIT).unwrap().err().as_deref(),
-        Some(crate::ticket::STOPPED)
-    );
+    assert!(matches!(
+        queued.recv_timeout(WAIT).unwrap(),
+        Err(DocumentError::Stopped)
+    ));
     let page: serde_json::Value =
         serde_json::from_slice(&service.plugin_activity(0, WAIT)).unwrap();
     assert_eq!(page["closed"], true);
-    assert_eq!(
-        finish(&service, Operation::Snapshot).err().as_deref(),
-        Some(crate::ticket::STOPPED)
-    );
+    assert!(matches!(
+        finish(&service, Operation::Snapshot),
+        Err(DocumentError::Stopped)
+    ));
     assert!(!service.position().1);
     drop(service);
     let _ = std::fs::remove_dir_all(path);

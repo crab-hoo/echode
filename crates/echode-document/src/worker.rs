@@ -15,14 +15,16 @@ use echode_model::Id;
 
 use crate::activity::ActivityHub;
 use crate::device::{self, Dispatch, Request, Resolution, Waiting};
+use crate::error::encode;
 use crate::lane::{DeviceLane, Returned, RoundTrip};
 use crate::live::LiveState;
 use crate::saves::PluginSaves;
 use crate::service::Configure;
 use crate::ticket::Ticket;
-use crate::{EMPTY_DEVICE_REPORT, EMPTY_HISTORY_REPORT, Operation, Presenter, Publication};
-
-const PANICKED: &str = "document thread panicked";
+use crate::{
+    DocumentError, EMPTY_DEVICE_REPORT, EMPTY_HISTORY_REPORT, Operation, Presenter, Publication,
+    Rejected,
+};
 
 /// One submission, in queue order.
 pub(crate) struct Job<V> {
@@ -140,17 +142,20 @@ impl<P: Presenter> Worker<P> {
     /// Runs one step. A panic ends accepting and becomes this step's error.
     fn guarded<T>(
         &mut self,
-        step: impl FnOnce(&mut Self) -> Result<T, String>,
-    ) -> Result<T, String> {
+        step: impl FnOnce(&mut Self) -> Result<T, DocumentError>,
+    ) -> Result<T, DocumentError> {
         catch_unwind(AssertUnwindSafe(|| step(self))).unwrap_or_else(|_| {
             self.accepting = false;
-            Err(PANICKED.to_string())
+            Err(DocumentError::Panicked)
         })
     }
 
     /// A step for a submitter, which may change the document. Helpers holding
     /// a change an edit in progress will record outlive it (ADR 0229).
-    fn turn<T>(&mut self, step: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
+    fn turn<T>(
+        &mut self,
+        step: impl FnOnce(&mut Self) -> Result<T, DocumentError>,
+    ) -> Result<T, DocumentError> {
         self.audio.keep_live_plugin_edits(self.saves.held());
         let before = self.host.snapshot();
         let result = self.guarded(step);
@@ -285,18 +290,14 @@ impl<P: Presenter> Worker<P> {
         &mut self,
         operation: Operation,
         transport_revision: u64,
-    ) -> Result<(P::View, Option<Resolution>), String> {
+    ) -> Result<(P::View, Option<Resolution>), DocumentError> {
         let mut resolution = None;
         let history = match operation {
             Operation::Audio(bytes) => {
-                self.host
-                    .require_recovery_confirmation()
-                    .map_err(|error| error.to_string())?;
+                self.host.require_recovery_confirmation()?;
                 let command: AudioCommand =
-                    serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-                self.audio
-                    .perform_requested(command, transport_revision)
-                    .map_err(|error| error.to_string())?;
+                    serde_json::from_slice(&bytes).map_err(DocumentError::Malformed)?;
+                self.audio.perform_requested(command, transport_revision)?;
                 None
             }
             Operation::History(bytes) => {
@@ -305,9 +306,7 @@ impl<P: Presenter> Worker<P> {
                 Some(report)
             }
             Operation::Device(bytes) => {
-                self.host
-                    .require_recovery_confirmation()
-                    .map_err(|error| error.to_string())?;
+                self.host.require_recovery_confirmation()?;
                 resolution = Some(device::dispatch(
                     &self.host,
                     &mut self.audio,
@@ -323,28 +322,25 @@ impl<P: Presenter> Worker<P> {
                 let after = self.host.snapshot();
                 let changed = !Arc::ptr_eq(&before, &after);
                 self.audio.update(after);
-                Some(
-                    serde_json::to_vec(&serde_json::json!({
-                        "revisions": [], "changed": changed
-                    }))
-                    .map_err(|error| error.to_string())?,
-                )
+                Some(encode(&serde_json::json!({
+                    "revisions": [], "changed": changed
+                }))?)
             }
             Operation::Snapshot => {
                 self.audio.update(self.host.snapshot());
                 None
             }
             Operation::Undo => {
-                self.host.undo().map_err(|error| error.to_string())?;
+                self.host.undo()?;
                 self.audio.update(self.host.snapshot());
                 None
             }
             Operation::Redo => {
-                self.host.redo().map_err(|error| error.to_string())?;
+                self.host.redo()?;
                 self.audio.update(self.host.snapshot());
                 None
             }
-            Operation::Invalid => return Err("unknown document operation".to_string()),
+            Operation::Invalid => return Err(Rejected::UnknownOperation.into()),
         };
         let view = self.publish(history, None)?;
         self.publish_position();
@@ -373,14 +369,13 @@ impl<P: Presenter> Worker<P> {
         &mut self,
         history: Option<Vec<u8>>,
         device: Option<Vec<u8>>,
-    ) -> Result<P::View, String> {
-        let audio = serde_json::to_vec(&self.audio.state()).map_err(|error| error.to_string())?;
+    ) -> Result<P::View, DocumentError> {
+        let audio = encode(&self.audio.state())?;
         let history = match history {
             Some(report) => report,
-            None => serde_json::to_vec(&serde_json::json!({
+            None => encode(&serde_json::json!({
                 "revisions": [], "changed": false, "recovery": self.host.recovery_notice()
-            }))
-            .map_err(|error| error.to_string())?,
+            }))?,
         };
         Ok(self.presenter.present(Publication {
             project: self.host.snapshot(),
@@ -392,35 +387,30 @@ impl<P: Presenter> Worker<P> {
     }
 }
 
-fn apply_edit(host: &DocumentHost, bytes: &[u8]) -> Result<(), String> {
+fn apply_edit(host: &DocumentHost, bytes: &[u8]) -> Result<(), DocumentError> {
     let text = match str::from_utf8(bytes) {
         Ok(text) if !text.is_empty() => text,
-        Ok(_) => return Err("command is empty".to_string()),
-        Err(_) => return Err("command is not utf-8".to_string()),
+        Ok(_) => return Err(Rejected::EmptyCommand.into()),
+        Err(_) => return Err(Rejected::NotUtf8.into()),
     };
     if text.trim_start().starts_with('[') {
-        let actions = serde_json::from_str(text).map_err(|error| error.to_string())?;
-        return host
-            .apply(actions)
-            .map(|_| ())
-            .map_err(|error| error.to_string());
+        let actions = serde_json::from_str(text).map_err(DocumentError::Malformed)?;
+        host.apply(actions)?;
+        return Ok(());
     }
-    let command = serde_json::from_str::<Command>(text).map_err(|error| error.to_string())?;
-    host.perform(command)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let command = serde_json::from_str::<Command>(text).map_err(DocumentError::Malformed)?;
+    host.perform(command)?;
+    Ok(())
 }
 
-fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> {
+fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, DocumentError> {
     let value: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| "history command was not recognized".to_string())?;
+        serde_json::from_slice(bytes).map_err(DocumentError::Malformed)?;
+    let object = value.as_object().ok_or(Rejected::UnknownHistoryCommand)?;
     let kind = object
         .get("type")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "history command was not recognized".to_string())?;
+        .ok_or(Rejected::UnknownHistoryCommand)?;
     let before = host.snapshot();
     match kind {
         "history.list" if object.len() == 1 => {}
@@ -429,41 +419,35 @@ fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> 
                 let settings = object
                     .get("settings")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| "export settings must be a JSON string".to_string())?;
-                host.require_recovery_confirmation()
-                    .map_err(|error| error.to_string())?;
-                echode_history::write_export_settings(host.directory(), settings)
-                    .map_err(|error| error.to_string())?;
+                    .ok_or(Rejected::ExportSettings)?;
+                host.require_recovery_confirmation()?;
+                echode_history::write_export_settings(host.directory(), settings)?;
             }
-            return serde_json::to_vec(&serde_json::json!({
+            return encode(&serde_json::json!({
                 "revisions": [], "changed": false,
                 "export_settings": echode_history::read_export_settings(host.directory()),
-            }))
-            .map_err(|error| error.to_string());
+            }));
         }
         "history.export_snapshot" if object.len() == 2 => {
-            host.require_recovery_confirmation()
-                .map_err(|error| error.to_string())?;
+            host.require_recovery_confirmation()?;
             let path = object
                 .get("path")
                 .and_then(serde_json::Value::as_str)
                 .filter(|path| !path.is_empty())
-                .ok_or_else(|| "export snapshot path is missing".to_string())?;
-            echode_history::freeze_export(host.directory(), &before, std::path::Path::new(path))
-                .map_err(|error| error.to_string())?;
+                .ok_or(Rejected::ExportPath)?;
+            echode_history::freeze_export(host.directory(), &before, std::path::Path::new(path))?;
             return Ok(EMPTY_HISTORY_REPORT.to_vec());
         }
         "history.accept_recovery" if object.len() == 3 => {
             let tip = object
                 .get("tip")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| "recovery tip is missing".to_string())?;
+                .ok_or(Rejected::RecoveryTip)?;
             let base = object
                 .get("base")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| "recovery base is missing".to_string())?;
-            host.accept_recovery(tip, base)
-                .map_err(|error| error.to_string())?;
+                .ok_or(Rejected::RecoveryBase)?;
+            host.accept_recovery(tip, base)?;
             return Ok(EMPTY_HISTORY_REPORT.to_vec());
         }
         "history.restore" if object.len() == 2 => {
@@ -471,20 +455,18 @@ fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, String> 
                 .get("revision")
                 .and_then(serde_json::Value::as_str)
                 .filter(|text| !text.is_empty())
-                .ok_or_else(|| "history command was not recognized".to_string())?;
+                .ok_or(Rejected::UnknownHistoryCommand)?;
             host.perform(Command::Restore {
                 revision: revision.to_string(),
-            })
-            .map_err(|error| error.to_string())?;
+            })?;
         }
-        _ => return Err("history command was not recognized".to_string()),
+        _ => return Err(Rejected::UnknownHistoryCommand.into()),
     }
     let changed = !Arc::ptr_eq(&before, &host.snapshot());
-    let revisions = host.revisions().map_err(|error| error.to_string())?;
-    serde_json::to_vec(&serde_json::json!({
+    let revisions = host.revisions()?;
+    encode(&serde_json::json!({
         "revisions": revisions,
         "changed": changed,
         "recovery": host.recovery_notice(),
     }))
-    .map_err(|error| error.to_string())
 }

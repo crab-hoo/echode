@@ -59,7 +59,7 @@ pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks
 mod meter;
 pub use echode_sandbox::{
     GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText,
-    ParamValue, PluginActivity, PluginCommand, PluginControl, RetainedWorkgroup,
+    ParamValue, PluginActivity, PluginCommand, PluginControl, RetainedWorkgroup, SessionError,
 };
 pub use meter::{AutoMute, TrackMeter};
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};

@@ -4,7 +4,7 @@
 use std::ffi::{CString, c_void};
 use std::path::Path;
 
-use echode_document::{DocumentService, Operation, Ticket};
+use echode_document::{DocumentError, DocumentService, Operation, Ticket};
 
 use crate::snapshot::SnapshotPresenter;
 use crate::{Complete, ECHODE_ERR, ECHODE_OK, Snapshot};
@@ -27,7 +27,7 @@ impl Context {
 }
 
 impl Document {
-    pub(crate) fn open(path: &Path) -> Result<Self, String> {
+    pub(crate) fn open(path: &Path) -> Result<Self, DocumentError> {
         DocumentService::open(path, SnapshotPresenter::default()).map(|service| Self { service })
     }
 
@@ -37,7 +37,7 @@ impl Document {
     pub(crate) fn open_headless(
         path: &Path,
         output: echode_audio_io::HeadlessOutput,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DocumentError> {
         Self::open_with(
             path,
             Box::new(move |session| session.use_headless_output(output)),
@@ -48,7 +48,7 @@ impl Document {
     pub(crate) fn open_with(
         path: &Path,
         configure: echode_document::Configure,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DocumentError> {
         DocumentService::open_configured(path, SnapshotPresenter::default(), configure)
             .map(|service| Self { service })
     }
@@ -73,7 +73,9 @@ impl Document {
     }
 }
 
-fn finish(context: *mut c_void, complete: Complete, result: Result<Snapshot, String>) {
+/// The C ABI reads a failure as text. This is the one place a document's
+/// error becomes it (ADR 0292).
+fn finish(context: *mut c_void, complete: Complete, result: Result<Snapshot, DocumentError>) {
     match result {
         Ok(snapshot) => complete(
             context,
@@ -81,8 +83,8 @@ fn finish(context: *mut c_void, complete: Complete, result: Result<Snapshot, Str
             std::ptr::null(),
             Box::into_raw(Box::new(snapshot)),
         ),
-        Err(message) => {
-            let message = CString::new(message).ok();
+        Err(error) => {
+            let message = CString::new(error.to_string()).ok();
             let pointer = message
                 .as_ref()
                 .map_or(std::ptr::null(), |message| message.as_ptr());
