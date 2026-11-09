@@ -6,7 +6,9 @@
 //! helper exits.
 
 use crate::control::{ControlMessage, Socket};
+use crate::error::{ProtocolError, SessionError, WorkgroupError};
 use crate::gui::PluginActivity;
+use crate::refusal::Refusal;
 use crate::region::{Collected, Delivered, FanIn, MappedRegion, RegionError, SessionLayout};
 use crate::sync::{SyncFlags, wake_one};
 use crate::workgroup::spawn_helper;
@@ -337,9 +339,7 @@ impl ControlState {
     /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
     pub fn request_save(&mut self) -> Result<(), SessionError> {
         if self.save_requested.is_some() {
-            return Err(SessionError::Protocol(
-                "a background save is already pending".into(),
-            ));
+            return Err(SessionError::SavePending);
         }
         let id = self.request(ControlMessage::SaveRequest)?;
         self.save_requested = Some(id);
@@ -347,7 +347,7 @@ impl ControlState {
     }
 
     /// A save reply already queued, or `None` when the helper has not answered.
-    pub fn poll_saved(&mut self) -> Result<Option<Result<Vec<u8>, String>>, SessionError> {
+    pub fn poll_saved(&mut self) -> Result<Option<Result<Vec<u8>, Refusal>>, SessionError> {
         if let Err(error) = self.drain() {
             if let Some(id) = self.save_requested.take() {
                 self.pending.remove(&id);
@@ -391,10 +391,8 @@ impl ControlState {
                 self.remember(id, &bytes);
                 Ok(bytes)
             }
-            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not return state".to_string(),
-            )),
+            ControlMessage::StateRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("return state").into()),
         }
     }
 
@@ -418,9 +416,7 @@ impl ControlState {
             }
             Some((_, ControlMessage::RequestProcess)) => PluginNotice::RequestProcess,
             _ => {
-                return Err(SessionError::Protocol(
-                    "queued notice disappeared".to_string(),
-                ));
+                return Err(ProtocolError::QueueLost.into());
             }
         }))
     }
@@ -456,7 +452,7 @@ impl ControlState {
         self.next_request = self
             .next_request
             .checked_add(1)
-            .ok_or_else(|| SessionError::Protocol("control request ids exhausted".into()))?;
+            .ok_or(ProtocolError::RequestIdsExhausted)?;
         self.pending.insert(self.next_request);
         Ok(self.next_request)
     }
@@ -498,9 +494,7 @@ impl ControlState {
                     .inbox
                     .remove(index)
                     .map(|(_, message)| message)
-                    .ok_or_else(|| {
-                        SessionError::Protocol("queued control message disappeared".to_string())
-                    });
+                    .ok_or_else(|| ProtocolError::QueueLost.into());
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -527,67 +521,6 @@ pub enum BlockProgress {
     Ready { events: usize },
     Pending,
     Abandoned,
-}
-
-#[derive(Debug)]
-pub enum SessionError {
-    Region(RegionError),
-    Io(std::io::Error),
-    Timeout,
-    Missed,
-    MappingPending,
-    HostExited {
-        status: ExitStatus,
-        stderr: String,
-    },
-    /// The helper has exited. The audio thread reports this without waiting
-    /// for the process or reading its stderr.
-    HelperDown,
-    /// The plugin returned an error from `process`. Not a deadline miss.
-    ProcessRefused,
-    Workgroup(String),
-    Protocol(String),
-}
-
-impl std::fmt::Display for SessionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Region(error) => write!(f, "{error}"),
-            Self::Io(error) => write!(f, "{error}"),
-            Self::Timeout => f.write_str("plugin process did not answer before the deadline"),
-            Self::MappingPending => f.write_str("prepared mapping has not been activated"),
-            Self::Missed => f.write_str("both block slots are still in flight"),
-            Self::Workgroup(error) => write!(f, "{error}"),
-            Self::Protocol(error) => write!(f, "{error}"),
-            Self::HostExited { status, stderr } => {
-                write!(f, "plugin process exited ({status})")?;
-                if !stderr.is_empty() {
-                    write!(f, ": {stderr}")?;
-                }
-                Ok(())
-            }
-            Self::HelperDown => f.write_str("plugin process has exited"),
-            Self::ProcessRefused => f.write_str("process refused"),
-        }
-    }
-}
-
-impl std::error::Error for SessionError {}
-
-impl From<RegionError> for SessionError {
-    fn from(error: RegionError) -> Self {
-        match error {
-            RegionError::Wait(crate::sync::WaitError::Timeout) => Self::Timeout,
-            RegionError::Busy => Self::Missed,
-            other => Self::Region(other),
-        }
-    }
-}
-
-impl From<std::io::Error> for SessionError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(error)
-    }
 }
 
 impl PluginHost {
@@ -828,12 +761,8 @@ impl PluginHost {
             )
         })? {
             ControlMessage::ChainReady => Ok(()),
-            ControlMessage::ChainRejected => Err(SessionError::Protocol(
-                "helper rejected the chain".to_string(),
-            )),
-            _ => Err(SessionError::Protocol(
-                "helper did not answer the chain".to_string(),
-            )),
+            ControlMessage::ChainRejected => Err(SessionError::ChainRefused),
+            _ => Err(ProtocolError::UnexpectedReply("answer the chain").into()),
         }
     }
 
@@ -938,9 +867,8 @@ impl PluginHost {
                 self.previous_region = Some(std::mem::replace(&mut self.region, Arc::new(region)));
                 Ok(())
             }
-            _ => Err(SessionError::Protocol(
-                "helper kept the previous mapping".to_string(),
-            )),
+            ControlMessage::RemapFailed => Err(SessionError::RemapRefused),
+            _ => Err(ProtocolError::UnexpectedReply("answer the remap").into()),
         }
     }
 
@@ -1106,12 +1034,8 @@ impl PluginHost {
                 self.tail_samples = tail_samples;
                 (inputs, outputs)
             }
-            ControlMessage::PortsRejected(reason) => return Err(SessionError::Protocol(reason)),
-            _ => {
-                return Err(SessionError::Protocol(
-                    "helper did not describe audio ports".to_string(),
-                ));
-            }
+            ControlMessage::PortsRejected(refusal) => return Err(refusal.into()),
+            _ => return Err(ProtocolError::UnexpectedReply("describe audio ports").into()),
         };
         let input_channels = sum_channels(&inputs)?;
         let output_channels = sum_channels(&outputs)?;
@@ -1156,7 +1080,10 @@ impl PluginHost {
         if stderr.is_empty() {
             error
         } else {
-            SessionError::Protocol(format!("{error}: {stderr}"))
+            SessionError::Launch {
+                error: Box::new(error),
+                stderr: stderr.to_string(),
+            }
         }
     }
 
@@ -1320,9 +1247,7 @@ fn launch_with(
     fan: Option<&FanIn>,
 ) -> Result<Launched, SessionError> {
     if workgroup.is_some_and(|handoff| handoff.period_ticks == 0) {
-        return Err(SessionError::Workgroup(
-            "workgroup period is zero".to_string(),
-        ));
+        return Err(SessionError::Workgroup(WorkgroupError::InvalidHandoff));
     }
     let (parent_socket, child_socket) = Socket::pair()?;
     let mut args = vec![
@@ -1369,8 +1294,7 @@ fn launch_with(
     if let Some(fan_dup) = fan_dup.as_ref() {
         inherit.push((fan_dup.as_raw_fd(), 5));
     }
-    let spawned = spawn_helper(host_bin, &args, extra, &inherit)
-        .map_err(|error| SessionError::Io(std::io::Error::other(error)))?;
+    let spawned = spawn_helper(host_bin, &args, extra, &inherit).map_err(SessionError::Spawn)?;
     drop((shm_dup, control_dup, fan_dup, child_socket));
     let mut child = HelperProcess {
         pid: spawned.pid,
@@ -1407,9 +1331,9 @@ fn inheritable(fd: i32) -> std::io::Result<OwnedFd> {
 fn sum_channels(counts: &[u32]) -> Result<u32, SessionError> {
     let mut total = 0u32;
     for channels in counts {
-        total = total.checked_add(*channels).ok_or_else(|| {
-            SessionError::Protocol("audio port channel count overflowed".to_string())
-        })?;
+        total = total
+            .checked_add(*channels)
+            .ok_or(ProtocolError::ChannelCountOverflow)?;
     }
     Ok(total)
 }

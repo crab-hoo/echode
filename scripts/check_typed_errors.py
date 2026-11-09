@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TYPED_CRATES = (
     'echode-audio-io',
     'echode-document',
+    'echode-sandbox',
 )
 STRING = {'String', 'std::string::String', 'alloc::string::String'}
 RESULT = re.compile(r'\bResult\s*<')

@@ -4,7 +4,10 @@ use super::*;
 fn abandoned_save_keeps_its_own_reply_and_blocks_replacement() {
     let mailbox = MainRequests::default();
     let save = mailbox.begin(MainRequest::Save).unwrap();
-    assert!(mailbox.begin(MainRequest::Load(vec![128])).is_err());
+    assert!(matches!(
+        mailbox.begin(MainRequest::Load(vec![128])),
+        Err(Refusal::Busy)
+    ));
     let (running, request) = mailbox.take().unwrap();
     assert!(matches!(request, MainRequest::Save));
     assert!(mailbox.take().is_none());
@@ -19,7 +22,7 @@ fn abandoned_save_keeps_its_own_reply_and_blocks_replacement() {
     assert!(restore.take_reply().is_none());
     assert!(matches!(save.take_reply(), Some(Ok(MainReply::State(bytes))) if bytes == [64]));
     // Even an accidentally repeated old completion cannot finish this call.
-    mailbox.complete(&save, Err("old failure".into()));
+    mailbox.complete(&save, Err(Refusal::Other("old failure".into())));
     assert!(restore.take_reply().is_none());
     mailbox.complete(&running, Ok(MainReply::Done));
     assert!(matches!(restore.take_reply(), Some(Ok(MainReply::Done))));
@@ -29,9 +32,12 @@ fn abandoned_save_keeps_its_own_reply_and_blocks_replacement() {
 fn dropping_a_timed_out_caller_does_not_make_the_mailbox_idle() {
     let mailbox = MainRequests::default();
     drop(mailbox.begin(MainRequest::Close).unwrap());
-    assert!(mailbox.begin(MainRequest::Parameters).is_err());
+    assert!(matches!(
+        mailbox.begin(MainRequest::Parameters),
+        Err(Refusal::Busy)
+    ));
     let (running, request) = mailbox.take().unwrap();
     assert!(matches!(request, MainRequest::Close));
-    mailbox.complete(&running, Err("refused".into()));
+    mailbox.complete(&running, Err(Refusal::Other("refused".into())));
     assert!(mailbox.begin(MainRequest::Parameters).is_ok());
 }

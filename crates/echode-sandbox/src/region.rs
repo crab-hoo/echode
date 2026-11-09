@@ -185,14 +185,20 @@ pub enum RegionError {
     Io(io::Error),
     Wait(WaitError),
     BadMagic,
-    BadShape { frames: usize, channels: usize },
+    BadShape {
+        frames: usize,
+        channels: usize,
+    },
     UnknownCommand(u32),
-    ProcessFailed(String),
     Lock(io::Error),
     Busy,
     Dead,
-    TooManyEvents { count: usize, capacity: usize },
-    Protocol(String),
+    TooManyEvents {
+        count: usize,
+        capacity: usize,
+    },
+    /// The event has no plain shared-memory record.
+    UnstorableEvent,
 }
 
 impl std::fmt::Display for RegionError {
@@ -208,14 +214,13 @@ impl std::fmt::Display for RegionError {
                 )
             }
             Self::UnknownCommand(command) => write!(f, "unknown command {command}"),
-            Self::ProcessFailed(error) => write!(f, "plugin process failed: {error}"),
             Self::Lock(error) => write!(f, "mlock failed: {error}"),
             Self::Busy => f.write_str("both block slots are still in flight"),
             Self::Dead => f.write_str("plugin process has exited"),
             Self::TooManyEvents { count, capacity } => {
                 write!(f, "{count} events exceed the session capacity {capacity}")
             }
-            Self::Protocol(error) => write!(f, "{error}"),
+            Self::UnstorableEvent => f.write_str("event cannot be stored in a plain record"),
         }
     }
 }
@@ -746,9 +751,7 @@ impl MappedRegion {
             }
         }
         for (index, (event, device)) in events.iter().enumerate() {
-            let record = encode_routed(event, *device).ok_or_else(|| {
-                RegionError::Protocol("event cannot be stored in a plain record".to_string())
-            })?;
+            let record = encode_routed(event, *device).ok_or(RegionError::UnstorableEvent)?;
             let offset = self.event_offset(generation, false, index);
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -830,9 +833,7 @@ impl MappedRegion {
             }
         }
         for (index, (event, device)) in events.iter().enumerate() {
-            let record = encode_routed(event, *device).ok_or_else(|| {
-                RegionError::Protocol("event cannot be stored in a plain record".to_string())
-            })?;
+            let record = encode_routed(event, *device).ok_or(RegionError::UnstorableEvent)?;
             let offset = self.event_offset(generation, false, index);
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -1091,9 +1092,7 @@ impl MappedRegion {
             }
         }
         for (index, event) in events_in.iter().enumerate() {
-            let record = encode_event(event).ok_or_else(|| {
-                RegionError::Protocol("event cannot be stored in a plain record".to_string())
-            })?;
+            let record = encode_event(event).ok_or(RegionError::UnstorableEvent)?;
             let offset = self.event_offset(generation, false, index);
             // SAFETY: `offset` addresses one record inside this generation's input events.
             unsafe {

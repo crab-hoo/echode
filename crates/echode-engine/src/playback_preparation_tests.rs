@@ -19,7 +19,9 @@ fn asynchronous_preparation_failure_is_reported_once_and_releases_pending_plans(
             state: None,
         }],
     );
-    control.workgroup = Some(Arc::new(|| Err("fixture workgroup failure".into())));
+    control.workgroup = Some(Arc::new(|| {
+        Err(echode_sandbox::WorkgroupError::InvalidHandoff)
+    }));
     let changed = base
         .add_clap_device(track, echode_model::Id::generate(), "org.example.failure")
         .unwrap();
@@ -37,7 +39,11 @@ fn asynchronous_preparation_failure_is_reported_once_and_releases_pending_plans(
         );
         std::thread::sleep(std::time::Duration::from_millis(1));
     };
-    assert!(error.to_string().contains("fixture workgroup failure"));
+    assert!(
+        error
+            .to_string()
+            .contains("workgroup port or period is invalid")
+    );
     assert!(!control.preparing_graph() && !control.status().pending_plan);
     for _ in 0..4 {
         control.service();

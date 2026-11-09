@@ -96,7 +96,7 @@ mod tests {
             selected_with(77, 32000, |_| Ok(std::ptr::null_mut())),
             Err(AudioError::Workgroup {
                 device: 77,
-                fault: WorkgroupFault::Retain(_),
+                fault: WorkgroupFault::Retain(echode_engine::WorkgroupError::InvalidDevice),
             })
         ));
     }

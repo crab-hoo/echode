@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-use echode_audio_io::SessionError;
+use echode_audio_io::{Refusal, SessionError};
 
 use super::*;
 use crate::Rejected;
@@ -137,7 +137,8 @@ fn closing_refuses_queued_requests_and_unrecorded_captures() {
 }
 
 /// A helper that timed out reaches the caller as that timeout, not as text,
-/// so it is told apart from a refusal: its outcome is unknown (ADR 0199).
+/// so it is told apart from a refusal: its outcome is unknown (ADR 0199). A
+/// busy helper's refusal arrives as busy, not as its words (ADR 0293).
 #[test]
 fn a_failed_or_panicking_round_trip_completes_with_an_error() {
     let mut lane = lane();
@@ -151,7 +152,7 @@ fn a_failed_or_panicking_round_trip_completes_with_an_error() {
     lane.report(
         refused,
         View::new(),
-        Box::new(|| Err(SessionError::Protocol("plugin refused".to_string()).into())),
+        Box::new(|| Err(SessionError::Refused(Refusal::Busy).into())),
     );
     let (panicked, panicked_done) = ticket();
     lane.report(
@@ -171,10 +172,18 @@ fn a_failed_or_panicking_round_trip_completes_with_an_error() {
         timed_out.to_string(),
         "plugin process did not answer before the deadline"
     );
-    assert!(matches!(
-        refused_done.recv_timeout(WAIT).unwrap(),
-        Err(DocumentError::Helper(SessionError::Protocol(_)))
-    ));
+    let refused = refused_done.recv_timeout(WAIT).unwrap().unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            DocumentError::Helper(SessionError::Refused(Refusal::Busy))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.to_string(),
+        "plugin main thread is busy with an earlier request"
+    );
     let panicked = panicked_done.recv_timeout(WAIT).unwrap().unwrap_err();
     assert!(matches!(panicked, DocumentError::DeviceRequestPanicked));
     assert_eq!(panicked.to_string(), "device request panicked");

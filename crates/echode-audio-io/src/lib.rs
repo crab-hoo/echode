@@ -36,7 +36,8 @@ pub use audition::{
 pub use clips::load_placed_clips;
 pub use echode_engine::{
     GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText,
-    ParamValue, PluginActivity, PluginCommand, PluginControl, SessionError, TrackMeter,
+    ParamValue, Pending, PluginActivity, PluginCommand, PluginControl, Refusal, SessionError,
+    TrackMeter, WorkgroupError,
 };
 pub use error::{
     AudioError, AuditionFault, CoreAudioCall, HardwareFault, Internal, Rejected, Stopped,

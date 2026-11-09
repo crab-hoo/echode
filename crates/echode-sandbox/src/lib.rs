@@ -24,8 +24,10 @@ compile_error!("Echode only builds for macOS");
 
 mod control;
 mod descriptors;
+mod error;
 mod gui;
 mod params;
+mod refusal;
 mod region;
 mod session;
 mod shortcuts;
@@ -34,18 +36,22 @@ mod wire;
 mod workgroup;
 
 pub use control::{ControlMessage, Socket};
+pub use error::{
+    ProtocolError, SessionError, SpawnError, SpawnStep, WorkgroupCall, WorkgroupError,
+};
 pub use gui::{GuiReport, ParamEvent, ParamEventKind, ParamRelay, PluginActivity};
 pub use params::{
     PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,
     PARAM_STEPPED, ParamChange, ParamInfo, ParamText, ParamValue,
 };
+pub use refusal::{Pending, Refusal};
 pub use region::{
     Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout,
     arm_abort_notice, point_abort_notice,
 };
 pub use session::{
-    BlockProgress, PluginAudio, PluginControl, PluginHost, PluginNotice, SessionError,
-    SpawnOptions, WorkgroupHandoff,
+    BlockProgress, PluginAudio, PluginControl, PluginHost, PluginNotice, SpawnOptions,
+    WorkgroupHandoff,
 };
 pub use shortcuts::PluginCommand;
 pub use sync::{SyncFlags, WaitError, wait_until_ne, wake_one};

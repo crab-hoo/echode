@@ -25,8 +25,10 @@ pub enum DocumentError {
     /// The audio session refused the request or could not open its output.
     Audio(AudioError),
     /// The device's helper failed the round trip. After
-    /// [`SessionError::Timeout`] the outcome is unknown: the helper may still
-    /// apply the request, and nothing sends it again (ADR 0199).
+    /// [`SessionError::Timeout`], and after the helper's own timeout or stop
+    /// ([`SessionError::Refused`] with `TimedOut` or `Stopped`), the outcome
+    /// is unknown: the plugin may still apply the request, and nothing sends
+    /// it again (ADR 0199, ADR 0293).
     Helper(SessionError),
     /// A report could not be encoded as JSON.
     Encode(serde_json::Error),

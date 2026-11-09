@@ -1,6 +1,7 @@
 use super::{FanIn, PluginControl, inheritable, push_stderr};
 use crate::control::{ControlMessage, Socket};
 use crate::gui::{GuiReport, ParamEvent, ParamEventKind, ParamRelay};
+use crate::refusal::Refusal;
 use std::os::fd::AsRawFd;
 use std::time::Duration;
 
@@ -110,7 +111,9 @@ fn contract_window_lifetimes_cross_the_control_socket_in_order() {
     // A rejected request does not light the indicator. Socket death closes it
     // even when complete replies remain in the inbox for another requester.
     helper
-        .send(&ControlMessage::GuiRejected("no window".into()))
+        .send(&ControlMessage::GuiRejected(Refusal::Other(
+            "no window".into(),
+        )))
         .unwrap();
     control.lock().drain().unwrap();
     assert!(control.take_activity().is_none());

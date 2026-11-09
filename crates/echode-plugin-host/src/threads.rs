@@ -40,8 +40,8 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
     CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage, FanIn,
-    MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue,
-    RegionError, Socket, SyncFlags, wake_one,
+    MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue, Pending,
+    Refusal, RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
@@ -354,7 +354,8 @@ impl Bridge {
         let Some((call, request)) = self.main_requests.take() else {
             return;
         };
-        let result = perform_main_request(self, request);
+        // The plugin's own failures are text until this crate types them (ADR 0293).
+        let result = perform_main_request(self, request).map_err(Refusal::Other);
         self.main_requests.complete(&call, result);
     }
 }
@@ -819,7 +820,7 @@ fn serve_region(
             // Tell the parent before any worker starts. A worker that exits
             // first can close the socket and drop this reason.
             if let Some(socket) = control.as_mut() {
-                let _ = socket.send(&ControlMessage::PortsRejected(error));
+                let _ = socket.send(&ControlMessage::PortsRejected(Refusal::Other(error)));
             }
             bridge.stop.store(true, Ordering::Release);
         } else {
@@ -1020,9 +1021,10 @@ fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<()
         return Ok(());
     }
     let _membership = match workgroup {
-        Some((name, ticks)) => {
-            Some(echode_sandbox::join_passed_workgroup(name, *ticks).map_err(HostError::Plugin)?)
-        }
+        Some((name, ticks)) => Some(
+            echode_sandbox::join_passed_workgroup(name, *ticks)
+                .map_err(|error| HostError::Plugin(error.to_string()))?,
+        ),
         None => None,
     };
     let mut started: Option<StartedPluginAudioProcessor<EchodeHost>> = None;
@@ -1406,7 +1408,7 @@ fn control_thread(bridge: &Bridge, mut socket: Option<Socket>) -> Result<(), Hos
         && let Some(shape) = published_ports(bridge)
     {
         let message = if let Some(error) = &shape.error {
-            ControlMessage::PortsRejected(error.clone())
+            ControlMessage::PortsRejected(Refusal::Other(error.clone()))
         } else {
             ControlMessage::Ports {
                 inputs: shape.inputs.clone(),
@@ -1535,7 +1537,7 @@ fn handle_control(
         ControlMessage::SaveRequest => {
             let reply = match call_main(bridge, MainRequest::Save) {
                 Ok(MainReply::State(bytes)) => ControlMessage::State(bytes),
-                Ok(_) => ControlMessage::StateRejected("unexpected main-thread reply".into()),
+                Ok(_) => ControlMessage::StateRejected(unexpected_main_reply()),
                 Err(error) => ControlMessage::StateRejected(error),
             };
             socket
@@ -1545,7 +1547,7 @@ fn handle_control(
         ControlMessage::Restore(bytes) => {
             let reply = match call_main(bridge, MainRequest::Load(bytes)) {
                 Ok(MainReply::Done) => ControlMessage::Restored,
-                Ok(_) => ControlMessage::StateRejected("unexpected main-thread reply".into()),
+                Ok(_) => ControlMessage::StateRejected(unexpected_main_reply()),
                 Err(error) => ControlMessage::StateRejected(error),
             };
             socket
@@ -1582,7 +1584,7 @@ fn handle_control(
         ControlMessage::GuiShow(title) => {
             let reply = match call_main(bridge, MainRequest::Show(title)) {
                 Ok(MainReply::Window(report)) => ControlMessage::GuiShown(report),
-                Ok(_) => ControlMessage::GuiRejected("unexpected main-thread reply".into()),
+                Ok(_) => ControlMessage::GuiRejected(unexpected_main_reply()),
                 Err(error) => ControlMessage::GuiRejected(error),
             };
             socket
@@ -1592,7 +1594,7 @@ fn handle_control(
         ControlMessage::GuiClose => {
             let reply = match call_main(bridge, MainRequest::Close) {
                 Ok(MainReply::Done) => ControlMessage::GuiClosedReply,
-                Ok(_) => ControlMessage::GuiRejected("unexpected main-thread reply".into()),
+                Ok(_) => ControlMessage::GuiRejected(unexpected_main_reply()),
                 Err(error) => ControlMessage::GuiRejected(error),
             };
             socket
@@ -1678,7 +1680,9 @@ fn handle_control(
 
 fn reject_launch(socket: Option<&mut Socket>, reason: &str) {
     if let Some(socket) = socket {
-        let _ = socket.send(&ControlMessage::PortsRejected(reason.to_string()));
+        let _ = socket.send(&ControlMessage::PortsRejected(Refusal::Other(
+            reason.to_string(),
+        )));
     }
 }
 
@@ -1898,9 +1902,9 @@ fn sum_ports(counts: &[u32]) -> usize {
 
 /// Control-thread only. A timeout abandons the reply, not the owned input.
 /// The mailbox rejects later calls until the main thread finishes this one.
-fn call_main(bridge: &Bridge, request: MainRequest) -> Result<MainReply, String> {
+fn call_main(bridge: &Bridge, request: MainRequest) -> Result<MainReply, Refusal> {
     if !bridge.has_plugin.load(Ordering::Acquire) {
-        return Err("no plugin".to_string());
+        return Err(Refusal::NoPlugin);
     }
     let wait = if matches!(request, MainRequest::Show(_) | MainRequest::Close) {
         WINDOW_WAIT
@@ -1915,16 +1919,10 @@ fn call_main(bridge: &Bridge, request: MainRequest) -> Result<MainReply, String>
             return reply;
         }
         if bridge.stop.load(Ordering::Acquire) {
-            return Err(format!(
-                "plugin stopped before main request {} finished",
-                call.id
-            ));
+            return Err(Refusal::Stopped(Pending::MainCall(call.id)));
         }
         if started.elapsed() > wait {
-            return Err(format!(
-                "plugin main request {} timed out; outcome unknown",
-                call.id
-            ));
+            return Err(Refusal::TimedOut(Pending::MainCall(call.id)));
         }
         thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -2069,14 +2067,20 @@ fn reclaim_param_batches(bridge: &Bridge) {
     }
 }
 
-fn read_params(bridge: &Bridge) -> Result<Vec<ParamInfo>, String> {
+fn unexpected_main_reply() -> Refusal {
+    Refusal::Other("unexpected main-thread reply".to_string())
+}
+
+fn read_params(bridge: &Bridge) -> Result<Vec<ParamInfo>, Refusal> {
     match call_main(bridge, MainRequest::Parameters)? {
         MainReply::Parameters(infos) => Ok(infos),
-        _ => Err("unexpected main-thread reply to parameter list".to_string()),
+        _ => Err(Refusal::Other(
+            "unexpected main-thread reply to parameter list".to_string(),
+        )),
     }
 }
 
-fn parse_param(bridge: &Bridge, id: u32, text: &str) -> Result<ParamText, String> {
+fn parse_param(bridge: &Bridge, id: u32, text: &str) -> Result<ParamText, Refusal> {
     match call_main(
         bridge,
         MainRequest::Parse {
@@ -2085,18 +2089,20 @@ fn parse_param(bridge: &Bridge, id: u32, text: &str) -> Result<ParamText, String
         },
     )? {
         MainReply::Parsed(parsed) => Ok(parsed),
-        _ => Err("unexpected main-thread reply to parameter text".to_string()),
+        _ => Err(Refusal::Other(
+            "unexpected main-thread reply to parameter text".to_string(),
+        )),
     }
 }
 
 /// Publishes `changes` for the processing thread, waits until they were
 /// flushed, then reads those values back on the main thread.
-fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamValue>, String> {
+fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamValue>, Refusal> {
     if !bridge.has_plugin.load(Ordering::Acquire) {
-        return Err("no plugin".to_string());
+        return Err(Refusal::NoPlugin);
     }
     if bridge.main_requests.is_busy() {
-        return Err("plugin main thread is busy with an earlier request".to_string());
+        return Err(Refusal::Busy);
     }
     let params = bridge.params.load(Ordering::Acquire);
     // SAFETY: the extension table lives as long as the plugin instance.
@@ -2104,14 +2110,16 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
         .and_then(|params| params.flush)
         .is_none()
     {
-        return Err("plugin does not accept parameter changes".to_string());
+        return Err(Refusal::Other(
+            "plugin does not accept parameter changes".to_string(),
+        ));
     }
     let mut events = EventBuffer::with_capacity(changes.len());
     let mut ids: Vec<u32> = Vec::with_capacity(changes.len());
     for change in changes {
         let id = ClapId::from_raw(change.id)
             .filter(|_| change.value.is_finite())
-            .ok_or_else(|| "invalid parameter change".to_string())?;
+            .ok_or_else(|| Refusal::Other("invalid parameter change".to_string()))?;
         events.push(&ParamValueEvent::new(
             0,
             id,
@@ -2138,21 +2146,26 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
     let started = std::time::Instant::now();
     while bridge.param_flushed.load(Ordering::Acquire) < generation {
         if bridge.stop.load(Ordering::Acquire) {
-            return Err("plugin stopped before parameters were applied".to_string());
+            return Err(Refusal::Stopped(Pending::ParameterChanges));
         }
         if started.elapsed() > std::time::Duration::from_secs(2) {
             let unclaimed = bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel);
             if !unclaimed.is_null() {
                 drop(unsafe { Box::from_raw(unclaimed) });
             }
-            return Err("parameter changes timed out".to_string());
+            // A batch the processing thread already took may still apply.
+            // Either way the outcome is reported as unknown, the safe side
+            // (ADR 0199).
+            return Err(Refusal::TimedOut(Pending::ParameterChanges));
         }
         thread::sleep(std::time::Duration::from_millis(1));
     }
     reclaim_param_batches(bridge);
     match call_main(bridge, MainRequest::Values { ids, relay: false })? {
         MainReply::Values(values) => Ok(values),
-        _ => Err("unexpected main-thread reply to parameter values".to_string()),
+        _ => Err(Refusal::Other(
+            "unexpected main-thread reply to parameter values".to_string(),
+        )),
     }
 }
 

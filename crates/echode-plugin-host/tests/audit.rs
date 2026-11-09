@@ -129,9 +129,13 @@ fn helper_fixture() -> (PathBuf, PathBuf) {
 /// docs/reviews/2026-10-30-structure-audit.md SPG-01. A timed-out save
 /// used to replace the next restore's bytes. An in-flight call must now keep
 /// its own input and reply; a rejected restore leaves the plugin unchanged.
+/// The save's outcome is unknown and the restore is refused as busy, each as
+/// its own type rather than as the helper's words (ADR 0293).
 #[test]
 fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
-    use echode_sandbox::{PluginHost, PluginNotice, SessionLayout, SpawnOptions};
+    use echode_sandbox::{
+        Pending, PluginHost, PluginNotice, Refusal, SessionError, SessionLayout, SpawnOptions,
+    };
 
     let (host_bin, plugin) = helper_fixture();
     let mut host = PluginHost::spawn(SpawnOptions {
@@ -164,10 +168,16 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
     assert!((left[0] - 0.25).abs() < 1.0e-4, "{}", left[0]);
 
     let endpoint = host.control_handle();
-    // The first save sleeps 3 s, past both 2 s waits.
+    // The first save sleeps 3 s, past both 2 s waits. Whichever wait ends
+    // first, the outcome is unknown.
+    let saved = endpoint.capture_state();
     assert!(
-        endpoint.capture_state().is_err(),
-        "the slow save must time out"
+        matches!(
+            saved,
+            Err(SessionError::Timeout
+                | SessionError::Refused(Refusal::TimedOut(Pending::MainCall(_))))
+        ),
+        "the slow save must time out: {saved:?}"
     );
     let restored = endpoint.restore_state(&[128]);
     // Allow the earlier main-thread call to finish before checking its effects.
@@ -190,8 +200,8 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
         );
     } else {
         assert!(
-            restored.is_err(),
-            "restore reported success without loading"
+            matches!(restored, Err(SessionError::Refused(Refusal::Busy))),
+            "a restore behind the running save must be refused as busy: {restored:?}"
         );
         assert!(
             (left[0] - 0.25).abs() < 1.0e-4,

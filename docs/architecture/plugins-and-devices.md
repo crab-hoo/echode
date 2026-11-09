@@ -55,6 +55,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - メインスレッドの制御要求は型付きの専有領域で渡し、時間切れ後も完了まで後続を busy で拒否する。
   ソケットの要求と応答は 64 bit の要求番号で照合し、遅れた応答を後続へ貸さない。
   時間切れは取消ではなく結果不明で、自動再送はしない（[ADR 0199](../decisions/0199-owned-helper-control-requests.md)）。
+  ヘルパーの拒否は種類付きの `Refusal` で送る。busy（始めていない）と、ヘルパー自身の時間切れ・停止（結果不明）と、ほかの拒否（ヘルパーの文）を型で分ける。
+  ホストではどれも `SessionError::Refused` になる（[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)）。
 
 - 制御専用の `PluginControl` は、`session_operations.rs` に型付きの操作と通信の実装を直接持つ。
   `ControlState` は要求番号・通知・保存の管理を共用し、ホスト経由の保存・復元の別経路は持たない。

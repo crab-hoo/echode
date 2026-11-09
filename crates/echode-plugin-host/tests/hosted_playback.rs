@@ -96,7 +96,7 @@ fn contract_live_workgroup_failure_cannot_be_silent_offline_hosting() {
     let counted = Arc::clone(&calls);
     let group: echode_engine::PluginWorkgroup = Arc::new(move || {
         counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Err("selected device workgroup unavailable".into())
+        Err(echode_engine::WorkgroupError::InvalidDevice)
     });
     let route = PluginRoute {
         clap_id: "dev.echode.test-gain".into(),
@@ -114,7 +114,7 @@ fn contract_live_workgroup_failure_cannot_be_silent_offline_hosting() {
             .workgroup(group),
     );
     assert!(
-        matches!(result, Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("selected device workgroup unavailable"))
+        matches!(result, Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("device workgroup or period is invalid"))
     );
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
@@ -128,7 +128,7 @@ fn a_workgroup_given_without_helpers_reaches_helpers_started_later() {
     let counted = Arc::clone(&calls);
     let group: echode_engine::PluginWorkgroup = Arc::new(move || {
         counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Err("selected device workgroup unavailable".into())
+        Err(echode_engine::WorkgroupError::InvalidDevice)
     });
     let (mut control, _audio) = echode_engine::playback(
         &project,
@@ -150,7 +150,7 @@ fn a_workgroup_given_without_helpers_reaches_helpers_started_later() {
         .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
         .unwrap();
     assert!(
-        matches!(control.replace(&edited), Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("selected device workgroup unavailable"))
+        matches!(control.replace(&edited), Err(echode_engine::PlaybackError::Unsupported(ref reason)) if reason.contains("device workgroup or period is invalid"))
     );
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

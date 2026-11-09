@@ -10,6 +10,7 @@ use crate::params::{
     read_text_request, read_values, write_changes, write_infos, write_parsed, write_text_request,
     write_values,
 };
+use crate::refusal::{Refusal, read_refusal, write_refusal};
 use crate::region::SessionLayout;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -92,10 +93,11 @@ pub enum ControlMessage {
         tail_samples: u32,
         latency_samples: u32,
     },
-    /// The plugin has no usable audio-port description. The bytes are the reason.
-    PortsRejected(String),
-    /// Save or load did not call the plugin, or the plugin refused. The bytes are the reason.
-    StateRejected(String),
+    /// The plugin has no usable audio-port description.
+    PortsRejected(Refusal),
+    /// Save or load did not finish: the helper did not call the plugin, the
+    /// plugin refused, or the outcome is unknown.
+    StateRejected(Refusal),
     /// Asks for every parameter description and current value.
     ParamsRequest,
     /// The plugin's parameters in its own order. A plugin without the params
@@ -105,8 +107,8 @@ pub enum ControlMessage {
     SetParams(Vec<ParamChange>),
     /// The changed parameters, read back after the plugin applied them.
     ParamsApplied(Vec<ParamValue>),
-    /// A parameter request did not reach the plugin. The bytes are the reason.
-    ParamsRejected(String),
+    /// A parameter request did not finish in the plugin.
+    ParamsRejected(Refusal),
     /// Asks the plugin to read typed text for one parameter. Changes nothing.
     ParseParam {
         id: u32,
@@ -121,8 +123,8 @@ pub enum ControlMessage {
     /// Closes the plugin window and destroys the plugin's view.
     GuiClose,
     GuiClosedReply,
-    /// The window could not be shown or closed. The bytes are the reason.
-    GuiRejected(String),
+    /// The window could not be shown or closed.
+    GuiRejected(Refusal),
     /// Notice: the user closed the plugin window.
     GuiClosed,
     /// Notice: values and gestures the plugin reported on its own.
@@ -394,20 +396,20 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
             bytes.extend_from_slice(&latency_samples.to_le_bytes());
             (PORTS, bytes)
         }
-        ControlMessage::PortsRejected(reason) => (PORTS_REJECTED, reason.as_bytes().to_vec()),
-        ControlMessage::StateRejected(reason) => (STATE_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::PortsRejected(refusal) => (PORTS_REJECTED, write_refusal(refusal)),
+        ControlMessage::StateRejected(refusal) => (STATE_REJECTED, write_refusal(refusal)),
         ControlMessage::ParamsRequest => (PARAMS_REQUEST, Vec::new()),
         ControlMessage::Params(infos) => (PARAMS, write_infos(infos)),
         ControlMessage::SetParams(changes) => (SET_PARAMS, write_changes(changes)),
         ControlMessage::ParamsApplied(values) => (PARAMS_APPLIED, write_values(values)),
-        ControlMessage::ParamsRejected(reason) => (PARAMS_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::ParamsRejected(refusal) => (PARAMS_REJECTED, write_refusal(refusal)),
         ControlMessage::ParseParam { id, text } => (PARSE_PARAM, write_text_request(*id, text)),
         ControlMessage::ParamParsed(parsed) => (PARAM_PARSED, write_parsed(*parsed)),
         ControlMessage::GuiShow(title) => (GUI_SHOW, title.as_bytes().to_vec()),
         ControlMessage::GuiShown(report) => (GUI_SHOWN, write_report(*report)),
         ControlMessage::GuiClose => (GUI_CLOSE, Vec::new()),
         ControlMessage::GuiClosedReply => (GUI_CLOSED_REPLY, Vec::new()),
-        ControlMessage::GuiRejected(reason) => (GUI_REJECTED, reason.as_bytes().to_vec()),
+        ControlMessage::GuiRejected(refusal) => (GUI_REJECTED, write_refusal(refusal)),
         ControlMessage::GuiClosed => (GUI_CLOSED, Vec::new()),
         ControlMessage::GuiCommand(command) => (GUI_COMMAND, vec![*command as u8]),
         ControlMessage::ParamRelay(relay) => (PARAM_RELAY, write_relay(relay)),
@@ -470,23 +472,13 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
                 latency_samples: u32::from_le_bytes(*latency),
             }
         }
-        PORTS_REJECTED => ControlMessage::PortsRejected(
-            String::from_utf8(body.to_vec())
-                .map_err(|_| io::Error::new(ErrorKind::InvalidData, "port refusal is not text"))?,
-        ),
-        STATE_REJECTED => ControlMessage::StateRejected(
-            String::from_utf8(body.to_vec())
-                .map_err(|_| io::Error::new(ErrorKind::InvalidData, "state refusal is not text"))?,
-        ),
+        PORTS_REJECTED => ControlMessage::PortsRejected(read_refusal(body)?),
+        STATE_REJECTED => ControlMessage::StateRejected(read_refusal(body)?),
         PARAMS_REQUEST if body.is_empty() => ControlMessage::ParamsRequest,
         PARAMS => ControlMessage::Params(read_infos(body)?),
         SET_PARAMS => ControlMessage::SetParams(read_changes(body)?),
         PARAMS_APPLIED => ControlMessage::ParamsApplied(read_values(body)?),
-        PARAMS_REJECTED => {
-            ControlMessage::ParamsRejected(String::from_utf8(body.to_vec()).map_err(|_| {
-                io::Error::new(ErrorKind::InvalidData, "parameter refusal is not text")
-            })?)
-        }
+        PARAMS_REJECTED => ControlMessage::ParamsRejected(read_refusal(body)?),
         PARSE_PARAM => {
             let (id, text) = read_text_request(body)?;
             ControlMessage::ParseParam { id, text }
@@ -499,11 +491,7 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         GUI_SHOWN => ControlMessage::GuiShown(read_report(body)?),
         GUI_CLOSE if body.is_empty() => ControlMessage::GuiClose,
         GUI_CLOSED_REPLY if body.is_empty() => ControlMessage::GuiClosedReply,
-        GUI_REJECTED => {
-            ControlMessage::GuiRejected(String::from_utf8(body.to_vec()).map_err(|_| {
-                io::Error::new(ErrorKind::InvalidData, "window refusal is not text")
-            })?)
-        }
+        GUI_REJECTED => ControlMessage::GuiRejected(read_refusal(body)?),
         GUI_CLOSED if body.is_empty() => ControlMessage::GuiClosed,
         GUI_COMMAND if body.len() == 1 => ControlMessage::GuiCommand(
             body.first()

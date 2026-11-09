@@ -64,7 +64,10 @@ fn contract_control_replies_are_correlated_across_timeouts() {
         assert!(matches!(request, ControlMessage::Restore(bytes) if bytes == [128]));
         // Same error type as the restore's errors, but for the expired save.
         helper
-            .send_tagged(old, &ControlMessage::StateRejected("old timeout".into()))
+            .send_tagged(
+                old,
+                &ControlMessage::StateRejected(Refusal::Other("old timeout".into())),
+            )
             .unwrap();
         helper
             .send_tagged(restore, &ControlMessage::Restored)
@@ -152,7 +155,7 @@ fn expired_parameter_and_window_replies_cannot_answer_new_calls() {
         helper
             .send_tagged(
                 old_params,
-                &ControlMessage::ParamsRejected("expired".into()),
+                &ControlMessage::ParamsRejected(Refusal::Other("expired".into())),
             )
             .unwrap();
         helper
@@ -161,7 +164,10 @@ fn expired_parameter_and_window_replies_cannot_answer_new_calls() {
         let (window, request) = helper.recv_tagged(Duration::from_secs(2)).unwrap();
         assert!(matches!(request, ControlMessage::GuiClose));
         helper
-            .send_tagged(old_window, &ControlMessage::GuiRejected("expired".into()))
+            .send_tagged(
+                old_window,
+                &ControlMessage::GuiRejected(Refusal::Other("expired".into())),
+            )
             .unwrap();
         helper
             .send_tagged(window, &ControlMessage::GuiClosedReply)

@@ -23,8 +23,11 @@ use crate::PlaybackError;
 
 /// Control-thread factory for a fresh send right on each live helper launch.
 /// The captured owner retains the selected device's workgroup.
-pub type PluginWorkgroup =
-    Arc<dyn Fn() -> Result<echode_sandbox::WorkgroupHandoff, String> + Send + Sync>;
+pub type PluginWorkgroup = Arc<
+    dyn Fn() -> Result<echode_sandbox::WorkgroupHandoff, echode_sandbox::WorkgroupError>
+        + Send
+        + Sync,
+>;
 use crate::mix::Signal;
 
 /// Where a CLAP id lives on disk, and its instrument role.
@@ -1510,7 +1513,7 @@ fn spawn_stage(
         workgroup: workgroup
             .map(|source| source())
             .transpose()
-            .map_err(PlaybackError::Unsupported)?,
+            .map_err(|error| PlaybackError::Unsupported(error.to_string()))?,
         layout,
         fan_in: Some(shared),
         sample_rate,

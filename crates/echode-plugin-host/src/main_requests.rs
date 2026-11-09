@@ -1,9 +1,9 @@
 //! Owned control-to-main calls. The realtime thread never touches this mailbox.
 //!
 //! A timed-out caller leaves its call alive until the main thread completes it.
-//! Later callers get an explicit busy error rather than replacing its input.
+//! Later callers get an explicit busy refusal rather than replacing its input.
 
-use echode_sandbox::{GuiReport, ParamInfo, ParamText, ParamValue};
+use echode_sandbox::{GuiReport, ParamInfo, ParamText, ParamValue, Refusal};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -30,11 +30,11 @@ pub(crate) enum MainReply {
 pub(crate) struct MainCall {
     pub(crate) id: u64,
     request: Mutex<Option<MainRequest>>,
-    reply: Mutex<Option<Result<MainReply, String>>>,
+    reply: Mutex<Option<Result<MainReply, Refusal>>>,
 }
 
 impl MainCall {
-    pub(crate) fn take_reply(&self) -> Option<Result<MainReply, String>> {
+    pub(crate) fn take_reply(&self) -> Option<Result<MainReply, Refusal>> {
         self.reply.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 }
@@ -54,15 +54,15 @@ impl MainRequests {
     }
 
     /// Control-thread only. At most one call can be queued or running.
-    pub(crate) fn begin(&self, request: MainRequest) -> Result<Arc<MainCall>, String> {
+    pub(crate) fn begin(&self, request: MainRequest) -> Result<Arc<MainCall>, Refusal> {
         let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         if active.is_some() {
-            return Err("plugin main thread is busy with an earlier request".to_string());
+            return Err(Refusal::Busy);
         }
         let id = self
             .next
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
-            .map_err(|_| "plugin main request ids exhausted".to_string())?
+            .map_err(|_| Refusal::Other("plugin main request ids exhausted".to_string()))?
             + 1;
         let call = Arc::new(MainCall {
             id,
@@ -89,7 +89,7 @@ impl MainRequests {
     }
 
     /// Main-thread only. Publish only to this call, even if its caller left.
-    pub(crate) fn complete(&self, call: &Arc<MainCall>, result: Result<MainReply, String>) {
+    pub(crate) fn complete(&self, call: &Arc<MainCall>, result: Result<MainReply, Refusal>) {
         let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         if active
             .as_ref()

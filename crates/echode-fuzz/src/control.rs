@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use echode_sandbox::{
     ControlMessage, GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay,
-    ParamText, ParamValue, PluginCommand, SessionLayout, Socket,
+    ParamText, ParamValue, Pending, PluginCommand, Refusal, SessionLayout, Socket,
 };
 
 use crate::bytes::Bytes;
@@ -286,8 +286,10 @@ fn sample_messages() -> Vec<ControlMessage> {
             tail_samples: 480,
             latency_samples: 32,
         },
-        ControlMessage::PortsRejected("no audio ports".to_string()),
-        ControlMessage::StateRejected("refused".to_string()),
+        ControlMessage::PortsRejected(Refusal::Other("no audio ports".to_string())),
+        ControlMessage::StateRejected(Refusal::Other("refused".to_string())),
+        ControlMessage::StateRejected(Refusal::TimedOut(Pending::MainCall(9))),
+        ControlMessage::StateRejected(Refusal::Stopped(Pending::MainCall(10))),
         ControlMessage::ParamsRequest,
         ControlMessage::Params(vec![ParamInfo {
             id: 3,
@@ -302,7 +304,11 @@ fn sample_messages() -> Vec<ControlMessage> {
         }]),
         ControlMessage::SetParams(vec![ParamChange { id: 3, value: 0.5 }]),
         ControlMessage::ParamsApplied(vec![value.clone()]),
-        ControlMessage::ParamsRejected("closed".to_string()),
+        ControlMessage::ParamsRejected(Refusal::Other("closed".to_string())),
+        ControlMessage::ParamsRejected(Refusal::Busy),
+        ControlMessage::ParamsRejected(Refusal::NoPlugin),
+        ControlMessage::ParamsRejected(Refusal::TimedOut(Pending::ParameterChanges)),
+        ControlMessage::ParamsRejected(Refusal::Stopped(Pending::ParameterChanges)),
         ControlMessage::ParseParam {
             id: 3,
             text: "-6 dB".to_string(),
@@ -318,7 +324,7 @@ fn sample_messages() -> Vec<ControlMessage> {
         }),
         ControlMessage::GuiClose,
         ControlMessage::GuiClosedReply,
-        ControlMessage::GuiRejected("no window".to_string()),
+        ControlMessage::GuiRejected(Refusal::Other("no window".to_string())),
         ControlMessage::GuiClosed,
         ControlMessage::ParamRelay(ParamRelay {
             events: vec![

@@ -10,6 +10,7 @@
 //! send right makes `posix_spawn` return EINVAL, and the bootstrap slot arrives
 //! in the child as a null port.
 
+use crate::error::{SpawnError, SpawnStep, WorkgroupCall, WorkgroupError};
 use crate::sync;
 use std::ffi::{CString, OsString};
 use std::fs::File;
@@ -39,20 +40,20 @@ impl RetainedWorkgroup {
     pub unsafe fn from_retained(
         object: *mut std::ffi::c_void,
         period_ticks: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, WorkgroupError> {
         let owner = Self {
             object,
             period_ticks,
         };
         if object.is_null() || period_ticks == 0 {
-            return Err("device workgroup or period is invalid".into());
+            return Err(WorkgroupError::InvalidDevice);
         }
         Ok(owner)
     }
 
-    pub(crate) fn from_handoff(handoff: crate::WorkgroupHandoff) -> Result<Self, String> {
+    pub(crate) fn from_handoff(handoff: crate::WorkgroupHandoff) -> Result<Self, WorkgroupError> {
         if handoff.port == 0 || handoff.period_ticks == 0 {
-            return Err("workgroup port or period is invalid".into());
+            return Err(WorkgroupError::InvalidHandoff);
         }
         // SAFETY: handoff owns its send right until the object is reconstructed.
         let object =
@@ -61,7 +62,7 @@ impl RetainedWorkgroup {
         unsafe { Self::from_retained(object, handoff.period_ticks) }
     }
 
-    pub fn handoff(&self) -> Result<crate::WorkgroupHandoff, String> {
+    pub fn handoff(&self) -> Result<crate::WorkgroupHandoff, WorkgroupError> {
         Ok(crate::WorkgroupHandoff {
             // SAFETY: this owner keeps the workgroup retained for the call.
             port: unsafe { copy_workgroup_port(self.object) }?,
@@ -111,15 +112,18 @@ impl Drop for WorkgroupMembership {
 /// # Safety
 ///
 /// `workgroup` is a retained `os_workgroup_t` and stays valid for the call.
-pub unsafe fn copy_workgroup_port(workgroup: *mut std::ffi::c_void) -> Result<u32, String> {
+pub unsafe fn copy_workgroup_port(workgroup: *mut std::ffi::c_void) -> Result<u32, WorkgroupError> {
     if workgroup.is_null() {
-        return Err("workgroup is null".to_string());
+        return Err(WorkgroupError::NullWorkgroup);
     }
     let mut port = 0u32;
     // SAFETY: the workgroup object stays retained by the caller for this call.
     let status = unsafe { sync::os_workgroup_copy_port(workgroup, &mut port) };
     if status != 0 || port == 0 {
-        return Err(format!("os_workgroup_copy_port returned {status}"));
+        return Err(WorkgroupError::Call {
+            call: WorkgroupCall::CopyPort,
+            status,
+        });
     }
     Ok(port)
 }
@@ -151,9 +155,9 @@ fn this_task() -> u32 {
 pub unsafe fn join_workgroup(
     workgroup: *mut std::ffi::c_void,
     period_ticks: u32,
-) -> Result<WorkgroupMembership, String> {
+) -> Result<WorkgroupMembership, WorkgroupError> {
     if workgroup.is_null() {
-        return Err("workgroup is null".to_string());
+        return Err(WorkgroupError::NullWorkgroup);
     }
     prepare_thread(period_ticks)?;
     let mut membership = WorkgroupMembership {
@@ -168,7 +172,10 @@ pub unsafe fn join_workgroup(
     // SAFETY: the caller retains `workgroup` until this membership is dropped.
     let joined = unsafe { sync::os_workgroup_join(workgroup, &mut membership.token) };
     if joined != 0 {
-        return Err(format!("os_workgroup_join returned {joined}"));
+        return Err(WorkgroupError::Call {
+            call: WorkgroupCall::Join,
+            status: joined,
+        });
     }
     membership.joined = true;
     Ok(membership)
@@ -180,11 +187,11 @@ pub(crate) fn service_name() -> String {
 }
 
 /// Send `port` to the helper that has checked `name` in. Does not consume `port`.
-pub(crate) fn send_workgroup_port(name: &str, port: u32) -> Result<(), String> {
+pub(crate) fn send_workgroup_port(name: &str, port: u32) -> Result<(), WorkgroupError> {
     if port == 0 {
-        return Err("workgroup port is null".to_string());
+        return Err(WorkgroupError::NullPort);
     }
-    let c_name = CString::new(name).map_err(|_| "workgroup name contains a nul")?;
+    let c_name = CString::new(name).map_err(|_| WorkgroupError::NulInName)?;
     let remote = lookup_send_right(&c_name)?;
     let sent = send_port(remote, port);
     deallocate_port(remote);
@@ -192,16 +199,20 @@ pub(crate) fn send_workgroup_port(name: &str, port: u32) -> Result<(), String> {
 }
 
 /// Join the workgroup the parent sends to `name`.
-pub fn join_passed_workgroup(name: &str, period_ticks: u32) -> Result<WorkgroupMembership, String> {
-    let c_name = CString::new(name).map_err(|_| "workgroup name contains a nul")?;
+pub fn join_passed_workgroup(
+    name: &str,
+    period_ticks: u32,
+) -> Result<WorkgroupMembership, WorkgroupError> {
+    let c_name = CString::new(name).map_err(|_| WorkgroupError::NulInName)?;
     let mut receive = 0u32;
     // SAFETY: `bootstrap_port` is this process's bootstrap port, and `c_name` is valid.
     let status =
         unsafe { sync::bootstrap_check_in(sync::bootstrap_port, c_name.as_ptr(), &mut receive) };
     if status != 0 || receive == 0 {
-        return Err(format!(
-            "bootstrap_check_in returned {status}, port {receive}"
-        ));
+        return Err(WorkgroupError::CheckIn {
+            status,
+            port: receive,
+        });
     }
     let port = match receive_port(receive) {
         Ok(port) => port,
@@ -218,7 +229,7 @@ pub fn join_passed_workgroup(name: &str, period_ticks: u32) -> Result<WorkgroupM
     let workgroup = unsafe { sync::os_workgroup_create_with_port(c"echode-helper".as_ptr(), port) };
     deallocate_port(port);
     if workgroup.is_null() {
-        return Err("os_workgroup_create_with_port returned null".to_string());
+        return Err(WorkgroupError::Create);
     }
     let mut membership = WorkgroupMembership {
         workgroup,
@@ -231,7 +242,10 @@ pub fn join_passed_workgroup(name: &str, period_ticks: u32) -> Result<WorkgroupM
     };
     let joined = unsafe { sync::os_workgroup_join(workgroup, &mut membership.token) };
     if joined != 0 {
-        return Err(format!("os_workgroup_join returned {joined}"));
+        return Err(WorkgroupError::Call {
+            call: WorkgroupCall::Join,
+            status: joined,
+        });
     }
     membership.joined = true;
     Ok(membership)
@@ -244,19 +258,18 @@ pub struct SpawnedHelper {
 
 /// Spawn `bin` with stdin and stdout on `/dev/null` and stderr on a pipe.
 /// The child receives only those and the `inherit` pairs; every other descriptor is closed.
-pub fn spawn_helper(
+pub(crate) fn spawn_helper(
     bin: &Path,
     args: &[OsString],
     extra_env: &[(&str, &str)],
     inherit: &[(i32, i32)],
-) -> Result<SpawnedHelper, String> {
-    let path = CString::new(bin.as_os_str().as_bytes()).map_err(|_| "host path contains a nul")?;
+) -> Result<SpawnedHelper, SpawnError> {
+    let path = CString::new(bin.as_os_str().as_bytes()).map_err(|_| SpawnError::NulInPath)?;
     let mut argv_owned = Vec::with_capacity(args.len() + 1);
     argv_owned.push(path.clone());
     for arg in args {
         argv_owned.push(
-            CString::new(arg.as_bytes())
-                .map_err(|_| format!("argument contains a nul: {arg:?}"))?,
+            CString::new(arg.as_bytes()).map_err(|_| SpawnError::NulInArgument(arg.clone()))?,
         );
     }
     let mut argv: Vec<*mut std::ffi::c_char> = argv_owned
@@ -279,7 +292,7 @@ pub fn spawn_helper(
     }
     for (key, value) in extra_env {
         env_owned.push(
-            CString::new(format!("{key}={value}")).map_err(|_| "environment contains a nul")?,
+            CString::new(format!("{key}={value}")).map_err(|_| SpawnError::NulInEnvironment)?,
         );
     }
     let mut envp: Vec<*mut std::ffi::c_char> = env_owned
@@ -305,7 +318,7 @@ pub fn spawn_helper(
     };
     if read_fd < 0 {
         unsafe { libc::kill(spawned, libc::SIGKILL) };
-        return Err("stderr pipe was not created".to_string());
+        return Err(SpawnError::NoStderrPipe);
     }
     Ok(SpawnedHelper {
         pid: spawned,
@@ -321,10 +334,10 @@ unsafe fn spawn_posix(
     inherit: &[(i32, i32)],
     read_fd: &mut i32,
     write_fd: &mut i32,
-) -> Result<i32, String> {
+) -> Result<i32, SpawnError> {
     let mut pipes = [0i32; 2];
     if unsafe { libc::pipe(pipes.as_mut_ptr()) } != 0 {
-        return Err(format!("pipe: {}", std::io::Error::last_os_error()));
+        return Err(SpawnError::Pipe(std::io::Error::last_os_error()));
     }
     let read = unsafe { libc::fcntl(pipes[0], libc::F_DUPFD_CLOEXEC, 3) };
     let write = unsafe { libc::fcntl(pipes[1], libc::F_DUPFD_CLOEXEC, 3) };
@@ -339,7 +352,7 @@ unsafe fn spawn_posix(
         if write >= 0 {
             unsafe { libc::close(write) };
         }
-        return Err(format!("dup pipe: {}", std::io::Error::last_os_error()));
+        return Err(SpawnError::DupPipe(std::io::Error::last_os_error()));
     }
     *read_fd = read;
     *write_fd = write;
@@ -349,12 +362,12 @@ unsafe fn spawn_posix(
     let mut attr: libc::posix_spawnattr_t = std::ptr::null_mut();
     let init_actions = unsafe { libc::posix_spawn_file_actions_init(&mut actions) };
     if init_actions != 0 {
-        return Err(format!("posix_spawn_file_actions_init: {init_actions}"));
+        return Err(posix(SpawnStep::FileActions, init_actions));
     }
     let init_attr = unsafe { libc::posix_spawnattr_init(&mut attr) };
     if init_attr != 0 {
         unsafe { libc::posix_spawn_file_actions_destroy(&mut actions) };
-        return Err(format!("posix_spawnattr_init: {init_attr}"));
+        return Err(posix(SpawnStep::Attributes, init_attr));
     }
 
     let result =
@@ -374,47 +387,53 @@ unsafe fn configure_and_spawn(
     inherit: &[(i32, i32)],
     actions: &mut libc::posix_spawn_file_actions_t,
     attr: &mut libc::posix_spawnattr_t,
-) -> Result<i32, String> {
+) -> Result<i32, SpawnError> {
     let flags = unsafe {
         libc::posix_spawnattr_setflags(attr, libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short)
     };
     if flags != 0 {
-        return Err(format!("close other descriptors: {flags}"));
+        return Err(posix(SpawnStep::CloseOthers, flags));
     }
     let null = c"/dev/null".as_ptr();
     let open_in =
         unsafe { libc::posix_spawn_file_actions_addopen(actions, 0, null, libc::O_RDONLY, 0) };
     if open_in != 0 {
-        return Err(format!("redirect stdin: {open_in}"));
+        return Err(posix(SpawnStep::Stdin, open_in));
     }
     let open_out =
         unsafe { libc::posix_spawn_file_actions_addopen(actions, 1, null, libc::O_WRONLY, 0) };
     if open_out != 0 {
-        return Err(format!("redirect stdout: {open_out}"));
+        return Err(posix(SpawnStep::Stdout, open_out));
     }
     let dup_err = unsafe { libc::posix_spawn_file_actions_adddup2(actions, pipes[1], 2) };
     if dup_err != 0 {
-        return Err(format!("redirect stderr: {dup_err}"));
+        return Err(posix(SpawnStep::Stderr, dup_err));
     }
     let close_read = unsafe { libc::posix_spawn_file_actions_addclose(actions, pipes[0]) };
     if close_read != 0 {
-        return Err(format!("close stderr read end: {close_read}"));
+        return Err(posix(SpawnStep::CloseStderrRead, close_read));
     }
     if pipes[1] != 2 {
         let close_write = unsafe { libc::posix_spawn_file_actions_addclose(actions, pipes[1]) };
         if close_write != 0 {
-            return Err(format!("close stderr write end: {close_write}"));
+            return Err(posix(SpawnStep::CloseStderrWrite, close_write));
         }
     }
     for (src, dst) in inherit {
         let dup = unsafe { libc::posix_spawn_file_actions_adddup2(actions, *src, *dst) };
         if dup != 0 {
-            return Err(format!("inherit fd {src} -> {dst}: {dup}"));
+            return Err(posix(
+                SpawnStep::Inherit {
+                    from: *src,
+                    to: *dst,
+                },
+                dup,
+            ));
         }
         if src != dst {
             let close = unsafe { libc::posix_spawn_file_actions_addclose(actions, *src) };
             if close != 0 {
-                return Err(format!("close inherited fd {src}: {close}"));
+                return Err(posix(SpawnStep::CloseInherited(*src), close));
             }
         }
     }
@@ -430,12 +449,16 @@ unsafe fn configure_and_spawn(
         )
     };
     if spawned != 0 {
-        return Err(format!("posix_spawn: {spawned}"));
+        return Err(posix(SpawnStep::Spawn, spawned));
     }
     Ok(pid)
 }
 
-fn lookup_send_right(name: &CString) -> Result<u32, String> {
+fn posix(step: SpawnStep, code: i32) -> SpawnError {
+    SpawnError::Posix { step, code }
+}
+
+fn lookup_send_right(name: &CString) -> Result<u32, WorkgroupError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut last = 0i32;
     while std::time::Instant::now() < deadline {
@@ -452,7 +475,10 @@ fn lookup_send_right(name: &CString) -> Result<u32, String> {
         // here. Special ports did not deliver the send right (S3).
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
-    Err(format!("bootstrap_look_up returned {last}"))
+    Err(WorkgroupError::Call {
+        call: WorkgroupCall::LookUp,
+        status: last,
+    })
 }
 
 #[repr(C)]
@@ -479,7 +505,7 @@ const MACH_MSGH_BITS_COMPLEX: u32 = 0x8000_0000;
 const MACH_MSG_TYPE_COPY_SEND: u32 = 19;
 const SEND_SIZE: u32 = 40;
 
-fn send_port(remote: u32, port: u32) -> Result<(), String> {
+fn send_port(remote: u32, port: u32) -> Result<(), WorkgroupError> {
     let mut message = PortMessage {
         bits: MACH_MSG_TYPE_COPY_SEND | MACH_MSGH_BITS_COMPLEX,
         size: SEND_SIZE,
@@ -507,12 +533,15 @@ fn send_port(remote: u32, port: u32) -> Result<(), String> {
         )
     };
     if status != 0 {
-        return Err(format!("mach_msg send returned {status:#x}"));
+        return Err(WorkgroupError::Call {
+            call: WorkgroupCall::Send,
+            status,
+        });
     }
     Ok(())
 }
 
-fn receive_port(receive: u32) -> Result<u32, String> {
+fn receive_port(receive: u32) -> Result<u32, WorkgroupError> {
     let mut received = Received {
         message: PortMessage {
             bits: 0,
@@ -542,13 +571,16 @@ fn receive_port(receive: u32) -> Result<u32, String> {
         )
     };
     if status != 0 {
-        return Err(format!("mach_msg receive returned {status:#x}"));
+        return Err(WorkgroupError::Call {
+            call: WorkgroupCall::Receive,
+            status,
+        });
     }
     if received.message.count != 1 || received.message.name == 0 {
-        return Err(format!(
-            "workgroup message had count {} and port {}",
-            received.message.count, received.message.name
-        ));
+        return Err(WorkgroupError::Message {
+            count: received.message.count,
+            port: received.message.name,
+        });
     }
     Ok(received.message.name)
 }
@@ -559,15 +591,13 @@ struct Received {
     trailer: [u8; 64],
 }
 
-fn prepare_thread(period_ticks: u32) -> Result<(), String> {
+fn prepare_thread(period_ticks: u32) -> Result<(), WorkgroupError> {
     // SAFETY: setting the calling thread's QoS has no pointer preconditions.
     unsafe {
         libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
     }
     if !apply_time_constraint(period_ticks) {
-        return Err(format!(
-            "thread_policy_set failed for a period of {period_ticks} ticks"
-        ));
+        return Err(WorkgroupError::ThreadPolicy { period_ticks });
     }
     Ok(())
 }

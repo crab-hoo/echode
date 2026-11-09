@@ -6,7 +6,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use echode_engine::PlaybackError;
+use echode_engine::{PlaybackError, WorkgroupError};
 use echode_history::PackageError;
 
 /// Why an output, audition or device request failed.
@@ -94,8 +94,8 @@ pub enum WorkgroupFault {
     Period,
     /// CoreAudio did not give the device's workgroup.
     Query(Box<AudioError>),
-    /// The workgroup could not be retained for helpers, as the sandbox says.
-    Retain(String),
+    /// The workgroup could not be retained for helpers.
+    Retain(WorkgroupError),
 }
 
 /// Why the project output stopped by itself.
@@ -265,7 +265,7 @@ impl fmt::Display for WorkgroupFault {
             Self::Timebase => formatter.write_str("could not read the timebase"),
             Self::Period => formatter.write_str("period is out of range"),
             Self::Query(error) => error.fmt(formatter),
-            Self::Retain(reason) => formatter.write_str(reason),
+            Self::Retain(error) => error.fmt(formatter),
         }
     }
 }

@@ -2,6 +2,7 @@
 //! exchange here; `ControlState` only manages correlation, notices and saved bytes.
 
 use super::{ControlMessage, PARAMETER_REPLY, PluginControl, SessionError, WINDOW_REPLY};
+use crate::error::ProtocolError;
 use crate::{GuiReport, ParamChange, ParamInfo, ParamText, ParamValue};
 use std::time::Duration;
 
@@ -18,10 +19,8 @@ impl PluginControl {
             )
         })? {
             ControlMessage::GuiShown(report) => Ok(report),
-            ControlMessage::GuiRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not show the window".to_string(),
-            )),
+            ControlMessage::GuiRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("show the window").into()),
         }
     }
 
@@ -36,10 +35,8 @@ impl PluginControl {
             )
         })? {
             ControlMessage::GuiClosedReply => Ok(()),
-            ControlMessage::GuiRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not close the window".to_string(),
-            )),
+            ControlMessage::GuiRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("close the window").into()),
         }
     }
 
@@ -54,19 +51,15 @@ impl PluginControl {
             )
         })? {
             ControlMessage::Params(infos) => Ok(infos),
-            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not return parameters".to_string(),
-            )),
+            ControlMessage::ParamsRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("return parameters").into()),
         }
     }
 
     /// Applies `changes` in order and returns those parameters as read back.
     pub fn set_parameters(&self, changes: &[ParamChange]) -> Result<Vec<ParamValue>, SessionError> {
         if changes.iter().any(|change| !change.value.is_finite()) {
-            return Err(SessionError::Protocol(
-                "parameter value is not finite".to_string(),
-            ));
+            return Err(SessionError::NonFiniteParameter);
         }
         let mut state = self.lock();
         let id = state.request(ControlMessage::SetParams(changes.to_vec()))?;
@@ -77,10 +70,8 @@ impl PluginControl {
             )
         })? {
             ControlMessage::ParamsApplied(values) => Ok(values),
-            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not apply parameters".to_string(),
-            )),
+            ControlMessage::ParamsRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("apply parameters").into()),
         }
     }
 
@@ -99,10 +90,8 @@ impl PluginControl {
             )
         })? {
             ControlMessage::ParamParsed(parsed) => Ok(parsed),
-            ControlMessage::ParamsRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not read the parameter text".to_string(),
-            )),
+            ControlMessage::ParamsRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("read the parameter text").into()),
         }
     }
 
@@ -136,10 +125,8 @@ impl PluginControl {
                 state.remember(id, bytes);
                 Ok(())
             }
-            ControlMessage::StateRejected(reason) => Err(SessionError::Protocol(reason)),
-            _ => Err(SessionError::Protocol(
-                "helper did not acknowledge restore".to_string(),
-            )),
+            ControlMessage::StateRejected(refusal) => Err(refusal.into()),
+            _ => Err(ProtocolError::UnexpectedReply("acknowledge restore").into()),
         }
     }
 }

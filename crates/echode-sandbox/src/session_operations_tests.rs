@@ -1,5 +1,5 @@
 use super::*;
-use crate::{GuiReport, ParamChange, ParamInfo, ParamText, ParamValue};
+use crate::{GuiReport, ParamChange, ParamInfo, ParamText, ParamValue, Pending};
 
 fn receive(helper: &mut Socket) -> (u64, ControlMessage) {
     let (id, message) = helper.recv_tagged(Duration::from_secs(2)).unwrap();
@@ -124,6 +124,19 @@ fn public_control_operations_preserve_payloads_and_typed_replies() {
     drop(answer.join().unwrap());
 }
 
+/// One refusal per operation below, covering every kind.
+fn refusals() -> [Refusal; 7] {
+    [
+        Refusal::Busy,
+        Refusal::TimedOut(Pending::ParameterChanges),
+        Refusal::Other("refused operation 2".to_string()),
+        Refusal::TimedOut(Pending::MainCall(5)),
+        Refusal::Stopped(Pending::ParameterChanges),
+        Refusal::Stopped(Pending::MainCall(6)),
+        Refusal::NoPlugin,
+    ]
+}
+
 #[test]
 fn public_control_rejections_preserve_the_last_applied_state() {
     let (parent, mut helper) = Socket::pair().unwrap();
@@ -132,9 +145,8 @@ fn public_control_rejections_preserve_the_last_applied_state() {
         let (id, request) = receive(&mut helper);
         assert!(matches!(request, ControlMessage::Restore(bytes) if bytes == [42]));
         helper.send_tagged(id, &ControlMessage::Restored).unwrap();
-        for operation in 0..7 {
+        for (operation, reason) in refusals().into_iter().enumerate() {
             let (id, request) = receive(&mut helper);
-            let reason = format!("refused operation {operation}");
             let reply = match (operation, request) {
                 (0, ControlMessage::ParamsRequest)
                 | (1, ControlMessage::SetParams(_))
@@ -163,9 +175,13 @@ fn public_control_rejections_preserve_the_last_applied_state() {
         control.show_gui("refused").unwrap_err(),
         control.close_gui().unwrap_err(),
     ];
-    for (operation, error) in errors.into_iter().enumerate() {
-        assert!(matches!(error, SessionError::Protocol(reason)
-            if reason == format!("refused operation {operation}")));
+    // Each kind arrives as the helper sent it, not as text to match.
+    for ((operation, error), expected) in errors.into_iter().enumerate().zip(refusals()) {
+        assert!(
+            matches!(&error, SessionError::Refused(refusal) if *refusal == expected),
+            "operation {operation}: {error:?}"
+        );
+        assert_eq!(error.to_string(), expected.to_string());
     }
     assert_eq!(control.applied_state().unwrap(), [42]);
     assert!(control.take_activity().is_none());
@@ -180,9 +196,7 @@ fn invalid_values_never_reach_the_socket_and_local_reads_do_not_wait_on_it() {
         let error = control
             .set_parameters(&[ParamChange { id: 1, value }])
             .unwrap_err();
-        assert!(
-            matches!(error, SessionError::Protocol(reason) if reason == "parameter value is not finite")
-        );
+        assert!(matches!(error, SessionError::NonFiniteParameter));
     }
     assert!(helper.try_recv_tagged().unwrap().is_none());
     let mut background = control.clone();
