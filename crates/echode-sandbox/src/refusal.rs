@@ -5,9 +5,9 @@
 //! tell a request that never started from one whose outcome is unknown
 //! (ADR 0199). What the plugin lacks or refused is a kind too (ADR 0295).
 //! Launch causes keep a typed kind and native metadata alongside the loader's
-//! diagnostic (ADR 0308). Only the helper's own remaining faults keep text.
+//! diagnostic (ADR 0308). Internal reply mismatches and invalid parameter ids are typed too.
 
-use crate::launch_failure::LaunchFailure;
+use crate::{LaunchFailure, MainReplyKind};
 use std::io::{self, ErrorKind};
 
 /// What the helper was waiting for when it gave up.
@@ -40,7 +40,14 @@ pub enum Refusal {
     /// Loading or activating the plugin failed. The cause is separate from its
     /// original diagnostic, which is only for display.
     Launch(LaunchFailure),
-    /// A remaining helper fault or invalid request, in the helper's words.
+    /// The reserved CLAP id cannot name a parameter. No batch was published.
+    InvalidParameterId(u32),
+    /// The helper's own main-thread operation returned the wrong payload.
+    UnexpectedMainReply {
+        expected: MainReplyKind,
+        actual: MainReplyKind,
+    },
+    /// An unclassified helper diagnostic, in the helper's words.
     Other(String),
 }
 
@@ -163,6 +170,10 @@ impl std::fmt::Display for Refusal {
             }
             Self::Plugin(failure) => write!(f, "{failure}"),
             Self::Launch(failure) => write!(f, "{failure}"),
+            Self::InvalidParameterId(_) => f.write_str("invalid parameter change"),
+            Self::UnexpectedMainReply { expected, .. } => {
+                f.write_str(expected.mismatch_diagnostic())
+            }
             Self::Other(reason) => f.write_str(reason),
         }
     }
@@ -181,6 +192,8 @@ const STOPPED_PARAMETERS: u8 = 6;
 /// the two port kinds.
 const PLUGIN: u8 = 7;
 const LAUNCH: u8 = 8;
+const INVALID_PARAMETER_ID: u8 = 9;
+const UNEXPECTED_MAIN_REPLY: u8 = 10;
 
 pub(crate) fn write_refusal(refusal: &Refusal) -> Vec<u8> {
     let (kind, payload): (u8, &[u8]) = match refusal {
@@ -197,6 +210,14 @@ pub(crate) fn write_refusal(refusal: &Refusal) -> Vec<u8> {
             let mut body = vec![LAUNCH];
             body.extend_from_slice(&failure.encode());
             return body;
+        }
+        Refusal::InvalidParameterId(id) => {
+            let mut body = vec![INVALID_PARAMETER_ID];
+            body.extend_from_slice(&id.to_le_bytes());
+            return body;
+        }
+        Refusal::UnexpectedMainReply { expected, actual } => {
+            return vec![UNEXPECTED_MAIN_REPLY, *expected as u8, *actual as u8];
         }
         Refusal::Other(reason) => (OTHER, reason.as_bytes()),
     };
@@ -337,6 +358,20 @@ pub(crate) fn read_refusal(body: &[u8]) -> io::Result<Refusal> {
         LAUNCH => LaunchFailure::decode(payload)
             .map(Refusal::Launch)
             .ok_or_else(|| invalid("launch failure is malformed")),
+        INVALID_PARAMETER_ID => <[u8; 4]>::try_from(payload)
+            .map(u32::from_le_bytes)
+            .map(Refusal::InvalidParameterId)
+            .map_err(|_| invalid("refusal parameter id is the wrong size")),
+        UNEXPECTED_MAIN_REPLY => match payload {
+            [expected, actual] => {
+                let expected = MainReplyKind::decode(*expected)
+                    .ok_or_else(|| invalid("refusal expected reply kind is unknown"))?;
+                let actual = MainReplyKind::decode(*actual)
+                    .ok_or_else(|| invalid("refusal actual reply kind is unknown"))?;
+                Ok(Refusal::UnexpectedMainReply { expected, actual })
+            }
+            _ => Err(invalid("refusal reply kinds are the wrong size")),
+        },
         _ => Err(invalid("refusal has an unknown kind")),
     }
 }

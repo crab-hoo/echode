@@ -140,7 +140,10 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 原因は文面でなく型で見る。ホストの待ちが先に切れた時は `SessionError::Timeout`、ヘルパーの待ちが先なら `Refused(TimedOut(MainCall(N)))` で、どちらも結果不明である。
 後続の拒否は `Refused(Busy)` になる（[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)）。
 プラグイン自身の失敗は `Refused(Plugin(種類))` で、拡張がない（`NoState`・`NoWindow` など）か、プラグインが断った（`SaveRefused`・`LoadRefused`）かを型で見る。
-`Refused(Other(文))` は、起動時のローダーの失敗と、ヘルパーの設計上起きない食い違いだけである（[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
+予約済み CLAP ID は `Refused(InvalidParameterId(ID))` で、一括変更の全部が未適用である。
+`Refused(UnexpectedMainReply { expected, actual })` はヘルパー内部の手順の不一致で、プラグイン自身の拒否とは分ける。
+表示文の解析や自動再送をせず、型の両方の種類を記録し、`main_requests.rs` と `threads.rs` の対応を調べる（[ADR 0309](../decisions/0309-typed-helper-request-failures.md)）。
+起動の拒否は `Refused(Launch(原因))` である。`Other(文)` は起動では届かない `HostError` の防御分岐にだけ残る。
 `plugin-main-timeout-state` は機器なしの `slow-save` で再現し、`plugin-control-request-ids` は古い応答の破棄を検査する。
 完了後の復元バイトと新しい保存結果を比較し、実行中の拒否と、古い応答の取り違えを区別する。
 操作と通信の対応・Unicode と状態バイト・拒否理由は `session_operations_tests.rs` で切り分ける。

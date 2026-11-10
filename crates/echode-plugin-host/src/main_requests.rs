@@ -3,7 +3,7 @@
 //! A timed-out caller leaves its call alive until the main thread completes it.
 //! Later callers get an explicit busy refusal rather than replacing its input.
 
-use echode_sandbox::{GuiReport, ParamInfo, ParamText, ParamValue, Refusal};
+use echode_sandbox::{GuiReport, MainReplyKind, ParamInfo, ParamText, ParamValue, Refusal};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +25,20 @@ pub(crate) enum MainReply {
     Values(Vec<ParamValue>),
     Parsed(ParamText),
     Window(GuiReport),
+}
+
+impl MainReply {
+    pub(crate) fn unexpected(&self, expected: MainReplyKind) -> Refusal {
+        let actual = match self {
+            Self::State(_) => MainReplyKind::State,
+            Self::Done => MainReplyKind::Done,
+            Self::Parameters(_) => MainReplyKind::Parameters,
+            Self::Values(_) => MainReplyKind::Values,
+            Self::Parsed(_) => MainReplyKind::Parsed,
+            Self::Window(_) => MainReplyKind::Window,
+        };
+        Refusal::UnexpectedMainReply { expected, actual }
+    }
 }
 
 pub(crate) struct MainCall {

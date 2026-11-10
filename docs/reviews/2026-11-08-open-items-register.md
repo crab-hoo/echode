@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 11 crate は列挙型（ADR 0291〜0308）。文書の単一編集とヘルパーの起動も型を保持。次は無効なパラメーター ID と手順の食い違い |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 11 crate は列挙型（ADR 0291〜0309）。予約済み ID と内部の応答不一致も型を保持。次は起動の防御分岐と残りの境界の棚卸し |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -142,6 +142,9 @@
 - 2026-11-10（ADR 0308）: ヘルパーの起動の失敗は `Refusal::Launch` で送り、読込み・作成・起動の原因と errno・NUL の位置・CLAP の版を保持する。
   実ヘルパーの ID 不一致・生成拒否・起動拒否・I/O・ライブラリ読込みを回帰で照合し、診断文は変えない。
   次は `Refusal::Other` に残る無効なパラメーター ID と、メインスレッドの応答の食い違いである。
+- 2026-11-10（ADR 0309）: 予約済み CLAP ID は ID を持つ拒否にし、内部の応答不一致は期待・実際の種類を保持して送る。
+  実ヘルパーで一括変更の全部が未適用のままで後続を受理することを照合し、表示文は変えない。
+  `Other` は起動では届かない `HostError` の防御分岐に残る。次はこの到達範囲の整理と M1 の残りの棚卸しである。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

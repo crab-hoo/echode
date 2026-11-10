@@ -41,3 +41,33 @@ fn dropping_a_timed_out_caller_does_not_make_the_mailbox_idle() {
     mailbox.complete(&running, Err(Refusal::Other("refused".into())));
     assert!(mailbox.begin(MainRequest::Parameters).is_ok());
 }
+
+#[test]
+fn main_reply_mismatches_report_expected_and_actual_payloads() {
+    use MainReplyKind::*;
+    let replies = [
+        (MainReply::State(vec![1]), State),
+        (MainReply::Done, Done),
+        (MainReply::Parameters(vec![]), Parameters),
+        (MainReply::Values(vec![]), Values),
+        (MainReply::Parsed(ParamText::Unsupported), Parsed),
+        (
+            MainReply::Window(GuiReport {
+                created: true,
+                visible: false,
+                key: false,
+            }),
+            Window,
+        ),
+    ];
+    for (reply, actual) in replies {
+        for expected in [State, Done, Parameters, Values, Parsed, Window] {
+            if expected != actual {
+                assert_eq!(
+                    reply.unexpected(expected),
+                    Refusal::UnexpectedMainReply { expected, actual }
+                );
+            }
+        }
+    }
+}

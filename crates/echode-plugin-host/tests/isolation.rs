@@ -624,6 +624,58 @@ fn launch_cause(error: &SessionError) -> &LaunchFailure {
     failure
 }
 
+#[test]
+fn invalid_parameter_id_keeps_its_kind_and_rejects_the_entire_batch() {
+    let plugin = plugin_dylib();
+    let host = PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(&plugin),
+        plugin_id: Some("dev.echode.test-params"),
+        fault: None,
+        workgroup: None,
+        layout: SessionLayout::stereo(),
+        fan_in: None,
+        sample_rate: 0,
+    })
+    .unwrap();
+    let control = host.control_handle();
+    let before = control.capture_state().unwrap();
+    let error = control
+        .set_parameters(&[
+            echode_sandbox::ParamChange { id: 1, value: 0.25 },
+            echode_sandbox::ParamChange {
+                id: u32::MAX,
+                value: 1.0,
+            },
+        ])
+        .expect_err("the reserved CLAP id must be rejected");
+    assert!(
+        matches!(
+            error,
+            SessionError::Refused(Refusal::InvalidParameterId(u32::MAX))
+        ),
+        "invalid parameter id lost its kind: {error:?}"
+    );
+    assert_eq!(error.to_string(), "invalid parameter change");
+    assert_eq!(control.capture_state().unwrap(), before);
+    // Other ids still reach the plugin; unknown ids are not the sentinel.
+    let values = control
+        .set_parameters(&[
+            echode_sandbox::ParamChange { id: 0, value: 1.0 },
+            echode_sandbox::ParamChange {
+                id: u32::MAX - 1,
+                value: 1.0,
+            },
+        ])
+        .unwrap();
+    assert!(values.is_empty());
+    assert_eq!(control.capture_state().unwrap(), before);
+    let values = control
+        .set_parameters(&[echode_sandbox::ParamChange { id: 1, value: 0.5 }])
+        .unwrap();
+    assert_eq!(values[0].value, 0.5);
+}
+
 // Exercise the real launch handshake, not an in-process loader or a text parser.
 #[test]
 fn launch_failures_keep_their_kinds_across_the_helper() {

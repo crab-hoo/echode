@@ -348,6 +348,9 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 
 起動の拒否の clack の型への対応は `echode-plugin-host/src/launch.rs`、共有する原因の種類と通信の形式は `echode-sandbox/src/launch_failure.rs` に置く。
 回帰はそれぞれの `*_tests.rs` と、`tests/isolation.rs` の `launch_` で実ヘルパーを通す（[ADR 0308](decisions/0308-typed-helper-launch-failures.md)）。
+予約済み ID と内部の応答不一致の共有型・通信は `refusal.rs` と `main_reply.rs` に置く。
+実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。
+回帰は `refusal_tests.rs`・`main_requests_tests.rs` と、実ヘルパーを通す `tests/isolation.rs` の `invalid_parameter_id_` を使う（[ADR 0309](decisions/0309-typed-helper-request-failures.md)）。
 
 プラグインのメインスレッド要求の所有は `echode-plugin-host/src/main_requests.rs`、実行は `threads.rs::perform_main_request` に置く。
 要求番号付きの制御フレームは `echode-sandbox/src/control.rs`、親の応答照合と背景保存は `session.rs` に置く。

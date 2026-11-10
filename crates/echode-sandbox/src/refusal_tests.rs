@@ -116,7 +116,7 @@ fn malformed_refusals_are_invalid_data() {
         short,
         vec![STOPPED_PARAMETERS, 1],
         vec![OTHER, 0xff],
-        vec![LAUNCH + 1],
+        vec![UNEXPECTED_MAIN_REPLY + 1],
         vec![LAUNCH],
         vec![LAUNCH, 27],
         vec![LAUNCH, 0, 0xff],
@@ -129,8 +129,54 @@ fn malformed_refusals_are_invalid_data() {
         vec![PLUGIN, 0, 1, 0, 0, 0, 0],
         vec![PLUGIN, 0, 0],
         vec![PLUGIN, u8::MAX],
+        vec![INVALID_PARAMETER_ID],
+        vec![INVALID_PARAMETER_ID, 0, 0, 0],
+        vec![INVALID_PARAMETER_ID, 0, 0, 0, 0, 0],
+        vec![UNEXPECTED_MAIN_REPLY],
+        vec![UNEXPECTED_MAIN_REPLY, 0],
+        vec![UNEXPECTED_MAIN_REPLY, 0, 0, 0],
+        vec![UNEXPECTED_MAIN_REPLY, 6, 0],
+        vec![UNEXPECTED_MAIN_REPLY, 0, 6],
     ] {
         let error = read_refusal(&bytes).expect_err("a malformed refusal was accepted");
         assert_eq!(error.kind(), ErrorKind::InvalidData, "{bytes:?}");
+    }
+}
+
+#[test]
+fn internal_helper_failures_keep_kinds_metadata_and_diagnostics() {
+    for id in [0, u32::MAX - 1, u32::MAX] {
+        let refusal = Refusal::InvalidParameterId(id);
+        assert_eq!(read_refusal(&write_refusal(&refusal)).unwrap(), refusal);
+        assert_eq!(refusal.to_string(), "invalid parameter change");
+    }
+    use MainReplyKind::*;
+    let kinds = [State, Done, Parameters, Values, Parsed, Window];
+    for (expected, diagnostic) in kinds.into_iter().zip([
+        "unexpected main-thread reply",
+        "unexpected main-thread reply",
+        "unexpected main-thread reply to parameter list",
+        "unexpected main-thread reply to parameter values",
+        "unexpected main-thread reply to parameter text",
+        "unexpected main-thread reply",
+    ]) {
+        for actual in kinds {
+            let refusal = Refusal::UnexpectedMainReply { expected, actual };
+            let bytes = write_refusal(&refusal);
+            assert_eq!(read_refusal(&bytes).unwrap(), refusal);
+            assert_eq!(refusal.to_string(), diagnostic);
+            let text = Refusal::Other(diagnostic.to_string());
+            assert_ne!(read_refusal(&write_refusal(&text)).unwrap(), refusal);
+        }
+    }
+    // Every accepted code is canonical; neither extra data nor unknown kinds pass.
+    for expected in 0..=u8::MAX {
+        for actual in 0..=u8::MAX {
+            let bytes = [UNEXPECTED_MAIN_REPLY, expected, actual];
+            match read_refusal(&bytes) {
+                Ok(refusal) => assert_eq!(write_refusal(&refusal), bytes),
+                Err(error) => assert_eq!(error.kind(), ErrorKind::InvalidData),
+            }
+        }
     }
 }

@@ -19,8 +19,8 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use echode_sandbox::{
-    AudioPort, ControlMessage, GuiReport, LaunchFailure, LaunchFailureKind, ParamChange,
-    ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText, ParamValue, Pending,
+    AudioPort, ControlMessage, GuiReport, LaunchFailure, LaunchFailureKind, MainReplyKind,
+    ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText, ParamValue, Pending,
     PluginCommand, PluginFailure, Refusal, SessionLayout, Socket,
 };
 
@@ -202,6 +202,19 @@ fn enlarge_buffers(fd: i32) {
 pub(crate) fn seeds() -> Vec<Vec<u8>> {
     let mut messages = sample_messages();
     messages.extend(launch_failures());
+    use MainReplyKind::*;
+    for expected in [State, Done, Parameters, Values, Parsed, Window] {
+        for actual in [State, Done, Parameters, Values, Parsed, Window] {
+            messages.push(ControlMessage::StateRejected(
+                Refusal::UnexpectedMainReply { expected, actual },
+            ));
+        }
+    }
+    for id in [0, u32::MAX - 1, u32::MAX] {
+        messages.push(ControlMessage::ParamsRejected(Refusal::InvalidParameterId(
+            id,
+        )));
+    }
     let mut seeds = Vec::new();
     let mut all = Vec::new();
     for (index, message) in messages.iter().enumerate() {

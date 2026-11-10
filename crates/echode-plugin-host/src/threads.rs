@@ -40,8 +40,8 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use echode_realtime::Event;
 use echode_sandbox::{
     AudioPort, CMD_ADOPT_MAPPING, CMD_PROCESS, CMD_RESET_PROCESS, CMD_SHUTDOWN, ControlMessage,
-    FanIn, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText, ParamValue,
-    Pending, PluginFailure, Refusal, RegionError, Socket, SyncFlags, wake_one,
+    FanIn, MainReplyKind, MappedRegion, ParamChange, ParamEvent, ParamInfo, ParamRelay, ParamText,
+    ParamValue, Pending, PluginFailure, Refusal, RegionError, Socket, SyncFlags, wake_one,
 };
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
@@ -1531,7 +1531,7 @@ fn handle_control(
         ControlMessage::SaveRequest => {
             let reply = match call_main(bridge, MainRequest::Save) {
                 Ok(MainReply::State(bytes)) => ControlMessage::State(bytes),
-                Ok(_) => ControlMessage::StateRejected(unexpected_main_reply()),
+                Ok(reply) => ControlMessage::StateRejected(reply.unexpected(MainReplyKind::State)),
                 Err(error) => ControlMessage::StateRejected(error),
             };
             socket
@@ -1541,7 +1541,7 @@ fn handle_control(
         ControlMessage::Restore(bytes) => {
             let reply = match call_main(bridge, MainRequest::Load(bytes)) {
                 Ok(MainReply::Done) => ControlMessage::Restored,
-                Ok(_) => ControlMessage::StateRejected(unexpected_main_reply()),
+                Ok(reply) => ControlMessage::StateRejected(reply.unexpected(MainReplyKind::Done)),
                 Err(error) => ControlMessage::StateRejected(error),
             };
             socket
@@ -1578,7 +1578,7 @@ fn handle_control(
         ControlMessage::GuiShow(title) => {
             let reply = match call_main(bridge, MainRequest::Show(title)) {
                 Ok(MainReply::Window(report)) => ControlMessage::GuiShown(report),
-                Ok(_) => ControlMessage::GuiRejected(unexpected_main_reply()),
+                Ok(reply) => ControlMessage::GuiRejected(reply.unexpected(MainReplyKind::Window)),
                 Err(error) => ControlMessage::GuiRejected(error),
             };
             socket
@@ -1588,7 +1588,7 @@ fn handle_control(
         ControlMessage::GuiClose => {
             let reply = match call_main(bridge, MainRequest::Close) {
                 Ok(MainReply::Done) => ControlMessage::GuiClosedReply,
-                Ok(_) => ControlMessage::GuiRejected(unexpected_main_reply()),
+                Ok(reply) => ControlMessage::GuiRejected(reply.unexpected(MainReplyKind::Done)),
                 Err(error) => ControlMessage::GuiRejected(error),
             };
             socket
@@ -2061,16 +2061,10 @@ fn reclaim_param_batches(bridge: &Bridge) {
     }
 }
 
-fn unexpected_main_reply() -> Refusal {
-    Refusal::Other("unexpected main-thread reply".to_string())
-}
-
 fn read_params(bridge: &Bridge) -> Result<Vec<ParamInfo>, Refusal> {
     match call_main(bridge, MainRequest::Parameters)? {
         MainReply::Parameters(infos) => Ok(infos),
-        _ => Err(Refusal::Other(
-            "unexpected main-thread reply to parameter list".to_string(),
-        )),
+        reply => Err(reply.unexpected(MainReplyKind::Parameters)),
     }
 }
 
@@ -2083,9 +2077,7 @@ fn parse_param(bridge: &Bridge, id: u32, text: &str) -> Result<ParamText, Refusa
         },
     )? {
         MainReply::Parsed(parsed) => Ok(parsed),
-        _ => Err(Refusal::Other(
-            "unexpected main-thread reply to parameter text".to_string(),
-        )),
+        reply => Err(reply.unexpected(MainReplyKind::Parsed)),
     }
 }
 
@@ -2109,9 +2101,8 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
     let mut events = EventBuffer::with_capacity(changes.len());
     let mut ids: Vec<u32> = Vec::with_capacity(changes.len());
     for change in changes {
-        let id = ClapId::from_raw(change.id)
-            .filter(|_| change.value.is_finite())
-            .ok_or_else(|| Refusal::Other("invalid parameter change".to_string()))?;
+        // The socket decoder already rejects non-finite values before dispatch.
+        let id = ClapId::from_raw(change.id).ok_or(Refusal::InvalidParameterId(change.id))?;
         events.push(&ParamValueEvent::new(
             0,
             id,
@@ -2155,9 +2146,7 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
     reclaim_param_batches(bridge);
     match call_main(bridge, MainRequest::Values { ids, relay: false })? {
         MainReply::Values(values) => Ok(values),
-        _ => Err(Refusal::Other(
-            "unexpected main-thread reply to parameter values".to_string(),
-        )),
+        reply => Err(reply.unexpected(MainReplyKind::Values)),
     }
 }
 
