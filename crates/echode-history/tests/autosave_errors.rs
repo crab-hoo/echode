@@ -225,3 +225,48 @@ fn malformed_revision_entries_keep_their_failure_kinds() {
     };
     assert_eq!(error.to_string(), format!("{native:?}"));
 }
+
+#[test]
+fn revision_validation_keeps_json_and_schema_causes_through_worker_replies() {
+    use echode_history::{PackageKind, PackageValidationError as Invalid};
+    use gix::objs::tree::EntryKind::Blob;
+
+    let fixture = Fixture::new();
+    echode_history::write_package(&fixture.0, &Project::new()).unwrap();
+    let original = fs::read(fixture.0.join("project.json")).unwrap();
+    let autosave = Autosave::create(&fixture.0).unwrap();
+    autosave.revisions().unwrap();
+    let repo = gix::open(&fixture.0).unwrap();
+    for text in ["{", "{\"schema\":7}"] {
+        let blob = repo.write_blob(text).unwrap().detach();
+        let id = revision(&repo, vec![entry("project.json", Blob, blob)]);
+        let error = autosave.load(id).unwrap_err();
+        if text == "{" {
+            assert!(
+                matches!(
+                    error.original(),
+                    PackageError::Validation(Invalid::Json {
+                        kind: PackageKind::Project,
+                        ..
+                    })
+                ),
+                "{error:?}"
+            );
+            assert!(cause::<serde_json::Error>(&error).unwrap().is_eof());
+        } else {
+            assert!(
+                matches!(
+                    error.original(),
+                    PackageError::Validation(Invalid::UnsupportedSchema {
+                        kind: PackageKind::Project,
+                        schema: 7,
+                    })
+                ),
+                "{error:?}"
+            );
+            assert_eq!(error.to_string(), "unsupported project schema 7");
+        }
+        assert!(!error.is_durability_unknown());
+        assert_eq!(fs::read(fixture.0.join("project.json")).unwrap(), original);
+    }
+}

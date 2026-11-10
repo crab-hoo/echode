@@ -16,21 +16,20 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::package_io::Directory;
-use echode_model::{
-    ContentMetadata, Id, Note, Placement, Project, ProjectMetadata, TempoMap, TempoPoint, Track,
-    TrackMetadata,
-};
+use echode_model::{ContentMetadata, Id, Project, ProjectMetadata, Track};
 use gix::ObjectId;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[path = "document_device.rs"]
 mod device_json;
 #[path = "document_git.rs"]
 mod git;
+#[path = "document_parse.rs"]
+mod parse;
 #[path = "document_track.rs"]
 mod track_json;
 pub(crate) use git::{commit_tree, read_commit};
+use parse::{SCHEMA, assemble, parse_header};
 
 /// Autosave commits land here until a project has more than one alternate.
 pub const AUTOSAVE_REF: &str = "refs/echode/autosave/main";
@@ -650,107 +649,6 @@ fn format_gain(gain: f32) -> String {
     }
 }
 
-/// Current package schema. Older numbers are raised by [`SCHEMA_STEPS`].
-const SCHEMA: u32 = 6;
-
-/// Raises one schema number. Index 0 raises schema 1 to schema 2.
-type SchemaStep = fn(&mut serde_json::Value) -> Result<(), String>;
-
-/// Schema 1 devices have no plugin id. Schema 2 stores audio as null or an id.
-/// Schema 3 devices were always active. Schema 5 devices pinned no parameters.
-const SCHEMA_STEPS: &[SchemaStep] = &[
-    add_device_plugin,
-    audio_reference,
-    add_device_bypass,
-    add_device_offline,
-    add_device_pins,
-];
-
-/// Earlier devices listed parameters in the plugin's order only.
-fn add_device_pins(value: &mut serde_json::Value) -> Result<(), String> {
-    let Some(devices) = value.get_mut("devices") else {
-        return Ok(());
-    };
-    let Some(devices) = devices.as_array_mut() else {
-        return Err("devices is not an array".into());
-    };
-    for device in devices {
-        let Some(device) = device.as_object_mut() else {
-            return Err("device is not an object".into());
-        };
-        device
-            .entry("pinned")
-            .or_insert(serde_json::Value::Array(Vec::new()));
-    }
-    Ok(())
-}
-
-/// Earlier devices always retained a runtime instance, including bypassed ones.
-fn add_device_offline(value: &mut serde_json::Value) -> Result<(), String> {
-    let Some(devices) = value.get_mut("devices") else {
-        return Ok(());
-    };
-    let Some(devices) = devices.as_array_mut() else {
-        return Err("devices is not an array".into());
-    };
-    for device in devices {
-        let Some(device) = device.as_object_mut() else {
-            return Err("device is not an object".into());
-        };
-        device
-            .entry("offline")
-            .or_insert(serde_json::Value::Bool(false));
-    }
-    Ok(())
-}
-
-/// Older devices were always active. The mixer cannot be bypassed.
-fn add_device_bypass(value: &mut serde_json::Value) -> Result<(), String> {
-    let Some(devices) = value.get_mut("devices") else {
-        return Ok(());
-    };
-    let Some(devices) = devices.as_array_mut() else {
-        return Err("devices is not an array".into());
-    };
-    for device in devices {
-        let Some(device) = device.as_object_mut() else {
-            return Err("device is not an object".into());
-        };
-        device
-            .entry("bypassed")
-            .or_insert(serde_json::Value::Bool(false));
-    }
-    Ok(())
-}
-
-fn add_device_plugin(value: &mut serde_json::Value) -> Result<(), String> {
-    let Some(devices) = value.get_mut("devices") else {
-        return Ok(());
-    };
-    let Some(devices) = devices.as_array_mut() else {
-        return Err("devices is not an array".to_string());
-    };
-    for device in devices {
-        let Some(object) = device.as_object_mut() else {
-            return Err("device is not an object".to_string());
-        };
-        object.entry("plugin").or_insert(serde_json::Value::Null);
-    }
-    Ok(())
-}
-
-/// Schema 2 named audio with an object id. Those ids were never files, so they
-/// become no audio. A hash object written by schema 3 is left alone.
-fn audio_reference(value: &mut serde_json::Value) -> Result<(), String> {
-    let Some(audio) = value.get_mut("audio") else {
-        return Ok(());
-    };
-    if audio.is_string() {
-        *audio = serde_json::Value::Null;
-    }
-    Ok(())
-}
-
 fn push_json_lines(out: &mut String, indent: &str, values: impl Iterator<Item = String>) {
     let values: Vec<String> = values.collect();
     for (index, value) in values.iter().enumerate() {
@@ -783,237 +681,6 @@ impl serde_json::ser::Formatter for PackageFormatter {
     {
         writer.write_all(format_gain(value).as_bytes())
     }
-}
-
-fn migrate(mut value: serde_json::Value, kind: &str) -> Result<serde_json::Value, PackageError> {
-    let mut schema = schema_number(&value, kind)?;
-    if schema > SCHEMA {
-        return Err(PackageError::new(format!(
-            "unsupported {kind} schema {schema}"
-        )));
-    }
-    while schema < SCHEMA {
-        let index = schema
-            .checked_sub(1)
-            .ok_or_else(|| PackageError::new(format!("unsupported {kind} schema {schema}")))?;
-        let index = usize::try_from(index)
-            .map_err(|_| PackageError::new(format!("unsupported {kind} schema {schema}")))?;
-        let step = SCHEMA_STEPS
-            .get(index)
-            .copied()
-            .ok_or_else(|| PackageError::new(format!("unsupported {kind} schema {schema}")))?;
-        step(&mut value)
-            .map_err(|message| PackageError::new(format!("{kind} schema {schema}: {message}")))?;
-        schema += 1;
-        let object = value
-            .as_object_mut()
-            .ok_or_else(|| PackageError::new(format!("{kind} json is not an object")))?;
-        object.insert("schema".to_owned(), serde_json::Value::from(schema));
-    }
-    Ok(value)
-}
-
-fn schema_number(value: &serde_json::Value, kind: &str) -> Result<u32, PackageError> {
-    let Some(object) = value.as_object() else {
-        return Err(PackageError::new(format!("{kind} json is not an object")));
-    };
-    let Some(schema) = object.get("schema") else {
-        return Err(PackageError::new(format!("{kind} schema is missing")));
-    };
-    let Some(number) = schema.as_number().filter(|number| number.is_u64()) else {
-        return Err(PackageError::new(format!(
-            "{kind} schema is not an integer"
-        )));
-    };
-    let Some(schema) = number.as_u64() else {
-        return Err(PackageError::new(format!(
-            "{kind} schema is not an integer"
-        )));
-    };
-    u32::try_from(schema)
-        .map_err(|_| PackageError::new(format!("unsupported {kind} schema {schema}")))
-}
-
-fn parse_schema<T: DeserializeOwned>(
-    json: &str,
-    file: &str,
-    kind: &str,
-) -> Result<T, PackageError> {
-    let value: serde_json::Value = serde_json::from_str(json)
-        .map_err(|error| PackageError::new(format!("{file}: {error}")))?;
-    let value = migrate(value, kind)?;
-    serde_json::from_value(value).map_err(|error| PackageError::new(format!("{file}: {error}")))
-}
-
-struct Header {
-    metadata: ProjectMetadata,
-    tempo: TempoMap,
-    content_ids: Vec<String>,
-    track_ids: Vec<String>,
-}
-
-fn parse_header(json: &str) -> Result<Header, PackageError> {
-    let file: ProjectFile = parse_schema(json, "project.json", "project")?;
-    if file.schema != SCHEMA {
-        return Err(PackageError::new(format!(
-            "unsupported project schema {}",
-            file.schema
-        )));
-    }
-    let metadata = serde_json::from_value(serde_json::Value::Object(file.metadata))
-        .map_err(|error| PackageError::new(format!("project.json: {error}")))?;
-    let tempo = TempoMap::try_from_points(file.tempo)
-        .ok_or_else(|| PackageError::new("tempo map is empty or has two points at one tick"))?;
-    Ok(Header {
-        metadata,
-        tempo,
-        content_ids: canonical_track_ids(file.contents)?,
-        track_ids: canonical_track_ids(file.tracks)?,
-    })
-}
-
-fn assemble(
-    header: Header,
-    contents: Vec<(String, String)>,
-    tracks: Vec<(String, String)>,
-    package: &Path,
-) -> Result<Project, PackageError> {
-    let mut parsed = Vec::with_capacity(tracks.len());
-    if tracks.len() != header.track_ids.len() {
-        return Err(PackageError::new(
-            "track list does not match the track files",
-        ));
-    }
-    if contents.len() != header.content_ids.len() {
-        return Err(PackageError::new(
-            "content list does not match the content files",
-        ));
-    }
-    let mut parsed_contents = Vec::with_capacity(contents.len());
-    for (id, (filename, json)) in header.content_ids.iter().zip(contents) {
-        if filename != format!("{id}.json") {
-            return Err(PackageError::new(format!(
-                "contents/{filename} is out of order"
-            )));
-        }
-        parsed_contents.push(parse_content(&json, id)?);
-    }
-    for (id, (filename, json)) in header.track_ids.iter().zip(tracks) {
-        if filename != format!("{id}.json") {
-            return Err(PackageError::new(format!(
-                "tracks/{filename} is out of order"
-            )));
-        }
-        parsed.push(parse_track(&json, id, package)?);
-    }
-    header
-        .metadata
-        .try_assemble(header.tempo, parsed_contents, parsed)
-        .map_err(|error| PackageError::new(error.to_string()))
-}
-
-fn parse_track(json: &str, expected_id: &str, package: &Path) -> Result<Track, PackageError> {
-    let file: TrackFile = parse_schema(json, "track json", "track")?;
-    // Keep unknown-field rejection in the scalar type, rather than combining
-    // Serde's unsupported flatten + deny_unknown_fields attributes.
-    let metadata: TrackMetadata = serde_json::from_value(serde_json::Value::Object(file.metadata))
-        .map_err(|error| PackageError::new(format!("track json: {error}")))?;
-    if file.schema != SCHEMA {
-        return Err(PackageError::new(format!(
-            "unsupported track schema {}",
-            file.schema
-        )));
-    }
-    if file.id != expected_id {
-        return Err(PackageError::new(format!(
-            "track file {} does not contain that id",
-            file.id
-        )));
-    }
-    let id = parse_id(&file.id)?;
-    let clips = file.clips;
-    let devices = file
-        .devices
-        .into_iter()
-        .map(|device| {
-            let kind = device.kind;
-            match (kind, device.state.as_deref()) {
-                (_, None) => {}
-                (echode_model::DeviceKind::Mixer, Some(_)) => {
-                    return Err(PackageError::new("mixer state must be null"));
-                }
-                (echode_model::DeviceKind::Clap, Some(text)) => {
-                    if !crate::objects::is_content_hash(text) {
-                        return Err(PackageError::new(
-                            "state hash must be 64 lowercase hex digits",
-                        ));
-                    }
-                    crate::objects::read_object(package, text)?;
-                }
-            }
-            match (kind, device.plugin.as_deref()) {
-                (echode_model::DeviceKind::Mixer, None) => {}
-                (echode_model::DeviceKind::Clap, Some(plugin))
-                    if echode_model::valid_plugin_id(plugin) && device.parameters.is_empty() => {}
-                _ => {
-                    return Err(PackageError::new(format!(
-                        "device {} does not match its plugin id",
-                        device.id
-                    )));
-                }
-            }
-            Ok(device)
-        })
-        .collect::<Result<Vec<_>, PackageError>>()?;
-    Ok(metadata.into_track(id, clips, devices))
-}
-
-fn parse_content(json: &str, expected_id: &str) -> Result<echode_model::Content, PackageError> {
-    let file: ContentFile = parse_schema(json, "content json", "content")?;
-    let metadata: ContentMetadata =
-        serde_json::from_value(serde_json::Value::Object(file.metadata))
-            .map_err(|error| PackageError::new(format!("content json: {error}")))?;
-    if let Some(audio) = &metadata.audio {
-        audio
-            .check()
-            .map_err(|error| PackageError::new(error.to_string()))?;
-    }
-    if file.schema != SCHEMA {
-        return Err(PackageError::new(format!(
-            "unsupported content schema {}",
-            file.schema
-        )));
-    }
-    if file.id != expected_id {
-        return Err(PackageError::new(format!(
-            "content file {} does not contain that id",
-            file.id
-        )));
-    }
-    for note in &file.notes {
-        if note.articulation.is_some() {
-            return Err(PackageError::new("articulation is not accepted yet"));
-        }
-    }
-    if let Some(expression) = file.expressions.first() {
-        return Err(PackageError::new(format!(
-            "expressions are not accepted yet ({} {} has {} points, first at {} value {})",
-            expression.note,
-            expression.kind,
-            expression.points.len(),
-            expression.points.first().map(|point| point.at).unwrap_or(0),
-            expression
-                .points
-                .first()
-                .map(|point| point.value)
-                .unwrap_or(0)
-        )));
-    }
-    Ok(metadata.into_content(parse_id(&file.id)?, file.notes, Vec::new()))
-}
-
-fn parse_id(text: &str) -> Result<Id, PackageError> {
-    Id::parse(text).ok_or_else(|| PackageError::new(format!("invalid id {text}")))
 }
 
 fn commit_message(journal_seq: u64) -> String {
@@ -1242,67 +909,11 @@ fn chained_descendant(directory: &Path, tip: ObjectId) -> Option<ObjectId> {
     None
 }
 
-fn canonical_track_ids(ids: Vec<String>) -> Result<Vec<String>, PackageError> {
-    ids.into_iter()
-        .map(|id| {
-            Id::parse(&id)
-                .map(|id| id.to_string())
-                .ok_or_else(|| PackageError::new(format!("invalid track id {id}")))
-        })
-        .collect()
-}
-
 pub(crate) fn io_error(path: &Path, error: std::io::Error) -> PackageError {
     PackageError::Io {
         path: Some(path.to_path_buf()),
         error,
     }
-}
-
-#[derive(Deserialize)]
-struct ProjectFile {
-    schema: u32,
-    #[serde(flatten)]
-    metadata: serde_json::Map<String, serde_json::Value>,
-    tempo: Vec<TempoPoint>,
-    #[serde(default)]
-    contents: Vec<String>,
-    tracks: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct TrackFile {
-    schema: u32,
-    id: String,
-    #[serde(flatten)]
-    metadata: serde_json::Map<String, serde_json::Value>,
-    devices: Vec<echode_model::Device>,
-    clips: Vec<Placement>,
-}
-
-#[derive(Deserialize)]
-struct ContentFile {
-    schema: u32,
-    id: String,
-    #[serde(flatten)]
-    metadata: serde_json::Map<String, serde_json::Value>,
-    notes: Vec<Note>,
-    expressions: Vec<ExpressionFile>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExpressionFile {
-    note: String,
-    kind: String,
-    points: Vec<ExpressionPointFile>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExpressionPointFile {
-    at: i64,
-    value: i32,
 }
 
 #[cfg(test)]

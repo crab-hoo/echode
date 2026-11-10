@@ -1,14 +1,18 @@
-//! Typed storage failures. Schema and document errors are migrated separately.
+//! Typed storage failures. Document transactions are migrated separately.
 
 use std::collections::TryReserveError;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[path = "error_validation.rs"]
+mod validation;
+pub use validation::{MigrationError, PackageKind, PackageValidationError};
+
 /// A package or journal could not be read or written.
 #[derive(Debug)]
 pub enum PackageError {
-    /// Schema and document paths not migrated to typed causes yet.
+    /// Document paths not migrated to typed causes yet.
     Message(String),
     /// A journal write reached the file but its durability is unknown.
     JournalDurabilityUnknown,
@@ -23,6 +27,7 @@ pub enum PackageError {
         error: gix::Error,
     },
     Autosave(AutosaveError),
+    Validation(PackageValidationError),
     MissingWorkingDirectory,
     MissingRevisionDirectory(String),
     MissingRevisionFile(String),
@@ -93,6 +98,7 @@ impl fmt::Display for PackageError {
             } => write!(f, "{error:?}"),
             Self::Git { error, .. } => write!(f, "{error}"),
             Self::Autosave(error) => write!(f, "{error}"),
+            Self::Validation(error) => write!(f, "{error}"),
             Self::MissingWorkingDirectory => {
                 f.write_str("package has no working directory for plugin state")
             }
@@ -124,6 +130,7 @@ impl std::error::Error for PackageError {
             Self::Shared(error) => Some(error.as_ref()),
             Self::Git { error, .. } => Some(error),
             Self::Autosave(error) => Some(error),
+            Self::Validation(error) => Some(error),
             Self::RevisionText(error) => Some(error),
             _ => None,
         }
@@ -139,6 +146,12 @@ impl From<std::io::Error> for PackageError {
 impl From<MediaError> for PackageError {
     fn from(error: MediaError) -> Self {
         Self::Audio(error)
+    }
+}
+
+impl From<PackageValidationError> for PackageError {
+    fn from(error: PackageValidationError) -> Self {
+        Self::Validation(error)
     }
 }
 

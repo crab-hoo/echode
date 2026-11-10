@@ -91,6 +91,19 @@ class TypedErrors(unittest.TestCase):
             root = self.tree({source: 'fn f() { PackageError::Audio(MediaError::NoSamples) }\n'})
             self.assertEqual(check_typed_errors.problems(root), [])
 
+    def test_migrated_package_modules_reject_string_results_and_erased_causes(self):
+        cases = [
+            ('fn f() -> Result<(), String> {}\n', 'returns a String error'),
+            ('fn f() { g().map_err(|e| E::Other(e.to_string()))?; }\n', 'turns an error into text'),
+        ]
+        for source in check_typed_errors.TYPED_FILES:
+            for text, problem in cases:
+                with self.subTest(source=source, text=text):
+                    root = self.tree({source: text})
+                    self.assertEqual(check_typed_errors.problems(root), [
+                        f"{source}:1: {problem}",
+                    ])
+
     def test_unmigrated_package_modules_are_not_claimed_as_typed(self):
         root = self.tree({
             'crates/echode-history/src/host.rs': 'fn f() -> Result<(), String> {}\n',

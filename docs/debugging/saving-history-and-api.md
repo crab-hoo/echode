@@ -279,6 +279,16 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 `tests/autosave_errors.rs` は公開入口、`autosave_tests.rs` は合流した待ち手と受信側の消失を切り分ける。
 共有の失敗も `is_durability_unknown()` で判定し、元のファイルを保全してから調べる（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。
 
+### パッケージの拒否が JSON・版・モデルのどれか分からない
+
+`PackageError::original()` が `Validation` なら、`PackageValidationError` の種類を調べる。
+`Json` は対象の `PackageKind` と元の JSON エラーを持ち、行・列・分類を `Error::source` から読める。
+`UnsupportedSchema` は入力の版を `u64` で保持し、`Migration` は失敗した段階の版と `MigrationError` を持つ。
+`Model` は元の `ModelError` で、版の拒否や I/O と分ける。表示文で判定しない。
+作業ファイルと Git の版は `document_parse.rs` の同じ移行・検証を通る。
+`tests/package_errors.rs` は原本の保持と原因、`tests/autosave_errors.rs` は実 Git の版のワーカー返信を照合する。
+共有後も `original()` を使い、読込みの拒否を保存の不確定や復旧同意と取り違えない（[ADR 0298](../decisions/0298-typed-package-validation-errors.md)）。
+
 ### 起動直後から新規作成・開くが無効で「変更を保存中」のまま
 
 前回プロジェクトの自動復元と `ProjectController.busy` を確認する。

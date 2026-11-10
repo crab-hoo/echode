@@ -29,7 +29,9 @@ TYPED_CRATES = (
 TYPED_FILES = (
     'crates/echode-history/src/autosave.rs',
     'crates/echode-history/src/document_git.rs',
+    'crates/echode-history/src/document_parse.rs',
     'crates/echode-history/src/error.rs',
+    'crates/echode-history/src/error_validation.rs',
     'crates/echode-history/src/media.rs',
     'crates/echode-history/src/objects.rs',
     'crates/echode-history/src/peaks.rs',

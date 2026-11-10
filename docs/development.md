@@ -112,7 +112,8 @@
 | 共通整数時間 | `crates/echode-time` | `TempoIndex`・区間丸め・tick / flick / sample 換算・Workgroup 期間。モデルと再生カーソルで共有し、外部依存を持たない |
 | モデル・時間・不変条件 | `crates/echode-model` | `model.rs`（`Project`）、`time.rs`（`Tick` / `Flicks` / `TempoMap`）、`invariants.rs`、`hierarchy.rs`（親の検証）、`changeset.rs`、`duplicate.rs`（部分木の複製と導出 ID） |
 | アクション・編集セッション | `crates/echode-actions` | `action.rs`（`Action` / 登録簿）、`session.rs`（`Session` の Undo / Redo 履歴） |
-| Git 履歴・パッケージ・ピーク | `crates/echode-history` | `host.rs`（文書・復旧）、`autosave.rs`（保存）、`document_git.rs`（Git と同期）、`error.rs`（原因の型）、`objects.rs`（CAS）、`peaks.rs`（波形） |
+| Git 履歴・パッケージ | `crates/echode-history` | `host.rs`（文書・復旧）、`autosave.rs`（保存）、`document_git.rs`（Git と同期） |
+| 保存の検証・素材 | `crates/echode-history` | `document_parse.rs`（スキーマと読込み）、`error.rs`（原因の型）、`objects.rs`（CAS）、`peaks.rs`（波形） |
 | 再生計画・カーソル | `crates/echode-realtime` | `lib.rs`（サンプル時刻の計画・鳴っている集合・ID の索引）、`event.rs`（イベント列）、`cursor_tests.rs`（境界の訪問数） |
 | オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器の入口 `playback` と `PlaybackOptions`・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（機器問い合わせ）、`device_measurement.rs`（非既定 feature の実機計測） |
 | CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`opening.rs`（出力準備の別スレッド・機器なしの検査用出力）、`session.rs`（文書の音声セッション）、`error.rs`（`AudioError`。境界のエラーの変種）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止）、`panic_log.rs`（コールバックの panic の捕捉と記録） |

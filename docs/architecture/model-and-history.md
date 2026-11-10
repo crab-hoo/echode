@@ -341,6 +341,9 @@ MySong.echode/
 - 配置ゲインとミキサーパラメーターの浮動小数点は、読み戻して元の値を保つ十進表記にする。
   旧表記が正確な時はそのバイトを保ち、小さい正の値を 0 に丸めない。0 の正規化とスキーマ 6 は維持する
   （[ADR 0196](../decisions/0196-lossless-package-floats.md)）。
+- スキーマ移行と読込みの検証は `document_parse.rs` を作業ファイルと Git の版で共有する。
+  `PackageError::Validation(PackageValidationError)` は JSON・版・移行の段階・意味上の拒否を分け、JSON とモデルの元の原因を保持する。
+  文面と原本の保持、現行版の確定は同じ入口で検証する（[ADR 0298](../decisions/0298-typed-package-validation-errors.md)）。
 
 ### 6.3 メディアの保管庫
 
@@ -356,7 +359,7 @@ MySong.echode/
 保管庫・復号・ピークの失敗は `error.rs` の `PackageError` の変種で返す（[ADR 0296](../decisions/0296-typed-storage-errors.md)）。
 `Io` は元の `io::Error` と、従来表示していたパスを持ち、`Audio(MediaError)` は PCM 検証・取消・容量・AudioToolbox の状態コードとプロパティ番号を分ける。
 `MediaIndex` は元の JSON エラーを持つ。`Error::source` で原因を読め、表示の文は変えない。
-`Message` は未移行の Git・スキーマ・文書の経路だけに残し、crate 全体が型付け済みとは扱わない。
+`Message` は未移行の文書・ジャーナル・設定・間引きなどに残し、crate 全体が型付け済みとは扱わない。
 
 ### 6.4 保存とコミット
 
