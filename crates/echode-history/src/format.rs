@@ -4,6 +4,7 @@
 //! can show a musical edit as a few changed lines. The same value always
 //! produces the same bytes.
 
+use crate::error::{PackageError, SpikeError};
 use crate::project::{Note, Project, Track};
 use std::fmt::Write as _;
 
@@ -46,20 +47,18 @@ pub fn track_json(track: &Track) -> String {
     out
 }
 
-pub fn parse_project_tracks(json: &str) -> Result<Vec<String>, String> {
-    let value: ProjectFile =
-        serde_json::from_str(json).map_err(|error| format!("project.json: {error}"))?;
+pub fn parse_project_tracks(json: &str) -> Result<Vec<String>, PackageError> {
+    let value: ProjectFile = serde_json::from_str(json).map_err(SpikeError::ProjectJson)?;
     if value.schema != 1 {
-        return Err(format!("unsupported project schema {}", value.schema));
+        return Err(SpikeError::ProjectSchema(value.schema).into());
     }
     Ok(value.tracks)
 }
 
-pub fn parse_track(json: &str) -> Result<Track, String> {
-    let file: TrackFile =
-        serde_json::from_str(json).map_err(|error| format!("track json: {error}"))?;
+pub fn parse_track(json: &str) -> Result<Track, PackageError> {
+    let file: TrackFile = serde_json::from_str(json).map_err(SpikeError::TrackJson)?;
     if file.schema != 1 {
-        return Err(format!("unsupported track schema {}", file.schema));
+        return Err(SpikeError::TrackSchema(file.schema).into());
     }
     Ok(Track {
         id: file.id,

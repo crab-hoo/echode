@@ -8,8 +8,8 @@ Nor may a `map_err` turn the error it receives into text (ADR 0294): a variant
 that holds `error.to_string()` hides the cause the same way. Tests may, since
 a fixture's message is not a boundary. Text is still made where a report
 reaches the app; that is a `String` field, not a `Result`.
-A file in TYPED_FILES has the same checks while its crate is being migrated;
-there, constructing an untyped PackageError message is also rejected.
+A file in TYPED_FILES has the same checks while its crate is being migrated.
+History and partially migrated files also reject untyped PackageError messages.
 """
 
 from pathlib import Path
@@ -22,29 +22,12 @@ TYPED_CRATES = (
     'echode-audio-io',
     'echode-document',
     'echode-engine',
+    'echode-history',
     'echode-plugin-host',
     'echode-sandbox',
 )
 # A large crate may migrate one storage boundary at a time (ADR 0296).
-TYPED_FILES = (
-    'crates/echode-history/src/autosave.rs',
-    'crates/echode-history/src/document.rs',
-    'crates/echode-history/src/document_git.rs',
-    'crates/echode-history/src/document_parse.rs',
-    'crates/echode-history/src/error.rs',
-    'crates/echode-history/src/error_document.rs',
-    'crates/echode-history/src/error_thin.rs',
-    'crates/echode-history/src/error_validation.rs',
-    'crates/echode-history/src/export.rs',
-    'crates/echode-history/src/export_settings.rs',
-    'crates/echode-history/src/host.rs',
-    'crates/echode-history/src/host_error.rs',
-    'crates/echode-history/src/media.rs',
-    'crates/echode-history/src/objects.rs',
-    'crates/echode-history/src/peaks.rs',
-    'crates/echode-history/src/thin.rs',
-    'crates/echode-history/src/transport.rs',
-)
+TYPED_FILES = ()
 PACKAGE_MESSAGE = re.compile(r'\bPackageError\s*::\s*(?:new|Message)\s*\(')
 STRING = {'String', 'std::string::String', 'alloc::string::String'}
 RESULT = re.compile(r'\bResult\s*<')
@@ -154,7 +137,7 @@ def problems(root):
             found.append(f'{relative.as_posix()}:{line}: returns a String error')
         for line in text_errors(text):
             found.append(f'{relative.as_posix()}:{line}: turns an error into text')
-        if relative.as_posix() in TYPED_FILES:
+        if relative.parts[1] == 'echode-history' or relative.as_posix() in TYPED_FILES:
             code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
             for match in PACKAGE_MESSAGE.finditer(code):
                 line = code.count('\n', 0, match.start()) + 1

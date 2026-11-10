@@ -15,6 +15,11 @@ pub use validation::{MigrationError, PackageKind, PackageValidationError};
 #[path = "error_thin.rs"]
 mod thin;
 pub use thin::ThinningError;
+#[cfg(feature = "spike")]
+#[path = "error_spike.rs"]
+mod spike;
+#[cfg(feature = "spike")]
+pub use spike::SpikeError;
 
 /// A package or journal could not be read or written.
 #[derive(Debug)]
@@ -37,6 +42,8 @@ pub enum PackageError {
     Journal(JournalError),
     Settings(SettingsError),
     Thinning(ThinningError),
+    #[cfg(feature = "spike")]
+    Spike(SpikeError),
     ExportSnapshot(echode_model::InvariantError),
     MissingDirectory(PathBuf),
     MissingWorkingDirectory,
@@ -109,6 +116,8 @@ impl fmt::Display for PackageError {
             Self::Journal(error) => write!(f, "{error}"),
             Self::Settings(error) => write!(f, "{error}"),
             Self::Thinning(error) => write!(f, "{error}"),
+            #[cfg(feature = "spike")]
+            Self::Spike(error) => write!(f, "{error}"),
             Self::ExportSnapshot(error) => write!(f, "{error}"),
             Self::MissingDirectory(path) => write!(f, "{} is missing", path.display()),
             Self::MissingWorkingDirectory => {
@@ -147,6 +156,8 @@ impl std::error::Error for PackageError {
             Self::Journal(error) => Some(error),
             Self::Settings(error) => Some(error),
             Self::Thinning(error) => Some(error),
+            #[cfg(feature = "spike")]
+            Self::Spike(error) => Some(error),
             Self::ExportSnapshot(error) => Some(error),
             Self::RevisionText(error) => Some(error),
             _ => None,

@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 5 crate は列挙型（ADR 0291〜0295）。`echode-history` は間引きまで型にした（ADR 0296〜0300）。非既定の履歴スパイクは残る |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 6 crate は列挙型（ADR 0291〜0301）。履歴は非既定のスパイクも型にした。次は `echode-ffi` の目録で、モデルも残る |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -118,6 +118,9 @@
   表示文・RPC のコード・保存と復旧の判断は変えない。次は間引き、その後に非既定の履歴スパイクである。
 - 2026-11-10（ADR 0300）: 間引き・パック・バンドルを `PackageError` に揃え、Git の操作・元の I/O と UTF-8 の原因、意味上の拒否を保持した。
   表示文・間引きの選択と削除の順番は変えない。残りは非既定の履歴スパイク（`format.rs`・`store.rs`）である。
+- 2026-11-10（ADR 0301）: 非既定の履歴スパイクも `PackageError` を返し、固有の JSON・版・ワーカーの失敗だけを feature 付きの `SpikeError` に分けた。
+  初期化失敗後の終了が待ち続ける不具合を子プロセスで再現して修正し、後続の要求へ同じ原因を共有する。
+  `echode-history` 全体を再導入の検査に登録した。次は `echode-ffi` の目録で、モデルの原因の文字列化も残る。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

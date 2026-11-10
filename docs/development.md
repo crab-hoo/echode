@@ -144,6 +144,10 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 計測は従来どおり `make spike-history` を使う。製品の型・保存形式と混同しない
 （[ADR 0211](decisions/0211-opt-in-history-spike.md)）。
 
+失敗の結果は `PackageError` を共用し、スパイク固有の `SpikeError` だけを feature に閉じる。
+`tests/roundtrip/errors.rs` は公開入口から原因・文面・原本の保持と、初期化失敗後の終了を子プロセスで検査する。
+`store_tests.rs` は通信路の切断と期限の種類を、待ち時間を使わず照合する（[ADR 0301](decisions/0301-typed-history-spike-errors.md)）。
+
 エンジンの Phase 0 の `graph.rs`・`wait.rs`・`device_measurement.rs` も非既定の `spike` feature 専用である。
 通常回帰は `cargo test -q -p echode-engine --features spike --lib`、実機計測は `make spike-engine-smoke`・`make spike-engine` を使う。
 製品の `playback`・機器一覧・`IoWorkgroup` は feature なしで使える

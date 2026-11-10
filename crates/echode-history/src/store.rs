@@ -4,6 +4,7 @@
 //! GPL-3.0-or-later. The caller of [`History::save`] only enqueues an
 //! `Arc` snapshot. Serialization and the commit happen on a worker thread.
 
+use crate::error::{GitOperation, PackageError, SpikeError};
 use crate::format::{self, parse_project_tracks, parse_track};
 use crate::project::Project;
 use gix::bstr::BString;
@@ -22,25 +23,23 @@ pub struct History {
 }
 
 pub struct PendingSave {
-    reply: Receiver<Result<ObjectId, String>>,
+    reply: Receiver<Result<ObjectId, PackageError>>,
 }
 
 impl PendingSave {
-    pub fn wait(self) -> Result<ObjectId, String> {
-        self.reply
-            .recv()
-            .map_err(|_| "history thread stopped".to_string())?
+    pub fn wait(self) -> Result<ObjectId, PackageError> {
+        self.reply.recv().map_err(|_| SpikeError::Stopped)?
     }
 }
 
 enum Request {
     Save {
         project: Arc<Project>,
-        reply: Sender<Result<ObjectId, String>>,
+        reply: Sender<Result<ObjectId, PackageError>>,
     },
     Load {
         revision: ObjectId,
-        reply: Sender<Result<Arc<Project>, String>>,
+        reply: Sender<Result<Arc<Project>, PackageError>>,
     },
     Shutdown,
 }
@@ -53,13 +52,13 @@ struct Cache {
 }
 
 impl History {
-    pub fn create(directory: &Path) -> Result<Self, String> {
+    pub fn create(directory: &Path) -> Result<Self, PackageError> {
         let directory = directory.to_path_buf();
         let (request, incoming) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("echode-history".to_string())
             .spawn(move || worker(directory, incoming))
-            .map_err(|error| error.to_string())?;
+            .map_err(PackageError::from)?;
         Ok(Self {
             request,
             thread: Some(thread),
@@ -67,22 +66,22 @@ impl History {
     }
 
     /// Hand the snapshot to the history thread and return.
-    pub fn save(&self, project: Arc<Project>) -> Result<PendingSave, String> {
+    pub fn save(&self, project: Arc<Project>) -> Result<PendingSave, PackageError> {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Save { project, reply })
-            .map_err(|_| "history thread stopped".to_string())?;
+            .map_err(|_| SpikeError::Stopped)?;
         Ok(PendingSave { reply: incoming })
     }
 
-    pub fn load(&self, revision: ObjectId) -> Result<Arc<Project>, String> {
+    pub fn load(&self, revision: ObjectId) -> Result<Arc<Project>, PackageError> {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Load { revision, reply })
-            .map_err(|_| "history thread stopped".to_string())?;
+            .map_err(|_| SpikeError::Stopped)?;
         incoming
             .recv_timeout(Duration::from_secs(30))
-            .map_err(|_| "history thread stopped".to_string())?
+            .map_err(SpikeError::from)?
     }
 }
 
@@ -99,8 +98,17 @@ fn worker(directory: std::path::PathBuf, incoming: Receiver<Request>) {
     let mut repo = match gix::init(&directory) {
         Ok(repo) => repo,
         Err(error) => {
+            let error = PackageError::git(GitOperation::Init, error).into_shared();
             while let Ok(request) = incoming.recv() {
-                fail(request, error.to_string());
+                match request {
+                    Request::Save { reply, .. } => {
+                        let _ = reply.send(Err(PackageError::Shared(Arc::clone(&error))));
+                    }
+                    Request::Load { reply, .. } => {
+                        let _ = reply.send(Err(PackageError::Shared(Arc::clone(&error))));
+                    }
+                    Request::Shutdown => break,
+                }
             }
             return;
         }
@@ -122,26 +130,14 @@ fn worker(directory: std::path::PathBuf, incoming: Receiver<Request>) {
     }
 }
 
-fn fail(request: Request, error: String) {
-    match request {
-        Request::Save { reply, .. } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::Load { reply, .. } => {
-            let _ = reply.send(Err(error));
-        }
-        Request::Shutdown => {}
-    }
-}
-
 fn save(
     repo: &mut Repository,
     directory: &Path,
     cache: &mut Option<Cache>,
     parents: &mut Vec<ObjectId>,
     project: &Project,
-) -> Result<ObjectId, String> {
-    std::fs::create_dir_all(directory.join("tracks")).map_err(|error| error.to_string())?;
+) -> Result<ObjectId, PackageError> {
+    std::fs::create_dir_all(directory.join("tracks"))?;
     let mut blobs = Vec::with_capacity(project.tracks.len());
     for (index, track) in project.tracks.iter().enumerate() {
         let unchanged = cache.as_ref().is_some_and(|cache| {
@@ -156,10 +152,10 @@ fn save(
         }
         let json = format::track_json(track);
         let path = directory.join(format!("tracks/{}.json", track.id));
-        std::fs::write(&path, &json).map_err(|error| error.to_string())?;
+        std::fs::write(&path, &json)?;
         let blob = repo
             .write_blob(json.as_bytes())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| PackageError::git(GitOperation::WriteObject, error))?;
         blobs.push(blob.detach());
     }
 
@@ -170,10 +166,9 @@ fn save(
     {
         cache.as_ref().unwrap().project_blob
     } else {
-        std::fs::write(directory.join("project.json"), &project_json)
-            .map_err(|error| error.to_string())?;
+        std::fs::write(directory.join("project.json"), &project_json)?;
         repo.write_blob(project_json.as_bytes())
-            .map_err(|error| error.to_string())?
+            .map_err(|error| PackageError::git(GitOperation::WriteObject, error))?
             .detach()
     };
 
@@ -190,7 +185,7 @@ fn save(
         .write_object(Tree {
             entries: track_entries,
         })
-        .map_err(|error| error.to_string())?
+        .map_err(|error| PackageError::git(GitOperation::WriteObject, error))?
         .detach();
 
     let mut root_entries = vec![
@@ -210,7 +205,7 @@ fn save(
         .write_object(Tree {
             entries: root_entries,
         })
-        .map_err(|error| error.to_string())?
+        .map_err(|error| PackageError::git(GitOperation::WriteObject, error))?
         .detach();
 
     let author = gix::actor::Signature {
@@ -229,7 +224,7 @@ fn save(
             root,
             parents.iter().copied(),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| PackageError::git(GitOperation::Commit, error))?;
     let id = commit.detach();
     parents.clear();
     parents.push(id);
@@ -242,51 +237,57 @@ fn save(
     Ok(id)
 }
 
-fn load(repo: &Repository, revision: ObjectId) -> Result<Arc<Project>, String> {
+fn load(repo: &Repository, revision: ObjectId) -> Result<Arc<Project>, PackageError> {
     let commit = repo
         .find_commit(revision)
-        .map_err(|error| error.to_string())?;
-    let root = commit.tree().map_err(|error| error.to_string())?;
+        .map_err(|error| PackageError::git(GitOperation::FindObject, error))?;
+    let root = commit
+        .tree()
+        .map_err(|error| PackageError::git(GitOperation::ReadCommitTree, error))?;
     let project_entry = root
         .lookup_entry_by_path("project.json")
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "project.json is missing from the revision".to_string())?;
+        .map_err(|error| PackageError::git(GitOperation::LookupEntry, error))?
+        .ok_or(PackageError::MissingRevisionProject)?;
     let project_blob = project_entry
         .object()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| PackageError::git(GitOperation::ReadObject, error))?
         .try_into_blob()
-        .map_err(|error| format!("{error:?}"))?;
+        .map_err(|error| PackageError::git(GitOperation::ObjectKind, error))?;
     let project_json =
-        std::str::from_utf8(&project_blob.data).map_err(|error| error.to_string())?;
+        std::str::from_utf8(&project_blob.data).map_err(PackageError::RevisionText)?;
     let ids = parse_project_tracks(project_json)?;
 
     let tracks_entry = root
         .lookup_entry_by_path("tracks")
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "tracks directory is missing from the revision".to_string())?;
+        .map_err(|error| PackageError::git(GitOperation::LookupEntry, error))?
+        .ok_or_else(|| PackageError::MissingRevisionDirectory("tracks".into()))?;
     let tracks_tree = tracks_entry
         .object()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| PackageError::git(GitOperation::ReadObject, error))?
         .try_into_tree()
-        .map_err(|error| format!("{error:?}"))?;
+        .map_err(|error| PackageError::git(GitOperation::ObjectKind, error))?;
     let mut by_name = std::collections::HashMap::with_capacity(ids.len());
     for entry in tracks_tree.iter() {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(|error| PackageError::git(GitOperation::DecodeTree, error))?;
         let filename = entry.filename().to_string();
         let blob = entry
             .object()
-            .map_err(|error| error.to_string())?
+            .map_err(|error| PackageError::git(GitOperation::ReadObject, error))?
             .try_into_blob()
-            .map_err(|error| format!("{error:?}"))?;
-        let json = std::str::from_utf8(&blob.data).map_err(|error| error.to_string())?;
+            .map_err(|error| PackageError::git(GitOperation::ObjectKind, error))?;
+        let json = std::str::from_utf8(&blob.data).map_err(PackageError::RevisionText)?;
         by_name.insert(filename, parse_track(json)?);
     }
     let mut tracks = Vec::with_capacity(ids.len());
     for id in ids {
         let track = by_name
             .remove(&format!("{id}.json"))
-            .ok_or_else(|| format!("tracks/{id}.json is missing"))?;
+            .ok_or_else(|| PackageError::MissingRevisionFile(format!("tracks/{id}.json")))?;
         tracks.push(Arc::new(track));
     }
     Ok(Arc::new(Project { tracks }))
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

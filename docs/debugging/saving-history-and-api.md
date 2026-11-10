@@ -313,6 +313,16 @@ Git の内側の型は合成フレームでなく、`gix::Error::downcast_any_re
 元の参照とオブジェクトを保全し、原因の I/O を調べる。失敗時の参照の巻戻しを仮定しない。
 `tests/thin_errors.rs` は文面・原因・失敗前の原本を照合し、`thin.rs` の単体テストは参照なしを区別する（[ADR 0300](../decisions/0300-typed-thinning-errors.md)）。
 
+### 履歴スパイクの失敗が分からない・初期化失敗後に終了しない
+
+対象は非既定の `spike` feature の `History` で、製品の `Autosave` と区別する。
+`PackageError::original()` と `Error::source` から Git の操作・I/O の errno・JSON・UTF-8 を調べる。
+`Spike(SpikeError)` はプロジェクトとトラックの JSON・版・ワーカーの終了と期限を分ける。
+期限も表示は旧来の `history thread stopped` のままなので、文で終了と判定しない。
+初期化失敗後の `History::drop` の join と `echode-history` の受信待ちが並ぶ時は、失敗の返信ループが終了要求を無視していないか確認する。
+修正版は初期化の原因を共有したまま終了要求を受け付ける。
+`tests/roundtrip/errors.rs` の子プロセス回帰と `store_tests.rs` で、機器なしに切り分ける（[ADR 0301](../decisions/0301-typed-history-spike-errors.md)）。
+
 ### 起動直後から新規作成・開くが無効で「変更を保存中」のまま
 
 前回プロジェクトの自動復元と `ProjectController.busy` を確認する。

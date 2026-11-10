@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -81,7 +82,7 @@ class TypedErrors(unittest.TestCase):
             'fn f() { PackageError::Message(message) }\n',
             'fn f() { PackageError\n    ::new("no samples") }\n',
         ]
-        for source in check_typed_errors.TYPED_FILES:
+        for source in ('crates/echode-history/src/store.rs', 'crates/echode-history/src/new.rs'):
             for text in cases:
                 with self.subTest(source=source, text=text):
                     root = self.tree({source: text})
@@ -96,7 +97,7 @@ class TypedErrors(unittest.TestCase):
             ('fn f() -> Result<(), String> {}\n', 'returns a String error'),
             ('fn f() { g().map_err(|e| E::Other(e.to_string()))?; }\n', 'turns an error into text'),
         ]
-        for source in check_typed_errors.TYPED_FILES:
+        for source in ('crates/echode-history/src/format.rs', 'crates/echode-history/src/new.rs'):
             for text, problem in cases:
                 with self.subTest(source=source, text=text):
                     root = self.tree({source: text})
@@ -104,17 +105,27 @@ class TypedErrors(unittest.TestCase):
                         f"{source}:1: {problem}",
                     ])
 
-    def test_unmigrated_package_modules_are_not_claimed_as_typed(self):
+    def test_completed_history_crate_guards_new_and_spike_modules(self):
+        for name in ('store.rs', 'format.rs', 'new_module.rs', 'nested/new_module.rs'):
+            source = f'crates/echode-history/src/{name}'
+            with self.subTest(source=source):
+                root = self.tree({source: 'fn f() -> Result<(), String> {}\n'})
+                self.assertEqual(check_typed_errors.problems(root), [
+                    f'{source}:1: returns a String error',
+                ])
+
+    def test_unmigrated_crates_are_not_claimed_as_typed(self):
         root = self.tree({
-            'crates/echode-history/src/store.rs': 'fn f() -> Result<(), String> {}\n',
+            'crates/unmigrated/src/store.rs': 'fn f() -> Result<(), String> {}\n',
         })
         self.assertEqual(check_typed_errors.problems(root), [])
 
     def test_a_missing_migrated_file_is_reported(self):
-        root = self.tree({})
-        source = check_typed_errors.TYPED_FILES[0]
-        (root / source).unlink()
-        self.assertEqual(check_typed_errors.problems(root), [f"{source}: missing"])
+        source = 'crates/unmigrated/src/typed.rs'
+        with patch.object(check_typed_errors, 'TYPED_FILES', (source,)):
+            root = self.tree({})
+            (root / source).unlink()
+            self.assertEqual(check_typed_errors.problems(root), [f"{source}: missing"])
 
     def test_test_files_are_fixtures(self):
         crate = check_typed_errors.TYPED_CRATES[0]

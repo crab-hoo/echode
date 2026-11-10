@@ -52,7 +52,7 @@ bundle のない実行ファイルでは、置かれたフォルダが主 bundle
 2026-11-03 の後続確認では `deps` が 549,820 件あり、通常の `cargo test -q --workspace` も 1,200 秒で終わらなかった。`--no-run` は 1.178 秒だった。
 同じ `device_offline` の製品回帰は、小さいフォルダのコピーで 1.098 秒、`deps` では 22.984 秒だった（単回の診断比較）。
 `sample` は `ExtAudioFileOpenURL` → `AudioAnalytics` → `_CFCopySystemVersionDictionary` → `CFBundleGetMainBundle` → `_CFIterateDirectory` の列挙を示した。
-テスト本体の失敗と混同せず、期限を延ばす前に置き場所を比較する。キャッシュの削除は同意を得て行い、検査ログを消す `cargo clean` 全体実行は避ける。
+テスト本体の失敗と混同せず、期限を延ばす前に置き場所を比較する。キャッシュの整理は下の空き容量不足の手順と ADR 0276 に従い、検査ログを消す `cargo clean` 全体実行は避ける。
 
 #### 蓄積した `.rcgu.o` だけを整理する
 
@@ -146,11 +146,12 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。
 文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
 
-`echode-history` の移行済みファイルは `TYPED_FILES` が正本である。
-保管庫・復号・ピーク・自動保存・Git・パッケージ検証に加え、文書・ジャーナル・設定・間引きと領域別のエラー定義を含む（ADR 0296〜[0300](../decisions/0300-typed-thinning-errors.md)）。
-その範囲の `returns an untyped package message` は、`PackageError::new`・`PackageError::Message` に戻している所である。`Io`・`Audio(MediaError)`・`Git`・`Validation(PackageValidationError)` など原因の変種を使う。
+`echode-history` は非既定の履歴スパイクも含めて `TYPED_CRATES` に登録している（ADR 0296〜[0301](../decisions/0301-typed-history-spike-errors.md)）。
+`PackageError::new`・`PackageError::Message` の再導入も crate 全体で拒否する。
+`Io`・`Audio(MediaError)`・`Git`・`Validation(PackageValidationError)` など原因の変種を使う。
+スパイクの JSON・版・ワーカーの失敗だけは feature 付きの `Spike(SpikeError)` に置く。
 複数の待ち手へ渡す失敗は `Shared` で原因を共有し、文を複製しない。`original()` で元の変種を調べる。
-非既定の履歴スパイク（`format.rs`・`store.rs`）は未移行であり、crate 全体を型付け済みとして登録しない。
+`TYPED_FILES` は次の大きな crate を部分移行する時の仕組みで、現在は空である。
 
 ### Cargo の依存メタデータが欠ける
 
