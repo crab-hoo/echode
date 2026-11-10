@@ -37,6 +37,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - 共有メモリの作成の失敗は `RegionError::SharedMemory` で操作と元の I/O エラーを保持する。
   `SharedMemoryOperation` で open・unlink・サイズ変更を区別し、errno は `Error::source` からも読める。
   表示文と FD の受渡し形式は変えない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。
+- 制御メッセージの窓名とパラメーターの UTF-8 は共通の `control_text.rs::read_text` で検証する。
+  不正なら `InvalidData` の `io::Error` の内側に `ControlTextError` を保持し、窓名とパラメーターを型で区別する。
+  元の `Utf8Error` は `source` から読める。位置は各文字列内で、表示文・通信の形式は変えない（[ADR 0312](../decisions/0312-typed-control-text-errors.md)）。
 - **一括投入と単一締め切り**: 独立したヘルパーには先に一括投入し、そのブロックの単一締め切りで完了したヘルパーから順に回収する。
   同じヘルパーで続くデバイスは 1 往復にまとめる（[ADR 0043](../decisions/0043-plugin-submit-collect.md)）
 - **Audio Workgroup の受け渡し**: ヘルパーが `bootstrap_check_in` した名前を制御スレッドが `bootstrap_look_up` し、`os_workgroup_copy_port` の送信権を Mach メッセージで渡す

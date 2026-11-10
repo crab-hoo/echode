@@ -58,6 +58,7 @@ make debug-report
   - 自動検査・製品契約の失敗
   - ASan / TSan の Swift 検査で `Status did not arrive`（復旧の警告待ちの期限切れを含む）
   - Swift のミキサー回帰で `Expectation failed: overlapped`
+  - Swift のミキサー回帰でアクセシビリティ操作の値と Undo の待機が外れる
   - 中断後に `running` が残る・全結果が一度に `stale` になる
   - 負の対照の `NOT rejected` / `Build failed`
   - 基準コミット（`VERIFY_BASE`）エラー
@@ -89,6 +90,7 @@ make debug-report
   - 音源なしのノート・Sine Pad が鳴らない
   - 同梱 CLAP の初回だけ RTSan が malloc を検出する
   - CLAP が鳴らない・走査失敗
+  - ヘルパーの応答が `window title is not text` / `parameter text is not UTF-8` で切れる
   - 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
   - プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
   - バイパスの表示と音が一致しない・解除後に古い音が鳴る

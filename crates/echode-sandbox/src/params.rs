@@ -4,6 +4,7 @@
 //! the plugin's own units between `min` and `max`; nothing is normalized here.
 //! The count is not capped. The 64 MiB message bound still applies.
 
+use crate::control_text::{ControlTextError, read_text};
 use std::io::{self, ErrorKind};
 
 /// `CLAP_PARAM_IS_STEPPED`. The flag values are CLAP's, so the parent does not link `clap-sys`.
@@ -91,8 +92,10 @@ pub(crate) fn write_text_request(id: u32, text: &str) -> Vec<u8> {
 pub(crate) fn read_text_request(body: &[u8]) -> io::Result<(u32, String)> {
     let mut cursor = Cursor::new(body);
     let id = cursor.u32()?;
-    let text = String::from_utf8(cursor.take(cursor.remaining())?.to_vec())
-        .map_err(|_| invalid("parameter text is not UTF-8"))?;
+    let text = read_text(
+        cursor.take(cursor.remaining())?,
+        ControlTextError::Parameter,
+    )?;
     Ok((id, text))
 }
 
@@ -289,8 +292,7 @@ impl<'a> Cursor<'a> {
 
     pub(crate) fn text(&mut self) -> io::Result<String> {
         let len = self.u32()? as usize;
-        String::from_utf8(self.take(len)?.to_vec())
-            .map_err(|_| invalid("parameter text is not UTF-8"))
+        read_text(self.take(len)?, ControlTextError::Parameter)
     }
 
     pub(crate) fn finish(&self) -> io::Result<()> {

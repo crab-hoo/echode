@@ -221,6 +221,22 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
         let bytes = encode(index as u64 + 1, message);
         seeds.push(seed(0, 0, &bytes));
         all.extend_from_slice(&bytes);
+        if matches!(
+            message,
+            ControlMessage::GuiShow(_)
+                | ControlMessage::ParseParam { .. }
+                | ControlMessage::Params(_)
+                | ControlMessage::ParamsApplied(_)
+                | ControlMessage::ParamRelay(_)
+        ) {
+            // These fixtures end in nonempty text. Preserve every length and
+            // exercise both an invalid byte and an incomplete UTF-8 sequence.
+            for byte in [0xff, 0xe3] {
+                let mut invalid = bytes.clone();
+                *invalid.last_mut().expect("a text fixture has text") = byte;
+                seeds.push(seed(0, 0, &invalid));
+            }
+        }
     }
     seeds.push(seed(0, 0, &all));
     // Old unclassified refusals are invalid, not a fallback for a new cause.

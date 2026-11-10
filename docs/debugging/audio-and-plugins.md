@@ -143,7 +143,7 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 予約済み CLAP ID は `Refused(InvalidParameterId(ID))` で、一括変更の全部が未適用である。
 `Refused(UnexpectedMainReply { expected, actual })` はヘルパー内部の手順の不一致で、プラグイン自身の拒否とは分ける。
 表示文の解析や自動再送をせず、型の両方の種類を記録し、`main_requests.rs` と `threads.rs` の対応を調べる（[ADR 0309](../decisions/0309-typed-helper-request-failures.md)）。
-起動の拒否は `Refused(Launch(原因))` である。`Other(文)` は起動では届かない `HostError` の防御分岐にだけ残る。
+起動の拒否は `Refused(Launch(原因))` である。未分類の `Other(文)` はなく、旧種類 `0` も拒否する（[ADR 0310](../decisions/0310-typed-plugin-load-boundary.md)）。
 `plugin-main-timeout-state` は機器なしの `slow-save` で再現し、`plugin-control-request-ids` は古い応答の破棄を検査する。
 完了後の復元バイトと新しい保存結果を比較し、実行中の拒否と、古い応答の取り違えを区別する。
 操作と通信の対応・Unicode と状態バイト・拒否理由は `session_operations_tests.rs` で切り分ける。
@@ -200,6 +200,17 @@ C ABI は診断の文を返さず従来の `-1` に畳むので、内部の回�
 子は `running`・両出力 0 byte で、直後の同じバイナリの直接起動は約 8 ms、同じ Cargo 構成の再実行は約 0.45 秒で完了した。
 shell 除去でこの環境の起動遅延自体が解決したとは扱わず、期限は維持する。
 初回の失敗は検査時間履歴と作業ログへ残し、再実行の合否で過去の失敗を上書きしない。
+
+### ヘルパーの応答が `window title is not text` / `parameter text is not UTF-8` で切れる
+
+制御ソケットの文字列が不正であり、音声 PCM の非有限値やプラグイン自身の拒否とは別である。
+`SessionError::Io` の内側の `io::Error::get_ref` を `ControlTextError` に downcast する。
+`WindowTitle` と `Parameter` が文脈で、元の `Utf8Error` は変種の中と `source` から読める。
+`valid_up_to` は各文字列内のバイト位置、`error_len == None` は未完の UTF-8 である。
+元の不正なバイトは診断へ残さない。アプリとヘルパーの版を照合し、自動再送や文字列の置換で隠さない。
+実ソケットの全経路は `cargo test -q -p echode-sandbox --lib control::text_tests`、
+公開操作は `session::operations_tests::parameter_operation_retains_invalid_utf8_from_the_helper` で切り分ける。
+制御ソケットの fuzz の種も同じ入口を通す（[ADR 0312](../decisions/0312-typed-control-text-errors.md)）。
 
 ### 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
 

@@ -8,6 +8,54 @@ fn receive(helper: &mut Socket) -> (u64, ControlMessage) {
 }
 
 #[test]
+fn parameter_operation_retains_invalid_utf8_from_the_helper() {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    let (parent, mut raw) = UnixStream::pair().unwrap();
+    let control = PluginControl::new(Socket::from_owned(parent.into()).unwrap());
+    let mut helper = Socket::from_owned(raw.try_clone().unwrap().into()).unwrap();
+    let answer = std::thread::spawn(move || {
+        let (id, request) = receive(&mut helper);
+        assert!(matches!(request, ControlMessage::ParamsRequest));
+        let mut body = crate::params::write_infos(&[ParamInfo {
+            id: 7,
+            flags: 0,
+            name: "Gain".into(),
+            module: String::new(),
+            min: 0.0,
+            max: 1.0,
+            default: 0.5,
+            value: 0.25,
+            text: "ab_".into(),
+        }]);
+        *body.last_mut().unwrap() = 0xff;
+        // A raw Params (21) frame deliberately bypasses the typed sender.
+        let mut frame = (12 + body.len() as u32).to_le_bytes().to_vec();
+        frame.extend_from_slice(&21u32.to_le_bytes());
+        frame.extend_from_slice(&id.to_le_bytes());
+        frame.extend_from_slice(&body);
+        raw.write_all(&frame).unwrap();
+    });
+    let error = control.parameters().unwrap_err();
+    answer.join().unwrap();
+    let SessionError::Io(error) = error else {
+        panic!("invalid parameter text must remain a typed I/O cause: {error:?}");
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(error.to_string(), "parameter text is not UTF-8");
+    let cause = error
+        .get_ref()
+        .and_then(|error| error.downcast_ref::<crate::ControlTextError>())
+        .expect("the parameter operation must retain the control text error");
+    let crate::ControlTextError::Parameter(utf8) = cause else {
+        panic!("the cause must identify parameter text");
+    };
+    assert_eq!(utf8.valid_up_to(), 2);
+    assert_eq!(utf8.error_len(), Some(1));
+}
+
+#[test]
 fn public_control_operations_preserve_payloads_and_typed_replies() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);

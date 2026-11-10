@@ -4,6 +4,7 @@
 //! one file descriptor with `SCM_RIGHTS`. A body longer than 64 MiB is rejected
 //! so a corrupt peer cannot force an unbounded allocation.
 
+use crate::control_text::{ControlTextError, read_text};
 use crate::gui::{GuiReport, ParamRelay, read_relay, read_report, write_relay, write_report};
 use crate::params::{
     ParamChange, ParamInfo, ParamText, ParamValue, read_changes, read_infos, read_parsed,
@@ -484,10 +485,7 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
             ControlMessage::ParseParam { id, text }
         }
         PARAM_PARSED => ControlMessage::ParamParsed(read_parsed(body)?),
-        GUI_SHOW => ControlMessage::GuiShow(
-            String::from_utf8(body.to_vec())
-                .map_err(|_| io::Error::new(ErrorKind::InvalidData, "window title is not text"))?,
-        ),
+        GUI_SHOW => ControlMessage::GuiShow(read_text(body, ControlTextError::WindowTitle)?),
         GUI_SHOWN => ControlMessage::GuiShown(read_report(body)?),
         GUI_CLOSE if body.is_empty() => ControlMessage::GuiClose,
         GUI_CLOSED_REPLY if body.is_empty() => ControlMessage::GuiClosedReply,
@@ -955,3 +953,7 @@ mod tagged_tests;
 #[cfg(test)]
 #[path = "control_rights_tests.rs"]
 mod rights_tests;
+
+#[cfg(test)]
+#[path = "control_text_tests.rs"]
+mod text_tests;
