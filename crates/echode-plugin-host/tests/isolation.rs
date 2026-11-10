@@ -5,8 +5,9 @@ use echode_engine::IoWorkgroup;
 use echode_plugin_host::measure_in_process;
 use echode_realtime::{Event, NoteEvent, Target};
 use echode_sandbox::{
-    BlockProgress, Delivered, FanIn, PluginHost, PluginNotice, SessionError, SessionLayout,
-    SpawnOptions, WorkgroupHandoff, WorkgroupMembership, copy_workgroup_port, join_workgroup,
+    BlockProgress, Delivered, FanIn, LaunchFailure, LaunchFailureKind, PluginHost, PluginNotice,
+    Refusal, SessionError, SessionLayout, SpawnOptions, WorkgroupHandoff, WorkgroupMembership,
+    copy_workgroup_port, join_workgroup,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -594,6 +595,94 @@ fn a_midi_only_session_round_trips_events() {
         .expect("midi block");
     assert_eq!(count, 1);
     assert_eq!(decoded[0], event);
+}
+
+fn refused_launch(plugin: &Path, plugin_id: Option<&str>, fault: Option<&str>) -> SessionError {
+    match PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(plugin),
+        plugin_id,
+        fault,
+        workgroup: None,
+        layout: SessionLayout::stereo(),
+        fan_in: None,
+        sample_rate: 0,
+    }) {
+        Ok(_) => panic!("a refused launch succeeded"),
+        Err(error) => error,
+    }
+}
+
+fn launch_cause(error: &SessionError) -> &LaunchFailure {
+    let mut cause = error;
+    while let SessionError::Launch { error, .. } = cause {
+        cause = error;
+    }
+    let SessionError::Refused(Refusal::Launch(failure)) = cause else {
+        panic!("launch refusal lost its kind: {error:?}");
+    };
+    failure
+}
+
+// Exercise the real launch handshake, not an in-process loader or a text parser.
+#[test]
+fn launch_failures_keep_their_kinds_across_the_helper() {
+    let plugin = plugin_dylib();
+    for (plugin_id, fault, expected, diagnostic) in [
+        (
+            Some("dev.echode.not-present"),
+            None,
+            LaunchFailureKind::NoPlugin,
+            format!("{} does not contain a plugin", plugin.display()),
+        ),
+        (
+            None,
+            Some("generate"),
+            LaunchFailureKind::PluginNotFound,
+            "Specified plugin was not found".to_string(),
+        ),
+        (
+            None,
+            Some("activate"),
+            LaunchFailureKind::ActivationFailed,
+            "Unable to activate".to_string(),
+        ),
+    ] {
+        let error = refused_launch(&plugin, plugin_id, fault);
+        let failure = launch_cause(&error);
+        assert_eq!(failure.kind, expected);
+        assert_eq!(failure.to_string(), diagnostic);
+    }
+}
+
+#[test]
+fn launch_entry_failures_keep_errno_and_the_native_loader_diagnostic() {
+    // A regular file cannot have a child: no fixture or installed plugin is read.
+    let path = plugin_dylib().join("not-a-plugin");
+    let error = refused_launch(&path, None, None);
+    let failure = launch_cause(&error);
+    assert_eq!(
+        failure.kind,
+        LaunchFailureKind::EntryIo {
+            raw_os_error: Some(libc::ENOTDIR)
+        }
+    );
+    assert_eq!(
+        failure.to_string(),
+        std::io::Error::from_raw_os_error(libc::ENOTDIR).to_string()
+    );
+
+    // A text manifest exists but is not a dynamic library. Only the helper loads it.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let error = refused_launch(&path, None, None);
+    let failure = launch_cause(&error);
+    assert_eq!(failure.kind, LaunchFailureKind::Library);
+    assert!(
+        failure
+            .diagnostic
+            .starts_with("Failed to load plugin descriptor library:")
+    );
+    assert!(failure.diagnostic.contains(&path.display().to_string()));
 }
 
 #[test]

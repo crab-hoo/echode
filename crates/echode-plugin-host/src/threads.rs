@@ -1678,10 +1678,7 @@ fn reject_launch(socket: Option<&mut Socket>, error: &HostError) {
     let Some(socket) = socket else {
         return;
     };
-    let refusal = match error {
-        HostError::Plugin(failure) => Refusal::Plugin(*failure),
-        other => Refusal::Other(other.to_string()),
-    };
+    let refusal = crate::launch::launch_refusal(error);
     let _ = socket.send(&ControlMessage::PortsRejected(refusal));
 }
 

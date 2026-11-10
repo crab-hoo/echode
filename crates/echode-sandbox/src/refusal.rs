@@ -4,9 +4,10 @@
 //! payload. Busy, a timeout and a stop are kinds of their own, so the host can
 //! tell a request that never started from one whose outcome is unknown
 //! (ADR 0199). What the plugin lacks or refused is a kind too (ADR 0295).
-//! Only a launch failure in the loader's words, and the helper's own faults
-//! that its design rules out, keep text.
+//! Launch causes keep a typed kind and native metadata alongside the loader's
+//! diagnostic (ADR 0308). Only the helper's own remaining faults keep text.
 
+use crate::launch_failure::LaunchFailure;
 use std::io::{self, ErrorKind};
 
 /// What the helper was waiting for when it gave up.
@@ -36,8 +37,10 @@ pub enum Refusal {
     /// The plugin lacks what the request needs, or answered `false`. The
     /// request finished: nothing is pending.
     Plugin(PluginFailure),
-    /// Another reason, in the helper's words: the loader's text when the
-    /// plugin did not load or activate, or a helper fault its design rules out.
+    /// Loading or activating the plugin failed. The cause is separate from its
+    /// original diagnostic, which is only for display.
+    Launch(LaunchFailure),
+    /// A remaining helper fault or invalid request, in the helper's words.
     Other(String),
 }
 
@@ -159,6 +162,7 @@ impl std::fmt::Display for Refusal {
                 f.write_str("plugin stopped before parameters were applied")
             }
             Self::Plugin(failure) => write!(f, "{failure}"),
+            Self::Launch(failure) => write!(f, "{failure}"),
             Self::Other(reason) => f.write_str(reason),
         }
     }
@@ -176,6 +180,7 @@ const STOPPED_PARAMETERS: u8 = 6;
 /// Followed by the failure's code, then an audio port's side and index for
 /// the two port kinds.
 const PLUGIN: u8 = 7;
+const LAUNCH: u8 = 8;
 
 pub(crate) fn write_refusal(refusal: &Refusal) -> Vec<u8> {
     let (kind, payload): (u8, &[u8]) = match refusal {
@@ -188,6 +193,11 @@ pub(crate) fn write_refusal(refusal: &Refusal) -> Vec<u8> {
         }
         Refusal::Stopped(Pending::MainCall(call)) => return main_call(STOPPED_MAIN, *call),
         Refusal::Plugin(failure) => return plugin_failure(*failure),
+        Refusal::Launch(failure) => {
+            let mut body = vec![LAUNCH];
+            body.extend_from_slice(&failure.encode());
+            return body;
+        }
         Refusal::Other(reason) => (OTHER, reason.as_bytes()),
     };
     let mut body = Vec::with_capacity(1 + payload.len());
@@ -324,6 +334,9 @@ pub(crate) fn read_refusal(body: &[u8]) -> io::Result<Refusal> {
         PLUGIN => read_plugin_failure(payload)
             .map(Refusal::Plugin)
             .ok_or_else(|| invalid("plugin failure is malformed")),
+        LAUNCH => LaunchFailure::decode(payload)
+            .map(Refusal::Launch)
+            .ok_or_else(|| invalid("launch failure is malformed")),
         _ => Err(invalid("refusal has an unknown kind")),
     }
 }

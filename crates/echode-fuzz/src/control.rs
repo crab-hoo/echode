@@ -19,9 +19,9 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use echode_sandbox::{
-    AudioPort, ControlMessage, GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo,
-    ParamRelay, ParamText, ParamValue, Pending, PluginCommand, PluginFailure, Refusal,
-    SessionLayout, Socket,
+    AudioPort, ControlMessage, GuiReport, LaunchFailure, LaunchFailureKind, ParamChange,
+    ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText, ParamValue, Pending,
+    PluginCommand, PluginFailure, Refusal, SessionLayout, Socket,
 };
 
 use crate::bytes::Bytes;
@@ -200,7 +200,8 @@ fn enlarge_buffers(fd: i32) {
 }
 
 pub(crate) fn seeds() -> Vec<Vec<u8>> {
-    let messages = sample_messages();
+    let mut messages = sample_messages();
+    messages.extend(launch_failures());
     let mut seeds = Vec::new();
     let mut all = Vec::new();
     for (index, message) in messages.iter().enumerate() {
@@ -215,6 +216,31 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     stream.extend_from_slice(&encode_remap(7, SessionLayout::stereo()));
     seeds.push(seed(1, hello.len() as u16, &stream));
     seeds
+}
+
+fn launch_failures() -> impl Iterator<Item = ControlMessage> {
+    use LaunchFailureKind::*;
+    [
+        Library,
+        InvalidNulPath { position: u64::MAX },
+        EntryIo { raw_os_error: None },
+        EntryIo {
+            raw_os_error: Some(libc::EACCES),
+        },
+        IncompatibleClapVersion {
+            plugin: [u32::MAX, 0, 1],
+            host: [1, 2, 3],
+        },
+        InstantiationFailed,
+        ActivationFailed,
+    ]
+    .into_iter()
+    .map(|kind| {
+        ControlMessage::PortsRejected(Refusal::Launch(LaunchFailure {
+            kind,
+            diagnostic: "native loader diagnostic — 音".to_string(),
+        }))
+    })
 }
 
 fn seed(rights: u8, split: u16, stream: &[u8]) -> Vec<u8> {

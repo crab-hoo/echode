@@ -58,7 +58,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   ヘルパーの拒否は種類付きの `Refusal` で送る。busy（始めていない）と、ヘルパー自身の時間切れ・停止（結果不明）と、ほかの拒否（ヘルパーの文）を型で分ける。
   ホストではどれも `SessionError::Refused` になる（[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)）。
   プラグイン自身の失敗（状態・窓・ポートの拡張がない、`false` で断った、ポートの記述が使えない）は `Refusal::Plugin(PluginFailure)` で、ヘルパーの内部と通信路で同じ型である。
-  文のまま送るのは、ローダーの文の起動の失敗と、設計上起きない食い違いだけである（[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
+  起動の失敗は `Refusal::Launch(LaunchFailure)` で、原因の種類・errno・NUL の位置・CLAP の版と元の診断文を分けて送る。
+  clack の型への対応はヘルパー側だけに置き、本体はローダーへ依存せず、文面から原因を分類しない（[ADR 0308](../decisions/0308-typed-helper-launch-failures.md)）。
+  `Refusal::Other` に残るのは、無効なパラメーター ID と、ヘルパー自身の手順の食い違いである。
 
 - 制御専用の `PluginControl` は、`session_operations.rs` に型付きの操作と通信の実装を直接持つ。
   `ControlState` は要求番号・通知・保存の管理を共用し、ホスト経由の保存・復元の別経路は持たない。

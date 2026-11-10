@@ -26,6 +26,7 @@ mod control;
 mod descriptors;
 mod error;
 mod gui;
+mod launch_failure;
 mod params;
 mod refusal;
 mod region;
@@ -40,6 +41,7 @@ pub use error::{
     ProtocolError, SessionError, SpawnError, SpawnStep, WorkgroupCall, WorkgroupError,
 };
 pub use gui::{GuiReport, ParamEvent, ParamEventKind, ParamRelay, PluginActivity};
+pub use launch_failure::{LaunchFailure, LaunchFailureKind};
 pub use params::{
     PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,
     PARAM_STEPPED, ParamChange, ParamInfo, ParamText, ParamValue,

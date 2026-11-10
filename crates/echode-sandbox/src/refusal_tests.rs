@@ -116,7 +116,11 @@ fn malformed_refusals_are_invalid_data() {
         short,
         vec![STOPPED_PARAMETERS, 1],
         vec![OTHER, 0xff],
-        vec![PLUGIN + 1],
+        vec![LAUNCH + 1],
+        vec![LAUNCH],
+        vec![LAUNCH, 27],
+        vec![LAUNCH, 0, 0xff],
+        vec![LAUNCH, 2, 2],
         // A plugin failure needs its code; a port kind needs its port.
         vec![PLUGIN],
         vec![PLUGIN, 18],
