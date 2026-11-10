@@ -359,7 +359,7 @@ MySong.echode/
 保管庫・復号・ピークの失敗は `error.rs` の `PackageError` の変種で返す（[ADR 0296](../decisions/0296-typed-storage-errors.md)）。
 `Io` は元の `io::Error` と、従来表示していたパスを持ち、`Audio(MediaError)` は PCM 検証・取消・容量・AudioToolbox の状態コードとプロパティ番号を分ける。
 `MediaIndex` は元の JSON エラーを持つ。`Error::source` で原因を読め、表示の文は変えない。
-`Message` は未移行の文書・ジャーナル・設定・間引きなどに残し、crate 全体が型付け済みとは扱わない。
+未移行なのは非既定の `spike` feature の `format.rs`・`store.rs` であり、crate 全体が型付け済みとは扱わない。
 
 ### 6.4 保存とコミット
 
@@ -389,6 +389,9 @@ MySong.echode/
   （[ADR 0046](../decisions/0046-history-thin.md)）。
   `gix-pack` は `streaming-input` 機能を入れるための直接の依存で、gix が解決する版と完全一致で固定する
   （[ADR 0270](../decisions/0270-gix-0-90-and-github-advisories.md)）
+  間引きとバンドルの失敗も `PackageError` を返す。Git・パック・ハッシュは操作と元の `gix::Error`、I/O は元の errno を保持する。
+  残す点や参照の欠落・シンボリック参照・先端の JSON の欠落・UTF-8 は `ThinningError` で分ける。
+  オブジェクト変換の `ConvertObject` は従来の表示文を保ち、旧経路の `ObjectKind` の Debug 表示とは分ける（[ADR 0300](../decisions/0300-typed-thinning-errors.md)）。
 
 ### 6.5〜6.7 要約・履歴 UI・オルタネイト
 

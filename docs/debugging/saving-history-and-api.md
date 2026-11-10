@@ -303,6 +303,16 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 設定の書込みの拒否は `PackageError::Settings`、読込みの不正な設定を既定値へ戻す挙動は従来どおりである。
 `tests/document_errors.rs` と `host_tests.rs`、既存の復旧・設定の回帰で切り分ける（[ADR 0299](../decisions/0299-typed-document-journal-and-settings-errors.md)）。
 
+### 間引き・バンドルの失敗の原因が分からない
+
+`PackageError::Thinning` は残す点・参照・先端の `project.json` の欠落、シンボリックな自動保存参照、UTF-8 の拒否を分ける。
+`Git` は `GitOperation` と元の `gix::Error` を持ち、コミットの復号・参照の列挙・パックの作成・ハッシュも操作で分かれる。
+`Error::source` で I/O や UTF-8 の原因をたどり、表示文から判定しない。
+Git の内側の型は合成フレームでなく、`gix::Error::downcast_any_ref::<io::Error>()` で読む。
+`objects/pack` がファイルになっている場合は、パックの書込みでなく、最初の `FindObject` の Git エラーになることがある。
+元の参照とオブジェクトを保全し、原因の I/O を調べる。失敗時の参照の巻戻しを仮定しない。
+`tests/thin_errors.rs` は文面・原因・失敗前の原本を照合し、`thin.rs` の単体テストは参照なしを区別する（[ADR 0300](../decisions/0300-typed-thinning-errors.md)）。
+
 ### 起動直後から新規作成・開くが無効で「変更を保存中」のまま
 
 前回プロジェクトの自動復元と `ProjectController.busy` を確認する。

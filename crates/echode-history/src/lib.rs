@@ -36,7 +36,7 @@ pub use document::{
 pub use echode_actions::HistoryUsage;
 pub use error::{
     AutosaveError, DocumentError, GitOperation, JournalError, MediaError, MigrationError,
-    PackageKind, PackageValidationError, SettingsError,
+    PackageKind, PackageValidationError, SettingsError, ThinningError,
 };
 pub use export::freeze_export;
 pub use export_settings::{read_export_settings, write_export_settings};

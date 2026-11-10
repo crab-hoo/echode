@@ -134,6 +134,9 @@
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`check_real_hal.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
+間引き・パック・バンドルは `echode-history/src/thin.rs`、意味上の拒否と UTF-8 の原因は `error_thin.rs` に置く。
+`tests/thin_errors.rs` で公開入口から原因・文面・原本の保持を、`tests/thin.rs` で先端の保持と間引き後の読込みを検査する。
+
 ### Phase 0 の検証コード
 
 Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`store.rs`）は、非既定の `spike` feature 専用である。

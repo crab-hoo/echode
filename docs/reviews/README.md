@@ -44,7 +44,8 @@
   XCA-11 は共通の運用の知識を各手順へ移し、XCA-12 は確認待ちを [ユーザー確認の一覧](../user-checks.md) へ集めた。
   XCA-16 は保存の不確定の判定を型にし（[ADR 0234](../decisions/0234-typed-journal-durability.md)）、`echode-audio-io`・`echode-document`・`echode-sandbox`・`echode-engine`・`echode-plugin-host` の境界のエラーを列挙型にした（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)、[ADR 0292](../decisions/0292-typed-document-errors.md)、[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)、[ADR 0294](../decisions/0294-typed-engine-errors.md)、[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
   `echode-history` は保管庫・復号・ピーク（[ADR 0296](../decisions/0296-typed-storage-errors.md)）と、製品の Git・自動保存を型にした（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。
-  スキーマ・パッケージ検証も型にした（[ADR 0298](../decisions/0298-typed-package-validation-errors.md)）。文書・ジャーナル・設定・間引き・非既定の履歴スパイクは未移行である。
+  スキーマ・パッケージ検証（[ADR 0298](../decisions/0298-typed-package-validation-errors.md)）、文書・ジャーナル・設定（[ADR 0299](../decisions/0299-typed-document-journal-and-settings-errors.md)）も型にした。
+  間引き・パック・バンドルは [ADR 0300](../decisions/0300-typed-thinning-errors.md)。非既定の履歴スパイクは未移行である。
   XCA-13 はコールバックのトラックごとの全体の走査をなくした（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
   XCA-14 はコールバックの panic を捕まえて理由を記録へ残し（[ADR 0238](../decisions/0238-audio-callback-panics.md)）、音声経路の crate で添字などを拒否した（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）。
   証拠は [保存の耐久性の追跡](../evidence/2026-11-02-durability-trace.md) に置く。

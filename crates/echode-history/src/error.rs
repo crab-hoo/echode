@@ -12,6 +12,10 @@ pub use document::{DocumentError, JournalError, SettingsError};
 mod validation;
 pub use validation::{MigrationError, PackageKind, PackageValidationError};
 
+#[path = "error_thin.rs"]
+mod thin;
+pub use thin::ThinningError;
+
 /// A package or journal could not be read or written.
 #[derive(Debug)]
 pub enum PackageError {
@@ -32,6 +36,7 @@ pub enum PackageError {
     Document(DocumentError),
     Journal(JournalError),
     Settings(SettingsError),
+    Thinning(ThinningError),
     ExportSnapshot(echode_model::InvariantError),
     MissingDirectory(PathBuf),
     MissingWorkingDirectory,
@@ -103,6 +108,7 @@ impl fmt::Display for PackageError {
             Self::Document(error) => write!(f, "{error}"),
             Self::Journal(error) => write!(f, "{error}"),
             Self::Settings(error) => write!(f, "{error}"),
+            Self::Thinning(error) => write!(f, "{error}"),
             Self::ExportSnapshot(error) => write!(f, "{error}"),
             Self::MissingDirectory(path) => write!(f, "{} is missing", path.display()),
             Self::MissingWorkingDirectory => {
@@ -140,6 +146,7 @@ impl std::error::Error for PackageError {
             Self::Document(error) => Some(error),
             Self::Journal(error) => Some(error),
             Self::Settings(error) => Some(error),
+            Self::Thinning(error) => Some(error),
             Self::ExportSnapshot(error) => Some(error),
             Self::RevisionText(error) => Some(error),
             _ => None,
@@ -181,6 +188,14 @@ pub enum GitOperation {
     FindReference,
     UpdateReference,
     ReadCommitTime,
+    DecodeCommit,
+    /// Object conversion with Display output; ObjectKind retains legacy Debug output.
+    ConvertObject,
+    References,
+    IterateReferences,
+    ReadReference,
+    WritePack,
+    HashPack,
 }
 
 /// Autosave worker lifetime and internal incremental-save contract failures.
