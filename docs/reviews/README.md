@@ -52,6 +52,7 @@
   API・MCP の通信と RPC の文書の原因も、応答の生成直前まで型で保持する（[ADR 0304](../decisions/0304-typed-api-errors.md)）。
   CLI も入力・I/O の操作とパス、元の保存・API・再生の原因を表示まで保持する（[ADR 0305](../decisions/0305-typed-cli-errors.md)）。
   アクションの引数は入力値付きの拒否を返し、Serde の文面の分類をなくした（[ADR 0306](../decisions/0306-typed-action-parameters.md)）。
+  文書ワーカーの単一編集も型付きのテキスト入口を使い、構文・形と意味の原因を分けて保持する（[ADR 0307](../decisions/0307-typed-document-command-decoding.md)）。
   XCA-13 はコールバックのトラックごとの全体の走査をなくした（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
   XCA-14 はコールバックの panic を捕まえて理由を記録へ残し（[ADR 0238](../decisions/0238-audio-callback-panics.md)）、音声経路の crate で添字などを拒否した（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）。
   証拠は [保存の耐久性の追跡](../evidence/2026-11-02-durability-trace.md) に置く。

@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 11 crate は列挙型（ADR 0291〜0306）。引数の文の解析も除去。次は文書の単一編集の Serde 互換入口 |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 11 crate は列挙型（ADR 0291〜0307）。文書の単一編集も型を保持。次はヘルパー起動時の文字列の拒否 |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -136,6 +136,9 @@
 - 2026-11-10（ADR 0306）: アクションの登録簿から wire の形とモデルの検証への変換を生成し、引数の意味の拒否を `ParameterError` で返す。
   単一 RPC・一括編集は原因と入力を返信まで保つ。未知の種別・余分なキーの文による誤分類と、ID の途中の切詰めを修正した。
   `echode-actions` 全体を再導入の検査に登録した。次は文書の単一編集で、Serde 互換入口を通って意味の原因が文へ戻る境界である。
+- 2026-11-10（ADR 0307）: 文書の単一編集を `Command` の `FromStr` へ移し、ID・拍子・テンポの原因を `DocumentError::Parameters` で保持する。
+  直接 wire を読み、重複フィールド・JSON の位置と診断、拒否後の Redo とジャーナルを維持する。
+  次はヘルパー起動時の `Refusal::Other` への文字列化である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

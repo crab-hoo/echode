@@ -128,6 +128,16 @@ macro_rules! define_actions {
             }
         }
 
+        impl std::str::FromStr for Command {
+            type Err = ParameterError;
+
+            /// Decode JSON text directly, preserving syntax locations and duplicate-field checks.
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                let wire: WireCommand = serde_json::from_str(text).map_err(ParameterError::Json)?;
+                wire.try_into()
+            }
+        }
+
         /// A committed edit. Replaying these actions rebuilds the same project.
         #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
         #[serde(tag = "type", deny_unknown_fields)]

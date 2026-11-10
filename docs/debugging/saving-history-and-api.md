@@ -53,7 +53,9 @@ MCP のリソースは `ProtocolMessage::Session`、ツールは最終の `struc
 未知の種別や余分なキーに拒否の文が含まれても `Json` で、一般の引数不一致を表示する。ID の途中の ` at line` は入力そのもので、切り詰めない。
 形を検証した後、登録簿の項目順で意味を検証する。複数の不正がある場合に JSON キー順の先頭を期待しない。
 `rpc_tests.rs::parameter_diagnostics_do_not_classify_user_text_as_a_cause` が単一・一括の公開応答を、履歴の `tests/document_errors.rs` が型と取消後の状態を照合する。
-Serde 互換入口は意味の原因を文へ変えるので、型を調べる呼出側は `from_value` を使う（[ADR 0306](../decisions/0306-typed-action-parameters.md)）。
+文書の単一編集は `Command` の `FromStr` を使う。`DocumentError::Parameters` の原因と、`Malformed` の元の JSON の構文・形の拒否を分ける。
+`echode-document/tests/edit_errors.rs` が入力・診断と、拒否後の Redo・ジャーナル・再オープンを照合する。
+Serde 互換入口は意味の原因を文へ変えるので、型を調べる呼出側は `from_value` か `FromStr` を使う（[ADR 0306](../decisions/0306-typed-action-parameters.md)、[ADR 0307](../decisions/0307-typed-document-command-decoding.md)）。
 
 ### API / MCP の呼出しが返らず、後続クライアントも止まる
 

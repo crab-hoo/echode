@@ -398,7 +398,7 @@ fn apply_edit(host: &DocumentHost, bytes: &[u8]) -> Result<(), DocumentError> {
         host.apply(actions)?;
         return Ok(());
     }
-    let command = serde_json::from_str::<Command>(text).map_err(DocumentError::Malformed)?;
+    let command = text.parse::<Command>()?;
     host.perform(command)?;
     Ok(())
 }

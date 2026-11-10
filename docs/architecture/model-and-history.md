@@ -298,9 +298,11 @@ Phase 2 で配置ごとの非破壊デバイスチェインを追加する（[AD
 モデルを変えるアクションは Rust 側（`echode-actions`）、UI だけのアクションは Swift 側に実装し、同じ登録簿に載せる。
 
 JSON の要求は登録簿が生成する内部の wire 型で形を読み、ID・拍子・テンポは既存のモデルの構築子で意味を検証する。
-`Command::from_value` の `ParameterError` は JSON の原因か入力値付きの拒否を持ち、RPC・一括編集の応答まで型を保つ。
+`Command::from_value` と `FromStr` の `ParameterError` は JSON の原因か入力値付きの拒否を持ち、RPC・文書の単一／一括編集の完了まで型を保つ。
 Serde の文面を分類せず、形の後に登録簿の項目順で意味を検証する（[ADR 0306](../decisions/0306-typed-action-parameters.md)）。
 `Command` の Serde 互換入口も同じ変換を使うが、Serde のエラーへ返す時だけ文へ変える。
+文書の単一編集は `FromStr` で wire を直接読み、重複フィールドの拒否と JSON の位置情報を維持する。
+意味の拒否は `DocumentError::Parameters`、構文・形は元の JSON エラーを持つ `Malformed` として返す（[ADR 0307](../decisions/0307-typed-document-command-decoding.md)）。
 
 - **トランザクションと Undo**: 操作前のスナップショットを積み、未変更トラックは `Arc` で共有する。
   連続ドラッグは 1 つの Undo 単位にまとめる（[ADR 0008](../decisions/0008-actions-undo-journal.md)）。

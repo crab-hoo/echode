@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+use echode_actions::ParameterError;
 use echode_audio_io::{AudioError, SessionError};
 use echode_history::{HostError, PackageError};
 use serde::Serialize;
@@ -16,6 +17,8 @@ pub enum DocumentError {
     Rejected(Rejected),
     /// The request's JSON did not parse as its operation. Nothing changed.
     Malformed(serde_json::Error),
+    /// A single edit's values failed model command validation. Nothing changed.
+    Parameters(ParameterError),
     /// The history refused or failed an edit, Undo, Redo, restore, recovery
     /// consent or the revision list.
     History(HostError),
@@ -76,6 +79,7 @@ impl fmt::Display for DocumentError {
         match self {
             Self::Rejected(rejected) => write!(f, "{rejected}"),
             Self::Malformed(error) | Self::Encode(error) => write!(f, "{error}"),
+            Self::Parameters(error) => write!(f, "{error}"),
             Self::History(error) => write!(f, "{error}"),
             Self::Package(error) => write!(f, "{error}"),
             Self::Audio(error) => write!(f, "{error}"),
@@ -111,6 +115,7 @@ impl std::error::Error for DocumentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Malformed(error) | Self::Encode(error) => Some(error),
+            Self::Parameters(error) => Some(error),
             Self::History(error) => Some(error),
             Self::Package(error) => Some(error),
             Self::Audio(error) => Some(error),
@@ -126,6 +131,15 @@ impl std::error::Error for DocumentError {
 impl From<Rejected> for DocumentError {
     fn from(rejected: Rejected) -> Self {
         Self::Rejected(rejected)
+    }
+}
+
+impl From<ParameterError> for DocumentError {
+    fn from(error: ParameterError) -> Self {
+        match error {
+            ParameterError::Json(error) => Self::Malformed(error),
+            error => Self::Parameters(error),
+        }
     }
 }
 

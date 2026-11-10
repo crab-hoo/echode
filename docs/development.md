@@ -382,6 +382,10 @@ JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バ�
 目録の Rust の境界は `crates/echode-ffi/src/catalog.rs` の `CatalogError` で、未検出のヘルパーのパスと元の目録・JSON の原因を持つ。
 回帰は `catalog_tests.rs` が子プロセスの環境・走査先を隔離し、同じ入口と C ABI の数値・JSON を照合する（[ADR 0302](decisions/0302-typed-ffi-catalog-errors.md)）。
 
+文書の単一編集は `worker.rs::apply_edit` から `Command` の `FromStr` を使う。
+`error.rs` は意味の拒否を `DocumentError::Parameters`、JSON の構文・形を元の原因付きの `Malformed` へ分ける。
+`crates/echode-document/tests/edit_errors.rs` は製品ワーカーで原因・入力・診断・拒否後の履歴と再オープンを検査する（[ADR 0307](decisions/0307-typed-document-command-decoding.md)）。
+
 フォルダ表示の製品 ABI は `crates/echode-ffi/src/projection.rs`、Swift の保持と階層取得は
 `swift/EchodeBridge/Sources/EchodeBridge/TrackHierarchy.swift` に置く。
 ヘッダの開閉と表示行の共有は `ArrangePaneView.swift`、追加位置の保持は `TrackInsertion.swift` を使う。
