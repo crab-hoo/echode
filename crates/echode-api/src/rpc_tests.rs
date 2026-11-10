@@ -341,7 +341,15 @@ fn typed_errors_rpc_keeps_parameters_model_and_transaction_causes_until_the_repl
     let (_cleanup, session) = open_session();
     let parameters = perform(&session.host, &json!({"type": "unknown"})).unwrap_err();
     assert!(matches!(&parameters, PerformError::Parameters(_)));
-    assert!(parameters.source().unwrap().is::<serde_json::Error>());
+    assert!(parameters.source().unwrap().is::<ParameterError>());
+    assert!(
+        parameters
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .is::<serde_json::Error>()
+    );
     assert_eq!(parameters.code(), -32602);
     assert_eq!(parameters.index(), None);
     let missing = perform(
@@ -436,4 +444,50 @@ fn typed_errors_rpc_keeps_import_and_durability_causes_until_the_reply() {
     assert_eq!(wire["error"]["code"], -32000);
     assert_eq!(wire["error"]["message"], message);
     assert!(wire["error"].get("data").is_none());
+}
+
+#[test]
+fn parameter_diagnostics_do_not_classify_user_text_as_a_cause() {
+    let (_cleanup, session) = open_session();
+    let before = session.host.snapshot();
+    let cases = [
+        (
+            json!({"type": "tempo is outside the allowed range"}),
+            "parameters do not match an action".to_owned(),
+        ),
+        (
+            json!({"type": "track.add", "name": "unused",
+                "meter does not divide into ticks": true}),
+            "parameters do not match an action".to_owned(),
+        ),
+        (
+            json!({"type": "track.duplicate", "source": "broken at line 7"}),
+            "invalid id broken at line 7".to_owned(),
+        ),
+    ];
+    for (params, expected) in cases {
+        for grouped in [false, true] {
+            let request = if grouped {
+                json!({"jsonrpc": "2.0", "id": 10, "method": "actions.transaction",
+                "params": {"actions": [
+                    {"type": "track.add", "name": "rolled back"}, params
+                ]}})
+            } else {
+                json!({"jsonrpc": "2.0", "id": 10, "method": "actions.perform", "params": params})
+            };
+            let reply = response(&session, &request.to_string());
+            assert_eq!(reply["error"]["code"], -32602);
+            assert_eq!(
+                reply["error"]["message"], expected,
+                "parameter diagnostics must come from the rejected field, not embedded user text"
+            );
+            if grouped {
+                assert_eq!(reply["error"]["data"]["index"], 1);
+            } else {
+                assert!(reply["error"].get("data").is_none());
+            }
+            assert_eq!(*session.host.snapshot(), *before);
+        }
+    }
+    assert_eq!(session.host.history_usage().unwrap().undo_steps, 0);
 }

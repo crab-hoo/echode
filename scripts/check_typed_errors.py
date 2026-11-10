@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Crates whose boundary errors are enums. Add a crate when its pass is done.
 TYPED_CRATES = (
     'echode-api',
+    'echode-actions',
     'echode-audio-io',
     'echode-cli',
     'echode-document',

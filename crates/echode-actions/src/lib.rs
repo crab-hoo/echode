@@ -8,8 +8,10 @@
 
 mod action;
 mod journal;
+mod parameters;
 mod session;
 
-pub use action::{Action, ActionError, ActionSpec, Command, catalog, parameter_message};
+pub use action::{Action, ActionError, ActionSpec, Command, catalog};
 pub use journal::{JournalEntry, JournalLine, JournalOp, decode, decode_line, encode, encode_line};
+pub use parameters::ParameterError;
 pub use session::{HistoryUsage, ParkedRedo, Session, Transaction, replay};

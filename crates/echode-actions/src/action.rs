@@ -11,6 +11,8 @@ use echode_model::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::parameters::{Parameter, ParameterError};
+
 /// Names shown in the command palette and handed to the on-device model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActionSpec {
@@ -75,7 +77,7 @@ macro_rules! define_actions {
     )*) => {
         /// What a caller asks for. Created ids are filled in when the command is performed.
         #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-        #[serde(tag = "type", deny_unknown_fields)]
+        #[serde(tag = "type", deny_unknown_fields, try_from = "WireCommand")]
         pub enum Command {
             $(
                 #[serde(rename = $id)]
@@ -86,6 +88,44 @@ macro_rules! define_actions {
                     )*
                 },
             )*
+        }
+
+        // Both the typed JSON entry and Serde compatibility use this registry.
+        #[derive(Deserialize)]
+        #[serde(tag = "type", deny_unknown_fields)]
+        enum WireCommand {
+            $(
+                #[serde(rename = $id)]
+                $variant {
+                    $(
+                        $(#[$cattr])*
+                        $cfield: <$ctype as Parameter>::Wire,
+                    )*
+                },
+            )*
+        }
+
+        impl TryFrom<WireCommand> for Command {
+            type Error = ParameterError;
+
+            fn try_from(wire: WireCommand) -> Result<Self, Self::Error> {
+                match wire {
+                    $(
+                        WireCommand::$variant { $($cfield),* } => Ok(Self::$variant {
+                            $($cfield: <$ctype as Parameter>::decode($cfield, stringify!($cfield))?,)*
+                        }),
+                    )*
+                }
+            }
+        }
+
+        impl Command {
+            /// Decode a request without erasing value failures into Serde text.
+            /// Shape is checked first, then fields in registry declaration order.
+            pub fn from_value(value: serde_json::Value) -> Result<Self, ParameterError> {
+                let wire: WireCommand = serde_json::from_value(value).map_err(ParameterError::Json)?;
+                wire.try_into()
+            }
         }
 
         /// A committed edit. Replaying these actions rebuilds the same project.
@@ -999,23 +1039,4 @@ impl std::error::Error for ActionError {
             }
         }
     }
-}
-
-/// The sentence a client sees when a command does not deserialize.
-pub fn parameter_message(error: &serde_json::Error) -> String {
-    let message = error.to_string();
-    for sentence in [
-        "meter does not divide into ticks",
-        "tempo is outside the allowed range",
-    ] {
-        if message.contains(sentence) {
-            return sentence.to_string();
-        }
-    }
-    if let Some(start) = message.find("invalid id ") {
-        let rest = &message[start..];
-        let end = rest.find(" at line").unwrap_or(rest.len());
-        return rest[..end].to_string();
-    }
-    "parameters do not match an action".to_string()
 }

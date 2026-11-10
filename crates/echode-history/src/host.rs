@@ -860,7 +860,7 @@ fn apply_transaction(
                 });
                 return Err(ActionError::CorruptJournal);
             }
-            let command = match serde_json::from_value(value) {
+            let command = match Command::from_value(value) {
                 Ok(command) => command,
                 Err(error) => {
                     failure = Some(HostError::Element {

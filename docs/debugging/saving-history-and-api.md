@@ -47,6 +47,14 @@ MCP のリソースは `ProtocolMessage::Session`、ツールは最終の `struc
 `tests/typed_errors.rs`、`rpc_tests.rs`、`mcp_tests.rs` が原因・文面・拒否後の状態を照合する。
 送信失敗が確定済みの編集を含む可能性は変わらない。原因が I/O でも自動で再送しない。
 
+### 引数の拒否が入力の文を含むだけで拍子・テンポ・ID のエラーになる
+
+`Command::from_value` の `ParameterError` を調べる。`Json` は元の Serde の原因、`InvalidId` は項目名と入力、拍子・テンポは元の分子・分母を持つ。
+未知の種別や余分なキーに拒否の文が含まれても `Json` で、一般の引数不一致を表示する。ID の途中の ` at line` は入力そのもので、切り詰めない。
+形を検証した後、登録簿の項目順で意味を検証する。複数の不正がある場合に JSON キー順の先頭を期待しない。
+`rpc_tests.rs::parameter_diagnostics_do_not_classify_user_text_as_a_cause` が単一・一括の公開応答を、履歴の `tests/document_errors.rs` が型と取消後の状態を照合する。
+Serde 互換入口は意味の原因を文へ変えるので、型を調べる呼出側は `from_value` を使う（[ADR 0306](../decisions/0306-typed-action-parameters.md)）。
+
 ### API / MCP の呼出しが返らず、後続クライアントも止まる
 
 ソケットの読込み待ちだけでなく、応答の書込み待ちを確認する。
@@ -306,7 +314,7 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 
 `HostError::Element` は失敗した添字と `ElementError` を持つ。
 `is_parameters()` が真なら RPC の `-32602`、それ以外は従来どおり `-32000` にする。表示文から判定しない。
-`ReferenceError` は参照の形・範囲・フィールドを分け、`Parameters` は元の JSON エラーを持つ。
+`ReferenceError` は参照の形・範囲・フィールドを分け、`Parameters` は `ParameterError` の JSON・ID・拍子・テンポの原因を持つ。
 `Action`・`Package` から `Error::source` をたどると、モデル・I/O・復号の原因を読める。
 存在しない音声の復号は I/O とは限らず、`MediaError::Open(OSStatus)` になるので errno と取り違えない。
 `PackageError::Document` はロックの競合・ワーカーの終了・復旧同意を分け、同意待ちは通知した `RecoveryNotice` そのものを保持する。

@@ -1,6 +1,6 @@
 //! One JSON-RPC request per line.
 
-use echode_actions::{Command, catalog, parameter_message};
+use echode_actions::{Command, ParameterError, catalog};
 use echode_history::{DocumentHost, HostError};
 use echode_model::Project;
 use serde_json::{Value, json};
@@ -106,7 +106,7 @@ fn summary(project: &Project) -> Value {
 
 #[derive(Debug)]
 enum PerformError {
-    Parameters(serde_json::Error),
+    Parameters(ParameterError),
     TransactionShape,
     Host(HostError),
     Serialize(serde_json::Error),
@@ -132,7 +132,7 @@ impl PerformError {
 impl std::fmt::Display for PerformError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Parameters(error) => f.write_str(&parameter_message(error)),
+            Self::Parameters(error) => write!(f, "{error}"),
             Self::TransactionShape => f.write_str("parameters do not match a transaction"),
             Self::Host(error) => write!(f, "{error}"),
             Self::Serialize(error) => write!(f, "{error}"),
@@ -143,7 +143,8 @@ impl std::fmt::Display for PerformError {
 impl std::error::Error for PerformError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Parameters(error) | Self::Serialize(error) => Some(error),
+            Self::Parameters(error) => Some(error),
+            Self::Serialize(error) => Some(error),
             Self::Host(error) => Some(error),
             Self::TransactionShape => None,
         }
@@ -163,8 +164,7 @@ fn outcome(id: &Value, result: Result<Value, PerformError>) -> String {
 }
 
 fn perform(host: &DocumentHost, params: &Value) -> Result<Value, PerformError> {
-    let command: Command =
-        serde_json::from_value(params.clone()).map_err(PerformError::Parameters)?;
+    let command = Command::from_value(params.clone()).map_err(PerformError::Parameters)?;
     match host.perform(command) {
         Ok(action) => Ok(serde_json::to_value(action).expect("a committed action is json")),
         Err(error) => Err(PerformError::Host(error)),

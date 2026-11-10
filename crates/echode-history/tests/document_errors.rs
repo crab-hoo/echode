@@ -132,7 +132,7 @@ fn transaction_references_and_parameter_failures_keep_kind_index_and_text() {
         panic!("{error:?}")
     };
     assert!(cause::<serde_json::Error>(&error).is_some());
-    assert_eq!(error.to_string(), echode_actions::parameter_message(json));
+    assert_eq!(error.to_string(), json.to_string());
     assert_eq!(*host.snapshot(), *before);
 
     let error = host
@@ -149,6 +149,78 @@ fn transaction_references_and_parameter_failures_keep_kind_index_and_text() {
     ));
     assert!(cause::<echode_model::ModelError>(&error).is_some());
     assert_eq!(host.history_usage().unwrap().undo_steps, 0);
+}
+
+#[test]
+fn transaction_parameter_values_keep_types_and_preserve_redo_and_journal() {
+    use echode_actions::{Command, ParameterError};
+    use echode_history::{ElementError, HostError};
+
+    let fixture = Fixture::new();
+    let host = DocumentHost::open(&fixture.0).unwrap();
+    host.perform(Command::AddTrack {
+        name: "kept".into(),
+    })
+    .unwrap();
+    host.undo().unwrap();
+    let before = host.snapshot();
+    let journal = fs::read(fixture.0.join("journal.jsonl")).unwrap();
+    let cases = [
+        json!({"type": "track.duplicate", "source": "broken at line 7"}),
+        json!({"type": "project.set_meter", "numerator": 1, "denominator": 27}),
+        json!({"type": "project.set_tempo", "at": 0, "numerator": 120, "denominator": 0}),
+    ];
+    for (case, value) in cases.into_iter().enumerate() {
+        let error = host
+            .apply(vec![
+                json!({"type": "track.add", "name": "rolled back"}),
+                value,
+            ])
+            .unwrap_err();
+        let HostError::Element {
+            index: 1,
+            error: ElementError::Parameters(ref parameter),
+        } = error
+        else {
+            panic!("{error:?}")
+        };
+        assert!(
+            match (case, parameter) {
+                (
+                    0,
+                    ParameterError::InvalidId {
+                        field: "source",
+                        value,
+                    },
+                ) => value == "broken at line 7",
+                (
+                    1,
+                    ParameterError::InvalidMeter {
+                        numerator: 1,
+                        denominator: 27,
+                    },
+                ) => true,
+                (
+                    2,
+                    ParameterError::InvalidTempo {
+                        numerator: 120,
+                        denominator: 0,
+                    },
+                ) => true,
+                _ => false,
+            },
+            "{error:?}"
+        );
+        assert!(cause::<ParameterError>(&error).is_some());
+        assert!(cause::<serde_json::Error>(&error).is_none());
+        assert_eq!(*host.snapshot(), *before);
+        assert_eq!(fs::read(fixture.0.join("journal.jsonl")).unwrap(), journal);
+        let usage = host.history_usage().unwrap();
+        assert_eq!(usage.undo_steps, 0);
+        assert_eq!(usage.redo_steps, 1);
+    }
+    host.redo().unwrap();
+    assert_eq!(host.snapshot().tracks()[0].name, "kept");
 }
 
 #[test]

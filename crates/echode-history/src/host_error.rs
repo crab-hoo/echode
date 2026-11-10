@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use echode_actions::{ActionError, parameter_message};
+use echode_actions::{ActionError, ParameterError};
 
 use crate::PackageError;
 
@@ -47,7 +47,7 @@ impl HostError {
 #[derive(Debug)]
 pub enum ElementError {
     Reference(ReferenceError),
-    Parameters(serde_json::Error),
+    Parameters(ParameterError),
     Package(PackageError),
     Action(ActionError),
 }
@@ -62,7 +62,7 @@ impl fmt::Display for ElementError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Reference(error) => write!(f, "{error}"),
-            Self::Parameters(error) => f.write_str(&parameter_message(error)),
+            Self::Parameters(error) => write!(f, "{error}"),
             Self::Package(error) => write!(f, "{error}"),
             Self::Action(error) => write!(f, "{error}"),
         }

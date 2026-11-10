@@ -163,6 +163,13 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 `invariants_error_tests.rs` は既存の不変条件テストの fixture を共有し、組立て・並びの型と `Error::source` を照合する。
 パッケージと復旧を通る原因は履歴の `tests/package_errors.rs`・`tests/audit_recovery.rs` で照合する（[ADR 0303](decisions/0303-typed-model-invariant-errors.md)）。
 
+### アクションの引数
+
+`echode-actions/src/parameters.rs` は `ParameterError` と、項目の型から wire の型・モデルの検証へ写す `Parameter` を持つ。
+`action.rs::define_actions!` が要求の形と変換を登録簿から生成する。呼出側は `Command::from_value` を使い、Serde の表示文で原因を分類しない。
+`tests/parameters.rs` は任意 ID・flatten・整数端点・検証の順、API の `rpc_tests.rs` は公開応答、履歴の `tests/document_errors.rs` は型と取消・Redo・ジャーナルの保持を検査する
+（[ADR 0306](decisions/0306-typed-action-parameters.md)）。
+
 ### モデルの項目表と変更セット
 
 パラメーターの変更セットの生成器は `echode-model/src/changeset_parameter.rs`、
