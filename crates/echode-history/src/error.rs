@@ -1,10 +1,13 @@
-//! Typed storage failures. Document transactions are migrated separately.
+//! Typed package, storage and document failures.
 
 use std::collections::TryReserveError;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[path = "error_document.rs"]
+mod document;
+pub use document::{DocumentError, JournalError, SettingsError};
 #[path = "error_validation.rs"]
 mod validation;
 pub use validation::{MigrationError, PackageKind, PackageValidationError};
@@ -12,8 +15,6 @@ pub use validation::{MigrationError, PackageKind, PackageValidationError};
 /// A package or journal could not be read or written.
 #[derive(Debug)]
 pub enum PackageError {
-    /// Document paths not migrated to typed causes yet.
-    Message(String),
     /// A journal write reached the file but its durability is unknown.
     JournalDurabilityUnknown,
     Io {
@@ -28,6 +29,11 @@ pub enum PackageError {
     },
     Autosave(AutosaveError),
     Validation(PackageValidationError),
+    Document(DocumentError),
+    Journal(JournalError),
+    Settings(SettingsError),
+    ExportSnapshot(echode_model::InvariantError),
+    MissingDirectory(PathBuf),
     MissingWorkingDirectory,
     MissingRevisionDirectory(String),
     MissingRevisionFile(String),
@@ -43,10 +49,6 @@ pub enum PackageError {
 }
 
 impl PackageError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self::Message(message.into())
-    }
-
     pub(crate) fn durability_unknown() -> Self {
         Self::JournalDurabilityUnknown
     }
@@ -81,7 +83,6 @@ impl PackageError {
 impl fmt::Display for PackageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Message(message) => f.write_str(message),
             Self::JournalDurabilityUnknown => {
                 f.write_str(crate::document::JOURNAL_DURABILITY_UNKNOWN)
             }
@@ -99,6 +100,11 @@ impl fmt::Display for PackageError {
             Self::Git { error, .. } => write!(f, "{error}"),
             Self::Autosave(error) => write!(f, "{error}"),
             Self::Validation(error) => write!(f, "{error}"),
+            Self::Document(error) => write!(f, "{error}"),
+            Self::Journal(error) => write!(f, "{error}"),
+            Self::Settings(error) => write!(f, "{error}"),
+            Self::ExportSnapshot(error) => write!(f, "{error}"),
+            Self::MissingDirectory(path) => write!(f, "{} is missing", path.display()),
             Self::MissingWorkingDirectory => {
                 f.write_str("package has no working directory for plugin state")
             }
@@ -131,6 +137,10 @@ impl std::error::Error for PackageError {
             Self::Git { error, .. } => Some(error),
             Self::Autosave(error) => Some(error),
             Self::Validation(error) => Some(error),
+            Self::Document(error) => Some(error),
+            Self::Journal(error) => Some(error),
+            Self::Settings(error) => Some(error),
+            Self::ExportSnapshot(error) => Some(error),
             Self::RevisionText(error) => Some(error),
             _ => None,
         }

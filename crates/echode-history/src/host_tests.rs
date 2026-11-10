@@ -1,4 +1,5 @@
 use super::*;
+use crate::document::JOURNAL_DURABILITY_UNKNOWN;
 use crate::document::JournalFault;
 use crate::document::write_package;
 use crate::recover;
@@ -380,11 +381,19 @@ fn audit_aud03_unknown_durability_stops_later_edits_until_recovery() {
     let next = host.perform(Command::AddTrack {
         name: "mixed".into(),
     });
+    let error = next.unwrap_err();
     assert!(
-        next.unwrap_err()
-            .to_string()
-            .contains("journal durability is unknown")
+        matches!(&error, HostError::Package(error) if error.is_durability_unknown()),
+        "halted reply lost its durability kind: {error:?}"
     );
+    assert_eq!(error.to_string(), JOURNAL_DURABILITY_UNKNOWN);
+    for error in [
+        host.apply(Vec::new()).unwrap_err(),
+        host.undo().unwrap_err(),
+        host.redo().unwrap_err(),
+    ] {
+        assert!(matches!(error, HostError::Package(error) if error.is_durability_unknown()));
+    }
     drop(host);
     let again = DocumentHost::open(&directory).unwrap();
     let recovered = names(&again);
@@ -427,17 +436,20 @@ fn history_usage_follows_undo_and_redo_and_answers_after_a_halt() {
 #[test]
 fn only_the_typed_durability_error_halts_later_edits() {
     // A path or an OS message can contain the same words (XCA-16).
-    let mut halted = None;
-    let lookalike = HostError::Package(PackageError::new(format!(
-        "/tmp/{JOURNAL_DURABILITY_UNKNOWN}/journal.jsonl: Permission denied"
-    )));
+    let mut halted = false;
+    let lookalike = HostError::Package(PackageError::Io {
+        path: Some(PathBuf::from(format!(
+            "/tmp/{JOURNAL_DURABILITY_UNKNOWN}/journal.jsonl"
+        ))),
+        error: std::io::Error::from_raw_os_error(libc::EACCES),
+    });
     note_failure(&mut halted, &lookalike);
-    assert_eq!(halted, None);
+    assert!(!halted);
     note_failure(
         &mut halted,
         &HostError::Package(PackageError::durability_unknown()),
     );
-    assert_eq!(halted.as_deref(), Some(JOURNAL_DURABILITY_UNKNOWN));
+    assert!(halted);
 }
 
 #[test]
@@ -678,4 +690,27 @@ fn an_import_keeps_its_object_only_while_its_journal_line_can_name_it() {
     let _ = std::fs::remove_file(&second);
     assert_eq!(clips, 2, "the uncertain line is replayed on reopening");
     assert!(readable, "every replayed clip names a stored object");
+}
+
+#[test]
+fn a_disconnected_document_keeps_its_lifetime_error_typed() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let mut host = DocumentHost::open(&directory).unwrap();
+    let (request, incoming) = mpsc::channel();
+    drop(incoming);
+    host.request = request;
+    let error = host
+        .perform(Command::AddTrack {
+            name: "rejected".into(),
+        })
+        .unwrap_err();
+    assert!(matches!(
+        &error,
+        HostError::Package(PackageError::Document(DocumentError::Stopped))
+    ));
+    assert_eq!(error.to_string(), "document thread stopped");
+    assert!(host.snapshot().tracks().is_empty());
+    drop(host);
+    std::fs::remove_dir_all(directory).unwrap();
 }

@@ -35,12 +35,13 @@ pub use document::{
 };
 pub use echode_actions::HistoryUsage;
 pub use error::{
-    AutosaveError, GitOperation, MediaError, MigrationError, PackageKind, PackageValidationError,
+    AutosaveError, DocumentError, GitOperation, JournalError, MediaError, MigrationError,
+    PackageKind, PackageValidationError, SettingsError,
 };
 pub use export::freeze_export;
 pub use export_settings::{read_export_settings, write_export_settings};
 pub use gix::ObjectId;
-pub use host::{DocumentHost, HostError, RecoveryNotice};
+pub use host::{DocumentHost, ElementError, HostError, RecoveryNotice, ReferenceError};
 pub use media::{
     AudioFileReader, DecodedPcm, StoredAudio, decode_audio_file, import_audio, read_pcm,
 };

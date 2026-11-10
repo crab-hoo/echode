@@ -28,13 +28,20 @@ TYPED_CRATES = (
 # A large crate may migrate one storage boundary at a time (ADR 0296).
 TYPED_FILES = (
     'crates/echode-history/src/autosave.rs',
+    'crates/echode-history/src/document.rs',
     'crates/echode-history/src/document_git.rs',
     'crates/echode-history/src/document_parse.rs',
     'crates/echode-history/src/error.rs',
+    'crates/echode-history/src/error_document.rs',
     'crates/echode-history/src/error_validation.rs',
+    'crates/echode-history/src/export.rs',
+    'crates/echode-history/src/export_settings.rs',
+    'crates/echode-history/src/host.rs',
+    'crates/echode-history/src/host_error.rs',
     'crates/echode-history/src/media.rs',
     'crates/echode-history/src/objects.rs',
     'crates/echode-history/src/peaks.rs',
+    'crates/echode-history/src/transport.rs',
 )
 PACKAGE_MESSAGE = re.compile(r'\bPackageError\s*::\s*(?:new|Message)\s*\(')
 STRING = {'String', 'std::string::String', 'alloc::string::String'}

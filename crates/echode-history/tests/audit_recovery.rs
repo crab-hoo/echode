@@ -86,6 +86,12 @@ fn assert_refused(directory: &std::path::Path, seq: u64) {
     let expected = format!("journal seq {seq} violates model invariants:");
     let error = recover(directory).expect_err("recovery must refuse an invalid journal step");
     assert!(error.to_string().contains(&expected), "{error}");
+    assert!(matches!(
+        &error,
+        echode_history::PackageError::Journal(echode_history::JournalError::Invariants { seq: actual, error: cause })
+            if *actual == seq && std::error::Error::source(&error).unwrap().source().unwrap().is::<echode_model::InvariantError>()
+                && error.to_string() == format!("journal seq {seq} violates model invariants: {cause}")
+    ));
     // A failed open releases its lock and never reaches autosave or compaction.
     for _ in 0..2 {
         let error = DocumentHost::open(directory)

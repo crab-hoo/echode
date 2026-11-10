@@ -9,6 +9,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::document::{PackageError, io_error, open_package};
+use crate::error::SettingsError;
 
 const FILE: &str = "transport.json";
 const VERSION: u32 = 1;
@@ -52,14 +53,14 @@ pub fn write_transport_settings(
     settings: TransportSettings,
 ) -> Result<(), PackageError> {
     if settings.start < 0 {
-        return Err(PackageError::new("playback start must not be negative"));
+        return Err(PackageError::Settings(SettingsError::NegativePlaybackStart));
     }
     let root = open_package(package)?;
     let mut text = serde_json::to_string(&Stored {
         version: VERSION,
         start: settings.start,
     })
-    .map_err(|error| PackageError::new(error.to_string()))?;
+    .map_err(|error| PackageError::Settings(SettingsError::TransportJson(error)))?;
     text.push('\n');
     root.write_atomic(FILE, text.as_bytes(), false)
         .map_err(|error| io_error(&package.join(FILE), error))

@@ -289,6 +289,20 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 `tests/package_errors.rs` は原本の保持と原因、`tests/autosave_errors.rs` は実 Git の版のワーカー返信を照合する。
 共有後も `original()` を使い、読込みの拒否を保存の不確定や復旧同意と取り違えない（[ADR 0298](../decisions/0298-typed-package-validation-errors.md)）。
 
+### 一括編集・復旧・設定の失敗の原因が分からない
+
+`HostError::Element` は失敗した添字と `ElementError` を持つ。
+`is_parameters()` が真なら RPC の `-32602`、それ以外は従来どおり `-32000` にする。表示文から判定しない。
+`ReferenceError` は参照の形・範囲・フィールドを分け、`Parameters` は元の JSON エラーを持つ。
+`Action`・`Package` から `Error::source` をたどると、モデル・I/O・復号の原因を読める。
+存在しない音声の復号は I/O とは限らず、`MediaError::Open(OSStatus)` になるので errno と取り違えない。
+`PackageError::Document` はロックの競合・ワーカーの終了・復旧同意を分け、同意待ちは通知した `RecoveryNotice` そのものを保持する。
+`Journal` の `Apply` と `Invariants` は連番と元のモデルの原因、`Text` と `Decode` は UTF-8 とアクションの原因を持つ。
+`Decode` の内側の JSON 診断は既存の `decode_line` が公開せず、`ActionError::CorruptJournal` のままである。
+耐久性の不確定で停止した後の返信も `is_durability_unknown()` で判定する。文が一致するだけの I/O エラーでは停止しない。
+設定の書込みの拒否は `PackageError::Settings`、読込みの不正な設定を既定値へ戻す挙動は従来どおりである。
+`tests/document_errors.rs` と `host_tests.rs`、既存の復旧・設定の回帰で切り分ける（[ADR 0299](../decisions/0299-typed-document-journal-and-settings-errors.md)）。
+
 ### 起動直後から新規作成・開くが無効で「変更を保存中」のまま
 
 前回プロジェクトの自動復元と `ProjectController.busy` を確認する。

@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::document::{PackageError, io_error, open_package};
+use crate::error::SettingsError;
 
 const FILE: &str = "export.json";
 // This bounds a preference record only, not a song, track, or audio buffer.
@@ -14,11 +15,11 @@ const MAX_BYTES: usize = 16_384;
 
 fn validate(text: &str) -> Result<(), PackageError> {
     if text.len() > MAX_BYTES {
-        return Err(PackageError::new("export settings exceed 16 KiB"));
+        return Err(PackageError::Settings(SettingsError::ExportTooLarge));
     }
     serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text)
         .map(|_| ())
-        .map_err(|error| PackageError::new(format!("invalid export settings: {error}")))
+        .map_err(|error| PackageError::Settings(SettingsError::ExportJson(error)))
 }
 
 /// Missing, unreadable, oversized or malformed preferences have no value.

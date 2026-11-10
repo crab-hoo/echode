@@ -154,7 +154,7 @@ fn failed_transaction_preserves_redo() {
         json!({"type": "audio.import", "track": {"ref": 0, "field": "id"}, "start": 0, "path": fixture.source}),
     ]);
     assert!(
-        matches!(result, Err(HostError::Element { index: 1, parameters: false, ref message }) if message == NONFINITE),
+        matches!(result, Err(HostError::Element { index: 1, ref error }) if !error.is_parameters() && error.to_string() == NONFINITE),
         "non-finite import must reject the whole transaction: {result:?}"
     );
     assert_eq!(*host.snapshot(), *before);

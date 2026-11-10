@@ -15,6 +15,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Mutex;
 
+use crate::error::{DocumentError, JournalError};
 use crate::package_io::Directory;
 use echode_model::{ContentMetadata, Id, Project, ProjectMetadata, Track};
 use gix::ObjectId;
@@ -72,7 +73,7 @@ fn read_named_dir(
         return if ids.is_empty() {
             Ok(Vec::new())
         } else {
-            Err(PackageError::new(format!("{} is missing", dir.display())))
+            Err(PackageError::MissingDirectory(dir))
         };
     };
     let mut files = Vec::with_capacity(ids.len());
@@ -112,7 +113,7 @@ pub fn append_journal(
     let bytes = text.into_bytes();
     let fault = take_journal_fault(directory);
     let wrote = match fault {
-        JournalFault::BeforeWrite => Err(PackageError::new("journal write failed")),
+        JournalFault::BeforeWrite => Err(PackageError::Journal(JournalError::WriteFailed)),
         JournalFault::Partial => {
             let torn = if bytes.is_empty() {
                 &bytes[..]
@@ -121,7 +122,7 @@ pub fn append_journal(
             };
             file.write_all(torn)
                 .map_err(|error| io_error(&path, error))?;
-            Err(PackageError::new("journal write failed"))
+            Err(PackageError::Journal(JournalError::WriteFailed))
         }
         JournalFault::Sync | JournalFault::Uncertain => file
             .write_all(&bytes)
@@ -129,7 +130,7 @@ pub fn append_journal(
             .and(Err(if fault == JournalFault::Uncertain {
                 PackageError::durability_unknown()
             } else {
-                PackageError::new("journal sync failed")
+                PackageError::Journal(JournalError::SyncFailed)
             })),
         JournalFault::None => file
             .write_all(&bytes)
@@ -336,7 +337,7 @@ pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageErro
     let tip = autosave_tip(directory);
     if let Some(id) = tip {
         let Some((commit, project, seq)) = first_readable_commit(directory, id)? else {
-            return Err(PackageError::new("no readable commit"));
+            return Err(PackageError::Document(DocumentError::NoReadableCommit));
         };
         let replayed = replay_suffix(directory, project, seq, &records)?;
         let reason = if commit == id {
@@ -353,9 +354,7 @@ pub(crate) fn recover_labeled(directory: &Path) -> Result<Recovered, PackageErro
         });
     }
     if pending {
-        return Err(PackageError::new(
-            "worktree save is unfinished and there is no commit",
-        ));
+        return Err(PackageError::Document(DocumentError::UnfinishedWorktree));
     }
     let project = read_package(directory)?;
     let replayed = replay_suffix(directory, project, 0, &records)?;
@@ -733,7 +732,7 @@ fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, Packag
         .read("journal.jsonl")
         .map_err(|error| io_error(&path, error))?;
     let text = std::str::from_utf8(committed_journal(&bytes))
-        .map_err(|error| PackageError::new(error.to_string()))?;
+        .map_err(|error| PackageError::Journal(JournalError::Text(error)))?;
     let mut records = Vec::new();
     for line in text.lines() {
         if line.is_empty() {
@@ -741,7 +740,7 @@ fn read_log(directory: &Path) -> Result<Vec<echode_actions::JournalLine>, Packag
         }
         records.push(
             echode_actions::decode_line(line)
-                .map_err(|error| PackageError::new(error.to_string()))?,
+                .map_err(|error| PackageError::Journal(JournalError::Decode(error)))?,
         );
     }
     Ok(records)
@@ -795,18 +794,18 @@ fn replay_suffix(
         };
         let before = project;
         project = before.apply_changeset(&changes).map_err(|error| {
-            PackageError::new(format!(
-                "journal seq {} cannot apply changes: {error}",
-                line.seq
-            ))
+            PackageError::Journal(JournalError::Apply {
+                seq: line.seq,
+                error,
+            })
         })?;
         // A journal is external input, not a trusted in-memory undo step.
         // Check each complete transaction before accepting any later line.
         project.check_invariants().map_err(|error| {
-            PackageError::new(format!(
-                "journal seq {} violates model invariants: {error}",
-                line.seq
-            ))
+            PackageError::Journal(JournalError::Invariants {
+                seq: line.seq,
+                error,
+            })
         })?;
         if !states_stored(directory, &before, &project) {
             return Ok(Replayed {

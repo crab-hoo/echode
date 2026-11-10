@@ -381,6 +381,10 @@ MySong.echode/
   自動保存は失敗そのものを `PackageError::Shared(Arc<PackageError>)` で待ち手へ共有し、`original()` で元の変種を読める。
   保存の不確定は共有後も同じ述語で判定する。Git は操作の種類と元の `gix::Error`、ワーカーの終了と期限は `AutosaveError` で分ける。
   木の読込みと同期コミットは `document_git.rs` に置き、欠落・UTF-8・オブジェクトの種類の拒否も型で返す（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。
+  文書の寿命・復旧同意は `DocumentError`、ジャーナルの読込み・適用・不変条件の拒否は `JournalError`、設定は `SettingsError` で返す。
+  停止後も `JournalDurabilityUnknown` のまま拒否する。保存形式・同意と同期の順番・表示文面は変えない。
+  一括編集の失敗は `HostError::Element` が添字と `ElementError` を持ち、引数の拒否かは原因の変種から求める。
+  JSON・アクション・保存の原因を `Error::source` へつなぎ、文へ変えるのは RPC 応答と表示の境界だけにする（[ADR 0299](../decisions/0299-typed-document-journal-and-settings-errors.md)）。
 - **Cmd+S と間引き**: `refs/heads/<オルタネイト>` の保存ポイントは間引かず、自動保存だけを `gix-pack` で間引く
   （[ADR 0046](../decisions/0046-history-thin.md)）。
   `gix-pack` は `streaming-input` 機能を入れるための直接の依存で、gix が解決する版と完全一致で固定する

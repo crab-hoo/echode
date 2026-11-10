@@ -6,7 +6,7 @@ fn durability_is_a_variant_not_a_message_match() {
     let unknown = PackageError::durability_unknown();
     assert!(matches!(unknown, PackageError::JournalDurabilityUnknown));
     assert!(unknown.is_durability_unknown());
-    let text = PackageError::new(unknown.to_string());
+    let text = PackageError::from(std::io::Error::other(unknown.to_string()));
     assert!(!text.is_durability_unknown());
     assert_eq!(text.to_string(), unknown.to_string());
 }
@@ -121,6 +121,8 @@ fn shared_delivery_keeps_native_codes_and_durability_without_nesting() {
     assert_eq!(error.raw_os_error(), Some(libc::EACCES));
     let unknown = PackageError::Shared(PackageError::durability_unknown().into_shared());
     assert!(unknown.is_durability_unknown());
-    let text = PackageError::Shared(PackageError::new(unknown.to_string()).into_shared());
+    let text = PackageError::Shared(
+        PackageError::from(std::io::Error::other(unknown.to_string())).into_shared(),
+    );
     assert!(!text.is_durability_unknown());
 }

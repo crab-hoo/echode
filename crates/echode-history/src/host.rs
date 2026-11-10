@@ -8,61 +8,24 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
-use echode_actions::{
-    Action, ActionError, Command, HistoryUsage, JournalLine, JournalOp, Session, parameter_message,
-};
+use echode_actions::{Action, ActionError, Command, HistoryUsage, JournalLine, JournalOp, Session};
 use echode_model::{ChangeSet, Id, Project};
 use gix::ObjectId;
 use serde_json::{Map, Value};
 
 use crate::autosave::{Autosave, PendingAutosave, SavedRevision};
 use crate::document::{
-    JOURNAL_DURABILITY_UNKNOWN, PackageError, append_journal, autosave_tip, compact_journal,
-    next_journal_seq, repair_journal,
+    PackageError, append_journal, autosave_tip, compact_journal, next_journal_seq, repair_journal,
 };
 
 /// Canonical package paths open in this process. `flock` does not stop a second open here.
 static OPEN_PACKAGES: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// Why the document thread rejected a command.
-#[derive(Debug)]
-pub enum HostError {
-    Action(ActionError),
-    Package(PackageError),
-    /// One element of a transaction failed. `parameters` selects the JSON-RPC code.
-    Element {
-        index: usize,
-        parameters: bool,
-        message: String,
-    },
-}
-
-impl std::fmt::Display for HostError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Action(error) => write!(formatter, "{error}"),
-            Self::Package(error) => write!(formatter, "{error}"),
-            Self::Element { message, .. } => write!(formatter, "{message}"),
-        }
-    }
-}
-
-impl std::error::Error for HostError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Action(error) => Some(error),
-            Self::Package(error) => Some(error),
-            Self::Element { .. } => None,
-        }
-    }
-}
-
-impl HostError {
-    fn durability_unknown(&self) -> bool {
-        matches!(self, Self::Package(error) if error.is_durability_unknown())
-    }
-}
+use crate::error::DocumentError;
+#[path = "host_error.rs"]
+mod error;
+pub use error::{ElementError, HostError, ReferenceError};
 
 /// Recent edits may be missing from the opened document: a readable ancestor
 /// was used instead of the autosave tip, or the journal could not be replayed
@@ -131,15 +94,13 @@ struct PackageLock {
 
 impl PackageLock {
     fn acquire(directory: &Path) -> Result<Self, PackageError> {
-        let path = directory
-            .canonicalize()
-            .map_err(|error| PackageError::new(error.to_string()))?;
+        let path = directory.canonicalize().map_err(PackageError::from)?;
         {
             let mut open = OPEN_PACKAGES
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             if !open.insert(path.clone()) {
-                return Err(PackageError::new("package is already open"));
+                return Err(PackageError::Document(DocumentError::AlreadyOpen));
             }
         }
         match lock_file(&path) {
@@ -173,11 +134,11 @@ fn lock_file(directory: &Path) -> Result<File, PackageError> {
     let path = directory.join("host.lock");
     let file = crate::document::open_package(directory)?
         .open_file("host.lock", true, true)
-        .map_err(|error| PackageError::new(format!("{}: {error}", path.display())))?;
+        .map_err(|error| crate::document::io_error(&path, error))?;
     match file.try_lock() {
         Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(PackageError::new("package is already open")),
-        Err(TryLockError::Error(error)) => Err(PackageError::new(error.to_string())),
+        Err(TryLockError::WouldBlock) => Err(PackageError::Document(DocumentError::AlreadyOpen)),
+        Err(TryLockError::Error(error)) => Err(PackageError::from(error)),
     }
 }
 
@@ -241,7 +202,7 @@ impl DocumentHost {
                     applied_seq,
                 )
             })
-            .map_err(|error| PackageError::new(error.to_string()))?;
+            .map_err(PackageError::from)?;
         Ok(Self {
             request,
             thread: Some(thread),
@@ -292,10 +253,10 @@ impl DocumentHost {
                 state: hash,
                 reply,
             })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 
     /// Applies `command`, writing any nonempty edit to the journal before returning.
@@ -306,10 +267,10 @@ impl DocumentHost {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Perform { command, reply })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 
     /// Applies every action as one undo step. References are resolved in order.
@@ -320,10 +281,10 @@ impl DocumentHost {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Apply { actions, reply })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 
     /// Undoes the newest undo step and appends an `undo` journal line.
@@ -333,10 +294,10 @@ impl DocumentHost {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Undo { reply })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 
     /// Pending consent is not an edit and never creates an Undo step.
@@ -349,19 +310,9 @@ impl DocumentHost {
     /// Every writer must check this before changing project or session state.
     pub fn require_recovery_confirmation(&self) -> Result<(), PackageError> {
         if let Some(notice) = self.recovery_notice() {
-            let cause = match notice.reason {
-                crate::RecoveryReason::UnreadableTip => format!("unreadable tip {}", notice.tip),
-                crate::RecoveryReason::JournalGap => {
-                    "journal lines after a missing one were not replayed".to_string()
-                }
-                crate::RecoveryReason::MissingState => {
-                    "a journal line names a missing plugin state".to_string()
-                }
-            };
-            return Err(PackageError::new(format!(
-                "recovery confirmation required: {cause}; recovered base {}; applied journal seq {}. Preserve a copy before continuing",
-                notice.base, notice.applied_seq
-            )));
+            return Err(PackageError::Document(
+                DocumentError::RecoveryConfirmationRequired(notice.clone()),
+            ));
         }
         Ok(())
     }
@@ -374,17 +325,17 @@ impl DocumentHost {
             .as_ref()
             .is_some_and(|notice| notice.tip == tip && notice.base == base)
         {
-            return Err(HostError::Package(PackageError::new(
-                "recovery confirmation does not match this document",
+            return Err(HostError::Package(PackageError::Document(
+                DocumentError::RecoveryMismatch,
             )));
         }
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::AcceptRecovery { reply })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 
     /// Autosave tip and the journal sequence included in the recovered project.
@@ -402,10 +353,10 @@ impl DocumentHost {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Revisions { reply })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 
     /// What undo and redo keep in memory beyond the current project (ADR 0286).
@@ -416,10 +367,10 @@ impl DocumentHost {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Usage { reply })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 
     /// Redoes the newest undone step and appends a `redo` journal line.
@@ -429,10 +380,10 @@ impl DocumentHost {
         let (reply, incoming) = mpsc::channel();
         self.request
             .send(Request::Redo { reply })
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?;
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
-            .map_err(|_| HostError::Package(PackageError::new("document thread stopped")))?
+            .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?
     }
 }
 
@@ -459,16 +410,16 @@ fn worker(
         .unwrap_or(1)
         .max(applied_seq.saturating_add(1));
     let mut inflight: Vec<(u64, PendingAutosave)> = Vec::new();
-    let mut halted: Option<String> = None;
+    let mut halted = false;
     while let Ok(request) = incoming.recv() {
         finish_saves(&directory, &mut inflight);
-        if halted.is_some()
+        if halted
             && !matches!(
                 request,
                 Request::Shutdown | Request::Revisions { .. } | Request::Usage { .. }
             )
         {
-            reply_halted(request, &halted);
+            reply_halted(request);
             continue;
         }
         match request {
@@ -730,9 +681,9 @@ struct Publish<'a> {
     session: &'a Session,
 }
 
-fn note_failure(halted: &mut Option<String>, error: &HostError) {
+fn note_failure(halted: &mut bool, error: &HostError) {
     if error.durability_unknown() {
-        *halted = Some(error.to_string());
+        *halted = true;
     }
 }
 
@@ -741,7 +692,7 @@ fn note_failure(halted: &mut Option<String>, error: &HostError) {
 fn settle(
     session: &mut Session,
     parked: echode_actions::ParkedRedo,
-    halted: &mut Option<String>,
+    halted: &mut bool,
     result: Result<(), HostError>,
 ) -> Result<(), HostError> {
     match result {
@@ -758,7 +709,7 @@ fn settle(
 /// followed `Session::undo`, so `redo` puts that step back.
 fn invert_on_failure(
     session: &mut Session,
-    halted: &mut Option<String>,
+    halted: &mut bool,
     result: Result<(), HostError>,
     undo: bool,
 ) -> Result<(), HostError> {
@@ -772,18 +723,15 @@ fn invert_on_failure(
                 session.undo().map(|_| ())
             };
             if restored.is_err() {
-                *halted = Some(JOURNAL_DURABILITY_UNKNOWN.to_string());
+                *halted = true;
             }
             Err(error)
         }
     }
 }
 
-fn reply_halted(request: Request, halted: &Option<String>) {
-    let message = halted
-        .clone()
-        .unwrap_or_else(|| JOURNAL_DURABILITY_UNKNOWN.to_string());
-    let error = HostError::Package(PackageError::new(message));
+fn reply_halted(request: Request) {
+    let error = HostError::Package(PackageError::durability_unknown());
     match request {
         Request::Perform { reply, .. } => {
             let _ = reply.send(Err(error));
@@ -905,11 +853,10 @@ fn apply_transaction(
     let result = session.transaction(|transaction| {
         for (index, action) in actions.iter().enumerate() {
             let mut value = action.clone();
-            if let Err(message) = resolve_refs(&mut value, &prior) {
+            if let Err(error) = resolve_refs(&mut value, &prior) {
                 failure = Some(HostError::Element {
                     index,
-                    parameters: true,
-                    message,
+                    error: ElementError::Reference(error),
                 });
                 return Err(ActionError::CorruptJournal);
             }
@@ -918,8 +865,7 @@ fn apply_transaction(
                 Err(error) => {
                     failure = Some(HostError::Element {
                         index,
-                        parameters: true,
-                        message: parameter_message(&error),
+                        error: ElementError::Parameters(error),
                     });
                     return Err(ActionError::CorruptJournal);
                 }
@@ -932,8 +878,7 @@ fn apply_transaction(
                 Err(error) => {
                     failure = Some(HostError::Element {
                         index,
-                        parameters: false,
-                        message: error.to_string(),
+                        error: ElementError::Package(error),
                     });
                     return Err(ActionError::NotApplied);
                 }
@@ -946,8 +891,7 @@ fn apply_transaction(
                 Err(error) => {
                     failure = Some(HostError::Element {
                         index,
-                        parameters: false,
-                        message: error.to_string(),
+                        error: ElementError::Action(error.clone()),
                     });
                     return Err(error);
                 }
@@ -983,7 +927,7 @@ fn import_command(
     }
 }
 
-fn resolve_refs(value: &mut Value, prior: &[Value]) -> Result<(), String> {
+fn resolve_refs(value: &mut Value, prior: &[Value]) -> Result<(), ReferenceError> {
     if let Some(replacement) = reference(value, prior)? {
         *value = replacement;
         return Ok(());
@@ -1004,7 +948,7 @@ fn resolve_refs(value: &mut Value, prior: &[Value]) -> Result<(), String> {
     Ok(())
 }
 
-fn reference(value: &Value, prior: &[Value]) -> Result<Option<Value>, String> {
+fn reference(value: &Value, prior: &[Value]) -> Result<Option<Value>, ReferenceError> {
     let Value::Object(map) = value else {
         return Ok(None);
     };
@@ -1012,19 +956,19 @@ fn reference(value: &Value, prior: &[Value]) -> Result<Option<Value>, String> {
         return Ok(None);
     }
     let Some(index) = map.get("ref").and_then(Value::as_u64) else {
-        return Err("action reference is not an index".to_string());
+        return Err(ReferenceError::NotIndex);
     };
     let Some(field) = map.get("field").and_then(Value::as_str) else {
-        return Err("action reference is missing a field".to_string());
+        return Err(ReferenceError::MissingField);
     };
     let Some(index) = usize::try_from(index).ok() else {
-        return Err("action reference is out of range".to_string());
+        return Err(ReferenceError::OutOfRange);
     };
     let Some(earlier) = prior.get(index) else {
-        return Err("action reference is out of range".to_string());
+        return Err(ReferenceError::OutOfRange);
     };
     let Some(found) = earlier.get(field).and_then(Value::as_str) else {
-        return Err("action reference field is missing".to_string());
+        return Err(ReferenceError::FieldNotFound);
     };
     Ok(Some(Value::String(found.to_string())))
 }
@@ -1047,7 +991,7 @@ fn restore_revision(
     revision: &str,
 ) -> Result<echode_model::ChangeSet, HostError> {
     let id = ObjectId::from_hex(revision.as_bytes())
-        .map_err(|_| HostError::Package(PackageError::new("saved revision was not found")))?;
+        .map_err(|_| HostError::Package(PackageError::Document(DocumentError::InvalidRevision)))?;
     let project = autosave.load(id).map_err(HostError::Package)?;
     session
         .restore(project, revision.to_string())

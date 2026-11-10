@@ -17,8 +17,8 @@ pub fn freeze_export(
 ) -> Result<(), PackageError> {
     project
         .check_invariants()
-        .map_err(|error| PackageError::new(error.to_string()))?;
-    std::fs::create_dir(destination).map_err(|error| PackageError::new(error.to_string()))?;
+        .map_err(PackageError::ExportSnapshot)?;
+    std::fs::create_dir(destination).map_err(PackageError::from)?;
     let result = (|| {
         let hashes: BTreeSet<&str> = project
             .contents()

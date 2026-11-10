@@ -106,7 +106,7 @@ class TypedErrors(unittest.TestCase):
 
     def test_unmigrated_package_modules_are_not_claimed_as_typed(self):
         root = self.tree({
-            'crates/echode-history/src/host.rs': 'fn f() -> Result<(), String> {}\n',
+            'crates/echode-history/src/thin.rs': 'fn f() -> Result<(), String> {}\n',
         })
         self.assertEqual(check_typed_errors.problems(root), [])
 

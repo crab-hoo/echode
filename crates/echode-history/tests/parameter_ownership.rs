@@ -280,6 +280,20 @@ fn recovery_refuses_to_silently_discard_unlisted_parameters() {
                     .contains("journal seq 2 cannot apply changes:"),
                 "{error}"
             );
+            assert!(matches!(
+                &error,
+                echode_history::PackageError::Journal(echode_history::JournalError::Apply {
+                    seq: 2,
+                    ..
+                })
+            ));
+            assert!(
+                std::error::Error::source(&error)
+                    .unwrap()
+                    .source()
+                    .unwrap()
+                    .is::<echode_model::ModelError>()
+            );
             assert_preserved(&directory, &project, &journal, original_tip);
             // A refused product open must release the package lock for the next attempt.
             for _ in 0..2 {

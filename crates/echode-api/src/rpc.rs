@@ -133,12 +133,9 @@ fn index_data(index: Option<usize>) -> Option<Value> {
 
 fn from_host(error: echode_history::HostError) -> PerformError {
     match error {
-        echode_history::HostError::Element {
-            index,
-            parameters,
-            message,
-        } => {
-            if parameters {
+        echode_history::HostError::Element { index, error } => {
+            let message = error.to_string();
+            if error.is_parameters() {
                 PerformError::Params {
                     message,
                     index: Some(index),

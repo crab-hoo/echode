@@ -43,8 +43,7 @@ fn contract_audio_import_transaction_adds_a_track_atomically_and_reopens() {
         host.apply(failed),
         Err(HostError::Element {
             index: 2,
-            parameters: false,
-            ..
+            error: echode_history::ElementError::Action(_),
         })
     ));
     assert!(host.snapshot().tracks().is_empty());
@@ -56,8 +55,7 @@ fn contract_audio_import_transaction_adds_a_track_atomically_and_reopens() {
         host.apply(missing),
         Err(HostError::Element {
             index: 1,
-            parameters: false,
-            ..
+            error: echode_history::ElementError::Package(_),
         })
     ));
     assert_eq!(*host.snapshot(), *imported);
