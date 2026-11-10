@@ -360,6 +360,9 @@ JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バ�
 
 ### FFI・文書・復旧・編集型
 
+目録の Rust の境界は `crates/echode-ffi/src/catalog.rs` の `CatalogError` で、未検出のヘルパーのパスと元の目録・JSON の原因を持つ。
+回帰は `catalog_tests.rs` が子プロセスの環境・走査先を隔離し、同じ入口と C ABI の数値・JSON を照合する（[ADR 0302](decisions/0302-typed-ffi-catalog-errors.md)）。
+
 フォルダ表示の製品 ABI は `crates/echode-ffi/src/projection.rs`、Swift の保持と階層取得は
 `swift/EchodeBridge/Sources/EchodeBridge/TrackHierarchy.swift` に置く。
 ヘッダの開閉と表示行の共有は `ArrangePaneView.swift`、追加位置の保持は `TrackInsertion.swift` を使う。

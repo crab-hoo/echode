@@ -22,6 +22,7 @@ TYPED_CRATES = (
     'echode-audio-io',
     'echode-document',
     'echode-engine',
+    'echode-ffi',
     'echode-history',
     'echode-plugin-host',
     'echode-sandbox',

@@ -145,6 +145,7 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 拒否されたら、その crate のエラー型（`echode-audio-io` は `AudioError`、`echode-document` は `DocumentError`、`echode-sandbox` は `SessionError`・`WorkgroupError`・`SpawnError`、ヘルパーの拒否は `Refusal`、プラグイン自身の失敗は `PluginFailure`、`echode-engine` は `PlaybackError`・`DeviceError`、`echode-plugin-host` は `HostError`・`ScanError`・`CatalogError`・`WatchError`）の変種を使うか、原因に合う変種を足す。
 `Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。
 文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
+`echode-ffi` の目録は `catalog::CatalogError` を返す。元の目録・JSON の原因を保持し、C ABI の失敗の数値へ畳むまで文にしない（[ADR 0302](../decisions/0302-typed-ffi-catalog-errors.md)）。
 
 `echode-history` は非既定の履歴スパイクも含めて `TYPED_CRATES` に登録している（ADR 0296〜[0301](../decisions/0301-typed-history-spike-errors.md)）。
 `PackageError::new`・`PackageError::Message` の再導入も crate 全体で拒否する。

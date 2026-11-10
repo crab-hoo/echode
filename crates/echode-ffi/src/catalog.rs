@@ -14,26 +14,55 @@ use echode_plugin_host::{
 
 static WATCH: Mutex<Option<LiveCatalog>> = Mutex::new(None);
 
-pub(crate) fn plugins_json() -> Result<Vec<u8>, String> {
+#[derive(Debug)]
+pub(crate) enum CatalogError {
+    MissingHost(Option<PathBuf>),
+    Catalog(echode_plugin_host::CatalogError),
+    Json(serde_json::Error),
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingHost(Some(path)) => {
+                write!(f, "plugin host is missing ({})", path.display())
+            }
+            Self::MissingHost(None) => f.write_str("plugin host is missing"),
+            Self::Catalog(error) => std::fmt::Display::fmt(error, f),
+            Self::Json(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for CatalogError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::MissingHost(_) => None,
+            Self::Catalog(error) => Some(error),
+            Self::Json(error) => Some(error),
+        }
+    }
+}
+
+pub(crate) fn plugins_json() -> Result<Vec<u8>, CatalogError> {
     if let Some(json) = watch_waiter().map(|watch| watch.json()) {
         return Ok(json);
     }
     let host = require_host()?;
-    // The C ABI reports text; the catalog's error is typed up to here.
-    let plugins = refresh_catalog(&host, &cache_path(), &catalog_bundles())
-        .map_err(|error| error.to_string())?;
+    let plugins =
+        refresh_catalog(&host, &cache_path(), &catalog_bundles()).map_err(CatalogError::Catalog)?;
     let mut listed = Vec::with_capacity(plugins.len());
     for plugin in &plugins {
-        let mut value = serde_json::to_value(plugin).map_err(|error| error.to_string())?;
+        let mut value = serde_json::to_value(plugin).map_err(CatalogError::Json)?;
         if let Some(object) = value.as_object_mut() {
             object.insert("fresh".to_string(), serde_json::Value::Bool(false));
         }
         listed.push(value);
     }
-    serde_json::to_vec(&listed).map_err(|error| error.to_string())
+    serde_json::to_vec(&listed).map_err(CatalogError::Json)
 }
 
-pub(crate) fn start_watch() -> Result<(), String> {
+pub(crate) fn start_watch() -> Result<(), CatalogError> {
     let mut slot = WATCH.lock().unwrap_or_else(|error| error.into_inner());
     if slot.is_some() {
         return Ok(());
@@ -41,7 +70,7 @@ pub(crate) fn start_watch() -> Result<(), String> {
     let host = require_host()?;
     *slot = Some(
         LiveCatalog::start(catalog_roots(), host, cache_path(), CatalogTiming::PRODUCT)
-            .map_err(|error| error.to_string())?,
+            .map_err(CatalogError::Catalog)?,
     );
     Ok(())
 }
@@ -61,13 +90,9 @@ fn watch_waiter() -> Option<CatalogWaiter> {
         .map(LiveCatalog::waiter)
 }
 
-fn require_host() -> Result<PathBuf, String> {
+fn require_host() -> Result<PathBuf, CatalogError> {
     host_binary().ok_or_else(|| {
-        if let Some(path) = std::env::var_os("ECHODE_PLUGIN_HOST") {
-            format!("plugin host is missing ({})", PathBuf::from(path).display())
-        } else {
-            "plugin host is missing".to_string()
-        }
+        CatalogError::MissingHost(std::env::var_os("ECHODE_PLUGIN_HOST").map(PathBuf::from))
     })
 }
 
@@ -84,3 +109,7 @@ fn cache_path() -> PathBuf {
     path.push("clap-scan.jsonl");
     path
 }
+
+#[cfg(test)]
+#[path = "catalog_tests.rs"]
+mod tests;

@@ -176,6 +176,10 @@ dylib 固有の検査用 TLS は、ヘルパーの最初の非 RT 起動段階�
 `clap-scan.jsonl` に `"rejected":true` の行があれば、ヘルパーが拒んだ版で、版が変わるまで読み込まない。
 行がなければ、まだ答えがない（走査中・時間切れ・ヘルパーを起動できない）。時間切れのバンドルは 5 秒の後に 120 秒で走査し直すので、最大 2 分ほど遅れて一覧に出る。
 2 回とも時間切れなら次の起動まで出ない。`echode-plugin-host --scan バンドル` を `time` で測り、125 秒を超えるかを確かめる（[ADR 0285](../decisions/0285-scan-timeouts-are-not-verdicts.md)）。
+FFI の目録内部の失敗は `crates/echode-ffi/src/catalog.rs` の `CatalogError` で区別する。
+`MissingHost` は指定されたパス（指定なしは `None`）、`Catalog` は元の `echode_plugin_host::CatalogError`、`Json` は元の JSON の原因を持つ。
+C ABI は診断の文を返さず従来の `-1` に畳むので、内部の回帰は `cargo test -q -p echode-ffi --lib catalog::tests` で確認する。
+走査先は子プロセスの `ECHODE_CLAP_ROOTS` に閉じ、実際の機器・インストール済みのプラグインを使わない。
 2026-10-28 の ⌘D 変更の通常検査では、`audit_rea08_descendant_pipe_does_not_extend_deadline` の最初の JSON 出力が 2 秒の期限切れとなった。
 失敗は子孫のパイプ保持ケースではなく、最初の短い shell の起動・完了待ちで、単独実行では再現しなかった。原因は未確定である。
 個別のログは `target/focused-checks/clip-duplicate-scan/`。期限・対象を変更せず、正式な `make verify` の結果と区別する。

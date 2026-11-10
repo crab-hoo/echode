@@ -137,6 +137,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   常駐のカタログは 5 秒で全部を走査して一覧を出した後、時間切れだけを 120 秒で走査し直す。
   走査のヘルパーは親を失ったら終わる（[ADR 0285](../decisions/0285-scan-timeouts-are-not-verdicts.md)）。
   `ScanError` の段（判定・時間切れ・読めない）は中身も型で、終了状態・stderr・管の量・`io::Error` を持つ（[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）
+  FFI の目録も `CatalogError` で、ヘルパーの未検出（指定パスを保持）・元の目録エラー・JSON を分ける。
+  C ABI では従来の成功・容量不足・失敗の数値だけを返し、内部で文へ戻さない（[ADR 0302](../decisions/0302-typed-ffi-catalog-errors.md)）。
 - **ブラウザとチェイン操作（P2）**: ダブルクリック追加時のみ自動で閉じ、ドラッグや Return 追加時は開いたままにする。
   候補の右メニューから選択中の全トラックへ、単一トランザクションで追加する。
   フォーカスと複数選択を分け、操作時の文書・対象を保持する（[ADR 0124](../decisions/0124-selected-track-fx-batches.md)）。
