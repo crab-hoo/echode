@@ -79,7 +79,7 @@ fn autosave_tip(directory: &std::path::Path) -> Option<gix::ObjectId> {
     )
 }
 
-fn assert_refused(directory: &std::path::Path, seq: u64) {
+fn assert_refused(directory: &std::path::Path, seq: u64) -> echode_model::InvariantError {
     let journal = std::fs::read(directory.join("journal.jsonl")).unwrap();
     let project = echode_history::read_package(directory).unwrap();
     let tip = autosave_tip(directory);
@@ -106,6 +106,13 @@ fn assert_refused(directory: &std::path::Path, seq: u64) {
         assert_eq!(autosave_tip(directory), tip);
         assert!(!directory.join("save.pending").exists());
     }
+    std::error::Error::source(&error)
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<echode_model::InvariantError>()
+        .unwrap()
+        .clone()
 }
 
 #[test]
@@ -126,7 +133,14 @@ fn audit_adv01_recovery_refuses_a_journal_line_that_breaks_invariants() {
     write_package(&directory, &base).unwrap();
     std::fs::write(directory.join("journal.jsonl"), damaged_move(&base, 1)).unwrap();
 
-    assert_refused(&directory, 1);
+    assert_eq!(
+        assert_refused(&directory, 1),
+        echode_model::InvariantError::ClipOverlap {
+            clip: base.tracks()[0].clips[1].id,
+            track,
+            track_name: "a".into(),
+        }
+    );
     assert!(autosave_tip(&directory).is_none());
     let _ = std::fs::remove_dir_all(directory.parent().unwrap());
 }

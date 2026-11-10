@@ -545,7 +545,10 @@ fn reverse_ordered_forest_validation_is_linear_before_order_rejection() {
             )
             .unwrap_err()
         });
-        assert_eq!(error, crate::ModelError::BadOrder);
+        assert!(matches!(
+            error,
+            crate::ModelError::Order(cause) if matches!(*cause, crate::ArrangeError::OutOfOrder { .. })
+        ));
         let (error, validation) = measured(|| broken.check_invariants().unwrap_err());
         assert!(error.to_string().contains("out of arrange order"));
         assert!(

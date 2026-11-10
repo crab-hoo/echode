@@ -43,6 +43,7 @@ mod content_fields;
 mod device;
 mod device_fields;
 mod duplicate;
+mod error;
 mod footprint;
 mod hierarchy;
 mod id;
@@ -67,9 +68,9 @@ pub use device::{
     Device, DeviceKind, GAIN_MAX, MixerIds, PAN_MAX, PAN_MIN, ParamKey, Parameter, test_mixer,
     valid_plugin_id,
 };
+pub use error::{ArrangeError, InvariantError};
 pub use footprint::Footprint;
 pub use id::Id;
-pub use invariants::InvariantError;
 pub use model::{
     AudioRef, CLIP_GAIN_MAX, ClipKind, Content, ContentMetadata, DEFAULT_FADE_FLICKS, Expression,
     ExpressionKind, ExpressionPoint, FADE_RATE_LIMIT, Lane, MIDI7_MAX, ModelError, Note, NoteDraft,

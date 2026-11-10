@@ -24,6 +24,7 @@ TYPED_CRATES = (
     'echode-engine',
     'echode-ffi',
     'echode-history',
+    'echode-model',
     'echode-plugin-host',
     'echode-sandbox',
 )

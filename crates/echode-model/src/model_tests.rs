@@ -923,7 +923,12 @@ fn a_bad_track_order_is_rejected() {
             vec![track(1, same.clone()), track(2, same)],
         )
         .unwrap_err(),
-        ModelError::BadOrder
+        ModelError::Order(Box::new(crate::ArrangeError::DuplicateKey {
+            first: Id::from_raw(1),
+            first_name: "t1".into(),
+            second: Id::from_raw(2),
+            second_name: "t2".into(),
+        }))
     );
     assert_eq!(
         Project::try_assemble(
@@ -933,7 +938,10 @@ fn a_bad_track_order_is_rejected() {
             vec![track(1, "not-a-key".into())],
         )
         .unwrap_err(),
-        ModelError::BadOrder
+        ModelError::Order(Box::new(crate::ArrangeError::InvalidKey {
+            track: Id::from_raw(1),
+            name: "t1".into(),
+        }))
     );
     let swapped = vec![track(1, sibling_order(1)), track(2, sibling_order(0))];
     assert_eq!(
@@ -944,7 +952,10 @@ fn a_bad_track_order_is_rejected() {
             swapped.clone()
         )
         .unwrap_err(),
-        ModelError::BadOrder
+        ModelError::Order(Box::new(crate::ArrangeError::OutOfOrder {
+            track: Id::from_raw(1),
+            name: "t1".into(),
+        }))
     );
     let stored = Project::unchecked(Meter::four_four(), tempo, Vec::new(), swapped);
     assert!(

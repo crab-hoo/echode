@@ -128,6 +128,20 @@ class TypedErrors(unittest.TestCase):
                         f'{source}:1: {problem}',
                     ])
 
+    def test_completed_model_crate_guards_validation_and_new_modules(self):
+        cases = [
+            ('fn f() -> Result<(), String> {}\n', 'returns a String error'),
+            ('fn f() { g().map_err(|e| E::Invariant(e.to_string()))?; }\n', 'turns an error into text'),
+        ]
+        for name in ('model.rs', 'invariants.rs', 'error.rs', 'new.rs', 'nested/new.rs'):
+            source = f'crates/echode-model/src/{name}'
+            for text, problem in cases:
+                with self.subTest(source=source, text=text):
+                    root = self.tree({source: text})
+                    self.assertEqual(check_typed_errors.problems(root), [
+                        f'{source}:1: {problem}',
+                    ])
+
     def test_unmigrated_crates_are_not_claimed_as_typed(self):
         root = self.tree({
             'crates/unmigrated/src/store.rs': 'fn f() -> Result<(), String> {}\n',

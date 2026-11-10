@@ -2,8 +2,8 @@
 
 use echode_actions::{JournalLine, JournalOp, decode_line, encode_line};
 use echode_model::{
-    Change, ChangeSet, Field, Id, ModelError, NoteDraft, ObjectKey, ObjectKind, Project, Property,
-    Tick, Track, Value,
+    ArrangeError, Change, ChangeSet, Field, Id, ModelError, NoteDraft, ObjectKey, ObjectKind,
+    Project, Property, Tick, Track, Value,
 };
 use proptest::prelude::*;
 
@@ -318,7 +318,10 @@ fn track_changesets_keep_hierarchy_and_child_resolution_checks() {
         )]);
         assert_eq!(
             base.apply_changeset(&invalid),
-            Err(ModelError::BadOrder),
+            Err(ModelError::Order(Box::new(ArrangeError::MissingTrack {
+                track: target,
+                name: "target".into(),
+            }))),
             "invalid parent {parent:?}"
         );
     }
@@ -328,11 +331,29 @@ fn track_changesets_keep_hierarchy_and_child_resolution_checks() {
         Value::Parent(None),
         Value::Parent(Some(target)),
     )]);
-    assert_eq!(base.apply_changeset(&cycle), Err(ModelError::BadOrder));
-    for key in [
-        String::new(),
-        "not a fractional index".into(),
-        track(&base, parents[1]).order.clone(),
+    assert_eq!(
+        base.apply_changeset(&cycle),
+        Err(ModelError::Order(Box::new(ArrangeError::MissingTrack {
+            track: parents[0],
+            name: "left folder".into(),
+        })))
+    );
+    let invalid_key = ArrangeError::InvalidKey {
+        track: parents[0],
+        name: "left folder".into(),
+    };
+    for (key, expected) in [
+        (String::new(), invalid_key.clone()),
+        ("not a fractional index".into(), invalid_key),
+        (
+            track(&base, parents[1]).order.clone(),
+            ArrangeError::DuplicateKey {
+                first: parents[0],
+                first_name: "left folder".into(),
+                second: parents[1],
+                second_name: "right folder".into(),
+            },
+        ),
     ] {
         let invalid = changes([update(
             parents[0],
@@ -342,7 +363,7 @@ fn track_changesets_keep_hierarchy_and_child_resolution_checks() {
         )]);
         assert_eq!(
             base.apply_changeset(&invalid),
-            Err(ModelError::BadOrder),
+            Err(ModelError::Order(Box::new(expected))),
             "invalid sibling key {key:?}"
         );
     }

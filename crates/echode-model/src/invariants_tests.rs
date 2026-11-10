@@ -5,6 +5,9 @@ use crate::model::{
 };
 use crate::time::{Meter, Tempo, TempoMap, Tick};
 
+#[path = "invariants_error_tests.rs"]
+mod typed_errors;
+
 fn project(contents: Vec<Content>, tracks: Vec<Track>) -> Project {
     Project::unchecked(
         Meter::four_four(),
@@ -60,6 +63,32 @@ fn clip(id: u128, kind: ClipKind, first: i64, bars: i64) -> (Content, Placement)
 
 fn broken_rule(project: &Project) -> String {
     project.check_invariants().unwrap_err().to_string()
+}
+
+#[test]
+fn assembly_preserves_the_invariant_cause() {
+    let (content, placement) = clip(2, ClipKind::Auto, 0, 2);
+    let error = assemble(vec![content], vec![track(1, None, vec![placement])]).unwrap_err();
+    let source = std::error::Error::source(&error);
+    assert!(
+        source.is_some_and(|cause| cause.is::<InvariantError>()),
+        "model assembly lost its typed invariant cause: {error:?}"
+    );
+}
+
+#[test]
+fn assembly_preserves_the_arrange_order_cause() {
+    let mut invalid = track(1, None, Vec::new());
+    invalid.order = "not-a-key".into();
+    let error = assemble(Vec::new(), vec![invalid]).unwrap_err();
+    assert!(
+        std::error::Error::source(&error).is_some(),
+        "model assembly lost its typed arrange order cause: {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "track order key is missing, duplicated, or out of arrange order"
+    );
 }
 
 #[test]
@@ -148,7 +177,7 @@ fn assembly_checks_auto_bars_from_content_zero_not_timeline_zero() {
         wrong.offset = Tick::new(-origin);
         assert!(matches!(
             assemble(vec![content], vec![track(1, None, vec![wrong])]),
-            Err(ModelError::Invariant(message)) if message.contains("auto clip")
+            Err(ModelError::Invariant(InvariantError::AutoBounds { .. }))
         ));
     }
 }
@@ -158,7 +187,10 @@ fn assembly_rejects_a_window_a_reversed_pair_an_overflow_and_a_self_take() {
     let (content, placement) = clip(2, ClipKind::Auto, 0, 2);
     let error = assemble(vec![content], vec![track(1, None, vec![placement])]).unwrap_err();
     assert!(
-        matches!(error, ModelError::Invariant(ref message) if message.contains("auto clip")),
+        matches!(
+            error,
+            ModelError::Invariant(InvariantError::AutoBounds { .. })
+        ),
         "{error}"
     );
 
@@ -170,7 +202,10 @@ fn assembly_rejects_a_window_a_reversed_pair_an_overflow_and_a_self_take() {
     )
     .unwrap_err();
     assert!(
-        matches!(error, ModelError::Invariant(ref message) if message.contains("starts before")),
+        matches!(
+            error,
+            ModelError::Invariant(InvariantError::ClipOverlap { .. })
+        ),
         "{error}"
     );
 
@@ -295,7 +330,7 @@ fn placement_note_bounds_match_scalar_checks_at_integer_limits() {
             assert_eq!(direct, expected, "origin {origin}, notes {notes:?}");
             let assembled = match assemble(vec![content], tracks) {
                 Ok(_) => Ok(()),
-                Err(ModelError::Invariant(message)) => Err(message),
+                Err(ModelError::Invariant(error)) => Err(error.to_string()),
                 Err(error) => panic!("unexpected assembly error: {error}"),
             };
             assert_eq!(assembled, expected, "origin {origin}, notes {notes:?}");
@@ -336,7 +371,11 @@ fn auto_bars_use_the_earliest_start_and_latest_end_of_shared_content() {
     tracks[0].clips[0].length = Tick::new(3 * bar);
     assert!(matches!(
         assemble(vec![content], tracks),
-        Err(ModelError::Invariant(message)) if message.contains("notes cover bars -1..=2")
+        Err(ModelError::Invariant(InvariantError::AutoBounds {
+            low: -1,
+            high: 2,
+            ..
+        }))
     ));
 }
 
@@ -352,7 +391,7 @@ fn empty_content_is_valid_only_for_fixed_placements() {
     placement.kind = ClipKind::Auto;
     assert!(matches!(
         assemble(vec![content], vec![track(1, None, vec![placement])]),
-        Err(ModelError::Invariant(message)) if message.contains("has no notes")
+        Err(ModelError::Invariant(InvariantError::EmptyAuto { .. }))
     ));
 }
 

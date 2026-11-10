@@ -156,6 +156,13 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 製品の命令変換とリングの境界回帰は `playback.rs::QueuedCommand` と `playback_command_tests.rs` に置く。
 未使用だった別系統の `handoff.rs` と専用の公開型は削除した（[ADR 0253](decisions/0253-product-only-playback-commands.md)）。
 
+### モデルのエラー
+
+`echode-model/src/error.rs` は `InvariantError` と `ArrangeError` の原因・表示、`model.rs` は編集・組立ての `ModelError` を持つ。
+規則は引き続き `invariants.rs` と既存の述語が正本で、表示のために検査を重ねない。
+`invariants_error_tests.rs` は既存の不変条件テストの fixture を共有し、組立て・並びの型と `Error::source` を照合する。
+パッケージと復旧を通る原因は履歴の `tests/package_errors.rs`・`tests/audit_recovery.rs` で照合する（[ADR 0303](decisions/0303-typed-model-invariant-errors.md)）。
+
 ### モデルの項目表と変更セット
 
 パラメーターの変更セットの生成器は `echode-model/src/changeset_parameter.rs`、

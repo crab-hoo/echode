@@ -285,6 +285,8 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 `Json` は対象の `PackageKind` と元の JSON エラーを持ち、行・列・分類を `Error::source` から読める。
 `UnsupportedSchema` は入力の版を `u64` で保持し、`Migration` は失敗した段階の版と `MigrationError` を持つ。
 `Model` は元の `ModelError` で、版の拒否や I/O と分ける。表示文で判定しない。
+`ModelError::Invariant` は `InvariantError` の規則・ID・時刻、`Order` は `ArrangeError` のキー不正・重複・並びの違いを持つ。
+`Error::source` でも同じ原因へ届く。トラック名が同じでも ID で区別し、従来の表示文で分岐しない（[ADR 0303](../decisions/0303-typed-model-invariant-errors.md)）。
 作業ファイルと Git の版は `document_parse.rs` の同じ移行・検証を通る。
 `tests/package_errors.rs` は原本の保持と原因、`tests/autosave_errors.rs` は実 Git の版のワーカー返信を照合する。
 共有後も `original()` を使い、読込みの拒否を保存の不確定や復旧同意と取り違えない（[ADR 0298](../decisions/0298-typed-package-validation-errors.md)）。

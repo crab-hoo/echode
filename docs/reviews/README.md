@@ -48,6 +48,7 @@
   間引き・パック・バンドルは [ADR 0300](../decisions/0300-typed-thinning-errors.md)。
   非既定の履歴スパイクも型にし、初期化失敗後の終了の待ちを修正した（[ADR 0301](../decisions/0301-typed-history-spike-errors.md)）。
   `echode-ffi` の目録も、ヘルパー未検出のパスと元の目録・JSON の原因を保つ（[ADR 0302](../decisions/0302-typed-ffi-catalog-errors.md)）。
+  モデルの並びと不変条件も、組立て・パッケージ・復旧を通って規則・ID・時刻を保つ（[ADR 0303](../decisions/0303-typed-model-invariant-errors.md)）。
   XCA-13 はコールバックのトラックごとの全体の走査をなくした（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
   XCA-14 はコールバックの panic を捕まえて理由を記録へ残し（[ADR 0238](../decisions/0238-audio-callback-panics.md)）、音声経路の crate で添字などを拒否した（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）。
   証拠は [保存の耐久性の追跡](../evidence/2026-11-02-durability-trace.md) に置く。

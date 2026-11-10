@@ -124,6 +124,50 @@ fn package_model_failure_retains_its_original_cause() {
 }
 
 #[test]
+fn package_validation_keeps_typed_order_and_invariant_details() {
+    use echode_model::{ArrangeError, InvariantError};
+
+    let fixture = Fixture::new();
+    let (_, path) = &fixture.files()[1];
+    let original = fs::read_to_string(path).unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&original).unwrap();
+    let track = Id::parse(value["id"].as_str().unwrap()).unwrap();
+    value["order"] = serde_json::json!("not-a-key");
+    let error = fixture.reject_file(path, &value.to_string());
+    assert_eq!(
+        cause::<ArrangeError>(&error),
+        Some(&ArrangeError::InvalidKey {
+            track,
+            name: "validation".into(),
+        })
+    );
+    assert_eq!(
+        error.to_string(),
+        "track order key is missing, duplicated, or out of arrange order"
+    );
+
+    fs::write(path, &original).unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&original).unwrap();
+    let clip = Id::parse(value["clips"][0]["id"].as_str().unwrap()).unwrap();
+    let bar = echode_model::Meter::four_four().bar_ticks().unwrap().get();
+    value["clips"][0]["length"] = serde_json::json!(2 * bar);
+    let error = fixture.reject_file(path, &value.to_string());
+    let expected = InvariantError::AutoBounds {
+        clip,
+        start: 0,
+        end: 2 * bar,
+        low: 0,
+        high: 0,
+    };
+    assert_eq!(cause::<InvariantError>(&error), Some(&expected));
+    assert_eq!(error.to_string(), expected.to_string());
+    assert!(matches!(
+        cause::<ModelError>(&error),
+        Some(ModelError::Invariant(actual)) if actual == &expected
+    ));
+}
+
+#[test]
 fn schema_refusals_keep_kind_number_and_legacy_text() {
     use echode_history::{PackageError, PackageValidationError as Invalid};
     use serde_json::json;

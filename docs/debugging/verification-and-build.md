@@ -146,6 +146,7 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。
 文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
 `echode-ffi` の目録は `catalog::CatalogError` を返す。元の目録・JSON の原因を保持し、C ABI の失敗の数値へ畳むまで文にしない（[ADR 0302](../decisions/0302-typed-ffi-catalog-errors.md)）。
+`echode-model` も crate 全体を登録している。`ModelError::Invariant` の内側は `InvariantError`、`Order` の内側は `ArrangeError` で、原因を文へ戻さない（[ADR 0303](../decisions/0303-typed-model-invariant-errors.md)）。
 
 `echode-history` は非既定の履歴スパイクも含めて `TYPED_CRATES` に登録している（ADR 0296〜[0301](../decisions/0301-typed-history-spike-errors.md)）。
 `PackageError::new`・`PackageError::Message` の再導入も crate 全体で拒否する。

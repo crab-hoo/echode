@@ -16,6 +16,7 @@ use std::convert::identity;
 use fractional_index::FractionalIndex;
 
 use crate::device::{Device, DeviceKind, MixerIds, valid_plugin_id};
+use crate::error::{ArrangeError, InvariantError};
 use crate::id::Id;
 use crate::note_fields::note_fields;
 use crate::time::{FLICKS_PER_SECOND, Flick, Meter, Tempo, TempoMap, Tick};
@@ -51,14 +52,19 @@ pub enum ModelError {
     InvalidParameter,
     InvalidDevice,
     InvalidAudio,
-    /// [`Project::check_invariants`] failed. The string is that function's sentence.
-    Invariant(String),
+    /// [`Project::check_invariants`] failed, retaining the broken rule.
+    Invariant(InvariantError),
+    /// Track keys cannot produce the required arrange order.
+    Order(Box<ArrangeError>),
 }
 
 impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::Invariant(message) => return formatter.write_str(message),
+            Self::Invariant(error) => return write!(formatter, "{error}"),
+            Self::Order(_) | Self::BadOrder => {
+                "track order key is missing, duplicated, or out of arrange order"
+            }
             Self::InvalidNote => "note pitch, velocity, or length is not usable",
             Self::InvalidClip => "clip bounds are empty or out of range",
             Self::InvalidMeter => "meter cannot change while a track has clips",
@@ -72,7 +78,6 @@ impl fmt::Display for ModelError {
             Self::InvalidGain => "gain must be finite, at least zero, and at most 1048576",
             Self::InvalidFade => "fade is negative or does not fit in a frame count",
             Self::Unsorted => "notes are not in start, pitch, id order",
-            Self::BadOrder => "track order key is missing, duplicated, or out of arrange order",
             Self::MissingParameter => "parameter is not in the project",
             Self::InvalidParameter => "parameter value is outside its range",
             Self::InvalidDevice => "plugin id is unusable or the device cannot be removed",
@@ -82,7 +87,15 @@ impl fmt::Display for ModelError {
     }
 }
 
-impl std::error::Error for ModelError {}
+impl std::error::Error for ModelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Invariant(error) => Some(error),
+            Self::Order(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// A note placed on the project timeline, before it belongs to a clip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1513,8 +1526,8 @@ impl Project {
             assembled.push(Arc::new(track));
         }
         validate_forest(&assembled)?;
-        if arrange_fault(&assembled).is_some() {
-            return Err(ModelError::BadOrder);
+        if let Some(error) = arrange_fault(&assembled) {
+            return Err(ModelError::Order(Box::new(error)));
         }
         let referenced = referenced_contents(&assembled);
         if stored
@@ -1529,9 +1542,7 @@ impl Project {
             contents: stored,
             tracks: assembled,
         };
-        project
-            .check_invariants()
-            .map_err(|error| ModelError::Invariant(error.to_string()))?;
+        project.check_invariants().map_err(ModelError::Invariant)?;
         Ok(project)
     }
 
@@ -1644,29 +1655,32 @@ fn next_order(tracks: &[Arc<Track>], parent: Option<Id>) -> Result<String, Model
 
 /// Arrange order from sibling keys. The walk is iterative, so depth is not capped.
 pub(crate) fn arrange_tracks(tracks: &[Arc<Track>]) -> Result<Vec<Arc<Track>>, ModelError> {
-    derived_order(tracks).map_err(|_| ModelError::BadOrder)
+    derived_order(tracks).map_err(|error| ModelError::Order(Box::new(error)))
 }
 
-/// `None` when `tracks` is already the arrange order. Otherwise words for the first fault.
-pub(crate) fn arrange_fault(tracks: &[Arc<Track>]) -> Option<String> {
+/// `None` when `tracks` is already the arrange order; otherwise the first fault.
+pub(crate) fn arrange_fault(tracks: &[Arc<Track>]) -> Option<ArrangeError> {
     match derived_order(tracks) {
-        Err(message) => Some(message),
+        Err(error) => Some(error),
         Ok(ordered) => tracks
             .iter()
             .zip(ordered)
             .find(|(given, want)| given.id != want.id)
-            .map(|(given, _)| format!("track {} is out of arrange order", given.name)),
+            .map(|(given, _)| ArrangeError::OutOfOrder {
+                track: given.id,
+                name: given.name.clone(),
+            }),
     }
 }
 
-fn derived_order(tracks: &[Arc<Track>]) -> Result<Vec<Arc<Track>>, String> {
+fn derived_order(tracks: &[Arc<Track>]) -> Result<Vec<Arc<Track>>, ArrangeError> {
     let mut groups: HashMap<Option<Id>, Vec<usize>> = HashMap::new();
     for (index, track) in tracks.iter().enumerate() {
         if FractionalIndex::from_string(&track.order).is_err() {
-            return Err(format!(
-                "track {} has an order key that is not a fractional index",
-                track.name
-            ));
+            return Err(ArrangeError::InvalidKey {
+                track: track.id,
+                name: track.name.clone(),
+            });
         }
         groups.entry(track.parent).or_default().push(index);
     }
@@ -1674,10 +1688,12 @@ fn derived_order(tracks: &[Arc<Track>]) -> Result<Vec<Arc<Track>>, String> {
         group.sort_by(|&left, &right| tracks[left].order.cmp(&tracks[right].order));
         for pair in group.windows(2) {
             if tracks[pair[0]].order == tracks[pair[1]].order {
-                return Err(format!(
-                    "tracks {} and {} share an order key",
-                    tracks[pair[0]].name, tracks[pair[1]].name
-                ));
+                return Err(ArrangeError::DuplicateKey {
+                    first: tracks[pair[0]].id,
+                    first_name: tracks[pair[0]].name.clone(),
+                    second: tracks[pair[1]].id,
+                    second_name: tracks[pair[1]].name.clone(),
+                });
             }
         }
     }
@@ -1688,7 +1704,10 @@ fn derived_order(tracks: &[Arc<Track>]) -> Result<Vec<Arc<Track>>, String> {
     while let Some(index) = stack.pop() {
         let id = tracks[index].id;
         if !seen.insert(id) {
-            return Err(format!("track {} is its own ancestor", tracks[index].name));
+            return Err(ArrangeError::Cycle {
+                track: id,
+                name: tracks[index].name.clone(),
+            });
         }
         ordered.push(Arc::clone(&tracks[index]));
         if let Some(children) = groups.get(&Some(id)) {
@@ -1702,10 +1721,10 @@ fn derived_order(tracks: &[Arc<Track>]) -> Result<Vec<Arc<Track>>, String> {
             .iter()
             .find(|track| !seen.contains(&track.id))
             .unwrap();
-        return Err(format!(
-            "track {} is not in the arrange order",
-            missing.name
-        ));
+        return Err(ArrangeError::MissingTrack {
+            track: missing.id,
+            name: missing.name.clone(),
+        });
     }
     Ok(ordered)
 }

@@ -4,41 +4,23 @@
 //! [`Project::check_invariants`] reports the first rule that fails.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 
+use crate::error::InvariantError;
 use crate::id::Id;
-use crate::model::{
-    CLIP_GAIN_MAX, ClipKind, Project, arrange_fault, clip_gain_allowed, fade_allowed, note_ord,
-};
-
-/// The first rule a snapshot broke, in words.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InvariantError(String);
-
-impl fmt::Display for InvariantError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for InvariantError {}
-
-fn broken(message: String) -> Result<(), InvariantError> {
-    Err(InvariantError(message))
-}
+use crate::model::{ClipKind, Project, arrange_fault, clip_gain_allowed, fade_allowed, note_ord};
 
 impl Project {
     /// Reports the first broken rule from the crate-level invariant list.
     pub fn check_invariants(&self) -> Result<(), InvariantError> {
         let Some(bar) = self.meter().bar_ticks().map(|bar| bar.get()) else {
-            return broken("the meter has no whole-tick bar".into());
+            return Err(InvariantError::InvalidMeter);
         };
         if self
             .contents()
             .windows(2)
             .any(|pair| pair[0].id > pair[1].id)
         {
-            return broken("contents are out of content id order".into());
+            return Err(InvariantError::ContentOrder);
         }
         let referenced = crate::model::referenced_contents(self.tracks());
         let mut ids = HashSet::new();
@@ -46,26 +28,28 @@ impl Project {
         let mut content_bounds = HashMap::new();
         for content in self.contents() {
             if !ids.insert(content.id) {
-                return broken(format!("id {} is used twice", content.id));
+                return Err(InvariantError::DuplicateId { id: content.id });
             }
             if content.takes.contains(&content.id) {
-                return broken(format!("content {} lists itself as a take", content.id));
+                return Err(InvariantError::SelfTake {
+                    content: content.id,
+                });
             }
             let mut bounds: Option<(i64, i64)> = None;
             for note in &content.notes {
                 #[cfg(test)]
                 crate::model_scale_tests::note_validation();
                 if !ids.insert(note.id) {
-                    return broken(format!("id {} is used twice", note.id));
+                    return Err(InvariantError::DuplicateId { id: note.id });
                 }
                 if note.pitch > crate::MIDI7_MAX
                     || note.length.get() <= 0
                     || note.articulation.is_some()
                 {
-                    return broken(format!("note {} is not usable", note.id));
+                    return Err(InvariantError::InvalidNote { note: note.id });
                 }
                 let Some(end) = note.start.get().checked_add(note.length.get()) else {
-                    return broken(format!("note {} ends past the time range", note.id));
+                    return Err(InvariantError::NoteEnd { note: note.id });
                 };
                 let last = end - 1;
                 bounds = Some(match bounds {
@@ -76,10 +60,9 @@ impl Project {
                 });
             }
             if !content.expressions.is_empty() {
-                return broken(format!(
-                    "content {} has expression curves before they can be edited",
-                    content.id
-                ));
+                return Err(InvariantError::Expressions {
+                    content: content.id,
+                });
             }
             if let Some((first, second)) = content
                 .notes
@@ -87,28 +70,35 @@ impl Project {
                 .zip(content.notes.iter().skip(1))
                 .find(|(first, second)| note_ord(first, second).is_gt())
             {
-                return broken(format!(
-                    "notes {} then {} in content {} are out of start, pitch, id order",
-                    first.id, second.id, content.id
-                ));
+                return Err(InvariantError::NoteOrder {
+                    content: content.id,
+                    first: first.id,
+                    second: second.id,
+                });
             }
             content_bounds.insert(content.id, (content, bounds));
         }
         for track in self.tracks() {
             if !ids.insert(track.id) {
-                return broken(format!("id {} is used twice", track.id));
+                return Err(InvariantError::DuplicateId { id: track.id });
             }
             let Some(mixer) = track.devices.last() else {
-                return broken(format!("track {} does not have one mixer", track.name));
+                return Err(InvariantError::MissingMixer {
+                    track: track.id,
+                    name: track.name.clone(),
+                });
             };
             if mixer.kind != crate::device::DeviceKind::Mixer || mixer.plugin.is_some() {
-                return broken(format!("track {} does not have one mixer", track.name));
+                return Err(InvariantError::MissingMixer {
+                    track: track.id,
+                    name: track.name.clone(),
+                });
             }
             if mixer.bypassed || mixer.offline || mixer.state.is_some() {
-                return broken(format!(
-                    "track {} mixer is bypassed, offline or holds plugin state",
-                    track.name
-                ));
+                return Err(InvariantError::InvalidMixer {
+                    track: track.id,
+                    name: track.name.clone(),
+                });
             }
             if track.devices[..track.devices.len() - 1]
                 .iter()
@@ -121,25 +111,25 @@ impl Project {
                         || !device.parameters.is_empty()
                 })
             {
-                return broken(format!(
-                    "track {} has a plugin device without a CLAP id",
-                    track.name
-                ));
+                return Err(InvariantError::InvalidPlugin {
+                    track: track.id,
+                    name: track.name.clone(),
+                });
             }
             for device in &track.devices {
                 if !ids.insert(device.id) {
-                    return broken(format!("id {} is used twice", device.id));
+                    return Err(InvariantError::DuplicateId { id: device.id });
                 }
             }
             if mixer.parameters.len() != crate::device::ParamKey::ORDER.len() {
-                return broken(format!(
-                    "track {} mixer does not have its four parameters",
-                    track.name
-                ));
+                return Err(InvariantError::MixerParameters {
+                    track: track.id,
+                    name: track.name.clone(),
+                });
             }
             for (parameter, key) in mixer.parameters.iter().zip(crate::device::ParamKey::ORDER) {
                 if !ids.insert(parameter.id) {
-                    return broken(format!("id {} is used twice", parameter.id));
+                    return Err(InvariantError::DuplicateId { id: parameter.id });
                 }
                 let (min, max, default) = key.ends();
                 if parameter.key != key
@@ -148,47 +138,43 @@ impl Project {
                     || parameter.default.to_bits() != default.to_bits()
                     || !key.allows(parameter.value)
                 {
-                    return broken(format!(
-                        "parameter {} on {} is outside its range",
-                        parameter.id, track.name
-                    ));
+                    return Err(InvariantError::ParameterRange {
+                        track: track.id,
+                        track_name: track.name.clone(),
+                        parameter: parameter.id,
+                    });
                 }
             }
             let mut previous_end = None;
             for clip in &track.clips {
                 if !ids.insert(clip.id) {
-                    return broken(format!("id {} is used twice", clip.id));
+                    return Err(InvariantError::DuplicateId { id: clip.id });
                 }
                 let start = clip.start.get();
                 let Some(end) = start.checked_add(clip.length.get()) else {
-                    return broken(format!("clip {} ends past the time range", clip.id));
+                    return Err(InvariantError::ClipEnd { clip: clip.id });
                 };
                 let Some((content, bounds)) = content_bounds.get(&clip.content) else {
-                    return broken(format!("clip {} names a missing content", clip.id));
+                    return Err(InvariantError::MissingContent { clip: clip.id });
                 };
                 let Some(origin) = start.checked_sub(clip.offset.get()) else {
-                    return broken(format!("clip {} has no origin", clip.id));
+                    return Err(InvariantError::ClipOrigin { clip: clip.id });
                 };
                 if clip.length.get() <= 0 {
-                    return broken(format!("clip {} is empty", clip.id));
+                    return Err(InvariantError::EmptyClip { clip: clip.id });
                 }
                 if !clip_gain_allowed(clip.gain) {
-                    return broken(format!(
-                        "clip {} gain must be finite, at least zero, and at most {CLIP_GAIN_MAX}",
-                        clip.id
-                    ));
+                    return Err(InvariantError::ClipGain { clip: clip.id });
                 }
                 if !fade_allowed(clip.fade_in) || !fade_allowed(clip.fade_out) {
-                    return broken(format!(
-                        "clip {} fade is negative or does not fit in a frame count",
-                        clip.id
-                    ));
+                    return Err(InvariantError::ClipFade { clip: clip.id });
                 }
                 if previous_end.is_some_and(|previous| start < previous) {
-                    return broken(format!(
-                        "clip {} starts before the previous clip on {} ends",
-                        clip.id, track.name
-                    ));
+                    return Err(InvariantError::ClipOverlap {
+                        clip: clip.id,
+                        track: track.id,
+                        track_name: track.name.clone(),
+                    });
                 }
                 previous_end = Some(end);
                 if clip.kind == ClipKind::Auto {
@@ -203,10 +189,10 @@ impl Project {
                         #[cfg(test)]
                         crate::model_scale_tests::note_validation();
                         let Some(absolute) = origin.checked_add(note.start.get()) else {
-                            return broken(format!("note {} starts past the time range", note.id));
+                            return Err(InvariantError::NoteStart { note: note.id });
                         };
                         if absolute.checked_add(note.length.get() - 1).is_none() {
-                            return broken(format!("note {} ends past the time range", note.id));
+                            return Err(InvariantError::NoteEnd { note: note.id });
                         }
                     }
                 }
@@ -214,59 +200,58 @@ impl Project {
                     bounds.map(|(first, last)| (first.div_euclid(bar), last.div_euclid(bar)));
                 if clip.kind == ClipKind::Auto {
                     let Some((low, high)) = bars else {
-                        return broken(format!("auto clip {} has no notes", clip.id));
+                        return Err(InvariantError::EmptyAuto { clip: clip.id });
                     };
                     let Some(covered_start) = low
                         .checked_mul(bar)
                         .and_then(|local| origin.checked_add(local))
                     else {
-                        return broken(format!("auto clip {} starts past the time range", clip.id));
+                        return Err(InvariantError::AutoStart { clip: clip.id });
                     };
                     let Some(covered_end) = high
                         .checked_add(1)
                         .and_then(|next| next.checked_mul(bar))
                         .and_then(|local| origin.checked_add(local))
                     else {
-                        return broken(format!("auto clip {} ends past the time range", clip.id));
+                        return Err(InvariantError::AutoEnd { clip: clip.id });
                     };
                     if start != covered_start || end != covered_end {
-                        return broken(format!(
-                            "auto clip {} spans {start}..{end}, but its notes cover bars {low}..={high}",
-                            clip.id
-                        ));
+                        return Err(InvariantError::AutoBounds {
+                            clip: clip.id,
+                            start,
+                            end,
+                            low,
+                            high,
+                        });
                     }
                 }
             }
         }
-        if auto_counts.values().any(|count| *count > 1) {
-            return broken("a content has more than one auto placement".into());
+        if let Some((&content, _)) = auto_counts.iter().find(|(_, count)| **count > 1) {
+            return Err(InvariantError::SharedAutoContent { content });
         }
         for content in self.contents() {
             if !referenced.contains(&content.id) {
-                return broken(format!("content {} has no placement", content.id));
+                return Err(InvariantError::UnplacedContent {
+                    content: content.id,
+                });
             }
             if let Some(audio) = &content.audio
                 && audio.check().is_err()
             {
-                return broken(format!(
-                    "content {} has an unusable audio reference",
-                    content.id
-                ));
+                return Err(InvariantError::InvalidAudio {
+                    content: content.id,
+                });
             }
         }
-        if let Err(error) = crate::hierarchy::check_forest(self.tracks()) {
-            let message = match error {
-                crate::hierarchy::ForestError::MissingParent { track, parent } => {
-                    format!("track {track} names a missing parent {parent}")
-                }
-                crate::hierarchy::ForestError::Cycle { track } => {
-                    format!("track {track} is its own ancestor")
-                }
-            };
-            return broken(message);
-        }
-        if let Some(message) = arrange_fault(self.tracks()) {
-            return broken(message);
+        crate::hierarchy::check_forest(self.tracks()).map_err(|error| match error {
+            crate::hierarchy::ForestError::MissingParent { track, parent } => {
+                InvariantError::MissingParent { track, parent }
+            }
+            crate::hierarchy::ForestError::Cycle { track } => InvariantError::TrackCycle { track },
+        })?;
+        if let Some(error) = arrange_fault(self.tracks()) {
+            return Err(InvariantError::Order(Box::new(error)));
         }
         Ok(())
     }
