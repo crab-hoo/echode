@@ -1,7 +1,7 @@
 //! One JSON-RPC request per line.
 
-use echode_actions::{ActionError, Command, catalog, parameter_message};
-use echode_history::DocumentHost;
+use echode_actions::{Command, catalog, parameter_message};
+use echode_history::{DocumentHost, HostError};
 use echode_model::Project;
 use serde_json::{Value, json};
 
@@ -104,103 +104,95 @@ fn summary(project: &Project) -> Value {
     })
 }
 
+#[derive(Debug)]
 enum PerformError {
-    Params {
-        message: String,
-        index: Option<usize>,
-    },
-    Rejected {
-        message: String,
-        index: Option<usize>,
-    },
+    Parameters(serde_json::Error),
+    TransactionShape,
+    Host(HostError),
+    Serialize(serde_json::Error),
+}
+
+impl PerformError {
+    fn code(&self) -> i32 {
+        match self {
+            Self::Parameters(_) | Self::TransactionShape => -32602,
+            Self::Host(HostError::Element { error, .. }) if error.is_parameters() => -32602,
+            Self::Host(_) | Self::Serialize(_) => -32000,
+        }
+    }
+
+    fn index(&self) -> Option<usize> {
+        match self {
+            Self::Host(HostError::Element { index, .. }) => Some(*index),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for PerformError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parameters(error) => f.write_str(&parameter_message(error)),
+            Self::TransactionShape => f.write_str("parameters do not match a transaction"),
+            Self::Host(error) => write!(f, "{error}"),
+            Self::Serialize(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for PerformError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parameters(error) | Self::Serialize(error) => Some(error),
+            Self::Host(error) => Some(error),
+            Self::TransactionShape => None,
+        }
+    }
 }
 
 fn outcome(id: &Value, result: Result<Value, PerformError>) -> String {
     match result {
         Ok(result) => ok_response(id, result),
-        Err(PerformError::Params { message, index }) => {
-            error_response(Some(id), -32602, &message, index_data(index))
-        }
-        Err(PerformError::Rejected { message, index }) => {
-            error_response(Some(id), -32000, &message, index_data(index))
-        }
-    }
-}
-
-fn index_data(index: Option<usize>) -> Option<Value> {
-    index.map(|index| json!({ "index": index }))
-}
-
-fn from_host(error: echode_history::HostError) -> PerformError {
-    match error {
-        echode_history::HostError::Element { index, error } => {
-            let message = error.to_string();
-            if error.is_parameters() {
-                PerformError::Params {
-                    message,
-                    index: Some(index),
-                }
-            } else {
-                PerformError::Rejected {
-                    message,
-                    index: Some(index),
-                }
-            }
-        }
-        echode_history::HostError::Action(ActionError::Model(error)) => PerformError::Rejected {
-            message: error.to_string(),
-            index: None,
-        },
-        error => PerformError::Rejected {
-            message: error.to_string(),
-            index: None,
-        },
+        Err(error) => error_response(
+            Some(id),
+            error.code(),
+            &error.to_string(),
+            error.index().map(|index| json!({ "index": index })),
+        ),
     }
 }
 
 fn perform(host: &DocumentHost, params: &Value) -> Result<Value, PerformError> {
-    let command: Command = serde_json::from_value(params.clone()).map_err(parameter_error)?;
+    let command: Command =
+        serde_json::from_value(params.clone()).map_err(PerformError::Parameters)?;
     match host.perform(command) {
         Ok(action) => Ok(serde_json::to_value(action).expect("a committed action is json")),
-        Err(error) => Err(from_host(error)),
+        Err(error) => Err(PerformError::Host(error)),
     }
 }
 
 fn transaction(host: &DocumentHost, params: &Value) -> Result<Value, PerformError> {
     let Some(actions) = params.get("actions").and_then(Value::as_array) else {
-        return Err(PerformError::Params {
-            message: "parameters do not match a transaction".to_string(),
-            index: None,
-        });
+        return Err(PerformError::TransactionShape);
     };
     match host.apply(actions.clone()) {
         Ok(actions) => Ok(serde_json::to_value(actions).expect("committed actions are json")),
-        Err(error) => Err(from_host(error)),
+        Err(error) => Err(PerformError::Host(error)),
     }
 }
 
 fn undo(host: &DocumentHost) -> Result<Value, PerformError> {
-    host.undo().map(|()| json!({})).map_err(from_host)
+    host.undo().map(|()| json!({})).map_err(PerformError::Host)
 }
 
 fn redo(host: &DocumentHost) -> Result<Value, PerformError> {
-    host.redo().map(|()| json!({})).map_err(from_host)
+    host.redo().map(|()| json!({})).map_err(PerformError::Host)
 }
 
 /// What undo and redo keep in memory (ADR 0286). Byte counts are estimates.
 fn usage(host: &DocumentHost) -> Result<Value, PerformError> {
-    let usage = host.history_usage().map_err(from_host)?;
-    serde_json::to_value(usage).map_err(|error| PerformError::Rejected {
-        message: error.to_string(),
-        index: None,
-    })
-}
-
-fn parameter_error(error: serde_json::Error) -> PerformError {
-    PerformError::Params {
-        message: parameter_message(&error),
-        index: None,
-    }
+    let usage = host.history_usage().map_err(PerformError::Host)?;
+    serde_json::to_value(usage).map_err(PerformError::Serialize)
 }
 
 fn ok_response(id: &Value, result: Value) -> String {

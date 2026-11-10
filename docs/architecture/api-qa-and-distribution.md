@@ -24,6 +24,8 @@
   改行前に EOF となった要求は、その接続だけをエラーで閉じて編集へ渡さない。
   完了済みの前方の要求は保持し、CRLF・分割受信・改行込みの行上限は変えない
   （[ADR 0073 の改行境界](../decisions/0073-socket-path.md#改行前の切断の拒否2026-10-29)）。
+  API・MCP のローカルな失敗は `ApiError` が I/O の操作・元の errno、パッケージ・JSON の原因、通信固有の拒否を分けて保持する。
+  RPC の `HostError` と一括編集の添字も応答の直前まで保持し、コード・表示文・JSON の形は変えない（[ADR 0304](../decisions/0304-typed-api-errors.md)）。
 - **CLI とヘッドレス**: `echode render`（ステレオ float / PCM16 / PCM24 WAV 書き出し、[ADR 0248](../decisions/0248-pcm16-wav-export.md)）、
   `echode apply`（アクション列の実行）、`echode serve`（ヘッドレスサーバー）、`echode mcp`（MCP サーバー）
 - **MCP**: アクション登録簿から MCP ツールを自動生成し、プロジェクト概要やトラック一覧をリソースとして公開する。

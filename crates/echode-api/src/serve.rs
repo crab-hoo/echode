@@ -11,6 +11,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::time::Duration;
 
+use crate::error::{ApiError, ApiIoOperation};
 use crate::rpc::ApiSession;
 
 /// One request line. This bounds a single JSON-RPC message, not the project.
@@ -20,34 +21,13 @@ pub(crate) const MAX_REQUEST_LINE: usize = 1024 * 1024;
 /// A silent client or unread reply must not hold the accept loop forever.
 pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Why the socket stopped.
-#[derive(Debug)]
-pub struct ApiError {
-    message: String,
-}
-
-impl ApiError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for ApiError {}
-
 /// Binds `path` and leaves it readable and writable only by the current user.
 pub fn bind_socket(path: &Path) -> Result<UnixListener, ApiError> {
     prepare_socket_path(path)?;
-    let listener = UnixListener::bind(path).map_err(|error| ApiError::new(error.to_string()))?;
+    let listener = UnixListener::bind(path)
+        .map_err(|error| ApiError::io(ApiIoOperation::BindSocket, error))?;
     set_permissions(path, Permissions::from_mode(0o600))
-        .map_err(|error| ApiError::new(error.to_string()))?;
+        .map_err(|error| ApiError::io(ApiIoOperation::SetSocketPermissions, error))?;
     Ok(listener)
 }
 
@@ -63,17 +43,17 @@ fn serve_connection_limited(
     max_line: usize,
 ) -> Result<(), ApiError> {
     if peer_uid(&stream)? != current_uid() {
-        return Err(ApiError::new("connection is from another user"));
+        return Err(ApiError::ConnectionFromAnotherUser);
     }
     stream
         .set_read_timeout(Some(timeout))
-        .map_err(|error| ApiError::new(error.to_string()))?;
+        .map_err(|error| ApiError::io(ApiIoOperation::SetReadTimeout, error))?;
     stream
         .set_write_timeout(Some(timeout))
-        .map_err(|error| ApiError::new(error.to_string()))?;
+        .map_err(|error| ApiError::io(ApiIoOperation::SetWriteTimeout, error))?;
     let mut writer = stream
         .try_clone()
-        .map_err(|error| ApiError::new(error.to_string()))?;
+        .map_err(|error| ApiError::io(ApiIoOperation::CloneStream, error))?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     loop {
@@ -85,11 +65,11 @@ fn serve_connection_limited(
         match read {
             Ok(0) => return Ok(()),
             Ok(_) if line.len() > max_line => {
-                return Err(ApiError::new("request line is too long"));
+                return Err(ApiError::RequestLineTooLong);
             }
             Ok(_) if !line.ends_with('\n') => {
                 // EOF is not a frame delimiter, even for syntactically valid JSON.
-                return Err(ApiError::new("request line ended without a newline"));
+                return Err(ApiError::RequestLineIncomplete);
             }
             Ok(_) => {}
             Err(error)
@@ -97,13 +77,13 @@ fn serve_connection_limited(
             {
                 return Ok(());
             }
-            Err(error) => return Err(ApiError::new(error.to_string())),
+            Err(error) => return Err(ApiError::io(ApiIoOperation::ReadRequest, error)),
         }
         if let Some(response) = session.reply(&line) {
             // An edit may already be committed. Close on write failure without
             // replaying the request, even if only part of the reply was sent.
             writeln!(writer, "{response}")
-                .map_err(|error| ApiError::new(format!("could not write API reply: {error}")))?;
+                .map_err(|error| ApiError::io(ApiIoOperation::WriteReply, error))?;
         }
     }
 }
@@ -112,27 +92,26 @@ fn prepare_socket_path(path: &Path) -> Result<(), ApiError> {
     let metadata = match path.symlink_metadata() {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(ApiError::new(error.to_string())),
+        Err(error) => return Err(ApiError::io(ApiIoOperation::InspectSocketPath, error)),
     };
     let kind = metadata.file_type();
     if kind.is_symlink() {
-        return Err(ApiError::new("socket path is a symbolic link"));
+        return Err(ApiError::SocketPathSymlink);
     }
     if kind.is_file() {
-        return Err(ApiError::new("socket path is a regular file"));
+        return Err(ApiError::SocketPathRegularFile);
     }
     if !kind.is_socket() {
-        return Err(ApiError::new("socket path is not a socket"));
+        return Err(ApiError::SocketPathNotSocket);
     }
     match UnixStream::connect(path) {
         Ok(stream) => {
             drop(stream);
-            Err(ApiError::new("socket is already in use"))
+            Err(ApiError::SocketInUse)
         }
-        Err(error) if error.kind() == ErrorKind::ConnectionRefused => {
-            std::fs::remove_file(path).map_err(|error| ApiError::new(error.to_string()))
-        }
-        Err(error) => Err(ApiError::new(error.to_string())),
+        Err(error) if error.kind() == ErrorKind::ConnectionRefused => std::fs::remove_file(path)
+            .map_err(|error| ApiError::io(ApiIoOperation::RemoveStaleSocket, error)),
+        Err(error) => Err(ApiError::io(ApiIoOperation::ProbeSocket, error)),
     }
 }
 
@@ -142,7 +121,10 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32, ApiError> {
     let mut gid = 0;
     let result = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
     if result != 0 {
-        return Err(ApiError::new(std::io::Error::last_os_error().to_string()));
+        return Err(ApiError::io(
+            ApiIoOperation::PeerCredentials,
+            std::io::Error::last_os_error(),
+        ));
     }
     Ok(uid)
 }
@@ -154,9 +136,9 @@ pub(crate) fn current_uid() -> u32 {
 /// Accepts connections until the process stops. A new client sees earlier edits.
 pub fn serve(package: &Path, socket: &Path) -> Result<(), ApiError> {
     let listener = bind_socket(socket)?;
-    let session = ApiSession::open(package).map_err(|error| ApiError::new(error.to_string()))?;
+    let session = ApiSession::open(package).map_err(ApiError::Package)?;
     for incoming in listener.incoming() {
-        let stream = incoming.map_err(|error| ApiError::new(error.to_string()))?;
+        let stream = incoming.map_err(|error| ApiError::io(ApiIoOperation::Accept, error))?;
         // One client ending early, sitting idle, or sending a bad line does
         // not close the socket for the next client.
         let _ = serve_connection(&session, stream);

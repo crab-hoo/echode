@@ -332,3 +332,108 @@ fn a_failed_transaction_names_the_element_and_keeps_the_project() {
     );
     assert!(summary["result"]["tracks"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn typed_errors_rpc_keeps_parameters_model_and_transaction_causes_until_the_reply() {
+    use echode_history::{ElementError, ReferenceError};
+    use std::error::Error;
+
+    let (_cleanup, session) = open_session();
+    let parameters = perform(&session.host, &json!({"type": "unknown"})).unwrap_err();
+    assert!(matches!(&parameters, PerformError::Parameters(_)));
+    assert!(parameters.source().unwrap().is::<serde_json::Error>());
+    assert_eq!(parameters.code(), -32602);
+    assert_eq!(parameters.index(), None);
+    let missing = perform(
+        &session.host,
+        &json!({
+            "type": "track.add_child", "parent": echode_model::Id::generate(), "name": "missing"
+        }),
+    )
+    .unwrap_err();
+    assert!(matches!(&missing, PerformError::Host(HostError::Action(_))));
+    let host = missing
+        .source()
+        .unwrap()
+        .downcast_ref::<HostError>()
+        .unwrap();
+    assert!(
+        host.source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .is::<echode_model::ModelError>()
+    );
+    assert_eq!(missing.code(), -32000);
+    assert_eq!(missing.index(), None);
+
+    let reference = transaction(
+        &session.host,
+        &json!({"actions": [
+            {"type": "track.add", "name": "rolled back"},
+            {"type": "track.add_child", "parent": {"ref": 1, "field": "id"}, "name": "missing"}
+        ]}),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        &reference,
+        PerformError::Host(HostError::Element {
+            index: 1,
+            error: ElementError::Reference(ReferenceError::OutOfRange)
+        })
+    ));
+    assert_eq!(reference.code(), -32602);
+    assert_eq!(reference.index(), Some(1));
+    let wire: Value = serde_json::from_str(&outcome(&json!(9), Err(reference))).unwrap();
+    assert_eq!(
+        wire,
+        json!({"jsonrpc": "2.0", "id": 9, "error": {
+            "code": -32602, "message": "action reference is out of range", "data": {"index": 1}
+        }})
+    );
+    assert!(session.host.snapshot().tracks().is_empty());
+}
+
+#[test]
+fn typed_errors_rpc_keeps_import_and_durability_causes_until_the_reply() {
+    use echode_history::{ElementError, MediaError, PackageError};
+    use std::error::Error;
+
+    let (cleanup, session) = open_session();
+    let rejected = transaction(
+        &session.host,
+        &json!({"actions": [
+            {"type": "track.add", "name": "rolled back"},
+            {"type": "audio.import", "track": {"ref": 0, "field": "id"}, "start": 0,
+             "path": cleanup.0.join("missing.wav")}
+        ]}),
+    )
+    .unwrap_err();
+    let PerformError::Host(HostError::Element {
+        index: 1,
+        error: ElementError::Package(package),
+    }) = &rejected
+    else {
+        panic!("{rejected:?}")
+    };
+    assert!(matches!(package, PackageError::Audio(MediaError::Open(_))));
+    assert!(rejected.source().unwrap().is::<HostError>());
+    assert_eq!(rejected.code(), -32000);
+    assert_eq!(rejected.index(), Some(1));
+    assert!(session.host.snapshot().tracks().is_empty());
+
+    // The worker's uncertainty cause must remain typed through the RPC wrapper.
+    let unknown = PerformError::Host(HostError::Package(PackageError::JournalDurabilityUnknown));
+    let source = unknown.source().unwrap().source().unwrap();
+    assert!(
+        source
+            .downcast_ref::<PackageError>()
+            .unwrap()
+            .is_durability_unknown()
+    );
+    let message = unknown.to_string();
+    let wire: Value = serde_json::from_str(&outcome(&json!(10), Err(unknown))).unwrap();
+    assert_eq!(wire["error"]["code"], -32000);
+    assert_eq!(wire["error"]["message"], message);
+    assert!(wire["error"].get("data").is_none());
+}

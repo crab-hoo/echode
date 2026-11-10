@@ -48,6 +48,7 @@ fn a_regular_file_is_left_in_place() {
     let path = socket_path();
     std::fs::write(&path, b"{}").unwrap();
     let error = bind_socket(&path).unwrap_err();
+    assert!(matches!(&error, ApiError::SocketPathRegularFile));
     assert!(error.to_string().contains("regular file"));
     assert_eq!(std::fs::read(&path).unwrap(), b"{}");
     let _ = std::fs::remove_file(path);
@@ -58,6 +59,7 @@ fn a_live_socket_is_not_replaced() {
     let path = socket_path();
     let listener = bind_socket(&path).unwrap();
     let error = bind_socket(&path).unwrap_err();
+    assert!(matches!(&error, ApiError::SocketInUse));
     assert!(error.to_string().contains("already in use"));
     assert!(path.symlink_metadata().unwrap().file_type().is_socket());
     drop(listener);
@@ -183,12 +185,13 @@ fn audit_cur04_an_unread_reply_releases_the_connection() {
     std::fs::remove_dir_all(directory).unwrap();
     std::fs::remove_file(path).unwrap();
     let result = released.expect("an unread reply must release the sequential accept loop");
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("could not write API reply")
-    );
+    let error = result.unwrap_err();
+    assert!(matches!(
+        &error,
+        ApiError::Io { operation: ApiIoOperation::WriteReply, error }
+            if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock)
+    ));
+    assert!(error.to_string().contains("could not write API reply"));
     read.expect("the next client must receive a reply");
     let response: serde_json::Value = serde_json::from_str(&reply).unwrap();
     assert_eq!(response["id"], 2);

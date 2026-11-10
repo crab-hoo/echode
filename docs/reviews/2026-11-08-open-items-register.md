@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 8 crate は列挙型（ADR 0291〜0303）。モデルの並び・不変条件も原因を保持。次は API |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 9 crate は列挙型（ADR 0291〜0304）。API・MCP も元の原因を応答まで保持。次は CLI |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -127,6 +127,9 @@
 - 2026-11-10（ADR 0303）: モデルの不変条件を `InvariantError` の変種にし、`derived_order` と並びの照合は `ArrangeError` を返す。
   組立て・パッケージ読込み・復旧で規則と対象 ID・時刻を保持し、表示文と検査の順は変えない。順序の原因だけを `Box` にした。
   `echode-model` 全体を再導入の検査に登録した。次は `echode-api` で、元の I/O・パッケージの原因を文にしている境界である。
+- 2026-11-10（ADR 0304）: `echode-api` の I/O・パッケージ・接続先 JSON を `ApiError` の原因として保持し、通信固有の拒否を分けた。
+  RPC の `HostError` と一括編集の添字、MCP のリソースの原因も応答まで保持する。文面・RPC のコード・再送しない判断は変えない。
+  crate 全体を再導入の検査に登録した。次は `echode-cli` の文だけの `CliError` である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

@@ -214,6 +214,7 @@ make debug-report
   - JSON-RPC の前後に空白がある時だけ `-32700` になる
   - API が `request line ended without a newline` で接続を閉じる
   - API / MCP の同値設定で Undo が何も戻さない・Redo が消える
+  - API・MCP の停止の原因が文だけで分からない
   - API / MCP の呼出しが返らず、後続クライアントも止まる
 - 保存・パッケージ・復旧
   - ミキサーのパラメーター ID を置換した差分が `InvalidChange` になる

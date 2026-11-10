@@ -38,6 +38,15 @@ EOF の前に LF が届いていない。JSON 自体が正しくても、この�
 画面だけ件数が増える時は、perform 完了の `historyReport.changed` と `recordEdit` の条件を照合する。
 旧版の `changes: []` の行は自動削除しない。同値の依頼・前後の連番・Redo の有無を記録し、原本を保持する。
 
+### API・MCP の停止の原因が文だけで分からない
+
+`echode-api::ApiError` の変種と `Error::source` を調べる。`Io` は操作と元の errno、`Package` は保存・復旧、`SessionJson` は接続先応答の JSON の原因を保持する。
+パスの拒否・改行未完了・行上限・切断・非対応の版は独立の変種で、表示文で分岐しない（[ADR 0304](../decisions/0304-typed-api-errors.md)）。
+RPC は `PerformError::Host` の `HostError::Element` に添字と元の原因を保持し、応答の生成時にコードと文へ変換する。
+MCP のリソースは `ProtocolMessage::Session`、ツールは最終の `structuredContent` の生成箇所で確認する。
+`tests/typed_errors.rs`、`rpc_tests.rs`、`mcp_tests.rs` が原因・文面・拒否後の状態を照合する。
+送信失敗が確定済みの編集を含む可能性は変わらない。原因が I/O でも自動で再送しない。
+
 ### API / MCP の呼出しが返らず、後続クライアントも止まる
 
 ソケットの読込み待ちだけでなく、応答の書込み待ちを確認する。
@@ -287,6 +296,8 @@ Rust の `PackageError::original()` で共有の配達の包みを除き、変�
 `Model` は元の `ModelError` で、版の拒否や I/O と分ける。表示文で判定しない。
 `ModelError::Invariant` は `InvariantError` の規則・ID・時刻、`Order` は `ArrangeError` のキー不正・重複・並びの違いを持つ。
 `Error::source` でも同じ原因へ届く。トラック名が同じでも ID で区別し、従来の表示文で分岐しない（[ADR 0303](../decisions/0303-typed-model-invariant-errors.md)）。
+再生で HashMap から集めた入力は順が固定されない。複数の到達不能なトラックの先頭や、等しいキーの二者の順を決め打ちせず、原因の変種・対象 ID の集合・各 ID の名前を照合する。
+`track_changesets_keep_hierarchy_and_child_resolution_checks` はこの境界を検査する（[ADR 0304](../decisions/0304-typed-api-errors.md)）。
 作業ファイルと Git の版は `document_parse.rs` の同じ移行・検証を通る。
 `tests/package_errors.rs` は原本の保持と原因、`tests/autosave_errors.rs` は実 Git の版のワーカー返信を照合する。
 共有後も `original()` を使い、読込みの拒否を保存の不確定や復旧同意と取り違えない（[ADR 0298](../decisions/0298-typed-package-validation-errors.md)）。

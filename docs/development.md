@@ -269,6 +269,11 @@ Phase 0 の履歴モデル（`echode-history/src/project.rs`・`format.rs`・`st
 
 ### JSON-RPC・MCP
 
+API・MCP の通信のエラーは `crates/echode-api/src/error.rs` の `ApiError` と `ApiIoOperation`、
+RPC の文書・引数の原因は `rpc.rs::PerformError`、MCP のリソースの原因は `mcp.rs::ProtocolMessage` に置く。
+元の原因を保持し、応答の生成時だけ文にする（[ADR 0304](decisions/0304-typed-api-errors.md)）。
+`tests/typed_errors.rs` は公開入口の I/O・パッケージ・パス保持、`rpc_tests.rs` と `mcp_tests.rs` は内部の原因と wire 応答を照合する。
+
 JSON-RPC の外枠検証は `crates/echode-api/src/rpc.rs::ApiSession::reply` に置く。
 公開 API・実ソケットの `tests/request_validation.rs` は、不正な ID・版・params の拒否と、
 通知の応答省略・後続要求・ジャーナルと Undo / Redo・再オープンを検査する

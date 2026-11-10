@@ -331,30 +331,17 @@ fn track_changesets_keep_hierarchy_and_child_resolution_checks() {
         Value::Parent(None),
         Value::Parent(Some(target)),
     )]);
-    assert_eq!(
-        base.apply_changeset(&cycle),
-        Err(ModelError::Order(Box::new(ArrangeError::MissingTrack {
-            track: parents[0],
-            name: "left folder".into(),
-        })))
-    );
-    let invalid_key = ArrangeError::InvalidKey {
-        track: parents[0],
-        name: "left folder".into(),
+    let Err(ModelError::Order(error)) = base.apply_changeset(&cycle) else {
+        panic!("a parent cycle must retain its arrange cause")
     };
-    for (key, expected) in [
-        (String::new(), invalid_key.clone()),
-        ("not a fractional index".into(), invalid_key),
-        (
-            track(&base, parents[1]).order.clone(),
-            ArrangeError::DuplicateKey {
-                first: parents[0],
-                first_name: "left folder".into(),
-                second: parents[1],
-                second_name: "right folder".into(),
-            },
-        ),
-    ] {
+    let ArrangeError::MissingTrack { track: id, name } = error.as_ref() else {
+        panic!("{error:?}")
+    };
+    // Replay gathers tracks from a hash map. Either cycle member may be first.
+    assert!([parents[0], target].contains(id));
+    assert_eq!(name, &track(&base, *id).name);
+
+    for key in [String::new(), "not a fractional index".into()] {
         let invalid = changes([update(
             parents[0],
             Property::Order,
@@ -363,10 +350,35 @@ fn track_changesets_keep_hierarchy_and_child_resolution_checks() {
         )]);
         assert_eq!(
             base.apply_changeset(&invalid),
-            Err(ModelError::Order(Box::new(expected))),
+            Err(ModelError::Order(Box::new(ArrangeError::InvalidKey {
+                track: parents[0],
+                name: "left folder".into(),
+            }))),
             "invalid sibling key {key:?}"
         );
     }
+    let duplicate = changes([update(
+        parents[0],
+        Property::Order,
+        Value::Text(track(&base, parents[0]).order.clone()),
+        Value::Text(track(&base, parents[1]).order.clone()),
+    )]);
+    let Err(ModelError::Order(error)) = base.apply_changeset(&duplicate) else {
+        panic!("duplicate keys must retain their arrange cause")
+    };
+    let ArrangeError::DuplicateKey {
+        first,
+        first_name,
+        second,
+        second_name,
+    } = error.as_ref()
+    else {
+        panic!("{error:?}")
+    };
+    // Equal keys keep the input order, which is not fixed by replay's hash map.
+    assert!([*first, *second] == parents || [*second, *first] == parents);
+    assert_eq!(first_name, &track(&base, *first).name);
+    assert_eq!(second_name, &track(&base, *second).name);
     let with_note = base
         .insert_note(
             target,

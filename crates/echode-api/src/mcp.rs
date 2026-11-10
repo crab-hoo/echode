@@ -8,7 +8,8 @@ use std::path::Path;
 use echode_actions::catalog;
 use serde_json::{Value, json};
 
-use crate::serve::{ApiError, MAX_REQUEST_LINE, READ_TIMEOUT, current_uid, peer_uid};
+use crate::error::{ApiError, ApiIoOperation};
+use crate::serve::{MAX_REQUEST_LINE, READ_TIMEOUT, current_uid, peer_uid};
 
 const MODERN: &str = "2026-07-28";
 const LEGACY: &str = "2025-11-25";
@@ -25,17 +26,41 @@ enum Lifecycle {
     Ready,
 }
 
+#[derive(Debug)]
+enum ProtocolMessage {
+    Local(&'static str),
+    Session(Box<ApiError>),
+}
+
+impl std::fmt::Display for ProtocolMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local(message) => f.write_str(message),
+            Self::Session(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct ProtocolError {
     code: i32,
-    message: String,
+    message: ProtocolMessage,
     data: Option<Value>,
 }
 
 impl ProtocolError {
-    fn new(code: i32, message: impl Into<String>) -> Self {
+    fn new(code: i32, message: &'static str) -> Self {
         Self {
             code,
-            message: message.into(),
+            message: ProtocolMessage::Local(message),
+            data: None,
+        }
+    }
+
+    fn session(error: ApiError) -> Self {
+        Self {
+            code: -32603,
+            message: ProtocolMessage::Session(Box::new(error)),
             data: None,
         }
     }
@@ -61,8 +86,11 @@ pub fn serve_mcp(
     };
     while let Some(line) = read_line(&mut input)? {
         if let Some(response) = session.reply(&line) {
-            writeln!(output, "{response}").map_err(io_error)?;
-            output.flush().map_err(io_error)?;
+            writeln!(output, "{response}")
+                .map_err(|error| ApiError::io(ApiIoOperation::WriteMcpReply, error))?;
+            output
+                .flush()
+                .map_err(|error| ApiError::io(ApiIoOperation::FlushMcpReply, error))?;
         }
     }
     Ok(())
@@ -203,7 +231,7 @@ impl McpSession<'_> {
                     ));
                 }
                 let response = backend(self.socket, "project.summary", json!({}))
-                    .map_err(|error| ProtocolError::new(-32603, error.to_string()))?;
+                    .map_err(ProtocolError::session)?;
                 let summary = response
                     .get("result")
                     .ok_or_else(|| ProtocolError::new(-32603, "session refused project summary"))?;
@@ -381,15 +409,11 @@ fn tool_result(data: Value, failed: bool) -> Value {
 }
 
 fn error(id: &Value, problem: ProtocolError) -> Value {
-    let mut error = json!({"code":problem.code,"message":problem.message});
+    let mut error = json!({"code":problem.code,"message":problem.message.to_string()});
     if let Some(data) = problem.data {
         error["data"] = data;
     }
     json!({"jsonrpc":"2.0","id":id,"error":error})
-}
-
-fn io_error(error: std::io::Error) -> ApiError {
-    ApiError::new(error.to_string())
 }
 
 fn read_line(input: &mut impl BufRead) -> Result<Option<String>, ApiError> {
@@ -397,17 +421,15 @@ fn read_line(input: &mut impl BufRead) -> Result<Option<String>, ApiError> {
     let count = input
         .take(MAX_REQUEST_LINE as u64 + 1)
         .read_line(&mut line)
-        .map_err(io_error)?;
+        .map_err(|error| ApiError::io(ApiIoOperation::ReadMcpMessage, error))?;
     if count == 0 {
         return Ok(None);
     }
     if count > MAX_REQUEST_LINE {
-        return Err(ApiError::new(
-            "MCP message exceeds the single-message size limit",
-        ));
+        return Err(ApiError::McpMessageTooLong);
     }
     if !line.ends_with('\n') {
-        return Err(ApiError::new("MCP message ended without a newline"));
+        return Err(ApiError::McpMessageIncomplete);
     }
     Ok(Some(line))
 }
@@ -415,20 +437,21 @@ fn read_line(input: &mut impl BufRead) -> Result<Option<String>, ApiError> {
 fn backend(socket: &Path, method: &str, params: Value) -> Result<Value, ApiError> {
     // A fresh connection per call does not occupy the single-client session
     // while an MCP client sits idle. Never retry a possibly journaled edit.
-    let stream = UnixStream::connect(socket).map_err(io_error)?;
+    let stream = UnixStream::connect(socket)
+        .map_err(|error| ApiError::io(ApiIoOperation::ConnectSession, error))?;
     if peer_uid(&stream)? != current_uid() {
-        return Err(ApiError::new("session belongs to another user"));
+        return Err(ApiError::SessionFromAnotherUser);
     }
     stream
         .set_read_timeout(Some(READ_TIMEOUT))
-        .map_err(io_error)?;
+        .map_err(|error| ApiError::io(ApiIoOperation::SetReadTimeout, error))?;
     stream
         .set_write_timeout(Some(READ_TIMEOUT))
-        .map_err(io_error)?;
+        .map_err(|error| ApiError::io(ApiIoOperation::SetWriteTimeout, error))?;
     let mut stream = BufReader::new(stream);
     let version = exchange(&mut stream, 0, "protocol.version", json!({}))?;
     if version["result"]["version"] != 1 {
-        return Err(ApiError::new("unsupported Echode session protocol"));
+        return Err(ApiError::UnsupportedSessionProtocol);
     }
     exchange(&mut stream, 1, method, params)
 }
@@ -441,15 +464,12 @@ fn exchange(
 ) -> Result<Value, ApiError> {
     let request = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
     if request.to_string().len() + 1 > MAX_REQUEST_LINE {
-        return Err(ApiError::new(
-            "session request exceeds the single-message size limit",
-        ));
+        return Err(ApiError::SessionRequestTooLong);
     }
-    writeln!(stream.get_mut(), "{request}").map_err(io_error)?;
-    let line =
-        read_line(stream)?.ok_or_else(|| ApiError::new("session closed without a response"))?;
-    let response: Value =
-        serde_json::from_str(&line).map_err(|error| ApiError::new(error.to_string()))?;
+    writeln!(stream.get_mut(), "{request}")
+        .map_err(|error| ApiError::io(ApiIoOperation::WriteSessionRequest, error))?;
+    let line = read_line(stream)?.ok_or(ApiError::SessionClosed)?;
+    let response: Value = serde_json::from_str(&line).map_err(ApiError::SessionJson)?;
     if response["jsonrpc"] != "2.0"
         || response["id"] != id
         || (response.get("result").is_some() == response.get("error").is_some())
@@ -459,103 +479,11 @@ fn exchange(
                 || !error["message"].is_string()
         })
     {
-        return Err(ApiError::new("invalid session response"));
+        return Err(ApiError::InvalidSessionResponse);
     }
     Ok(response)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::bind_socket;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    #[test]
-    fn stdio_keeps_parse_errors_out_of_the_following_reply_and_closes_at_eof() {
-        let input = b"{bad}\n{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}\n";
-        let mut output = Vec::new();
-        serve_mcp(Path::new("unused.sock"), &input[..], &mut output).unwrap();
-        let lines: Vec<Value> = String::from_utf8(output)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0]["error"]["code"], -32700);
-        assert_eq!(lines[1]["id"], 7);
-        assert_eq!(lines[1]["result"], json!({}));
-    }
-
-    #[test]
-    fn a_message_limit_and_truncated_line_do_not_parse_another_request() {
-        // This is the transport's per-message bound, not a project/track limit.
-        let oversized = vec![b'x'; MAX_REQUEST_LINE + 1];
-        let mut output = Vec::new();
-        assert!(serve_mcp(Path::new("unused.sock"), &oversized[..], &mut output).is_err());
-        assert!(output.is_empty());
-        assert!(serve_mcp(Path::new("unused.sock"), &b"{}"[..], &mut output).is_err());
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn a_wrong_session_version_never_receives_an_edit() {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::path::PathBuf::from(format!(
-            "/tmp/echode-mcp-version-{}-{}.sock",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let listener = bind_socket(&path).unwrap();
-        let server = std::thread::spawn(move || {
-            let mut stream = BufReader::new(listener.accept().unwrap().0);
-            let request: Value =
-                serde_json::from_str(&read_line(&mut stream).unwrap().unwrap()).unwrap();
-            assert_eq!(request["method"], "protocol.version");
-            writeln!(
-                stream.get_mut(),
-                "{}",
-                json!({"jsonrpc":"2.0","id":0,"result":{"version":2}})
-            )
-            .unwrap();
-            assert!(
-                read_line(&mut stream).unwrap().is_none(),
-                "an incompatible session received an edit"
-            );
-        });
-        let result = backend(
-            &path,
-            "actions.perform",
-            json!({"type":"track.add","name":"must not arrive"}),
-        );
-        server.join().unwrap();
-        std::fs::remove_file(path).unwrap();
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("unsupported Echode session protocol")
-        );
-    }
-
-    #[test]
-    fn malformed_or_mismatched_backend_results_are_not_successful_edits() {
-        for response in [
-            "not json\n".to_string(),
-            json!({"jsonrpc":"2.0","id":9,"result":{}}).to_string() + "\n",
-            json!({"jsonrpc":"2.0","id":1,"result":{},"error":{}}).to_string() + "\n",
-            json!({"jsonrpc":"1.0","id":1,"result":{}}).to_string() + "\n",
-            "{}".to_string(),
-        ] {
-            let (client, server) = UnixStream::pair().unwrap();
-            let server = std::thread::spawn(move || {
-                let mut server = BufReader::new(server);
-                read_line(&mut server).unwrap().unwrap();
-                server.get_mut().write_all(response.as_bytes()).unwrap();
-            });
-            assert!(
-                exchange(&mut BufReader::new(client), 1, "project.summary", json!({})).is_err()
-            );
-            server.join().unwrap();
-        }
-    }
-}
+#[path = "mcp_tests.rs"]
+mod tests;
