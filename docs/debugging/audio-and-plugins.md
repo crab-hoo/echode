@@ -153,7 +153,7 @@ AudioToolbox の失敗は `MediaError` の操作別の変種で、`Property` は
 
 自動ミュートを確かめる（[ADR 0282](../decisions/0282-plugin-nan-and-master-auto-mute.md)）。
 `AudioState` の `auto_muted_tracks` は NaN・無限大を返した装置と標本、`master_auto_mute` は +18 dBFS を超えた値と標本を示す。
-再生の開始で解除し、そのトラックのプラグインをリセットする。書出しでは `plugin_failure` が `returned a NaN or an infinity` を返す。
+再生の開始で解除し、そのトラックのプラグインをリセットする。書出しでは `plugin_failure` が `PluginBlockFailureReason::NonFinite` を返し、表示は `returned a NaN or an infinity` になる。
 
 ### 音源なしのノート・Sine Pad が鳴らない
 
@@ -401,6 +401,16 @@ CLAP の `>= i32::MAX` の申告値は無限として明示指定を求めるが
 `chain_of` と `project_plugin_ids` / `routes_with_saved_state` の対象、計画の要求・適用版を確認する。
 `device rendering requires the isolated plugin host` が全オフライン時に出たら、ホストなし書出しの対象判定を確認する。
 再有効化後の未検出・状態オブジェクトの読込エラーとは区別する（[ADR 0125](../decisions/0125-device-offline.md)）。
+
+### CLI の失敗が文だけで分類できない
+
+Rust の呼出し元では `echode_cli::CliError` の変種と `Error::source` を調べる。
+I/O は `CliIoOperation` とパス・元の errno、引数は `ArgumentError` の入力値・構文と範囲の拒否を分ける。
+保存・API・素材・再生の原因は元の型のままで、文を解析して分類しない。
+ブロック拒否は `PluginBlockFailure` の装置 ID・CLAP ID・`reason` を確認する。
+`DurabilityUnknown` は rename 後なので完了ファイルを削除・自動再試行せず、`Cancelled` と区別する。
+`tests/typed_errors.rs`・`error_tests.rs`・`normalization_tests.rs` と隔離の `auto_mute`・`deadline_fade` が診断と保全を検査する。
+標準エラー・終了コード・進捗の形式と収集範囲は変わらない（[ADR 0305](../decisions/0305-typed-cli-errors.md)）。
 
 ### プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`
 

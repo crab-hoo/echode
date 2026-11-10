@@ -2,7 +2,7 @@ use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::CliError;
+use crate::{CliError, CliIoOperation};
 
 /// Opt-in CLI control, independent of advisory stdout progress. Never read on an
 /// audio callback: the command checks this flag between blocks and before rename.
@@ -26,9 +26,7 @@ impl Cancellation {
                 }
                 requested.store(true, Ordering::Release);
             })
-            .map_err(|error| {
-                CliError::new(format!("cannot monitor export cancellation: {error}"))
-            })?;
+            .map_err(|error| CliError::io(CliIoOperation::MonitorCancellation, None, error))?;
         // The stdin reader is process-scoped, not joined on success: a controller
         // may keep the pipe open until it observes the CLI's exit.
         Ok(cancellation)
@@ -36,7 +34,7 @@ impl Cancellation {
 
     pub(crate) fn check(&self) -> Result<(), CliError> {
         if self.0.load(Ordering::Acquire) {
-            Err(CliError::cancelled())
+            Err(CliError::Cancelled)
         } else {
             Ok(())
         }

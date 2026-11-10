@@ -40,6 +40,10 @@ use normalization::{ExportOutput, PeakTarget};
 mod progress;
 use progress::RenderProgress;
 
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod error_tests;
+
 /// One product callback while exporting plugins. Scratch for the helper, not a
 /// limit on the export. 256 frames at 48 kHz is about 5.3 ms. The block does
 /// not depend on the export's length or tail; the last one is shorter.
@@ -63,9 +67,7 @@ impl WavFormat {
             "float32" => Ok(Self::Float32),
             "pcm16" => Ok(Self::Pcm16),
             "pcm24" => Ok(Self::Pcm24),
-            _ => Err(CliError::new(format!(
-                "expected wav format float32, pcm16, or pcm24, got {text}"
-            ))),
+            _ => Err(ArgumentError::WavFormat(text.into()).into()),
         }
     }
 
@@ -78,51 +80,8 @@ impl WavFormat {
     }
 }
 
-/// Why a command stopped.
-#[derive(Debug)]
-pub struct CliError {
-    message: String,
-    durability_unknown: bool,
-    cancelled: bool,
-}
-
-impl CliError {
-    fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            durability_unknown: false,
-            cancelled: false,
-        }
-    }
-
-    fn cancelled() -> Self {
-        Self {
-            message: "export cancelled".into(),
-            durability_unknown: false,
-            cancelled: true,
-        }
-    }
-
-    /// Cancellation was acknowledged before publishing the output file.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled
-    }
-
-    /// The WAV was renamed into place, then the parent directory could not be
-    /// synced. The finished file is left in place.
-    fn durability_unknown(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            durability_unknown: true,
-            cancelled: false,
-        }
-    }
-
-    /// The finished file is on disk, but the directory sync after rename failed.
-    pub fn is_durability_unknown(&self) -> bool {
-        self.durability_unknown
-    }
-}
+mod error;
+pub use error::{ArgumentError, CliError, CliIoOperation};
 
 /// Next WAV step to fail. Cleared when that step runs.
 #[doc(hidden)]
@@ -172,14 +131,6 @@ fn note_export(revision: &str, seq: u64) {
     eprintln!("exported {revision} {seq}");
     EXPORT_LINES.fetch_add(1, Ordering::Relaxed);
 }
-
-impl std::fmt::Display for CliError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for CliError {}
 
 /// Runs one invocation. `args` does not include the program name.
 pub fn run<I, S>(args: I) -> Result<(), CliError>
@@ -294,8 +245,7 @@ where
     if args.next().is_some() {
         return Err(usage());
     }
-    serve(Path::new(package.as_ref()), Path::new(socket.as_ref()))
-        .map_err(|error| CliError::new(error.to_string()))
+    serve(Path::new(package.as_ref()), Path::new(socket.as_ref())).map_err(CliError::from)
 }
 
 fn mcp_command<I, S>(args: &mut I) -> Result<(), CliError>
@@ -314,7 +264,7 @@ where
         std::io::stdin().lock(),
         std::io::stdout().lock(),
     )
-    .map_err(|error| CliError::new(error.to_string()))
+    .map_err(CliError::from)
 }
 
 /// Recovers a package and writes a stereo IEEE-float WAV.
@@ -359,10 +309,10 @@ fn render_to_wav_format(
     cancellation.check()?;
     dither.validate(format)?;
     if sample_rate == 0 {
-        return Err(CliError::new("invalid sample rate"));
+        return Err(ArgumentError::SampleRate.into());
     }
     if frames.is_some() && tail_frames.is_some() {
-        return Err(CliError::new("cannot combine --frames and --tail-frames"));
+        return Err(ArgumentError::ConflictingLength.into());
     }
     let tail = if frames.is_some() {
         RenderTail::Frames(0)
@@ -373,23 +323,19 @@ fn render_to_wav_format(
     let package = paths.package.as_path();
     let wav = paths.output.as_path();
     let _activity = echode_audio_io::UserActivity::begin("Echode is writing audio");
-    let host = DocumentHost::open(package).map_err(|error| CliError::new(error.to_string()))?;
+    let host = DocumentHost::open(package).map_err(CliError::from)?;
     let project = host.snapshot();
-    let (revision, seq) = host
-        .recovered_label()
-        .map_err(|error| CliError::new(error.to_string()))?;
+    let (revision, seq) = host.recovered_label().map_err(CliError::from)?;
     drop(host);
     let frames = match frames {
         Some(frames) => frames,
-        None => render_span_frames(&project, sample_rate)
-            .map_err(|error| CliError::new(error.to_string()))?,
+        None => render_span_frames(&project, sample_rate).map_err(CliError::from)?,
     };
     // Validate explicit length overflow before loading media or starting helpers.
     let minimum_frames = tail.total_frames(frames, 0)?;
     let ids = project_plugin_ids(&project);
     if ids.is_empty() {
-        let clips = load_placed_clips(package, &project, sample_rate)
-            .map_err(|error| CliError::new(error.to_string()))?;
+        let clips = load_placed_clips(package, &project, sample_rate).map_err(CliError::from)?;
         cancellation.check()?;
         let mut wav = ExportOutput::create(
             wav,
@@ -415,7 +361,7 @@ fn render_to_wav_format(
         )
         .map_err(|error| match error {
             echode_engine::OfflineError::Write(error) => error,
-            echode_engine::OfflineError::Playback(error) => CliError::new(error.to_string()),
+            echode_engine::OfflineError::Playback(error) => CliError::Playback(error),
         })?;
         progress.finalizing();
         wav.finish_cancellable(cancellation)?;
@@ -424,10 +370,9 @@ fn render_to_wav_format(
         return Ok(());
     }
     let Some(host) = echode_plugin_host::host_binary() else {
-        return Err(CliError::new("plugin host is missing"));
+        return Err(CliError::MissingPluginHost);
     };
-    let routes = routes_with_saved_state(&project, package)
-        .map_err(|error| CliError::new(error.to_string()))?;
+    let routes = routes_with_saved_state(&project, package).map_err(CliError::from)?;
     let missing: Vec<&str> = ids
         .iter()
         .filter(|id| {
@@ -438,10 +383,9 @@ fn render_to_wav_format(
         .map(String::as_str)
         .collect();
     if !missing.is_empty() {
-        return Err(CliError::new(format!(
-            "missing plugin: {}",
-            missing.join(", ")
-        )));
+        return Err(CliError::MissingPlugins(
+            missing.into_iter().map(str::to_owned).collect(),
+        ));
     }
     render_with_plugins(
         package,
@@ -493,19 +437,17 @@ fn render_with_plugins(
         block,
         PlaybackOptions::default().plugins(host, routes),
     )
-    .map_err(|error| CliError::new(error.to_string()))?;
+    .map_err(CliError::from)?;
     let frames = tail.total_frames(frames, control.tail_samples())?;
     let total = frames as usize;
     let package = package.to_path_buf();
     control.set_clip_loader(Arc::new(move |project, rate| {
         load_placed_clips(&package, project, rate)
     }));
-    control
-        .replace(project)
-        .map_err(|error| CliError::new(error.to_string()))?;
+    control.replace(project).map_err(CliError::from)?;
     control
         .command(PlaybackCommand::Play)
-        .map_err(|error| CliError::new(error.to_string()))?;
+        .map_err(CliError::from)?;
     cancellation.check()?;
     let mut wav = ExportOutput::create(wav, sample_rate, frames, format, dither, peak_target)?;
     progress.start(frames);
@@ -523,10 +465,10 @@ fn render_with_plugins(
         );
         cancellation.check()?;
         if let Some(reason) = control.plugin_failure() {
-            return Err(CliError::new(reason));
+            return Err(CliError::PluginBlock(reason));
         }
         if control.status().failed {
-            return Err(CliError::new("plugin playback failed"));
+            return Err(CliError::PluginPlaybackFailed);
         }
         for index in 0..count {
             let left = left.get(index).copied().unwrap_or(0.0);
@@ -559,9 +501,7 @@ impl RenderTail {
         let tail = match self {
             Self::Automatic => {
                 if device_tail >= i32::MAX as u32 {
-                    return Err(CliError::new(
-                        "infinite plugin tail; specify --tail-frames or --frames",
-                    ));
+                    return Err(CliError::InfiniteTail);
                 }
                 device_tail
             }
@@ -569,19 +509,22 @@ impl RenderTail {
         };
         frames
             .checked_add(tail)
-            .ok_or_else(|| CliError::new("export length overflowed"))
+            .ok_or(CliError::ExportLengthOverflow)
     }
 }
 
 fn parse_u32(text: &str) -> Result<u32, CliError> {
-    text.parse::<u32>()
-        .map_err(|_| CliError::new(format!("expected a non-negative integer, got {text}")))
+    text.parse::<u32>().map_err(|error| {
+        ArgumentError::Integer {
+            text: text.into(),
+            error,
+        }
+        .into()
+    })
 }
 
 fn usage() -> CliError {
-    CliError::new(
-        "usage: echode render PACKAGE WAV [--sample-rate 48000] [--frames N | --tail-frames N] [--format float32|pcm16|pcm24] [--dither none|tpdf] [--normalize-peak-db DB] [--progress-json] [--cancel-stdin]\n       echode serve PACKAGE SOCKET\n       echode mcp SOCKET",
-    )
+    ArgumentError::Usage.into()
 }
 
 /// Stereo 32-bit IEEE float WAV with WAVEFORMATEX and a frame-count `fact` chunk.
@@ -590,10 +533,9 @@ fn usage() -> CliError {
 /// Samples are converted in groups and written through [`BufWriter`].
 pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(), CliError> {
     if !interleaved.len().is_multiple_of(2) {
-        return Err(CliError::new("wav data must be stereo"));
+        return Err(CliError::WavStereo);
     }
-    let frames = u32::try_from(interleaved.len() / 2)
-        .map_err(|_| CliError::new("wav frame count exceeds the renderer's u32 range"))?;
+    let frames = u32::try_from(interleaved.len() / 2).map_err(CliError::WavFrameCount)?;
     let mut wav = WavFile::create(path, sample_rate, frames, WavFormat::Float32)?;
     for block in interleaved.chunks(64 * 2) {
         wav.write_block(block)?;
@@ -646,12 +588,16 @@ impl WavFile {
             .create_new(true)
             .mode(0o600)
             .open(&temporary)
-            .map_err(|error| CliError::new(error.to_string()))?;
+            .map_err(|error| CliError::io(CliIoOperation::CreateWav, temporary.clone(), error))?;
         let mut writer = BufWriter::with_capacity(64 * 1024, file);
         if let Err(error) = writer.write_all(&header) {
             drop(writer);
             let _ = std::fs::remove_file(&temporary);
-            return Err(CliError::new(error.to_string()));
+            return Err(CliError::io(
+                CliIoOperation::WriteWavHeader,
+                temporary,
+                error,
+            ));
         }
         Ok(Self {
             writer,
@@ -666,7 +612,7 @@ impl WavFile {
 
     fn write_block(&mut self, interleaved: &[f32]) -> Result<(), CliError> {
         if consume_wav_fault(WAV_FAULT_WRITE) {
-            return Err(CliError::new("wav write failed"));
+            return Err(CliError::WavWriteFailed);
         }
         self.bytes.clear();
         self.bytes.reserve(
@@ -680,9 +626,7 @@ impl WavFile {
                 WavFormat::Pcm16 | WavFormat::Pcm24 => {
                     let bits = self.format.frame_bytes() * 4;
                     if !sample.is_finite() {
-                        return Err(CliError::new(format!(
-                            "non-finite sample in PCM{bits} export"
-                        )));
+                        return Err(CliError::NonFinitePcm { bits });
                     }
                     // Quantize once, at the file boundary. No noise shaping.
                     // f64 preserves the half-LSB rounding boundary near full scale.
@@ -696,9 +640,13 @@ impl WavFile {
                 }
             }
         }
-        self.writer
-            .write_all(&self.bytes)
-            .map_err(|error| CliError::new(error.to_string()))
+        self.writer.write_all(&self.bytes).map_err(|error| {
+            CliError::io(
+                CliIoOperation::WriteWavSamples,
+                self.temporary.clone(),
+                error,
+            )
+        })
     }
 
     fn finish(self) -> Result<(), CliError> {
@@ -713,29 +661,33 @@ impl WavFile {
     fn publish(&mut self, cancellation: &Cancellation) -> Result<(), CliError> {
         cancellation.check()?;
         if consume_wav_fault(WAV_FAULT_FLUSH) {
-            return Err(CliError::new("wav flush failed"));
+            return Err(CliError::WavFlushFailed);
         }
-        self.writer
-            .flush()
-            .map_err(|error| CliError::new(error.to_string()))?;
-        self.writer
-            .get_ref()
-            .sync_all()
-            .map_err(|error| CliError::new(error.to_string()))?;
+        self.writer.flush().map_err(|error| {
+            CliError::io(CliIoOperation::FlushWav, self.temporary.clone(), error)
+        })?;
+        self.writer.get_ref().sync_all().map_err(|error| {
+            CliError::io(CliIoOperation::SyncWav, self.temporary.clone(), error)
+        })?;
         if consume_wav_fault(WAV_FAULT_RENAME) {
-            return Err(CliError::new("wav rename failed"));
+            return Err(CliError::WavRenameFailed);
         }
         // This is the commit boundary. A later cancellation must not delete or
         // relabel a successfully published file (nor hide a directory-sync error).
         cancellation.check()?;
-        std::fs::rename(&self.temporary, &self.destination)
-            .map_err(|error| CliError::new(error.to_string()))?;
+        std::fs::rename(&self.temporary, &self.destination).map_err(|error| {
+            CliError::io(CliIoOperation::RenameWav, self.destination.clone(), error)
+        })?;
         self.published = true;
         if consume_wav_fault(WAV_FAULT_DIR_SYNC) {
-            return Err(CliError::durability_unknown("export durability is unknown"));
+            return Err(CliError::DurabilityUnknown {
+                path: self.destination.clone(),
+                error: None,
+            });
         }
-        sync_parent(&self.destination).map_err(|error| {
-            CliError::durability_unknown(format!("export durability is unknown: {error}"))
+        sync_parent(&self.destination).map_err(|error| CliError::DurabilityUnknown {
+            path: self.destination.clone(),
+            error: Some(error),
         })
     }
 }
@@ -760,7 +712,10 @@ fn wav_header(sample_rate: u32, frames: u32, format: WavFormat) -> Result<Vec<u8
     let riff_size = data_bytes + header_length - 8;
     let byte_rate = sample_rate
         .checked_mul(frame_bytes)
-        .ok_or_else(|| CliError::new("sample rate does not fit in the wav header"))?;
+        .ok_or(CliError::WavByteRate {
+            sample_rate,
+            frame_bytes,
+        })?;
     let mut header = Vec::with_capacity(header_length as usize);
     header.extend_from_slice(if rf64 { b"RF64" } else { b"RIFF" });
     header.extend_from_slice(&(if rf64 { u32::MAX } else { riff_size as u32 }).to_le_bytes());
@@ -811,9 +766,7 @@ fn wav_header(sample_rate: u32, frames: u32, format: WavFormat) -> Result<Vec<u8
 }
 
 fn temporary_wav_path(destination: &Path) -> Result<PathBuf, CliError> {
-    let name = destination
-        .file_name()
-        .ok_or_else(|| CliError::new("wav path has no file name"))?;
+    let name = destination.file_name().ok_or(CliError::WavFileName)?;
     let parent = destination.parent().unwrap_or(Path::new(""));
     let seq = WAV_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let mut temporary = parent.to_path_buf();

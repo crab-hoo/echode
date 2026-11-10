@@ -101,9 +101,17 @@ fn check_deadline_fade(rate: u32, frames: usize) {
     gate.peer.read_exact(&mut receipt).unwrap();
     assert_eq!(receipt, [1]);
     assert_eq!(control.status().plugin_missed_blocks, 1);
+    let failure = control
+        .plugin_failure()
+        .expect("export must still reject this miss");
+    assert_eq!(
+        failure.reason,
+        echode_engine::PluginBlockFailureReason::Deadline
+    );
     assert!(
-        control.plugin_failure().is_some(),
-        "export must still reject this miss"
+        failure
+            .to_string()
+            .ends_with("did not finish before the deadline")
     );
     assert!(
         (left[0] - 0.53125).abs() < 1.0e-6,

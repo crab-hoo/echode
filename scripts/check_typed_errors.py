@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TYPED_CRATES = (
     'echode-api',
     'echode-audio-io',
+    'echode-cli',
     'echode-document',
     'echode-engine',
     'echode-ffi',

@@ -5,22 +5,28 @@ use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
-use crate::{Cancellation, CliError, Dither, WavFile, WavFormat, temporary_wav_path};
+use crate::{
+    ArgumentError, Cancellation, CliError, CliIoOperation, Dither, WavFile, WavFormat,
+    temporary_wav_path,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct PeakTarget(f64);
 
 impl PeakTarget {
     pub(crate) fn parse(text: &str) -> Result<Self, CliError> {
-        let db: f64 = text.parse().map_err(|_| Self::invalid())?;
+        let db: f64 = text.parse().map_err(|error| ArgumentError::PeakTarget {
+            text: text.into(),
+            error: Some(error),
+        })?;
         if !db.is_finite() || !(-120.0..=0.0).contains(&db) {
-            return Err(Self::invalid());
+            return Err(ArgumentError::PeakTarget {
+                text: text.into(),
+                error: None,
+            }
+            .into());
         }
         Ok(Self(10.0f64.powf(db / 20.0)))
-    }
-
-    fn invalid() -> CliError {
-        CliError::new("peak target must be a finite dBFS value from -120 to 0")
     }
 }
 
@@ -81,9 +87,13 @@ impl Normalization {
             .create_new(true)
             .mode(0o600)
             .open(&temporary)
-            .map_err(scratch_error)?;
+            .map_err(|error| {
+                CliError::io(CliIoOperation::CreateScratch, temporary.clone(), error)
+            })?;
         // The descriptor owns the scratch lifetime, even on cancellation or crash.
-        std::fs::remove_file(&temporary).map_err(scratch_error)?;
+        std::fs::remove_file(&temporary).map_err(|error| {
+            CliError::io(CliIoOperation::UnlinkScratch, temporary.clone(), error)
+        })?;
         Ok(Self {
             spool: BufWriter::with_capacity(64 * 1024, file),
             bytes: Vec::new(),
@@ -97,20 +107,26 @@ impl Normalization {
         self.bytes.clear();
         for &sample in samples {
             if !sample.is_finite() {
-                return Err(CliError::new("non-finite sample in peak-normalized export"));
+                return Err(CliError::NonFiniteNormalized);
             }
             self.peak = self.peak.max(f64::from(sample).abs());
             self.bytes.extend_from_slice(&sample.to_le_bytes());
         }
-        self.spool.write_all(&self.bytes).map_err(scratch_error)?;
+        self.spool
+            .write_all(&self.bytes)
+            .map_err(|error| CliError::io(CliIoOperation::WriteScratch, None, error))?;
         self.samples += samples.len() as u64;
         Ok(())
     }
 
     fn encode(&mut self, wav: &mut WavFile, cancellation: &Cancellation) -> Result<(), CliError> {
         cancellation.check()?;
-        self.spool.flush().map_err(scratch_error)?;
-        self.spool.seek(SeekFrom::Start(0)).map_err(scratch_error)?;
+        self.spool
+            .flush()
+            .map_err(|error| CliError::io(CliIoOperation::FlushScratch, None, error))?;
+        self.spool
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| CliError::io(CliIoOperation::RewindScratch, None, error))?;
         // f64 also handles finite f32 subnormals without an overflowing gain.
         let gain = if self.peak == 0.0 {
             1.0
@@ -127,7 +143,7 @@ impl Normalization {
             self.spool
                 .get_mut()
                 .read_exact(&mut bytes[..count * 4])
-                .map_err(scratch_error)?;
+                .map_err(|error| CliError::io(CliIoOperation::ReadScratch, None, error))?;
             for (sample, raw) in samples[..count].iter_mut().zip(bytes.chunks_exact(4)) {
                 let value = f32::from_le_bytes(raw.try_into().expect("four-byte sample"));
                 *sample = (f64::from(value) * gain) as f32;
@@ -137,10 +153,6 @@ impl Normalization {
         }
         Ok(())
     }
-}
-
-fn scratch_error(error: std::io::Error) -> CliError {
-    CliError::new(format!("normalization scratch I/O failed: {error}"))
 }
 
 #[cfg(test)]

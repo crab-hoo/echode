@@ -109,6 +109,7 @@ make debug-report
   - 大きな WAV が RF64 になる・読み手が長さを誤認する
   - 書出しの余韻が短い・`infinite plugin tail` / `export length overflowed` で止まる
   - オフラインの FX が読み込まれる・素材まで無音になる・書出しに失敗する
+  - CLI の失敗が文だけで分類できない
   - プラグインを使う書き出しが `did not finish before the deadline` で止まる・並列の書き出しで `missing plugin`
   - パラメーター一覧が出ない・値が音に反映しない・Undo で音が戻らない
   - プラグインの遅延表示が更新されない・音がずれる

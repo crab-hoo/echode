@@ -2084,7 +2084,7 @@ impl PlaybackControl {
     /// Device id and reason when a plugin missed the block that just rendered.
     /// Live playback still silences that block and leaves [`PlaybackStatus::failed`]
     /// clear. Export uses this so a deadline miss is not a finished file.
-    pub fn plugin_failure(&self) -> Option<String> {
+    pub fn plugin_failure(&self) -> Option<crate::PluginBlockFailure> {
         self.hosts.export_failure()
     }
 

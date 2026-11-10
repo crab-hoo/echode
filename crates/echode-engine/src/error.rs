@@ -133,6 +133,39 @@ impl PlaybackError {
     }
 }
 
+/// The device and cause of a rejected export block. Constructed on the control
+/// side from the audio thread's existing failure code, never on that callback.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginBlockFailure {
+    pub device: u128,
+    pub clap_id: String,
+    pub reason: PluginBlockFailureReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginBlockFailureReason {
+    ProcessRefused,
+    Deadline,
+    Submit,
+    NonFinite,
+    Exited,
+}
+
+impl fmt::Display for PluginBlockFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let reason = match self.reason {
+            PluginBlockFailureReason::ProcessRefused => "process refused",
+            PluginBlockFailureReason::Deadline => "did not finish before the deadline",
+            PluginBlockFailureReason::Submit => "could not submit audio",
+            PluginBlockFailureReason::NonFinite => "returned a NaN or an infinity",
+            PluginBlockFailureReason::Exited => "plugin process has exited",
+        };
+        write!(f, "device {} ({}): {reason}", self.device, self.clap_id)
+    }
+}
+
+impl std::error::Error for PluginBlockFailure {}
+
 /// Why a CoreAudio query of the default output failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceError {

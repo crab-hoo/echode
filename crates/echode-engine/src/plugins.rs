@@ -471,7 +471,7 @@ impl HostGraph {
     /// including its device id. `None` when every submitted plugin finished
     /// cleanly. Live playback conceals a miss by a fade and auto-mutes a
     /// non-finite track; this is what export refuses to call success.
-    pub(crate) fn export_failure(&self) -> Option<String> {
+    pub(crate) fn export_failure(&self) -> Option<crate::PluginBlockFailure> {
         for stage in self.tracks.iter().flat_map(|track| &track.stages) {
             if stage.bypassed {
                 continue;
@@ -483,17 +483,19 @@ impl HostGraph {
             if reason == MISS_DEADLINE && stage.instance.host().has_exited() {
                 reason = MISS_EXITED;
             }
-            let why = match reason {
-                MISS_PROCESS => "process refused",
-                MISS_DEADLINE => "did not finish before the deadline",
-                MISS_SUBMIT => "could not submit audio",
-                FAULT_NONFINITE => "returned a NaN or an infinity",
-                _ => "plugin process has exited",
+            use crate::PluginBlockFailureReason;
+            let reason = match reason {
+                MISS_PROCESS => PluginBlockFailureReason::ProcessRefused,
+                MISS_DEADLINE => PluginBlockFailureReason::Deadline,
+                MISS_SUBMIT => PluginBlockFailureReason::Submit,
+                FAULT_NONFINITE => PluginBlockFailureReason::NonFinite,
+                _ => PluginBlockFailureReason::Exited,
             };
-            return Some(format!(
-                "device {} ({}): {why}",
-                stage.device, stage.clap_id
-            ));
+            return Some(crate::PluginBlockFailure {
+                device: stage.device,
+                clap_id: stage.clap_id.clone(),
+                reason,
+            });
         }
         None
     }

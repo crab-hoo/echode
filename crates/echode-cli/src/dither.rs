@@ -3,7 +3,7 @@
 use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 use rand_distr::{Distribution, Triangular};
 
-use super::{CliError, WavFormat};
+use super::{ArgumentError, CliError, WavFormat};
 
 #[derive(Clone, Copy, Default)]
 pub(super) enum Dither {
@@ -17,15 +17,13 @@ impl Dither {
         match text {
             "none" => Ok(Self::None),
             "tpdf" => Ok(Self::Tpdf),
-            _ => Err(CliError::new(format!(
-                "expected dither none or tpdf, got {text}"
-            ))),
+            _ => Err(ArgumentError::Dither(text.into()).into()),
         }
     }
 
     pub(super) fn validate(self, format: WavFormat) -> Result<(), CliError> {
         if matches!((self, format), (Self::Tpdf, WavFormat::Float32)) {
-            return Err(CliError::new("--dither tpdf requires pcm16 or pcm24"));
+            return Err(ArgumentError::DitherFormat.into());
         }
         Ok(())
     }

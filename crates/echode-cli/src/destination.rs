@@ -1,7 +1,7 @@
 //! Keep a render's output outside the package it reads, before recovery or I/O.
 use std::path::{Path, PathBuf};
 
-use crate::CliError;
+use crate::{ArgumentError, CliError, CliIoOperation};
 
 pub(crate) struct RenderPaths {
     pub(crate) package: PathBuf,
@@ -10,18 +10,20 @@ pub(crate) struct RenderPaths {
 
 impl RenderPaths {
     pub(crate) fn resolve(package: &Path, output: &Path) -> Result<Self, CliError> {
-        let package = package
-            .canonicalize()
-            .map_err(|error| CliError::new(format!("cannot resolve project package: {error}")))?;
-        let name = output
-            .file_name()
-            .ok_or_else(|| CliError::new("export output must name a file"))?;
+        let package = package.canonicalize().map_err(|error| {
+            CliError::io(CliIoOperation::ResolvePackage, package.to_path_buf(), error)
+        })?;
+        let name = output.file_name().ok_or(ArgumentError::OutputFileName)?;
         let parent = output
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         let parent = parent.canonicalize().map_err(|error| {
-            CliError::new(format!("cannot resolve export output directory: {error}"))
+            CliError::io(
+                CliIoOperation::ResolveOutputDirectory,
+                parent.to_path_buf(),
+                error,
+            )
         })?;
         let output = parent.join(name);
         // Component comparison, not a string prefix: Song.echode-exports is outside.
@@ -32,9 +34,7 @@ impl RenderPaths {
                 .canonicalize()
                 .is_ok_and(|target| target.starts_with(&package));
         if inside {
-            return Err(CliError::new(
-                "choose an output outside the project package",
-            ));
+            return Err(ArgumentError::OutputInsidePackage.into());
         }
         // Use the resolved parent for both scratch and publication, so retargeting
         // the user's directory symlink during a render cannot redirect the export.

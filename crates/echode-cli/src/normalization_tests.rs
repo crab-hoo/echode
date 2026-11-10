@@ -79,12 +79,10 @@ fn invalid_samples_and_failed_spool_reads_keep_the_original_and_remove_the_parti
         )
         .unwrap();
         let temporary = wav.wav.temporary.clone();
-        assert!(
-            wav.write_block(&[value, 0.0])
-                .unwrap_err()
-                .to_string()
-                .contains("non-finite")
-        );
+        assert!(matches!(
+            wav.write_block(&[value, 0.0]).unwrap_err(),
+            CliError::NonFiniteNormalized
+        ));
         drop(wav);
         assert_eq!(std::fs::read(&path).unwrap(), b"original");
         assert!(!temporary.exists());
@@ -106,12 +104,18 @@ fn invalid_samples_and_failed_spool_reads_keep_the_original_and_remove_the_parti
     let spool = &mut wav.normalization.as_mut().unwrap().spool;
     spool.flush().unwrap();
     spool.get_ref().set_len(0).unwrap();
+    let error = wav
+        .finish_cancellable(&Cancellation::default())
+        .unwrap_err();
     assert!(
-        wav.finish_cancellable(&Cancellation::default())
-            .unwrap_err()
+        error
             .to_string()
             .contains("normalization scratch I/O failed")
     );
+    assert!(matches!(&error, CliError::Io {
+        operation: CliIoOperation::ReadScratch, error, ..
+    } if error.kind() == std::io::ErrorKind::UnexpectedEof));
+    assert!(std::error::Error::source(&error).is_some_and(|cause| cause.is::<std::io::Error>()));
     assert_eq!(std::fs::read(&path).unwrap(), b"original");
     assert!(!temporary.exists());
     std::fs::remove_file(path).unwrap();

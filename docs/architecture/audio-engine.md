@@ -129,6 +129,9 @@ CLI の任意の NDJSON と GUI の率・仕上げ中の表示は [ADR 0255](../
 対象・設定互換・容量・取消の境界は [ADR 0258](../decisions/0258-peak-export-normalization.md) に定める。
 CLI と `render_to_wav` の出力先は元パッケージの外へ限定し、親の正規化・内部を指す既存リンクの検証を復旧より前に行う。
 出力の一時物と公開は同じ正規化済みの親を使う（[ADR 0259](../decisions/0259-export-destination-boundary.md)）。
+CLI の失敗は `CliError` が引数・I/O の操作とパス・保存・API・音声・再生の原因を分け、`Error::source` から元の原因をたどれる。
+`plugin_failure` は装置 ID・CLAP ID・失敗の種類を持つ `PluginBlockFailure` を返し、CLI が表示の直前まで保持する。
+公開前の取消と公開後のディレクトリ同期失敗は別の変種で、既存の表示文と終了コードは変えない（[ADR 0305](../decisions/0305-typed-cli-errors.md)）。
 GUI の完了結果は固定した出力 URL を保持し、利用者の明示操作だけで Finder へ渡す。
 文書交換・次回の失敗／取消との境界は [ADR 0261](../decisions/0261-reveal-export-output.md) に定める。
 

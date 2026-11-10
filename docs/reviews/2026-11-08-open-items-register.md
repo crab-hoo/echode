@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 9 crate は列挙型（ADR 0291〜0304）。API・MCP も元の原因を応答まで保持。次は CLI |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 10 crate は列挙型（ADR 0291〜0305）。CLI も元の原因を表示まで保持。次はアクションの引数エラーの文の解析 |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -130,6 +130,9 @@
 - 2026-11-10（ADR 0304）: `echode-api` の I/O・パッケージ・接続先 JSON を `ApiError` の原因として保持し、通信固有の拒否を分けた。
   RPC の `HostError` と一括編集の添字、MCP のリソースの原因も応答まで保持する。文面・RPC のコード・再送しない判断は変えない。
   crate 全体を再導入の検査に登録した。次は `echode-cli` の文だけの `CliError` である。
+- 2026-11-10（ADR 0305）: CLI の文と二つの真偽値を `CliError` に置き換え、引数・I/O の操作・パスと元の保存・API・音声・再生の原因を保持する。
+  `plugin_failure` も装置と拒否の種類を持つ型で返す。取消・公開後の保存の不確定を分け、表示文・終了コード・出力保全は変えない。
+  crate 全体を再導入の検査に登録した。次はアクションの引数エラーを文から分類している箇所である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

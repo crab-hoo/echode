@@ -78,11 +78,18 @@ fn a_plugin_nan_auto_mutes_its_track_until_playback_starts() {
         "the NaN reached the next plugin"
     );
     assert_eq!(mute.at, frames as i64 + 10);
+    let failure = control
+        .plugin_failure()
+        .expect("export must refuse this block");
+    assert_eq!(
+        failure.reason,
+        echode_engine::PluginBlockFailureReason::NonFinite
+    );
+    assert_eq!(failure.device, instrument.raw());
     assert!(
-        control
-            .plugin_failure()
-            .is_some_and(|reason| reason.contains("NaN")),
-        "export must refuse this block"
+        failure
+            .to_string()
+            .ends_with("returned a NaN or an infinity")
     );
     assert!(!control.status().failed);
     assert_eq!(

@@ -430,6 +430,8 @@ controller の単一／一括編集はすべて生成型へ移行した。辞書
 
 ### GUI の書出し
 
+- CLI の失敗は `echode-cli/src/error.rs` の `CliError`・`ArgumentError`・`CliIoOperation`。公開入口は `tests/typed_errors.rs`、原因の転送と分類は `src/error_tests.rs` で照合する。
+  プラグインのブロック拒否はエンジンの `error.rs::PluginBlockFailure` に ID と種類を持つ（[ADR 0305](decisions/0305-typed-cli-errors.md)）。
 - 設定とパッケージ内の記憶・旧パス設定の読取りは `ExportSettings.swift`、専用パッケージの準備と別プロセスの寿命は `ExportJob.swift`、画面は `WorkspaceExportView.swift`。
 - 数値入力の下書きと全入力の検証は `ExportSettingsDraft.swift`。`ExportInputTests` が実シートのフィールドエディターを通し、`ExportSettingsDraftTests` がロケール・有限性・丸め境界を確認する。
   必須契約は `export-input-ui`（[ADR 0262](decisions/0262-export-numeric-drafts.md)）。既存の `check-swift`・`check-product-contracts` から実行する。
