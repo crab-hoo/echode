@@ -223,6 +223,16 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 実ソケットの回帰は `cargo test -q -p echode-sandbox --lib control::launch_tests`、
 公開操作は `session::operations_tests::parameter_operation_preserves_malformed_launch_refusal_causes` である（[ADR 0313](../decisions/0313-typed-launch-refusal-decoding.md)）。
 
+### ヘルパーの応答が `plugin failure is malformed` / `refusal ...` で切れる
+
+正当なプラグインの拒否ではなく、通信の拒否ペイロード自体の構造が不正である。
+`SessionError::Io` の `io::Error::get_ref` を `RefusalDecodeError` に downcast する。
+`WrongSize` は `RefusalField` と必要・実際のバイト数を持ち、プラグインのペイロードはその種類も持つ。
+欠けた種類、未知の種類・期待／実際の応答コード、余分なバイト、不正なポートの向きは別の変種である。
+長さは当該フィールドだけを数える。生バイトや診断文から分類せず、アプリとヘルパーの版・送信側を確認する。自動再送はしない。
+回帰は `cargo test -q -p echode-sandbox --lib refusal_tests` で、実ソケットの全拒否経路と公開操作を通す。
+起動拒否の不正は前節の `LaunchDecodeError` のままである（[ADR 0314](../decisions/0314-typed-refusal-structure-errors.md)）。
+
 ### 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
 
 `RegionError::SharedMemory` の `operation` と `error.raw_os_error()` を確認する。

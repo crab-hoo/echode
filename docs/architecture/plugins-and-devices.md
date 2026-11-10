@@ -68,6 +68,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   clack の型への対応はヘルパー側だけに置き、本体はローダーへ依存せず、文面から原因を分類しない（[ADR 0308](../decisions/0308-typed-helper-launch-failures.md)）。
   起動拒否自体が壊れていれば `LaunchDecodeError` を `io::Error` の内側に保持する。
   不足した `LaunchField` と長さ、未知コード・不正フラグ、診断文の元の UTF-8 の原因を分け、表示文と通信形式は変えない（[ADR 0313](../decisions/0313-typed-launch-refusal-decoding.md)）。
+  拒否の残る構造の不正は `RefusalDecodeError` で、欠けた／未知の種類・余分なバイト・固定長の不一致・不正な応答コードとポートの向きを保持する。
+  固定長は `RefusalField` と必要・実際のバイト数で区別する。表示文と受理する通信の形式は変えない（[ADR 0314](../decisions/0314-typed-refusal-structure-errors.md)）。
   予約済み CLAP ID は `Refusal::InvalidParameterId` で拒否し、一括変更を適用しない。
   内部の応答不一致は `Refusal::UnexpectedMainReply` で期待・実際の `MainReplyKind` を送る。診断文と再送しない判断は変えない（[ADR 0309](../decisions/0309-typed-helper-request-failures.md)）。
   起動の返信は読込み・生成・起動専用の `LoadError` だけを受ける。

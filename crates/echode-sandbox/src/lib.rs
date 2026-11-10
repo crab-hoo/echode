@@ -31,6 +31,7 @@ mod launch_failure;
 mod main_reply;
 mod params;
 mod refusal;
+mod refusal_decode;
 mod region;
 mod session;
 mod shortcuts;
@@ -51,6 +52,7 @@ pub use params::{
     PARAM_STEPPED, ParamChange, ParamInfo, ParamText, ParamValue,
 };
 pub use refusal::{AudioPort, Pending, PluginFailure, Refusal};
+pub use refusal_decode::{RefusalDecodeError, RefusalField};
 pub use region::{
     Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout,
     SharedMemoryOperation, arm_abort_notice, point_abort_notice,

@@ -1580,3 +1580,7 @@ mod correlation_tests;
 #[cfg(test)]
 #[path = "session_operations_tests.rs"]
 mod operations_tests;
+
+#[cfg(test)]
+#[path = "session_refusal_tests.rs"]
+mod refusal_tests;

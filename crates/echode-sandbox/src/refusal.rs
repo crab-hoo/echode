@@ -7,7 +7,7 @@
 //! Launch causes keep a typed kind and native metadata alongside the loader's
 //! diagnostic (ADR 0308). Internal reply mismatches and invalid parameter ids are typed too.
 
-use crate::{LaunchFailure, MainReplyKind};
+use crate::{LaunchFailure, MainReplyKind, RefusalDecodeError, RefusalField};
 use std::io::{self, ErrorKind};
 
 /// What the helper was waiting for when it gave up.
@@ -238,7 +238,7 @@ fn plugin_failure(failure: PluginFailure) -> Vec<u8> {
 }
 
 /// The wire code of each failure. The helper and the host ship together, so a
-/// code only has to match [`failure_from_code`] in the same build.
+/// code only has to match [`read_plugin_failure`] in the same build.
 fn failure_code(failure: PluginFailure) -> u8 {
     match failure {
         PluginFailure::NoState => 0,
@@ -269,71 +269,91 @@ fn failure_code(failure: PluginFailure) -> u8 {
     }
 }
 
-/// A port kind's code with its port, or a code that carries nothing.
-fn failure_from_code(code: u8, port: Option<AudioPort>) -> Option<PluginFailure> {
-    let failure = match (code, port) {
-        (18, Some(port)) => PluginFailure::PortUndescribed(port),
-        (19, Some(port)) => PluginFailure::PortWithoutChannels(port),
-        (_, Some(_)) => return None,
-        (0, None) => PluginFailure::NoState,
-        (1, None) => PluginFailure::NoStateSave,
-        (2, None) => PluginFailure::NoStateLoad,
-        (3, None) => PluginFailure::SaveRefused,
-        (4, None) => PluginFailure::LoadRefused,
-        (5, None) => PluginFailure::CapacityRefused,
-        (6, None) => PluginFailure::NoParameterFlush,
-        (7, None) => PluginFailure::NoWindow,
-        (8, None) => PluginFailure::NoCocoaWindow,
-        (9, None) => PluginFailure::NoWindowCreate,
-        (10, None) => PluginFailure::WindowRefused,
-        (11, None) => PluginFailure::NoEmbedding,
-        (12, None) => PluginFailure::ParentRefused,
-        (13, None) => PluginFailure::PanelNeedsMainThread,
-        (14, None) => PluginFailure::PanelHasNoView,
-        (15, None) => PluginFailure::NoAudioPorts,
-        (16, None) => PluginFailure::NoPortCount,
-        (17, None) => PluginFailure::NoPortInfo,
-        (20, None) => PluginFailure::NoPorts,
-        (21, None) => PluginFailure::NoNotePortCount,
-        (22, None) => PluginFailure::NoNotePortInfo,
-        (23, None) => PluginFailure::NotePortUndescribed,
-        (24, None) => PluginFailure::NotePortIndex,
-        _ => return None,
+fn read_plugin_failure(payload: &[u8]) -> Result<PluginFailure, RefusalDecodeError> {
+    let (&code, rest) = payload
+        .split_first()
+        .ok_or(RefusalDecodeError::MissingPluginKind)?;
+    let failure = match code {
+        0 => PluginFailure::NoState,
+        1 => PluginFailure::NoStateSave,
+        2 => PluginFailure::NoStateLoad,
+        3 => PluginFailure::SaveRefused,
+        4 => PluginFailure::LoadRefused,
+        5 => PluginFailure::CapacityRefused,
+        6 => PluginFailure::NoParameterFlush,
+        7 => PluginFailure::NoWindow,
+        8 => PluginFailure::NoCocoaWindow,
+        9 => PluginFailure::NoWindowCreate,
+        10 => PluginFailure::WindowRefused,
+        11 => PluginFailure::NoEmbedding,
+        12 => PluginFailure::ParentRefused,
+        13 => PluginFailure::PanelNeedsMainThread,
+        14 => PluginFailure::PanelHasNoView,
+        15 => PluginFailure::NoAudioPorts,
+        16 => PluginFailure::NoPortCount,
+        17 => PluginFailure::NoPortInfo,
+        18 | 19 => {
+            let [side, a, b, c, d] = fixed(rest, RefusalField::PluginPayload { kind: code })?;
+            let input = match side {
+                0 => false,
+                1 => true,
+                _ => return Err(RefusalDecodeError::InvalidPortSide { kind: code, side }),
+            };
+            let port = AudioPort {
+                input,
+                index: u32::from_le_bytes([a, b, c, d]),
+            };
+            return Ok(if code == 18 {
+                PluginFailure::PortUndescribed(port)
+            } else {
+                PluginFailure::PortWithoutChannels(port)
+            });
+        }
+        20 => PluginFailure::NoPorts,
+        21 => PluginFailure::NoNotePortCount,
+        22 => PluginFailure::NoNotePortInfo,
+        23 => PluginFailure::NotePortUndescribed,
+        24 => PluginFailure::NotePortIndex,
+        _ => return Err(RefusalDecodeError::UnknownPluginKind(code)),
     };
-    Some(failure)
+    fixed::<0>(rest, RefusalField::PluginPayload { kind: code })?;
+    Ok(failure)
 }
 
-fn read_plugin_failure(payload: &[u8]) -> Option<PluginFailure> {
-    let (&code, rest) = payload.split_first()?;
-    let port = match rest {
-        [] => None,
-        [side @ (0 | 1), index @ ..] => Some(AudioPort {
-            input: *side == 1,
-            index: u32::from_le_bytes(<[u8; 4]>::try_from(index).ok()?),
-        }),
-        _ => return None,
-    };
-    failure_from_code(code, port)
+fn fixed<const N: usize>(
+    payload: &[u8],
+    field: RefusalField,
+) -> Result<[u8; N], RefusalDecodeError> {
+    payload
+        .try_into()
+        .map_err(|_| RefusalDecodeError::WrongSize {
+            field,
+            expected: N,
+            actual: payload.len(),
+        })
 }
 
 /// Reads exactly what [`write_refusal`] writes. Anything else is invalid data,
 /// so every refusal the host accepts encodes back to the same bytes.
 pub(crate) fn read_refusal(body: &[u8]) -> io::Result<Refusal> {
-    let invalid = |reason: &'static str| io::Error::new(ErrorKind::InvalidData, reason);
-    let Some((&kind, payload)) = body.split_first() else {
-        return Err(invalid("refusal has no kind"));
-    };
+    let invalid = |error: RefusalDecodeError| io::Error::new(ErrorKind::InvalidData, error);
+    let (&kind, payload) = body
+        .split_first()
+        .ok_or_else(|| invalid(RefusalDecodeError::MissingKind))?;
     let empty = |refusal: Refusal| {
         if payload.is_empty() {
             Ok(refusal)
         } else {
-            Err(invalid("refusal has trailing bytes"))
+            Err(invalid(RefusalDecodeError::TrailingBytes {
+                kind,
+                actual: payload.len(),
+            }))
         }
     };
     let call = || {
-        <[u8; 8]>::try_from(payload)
+        fixed(payload, RefusalField::MainCall)
             .map(u64::from_le_bytes)
-            .map_err(|_| invalid("refusal call number is the wrong size"))
+            .map_err(invalid)
     };
     match kind {
         BUSY => empty(Refusal::Busy),
@@ -344,25 +364,23 @@ pub(crate) fn read_refusal(body: &[u8]) -> io::Result<Refusal> {
         STOPPED_MAIN => Ok(Refusal::Stopped(Pending::MainCall(call()?))),
         PLUGIN => read_plugin_failure(payload)
             .map(Refusal::Plugin)
-            .ok_or_else(|| invalid("plugin failure is malformed")),
+            .map_err(invalid),
         LAUNCH => LaunchFailure::decode(payload)
             .map(Refusal::Launch)
             .map_err(|error| io::Error::new(ErrorKind::InvalidData, error)),
-        INVALID_PARAMETER_ID => <[u8; 4]>::try_from(payload)
+        INVALID_PARAMETER_ID => fixed(payload, RefusalField::ParameterId)
             .map(u32::from_le_bytes)
             .map(Refusal::InvalidParameterId)
-            .map_err(|_| invalid("refusal parameter id is the wrong size")),
-        UNEXPECTED_MAIN_REPLY => match payload {
-            [expected, actual] => {
-                let expected = MainReplyKind::decode(*expected)
-                    .ok_or_else(|| invalid("refusal expected reply kind is unknown"))?;
-                let actual = MainReplyKind::decode(*actual)
-                    .ok_or_else(|| invalid("refusal actual reply kind is unknown"))?;
-                Ok(Refusal::UnexpectedMainReply { expected, actual })
-            }
-            _ => Err(invalid("refusal reply kinds are the wrong size")),
-        },
-        _ => Err(invalid("refusal has an unknown kind")),
+            .map_err(invalid),
+        UNEXPECTED_MAIN_REPLY => {
+            let [expected, actual] = fixed(payload, RefusalField::MainReplies).map_err(invalid)?;
+            let expected = MainReplyKind::decode(expected)
+                .ok_or_else(|| invalid(RefusalDecodeError::UnknownExpectedReply(expected)))?;
+            let actual = MainReplyKind::decode(actual)
+                .ok_or_else(|| invalid(RefusalDecodeError::UnknownActualReply(actual)))?;
+            Ok(Refusal::UnexpectedMainReply { expected, actual })
+        }
+        _ => Err(invalid(RefusalDecodeError::UnknownKind(kind))),
     }
 }
 

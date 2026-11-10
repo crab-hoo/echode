@@ -244,6 +244,31 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     let mut obsolete = encode(1, &ControlMessage::StateRejected(Refusal::NoPlugin));
     *obsolete.last_mut().expect("a refusal has its kind byte") = 0;
     seeds.push(seed(0, 0, &obsolete));
+    for typ in [16u32, 17, 24, 29] {
+        for payload in [
+            vec![],
+            vec![255],
+            vec![1, 0],
+            vec![3, 0],
+            vec![5; 10],
+            vec![9, 0, 0, 0, 0, 0],
+            vec![10, 0],
+            vec![10, 6, 0],
+            vec![10, 0, 6],
+            vec![7],
+            vec![7, 255],
+            vec![7, 0, 0],
+            vec![7, 18],
+            vec![7, 19, 2, 0, 0, 0, 0],
+        ] {
+            // The four refusal replies, with raw malformed structural payloads.
+            let mut bytes = (12 + payload.len() as u32).to_le_bytes().to_vec();
+            bytes.extend_from_slice(&typ.to_le_bytes());
+            bytes.extend_from_slice(&1u64.to_le_bytes());
+            bytes.extend_from_slice(&payload);
+            seeds.push(seed(0, 0, &bytes));
+        }
+    }
     // A remap with its mapping, after one plain message.
     let hello = encode(0, &ControlMessage::Hello);
     let mut stream = hello.clone();
