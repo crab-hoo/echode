@@ -353,6 +353,9 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。
 回帰は `refusal_tests.rs`・`main_requests_tests.rs` と、実ヘルパーを通す `tests/isolation.rs` の `invalid_parameter_id_` を使う（[ADR 0309](decisions/0309-typed-helper-request-failures.md)）。
 
+共有メモリの作成と `SharedMemoryOperation` は `echode-sandbox/src/region.rs`、
+操作・errno・表示・unlink と close-on-exec の回帰は `region_error_tests.rs` に置く（[ADR 0311](decisions/0311-typed-shared-memory-errors.md)）。
+
 プラグインのメインスレッド要求の所有は `echode-plugin-host/src/main_requests.rs`、実行は `threads.rs::perform_main_request` に置く。
 要求番号付きの制御フレームは `echode-sandbox/src/control.rs`、親の応答照合と背景保存は `session.rs` に置く。
 回帰は `main_requests_tests.rs`・`session_correlation_tests.rs`・`control_tagged_tests.rs` と `tests/audit.rs` の SPG-01 を使う。

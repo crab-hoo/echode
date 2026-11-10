@@ -142,6 +142,9 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `scripts/check_typed_errors.py` は、境界のエラーを列挙型にした crate の製品コードに `Result<_, String>` がないことを確かめる。
 署名・チャネル・クロージャの型を、複数行と入れ子も含めて見る。`*_tests.rs`、`tests/`、末尾の `#[cfg(test)] mod tests` は対象外である。
 `turns an error into text` は、`map_err` の中で受け取ったエラーを `.to_string()`・`format!` で文にした所である。元のエラーを変種に持たせ、文は `Display` で作る。
+`wraps error text in an I/O error` は `map_err` の外も含めて調べる。
+`io::Error::other` の文への変換と、`io::Error::new` 内の `.to_string()`・明示的な `last_os_error` の整形が対象である。
+元の I/O エラーと操作を変種で持つ。入力名などの説明の整形は許し、型の推論や別変数経由の追跡はしない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。
 拒否されたら、その crate のエラー型（`echode-audio-io` は `AudioError`、`echode-document` は `DocumentError`、`echode-sandbox` は `SessionError`・`WorkgroupError`・`SpawnError`、ヘルパーの拒否は `Refusal`、プラグイン自身の失敗は `PluginFailure`、`echode-engine` は `PlaybackError`・`DeviceError`、`echode-plugin-host` は `HostError`・`ScanError`・`CatalogError`・`WatchError`）の変種を使うか、原因に合う変種を足す。
 `Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。
 文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。

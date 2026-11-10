@@ -180,9 +180,31 @@ struct SlotHead {
 
 const _: () = assert!(std::mem::size_of::<SlotHead>() <= SLOT_HEAD);
 
+/// The native operation that failed while preparing a shared-memory object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SharedMemoryOperation {
+    Open,
+    Unlink,
+    Truncate,
+}
+
+impl std::fmt::Display for SharedMemoryOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Open => "shm_open",
+            Self::Unlink => "shm_unlink",
+            Self::Truncate => "ftruncate",
+        })
+    }
+}
+
 #[derive(Debug)]
 pub enum RegionError {
     Io(io::Error),
+    SharedMemory {
+        operation: SharedMemoryOperation,
+        error: io::Error,
+    },
     Wait(WaitError),
     BadMagic,
     BadShape {
@@ -205,6 +227,7 @@ impl std::fmt::Display for RegionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(error) => write!(f, "{error}"),
+            Self::SharedMemory { operation, error } => write!(f, "{operation}: {error}"),
             Self::Wait(error) => write!(f, "{error}"),
             Self::BadMagic => f.write_str("shared mapping has the wrong magic"),
             Self::BadShape { frames, channels } => {
@@ -225,7 +248,15 @@ impl std::fmt::Display for RegionError {
     }
 }
 
-impl std::error::Error for RegionError {}
+impl std::error::Error for RegionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) | Self::Lock(error) | Self::SharedMemory { error, .. } => Some(error),
+            Self::Wait(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<io::Error> for RegionError {
     fn from(error: io::Error) -> Self {
@@ -1334,6 +1365,10 @@ fn shm_file(len: usize) -> Result<File, RegionError> {
     );
     let name = CString::new(name)
         .map_err(|error| RegionError::Io(io::Error::new(io::ErrorKind::InvalidInput, error)))?;
+    shm_file_named(&name, len)
+}
+
+fn shm_file_named(name: &std::ffi::CStr, len: usize) -> Result<File, RegionError> {
     // `mode_t` is `u16` on macOS, and a variadic argument is passed as `int`.
     let fd = unsafe {
         libc::shm_open(
@@ -1343,24 +1378,31 @@ fn shm_file(len: usize) -> Result<File, RegionError> {
         )
     };
     if fd < 0 {
-        return Err(io::Error::other(format!("shm_open: {}", io::Error::last_os_error())).into());
+        return Err(RegionError::SharedMemory {
+            operation: SharedMemoryOperation::Open,
+            error: io::Error::last_os_error(),
+        });
     }
+    // SAFETY: shm_open returned a new descriptor owned by this function. Hold
+    // it before the remaining fallible operations so every failure closes it.
+    let file = unsafe { File::from_raw_fd(fd) };
     if unsafe { libc::shm_unlink(name.as_ptr()) } != 0 {
-        let error = io::Error::other(format!("shm_unlink: {}", io::Error::last_os_error()));
-        unsafe { libc::close(fd) };
-        return Err(error.into());
+        return Err(RegionError::SharedMemory {
+            operation: SharedMemoryOperation::Unlink,
+            error: io::Error::last_os_error(),
+        });
     }
     if unsafe { libc::ftruncate(fd, len as i64) } != 0 {
-        let error = io::Error::other(format!("ftruncate: {}", io::Error::last_os_error()));
-        unsafe { libc::close(fd) };
-        return Err(error.into());
+        return Err(RegionError::SharedMemory {
+            operation: SharedMemoryOperation::Truncate,
+            error: io::Error::last_os_error(),
+        });
     }
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags >= 0 {
         unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
     }
-    // SAFETY: `fd` is the shared-memory object this function opened.
-    Ok(unsafe { File::from_raw_fd(fd) })
+    Ok(file)
 }
 
 fn infer_frames(
@@ -1411,3 +1453,7 @@ fn align_up(value: usize, align: usize) -> Option<usize> {
 #[cfg(test)]
 #[path = "region_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "region_error_tests.rs"]
+mod error_tests;

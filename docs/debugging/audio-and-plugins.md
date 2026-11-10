@@ -201,6 +201,16 @@ C ABI は診断の文を返さず従来の `-1` に畳むので、内部の回�
 shell 除去でこの環境の起動遅延自体が解決したとは扱わず、期限は維持する。
 初回の失敗は検査時間履歴と作業ログへ残し、再実行の合否で過去の失敗を上書きしない。
 
+### 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
+
+`RegionError::SharedMemory` の `operation` と `error.raw_os_error()` を確認する。
+`SessionError::Region` でも元の変種を保持し、`RegionError::source` も元の `io::Error` を返す。
+`Open` は作成の権限・記述子・同名の衝突、`Unlink` は名前の除去、`Truncate` はサイズ変更の失敗である。
+起動の拒否（`Refusal::Launch`）や実行中の時間切れと混同せず、診断文から errno を推測しない。
+回帰は `cargo test -q -p echode-sandbox --lib region::error_tests` で、機器は開かない。
+実 `ftruncate` のサイズ境界、同名の作成、表示と source、成功時の名前の除去と FD の属性を照合する。
+macOS は共有メモリの長さをページ単位に切り上げるため、要求値との完全一致を仮定しない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。
+
 ### プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
 
 親はヘルパー 1 つにつき記述子を 4 つ持ち、Finder から起動したアプリの soft の上限は 256 である（`launchctl limit maxfiles`）。

@@ -8,6 +8,8 @@ Nor may a `map_err` turn the error it receives into text (ADR 0294): a variant
 that holds `error.to_string()` hides the cause the same way. Tests may, since
 a fixture's message is not a boundary. Text is still made where a report
 reaches the app; that is a `String` field, not a `Result`.
+I/O error constructors must also keep explicit OS causes rather than text,
+even outside a `map_err` (ADR 0311).
 A file in TYPED_FILES has the same checks while its crate is being migrated.
 History and partially migrated files also reject untyped PackageError messages.
 """
@@ -38,6 +40,9 @@ STRING = {'String', 'std::string::String', 'alloc::string::String'}
 RESULT = re.compile(r'\bResult\s*<')
 MAP_ERR = re.compile(r'\.map_err\s*\(')
 TEXT = re.compile(r'\.to_string\s*\(\s*\)|\bformat!\s*\(')
+IO_ERROR = re.compile(r'\b(?:std\s*::\s*)?io\s*::\s*Error\s*::\s*(other|new)\s*\(')
+TO_STRING = re.compile(r'\.to_string\s*\(\s*\)')
+OS_ERROR = re.compile(r'\b(?:std\s*::\s*)?io\s*::\s*Error\s*::\s*last_os_error\s*\(')
 COMMENT = re.compile(r'//[^\n]*')
 OPEN = '<([{'
 CLOSE = '>)]}'
@@ -110,6 +115,25 @@ def text_errors(text):
     return lines
 
 
+def text_io_errors(text):
+    """Line numbers where an I/O error wraps text rather than a typed cause."""
+    code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
+    lines = []
+    for match in IO_ERROR.finditer(code):
+        end = closing(code, match.end() - 1)
+        if end is None:
+            continue
+        body = code[match.end():end]
+        # `new` may format input data for InvalidData/InvalidInput without
+        # erasing a source (e.g. a package entry's name and expected type).
+        # Guard explicit OS causes and to_string there; other(format!(...))
+        # is always an untyped boundary. This is syntax, not type inference.
+        if TEXT.search(body) and (
+                match.group(1) == 'other' or TO_STRING.search(body) or OS_ERROR.search(body)):
+            lines.append(code.count('\n', 0, match.start()) + 1)
+    return lines
+
+
 def is_test(path):
     return path.name.endswith('_tests.rs') or 'tests' in path.parts
 
@@ -142,6 +166,8 @@ def problems(root):
             found.append(f'{relative.as_posix()}:{line}: returns a String error')
         for line in text_errors(text):
             found.append(f'{relative.as_posix()}:{line}: turns an error into text')
+        for line in text_io_errors(text):
+            found.append(f'{relative.as_posix()}:{line}: wraps error text in an I/O error')
         if relative.parts[1] == 'echode-history' or relative.as_posix() in TYPED_FILES:
             code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
             for match in PACKAGE_MESSAGE.finditer(code):

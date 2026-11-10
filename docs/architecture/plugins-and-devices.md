@@ -34,6 +34,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   （[ADR 0042](../decisions/0042-plugin-ipc.md)）
   ソケットで渡す記述子は `Remap` の 1 メッセージに 1 個だけである。受け手は届いた記述子を全部持ち、2 個以上や切り詰めがあれば全部閉じて、そのソケットの受信を失敗させ続ける
   （[ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md)）。
+- 共有メモリの作成の失敗は `RegionError::SharedMemory` で操作と元の I/O エラーを保持する。
+  `SharedMemoryOperation` で open・unlink・サイズ変更を区別し、errno は `Error::source` からも読める。
+  表示文と FD の受渡し形式は変えない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。
 - **一括投入と単一締め切り**: 独立したヘルパーには先に一括投入し、そのブロックの単一締め切りで完了したヘルパーから順に回収する。
   同じヘルパーで続くデバイスは 1 往復にまとめる（[ADR 0043](../decisions/0043-plugin-submit-collect.md)）
 - **Audio Workgroup の受け渡し**: ヘルパーが `bootstrap_check_in` した名前を制御スレッドが `bootstrap_look_up` し、`os_workgroup_copy_port` の送信権を Mach メッセージで渡す

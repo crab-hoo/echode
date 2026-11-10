@@ -89,6 +89,7 @@ make debug-report
   - 音源なしのノート・Sine Pad が鳴らない
   - 同梱 CLAP の初回だけ RTSan が malloc を検出する
   - CLAP が鳴らない・走査失敗
+  - 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
   - プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
   - バイパスの表示と音が一致しない・解除後に古い音が鳴る
   - GUI の書出しが始まらない・文書を切り替えると内容が違う

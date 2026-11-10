@@ -51,7 +51,7 @@ pub use params::{
 pub use refusal::{AudioPort, Pending, PluginFailure, Refusal};
 pub use region::{
     Collected, Delivered, FanIn, Header, MappedRegion, RegionError, SessionLayout,
-    arm_abort_notice, point_abort_notice,
+    SharedMemoryOperation, arm_abort_notice, point_abort_notice,
 };
 pub use session::{
     BlockProgress, PluginAudio, PluginControl, PluginHost, PluginNotice, SpawnOptions,

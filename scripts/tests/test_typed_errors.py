@@ -76,6 +76,27 @@ class TypedErrors(unittest.TestCase):
                     [f"{source}:{line}: turns an error into text" for line in lines],
                 )
 
+    def test_io_error_constructors_do_not_erase_causes_outside_map_err(self):
+        crate = check_typed_errors.TYPED_CRATES[0]
+        source = f"crates/{crate}/src/lib.rs"
+        cases = {
+            'fn f() { io::Error::other(format!("shm_open: {}", io::Error::last_os_error())) }\n': [1],
+            'fn f() { std::io::Error::new(ErrorKind::Other, error.to_string()) }\n': [1],
+            'fn f() { io::Error::new(ErrorKind::Other, format!("shm_unlink: {}", io::Error::last_os_error())) }\n': [1],
+            'fn f() { io::Error::new(ErrorKind::InvalidInput, format!("{} {reason}", name.to_string_lossy())) }\n': [],
+            'fn f() { io::Error\n    ::other(\n        format!("ftruncate: {error}")\n    ) }\n': [1],
+            'fn f() { io::Error::other(error) }\n': [],
+            'fn f() { io::Error::new(ErrorKind::InvalidData, error) }\n': [],
+            'fn f() { io::Error::new(ErrorKind::InvalidData, "invalid frame") }\n': [],
+            '// io::Error::other(format!("{error}"))\nfn f() {}\n': [],
+        }
+        for text, lines in cases.items():
+            with self.subTest(text=text):
+                root = self.tree({source: text})
+                self.assertEqual(check_typed_errors.problems(root), [
+                    f"{source}:{line}: wraps error text in an I/O error" for line in lines
+                ])
+
     def test_migrated_package_modules_reject_untyped_messages(self):
         cases = [
             'fn f() { PackageError::new("no samples") }\n',
