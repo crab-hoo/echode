@@ -49,6 +49,47 @@ pub enum LaunchFailureKind {
     NullActivateFunction,
 }
 
+/// A fixed-width field in a launch refusal's payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchField {
+    Kind,
+    NulPosition,
+    ErrnoFlag,
+    Errno,
+    PluginVersion,
+    HostVersion,
+}
+
+/// Invalid launch-refusal data, not a refusal reported by the plugin loader.
+/// Counts are relative to the named field; raw diagnostic bytes are not retained.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchDecodeError {
+    Truncated {
+        field: LaunchField,
+        expected: usize,
+        actual: usize,
+    },
+    UnknownKind(u8),
+    InvalidErrnoFlag(u8),
+    /// The native error's offsets are relative to the diagnostic text only.
+    Diagnostic(std::str::Utf8Error),
+}
+
+impl std::fmt::Display for LaunchDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("launch failure is malformed")
+    }
+}
+
+impl std::error::Error for LaunchDecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Diagnostic(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for LaunchFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.diagnostic)
@@ -110,26 +151,27 @@ impl LaunchFailure {
 
     /// Accept exactly the writer's format, so accepted messages encode back to
     /// identical bytes. Short metadata and non-UTF-8 diagnostics are invalid.
-    pub(crate) fn decode(body: &[u8]) -> Option<Self> {
+    pub(crate) fn decode(body: &[u8]) -> Result<Self, LaunchDecodeError> {
         use LaunchFailureKind::*;
-        let (&code, mut rest) = body.split_first()?;
+        let mut rest = body;
+        let [code] = take(&mut rest, LaunchField::Kind)?;
         let kind = match code {
             0 => Library,
             1 => InvalidNulPath {
-                position: u64::from_le_bytes(take(&mut rest)?),
+                position: u64::from_le_bytes(take(&mut rest, LaunchField::NulPosition)?),
             },
             2 => EntryIo {
-                raw_os_error: match take::<1>(&mut rest)? {
+                raw_os_error: match take(&mut rest, LaunchField::ErrnoFlag)? {
                     [0] => None,
-                    [1] => Some(i32::from_le_bytes(take(&mut rest)?)),
-                    _ => return None,
+                    [1] => Some(i32::from_le_bytes(take(&mut rest, LaunchField::Errno)?)),
+                    [flag] => return Err(LaunchDecodeError::InvalidErrnoFlag(flag)),
                 },
             },
             3 => ResolveFailed,
             4 => NullEntryPointer,
             5 => IncompatibleClapVersion {
-                plugin: version(&mut rest)?,
-                host: version(&mut rest)?,
+                plugin: version(&mut rest, LaunchField::PluginVersion)?,
+                host: version(&mut rest, LaunchField::HostVersion)?,
             },
             6 => EntryInitFailed,
             7 => UnknownEntry,
@@ -152,27 +194,45 @@ impl LaunchFailure {
             24 => NullFactoryCreatePluginFunction,
             25 => NullProcessFunction,
             26 => NullActivateFunction,
-            _ => return None,
+            _ => return Err(LaunchDecodeError::UnknownKind(code)),
         };
-        Some(Self {
+        Ok(Self {
             kind,
-            diagnostic: std::str::from_utf8(rest).ok()?.to_owned(),
+            diagnostic: std::str::from_utf8(rest)
+                .map_err(LaunchDecodeError::Diagnostic)?
+                .to_owned(),
         })
     }
 }
 
-fn take<const N: usize>(body: &mut &[u8]) -> Option<[u8; N]> {
-    let (head, tail) = body.split_at_checked(N)?;
+fn take<const N: usize>(
+    body: &mut &[u8],
+    field: LaunchField,
+) -> Result<[u8; N], LaunchDecodeError> {
+    let (head, tail) = body
+        .split_at_checked(N)
+        .ok_or(LaunchDecodeError::Truncated {
+            field,
+            expected: N,
+            actual: body.len(),
+        })?;
+    let mut bytes = [0; N];
+    bytes.copy_from_slice(head);
     *body = tail;
-    head.try_into().ok()
+    Ok(bytes)
 }
 
-fn version(body: &mut &[u8]) -> Option<[u32; 3]> {
-    Some([
-        u32::from_le_bytes(take(body)?),
-        u32::from_le_bytes(take(body)?),
-        u32::from_le_bytes(take(body)?),
-    ])
+fn version(body: &mut &[u8], field: LaunchField) -> Result<[u32; 3], LaunchDecodeError> {
+    let mut version = [0; 3];
+    for (part, chunk) in version
+        .iter_mut()
+        .zip(take::<12>(body, field)?.chunks_exact(4))
+    {
+        let mut bytes = [0; 4];
+        bytes.copy_from_slice(chunk);
+        *part = u32::from_le_bytes(bytes);
+    }
+    Ok(version)
 }
 
 #[cfg(test)]

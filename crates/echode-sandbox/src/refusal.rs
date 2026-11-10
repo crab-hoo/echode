@@ -347,7 +347,7 @@ pub(crate) fn read_refusal(body: &[u8]) -> io::Result<Refusal> {
             .ok_or_else(|| invalid("plugin failure is malformed")),
         LAUNCH => LaunchFailure::decode(payload)
             .map(Refusal::Launch)
-            .ok_or_else(|| invalid("launch failure is malformed")),
+            .map_err(|error| io::Error::new(ErrorKind::InvalidData, error)),
         INVALID_PARAMETER_ID => <[u8; 4]>::try_from(payload)
             .map(u32::from_le_bytes)
             .map(Refusal::InvalidParameterId)

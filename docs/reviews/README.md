@@ -56,6 +56,7 @@
   起動の変換は `LoadError` に狭め、実行中の失敗を文へ戻す防御分岐と未分類の拒否を除いた（[ADR 0310](../decisions/0310-typed-plugin-load-boundary.md)）。
   共有メモリの作成も操作と元の errno を保持し、文を I/O エラーへ包む再導入を検査する（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。
   制御文字列も窓名・パラメーターと元の UTF-8 の原因を保持する（[ADR 0312](../decisions/0312-typed-control-text-errors.md)）。
+  不正な起動拒否も不足したフィールド・長さ・コードと診断文の UTF-8 の原因を保持する（[ADR 0313](../decisions/0313-typed-launch-refusal-decoding.md)）。
   XCA-13 はコールバックのトラックごとの全体の走査をなくした（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
   XCA-14 はコールバックの panic を捕まえて理由を記録へ残し（[ADR 0238](../decisions/0238-audio-callback-panics.md)）、音声経路の crate で添字などを拒否した（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）。
   証拠は [保存の耐久性の追跡](../evidence/2026-11-02-durability-trace.md) に置く。

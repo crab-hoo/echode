@@ -56,6 +56,54 @@ fn parameter_operation_retains_invalid_utf8_from_the_helper() {
 }
 
 #[test]
+fn parameter_operation_preserves_malformed_launch_refusal_causes() {
+    use crate::{LaunchDecodeError, LaunchField};
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    let invalid_text = vec![0xff];
+    for (payload, expected) in [
+        (
+            vec![8],
+            LaunchDecodeError::Truncated {
+                field: LaunchField::Kind,
+                expected: 1,
+                actual: 0,
+            },
+        ),
+        (vec![8, 2, 2], LaunchDecodeError::InvalidErrnoFlag(2)),
+        (
+            vec![8, 0, 0xff],
+            LaunchDecodeError::Diagnostic(std::str::from_utf8(&invalid_text).unwrap_err()),
+        ),
+    ] {
+        let (parent, mut raw) = UnixStream::pair().unwrap();
+        let control = PluginControl::new(Socket::from_owned(parent.into()).unwrap());
+        let mut helper = Socket::from_owned(raw.try_clone().unwrap().into()).unwrap();
+        let answer = std::thread::spawn(move || {
+            let (id, request) = receive(&mut helper);
+            assert!(matches!(request, ControlMessage::ParamsRequest));
+            // ParamsRejected (24), with a raw payload bypassing the typed sender.
+            let mut frame = (12 + payload.len() as u32).to_le_bytes().to_vec();
+            frame.extend_from_slice(&24u32.to_le_bytes());
+            frame.extend_from_slice(&id.to_le_bytes());
+            frame.extend_from_slice(&payload);
+            raw.write_all(&frame).unwrap();
+        });
+        let error = control.parameters().unwrap_err();
+        answer.join().unwrap();
+        let SessionError::Io(error) = error else {
+            panic!("malformed launch refusal must remain an I/O cause: {error:?}");
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "launch failure is malformed");
+        assert_eq!(
+            error.get_ref().unwrap().downcast_ref::<LaunchDecodeError>(),
+            Some(&expected)
+        );
+    }
+}
+
+#[test]
 fn public_control_operations_preserve_payloads_and_typed_replies() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);

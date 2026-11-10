@@ -66,6 +66,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   プラグイン自身の失敗（状態・窓・ポートの拡張がない、`false` で断った、ポートの記述が使えない）は `Refusal::Plugin(PluginFailure)` で、ヘルパーの内部と通信路で同じ型である。
   起動の失敗は `Refusal::Launch(LaunchFailure)` で、原因の種類・errno・NUL の位置・CLAP の版と元の診断文を分けて送る。
   clack の型への対応はヘルパー側だけに置き、本体はローダーへ依存せず、文面から原因を分類しない（[ADR 0308](../decisions/0308-typed-helper-launch-failures.md)）。
+  起動拒否自体が壊れていれば `LaunchDecodeError` を `io::Error` の内側に保持する。
+  不足した `LaunchField` と長さ、未知コード・不正フラグ、診断文の元の UTF-8 の原因を分け、表示文と通信形式は変えない（[ADR 0313](../decisions/0313-typed-launch-refusal-decoding.md)）。
   予約済み CLAP ID は `Refusal::InvalidParameterId` で拒否し、一括変更を適用しない。
   内部の応答不一致は `Refusal::UnexpectedMainReply` で期待・実際の `MainReplyKind` を送る。診断文と再送しない判断は変えない（[ADR 0309](../decisions/0309-typed-helper-request-failures.md)）。
   起動の返信は読込み・生成・起動専用の `LoadError` だけを受ける。

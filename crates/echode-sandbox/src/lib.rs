@@ -44,7 +44,7 @@ pub use error::{
     ProtocolError, SessionError, SpawnError, SpawnStep, WorkgroupCall, WorkgroupError,
 };
 pub use gui::{GuiReport, ParamEvent, ParamEventKind, ParamRelay, PluginActivity};
-pub use launch_failure::{LaunchFailure, LaunchFailureKind};
+pub use launch_failure::{LaunchDecodeError, LaunchFailure, LaunchFailureKind, LaunchField};
 pub use main_reply::MainReplyKind;
 pub use params::{
     PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,

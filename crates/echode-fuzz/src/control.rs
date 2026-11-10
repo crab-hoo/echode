@@ -228,6 +228,7 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
                 | ControlMessage::Params(_)
                 | ControlMessage::ParamsApplied(_)
                 | ControlMessage::ParamRelay(_)
+                | ControlMessage::PortsRejected(Refusal::Launch(_))
         ) {
             // These fixtures end in nonempty text. Preserve every length and
             // exercise both an invalid byte and an incomplete UTF-8 sequence.

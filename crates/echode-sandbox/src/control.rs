@@ -957,3 +957,7 @@ mod rights_tests;
 #[cfg(test)]
 #[path = "control_text_tests.rs"]
 mod text_tests;
+
+#[cfg(test)]
+#[path = "control_launch_tests.rs"]
+mod launch_tests;

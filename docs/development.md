@@ -349,6 +349,8 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 読込み・生成・起動の `LoadError` と clack の型への対応は `echode-plugin-host/src/launch.rs`、共有する原因と通信は `echode-sandbox/src/launch_failure.rs` に置く。
 `reject_launch` は `LoadError` だけを受け、実行全体の `HostError::Load` は元の原因を保つ（[ADR 0310](decisions/0310-typed-plugin-load-boundary.md)）。
 回帰はそれぞれの `*_tests.rs` と、`tests/isolation.rs` の `launch_` で実ヘルパーを通す。
+不正な起動拒否の `LaunchDecodeError` と `LaunchField` も `launch_failure.rs` に置く。
+実ソケットの回帰は `control_launch_tests.rs`、公開操作での原因の保持は `session_operations_tests.rs` を使う（[ADR 0313](decisions/0313-typed-launch-refusal-decoding.md)）。
 予約済み ID と内部の応答不一致の共有型・通信は `refusal.rs` と `main_reply.rs` に置く。
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。
 回帰は `refusal_tests.rs`・`main_requests_tests.rs` と、実ヘルパーを通す `tests/isolation.rs` の `invalid_parameter_id_` を使う（[ADR 0309](decisions/0309-typed-helper-request-failures.md)）。

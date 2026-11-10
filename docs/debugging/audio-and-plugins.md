@@ -212,6 +212,17 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 公開操作は `session::operations_tests::parameter_operation_retains_invalid_utf8_from_the_helper` で切り分ける。
 制御ソケットの fuzz の種も同じ入口を通す（[ADR 0312](../decisions/0312-typed-control-text-errors.md)）。
 
+### ヘルパーの応答が `launch failure is malformed` で切れる
+
+ローダーの正当な拒否（`SessionError::Refused(Refusal::Launch(...))`）ではなく、通信の起動拒否ペイロードが壊れている。
+`SessionError::Io` の内側の `io::Error::get_ref` を `LaunchDecodeError` に downcast する。
+起動時の stderr があれば、外側の `SessionError::Launch.error` の内側を調べる。
+`Truncated` は `LaunchField` と必要・残りのバイト数、`UnknownKind` と `InvalidErrnoFlag` は受けた値を持つ。
+`Diagnostic` は元の `Utf8Error` を変種と `source` に保持し、位置は診断文の先頭から数える。
+診断文や壊れたバイトの解析では分類せず、アプリとヘルパーの版・送信側を確認する。自動再送はしない。
+実ソケットの回帰は `cargo test -q -p echode-sandbox --lib control::launch_tests`、
+公開操作は `session::operations_tests::parameter_operation_preserves_malformed_launch_refusal_causes` である（[ADR 0313](../decisions/0313-typed-launch-refusal-decoding.md)）。
+
 ### 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
 
 `RegionError::SharedMemory` の `operation` と `error.raw_os_error()` を確認する。

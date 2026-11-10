@@ -75,20 +75,27 @@ fn truncated_metadata_unknown_causes_and_non_text_are_rejected() {
         // With an empty diagnostic, every proper prefix lacks required metadata.
         for end in 0..encoded.len() {
             assert!(
-                LaunchFailure::decode(&encoded[..end]).is_none(),
+                LaunchFailure::decode(&encoded[..end]).is_err(),
                 "{kind:?}: {end}"
             );
         }
         let mut invalid_text = encoded;
         invalid_text.push(0xff);
-        assert!(LaunchFailure::decode(&invalid_text).is_none());
+        let expected = std::str::from_utf8(&invalid_text[invalid_text.len() - 1..]).unwrap_err();
+        assert_eq!(
+            LaunchFailure::decode(&invalid_text).unwrap_err(),
+            LaunchDecodeError::Diagnostic(expected)
+        );
     }
-    assert!(
-        LaunchFailure::decode(&[2, 2]).is_none(),
-        "an invalid errno flag was accepted"
+    assert_eq!(
+        LaunchFailure::decode(&[2, 2]).unwrap_err(),
+        LaunchDecodeError::InvalidErrnoFlag(2)
     );
     for code in 27..=u8::MAX {
-        assert!(LaunchFailure::decode(&[code]).is_none());
+        assert_eq!(
+            LaunchFailure::decode(&[code]).unwrap_err(),
+            LaunchDecodeError::UnknownKind(code)
+        );
     }
 }
 
@@ -100,7 +107,7 @@ fn every_accepted_encoding_is_canonical() {
             for len in 0..=32 {
                 let mut bytes = vec![code];
                 bytes.extend(std::iter::repeat_n(byte, len));
-                if let Some(failure) = LaunchFailure::decode(&bytes) {
+                if let Ok(failure) = LaunchFailure::decode(&bytes) {
                     assert_eq!(failure.encode(), bytes);
                 }
             }
