@@ -223,6 +223,10 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
         all.extend_from_slice(&bytes);
     }
     seeds.push(seed(0, 0, &all));
+    // Old unclassified refusals are invalid, not a fallback for a new cause.
+    let mut obsolete = encode(1, &ControlMessage::StateRejected(Refusal::NoPlugin));
+    *obsolete.last_mut().expect("a refusal has its kind byte") = 0;
+    seeds.push(seed(0, 0, &obsolete));
     // A remap with its mapping, after one plain message.
     let hello = encode(0, &ControlMessage::Hello);
     let mut stream = hello.clone();
@@ -326,14 +330,14 @@ fn sample_messages() -> Vec<ControlMessage> {
             tail_samples: 480,
             latency_samples: 32,
         },
-        ControlMessage::PortsRejected(Refusal::Other("no audio ports".to_string())),
+        ControlMessage::PortsRejected(Refusal::Plugin(PluginFailure::NoAudioPorts)),
         ControlMessage::PortsRejected(Refusal::Plugin(PluginFailure::PortWithoutChannels(
             AudioPort {
                 input: false,
                 index: 1,
             },
         ))),
-        ControlMessage::StateRejected(Refusal::Other("refused".to_string())),
+        ControlMessage::StateRejected(Refusal::Plugin(PluginFailure::SaveRefused)),
         ControlMessage::StateRejected(Refusal::Plugin(PluginFailure::NoState)),
         ControlMessage::StateRejected(Refusal::TimedOut(Pending::MainCall(9))),
         ControlMessage::StateRejected(Refusal::Stopped(Pending::MainCall(10))),
@@ -351,7 +355,7 @@ fn sample_messages() -> Vec<ControlMessage> {
         }]),
         ControlMessage::SetParams(vec![ParamChange { id: 3, value: 0.5 }]),
         ControlMessage::ParamsApplied(vec![value.clone()]),
-        ControlMessage::ParamsRejected(Refusal::Other("closed".to_string())),
+        ControlMessage::ParamsRejected(Refusal::Plugin(PluginFailure::NoParameterFlush)),
         ControlMessage::ParamsRejected(Refusal::Busy),
         ControlMessage::ParamsRejected(Refusal::NoPlugin),
         ControlMessage::ParamsRejected(Refusal::TimedOut(Pending::ParameterChanges)),
@@ -371,7 +375,6 @@ fn sample_messages() -> Vec<ControlMessage> {
         }),
         ControlMessage::GuiClose,
         ControlMessage::GuiClosedReply,
-        ControlMessage::GuiRejected(Refusal::Other("no window".to_string())),
         ControlMessage::GuiRejected(Refusal::Plugin(PluginFailure::NoWindow)),
         ControlMessage::GuiClosed,
         ControlMessage::ParamRelay(ParamRelay {

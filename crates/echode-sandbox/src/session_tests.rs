@@ -111,8 +111,8 @@ fn contract_window_lifetimes_cross_the_control_socket_in_order() {
     // A rejected request does not light the indicator. Socket death closes it
     // even when complete replies remain in the inbox for another requester.
     helper
-        .send(&ControlMessage::GuiRejected(Refusal::Other(
-            "no window".into(),
+        .send(&ControlMessage::GuiRejected(Refusal::Plugin(
+            crate::PluginFailure::NoWindow,
         )))
         .unwrap();
     control.lock().drain().unwrap();

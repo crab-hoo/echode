@@ -129,7 +129,7 @@ fn refusals() -> [Refusal; 7] {
     [
         Refusal::Busy,
         Refusal::TimedOut(Pending::ParameterChanges),
-        Refusal::Other("refused operation 2".to_string()),
+        Refusal::Plugin(crate::PluginFailure::NoParameterFlush),
         Refusal::TimedOut(Pending::MainCall(5)),
         Refusal::Stopped(Pending::ParameterChanges),
         Refusal::Stopped(Pending::MainCall(6)),

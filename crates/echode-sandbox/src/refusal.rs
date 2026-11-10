@@ -47,8 +47,6 @@ pub enum Refusal {
         expected: MainReplyKind,
         actual: MainReplyKind,
     },
-    /// An unclassified helper diagnostic, in the helper's words.
-    Other(String),
 }
 
 impl From<PluginFailure> for Refusal {
@@ -174,14 +172,13 @@ impl std::fmt::Display for Refusal {
             Self::UnexpectedMainReply { expected, .. } => {
                 f.write_str(expected.mismatch_diagnostic())
             }
-            Self::Other(reason) => f.write_str(reason),
         }
     }
 }
 
 impl std::error::Error for Refusal {}
 
-const OTHER: u8 = 0;
+// Kind 0 was the unclassified text refusal. It is deliberately not accepted.
 const BUSY: u8 = 1;
 const NO_PLUGIN: u8 = 2;
 const TIMED_OUT_MAIN: u8 = 3;
@@ -196,11 +193,11 @@ const INVALID_PARAMETER_ID: u8 = 9;
 const UNEXPECTED_MAIN_REPLY: u8 = 10;
 
 pub(crate) fn write_refusal(refusal: &Refusal) -> Vec<u8> {
-    let (kind, payload): (u8, &[u8]) = match refusal {
-        Refusal::Busy => (BUSY, &[]),
-        Refusal::NoPlugin => (NO_PLUGIN, &[]),
-        Refusal::TimedOut(Pending::ParameterChanges) => (TIMED_OUT_PARAMETERS, &[]),
-        Refusal::Stopped(Pending::ParameterChanges) => (STOPPED_PARAMETERS, &[]),
+    let kind = match refusal {
+        Refusal::Busy => BUSY,
+        Refusal::NoPlugin => NO_PLUGIN,
+        Refusal::TimedOut(Pending::ParameterChanges) => TIMED_OUT_PARAMETERS,
+        Refusal::Stopped(Pending::ParameterChanges) => STOPPED_PARAMETERS,
         Refusal::TimedOut(Pending::MainCall(call)) => {
             return main_call(TIMED_OUT_MAIN, *call);
         }
@@ -219,12 +216,8 @@ pub(crate) fn write_refusal(refusal: &Refusal) -> Vec<u8> {
         Refusal::UnexpectedMainReply { expected, actual } => {
             return vec![UNEXPECTED_MAIN_REPLY, *expected as u8, *actual as u8];
         }
-        Refusal::Other(reason) => (OTHER, reason.as_bytes()),
     };
-    let mut body = Vec::with_capacity(1 + payload.len());
-    body.push(kind);
-    body.extend_from_slice(payload);
-    body
+    vec![kind]
 }
 
 fn main_call(kind: u8, call: u64) -> Vec<u8> {
@@ -343,9 +336,6 @@ pub(crate) fn read_refusal(body: &[u8]) -> io::Result<Refusal> {
             .map_err(|_| invalid("refusal call number is the wrong size"))
     };
     match kind {
-        OTHER => String::from_utf8(payload.to_vec())
-            .map(Refusal::Other)
-            .map_err(|_| invalid("refusal is not text")),
         BUSY => empty(Refusal::Busy),
         NO_PLUGIN => empty(Refusal::NoPlugin),
         TIMED_OUT_PARAMETERS => empty(Refusal::TimedOut(Pending::ParameterChanges)),

@@ -70,7 +70,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 11 crate は列挙型（ADR 0291〜0309）。予約済み ID と内部の応答不一致も型を保持。次は起動の防御分岐と残りの境界の棚卸し |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 11 crate は列挙型（ADR 0291〜0310）。未分類の起動拒否を除去。次は共有領域の I/O で errno を文に戻す 3 か所 |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -145,6 +145,8 @@
 - 2026-11-10（ADR 0309）: 予約済み CLAP ID は ID を持つ拒否にし、内部の応答不一致は期待・実際の種類を保持して送る。
   実ヘルパーで一括変更の全部が未適用のままで後続を受理することを照合し、表示文は変えない。
   `Other` は起動では届かない `HostError` の防御分岐に残る。次はこの到達範囲の整理と M1 の残りの棚卸しである。
+- 2026-11-10（ADR 0310）: 起動の変換を `LoadError` だけに狭め、実行中の失敗を文へ戻す防御分岐と `Refusal::Other` を除いた。
+  実ヘルパーで原因・診断文・ポートの型付き拒否を維持する。棚卸しで `region.rs::shm_file` に errno を文へ戻す 3 か所が見つかり、次の境界とする。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

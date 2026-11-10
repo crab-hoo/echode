@@ -2,14 +2,36 @@ use super::*;
 use std::ffi::CString;
 use std::io;
 
-fn check(error: HostError, expected: LaunchFailureKind) {
+fn check(error: LoadError, expected: LaunchFailureKind) {
     let diagnostic = error.to_string();
-    let Refusal::Launch(failure) = launch_refusal(&error) else {
-        panic!("launch refusal lost its kind: {error:?}");
-    };
+    let failure = launch_failure(&error);
     assert_eq!(failure.kind, expected);
     assert_eq!(failure.diagnostic, diagnostic);
     assert_eq!(failure.to_string(), diagnostic);
+    let host_error = crate::HostError::from(error);
+    assert_eq!(host_error.to_string(), diagnostic);
+    let source = std::error::Error::source(&host_error)
+        .unwrap()
+        .downcast_ref::<LoadError>()
+        .unwrap();
+    assert_eq!(launch_failure(source), failure);
+    match source {
+        LoadError::Entry(error) => {
+            let cause = std::error::Error::source(source)
+                .unwrap()
+                .downcast_ref::<PluginEntryError>()
+                .unwrap();
+            assert_eq!(cause.to_string(), error.to_string());
+        }
+        LoadError::Instance(error) => {
+            let cause = std::error::Error::source(source)
+                .unwrap()
+                .downcast_ref::<PluginInstanceError>()
+                .unwrap();
+            assert_eq!(cause.to_string(), error.to_string());
+        }
+        _ => assert!(std::error::Error::source(source).is_none()),
+    }
 }
 
 #[test]
@@ -51,12 +73,12 @@ fn entry_causes_keep_native_metadata_and_the_original_diagnostic() {
             },
         ),
     ] {
-        check(HostError::Entry(error), expected);
+        check(LoadError::Entry(error), expected);
     }
-    check(HostError::NoBinary("fixture.clap".into()), Kind::NoBinary);
-    check(HostError::NoFactory("fixture.clap".into()), Kind::NoFactory);
-    check(HostError::NoPlugin("fixture.clap".into()), Kind::NoPlugin);
-    check(HostError::NoPluginId, Kind::NoPluginId);
+    check(LoadError::NoBinary("fixture.clap".into()), Kind::NoBinary);
+    check(LoadError::NoFactory("fixture.clap".into()), Kind::NoFactory);
+    check(LoadError::NoPlugin("fixture.clap".into()), Kind::NoPlugin);
+    check(LoadError::NoPluginId, Kind::NoPluginId);
 }
 
 #[test]
@@ -83,19 +105,6 @@ fn every_instance_cause_is_classified_without_duplicating_its_words() {
         (Error::NullProcessFunction, Kind::NullProcessFunction),
         (Error::NullActivateFunction, Kind::NullActivateFunction),
     ] {
-        check(HostError::Instance(error), expected);
-    }
-}
-
-#[test]
-fn plugin_failures_keep_the_existing_kind() {
-    for failure in [
-        echode_sandbox::PluginFailure::NoAudioPorts,
-        echode_sandbox::PluginFailure::CapacityRefused,
-    ] {
-        assert_eq!(
-            launch_refusal(&HostError::Plugin(failure)),
-            Refusal::Plugin(failure)
-        );
+        check(LoadError::Instance(error), expected);
     }
 }

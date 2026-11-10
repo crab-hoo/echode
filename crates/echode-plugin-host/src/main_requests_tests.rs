@@ -22,7 +22,10 @@ fn abandoned_save_keeps_its_own_reply_and_blocks_replacement() {
     assert!(restore.take_reply().is_none());
     assert!(matches!(save.take_reply(), Some(Ok(MainReply::State(bytes))) if bytes == [64]));
     // Even an accidentally repeated old completion cannot finish this call.
-    mailbox.complete(&save, Err(Refusal::Other("old failure".into())));
+    mailbox.complete(
+        &save,
+        Err(Refusal::Plugin(echode_sandbox::PluginFailure::SaveRefused)),
+    );
     assert!(restore.take_reply().is_none());
     mailbox.complete(&running, Ok(MainReply::Done));
     assert!(matches!(restore.take_reply(), Some(Ok(MainReply::Done))));
@@ -38,7 +41,12 @@ fn dropping_a_timed_out_caller_does_not_make_the_mailbox_idle() {
     ));
     let (running, request) = mailbox.take().unwrap();
     assert!(matches!(request, MainRequest::Close));
-    mailbox.complete(&running, Err(Refusal::Other("refused".into())));
+    mailbox.complete(
+        &running,
+        Err(Refusal::Plugin(
+            echode_sandbox::PluginFailure::WindowRefused,
+        )),
+    );
     assert!(mailbox.begin(MainRequest::Parameters).is_ok());
 }
 

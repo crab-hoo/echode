@@ -8,7 +8,7 @@ use crate::events::write_input;
 use crate::gui::GuiRequests;
 use crate::main_requests::{MainReply, MainRequest, MainRequests};
 use crate::relay::{RelayOutput, RelayRing};
-use crate::{HostError, gui, host_info, load_entry};
+use crate::{HostError, LoadError, gui, host_info, load_entry};
 use clack_host::events::io::{EventBuffer, InputEvents};
 use clack_host::events::{
     Pckn,
@@ -792,7 +792,7 @@ fn serve_region(
             Ok(plugin) => Some(plugin),
             Err(error) => {
                 reject_launch(control.as_mut(), &error);
-                return Err(error);
+                return Err(error.into());
             }
         },
     };
@@ -823,8 +823,9 @@ fn serve_region(
             let stopped = match activate(&mut loaded.instance, sample_rate, max_frames) {
                 Ok(stopped) => stopped,
                 Err(error) => {
+                    let error = LoadError::Instance(error);
                     reject_launch(control.as_mut(), &error);
-                    return Err(error);
+                    return Err(error.into());
                 }
             };
             bridge
@@ -836,9 +837,10 @@ fn serve_region(
             if let Err(failure) =
                 prepare_event_capacity(&loaded.instance, bridge.root.layout().input_events)
             {
-                let error = HostError::Plugin(failure);
-                reject_launch(control.as_mut(), &error);
-                return Err(error);
+                if let Some(socket) = control.as_mut() {
+                    let _ = socket.send(&ControlMessage::PortsRejected(failure.into()));
+                }
+                return Err(failure.into());
             }
             publish_stopped(&bridge.processor, stopped, false);
             bridge.need_start.store(true, Ordering::Release);
@@ -965,19 +967,19 @@ fn load_plugin(
     path: &std::path::Path,
     plugin_id: Option<&str>,
     bridge: Arc<Bridge>,
-) -> Result<Loaded, HostError> {
+) -> Result<Loaded, LoadError> {
     let entry = load_entry(path)?;
     let factory = entry
         .get_plugin_factory()
-        .ok_or_else(|| HostError::NoFactory(path.to_path_buf()))?;
+        .ok_or_else(|| LoadError::NoFactory(path.to_path_buf()))?;
     let descriptor = factory
         .plugin_descriptors()
         .find(|descriptor| match plugin_id {
             None => true,
             Some(wanted) => descriptor.id().and_then(|id| id.to_str().ok()) == Some(wanted),
         })
-        .ok_or_else(|| HostError::NoPlugin(path.to_path_buf()))?;
-    let plugin_id = descriptor.id().ok_or(HostError::NoPluginId)?;
+        .ok_or_else(|| LoadError::NoPlugin(path.to_path_buf()))?;
+    let plugin_id = descriptor.id().ok_or(LoadError::NoPluginId)?;
     let instance = PluginInstance::<EchodeHost>::new(
         move |_| HostShared {
             bridge: Some(Arc::clone(&bridge)),
@@ -987,7 +989,7 @@ fn load_plugin(
         plugin_id,
         &host_info(),
     )
-    .map_err(HostError::Instance)?;
+    .map_err(LoadError::Instance)?;
     Ok(Loaded {
         _entry: entry,
         instance,
@@ -998,17 +1000,15 @@ fn activate(
     instance: &mut PluginInstance<EchodeHost>,
     sample_rate: f64,
     max_frames: u32,
-) -> Result<StoppedPluginAudioProcessor<EchodeHost>, HostError> {
-    instance
-        .activate(
-            |_, _| (),
-            PluginAudioConfiguration {
-                sample_rate,
-                min_frames_count: 1,
-                max_frames_count: max_frames.max(1),
-            },
-        )
-        .map_err(HostError::Instance)
+) -> Result<StoppedPluginAudioProcessor<EchodeHost>, PluginInstanceError> {
+    instance.activate(
+        |_, _| (),
+        PluginAudioConfiguration {
+            sample_rate,
+            min_frames_count: 1,
+            max_frames_count: max_frames.max(1),
+        },
+    )
 }
 
 fn audio_thread(bridge: &Bridge, workgroup: Option<&(String, u32)>) -> Result<(), HostError> {
@@ -1672,13 +1672,12 @@ fn handle_control(
     Ok(())
 }
 
-/// Tells the parent why the plugin did not launch. What the plugin lacks keeps
-/// its kind; a load or activation failure crosses in the loader's words.
-fn reject_launch(socket: Option<&mut Socket>, error: &HostError) {
+/// Only load and activation causes can enter the launch-failure handshake.
+fn reject_launch(socket: Option<&mut Socket>, error: &LoadError) {
     let Some(socket) = socket else {
         return;
     };
-    let refusal = crate::launch::launch_refusal(error);
+    let refusal = echode_sandbox::Refusal::Launch(crate::launch::launch_failure(error));
     let _ = socket.send(&ControlMessage::PortsRejected(refusal));
 }
 

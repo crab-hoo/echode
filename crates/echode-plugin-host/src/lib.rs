@@ -16,13 +16,12 @@
     )
 )]
 
-use clack_host::entry::PluginEntryError;
 use clack_host::prelude::*;
 use echode_sandbox::{
     MAX_CHANNELS, MAX_FRAMES, PluginFailure, RegionError, SPIKE_SAMPLE_RATE, WorkgroupError,
 };
 use std::os::fd::FromRawFd;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
@@ -30,6 +29,7 @@ compile_error!("Echode only builds for macOS");
 mod awake;
 mod gui;
 mod launch;
+pub use launch::LoadError;
 mod main_requests;
 mod relay;
 pub use awake::HelperActivity;
@@ -38,14 +38,8 @@ pub use awake::HelperActivity;
 #[derive(Debug)]
 pub enum HostError {
     Region(RegionError),
-    /// The bundle's library did not load, or its entry failed, in the loader's words.
-    Entry(PluginEntryError),
-    NoBinary(PathBuf),
-    NoFactory(PathBuf),
-    /// The bundle has no plugin, or none with the requested id.
-    NoPlugin(PathBuf),
-    NoPluginId,
-    /// Creating, activating or calling the instance failed.
+    Load(LoadError),
+    /// Calling the instance during a measurement failed.
     Instance(PluginInstanceError),
     /// The plugin lacks what the helper needs, or answered `false`.
     Plugin(PluginFailure),
@@ -69,11 +63,7 @@ impl std::fmt::Display for HostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Region(error) => write!(f, "{error}"),
-            Self::Entry(error) => write!(f, "{error}"),
-            Self::NoBinary(path) => write!(f, "{} has no plugin binary", path.display()),
-            Self::NoFactory(path) => write!(f, "{} has no plugin factory", path.display()),
-            Self::NoPlugin(path) => write!(f, "{} does not contain a plugin", path.display()),
-            Self::NoPluginId => f.write_str("plugin descriptor has no id"),
+            Self::Load(error) => write!(f, "{error}"),
             Self::Instance(error) => write!(f, "{error}"),
             Self::Plugin(failure) => write!(f, "{failure}"),
             Self::StartRefused => f.write_str("plugin refused to start processing"),
@@ -89,7 +79,25 @@ impl std::fmt::Display for HostError {
     }
 }
 
-impl std::error::Error for HostError {}
+impl std::error::Error for HostError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Load(error) => Some(error),
+            Self::Region(error) => Some(error),
+            Self::Instance(error) => Some(error),
+            Self::Plugin(error) => Some(error),
+            Self::Socket(error) => Some(error),
+            Self::Workgroup(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<LoadError> for HostError {
+    fn from(error: LoadError) -> Self {
+        Self::Load(error)
+    }
+}
 
 impl From<RegionError> for HostError {
     fn from(error: RegionError) -> Self {
@@ -113,10 +121,10 @@ pub(crate) fn host_info() -> HostInfo {
     )
 }
 
-pub(crate) fn load_entry(path: &Path) -> Result<PluginEntry, HostError> {
+pub(crate) fn load_entry(path: &Path) -> Result<PluginEntry, LoadError> {
     // SAFETY: loading a plugin runs its static constructors in this process.
     // That is the reason this binary is a separate process from the DAW.
-    unsafe { PluginEntry::load(path) }.map_err(HostError::Entry)
+    unsafe { PluginEntry::load(path) }.map_err(LoadError::Entry)
 }
 
 pub fn serve(
@@ -159,12 +167,12 @@ pub fn measure_in_process(
     let entry = load_entry(plugin)?;
     let factory = entry
         .get_plugin_factory()
-        .ok_or_else(|| HostError::NoFactory(plugin.to_path_buf()))?;
+        .ok_or_else(|| LoadError::NoFactory(plugin.to_path_buf()))?;
     let descriptor = factory
         .plugin_descriptors()
         .next()
-        .ok_or_else(|| HostError::NoPlugin(plugin.to_path_buf()))?;
-    let plugin_id = descriptor.id().ok_or(HostError::NoPluginId)?;
+        .ok_or_else(|| LoadError::NoPlugin(plugin.to_path_buf()))?;
+    let plugin_id = descriptor.id().ok_or(LoadError::NoPluginId)?;
     let mut instance = PluginInstance::<threads::EchodeHost>::new(
         |_| threads::HostShared::inert(),
         threads::host_main,

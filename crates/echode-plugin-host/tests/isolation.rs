@@ -625,6 +625,21 @@ fn launch_cause(error: &SessionError) -> &LaunchFailure {
 }
 
 #[test]
+fn launch_port_refusals_remain_plugin_failures() {
+    let plugin = plugin_dylib();
+    let error = refused_launch(&plugin, Some("dev.echode.test-noports"), None);
+    let mut cause = &error;
+    while let SessionError::Launch { error, .. } = cause {
+        cause = error;
+    }
+    assert!(matches!(
+        cause,
+        SessionError::Refused(Refusal::Plugin(echode_sandbox::PluginFailure::NoAudioPorts))
+    ));
+    assert_eq!(cause.to_string(), "plugin does not declare audio ports");
+}
+
+#[test]
 fn invalid_parameter_id_keeps_its_kind_and_rejects_the_entire_batch() {
     let plugin = plugin_dylib();
     let host = PluginHost::spawn(SpawnOptions {

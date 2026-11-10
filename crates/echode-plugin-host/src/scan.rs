@@ -14,8 +14,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::HostError;
 use crate::catalog::{BundleRevision, bundle_revision};
+use crate::{HostError, LoadError};
 
 /// One plugin listed inside a bundle.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,7 +243,7 @@ pub fn scan_descriptors(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
     let entry = crate::load_entry(path)?;
     let factory = entry
         .get_plugin_factory()
-        .ok_or_else(|| HostError::NoFactory(path.to_path_buf()))?;
+        .ok_or_else(|| LoadError::NoFactory(path.to_path_buf()))?;
     let mut plugins = Vec::new();
     for descriptor in factory.plugin_descriptors() {
         let Some(id) = cstr_text(descriptor.id()) else {
@@ -267,7 +267,7 @@ pub fn scan_descriptors(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
         });
     }
     if plugins.is_empty() {
-        return Err(HostError::NoPlugin(path.to_path_buf()));
+        return Err(LoadError::NoPlugin(path.to_path_buf()).into());
     }
     plugins.sort_by(|left, right| left.id.cmp(&right.id));
     plugins.dedup_by(|left, right| left.id == right.id);
@@ -373,7 +373,7 @@ pub fn exit_with_parent() {
 /// Resolves a bundle to its binary, then reads descriptors in this process.
 pub fn scan_path(path: &Path) -> Result<Vec<ScannedPlugin>, HostError> {
     let binary =
-        crate::bundle_binary(path).ok_or_else(|| HostError::NoBinary(path.to_path_buf()))?;
+        crate::bundle_binary(path).ok_or_else(|| LoadError::NoBinary(path.to_path_buf()))?;
     scan_descriptors(&binary)
 }
 

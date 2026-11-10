@@ -57,9 +57,7 @@ fn launch_causes_and_native_metadata_round_trip_through_refusals() {
             let refusal = Refusal::Launch(failure);
             let bytes = write_refusal(&refusal);
             assert_eq!(read_refusal(&bytes).unwrap(), refusal);
-            let text = Refusal::Other(diagnostic.into());
-            assert_eq!(refusal.to_string(), text.to_string());
-            assert_ne!(refusal, text);
+            assert_eq!(refusal.to_string(), diagnostic);
         }
     }
     // EntryIo appears three times with different native metadata.

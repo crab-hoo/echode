@@ -1,6 +1,6 @@
 use super::*;
 
-fn every_kind() -> [Refusal; 7] {
+fn every_kind() -> [Refusal; 6] {
     [
         Refusal::Busy,
         Refusal::NoPlugin,
@@ -8,7 +8,6 @@ fn every_kind() -> [Refusal; 7] {
         Refusal::TimedOut(Pending::ParameterChanges),
         Refusal::Stopped(Pending::MainCall(7)),
         Refusal::Stopped(Pending::ParameterChanges),
-        Refusal::Other("plugin refused — état".to_string()),
     ]
 }
 
@@ -61,16 +60,17 @@ fn every_refusal_round_trips_with_its_kind() {
         let bytes = write_refusal(&refusal);
         assert_eq!(read_refusal(&bytes).unwrap(), refusal);
     }
-    // An empty reason is still a reason, not a missing kind.
-    let empty = Refusal::Other(String::new());
-    assert_eq!(read_refusal(&write_refusal(&empty)).unwrap(), empty);
 }
 
 #[test]
-fn busy_is_not_text_that_happens_to_say_busy() {
-    let text = Refusal::Other(Refusal::Busy.to_string());
-    assert_eq!(text.to_string(), Refusal::Busy.to_string());
-    assert_ne!(read_refusal(&write_refusal(&text)).unwrap(), Refusal::Busy);
+fn unclassified_refusal_frames_are_rejected() {
+    // The app and helper ship together. No product sender needs the old text kind.
+    for diagnostic in ["", "no plugin", "plugin refused — état"] {
+        let mut body = vec![0];
+        body.extend_from_slice(diagnostic.as_bytes());
+        let error = read_refusal(&body).expect_err("unclassified refusal frame was accepted");
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
+    }
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn malformed_refusals_are_invalid_data() {
         extra,
         short,
         vec![STOPPED_PARAMETERS, 1],
-        vec![OTHER, 0xff],
+        vec![0, 0xff],
         vec![UNEXPECTED_MAIN_REPLY + 1],
         vec![LAUNCH],
         vec![LAUNCH, 27],
@@ -165,8 +165,6 @@ fn internal_helper_failures_keep_kinds_metadata_and_diagnostics() {
             let bytes = write_refusal(&refusal);
             assert_eq!(read_refusal(&bytes).unwrap(), refusal);
             assert_eq!(refusal.to_string(), diagnostic);
-            let text = Refusal::Other(diagnostic.to_string());
-            assert_ne!(read_refusal(&write_refusal(&text)).unwrap(), refusal);
         }
     }
     // Every accepted code is canonical; neither extra data nor unknown kinds pass.

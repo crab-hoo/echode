@@ -185,6 +185,9 @@ C ABI は診断の文を返さず従来の `-1` に畳むので、内部の回�
 起動の拒否は `SessionError::Refused(Refusal::Launch(...))`（stderr があれば `SessionError::Launch` の内側）で読む。
 `LaunchFailure.kind` が読込み・作成・起動の原因で、I/O の errno・NUL の位置・CLAP の版も保持する。`diagnostic` は表示用で、分類に使わない。
 対応は `echode-plugin-host/src/launch.rs`、通信は `echode-sandbox/src/launch_failure.rs`、実ヘルパーの回帰は `cargo test -q -p echode-plugin-host --test isolation launch_` である。
+ヘルパー内部では `HostError::Load(LoadError)` の `source` から clack の原因を読める。
+実行中のソケット・共有領域の失敗を起動拒否へ変換する入口はない。
+未分類の拒否の旧種類 `0` は `InvalidData` で拒否するので、アプリとヘルパーの版も照合する（[ADR 0310](../decisions/0310-typed-plugin-load-boundary.md)）。
 走査先は子プロセスの `ECHODE_CLAP_ROOTS` に閉じ、実際の機器・インストール済みのプラグインを使わない。
 2026-10-28 の ⌘D 変更の通常検査では、`audit_rea08_descendant_pipe_does_not_extend_deadline` の最初の JSON 出力が 2 秒の期限切れとなった。
 失敗は子孫のパイプ保持ケースではなく、最初の短い shell の起動・完了待ちで、単独実行では再現しなかった。原因は未確定である。

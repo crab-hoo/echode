@@ -66,7 +66,7 @@ fn contract_control_replies_are_correlated_across_timeouts() {
         helper
             .send_tagged(
                 old,
-                &ControlMessage::StateRejected(Refusal::Other("old timeout".into())),
+                &ControlMessage::StateRejected(Refusal::TimedOut(crate::Pending::MainCall(1))),
             )
             .unwrap();
         helper
@@ -155,7 +155,9 @@ fn expired_parameter_and_window_replies_cannot_answer_new_calls() {
         helper
             .send_tagged(
                 old_params,
-                &ControlMessage::ParamsRejected(Refusal::Other("expired".into())),
+                &ControlMessage::ParamsRejected(Refusal::TimedOut(
+                    crate::Pending::ParameterChanges,
+                )),
             )
             .unwrap();
         helper
@@ -166,7 +168,7 @@ fn expired_parameter_and_window_replies_cannot_answer_new_calls() {
         helper
             .send_tagged(
                 old_window,
-                &ControlMessage::GuiRejected(Refusal::Other("expired".into())),
+                &ControlMessage::GuiRejected(Refusal::TimedOut(crate::Pending::MainCall(2))),
             )
             .unwrap();
         helper
