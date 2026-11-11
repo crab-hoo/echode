@@ -15,6 +15,8 @@ use std::path::{Component, Path};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::error::{EntryKind, PackageEntryError};
+
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct Directory(File);
@@ -56,6 +58,16 @@ impl Directory {
         require_kind(name.as_ref(), kind, libc::S_IFDIR)?;
         let name = entry_name(name.as_ref())?;
         self.open_directory(&name).map(Self).map(Some)
+    }
+
+    /// The existing folder `name`; its absence is [`PackageEntryError::MissingFolder`].
+    pub(crate) fn required_child(&self, name: &str) -> io::Result<Self> {
+        self.optional_child(name)?.ok_or_else(|| {
+            PackageEntryError::MissingFolder {
+                name: OsString::from(name),
+            }
+            .into()
+        })
     }
 
     pub(crate) fn child(&self, name: &str) -> io::Result<Self> {
@@ -139,10 +151,11 @@ impl Directory {
             owned_file(unsafe { libc::openat(self.0.as_raw_fd(), name.as_ptr(), flags, 0o600) })?;
         let metadata = file.metadata()?;
         if !metadata.is_file() || (writable && metadata.nlink() != 1) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "package file is not a regular unshared file",
-            ));
+            return Err(PackageEntryError::NotRegularUnsharedFile {
+                kind: EntryKind::from_mode(metadata.mode()),
+                links: metadata.nlink(),
+            }
+            .into());
         }
         Ok(file)
     }
@@ -315,10 +328,7 @@ impl Drop for DirectoryStream {
 fn entry_name(name: &OsStr) -> io::Result<CString> {
     let mut components = Path::new(name).components();
     if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "package entry must be a single path component",
-        ));
+        return Err(PackageEntryError::NotSingleComponent { name: name.into() }.into());
     }
     CString::new(name.as_bytes())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
@@ -328,15 +338,12 @@ fn require_kind(name: &OsStr, actual: libc::mode_t, expected: libc::mode_t) -> i
     if actual == expected {
         return Ok(());
     }
-    let reason = if actual == libc::S_IFLNK {
-        "is a symbolic link"
-    } else {
-        "has the wrong file type"
-    };
-    Err(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!("{} {reason}", name.to_string_lossy()),
-    ))
+    Err(PackageEntryError::WrongType {
+        name: name.into(),
+        actual: EntryKind::from_mode(actual.into()),
+        expected: EntryKind::from_mode(expected.into()),
+    }
+    .into())
 }
 
 fn owned_file(fd: libc::c_int) -> io::Result<File> {
@@ -387,6 +394,42 @@ mod tests {
         );
         assert!(package.optional_child("tracks").is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn refusal(error: &io::Error) -> Option<&PackageEntryError> {
+        error.get_ref()?.downcast_ref::<PackageEntryError>()
+    }
+
+    #[test]
+    fn entry_refusals_keep_their_typed_cause_and_text() {
+        let root = scratch();
+        let directory = Directory::open(&root).unwrap();
+        for name in ["a/b", "..", ".", "/absolute", ""] {
+            let error = directory.read(name).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{name}");
+            assert_eq!(
+                error.to_string(),
+                "package entry must be a single path component"
+            );
+            assert_eq!(
+                refusal(&error),
+                Some(&PackageEntryError::NotSingleComponent { name: name.into() })
+            );
+        }
+        let pipe = CString::new(root.join("pipe").into_os_string().into_vec()).unwrap();
+        // SAFETY: the path is NUL-terminated and lives for the call.
+        assert_eq!(unsafe { libc::mkfifo(pipe.as_ptr(), 0o600) }, 0);
+        let error = directory.read("pipe").unwrap_err();
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(error.to_string(), "pipe has the wrong file type");
+        assert_eq!(
+            refusal(&error),
+            Some(&PackageEntryError::WrongType {
+                name: "pipe".into(),
+                actual: EntryKind::Other(u32::from(libc::S_IFIFO)),
+                expected: EntryKind::File,
+            })
+        );
     }
 
     #[test]

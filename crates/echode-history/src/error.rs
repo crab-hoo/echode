@@ -12,6 +12,9 @@ pub use document::{DocumentError, JournalError, SettingsError};
 mod validation;
 pub use validation::{MigrationError, PackageKind, PackageValidationError};
 
+#[path = "error_entry.rs"]
+mod entry;
+pub use entry::{EntryKind, PackageEntryError};
 #[path = "error_thin.rs"]
 mod thin;
 pub use thin::ThinningError;

@@ -72,3 +72,5 @@ ADR 0042 は 64 MiB を「状態の上限ではない」としているが、実
 M1 全体の完了とはしない。`echode-sandbox` の制御ソケットの文だけの原因は、種類が原因そのものの 3 つを除いてなくなった。
 次の M1 は `echode-history` のリテラル 4 か所を型にし、`CONSTANT_TEXT_CRATES` を型付きの全 crate へ広げることである。
 検査結果と各検査の見送り理由は `target/verification/report.md` を正本とする。
+
+（2026-11-11 追記: [ADR 0320](0320-typed-package-entry-errors-and-workspace-check.md) で `echode-history` の 4 か所を型にし、検査をワークスペースの全メンバーへ広げた。`CONSTANT_TEXT_CRATES` はなくなった。）

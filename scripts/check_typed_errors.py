@@ -1,46 +1,31 @@
 #!/usr/bin/env python3
-"""Check that crates with typed errors do not return `String` errors again.
+"""Check that no workspace crate returns `String` errors again.
 
-A crate on this list has an error enum at its boundary (M1, ADR 0291), so its
-callers branch on the cause instead of on text. Product code in it must not
-name `Result<_, String>` anywhere: not in a signature, a channel or a closure.
+Every crate's boundary errors are enums (M1, ADR 0291 to 0320), so callers
+branch on the cause instead of on text. Product code must not name
+`Result<_, String>` anywhere: not in a signature, a channel or a closure.
 Nor may a `map_err` turn the error it receives into text (ADR 0294): a variant
 that holds `error.to_string()` hides the cause the same way. Tests may, since
 a fixture's message is not a boundary. Text is still made where a report
 reaches the app; that is a `String` field, not a `Result`.
-I/O error constructors must also keep explicit OS causes rather than text,
-even outside a `map_err` (ADR 0311).
-In a crate on CONSTANT_TEXT_CRATES an I/O error does not carry a string literal
-either, unless its kind is the whole cause (ADR 0317). A literal under
-InvalidData folds every field and value into one sentence. A `&'static str`
-held in a variable is not found: this is syntax, not type inference.
-A file in TYPED_FILES has the same checks while its crate is being migrated.
-History and partially migrated files also reject untyped PackageError messages.
+I/O error constructors must not take formatted text either, even outside a
+`map_err` (ADR 0311, 0320): an inner error type keeps the name or OS cause.
+An I/O error does not carry a string literal either, unless its kind is the
+whole cause (ADR 0317). A literal under InvalidData folds every field and
+value into one sentence. A `&'static str` held in a variable is not found:
+this is syntax, not type inference.
+The crates are the workspace members in Cargo.toml (ADR 0320), so a new crate
+is checked from the commit that adds it, without a list to update here.
+The history crate also rejects untyped PackageError messages.
 """
 
 from pathlib import Path
 import re
 import sys
+import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
-# Crates whose boundary errors are enums. Add a crate when its pass is done.
-TYPED_CRATES = (
-    'echode-api',
-    'echode-actions',
-    'echode-audio-io',
-    'echode-cli',
-    'echode-document',
-    'echode-engine',
-    'echode-ffi',
-    'echode-history',
-    'echode-model',
-    'echode-plugin-host',
-    'echode-sandbox',
-)
-# A large crate may migrate one storage boundary at a time (ADR 0296).
-TYPED_FILES = ()
-# Crates whose I/O errors keep a typed cause even for a constant sentence.
-CONSTANT_TEXT_CRATES = ('echode-sandbox',)
+HISTORY = ('crates', 'echode-history')
 # Kinds that are the whole cause, so a literal there is only a remark.
 KIND_IS_CAUSE = {'TimedOut', 'UnexpectedEof', 'WriteZero'}
 LITERAL = re.compile(r'\s*r?#*"')
@@ -50,8 +35,6 @@ RESULT = re.compile(r'\bResult\s*<')
 MAP_ERR = re.compile(r'\.map_err\s*\(')
 TEXT = re.compile(r'\.to_string\s*\(\s*\)|\bformat!\s*\(')
 IO_ERROR = re.compile(r'\b(?:std\s*::\s*)?io\s*::\s*Error\s*::\s*(other|new)\s*\(')
-TO_STRING = re.compile(r'\.to_string\s*\(\s*\)')
-OS_ERROR = re.compile(r'\b(?:std\s*::\s*)?io\s*::\s*Error\s*::\s*last_os_error\s*\(')
 COMMENT = re.compile(r'//[^\n]*')
 OPEN = '<([{'
 CLOSE = '>)]}'
@@ -132,13 +115,10 @@ def text_io_errors(text):
         end = closing(code, match.end() - 1)
         if end is None:
             continue
-        body = code[match.end():end]
-        # `new` may format input data for InvalidData/InvalidInput without
-        # erasing a source (e.g. a package entry's name and expected type).
-        # Guard explicit OS causes and to_string there; other(format!(...))
-        # is always an untyped boundary. This is syntax, not type inference.
-        if TEXT.search(body) and (
-                match.group(1) == 'other' or TO_STRING.search(body) or OS_ERROR.search(body)):
+        # Formatted text folds a name, a value or an OS cause into a sentence;
+        # since ADR 0320 no crate needs it, so an inner error type holds them.
+        # This is syntax, not type inference.
+        if TEXT.search(code, match.end(), end):
             lines.append(code.count('\n', 0, match.start()) + 1)
     return lines
 
@@ -182,21 +162,36 @@ def is_test(path):
     return path.name.endswith('_tests.rs') or 'tests' in path.parts
 
 
-def problems(root):
+def members(root):
+    """Each workspace member's directory, and problems with the manifest."""
+    manifest = root / 'Cargo.toml'
+    if not manifest.is_file():
+        return [], ['Cargo.toml: missing']
+    try:
+        listed = tomllib.loads(manifest.read_text())['workspace']['members']
+    except (tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        return [], [f'Cargo.toml: no workspace members ({error})']
     found = []
+    problems = []
+    for member in listed:
+        matched = sorted(root.glob(member)) if any(c in member for c in '*?[') else [root / member]
+        if not matched:
+            problems.append(f'{member}: missing')
+        found.extend(matched)
+    if not listed:
+        problems.append('Cargo.toml: no workspace members')
+    return found, problems
+
+
+def problems(root):
+    directories, found = members(root)
     sources = []
-    for crate in TYPED_CRATES:
-        source = root / 'crates' / crate / 'src'
+    for directory in directories:
+        source = directory / 'src'
         if not source.is_dir():
-            found.append(f'crates/{crate}/src: missing')
+            found.append(f'{source.relative_to(root).as_posix()}: missing')
             continue
         sources.extend(sorted(source.rglob('*.rs')))
-    for relative in TYPED_FILES:
-        source = root / relative
-        if not source.is_file():
-            found.append(f'{relative}: missing')
-            continue
-        sources.append(source)
     for path in sources:
         relative = path.relative_to(root)
         if is_test(relative):
@@ -212,10 +207,9 @@ def problems(root):
             found.append(f'{relative.as_posix()}:{line}: turns an error into text')
         for line in text_io_errors(text):
             found.append(f'{relative.as_posix()}:{line}: wraps error text in an I/O error')
-        if relative.parts[1] in CONSTANT_TEXT_CRATES:
-            for line in constant_io_errors(text):
-                found.append(f'{relative.as_posix()}:{line}: gives an I/O error only constant text')
-        if relative.parts[1] == 'echode-history' or relative.as_posix() in TYPED_FILES:
+        for line in constant_io_errors(text):
+            found.append(f'{relative.as_posix()}:{line}: gives an I/O error only constant text')
+        if relative.parts[:2] == HISTORY:
             code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
             for match in PACKAGE_MESSAGE.finditer(code):
                 line = code.count('\n', 0, match.start()) + 1
@@ -226,7 +220,7 @@ def problems(root):
 def main():
     found = problems(ROOT)
     if found:
-        print('check-typed-errors: these boundaries return error enums (ADR 0291, 0296):')
+        print('check-typed-errors: workspace boundaries return error enums (ADR 0291, 0320):')
         for problem in found:
             print(f'  {problem}')
     return int(bool(found))

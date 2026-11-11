@@ -157,25 +157,29 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 
 ### `check-typed-errors` が文字列のエラーを拒否する
 
-`scripts/check_typed_errors.py` は、境界のエラーを列挙型にした crate の製品コードに `Result<_, String>` がないことを確かめる。
-署名・チャネル・クロージャの型を、複数行と入れ子も含めて見る。`*_tests.rs`、`tests/`、末尾の `#[cfg(test)] mod tests` は対象外である。
-`turns an error into text` は、`map_err` の中で受け取ったエラーを `.to_string()`・`format!` で文にした所である。元のエラーを変種に持たせ、文は `Display` で作る。
-`wraps error text in an I/O error` は `map_err` の外も含めて調べる。
-`io::Error::other` の文への変換と、`io::Error::new` 内の `.to_string()`・明示的な `last_os_error` の整形が対象である。
-元の I/O エラーと操作を変種で持つ。入力名などの説明の整形は許し、型の推論や別変数経由の追跡はしない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。
-拒否されたら、その crate のエラー型（`echode-audio-io` は `AudioError`、`echode-document` は `DocumentError`、`echode-sandbox` は `SessionError`・`WorkgroupError`・`SpawnError`、ヘルパーの拒否は `Refusal`、プラグイン自身の失敗は `PluginFailure`、`echode-engine` は `PlaybackError`・`DeviceError`、`echode-plugin-host` は `HostError`・`ScanError`・`CatalogError`・`WatchError`）の変種を使うか、原因に合う変種を足す。
-`Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。
-文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする。型付けを終えた crate は `TYPED_CRATES` に足す（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
-`echode-ffi` の目録は `catalog::CatalogError` を返す。元の目録・JSON の原因を保持し、C ABI の失敗の数値へ畳むまで文にしない（[ADR 0302](../decisions/0302-typed-ffi-catalog-errors.md)）。
-`echode-model` も crate 全体を登録している。`ModelError::Invariant` の内側は `InvariantError`、`Order` の内側は `ArrangeError` で、原因を文へ戻さない（[ADR 0303](../decisions/0303-typed-model-invariant-errors.md)）。
-`echode-api` も crate 全体を登録している。`ApiError`・`PerformError`・`ProtocolMessage` に元の I/O・保存・JSON・文書の原因を保持し、wire 応答を作る直前まで文にしない（[ADR 0304](../decisions/0304-typed-api-errors.md)）。
+`scripts/check_typed_errors.py` は、`Cargo.toml` の `[workspace] members` の全メンバーの `src` を調べる。
+一覧はなく、新しい crate はワークスペースへ足した時から対象になる（[ADR 0320](../decisions/0320-typed-package-entry-errors-and-workspace-check.md)）。
+`Cargo.toml: missing`・`no workspace members`・`<member>/src: missing` は、マニフェストかメンバーのソースが読めない状態である。
+`*_tests.rs`、`tests/`、末尾の `#[cfg(test)] mod tests` は対象外である。
 
-`echode-history` は非既定の履歴スパイクも含めて `TYPED_CRATES` に登録している（ADR 0296〜[0301](../decisions/0301-typed-history-spike-errors.md)）。
-`PackageError::new`・`PackageError::Message` の再導入も crate 全体で拒否する。
+- `returns a String error`: `Result<_, String>`。署名・チャネル・クロージャの型を、複数行と入れ子も含めて見る。
+- `turns an error into text`: `map_err` の中で受け取ったエラーを `.to_string()`・`format!` で文にした所。元のエラーを変種に持たせ、文は `Display` で作る。
+- `wraps error text in an I/O error`: `io::Error::other`・`io::Error::new` に `format!`・`.to_string()` を渡した所。`map_err` の外も含め、種類を問わない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)、ADR 0320）。
+- `gives an I/O error only constant text`: I/O エラーに文字列リテラルだけを渡した所。種類が原因そのものの `TimedOut`・`UnexpectedEof`・`WriteZero` は許す（[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
+- `returns an untyped package message`: `echode-history` の `PackageError::new`・`Message` の再導入。
+
+I/O エラーの原因は、内側の型にして `io::Error::new(kind, 型)` で包む（`DescriptorRuleError`、`PackageEntryError` など）。種類と表示文は保ち、呼出し側は `get_ref` で読む。
+拒否されたら、その crate のエラー型（`echode-audio-io` は `AudioError`、`echode-document` は `DocumentError`、`echode-sandbox` は `SessionError`・`WorkgroupError`・`SpawnError`、ヘルパーの拒否は `Refusal`、プラグイン自身の失敗は `PluginFailure`、`echode-engine` は `PlaybackError`・`DeviceError`、`echode-plugin-host` は `HostError`・`ScanError`・`CatalogError`・`WatchError`）の変種を使うか、原因に合う変種を足す。
+`Clone` でない原因（`SessionError`・`io::Error` など）は `Arc` で包む。文字列にするのは、アプリ・API・ログへ渡す報告の欄だけにする（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)〜[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
+`echode-ffi` の目録は `catalog::CatalogError` を返す。元の目録・JSON の原因を保持し、C ABI の失敗の数値へ畳むまで文にしない（[ADR 0302](../decisions/0302-typed-ffi-catalog-errors.md)）。
+`echode-model` の `ModelError::Invariant` の内側は `InvariantError`、`Order` の内側は `ArrangeError` で、原因を文へ戻さない（[ADR 0303](../decisions/0303-typed-model-invariant-errors.md)）。
+`echode-api` は `ApiError`・`PerformError`・`ProtocolMessage` に元の I/O・保存・JSON・文書の原因を保持し、wire 応答を作る直前まで文にしない（[ADR 0304](../decisions/0304-typed-api-errors.md)）。
+
+`echode-history` は非既定の履歴スパイクも含めて対象である（ADR 0296〜[0301](../decisions/0301-typed-history-spike-errors.md)）。
 `Io`・`Audio(MediaError)`・`Git`・`Validation(PackageValidationError)` など原因の変種を使う。
 スパイクの JSON・版・ワーカーの失敗だけは feature 付きの `Spike(SpikeError)` に置く。
 複数の待ち手へ渡す失敗は `Shared` で原因を共有し、文を複製しない。`original()` で元の変種を調べる。
-`TYPED_FILES` は次の大きな crate を部分移行する時の仕組みで、現在は空である。
+検査は構文で見るので、変数に入れた `&'static str` や型の推論を要する経路は見つけない。
 
 ### Cargo の依存メタデータが欠ける
 

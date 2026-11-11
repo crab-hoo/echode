@@ -135,6 +135,8 @@
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`check_real_hal.py`、`diagnose.py`、`distribution.py`、`tests/` |
 
 間引き・パック・バンドルは `echode-history/src/thin.rs`、意味上の拒否と UTF-8 の原因は `error_thin.rs` に置く。
+パッケージの項目を保持した記述子から開くのは `package_io.rs` の `Directory`、拒否の原因 `PackageEntryError`・`EntryKind` は `error_entry.rs` に置く。
+`io::Error` の内側の型で、公開の入口の回帰は `tests/package_entries.rs` にある（[ADR 0320](decisions/0320-typed-package-entry-errors-and-workspace-check.md)）。
 `tests/thin_errors.rs` で公開入口から原因・文面・原本の保持を、`tests/thin.rs` で先端の保持と間引き後の読込みを検査する。
 
 ### Phase 0 の検証コード
@@ -364,7 +366,7 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 送信の待ち（`SendWait`・`wait_for_room`）と期限の原因 `ControlSendError` は `control_transport.rs`、待つ間に読んだメッセージの `ready` と `Socket::fill` は `control.rs` に置く。
 制御ソケットの記述子は非ブロックなので、ブロックする読み書きを足さず、待ちは `poll` と期限で書く。本体の要求は `ControlState::request` に期限を渡す。
 回帰は `control_wait_tests.rs` と、`isolation.rs` の `a_large_restore_crosses_a_large_background_save_without_stalling`・`a_restore_behind_a_cancel_held_by_a_hung_plugin_ends_at_its_deadline` を使う（[ADR 0319](decisions/0319-control-send-deadline.md)）。
-この crate の I/O エラーに文字列リテラルだけを渡すと、`check_typed_errors.py` が拒否する（[ADR 0317](decisions/0317-typed-control-transport-errors.md)）。
+I/O エラーに文字列リテラルだけを渡すと、`check_typed_errors.py` が全 crate で拒否する（[ADR 0317](decisions/0317-typed-control-transport-errors.md)、[ADR 0320](decisions/0320-typed-package-entry-errors-and-workspace-check.md)）。
 予約済み ID と内部の応答不一致の共有型・通信は `refusal.rs` と `main_reply.rs` に置く。
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。
 回帰は `refusal_tests.rs`・`main_requests_tests.rs` と、実ヘルパーを通す `tests/isolation.rs` の `invalid_parameter_id_` を使う（[ADR 0309](decisions/0309-typed-helper-request-failures.md)）。

@@ -58,3 +58,5 @@ M1 全体の完了とはしない。
 次は `control.rs` の窓名と `params.rs::Cursor::text` の不正 UTF-8 で、
 元の復号の原因を捨てて定数の文だけの `io::Error` にする境界を扱う。
 結果と検査ごとの見送り理由は `target/verification/report.md` を正本とする。
+
+（2026-11-11 追記: [ADR 0320](0320-typed-package-entry-errors-and-workspace-check.md) でパッケージの入力名と種類も `PackageEntryError` に移したので、`new(format!(…))` も一律に拒否する。）

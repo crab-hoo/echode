@@ -196,16 +196,8 @@ pub fn read_object(package: &Path, hash: &str) -> Result<Vec<u8>, PackageError> 
     }
     let path = package.join("media").join("objects").join(hash);
     let bytes = Directory::open(package)
-        .and_then(|root| {
-            root.optional_child("media")?.ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "media is missing")
-            })
-        })
-        .and_then(|media| {
-            media.optional_child("objects")?.ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "objects is missing")
-            })
-        })
+        .and_then(|root| root.required_child("media"))
+        .and_then(|media| media.required_child("objects"))
         .and_then(|objects| objects.read(hash))
         .map_err(|error| io_error(&path, error))?;
     if hash_bytes(&bytes) != hash {

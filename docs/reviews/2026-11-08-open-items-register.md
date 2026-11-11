@@ -84,7 +84,7 @@
 
 | 行 | 内容 | 番号 | 現在 |
 |---|---|---|---|
-| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 11 crate は列挙型（ADR 0291〜0317）。`echode-sandbox` の制御ソケットは種類が原因そのものの 3 つを除き型を保持し、リテラルの再導入を検査する。次は `echode-history` のリテラル 4 か所 |
+| M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 対応済み（ADR 0291〜0320）。全 crate の境界が列挙型で、`Cargo.toml` のワークスペースの全メンバーに文字列のエラー・原因の文字列化・文だけの I/O エラーの再導入を拒否する検査をかける |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 633 ブロックに `SAFETY` 233。`echode-ffi` は 235 に 0。lint は無効 |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
 | M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
@@ -180,7 +180,11 @@
 - 2026-11-11（ADR 0317）: 記述子の規則の違反は `DescriptorRuleError` で届いた数を、送信の拒否は `ControlSendError::TooLong` で枠の種類と長さを保持する。
   `send_tagged` が `Remap` の記述子を渡すようにし、remap の拒否の経路をなくした。時間切れ・切断・書込み 0 バイトは種類が原因そのもので、文を残す。
   `check_typed_errors.py` は `echode-sandbox` の I/O エラーに文字列リテラルだけを渡すことを拒否する。次は `echode-history` の 4 か所と、この検査を全 crate へ広げることである。
-- M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。
+- 2026-11-11（ADR 0320）: `echode-history` のパッケージの項目の拒否 4 か所と、名前と種類を文に畳む `require_kind` を `PackageEntryError` にした。
+  `io::Error` の種類と表示文は変えず、名前・実際と期待の種類・リンク数を内側の型で読める。公開の入口の回帰は修正前に 3 件とも失敗した。
+  検査は `Cargo.toml` の全メンバーを対象にし、一覧と部分移行の仕組みをなくした。I/O エラーへの文の整形の例外（ADR 0311）もなくした。
+  製品コードと Swift に文面で分岐する所はなく、文字列にするのは C ABI・API の wire 応答・CLI の表示だけである。M1 を閉じ、次は ADR 0278 の順の M2 である。
+- M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。（統合時の記録。2026-11-11 の ADR 0320 で対応済み）
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。
   DEV-9 の 10/13 の壊れたリンクは解消し、資料の整理は XCA-10（ADR 0235）が引き継いだ。

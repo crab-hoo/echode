@@ -55,7 +55,7 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 | XCA-13 | P2 | 音声 | オーディオスレッドにプラグイン付きトラック数の 2 乗の処理がある | 対応済み（ADR 0236、回収の全走査は測って変えない） |
 | XCA-14 | P2 | 音声・FFI | コールバックの panic が C のフレームへ伝わり、panic の記録もない | 対応済み（ADR 0238・0284） |
 | XCA-15 | P2 | unsafe | `unsafe` ブロックの根拠の注釈が約 3 割で、FFI は 0 件 | 未着手（FFI-A1 を含む） |
-| XCA-16 | P2 | エラー | 文字列のエラーが増え、文字列で分岐する製品コードがある | 一部対応（ADR 0234・0291〜0313、SPG-11・DEV-7 と同じ） |
+| XCA-16 | P2 | エラー | 文字列のエラーが増え、文字列で分岐する製品コードがある | 対応済み（ADR 0234・0291〜0320、SPG-11・DEV-7 と同じ） |
 | XCA-17 | P2 | テスト | fuzz とカバレッジの測定がない | 対応済み（ADR 0290） |
 | XCA-18 | P2 | 静的検査 | Swift・Python・シェルに整形と lint がない | 未着手 |
 | XCA-19 | P2 | 診断 | ログの仕組みがなく、現場の不具合を追えない | 未着手（DEV-8 と同じ） |
@@ -334,6 +334,10 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 - 後続対応（2026-11-10）: 制御文字列に続き、不正な起動拒否も `LaunchDecodeError` で元の原因を保持する（[ADR 0312](../decisions/0312-typed-control-text-errors.md)・[ADR 0313](../decisions/0313-typed-launch-refusal-decoding.md)）。
   `control_launch_tests.rs` が全拒否経路でフィールドと長さ・未知コード・不正フラグ・元の UTF-8 の原因を照合する。
   公開操作でも原因と従来の表示文を維持する。M1 は継続し、ほかの拒否ペイロードの構造の原因は残る。
+- 後続対応（2026-11-10〜11）: 拒否・制御メタデータ・ペイロード・記述子の規則の原因も型で保持した（[ADR 0314](../decisions/0314-typed-refusal-structure-errors.md)〜[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
+- 後続対応（2026-11-11）: `echode-history` のパッケージの項目の拒否を `PackageEntryError` にし、名前・種類・リンク数を `io::Error` の内側に保持した（[ADR 0320](../decisions/0320-typed-package-entry-errors-and-workspace-check.md)）。
+  `check_typed_errors.py` は `Cargo.toml` のワークスペースの全メンバーを対象にし、一覧をなくした。製品コードと Swift に文面で分岐する所はない。
+  文字列にするのは C ABI・API の wire 応答・CLI の表示だけになったので、対応済みとする。
 
 ### XCA-17: fuzz とカバレッジ
 

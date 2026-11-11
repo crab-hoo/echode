@@ -371,6 +371,8 @@ MySong.echode/
 保管庫・復号・ピークの失敗は `error.rs` の `PackageError` の変種で返す（[ADR 0296](../decisions/0296-typed-storage-errors.md)）。
 `Io` は元の `io::Error` と、従来表示していたパスを持ち、`Audio(MediaError)` は PCM 検証・取消・容量・AudioToolbox の状態コードとプロパティ番号を分ける。
 `MediaIndex` は元の JSON エラーを持つ。`Error::source` で原因を読め、表示の文は変えない。
+保持した記述子からの項目の拒否（フォルダの欠落・単一要素でない名前・種類の違い・共有か非通常のファイル）は、
+`Io` の `io::Error` の内側の `PackageEntryError` に名前・実際と期待の `EntryKind`・リンク数を持つ（[ADR 0320](../decisions/0320-typed-package-entry-errors-and-workspace-check.md)）。
 非既定の `spike` feature の `format.rs`・`store.rs` も `PackageError` を返し、履歴の crate 全体で原因の型を保つ。
 スパイク固有の JSON・版・ワーカーの終了と期限だけを feature 付きの `SpikeError` に置く。
 Git・I/O・欠落・UTF-8 と表示は共用し、初期化の失敗は後続の要求へ同じ原因を共有する。
