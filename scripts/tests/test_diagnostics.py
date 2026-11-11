@@ -244,6 +244,7 @@ class DiagnosticTests(unittest.TestCase):
         (app_logs / "audition.ndjson").write_text('{"request":1}\n' * 4)
         (app_logs / "audition.1.ndjson").symlink_to(outside)
         (app_logs / "panic.ndjson").write_text('{"panic":1}\n')
+        (app_logs / "echode.ndjson").write_text('{"log":1}\n')
         data = diagnose.collect(self.root)
         with patch.object(diagnose, "LOG_LIMIT", 16), patch.object(diagnose, "APP_LOG_DIR", app_logs):
             output = diagnose.bundle(self.root, data)
@@ -260,9 +261,11 @@ class DiagnosticTests(unittest.TestCase):
         self.assertFalse((output / "toolchains/tsan/runtime.dylib").exists())
         # The app's audition record is copied, bounded; a link out of its folder is not followed.
         self.assertEqual((output / "app-logs/audition.ndjson").read_text(), ('{"request":1}\n' * 4)[-16:])
-        self.assertEqual(record["app_logs"], [{"path": "app-logs/audition.ndjson", "truncated": True},
+        self.assertEqual(record["app_logs"], [{"path": "app-logs/echode.ndjson", "truncated": False},
+                                              {"path": "app-logs/audition.ndjson", "truncated": True},
                                               {"path": "app-logs/panic.ndjson", "truncated": False}])
         self.assertEqual((output / "app-logs/panic.ndjson").read_text(), '{"panic":1}\n')
+        self.assertEqual((output / "app-logs/echode.ndjson").read_text(), '{"log":1}\n')
         self.assertFalse((output / "app-logs/audition.1.ndjson").exists())
         self.assertIn("app-logs/", (output / "README.md").read_text())
 

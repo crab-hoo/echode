@@ -1116,10 +1116,19 @@ impl PluginHost {
     }
 
     fn exited(&self, status: ExitStatus) -> SessionError {
-        SessionError::HostExited {
-            status,
-            stderr: self.stderr_log(),
-        }
+        let stderr = self.stderr_log();
+        // The helper's own output is kept for the log only at its exit, so a
+        // plugin that prints all the time cannot fill the log (ADR 0322).
+        let tail = stderr_tail(&stderr);
+        log::warn!(
+            target: "echode_sandbox::session",
+            pid = self.child.pid,
+            status:% = status,
+            plugin = self.plugin_id.as_deref().unwrap_or("none"),
+            stderr = tail;
+            "a plugin helper exited"
+        );
+        SessionError::HostExited { status, stderr }
     }
 
     fn force_stop(&mut self) {
@@ -1370,6 +1379,18 @@ fn spawn_stderr_reader(mut pipe: Box<dyn Read + Send>, slot: Arc<Mutex<String>>)
             }
         }
     });
+}
+
+/// The last bytes of a helper's stderr that the log keeps. Bounds this
+/// diagnostic copy only; the full capture stays in the error.
+const STDERR_LOGGED: usize = 2048;
+
+fn stderr_tail(stderr: &str) -> &str {
+    let mut start = stderr.len().saturating_sub(STDERR_LOGGED);
+    while !stderr.is_char_boundary(start) {
+        start += 1;
+    }
+    stderr.get(start..).unwrap_or_default().trim()
 }
 
 fn push_stderr(slot: &mut String, chunk: &str) {

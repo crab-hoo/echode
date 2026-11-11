@@ -21,6 +21,7 @@ clap-sys = "=0.5.0"
 dispatch2 = "=0.3.1"
 echode-realtime = { path = "../echode-realtime" }
 echode-sandbox = { path = "../echode-sandbox" }
+log.workspace = true
 objc2 = "=0.6.5"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSPanel", "NSResponder", "NSRunningApplication", "NSText", "NSTextView", "NSView", "NSWindow", "NSWorkspace"] }
 objc2-core-foundation = "=0.3.2"
@@ -38,6 +39,7 @@ libloading = "=0.8.9"
 echode-actions = { path = "../echode-actions" }
 echode-engine = { path = "../echode-engine" }
 echode-history = { path = "../echode-history" }
+echode-log = { path = "../echode-log" }
 echode-model = { path = "../echode-model" }
 
 [lints]

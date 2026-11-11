@@ -700,10 +700,12 @@ dependencies = [
  "block2",
  "echode-engine",
  "echode-history",
+ "echode-log",
  "echode-model",
  "echode-plugin-host",
  "echode-time",
  "libc",
+ "log",
  "objc2-core-audio",
  "objc2-core-audio-types",
  "objc2-core-foundation",
@@ -735,6 +737,7 @@ dependencies = [
  "echode-audio-io",
  "echode-engine",
  "echode-history",
+ "echode-log",
  "echode-model",
  "echode-plugin-host",
  "rand_chacha",
@@ -750,6 +753,7 @@ dependencies = [
  "echode-audio-io",
  "echode-history",
  "echode-model",
+ "log",
  "serde",
  "serde_json",
  "uuid",
@@ -777,17 +781,20 @@ dependencies = [
  "dasp_interpolate",
  "dasp_ring_buffer",
  "echode-dsp",
+ "echode-log",
  "echode-model",
  "echode-realtime",
  "echode-sandbox",
  "echode-time",
  "libc",
  "libm",
+ "log",
  "objc2-core-audio",
  "objc2-core-audio-types",
  "rtrb",
  "rtsan-standalone",
  "rubato",
+ "serde_json",
 ]
 
 [[package]]
@@ -800,9 +807,11 @@ dependencies = [
  "echode-document",
  "echode-draw",
  "echode-history",
+ "echode-log",
  "echode-model",
  "echode-plugin-host",
  "libc",
+ "log",
  "serde",
  "serde_json",
  "uuid",
@@ -833,11 +842,22 @@ dependencies = [
  "gix-pack",
  "insta",
  "libc",
+ "log",
  "memmap2",
  "objc2-audio-toolbox",
  "objc2-core-audio-types",
  "objc2-core-foundation",
  "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "echode-log"
+version = "0.0.0"
+dependencies = [
+ "log",
+ "oslog",
  "serde",
  "serde_json",
 ]
@@ -864,11 +884,13 @@ dependencies = [
  "echode-actions",
  "echode-engine",
  "echode-history",
+ "echode-log",
  "echode-model",
  "echode-realtime",
  "echode-sandbox",
  "libc",
  "libloading",
+ "log",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -892,6 +914,7 @@ version = "0.0.0"
 dependencies = [
  "echode-realtime",
  "libc",
+ "log",
  "memmap2",
 ]
 
@@ -2514,6 +2537,15 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "oslog"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d2043d1f61d77cb2f4b1f7b7b2295f40507f5f8e9d1c8bf10a1ca5f97a3969"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "parking_lot"

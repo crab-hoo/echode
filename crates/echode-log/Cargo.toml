@@ -1,0 +1,17 @@
+[package]
+name = "echode-log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The product log: NDJSON file and unified logging for every non-audio thread"
+
+[dependencies]
+log.workspace = true
+oslog = { version = "=0.2.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

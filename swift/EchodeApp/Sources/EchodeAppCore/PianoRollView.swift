@@ -200,7 +200,7 @@ final class PianoGridView: NSView {
                         self.present(frame)
                     })
             } catch {
-                NSLog("Echode piano renderer: %@", String(describing: error))
+                EchodeLog.write(.error, "piano", "the Metal renderer could not start: \(String(describing: error))")
                 let label = NSTextField(labelWithString: text("Metal is unavailable"))
                 label.frame = bounds; label.autoresizingMask = [.width, .height]; addSubview(label)
             }

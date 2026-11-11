@@ -2,6 +2,7 @@
 //! the control thread. The callback only moves prepared ownership through rings.
 
 use crate::TrackMeter;
+use crate::audio_log::{AudioLog, Note, NoteSender, Scene};
 use crate::meter::AutoMute;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -1278,6 +1279,15 @@ pub struct PlaybackControl {
     /// Plugin bytes saved on the control thread and not yet given to the document.
     plugin_saves: Vec<(u128, Vec<u8>)>,
     save_controls: Vec<(u128, echode_sandbox::PluginControl)>,
+    /// The audio thread's notes, logged on this thread (ADR 0322).
+    audio_log: AudioLog,
+}
+
+impl Drop for PlaybackControl {
+    /// Logs the counts still pending, so a closed output's last episode is not lost.
+    fn drop(&mut self) {
+        self.log_audio(true);
+    }
 }
 
 /// Owned by exactly one callback. Move back to the control thread before Drop.
@@ -1315,6 +1325,8 @@ pub struct PlaybackAudio {
     /// See [`PlaybackOptions::guard_output`].
     guard_output: bool,
     master_mute: Option<MasterAutoMute>,
+    /// Misses and late blocks for the control thread's log (ADR 0322).
+    notes: NoteSender,
 }
 
 /// How [`playback`] starts. Every choice combines with the others, so a new
@@ -1430,6 +1442,7 @@ fn transport_pair(
     let (returning, returns) = RingBuffer::new(2);
     let (commands, actions) = RingBuffer::new(32);
     let (preview_returning, preview_returns) = RingBuffer::new(32);
+    let (notes, audio_log) = crate::audio_log::note_pair();
     let mut ids = PlaybackIds::new();
     let mut meters = BTreeMap::new();
     let caches = BTreeMap::new();
@@ -1507,6 +1520,7 @@ fn transport_pair(
         reserved_events,
         plugin_saves: Vec::new(),
         save_controls: Vec::new(),
+        audio_log,
     };
     let audio = PlaybackAudio {
         plans: incoming,
@@ -1555,6 +1569,7 @@ fn transport_pair(
         status,
         guard_output: false,
         master_mute: None,
+        notes,
     };
     Ok((control, audio))
 }
@@ -1991,6 +2006,7 @@ impl PlaybackControl {
     pub fn service(&mut self) {
         while self.returns.pop().is_ok() {}
         while self.preview_returns.pop().is_ok() {}
+        self.log_audio(false);
         for (device, control) in &mut self.save_controls {
             if let Some(bytes) = control.poll_state_save() {
                 self.plugin_saves.push((*device, bytes));
@@ -1998,6 +2014,30 @@ impl PlaybackControl {
         }
         if let Err(error) = self.adopt_media().and_then(|()| self.publish_pending()) {
             self.preparation_error = Some(error);
+        }
+    }
+
+    /// Logs what the audio thread noted since the last call, naming each node
+    /// from this thread's project. `closing` also logs every pending count.
+    fn log_audio(&mut self, closing: bool) {
+        let hosts = &self.hosts;
+        let exited = |device| hosts.exited(device);
+        let master = self.status.master_muted.load(Ordering::SeqCst).then(|| {
+            (
+                f32::from_bits(self.status.master_mute_peak.load(Ordering::SeqCst)),
+                self.status.master_mute_at.load(Ordering::SeqCst),
+            )
+        });
+        let scene = Scene {
+            project: &self.project,
+            meters: &self.meters,
+            master,
+            exited: &exited,
+        };
+        if closing {
+            self.audio_log.finish(&scene);
+        } else {
+            self.audio_log.drain(Instant::now(), &scene);
         }
     }
 
@@ -2162,7 +2202,17 @@ impl PlaybackAudio {
         deadline: Instant,
         enabled: bool,
     ) {
+        let sample = self.clock.position();
         let _ = self.render_mode(left, right, deadline, enabled, true);
+        // The engine's own deadline (ADR 0283): a later return is logged.
+        let late = Instant::now().saturating_duration_since(deadline);
+        if !late.is_zero() {
+            self.notes.send(Note::Late {
+                sample,
+                late_ns: u64::try_from(late.as_nanos()).unwrap_or(u64::MAX),
+                frames: u32::try_from(left.len()).unwrap_or(u32::MAX),
+            });
+        }
     }
 
     /// A start cancelled before any device block was heard cannot emit a tail.
@@ -2460,11 +2510,7 @@ impl PlaybackAudio {
         if self.hosts.cleanup_pending() {
             let cleanup_deadline = if live { None } else { Some(deadline) };
             let completed = self.hosts.collect_cleanup(cleanup_deadline);
-            if self.hosts.missed_block() {
-                self.status
-                    .plugin_missed_blocks
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            self.count_misses();
             if !completed {
                 return Ok(());
             }
@@ -2488,18 +2534,12 @@ impl PlaybackAudio {
                         meter_release,
                     },
                 )?;
-                if self.hosts.missed_block() {
-                    self.status
-                        .plugin_missed_blocks
-                        .fetch_add(1, Ordering::Relaxed);
-                }
+                self.count_misses();
             } else {
                 let flushed = self.current.released != 0;
                 self.current.flush_releases(&mut self.hosts, deadline)?;
-                if flushed && self.hosts.missed_block() {
-                    self.status
-                        .plugin_missed_blocks
-                        .fetch_add(1, Ordering::Relaxed);
+                if flushed {
+                    self.count_misses();
                 }
             }
             return Ok(());
@@ -2529,11 +2569,7 @@ impl PlaybackAudio {
                 meter_release,
             },
         )?;
-        if self.hosts.missed_block() {
-            self.status
-                .plugin_missed_blocks
-                .fetch_add(1, Ordering::Relaxed);
-        }
+        self.count_misses();
         if self.metronome {
             mix_metronome(self, span_count, left, right, None)?;
         }
@@ -2545,6 +2581,24 @@ impl PlaybackAudio {
     /// Starting playback is how the user asks to hear again (ADR 0282). The
     /// plugins of an auto-muted track start afresh, so the state that faulted
     /// does not fault again at once.
+    /// Counts a block in which a plugin missed, and notes each miss for the log.
+    fn count_misses(&mut self) {
+        if !self.hosts.missed_block() {
+            return;
+        }
+        self.status
+            .plugin_missed_blocks
+            .fetch_add(1, Ordering::Relaxed);
+        let sample = self.clock.position();
+        for &(device, reason) in self.hosts.misses() {
+            self.notes.send(Note::Plugin {
+                device,
+                reason,
+                sample,
+            });
+        }
+    }
+
     fn release_auto_mutes(&mut self) {
         for track in &self.current.tracks {
             if track.meter.auto_muted() {
@@ -2678,11 +2732,7 @@ impl PlaybackAudio {
                 .ok_or(PlaybackError::BufferTooSmall)? = span;
             mix_metronome(self, 1, left, right, Some(tail.cutoff))?;
         }
-        if self.hosts.missed_block() {
-            self.status
-                .plugin_missed_blocks
-                .fetch_add(1, Ordering::Relaxed);
-        }
+        self.count_misses();
         tail.remaining -= frames as u32;
         tail.position = tail
             .position

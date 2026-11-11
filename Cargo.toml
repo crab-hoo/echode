@@ -7,6 +7,7 @@ members = [
     "crates/echode-sine-pad",
     "crates/echode-dsp",
     "crates/echode-time",
+    "crates/echode-log",
     "crates/echode-draw",
     "crates/echode-engine",
     "crates/echode-audio-io",
@@ -33,6 +34,8 @@ clack-host = "0.2"
 clack-plugin = "0.2"
 memmap2 = "0.9"
 gix = "0.90"
+# The log facade, with structured fields, for every crate that logs (ADR 0322).
+log = { version = "=0.4.34", features = ["std", "kv"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

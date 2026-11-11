@@ -25,6 +25,7 @@ gix = { workspace = true }
 # version gix resolves, so both share one gix-pack (ADR 0046, ADR 0270).
 gix-pack = "=0.77.0"
 libc = "=0.2.190"
+log.workspace = true
 memmap2 = { workspace = true }
 objc2-audio-toolbox = { version = "=0.3.2", default-features = false, features = ["std", "AudioFile", "ExtendedAudioFile", "objc2-core-audio-types", "objc2-core-foundation"] }
 objc2-core-audio-types = { version = "=0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }

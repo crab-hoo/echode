@@ -20,6 +20,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
 
+mod audio_log;
 mod audition;
 mod builtin;
 mod bypass;

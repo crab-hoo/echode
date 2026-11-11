@@ -15,8 +15,10 @@ echode-audio-io = { path = "../echode-audio-io" }
 echode-document = { path = "../echode-document" }
 echode-draw = { path = "../echode-draw" }
 echode-history = { path = "../echode-history" }
+echode-log = { path = "../echode-log" }
 echode-model = { path = "../echode-model" }
 echode-plugin-host = { path = "../echode-plugin-host" }
+log.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = "1"

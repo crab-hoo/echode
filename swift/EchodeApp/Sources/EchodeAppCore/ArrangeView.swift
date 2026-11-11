@@ -213,7 +213,7 @@ public final class ArrangeView: NSView {
                         NSAccessibility.post(element: self, notification: .layoutChanged)
                     })
             } catch {
-                NSLog("Echode arrange renderer: %@", String(describing: error))
+                EchodeLog.write(.error, "arrange", "the Metal renderer could not start: \(String(describing: error))")
                 let label = NSTextField(labelWithString: text("Metal is unavailable"))
                 label.frame = bounds
                 label.autoresizingMask = [.width, .height]

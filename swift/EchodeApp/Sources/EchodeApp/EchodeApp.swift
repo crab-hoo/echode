@@ -4,7 +4,13 @@ import SwiftUI
 
 @main
 struct EchodeApp: App {
-    init() { ProjectController.keepPanicLog() }
+    init() {
+        ProjectController.keepLogs()
+        // Records still queued for the file would be lost with the process.
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
+            ProjectController.flushLogs()
+        }
+    }
 
     var body: some Scene {
         Window("Echode", id: "workspace") { ProjectWindow() }

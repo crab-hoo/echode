@@ -87,7 +87,7 @@
 | M1 | エラーを文字列で返す | DEV-7・SPG-11・XCA-16 | 対応済み（ADR 0291〜0320）。全 crate の境界が列挙型で、`Cargo.toml` のワークスペースの全メンバーに文字列のエラー・原因の文字列化・文だけの I/O エラーの再導入を拒否する検査をかける |
 | M2 | `unsafe` の根拠と FFI の長さの検査 | XCA-15・FFI-A1 | 対応済み（ADR 0321）。全 crate の `unsafe` に根拠があり、lint は `forbid`。C ABI の引数は `abi.rs` が一つの規則で検査する |
 | M3 | fuzz とカバレッジ | XCA-17 | 対応済み（ADR 0290）。5 つの入口に fuzz の対象を置き、見つかった 2 件を直した。`make coverage` で Rust 84.3%、Swift 72.9% |
-| M4 | ログの仕組み | DEV-8・XCA-19 | Rust・Swift ともない。panic だけを `panic.ndjson` に残す（ADR 0238） |
+| M4 | ログの仕組み | DEV-8・XCA-19 | 対応済み（ADR 0322）。`log` の窓口と `echode-log` のロガーでファイルと統合ログへ書く。コールバックの取りこぼしはリングで渡し、ノード名付きで書く |
 | M5 | Swift・Python・シェルの整形と lint | XCA-18 | どれもない |
 | M6 | Codex のフック | XCA-06・ENV-04 | Claude Code は対応済み。Codex の matcher は Cursor の道具名のまま |
 | M7 | 入口と依存の整備 | XCA-20・DEV-9 | 下の注を参照 |
@@ -188,6 +188,9 @@
   `undocumented_unsafe_blocks` を `forbid`、`unnecessary_safety_comment` を警告にし、`check_workspace_lints.py` が全メンバーの継承を確かめる。
   C ABI は `abi.rs` を通り、null と長さ・`isize::MAX` を超える大きさ・位置のずれを全入口で同じに拒否する（FFI-A1）。
   根拠を書けなかった 6 か所はコードを直した（安全な関数の生ポインターの参照外し、シグナルハンドラーの領域の寿命、任意の型の `assume_init` など）。次は ADR 0278 の順の M4 である。
+- 2026-11-12（ADR 0322）: M4 を閉じた。製品のコードは `log` の欄付きのマクロで書き、アプリは `echode.ndjson` と統合ログ、CLI は統合ログへ書く。
+  コールバックは記録せず、取りこぼしと締め切りを越えたブロックをリングで制御スレッドへ渡し、デバイス・トラック・CLAP ID 付きで書く（必須契約 `engine-deadline-log`）。
+  診断の NDJSON の回転は 1 つの規則にし、`make debug-report` がログも集める。次は ADR 0278 の順の M5 である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。（統合時の記録。2026-11-11 の ADR 0320 で対応済み）
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。
@@ -263,6 +266,7 @@
 | XCA-17 | 未着手 | 対応済み。fuzz の対象を置き、カバレッジを明示の計測にした | ADR 0290 |
 | XCA-16 | 一部対応 | `echode-audio-io`・`echode-document`・`echode-sandbox`・`echode-engine` の境界を列挙型にした。ほかの crate は続ける | ADR 0291〜0294 |
 | XCA-15・FFI-A1 | 未着手・事実 | 対応済み。全 `unsafe` に根拠、lint は `forbid`、C ABI の引数は一つの規則 | ADR 0321 |
+| DEV-8・XCA-19 | 未着手 | 対応済み。ログの窓口とロガー、コールバックの出来事のリング、ノード名付きの締め切りの超過 | ADR 0322 |
 
 ### MOD-13 の照合
 

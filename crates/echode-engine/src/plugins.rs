@@ -78,11 +78,21 @@ struct BlockReport {
     /// Device whose plugin missed this block. Zero reason means none.
     /// Live playback still fades out that track. Export reads the reason.
     export_reason: u8,
+    /// Every stage that missed this block and why, for the log (ADR 0322).
+    /// The control thread reserves a place for each stage, so the audio thread
+    /// never grows it; a miss past that capacity is left out of the log only.
+    misses: Vec<(u128, u8)>,
 }
 
 impl BlockReport {
-    /// Names the first miss of the block, on `stage` when it is known.
+    /// Names the first miss of the block, on `stage` when it is known, and
+    /// keeps every miss on a known stage for the log.
     fn note_miss(&mut self, stage: Option<&Stage>, reason: u8) {
+        if let Some(stage) = stage
+            && self.misses.len() < self.misses.capacity()
+        {
+            self.misses.push((stage.device, reason));
+        }
         if self.export_reason != 0 {
             return;
         }
@@ -93,10 +103,10 @@ impl BlockReport {
     }
 }
 
-const MISS_PROCESS: u8 = 1;
-const MISS_DEADLINE: u8 = 2;
-const MISS_SUBMIT: u8 = 3;
-const MISS_EXITED: u8 = 4;
+pub(crate) const MISS_PROCESS: u8 = 1;
+pub(crate) const MISS_DEADLINE: u8 = 2;
+pub(crate) const MISS_SUBMIT: u8 = 3;
+pub(crate) const MISS_EXITED: u8 = 4;
 /// Not a miss: the plugin answered, but with a NaN or an infinity (ADR 0282).
 const FAULT_NONFINITE: u8 = 5;
 
@@ -339,11 +349,29 @@ impl HostGraph {
         self.report.export_reason != 0
     }
 
+    /// Each stage that missed the block just rendered, with its `MISS_*` code.
+    pub(crate) fn misses(&self) -> &[(u128, u8)] {
+        &self.report.misses
+    }
+
+    /// True when the helper hosting `device` has exited. Never waits: a host
+    /// another control thread holds (a preparation, a state save) counts as
+    /// running, so the log never stalls the document thread behind a helper.
+    pub(crate) fn exited(&self, device: u128) -> bool {
+        self.tracks
+            .iter()
+            .flat_map(|track| &track.stages)
+            .find(|stage| stage.device == device)
+            .and_then(|stage| stage.instance.host.try_lock().ok())
+            .is_some_and(|mut host| host.has_exited())
+    }
+
     pub(crate) fn begin_block(&mut self) {
         for stage in self.tracks.iter().flat_map(|track| &track.stages) {
             stage.instance.failure.store(0, Ordering::Release);
         }
         self.report.export_reason = 0;
+        self.report.misses.clear();
     }
 
     /// Mark every live processor, including downstream effects. Each helper
@@ -556,6 +584,8 @@ impl HostGraph {
             })
             .collect();
         graph.stage_index.sort_unstable_by_key(|entry| entry.0);
+        // One place per stage: a stage misses a block at most once.
+        graph.report.misses = Vec::with_capacity(graph.stage_index.len());
         graph
     }
 

@@ -23,9 +23,10 @@ BUILD_FILES = ("Contents/MacOS/Echode", "Contents/MacOS/echode-plugin-host",
                "Contents/PlugIns/EchodeSinePad.clap/Contents/Info.plist",
                "Contents/MacOS/echode-cli")
 LOG_LIMIT = 2 * 1024 * 1024  # Diagnostic copies only; never a product capacity limit.
-# The app's own diagnostic records (ADR 0143), never user projects.
+# The app's own diagnostic records (ADR 0143, 0238, 0322), never user projects.
 APP_LOG_DIR = Path.home() / "Library/Logs/Echode"
-APP_LOG_FILES = ("audition.ndjson", "audition.1.ndjson", "panic.ndjson", "panic.1.ndjson")
+APP_LOG_FILES = ("echode.ndjson", "echode.1.ndjson", "audition.ndjson", "audition.1.ndjson",
+                 "panic.ndjson", "panic.1.ndjson")
 
 
 def read_json(path):
@@ -224,7 +225,8 @@ def bundle(root, data):
     (destination / "diagnosis.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     note = "\nログにはローカルのパスやプラグイン名が含まれ得る。共有前に内容を確認する。\n"
     if app_logs:
-        note += ("app-logs/ はアプリが書いた試聴の要求の記録（操作の種類と各段の時刻、素材のパス）と、"
+        note += ("app-logs/ はアプリが書いたログ（出力・ヘルパー・文書の出来事と、オーディオスレッドの取りこぼしの"
+                 "ノード名。ADR 0322）、試聴の要求の記録（操作の種類と各段の時刻、素材のパス）、"
                  "Rust の panic の記録（場所・理由・スレッド。ADR 0238）。\n")
     (destination / "README.md").write_text(render(data) + note)
     return destination

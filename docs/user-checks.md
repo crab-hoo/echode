@@ -117,6 +117,7 @@
 | UC-29 | 文書を開く・閉じる・切り替える間の画面、VoiceOver、音 | 画面・VO・聴感 | [ADR 0203](decisions/0203-document-session.md) | 2026-10-31 |
 | UC-30 | 古い保存版へ戻す復旧の警告の見え方と VoiceOver | 画面・VO | [ADR 0183](decisions/0183-recovery-consent.md) | 2026-10-28 |
 | UC-31 | 前回のプロジェクトの復元に失敗した後、別のプロジェクトを開ける（同じ後の新規作成とトラックの追加は 2026-10-19 にユーザーが確認した。[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)） | 画面 | [現在の制約](status.md) のプロジェクトの開始 | 2026-10-19 |
+| UC-66 | `make app` のアプリで文書を開き、再生・停止して閉じ、アプリを終了する。`~/Library/Logs/Echode/echode.ndjson` に `log started`・`a document opened`・`the audio output opened`・`a document closed` が順に並び、Console で `subsystem:io.echode` の記録が見える。自動検査は署名したアプリの起動経路と統合ログの保存を通らない | 実機 | [ADR 0322](decisions/0322-product-log.md) | 2026-11-12 |
 
 ## H. 書出し
 

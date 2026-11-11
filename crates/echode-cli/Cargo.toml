@@ -16,6 +16,7 @@ echode-api = { path = "../echode-api" }
 echode-audio-io = { path = "../echode-audio-io" }
 echode-engine = { path = "../echode-engine" }
 echode-history = { path = "../echode-history" }
+echode-log = { path = "../echode-log" }
 echode-model = { path = "../echode-model" }
 echode-plugin-host = { path = "../echode-plugin-host" }
 rand_chacha = { version = "0.9", default-features = false }

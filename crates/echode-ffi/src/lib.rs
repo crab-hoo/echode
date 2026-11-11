@@ -16,6 +16,7 @@ mod catalog;
 mod constants;
 mod controls;
 mod document;
+mod logging;
 mod overview;
 mod piano;
 mod projection;
@@ -28,6 +29,10 @@ pub use controls::{
 pub use projection::{TrackTreeInfo, echode_snapshot_project_arrange, echode_snapshot_track_tree};
 
 pub use document::Document;
+pub use logging::{
+    ECHODE_LOG_DEBUG, ECHODE_LOG_ERROR, ECHODE_LOG_FILE_LIMIT, ECHODE_LOG_INFO, ECHODE_LOG_WARN,
+    echode_log_append_lines, echode_log_flush, echode_log_install, echode_log_write,
+};
 pub use snapshot::Snapshot;
 
 /// A coherent copy of the live playhead. This query is safe on a draw thread.

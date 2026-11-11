@@ -111,9 +111,9 @@ final class AuditionLog {
     }
 }
 
-/// Appends lines to a file on a background queue. Past `limit` bytes the
-/// file becomes `<name>.1.<extension>` and a new one starts. The limit bounds
-/// this diagnostic record only.
+/// Appends lines to a file on a background queue, under the core's rotation
+/// rule (ADR 0322): past `limit` bytes the file becomes `<name>.1.<extension>`
+/// and a new one starts. The limit bounds this diagnostic record only.
 final class LineLog: Sendable {
     static var auditions: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Echode/audition.ndjson")
@@ -122,30 +122,15 @@ final class LineLog: Sendable {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Echode/panic.ndjson")
     }
     let url: URL
-    let limit: Int
+    let limit: UInt64
     private let queue = DispatchQueue(label: "io.echode.line-log", qos: .utility)
 
-    init(url: URL, limit: Int = 1 << 20) { self.url = url; self.limit = limit }
+    init(url: URL, limit: UInt64 = EchodeLog.fileLimit) { self.url = url; self.limit = limit }
 
     var previous: URL { url.deletingPathExtension().appendingPathExtension("1").appendingPathExtension(url.pathExtension) }
 
     func append(_ line: Data) {
-        queue.async { [url, limit, previous] in
-            let manager = FileManager.default
-            try? manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let size = (try? manager.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil
-            if let size, size > 0, size + line.count > limit {
-                try? manager.removeItem(at: previous)
-                try? manager.moveItem(at: url, to: previous)
-            }
-            if let handle = try? FileHandle(forWritingTo: url) {
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: line)
-            } else {
-                try? line.write(to: url)
-            }
-        }
+        queue.async { [url, limit] in EchodeLog.append(line, to: url, limit: limit) }
     }
 
     /// Waits for every line appended so far.
@@ -159,10 +144,14 @@ extension ProjectController {
         auditionLog.keep(in: LineLog(url: file ?? LineLog.auditions))
     }
 
-    /// Lets the Rust core append its panics beside the audition log
-    /// (ADR 0238). Once per process; tests and tools that never call it
-    /// write nothing.
-    public static func keepPanicLog(at file: URL? = nil) {
-        PanicLog.keep(at: file ?? LineLog.panics)
+    /// Lets the Rust core append its panics (ADR 0238) and its log (ADR 0322)
+    /// beside the audition log. Once per process; tests and tools that never
+    /// call it write no file.
+    public static func keepLogs() {
+        PanicLog.keep(at: LineLog.panics)
+        EchodeLog.install(at: EchodeLog.file)
     }
+
+    /// Waits, up to two seconds, until the log file holds every record so far.
+    nonisolated public static func flushLogs() { EchodeLog.flush() }
 }

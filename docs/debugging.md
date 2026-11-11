@@ -14,7 +14,7 @@ make debug-report
 - `agent-context` は同じ診断経路と検査選択を一度で使い、要約と根拠の JSON を作る。
   取得の失敗、本文予算の超過、曖昧な節、古い行番号の識別と復旧は [エージェントの手順](agent-workflow.md) を参照する。
 - `debug-report` は `target/debug-reports/<日時>-<一意名>/` へ診断 JSON、案内、既存ログ（末尾最大 2 MiB）とスパイクの JSON をコピーする。
-  アプリが `~/Library/Logs/Echode/` に書いた試聴の記録（素材のパスを含む）と panic の記録（[ADR 0238](decisions/0238-audio-callback-panics.md)）も `app-logs/` へ写す。
+  アプリが `~/Library/Logs/Echode/` に書いたログ（`echode.ndjson`、下の「製品のログ」）、試聴の記録（素材のパスを含む）と panic の記録（[ADR 0238](decisions/0238-audio-callback-panics.md)）も `app-logs/` へ写す。
   生の環境変数・Cargo 設定・ユーザープロジェクトは収集しない。
 - `make app` は署名後の本体・ヘルパー・同梱プラグインのハッシュとソースを `target/Echode.build.json` に記録する。
 - ソースが同じでも実機計測だけが古くなったら、既定出力とレートの変更、`system_profiler -json SPAudioDataType -detailLevel mini` の読取可否を確認する。機器設定を診断のために勝手に変えない。
@@ -268,6 +268,15 @@ make debug-report
   - MCP が `MCP message ended without a newline` を返す
 
 ## 再現と引き継ぎに残す情報
+
+### 製品のログ
+
+- アプリは 1 件 1 行の JSON を `~/Library/Logs/Echode/echode.ndjson`（1 MiB で `echode.1.ndjson` へ移す）と統合ログへ書く（[ADR 0322](decisions/0322-product-log.md)）。
+  CLI は統合ログだけに書く。実行中は `log stream --level info --predicate 'subsystem == "io.echode"'` で見える。
+- 欄の `target` で出所を選ぶ。`echode_engine::audio` はコールバックの出来事で、取りこぼしたデバイス・トラック・CLAP ID・理由・位置と、締め切りを越えたブロックを持つ。
+  `echode_audio_io::session` は出力の開閉と停止の原因、`echode_sandbox::session` はヘルパーの終了と stderr の末尾、`echode_history::host` は文書の開閉・保存の失敗・閉じた時の履歴の使用量である。
+- 同じ出来事が続くと、最初の 1 行の後は 10 秒ごとの件数の行になる。`log records were lost` は書込みが追いつかずに捨てた件数と書込みの失敗の回数である。
+- 詳しく見る時は `ECHODE_LOG=debug` で起動する。テストでは `echode_log::testing::capture` が製品の経路の記録を返す。
 
 ### 停止クリック・発音アタックの実出力診断
 

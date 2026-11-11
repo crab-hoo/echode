@@ -1,6 +1,6 @@
 # 現在の範囲と制約
 
-更新: 2026-11-11。
+更新: 2026-11-12。
 制約と未確認・未接続を置く。合格証ではない。
 合否は `make verify`、実操作は日付付きの監査記録で確認する。
 実機等の確認待ちは [ユーザー確認の一覧](user-checks.md) の UC-番号で示す。
@@ -50,6 +50,8 @@
   実画面での文書切替・VoiceOver・聴感はユーザー確認待ち（UC-29）。
 - **文書の手番の調停（SPG-05）**: CLI と MCP はこのサービスを使わず、`DocumentHost` へ直接つなぐ（[ADR 0204](decisions/0204-document-service.md)）。
 - **Swift の型付き編集入口（SPG-03）**: 互換の raw JSON の入口が残る（[ADR 0202](decisions/0202-generated-swift-edit-actions.md)）。
+- **製品のログ**: 異常終了で待ち行列の残りは失われ、ヘルパーは終了時の stderr の末尾だけ。
+  履歴の使用量は文書を閉じる時だけ書く。実アプリは UC-66（[ADR 0322](decisions/0322-product-log.md)）。
 
 ### 音声・再生・トランスポート
 
@@ -66,7 +68,6 @@
 - **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する。
   開いた出力の停止中の処理負荷は残る（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。
 - **位置移動と準備の取消**: 位置移動・未発音の準備の取消とオフラインの停止では、以前の発音状態を消す（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
-- **停止診断**: 減衰位置は素材側を示し、マスター出力の無音化を示さない（[ADR 0104](decisions/0104-stop-output-diagnostics.md)、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
 - **バス・ループ・ゲイン・メーター**: 暗黙のステレオ→モノ変換はエラーにする（[ADR 0095](decisions/0095-product-audio-buses-and-continuity.md)）。
   ディスクストリーミング、Phase 3 のレンダリングキャッシュの生成本体、Ogg、プラグインのサムネイルは未実装（[ADR 0108](decisions/0108-phase1-loop-readiness.md)）。
   クリップゲインは `0..=1_048_576`（音声クリップのみ）で、負の配置オフセットはファイル前の無音として扱う（[ADR 0109](decisions/0109-placement-bounds-and-plugin-capture.md)）。
@@ -76,7 +77,6 @@
 - **クリップゲイン**: 実機の操作感・聴感は未確認（UC-48、[ADR 0241](decisions/0241-unscaled-placement-pcm.md)）。
 - **規模・ミックスと履歴（FCA-05〜07・19）**: モデル ID の線形探索と履歴のメモリ予算は残る（[ADR 0274](decisions/0274-reused-track-plans.md)）。
   ノートの編集の 1 段は触れた run だけを持つ（1 万ノートで約 13 KB）。多くのノートを変える編集はその分を持ち、総量の予算はない（[ADR 0287](decisions/0287-shared-note-runs.md)）。
-  使用量は GUI からは読めない（[ADR 0286](decisions/0286-history-usage-diagnostics.md)）。
   フォルダの音量・パンは子に効かず、遅延は未補正。ループとミックスの聴感は UC-47・49、遅延表示は UC-51（[ADR 0246](decisions/0246-plugin-latency-reporting.md)）。
 - **長い素材**: 全体を復号して 1 コピーを常駐させ、逐次読込みはない（[ADR 0273](decisions/0273-shared-source-clip-windows.md)）。
 

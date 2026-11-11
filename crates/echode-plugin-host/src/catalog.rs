@@ -116,8 +116,26 @@ impl PluginCatalog {
     ) {
         match result {
             Ok(plugins) => self.note_scanned(path, plugins),
-            Err(error) if error.is_verdict() => self.note_failed(path),
-            Err(_) => self.note_unanswered(path),
+            Err(error) if error.is_verdict() => {
+                log::info!(
+                    target: "echode_plugin_host::catalog",
+                    bundle:% = path.display(),
+                    error:% = error,
+                    cause:? = error;
+                    "a plugin bundle was rejected by its scan"
+                );
+                self.note_failed(path);
+            }
+            Err(error) => {
+                log::warn!(
+                    target: "echode_plugin_host::catalog",
+                    bundle:% = path.display(),
+                    error:% = error,
+                    cause:? = error;
+                    "a plugin bundle did not answer its scan"
+                );
+                self.note_unanswered(path);
+            }
         }
     }
 

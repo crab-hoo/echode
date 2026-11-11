@@ -13,16 +13,14 @@
 
 use std::any::Any;
 use std::cell::UnsafeCell;
-use std::io::Write as _;
 use std::panic::{AssertUnwindSafe, PanicHookInfo, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Past this size the log moves to `<name>.1.<extension>` and a new one
-/// starts. The limit bounds this diagnostic record only.
-const LOG_LIMIT: u64 = 1 << 20;
+/// The shared size past which the log moves to `<name>.1.<extension>`.
+const LOG_LIMIT: u64 = echode_log::FILE_LIMIT;
 
 /// Bytes of location and message a callback keeps. A longer text is cut at a
 /// character boundary. The limit bounds this diagnostic text only.
@@ -90,28 +88,15 @@ fn now_ms() -> u64 {
         .map_or(0, |time| time.as_millis().min(u128::from(u64::MAX)) as u64)
 }
 
-/// Appends one line. A failure is ignored: the panic is already in progress.
+/// Appends one line under the shared rotation rule. It writes synchronously:
+/// an `extern "C"` entry aborts right after the hook, before a queued line
+/// would reach the file. A failure is ignored; the panic is already in progress.
 fn append(path: &Path, entry: &Entry<'_>) {
     let Ok(mut line) = serde_json::to_vec(entry) else {
         return;
     };
     line.push(b'\n');
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if std::fs::metadata(path).is_ok_and(|metadata| metadata.len() >= LOG_LIMIT) {
-        let extension = path.extension().and_then(|value| value.to_str());
-        let previous =
-            path.with_extension(extension.map_or("1".into(), |value| format!("1.{value}")));
-        let _ = std::fs::rename(path, previous);
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = file.write_all(&line);
-    }
+    let _ = echode_log::append_lines(path, &line, LOG_LIMIT);
 }
 
 /// `location: message`. Writes into a fixed buffer without allocating.

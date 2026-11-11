@@ -307,7 +307,7 @@ impl Session {
                 if let Err(error) = self.reconcile() {
                     self.playing = false;
                     self.sync_activity();
-                    self.error = Some(error.clone());
+                    self.fail(error.clone());
                     return Err(error);
                 }
                 self.playing = self.cancellation.is_current(revision);
@@ -319,7 +319,7 @@ impl Session {
                     self.cancellation.request(&AudioCommand::Stop);
                     self.playing = false;
                     self.sync_activity();
-                    self.error = Some(error.clone());
+                    self.fail(error.clone());
                     return Err(error);
                 }
             }
@@ -511,7 +511,7 @@ impl Session {
                 self.park();
                 self.playing = false;
                 self.sync_activity();
-                self.error = Some(error);
+                self.fail(error);
             }
             return;
         }
@@ -546,12 +546,12 @@ impl Session {
             self.park();
             self.playing = false;
             self.sync_activity();
-            self.error = Some(error);
+            self.fail(error);
         } else if changed_tempo && let Err(error) = self.resend_loop() {
             self.park();
             self.playing = false;
             self.sync_activity();
-            self.error = Some(error);
+            self.fail(error);
         }
     }
 
@@ -679,7 +679,7 @@ impl Session {
             self.park();
             self.playing = false;
             self.sync_activity();
-            self.error = Some(error);
+            self.fail(error);
         }
         self.retiring.retain(|opening| !opening.finished());
         if let Some(result) = self.opening.as_mut().and_then(Opening::poll)
@@ -689,7 +689,7 @@ impl Session {
             self.park();
             self.playing = false;
             self.sync_activity();
-            self.error = Some(error);
+            self.fail(error);
         }
         if let Some(stream) = &mut self.stream
             && let Err(error) = stream.service()
@@ -709,7 +709,7 @@ impl Session {
                     self.park();
                     self.playing = false;
                     self.sync_activity();
-                    self.error = Some(error);
+                    self.fail(error);
                 }
             }
         }
@@ -725,7 +725,7 @@ impl Session {
             self.cancellation.request(&AudioCommand::Stop);
             self.playing = false;
             self.sync_activity();
-            self.error = Some(error);
+            self.fail(error);
         }
     }
 
@@ -812,7 +812,7 @@ impl Session {
             if let Some(device) = device {
                 self.opening = Some(self.begin(device)?);
             } else {
-                self.error = Some(AudioError::NoOutputDevice);
+                self.fail(AudioError::NoOutputDevice);
             }
         }
         if let Some(stream) = &self.stream {
@@ -912,8 +912,30 @@ impl Session {
         stream.acknowledge_configuration(self.observed_epoch);
         self.outputs.register(stream)?;
         stream.prepare_in_background();
+        let device = &stream.device;
+        log::info!(
+            target: "echode_audio_io::session",
+            device = device.name.as_str(),
+            uid = device.uid.as_str(),
+            sample_rate = device.sample_rate,
+            buffer_frames = device.buffer_frames,
+            safety_frames = device.safety_frames,
+            channels = device.channels;
+            "the audio output opened"
+        );
         self.error = None;
         Ok(())
+    }
+
+    /// Keeps `error` for the state's text and logs it (ADR 0322).
+    fn fail(&mut self, error: AudioError) {
+        log::warn!(
+            target: "echode_audio_io::session",
+            error:% = error,
+            cause:? = error;
+            "the audio output stopped or could not open"
+        );
+        self.error = Some(error);
     }
 
     fn park(&mut self) {
@@ -921,9 +943,16 @@ impl Session {
         self.resume_held = false;
         if let Some(mut stream) = self.stream.take() {
             let status = stream.close();
+            log::info!(
+                target: "echode_audio_io::session",
+                device = stream.device.name.as_str(),
+                plugin_missed_blocks = status.plugin_missed_blocks,
+                failed = status.failed;
+                "the audio output closed"
+            );
             self.tick = status.tick;
             if status.failed {
-                self.error = Some(Stopped::CallbackNotReleased.into());
+                self.fail(Stopped::CallbackNotReleased.into());
             }
         }
     }

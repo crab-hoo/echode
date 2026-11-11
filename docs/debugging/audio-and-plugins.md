@@ -581,6 +581,7 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 ### プラグインの取りこぼしで段差が出る・復帰後も無音になる
 
 `plugin_missed_blocks` の増加と `plugin_failure()` のデバイス・理由を先に見る。フェードしても取りこぼしは成功にならない。
+アプリでは `app-logs/echode.ndjson` の `echode_engine::audio` の行が、取りこぼしたデバイス・トラック・CLAP ID・理由・位置と、締め切りを越えたブロックを残す（[ADR 0322](../decisions/0322-product-log.md)）。
 `plugin-deadline-fade` は実ヘルパーの 2 回目の処理を `process-wait:` のソケットで保留し、対象トラックだけの 5 ms の減衰・復帰を PCM で照合する。
 この故障はテスト専用であり、実機を開かず過去の期限を渡す。`process reached` / `process release` の失敗はソケットの到達・解放を調べる。
 計画交換の後だけ段差が出る時は `Prepared::carry` の `plugin_declick` の引継ぎ、左右が変わる時は失敗した段でなく最終段のバス形を確認する。

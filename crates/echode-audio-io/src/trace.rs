@@ -66,7 +66,7 @@ pub(crate) fn configured(rate: u32, frames: usize) -> Option<(Writer, Files)> {
     }
     let directory = PathBuf::from(directory);
     if let Err(error) = std::fs::create_dir_all(&directory) {
-        eprintln!("Could not enable stop diagnostics: {error}");
+        log::warn!(target: "echode_audio_io::trace", error:% = error; "could not enable stop diagnostics");
         return None;
     }
     Some(pair(rate, frames, directory))
@@ -168,7 +168,7 @@ impl Files {
             && let Err(error) = self.save(&buffer, status)
         {
             self.disabled = true;
-            eprintln!("Stop diagnostics disabled after a write failure: {error}");
+            log::warn!(target: "echode_audio_io::trace", error:% = error; "stop diagnostics disabled after a write failure");
         }
         buffer.total = 0;
         buffer.block_count = 0;

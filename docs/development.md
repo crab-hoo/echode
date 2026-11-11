@@ -116,7 +116,8 @@
 | 保存の検証・素材 | `crates/echode-history` | `document_parse.rs`（スキーマと読込み）、`error.rs`（原因の型）、`objects.rs`（CAS）、`peaks.rs`（波形） |
 | 文書・復旧・設定の失敗 | `crates/echode-history/src` | `error_document.rs`（`DocumentError`・`JournalError`・`SettingsError`）、`host_error.rs`（`HostError`・`ElementError`・参照の拒否） |
 | 再生計画・カーソル | `crates/echode-realtime` | `lib.rs`（サンプル時刻の計画・鳴っている集合・ID の索引）、`event.rs`（イベント列）、`cursor_tests.rs`（境界の訪問数） |
-| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器の入口 `playback` と `PlaybackOptions`・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（機器問い合わせ）、`device_measurement.rs`（非既定 feature の実機計測） |
+| オーディオエンジン | `crates/echode-engine` | `playback.rs`（再生器の入口 `playback` と `PlaybackOptions`・`PlaybackAudio`・`CachedTrack`）、`plugins.rs`（別プロセス CLAP ステージ）、`bypass.rs`（ドライ平面の通過）、`mix.rs`（フェーダー補間・f64 加算）、`declick.rs`（停止減衰）、`render.rs`（オフライン書出し）、`device.rs`（機器問い合わせ）、`device_measurement.rs`（非既定 feature の実機計測）、`audio_log.rs`（コールバックの出来事のリングとノード名付きの記録） |
+| 製品のログ | `crates/echode-log` | `install`（ファイル・統合ログ・stderr の出力先）、`file.rs`（書込みスレッドと共通の回転 `append_lines`）、`testing.rs`（テストの記録の取得）。書き方は `log` のマクロと欄（[ADR 0322](decisions/0322-product-log.md)） |
 | CoreAudio I/O・素材読込 | `crates/echode-audio-io` | `stream.rs`（HAL 入出力）、`opening.rs`（出力準備の別スレッド・機器なしの検査用出力）、`session.rs`（文書の音声セッション）、`error.rs`（`AudioError`。境界のエラーの変種）、`clips.rs`（WAV 読込・SRC・PCM 共有キャッシュ）、`transport.rs`（取消世代）、`workgroup.rs` / `hardware.rs`（Workgroup・機器通知）、`trace.rs`（停止出力診断）、`activity.rs`（スリープ抑止）、`panic_log.rs`（コールバックの panic の捕捉と記録） |
 | 共有メモリ・IPC | `crates/echode-sandbox` | `region.rs`（共有メモリ・`arm_abort_notice`）、`session.rs`（`PluginControl`）、`workgroup.rs`、`wire.rs` |
 | プラグインヘルパー | `crates/echode-plugin-host` | `scan.rs`（バンドル走査）、`catalog.rs`（キャッシュ）、`threads.rs` / `events.rs`（CLAP 処理・リセット）、`awake.rs` |
@@ -128,8 +129,8 @@
 | CLI | `crates/echode-cli` | `render`、`serve`、`mcp` サブコマンド。統合テストは `tests/render.rs`、`tests/mcp.rs` |
 | 文書の手番 | `crates/echode-document` | `service.rs`（投入・取消・終了）、`worker.rs`（手番と保護）、`ticket.rs`（完了の 1 回の保証）、`error.rs`（`DocumentError`。手番・レーンの失敗の変種）、`saves.rs`（保存の取込み）、`lane.rs`（デバイスレーン）、`device.rs`、`activity.rs`、`live.rs` |
 | 外部入力の fuzz | `crates/echode-fuzz` | 制御ソケット・共有領域・ジャーナル・パッケージ・音声の対象。`Target::run` を libFuzzer の `fuzz_targets/` と `tests/replay.rs` が共有し、`regressions/` の発見を通常テストで再生する（[ADR 0290](decisions/0290-fuzz-targets-for-external-input.md)） |
-| 製品 C ABI | `crates/echode-ffi` | `lib.rs`、`document.rs`（C のコールバックと `Ticket`）、`snapshot.rs`（`Snapshot`・`SnapshotPresenter`）、`controls.rs`。ヘッダ生成は `cbindgen` |
-| Swift ブリッジ | `swift/EchodeBridge` | `Document.swift`、`Audio.swift`、`Controls.swift`（`echode-ffi` の Swift 6 ラッパー） |
+| 製品 C ABI | `crates/echode-ffi` | `lib.rs`、`document.rs`（C のコールバックと `Ticket`）、`snapshot.rs`（`Snapshot`・`SnapshotPresenter`）、`controls.rs`、`logging.rs`（ログの導入・記録・追記）。ヘッダ生成は `cbindgen` |
+| Swift ブリッジ | `swift/EchodeBridge` | `Document.swift`、`Audio.swift`、`Controls.swift`、`Log.swift`（`echode-ffi` の Swift 6 ラッパー） |
 | 製品 macOS アプリ | `swift/EchodeApp` | `Sources/EchodeAppCore/`：`ProjectController.swift`、`DocumentSession.swift`、`Arrange*.swift`、`Piano*.swift`、`Mix*.swift`、`DeviceChain.swift`、`Workspace*.swift`、`Canvas*.swift` |
 | スパイク（検証用） | `spikes/` | `draw`（S1）、`bridge`（UI-2）、`input`（S5）。スパイクの型を製品へ流用しない |
 | 検査・診断・配布スクリプト | `scripts/` | `verify.py`、`verification.json`、`check_product_contracts.py`、`check_real_hal.py`、`diagnose.py`、`distribution.py`、`tests/` |

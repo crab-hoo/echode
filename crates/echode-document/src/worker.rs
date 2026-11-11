@@ -145,6 +145,8 @@ impl<P: Presenter> Worker<P> {
         step: impl FnOnce(&mut Self) -> Result<T, DocumentError>,
     ) -> Result<T, DocumentError> {
         catch_unwind(AssertUnwindSafe(|| step(self))).unwrap_or_else(|_| {
+            // The panic hook keeps the reason in the panic log (ADR 0238).
+            log::error!(target: "echode_document::worker", "a document step panicked; the document takes no more edits");
             self.accepting = false;
             Err(DocumentError::Panicked)
         })

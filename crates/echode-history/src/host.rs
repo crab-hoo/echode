@@ -170,6 +170,25 @@ impl DocumentHost {
             reason,
         });
         let recovery_pending = Arc::new(AtomicBool::new(recovery.is_some()));
+        let package = package_name(&directory);
+        match &recovery {
+            Some(notice) => log::warn!(
+                target: LOG,
+                package = package.as_str(),
+                reason:? = notice.reason,
+                tip = notice.tip.as_str(),
+                base = notice.base.as_str(),
+                applied_seq = notice.applied_seq;
+                "a document opened from an older state; editing waits for consent"
+            ),
+            None => log::info!(
+                target: LOG,
+                package = package.as_str(),
+                base = recovered.base_revision.as_str(),
+                applied_seq = recovered.applied_seq;
+                "a document opened"
+            ),
+        }
         let mut base_revision = recovered.base_revision;
         let applied_seq = recovered.applied_seq;
         let project = recovered.project;
@@ -670,6 +689,32 @@ fn worker(
             let _ = compact_journal(&directory, seq);
         }
     }
+    // Read at close, where the walk over every version delays no edit (ADR 0286).
+    let usage = session.usage();
+    log::info!(
+        target: LOG,
+        package = package_name(&directory).as_str(),
+        halted = halted,
+        undo_steps = usage.undo_steps,
+        redo_steps = usage.redo_steps,
+        version_bytes = usage.versions.bytes,
+        version_tracks = usage.versions.tracks,
+        version_contents = usage.versions.contents,
+        version_notes = usage.versions.notes,
+        journal_changes = usage.journal_changes,
+        journal_bytes = usage.journal_bytes;
+        "a document closed"
+    );
+}
+
+/// The log's target for the document thread.
+const LOG: &str = "echode_history::host";
+
+/// The package's file name. The log names the package, not its folder path.
+fn package_name(directory: &Path) -> String {
+    directory
+        .file_name()
+        .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
 }
 
 struct Publish<'a> {
@@ -684,6 +729,14 @@ struct Publish<'a> {
 fn note_failure(halted: &mut bool, error: &HostError) {
     if error.durability_unknown() {
         *halted = true;
+        log::error!(
+            target: LOG,
+            error:% = error,
+            cause:? = error;
+            "the document stopped taking edits: a write's durability is unknown"
+        );
+    } else {
+        log::warn!(target: LOG, error:% = error, cause:? = error; "a document change was not saved");
     }
 }
 
@@ -1005,9 +1058,12 @@ fn finish_saves(directory: &Path, inflight: &mut Vec<(u64, PendingAutosave)>) {
             Some(Ok(_)) => {
                 let seq = *seq;
                 inflight.remove(0);
-                let _ = compact_journal(directory, seq);
+                if let Err(error) = compact_journal(directory, seq) {
+                    log::warn!(target: LOG, seq = seq, error:% = error, cause:? = error; "the journal was not compacted");
+                }
             }
-            Some(Err(_)) => {
+            Some(Err(error)) => {
+                log::warn!(target: LOG, seq = *seq, error:% = error, cause:? = error; "an autosave failed");
                 inflight.remove(0);
             }
         }
