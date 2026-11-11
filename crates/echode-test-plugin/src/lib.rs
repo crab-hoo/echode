@@ -8,7 +8,7 @@
 //! `ECHODE_TEST_FAULT=nan` writes 0.5, then NaN from frame 10 of its second
 //! block on, until a CLAP reset; afterwards it writes 0.5 again.
 //! `ECHODE_TEST_FAULT=large-state` saves the state byte repeated
-//! [`LARGE_STATE`] times and loads only that shape.
+//! [`LARGE_STATE`] times and loads only that shape, marking itself dirty.
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -1146,6 +1146,14 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
             return false;
         };
         STATE_BYTE.store(byte, Ordering::Release);
+        // Like a short load, so a test can start a background save of the
+        // large state through the dirty notice.
+        unsafe {
+            PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
+                wrapper.main_thread().mark_dirty();
+                Ok(())
+            });
+        }
         return true;
     }
     let mut byte = 0u8;

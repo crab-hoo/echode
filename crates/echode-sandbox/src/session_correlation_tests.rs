@@ -1,5 +1,10 @@
 use super::*;
 
+/// A request deadline no send in these tests comes near.
+fn soon() -> Instant {
+    Instant::now() + Duration::from_secs(2)
+}
+
 #[test]
 fn latency_is_retained_when_another_request_drains_the_socket() {
     let (parent, _helper) = Socket::pair().unwrap();
@@ -35,9 +40,9 @@ fn contract_control_replies_are_correlated_across_timeouts() {
     let control = PluginControl::new(parent);
     // A deterministic timeout, without sleeping or depending on scheduling.
     let mut state = control.lock();
-    let old = state.request(ControlMessage::SaveRequest).unwrap();
+    let old = state.request(ControlMessage::SaveRequest, soon()).unwrap();
     assert!(matches!(
-        state.wait_reply(old, Duration::ZERO, |_| true),
+        state.wait_reply(old, Instant::now(), |_| true),
         Err(SessionError::Timeout)
     ));
     let (wire_id, request) = helper.recv_tagged(Duration::from_secs(2)).unwrap();
@@ -134,16 +139,18 @@ fn expired_parameter_and_window_replies_cannot_answer_new_calls() {
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);
     let mut state = control.lock();
-    let old_params = state.request(ControlMessage::ParamsRequest).unwrap();
+    let old_params = state
+        .request(ControlMessage::ParamsRequest, soon())
+        .unwrap();
     assert!(matches!(
-        state.wait_reply(old_params, Duration::ZERO, |_| true),
+        state.wait_reply(old_params, Instant::now(), |_| true),
         Err(SessionError::Timeout)
     ));
     let old_window = state
-        .request(ControlMessage::GuiShow("old".into()))
+        .request(ControlMessage::GuiShow("old".into()), soon())
         .unwrap();
     assert!(matches!(
-        state.wait_reply(old_window, Duration::ZERO, |_| true),
+        state.wait_reply(old_window, Instant::now(), |_| true),
         Err(SessionError::Timeout)
     ));
     drop(state);

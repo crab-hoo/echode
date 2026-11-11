@@ -1,18 +1,21 @@
 //! Typed, control-only operations. Each operation owns its validation and wire
 //! exchange here; `ControlState` only manages correlation, notices and saved bytes.
 
-use super::{ControlMessage, PARAMETER_REPLY, PluginControl, SessionError, WINDOW_REPLY};
+use super::{
+    ControlMessage, PARAMETER_REPLY, PluginControl, STATE_REPLY, SessionError, WINDOW_REPLY,
+};
 use crate::error::ProtocolError;
 use crate::{GuiReport, ParamChange, ParamInfo, ParamText, ParamValue};
-use std::time::Duration;
+use std::time::Instant;
 
 impl PluginControl {
     /// Opens the plugin's window in its helper, or raises it when it is open.
     /// The window does not take keyboard focus. `title` names a new window.
     pub fn show_gui(&self, title: &str) -> Result<GuiReport, SessionError> {
         let mut state = self.lock();
-        let id = state.request(ControlMessage::GuiShow(title.to_string()))?;
-        match state.wait_reply(id, WINDOW_REPLY, |message| {
+        let deadline = Instant::now() + WINDOW_REPLY;
+        let id = state.request(ControlMessage::GuiShow(title.to_string()), deadline)?;
+        match state.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::GuiShown(_) | ControlMessage::GuiRejected(_)
@@ -27,8 +30,9 @@ impl PluginControl {
     /// Closes the plugin's window. Closing a window that is not open succeeds.
     pub fn close_gui(&self) -> Result<(), SessionError> {
         let mut state = self.lock();
-        let id = state.request(ControlMessage::GuiClose)?;
-        match state.wait_reply(id, WINDOW_REPLY, |message| {
+        let deadline = Instant::now() + WINDOW_REPLY;
+        let id = state.request(ControlMessage::GuiClose, deadline)?;
+        match state.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::GuiClosedReply | ControlMessage::GuiRejected(_)
@@ -43,8 +47,9 @@ impl PluginControl {
     /// Every parameter the plugin describes, with its value and text.
     pub fn parameters(&self) -> Result<Vec<ParamInfo>, SessionError> {
         let mut state = self.lock();
-        let id = state.request(ControlMessage::ParamsRequest)?;
-        match state.wait_reply(id, PARAMETER_REPLY, |message| {
+        let deadline = Instant::now() + PARAMETER_REPLY;
+        let id = state.request(ControlMessage::ParamsRequest, deadline)?;
+        match state.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::Params(_) | ControlMessage::ParamsRejected(_)
@@ -62,8 +67,9 @@ impl PluginControl {
             return Err(SessionError::NonFiniteParameter);
         }
         let mut state = self.lock();
-        let id = state.request(ControlMessage::SetParams(changes.to_vec()))?;
-        match state.wait_reply(id, PARAMETER_REPLY, |message| {
+        let deadline = Instant::now() + PARAMETER_REPLY;
+        let id = state.request(ControlMessage::SetParams(changes.to_vec()), deadline)?;
+        match state.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::ParamsApplied(_) | ControlMessage::ParamsRejected(_)
@@ -79,11 +85,15 @@ impl PluginControl {
     /// The plugin's value does not change.
     pub fn parse_parameter(&self, id: u32, text: &str) -> Result<ParamText, SessionError> {
         let mut state = self.lock();
-        let request = state.request(ControlMessage::ParseParam {
-            id,
-            text: text.to_string(),
-        })?;
-        match state.wait_reply(request, PARAMETER_REPLY, |message| {
+        let deadline = Instant::now() + PARAMETER_REPLY;
+        let request = state.request(
+            ControlMessage::ParseParam {
+                id,
+                text: text.to_string(),
+            },
+            deadline,
+        )?;
+        match state.wait_reply(request, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::ParamParsed(_) | ControlMessage::ParamsRejected(_)
@@ -101,7 +111,7 @@ impl PluginControl {
         // A background save already in flight answers first on this socket.
         // Collect it before requesting the state after the edits.
         if let Some(id) = state.save_requested.take() {
-            state.wait_reply(id, Duration::from_secs(2), |message| {
+            state.wait_reply(id, Instant::now() + STATE_REPLY, |message| {
                 matches!(
                     message,
                     ControlMessage::State(_) | ControlMessage::StateRejected(_)
@@ -114,8 +124,9 @@ impl PluginControl {
     /// Loads recorded bytes into the running plugin.
     pub fn restore_state(&self, bytes: &[u8]) -> Result<(), SessionError> {
         let mut state = self.lock();
-        let id = state.request(ControlMessage::Restore(bytes.to_vec()))?;
-        match state.wait_reply(id, Duration::from_secs(2), |message| {
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = state.request(ControlMessage::Restore(bytes.to_vec()), deadline)?;
+        match state.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::Restored | ControlMessage::StateRejected(_)

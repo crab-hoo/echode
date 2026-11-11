@@ -122,6 +122,11 @@ const PARAMETER_REPLY: Duration = Duration::from_secs(5);
 /// load large resources the first time.
 const WINDOW_REPLY: Duration = Duration::from_secs(10);
 
+/// Saving or loading a plugin's state, and the helper's mapping and chain
+/// changes. A state moves at about 1 GiB/s (ADR 0318), so states past about
+/// 2 GiB do not cross a synchronous request in time.
+const STATE_REPLY: Duration = Duration::from_secs(2);
+
 /// Socket and saved-state access for control threads, independent of the
 /// realtime mapping. Never call these methods from an audio callback.
 ///
@@ -337,11 +342,13 @@ impl ControlState {
     }
 
     /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
+    /// The poller does not wait for room: a helper that has stopped reading
+    /// leaves the request unsent, and the next poll asks again (ADR 0319).
     pub fn request_save(&mut self) -> Result<(), SessionError> {
         if self.save_requested.is_some() {
             return Err(SessionError::SavePending);
         }
-        let id = self.request(ControlMessage::SaveRequest)?;
+        let id = self.request(ControlMessage::SaveRequest, Instant::now())?;
         self.save_requested = Some(id);
         Ok(())
     }
@@ -380,8 +387,9 @@ impl ControlState {
     }
 
     pub fn save_state(&mut self) -> Result<Vec<u8>, SessionError> {
-        let id = self.request(ControlMessage::SaveRequest)?;
-        match self.wait_reply(id, Duration::from_secs(2), |message| {
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = self.request(ControlMessage::SaveRequest, deadline)?;
+        match self.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::State(_) | ControlMessage::StateRejected(_)
@@ -439,9 +447,12 @@ impl ControlState {
         }
     }
 
-    fn request(&mut self, message: ControlMessage) -> Result<u64, SessionError> {
+    /// Sends a request that must be on its way by `deadline`, the same one
+    /// its reply is waited for: a helper that stops reading cannot hold the
+    /// caller in the send (R9, ADR 0319).
+    fn request(&mut self, message: ControlMessage, deadline: Instant) -> Result<u64, SessionError> {
         let id = self.allocate_request()?;
-        if let Err(error) = self.control.send_tagged(id, &message) {
+        if let Err(error) = self.control.send_tagged_until(id, &message, deadline) {
             self.pending.remove(&id);
             return Err(error.into());
         }
@@ -460,10 +471,10 @@ impl ControlState {
     fn wait_reply(
         &mut self,
         id: u64,
-        timeout: Duration,
+        deadline: Instant,
         want: impl Fn(&ControlMessage) -> bool,
     ) -> Result<ControlMessage, SessionError> {
-        let result = self.wait_matching(id, timeout, want);
+        let result = self.wait_matching(id, deadline, want);
         self.pending.remove(&id);
         self.inbox.retain(|(reply_id, _)| *reply_id != id);
         result
@@ -473,16 +484,15 @@ impl ControlState {
         timeout: Duration,
         want: impl Fn(&ControlMessage) -> bool,
     ) -> Result<ControlMessage, SessionError> {
-        self.wait_matching(0, timeout, want)
+        self.wait_matching(0, Instant::now() + timeout, want)
     }
 
     fn wait_matching(
         &mut self,
         id: u64,
-        timeout: Duration,
+        deadline: Instant,
         want: impl Fn(&ControlMessage) -> bool,
     ) -> Result<ControlMessage, SessionError> {
-        let deadline = Instant::now() + timeout;
         loop {
             self.drain()?;
             if let Some(index) = self
@@ -753,8 +763,9 @@ impl PluginHost {
     /// Ask the helper to run `stages` process calls, in order, for each block.
     pub fn set_chain(&mut self, stages: u32) -> Result<(), SessionError> {
         let mut control = self.control.lock();
-        let id = control.request(ControlMessage::SetChain(stages))?;
-        match control.wait_reply(id, Duration::from_secs(2), |message| {
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = control.request(ControlMessage::SetChain(stages), deadline)?;
+        match control.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::ChainReady | ControlMessage::ChainRejected
@@ -850,12 +861,9 @@ impl PluginHost {
         region.set_wake_target(Arc::clone(&self.root));
         let fd = region.duplicate_fd()?;
         let mut control = self.control.lock();
-        let id = control.allocate_request()?;
-        if let Err(error) = control.control.send_remap_tagged(id, layout, fd) {
-            control.pending.remove(&id);
-            return Err(error.into());
-        }
-        let reply = control.wait_reply(id, Duration::from_secs(2), |message| {
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = control.request(ControlMessage::Remap { layout, fd }, deadline)?;
+        let reply = control.wait_reply(id, deadline, |message| {
             matches!(
                 message,
                 ControlMessage::Remapped | ControlMessage::RemapFailed
@@ -885,8 +893,9 @@ impl PluginHost {
             return Err(SessionError::MappingPending);
         }
         let mut control = self.control.lock();
-        let id = control.request(ControlMessage::CancelRemap)?;
-        control.wait_reply(id, Duration::from_secs(2), |message| {
+        let deadline = Instant::now() + STATE_REPLY;
+        let id = control.request(ControlMessage::CancelRemap, deadline)?;
+        control.wait_reply(id, deadline, |message| {
             matches!(message, ControlMessage::RemapCancelled)
         })?;
         drop(control);

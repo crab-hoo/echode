@@ -285,6 +285,19 @@ macOS は共有メモリの長さをページ単位に切り上げるため、�
 背景の保存が遅いなら、`try_recv_tagged` が読める分を続けて読むことと、送受信の領域が 1 MiB になっていることを確かめる。
 回帰は `cargo test -q -p echode-plugin-host --test isolation a_state_longer_than_one_frame` と `control_send_tests.rs` である（[ADR 0318](../decisions/0318-split-control-messages.md)）。
 
+### ヘルパーへの要求が `control message was cut off at the deadline` などの送信の期限で失敗する
+
+本体の要求は、送信と応答の待ちで 1 つの期限を共有する。原因は `io::Error::get_ref` を `ControlSendError` に downcast して読み、文面で分類しない。
+
+- `control message was not sent before the deadline`（`Unsent`）: ヘルパーが読まず、1 バイトも渡せなかった。流れは保たれ、次の要求は送れる。
+- `control message was cut off at the deadline`（`Abandoned`）: 途中で切れた。`sent` と `total` で、どこまで渡ったかを読む。本体は送る側を閉じ、ヘルパーは終わりを読んで止まる。
+- `control socket stopped sending after a message was cut off`（`Closed`）: 前の要求が途中で切れた後の要求で、何も送っていない。
+
+どれも要求は実行されていない（`SessionError::Timeout` の結果不明とは違う）。ヘルパーの制御スレッドが読まない理由を先に疑う。
+処理スレッドが止まったプラグインでの `CancelRemap` と再起動の待ちは期限がない。`sample <helper pid>` で制御スレッドが `handle_control` か `control_thread` の待ちにいるかを確かめる。
+両端が同時に長いメッセージを送って止まるなら、`wait_for_room` が `POLLIN` で `Socket::fill` を呼んでいるかと、記述子が `O_NONBLOCK` かを確かめる（Darwin は送信の `MSG_DONTWAIT` を無視する）。
+回帰は `cargo test -q -p echode-sandbox --lib wait_tests operations_tests` と、`cargo test -q -p echode-plugin-host --test isolation a_large_restore_crosses a_restore_behind_a_cancel` である（[ADR 0319](../decisions/0319-control-send-deadline.md)）。
+
 ### バイパスの表示と音が一致しない・解除後に古い音が鳴る
 
 文書のデバイス ID と `bypassed`、計画の要求・適用版、プラグイン失敗、ドライ／ウェットの平面数を確認する。

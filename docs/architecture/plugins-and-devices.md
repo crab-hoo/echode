@@ -39,6 +39,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   1 枠の長さは 64 MiB までで、本体がそれを超えるメッセージは同じ要求 ID の `PART` の枠に分け、最後の枠だけが種類と記述子を持つ。
   受け手はつないでから解釈し、途中に別の要求の枠が来れば `ControlDecodeError::InterleavedPart` で拒否する。メッセージ全体の上限は置かない。
   受信は待たずに読める分を 1 回 1 枠分まで読み、各端の送受信の領域は 1 MiB である（[ADR 0318](../decisions/0318-split-control-messages.md)）。
+  記述子は非ブロックで、送信は余地がない間に相手の分を読んで `ready` に置くので、両端が同時に長いメッセージを送っても進む。
+  本体の要求は送信と応答の待ちで 1 つの期限を共有する。期限で終わった送信は `ControlSendError` で、途中で切れたら送る側を閉じて以後は送らない。
+  ヘルパーの送信は期限を持たず、背景の保存の要求は待たない（[ADR 0319](../decisions/0319-control-send-deadline.md)）。
 - 共有メモリの作成の失敗は `RegionError::SharedMemory` で操作と元の I/O エラーを保持する。
   `SharedMemoryOperation` で open・unlink・サイズ変更を区別し、errno は `Error::source` からも読める。
   表示文と FD の受渡し形式は変えない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。

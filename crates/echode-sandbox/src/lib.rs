@@ -45,7 +45,7 @@ mod workgroup;
 pub use control::{ControlMessage, Socket};
 pub use control_decode::{ControlDecodeError, ControlField};
 pub use control_text::ControlTextError;
-pub use control_transport::DescriptorRuleError;
+pub use control_transport::{ControlSendError, DescriptorRuleError};
 pub use error::{
     ProtocolError, SessionError, SpawnError, SpawnStep, WorkgroupCall, WorkgroupError,
 };

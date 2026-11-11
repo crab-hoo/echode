@@ -12,7 +12,7 @@ const SMALL_BODY: usize = 4;
 /// What one split send wrote, read raw from the other end.
 fn sent_raw(id: u64, message: &ControlMessage, max_body: usize) -> Vec<u8> {
     let (mut sender, receiver) = Socket::pair().unwrap();
-    sender.send_split(id, message, max_body).unwrap();
+    sender.send_split(id, message, max_body, None).unwrap();
     drop(sender);
     let mut raw = std::os::unix::net::UnixStream::from(receiver.fd);
     let mut bytes = Vec::new();
@@ -67,7 +67,7 @@ fn bodies_past_one_frame_cross_as_parts_and_join_into_one_message() {
 
         let (mut sender, mut receiver) = Socket::pair().unwrap();
         sender.send_tagged(0, &ControlMessage::Dirty).unwrap();
-        sender.send_split(7, &message, SMALL_BODY).unwrap();
+        sender.send_split(7, &message, SMALL_BODY, None).unwrap();
         sender.send_tagged(0, &ControlMessage::Dirty).unwrap();
         let mut received = Vec::new();
         for _ in 0..3 {
@@ -100,7 +100,7 @@ fn every_message_type_joins_the_same_way() {
     ];
     for message in &messages {
         let (mut sender, mut receiver) = Socket::pair().unwrap();
-        sender.send_split(11, message, SMALL_BODY).unwrap();
+        sender.send_split(11, message, SMALL_BODY, None).unwrap();
         let (id, received) = receiver.recv_tagged(Duration::from_secs(2)).unwrap();
         assert_eq!(id, 11);
         assert_eq!(format!("{received:?}"), format!("{message:?}"));
@@ -199,7 +199,7 @@ fn a_split_remap_passes_its_descriptor_with_the_frame_of_its_type() {
     };
     let (mut sender, mut receiver) = Socket::pair().unwrap();
     // The 20-byte layout crosses as five parts and the remap frame.
-    sender.send_split(3, &message, SMALL_BODY).unwrap();
+    sender.send_split(3, &message, SMALL_BODY, None).unwrap();
     let ControlMessage::Remap { layout: got, fd } =
         receiver.recv_timeout(Duration::from_secs(2)).unwrap()
     else {

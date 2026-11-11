@@ -361,6 +361,9 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 記述子の規則の違反の `DescriptorRuleError` と、1 枠を超えるメッセージを `PART` の枠に分ける送信は `control_transport.rs` に置く。
 違反の判定は `control.rs` の `descriptor_rule`、部分をつなぐのは `Socket::parse_one` である（[ADR 0318](decisions/0318-split-control-messages.md)）。
 回帰は `control_rights_tests.rs`・`control_send_tests.rs` と `session_operations_tests.rs`、製品のヘルパーでは `isolation.rs` の `a_state_longer_than_one_frame_saves_and_restores_in_parts` を使う。
+送信の待ち（`SendWait`・`wait_for_room`）と期限の原因 `ControlSendError` は `control_transport.rs`、待つ間に読んだメッセージの `ready` と `Socket::fill` は `control.rs` に置く。
+制御ソケットの記述子は非ブロックなので、ブロックする読み書きを足さず、待ちは `poll` と期限で書く。本体の要求は `ControlState::request` に期限を渡す。
+回帰は `control_wait_tests.rs` と、`isolation.rs` の `a_large_restore_crosses_a_large_background_save_without_stalling`・`a_restore_behind_a_cancel_held_by_a_hung_plugin_ends_at_its_deadline` を使う（[ADR 0319](decisions/0319-control-send-deadline.md)）。
 この crate の I/O エラーに文字列リテラルだけを渡すと、`check_typed_errors.py` が拒否する（[ADR 0317](decisions/0317-typed-control-transport-errors.md)）。
 予約済み ID と内部の応答不一致の共有型・通信は `refusal.rs` と `main_reply.rs` に置く。
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。

@@ -5,9 +5,9 @@ use echode_engine::IoWorkgroup;
 use echode_plugin_host::measure_in_process;
 use echode_realtime::{Event, NoteEvent, Target};
 use echode_sandbox::{
-    BlockProgress, Delivered, FanIn, LaunchFailure, LaunchFailureKind, PluginHost, PluginNotice,
-    Refusal, SessionError, SessionLayout, SpawnOptions, WorkgroupHandoff, WorkgroupMembership,
-    copy_workgroup_port, join_workgroup,
+    BlockProgress, ControlSendError, Delivered, FanIn, LaunchFailure, LaunchFailureKind,
+    PluginHost, PluginNotice, Refusal, SessionError, SessionLayout, SpawnOptions, WorkgroupHandoff,
+    WorkgroupMembership, copy_workgroup_port, join_workgroup,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1198,6 +1198,154 @@ fn a_state_longer_than_one_frame_saves_and_restores_in_parts() {
     host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
         .expect("the helper still processes after both transfers");
     assert!((output[0][0] - 0.5).abs() < 1.0e-4, "{}", output[0][0]);
+}
+
+/// R9 (ADR 0319): a background save's reply and a restore, each larger than
+/// both socket buffers, used to stop both ends in their sends for good. Each
+/// end now reads what the other queued while it waits to send.
+#[test]
+fn a_large_restore_crosses_a_large_background_save_without_stalling() {
+    // The test plugin's `large-state` length, as above. It sizes this fixture only.
+    const LARGE_STATE: usize = 64 * 1024 * 1024 - 12 + 1024 * 1024;
+    let host = PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(&plugin_dylib()),
+        fault: Some("large-state"),
+        workgroup: None,
+        layout: SessionLayout::stereo(),
+        fan_in: None,
+        sample_rate: 48_000,
+        plugin_id: Some("dev.echode.test-state"),
+    })
+    .unwrap_or_else(|error| panic!("spawn plugin host: {error}"));
+    let mut control = host.control_handle();
+    // A loaded large state marks the plugin dirty.
+    control
+        .restore_state(&vec![64; LARGE_STATE])
+        .unwrap_or_else(|error| panic!("first restore: {error:?}"));
+    // The helper sends the dirty notice before it reads the next request, so
+    // the notice is queued here once this reply has arrived.
+    let _ = control.parameters();
+    // Takes the notice and asks for a background save. The helper starts
+    // sending a state larger than both socket buffers.
+    assert!(
+        control.poll_state_save().is_none(),
+        "the save cannot be back yet"
+    );
+
+    let restorer = control.clone();
+    let (done, finished) = std::sync::mpsc::channel();
+    let restoring = std::thread::spawn(move || {
+        let _ = done.send(restorer.restore_state(&vec![128; LARGE_STATE]));
+    });
+    let restored = finished.recv_timeout(Duration::from_secs(30));
+    if restored.is_err() {
+        // Stopping the helper fails the stalled send, so the thread can end.
+        drop(host);
+        let _ = restoring.join();
+        panic!("the restore stalled behind the helper's background save reply");
+    }
+    restoring.join().expect("restore thread");
+    restored
+        .expect("restore result")
+        .unwrap_or_else(|error| panic!("restore while a save is sent: {error:?}"));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let saved = loop {
+        if let Some(bytes) = control.poll_state_save() {
+            break bytes;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the background save never arrived"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(saved.len(), LARGE_STATE);
+    assert!(
+        saved.iter().all(|byte| *byte == 64),
+        "the save ran before the restore"
+    );
+    drop(saved);
+    assert_eq!(
+        control
+            .applied_state()
+            .map(|bytes| bytes.len() == LARGE_STATE && bytes[0] == 128),
+        Some(true),
+        "the older save must not replace the restored bytes"
+    );
+}
+
+/// R9 (ADR 0319): a `CancelRemap` waits for the processing thread to switch,
+/// and a hung plugin never lets it, so the helper stops reading. A restore
+/// past the socket buffers used to wait in its send for good, holding the
+/// control socket. It now ends at its deadline and later requests fail at once.
+#[test]
+fn a_restore_behind_a_cancel_held_by_a_hung_plugin_ends_at_its_deadline() {
+    // Twice both 1 MiB socket buffers. It sizes this fixture only.
+    const PAST_BUFFERS: usize = 4 * 1024 * 1024;
+    let mut host = spawn(Some(&plugin_dylib()), Some("hang"));
+    let input = stereo(32, 0.2);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    assert!(matches!(
+        host.process(&planes, &mut outs(&mut output), Duration::from_millis(100)),
+        Err(SessionError::Timeout)
+    ));
+    let mut next = host.layout();
+    next.input_events += 1; // Fixture growth, not an event limit.
+    host.prepare_mapping(next)
+        .expect("the main thread still prepares");
+    assert!(
+        matches!(host.cancel_mapping(), Err(SessionError::Timeout)),
+        "the hung processing thread never takes the cancel"
+    );
+
+    let control = host.control_handle();
+    let restorer = control.clone();
+    let (done, finished) = std::sync::mpsc::channel();
+    let start = Instant::now();
+    let restoring = std::thread::spawn(move || {
+        let _ = done.send(restorer.restore_state(&vec![1; PAST_BUFFERS]));
+    });
+    let Ok(result) = finished.recv_timeout(Duration::from_secs(10)) else {
+        // Stopping the helper fails the stalled send, so the thread can end.
+        drop(host);
+        let _ = restoring.join();
+        panic!("the restore waited in its send for a helper that stopped reading");
+    };
+    restoring.join().expect("restore thread");
+    assert!(
+        start.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        start.elapsed()
+    );
+    let send_cause = |error: SessionError| match error {
+        SessionError::Io(error) => (
+            error.kind(),
+            error
+                .get_ref()
+                .and_then(|error| error.downcast_ref::<ControlSendError>())
+                .copied(),
+        ),
+        other => panic!("a send failure stays a typed I/O cause: {other:?}"),
+    };
+    assert!(matches!(
+        send_cause(result.expect_err("the cut-off restore fails")),
+        (
+            std::io::ErrorKind::TimedOut,
+            Some(ControlSendError::Abandoned { .. })
+        )
+    ));
+    let start = Instant::now();
+    assert_eq!(
+        send_cause(control.parameters().expect_err("nothing more is sent")),
+        (
+            std::io::ErrorKind::BrokenPipe,
+            Some(ControlSendError::Closed)
+        )
+    );
+    assert!(start.elapsed() < Duration::from_millis(500));
 }
 
 /// Newest edit among the test plugin's sources, so a change to any module rebuilds it.

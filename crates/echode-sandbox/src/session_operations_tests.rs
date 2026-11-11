@@ -340,3 +340,124 @@ fn a_state_past_one_frame_restores_and_saves_in_parts() {
     control.close_gui().unwrap();
     answer.join().unwrap();
 }
+
+/// R9 (ADR 0319). A helper that stopped reading used to hold a restore past
+/// the socket buffers in its send for good. The send now shares the reply's
+/// deadline, the cut-off request is never delivered whole, and later requests
+/// fail at once instead of writing after the partial frame.
+#[test]
+fn a_restore_to_a_helper_that_never_reads_ends_at_the_request_deadline() {
+    use crate::ControlSendError;
+    // Twice both 1 MiB socket buffers. It sizes this fixture only.
+    const PAST_BUFFERS: usize = 4 * 1024 * 1024;
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    let restorer = control.clone();
+    let (done, finished) = std::sync::mpsc::channel();
+    let start = Instant::now();
+    std::thread::spawn(move || {
+        let _ = done.send(restorer.restore_state(&vec![1; PAST_BUFFERS]));
+    });
+    let result = finished
+        .recv_timeout(STATE_REPLY + Duration::from_secs(8))
+        .expect("the restore must end at its deadline");
+    let elapsed = start.elapsed();
+    assert!(
+        (STATE_REPLY..STATE_REPLY + Duration::from_secs(1)).contains(&elapsed),
+        "{elapsed:?}"
+    );
+    let cause = |error: &SessionError| match error {
+        SessionError::Io(error) => (
+            error.kind(),
+            error
+                .get_ref()
+                .and_then(|error| error.downcast_ref::<ControlSendError>())
+                .copied(),
+        ),
+        other => panic!("a send failure stays a typed I/O cause: {other:?}"),
+    };
+    let error = result.unwrap_err();
+    assert!(
+        matches!(
+            cause(&error),
+            (std::io::ErrorKind::TimedOut, Some(ControlSendError::Abandoned { sent, total, .. }))
+                if 0 < sent && sent < total
+        ),
+        "{error:?}"
+    );
+    assert!(control.applied_state().is_none());
+
+    let start = Instant::now();
+    let error = control.parameters().unwrap_err();
+    assert!(start.elapsed() < Duration::from_millis(500));
+    assert_eq!(
+        cause(&error),
+        (
+            std::io::ErrorKind::BrokenPipe,
+            Some(ControlSendError::Closed)
+        )
+    );
+    let error = loop {
+        match helper.try_recv_tagged() {
+            Ok(None) => std::thread::yield_now(),
+            Ok(Some(message)) => panic!("the helper got a whole message: {message:?}"),
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+/// The 20 ms background poller never waits for room: a helper that stopped
+/// reading leaves the save request unsent, and a later poll asks again.
+#[test]
+fn a_background_save_request_does_not_wait_for_a_helper_that_stopped_reading() {
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let mut control = PluginControl::new(parent);
+    // Whole 2,000-byte messages fill both buffers, then 16-byte notices the
+    // room left; Darwin takes a write of at most 2,048 bytes whole or not at
+    // all. Both sizes bound this fixture only.
+    {
+        let mut state = control.lock();
+        for filler in [
+            ControlMessage::State(vec![0; 2_000 - 16]),
+            ControlMessage::Dirty,
+        ] {
+            while state
+                .control
+                .send_tagged_until(0, &filler, Instant::now())
+                .is_ok()
+            {}
+        }
+    }
+    helper.send(&ControlMessage::Dirty).unwrap();
+    let start = Instant::now();
+    assert!(control.poll_state_save().is_none());
+    assert!(
+        start.elapsed() < Duration::from_millis(200),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(
+        control.lock().save_requested.is_none(),
+        "the request stayed unsent"
+    );
+    assert!(control.lock().dirty_again, "the next poll asks again");
+
+    // Once the helper reads, the next poll sends the request.
+    while helper.try_recv_tagged().unwrap().is_some() {}
+    assert!(control.poll_state_save().is_none());
+    let (id, request) = receive(&mut helper);
+    assert!(matches!(request, ControlMessage::SaveRequest));
+    helper
+        .send_tagged(id, &ControlMessage::State(vec![2]))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let saved = loop {
+        if let Some(bytes) = control.poll_state_save() {
+            break bytes;
+        }
+        assert!(Instant::now() < deadline, "the save never arrived");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(saved, [2]);
+}

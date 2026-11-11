@@ -3,11 +3,16 @@
 //! Frames are a little-endian length, a type, a request id, and a body. `Remap` also carries
 //! one file descriptor with `SCM_RIGHTS`. A length field past 64 MiB is
 //! rejected so a corrupt peer cannot make one frame hold more. A longer message
-//! crosses as several frames (`control_transport`, ADR 0318).
+//! crosses as several frames (`control_transport`, ADR 0318). A send reads what
+//! the peer queued while it waits for room, and the host's sends end at their
+//! request's deadline (ADR 0319).
 
 use crate::control_decode::{ControlDecodeError, ControlField, read_fixed};
 use crate::control_text::{ControlTextError, read_text};
-use crate::control_transport::{DescriptorRuleError, MAX_BODY, MAX_FRAME, PART, send_message};
+use crate::control_transport::{
+    ControlSendError, DescriptorRuleError, MAX_BODY, MAX_FRAME, PART, SendFailure, SendWait,
+    send_message,
+};
 use crate::gui::{GuiReport, ParamRelay, read_relay, read_report, write_relay, write_report};
 use crate::params::{
     ParamChange, ParamInfo, ParamText, ParamValue, read_changes, read_infos, read_parsed,
@@ -17,6 +22,7 @@ use crate::params::{
 use crate::refusal::{Refusal, read_refusal, write_refusal};
 use crate::region::SessionLayout;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
@@ -187,6 +193,15 @@ pub struct Socket {
     broken: Option<DescriptorRuleError>,
     /// A message sent in parts, until the frame with its own type arrives.
     partial: Option<Partial>,
+    /// Whole messages read ahead of the receives that return them, in order:
+    /// a send reads what the peer queued while it waits for room (ADR 0319).
+    ready: VecDeque<(u64, ControlMessage)>,
+    /// Why reading during a send stopped. Returned behind `ready`, where the
+    /// receive path would have met it.
+    deferred: Option<io::Error>,
+    /// Set once a send was cut off at its deadline. The peer can never get the
+    /// rest, so this end sends nothing more.
+    send_closed: bool,
 }
 
 impl Socket {
@@ -214,6 +229,9 @@ impl Socket {
             pending_fd: None,
             broken: None,
             partial: None,
+            ready: VecDeque::new(),
+            deferred: None,
+            send_closed: false,
         })
     }
 
@@ -226,18 +244,91 @@ impl Socket {
     /// A body of any length is sent, in several frames past one frame's limit.
     /// A `Remap` passes its descriptor with the frame. The kernel duplicates
     /// it, so the message still owns this side's copy.
+    ///
+    /// While the peer has no room, this reads what it queued, and waits for as
+    /// long as it takes to read. The helper sends this way: the host reads or
+    /// closes. The host uses [`Self::send_tagged_until`].
     pub fn send_tagged(&mut self, id: u64, message: &ControlMessage) -> io::Result<()> {
-        self.send_split(id, message, MAX_BODY)
+        self.send_split(id, message, MAX_BODY, None)
+    }
+
+    /// [`Self::send_tagged`] that ends at `deadline` with a
+    /// [`ControlSendError`]. A message cut off part way leaves the peer a
+    /// partial frame, so this end then stops sending and the peer reads end of
+    /// file (R9, ADR 0319).
+    pub fn send_tagged_until(
+        &mut self,
+        id: u64,
+        message: &ControlMessage,
+        deadline: Instant,
+    ) -> io::Result<()> {
+        self.send_split(id, message, MAX_BODY, Some(deadline))
     }
 
     /// [`Self::send_tagged`] with frames of at most `max_body` body bytes.
-    fn send_split(&mut self, id: u64, message: &ControlMessage, max_body: usize) -> io::Result<()> {
+    fn send_split(
+        &mut self,
+        id: u64,
+        message: &ControlMessage,
+        max_body: usize,
+        deadline: Option<Instant>,
+    ) -> io::Result<()> {
+        if self.send_closed {
+            return Err(ControlSendError::Closed.into());
+        }
         let (typ, body) = encode(message);
         let fd = match message {
             ControlMessage::Remap { fd, .. } => Some(fd.as_raw_fd()),
             _ => None,
         };
-        send_message(self.fd.as_raw_fd(), id, typ, &body, fd, max_body)
+        let socket = self.fd.as_raw_fd();
+        let mut receive = || self.receive_while_sending();
+        let mut wait = SendWait {
+            deadline,
+            receive: &mut receive,
+        };
+        let failure = match send_message(socket, id, typ, &body, fd, max_body, &mut wait) {
+            Ok(()) => return Ok(()),
+            Err(failure) => failure,
+        };
+        Err(match failure {
+            SendFailure::Io(error) => error,
+            SendFailure::Deadline { sent: 0, total } => ControlSendError::Unsent {
+                message_type: typ,
+                total,
+            }
+            .into(),
+            SendFailure::Deadline { sent, total } => {
+                self.send_closed = true;
+                // SAFETY: `socket` is this end's open descriptor. A failure
+                // leaves the peer waiting for the rest, as before the call.
+                unsafe { libc::shutdown(socket, libc::SHUT_WR) };
+                ControlSendError::Abandoned {
+                    message_type: typ,
+                    sent,
+                    total,
+                }
+                .into()
+            }
+        })
+    }
+
+    /// Reads what the peer queued while this end waits to send, and files each
+    /// whole message, so two ends that send long messages at once both
+    /// progress (R9, ADR 0319). Messages are taken as they arrive, so each
+    /// descriptor is consumed with its message as on the receive path. False
+    /// once reading stopped on an error, which a later receive returns.
+    fn receive_while_sending(&mut self) -> bool {
+        if self.deferred.is_some() {
+            return false;
+        }
+        match self.fill(MAX_FRAME, usize::MAX) {
+            Ok(()) => true,
+            Err(error) => {
+                self.deferred = Some(error);
+                false
+            }
+        }
     }
 
     /// Send a new mapping. `fd` is duplicated by the kernel; this end is closed.
@@ -254,7 +345,11 @@ impl Socket {
         self.send_tagged(id, &ControlMessage::Remap { layout, fd })
     }
 
+    /// True at once when a send already read a message or an error ahead.
     pub fn wait_readable(&self, timeout: Duration) -> io::Result<bool> {
+        if !self.ready.is_empty() || self.deferred.is_some() {
+            return Ok(true);
+        }
         poll_read(self.fd.as_raw_fd(), timeout)
     }
 
@@ -271,17 +366,35 @@ impl Socket {
     }
 
     /// [`Self::try_recv_tagged`], stopping once `budget` bytes were read.
+    /// Messages a send read ahead come first, then the error it stopped on.
     fn try_recv_within(&mut self, budget: usize) -> io::Result<Option<(u64, ControlMessage)>> {
+        if self.ready.is_empty() {
+            if let Some(error) = self.deferred.take() {
+                return Err(error);
+            }
+            self.fill(budget, 1)?;
+        }
+        Ok(self.ready.pop_front())
+    }
+
+    /// Reads queued bytes without waiting and files whole messages in
+    /// `ready`, until it holds `want`, nothing more is queued, or `budget`
+    /// bytes were read. Each message is taken before the next read, so a
+    /// descriptor is consumed before the next can arrive.
+    fn fill(&mut self, budget: usize, want: usize) -> io::Result<()> {
         let mut read = 0;
         loop {
-            if let Some(message) = self.parse_one()? {
-                return Ok(Some(message));
+            while self.ready.len() < want {
+                match self.parse_one()? {
+                    Some(message) => self.ready.push_back(message),
+                    None => break,
+                }
             }
-            if read >= budget {
-                return Ok(None);
+            if self.ready.len() >= want || read >= budget {
+                return Ok(());
             }
-            match self.read_some(true)? {
-                0 => return Ok(None),
+            match self.read_some()? {
+                0 => return Ok(()),
                 count => read += count,
             }
         }
@@ -396,8 +509,8 @@ impl Socket {
         Ok(Some(parsed?))
     }
 
-    /// Bytes read into `incoming`; 0 when a non-blocking read found none.
-    fn read_some(&mut self, nonblock: bool) -> io::Result<usize> {
+    /// Bytes read into `incoming`; 0 when nothing is queued. Never waits.
+    fn read_some(&mut self) -> io::Result<usize> {
         if let Some(rule) = self.broken {
             return Err(rule.into());
         }
@@ -417,12 +530,11 @@ impl Socket {
             msg_controllen: std::mem::size_of_val(&control) as libc::socklen_t,
             msg_flags: 0,
         };
-        let flags = if nonblock { libc::MSG_DONTWAIT } else { 0 };
-        let n = unsafe { libc::recvmsg(self.fd.as_raw_fd(), &mut msg, flags) };
+        let n = unsafe { libc::recvmsg(self.fd.as_raw_fd(), &mut msg, libc::MSG_DONTWAIT) };
         if n < 0 {
             let error = io::Error::last_os_error();
             match error.raw_os_error() {
-                Some(libc::EINTR) => return self.read_some(nonblock),
+                Some(libc::EINTR) => return self.read_some(),
                 Some(libc::EAGAIN) => return Ok(0),
                 _ if error.kind() == ErrorKind::WouldBlock => return Ok(0),
                 _ => return Err(error),
@@ -742,7 +854,7 @@ fn frame_tagged(id: u64, typ: u32, body: &[u8]) -> Vec<u8> {
 /// Raw bytes, for tests that write the wire directly.
 #[cfg(test)]
 fn send_bytes(socket: i32, bytes: &[u8], fd: Option<i32>) -> io::Result<()> {
-    crate::control_transport::send_slices(socket, [bytes, &[]], fd)
+    crate::control_transport::send_raw(socket, bytes, fd)
 }
 
 fn poll_read(fd: i32, timeout: Duration) -> io::Result<bool> {
@@ -765,12 +877,23 @@ fn poll_read(fd: i32, timeout: Duration) -> io::Result<bool> {
     Ok(rc > 0)
 }
 
+/// Close-on-exec, no `SIGPIPE`, non-blocking, and larger buffers.
+///
+/// Non-blocking because Darwin ignores `MSG_DONTWAIT` on `sendmsg` for a
+/// blocking socket (measured, ADR 0319): a send must be able to stop when the
+/// peer has no room, to read and to keep its deadline. Every wait on this
+/// descriptor is a `poll` with its own bound.
 fn configure(fd: i32) -> io::Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags < 0 {
         return Err(io::Error::last_os_error());
     }
     if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is an open descriptor; these calls only read and set its status flags.
+    let status = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if status < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, status | libc::O_NONBLOCK) } < 0 {
         return Err(io::Error::last_os_error());
     }
     let one = 1i32;
@@ -1084,3 +1207,7 @@ mod decode_tests;
 #[cfg(test)]
 #[path = "control_payload_tests.rs"]
 mod payload_tests;
+
+#[cfg(test)]
+#[path = "control_wait_tests.rs"]
+mod wait_tests;
