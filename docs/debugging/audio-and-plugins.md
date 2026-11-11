@@ -273,14 +273,17 @@ macOS は共有メモリの長さをページ単位に切り上げるため、�
 最初のヘルパーの前に上限を上げるので、この文が出るなら上げられなかったか、hard の上限が低い（[ADR 0237](../decisions/0237-helper-descriptor-limit.md)）。
 そのプロセスの上限を `launchctl limit maxfiles` と、可能なら `lsof -p <pid> | wc -l` で記録する。回帰は `cargo test -p echode-plugin-host --test descriptor_limit` である。
 
-### ヘルパーとの接続が記述子の規則の違反か `control message is longer than 64 MiB` で切れる
+### ヘルパーとの接続が記述子の規則の違反か `control message parts were interleaved` で切れる
 
 ヘルパーとの接続が `a control message carried more than one file descriptor`・`control data was truncated`・`a second file descriptor arrived before the first was consumed` で切れたなら、相手が記述子の規則を破っている。
 本体はその読込みの記述子を全部閉じて、そのソケットを使わなくなる。本体の記述子が増え続けるなら、`lsof -p <pid>` で種類を分け、`plugin-control-descriptors` の契約が通るかを確かめる（[ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md)）。
 どの規則かは `io::Error::get_ref` を `DescriptorRuleError` に downcast して読み、2 個以上なら届いた数も持つ。文面で分類しない。
-`control message is longer than 64 MiB` は相手ではなく送り手の拒否で、何も書いていない。`ControlSendError::TooLong` の種類と長さで、どの枠かを確かめる。
-ヘルパーが保存の応答でこれに当たると制御ループを止めるので、状態が 64 MiB 近いプラグインのヘルパーの停止を疑う（統合表の R8）。
 回帰は `cargo test -q -p echode-sandbox --lib rights_tests send_tests` である（[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
+`control message parts were interleaved` は、64 MiB を超えて `PART` の枠に分けたメッセージの途中に別の要求の枠が来た。
+`ControlDecodeError::InterleavedPart` の `expected` と `actual` で両方の要求 ID を読む。送り手は 1 つのスレッドが送るので、送り手の側で同じソケットに書く経路が増えていないかを疑う。
+大きな状態のプラグインで保存が `Timeout` になるなら、同期の取得は応答を 2 秒しか待たず、約 1 GiB/s では 2 GiB 前後が上限である。
+背景の保存が遅いなら、`try_recv_tagged` が読める分を続けて読むことと、送受信の領域が 1 MiB になっていることを確かめる。
+回帰は `cargo test -q -p echode-plugin-host --test isolation a_state_longer_than_one_frame` と `control_send_tests.rs` である（[ADR 0318](../decisions/0318-split-control-messages.md)）。
 
 ### バイパスの表示と音が一致しない・解除後に古い音が鳴る
 

@@ -47,7 +47,7 @@ fn text_messages(text: &str) -> Vec<ControlMessage> {
 
 fn receive(typ: u32, body: &[u8]) -> io::Result<(u64, ControlMessage)> {
     let (sender, mut receiver) = Socket::pair()?;
-    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, body)?, None)?;
+    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, body), None)?;
     receiver.recv_tagged(Duration::from_secs(2))
 }
 
@@ -62,7 +62,7 @@ fn invalid_control_text_retains_utf8_cause() {
             .collect();
         assert_eq!(offsets.len(), 1, "the fixture has one text field");
         for bytes in [b"ab\xff!", b"ab\xe3\x81"] {
-            let mut invalid = body.clone();
+            let mut invalid = body.to_vec();
             invalid[offsets[0]..offsets[0] + 4].copy_from_slice(bytes);
             let error = receive(typ, &invalid).unwrap_err();
             assert_eq!(error.kind(), ErrorKind::InvalidData);

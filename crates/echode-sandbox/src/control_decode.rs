@@ -47,6 +47,13 @@ pub enum ControlDecodeError {
     MissingMapping,
     UnknownMessageType(u32),
     UnknownPluginCommand(u8),
+    /// A frame of request `actual` arrived while the message of request
+    /// `expected` still waited for its frames after its `PART` frames. Its
+    /// joined bytes are dropped (ADR 0318).
+    InterleavedPart {
+        expected: u64,
+        actual: u64,
+    },
 }
 
 impl std::fmt::Display for ControlDecodeError {
@@ -69,6 +76,7 @@ impl std::fmt::Display for ControlDecodeError {
             Self::MissingMapping => "remap did not include a mapping",
             Self::UnknownMessageType(_) => "unknown control message",
             Self::UnknownPluginCommand(_) => "unknown plugin command",
+            Self::InterleavedPart { .. } => "control message parts were interleaved",
         })
     }
 }

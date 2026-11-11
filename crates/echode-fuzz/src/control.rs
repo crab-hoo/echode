@@ -27,7 +27,7 @@ use echode_sandbox::{
 use crate::bytes::Bytes;
 
 /// Longer streams are skipped. Bounds this target's socket buffers only; the
-/// product accepts messages up to 64 MiB.
+/// product accepts frames up to 64 MiB and joins longer messages from parts.
 const MAX_STREAM: usize = 256 * 1024;
 const BUFFER: i32 = 1024 * 1024;
 
@@ -347,6 +347,39 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
         bytes.extend_from_slice(&payload);
         seeds.push(seed(0, 0, &bytes));
     }
+    // Messages in parts (type 35, ADR 0318): joined, another request's frame
+    // between parts, a part that never ends, and a remap whose layout is
+    // split with its mapping on the remap frame.
+    let frame = |id: u64, typ: u32, body: &[u8]| {
+        let mut bytes = (12 + body.len() as u32).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&typ.to_le_bytes());
+        bytes.extend_from_slice(&id.to_le_bytes());
+        bytes.extend_from_slice(body);
+        bytes
+    };
+    for stream in [
+        [
+            frame(5, 35, b"plugin "),
+            frame(5, 35, b""),
+            frame(5, 3, b"state"),
+        ]
+        .concat(),
+        [frame(5, 35, b"ab"), frame(0, 7, b"")].concat(),
+        [frame(5, 35, b"ab"), frame(6, 35, b"cd")].concat(),
+        [frame(5, 35, b"ab"), frame(6, 4, b"cd")].concat(),
+        frame(5, 35, b"ab"),
+    ] {
+        seeds.push(seed(0, 0, &stream));
+    }
+    let remap = encode_remap(7, SessionLayout::stereo());
+    let layout = remap.get(16..).expect("a remap frame has its layout");
+    let (head, tail) = layout.split_at(12);
+    let first = frame(7, 35, head);
+    seeds.push(seed(
+        1,
+        first.len() as u16,
+        &[first.clone(), frame(7, 9, tail)].concat(),
+    ));
     // A remap with its mapping, after one plain message.
     let hello = encode(0, &ControlMessage::Hello);
     let mut stream = hello.clone();

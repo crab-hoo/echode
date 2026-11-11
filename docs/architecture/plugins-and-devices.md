@@ -35,7 +35,10 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   ソケットで渡す記述子は `Remap` の 1 メッセージに 1 個だけである。受け手は届いた記述子を全部持ち、2 個以上や切り詰めがあれば全部閉じて、そのソケットの受信を失敗させ続ける
   （[ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md)）。
   違反は `DescriptorRuleError` で、届いた記述子の数とともに後の受信でも同じ原因を返す。
-  送り手は `send_tagged` でも `Remap` の記述子を渡す。64 MiB を超える枠は何も書かずに `ControlSendError::TooLong` で拒否し、種類と長さを型で読める（[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
+  送り手は `send_tagged` でも `Remap` の記述子を渡す（[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
+  1 枠の長さは 64 MiB までで、本体がそれを超えるメッセージは同じ要求 ID の `PART` の枠に分け、最後の枠だけが種類と記述子を持つ。
+  受け手はつないでから解釈し、途中に別の要求の枠が来れば `ControlDecodeError::InterleavedPart` で拒否する。メッセージ全体の上限は置かない。
+  受信は待たずに読める分を 1 回 1 枠分まで読み、各端の送受信の領域は 1 MiB である（[ADR 0318](../decisions/0318-split-control-messages.md)）。
 - 共有メモリの作成の失敗は `RegionError::SharedMemory` で操作と元の I/O エラーを保持する。
   `SharedMemoryOperation` で open・unlink・サイズ変更を区別し、errno は `Error::source` からも読める。
   表示文と FD の受渡し形式は変えない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。

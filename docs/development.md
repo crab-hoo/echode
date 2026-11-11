@@ -358,8 +358,9 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 パラメーター・通知・窓の報告の内側の `PayloadDecodeError`・`ParamPayload`・`ParamField` と、列を読む `Cursor` は `payload_decode.rs` に置く。
 新しい列は `Cursor::list` で読み、手書きのループと確保を足さない。フィールドを足したら `control_payload_tests.rs` の並びのモデルにも足す。
 実ソケットの回帰は `control_payload_tests.rs`、公開操作での原因の保持は `session_payload_tests.rs` を使う（[ADR 0316](decisions/0316-typed-parameter-payload-errors.md)）。
-記述子の規則の違反の `DescriptorRuleError` と送信の拒否の `ControlSendError` は `control_transport.rs`、違反の判定は `control.rs` の `descriptor_rule` に置く。
-回帰は `control_rights_tests.rs`・`control_send_tests.rs` と `session_operations_tests.rs` を使う。
+記述子の規則の違反の `DescriptorRuleError` と、1 枠を超えるメッセージを `PART` の枠に分ける送信は `control_transport.rs` に置く。
+違反の判定は `control.rs` の `descriptor_rule`、部分をつなぐのは `Socket::parse_one` である（[ADR 0318](decisions/0318-split-control-messages.md)）。
+回帰は `control_rights_tests.rs`・`control_send_tests.rs` と `session_operations_tests.rs`、製品のヘルパーでは `isolation.rs` の `a_state_longer_than_one_frame_saves_and_restores_in_parts` を使う。
 この crate の I/O エラーに文字列リテラルだけを渡すと、`check_typed_errors.py` が拒否する（[ADR 0317](decisions/0317-typed-control-transport-errors.md)）。
 予約済み ID と内部の応答不一致の共有型・通信は `refusal.rs` と `main_reply.rs` に置く。
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。

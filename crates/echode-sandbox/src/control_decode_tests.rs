@@ -2,7 +2,7 @@ use super::*;
 
 fn receive(typ: u32, body: &[u8]) -> io::Result<(u64, ControlMessage)> {
     let (sender, mut receiver) = Socket::pair()?;
-    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, body)?, None)?;
+    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, body), None)?;
     receiver.recv_tagged(Duration::from_secs(2))
 }
 
@@ -71,7 +71,8 @@ fn malformed_control_metadata_retains_a_structural_cause() {
             );
         }
     }
-    for typ in [0, 35, 256, u32::MAX] {
+    // `PART + 1` is the first type past the last one in use (ADR 0318).
+    for typ in [0, crate::control_transport::PART + 1, 256, u32::MAX] {
         assert_cause(
             receive(typ, &[1, 2, 3]).unwrap_err(),
             ControlDecodeError::UnknownMessageType(typ),
@@ -159,7 +160,7 @@ fn malformed_ports_retain_direction_field_and_lengths() {
 
 #[test]
 fn frame_length_rejection_retains_the_declared_length_and_bounds() {
-    for actual in (0..12).chain([MAX_MESSAGE + 1, u32::MAX as usize]) {
+    for actual in (0..12).chain([MAX_FRAME + 1, u32::MAX as usize]) {
         let (sender, mut receiver) = Socket::pair().unwrap();
         send_bytes(sender.as_raw_fd(), &(actual as u32).to_le_bytes(), None).unwrap();
         assert_cause(
@@ -167,12 +168,12 @@ fn frame_length_rejection_retains_the_declared_length_and_bounds() {
             ControlDecodeError::MessageLength {
                 actual,
                 minimum: 12,
-                maximum: MAX_MESSAGE,
+                maximum: MAX_FRAME,
             },
             "control message length is not usable",
         );
     }
-    for declared in [12, MAX_MESSAGE] {
+    for declared in [12, MAX_FRAME] {
         let (sender, mut receiver) = Socket::pair().unwrap();
         send_bytes(sender.as_raw_fd(), &(declared as u32).to_le_bytes(), None).unwrap();
         assert!(receiver.try_recv_tagged().unwrap().is_none());
@@ -181,7 +182,7 @@ fn frame_length_rejection_retains_the_declared_length_and_bounds() {
 
 #[test]
 fn metadata_errors_wait_for_the_complete_frame() {
-    let frame = frame_tagged(73, SET_CHAIN, &[0]).unwrap();
+    let frame = frame_tagged(73, SET_CHAIN, &[0]);
     for split in 0..frame.len() {
         let (sender, mut receiver) = Socket::pair().unwrap();
         if split > 0 {

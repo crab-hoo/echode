@@ -3,7 +3,7 @@ use crate::{RefusalDecodeError, RefusalField};
 
 fn receive(typ: u32, payload: &[u8]) -> io::Result<(u64, ControlMessage)> {
     let (sender, mut receiver) = Socket::pair()?;
-    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, payload)?, None)?;
+    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, payload), None)?;
     receiver.recv_tagged(Duration::from_secs(2))
 }
 

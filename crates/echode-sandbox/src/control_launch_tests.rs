@@ -14,7 +14,7 @@ fn receive(typ: u32, payload: &[u8]) -> io::Result<(u64, ControlMessage)> {
     // A launch refusal (8) wraps the deliberately malformed launch payload.
     let mut body = vec![8];
     body.extend_from_slice(payload);
-    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, &body)?, None)?;
+    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, &body), None)?;
     receiver.recv_tagged(Duration::from_secs(2))
 }
 

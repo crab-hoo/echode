@@ -50,7 +50,7 @@ fn short_headers_are_rejected_and_partial_frames_wait_for_completion() {
         socket.parse_one().unwrap_err().kind(),
         ErrorKind::InvalidData
     );
-    let frame = frame_tagged(17, RESTORE, &[128]).unwrap();
+    let frame = frame_tagged(17, RESTORE, &[128]);
     for split in 0..frame.len() {
         socket.incoming = frame[..split].to_vec();
         assert!(

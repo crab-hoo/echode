@@ -5,7 +5,7 @@ use crate::{ParamField as F, ParamPayload, PayloadDecodeError, WindowFlag};
 
 fn receive(typ: u32, body: &[u8]) -> io::Result<(u64, ControlMessage)> {
     let (sender, mut receiver) = Socket::pair()?;
-    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, body)?, None)?;
+    send_bytes(sender.as_raw_fd(), &frame_tagged(73, typ, body), None)?;
     receiver.recv_tagged(Duration::from_secs(2))
 }
 
@@ -121,7 +121,7 @@ fn assert_every_cut(message: &ControlMessage, payload: ParamPayload, parts: &[Pa
     let (typ, body) = encode(message);
     assert_eq!(
         bytes(parts),
-        body,
+        *body,
         "the model must match the product writer"
     );
     for cut in 0..body.len() {
@@ -289,7 +289,7 @@ fn declared_counts_and_lengths_fail_at_the_first_missing_field() {
 #[test]
 fn trailing_bytes_retain_the_payload_and_their_count() {
     use ParamPayload::*;
-    let parsed = |parsed| encode(&ControlMessage::ParamParsed(parsed)).1;
+    let parsed = |parsed| encode(&ControlMessage::ParamParsed(parsed)).1.into_owned();
     for (typ, payload, body) in [
         (PARAMS, Parameters, write_infos(&infos())),
         (PARAMS, Parameters, write_infos(&[])),

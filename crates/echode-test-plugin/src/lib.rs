@@ -7,6 +7,8 @@
 //! a test releases it. The connection is created during activation, off RT.
 //! `ECHODE_TEST_FAULT=nan` writes 0.5, then NaN from frame 10 of its second
 //! block on, until a CLAP reset; afterwards it writes 0.5 again.
+//! `ECHODE_TEST_FAULT=large-state` saves the state byte repeated
+//! [`LARGE_STATE`] times and loads only that shape.
 
 use std::ffi::{CStr, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -233,6 +235,8 @@ enum Fault {
     Latency,
     /// A poisoned state: NaN from frame 10 of the second block until reset.
     Nan,
+    /// Saves and loads a state longer than one control frame's body.
+    LargeState,
 }
 
 fn fault_code(text: &str) -> u8 {
@@ -254,6 +258,7 @@ fn fault_code(text: &str) -> u8 {
         "slow-process" => 15,
         "latency" => 16,
         "nan" => 17,
+        "large-state" => 18,
         _ => 0,
     }
 }
@@ -277,6 +282,7 @@ fn fault_from_code(code: u8) -> Fault {
         15 => Fault::SlowProcess,
         16 => Fault::Latency,
         17 => Fault::Nan,
+        18 => Fault::LargeState,
         _ => Fault::None,
     }
 }
@@ -666,7 +672,11 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
                 }
                 return Ok(ProcessStatus::Continue);
             }
-            Fault::None | Fault::Activate | Fault::Generate | Fault::SlowSave => {}
+            Fault::None
+            | Fault::Activate
+            | Fault::Generate
+            | Fault::SlowSave
+            | Fault::LargeState => {}
         }
 
         if self.role == Role::State {
@@ -1020,6 +1030,14 @@ unsafe impl ExtensionImplementation<TestGain> for PluginStateExt {
         });
 }
 
+/// The `large-state` fixture's length: one control frame's largest body
+/// (64 MiB less the type and request id) plus 1 MiB, so the state crosses the
+/// socket in two frames. It sizes this fixture only; states are not capped.
+const LARGE_STATE: usize = 64 * 1024 * 1024 - 12 + 1024 * 1024;
+
+/// The chunk the `large-state` fixture writes and reads per stream call.
+const LARGE_STATE_CHUNK: usize = 1024 * 1024;
+
 /// Set once the `slow-save` fault has delayed a save.
 static SLOW_SAVE_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -1041,12 +1059,67 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
         };
     }
     let byte = STATE_BYTE.load(Ordering::Acquire);
+    if fault_now() == Fault::LargeState {
+        return unsafe { save_large_state(stream, byte) };
+    }
     unsafe {
         let Some(write) = (*stream).write else {
             return false;
         };
         write(stream, std::ptr::from_ref(&byte).cast::<c_void>(), 1) == 1
     }
+}
+
+/// Writes `byte` [`LARGE_STATE`] times in [`LARGE_STATE_CHUNK`] calls.
+///
+/// # Safety
+/// `stream` is the host's non-null output stream for this save.
+unsafe fn save_large_state(stream: *const clap_ostream, byte: u8) -> bool {
+    let Some(write) = (unsafe { (*stream).write }) else {
+        return false;
+    };
+    let chunk = vec![byte; LARGE_STATE_CHUNK];
+    let mut left = LARGE_STATE;
+    while left > 0 {
+        let count = left.min(chunk.len());
+        let written = unsafe { write(stream, chunk.as_ptr().cast::<c_void>(), count as u64) };
+        if usize::try_from(written).ok() != Some(count) {
+            return false;
+        }
+        left -= count;
+    }
+    true
+}
+
+/// Reads a whole `large-state` save: [`LARGE_STATE`] copies of one byte.
+///
+/// # Safety
+/// `stream` is the host's non-null input stream for this load.
+unsafe fn load_large_state(stream: *const clap_istream) -> Option<u8> {
+    let read = unsafe { (*stream).read }?;
+    let mut chunk = vec![0u8; LARGE_STATE_CHUNK];
+    let mut first = None;
+    let mut total = 0usize;
+    loop {
+        let count = unsafe {
+            read(
+                stream,
+                chunk.as_mut_ptr().cast::<c_void>(),
+                chunk.len() as u64,
+            )
+        };
+        let count = usize::try_from(count).ok()?;
+        if count == 0 {
+            break;
+        }
+        let bytes = chunk.get(..count)?;
+        let byte = *first.get_or_insert(*bytes.first()?);
+        if bytes.iter().any(|value| *value != byte) {
+            return None;
+        }
+        total += count;
+    }
+    (total == LARGE_STATE).then_some(first?)
 }
 
 unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_istream) -> bool {
@@ -1067,6 +1140,13 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
             )
         };
         return usize::try_from(read).is_ok_and(|read| params::load(&bytes[..read]));
+    }
+    if fault_now() == Fault::LargeState {
+        let Some(byte) = (unsafe { load_large_state(stream) }) else {
+            return false;
+        };
+        STATE_BYTE.store(byte, Ordering::Release);
+        return true;
     }
     let mut byte = 0u8;
     let mut extra = 0u8;

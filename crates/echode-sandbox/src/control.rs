@@ -1,13 +1,13 @@
 //! Control socket. The audio thread never reads or writes it.
 //!
-//! Messages are a little-endian length, a type, a request id, and a body. `Remap` also carries
-//! one file descriptor with `SCM_RIGHTS`. A body longer than 64 MiB is rejected
-//! so a corrupt peer cannot force an unbounded allocation; this side refuses to
-//! send one with [`ControlSendError`].
+//! Frames are a little-endian length, a type, a request id, and a body. `Remap` also carries
+//! one file descriptor with `SCM_RIGHTS`. A length field past 64 MiB is
+//! rejected so a corrupt peer cannot make one frame hold more. A longer message
+//! crosses as several frames (`control_transport`, ADR 0318).
 
 use crate::control_decode::{ControlDecodeError, ControlField, read_fixed};
 use crate::control_text::{ControlTextError, read_text};
-use crate::control_transport::{ControlSendError, DescriptorRuleError};
+use crate::control_transport::{DescriptorRuleError, MAX_BODY, MAX_FRAME, PART, send_message};
 use crate::gui::{GuiReport, ParamRelay, read_relay, read_report, write_relay, write_report};
 use crate::params::{
     ParamChange, ParamInfo, ParamText, ParamValue, read_changes, read_infos, read_parsed,
@@ -16,17 +16,22 @@ use crate::params::{
 };
 use crate::refusal::{Refusal, read_refusal, write_refusal};
 use crate::region::SessionLayout;
+use std::borrow::Cow;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
-const MAX_MESSAGE: usize = 64 * 1024 * 1024;
 /// Ancillary data one `recvmsg` can hold: 2,048 bytes. Darwin refuses longer
 /// ancillary data on send (`MCLBYTES`) and, measured, more than 254 descriptors
 /// in one message (1,028 bytes received). The kernel installs every passed
 /// descriptor even when the buffer truncates them, so a smaller buffer would
 /// leave descriptors open that this process never sees (ADR 0288).
 const RECEIVE_CONTROL_WORDS: usize = 512;
+/// Send and receive buffer of each end, in place of Darwin's 8 KiB. Measured
+/// (ADR 0318): a poller that reads only what is queued collected a 65 MiB save
+/// in 6,437 polls with 8 KiB and in 2 with 1 MiB; 4 MiB was no faster. The
+/// kernel holds only the bytes in flight, so an idle socket costs nothing.
+const SOCKET_BUFFER: i32 = 1024 * 1024;
 
 const HELLO: u32 = 1;
 const SAVE: u32 = 2;
@@ -158,6 +163,21 @@ struct PendingFd {
     fd: OwnedFd,
 }
 
+/// The leading body bytes of a message whose `PART` frames have arrived, and
+/// the request id every later frame of it must carry.
+struct Partial {
+    id: u64,
+    body: Vec<u8>,
+}
+
+/// One whole frame taken from `incoming`, with the descriptor that arrived in it.
+struct Frame {
+    id: u64,
+    typ: u32,
+    body: Vec<u8>,
+    fd: Option<OwnedFd>,
+}
+
 pub struct Socket {
     fd: OwnedFd,
     incoming: Vec<u8>,
@@ -165,6 +185,8 @@ pub struct Socket {
     /// Set when the peer broke the descriptor rules. That read's bytes were
     /// dropped and every later receive fails, so the message is never accepted.
     broken: Option<DescriptorRuleError>,
+    /// A message sent in parts, until the frame with its own type arrives.
+    partial: Option<Partial>,
 }
 
 impl Socket {
@@ -191,6 +213,7 @@ impl Socket {
             incoming: Vec::new(),
             pending_fd: None,
             broken: None,
+            partial: None,
         })
     }
 
@@ -200,16 +223,21 @@ impl Socket {
 
     /// A nonzero id correlates one control request and its reply. Notices use 0.
     ///
+    /// A body of any length is sent, in several frames past one frame's limit.
     /// A `Remap` passes its descriptor with the frame. The kernel duplicates
     /// it, so the message still owns this side's copy.
     pub fn send_tagged(&mut self, id: u64, message: &ControlMessage) -> io::Result<()> {
+        self.send_split(id, message, MAX_BODY)
+    }
+
+    /// [`Self::send_tagged`] with frames of at most `max_body` body bytes.
+    fn send_split(&mut self, id: u64, message: &ControlMessage, max_body: usize) -> io::Result<()> {
         let (typ, body) = encode(message);
-        let bytes = frame_tagged(id, typ, &body)?;
         let fd = match message {
             ControlMessage::Remap { fd, .. } => Some(fd.as_raw_fd()),
             _ => None,
         };
-        send_bytes(self.fd.as_raw_fd(), &bytes, fd)
+        send_message(self.fd.as_raw_fd(), id, typ, &body, fd, max_body)
     }
 
     /// Send a new mapping. `fd` is duplicated by the kernel; this end is closed.
@@ -234,14 +262,29 @@ impl Socket {
         Ok(self.try_recv_tagged()?.map(|(_, message)| message))
     }
 
+    /// The next message, reading bytes already queued on the socket until one
+    /// is whole. It never waits, so a long message a poller collects is not
+    /// paced by how often it polls. One call reads at most one frame's worth,
+    /// so a peer that keeps sending cannot hold the caller (ADR 0318).
     pub fn try_recv_tagged(&mut self) -> io::Result<Option<(u64, ControlMessage)>> {
-        if let Some(message) = self.parse_one()? {
-            return Ok(Some(message));
+        self.try_recv_within(MAX_FRAME)
+    }
+
+    /// [`Self::try_recv_tagged`], stopping once `budget` bytes were read.
+    fn try_recv_within(&mut self, budget: usize) -> io::Result<Option<(u64, ControlMessage)>> {
+        let mut read = 0;
+        loop {
+            if let Some(message) = self.parse_one()? {
+                return Ok(Some(message));
+            }
+            if read >= budget {
+                return Ok(None);
+            }
+            match self.read_some(true)? {
+                0 => return Ok(None),
+                count => read += count,
+            }
         }
-        if !self.read_some(true)? {
-            return Ok(None);
-        }
-        self.parse_one()
     }
 
     pub fn recv_timeout(&mut self, timeout: Duration) -> io::Result<ControlMessage> {
@@ -267,16 +310,50 @@ impl Socket {
         }
     }
 
+    /// The next whole message, joining `PART` frames, or `None` until the
+    /// frame with its own type has arrived.
     fn parse_one(&mut self) -> io::Result<Option<(u64, ControlMessage)>> {
+        while let Some(Frame { id, typ, body, fd }) = self.take_frame()? {
+            let partial = match self.partial.take() {
+                Some(partial) if partial.id != id => {
+                    return Err(ControlDecodeError::InterleavedPart {
+                        expected: partial.id,
+                        actual: id,
+                    }
+                    .into());
+                }
+                partial => partial,
+            };
+            let body = match partial {
+                Some(mut partial) => {
+                    partial.body.extend_from_slice(&body);
+                    partial.body
+                }
+                None => body,
+            };
+            if typ == PART {
+                // Only the frame of the message's own type may carry a descriptor.
+                drop(fd);
+                self.partial = Some(Partial { id, body });
+                continue;
+            }
+            return Ok(decode_body(typ, body, fd)?.map(|message| (id, message)));
+        }
+        Ok(None)
+    }
+
+    /// The next whole frame, or `None` until all its bytes have arrived. The
+    /// frame is removed before its metadata is checked.
+    fn take_frame(&mut self) -> io::Result<Option<Frame>> {
         let Some(header) = self.incoming.first_chunk::<4>() else {
             return Ok(None);
         };
         let len = u32::from_le_bytes(*header) as usize;
-        if !(12..=MAX_MESSAGE).contains(&len) {
+        if !(12..=MAX_FRAME).contains(&len) {
             return Err(ControlDecodeError::MessageLength {
                 actual: len,
                 minimum: 12,
-                maximum: MAX_MESSAGE,
+                maximum: MAX_FRAME,
             }
             .into());
         }
@@ -284,7 +361,6 @@ impl Socket {
         if self.incoming.len() < total {
             return Ok(None);
         }
-        let mut payload: Vec<u8> = self.incoming.drain(..total).skip(4).collect();
         let fd = match self.pending_fd.take() {
             Some(pending) if pending.at < total => Some(pending.fd),
             Some(mut pending) => {
@@ -294,21 +370,34 @@ impl Socket {
             }
             None => None,
         };
+        let frame = self.incoming.get(4..total).unwrap_or_default();
         // `len` is at least 12, so the type and the id are both present.
-        let id = payload.get(4..12).ok_or_else(|| {
-            io::Error::from(ControlDecodeError::WrongSize {
-                field: ControlField::RequestId,
-                expected: 8,
-                actual: payload.len().saturating_sub(4).min(8),
-            })
-        })?;
-        let id = read_fixed(id, ControlField::RequestId)?;
-        let id = u64::from_le_bytes(id);
-        payload.drain(4..12);
-        Ok(decode(&payload, fd)?.map(|message| (id, message)))
+        let parsed = match frame.split_first_chunk::<4>() {
+            None => Err(ControlDecodeError::WrongSize {
+                field: ControlField::MessageType,
+                expected: 4,
+                actual: frame.len(),
+            }),
+            Some((typ, rest)) => match rest.split_first_chunk::<8>() {
+                None => Err(ControlDecodeError::WrongSize {
+                    field: ControlField::RequestId,
+                    expected: 8,
+                    actual: rest.len(),
+                }),
+                Some((id, body)) => Ok(Frame {
+                    id: u64::from_le_bytes(*id),
+                    typ: u32::from_le_bytes(*typ),
+                    body: body.to_vec(),
+                    fd,
+                }),
+            },
+        };
+        self.incoming.drain(..total);
+        Ok(Some(parsed?))
     }
 
-    fn read_some(&mut self, nonblock: bool) -> io::Result<bool> {
+    /// Bytes read into `incoming`; 0 when a non-blocking read found none.
+    fn read_some(&mut self, nonblock: bool) -> io::Result<usize> {
         if let Some(rule) = self.broken {
             return Err(rule.into());
         }
@@ -334,8 +423,8 @@ impl Socket {
             let error = io::Error::last_os_error();
             match error.raw_os_error() {
                 Some(libc::EINTR) => return self.read_some(nonblock),
-                Some(libc::EAGAIN) => return Ok(false),
-                _ if error.kind() == ErrorKind::WouldBlock => return Ok(false),
+                Some(libc::EAGAIN) => return Ok(0),
+                _ if error.kind() == ErrorKind::WouldBlock => return Ok(0),
                 _ => return Err(error),
             }
         }
@@ -359,7 +448,7 @@ impl Socket {
         if let Some(fd) = fds.pop() {
             self.pending_fd = Some(PendingFd { at, fd });
         }
-        Ok(true)
+        Ok(n as usize)
     }
 }
 
@@ -378,12 +467,14 @@ fn descriptor_rule(truncated: bool, received: usize, pending: bool) -> Option<De
 }
 
 /// The wire type and body. A `Remap`'s descriptor is not part of the body.
-fn encode(message: &ControlMessage) -> (u32, Vec<u8>) {
-    match message {
+/// State bytes and titles are borrowed, so a large state is not copied to be sent.
+fn encode(message: &ControlMessage) -> (u32, Cow<'_, [u8]>) {
+    let (typ, body): (u32, Vec<u8>) = match message {
+        ControlMessage::State(bytes) => return (STATE, Cow::Borrowed(bytes)),
+        ControlMessage::Restore(bytes) => return (RESTORE, Cow::Borrowed(bytes)),
+        ControlMessage::GuiShow(title) => return (GUI_SHOW, Cow::Borrowed(title.as_bytes())),
         ControlMessage::Hello => (HELLO, Vec::new()),
         ControlMessage::SaveRequest => (SAVE, Vec::new()),
-        ControlMessage::State(bytes) => (STATE, bytes.clone()),
-        ControlMessage::Restore(bytes) => (RESTORE, bytes.clone()),
         ControlMessage::Restored => (RESTORED, Vec::new()),
         ControlMessage::RequestProcess => (REQUEST_PROCESS, Vec::new()),
         ControlMessage::Dirty => (DIRTY, Vec::new()),
@@ -418,7 +509,6 @@ fn encode(message: &ControlMessage) -> (u32, Vec<u8>) {
         ControlMessage::ParamsRejected(refusal) => (PARAMS_REJECTED, write_refusal(refusal)),
         ControlMessage::ParseParam { id, text } => (PARSE_PARAM, write_text_request(*id, text)),
         ControlMessage::ParamParsed(parsed) => (PARAM_PARSED, write_parsed(*parsed)),
-        ControlMessage::GuiShow(title) => (GUI_SHOW, title.as_bytes().to_vec()),
         ControlMessage::GuiShown(report) => (GUI_SHOWN, write_report(*report)),
         ControlMessage::GuiClose => (GUI_CLOSE, Vec::new()),
         ControlMessage::GuiClosedReply => (GUI_CLOSED_REPLY, Vec::new()),
@@ -426,9 +516,12 @@ fn encode(message: &ControlMessage) -> (u32, Vec<u8>) {
         ControlMessage::GuiClosed => (GUI_CLOSED, Vec::new()),
         ControlMessage::GuiCommand(command) => (GUI_COMMAND, vec![*command as u8]),
         ControlMessage::ParamRelay(relay) => (PARAM_RELAY, write_relay(relay)),
-    }
+    };
+    (typ, Cow::Owned(body))
 }
 
+/// A payload of type and body, as one frame carries it.
+#[cfg(test)]
 fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessage>> {
     let Some((typ, body)) = payload.split_first_chunk::<4>() else {
         return Err(ControlDecodeError::WrongSize {
@@ -438,18 +531,30 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         }
         .into());
     };
-    let typ = u32::from_le_bytes(*typ);
+    decode_body(u32::from_le_bytes(*typ), body.to_vec(), fd)
+}
+
+/// A whole message's body. State bytes are moved, not copied.
+fn decode_body(
+    typ: u32,
+    owned: Vec<u8>,
+    fd: Option<OwnedFd>,
+) -> io::Result<Option<ControlMessage>> {
     if typ == REMAP {
-        let layout = read_layout(body)?;
+        let layout = read_layout(&owned)?;
         let fd = fd.ok_or(ControlDecodeError::MissingMapping)?;
         return Ok(Some(ControlMessage::Remap { layout, fd }));
     }
     drop(fd);
+    match typ {
+        STATE => return Ok(Some(ControlMessage::State(owned))),
+        RESTORE => return Ok(Some(ControlMessage::Restore(owned))),
+        _ => {}
+    }
+    let body = owned.as_slice();
     let message = match typ {
         HELLO => ControlMessage::Hello,
         SAVE => ControlMessage::SaveRequest,
-        STATE => ControlMessage::State(body.to_vec()),
-        RESTORE => ControlMessage::Restore(body.to_vec()),
         RESTORED => ControlMessage::Restored,
         REQUEST_PROCESS => ControlMessage::RequestProcess,
         DIRTY => ControlMessage::Dirty,
@@ -622,65 +727,22 @@ fn read_layout(body: &[u8]) -> io::Result<SessionLayout> {
     })
 }
 
-fn frame_tagged(id: u64, typ: u32, body: &[u8]) -> io::Result<Vec<u8>> {
-    let len = 12 + body.len();
-    if len > MAX_MESSAGE {
-        return Err(ControlSendError::TooLong {
-            message_type: typ,
-            length: len,
-            maximum: MAX_MESSAGE,
-        }
-        .into());
-    }
-    let mut bytes = Vec::with_capacity(4 + len);
-    bytes.extend_from_slice(&(len as u32).to_le_bytes());
+/// One frame's bytes, for tests that write the wire directly.
+#[cfg(test)]
+fn frame_tagged(id: u64, typ: u32, body: &[u8]) -> Vec<u8> {
+    let len = u32::try_from(12 + body.len()).expect("a test frame within a u32 length");
+    let mut bytes = Vec::with_capacity(16 + body.len());
+    bytes.extend_from_slice(&len.to_le_bytes());
     bytes.extend_from_slice(&typ.to_le_bytes());
     bytes.extend_from_slice(&id.to_le_bytes());
     bytes.extend_from_slice(body);
-    Ok(bytes)
+    bytes
 }
 
+/// Raw bytes, for tests that write the wire directly.
+#[cfg(test)]
 fn send_bytes(socket: i32, bytes: &[u8], fd: Option<i32>) -> io::Result<()> {
-    let mut sent = 0;
-    while sent < bytes.len() {
-        let rest = bytes.get(sent..).unwrap_or_default();
-        let mut iov = libc::iovec {
-            iov_base: rest.as_ptr().cast_mut().cast(),
-            iov_len: rest.len(),
-        };
-        let mut control = [0u32; cmsg_space_fd() / 4];
-        let pass = if sent == 0 { fd } else { None };
-        let mut msg = libc::msghdr {
-            msg_name: std::ptr::null_mut(),
-            msg_namelen: 0,
-            msg_iov: &mut iov,
-            msg_iovlen: 1,
-            msg_control: std::ptr::null_mut(),
-            msg_controllen: 0,
-            msg_flags: 0,
-        };
-        if let Some(fd) = pass {
-            write_rights(&mut control, fd);
-            msg.msg_control = control.as_mut_ptr().cast();
-            msg.msg_controllen = cmsg_space_fd() as libc::socklen_t;
-        }
-        let n = unsafe { libc::sendmsg(socket, &msg, 0) };
-        if n < 0 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::EINTR) {
-                continue;
-            }
-            return Err(error);
-        }
-        if n == 0 {
-            return Err(io::Error::new(
-                ErrorKind::WriteZero,
-                "control socket accepted no bytes",
-            ));
-        }
-        sent += n as usize;
-    }
-    Ok(())
+    crate::control_transport::send_slices(socket, [bytes, &[]], fd)
 }
 
 fn poll_read(fd: i32, timeout: Duration) -> io::Result<bool> {
@@ -724,6 +786,20 @@ fn configure(fd: i32) -> io::Result<()> {
     if rc != 0 {
         return Err(io::Error::last_os_error());
     }
+    // Best effort: a smaller buffer is slower, not wrong.
+    let size = SOCKET_BUFFER;
+    for option in [libc::SO_SNDBUF, libc::SO_RCVBUF] {
+        // SAFETY: `fd` is an open socket and the option value is an `i32`.
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                option,
+                (&raw const size).cast(),
+                std::mem::size_of::<i32>() as libc::socklen_t,
+            )
+        };
+    }
     Ok(())
 }
 
@@ -732,7 +808,7 @@ const fn cmsg_align(len: usize) -> usize {
     len.saturating_add(3) & !3
 }
 
-const fn cmsg_space_fd() -> usize {
+pub(crate) const fn cmsg_space_fd() -> usize {
     cmsg_align(std::mem::size_of::<libc::cmsghdr>()) + cmsg_align(std::mem::size_of::<i32>())
 }
 
@@ -741,7 +817,7 @@ fn cmsg_len_fd() -> libc::socklen_t {
         as libc::socklen_t
 }
 
-fn write_rights(buf: &mut [u32], fd: i32) {
+pub(crate) fn write_rights(buf: &mut [u32], fd: i32) {
     debug_assert!(std::mem::size_of_val(buf) >= cmsg_space_fd());
     let header = buf.as_mut_ptr().cast::<libc::cmsghdr>();
     // SAFETY: `buf` is large enough for one `SCM_RIGHTS` header and one fd.
@@ -968,7 +1044,7 @@ mod tests {
         };
         let (kind, bytes) = encode(&message);
         let mut payload = kind.to_le_bytes().to_vec();
-        payload.extend(bytes);
+        payload.extend_from_slice(&bytes);
         assert!(
             matches!(decode(&payload, None).unwrap(), Some(ControlMessage::Ports { inputs, outputs, tail_samples: 19_200, latency_samples: 256 }) if inputs.is_empty() && outputs == [1])
         );

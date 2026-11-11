@@ -94,7 +94,7 @@ fn remap_frame() -> Vec<u8> {
         input_events: 1,
         output_events: 1,
     };
-    frame_tagged(0, REMAP, &layout_bytes(layout)).unwrap()
+    frame_tagged(0, REMAP, &layout_bytes(layout))
 }
 
 /// What one delivery left behind.
@@ -143,7 +143,7 @@ const MOST_DESCRIPTORS: usize = 254;
 fn contract_received_descriptors_beyond_one_are_rejected_and_all_closed() {
     // Up to 2 × 254 descriptors are open at once below.
     crate::descriptors::raise_descriptor_limit();
-    let notice = frame_tagged(0, DIRTY, &[]).unwrap();
+    let notice = frame_tagged(0, DIRTY, &[]);
     for (name, frame) in [("remap", remap_frame()), ("notice", notice)] {
         for count in [2, 3, MOST_DESCRIPTORS] {
             let witness = Witness::new();

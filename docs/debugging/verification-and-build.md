@@ -117,6 +117,12 @@ GitHub の `full` がプッシュごとに実行する。作業ごとの `make v
 `target/debug/incremental` と、再利用する成果物・鮮度情報の `deps`・`build`・`.fingerprint` を区別し、後者と反例・サニタイザ専用のビルド先、検査記録は残す。
 既に鮮度のある同じ Cargo ビルドを再実行し、成果物のサイズ・更新時刻が変わらないことを照合する。ソースの再ビルドが要る場合は遅くなるため、影響なしとは扱わない。
 
+### `cargo test -p echode-plugin-host` を直接動かすと `hosted_playback` の多くが無音の断定で失敗する
+
+`expected.iter().any(|sample| *sample != 0.0)` などで、プラグインのない描画まで無音になるなら、同梱の Sine Pad の `target/debug/plugins/EchodeSinePad.clap` がない。
+`hosted_playback` の楽譜はこの音源で鳴らす。`make verify` は先に `make bundled-plugins` を実行するが、`cargo test` は作らない。
+`make bundled-plugins` の後に再実行する（2026-11-11、ADR 0318 の作業で 10 件がこれで失敗し、作った後は 60 件が通った）。
+
 ### 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
 
 `make rtsan` が `target/debug/echode-plugin-host` を RTSan 版で上書きした状態である。製品の不具合ではない。

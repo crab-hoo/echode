@@ -302,37 +302,41 @@ fn invalid_values_never_reach_the_socket_and_local_reads_do_not_wait_on_it() {
     assert!(background.take_activity().is_none());
 }
 
+/// R8 (ADR 0318). A state past one frame's body crosses in parts both ways,
+/// and the next request on the socket still pairs with its own reply.
 #[test]
-fn restoring_a_state_past_the_frame_limit_names_its_size_and_sends_nothing() {
-    use crate::ControlSendError;
+fn a_state_past_one_frame_restores_and_saves_in_parts() {
+    // One byte past the largest frame body (64 MiB less type and id): the
+    // smallest state that needs two frames. It sizes this fixture only.
+    const STATE: usize = 64 * 1024 * 1024 - 12 + 1;
     let (parent, mut helper) = Socket::pair().unwrap();
     let control = PluginControl::new(parent);
-    // One byte past the largest frame body (64 MiB less type and id).
-    let state = vec![0; 64 * 1024 * 1024 - 12 + 1];
-    let error = control.restore_state(&state).unwrap_err();
-    drop(state);
-    let SessionError::Io(error) = error else {
-        panic!("an oversized state must remain an I/O cause: {error:?}");
-    };
-    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-    assert_eq!(error.to_string(), "control message is longer than 64 MiB");
-    assert_eq!(
-        error.get_ref().unwrap().downcast_ref::<ControlSendError>(),
-        Some(&ControlSendError::TooLong {
-            // Restore (4).
-            message_type: 4,
-            length: 64 * 1024 * 1024 + 1,
-            maximum: 64 * 1024 * 1024,
-        })
-    );
-    assert!(helper.try_recv().unwrap().is_none(), "nothing was sent");
     let answer = std::thread::spawn(move || {
+        let (id, request) = receive(&mut helper);
+        let ControlMessage::Restore(bytes) = request else {
+            panic!("expected a restore: {request:?}");
+        };
+        assert!(bytes.len() == STATE && bytes.iter().all(|byte| *byte == 7));
+        helper.send_tagged(id, &ControlMessage::Restored).unwrap();
+        let (id, request) = receive(&mut helper);
+        assert!(matches!(request, ControlMessage::SaveRequest));
+        helper
+            .send_tagged(id, &ControlMessage::State(bytes))
+            .unwrap();
         let (id, request) = receive(&mut helper);
         assert!(matches!(request, ControlMessage::GuiClose));
         helper
             .send_tagged(id, &ControlMessage::GuiClosedReply)
             .unwrap();
     });
+    control
+        .restore_state(&vec![7; STATE])
+        .unwrap_or_else(|error| panic!("a state past one frame must restore: {error:?}"));
+    let saved = control
+        .capture_state()
+        .unwrap_or_else(|error| panic!("a state past one frame must save: {error:?}"));
+    assert!(saved.len() == STATE && saved.iter().all(|byte| *byte == 7));
+    drop(saved);
     control.close_gui().unwrap();
     answer.join().unwrap();
 }

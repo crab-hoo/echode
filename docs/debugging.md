@@ -37,6 +37,7 @@ make debug-report
   - `swift test` が出力なしで止まる（Swift Testing の待ち続け）
   - 空き容量不足（`No space left on device` / `Errno 28`）
   - 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
+  - `cargo test -p echode-plugin-host` を直接動かすと `hosted_playback` の多くが無音の断定で失敗する
 - ツール・ビルド・生成物
   - ツール不足・ビルド失敗
   - `check-ffi` が外部シンボルを拒否する
@@ -98,7 +99,7 @@ make debug-report
   - ヘルパーの応答が `parameter message ...` / `window report ...` / `relay ...` で切れる
   - 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
   - プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
-  - ヘルパーとの接続が記述子の規則の違反か `control message is longer than 64 MiB` で切れる
+  - ヘルパーとの接続が記述子の規則の違反か `control message parts were interleaved` で切れる
   - バイパスの表示と音が一致しない・解除後に古い音が鳴る
   - GUI の書出しが始まらない・文書を切り替えると内容が違う
   - 書出しの数値欄を変更しても開始できない・前の値が使われる

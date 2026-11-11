@@ -11,6 +11,7 @@
 - [2026-11-08 監査の未完了項目の統合](2026-11-08-open-items-register.md): 10/8・SPG・XCA・外部監査・FCA ほかの未完了を束ねた。
   重複と古い状態を整理し、残りを堅牢性・保守性・効率・機能に付随・ユーザーの担当の 38 行に分けた。
   順番と FCA-05 の区切りは [ADR 0278](../decisions/0278-audit-backlog-order.md) で決めた。最優先は FCA-02 の採用の固定費用（R1）。
+  後で見つけた R8（64 MiB を超える状態でヘルパーが止まる）は [ADR 0318](../decisions/0318-split-control-messages.md) で直した。
 - [2026-11-08 構造の評価の精査](2026-11-08-structure-assessment-review.md): モデルの検査の分担と placement.rs の構造の判定。
   漏れ得るのは `Draft::finish` の消費の検査だけで、ID 探索と検証基盤の規模は既知（FCA-05、2026-11-06 の精査）。
 - [2026-11-06 課題一覧の精査](2026-11-06-assessment-review.md): 検証基盤と製品の課題一覧の判定。gix-pack は解決済み、CI の待ちの主因は同時実行数。

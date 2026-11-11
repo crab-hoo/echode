@@ -1150,6 +1150,56 @@ fn an_endpoint_observes_a_crash_after_mapping_replacement_under_rtsan() {
     }
 }
 
+/// R8 (ADR 0318). A plugin state longer than one control frame's body used to
+/// stop the helper: its save reply could not be framed, the control loop
+/// ended, and the plugin fell silent. The state now crosses in parts both ways
+/// and the plugin keeps sounding.
+#[test]
+fn a_state_longer_than_one_frame_saves_and_restores_in_parts() {
+    // The test plugin's `large-state` length: one frame's largest body
+    // (64 MiB less type and id) plus 1 MiB. It sizes this fixture only.
+    const LARGE_STATE: usize = 64 * 1024 * 1024 - 12 + 1024 * 1024;
+    let mut host = PluginHost::spawn(SpawnOptions {
+        host_bin: &host_bin(),
+        plugin: Some(&plugin_dylib()),
+        fault: Some("large-state"),
+        workgroup: None,
+        layout: SessionLayout::stereo(),
+        fan_in: None,
+        sample_rate: 48_000,
+        plugin_id: Some("dev.echode.test-state"),
+    })
+    .unwrap_or_else(|error| panic!("spawn plugin host: {error}"));
+    // Fixture buffers only; the state plugin writes its level to every frame.
+    let input = stereo(32, 0.0);
+    let mut output = [vec![0.0; 32], vec![0.0; 32]];
+    let planes: [&[f32]; 2] = [&input[0], &input[1]];
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("initial block");
+    assert!((output[0][0] - 0.25).abs() < 1.0e-4, "{}", output[0][0]);
+
+    let control = host.control_handle();
+    let saved = control
+        .capture_state()
+        .unwrap_or_else(|error| panic!("a state past one frame must save: {error:?}"));
+    assert_eq!(saved.len(), LARGE_STATE);
+    assert!(saved.iter().all(|byte| *byte == 64), "saved bytes changed");
+    drop(saved);
+    control
+        .restore_state(&vec![128; LARGE_STATE])
+        .unwrap_or_else(|error| panic!("a state past one frame must restore: {error:?}"));
+    let saved = control.capture_state().expect("save after the restore");
+    assert_eq!(saved.len(), LARGE_STATE);
+    assert!(
+        saved.iter().all(|byte| *byte == 128),
+        "restored bytes changed"
+    );
+    drop(saved);
+    host.process(&planes, &mut outs(&mut output), Duration::from_secs(2))
+        .expect("the helper still processes after both transfers");
+    assert!((output[0][0] - 0.5).abs() < 1.0e-4, "{}", output[0][0]);
+}
+
 /// Newest edit among the test plugin's sources, so a change to any module rebuilds it.
 fn newest_source(dir: &Path) -> std::io::Result<std::time::SystemTime> {
     let mut newest = std::time::SystemTime::UNIX_EPOCH;
