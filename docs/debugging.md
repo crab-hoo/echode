@@ -93,6 +93,7 @@ make debug-report
   - ヘルパーの応答が `window title is not text` / `parameter text is not UTF-8` で切れる
   - ヘルパーの応答が `launch failure is malformed` で切れる
   - ヘルパーの応答が `plugin failure is malformed` / `refusal ...` で切れる
+  - ヘルパーの応答が `chain message is the wrong size` / `port description ...` / `unknown control message` で切れる
   - 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
   - プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
   - バイパスの表示と音が一致しない・解除後に古い音が鳴る

@@ -40,6 +40,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - 制御メッセージの窓名とパラメーターの UTF-8 は共通の `control_text.rs::read_text` で検証する。
   不正なら `InvalidData` の `io::Error` の内側に `ControlTextError` を保持し、窓名とパラメーターを型で区別する。
   元の `Utf8Error` は `source` から読める。位置は各文字列内で、表示文・通信の形式は変えない（[ADR 0312](../decisions/0312-typed-control-text-errors.md)）。
+- 拒否以外の制御メタデータが不正なら、`ControlDecodeError` を `InvalidData` の `io::Error` の内側に保持する。
+  `ControlField` と必要・実際のバイト数、未知の種類・コマンド、ポートの方向と列の長さ、フレームの宣言長と許容範囲を型で読める。
+  公開操作の `SessionError::Io` でも同じ原因を保ち、表示文と受理する通信の形式は変えない（[ADR 0315](../decisions/0315-typed-control-metadata-errors.md)）。
 - **一括投入と単一締め切り**: 独立したヘルパーには先に一括投入し、そのブロックの単一締め切りで完了したヘルパーから順に回収する。
   同じヘルパーで続くデバイスは 1 往復にまとめる（[ADR 0043](../decisions/0043-plugin-submit-collect.md)）
 - **Audio Workgroup の受け渡し**: ヘルパーが `bootstrap_check_in` した名前を制御スレッドが `bootstrap_look_up` し、`os_workgroup_copy_port` の送信権を Mach メッセージで渡す

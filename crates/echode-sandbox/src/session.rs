@@ -1584,3 +1584,7 @@ mod operations_tests;
 #[cfg(test)]
 #[path = "session_refusal_tests.rs"]
 mod refusal_tests;
+
+#[cfg(test)]
+#[path = "session_decode_tests.rs"]
+mod decode_tests;

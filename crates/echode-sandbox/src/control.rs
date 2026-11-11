@@ -4,6 +4,7 @@
 //! one file descriptor with `SCM_RIGHTS`. A body longer than 64 MiB is rejected
 //! so a corrupt peer cannot force an unbounded allocation.
 
+use crate::control_decode::{ControlDecodeError, ControlField, read_fixed};
 use crate::control_text::{ControlTextError, read_text};
 use crate::gui::{GuiReport, ParamRelay, read_relay, read_report, write_relay, write_report};
 use crate::params::{
@@ -267,10 +268,12 @@ impl Socket {
         };
         let len = u32::from_le_bytes(*header) as usize;
         if !(12..=MAX_MESSAGE).contains(&len) {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                "control message length is not usable",
-            ));
+            return Err(ControlDecodeError::MessageLength {
+                actual: len,
+                minimum: 12,
+                maximum: MAX_MESSAGE,
+            }
+            .into());
         }
         let total = 4 + len;
         if self.incoming.len() < total {
@@ -287,12 +290,14 @@ impl Socket {
             None => None,
         };
         // `len` is at least 12, so the type and the id are both present.
-        let id = payload
-            .get(4..12)
-            .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
-            .ok_or_else(|| {
-                io::Error::new(ErrorKind::InvalidData, "control message has no request id")
-            })?;
+        let id = payload.get(4..12).ok_or_else(|| {
+            io::Error::from(ControlDecodeError::WrongSize {
+                field: ControlField::RequestId,
+                expected: 8,
+                actual: payload.len().saturating_sub(4).min(8),
+            })
+        })?;
+        let id = read_fixed(id, ControlField::RequestId)?;
         let id = u64::from_le_bytes(id);
         payload.drain(4..12);
         Ok(decode(&payload, fd)?.map(|message| (id, message)))
@@ -419,17 +424,17 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
 
 fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessage>> {
     let Some((typ, body)) = payload.split_first_chunk::<4>() else {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            "control message has no type",
-        ));
+        return Err(ControlDecodeError::WrongSize {
+            field: ControlField::MessageType,
+            expected: 4,
+            actual: payload.len(),
+        }
+        .into());
     };
     let typ = u32::from_le_bytes(*typ);
     if typ == REMAP {
         let layout = read_layout(body)?;
-        let fd = fd.ok_or_else(|| {
-            io::Error::new(ErrorKind::InvalidData, "remap did not include a mapping")
-        })?;
+        let fd = fd.ok_or(ControlDecodeError::MissingMapping)?;
         return Ok(Some(ControlMessage::Remap { layout, fd }));
     }
     drop(fd);
@@ -441,28 +446,27 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         RESTORED => ControlMessage::Restored,
         REQUEST_PROCESS => ControlMessage::RequestProcess,
         DIRTY => ControlMessage::Dirty,
-        PLUGIN_RESTARTED => {
-            let bytes: [u8; 4] = body.try_into().map_err(|_| {
-                io::Error::new(ErrorKind::InvalidData, "restart notice is the wrong size")
-            })?;
-            ControlMessage::PluginRestarted {
-                latency_samples: u32::from_le_bytes(bytes),
-            }
-        }
+        PLUGIN_RESTARTED => ControlMessage::PluginRestarted {
+            latency_samples: u32::from_le_bytes(read_fixed(body, ControlField::RestartLatency)?),
+        },
         REMAPPED => ControlMessage::Remapped,
         REMAP_FAILED => ControlMessage::RemapFailed,
         CANCEL_REMAP => ControlMessage::CancelRemap,
         REMAP_CANCELLED => ControlMessage::RemapCancelled,
-        SET_CHAIN => {
-            let bytes: [u8; 4] = body.try_into().map_err(|_| {
-                io::Error::new(ErrorKind::InvalidData, "chain message is the wrong size")
-            })?;
-            ControlMessage::SetChain(u32::from_le_bytes(bytes))
-        }
+        SET_CHAIN => ControlMessage::SetChain(u32::from_le_bytes(read_fixed(
+            body,
+            ControlField::ChainStages,
+        )?)),
         CHAIN_READY => ControlMessage::ChainReady,
         CHAIN_REJECTED => ControlMessage::ChainRejected,
         PORTS => {
-            let missing = || io::Error::new(ErrorKind::InvalidData, "port tail/latency is missing");
+            let missing = || {
+                io::Error::from(ControlDecodeError::WrongSize {
+                    field: ControlField::PortTailLatency,
+                    expected: 8,
+                    actual: body.len(),
+                })
+            };
             let (rest, latency) = body.split_last_chunk::<4>().ok_or_else(missing)?;
             let (ports, tail) = rest.split_last_chunk::<4>().ok_or_else(missing)?;
             let (inputs, outputs) = read_ports(ports)?;
@@ -475,7 +479,10 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         }
         PORTS_REJECTED => ControlMessage::PortsRejected(read_refusal(body)?),
         STATE_REJECTED => ControlMessage::StateRejected(read_refusal(body)?),
-        PARAMS_REQUEST if body.is_empty() => ControlMessage::ParamsRequest,
+        PARAMS_REQUEST => {
+            read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
+            ControlMessage::ParamsRequest
+        }
         PARAMS => ControlMessage::Params(read_infos(body)?),
         SET_PARAMS => ControlMessage::SetParams(read_changes(body)?),
         PARAMS_APPLIED => ControlMessage::ParamsApplied(read_values(body)?),
@@ -487,23 +494,28 @@ fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessa
         PARAM_PARSED => ControlMessage::ParamParsed(read_parsed(body)?),
         GUI_SHOW => ControlMessage::GuiShow(read_text(body, ControlTextError::WindowTitle)?),
         GUI_SHOWN => ControlMessage::GuiShown(read_report(body)?),
-        GUI_CLOSE if body.is_empty() => ControlMessage::GuiClose,
-        GUI_CLOSED_REPLY if body.is_empty() => ControlMessage::GuiClosedReply,
-        GUI_REJECTED => ControlMessage::GuiRejected(read_refusal(body)?),
-        GUI_CLOSED if body.is_empty() => ControlMessage::GuiClosed,
-        GUI_COMMAND if body.len() == 1 => ControlMessage::GuiCommand(
-            body.first()
-                .copied()
-                .and_then(crate::PluginCommand::decode)
-                .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "unknown plugin command"))?,
-        ),
-        PARAM_RELAY => ControlMessage::ParamRelay(read_relay(body)?),
-        _ => {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                "unknown control message",
-            ));
+        GUI_CLOSE => {
+            read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
+            ControlMessage::GuiClose
         }
+        GUI_CLOSED_REPLY => {
+            read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
+            ControlMessage::GuiClosedReply
+        }
+        GUI_REJECTED => ControlMessage::GuiRejected(read_refusal(body)?),
+        GUI_CLOSED => {
+            read_fixed::<0>(body, ControlField::EmptyBody { message_type: typ })?;
+            ControlMessage::GuiClosed
+        }
+        GUI_COMMAND => {
+            let [code] = read_fixed(body, ControlField::PluginCommand)?;
+            ControlMessage::GuiCommand(
+                crate::PluginCommand::decode(code)
+                    .ok_or(ControlDecodeError::UnknownPluginCommand(code))?,
+            )
+        }
+        PARAM_RELAY => ControlMessage::ParamRelay(read_relay(body)?),
+        _ => return Err(ControlDecodeError::UnknownMessageType(typ).into()),
     };
     Ok(Some(message))
 }
@@ -524,25 +536,33 @@ fn write_counts(body: &mut Vec<u8>, counts: &[u32]) {
 }
 
 fn read_ports(body: &[u8]) -> io::Result<(Vec<u32>, Vec<u32>)> {
-    let (inputs, rest) = read_counts(body)?;
-    let (outputs, rest) = read_counts(rest)?;
+    let (inputs, rest) = read_counts(body, true)?;
+    let (outputs, rest) = read_counts(rest, false)?;
     if !rest.is_empty() {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            "port description has trailing bytes",
-        ));
+        return Err(ControlDecodeError::TrailingPortBytes { actual: rest.len() }.into());
     }
     Ok((inputs, outputs))
 }
 
-fn read_counts(body: &[u8]) -> io::Result<(Vec<u32>, &[u8])> {
-    let truncated = || io::Error::new(ErrorKind::InvalidData, "port description is truncated");
-    let (count, rest) = body.split_first_chunk::<4>().ok_or_else(truncated)?;
-    let count = u32::from_le_bytes(*count) as usize;
-    let bytes = count
+fn read_counts(body: &[u8], input: bool) -> io::Result<(Vec<u32>, &[u8])> {
+    let (count, rest) = body.split_first_chunk::<4>().ok_or_else(|| {
+        io::Error::from(ControlDecodeError::WrongSize {
+            field: ControlField::PortCount { input },
+            expected: 4,
+            actual: body.len(),
+        })
+    })?;
+    let count = u32::from_le_bytes(*count);
+    let bytes = (count as usize)
         .checked_mul(4)
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "port description is too large"))?;
-    let (ports, rest) = rest.split_at_checked(bytes).ok_or_else(truncated)?;
+        .ok_or(ControlDecodeError::PortCountOverflow { input, count })?;
+    let (ports, rest) = rest.split_at_checked(bytes).ok_or_else(|| {
+        io::Error::from(ControlDecodeError::WrongSize {
+            field: ControlField::PortChannels { input },
+            expected: bytes,
+            actual: rest.len(),
+        })
+    })?;
     let counts = ports
         .as_chunks::<4>()
         .0
@@ -579,10 +599,12 @@ fn read_layout(body: &[u8]) -> io::Result<SessionLayout> {
         [],
     ) = body.as_chunks::<4>()
     else {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            "remap layout is the wrong size",
-        ));
+        return Err(ControlDecodeError::WrongSize {
+            field: ControlField::RemapLayout,
+            expected: 20,
+            actual: body.len(),
+        }
+        .into());
     };
     Ok(SessionLayout {
         max_frames: u32::from_le_bytes(*max_frames),
@@ -965,3 +987,7 @@ mod launch_tests;
 #[cfg(test)]
 #[path = "control_refusal_tests.rs"]
 mod refusal_tests;
+
+#[cfg(test)]
+#[path = "control_decode_tests.rs"]
+mod decode_tests;

@@ -233,6 +233,17 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 回帰は `cargo test -q -p echode-sandbox --lib refusal_tests` で、実ソケットの全拒否経路と公開操作を通す。
 起動拒否の不正は前節の `LaunchDecodeError` のままである（[ADR 0314](../decisions/0314-typed-refusal-structure-errors.md)）。
 
+### ヘルパーの応答が `chain message is the wrong size` / `port description ...` / `unknown control message` で切れる
+
+拒否ペイロードではなく、外側の制御メタデータが不正である。
+`SessionError::Io` の `io::Error::get_ref` を `ControlDecodeError` に downcast する。
+`WrongSize` は `ControlField` と必要・実際のバイト数で、ポートの列と数は `input` で方向を分ける。
+固定長の `expected` は一致すべき長さ、不足した列の `expected` は最低限必要な長さである。
+`MessageLength` は宣言長と許容範囲、未知の種類・コマンドは受けた値、余分なポートの列は残りの長さを持つ。
+文面や生バイトで分類せず、アプリとヘルパーの版・送信側を確認する。自動再送はしない。
+回帰は `cargo test -q -p echode-sandbox --lib decode_tests` で、実ソケットと公開操作を通す。
+パラメーター・窓・通知の内側の構造はまだ対象外である（[ADR 0315](../decisions/0315-typed-control-metadata-errors.md)）。
+
 ### 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
 
 `RegionError::SharedMemory` の `operation` と `error.raw_os_error()` を確認する。

@@ -269,6 +269,49 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
             seeds.push(seed(0, 0, &bytes));
         }
     }
+    // Non-refusal control metadata: wrong fixed sizes, port counts, and codes.
+    for (typ, payload) in [
+        (8u32, vec![0]),
+        (12, vec![]),
+        (9, vec![0; 19]),
+        (9, vec![0; 20]),
+        (15, vec![0; 7]),
+        (15, vec![0; 8]),
+        (15, vec![0; 12]),
+        (15, vec![0; 17]),
+        (20, vec![0]),
+        (27, vec![0]),
+        (28, vec![0]),
+        (30, vec![0]),
+        (32, vec![]),
+        (32, vec![255]),
+        (u32::MAX, vec![]),
+    ] {
+        let mut bytes = (12 + payload.len() as u32).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&typ.to_le_bytes());
+        bytes.extend_from_slice(&1u64.to_le_bytes());
+        bytes.extend_from_slice(&payload);
+        seeds.push(seed(0, 0, &bytes));
+    }
+    for input in [true, false] {
+        for count in [1u32, u32::MAX] {
+            let mut payload = if input {
+                vec![]
+            } else {
+                0u32.to_le_bytes().to_vec()
+            };
+            payload.extend_from_slice(&count.to_le_bytes());
+            payload.extend_from_slice(&[0; 8]);
+            let mut bytes = (12 + payload.len() as u32).to_le_bytes().to_vec();
+            bytes.extend_from_slice(&15u32.to_le_bytes());
+            bytes.extend_from_slice(&1u64.to_le_bytes());
+            bytes.extend_from_slice(&payload);
+            seeds.push(seed(0, 0, &bytes));
+        }
+    }
+    for length in [0u32, 11, 64 * 1024 * 1024 + 1, u32::MAX] {
+        seeds.push(seed(0, 0, &length.to_le_bytes()));
+    }
     // A remap with its mapping, after one plain message.
     let hello = encode(0, &ControlMessage::Hello);
     let mut stream = hello.clone();
