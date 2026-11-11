@@ -32,11 +32,18 @@ static ABORT_ARMED: AtomicBool = AtomicBool::new(false);
 /// Mach exception port, so a fault that never becomes one of these signals
 /// is still noticed when the process exits. Later calls replace the mapping
 /// and do not call `sigaction` again.
-pub fn arm_abort_notice(region: &MappedRegion) {
-    point_abort_notice(region);
+///
+/// The handler can run on any thread at any moment, so the mapping it writes
+/// into is kept for the rest of the process: each call keeps one reference,
+/// and an earlier mapping is never released either (ADR 0321).
+pub fn arm_abort_notice(region: &std::sync::Arc<MappedRegion>) {
+    let kept = std::sync::Arc::into_raw(std::sync::Arc::clone(region));
+    ABORT_REGION.store(kept.cast_mut(), Ordering::Release);
     if ABORT_ARMED.swap(true, Ordering::AcqRel) {
         return;
     }
+    // SAFETY: `action` is a zeroed `sigaction` whose handler is set below, and both calls receive
+    // valid pointers to it and to a null old action.
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = abort_notice as *const () as libc::sighandler_t;
@@ -47,17 +54,15 @@ pub fn arm_abort_notice(region: &MappedRegion) {
     }
 }
 
-/// Replace the mapping the handler writes into. Does not call `sigaction`.
-/// The processing thread uses this after the handler is already installed.
-pub fn point_abort_notice(region: &MappedRegion) {
-    ABORT_REGION.store(ptr::from_ref(region).cast_mut(), Ordering::Release);
-}
-
 extern "C" fn abort_notice(signal: i32) {
     let region = ABORT_REGION.load(Ordering::Relaxed);
     if !region.is_null() {
+        // SAFETY: `ABORT_REGION` is null or a region that `arm_abort_notice` keeps alive for the
+        // rest of the process, and `mark_aborted` only stores atomics.
         unsafe { (*region).mark_aborted() };
     }
+    // SAFETY: `signal` and `raise` are async-signal-safe and restore the default action before
+    // raising the same signal again.
     unsafe {
         libc::signal(signal, libc::SIG_DFL);
         libc::raise(signal);
@@ -424,6 +429,7 @@ impl MappedRegion {
     }
 
     pub fn duplicate_fd(&self) -> io::Result<OwnedFd> {
+        // SAFETY: `fcntl` duplicates the region's own open descriptor; no memory is passed.
         let fd = unsafe { libc::fcntl(self.file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
         if fd < 0 {
             Err(io::Error::last_os_error())
@@ -773,6 +779,9 @@ impl MappedRegion {
         }
         let generation = published.wrapping_add(1);
         for (channel, plane) in input.iter().enumerate() {
+            // SAFETY: `publish` checked that each input plane holds `frames` floats, at most
+            // `max_frames`, which the shared plane of this generation holds; the slot is not yet
+            // published, so the helper does not read it.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     plane.as_ptr(),
@@ -784,6 +793,8 @@ impl MappedRegion {
         for (index, (event, device)) in events.iter().enumerate() {
             let record = encode_routed(event, *device).ok_or(RegionError::UnstorableEvent)?;
             let offset = self.event_offset(generation, false, index);
+            // SAFETY: `event_offset` places record `index` inside the mapping for an index below
+            // `input_events`, which was checked above; the slot is not yet published.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     record.as_ptr(),
@@ -855,6 +866,9 @@ impl MappedRegion {
         }
         let generation = published.wrapping_add(1);
         for (channel, plane) in input.iter().enumerate() {
+            // SAFETY: `publish` checked that each input plane holds `frames` floats, at most
+            // `max_frames`, which the shared plane of this generation holds; the slot is not yet
+            // published, so the helper does not read it.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     plane.as_ptr(),
@@ -866,6 +880,8 @@ impl MappedRegion {
         for (index, (event, device)) in events.iter().enumerate() {
             let record = encode_routed(event, *device).ok_or(RegionError::UnstorableEvent)?;
             let offset = self.event_offset(generation, false, index);
+            // SAFETY: `event_offset` places record `index` inside the mapping for an index below
+            // `input_events`, which was checked above; the slot is not yet published.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     record.as_ptr(),
@@ -929,6 +945,9 @@ impl MappedRegion {
             }
         }
         for (channel, plane) in output.iter_mut().enumerate() {
+            // SAFETY: `prepare_block` bounded `frames` by `max_frames`, which each shared plane
+            // holds, and each output plane was checked to hold `frames`; the helper completed this
+            // generation and no longer writes it.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.output_ptr(generation, channel),
@@ -949,6 +968,8 @@ impl MappedRegion {
             };
             let offset = self.event_offset(generation, true, index);
             let mut record = [0u8; RECORD_BYTES];
+            // SAFETY: `event_offset` places record `index` inside the mapping for an index below
+            // `output_events`, and the helper completed this generation.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.map.as_ptr().add(offset),
@@ -995,6 +1016,9 @@ impl MappedRegion {
             });
         }
         for (channel, plane) in output.iter_mut().enumerate() {
+            // SAFETY: `prepare_block` bounded `frames` by `max_frames`, which each shared plane
+            // holds, and each output plane was checked to hold `frames`; the helper completed this
+            // generation and no longer writes it.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.output_ptr(generation, channel),
@@ -1015,6 +1039,8 @@ impl MappedRegion {
             };
             let offset = self.event_offset(generation, true, index);
             let mut record = [0u8; RECORD_BYTES];
+            // SAFETY: `event_offset` places record `index` inside the mapping for an index below
+            // `output_events`, and the helper completed this generation.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.map.as_ptr().add(offset),
@@ -1048,6 +1074,9 @@ impl MappedRegion {
             }
             let offset = self.event_offset(generation, false, index);
             let mut record = [0u8; RECORD_BYTES];
+            // SAFETY: `event_offset` places record `index` inside the mapping for an index below
+            // `input_events`, and this generation's slot belongs to the processing thread during
+            // the block.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.map.as_ptr().add(offset),
@@ -1328,6 +1357,8 @@ fn map_existing(file: File) -> Result<MappedRegion, RegionError> {
     if map.len() < HEADER_BYTES {
         return Err(RegionError::BadMagic);
     }
+    // SAFETY: `map_new` checked that the mapping holds at least `HEADER_BYTES`, and the page-
+    // aligned mapping starts with the `Header`, whose fields are atomics.
     let header = unsafe { &*map.as_ptr().cast::<Header>() };
     if header.magic.load(Ordering::Acquire) != MAGIC {
         return Err(RegionError::BadMagic);
@@ -1370,6 +1401,7 @@ fn shm_file(len: usize) -> Result<File, RegionError> {
 
 fn shm_file_named(name: &std::ffi::CStr, len: usize) -> Result<File, RegionError> {
     // `mode_t` is `u16` on macOS, and a variadic argument is passed as `int`.
+    // SAFETY: `name` is a NUL-terminated C string.
     let fd = unsafe {
         libc::shm_open(
             name.as_ptr(),
@@ -1386,20 +1418,25 @@ fn shm_file_named(name: &std::ffi::CStr, len: usize) -> Result<File, RegionError
     // SAFETY: shm_open returned a new descriptor owned by this function. Hold
     // it before the remaining fallible operations so every failure closes it.
     let file = unsafe { File::from_raw_fd(fd) };
+    // SAFETY: `name` is a NUL-terminated C string.
     if unsafe { libc::shm_unlink(name.as_ptr()) } != 0 {
         return Err(RegionError::SharedMemory {
             operation: SharedMemoryOperation::Unlink,
             error: io::Error::last_os_error(),
         });
     }
+    // SAFETY: `fd` is the descriptor `file` owns, and `ftruncate` passes no memory.
     if unsafe { libc::ftruncate(fd, len as i64) } != 0 {
         return Err(RegionError::SharedMemory {
             operation: SharedMemoryOperation::Truncate,
             error: io::Error::last_os_error(),
         });
     }
+    // SAFETY: `fcntl` reads the descriptor flags of `fd`, which `file` owns; no memory is passed.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags >= 0 {
+        // SAFETY: `fcntl` sets the descriptor flags of `fd`, which `file` owns; no memory is
+        // passed.
         unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
     }
     Ok(file)

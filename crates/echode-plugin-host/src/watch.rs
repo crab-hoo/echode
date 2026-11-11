@@ -75,6 +75,8 @@ impl FolderWatch {
             release: Some(release_info),
             copyDescription: None,
         };
+        // SAFETY: `context` and `paths` are valid for the call, which copies the context; `info`
+        // stays owned by the stream, which frees it through `release_info`.
         let stream = unsafe {
             FSEventStreamCreate(
                 None,
@@ -89,10 +91,14 @@ impl FolderWatch {
             )
         };
         if stream.is_null() {
+            // SAFETY: the stream was not created, so it never took `info`, which came from
+            // `Box::into_raw` above.
             drop(unsafe { Box::from_raw(info) });
             return Err(WatchError::Create);
         }
         let queue = DispatchQueue::new("dev.echode.plugin-watch", None);
+        // SAFETY: `stream` is the stream just created, and `queue` is retained by this watch for as
+        // long as the stream.
         let started = unsafe {
             FSEventStreamSetDispatchQueue(stream, Some(&*queue));
             FSEventStreamStart(stream)
@@ -100,6 +106,8 @@ impl FolderWatch {
         if !started {
             // The stream was never started, so `FSEventStreamStop` is not
             // allowed. Invalidate still releases the callback info.
+            // SAFETY: the stream never started, so it may be invalidated and released, which also
+            // frees `info`.
             unsafe {
                 FSEventStreamInvalidate(stream);
                 FSEventStreamRelease(stream);
@@ -129,6 +137,8 @@ impl FolderWatch {
 impl Drop for FolderWatch {
     fn drop(&mut self) {
         // `FSEventStreamStop` returns only after the callback will not run again.
+        // SAFETY: `stream` was started in `start` and is released only here; stopping waits until
+        // the callback will not run again.
         unsafe {
             FSEventStreamStop(self.stream);
             FSEventStreamInvalidate(self.stream);
@@ -143,6 +153,8 @@ impl Drop for FolderWatch {
 /// and it does call `release` on deallocation (FSEvents.h).
 unsafe extern "C-unwind" fn release_info(info: *const c_void) {
     if !info.is_null() {
+        // SAFETY: `info` came from `Box::into_raw` in `start`, and FSEvents releases it once, when
+        // the stream is deallocated.
         drop(unsafe { Box::from_raw(info as *mut CallbackInfo) });
     }
 }
@@ -158,6 +170,8 @@ unsafe extern "C-unwind" fn stream_callback(
     if info.is_null() {
         return;
     }
+    // SAFETY: `info` is the `CallbackInfo` `start` gave the stream, which lives until the stream
+    // releases it after its last callback.
     let context = unsafe { &*(info as *const CallbackInfo) };
     let _ = context.tx.send(());
 }

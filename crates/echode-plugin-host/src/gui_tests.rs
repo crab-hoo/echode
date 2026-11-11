@@ -4,11 +4,15 @@ use super::*;
 /// must never stand in for the close notification and destroy the view.
 #[test]
 fn contract_plugin_window_survives_temporary_invisibility() {
+    // SAFETY: every field of `clap_plugin_gui` is a nullable function pointer, for which all zero
+    // bytes are `None`.
     static TABLE: clap_plugin_gui = unsafe { std::mem::zeroed() };
     unsafe extern "C" fn get(_: *const clap_plugin, _: *const std::ffi::c_char) -> *const c_void {
         std::ptr::addr_of!(TABLE).cast()
     }
     // All fields are nullable function/data pointers in the raw CLAP ABI.
+    // SAFETY: every field of `clap_plugin` is a nullable pointer or a plain value, for which all
+    // zero bytes are valid.
     let mut plugin: clap_plugin = unsafe { std::mem::zeroed() };
     plugin.get_extension = Some(get);
     let mut surface = Recorded::default();

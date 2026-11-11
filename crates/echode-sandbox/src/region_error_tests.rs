@@ -82,6 +82,7 @@ fn native_open_collision_keeps_errno_and_existing_object() {
     let result = shm_file_named(&name, 4096);
     // Unlink before assertions so the test leaves no named object on failure.
     // Its success also proves the collision did not unlink the existing object.
+    // SAFETY: `name` is a NUL-terminated C string.
     let unlinked = unsafe { libc::shm_unlink(name.as_ptr()) };
     assert_eq!(unlinked, 0);
     let error = result.unwrap_err();
@@ -112,6 +113,7 @@ fn shared_file_unlinks_name_sizes_file_and_sets_close_on_exec() {
     if fd >= 0 {
         // SAFETY: clean up an unexpected successful open before failing.
         drop(unsafe { File::from_raw_fd(fd) });
+        // SAFETY: `name` is a NUL-terminated C string.
         unsafe { libc::shm_unlink(name.as_ptr()) };
     }
     assert_eq!(fd, -1);

@@ -64,6 +64,18 @@ FFI-A1（長さの検査が関数ごとに不揃い）は、次の形で残っ�
 - 局所の `allow`・`expect` で lint を外すことは検査で拒否する。
 - ADR 0278 のとおり crate の境界ごとに注釈を足してコミットし、全件を終えたコミットで lint と検査を有効にする。
 
+### 根拠を書いて分かった所
+
+根拠を書けない所は、注釈ではなくコードを直した。
+
+- **プラグインの拡張の表**: `echode-plugin-host` は、`get_extension` の呼出しと結果の型の付け替えを 8 か所で別々に書いていた。
+  `extension.rs` の `table::<T>(plugin, id)` 一つにまとめ、「`T` が `id` の表の型である」ことだけを呼出し側の根拠にした。
+- **致命的なシグナルの通知（`echode-sandbox`）**: `arm_abort_notice(&MappedRegion)` は安全な関数なのに、シグナルハンドラーが書き込む生ポインターを保存し、
+  その領域を生かしておく仕組みがなかった。単体テストのプロセスでは、領域を捨てた後もハンドラーが残る。
+  `&Arc<MappedRegion>` を受け取って参照を一つ持ち続け、前の領域も解放しない（ハンドラーはどのスレッドでもいつでも動き得るため）。
+  ヘルパーは 1 プロセスに 1 回しか呼ばないので、残す量は領域 1 つである。使われていなかった `point_abort_notice` は消した。
+  回帰は `region_tests.rs` の `the_abort_notice_keeps_its_mapping_for_the_rest_of_the_process` である。
+
 ## 回帰と基盤
 
 - `abi_tests.rs`（Miri でも実行）は、`isize::MAX` を超える出力の容量、0 でない長さの null、位置のずれた出力、位置を問わない UUID を、

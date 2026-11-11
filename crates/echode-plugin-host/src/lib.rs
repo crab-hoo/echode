@@ -150,7 +150,11 @@ pub fn serve_fds(
     // socket on `control_fd`, and the optional fan-in word on `fan_fd`, before
     // exec. This process owns them.
     let shm = unsafe { std::os::fd::OwnedFd::from_raw_fd(shm_fd) };
+    // SAFETY: the parent placed the control socket on `control_fd` before exec, and nothing else in
+    // this process owns it.
     let control = unsafe { std::os::fd::OwnedFd::from_raw_fd(control_fd) };
+    // SAFETY: the parent placed the fan-in word on this descriptor before exec, and nothing else in
+    // this process owns it.
     let fan = fan_fd.map(|fd| unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) });
     threads::serve_fds(shm, control, fan, plugin, plugin_id, sample_rate, workgroup)
 }
@@ -238,6 +242,7 @@ pub fn measure_in_process(
 
 mod catalog;
 mod events;
+mod extension;
 mod live;
 mod realtime;
 mod scan;

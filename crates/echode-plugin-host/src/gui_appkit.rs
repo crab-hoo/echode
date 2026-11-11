@@ -79,8 +79,8 @@ impl Surface for Panel {
             NSPoint::new(0.0, 0.0),
             NSSize::new(f64::from(width), f64::from(height)),
         );
-        // SAFETY: a standard initializer on a freshly allocated panel.
         let allocated = HostPanel::alloc(self.mtm).set_ivars(PanelState::default());
+        // SAFETY: a standard initializer on a freshly allocated panel.
         let panel: Retained<HostPanel> = unsafe {
             msg_send![
                 super(allocated),

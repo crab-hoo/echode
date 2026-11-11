@@ -30,6 +30,8 @@ pub struct RetainedWorkgroup {
 // SAFETY: workgroup retention and port copying are thread-safe OS operations.
 // This owner never joins a thread or contains a thread-local membership token.
 unsafe impl Send for RetainedWorkgroup {}
+// SAFETY: as for `Send`: every operation this owner performs on the object is a thread-safe OS
+// call.
 unsafe impl Sync for RetainedWorkgroup {}
 
 impl RetainedWorkgroup {
@@ -142,6 +144,7 @@ fn this_task() -> u32 {
     // `mach2` 0.7 does not expose the current task port. libc still does, and
     // marks the wrapper deprecated.
     #[allow(deprecated)]
+    // SAFETY: `mach_task_self` has no preconditions; it reads this task's own port.
     unsafe {
         libc::mach_task_self()
     }
@@ -226,6 +229,8 @@ pub fn join_passed_workgroup(
         deallocate_port(port);
         return Err(error);
     }
+    // SAFETY: `port` is the send right just received, owned here until it is deallocated below, and
+    // the name is a static C string.
     let workgroup = unsafe { sync::os_workgroup_create_with_port(c"echode-helper".as_ptr(), port) };
     deallocate_port(port);
     if workgroup.is_null() {
@@ -240,6 +245,8 @@ pub fn join_passed_workgroup(
         joined: false,
         release: true,
     };
+    // SAFETY: the membership owns the retained `workgroup` until it is dropped on this thread, and
+    // the token lives in it.
     let joined = unsafe { sync::os_workgroup_join(workgroup, &mut membership.token) };
     if joined != 0 {
         return Err(WorkgroupError::Call {
@@ -303,20 +310,28 @@ pub(crate) fn spawn_helper(
 
     let mut read_fd = -1;
     let mut write_fd = -1;
+    // SAFETY: `argv` and `envp` are null-terminated arrays of pointers into `argv_owned` and
+    // `env_owned`, which outlive the call.
     let spawned = unsafe { spawn_posix(&path, &argv, &envp, inherit, &mut read_fd, &mut write_fd) };
     if write_fd >= 0 {
+        // SAFETY: `write_fd` is the pipe's write end, which `spawn_posix` opened and this function
+        // owns.
         unsafe { libc::close(write_fd) };
     }
     let spawned = match spawned {
         Ok(pid) => pid,
         Err(error) => {
             if read_fd >= 0 {
+                // SAFETY: `read_fd` is the pipe's read end, which `spawn_posix` opened and this
+                // function owns.
                 unsafe { libc::close(read_fd) };
             }
             return Err(error);
         }
     };
     if read_fd < 0 {
+        // SAFETY: `spawned` is the child just started, which nothing has reaped yet, so its pid is
+        // still its own.
         unsafe { libc::kill(spawned, libc::SIGKILL) };
         return Err(SpawnError::NoStderrPipe);
     }
@@ -327,6 +342,9 @@ pub(crate) fn spawn_helper(
     })
 }
 
+/// # Safety
+/// `argv` and `envp` are null-terminated arrays of pointers to NUL-terminated
+/// strings, and the strings outlive the call.
 unsafe fn spawn_posix(
     path: &CString,
     argv: &[*mut std::ffi::c_char],
@@ -336,20 +354,26 @@ unsafe fn spawn_posix(
     write_fd: &mut i32,
 ) -> Result<i32, SpawnError> {
     let mut pipes = [0i32; 2];
+    // SAFETY: `pipes` has room for the two descriptors `pipe` writes.
     if unsafe { libc::pipe(pipes.as_mut_ptr()) } != 0 {
         return Err(SpawnError::Pipe(std::io::Error::last_os_error()));
     }
+    // SAFETY: `pipes[0]` is an open descriptor this function owns; `fcntl` only duplicates it.
     let read = unsafe { libc::fcntl(pipes[0], libc::F_DUPFD_CLOEXEC, 3) };
+    // SAFETY: `pipes[1]` is an open descriptor this function owns; `fcntl` only duplicates it.
     let write = unsafe { libc::fcntl(pipes[1], libc::F_DUPFD_CLOEXEC, 3) };
+    // SAFETY: both descriptors are open and owned here, and their duplicates replace them.
     unsafe {
         libc::close(pipes[0]);
         libc::close(pipes[1]);
     }
     if read < 0 || write < 0 {
         if read >= 0 {
+            // SAFETY: `read` is a duplicate this function owns and closes once.
             unsafe { libc::close(read) };
         }
         if write >= 0 {
+            // SAFETY: `write` is a duplicate this function owns and closes once.
             unsafe { libc::close(write) };
         }
         return Err(SpawnError::DupPipe(std::io::Error::last_os_error()));
@@ -360,18 +384,24 @@ unsafe fn spawn_posix(
 
     let mut actions: libc::posix_spawn_file_actions_t = std::ptr::null_mut();
     let mut attr: libc::posix_spawnattr_t = std::ptr::null_mut();
+    // SAFETY: `actions` is local storage that `posix_spawn_file_actions_init` initializes.
     let init_actions = unsafe { libc::posix_spawn_file_actions_init(&mut actions) };
     if init_actions != 0 {
         return Err(posix(SpawnStep::FileActions, init_actions));
     }
+    // SAFETY: `attr` is local storage that `posix_spawnattr_init` initializes.
     let init_attr = unsafe { libc::posix_spawnattr_init(&mut attr) };
     if init_attr != 0 {
+        // SAFETY: `actions` was initialized above and is destroyed once.
         unsafe { libc::posix_spawn_file_actions_destroy(&mut actions) };
         return Err(posix(SpawnStep::Attributes, init_attr));
     }
 
     let result =
+        // SAFETY: `argv` and `envp` are as the caller promised, and `actions` and `attr` were
+        // initialized above and outlive the call.
         unsafe { configure_and_spawn(path, argv, envp, pipes, inherit, &mut actions, &mut attr) };
+    // SAFETY: `actions` and `attr` were initialized above and are destroyed once.
     unsafe {
         libc::posix_spawnattr_destroy(&mut attr);
         libc::posix_spawn_file_actions_destroy(&mut actions);
@@ -379,6 +409,9 @@ unsafe fn spawn_posix(
     result
 }
 
+/// # Safety
+/// As for [`spawn_posix`]. `actions` and `attr` were initialized, and the caller
+/// destroys them after this returns.
 unsafe fn configure_and_spawn(
     path: &CString,
     argv: &[*mut std::ffi::c_char],
@@ -388,6 +421,7 @@ unsafe fn configure_and_spawn(
     actions: &mut libc::posix_spawn_file_actions_t,
     attr: &mut libc::posix_spawnattr_t,
 ) -> Result<i32, SpawnError> {
+    // SAFETY: `attr` was initialized by the caller.
     let flags = unsafe {
         libc::posix_spawnattr_setflags(attr, libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short)
     };
@@ -396,30 +430,36 @@ unsafe fn configure_and_spawn(
     }
     let null = c"/dev/null".as_ptr();
     let open_in =
+        // SAFETY: `actions` was initialized by the caller, and `null` is a static C string.
         unsafe { libc::posix_spawn_file_actions_addopen(actions, 0, null, libc::O_RDONLY, 0) };
     if open_in != 0 {
         return Err(posix(SpawnStep::Stdin, open_in));
     }
     let open_out =
+        // SAFETY: `actions` was initialized by the caller, and `null` is a static C string.
         unsafe { libc::posix_spawn_file_actions_addopen(actions, 1, null, libc::O_WRONLY, 0) };
     if open_out != 0 {
         return Err(posix(SpawnStep::Stdout, open_out));
     }
+    // SAFETY: `actions` was initialized by the caller.
     let dup_err = unsafe { libc::posix_spawn_file_actions_adddup2(actions, pipes[1], 2) };
     if dup_err != 0 {
         return Err(posix(SpawnStep::Stderr, dup_err));
     }
+    // SAFETY: `actions` was initialized by the caller.
     let close_read = unsafe { libc::posix_spawn_file_actions_addclose(actions, pipes[0]) };
     if close_read != 0 {
         return Err(posix(SpawnStep::CloseStderrRead, close_read));
     }
     if pipes[1] != 2 {
+        // SAFETY: `actions` was initialized by the caller.
         let close_write = unsafe { libc::posix_spawn_file_actions_addclose(actions, pipes[1]) };
         if close_write != 0 {
             return Err(posix(SpawnStep::CloseStderrWrite, close_write));
         }
     }
     for (src, dst) in inherit {
+        // SAFETY: `actions` was initialized by the caller.
         let dup = unsafe { libc::posix_spawn_file_actions_adddup2(actions, *src, *dst) };
         if dup != 0 {
             return Err(posix(
@@ -431,6 +471,7 @@ unsafe fn configure_and_spawn(
             ));
         }
         if src != dst {
+            // SAFETY: `actions` was initialized by the caller.
             let close = unsafe { libc::posix_spawn_file_actions_addclose(actions, *src) };
             if close != 0 {
                 return Err(posix(SpawnStep::CloseInherited(*src), close));
@@ -438,6 +479,8 @@ unsafe fn configure_and_spawn(
         }
     }
     let mut pid = 0i32;
+    // SAFETY: `path`, `argv` and `envp` are as the caller promised, `actions` and `attr` were
+    // initialized by the caller, and `pid` is writable.
     let spawned = unsafe {
         libc::posix_spawn(
             &mut pid,

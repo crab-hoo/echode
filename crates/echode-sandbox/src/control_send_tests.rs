@@ -177,6 +177,7 @@ fn a_remap_sent_as_a_message_carries_its_descriptor() {
         unreachable!();
     };
     assert!(
+        // SAFETY: `fcntl` reads the descriptor flags of an open descriptor; no memory is passed.
         unsafe { libc::fcntl(kept.as_raw_fd(), libc::F_GETFD) } >= 0,
         "a borrowed message keeps the sender's descriptor open"
     );

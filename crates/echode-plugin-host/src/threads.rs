@@ -5,6 +5,7 @@
 //! parent block and for a restart that arrives while the transport is idle.
 
 use crate::events::write_input;
+use crate::extension::table;
 use crate::gui::GuiRequests;
 use crate::main_requests::{MainReply, MainRequest, MainRequests};
 use crate::relay::{RelayOutput, RelayRing};
@@ -227,6 +228,8 @@ struct Bridge {
 // mapping is freed only after the processing thread has left it. The stopped
 // processor slot is published through `processor.state`, not by aliasing.
 unsafe impl Send for Bridge {}
+// SAFETY: the same reasons as `Send` above: threads share the bridge through atomics, and the
+// pointers in them are dereferenced only under the ownership rules stated there.
 unsafe impl Sync for Bridge {}
 
 impl Bridge {
@@ -236,6 +239,9 @@ impl Bridge {
         if source.is_null() || run_loop.is_null() {
             return;
         }
+        // SAFETY: `serve_region` stores both pointers before any worker starts and keeps the source
+        // and the run loop retained until the workers have been joined and the plugin is gone;
+        // CoreFoundation allows signalling a source and waking a run loop from any thread.
         unsafe {
             (*source).signal();
             (*run_loop).wake_up();
@@ -274,6 +280,8 @@ impl Bridge {
             INSTANCE.with(|cell| {
                 let instance = cell.get();
                 if !instance.is_null() {
+                    // SAFETY: `INSTANCE` is set only on the main thread, where this runs, to the
+                    // instance `serve_region` keeps until it clears the pointer again.
                     unsafe { (*instance).call_on_main_thread_callback() };
                 }
             });
@@ -293,6 +301,8 @@ impl Bridge {
             if instance.is_null() {
                 return;
             }
+            // SAFETY: as in `on_main`: the instance lives until `serve_region` clears `INSTANCE`,
+            // and this main-thread call holds its only reference.
             let instance = unsafe { &mut *instance };
             if let Some(stopped) = self.processor.try_take() {
                 instance.deactivate(stopped);
@@ -325,6 +335,8 @@ impl Bridge {
             if instance.is_null() {
                 return;
             }
+            // SAFETY: as in `on_main`: the instance lives until `serve_region` clears `INSTANCE`,
+            // and this main-thread call holds its only reference.
             let instance = unsafe { &mut *instance };
             if self.processor.is_empty() {
                 match activate(
@@ -430,6 +442,7 @@ impl MarkDirty for HostMain<'_> {
 #[derive(Copy, Clone)]
 struct HostState;
 
+// SAFETY: `CLAP_EXT_STATE` is the official identifier of the extension this type stands for.
 unsafe impl Extension for HostState {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_STATE];
     type ExtensionSide = HostExtensionSide;
@@ -439,6 +452,8 @@ unsafe impl Extension for HostState {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_host_state`, the `#[repr(C)]` table CLAP declares for
+// that identifier.
 unsafe impl<H> ExtensionImplementation<H> for HostState
 where
     H: for<'a> HostHandlers<MainThread<'a>: MarkDirty>,
@@ -453,6 +468,8 @@ unsafe extern "C" fn host_mark_dirty<H>(host: *const clap_host)
 where
     H: for<'a> HostHandlers<MainThread<'a>: MarkDirty>,
 {
+    // SAFETY: the plugin passes back the host pointer this helper gave it, on the main thread as
+    // CLAP requires for `mark_dirty`.
     unsafe {
         HostWrapper::<H>::handle_main_thread(host, |host| {
             host.mark_dirty();
@@ -466,6 +483,7 @@ where
 /// # Safety
 /// `host` is the pointer this helper gave the plugin.
 unsafe fn with_bridge(host: *const clap_host, action: impl FnOnce(&Bridge)) {
+    // SAFETY: the caller passes the host pointer this helper gave the plugin.
     unsafe {
         HostWrapper::<EchodeHost>::handle(host, |wrapper| {
             if let Some(bridge) = &wrapper.shared().bridge {
@@ -479,6 +497,7 @@ unsafe fn with_bridge(host: *const clap_host, action: impl FnOnce(&Bridge)) {
 #[derive(Copy, Clone)]
 struct HostGui;
 
+// SAFETY: `CLAP_EXT_GUI` is the official identifier of the extension this type stands for.
 unsafe impl Extension for HostGui {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_GUI];
     type ExtensionSide = HostExtensionSide;
@@ -488,6 +507,8 @@ unsafe impl Extension for HostGui {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_host_gui`, the `#[repr(C)]` table CLAP declares for
+// that identifier.
 unsafe impl ExtensionImplementation<EchodeHost> for HostGui {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_host_gui {
@@ -503,6 +524,7 @@ unsafe impl ExtensionImplementation<EchodeHost> for HostGui {
 unsafe extern "C" fn host_gui_hints(_host: *const clap_host) {}
 
 unsafe extern "C" fn host_gui_resize(host: *const clap_host, width: u32, height: u32) -> bool {
+    // SAFETY: the plugin passes back the host pointer this helper gave it.
     unsafe {
         with_bridge(host, |bridge| {
             bridge.gui.request_resize(width, height);
@@ -513,6 +535,7 @@ unsafe extern "C" fn host_gui_resize(host: *const clap_host, width: u32, height:
 }
 
 unsafe extern "C" fn host_gui_show(host: *const clap_host) -> bool {
+    // SAFETY: the plugin passes back the host pointer this helper gave it.
     unsafe {
         with_bridge(host, |bridge| {
             bridge.gui.request_show();
@@ -523,6 +546,7 @@ unsafe extern "C" fn host_gui_show(host: *const clap_host) -> bool {
 }
 
 unsafe extern "C" fn host_gui_hide(host: *const clap_host) -> bool {
+    // SAFETY: the plugin passes back the host pointer this helper gave it.
     unsafe {
         with_bridge(host, |bridge| {
             bridge.gui.request_hide();
@@ -534,6 +558,7 @@ unsafe extern "C" fn host_gui_hide(host: *const clap_host) -> bool {
 
 /// A floating window closed. The host destroys the plugin's view either way.
 unsafe extern "C" fn host_gui_closed(host: *const clap_host, _was_destroyed: bool) {
+    // SAFETY: the plugin passes back the host pointer this helper gave it.
     unsafe {
         with_bridge(host, |bridge| {
             bridge.gui.closed();
@@ -545,6 +570,7 @@ unsafe extern "C" fn host_gui_closed(host: *const clap_host, _was_destroyed: boo
 #[derive(Copy, Clone)]
 struct HostParams;
 
+// SAFETY: `CLAP_EXT_PARAMS` is the official identifier of the extension this type stands for.
 unsafe impl Extension for HostParams {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_PARAMS];
     type ExtensionSide = HostExtensionSide;
@@ -554,6 +580,8 @@ unsafe impl Extension for HostParams {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_host_params`, the `#[repr(C)]` table CLAP declares for
+// that identifier.
 unsafe impl ExtensionImplementation<EchodeHost> for HostParams {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_host_params {
@@ -569,6 +597,7 @@ unsafe extern "C" fn host_params_rescan(host: *const clap_host, flags: clap_para
     if flags & (CLAP_PARAM_RESCAN_INFO | CLAP_PARAM_RESCAN_ALL) != 0 {
         PARAM_FLAGS.with(|cache| cache.borrow_mut().take());
     }
+    // SAFETY: the plugin passes back the host pointer this helper gave it.
     unsafe {
         with_bridge(host, |bridge| {
             bridge.rescan_request.store(true, Ordering::Release);
@@ -588,6 +617,7 @@ unsafe extern "C" fn host_params_clear(
 /// Any thread. The processing thread calls `flush` between blocks, and is
 /// woken for it when the transport is stopped.
 unsafe extern "C" fn host_params_flush(host: *const clap_host) {
+    // SAFETY: the plugin passes back the host pointer this helper gave it.
     unsafe {
         with_bridge(host, |bridge| {
             bridge.flush_request.store(true, Ordering::Release);
@@ -599,6 +629,7 @@ unsafe extern "C" fn host_params_flush(host: *const clap_host) {
 #[derive(Copy, Clone)]
 struct HostLatency;
 
+// SAFETY: `CLAP_EXT_LATENCY` is the official identifier of the extension this type stands for.
 unsafe impl Extension for HostLatency {
     const IDENTIFIERS: &[&CStr] = &[clap_sys::ext::latency::CLAP_EXT_LATENCY];
     type ExtensionSide = HostExtensionSide;
@@ -607,6 +638,8 @@ unsafe impl Extension for HostLatency {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_host_latency`, the `#[repr(C)]` table CLAP declares
+// for that identifier.
 unsafe impl ExtensionImplementation<EchodeHost> for HostLatency {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_sys::ext::latency::clap_host_latency {
@@ -771,6 +804,8 @@ fn serve_region(
         cancel: None,
         perform: Some(on_source),
     };
+    // SAFETY: `context` is a complete source context whose `info` is the bridge, which outlives the
+    // source; CoreFoundation copies the context during the call.
     let source = unsafe { CFRunLoopSource::new(None, 0, &raw mut context) }
         .ok_or(HostError::RunLoopSource)?;
     let run_loop = CFRunLoop::current().ok_or(HostError::NoRunLoop)?;
@@ -914,15 +949,21 @@ fn serve_region(
     // Both worker threads have been joined, so no batch is still being flushed.
     let unclaimed = bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel);
     if !unclaimed.is_null() {
+        // SAFETY: both worker threads have been joined, so the swap handed this thread the batch,
+        // which came from `Box::into_raw`.
         drop(unsafe { Box::from_raw(unclaimed) });
     }
     reclaim_param_batches(&bridge);
     let ports = bridge.ports.swap(ptr::null_mut(), Ordering::AcqRel);
     if !ports.is_null() {
+        // SAFETY: the shape came from `Box::into_raw` in this function, and the joined workers no
+        // longer read it.
         drop(unsafe { Box::from_raw(ports) });
     }
     let fan = bridge.fan.swap(ptr::null_mut(), Ordering::AcqRel);
     if !fan.is_null() {
+        // SAFETY: the fan-in word came from `Box::into_raw` in `serve_region`, and the joined
+        // workers no longer read it.
         drop(unsafe { Box::from_raw(fan) });
     }
     audio_result
@@ -1288,9 +1329,9 @@ fn adopt(bridge: &Bridge, buffers: Option<&mut Box<PluginBuffers>>) -> bool {
         return false;
     }
     let cancel = bridge.cancel_pending.swap(false, Ordering::AcqRel);
-    // SAFETY: only this thread can retire this pending mapping.
     if !cancel
         && bridge.buffers_live.load(Ordering::Acquire)
+        // SAFETY: only this thread can retire this pending mapping.
         && unsafe { (*pending).published() } == 0
     {
         return false;
@@ -1344,11 +1385,14 @@ fn reclaim_retired(bridge: &Bridge) {
     let buffers = bridge
         .retired_buffers
         .swap(ptr::null_mut(), Ordering::AcqRel);
-    // SAFETY: the processing thread relinquished these allocations before release.
     if !old.is_null() {
+        // SAFETY: the processing thread relinquished this mapping, which came
+        // from `Box::into_raw`, before the swap handed it to this thread.
         drop(unsafe { Box::from_raw(old) });
     }
     if !buffers.is_null() {
+        // SAFETY: the processing thread relinquished these buffers, which came
+        // from `Box::into_raw`, before the swap handed them to this thread.
         drop(unsafe { Box::from_raw(buffers) });
     }
 }
@@ -1704,6 +1748,9 @@ fn render_plugin(
     relay: &RelayRing,
 ) -> Result<(), ()> {
     for (channel, plane) in buffers.input.iter_mut().enumerate() {
+        // SAFETY: `prepare_block` bounded `frames` by the plane size of the shared region, `fits`
+        // matched the channel counts and checked that every local plane holds `frames`, and the
+        // shared and local planes never overlap.
         unsafe {
             ptr::copy_nonoverlapping(
                 region.input_ptr(generation, channel),
@@ -1756,6 +1803,9 @@ fn render_plugin(
         )
         .map_err(|_| ())?;
     for (channel, plane) in buffers.output.iter().enumerate() {
+        // SAFETY: `prepare_block` bounded `frames` by the plane size of the shared region, `fits`
+        // matched the channel counts and checked that every local plane holds `frames`, and the
+        // shared and local planes never overlap.
         unsafe {
             ptr::copy_nonoverlapping(
                 plane.as_ptr(),
@@ -1790,6 +1840,8 @@ fn port_inputs<'a>(
         // SAFETY: `ptrs` addresses the buffer set for this block, and `start + index`
         // is one of its channels. The slice lives only while clack copies the pointer.
         let pointer = unsafe { *ptrs.add(start + index) };
+        // SAFETY: `refresh_ptrs` pointed this channel at a local plane of at least `frames` floats,
+        // and no other slice of that plane lives during the block.
         InputChannel::variable(unsafe { std::slice::from_raw_parts_mut(pointer, frames) })
     });
     AudioPortBuffer {
@@ -1810,6 +1862,8 @@ fn port_outputs<'a>(
     let channels = (0..count).map(move |index| {
         // SAFETY: same region as `port_inputs`. Clack copies the pointer before returning.
         let pointer = unsafe { *ptrs.add(start + index) };
+        // SAFETY: `refresh_ptrs` pointed this channel at a local plane of at least `frames` floats,
+        // and no other slice of that plane lives during the block.
         unsafe { std::slice::from_raw_parts_mut(pointer, frames) }
     });
     AudioPortBuffer {
@@ -1852,6 +1906,8 @@ fn published_ports(bridge: &Bridge) -> Option<&PortShape> {
     if pointer.is_null() {
         None
     } else {
+        // SAFETY: `serve_region` publishes the shape from `Box::into_raw` before the workers start
+        // and frees it only after joining them.
         Some(unsafe { &*pointer })
     }
 }
@@ -1927,6 +1983,8 @@ fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainRep
         if instance.is_null() {
             return Err(Refusal::NoPlugin);
         }
+        // SAFETY: `INSTANCE` is set only on the main thread, where main requests run, to the
+        // instance `serve_region` keeps until it clears the pointer again.
         let instance = unsafe { &*instance };
         // Exhaustive: a new operation can never fall through to state loading.
         Ok(match request {
@@ -1942,6 +2000,8 @@ fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainRep
             MainRequest::Parameters => {
                 let params = bridge.params.load(Ordering::Acquire);
                 MainReply::Parameters(
+                    // SAFETY: `params` is null or the plugin's `clap_plugin_params` table, which
+                    // stays valid while the plugin lives.
                     unsafe { params.as_ref() }
                         .map(|params| param_infos(instance.raw_instance(), params))
                         .unwrap_or_default(),
@@ -1953,6 +2013,8 @@ fn perform_main_request(bridge: &Bridge, request: MainRequest) -> Result<MainRep
             MainRequest::Parse { id, text } => {
                 let params = bridge.params.load(Ordering::Acquire);
                 MainReply::Parsed(
+                    // SAFETY: `params` is null or the plugin's `clap_plugin_params` table, which
+                    // stays valid while the plugin lives.
                     unsafe { params.as_ref() }
                         .map(|params| param_from_text(instance.raw_instance(), params, id, &text))
                         .unwrap_or(ParamText::Unsupported),
@@ -1979,14 +2041,9 @@ struct ParamBatch {
 
 fn params_extension(instance: &PluginInstance<EchodeHost>) -> *mut clap_plugin_params {
     let plugin = instance.raw_instance();
-    let Some(get) = plugin.get_extension else {
-        return ptr::null_mut();
-    };
-    // SAFETY: standard extension id, queried on the main thread after creation.
-    // The table stays valid for the plugin's lifetime.
-    unsafe { get(plugin, CLAP_EXT_PARAMS.as_ptr()) }
-        .cast::<clap_plugin_params>()
-        .cast_mut()
+    // SAFETY: `clap_plugin_params` is the table for `CLAP_EXT_PARAMS`.
+    unsafe { table::<clap_plugin_params>(plugin, CLAP_EXT_PARAMS) }
+        .map_or(ptr::null_mut(), |params| ptr::from_ref(params).cast_mut())
 }
 
 /// Applies queued parameter values between blocks, on the processing thread.
@@ -2122,6 +2179,8 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
     let stale = bridge.param_pending.swap(batch, Ordering::AcqRel);
     if !stale.is_null() {
         // The processing thread never took it, so this thread still owns it.
+        // SAFETY: the processing thread never took this batch, so the swap handed it back to this
+        // thread; it came from `Box::into_raw`.
         drop(unsafe { Box::from_raw(stale) });
     }
     bridge.bump_audio();
@@ -2133,6 +2192,8 @@ fn apply_params(bridge: &Bridge, changes: &[ParamChange]) -> Result<Vec<ParamVal
         if started.elapsed() > std::time::Duration::from_secs(2) {
             let unclaimed = bridge.param_pending.swap(ptr::null_mut(), Ordering::AcqRel);
             if !unclaimed.is_null() {
+                // SAFETY: the processing thread never took this batch, so the swap handed it back
+                // to this thread; it came from `Box::into_raw`.
                 drop(unsafe { Box::from_raw(unclaimed) });
             }
             // A batch the processing thread already took may still apply.
@@ -2373,29 +2434,24 @@ fn c_text(chars: &[c_char]) -> String {
 fn query_latency(instance: &PluginInstance<EchodeHost>) -> u32 {
     use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_plugin_latency};
     let plugin = instance.raw_instance();
-    let Some(get) = plugin.get_extension else {
+    // SAFETY: `clap_plugin_latency` is the table for `CLAP_EXT_LATENCY`.
+    let Some(extension) = (unsafe { table::<clap_plugin_latency>(plugin, CLAP_EXT_LATENCY) })
+    else {
         return 0;
     };
-    // SAFETY: CLAP latency is read on the main thread after successful activation.
-    let raw = unsafe { get(plugin, CLAP_EXT_LATENCY.as_ptr()) };
-    if raw.is_null() {
-        return 0;
-    }
-    let extension = unsafe { &*raw.cast::<clap_plugin_latency>() };
+    // SAFETY: the plugin's own function, called on the main thread after a
+    // successful activation, where CLAP lets the host read the latency.
     extension.get.map(|get| unsafe { get(plugin) }).unwrap_or(0)
 }
 fn query_tail(instance: &PluginInstance<EchodeHost>) -> u32 {
     use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_plugin_tail};
     let plugin = instance.raw_instance();
-    let Some(get) = plugin.get_extension else {
+    // SAFETY: `clap_plugin_tail` is the table for `CLAP_EXT_TAIL`.
+    let Some(extension) = (unsafe { table::<clap_plugin_tail>(plugin, CLAP_EXT_TAIL) }) else {
         return 0;
     };
-    // SAFETY: standard CLAP extension, queried on the main thread after activation.
-    let raw = unsafe { get(plugin, CLAP_EXT_TAIL.as_ptr()) };
-    if raw.is_null() {
-        return 0;
-    }
-    let extension = unsafe { &*raw.cast::<clap_plugin_tail>() };
+    // SAFETY: the plugin's own function, called on the main thread after a
+    // successful activation; CLAP allows it on the main and audio threads.
     extension.get.map(|get| unsafe { get(plugin) }).unwrap_or(0)
 }
 
@@ -2406,15 +2462,13 @@ fn prepare_event_capacity(
 ) -> Result<(), PluginFailure> {
     use echode_realtime::plugin_capacity::{PLUGIN_EVENT_CAPACITY, PluginEventCapacity};
     let plugin = instance.raw_instance();
-    let Some(get) = plugin.get_extension else {
+    // SAFETY: `PluginEventCapacity` is the table for `PLUGIN_EVENT_CAPACITY`.
+    let Some(extension) = (unsafe { table::<PluginEventCapacity>(plugin, PLUGIN_EVENT_CAPACITY) })
+    else {
         return Ok(());
     };
-    // SAFETY: the extension is queried and called on the plugin main thread.
-    let raw = unsafe { get(plugin, PLUGIN_EVENT_CAPACITY.as_ptr()) };
-    if raw.is_null() {
-        return Ok(());
-    }
-    let extension = unsafe { &*raw.cast::<PluginEventCapacity>() };
+    // SAFETY: the plugin's own function, called with its plugin on the main
+    // thread, where the extension is declared to run.
     if unsafe { (extension.prepare)((plugin as *const clap_plugin).cast(), events) } {
         Ok(())
     } else {
@@ -2423,12 +2477,8 @@ fn prepare_event_capacity(
 }
 
 fn state_extension(plugin: &clap_plugin) -> Result<&clap_plugin_state, PluginFailure> {
-    let get_extension = plugin.get_extension.ok_or(PluginFailure::NoState)?;
-    let extension = unsafe { get_extension(plugin, CLAP_EXT_STATE.as_ptr()) };
-    if extension.is_null() {
-        return Err(PluginFailure::NoState);
-    }
-    Ok(unsafe { &*(extension as *const clap_plugin_state) })
+    // SAFETY: `clap_plugin_state` is the table for `CLAP_EXT_STATE`.
+    unsafe { table::<clap_plugin_state>(plugin, CLAP_EXT_STATE) }.ok_or(PluginFailure::NoState)
 }
 
 fn save_plugin_state(instance: &PluginInstance<EchodeHost>) -> Result<Vec<u8>, PluginFailure> {
@@ -2441,6 +2491,8 @@ fn save_plugin_state(instance: &PluginInstance<EchodeHost>) -> Result<Vec<u8>, P
         ctx: (&mut bytes as *mut Vec<u8>).cast::<c_void>(),
         write: Some(state_write),
     };
+    // SAFETY: `save` is the plugin's own function, called on the main thread with its plugin and a
+    // stream whose context outlives the call.
     let saved = unsafe { save(plugin, &stream) };
     if !saved {
         return Err(PluginFailure::SaveRefused);
@@ -2465,6 +2517,8 @@ fn load_plugin_state(
         ctx: (&mut cursor as *mut ReadCursor).cast::<c_void>(),
         read: Some(state_read),
     };
+    // SAFETY: `load` is the plugin's own function, called on the main thread with its plugin and a
+    // stream whose context outlives the call.
     let loaded = unsafe { load(plugin, &stream) };
     if !loaded {
         return Err(PluginFailure::LoadRefused);
@@ -2489,8 +2543,11 @@ unsafe extern "C" fn state_write(
     let Ok(count) = usize::try_from(size) else {
         return -1;
     };
+    // SAFETY: the plugin passes back the stream `save_plugin_state` made, whose context is that
+    // call's `Vec<u8>`, borrowed only here.
     let ctx = unsafe { &mut *(*stream).ctx.cast::<Vec<u8>>() };
     if count > 0 {
+        // SAFETY: the plugin passes `size` readable bytes at a non-null `buffer`.
         let slice = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), count) };
         ctx.extend_from_slice(slice);
     }
@@ -2508,10 +2565,14 @@ unsafe extern "C" fn state_read(
     let Ok(count) = usize::try_from(size) else {
         return -1;
     };
+    // SAFETY: the plugin passes back the stream `load_plugin_state` made, whose context is that
+    // call's `ReadCursor`, borrowed only here.
     let ctx = unsafe { &mut *(*stream).ctx.cast::<ReadCursor>() };
     let available = ctx.len.saturating_sub(ctx.pos);
     let take = count.min(available);
     if take > 0 {
+        // SAFETY: `take` fits both the cursor's remaining bytes, which the cursor's slice holds,
+        // and the `size` writable bytes the plugin passed.
         unsafe {
             ptr::copy_nonoverlapping(ctx.bytes.add(ctx.pos), buffer.cast::<u8>(), take);
         }
@@ -2523,14 +2584,9 @@ unsafe extern "C" fn state_read(
 /// Reads `clap.audio-ports` while the plugin is inactive.
 fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape, PluginFailure> {
     let plugin = instance.raw_instance();
-    let get_extension = plugin.get_extension.ok_or(PluginFailure::NoAudioPorts)?;
-    // SAFETY: `get_extension` is the plugin's own function. The id is a static
-    // C string. The plugin is inactive and this runs on the main thread.
-    let extension = unsafe { get_extension(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr()) };
-    if extension.is_null() {
-        return Err(PluginFailure::NoAudioPorts);
-    }
-    let ports = unsafe { &*(extension as *const clap_plugin_audio_ports) };
+    // SAFETY: `clap_plugin_audio_ports` is the table for `CLAP_EXT_AUDIO_PORTS`.
+    let ports = unsafe { table::<clap_plugin_audio_ports>(plugin, CLAP_EXT_AUDIO_PORTS) }
+        .ok_or(PluginFailure::NoAudioPorts)?;
     let count = ports.count.ok_or(PluginFailure::NoPortCount)?;
     let get = ports.get.ok_or(PluginFailure::NoPortInfo)?;
     let inputs = read_port_list(plugin, count, get, true)?;
@@ -2548,22 +2604,23 @@ fn query_audio_ports(instance: &PluginInstance<EchodeHost>) -> Result<PortShape,
 
 fn query_midi_resets(plugin: &clap_plugin) -> Result<Vec<MidiEvent>, PluginFailure> {
     let mut result = Vec::new();
-    let Some(get_extension) = plugin.get_extension else {
+    // SAFETY: `clap_plugin_note_ports` is the table for `CLAP_EXT_NOTE_PORTS`.
+    let Some(ports) = (unsafe { table::<clap_plugin_note_ports>(plugin, CLAP_EXT_NOTE_PORTS) })
+    else {
         return Ok(result);
     };
-    // SAFETY: main thread, inactive plugin, typed public CLAP extension.
-    let raw = unsafe { get_extension(plugin, CLAP_EXT_NOTE_PORTS.as_ptr()) };
-    if raw.is_null() {
-        return Ok(result);
-    }
-    let ports = unsafe { &*(raw as *const clap_plugin_note_ports) };
     let count = ports.count.ok_or(PluginFailure::NoNotePortCount)?;
     let get = ports.get.ok_or(PluginFailure::NoNotePortInfo)?;
+    // SAFETY: the plugin's own function, called on the main thread while the plugin is inactive.
     for index in 0..unsafe { count(plugin, true) } {
         let mut info = MaybeUninit::<clap_note_port_info>::zeroed();
+        // SAFETY: the plugin's own function, called on the main thread while the plugin is
+        // inactive, with storage for one descriptor.
         if !unsafe { get(plugin, index, true, info.as_mut_ptr()) } {
             return Err(PluginFailure::NotePortUndescribed);
         }
+        // SAFETY: `info` started zeroed, a valid `clap_note_port_info`, and the plugin only wrote
+        // that type's plain fields.
         let info = unsafe { info.assume_init() };
         if info.supported_dialects & (CLAP_NOTE_DIALECT_MIDI | CLAP_NOTE_DIALECT_MIDI_MPE) == 0 {
             continue;
@@ -2591,6 +2648,7 @@ fn read_port_list(
     ) -> bool,
     is_input: bool,
 ) -> Result<Vec<u32>, PluginFailure> {
+    // SAFETY: the plugin's own function, called on the main thread while the plugin is inactive.
     let port_count = unsafe { count(plugin, is_input) };
     let mut counts = Vec::with_capacity(port_count as usize);
     for index in 0..port_count {
@@ -2606,6 +2664,8 @@ fn read_port_list(
             input: is_input,
             index,
         };
+        // SAFETY: the plugin's own function, called on the main thread while the plugin is
+        // inactive, with storage for one descriptor.
         let ok = unsafe { get(plugin, index, is_input, &mut info) };
         if !ok {
             return Err(PluginFailure::PortUndescribed(port));
@@ -2643,6 +2703,8 @@ fn publish_stopped(
 fn stop_loop(bridge: &Bridge) {
     let run_loop = bridge.run_loop.load(Ordering::Acquire);
     if !run_loop.is_null() {
+        // SAFETY: `serve_region` keeps the run loop retained until the workers have been joined;
+        // CoreFoundation allows stopping a run loop from any thread.
         unsafe { (*run_loop).stop() };
     }
 }
@@ -2658,6 +2720,8 @@ unsafe extern "C-unwind" fn on_source(info: *mut c_void) {
     if info.is_null() {
         return;
     }
+    // SAFETY: `info` is the bridge `serve_region` put in the source context, which it keeps until
+    // the run loop has stopped.
     let bridge = unsafe { &*(info as *const Bridge) };
     bridge.on_main();
 }

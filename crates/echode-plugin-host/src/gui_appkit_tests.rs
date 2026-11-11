@@ -8,7 +8,9 @@ fn focusing_the_helper_keeps_the_workspace_active() {
     assert!(!workspace_active(10, 20, 30));
     // SAFETY: getpid/getppid have no preconditions.
     assert_eq!(
+        // SAFETY: `getpid` has no preconditions.
         process_parent(unsafe { libc::getpid() }),
+        // SAFETY: `getppid` has no preconditions.
         Some(unsafe { libc::getppid() })
     );
 }

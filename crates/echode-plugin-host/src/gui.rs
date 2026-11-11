@@ -157,14 +157,8 @@ thread_local! {
 }
 
 fn extension(plugin: &clap_plugin) -> Option<&clap_plugin_gui> {
-    let get = plugin.get_extension?;
-    // SAFETY: standard extension id, queried on the main thread. The table
-    // stays valid for the plugin's lifetime.
-    unsafe {
-        get(plugin, CLAP_EXT_GUI.as_ptr())
-            .cast::<clap_plugin_gui>()
-            .as_ref()
-    }
+    // SAFETY: `clap_plugin_gui` is the table for `CLAP_EXT_GUI`.
+    unsafe { crate::extension::table::<clap_plugin_gui>(plugin, CLAP_EXT_GUI) }
 }
 
 fn recorded() -> bool {

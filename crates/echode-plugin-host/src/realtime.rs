@@ -45,19 +45,26 @@ impl Drop for ForbidAlloc {
 pub struct GuardAlloc;
 
 #[cfg(debug_assertions)]
+// SAFETY: every method forwards the same arguments to `System`, which upholds the `GlobalAlloc`
+// contract; `refuse` only aborts and never allocates.
 unsafe impl std::alloc::GlobalAlloc for GuardAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         refuse();
+        // SAFETY: the caller's contract for `alloc` is `System.alloc`'s.
         unsafe { std::alloc::System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         refuse();
+        // SAFETY: the caller's contract for `dealloc` is `System.dealloc`'s, and every block came
+        // from `System` through this allocator.
         unsafe { std::alloc::System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
         refuse();
+        // SAFETY: the caller's contract for `realloc` is `System.realloc`'s, and every block came
+        // from `System` through this allocator.
         unsafe { std::alloc::System.realloc(ptr, layout, new_size) }
     }
 }

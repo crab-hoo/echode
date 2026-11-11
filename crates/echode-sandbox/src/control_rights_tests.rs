@@ -12,10 +12,13 @@ struct Witness {
 impl Witness {
     fn new() -> Self {
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` has room for the two descriptors `pipe` writes.
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe");
         for fd in fds {
+            // SAFETY: `fd` is an open pipe descriptor; no memory is passed.
             assert!(unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } >= 0);
         }
+        // SAFETY: `fds[0]` is an open pipe descriptor; no memory is passed.
         assert!(unsafe { libc::fcntl(fds[0], libc::F_SETFL, libc::O_NONBLOCK) } >= 0);
         // SAFETY: `pipe` returned two open descriptors.
         let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
@@ -29,6 +32,7 @@ impl Witness {
         let write = self.write.as_ref().expect("write end").as_raw_fd();
         (0..count)
             .map(|_| {
+                // SAFETY: `write` is an open descriptor; `fcntl` only duplicates it.
                 let fd = unsafe { libc::fcntl(write, libc::F_DUPFD_CLOEXEC, 0) };
                 assert!(fd >= 0, "dup: {}", io::Error::last_os_error());
                 // SAFETY: `fcntl` returned a new descriptor this test owns.
@@ -41,6 +45,7 @@ impl Witness {
     fn all_closed(mut self) -> bool {
         self.write = None;
         let mut byte = 0u8;
+        // SAFETY: `byte` is one writable byte and the descriptor is open.
         let n = unsafe { libc::read(self.read.as_raw_fd(), (&raw mut byte).cast(), 1) };
         n == 0
     }
@@ -77,6 +82,8 @@ fn send_with_rights(socket: &Socket, bytes: &[u8], fds: &[OwnedFd]) -> io::Resul
         msg_controllen: total as libc::socklen_t,
         msg_flags: 0,
     };
+    // SAFETY: `msg` points at `iov` and `control`, which are readable for their stated lengths
+    // during the call.
     let n = unsafe { libc::sendmsg(socket.as_raw_fd(), &msg, 0) };
     if n < 0 {
         return Err(io::Error::last_os_error());
@@ -180,6 +187,7 @@ fn one_descriptor_still_arrives_with_its_remap() {
     else {
         panic!("expected remap");
     };
+    // SAFETY: `fcntl` reads the descriptor flags of an open descriptor; no memory is passed.
     let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
     assert!(
         flags >= 0 && flags & libc::FD_CLOEXEC != 0,

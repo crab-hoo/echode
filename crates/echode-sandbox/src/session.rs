@@ -1173,6 +1173,8 @@ impl HelperProcess {
             return Ok(Some(status));
         }
         let mut raw = 0;
+        // SAFETY: `raw` is writable, and `self.pid` is this session's child, which has not been
+        // reaped.
         let rc = unsafe { libc::waitpid(self.pid, &mut raw, libc::WNOHANG) };
         if rc == 0 {
             return Ok(None);
@@ -1190,6 +1192,7 @@ impl HelperProcess {
         if self.status.is_some() {
             return Ok(());
         }
+        // SAFETY: the child has not been reaped, so its pid still names it.
         if unsafe { libc::kill(self.pid, libc::SIGKILL) } == 0 {
             Ok(())
         } else {
@@ -1203,6 +1206,8 @@ impl HelperProcess {
         }
         let mut raw = 0;
         loop {
+            // SAFETY: `raw` is writable, and `self.pid` is this session's child, which has not been
+            // reaped.
             if unsafe { libc::waitpid(self.pid, &mut raw, 0) } >= 0 {
                 break;
             }
@@ -1328,6 +1333,7 @@ fn launch_with(
 /// `dup2`, and the following `close` then drops the descriptor the child needs.
 /// `dup2` clears CLOEXEC on the target in the child; the copy keeps it here.
 fn inheritable(fd: i32) -> std::io::Result<OwnedFd> {
+    // SAFETY: `fcntl` duplicates `fd`, an open descriptor of the caller; no memory is passed.
     let dup = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 6) };
     if dup < 0 {
         Err(std::io::Error::last_os_error())
@@ -1378,6 +1384,7 @@ fn push_stderr(slot: &mut String, chunk: &str) {
 }
 
 fn watch_exit(pid: i32, slots: Arc<Mutex<WatchSlots>>, stop: Arc<AtomicBool>) {
+    // SAFETY: `kqueue` takes no arguments and returns a new descriptor or -1.
     let queue = unsafe { libc::kqueue() };
     if queue < 0 {
         return;
@@ -1405,6 +1412,8 @@ fn watch_exit(pid: i32, slots: Arc<Mutex<WatchSlots>>, stop: Arc<AtomicBool>) {
             tv_nsec: 200_000_000,
         };
         let changes = if registered { 0 } else { 1 };
+        // SAFETY: `change` and `event` are valid for one `kevent` each, and `timeout` is a valid
+        // `timespec`.
         let ready = unsafe { libc::kevent(queue, &change, changes, &mut event, 1, &timeout) };
         registered = true;
         if ready > 0 && event.filter == libc::EVFILT_PROC && event.fflags & libc::NOTE_EXIT != 0 {
@@ -1437,6 +1446,7 @@ fn watch_exit(pid: i32, slots: Arc<Mutex<WatchSlots>>, stop: Arc<AtomicBool>) {
             break;
         }
     }
+    // SAFETY: `queue` is the kqueue this function opened, closed once.
     unsafe { libc::close(queue) };
 }
 

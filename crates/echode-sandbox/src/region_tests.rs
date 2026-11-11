@@ -26,6 +26,19 @@ fn replacement_control_wait_observes_the_stable_exit_notice() {
 }
 
 #[test]
+fn the_abort_notice_keeps_its_mapping_for_the_rest_of_the_process() {
+    // The handler may run on any thread at any moment, so the mapping it
+    // writes into must outlive every other owner (ADR 0321).
+    let region = std::sync::Arc::new(MappedRegion::create_shared(SessionLayout::stereo()).unwrap());
+    arm_abort_notice(&region);
+    assert_eq!(std::sync::Arc::strong_count(&region), 2);
+    assert!(ptr::eq(
+        ABORT_REGION.load(Ordering::Acquire).cast_const(),
+        &*region
+    ));
+}
+
+#[test]
 fn empty_and_zero_frame_layouts_are_rejected() {
     assert!(
         SessionLayout {
@@ -202,6 +215,7 @@ fn a_corrupt_output_record_is_skipped() {
     let _ = std::fs::remove_file(&path);
     let region = MappedRegion::create(&path).expect("region");
     let offset = region.event_offset(1, true, 0);
+    // SAFETY: `offset` is inside the mapping, which no other thread uses during this test.
     unsafe { region.map.as_ptr().cast_mut().add(offset).write(0xff) };
     region
         .slot_head(1)

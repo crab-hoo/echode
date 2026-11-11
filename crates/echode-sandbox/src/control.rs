@@ -207,12 +207,14 @@ pub struct Socket {
 impl Socket {
     pub fn pair() -> io::Result<(Self, Self)> {
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` has room for the two descriptors `socketpair` writes.
         let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
         if rc != 0 {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: `socketpair` returned two open descriptors.
         let parent = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+        // SAFETY: `socketpair` returned two open descriptors, and this function owns both.
         let child = unsafe { OwnedFd::from_raw_fd(fds[1]) };
         Ok((Self::from_owned(parent)?, Self::from_owned(child)?))
     }
@@ -530,6 +532,8 @@ impl Socket {
             msg_controllen: std::mem::size_of_val(&control) as libc::socklen_t,
             msg_flags: 0,
         };
+        // SAFETY: `msg` points at `iov` and `control`, which are writable for their stated lengths
+        // during the call.
         let n = unsafe { libc::recvmsg(self.fd.as_raw_fd(), &mut msg, libc::MSG_DONTWAIT) };
         if n < 0 {
             let error = io::Error::last_os_error();
@@ -866,6 +870,7 @@ fn poll_read(fd: i32, timeout: Duration) -> io::Result<bool> {
     let millis = i32::try_from(timeout.as_millis())
         .unwrap_or(i32::MAX)
         .max(1);
+    // SAFETY: `poll` is one writable `pollfd`, and the count passed is one.
     let rc = unsafe { libc::poll(&mut poll, 1, millis) };
     if rc < 0 {
         let error = io::Error::last_os_error();
@@ -884,19 +889,23 @@ fn poll_read(fd: i32, timeout: Duration) -> io::Result<bool> {
 /// peer has no room, to read and to keep its deadline. Every wait on this
 /// descriptor is a `poll` with its own bound.
 fn configure(fd: i32) -> io::Result<()> {
+    // SAFETY: `fcntl` reads the descriptor flags of `fd`, an open descriptor; no memory is passed.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags < 0 {
         return Err(io::Error::last_os_error());
     }
+    // SAFETY: `fcntl` sets the descriptor flags of `fd`, an open descriptor; no memory is passed.
     if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: `fd` is an open descriptor; these calls only read and set its status flags.
     let status = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    // SAFETY: `fcntl` sets the status flags of `fd`, an open descriptor; no memory is passed.
     if status < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, status | libc::O_NONBLOCK) } < 0 {
         return Err(io::Error::last_os_error());
     }
     let one = 1i32;
+    // SAFETY: `fd` is an open socket, and the option value is an `i32` that outlives the call.
     let rc = unsafe {
         libc::setsockopt(
             fd,
@@ -994,8 +1003,12 @@ fn take_rights(msg: &libc::msghdr) -> Vec<OwnedFd> {
                 }
                 // SAFETY: `recvmsg` transferred this descriptor to this process.
                 let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+                // SAFETY: `fcntl` reads the descriptor flags of `owned`, which this process owns;
+                // no memory is passed.
                 let flags = unsafe { libc::fcntl(owned.as_raw_fd(), libc::F_GETFD) };
                 if flags >= 0 {
+                    // SAFETY: `fcntl` sets the descriptor flags of `owned`, which this process
+                    // owns; no memory is passed.
                     unsafe {
                         libc::fcntl(owned.as_raw_fd(), libc::F_SETFD, flags | libc::FD_CLOEXEC)
                     };
