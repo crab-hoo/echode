@@ -20,8 +20,9 @@ pub struct BridgeCounts {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eb_probe_new(document: *const CBridgeDocument) -> *mut CBridgeProbe {
     // SAFETY: the caller owns the document throughout this call.
+    let document = unsafe { &*document };
     Box::into_raw(Box::new(CBridgeProbe {
-        live: Arc::clone(&unsafe { &*document }.inner.live),
+        live: Arc::clone(&document.inner.live),
     }))
 }
 

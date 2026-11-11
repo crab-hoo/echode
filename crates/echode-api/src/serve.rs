@@ -119,6 +119,7 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32, ApiError> {
     // libc declares getpeereid. This process never calls it from the audio thread.
     let mut uid = 0;
     let mut gid = 0;
+    // SAFETY: `uid` and `gid` are writable locals and the descriptor is the connected socket's own.
     let result = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
     if result != 0 {
         return Err(ApiError::io(
@@ -130,6 +131,7 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32, ApiError> {
 }
 
 pub(crate) fn current_uid() -> u32 {
+    // SAFETY: `getuid` has no preconditions.
     unsafe { libc::getuid() }
 }
 

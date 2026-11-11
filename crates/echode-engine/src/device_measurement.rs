@@ -260,6 +260,8 @@ struct Session {
 
 // SAFETY: the audio thread is the only writer, and the report is read after
 // `AudioDeviceStop` has returned.
+// SAFETY: `Session` is shared with the IOProc: the counters are atomics, and `samples` is written
+// only by the audio thread and read after `AudioDeviceStop` has returned.
 unsafe impl Sync for Session {}
 
 impl Session {
@@ -370,11 +372,14 @@ fn run_measurement(
         return Err(DeviceError::NoWorkgroup.into());
     }
 
-    let workgroup_parallel = crate::graph::workgroup_parallel_threads(workgroup);
+    // SAFETY: `workgroup` is the retained object `get_pointer` returned.
+    let workgroup_parallel = unsafe { crate::graph::workgroup_parallel_threads(workgroup) };
     let worker_count = match workers {
         Some(count) => count,
         None => {
             if workgroup_parallel <= 1 {
+                // SAFETY: `workgroup` is the retained object `get_pointer` returned, released once
+                // on this path.
                 unsafe { os_release(workgroup) };
                 return Err(MeasurementError::ParallelThreads(workgroup_parallel));
             }
@@ -399,6 +404,8 @@ fn run_measurement(
     });
 
     let mut proc_id: AudioDeviceIOProcID = None;
+    // SAFETY: the boxed `session` outlives the IOProc, which is destroyed below before the box
+    // drops.
     let status = unsafe {
         AudioDeviceCreateIOProcID(
             device,
@@ -409,13 +416,19 @@ fn run_measurement(
     };
     if status != 0 {
         drop(workers);
+        // SAFETY: `workgroup` is the retained object `get_pointer` returned, released once on this
+        // path.
         unsafe { os_release(workgroup) };
         return Err(MeasurementError::CreateIoProc(status));
     }
+    // SAFETY: `proc_id` is the IOProc just created on this device.
     let status = unsafe { AudioDeviceStart(device, proc_id) };
     if status != 0 {
+        // SAFETY: `proc_id` is the IOProc just created on this device, which never started.
         unsafe { AudioDeviceDestroyIOProcID(device, proc_id) };
         drop(workers);
+        // SAFETY: `workgroup` is the retained object `get_pointer` returned, released once on this
+        // path.
         unsafe { os_release(workgroup) };
         return Err(MeasurementError::StartIo(status));
     }
@@ -445,14 +458,19 @@ fn run_measurement(
     );
     let measured_for = started.elapsed();
 
+    // SAFETY: `proc_id` is the IOProc created and started above.
     unsafe { AudioDeviceStop(device, proc_id) };
+    // SAFETY: `proc_id` is the IOProc created above, stopped on the line before.
     unsafe { AudioDeviceDestroyIOProcID(device, proc_id) };
     let failures = session.engine.workgroup_failures();
     let policy_failures = session.engine.policy_failures();
     drop(workers);
+    // SAFETY: `workgroup` is the retained object `get_pointer` returned; the workers that joined it
+    // have been dropped, and it is released once.
     unsafe { os_release(workgroup) };
 
     let count = session.sample_count.load(Ordering::Relaxed) as usize;
+    // SAFETY: the IOProc was stopped and destroyed above, so nothing writes the samples any more.
     let samples = unsafe { &*session.samples.get() };
     let measured = samples
         .get(WARMUP_CALLBACKS as usize..count.min(samples.len()))
@@ -496,11 +514,15 @@ unsafe extern "C-unwind" fn io_proc(
     output_time: NonNull<AudioTimeStamp>,
     client: *mut c_void,
 ) -> i32 {
+    // SAFETY: `client` is the boxed `Session` given to `AudioDeviceCreateIOProcID`, which outlives
+    // the IOProc.
     let session = unsafe { &*(client as *const Session) };
     // SAFETY: `mach_absolute_time` has no preconditions.
     let started = unsafe { mach_absolute_time() };
     let _energy = session.engine.render_block();
-    silence(output_data.as_ptr());
+    // SAFETY: HAL passes this call's output list.
+    unsafe { silence(output_data.as_ptr()) };
+    // SAFETY: `mach_absolute_time` has no preconditions.
     let elapsed = unsafe { mach_absolute_time() }.wrapping_sub(started);
     // SAFETY: HAL provides a live timestamp for the duration of the callback.
     let host_time = unsafe { output_time.as_ref().mHostTime };
@@ -508,7 +530,11 @@ unsafe extern "C-unwind" fn io_proc(
     0
 }
 
-fn silence(list: *mut AudioBufferList) {
+/// Zeroes every buffer of an IOProc's output list.
+///
+/// # Safety
+/// `list` is null or the output list of the current IOProc call.
+unsafe fn silence(list: *mut AudioBufferList) {
     if list.is_null() {
         return;
     }
@@ -532,6 +558,7 @@ fn stop_requested() -> bool {
 static STOP: AtomicU32 = AtomicU32::new(0);
 
 pub fn install_stop_handler() {
+    // SAFETY: `signal` installs an async-signal-safe handler that only stores an atomic.
     unsafe {
         libc::signal(libc::SIGINT, handle_stop as *const () as libc::sighandler_t);
     }

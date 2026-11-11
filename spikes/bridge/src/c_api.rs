@@ -246,6 +246,8 @@ mod tests {
         } else {
             // SAFETY: the completion receives an owned live handle.
             let revision = unsafe { eb_snapshot_revision(snapshot) };
+            // SAFETY: the completion owns this live handle and frees it once, after reading it
+            // above.
             unsafe { eb_snapshot_free(snapshot) };
             revision
         };

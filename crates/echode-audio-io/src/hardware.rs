@@ -47,7 +47,26 @@ fn checked(call: CoreAudioCall, status: i32) -> Result<(), AudioError> {
     }
 }
 
-pub(crate) fn get<T: Copy>(object: u32, selector: u32, scope: u32) -> Result<T, AudioError> {
+/// A property value for which any bytes HAL writes are valid, so [`get`] can
+/// read one without knowing what HAL stored (ADR 0321).
+///
+/// # Safety
+/// Every bit pattern of `size_of::<Self>()` bytes is a valid `Self`.
+pub(crate) unsafe trait PlainProperty: Copy {}
+// SAFETY: every bit pattern is a valid integer or float.
+unsafe impl PlainProperty for u32 {}
+// SAFETY: every bit pattern is a valid integer or float.
+unsafe impl PlainProperty for f64 {}
+// SAFETY: a C struct of one `f64` and eight `u32`, without padding.
+unsafe impl PlainProperty for AudioStreamBasicDescription {}
+// SAFETY: a raw pointer may hold any address; callers check it before use.
+unsafe impl<T> PlainProperty for *mut T {}
+
+pub(crate) fn get<T: PlainProperty>(
+    object: u32,
+    selector: u32,
+    scope: u32,
+) -> Result<T, AudioError> {
     let mut value = std::mem::MaybeUninit::<T>::uninit();
     let mut property = address(selector, scope);
     let mut size =
@@ -67,6 +86,8 @@ pub(crate) fn get<T: Copy>(object: u32, selector: u32, scope: u32) -> Result<T, 
     if size as usize != size_of::<T>() {
         return Err(HardwareFault::PropertySize.into());
     }
+    // SAFETY: HAL wrote all `size_of::<T>()` bytes, and any bytes are a valid
+    // `T: PlainProperty`.
     Ok(unsafe { value.assume_init() })
 }
 
@@ -75,6 +96,8 @@ pub(crate) fn list(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, A
     // Device/stream lists can change between the size query and read.
     for _ in 0..3 {
         let mut size = 0;
+        // SAFETY: `property` and `size` are writable locals for the call, and no qualifier is
+        // passed.
         checked(CoreAudioCall::Property, unsafe {
             AudioObjectGetPropertyDataSize(
                 object,
@@ -94,6 +117,8 @@ pub(crate) fn list(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, A
         let Some(pointer) = NonNull::new(values.as_mut_ptr()) else {
             return Ok(Vec::new());
         };
+        // SAFETY: `pointer` addresses `values`, whose `size` bytes are what `size` tells HAL it may
+        // write.
         let status = unsafe {
             AudioObjectGetPropertyData(
                 object,
@@ -120,8 +145,8 @@ pub(crate) fn list(object: u32, selector: u32, scope: u32) -> Result<Vec<u32>, A
 fn string(object: u32, selector: u32) -> Result<String, AudioError> {
     let pointer: *mut CFString = get(object, selector, kAudioObjectPropertyScopeGlobal)?;
     let pointer = NonNull::new(pointer).ok_or(HardwareFault::EmptyName)?;
-    // HAL transfers a retained CFString for these properties; release it once
-    // after copying the UTF-8 name/UID on the control thread.
+    // SAFETY: HAL transfers a retained CFString for these properties; release
+    // it once after copying the UTF-8 name/UID on the control thread.
     let value = unsafe { CFRetained::from_raw(pointer) };
     Ok(value.to_string())
 }
@@ -324,6 +349,8 @@ impl Notifications {
     fn add_scoped(&mut self, id: u32, selector: u32, scope: u32) -> Result<(), AudioError> {
         let mut property = address(selector, scope);
         let pointer = NonNull::from(&*self.block).as_ptr();
+        // SAFETY: `property` is valid for the call, and `self.block` is a heap block this set keeps
+        // until `drop` removes every registration.
         checked(CoreAudioCall::Listener, unsafe {
             AudioObjectAddPropertyListenerBlock(id, NonNull::from(&mut property), None, pointer)
         })?;
@@ -339,6 +366,7 @@ impl Drop for Notifications {
     fn drop(&mut self) {
         let pointer = NonNull::from(&*self.block).as_ptr();
         for (id, property) in &mut self.registered {
+            // SAFETY: each registration was added with this block and property in `add_scoped`.
             let _ = unsafe {
                 AudioObjectRemovePropertyListenerBlock(*id, NonNull::from(property), None, pointer)
             };

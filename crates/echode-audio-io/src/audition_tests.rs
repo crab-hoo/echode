@@ -182,6 +182,8 @@ fn hear(callback: &AuditionCallback, frames: usize, block: usize) -> Vec<[f32; 2
         }];
         // SAFETY: reads the host clock and takes no pointers.
         let host = unsafe { AudioGetCurrentHostTime() };
+        // SAFETY: the test calls this in place of HAL, never alongside it, and each buffer points
+        // at a local array writable for its byte size.
         unsafe { fill(callback, &mut buffers, host) };
         heard.extend(data.chunks_exact(2).map(|pair| [pair[0], pair[1]]));
     }
@@ -556,6 +558,8 @@ fn the_callback_notes_each_new_sound_once_with_its_block_time_under_rtsan() {
             mDataByteSize: std::mem::size_of_val(data.as_slice()) as u32,
             mData: data.as_mut_ptr().cast(),
         }];
+        // SAFETY: the test calls this in place of HAL, never alongside it, and each buffer points
+        // at a local array writable for its byte size.
         unsafe { fill(&callback, &mut buffers, host) };
     };
     // SAFETY: reads the host clock and takes no pointers.
@@ -568,6 +572,7 @@ fn the_callback_notes_each_new_sound_once_with_its_block_time_under_rtsan() {
     run(now + 20);
     let (sound, at) = heard.latest().unwrap();
     assert_eq!(sound, short);
+    // SAFETY: the conversion reads the host clock's timebase and takes no pointers.
     assert_eq!(at, unsafe { AudioConvertHostTimeToNanos(now + 10) });
     // HAL without a host time leaves the time unknown, not wrong.
     let next = control.play(AuditionSound::new(Arc::from([0.25f32; 8]), None).unwrap());
@@ -607,6 +612,8 @@ fn the_callback_writes_every_layout_and_is_silent_after_a_device_change_under_rt
                     mData: interleaved.as_mut_ptr().cast(),
                 }]
             };
+            // SAFETY: the test calls this in place of HAL, never alongside it, and each buffer
+            // points at a local array writable for its byte size.
             unsafe { fill(&callback, &mut buffers, 0) };
             (0..frames)
                 .map(|frame| match layout {

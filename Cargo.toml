@@ -39,6 +39,10 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# Every unsafe block and impl states why it is sound, and `forbid` refuses a
+# local allow (ADR 0321). A stale SAFETY comment on safe code is refused too.
+undocumented_unsafe_blocks = "forbid"
+unnecessary_safety_comment = "warn"
 
 # Full debug info of dependencies made up most of target/debug. Line tables keep
 # their file and line in backtraces; workspace crates keep full debug info for lldb.

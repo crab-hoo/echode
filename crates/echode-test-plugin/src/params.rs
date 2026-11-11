@@ -234,6 +234,7 @@ pub fn load(bytes: &[u8]) -> bool {
 #[derive(Copy, Clone)]
 pub struct PluginParamsExt;
 
+// SAFETY: `CLAP_EXT_PARAMS` is the official identifier of the extension this type stands for.
 unsafe impl Extension for PluginParamsExt {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_PARAMS];
     type ExtensionSide = PluginExtensionSide;
@@ -243,6 +244,8 @@ unsafe impl Extension for PluginParamsExt {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_params`, the `#[repr(C)]` table CLAP declares
+// for that identifier.
 unsafe impl ExtensionImplementation<TestGain> for PluginParamsExt {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_plugin_params {
@@ -371,6 +374,7 @@ unsafe extern "C" fn flush(
 ) {
     // SAFETY: the host passes its output list for this call, or null.
     unsafe { crate::gui::emit_raw(output) };
+    // SAFETY: the host passes null or its input list for this call.
     let Some(input) = (unsafe { input.as_ref() }) else {
         return;
     };
@@ -379,7 +383,9 @@ unsafe extern "C" fn flush(
     };
     // SAFETY: the host owns the list for this call and gives a valid count.
     for index in 0..unsafe { size(input) } {
+        // SAFETY: `get` is the list's own function, called with an index below its `size`.
         let header = unsafe { get(input, index) };
+        // SAFETY: a non-null header is an event the host keeps valid for this call.
         let Some(event) = (unsafe { header.as_ref() }) else {
             continue;
         };

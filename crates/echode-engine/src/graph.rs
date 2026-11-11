@@ -70,6 +70,8 @@ pub struct Engine {
 // SAFETY: the raw plane pointer is only used as described above, and the
 // engine is not sent to another thread until workers are spawned after `new`.
 unsafe impl Sync for Engine {}
+// SAFETY: as for `Sync` above: the plane pointer is only used as described there, and workers start
+// after `new`.
 unsafe impl Send for Engine {}
 
 impl Engine {
@@ -265,12 +267,17 @@ impl Engine {
         // SAFETY: the ready stack hands this node to one thread. The previous
         // filter in the chain has stored its plane before publishing this node.
         let node = unsafe { &mut *self.nodes[level * CHAINS + chain].get() };
+        // SAFETY: the audio thread wrote the input before publishing the block, and no thread
+        // writes it while nodes run.
         let input = unsafe { &*self.input.get() };
+        // SAFETY: the ready stack hands this node, and so its output plane slot, to one thread.
         let write = unsafe { &mut *self.planes.add((level % 2) * CHAINS + chain) };
         for frame in 0..BLOCK_FRAMES {
             let sample = if level == 0 {
                 input[frame]
             } else {
+                // SAFETY: the previous filter in the chain stored this plane before publishing this
+                // node, and no thread writes it now.
                 let read = unsafe { &*self.planes.add(((level - 1) % 2) * CHAINS + chain) };
                 read[frame]
             };
@@ -324,16 +331,22 @@ fn unpack(raw: u64) -> (u32, u32) {
 }
 
 /// The device workgroup's recommended thread count, including the IO thread.
-pub fn workgroup_parallel_threads(workgroup: *mut std::ffi::c_void) -> i32 {
+///
+/// # Safety
+/// `workgroup` is null or a retained `os_workgroup_t` for the call.
+pub unsafe fn workgroup_parallel_threads(workgroup: *mut std::ffi::c_void) -> i32 {
     if workgroup.is_null() {
         return 0;
     }
+    // SAFETY: the caller keeps the workgroup retained for the call, and a null
+    // attribute asks for the default.
     unsafe { os_workgroup_max_parallel_threads(workgroup, std::ptr::null_mut()) }
 }
 
 fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void, period_ticks: u32) {
     // Parked workers stay at user-interactive QoS so the first wake is not
-    // scheduled from the default priority. This call has no preconditions.
+    // scheduled from the default priority.
+    // SAFETY: this call has no preconditions; it changes only the current thread.
     unsafe {
         libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
     }

@@ -793,6 +793,7 @@ impl AuditionStream {
             proc,
             observed,
         };
+        // SAFETY: `value.proc` is the IOProc just created on this device.
         let status = unsafe { AudioDeviceStart(value.device.id, value.proc) };
         if status != 0 {
             return Err(AudioError::CoreAudio {
@@ -811,7 +812,9 @@ impl AuditionStream {
 
     fn close(&mut self) {
         if let Some(callback) = self.callback.take() {
+            // SAFETY: `self.proc` is the IOProc `open` created on this device.
             let _ = unsafe { AudioDeviceStop(self.device.id, self.proc) };
+            // SAFETY: `self.proc` is the IOProc `open` created on this device, stopped above.
             let destroyed = unsafe { AudioDeviceDestroyIOProcID(self.device.id, self.proc) };
             if destroyed != 0
                 && destroyed != kAudioHardwareBadObjectError
@@ -839,6 +842,8 @@ unsafe extern "C-unwind" fn render(
     output_time: NonNull<AudioTimeStamp>,
     context: *mut c_void,
 ) -> i32 {
+    // SAFETY: the context is the boxed `AuditionCallback` given to
+    // `AudioDeviceCreateIOProcID`, which `close` frees only after destroying the IOProc.
     let Some(callback) = (unsafe { context.cast::<AuditionCallback>().as_ref() }) else {
         return 0;
     };
@@ -849,11 +854,9 @@ unsafe extern "C-unwind" fn render(
     } else {
         0
     };
-    // SAFETY: HAL supplies the entire flexible buffer array.
-    let list = output.as_ptr();
-    let count = unsafe { (*list).mNumberBuffers } as usize;
-    let pointer = unsafe { std::ptr::addr_of_mut!((*list).mBuffers).cast::<AudioBuffer>() };
-    let buffers = unsafe { std::slice::from_raw_parts_mut(pointer, count) };
+    // SAFETY: HAL passes this call's output list.
+    let buffers = unsafe { crate::stream::hal_buffers(output) };
+    // SAFETY: HAL serializes this IOProc's calls, and the buffers are this call's.
     unsafe { fill(callback, buffers, host) };
     0
 }
@@ -868,6 +871,7 @@ unsafe extern "C-unwind" fn render(
 pub(crate) unsafe fn fill(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u64) {
     if !callback
         .panic
+        // SAFETY: the caller's contract is `mix`'s.
         .run(|| unsafe { mix(callback, buffers, host) })
     {
         callback.failed.store(true, Ordering::Release);
@@ -880,6 +884,7 @@ pub(crate) unsafe fn fill(callback: &AuditionCallback, buffers: &mut [AudioBuffe
 /// As for [`fill`].
 unsafe fn mix(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u64) {
     let _guard = ForbidAlloc::enter();
+    // SAFETY: the caller's contract for `fill` is `clear_buffers`'s.
     let (frames, valid) = unsafe { crate::stream::clear_buffers(buffers) };
     // A changed device stays silent until the thread closes this output.
     if callback.epoch.load(Ordering::Acquire) != callback.observed {
@@ -888,6 +893,8 @@ unsafe fn mix(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u6
     let Some(frames) = frames.filter(|frames| *frames != 0) else {
         return;
     };
+    // SAFETY: only this serialized callback touches the audition state, and no other borrow of it
+    // is live.
     let state = unsafe { &mut *callback.state.get() };
     let (Some(left), Some(right)) = (state.left.get_mut(..frames), state.right.get_mut(..frames))
     else {
@@ -907,6 +914,8 @@ unsafe fn mix(callback: &AuditionCallback, buffers: &mut [AudioBuffer], host: u6
         state.noted = started;
         let _ = state.heard.push((started, host));
     }
+    // SAFETY: `clear_buffers` accepted these buffers (`valid`) for `frames` frames, which `left`
+    // and `right` hold.
     unsafe { crate::stream::write_planes(buffers, left, right, callback.channels == 1) };
 }
 

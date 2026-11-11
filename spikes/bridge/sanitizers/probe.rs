@@ -14,6 +14,8 @@ pub extern "C" fn eb_sanitizer_clean() -> u64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eb_sanitizer_memory_fault() -> u64 {
     let allocation = Box::into_raw(Box::new(42_u64));
+    // SAFETY: none: this use after free is the deliberate fault ASan must report; only the
+    // expected-failing child runs it.
     unsafe {
         drop(Box::from_raw(allocation));
         ptr::read_volatile(allocation)
@@ -29,10 +31,14 @@ pub unsafe extern "C" fn eb_sanitizer_thread_fault() {
     let thread = std::thread::spawn(|| {
         // Iteration count is this fault fixture's detection budget.
         for value in 0..100_000 {
+            // SAFETY: none: these unsynchronized writes are the deliberate race TSan must report;
+            // only the expected-failing child runs them.
             unsafe { ptr::write_volatile(&raw mut RACE, value) };
         }
     });
     for value in 0..100_000 {
+        // SAFETY: none: these unsynchronized writes are the deliberate race TSan must report; only
+        // the expected-failing child runs them.
         unsafe { ptr::write_volatile(&raw mut RACE, value) };
     }
     thread.join().unwrap();

@@ -146,6 +146,9 @@ DOC-A1・DOC-A2・HIS-A1・CLI-A1 を `#[ignore]` 付きの `audit_*` テスト�
 - 2026-11-09: SBX-A1 (2) を [ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md) で修正した。受けた記述子を全部持ち、2 個以上のメッセージは閉じて拒否する。
   256 バイトの受信バッファに入らない記述子もカーネルの側で残っていたので、受信バッファを 2,048 バイトにした。回帰は製品契約 `plugin-control-descriptors`。
   残りの項目の束ねと順番は [統合表](2026-11-08-open-items-register.md) にある。
+- 2026-11-12: FFI-A1 を [ADR 0321](../decisions/0321-unsafe-safety-comments-and-ffi-arguments.md) で修正した（統合表の M2）。
+  全入口が `crates/echode-ffi/src/abi.rs` を通り、0 でない長さを伴う null・`isize::MAX` を超える大きさ・位置のずれを同じに拒否する。
+  回帰は `abi_tests.rs`（Miri でも実行）と `tests.rs` の `contract_queued_commands_refuse_null_and_oversized_bytes_at_once`。
 
 ## 修正の進め方
 

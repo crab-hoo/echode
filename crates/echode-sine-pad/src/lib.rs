@@ -252,6 +252,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, ()> for Processor<'a> {
 
 #[derive(Clone, Copy)]
 struct Capacity;
+// SAFETY: `PLUGIN_EVENT_CAPACITY` is the identifier of Echode's own extension this type stands for.
 unsafe impl Extension for Capacity {
     const IDENTIFIERS: &[&CStr] = &[PLUGIN_EVENT_CAPACITY];
     type ExtensionSide = PluginExtensionSide;
@@ -259,6 +260,8 @@ unsafe impl Extension for Capacity {
         Self
     }
 }
+// SAFETY: `IMPLEMENTATION` points at a `PluginEventCapacity`, the `#[repr(C)]` table declared for
+// that identifier.
 unsafe impl ExtensionImplementation<SinePad> for Capacity {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&PluginEventCapacity {
@@ -278,6 +281,7 @@ unsafe extern "C" fn prepare_capacity(plugin: *const c_void, events: u32) -> boo
 
 #[derive(Clone, Copy)]
 struct Ports;
+// SAFETY: `CLAP_EXT_AUDIO_PORTS` is the official identifier of the extension this type stands for.
 unsafe impl Extension for Ports {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_AUDIO_PORTS];
     type ExtensionSide = PluginExtensionSide;
@@ -285,6 +289,8 @@ unsafe impl Extension for Ports {
         Self
     }
 }
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_audio_ports`, the `#[repr(C)]` table CLAP
+// declares for that identifier.
 unsafe impl ExtensionImplementation<SinePad> for Ports {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_plugin_audio_ports {
@@ -320,6 +326,7 @@ unsafe extern "C" fn port_get(
 
 #[derive(Clone, Copy)]
 struct Notes;
+// SAFETY: `CLAP_EXT_NOTE_PORTS` is the official identifier of the extension this type stands for.
 unsafe impl Extension for Notes {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_NOTE_PORTS];
     type ExtensionSide = PluginExtensionSide;
@@ -327,6 +334,8 @@ unsafe impl Extension for Notes {
         Self
     }
 }
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_note_ports`, the `#[repr(C)]` table CLAP
+// declares for that identifier.
 unsafe impl ExtensionImplementation<SinePad> for Notes {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_plugin_note_ports {
@@ -362,6 +371,7 @@ clack_export_entry!(SinglePluginEntry<SinePad>);
 
 #[derive(Clone, Copy)]
 struct Tail;
+// SAFETY: `CLAP_EXT_TAIL` is the official identifier of the extension this type stands for.
 unsafe impl Extension for Tail {
     const IDENTIFIERS: &[&CStr] = &[clap_sys::ext::tail::CLAP_EXT_TAIL];
     type ExtensionSide = PluginExtensionSide;
@@ -369,6 +379,8 @@ unsafe impl Extension for Tail {
         Self
     }
 }
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_tail`, the `#[repr(C)]` table CLAP declares for
+// that identifier.
 unsafe impl ExtensionImplementation<SinePad> for Tail {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_sys::ext::tail::clap_plugin_tail { get: Some(tail) });
@@ -390,6 +402,7 @@ unsafe extern "C" fn tail(plugin: *const clap_plugin) -> u32 {
 
 #[derive(Clone, Copy)]
 struct State;
+// SAFETY: `CLAP_EXT_STATE` is the official identifier of the extension this type stands for.
 unsafe impl Extension for State {
     const IDENTIFIERS: &[&CStr] = &[clap_sys::ext::state::CLAP_EXT_STATE];
     type ExtensionSide = PluginExtensionSide;
@@ -397,6 +410,8 @@ unsafe impl Extension for State {
         Self
     }
 }
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_state`, the `#[repr(C)]` table CLAP declares
+// for that identifier.
 unsafe impl ExtensionImplementation<SinePad> for State {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_sys::ext::state::clap_plugin_state {
@@ -418,6 +433,8 @@ unsafe extern "C" fn save(
     };
     let mut rest = PRESET_STATE;
     while !rest.is_empty() {
+        // SAFETY: `write` is the stream's own function, given the stream and `rest`, readable for
+        // its length.
         let wrote = unsafe { write(stream, rest.as_ptr().cast(), rest.len() as u64) };
         // A count past what is left is a broken stream, like a failed write.
         let Some(after) = usize::try_from(wrote)
@@ -440,11 +457,14 @@ unsafe extern "C" fn load(
     }
     // This fixed buffer describes the versioned preset state, not a product limit.
     let mut bytes = [0; 8];
+    // SAFETY: the host passes a non-null input stream, checked above, valid for the call.
     let Some(read) = (unsafe { (*stream).read }) else {
         return false;
     };
     let mut rest: &mut [u8] = &mut bytes;
     while !rest.is_empty() {
+        // SAFETY: `read` is the stream's own function, given the stream and `rest`, writable for
+        // its length.
         let count = unsafe { read(stream, rest.as_mut_ptr().cast(), rest.len() as u64) };
         let Some(after) = usize::try_from(count)
             .ok()

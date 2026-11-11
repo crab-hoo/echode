@@ -410,6 +410,7 @@ struct OpenAudio(ExtAudioFileRef);
 impl Drop for OpenAudio {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: `self.0` is the file `ExtAudioFileOpenURL` opened, disposed once here.
             unsafe {
                 ExtAudioFileDispose(self.0);
             }
@@ -419,6 +420,8 @@ impl Drop for OpenAudio {
 
 fn open_audio(source: &Path) -> Result<OpenAudio, PackageError> {
     let bytes = std::os::unix::ffi::OsStrExt::as_bytes(source.as_os_str());
+    // SAFETY: `bytes` is the path's own byte string, valid for the call, and its length is passed
+    // with it.
     let url = unsafe {
         CFURL::from_file_system_representation(
             None,
@@ -430,6 +433,8 @@ fn open_audio(source: &Path) -> Result<OpenAudio, PackageError> {
     .ok_or(MediaError::NotFileUrl)?;
     let mut opened: ExtAudioFileRef = core::ptr::null_mut();
     let status =
+        // SAFETY: `url` is a valid file URL and `opened` is a writable local, so the pointer is
+        // never null.
         unsafe { ExtAudioFileOpenURL(&url, core::ptr::NonNull::new_unchecked(&mut opened)) };
     if status != 0 || opened.is_null() {
         return Err(MediaError::Open(status).into());
@@ -459,9 +464,25 @@ fn client_format(sample_rate: f64, channels: u32) -> AudioStreamBasicDescription
     }
 }
 
-fn audio_property<T>(file: ExtAudioFileRef, property: u32) -> Result<T, PackageError> {
+/// A property value for which any bytes Audio Toolbox writes are valid, so
+/// [`audio_property`] can read one without knowing what it stored (ADR 0321).
+///
+/// # Safety
+/// Every bit pattern of `size_of::<Self>()` bytes is a valid `Self`.
+unsafe trait PlainProperty {}
+// SAFETY: every bit pattern is a valid integer.
+unsafe impl PlainProperty for i64 {}
+// SAFETY: a C struct of one `f64` and eight `u32`, without padding.
+unsafe impl PlainProperty for AudioStreamBasicDescription {}
+
+fn audio_property<T: PlainProperty>(
+    file: ExtAudioFileRef,
+    property: u32,
+) -> Result<T, PackageError> {
     let mut value = std::mem::MaybeUninit::<T>::uninit();
     let mut size = u32::try_from(std::mem::size_of::<T>()).unwrap_or(u32::MAX);
+    // SAFETY: `file` is open, `size` is writable and tells the call that
+    // `value` has room for `size_of::<T>()` bytes.
     let status = unsafe {
         ExtAudioFileGetProperty(
             file,
@@ -479,6 +500,8 @@ fn audio_property<T>(file: ExtAudioFileRef, property: u32) -> Result<T, PackageE
         }
         .into());
     }
+    // SAFETY: the call wrote all `size_of::<T>()` bytes, and any bytes are a
+    // valid `T: PlainProperty`.
     Ok(unsafe { value.assume_init() })
 }
 
@@ -488,6 +511,7 @@ fn set_audio_property<T>(
     value: &T,
 ) -> Result<(), PackageError> {
     let size = u32::try_from(std::mem::size_of::<T>()).unwrap_or(u32::MAX);
+    // SAFETY: `value` is a `T` of `size` bytes, read by the call before it returns.
     let status = unsafe {
         ExtAudioFileSetProperty(file, property, size, core::ptr::NonNull::from(value).cast())
     };

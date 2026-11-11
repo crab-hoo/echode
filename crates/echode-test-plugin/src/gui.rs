@@ -114,6 +114,7 @@ pub fn emit(output: &mut OutputEvents<'_>) {
 /// # Safety
 /// `output` is null or the host's output list for this call.
 pub unsafe fn emit_raw(output: *const clap_output_events) {
+    // SAFETY: the caller passes null or the host's output list for this call.
     let Some(output) = (unsafe { output.as_ref() }) else {
         return;
     };
@@ -161,11 +162,14 @@ pub unsafe fn emit_raw(output: *const clap_output_events) {
 #[derive(Copy, Clone)]
 struct SeenHostParams(RawExtension<HostExtensionSide, clap_host_params>);
 
+// SAFETY: `CLAP_EXT_PARAMS` is the official identifier of the extension this type stands for.
 unsafe impl Extension for SeenHostParams {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_PARAMS];
     type ExtensionSide = HostExtensionSide;
 
     unsafe fn from_raw(raw: RawExtension<Self::ExtensionSide>) -> Self {
+        // SAFETY: `IDENTIFIERS` names the params extension, whose host table is `clap_host_params`,
+        // so the raw extension clack found has this type.
         Self(unsafe { raw.cast() })
     }
 }
@@ -173,11 +177,14 @@ unsafe impl Extension for SeenHostParams {
 #[derive(Copy, Clone)]
 struct SeenHostGui(RawExtension<HostExtensionSide, clap_host_gui>);
 
+// SAFETY: `CLAP_EXT_GUI` is the official identifier of the extension this type stands for.
 unsafe impl Extension for SeenHostGui {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_GUI];
     type ExtensionSide = HostExtensionSide;
 
     unsafe fn from_raw(raw: RawExtension<Self::ExtensionSide>) -> Self {
+        // SAFETY: `IDENTIFIERS` names the GUI extension, whose host table is `clap_host_gui`, so
+        // the raw extension clack found has this type.
         Self(unsafe { raw.cast() })
     }
 }
@@ -193,6 +200,8 @@ pub fn report_closed() {
     let host = gui.0.host_ptr();
     // SAFETY: called from the plugin's main-thread callback.
     if let Some(closed) = unsafe { gui.0.as_ptr().as_ref().closed } {
+        // SAFETY: `closed` is the host's own function, called from the plugin's main thread with
+        // the host pointer it gave this plugin.
         unsafe { closed(host.as_ptr(), true) };
     }
 }
@@ -207,6 +216,8 @@ fn request_flush() {
     let host_ptr = params.0.host_ptr();
     // SAFETY: CLAP's `request_flush` may be called from any thread.
     if let Some(flush) = unsafe { params.0.as_ptr().as_ref().request_flush } {
+        // SAFETY: `request_flush` is the host's own function, which CLAP lets any thread call with
+        // the host pointer it gave this plugin.
         unsafe { flush(host_ptr.as_ptr()) };
     }
 }
@@ -293,6 +304,7 @@ fn disconnect() {
 #[derive(Copy, Clone)]
 pub struct PluginGuiExt;
 
+// SAFETY: `CLAP_EXT_GUI` is the official identifier of the extension this type stands for.
 unsafe impl Extension for PluginGuiExt {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_GUI];
     type ExtensionSide = PluginExtensionSide;
@@ -302,6 +314,8 @@ unsafe impl Extension for PluginGuiExt {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_gui`, the `#[repr(C)]` table CLAP declares for
+// that identifier.
 unsafe impl ExtensionImplementation<TestGain> for PluginGuiExt {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_plugin_gui {

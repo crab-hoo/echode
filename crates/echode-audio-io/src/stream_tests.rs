@@ -97,6 +97,8 @@ fn delayed_control_pause_preserves_stop_and_trace_matches_native_buffers_under_r
                         mData: interleaved.as_mut_ptr().cast(),
                     }]
                 };
+                // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer
+                // points at a local array writable for its byte size.
                 unsafe {
                     fill_with_time(
                         &callback,
@@ -241,6 +243,8 @@ fn contract_transport_discontinuities_declick_hal_output_under_rtsan() {
                         mDataByteSize: std::mem::size_of_val(stereo.as_slice()) as u32,
                         mData: stereo.as_mut_ptr().cast(),
                     };
+                    // SAFETY: the test calls this in place of HAL, never alongside it, and the
+                    // buffer points at a local array writable for its byte size.
                     unsafe { fill(&callback, &mut [buffer], Instant::now()) };
                     stereo.clone()
                 };
@@ -354,6 +358,8 @@ fn contract_stop_preserves_waveform_while_fading_under_rtsan() {
                             mDataByteSize: std::mem::size_of_val(output.as_slice()) as u32,
                             mData: output.as_mut_ptr().cast(),
                         };
+                        // SAFETY: the test calls this in place of HAL, never alongside it, and the
+                        // buffer points at a local array writable for its byte size.
                         unsafe {
                             fill(&callback, &mut [buffer], Instant::now());
                         }
@@ -480,6 +486,8 @@ fn in_flight_stop_preserves_heard_audio_and_cancels_unheard_starts_under_rtsan()
                 mDataByteSize: std::mem::size_of_val(output.as_slice()) as u32,
                 mData: output.as_mut_ptr().cast(),
             };
+            // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer
+            // points at a local array writable for its byte size.
             unsafe {
                 fill(&callback, &mut [buffer], Instant::now());
             }
@@ -622,6 +630,8 @@ fn contract_stop_during_preparation_gates_callbacks_under_rtsan() {
             mDataByteSize: std::mem::size_of_val(&stereo) as u32,
             mData: stereo.as_mut_ptr().cast(),
         };
+        // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at
+        // a local array writable for its byte size.
         unsafe { fill(&callback, &mut [buffer], Instant::now()) };
         stereo
     };
@@ -777,9 +787,13 @@ fn interleaved_and_planar_hal_buffers_match_under_rtsan() {
         mDataByteSize: std::mem::size_of_val(data) as u32,
         mData: data.as_mut_ptr().cast(),
     };
+    // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at a
+    // local array writable for its byte size.
     unsafe {
         fill(&a, &mut [buffer(&mut stereo, 2)], Instant::now());
     }
+    // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at a
+    // local array writable for its byte size.
     unsafe {
         fill(
             &b,
@@ -800,16 +814,22 @@ fn interleaved_and_planar_hal_buffers_match_under_rtsan() {
     let held = control_a.status().sample;
     a.hardware_epoch.fetch_add(1, Ordering::Release);
     stereo.fill(1.0);
+    // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at a
+    // local array writable for its byte size.
     unsafe { fill(&a, &mut [buffer(&mut stereo, 2)], Instant::now()) };
     assert!(stereo.iter().all(|sample| *sample == 0.0));
     assert_eq!(control_a.status().sample, held);
     a.observed_epoch.store(1, Ordering::Release);
+    // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at a
+    // local array writable for its byte size.
     unsafe { fill(&a, &mut [buffer(&mut stereo, 2)], Instant::now()) };
     assert_eq!(control_a.status().sample, held + 64);
     assert!(stereo.iter().any(|sample| *sample != 0.0));
     assert!(!a.failed.load(Ordering::Acquire) && !b.failed.load(Ordering::Acquire));
     // A driver enlargement beyond prepared scratch is silent, never a panic.
     let mut large = [1.0f32; 256];
+    // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at a
+    // local array writable for its byte size.
     unsafe {
         fill(&a, &mut [buffer(&mut large, 2)], Instant::now());
     }
@@ -869,6 +889,8 @@ fn the_hal_deadline_starts_when_the_callback_is_entered() {
         mDataByteSize: std::mem::size_of_val(&stereo) as u32,
         mData: stereo.as_mut_ptr().cast(),
     };
+    // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at a
+    // local array writable for its byte size.
     unsafe { fill(&callback, &mut [buffer], entered) };
     assert!(stereo.iter().any(|sample| *sample != 0.0));
     assert!(!callback.failed.load(Ordering::Acquire));
@@ -925,6 +947,8 @@ fn contract_the_output_block_ends_before_the_device_safety_offset() {
             mDataByteSize: std::mem::size_of_val(&stereo) as u32,
             mData: stereo.as_mut_ptr().cast(),
         };
+        // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at
+        // a local array writable for its byte size.
         let deadline = unsafe { fill_inner(&callback, &mut [buffer], entry) };
         assert!(stereo.iter().any(|sample| *sample != 0.0));
         deadline.map(|deadline| deadline.saturating_duration_since(at))
@@ -1130,6 +1154,8 @@ fn a_panic_in_the_render_leaves_the_output_silent_and_reports_its_location() {
             mData: output.as_mut_ptr().cast(),
         };
         let callback = stream.callback.as_deref().unwrap();
+        // SAFETY: the test calls this in place of HAL, never alongside it, and the buffer points at
+        // a local array writable for its byte size.
         unsafe { fill(callback, &mut [buffer], Instant::now()) };
         output.clone()
     };

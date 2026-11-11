@@ -1093,6 +1093,8 @@ impl PluginEnv {
     }
 
     fn without_host(cache: &Path) -> Self {
+        // SAFETY: the caller holds `PLUGIN_ENV` while this value lives, and no helper reads the
+        // environment before these values are stored.
         unsafe {
             std::env::set_var("ECHODE_PLUGIN_HOST", cache.with_file_name("no-such-host"));
             std::env::set_var("ECHODE_PLUGIN_CACHE", cache);
@@ -1103,6 +1105,8 @@ impl PluginEnv {
 
 impl Drop for PluginEnv {
     fn drop(&mut self) {
+        // SAFETY: the caller holds `PLUGIN_ENV` until after this drop, and the render that read
+        // these variables has finished.
         unsafe {
             std::env::remove_var("ECHODE_PLUGIN_HOST");
             std::env::remove_var("ECHODE_PLUGIN_CACHE");

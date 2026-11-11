@@ -41,6 +41,8 @@ impl Drop for ForbidAlloc {
 pub struct GuardAlloc;
 
 #[cfg(debug_assertions)]
+// SAFETY: every method forwards the same arguments to `System`, which upholds the `GlobalAlloc`
+// contract; `refuse` only aborts and never allocates.
 unsafe impl std::alloc::GlobalAlloc for GuardAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         refuse();

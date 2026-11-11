@@ -252,6 +252,7 @@ impl OutputStream {
         }
         self.proc = proc;
         self.registered = true;
+        // SAFETY: `self.proc` is the IOProc just created on this device.
         let status = unsafe { AudioDeviceStart(self.device.id, self.proc) };
         if status != 0 {
             return Err(AudioError::CoreAudio {
@@ -346,6 +347,8 @@ impl OutputStream {
             mData: data.as_mut_ptr().cast(),
         };
         if let Some(callback) = &self.callback {
+            // SAFETY: the test calls this in place of HAL, never alongside it, and `buffer` points
+            // at `data`, writable for its byte size.
             unsafe { fill(callback, &mut [buffer], Instant::now()) };
         }
         data
@@ -537,7 +540,9 @@ impl OutputStream {
         if let Some(callback) = self.callback.take()
             && self.registered
         {
+            // SAFETY: `self.proc` is the IOProc `register` created on this device.
             let stopped = unsafe { AudioDeviceStop(self.device.id, self.proc) };
+            // SAFETY: `self.proc` is the IOProc `register` created on this device, stopped above.
             let destroyed = unsafe { AudioDeviceDestroyIOProcID(self.device.id, self.proc) };
             if destroyed != 0
                 && destroyed != kAudioHardwareBadObjectError
@@ -760,6 +765,8 @@ unsafe extern "C-unwind" fn render(
     // the instant can only end the block earlier.
     let at = Instant::now();
     let host = host_now();
+    // SAFETY: the context is the boxed `Callback` given to
+    // `AudioDeviceCreateIOProcID`, which `close` frees only after destroying the IOProc.
     let Some(callback) = (unsafe { context.cast::<Callback>().as_ref() }) else {
         return 0;
     };
@@ -773,14 +780,30 @@ unsafe extern "C-unwind" fn render(
             .contains(AudioTimeStampFlags::HostTimeValid)
             .then_some(time.mHostTime),
     };
-    // SAFETY: HAL supplies the entire flexible buffer array, not merely the
-    // one-element prefix represented in the SDK struct.
-    let list = output.as_ptr();
-    let count = unsafe { (*list).mNumberBuffers } as usize;
-    let pointer = unsafe { std::ptr::addr_of_mut!((*list).mBuffers).cast::<AudioBuffer>() };
-    let buffers = unsafe { std::slice::from_raw_parts_mut(pointer, count) };
+    // SAFETY: HAL passes this call's output list.
+    let buffers = unsafe { hal_buffers(output) };
+    // SAFETY: HAL serializes this IOProc's calls, and the buffers are this call's.
     unsafe { block(callback, buffers, entry) };
     0
+}
+
+/// The buffers of the output list HAL passed to an IOProc, as one slice.
+///
+/// # Safety
+/// `list` is the output list of the current IOProc call. HAL supplies its whole
+/// flexible array of `mNumberBuffers` buffers, writable until the call returns.
+pub(crate) unsafe fn hal_buffers<'a>(list: NonNull<AudioBufferList>) -> &'a mut [AudioBuffer] {
+    let list = list.as_ptr();
+    // SAFETY: the list is valid for this call, and its array starts at `mBuffers`.
+    let (count, first) = unsafe {
+        (
+            (*list).mNumberBuffers as usize,
+            std::ptr::addr_of_mut!((*list).mBuffers).cast::<AudioBuffer>(),
+        )
+    };
+    // SAFETY: HAL supplies the entire flexible array, not merely the
+    // one-element prefix the SDK struct declares.
+    unsafe { std::slice::from_raw_parts_mut(first, count) }
 }
 
 /// When HAL entered this block, and its output time.
@@ -806,17 +829,27 @@ impl Entry {
 }
 
 /// This function also runs with owned test buffers; no HAL calls occur here.
+///
+/// # Safety
+/// As for [`block`].
 #[cfg(test)]
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 unsafe fn fill(callback: &Callback, buffers: &mut [AudioBuffer], entered: Instant) {
+    // SAFETY: the caller's contract is `block`'s.
     unsafe { block(callback, buffers, Entry::untimed(entered)) };
 }
 
 /// One HAL block. A panic in its body leaves this and every later block
 /// silent, and the control thread reports it (ADR 0238).
+///
+/// # Safety
+/// Calls for one `callback` never overlap: HAL serializes its IOProc, and a
+/// test calls this in place of HAL. Each non-null buffer is writable for its
+/// `mDataByteSize` bytes during the call.
 unsafe fn block(callback: &Callback, buffers: &mut [AudioBuffer], entry: Entry) {
     let finished = callback
         .panic
+        // SAFETY: the caller's contract for `block` is the body's.
         .run(|| unsafe { fill_with_time(callback, buffers, entry) });
     if !finished {
         callback.failed.store(true, Ordering::Release);
@@ -825,15 +858,24 @@ unsafe fn block(callback: &Callback, buffers: &mut [AudioBuffer], entry: Entry) 
     }
 }
 
+/// # Safety
+/// As for [`block`].
 #[cfg_attr(feature = "rtsan", rtsan_standalone::nonblocking)]
 unsafe fn fill_with_time(callback: &Callback, buffers: &mut [AudioBuffer], entry: Entry) {
     let _guard = ForbidAlloc::enter();
     let entered = entry.at;
+    // SAFETY: only this serialized callback touches the render state, and this shared borrow ends
+    // with the statement.
     let was_live = unsafe { &*callback.render.get() }.player.has_live_output();
+    // SAFETY: the caller's contract is `fill_inner`'s.
     let deadline = unsafe { fill_inner(callback, buffers, entry) };
+    // SAFETY: only this serialized callback touches the trace writer, and no other borrow of it is
+    // live.
     let Some(trace) = (unsafe { &mut *callback.trace.get() }).as_mut() else {
         return;
     };
+    // SAFETY: only this serialized callback touches the render state, and `fill_inner`'s mutable
+    // borrow has ended.
     let state = unsafe { &*callback.render.get() };
     let frames = trace_frames(buffers);
     let revision = callback.transport_revision.load(Ordering::Acquire);
@@ -865,6 +907,8 @@ unsafe fn fill_with_time(callback: &Callback, buffers: &mut [AudioBuffer], entry
         },
         entered,
         (was_live && !authorized) || state.player.stop_fade_offset() == Some(0),
+        // SAFETY: `record` calls this only for frames below `block.frames`, which is zero unless
+        // `trace_frames` accepted every buffer's float layout.
         |frame| unsafe { submitted_pair(buffers, frame, callback.channels == 1) },
     );
 }
@@ -891,13 +935,18 @@ fn trace_frames(buffers: &[AudioBuffer]) -> Option<usize> {
     frames
 }
 
-// SAFETY: trace_frames validated the native float layout and frame count.
+/// One frame of the first two channels the block submitted.
+///
+/// # Safety
+/// [`trace_frames`] accepted these buffers, which stay readable for the call.
 unsafe fn submitted_pair(buffers: &[AudioBuffer], frame: usize, mono: bool) -> [f32; 2] {
     let mut pair = [0.0; 2];
     let mut base = 0usize;
     for buffer in buffers {
         let channels = buffer.mNumberChannels as usize;
         if !buffer.mData.is_null() && buffer.mDataByteSize != 0 {
+            // SAFETY: `trace_frames` found this buffer's data aligned for `f32` and its size a
+            // whole number of frames, and HAL keeps it readable during the call.
             let data = unsafe {
                 std::slice::from_raw_parts(
                     buffer.mData.cast::<f32>(),
@@ -934,6 +983,7 @@ pub(crate) unsafe fn clear_buffers(buffers: &mut [AudioBuffer]) -> (Option<usize
         if buffer.mData.is_null() || buffer.mDataByteSize == 0 {
             continue;
         }
+        // SAFETY: the caller promises `mDataByteSize` writable bytes at each non-null buffer.
         unsafe {
             std::ptr::write_bytes(buffer.mData.cast::<u8>(), 0, buffer.mDataByteSize as usize)
         };
@@ -973,6 +1023,8 @@ pub(crate) unsafe fn write_planes(
             continue;
         }
         if !buffer.mData.is_null() && buffer.mDataByteSize != 0 {
+            // SAFETY: `clear_buffers` found this buffer's data aligned for `f32` and its size a
+            // whole number of frames, and the caller promises it is writable.
             let data = unsafe {
                 std::slice::from_raw_parts_mut(
                     buffer.mData.cast::<f32>(),
@@ -1003,11 +1055,15 @@ pub(crate) unsafe fn write_planes(
 
 /// Renders one block and returns the deadline it gave the player, or `None`
 /// when the block was left silent before rendering.
+///
+/// # Safety
+/// As for [`block`].
 unsafe fn fill_inner(
     callback: &Callback,
     buffers: &mut [AudioBuffer],
     entry: Entry,
 ) -> Option<Instant> {
+    // SAFETY: the caller's contract is `clear_buffers`'s.
     let (frames, valid) = unsafe { clear_buffers(buffers) };
     // Notifications never query HAL here. Leave bytes zeroed and hold the
     // clock until the control thread has checked the notified configuration.
@@ -1020,6 +1076,8 @@ unsafe fn fill_inner(
     if frames == 0 {
         return None;
     }
+    // SAFETY: only this serialized callback touches the render state, and no other borrow of it is
+    // live.
     let state = unsafe { &mut *callback.render.get() };
     let (Some(left), Some(right)) = (state.left.get_mut(..frames), state.right.get_mut(..frames))
     else {
@@ -1060,6 +1118,8 @@ unsafe fn fill_inner(
     state.output_revision = output_revision;
     state.enabled = effective;
     if !callback.silent {
+        // SAFETY: `clear_buffers` accepted these buffers (`valid`) for `frames` frames, which
+        // `left` and `right` hold.
         unsafe { write_planes(buffers, left, right, callback.channels == 1) };
     }
     Some(deadline)

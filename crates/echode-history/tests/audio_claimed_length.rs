@@ -37,20 +37,26 @@ fn note(size: usize) {
 unsafe impl GlobalAlloc for Largest {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         note(layout.size());
+        // SAFETY: the caller's contract for `alloc` is `System.alloc`'s.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         note(layout.size());
+        // SAFETY: the caller's contract for `alloc_zeroed` is `System.alloc_zeroed`'s.
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: the caller's contract for `dealloc` is `System.dealloc`'s, and every block came
+        // from `System` through this allocator.
         unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         note(new_size);
+        // SAFETY: the caller's contract for `realloc` is `System.realloc`'s, and every block came
+        // from `System` through this allocator.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }

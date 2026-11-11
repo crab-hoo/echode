@@ -153,7 +153,7 @@ impl DefaultPluginFactory for TestGain {
     ) -> Result<Self::MainThread<'a>, PluginError> {
         Ok(TestMain {
             role: current_role(),
-            // Load runs on this same main thread, while the host is still alive.
+            // SAFETY: load runs on this same main thread, while the host is still alive.
             host: unsafe { host.with_arbitrary_lifetime() },
         })
     }
@@ -469,6 +469,8 @@ impl<'a> PluginAudioProcessor<'a, (), TestMain> for TestGainProcessor<'a> {
             Fault::Segfault => loop {
                 // A real fault, not `raise`. The handler must run if the kernel
                 // turns this into `SIGSEGV`. Do not fall through to `abort`.
+                // SAFETY: none: writing to address zero is the deliberate fault of the `segfault`
+                // fixture, so the kernel raises a real SIGSEGV; execution never continues past it.
                 unsafe { std::ptr::write_volatile(std::ptr::null_mut::<u8>(), 1) };
             },
             Fault::Hang => loop {
@@ -921,6 +923,7 @@ impl PluginFactoryImpl for TestFactory {
 #[derive(Copy, Clone)]
 struct PluginAudioPorts;
 
+// SAFETY: `CLAP_EXT_AUDIO_PORTS` is the official identifier of the extension this type stands for.
 unsafe impl Extension for PluginAudioPorts {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_AUDIO_PORTS];
     type ExtensionSide = PluginExtensionSide;
@@ -930,6 +933,8 @@ unsafe impl Extension for PluginAudioPorts {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_audio_ports`, the `#[repr(C)]` table CLAP
+// declares for that identifier.
 unsafe impl ExtensionImplementation<TestGain> for PluginAudioPorts {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_plugin_audio_ports {
@@ -939,6 +944,7 @@ unsafe impl ExtensionImplementation<TestGain> for PluginAudioPorts {
 }
 
 unsafe extern "C" fn port_count(plugin: *const clap_plugin, is_input: bool) -> u32 {
+    // SAFETY: the host calls with the plugin pointer this plugin gave it, on the main thread.
     unsafe {
         PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
             let (inputs, outputs) = wrapper.main_thread().ports();
@@ -959,6 +965,8 @@ unsafe extern "C" fn port_get(
     is_input: bool,
     info: *mut clap_audio_port_info,
 ) -> bool {
+    // SAFETY: the host calls with the plugin pointer this plugin gave it, on the main thread, and
+    // writable storage for one descriptor in `info`.
     unsafe {
         PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
             let (inputs, outputs) = wrapper.main_thread().ports();
@@ -991,11 +999,14 @@ unsafe extern "C" fn port_get(
 #[derive(Copy, Clone)]
 struct SeenHostState(RawExtension<HostExtensionSide, clap_host_state>);
 
+// SAFETY: `CLAP_EXT_STATE` is the official identifier of the extension this type stands for.
 unsafe impl Extension for SeenHostState {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_STATE];
     type ExtensionSide = HostExtensionSide;
 
     unsafe fn from_raw(raw: RawExtension<Self::ExtensionSide>) -> Self {
+        // SAFETY: `IDENTIFIERS` names the state extension, whose host table is `clap_host_state`,
+        // so the raw extension clack found has this type.
         Self(unsafe { raw.cast() })
     }
 }
@@ -1003,8 +1014,11 @@ unsafe impl Extension for SeenHostState {
 impl SeenHostState {
     fn mark_dirty(self) {
         let host = self.0.host_ptr();
+        // SAFETY: the host's `clap_host_state` table stays valid while the plugin lives.
         let mark = unsafe { self.0.as_ptr().as_ref().mark_dirty };
         if let Some(mark) = mark {
+            // SAFETY: `mark_dirty` is the host's own function, called with the host pointer it gave
+            // this plugin.
             unsafe { mark(host.as_ptr()) };
         }
     }
@@ -1013,6 +1027,7 @@ impl SeenHostState {
 #[derive(Copy, Clone)]
 struct PluginStateExt;
 
+// SAFETY: `CLAP_EXT_STATE` is the official identifier of the extension this type stands for.
 unsafe impl Extension for PluginStateExt {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_STATE];
     type ExtensionSide = PluginExtensionSide;
@@ -1022,6 +1037,8 @@ unsafe impl Extension for PluginStateExt {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_state`, the `#[repr(C)]` table CLAP declares
+// for that identifier.
 unsafe impl ExtensionImplementation<TestGain> for PluginStateExt {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_plugin_state {
@@ -1051,6 +1068,8 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
     }
     if current_role() == Role::Params {
         let bytes = params::save();
+        // SAFETY: `stream` is the host's non-null output stream for this save, and `bytes` is
+        // readable for its length.
         return unsafe {
             let Some(write) = (*stream).write else {
                 return false;
@@ -1060,8 +1079,10 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
     }
     let byte = STATE_BYTE.load(Ordering::Acquire);
     if fault_now() == Fault::LargeState {
+        // SAFETY: `stream` is the host's non-null output stream for this save.
         return unsafe { save_large_state(stream, byte) };
     }
+    // SAFETY: `stream` is the host's non-null output stream for this save, and `byte` is readable.
     unsafe {
         let Some(write) = (*stream).write else {
             return false;
@@ -1075,6 +1096,7 @@ unsafe extern "C" fn state_save(plugin: *const clap_plugin, stream: *const clap_
 /// # Safety
 /// `stream` is the host's non-null output stream for this save.
 unsafe fn save_large_state(stream: *const clap_ostream, byte: u8) -> bool {
+    // SAFETY: the caller passes the host's non-null output stream.
     let Some(write) = (unsafe { (*stream).write }) else {
         return false;
     };
@@ -1082,6 +1104,8 @@ unsafe fn save_large_state(stream: *const clap_ostream, byte: u8) -> bool {
     let mut left = LARGE_STATE;
     while left > 0 {
         let count = left.min(chunk.len());
+        // SAFETY: `write` is the stream's own function, given the stream and `count` readable bytes
+        // of `chunk`.
         let written = unsafe { write(stream, chunk.as_ptr().cast::<c_void>(), count as u64) };
         if usize::try_from(written).ok() != Some(count) {
             return false;
@@ -1096,11 +1120,14 @@ unsafe fn save_large_state(stream: *const clap_ostream, byte: u8) -> bool {
 /// # Safety
 /// `stream` is the host's non-null input stream for this load.
 unsafe fn load_large_state(stream: *const clap_istream) -> Option<u8> {
+    // SAFETY: the caller passes the host's non-null input stream.
     let read = unsafe { (*stream).read }?;
     let mut chunk = vec![0u8; LARGE_STATE_CHUNK];
     let mut first = None;
     let mut total = 0usize;
     loop {
+        // SAFETY: `read` is the stream's own function, given the stream and `chunk`, writable for
+        // its length.
         let count = unsafe {
             read(
                 stream,
@@ -1129,6 +1156,8 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
     if current_role() == Role::Params {
         // One byte more than the fixture writes, so trailing bytes are refused.
         let mut bytes = [0u8; 17];
+        // SAFETY: `stream` is the host's non-null input stream for this load, and `bytes` is
+        // writable for its length.
         let read = unsafe {
             let Some(read) = (*stream).read else {
                 return false;
@@ -1142,12 +1171,14 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
         return usize::try_from(read).is_ok_and(|read| params::load(&bytes[..read]));
     }
     if fault_now() == Fault::LargeState {
+        // SAFETY: `stream` is the host's non-null input stream for this load.
         let Some(byte) = (unsafe { load_large_state(stream) }) else {
             return false;
         };
         STATE_BYTE.store(byte, Ordering::Release);
         // Like a short load, so a test can start a background save of the
         // large state through the dirty notice.
+        // SAFETY: the host calls with the plugin pointer this plugin gave it, on the main thread.
         unsafe {
             PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
                 wrapper.main_thread().mark_dirty();
@@ -1158,6 +1189,8 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
     }
     let mut byte = 0u8;
     let mut extra = 0u8;
+    // SAFETY: `stream` is the host's non-null input stream for this load, and each byte is
+    // writable.
     let accepted = unsafe {
         let Some(read) = (*stream).read else {
             return false;
@@ -1171,6 +1204,7 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
         return false;
     }
     STATE_BYTE.store(byte, Ordering::Release);
+    // SAFETY: the host calls with the plugin pointer this plugin gave it, on the main thread.
     unsafe {
         PluginWrapper::<TestGain>::handle(plugin, |wrapper| {
             wrapper.main_thread().mark_dirty();
@@ -1183,6 +1217,7 @@ unsafe extern "C" fn state_load(plugin: *const clap_plugin, stream: *const clap_
 #[derive(Copy, Clone)]
 struct PluginNotePorts;
 
+// SAFETY: `CLAP_EXT_NOTE_PORTS` is the official identifier of the extension this type stands for.
 unsafe impl Extension for PluginNotePorts {
     const IDENTIFIERS: &[&CStr] = &[CLAP_EXT_NOTE_PORTS];
     type ExtensionSide = PluginExtensionSide;
@@ -1192,6 +1227,8 @@ unsafe impl Extension for PluginNotePorts {
     }
 }
 
+// SAFETY: `IMPLEMENTATION` points at a `clap_plugin_note_ports`, the `#[repr(C)]` table CLAP
+// declares for that identifier.
 unsafe impl ExtensionImplementation<TestGain> for PluginNotePorts {
     const IMPLEMENTATION: RawExtensionImplementation =
         RawExtensionImplementation::new(&clap_plugin_note_ports {
@@ -1215,9 +1252,13 @@ unsafe extern "C" fn note_port_get(
     is_input: bool,
     info: *mut clap_note_port_info,
 ) -> bool {
+    // SAFETY: `note_port_count` only reads the fault setting and never dereferences the plugin
+    // pointer.
     if info.is_null() || index >= unsafe { note_port_count(_plugin, is_input) } || !is_input {
         return false;
     }
+    // SAFETY: `info` is non-null, checked above, and the host gives writable storage for one
+    // descriptor.
     unsafe {
         *info = clap_note_port_info {
             id: index,

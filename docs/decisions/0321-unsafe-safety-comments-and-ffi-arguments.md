@@ -56,13 +56,19 @@ FFI-A1（長さの検査が関数ごとに不揃い）は、次の形で残っ�
 
 ### `unsafe` の根拠
 
-- **ワークスペースの lint に `undocumented_unsafe_blocks` と `unnecessary_safety_comment` を足す。**
+- **ワークスペースの lint で `undocumented_unsafe_blocks` を `forbid`、`unnecessary_safety_comment` を警告にする。**
   前者は `unsafe` のブロックと `impl` に `// SAFETY:` を求め、後者は `unsafe` のなくなった所に残った古い根拠を止める。
   `missing_safety_doc` は `clippy::all` に既にある。`multiple_unsafe_ops_per_block` は、ブロックと注釈を増やすだけで情報が増えないので採らない。
 - テストのコードも除外しない。`cfg_attr(test, allow(...))` で除くと、規則に例外が増える。
   `echode-ffi` のテストは Miri で所有権の契約を確かめるもので、根拠がその契約である。
-- 局所の `allow`・`expect` で lint を外すことは検査で拒否する。
-- ADR 0278 のとおり crate の境界ごとに注釈を足してコミットし、全件を終えたコミットで lint と検査を有効にする。
+- 局所の解除の防ぎ方は 2 案を比べた。
+  1. `check_audio_lints.py` と同じく、ソースの `allow`・`expect` を正規表現で探すスクリプト。属性の書き方の揺れを追い続けることになる。
+  2. **`forbid` にする。** rustc が `allow(clippy::undocumented_unsafe_blocks) incompatible with previous forbid`（E0453）で拒否する。
+     外部のマクロの展開は lint の対象外で、全 target・非既定の feature で衝突はなかった。
+  2 を採る。残る抜け道は、メンバーが `[lints] workspace = true` を書かずにワークスペースの lint ごと外れることで、
+  `scripts/check_workspace_lints.py` が全メンバーの継承と、`forbid`・`unsafe_op_in_unsafe_fn = "deny"` の水準を確かめる。
+  メンバーの一覧は `check_typed_errors.py` の読み方（ADR 0320）を使い、新しい crate は最初のコミットから対象になる。
+- ADR 0278 のとおり crate の境界ごとに注釈を足してコミットし、全件を終えたコミットで lint と検査を有効にした。
 
 ### 根拠を書いて分かった所
 
@@ -75,6 +81,25 @@ FFI-A1（長さの検査が関数ごとに不揃い）は、次の形で残っ�
   `&Arc<MappedRegion>` を受け取って参照を一つ持ち続け、前の領域も解放しない（ハンドラーはどのスレッドでもいつでも動き得るため）。
   ヘルパーは 1 プロセスに 1 回しか呼ばないので、残す量は領域 1 つである。使われていなかった `point_abort_notice` は消した。
   回帰は `region_tests.rs` の `the_abort_notice_keeps_its_mapping_for_the_rest_of_the_process` である。
+- **HAL の出力の一覧（`echode-audio-io`）**: 製品の出力と試聴の IOProc が、可変長の `AudioBufferList` をスライスにする 3 つの操作を別々に書いていた。
+  `stream::hal_buffers` にまとめた。描画の連鎖の `unsafe fn`（`block`・`fill_with_time`・`fill_inner`・`submitted_pair`）に `# Safety` がなかったので書いた。
+- **任意の型の `assume_init`（`echode-audio-io`・`echode-history`）**: `hardware::get::<T: Copy>` と `media::audio_property::<T>` は、
+  OS が書いたバイトをどの型でも `assume_init` していた。`bool` などの不正なビットの型で呼べば未定義動作になる。
+  どのバイトも正しい値である型だけに付ける `unsafe trait PlainProperty` で縛り、根拠を実装の側へ移した
+  （`u32`・`f64`・`i64`・`AudioStreamBasicDescription`・生ポインター）。呼出しは変えていない。
+- **エンジンの spike**: `graph::workgroup_parallel_threads` と `device_measurement::silence` は、生ポインターを受けて参照外しする安全な関数だった。
+  `unsafe fn` にし、呼出し側に根拠を書いた。計測の処理は変えていない（ADR 0284 の除外と同じく、計測したコードの動きを保つ）。
+- **意図した未定義動作**: テスト用プラグインの `segfault` の故障と、橋渡しの spike のサニタイザの対照は、未定義動作そのものが目的である。
+  根拠の欄には「意図した故障で、期待どおり失敗する子プロセスだけが実行する」と書いた。
+
+## 結果
+
+- lint を仮に有効にした時の 560 か所（全 target 536、エンジンの spike 19、橋渡しの全 feature 5）を 0 にした。
+  `rtsan`・`headless-output`・`libfuzzer` の feature でも一度 clippy を通した。これらの下に `unsafe` はなく、`make check` はこの組合せを見ない。
+- `unsafe` のブロックは 819 → 841、`SAFETY` の注釈は 329 → 902（`crates/` と `spikes/bridge` の grep、テストを含む）。
+  ブロックが増えたのは、`echode-ffi` の参照外しを隠していた安全な補助関数をなくし、各入口が `abi` を呼ぶ所を明示したためである。
+  呼出し側のメモリを実際に読み書きする所は `abi.rs` の 7 つのブロックだけになった。
+- 音声の処理・ブロック長・保存形式・Swift の呼出しは変えていない。性能の改善は主張しない。
 
 ## 回帰と基盤
 
@@ -83,4 +108,11 @@ FFI-A1（長さの検査が関数ごとに不揃い）は、次の形で残っ�
 - `tests.rs` の `contract_queued_commands_refuse_null_and_oversized_bytes_at_once` は、4 つの入口の拒否、完了の文、返り値と、拒否の後も文書が使えることを照合する。
   修正前は SIGSEGV で失敗した。
 - `scripts/check-bridge-miri.sh` は `abi_tests` も各 seed で動かす。`check-bridge-miri` の `task_inputs` に `crates/echode-ffi/src/abi*` を足した。
-- コードの所在（`docs/development.md`）と検査手順（`docs/verification.md`）を更新した。
+  選択の回帰は `test_verification_tiers.py` の `test_the_c_abi_argument_rules_reach_miri_at_the_task_tier`。
+- `check_workspace_lints.py` を `check-base` と `check-portable` で動かし、`check` の入力に足した。回帰は `scripts/tests/test_workspace_lints.py`。
+- コードの所在（`docs/development.md`）、検査手順（`docs/verification.md`）、診断（`docs/debugging/verification-and-build.md`）、
+  監査の状態（統合表の M2、XCA-15、FFI-A1）を更新した。利用者の制約と実機の確認場面は増えず、status.md とユーザー確認の一覧は変えない。
+
+## M2 の完了
+
+統合表の M2（XCA-15・FFI-A1）を対応済みとした。ADR 0278 の順で、次は M4（ログの仕組み）である。

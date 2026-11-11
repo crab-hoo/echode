@@ -155,6 +155,20 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 `does not deny` はルートの宣言が欠けたか lint が減った状態で、宣言を戻す。`allows clippy::...` は解除で、`get`・反復子・スライスのパターンへ書き換える。
 音声スレッドで動く crate を足した時は、スクリプトの `AUDIO_CRATES` に足す。spike 専用の `graph.rs` の解除だけは許す（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）。
 
+### clippy が `unsafe` の根拠を求める
+
+`undocumented_unsafe_blocks` は `forbid` で、`unsafe` のブロックと `impl` の直前に `// SAFETY:` で根拠を書く（[ADR 0321](../decisions/0321-unsafe-safety-comments-and-ffi-arguments.md)）。
+`allow(...) incompatible with previous forbid` は局所の解除で、許されない。根拠を書けない時は、呼出し側の契約を `unsafe fn` の `# Safety` に移すか、コードを直す。
+複数行の式の中のブロックは、式の前の注釈では足りないことがある。ブロックの行の直前へ移すか、ブロックを `let` に分ける。
+`unnecessary_safety_comment` は、`unsafe` のなくなった所に残った根拠である。消すか、根拠の要る行へ移す。
+C ABI の入口で呼出し側のメモリを読み書きする時は、直接ではなく `crates/echode-ffi/src/abi.rs` の関数を使う。
+
+### `check-workspace-lints` が lint の継承を求める
+
+`scripts/check_workspace_lints.py` は、`[workspace] members` の全メンバーの `Cargo.toml` に `[lints] workspace = true` があることと、
+ワークスペースの `undocumented_unsafe_blocks` が `forbid`、`unsafe_op_in_unsafe_fn` が `deny` 以上であることを確かめる。
+`does not inherit the workspace lints` は新しい crate の宣言漏れで、`[lints]` に `workspace = true` を書く。
+
 ### `check-typed-errors` が文字列のエラーを拒否する
 
 `scripts/check_typed_errors.py` は、`Cargo.toml` の `[workspace] members` の全メンバーの `src` を調べる。

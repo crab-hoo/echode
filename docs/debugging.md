@@ -42,6 +42,8 @@ make debug-report
   - ツール不足・ビルド失敗
   - `check-ffi` が外部シンボルを拒否する
   - `check-audio-lints` が宣言や解除を拒否する
+  - clippy が `unsafe` の根拠を求める
+  - `check-workspace-lints` が lint の継承を求める
   - `check-typed-errors` が文字列のエラーを拒否する
   - Cargo の依存メタデータが欠ける
   - Swift の編集型の生成鮮度が不一致になる
