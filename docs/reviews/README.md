@@ -59,6 +59,7 @@
   不正な起動拒否も不足したフィールド・長さ・コードと診断文の UTF-8 の原因を保持する（[ADR 0313](../decisions/0313-typed-launch-refusal-decoding.md)）。
   拒否以外の制御メタデータもフィールド・長さ・種類とポートの方向を保持する（[ADR 0315](../decisions/0315-typed-control-metadata-errors.md)）。
   パラメーター・通知・窓の報告の内側もフィールド・項目の番号・長さと受けた値を保持する（[ADR 0316](../decisions/0316-typed-parameter-payload-errors.md)）。
+  記述子の規則の違反と送信の拒否も届いた数・枠の種類と長さを保持し、`Remap` の送信の拒否をなくした（[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
   XCA-13 はコールバックのトラックごとの全体の走査をなくした（[ADR 0236](../decisions/0236-callback-work-per-track.md)）。
   XCA-14 はコールバックの panic を捕まえて理由を記録へ残し（[ADR 0238](../decisions/0238-audio-callback-panics.md)）、音声経路の crate で添字などを拒否した（[ADR 0284](../decisions/0284-audio-path-panic-lints.md)）。
   証拠は [保存の耐久性の追跡](../evidence/2026-11-02-durability-trace.md) に置く。

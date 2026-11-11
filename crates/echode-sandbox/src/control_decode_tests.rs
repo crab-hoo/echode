@@ -232,11 +232,11 @@ fn valid_metadata_keeps_its_values_and_existing_body_acceptance() {
         });
     }
     for message in messages {
-        let (typ, body) = encode(&message).unwrap();
+        let (typ, body) = encode(&message);
         let (id, actual) = receive(typ, &body).unwrap();
         assert_eq!(id, 73);
         assert_eq!(format!("{actual:?}"), format!("{message:?}"));
-        assert_eq!(encode(&actual).unwrap(), (typ, body));
+        assert_eq!(encode(&actual), (typ, body));
     }
     // These older messages deliberately ignore bodies. Do not silently tighten
     // the accepted protocol while changing how malformed metadata is reported.

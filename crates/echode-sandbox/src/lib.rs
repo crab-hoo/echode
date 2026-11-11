@@ -25,6 +25,7 @@ compile_error!("Echode only builds for macOS");
 mod control;
 mod control_decode;
 mod control_text;
+mod control_transport;
 mod descriptors;
 mod error;
 mod gui;
@@ -44,6 +45,7 @@ mod workgroup;
 pub use control::{ControlMessage, Socket};
 pub use control_decode::{ControlDecodeError, ControlField};
 pub use control_text::ControlTextError;
+pub use control_transport::{ControlSendError, DescriptorRuleError};
 pub use error::{
     ProtocolError, SessionError, SpawnError, SpawnStep, WorkgroupCall, WorkgroupError,
 };

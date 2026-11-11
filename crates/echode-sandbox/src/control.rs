@@ -2,10 +2,12 @@
 //!
 //! Messages are a little-endian length, a type, a request id, and a body. `Remap` also carries
 //! one file descriptor with `SCM_RIGHTS`. A body longer than 64 MiB is rejected
-//! so a corrupt peer cannot force an unbounded allocation.
+//! so a corrupt peer cannot force an unbounded allocation; this side refuses to
+//! send one with [`ControlSendError`].
 
 use crate::control_decode::{ControlDecodeError, ControlField, read_fixed};
 use crate::control_text::{ControlTextError, read_text};
+use crate::control_transport::{ControlSendError, DescriptorRuleError};
 use crate::gui::{GuiReport, ParamRelay, read_relay, read_report, write_relay, write_report};
 use crate::params::{
     ParamChange, ParamInfo, ParamText, ParamValue, read_changes, read_infos, read_parsed,
@@ -162,7 +164,7 @@ pub struct Socket {
     pending_fd: Option<PendingFd>,
     /// Set when the peer broke the descriptor rules. That read's bytes were
     /// dropped and every later receive fails, so the message is never accepted.
-    broken: Option<&'static str>,
+    broken: Option<DescriptorRuleError>,
 }
 
 impl Socket {
@@ -197,10 +199,17 @@ impl Socket {
     }
 
     /// A nonzero id correlates one control request and its reply. Notices use 0.
+    ///
+    /// A `Remap` passes its descriptor with the frame. The kernel duplicates
+    /// it, so the message still owns this side's copy.
     pub fn send_tagged(&mut self, id: u64, message: &ControlMessage) -> io::Result<()> {
-        let (typ, body) = encode(message)?;
+        let (typ, body) = encode(message);
         let bytes = frame_tagged(id, typ, &body)?;
-        send_bytes(self.fd.as_raw_fd(), &bytes, None)
+        let fd = match message {
+            ControlMessage::Remap { fd, .. } => Some(fd.as_raw_fd()),
+            _ => None,
+        };
+        send_bytes(self.fd.as_raw_fd(), &bytes, fd)
     }
 
     /// Send a new mapping. `fd` is duplicated by the kernel; this end is closed.
@@ -214,11 +223,7 @@ impl Socket {
         layout: SessionLayout,
         fd: OwnedFd,
     ) -> io::Result<()> {
-        let body = layout_bytes(layout);
-        let bytes = frame_tagged(id, REMAP, &body)?;
-        send_bytes(self.fd.as_raw_fd(), &bytes, Some(fd.as_raw_fd()))?;
-        drop(fd);
-        Ok(())
+        self.send_tagged(id, &ControlMessage::Remap { layout, fd })
     }
 
     pub fn wait_readable(&self, timeout: Duration) -> io::Result<bool> {
@@ -304,8 +309,8 @@ impl Socket {
     }
 
     fn read_some(&mut self, nonblock: bool) -> io::Result<bool> {
-        if let Some(reason) = self.broken {
-            return Err(io::Error::new(ErrorKind::InvalidData, reason));
+        if let Some(rule) = self.broken {
+            return Err(rule.into());
         }
         let mut buf = [0u8; 8192];
         // `u32` words give the ancillary headers the 4-byte alignment Darwin uses.
@@ -343,18 +348,10 @@ impl Socket {
         // Every received descriptor is owned before any check, so a rejected
         // read closes them all (SBX-A1 (2), ADR 0288).
         let mut fds = take_rights(&msg);
-        let violation = if msg.msg_flags & libc::MSG_CTRUNC != 0 {
-            Some("control data was truncated")
-        } else if fds.len() > 1 {
-            Some("a control message carried more than one file descriptor")
-        } else if !fds.is_empty() && self.pending_fd.is_some() {
-            Some("a second file descriptor arrived before the first was consumed")
-        } else {
-            None
-        };
-        if let Some(reason) = violation {
-            self.broken = Some(reason);
-            return Err(io::Error::new(ErrorKind::InvalidData, reason));
+        let truncated = msg.msg_flags & libc::MSG_CTRUNC != 0;
+        if let Some(rule) = descriptor_rule(truncated, fds.len(), self.pending_fd.is_some()) {
+            self.broken = Some(rule);
+            return Err(rule.into());
         }
         let at = self.incoming.len();
         self.incoming
@@ -366,8 +363,23 @@ impl Socket {
     }
 }
 
-fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
-    Ok(match message {
+/// The rule one read broke, checked in this order: truncated ancillary data,
+/// then more than one descriptor, then one before the pending one was used.
+fn descriptor_rule(truncated: bool, received: usize, pending: bool) -> Option<DescriptorRuleError> {
+    if truncated {
+        Some(DescriptorRuleError::ControlTruncated { received })
+    } else if received > 1 {
+        Some(DescriptorRuleError::ExtraDescriptors { count: received })
+    } else if received == 1 && pending {
+        Some(DescriptorRuleError::UnconsumedDescriptor)
+    } else {
+        None
+    }
+}
+
+/// The wire type and body. A `Remap`'s descriptor is not part of the body.
+fn encode(message: &ControlMessage) -> (u32, Vec<u8>) {
+    match message {
         ControlMessage::Hello => (HELLO, Vec::new()),
         ControlMessage::SaveRequest => (SAVE, Vec::new()),
         ControlMessage::State(bytes) => (STATE, bytes.clone()),
@@ -378,12 +390,7 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         ControlMessage::PluginRestarted { latency_samples } => {
             (PLUGIN_RESTARTED, latency_samples.to_le_bytes().to_vec())
         }
-        ControlMessage::Remap { .. } => {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                "remap carries a file descriptor",
-            ));
-        }
+        ControlMessage::Remap { layout, .. } => (REMAP, layout_bytes(*layout).to_vec()),
         ControlMessage::Remapped => (REMAPPED, Vec::new()),
         ControlMessage::RemapFailed => (REMAP_FAILED, Vec::new()),
         ControlMessage::CancelRemap => (CANCEL_REMAP, Vec::new()),
@@ -419,7 +426,7 @@ fn encode(message: &ControlMessage) -> io::Result<(u32, Vec<u8>)> {
         ControlMessage::GuiClosed => (GUI_CLOSED, Vec::new()),
         ControlMessage::GuiCommand(command) => (GUI_COMMAND, vec![*command as u8]),
         ControlMessage::ParamRelay(relay) => (PARAM_RELAY, write_relay(relay)),
-    })
+    }
 }
 
 fn decode(payload: &[u8], fd: Option<OwnedFd>) -> io::Result<Option<ControlMessage>> {
@@ -618,10 +625,12 @@ fn read_layout(body: &[u8]) -> io::Result<SessionLayout> {
 fn frame_tagged(id: u64, typ: u32, body: &[u8]) -> io::Result<Vec<u8>> {
     let len = 12 + body.len();
     if len > MAX_MESSAGE {
-        return Err(io::Error::new(
-            ErrorKind::InvalidData,
-            "control message is longer than 64 MiB",
-        ));
+        return Err(ControlSendError::TooLong {
+            message_type: typ,
+            length: len,
+            maximum: MAX_MESSAGE,
+        }
+        .into());
     }
     let mut bytes = Vec::with_capacity(4 + len);
     bytes.extend_from_slice(&(len as u32).to_le_bytes());
@@ -882,7 +891,7 @@ mod tests {
             parent.recv_timeout(Duration::from_secs(2)).expect("recv"),
             ControlMessage::GuiClosed
         ));
-        let (kind, _) = encode(&ControlMessage::GuiClose).unwrap();
+        let (kind, _) = encode(&ControlMessage::GuiClose);
         let mut payload = kind.to_le_bytes().to_vec();
         payload.push(0);
         assert!(
@@ -943,7 +952,7 @@ mod tests {
             parent.recv_timeout(Duration::from_secs(2)).expect("reply"),
             ControlMessage::ParamParsed(ParamText::Value(value)) if value == 0.4
         ));
-        let (kind, _) = encode(&ControlMessage::ParamsRequest).unwrap();
+        let (kind, _) = encode(&ControlMessage::ParamsRequest);
         let mut payload = kind.to_le_bytes().to_vec();
         payload.push(1);
         assert!(decode(&payload, None).is_err());
@@ -957,7 +966,7 @@ mod tests {
             tail_samples: 19_200,
             latency_samples: 256,
         };
-        let (kind, bytes) = encode(&message).unwrap();
+        let (kind, bytes) = encode(&message);
         let mut payload = kind.to_le_bytes().to_vec();
         payload.extend(bytes);
         assert!(
@@ -975,6 +984,10 @@ mod tagged_tests;
 #[cfg(test)]
 #[path = "control_rights_tests.rs"]
 mod rights_tests;
+
+#[cfg(test)]
+#[path = "control_send_tests.rs"]
+mod send_tests;
 
 #[cfg(test)]
 #[path = "control_text_tests.rs"]

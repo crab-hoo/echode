@@ -34,6 +34,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   （[ADR 0042](../decisions/0042-plugin-ipc.md)）
   ソケットで渡す記述子は `Remap` の 1 メッセージに 1 個だけである。受け手は届いた記述子を全部持ち、2 個以上や切り詰めがあれば全部閉じて、そのソケットの受信を失敗させ続ける
   （[ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md)）。
+  違反は `DescriptorRuleError` で、届いた記述子の数とともに後の受信でも同じ原因を返す。
+  送り手は `send_tagged` でも `Remap` の記述子を渡す。64 MiB を超える枠は何も書かずに `ControlSendError::TooLong` で拒否し、種類と長さを型で読める（[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
 - 共有メモリの作成の失敗は `RegionError::SharedMemory` で操作と元の I/O エラーを保持する。
   `SharedMemoryOperation` で open・unlink・サイズ変更を区別し、errno は `Error::source` からも読める。
   表示文と FD の受渡し形式は変えない（[ADR 0311](../decisions/0311-typed-shared-memory-errors.md)）。

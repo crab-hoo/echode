@@ -10,6 +10,10 @@ a fixture's message is not a boundary. Text is still made where a report
 reaches the app; that is a `String` field, not a `Result`.
 I/O error constructors must also keep explicit OS causes rather than text,
 even outside a `map_err` (ADR 0311).
+In a crate on CONSTANT_TEXT_CRATES an I/O error does not carry a string literal
+either, unless its kind is the whole cause (ADR 0317). A literal under
+InvalidData folds every field and value into one sentence. A `&'static str`
+held in a variable is not found: this is syntax, not type inference.
 A file in TYPED_FILES has the same checks while its crate is being migrated.
 History and partially migrated files also reject untyped PackageError messages.
 """
@@ -35,6 +39,11 @@ TYPED_CRATES = (
 )
 # A large crate may migrate one storage boundary at a time (ADR 0296).
 TYPED_FILES = ()
+# Crates whose I/O errors keep a typed cause even for a constant sentence.
+CONSTANT_TEXT_CRATES = ('echode-sandbox',)
+# Kinds that are the whole cause, so a literal there is only a remark.
+KIND_IS_CAUSE = {'TimedOut', 'UnexpectedEof', 'WriteZero'}
+LITERAL = re.compile(r'\s*r?#*"')
 PACKAGE_MESSAGE = re.compile(r'\bPackageError\s*::\s*(?:new|Message)\s*\(')
 STRING = {'String', 'std::string::String', 'alloc::string::String'}
 RESULT = re.compile(r'\bResult\s*<')
@@ -134,6 +143,41 @@ def text_io_errors(text):
     return lines
 
 
+def top_level(body):
+    """The comma-separated arguments of a call's body, outside nested brackets."""
+    depth = 0
+    pieces = ['']
+    for char in body:
+        if char in OPEN:
+            depth += 1
+        elif char in CLOSE:
+            depth -= 1
+        if char == ',' and depth == 0:
+            pieces.append('')
+        else:
+            pieces[-1] += char
+    return pieces
+
+
+def constant_io_errors(text):
+    """Line numbers where an I/O error carries only a string literal."""
+    code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
+    lines = []
+    for match in IO_ERROR.finditer(code):
+        end = closing(code, match.end() - 1)
+        if end is None:
+            continue
+        pieces = top_level(code[match.end():end - 1])
+        if match.group(1) == 'other':
+            literal = LITERAL.match(pieces[0])
+        else:
+            kind = re.split(r'::', pieces[0])[-1].strip()
+            literal = len(pieces) > 1 and LITERAL.match(pieces[1]) and kind not in KIND_IS_CAUSE
+        if literal:
+            lines.append(code.count('\n', 0, match.start()) + 1)
+    return lines
+
+
 def is_test(path):
     return path.name.endswith('_tests.rs') or 'tests' in path.parts
 
@@ -168,6 +212,9 @@ def problems(root):
             found.append(f'{relative.as_posix()}:{line}: turns an error into text')
         for line in text_io_errors(text):
             found.append(f'{relative.as_posix()}:{line}: wraps error text in an I/O error')
+        if relative.parts[1] in CONSTANT_TEXT_CRATES:
+            for line in constant_io_errors(text):
+                found.append(f'{relative.as_posix()}:{line}: gives an I/O error only constant text')
         if relative.parts[1] == 'echode-history' or relative.as_posix() in TYPED_FILES:
             code = COMMENT.sub(lambda match: ' ' * len(match.group(0)), text)
             for match in PACKAGE_MESSAGE.finditer(code):

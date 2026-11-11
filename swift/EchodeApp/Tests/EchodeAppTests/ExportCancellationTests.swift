@@ -40,11 +40,16 @@ struct ExportCancellationTests {
         let job = ExportJob(); job.executable = wrapper
         let task = try #require(job.start(controller: controller, document: document, project: source,
                                           output: output, settings: settings, defaults: defaults))
-        let deadline = ContinuousClock.now + .seconds(10)
+        let started = ContinuousClock.now, deadline = started + .seconds(10)
         while job.fractionCompleted == nil, job.running, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(job.running && job.fractionCompleted == 0.5, "Cancellable export did not deliver live progress")
+        // The state tells an early failure (not running, with its detail) from progress that never arrived.
+        #expect(job.running && job.fractionCompleted == 0.5, """
+            Cancellable export did not deliver live progress after \(ContinuousClock.now - started): \
+            running \(job.running), fraction \(String(describing: job.fractionCompleted)), \
+            message \(job.message), detail \(job.detail)
+            """)
         await controller.close()
         await controller.open(root.appendingPathComponent("Other.echode"), creating: true)
         job.cancel(); job.cancel()

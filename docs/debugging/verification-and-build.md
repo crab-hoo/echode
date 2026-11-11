@@ -46,6 +46,9 @@ Swift 契約の直接起動で `missing helper, test bundle, or Testing framewor
 作られた成果物は残るので、そのまま再実行すると `check` は 561 秒で通った。止まった段だけなら 47 秒である。
 多くの crate が依存する crate の変更では再ビルドが広く、最初の実行が期限を超え得る。空きの少なさが遅さに効いたかは切り分けていない。
 期限を緩めず、ログに失敗がないことを確かめてから再実行する。再実行も期限を超える時は、`check.log` のコマンドの行から遅い段を特定して測る。
+同じ日の ADR 0317 でも、`echode-sandbox` の変更後に同じ段（`echode-history` の spike のテスト）で期限に達した。空きは 2.2 GiB だった。
+11/8 から更新のない反例のキャッシュ（`target/product-contract-mutations` の 7.3 GB、全体の段階の `check-contract-controls` だけが使う）を消して 9.6 GiB にし、再実行で通った。
+2 回とも、空きが 2〜3 GiB の時に、多くの crate が依存する crate を変えた後の最初の実行だった。
 
 ### Rust のテストで最初の音声ファイルの読込みが数秒〜十数秒かかる（`audition stalled at ... phase: Loading`）
 

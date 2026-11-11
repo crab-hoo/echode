@@ -54,7 +54,7 @@ fn receive(typ: u32, body: &[u8]) -> io::Result<(u64, ControlMessage)> {
 #[test]
 fn invalid_control_text_retains_utf8_cause() {
     for message in text_messages("ab__") {
-        let (typ, body) = encode(&message).unwrap();
+        let (typ, body) = encode(&message);
         let offsets: Vec<_> = body
             .windows(4)
             .enumerate()
@@ -98,7 +98,7 @@ fn invalid_control_text_retains_utf8_cause() {
 fn valid_control_text_round_trips_without_normalization() {
     for text in ["", "Filter — 音 🎹", "embedded\0nul"] {
         for message in text_messages(text) {
-            let (typ, body) = encode(&message).unwrap();
+            let (typ, body) = encode(&message);
             let (id, decoded) = receive(typ, &body).unwrap();
             assert_eq!(id, 73);
             assert_eq!(format!("{decoded:?}"), format!("{message:?}"));

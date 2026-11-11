@@ -272,8 +272,15 @@ macOS は共有メモリの長さをページ単位に切り上げるため、�
 親はヘルパー 1 つにつき記述子を 4 つ持ち、Finder から起動したアプリの soft の上限は 256 である（`launchctl limit maxfiles`）。
 最初のヘルパーの前に上限を上げるので、この文が出るなら上げられなかったか、hard の上限が低い（[ADR 0237](../decisions/0237-helper-descriptor-limit.md)）。
 そのプロセスの上限を `launchctl limit maxfiles` と、可能なら `lsof -p <pid> | wc -l` で記録する。回帰は `cargo test -p echode-plugin-host --test descriptor_limit` である。
+
+### ヘルパーとの接続が記述子の規則の違反か `control message is longer than 64 MiB` で切れる
+
 ヘルパーとの接続が `a control message carried more than one file descriptor`・`control data was truncated`・`a second file descriptor arrived before the first was consumed` で切れたなら、相手が記述子の規則を破っている。
 本体はその読込みの記述子を全部閉じて、そのソケットを使わなくなる。本体の記述子が増え続けるなら、`lsof -p <pid>` で種類を分け、`plugin-control-descriptors` の契約が通るかを確かめる（[ADR 0288](../decisions/0288-received-descriptors-are-all-owned.md)）。
+どの規則かは `io::Error::get_ref` を `DescriptorRuleError` に downcast して読み、2 個以上なら届いた数も持つ。文面で分類しない。
+`control message is longer than 64 MiB` は相手ではなく送り手の拒否で、何も書いていない。`ControlSendError::TooLong` の種類と長さで、どの枠かを確かめる。
+ヘルパーが保存の応答でこれに当たると制御ループを止めるので、状態が 64 MiB 近いプラグインのヘルパーの停止を疑う（統合表の R8）。
+回帰は `cargo test -q -p echode-sandbox --lib rights_tests send_tests` である（[ADR 0317](../decisions/0317-typed-control-transport-errors.md)）。
 
 ### バイパスの表示と音が一致しない・解除後に古い音が鳴る
 
@@ -385,6 +392,12 @@ CLI の取消はこのテストから呼ばれない。再発時は拡張した�
 `ExportCancellationTests` と CLI の `tests/export_cancellation.rs` で、閉じた stdout・文書交換・原本と一時物を切り分ける。
 制御する Rust テストで `Child::wait` を使う時は、先に `child.stdin.take()` のハンドルを保持する。`wait` 自身が stdin を閉じると意図せず取り消す。
 再現には要求時の準備／処理／仕上げの表示・終了コード・詳細を残す。音声・専用パッケージは debug-report へ自動収集しない。
+
+2026-11-11 の `make verify` の `check-swift` で、`contractCancellationSurvivesClosedProgressAndDocumentExchange` が一度だけ `Cancellable export did not deliver live progress` で失敗した。
+CLI へ引き継ぐ前の最初の照合で、制御ソケットの変更の経路は通らない。単独の 3 回、全体の 3 回、CPU の負荷を並べた全体の 5 回では再現しなかった。
+当時の文は固定で、ジョブが早く終わった（失敗）のか、進捗が 10 秒届かなかったのかを分けられなかった。
+今はその時点の `running`・`fraction`・`message`・`detail` と経過時間を出す。再発したらこの値で、準備（`freezeExport`）の失敗か、子の起動か、進捗の読込みかを分ける。
+当時のログは `target/focused-checks/export-cancel-flake/` に保持する。期限を延ばして隠さない。
 
 ### 書出しの進捗が出ない・99% で止まる
 

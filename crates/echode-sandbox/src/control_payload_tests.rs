@@ -118,7 +118,7 @@ fn truncation(payload: ParamPayload, parts: &[Part], cut: usize) -> PayloadDecod
 }
 
 fn assert_every_cut(message: &ControlMessage, payload: ParamPayload, parts: &[Part]) {
-    let (typ, body) = encode(message).unwrap();
+    let (typ, body) = encode(message);
     assert_eq!(
         bytes(parts),
         body,
@@ -289,7 +289,7 @@ fn declared_counts_and_lengths_fail_at_the_first_missing_field() {
 #[test]
 fn trailing_bytes_retain_the_payload_and_their_count() {
     use ParamPayload::*;
-    let parsed = |parsed| encode(&ControlMessage::ParamParsed(parsed)).unwrap().1;
+    let parsed = |parsed| encode(&ControlMessage::ParamParsed(parsed)).1;
     for (typ, payload, body) in [
         (PARAMS, Parameters, write_infos(&infos())),
         (PARAMS, Parameters, write_infos(&[])),
@@ -486,11 +486,11 @@ fn valid_payloads_keep_their_values_and_existing_acceptance() {
         }));
     }
     for message in messages {
-        let (typ, body) = encode(&message).unwrap();
+        let (typ, body) = encode(&message);
         let (id, actual) = receive(typ, &body).unwrap();
         assert_eq!(id, 73);
         assert_eq!(format!("{actual:?}"), format!("{message:?}"));
         // Bit-exact, including the sign of zero and the NaN the writer sent.
-        assert_eq!(encode(&actual).unwrap(), (typ, body));
+        assert_eq!(encode(&actual), (typ, body));
     }
 }

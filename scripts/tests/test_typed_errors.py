@@ -97,6 +97,31 @@ class TypedErrors(unittest.TestCase):
                     f"{source}:{line}: wraps error text in an I/O error" for line in lines
                 ])
 
+    def test_constant_text_crates_keep_a_typed_cause_for_literals(self):
+        source = "crates/echode-sandbox/src/control.rs"
+        cases = {
+            'fn f() { io::Error::new(ErrorKind::InvalidData, "invalid frame") }\n': [1],
+            'fn f() { io::Error::new(\n    ErrorKind::InvalidInput,\n    "remap",\n) }\n': [1],
+            'fn f() { std::io::Error::new(std::io::ErrorKind::Other, r"raw") }\n': [1],
+            'fn f() { io::Error::other("constant") }\n': [1],
+            'fn f() { io::Error::new(ErrorKind::InvalidData, error) }\n': [],
+            'fn f() { io::Error::new(ErrorKind::InvalidData, f(a, "b")) }\n': [],
+            'fn f() { io::Error::new(\n    ErrorKind::TimedOut,\n    "deadline",\n) }\n': [],
+            'fn f() { std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "closed") }\n': [],
+            'fn f() { io::Error::new(ErrorKind::WriteZero, "no bytes") }\n': [],
+            '// io::Error::other("constant")\nfn f() {}\n': [],
+        }
+        for text, lines in cases.items():
+            with self.subTest(text=text):
+                root = self.tree({source: text})
+                self.assertEqual(check_typed_errors.problems(root), [
+                    f"{source}:{line}: gives an I/O error only constant text" for line in lines
+                ])
+        other = f"crates/{check_typed_errors.TYPED_CRATES[0]}/src/lib.rs"
+        self.assertNotIn(check_typed_errors.TYPED_CRATES[0], check_typed_errors.CONSTANT_TEXT_CRATES)
+        root = self.tree({other: 'fn f() { io::Error::other("constant") }\n'})
+        self.assertEqual(check_typed_errors.problems(root), [])
+
     def test_migrated_package_modules_reject_untyped_messages(self):
         cases = [
             'fn f() { PackageError::new("no samples") }\n',

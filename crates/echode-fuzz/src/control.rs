@@ -101,11 +101,10 @@ fn assert_round_trip(id: u64, message: ControlMessage) {
     enlarge_buffers(sender.as_raw_fd());
     enlarge_buffers(receiver.as_raw_fd());
     let expected = describe(&message);
-    match message {
-        ControlMessage::Remap { layout, fd } => sender.send_remap_tagged(id, layout, fd),
-        other => sender.send_tagged(id, &other),
-    }
-    .expect("a decoded control message encodes again");
+    // A remap passes its descriptor too; the message keeps its own copy.
+    sender
+        .send_tagged(id, &message)
+        .expect("a decoded control message encodes again");
     let (again_id, again) = receiver
         .recv_tagged(Duration::from_secs(5))
         .expect("an encoded control message decodes");

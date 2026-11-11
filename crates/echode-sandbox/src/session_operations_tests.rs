@@ -301,3 +301,38 @@ fn invalid_values_never_reach_the_socket_and_local_reads_do_not_wait_on_it() {
     assert!(background.applied_state().is_none());
     assert!(background.take_activity().is_none());
 }
+
+#[test]
+fn restoring_a_state_past_the_frame_limit_names_its_size_and_sends_nothing() {
+    use crate::ControlSendError;
+    let (parent, mut helper) = Socket::pair().unwrap();
+    let control = PluginControl::new(parent);
+    // One byte past the largest frame body (64 MiB less type and id).
+    let state = vec![0; 64 * 1024 * 1024 - 12 + 1];
+    let error = control.restore_state(&state).unwrap_err();
+    drop(state);
+    let SessionError::Io(error) = error else {
+        panic!("an oversized state must remain an I/O cause: {error:?}");
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(error.to_string(), "control message is longer than 64 MiB");
+    assert_eq!(
+        error.get_ref().unwrap().downcast_ref::<ControlSendError>(),
+        Some(&ControlSendError::TooLong {
+            // Restore (4).
+            message_type: 4,
+            length: 64 * 1024 * 1024 + 1,
+            maximum: 64 * 1024 * 1024,
+        })
+    );
+    assert!(helper.try_recv().unwrap().is_none(), "nothing was sent");
+    let answer = std::thread::spawn(move || {
+        let (id, request) = receive(&mut helper);
+        assert!(matches!(request, ControlMessage::GuiClose));
+        helper
+            .send_tagged(id, &ControlMessage::GuiClosedReply)
+            .unwrap();
+    });
+    control.close_gui().unwrap();
+    answer.join().unwrap();
+}

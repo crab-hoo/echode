@@ -304,7 +304,7 @@
       "negative_controls": [
         {"file": "crates/echode-sandbox/src/control.rs", "old": "for slot in 0..count {", "new": "for slot in 0..count.min(1) {"},
         {"file": "crates/echode-sandbox/src/control.rs", "old": "const RECEIVE_CONTROL_WORDS: usize = 512;", "new": "const RECEIVE_CONTROL_WORDS: usize = 64;"},
-        {"file": "crates/echode-sandbox/src/control.rs", "old": "            self.broken = Some(reason);\n", "new": ""}
+        {"file": "crates/echode-sandbox/src/control.rs", "old": "            self.broken = Some(rule);\n", "new": ""}
       ]
     },
     {

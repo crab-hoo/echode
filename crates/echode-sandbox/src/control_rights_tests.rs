@@ -99,10 +99,23 @@ fn remap_frame() -> Vec<u8> {
 
 /// What one delivery left behind.
 struct Delivery {
-    first: Option<ErrorKind>,
+    first: Option<io::Error>,
     /// A later receive, which must not accept the rejected bytes.
     later: io::Result<Option<ControlMessage>>,
     closed: bool,
+}
+
+/// The broken rule, its unchanged text, and the kind every caller already sees.
+fn assert_rule(error: &io::Error, expected: DescriptorRuleError) {
+    assert_eq!(error.kind(), ErrorKind::InvalidData);
+    assert_eq!(error.to_string(), expected.to_string());
+    assert_eq!(
+        error
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<DescriptorRuleError>()),
+        Some(&expected),
+        "a broken descriptor rule must retain its typed cause"
+    );
 }
 
 /// Sends one frame with these descriptors, closes the sender's copies, and
@@ -112,10 +125,7 @@ fn deliver(frame: &[u8], fds: Vec<OwnedFd>, witness: Witness) -> io::Result<Deli
     let (sender, mut receiver) = Socket::pair()?;
     send_with_rights(&sender, frame, &fds)?;
     drop(fds);
-    let first = receiver
-        .recv_timeout(Duration::from_secs(2))
-        .err()
-        .map(|error| error.kind());
+    let first = receiver.recv_timeout(Duration::from_secs(2)).err();
     let later = receiver.try_recv();
     let closed = witness.all_closed();
     drop(receiver);
@@ -139,16 +149,18 @@ fn contract_received_descriptors_beyond_one_are_rejected_and_all_closed() {
             let witness = Witness::new();
             let fds = witness.copies(count);
             let delivery = deliver(&frame, fds, witness).unwrap();
-            assert_eq!(
-                delivery.first,
-                Some(ErrorKind::InvalidData),
-                "a {name} with {count} descriptors breaks the protocol"
-            );
-            assert!(
-                matches!(&delivery.later, Err(error) if error.kind() == ErrorKind::InvalidData),
-                "the rejected {name} is not accepted later: {:?}",
-                delivery.later
-            );
+            let expected = DescriptorRuleError::ExtraDescriptors { count };
+            let first = delivery
+                .first
+                .unwrap_or_else(|| panic!("a {name} with {count} descriptors breaks the protocol"));
+            assert_rule(&first, expected);
+            let Err(later) = &delivery.later else {
+                panic!(
+                    "the rejected {name} is not accepted later: {:?}",
+                    delivery.later
+                );
+            };
+            assert_rule(later, expected);
             assert!(
                 delivery.closed,
                 "all {count} descriptors of a {name} are closed"
@@ -216,8 +228,9 @@ fn a_second_descriptor_before_the_first_is_used_is_rejected_and_closed() {
     send_with_rights(&sender, tail, &second).unwrap();
     drop(second);
     let error = receiver.recv_timeout(Duration::from_secs(2)).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::InvalidData);
-    assert!(receiver.try_recv().is_err(), "the socket stays rejected");
+    assert_rule(&error, DescriptorRuleError::UnconsumedDescriptor);
+    let later = receiver.try_recv().expect_err("the socket stays rejected");
+    assert_rule(&later, DescriptorRuleError::UnconsumedDescriptor);
     assert!(
         second_witness.all_closed(),
         "the second descriptor is closed"
@@ -227,4 +240,34 @@ fn a_second_descriptor_before_the_first_is_used_is_rejected_and_closed() {
         first_witness.all_closed(),
         "the pending one closes with the socket"
     );
+}
+
+/// Darwin refuses to send more descriptors than the receive buffer holds (see
+/// above), so a peer cannot make the kernel truncate them. The rule's order
+/// and its count are still fixed here, where no socket is needed.
+#[test]
+fn each_read_names_the_first_rule_it_broke() {
+    use DescriptorRuleError::*;
+    for (truncated, received, pending, expected) in [
+        (false, 0, false, None),
+        (false, 0, true, None),
+        (false, 1, false, None),
+        (false, 1, true, Some(UnconsumedDescriptor)),
+        (false, 2, false, Some(ExtraDescriptors { count: 2 })),
+        (false, 2, true, Some(ExtraDescriptors { count: 2 })),
+        (true, 0, false, Some(ControlTruncated { received: 0 })),
+        (true, 1, true, Some(ControlTruncated { received: 1 })),
+        (true, 3, true, Some(ControlTruncated { received: 3 })),
+    ] {
+        assert_eq!(
+            descriptor_rule(truncated, received, pending),
+            expected,
+            "truncated {truncated}, {received} received, pending {pending}"
+        );
+    }
+    let (mut socket, _peer) = Socket::pair().unwrap();
+    socket.broken = Some(ControlTruncated { received: 2 });
+    let error = socket.try_recv().unwrap_err();
+    assert_rule(&error, ControlTruncated { received: 2 });
+    assert_eq!(error.to_string(), "control data was truncated");
 }

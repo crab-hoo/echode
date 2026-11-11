@@ -98,7 +98,7 @@ fn every_truncated_body_is_refused_without_a_panic() {
         }]),
     ];
     for message in &messages {
-        let (typ, body) = encode(message).unwrap();
+        let (typ, body) = encode(message);
         for end in 0..body.len() {
             let mut payload = typ.to_le_bytes().to_vec();
             payload.extend_from_slice(&body[..end]);

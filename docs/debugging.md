@@ -98,6 +98,7 @@ make debug-report
   - ヘルパーの応答が `parameter message ...` / `window report ...` / `relay ...` で切れる
   - 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
   - プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
+  - ヘルパーとの接続が記述子の規則の違反か `control message is longer than 64 MiB` で切れる
   - バイパスの表示と音が一致しない・解除後に古い音が鳴る
   - GUI の書出しが始まらない・文書を切り替えると内容が違う
   - 書出しの数値欄を変更しても開始できない・前の値が使われる
