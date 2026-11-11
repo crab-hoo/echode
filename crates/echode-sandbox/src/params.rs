@@ -4,8 +4,8 @@
 //! the plugin's own units between `min` and `max`; nothing is normalized here.
 //! The count is not capped. The 64 MiB message bound still applies.
 
-use crate::control_text::{ControlTextError, read_text};
-use std::io::{self, ErrorKind};
+use crate::payload_decode::{Cursor, ParamField, ParamPayload, PayloadDecodeError};
+use std::io;
 
 /// `CLAP_PARAM_IS_STEPPED`. The flag values are CLAP's, so the parent does not link `clap-sys`.
 pub const PARAM_STEPPED: u32 = 1 << 0;
@@ -90,12 +90,9 @@ pub(crate) fn write_text_request(id: u32, text: &str) -> Vec<u8> {
 }
 
 pub(crate) fn read_text_request(body: &[u8]) -> io::Result<(u32, String)> {
-    let mut cursor = Cursor::new(body);
-    let id = cursor.u32()?;
-    let text = read_text(
-        cursor.take(cursor.remaining())?,
-        ControlTextError::Parameter,
-    )?;
+    let mut cursor = Cursor::new(ParamPayload::TextRequest, body);
+    let id = cursor.u32(ParamField::Id)?;
+    let text = cursor.rest_text()?;
     Ok((id, text))
 }
 
@@ -112,18 +109,19 @@ pub(crate) fn write_parsed(parsed: ParamText) -> Vec<u8> {
 }
 
 pub(crate) fn read_parsed(body: &[u8]) -> io::Result<ParamText> {
-    let mut cursor = Cursor::new(body);
-    let parsed = match cursor.u8()? {
+    let mut cursor = Cursor::new(ParamPayload::ParsedText, body);
+    let parsed = match cursor.u8(ParamField::ParsedKind)? {
         0 => {
-            let value = cursor.f64()?;
+            let value = cursor.f64(ParamField::Value)?;
             if !value.is_finite() {
-                return Err(invalid("parameter value is not finite"));
+                let bits = value.to_bits();
+                return Err(PayloadDecodeError::NonFiniteParsedValue { bits }.into());
             }
             ParamText::Value(value)
         }
         1 => ParamText::Refused,
         2 => ParamText::Unsupported,
-        _ => return Err(invalid("unknown parameter text reply")),
+        kind => return Err(PayloadDecodeError::UnknownParsedKind(kind).into()),
     };
     cursor.finish()?;
     Ok(parsed)
@@ -146,22 +144,20 @@ pub(crate) fn write_infos(infos: &[ParamInfo]) -> Vec<u8> {
 }
 
 pub(crate) fn read_infos(body: &[u8]) -> io::Result<Vec<ParamInfo>> {
-    let mut cursor = Cursor::new(body);
-    let count = cursor.u32()? as usize;
-    // Each entry needs at least 52 bytes, so a corrupt count cannot reserve
-    // more than the message already holds.
-    let mut infos = Vec::with_capacity(count.min(body.len() / 52));
-    for _ in 0..count {
-        let id = cursor.u32()?;
-        let flags = cursor.u32()?;
-        let min = cursor.f64()?;
-        let max = cursor.f64()?;
-        let default = cursor.f64()?;
-        let value = cursor.f64()?;
-        let name = cursor.text()?;
-        let module = cursor.text()?;
-        let text = cursor.text()?;
-        infos.push(ParamInfo {
+    use ParamField::*;
+    let mut cursor = Cursor::new(ParamPayload::Parameters, body);
+    // Two ids, four values and three text lengths: 52 bytes before any text.
+    let infos = cursor.list(Count, 52, |cursor, _| {
+        let id = cursor.u32(Id)?;
+        let flags = cursor.u32(Flags)?;
+        let min = cursor.f64(Min)?;
+        let max = cursor.f64(Max)?;
+        let default = cursor.f64(Default)?;
+        let value = cursor.f64(Value)?;
+        let name = cursor.text(NameLength, Name)?;
+        let module = cursor.text(ModuleLength, Module)?;
+        let text = cursor.text(TextLength, Text)?;
+        Ok(ParamInfo {
             id,
             flags,
             name,
@@ -171,8 +167,8 @@ pub(crate) fn read_infos(body: &[u8]) -> io::Result<Vec<ParamInfo>> {
             default,
             value,
             text,
-        });
-    }
+        })
+    })?;
     cursor.finish()?;
     Ok(infos)
 }
@@ -193,22 +189,21 @@ pub(crate) fn write_values_into(body: &mut Vec<u8>, values: &[ParamValue]) {
 }
 
 pub(crate) fn read_values(body: &[u8]) -> io::Result<Vec<ParamValue>> {
-    let mut cursor = Cursor::new(body);
+    let mut cursor = Cursor::new(ParamPayload::AppliedValues, body);
     let values = read_values_from(&mut cursor)?;
     cursor.finish()?;
     Ok(values)
 }
 
 pub(crate) fn read_values_from(cursor: &mut Cursor<'_>) -> io::Result<Vec<ParamValue>> {
-    let count = cursor.u32()? as usize;
-    let mut values = Vec::with_capacity(count.min(cursor.remaining() / 16));
-    for _ in 0..count {
-        let id = cursor.u32()?;
-        let value = cursor.f64()?;
-        let text = cursor.text()?;
-        values.push(ParamValue { id, value, text });
-    }
-    Ok(values)
+    use ParamField::*;
+    // An id, a value and a text length: 16 bytes before any text.
+    cursor.list(Count, 16, |cursor, _| {
+        let id = cursor.u32(Id)?;
+        let value = cursor.f64(Value)?;
+        let text = cursor.text(TextLength, Text)?;
+        Ok(ParamValue { id, value, text })
+    })
 }
 
 pub(crate) fn write_changes(changes: &[ParamChange]) -> Vec<u8> {
@@ -222,17 +217,16 @@ pub(crate) fn write_changes(changes: &[ParamChange]) -> Vec<u8> {
 }
 
 pub(crate) fn read_changes(body: &[u8]) -> io::Result<Vec<ParamChange>> {
-    let mut cursor = Cursor::new(body);
-    let count = cursor.u32()? as usize;
-    let mut changes = Vec::with_capacity(count.min(body.len() / 12));
-    for _ in 0..count {
-        let id = cursor.u32()?;
-        let value = cursor.f64()?;
+    let mut cursor = Cursor::new(ParamPayload::Changes, body);
+    let changes = cursor.list(ParamField::Count, 12, |cursor, entry| {
+        let id = cursor.u32(ParamField::Id)?;
+        let value = cursor.f64(ParamField::Value)?;
         if !value.is_finite() {
-            return Err(invalid("parameter value is not finite"));
+            let bits = value.to_bits();
+            return Err(PayloadDecodeError::NonFiniteChange { entry, id, bits }.into());
         }
-        changes.push(ParamChange { id, value });
-    }
+        Ok(ParamChange { id, value })
+    })?;
     cursor.finish()?;
     Ok(changes)
 }
@@ -244,64 +238,6 @@ pub(crate) fn len32(len: usize) -> u32 {
 fn write_text(body: &mut Vec<u8>, text: &str) {
     body.extend_from_slice(&len32(text.len()).to_le_bytes());
     body.extend_from_slice(text.as_bytes());
-}
-
-pub(crate) fn invalid(message: &'static str) -> io::Error {
-    io::Error::new(ErrorKind::InvalidData, message)
-}
-
-pub(crate) struct Cursor<'a> {
-    body: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Cursor<'a> {
-    pub(crate) fn new(body: &'a [u8]) -> Self {
-        Self { body, at: 0 }
-    }
-
-    pub(crate) fn remaining(&self) -> usize {
-        self.body.len() - self.at
-    }
-
-    fn take(&mut self, len: usize) -> io::Result<&'a [u8]> {
-        let end = self.at.checked_add(len);
-        let bytes = end
-            .and_then(|end| self.body.get(self.at..end))
-            .ok_or_else(|| invalid("parameter message is truncated"))?;
-        self.at += len;
-        Ok(bytes)
-    }
-
-    fn take_array<const N: usize>(&mut self) -> io::Result<[u8; N]> {
-        <[u8; N]>::try_from(self.take(N)?).map_err(|_| invalid("parameter message is truncated"))
-    }
-
-    pub(crate) fn u8(&mut self) -> io::Result<u8> {
-        let [byte] = self.take_array()?;
-        Ok(byte)
-    }
-
-    pub(crate) fn u32(&mut self) -> io::Result<u32> {
-        Ok(u32::from_le_bytes(self.take_array()?))
-    }
-
-    pub(crate) fn f64(&mut self) -> io::Result<f64> {
-        Ok(f64::from_bits(u64::from_le_bytes(self.take_array()?)))
-    }
-
-    pub(crate) fn text(&mut self) -> io::Result<String> {
-        let len = self.u32()? as usize;
-        read_text(self.take(len)?, ControlTextError::Parameter)
-    }
-
-    pub(crate) fn finish(&self) -> io::Result<()> {
-        if self.at == self.body.len() {
-            Ok(())
-        } else {
-            Err(invalid("parameter message has trailing bytes"))
-        }
-    }
 }
 
 #[cfg(test)]

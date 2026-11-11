@@ -242,7 +242,20 @@ shell 除去でこの環境の起動遅延自体が解決したとは扱わず�
 `MessageLength` は宣言長と許容範囲、未知の種類・コマンドは受けた値、余分なポートの列は残りの長さを持つ。
 文面や生バイトで分類せず、アプリとヘルパーの版・送信側を確認する。自動再送はしない。
 回帰は `cargo test -q -p echode-sandbox --lib decode_tests` で、実ソケットと公開操作を通す。
-パラメーター・窓・通知の内側の構造はまだ対象外である（[ADR 0315](../decisions/0315-typed-control-metadata-errors.md)）。
+パラメーター・窓・通知の内側の構造は次の節で扱う（[ADR 0315](../decisions/0315-typed-control-metadata-errors.md)）。
+
+### ヘルパーの応答が `parameter message ...` / `window report ...` / `relay ...` で切れる
+
+外側のメタデータは正しく、パラメーター・通知・窓の報告の中身が不正である。`parameter value is not finite` と `unknown parameter text reply` もここに入る。
+`SessionError::Io` の `io::Error::get_ref` を `PayloadDecodeError` に downcast する。
+`Truncated` は `ParamPayload` と `ParamField`、列の中なら 0 始まりの項目の番号、必要なバイト数と残りを持つ。
+文字列の本体（`Name`・`Module`・`Text`）の `expected` は宣言された長さなので、巨大な値は直前の長さのフィールドの破損を疑う。
+`TrailingBytes` は余りの長さ、有限でない値は ID と IEEE-754 のビット、未知のコードとフラグは受けた値を持つ。
+`InvalidWindowFlag` は通信の順で最初の不正なフラグだけを返す。
+同じ文の `SessionError::NonFiniteParameter` は送信前の引数の拒否で、I/O の原因を持たない。
+文字列の不正な UTF-8 は `ControlTextError` で、この型にはならない。
+文面や生バイトで分類せず、アプリとヘルパーの版・送信側を確認する。自動再送はしない。
+回帰は `cargo test -q -p echode-sandbox --lib payload_tests` で、実ソケットと公開操作を通す（[ADR 0316](../decisions/0316-typed-parameter-payload-errors.md)）。
 
 ### 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
 

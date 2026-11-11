@@ -1588,3 +1588,7 @@ mod refusal_tests;
 #[cfg(test)]
 #[path = "session_decode_tests.rs"]
 mod decode_tests;
+
+#[cfg(test)]
+#[path = "session_payload_tests.rs"]
+mod payload_tests;

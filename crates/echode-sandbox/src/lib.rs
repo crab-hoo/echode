@@ -31,6 +31,7 @@ mod gui;
 mod launch_failure;
 mod main_reply;
 mod params;
+mod payload_decode;
 mod refusal;
 mod refusal_decode;
 mod region;
@@ -53,6 +54,7 @@ pub use params::{
     PARAM_AUTOMATABLE, PARAM_BYPASS, PARAM_ENUM, PARAM_HIDDEN, PARAM_PERIODIC, PARAM_READONLY,
     PARAM_STEPPED, ParamChange, ParamInfo, ParamText, ParamValue,
 };
+pub use payload_decode::{ParamField, ParamPayload, PayloadDecodeError, WindowFlag};
 pub use refusal::{AudioPort, Pending, PluginFailure, Refusal};
 pub use refusal_decode::{RefusalDecodeError, RefusalField};
 pub use region::{

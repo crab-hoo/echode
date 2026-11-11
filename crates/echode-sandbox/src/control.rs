@@ -991,3 +991,7 @@ mod refusal_tests;
 #[cfg(test)]
 #[path = "control_decode_tests.rs"]
 mod decode_tests;
+
+#[cfg(test)]
+#[path = "control_payload_tests.rs"]
+mod payload_tests;

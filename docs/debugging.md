@@ -32,6 +32,7 @@ make debug-report
 - 検査の時間・期限・待ち続け
   - `make verify` の所要時間の増加
   - `check-verification` の `VERIFICATION TIMEOUT`
+  - `check` の `VERIFICATION TIMEOUT`
   - Rust のテストで最初の音声ファイルの読込みが数秒〜十数秒かかる（`audition stalled at ... phase: Loading`）
   - `swift test` が出力なしで止まる（Swift Testing の待ち続け）
   - 空き容量不足（`No space left on device` / `Errno 28`）
@@ -94,6 +95,7 @@ make debug-report
   - ヘルパーの応答が `launch failure is malformed` で切れる
   - ヘルパーの応答が `plugin failure is malformed` / `refusal ...` で切れる
   - ヘルパーの応答が `chain message is the wrong size` / `port description ...` / `unknown control message` で切れる
+  - ヘルパーの応答が `parameter message ...` / `window report ...` / `relay ...` で切れる
   - 共有メモリの準備が `shm_open`・`shm_unlink`・`ftruncate` で止まる
   - プラグインが多いとヘルパーが `Too many open files (os error 24)` で起動しない
   - バイパスの表示と音が一致しない・解除後に古い音が鳴る

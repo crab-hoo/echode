@@ -7,7 +7,8 @@
 
 use std::io;
 
-use crate::params::{Cursor, ParamValue, invalid, len32, read_values_from, write_values_into};
+use crate::params::{ParamValue, len32, read_values_from, write_values_into};
+use crate::payload_decode::{Cursor, ParamField, ParamPayload, PayloadDecodeError, WindowFlag};
 
 /// What showing a plugin window did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -118,18 +119,22 @@ pub(crate) fn write_report(report: GuiReport) -> Vec<u8> {
 }
 
 pub(crate) fn read_report(body: &[u8]) -> io::Result<GuiReport> {
-    let [created, visible, key] = body else {
-        return Err(invalid("window report is the wrong size"));
+    let [created, visible, key] = *body else {
+        return Err(PayloadDecodeError::WindowReportSize {
+            expected: 3,
+            actual: body.len(),
+        }
+        .into());
     };
-    let flag = |byte: &u8| match byte {
+    let read = |flag, value| match value {
         0 => Ok(false),
         1 => Ok(true),
-        _ => Err(invalid("window report flag is not 0 or 1")),
+        _ => Err(PayloadDecodeError::InvalidWindowFlag { flag, value }),
     };
     Ok(GuiReport {
-        created: flag(created)?,
-        visible: flag(visible)?,
-        key: flag(key)?,
+        created: read(WindowFlag::Created, created)?,
+        visible: read(WindowFlag::Visible, visible)?,
+        key: read(WindowFlag::Key, key)?,
     })
 }
 
@@ -160,24 +165,22 @@ pub(crate) fn write_relay(relay: &ParamRelay) -> Vec<u8> {
 }
 
 pub(crate) fn read_relay(body: &[u8]) -> io::Result<ParamRelay> {
-    let mut cursor = Cursor::new(body);
-    let flags = cursor.u8()?;
+    let mut cursor = Cursor::new(ParamPayload::Relay, body);
+    let flags = cursor.u8(ParamField::RelayFlags)?;
     if flags & !(RESCAN | LOST) != 0 {
-        return Err(invalid("relay flags are unknown"));
+        return Err(PayloadDecodeError::UnknownRelayFlags(flags).into());
     }
-    let count = cursor.u32()? as usize;
-    // Each event is 5 bytes, so a corrupt count cannot reserve more than the message holds.
-    let mut events = Vec::with_capacity(count.min(body.len() / 5));
-    for _ in 0..count {
-        let id = cursor.u32()?;
-        let kind = match cursor.u8()? {
+    // Each event is an id and a kind: 5 bytes.
+    let events = cursor.list(ParamField::EventCount, 5, |cursor, entry| {
+        let id = cursor.u32(ParamField::EventId)?;
+        let kind = match cursor.u8(ParamField::EventKind)? {
             0 => ParamEventKind::Value,
             1 => ParamEventKind::Begin,
             2 => ParamEventKind::End,
-            _ => return Err(invalid("relay event kind is unknown")),
+            kind => return Err(PayloadDecodeError::UnknownEventKind { entry, id, kind }.into()),
         };
-        events.push(ParamEvent { id, kind });
-    }
+        Ok(ParamEvent { id, kind })
+    })?;
     let values = read_values_from(&mut cursor)?;
     cursor.finish()?;
     Ok(ParamRelay {

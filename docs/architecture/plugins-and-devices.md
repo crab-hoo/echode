@@ -43,6 +43,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - 拒否以外の制御メタデータが不正なら、`ControlDecodeError` を `InvalidData` の `io::Error` の内側に保持する。
   `ControlField` と必要・実際のバイト数、未知の種類・コマンド、ポートの方向と列の長さ、フレームの宣言長と許容範囲を型で読める。
   公開操作の `SessionError::Io` でも同じ原因を保ち、表示文と受理する通信の形式は変えない（[ADR 0315](../decisions/0315-typed-control-metadata-errors.md)）。
+- パラメーター・通知・窓の報告の内側の構造が不正なら、同じく `PayloadDecodeError` を保持する。
+  切詰めは `ParamPayload`・`ParamField`・項目の番号・必要と残りのバイト数、値とコードの不正は受けた値を型で読める。
+  列は `payload_decode.rs` の `Cursor::list` だけで読み、項目の番号と不正な数からの確保の上限を一か所で決める（[ADR 0316](../decisions/0316-typed-parameter-payload-errors.md)）。
 - **一括投入と単一締め切り**: 独立したヘルパーには先に一括投入し、そのブロックの単一締め切りで完了したヘルパーから順に回収する。
   同じヘルパーで続くデバイスは 1 往復にまとめる（[ADR 0043](../decisions/0043-plugin-submit-collect.md)）
 - **Audio Workgroup の受け渡し**: ヘルパーが `bootstrap_check_in` した名前を制御スレッドが `bootstrap_look_up` し、`os_workgroup_copy_port` の送信権を Mach メッセージで渡す

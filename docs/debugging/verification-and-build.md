@@ -38,6 +38,15 @@ Swift 契約の直接起動で `missing helper, test bundle, or Testing framewor
 `contract_fingerprints` 1 回は約 0.6 秒で、`scope_entries` は契約 236 件に 11 回だけ呼ばれる。
 短縮で足りなければ期限を変え、測定値と理由を ADR に書く（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。
 
+### `check` の `VERIFICATION TIMEOUT`
+
+`check.log` に `FAILED`・`error` がなく、最後が進捗の点と `VERIFICATION TIMEOUT` なら、テストの失敗ではなく 1200 秒の期限である。
+2026-11-11 は `echode-sandbox` の変更後の最初の実行が、最後の `echode-history` の spike のテストの途中で期限に達した。
+直前に空き容量の不足（2.3 GiB）で事前確認が止まり、サニタイザのキャッシュを消して 5.5 GiB にした直後だった。ほかの作業の負荷はなかった。
+作られた成果物は残るので、そのまま再実行すると `check` は 561 秒で通った。止まった段だけなら 47 秒である。
+多くの crate が依存する crate の変更では再ビルドが広く、最初の実行が期限を超え得る。空きの少なさが遅さに効いたかは切り分けていない。
+期限を緩めず、ログに失敗がないことを確かめてから再実行する。再実行も期限を超える時は、`check.log` のコマンドの行から遅い段を特定して測る。
+
 ### Rust のテストで最初の音声ファイルの読込みが数秒〜十数秒かかる（`audition stalled at ... phase: Loading`）
 
 2026-11-03 の `make verify` で、`rtsan` の試聴のテスト 3 件が 10 秒の待ちで落ちた。`handled: 0`・`source_frames: None` で、`AudioFileReader::open` の中だった。

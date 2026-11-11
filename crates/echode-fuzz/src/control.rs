@@ -312,6 +312,42 @@ pub(crate) fn seeds() -> Vec<Vec<u8>> {
     for length in [0u32, 11, 64 * 1024 * 1024 + 1, u32::MAX] {
         seeds.push(seed(0, 0, &length.to_le_bytes()));
     }
+    // Parameter, relay and window-report payloads: missing fields, huge
+    // counts and text lengths, trailing bytes, non-finite values, bad codes.
+    let nan = f64::NAN.to_bits().to_le_bytes();
+    let huge = u32::MAX.to_le_bytes();
+    for (typ, payload) in [
+        (21u32, vec![]),
+        (21, huge.to_vec()),
+        (21, [&[1, 0, 0, 0][..], &[0; 40], &huge, b"Ga"].concat()),
+        (21, vec![0; 5]),
+        (22, huge.to_vec()),
+        (22, [&[1, 0, 0, 0, 3, 0, 0, 0][..], &nan].concat()),
+        (22, vec![1, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0]),
+        (23, huge.to_vec()),
+        (23, vec![0; 6]),
+        (33, vec![0; 3]),
+        (34, vec![]),
+        (34, vec![0, 0, 0]),
+        (34, [&[0][..], &nan].concat()),
+        (34, vec![3]),
+        (34, vec![1, 0]),
+        (26, vec![1, 1]),
+        (26, vec![1, 0, 7]),
+        (26, vec![0; 4]),
+        (31, vec![]),
+        (31, vec![4]),
+        (31, [&[0][..], &huge].concat()),
+        (31, vec![0, 1, 0, 0, 0, 8, 0, 0, 0, 3]),
+        (31, [&[0, 0, 0, 0, 0][..], &huge].concat()),
+        (31, vec![0; 10]),
+    ] {
+        let mut bytes = (12 + payload.len() as u32).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&typ.to_le_bytes());
+        bytes.extend_from_slice(&1u64.to_le_bytes());
+        bytes.extend_from_slice(&payload);
+        seeds.push(seed(0, 0, &bytes));
+    }
     // A remap with its mapping, after one plain message.
     let hello = encode(0, &ControlMessage::Hello);
     let mut stream = hello.clone();

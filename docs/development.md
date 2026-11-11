@@ -355,6 +355,9 @@ MCP のツール名によるアクション種別の決定と引数のローカ�
 実ソケットの全拒否経路は `control_refusal_tests.rs`、公開操作での原因の保持は `session_refusal_tests.rs` で照合する（[ADR 0314](decisions/0314-typed-refusal-structure-errors.md)）。
 拒否以外の制御メタデータの `ControlDecodeError`・`ControlField` と固定長の読込みは `control_decode.rs` に置く。
 実ソケットの長さ・種類・ポートの列の回帰は `control_decode_tests.rs`、公開操作での原因の保持は `session_decode_tests.rs` を使う（[ADR 0315](decisions/0315-typed-control-metadata-errors.md)）。
+パラメーター・通知・窓の報告の内側の `PayloadDecodeError`・`ParamPayload`・`ParamField` と、列を読む `Cursor` は `payload_decode.rs` に置く。
+新しい列は `Cursor::list` で読み、手書きのループと確保を足さない。フィールドを足したら `control_payload_tests.rs` の並びのモデルにも足す。
+実ソケットの回帰は `control_payload_tests.rs`、公開操作での原因の保持は `session_payload_tests.rs` を使う（[ADR 0316](decisions/0316-typed-parameter-payload-errors.md)）。
 予約済み ID と内部の応答不一致の共有型・通信は `refusal.rs` と `main_reply.rs` に置く。
 実際の応答の種類への変換は `main_requests.rs::unexpected` にまとめる。
 回帰は `refusal_tests.rs`・`main_requests_tests.rs` と、実ヘルパーを通す `tests/isolation.rs` の `invalid_parameter_id_` を使う（[ADR 0309](decisions/0309-typed-helper-request-failures.md)）。
