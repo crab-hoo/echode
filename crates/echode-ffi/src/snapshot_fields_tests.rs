@@ -38,6 +38,8 @@ fn package_scalars_reach_retained_snapshot_controls_without_a_device_or_helper()
     let snapshot = Snapshot::from_project(Arc::new(read_package(&root).unwrap()), None);
     let retained = snapshot.retain();
     drop(snapshot);
+    // SAFETY: `retained` is an owned snapshot for this block, the lengths are writable, and each
+    // borrowed slice is read before `retained` is dropped.
     unsafe {
         let mut length = usize::MAX;
         let name = echode_snapshot_track_name(&retained, 1, &mut length);

@@ -1,5 +1,5 @@
 //! Immutable control values, separate from audio-owned peak taps.
-use crate::{Document, ECHODE_ERR, ECHODE_OK, Snapshot, document_ref, snapshot_ref};
+use crate::{Document, ECHODE_ERR, ECHODE_OK, Snapshot, abi};
 use echode_model::{DeviceKind, ParamKey, Project};
 use std::collections::BTreeMap;
 
@@ -140,14 +140,16 @@ fn fade_ticks(project: &Project, clip: &echode_model::Placement, entering: bool)
 }
 
 /// # Safety
-/// The snapshot must remain alive. `out` is null or writable for one value.
+/// The snapshot is null or must remain alive. `out` is null or writable for
+/// one value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_mixer_controls(
     snapshot: *const Snapshot,
     track: usize,
     out: *mut MixerControls,
 ) -> i32 {
-    let Some(value) = snapshot_ref(snapshot).and_then(|snapshot| {
+    // SAFETY: the caller keeps the snapshot alive.
+    let Some(value) = unsafe { abi::handle(snapshot) }.and_then(|snapshot| {
         snapshot
             .controls
             .mixers
@@ -155,69 +157,76 @@ pub unsafe extern "C" fn echode_snapshot_mixer_controls(
     }) else {
         return ECHODE_ERR;
     };
-    if out.is_null() {
-        return ECHODE_ERR;
+    // SAFETY: the caller passes null or one writable value.
+    if unsafe { abi::put(out, *value) } {
+        ECHODE_OK
+    } else {
+        ECHODE_ERR
     }
-    unsafe {
-        out.write(*value);
-    }
-    ECHODE_OK
 }
 
 /// # Safety
-/// The snapshot must remain alive. `clip` addresses 16 UUID bytes and `out`
-/// is null or writable for one value. Neither pointer is retained.
+/// The snapshot is null or must remain alive. `clip` is null or addresses 16
+/// UUID bytes, and `out` is null or writable for one value. Neither pointer
+/// is retained.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_clip_controls(
     snapshot: *const Snapshot,
     clip: *const u8,
     out: *mut ClipControls,
 ) -> i32 {
-    if clip.is_null() || out.is_null() {
-        return ECHODE_ERR;
-    }
-    let id = u128::from_be_bytes(unsafe { std::ptr::read_unaligned(clip.cast::<[u8; 16]>()) });
-    let Some(value) = snapshot_ref(snapshot).and_then(|snapshot| snapshot.controls.clips.get(&id))
-    else {
+    // SAFETY: the caller keeps the snapshot alive and passes 16 readable bytes
+    // at a non-null `clip`.
+    let (Some(snapshot), Some(id)) = (unsafe { (abi::handle(snapshot), abi::uuid(clip)) }) else {
         return ECHODE_ERR;
     };
-    unsafe {
-        out.write(*value);
+    let Some(value) = snapshot.controls.clips.get(&id) else {
+        return ECHODE_ERR;
+    };
+    // SAFETY: the caller passes null or one writable value.
+    if unsafe { abi::put(out, *value) } {
+        ECHODE_OK
+    } else {
+        ECHODE_ERR
     }
-    ECHODE_OK
 }
 
 /// Read a post-fader peak without submitting work to the document queue.
 /// # Safety
-/// The document is open or retained and `track` addresses 16 UUID bytes.
+/// The document is null, open or retained, and `track` is null or addresses
+/// 16 UUID bytes. Either null reads as silence.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_track_peak(
     document: *mut Document,
     track: *const u8,
 ) -> f32 {
-    if track.is_null() {
+    // SAFETY: the caller passes null or an open document, and 16 readable
+    // bytes at a non-null `track`.
+    let (Some(document), Some(id)) = (unsafe { (abi::handle(document), abi::uuid(track)) }) else {
         return 0.0;
-    }
-    let id = u128::from_be_bytes(unsafe { std::ptr::read_unaligned(track.cast::<[u8; 16]>()) });
-    document_ref(document).map_or(0.0, |document| document.service.track_peak(id))
+    };
+    document.service.track_peak(id)
 }
 
 /// # Safety
-/// The snapshot remains alive and `out` is null or writable for one i64.
+/// The snapshot is null or remains alive, and `out` is null or writable for
+/// one i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_flicks(
     snapshot: *const Snapshot,
     tick: i64,
     out: *mut i64,
 ) -> i32 {
-    if out.is_null() {
-        return ECHODE_ERR;
-    }
-    let Some(value) = snapshot_ref(snapshot).and_then(|snapshot| snapshot.flicks_at(tick)) else {
+    // SAFETY: the caller keeps the snapshot alive.
+    let Some(value) =
+        unsafe { abi::handle(snapshot) }.and_then(|snapshot| snapshot.flicks_at(tick))
+    else {
         return ECHODE_ERR;
     };
-    unsafe {
-        out.write(value);
+    // SAFETY: the caller passes null or one writable i64.
+    if unsafe { abi::put(out, value) } {
+        ECHODE_OK
+    } else {
+        ECHODE_ERR
     }
-    ECHODE_OK
 }

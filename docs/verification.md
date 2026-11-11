@@ -196,6 +196,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   対象は制御ソケット・共有領域・ジャーナル・パッケージ・音声で、先に種と `regressions/` の保存した発見を通す（[ADR 0290](decisions/0290-fuzz-targets-for-external-input.md)）。
   発見は失敗にし、入力は `target/fuzz/artifacts/` に残る。種と保存した発見は ASan なしの通常テストとして `check` でも毎回動く。
 - `check-bridge-miri`（全体の段階）: Rust 側のポインタ・所有権。製品のスナップショット保持、UTF-8 の借用、可視列の容量・null を seed 1・17・42 で検査する。
+  C ABI の共通の引数の規則（`abi_tests`: null と長さ、`isize::MAX` を超える大きさ、位置のずれ）も同じ seed で動かす（[ADR 0321](decisions/0321-unsafe-safety-comments-and-ffi-arguments.md)）。
   フォルダ開閉用の表示ハンドルの保持・再展開と可視行の容量境界も同じ経路で確認する。
 
 ## 実機・計測・ネットワークの検査

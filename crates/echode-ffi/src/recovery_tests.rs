@@ -15,8 +15,10 @@ extern "C" fn complete(
     snapshot: *mut Snapshot,
 ) {
     // The callback owns its context: the waiter may return while this runs.
+    // SAFETY: `request` leaked this box as the context and never uses it again.
     let sender = unsafe { Box::from_raw(context.cast::<mpsc::Sender<Reply>>()) };
     let message = (!message.is_null()).then(|| {
+        // SAFETY: a non-null message is a NUL-terminated string, valid for this call.
         unsafe { CStr::from_ptr(message) }
             .to_string_lossy()
             .into_owned()
@@ -27,6 +29,8 @@ extern "C" fn complete(
 fn request(document: *mut Document, operation: u32, json: Option<&str>) -> Reply {
     let (sender, incoming) = mpsc::channel::<Reply>();
     let context = Box::into_raw(Box::new(sender)).cast::<c_void>();
+    // SAFETY: the document is open, `json` is `json.len()` readable bytes and the boxed sender is
+    // handed to the completion.
     unsafe {
         if let Some(json) = json {
             let entry = match operation {
@@ -47,8 +51,11 @@ fn request(document: *mut Document, operation: u32, json: Option<&str>) -> Reply
 fn report(reply: Reply) -> serde_json::Value {
     assert_eq!(reply.0, ECHODE_OK, "{:?}", reply.1);
     let mut len = 0;
+    // SAFETY: the snapshot is owned and `len` is writable.
     let bytes = unsafe { echode_snapshot_history(reply.2, &mut len) };
+    // SAFETY: the snapshot lends `len` bytes at `bytes` until it is freed below.
     let value = serde_json::from_slice(unsafe { std::slice::from_raw_parts(bytes, len) }).unwrap();
+    // SAFETY: the snapshot is owned and freed once.
     unsafe { echode_snapshot_free(reply.2) };
     value
 }
@@ -82,6 +89,7 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
     let original = std::fs::read(path.join("project.json")).unwrap();
     let journal = std::fs::read(path.join("journal.jsonl")).unwrap();
     let c_path = CString::new(path.to_str().unwrap()).unwrap();
+    // SAFETY: `c_path` is a NUL-terminated string.
     let document = unsafe { echode_document_open(c_path.as_ptr()) };
     assert!(!document.is_null());
     let initial = report(request(document, ECHODE_DOCUMENT_SNAPSHOT, None));
@@ -126,6 +134,7 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
         "session writes must wait for consent too"
     );
     assert!(!path.join("transport.json").exists());
+    // SAFETY: the document is open and not used after this.
     unsafe { echode_document_close(document) };
     assert_eq!(std::fs::read(path.join("project.json")).unwrap(), original);
     assert_eq!(std::fs::read(path.join("journal.jsonl")).unwrap(), journal);
@@ -153,6 +162,7 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
     );
     drop(host);
 
+    // SAFETY: `c_path` is a NUL-terminated string.
     let document = unsafe { echode_document_open(c_path.as_ptr()) };
     let stale = request(
         document,
@@ -200,8 +210,10 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
             .iter()
             .any(|revision| revision["id"] == base.to_string())
     );
+    // SAFETY: the document is open and not used after this.
     unsafe { echode_document_close(document) };
 
+    // SAFETY: `c_path` is a NUL-terminated string.
     let document = unsafe { echode_document_open(c_path.as_ptr()) };
     assert!(report(request(document, ECHODE_DOCUMENT_SNAPSHOT, None))["recovery"].is_null());
     report(request(
@@ -209,6 +221,7 @@ fn contract_recovery_requires_consent_before_edits_and_preserves_the_original_on
         0,
         Some(r#"{"type":"track.add","name":"confirmed"}"#),
     ));
+    // SAFETY: the document is open and not used after this.
     unsafe { echode_document_close(document) };
     let recovered = echode_history::recover(&path).unwrap();
     assert_eq!(

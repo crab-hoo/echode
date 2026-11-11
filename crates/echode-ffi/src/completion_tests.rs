@@ -30,8 +30,12 @@ extern "C" fn close_from_completion(
     snapshot: *mut Snapshot,
 ) {
     // The callback owns its context: the waiter may return while this runs.
+    // SAFETY: the test leaked this box as the context and never uses it again.
     let reply = unsafe { Box::from_raw(context.cast::<Closing>()) };
+    // SAFETY: the completion owns the snapshot, which may be null, and frees it once.
     unsafe { echode_snapshot_free(snapshot) };
+    // SAFETY: the test hands the document to this completion; after a close it never uses it again,
+    // and after a shutdown it closes it only once this completion has run.
     unsafe {
         if reply.close {
             echode_document_close(reply.document);
@@ -73,6 +77,8 @@ fn complete_a_device_request_by(close: bool) {
         r#"{{"type":"device.gui.close","device":"{}"}}"#,
         Id::from_raw(0xF0)
     );
+    // SAFETY: the document is open, `json` is `json.len()` readable bytes and the boxed context is
+    // handed to the completion.
     let code = unsafe {
         echode_document_device(
             document,
@@ -88,11 +94,13 @@ fn complete_a_device_request_by(close: bool) {
         .expect("the callback ended its document without waiting for its own thread");
     assert_eq!(status, ECHODE_OK);
     if !close {
+        // SAFETY: the completion only shut the document down, and nothing uses it after this.
         unsafe { echode_document_close(document) };
     }
     // The worker finishes after the callback returns. Reopening proves it let
     // the package go and that its teardown did not fail.
     let reopened = wait_for_reopen(&path);
+    // SAFETY: `reopened` came from `Box::into_raw` and is not used after this.
     unsafe { echode_document_close(reopened) };
     let _ = std::fs::remove_dir_all(path);
 }
@@ -128,12 +136,15 @@ extern "C" fn report_status(
     message: *const c_char,
     snapshot: *mut Snapshot,
 ) {
+    // SAFETY: the test leaked this box as the context and never uses it again.
     let sender = unsafe { Box::from_raw(context.cast::<mpsc::Sender<(c_int, Option<String>)>>()) };
     let message = (!message.is_null()).then(|| {
+        // SAFETY: a non-null message is a NUL-terminated string, valid for this call.
         unsafe { CStr::from_ptr(message) }
             .to_string_lossy()
             .into_owned()
     });
+    // SAFETY: the completion owns the snapshot, which may be null, and frees it once.
     unsafe { echode_snapshot_free(snapshot) };
     let _ = sender.send((status, message));
 }
@@ -153,6 +164,8 @@ fn contract_a_worker_that_dies_still_completes_queued_commands() {
     let document = Box::into_raw(Box::new(document));
     let (sender, incoming) = mpsc::channel::<(c_int, Option<String>)>();
     let json = r#"{"type":"track.add","name":"queued"}"#;
+    // SAFETY: the document is open, `json` is `json.len()` readable bytes and the boxed sender is
+    // handed to the completion.
     let code = unsafe {
         echode_document_submit(
             document,
@@ -169,6 +182,7 @@ fn contract_a_worker_that_dies_still_completes_queued_commands() {
         .expect("a queued command must not lose its completion");
     assert_eq!(status, ECHODE_ERR);
     assert_eq!(message.as_deref(), Some("document thread stopped"));
+    // SAFETY: the document is open and not used after this.
     unsafe { echode_document_close(document) };
     let _ = std::fs::remove_dir_all(path);
 }

@@ -1,14 +1,16 @@
-use crate::{PianoNoteElement, Snapshot, snapshot_ref};
+use crate::{PianoNoteElement, Snapshot, abi};
 use echode_draw::PianoView;
 use echode_model::{Id, Tick};
 use std::os::raw::c_int;
 
 /// Writes piano notes intersecting time and pitch. Null output with capacity
-/// zero counts notes in `dropped`. Invalid handles return -1 and zero counts.
+/// zero counts notes in `dropped`. Invalid handles and a refused `out` (see
+/// `abi`) return -1 and zero counts.
 ///
 /// # Safety
-/// UUID inputs have 16 readable bytes. `snapshot` is null or owned. `out` has
-/// room for `capacity` elements. Count pointers are writable and do not alias.
+/// Non-null UUID inputs have 16 readable bytes. `snapshot` is null or owned.
+/// `out` is null or has room for `capacity` elements. Count pointers are null
+/// or writable and do not alias.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_piano_visible(
     snapshot: *const Snapshot,
@@ -24,19 +26,26 @@ pub unsafe extern "C" fn echode_snapshot_piano_visible(
     written: *mut usize,
     dropped: *mut usize,
 ) -> c_int {
-    if written.is_null() || dropped.is_null() {
-        return -1;
-    }
-    unsafe {
-        *written = 0;
-        *dropped = 0;
-    }
-    if out.is_null() && capacity != 0 {
-        return -1;
-    }
-    let (Some(snapshot), Some(track)) = (snapshot_ref(snapshot), read_id(track)) else {
+    // SAFETY: the caller passes writable, unaliased counts.
+    let (Some(mut written), Some(mut dropped)) =
+        (unsafe { (abi::place(written), abi::place(dropped)) })
+    else {
         return -1;
     };
+    written.set(0);
+    dropped.set(0);
+    // SAFETY: the caller passes null or an owned handle, null or 16 readable
+    // bytes at `track`, and room for `capacity` elements at a non-null `out`.
+    let (Some(snapshot), Some(track), Some(slot)) = (unsafe {
+        (
+            abi::handle(snapshot),
+            abi::uuid(track),
+            abi::output(out, capacity),
+        )
+    }) else {
+        return -1;
+    };
+    let track = Id::from_raw(track);
     let view = PianoView {
         origin_tick: Tick::new(origin_tick),
         width_ticks,
@@ -45,16 +54,9 @@ pub unsafe extern "C" fn echode_snapshot_piano_visible(
         pixels_per_tick,
         pixels_per_pitch,
     };
-    let slot = if out.is_null() || capacity == 0 {
-        &mut [][..]
-    } else {
-        unsafe { std::slice::from_raw_parts_mut(out, capacity) }
-    };
     let (filled, overflow) = snapshot.write_piano(track, view, slot);
-    unsafe {
-        *written = filled;
-        *dropped = overflow;
-    }
+    written.set(filled);
+    dropped.set(overflow);
     0
 }
 
@@ -63,7 +65,7 @@ pub unsafe extern "C" fn echode_snapshot_piano_visible(
 ///
 /// # Safety
 /// Non-null UUID inputs have 16 readable bytes. Track and note are required;
-/// placement is optional. `snapshot` is null or owned, and `out` is writable.
+/// placement is optional. `snapshot` is null or owned, and `out` is null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_piano_note(
     snapshot: *const Snapshot,
@@ -72,12 +74,20 @@ pub unsafe extern "C" fn echode_snapshot_piano_note(
     note: *const u8,
     out: *mut PianoNoteElement,
 ) -> c_int {
-    let (Some(snapshot), Some(track), Some(note)) =
-        (snapshot_ref(snapshot), read_id(track), read_id(note))
-    else {
+    // SAFETY: the caller passes null or an owned handle, and null or 16
+    // readable bytes at each UUID.
+    let (Some(snapshot), Some(track), placement, Some(note)) = (unsafe {
+        (
+            abi::handle(snapshot),
+            read_id(track),
+            read_id(placement),
+            read_id(note),
+        )
+    }) else {
         return -1;
     };
-    write(out, snapshot.piano_note(track, read_id(placement), note))
+    // SAFETY: the caller passes null or one writable element.
+    unsafe { write(out, snapshot.piano_note(track, placement, note)) }
 }
 
 /// Next/previous audible note on this track, independent of the viewport.
@@ -85,7 +95,7 @@ pub unsafe extern "C" fn echode_snapshot_piano_note(
 ///
 /// # Safety
 /// Non-null UUID inputs have 16 readable bytes. Track is required; placement
-/// and note are optional. `snapshot` is null or owned, and `out` is writable.
+/// and note are optional. `snapshot` is null or owned, and `out` is null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_piano_neighbor(
     snapshot: *const Snapshot,
@@ -95,32 +105,46 @@ pub unsafe extern "C" fn echode_snapshot_piano_neighbor(
     backwards: c_int,
     out: *mut PianoNoteElement,
 ) -> c_int {
-    let (Some(snapshot), Some(track)) = (snapshot_ref(snapshot), read_id(track)) else {
+    // SAFETY: the caller passes null or an owned handle, and null or 16
+    // readable bytes at each UUID.
+    let (Some(snapshot), Some(track), placement, note) = (unsafe {
+        (
+            abi::handle(snapshot),
+            read_id(track),
+            read_id(placement),
+            read_id(note),
+        )
+    }) else {
         return -1;
     };
-    write(
-        out,
-        snapshot.piano_neighbor(track, read_id(placement), read_id(note), backwards != 0),
-    )
+    // SAFETY: the caller passes null or one writable element.
+    unsafe {
+        write(
+            out,
+            snapshot.piano_neighbor(track, placement, note, backwards != 0),
+        )
+    }
 }
 
-fn read_id(input: *const u8) -> Option<Id> {
-    if input.is_null() {
-        return None;
-    }
-    let bytes = unsafe { *(input as *const [u8; 16]) };
-    Some(Id::from_raw(u128::from_be_bytes(bytes)))
+/// # Safety
+/// A non-null `input` addresses 16 readable bytes.
+unsafe fn read_id(input: *const u8) -> Option<Id> {
+    // SAFETY: the caller's contract is `abi::uuid`'s.
+    unsafe { abi::uuid(input) }.map(Id::from_raw)
 }
 
-fn write(out: *mut PianoNoteElement, note: Option<PianoNoteElement>) -> c_int {
-    if out.is_null() {
-        return -1;
-    }
+/// Writes a found note. -1, writing nothing, when the note or `out` is missing.
+///
+/// # Safety
+/// `out` is null or one writable element.
+unsafe fn write(out: *mut PianoNoteElement, note: Option<PianoNoteElement>) -> c_int {
     let Some(note) = note else {
         return -1;
     };
-    unsafe {
-        out.write(note);
+    // SAFETY: the caller's contract is `abi::put`'s.
+    if unsafe { abi::put(out, note) } {
+        0
+    } else {
+        -1
     }
-    0
 }

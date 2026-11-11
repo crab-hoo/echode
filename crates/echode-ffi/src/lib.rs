@@ -3,7 +3,15 @@
 //! A command is queued and the caller returns. The document thread applies it,
 //! then the completion callback runs once, without a lock held. The spike in
 //! `spikes/bridge` is not used here.
+//!
+//! Every entry point reaches the caller's memory through `abi`, so all of them
+//! refuse the same arguments, like a missing one: a null pointer with a nonzero
+//! length or capacity, a length beyond `isize::MAX` bytes, and an address
+//! misaligned for its type (ADR 0321). Each `# Safety` section states only what
+//! no check can see: that non-null memory is live, of the stated length, and
+//! not shared with another writer for the call.
 
+mod abi;
 mod catalog;
 mod constants;
 mod controls;
@@ -44,38 +52,25 @@ pub unsafe extern "C" fn echode_document_audio(
     context: *mut c_void,
     complete: Complete,
 ) -> c_int {
-    let Some(document) = document_ref(document) else {
-        complete(
+    // SAFETY: this function's contract is `queue`'s.
+    unsafe {
+        queue(
+            document,
+            json,
+            json_len,
             context,
-            ECHODE_ERR,
-            c"document is null".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return ECHODE_ERR;
-    };
-    if json_len > isize::MAX as usize || (json.is_null() && json_len != 0) {
-        complete(
-            context,
-            ECHODE_ERR,
-            c"audio command is null or too long".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return ECHODE_ERR;
+            complete,
+            Operation::Audio,
+            c"audio command is null or too long",
+        )
     }
-    let bytes = if json_len == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(json, json_len) }
-    };
-    document.enqueue(Operation::Audio(bytes.to_vec()), context, complete);
-    ECHODE_OK
 }
 
 /// Queues a history list or restore on the document thread. The completed
 /// snapshot carries the revision list. Restoring records a new version.
 ///
 /// # Safety
-/// `document` is null or open. `json` is null only when `json_len` is zero.
+/// `document` is null or open. `json` is null or addresses `json_len` readable bytes.
 /// The callback owns `context` until completion.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_history(
@@ -85,31 +80,18 @@ pub unsafe extern "C" fn echode_document_history(
     context: *mut c_void,
     complete: Complete,
 ) -> c_int {
-    let Some(document) = document_ref(document) else {
-        complete(
+    // SAFETY: this function's contract is `queue`'s.
+    unsafe {
+        queue(
+            document,
+            json,
+            json_len,
             context,
-            ECHODE_ERR,
-            c"document is null".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return ECHODE_ERR;
-    };
-    if json_len > isize::MAX as usize || (json.is_null() && json_len != 0) {
-        complete(
-            context,
-            ECHODE_ERR,
-            c"history command is null or too long".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return ECHODE_ERR;
+            complete,
+            Operation::History,
+            c"history command is null or too long",
+        )
     }
-    let bytes = if json_len == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(json, json_len) }
-    };
-    document.enqueue(Operation::History(bytes.to_vec()), context, complete);
-    ECHODE_OK
 }
 
 /// Queues a device command (`device.parameters`, `device.parameter.set`,
@@ -119,7 +101,7 @@ pub unsafe extern "C" fn echode_document_history(
 /// carries the JSON report.
 ///
 /// # Safety
-/// `document` is null or open. `json` is null only when `json_len` is zero.
+/// `document` is null or open. `json` is null or addresses `json_len` readable bytes.
 /// The callback owns `context` until completion.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_device(
@@ -129,31 +111,18 @@ pub unsafe extern "C" fn echode_document_device(
     context: *mut c_void,
     complete: Complete,
 ) -> c_int {
-    let Some(document) = document_ref(document) else {
-        complete(
+    // SAFETY: this function's contract is `queue`'s.
+    unsafe {
+        queue(
+            document,
+            json,
+            json_len,
             context,
-            ECHODE_ERR,
-            c"document is null".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return ECHODE_ERR;
-    };
-    if json_len > isize::MAX as usize || (json.is_null() && json_len != 0) {
-        complete(
-            context,
-            ECHODE_ERR,
-            c"device command is null or too long".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return ECHODE_ERR;
+            complete,
+            Operation::Device,
+            c"device command is null or too long",
+        )
     }
-    let bytes = if json_len == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(json, json_len) }
-    };
-    document.enqueue(Operation::Device(bytes.to_vec()), context, complete);
-    ECHODE_OK
 }
 
 /// UTF-8 JSON report from the snapshot that completed a device command.
@@ -161,22 +130,14 @@ pub unsafe extern "C" fn echode_document_device(
 ///
 /// # Safety
 /// `snapshot` is null or an owned handle that has not been freed. `len` is
-/// writable.
+/// null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_device(
     snapshot: *const Snapshot,
     len: *mut usize,
 ) -> *const u8 {
-    let Some(len) = (unsafe { len.as_mut() }) else {
-        return std::ptr::null();
-    };
-    *len = 0;
-    let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
-        return std::ptr::null();
-    };
-    let bytes = snapshot.device();
-    *len = bytes.len();
-    bytes.as_ptr()
+    // SAFETY: this function's contract is `lend`'s.
+    unsafe { lend(snapshot, len, |snapshot| Some(snapshot.device())) }
 }
 
 /// Waits up to `timeout_ms` for plugin activity newer than `after` and writes
@@ -186,12 +147,13 @@ pub unsafe extern "C" fn echode_snapshot_device(
 ///
 /// Returns 0 when `out` holds the page. Returns 1 when `capacity` is too
 /// small and `written` is the size needed; nothing newer is dropped, so the
-/// next call returns at once. Returns -1 for a null document or `written`.
-/// Never waits for the document thread.
+/// next call returns at once. Returns -1, before waiting, for a null document
+/// or `written`, or a refused `out` (see `abi`). Never waits for the document
+/// thread.
 ///
 /// # Safety
-/// `document` is null or open. `written` is writable. `out` is null or has
-/// room for `capacity` bytes.
+/// `document` is null or open. `written` is null or writable. `out` is null or has room
+/// for `capacity` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_plugin_activity(
     document: *const Document,
@@ -201,23 +163,22 @@ pub unsafe extern "C" fn echode_document_plugin_activity(
     capacity: usize,
     written: *mut usize,
 ) -> c_int {
-    let (Some(document), Some(written)) =
-        (unsafe { document.as_ref() }, unsafe { written.as_mut() })
-    else {
+    // SAFETY: the caller passes null or an open document, a writable
+    // `written`, and room for `capacity` bytes at a non-null `out`.
+    let (Some(document), Some(mut written), Some(out)) = (unsafe {
+        (
+            abi::handle(document),
+            abi::place(written),
+            abi::output(out, capacity),
+        )
+    }) else {
         return -1;
     };
     let json = document.service.plugin_activity(
         after,
         std::time::Duration::from_millis(u64::from(timeout_ms)),
     );
-    *written = json.len();
-    if out.is_null() || capacity < json.len() {
-        return 1;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
-    }
-    0
+    copy_out(&json, out, &mut written)
 }
 
 /// An audition request that came from neither a click nor a key.
@@ -239,7 +200,7 @@ pub const ECHODE_AUDITION_INPUT_KEY: u32 = 2;
 /// for `ECHODE_AUDITION_INPUT_OTHER`.
 ///
 /// # Safety
-/// `document` is null or open. `path` is null only when `path_len` is zero.
+/// `document` is null or open. `path` is null or addresses `path_len` readable bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_audition(
     document: *const Document,
@@ -248,6 +209,7 @@ pub unsafe extern "C" fn echode_document_audition(
     input: u32,
     input_delay_us: u64,
 ) -> c_int {
+    // SAFETY: this function's contract is `echode_document_audition_at`'s.
     unsafe { echode_document_audition_at(document, path, path_len, 0, input, input_delay_us) }
 }
 
@@ -256,8 +218,8 @@ pub unsafe extern "C" fn echode_document_audition(
 /// A null or empty path stops, irrespective of the position.
 ///
 /// # Safety
-/// `document` is null or open. `path` points to `path_len` readable bytes,
-/// or is null only when `path_len` is zero.
+/// `document` is null or open. `path` is null or addresses `path_len`
+/// readable bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_audition_at(
     document: *const Document,
@@ -267,12 +229,13 @@ pub unsafe extern "C" fn echode_document_audition_at(
     input: u32,
     input_delay_us: u64,
 ) -> c_int {
-    let Some(document) = (unsafe { document.as_ref() }) else {
+    // SAFETY: the caller passes null or an open document, and `path_len`
+    // readable bytes at a non-null `path`.
+    let (Some(document), Some(bytes)) =
+        (unsafe { (abi::handle(document), abi::input(path, path_len)) })
+    else {
         return ECHODE_ERR;
     };
-    if path_len > isize::MAX as usize || (path.is_null() && path_len != 0) {
-        return ECHODE_ERR;
-    }
     let input = match input {
         ECHODE_AUDITION_INPUT_OTHER => echode_audio_io::AuditionInput::Other,
         ECHODE_AUDITION_INPUT_CLICK => echode_audio_io::AuditionInput::Click,
@@ -283,11 +246,10 @@ pub unsafe extern "C" fn echode_document_audition_at(
         input,
         delay_us: (input != echode_audio_io::AuditionInput::Other).then_some(input_delay_us),
     };
-    if path_len == 0 {
+    if bytes.is_empty() {
         document.service.audition(None, origin, 0);
         return ECHODE_OK;
     }
-    let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
     let Ok(text) = std::str::from_utf8(bytes) else {
         return ECHODE_ERR;
     };
@@ -310,7 +272,8 @@ pub unsafe extern "C" fn echode_document_audition_configure(
     visible: u32,
     gain: f32,
 ) -> c_int {
-    let Some(document) = (unsafe { document.as_ref() }) else {
+    // SAFETY: the caller passes null or an open document.
+    let Some(document) = (unsafe { abi::handle(document) }) else {
         return ECHODE_ERR;
     };
     if visible > 1 || !document.service.configure_audition(visible == 1, gain) {
@@ -322,40 +285,33 @@ pub unsafe extern "C" fn echode_document_audition_configure(
 /// Reads the live playhead without submitting a command or taking a lock.
 ///
 /// # Safety
-/// document is still owned; out points to writable TransportPosition storage.
+/// `document` is null or open. `out` is null or a writable `TransportPosition`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_position(
     document: *const Document,
     out: *mut TransportPosition,
 ) -> c_int {
-    let (Some(document), Some(out)) = (unsafe { document.as_ref() }, unsafe { out.as_mut() })
+    // SAFETY: the caller passes null or an open document, and a writable `out`.
+    let (Some(document), Some(mut out)) = (unsafe { (abi::handle(document), abi::place(out)) })
     else {
         return ECHODE_ERR;
     };
-    *out = document.position();
+    out.set(document.position());
     ECHODE_OK
 }
 
 /// Borrowed UTF-8 JSON session state for this immutable snapshot.
 ///
 /// # Safety
-/// snapshot is owned; len points to writable size_t storage. Bytes are valid
-/// only until this snapshot is freed.
+/// `snapshot` is null or an owned handle that has not been freed. `len` is
+/// null or writable. The bytes are valid only until this snapshot is freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_audio(
     snapshot: *const Snapshot,
     len: *mut usize,
 ) -> *const u8 {
-    let Some(len) = (unsafe { len.as_mut() }) else {
-        return std::ptr::null();
-    };
-    *len = 0;
-    let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
-        return std::ptr::null();
-    };
-    let bytes = snapshot.audio();
-    *len = bytes.len();
-    bytes.as_ptr()
+    // SAFETY: this function's contract is `lend`'s.
+    unsafe { lend(snapshot, len, |snapshot| Some(snapshot.audio())) }
 }
 
 /// UTF-8 JSON `{revisions, changed}` from a history or perform completion.
@@ -365,22 +321,14 @@ pub unsafe extern "C" fn echode_snapshot_audio(
 ///
 /// # Safety
 /// `snapshot` is null or an owned handle that has not been freed. `len` is
-/// writable.
+/// null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_history(
     snapshot: *const Snapshot,
     len: *mut usize,
 ) -> *const u8 {
-    let Some(len) = (unsafe { len.as_mut() }) else {
-        return std::ptr::null();
-    };
-    *len = 0;
-    let Some(snapshot) = (unsafe { snapshot.as_ref() }) else {
-        return std::ptr::null();
-    };
-    let bytes = snapshot.history();
-    *len = bytes.len();
-    bytes.as_ptr()
+    // SAFETY: this function's contract is `lend`'s.
+    unsafe { lend(snapshot, len, |snapshot| Some(snapshot.history())) }
 }
 
 use std::ffi::{CStr, c_char, c_void};
@@ -465,7 +413,9 @@ pub type Complete = extern "C" fn(
 /// `path` is a nullable NUL-terminated string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_keep_panic_log(path: *const c_char) {
-    echode_audio_io::keep_panic_log(c_str(path).map(std::path::PathBuf::from));
+    // SAFETY: the caller passes null or a NUL-terminated string.
+    let path = unsafe { abi::text(path) };
+    echode_audio_io::keep_panic_log(path.map(std::path::PathBuf::from));
 }
 
 /// Creates an empty package at `path` and opens it. Null if that fails.
@@ -475,7 +425,8 @@ pub unsafe extern "C" fn echode_keep_panic_log(path: *const c_char) {
 /// with [`echode_document_close`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_create(path: *const c_char) -> *mut Document {
-    let Some(path) = c_str(path) else {
+    // SAFETY: the caller passes null or a NUL-terminated string.
+    let Some(path) = (unsafe { abi::text(path) }) else {
         return std::ptr::null_mut();
     };
     let path = std::path::Path::new(&path);
@@ -498,7 +449,8 @@ pub unsafe extern "C" fn echode_document_create(path: *const c_char) -> *mut Doc
 /// with [`echode_document_close`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_open(path: *const c_char) -> *mut Document {
-    let Some(path) = c_str(path) else {
+    // SAFETY: the caller passes null or a NUL-terminated string.
+    let Some(path) = (unsafe { abi::text(path) }) else {
         return std::ptr::null_mut();
     };
     Document::open(std::path::Path::new(&path))
@@ -509,10 +461,12 @@ pub unsafe extern "C" fn echode_document_open(path: *const c_char) -> *mut Docum
 /// Finishes queued commands, then rejects later submissions.
 ///
 /// # Safety
-/// `document` came from [`echode_document_open`] and has not been closed.
+/// `document` is null, or came from [`echode_document_open`] or
+/// [`echode_document_create`] and has not been closed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_shutdown(document: *mut Document) {
-    if let Some(document) = document_ref(document) {
+    // SAFETY: the caller passes null or an open document.
+    if let Some(document) = unsafe { abi::handle(document) } {
         document.service.shutdown();
     }
 }
@@ -520,10 +474,13 @@ pub unsafe extern "C" fn echode_document_shutdown(document: *mut Document) {
 /// Drops the document. A snapshot taken earlier stays readable.
 ///
 /// # Safety
-/// `document` came from [`echode_document_open`] and is not used again.
+/// `document` is null, or came from [`echode_document_open`] or
+/// [`echode_document_create`] and is not used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_close(document: *mut Document) {
     if !document.is_null() {
+        // SAFETY: the document came from `Box::into_raw` in `echode_document_open`
+        // or `echode_document_create`, and the caller never uses it again.
         drop(unsafe { Box::from_raw(document) });
     }
 }
@@ -532,9 +489,12 @@ pub unsafe extern "C" fn echode_document_close(document: *mut Document) {
 ///
 /// `complete` is required and runs once, which hands `context` back.
 ///
+/// A null document, a null `json` with a nonzero `json_len`, or more than
+/// `isize::MAX` bytes complete at once with `ECHODE_ERR`, which is also returned.
+///
 /// # Safety
-/// `document` is open. `json` is a nullable byte string of `json_len` bytes,
-/// not necessarily NUL-terminated. `context` is not read by Rust.
+/// `document` is null or open. `json` is null or addresses `json_len`
+/// readable bytes, not necessarily NUL-terminated. `context` is not read by Rust.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_document_submit(
     document: *mut Document,
@@ -543,22 +503,18 @@ pub unsafe extern "C" fn echode_document_submit(
     context: *mut c_void,
     complete: Complete,
 ) -> c_int {
-    let Some(document) = document_ref(document) else {
-        complete(
+    // SAFETY: this function's contract is `queue`'s.
+    unsafe {
+        queue(
+            document,
+            json,
+            json_len,
             context,
-            ECHODE_ERR,
-            c"document is null".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return 0;
-    };
-    let bytes = if json.is_null() {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(json, json_len) }
-    };
-    document.submit(bytes, context, complete);
-    0
+            complete,
+            Operation::Perform,
+            c"command is null or too long",
+        )
+    }
 }
 
 /// Queues a snapshot, Undo, or Redo on the same queue as edits. Completes once,
@@ -573,14 +529,9 @@ pub unsafe extern "C" fn echode_document_query(
     context: *mut c_void,
     complete: Complete,
 ) -> c_int {
-    let Some(document) = document_ref(document) else {
-        complete(
-            context,
-            ECHODE_ERR,
-            c"document is null".as_ptr(),
-            std::ptr::null_mut(),
-        );
-        return 0;
+    // SAFETY: the caller passes null or an open document.
+    let Some(document) = (unsafe { abi::handle(document) }) else {
+        return refuse(context, complete, c"document is null");
     };
     let operation = match operation {
         ECHODE_DOCUMENT_SNAPSHOT => Operation::Snapshot,
@@ -589,16 +540,18 @@ pub unsafe extern "C" fn echode_document_query(
         _ => Operation::Invalid,
     };
     document.enqueue(operation, context, complete);
-    0
+    ECHODE_OK
 }
 
 /// Another owned handle for the same project.
 ///
 /// # Safety
-/// `snapshot` came from a completion or from this function and has not been freed.
+/// `snapshot` is null, or came from a completion or from this function and
+/// has not been freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_retain(snapshot: *mut Snapshot) -> *mut Snapshot {
-    snapshot_ref(snapshot)
+    // SAFETY: the caller passes null or an owned handle.
+    unsafe { abi::handle(snapshot) }
         .map(|snapshot| Box::into_raw(Box::new(snapshot.retain())))
         .unwrap_or(std::ptr::null_mut())
 }
@@ -610,6 +563,8 @@ pub unsafe extern "C" fn echode_snapshot_retain(snapshot: *mut Snapshot) -> *mut
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_free(snapshot: *mut Snapshot) {
     if !snapshot.is_null() {
+        // SAFETY: every handle this library returns comes from `Box::into_raw`,
+        // and the caller frees each one once.
         drop(unsafe { Box::from_raw(snapshot) });
     }
 }
@@ -620,39 +575,34 @@ pub unsafe extern "C" fn echode_snapshot_free(snapshot: *mut Snapshot) {
 /// `snapshot` is null or an owned handle that has not been freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_track_count(snapshot: *const Snapshot) -> usize {
-    snapshot_ref(snapshot)
+    // SAFETY: the caller passes null or an owned handle.
+    unsafe { abi::handle(snapshot) }
         .map(Snapshot::track_count)
         .unwrap_or(0)
 }
 
-/// Writes the UUID bytes of track `index`. Returns 0, or `-1` when it is missing.
+/// Writes the UUID bytes of track `index`. Returns 0, or `-1` when it is
+/// missing or `out` is null; `out` is unchanged then.
 ///
 /// # Safety
-/// `out` points at 16 writable bytes. `snapshot` is null or still owned.
+/// `out` is null or points at 16 writable bytes. `snapshot` is null or still owned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_track_id(
     snapshot: *const Snapshot,
     index: usize,
     out: *mut u8,
 ) -> c_int {
-    let Some(out) = out_bytes(out) else {
-        return -1;
-    };
-    let Some(snapshot) = snapshot_ref(snapshot) else {
-        return -1;
-    };
-    if snapshot.write_track_id(index, out) {
-        0
-    } else {
-        -1
-    }
+    // SAFETY: the caller passes null or an owned handle.
+    let id = unsafe { abi::handle(snapshot) }.and_then(|snapshot| snapshot.track_id(index));
+    // SAFETY: the caller passes 16 writable bytes at a non-null `out`.
+    write_uuid(id, unsafe { abi::place(out.cast::<[u8; 16]>()) })
 }
 
 /// Borrows the UTF-8 name of track `index`, without a trailing NUL. Missing
 /// tracks return null and length zero. No model storage is copied or mutated.
 ///
 /// # Safety
-/// `length` is writable. `snapshot` is null or owned; keep it alive for the
+/// `length` is null or writable. `snapshot` is null or owned; keep it alive for the
 /// entire read of the returned `length` bytes, and never write through them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_track_name(
@@ -660,19 +610,12 @@ pub unsafe extern "C" fn echode_snapshot_track_name(
     index: usize,
     length: *mut usize,
 ) -> *const u8 {
-    if length.is_null() {
-        return std::ptr::null();
-    }
+    // SAFETY: this function's contract is `lend`'s.
     unsafe {
-        *length = 0;
+        lend(snapshot, length, |snapshot| {
+            snapshot.track_name(index).map(str::as_bytes)
+        })
     }
-    let Some(name) = snapshot_ref(snapshot).and_then(|snapshot| snapshot.track_name(index)) else {
-        return std::ptr::null();
-    };
-    unsafe {
-        *length = name.len();
-    }
-    name.as_ptr()
 }
 
 /// How many devices the track has, including its mixer. A missing track is zero.
@@ -684,15 +627,17 @@ pub unsafe extern "C" fn echode_snapshot_device_count(
     snapshot: *const Snapshot,
     track: usize,
 ) -> usize {
-    snapshot_ref(snapshot)
+    // SAFETY: the caller passes null or an owned handle.
+    unsafe { abi::handle(snapshot) }
         .map(|snapshot| snapshot.device_count(track))
         .unwrap_or(0)
 }
 
-/// Writes the UUID bytes of a device. Returns 0, or `-1` when it is missing.
+/// Writes the UUID bytes of a device. Returns 0, or `-1` when it is missing
+/// or `out` is null; `out` is unchanged then.
 ///
 /// # Safety
-/// `out` points at 16 writable bytes. `snapshot` is null or still owned.
+/// `out` is null or points at 16 writable bytes. `snapshot` is null or still owned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_device_id(
     snapshot: *const Snapshot,
@@ -700,17 +645,11 @@ pub unsafe extern "C" fn echode_snapshot_device_id(
     device: usize,
     out: *mut u8,
 ) -> c_int {
-    let Some(out) = out_bytes(out) else {
-        return -1;
-    };
-    let Some(snapshot) = snapshot_ref(snapshot) else {
-        return -1;
-    };
-    if snapshot.write_device_id(track, device, out) {
-        0
-    } else {
-        -1
-    }
+    // SAFETY: the caller passes null or an owned handle.
+    let id =
+        unsafe { abi::handle(snapshot) }.and_then(|snapshot| snapshot.device_id(track, device));
+    // SAFETY: the caller passes 16 writable bytes at a non-null `out`.
+    write_uuid(id, unsafe { abi::place(out.cast::<[u8; 16]>()) })
 }
 
 /// Returns 1 for bypassed, 0 for active, or -1 for an invalid snapshot/index.
@@ -723,7 +662,8 @@ pub unsafe extern "C" fn echode_snapshot_device_bypassed(
     track: usize,
     device: usize,
 ) -> c_int {
-    snapshot_ref(snapshot)
+    // SAFETY: the caller passes null or an owned handle.
+    unsafe { abi::handle(snapshot) }
         .and_then(|snapshot| snapshot.device_bypassed(track, device))
         .map_or(-1, c_int::from)
 }
@@ -738,7 +678,8 @@ pub unsafe extern "C" fn echode_snapshot_device_offline(
     track: usize,
     device: usize,
 ) -> c_int {
-    snapshot_ref(snapshot)
+    // SAFETY: the caller passes null or an owned handle.
+    unsafe { abi::handle(snapshot) }
         .and_then(|snapshot| snapshot.device_offline(track, device))
         .map_or(-1, c_int::from)
 }
@@ -746,7 +687,8 @@ pub unsafe extern "C" fn echode_snapshot_device_offline(
 /// Borrows the CLAP id of a device. The mixer has none and returns null.
 ///
 /// # Safety
-/// `length` is writable. `snapshot` is null or owned for the whole read.
+/// `length` is null or writable. `snapshot` is null or owned for the whole
+/// read.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_device_plugin(
     snapshot: *const Snapshot,
@@ -754,28 +696,20 @@ pub unsafe extern "C" fn echode_snapshot_device_plugin(
     device: usize,
     length: *mut usize,
 ) -> *const u8 {
-    if length.is_null() {
-        return std::ptr::null();
-    }
+    // SAFETY: this function's contract is `lend`'s.
     unsafe {
-        *length = 0;
+        lend(snapshot, length, |snapshot| {
+            snapshot.device_plugin(track, device).map(str::as_bytes)
+        })
     }
-    let Some(plugin) =
-        snapshot_ref(snapshot).and_then(|snapshot| snapshot.device_plugin(track, device))
-    else {
-        return std::ptr::null();
-    };
-    unsafe {
-        *length = plugin.len();
-    }
-    plugin.as_ptr()
 }
 
 /// Borrows the ascending CLAP parameter ids pinned on a device. An invalid
 /// snapshot or index returns null with a zero count; no pins return a count of 0.
 ///
 /// # Safety
-/// `count` is writable. `snapshot` is null or owned for the whole read.
+/// `count` is null or writable. `snapshot` is null or owned for the whole
+/// read.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_device_pins(
     snapshot: *const Snapshot,
@@ -783,56 +717,42 @@ pub unsafe extern "C" fn echode_snapshot_device_pins(
     device: usize,
     count: *mut usize,
 ) -> *const u32 {
-    if count.is_null() {
-        return std::ptr::null();
-    }
+    // SAFETY: this function's contract is `lend`'s.
     unsafe {
-        *count = 0;
+        lend(snapshot, count, |snapshot| {
+            snapshot.device_pins(track, device)
+        })
     }
-    let Some(pins) =
-        snapshot_ref(snapshot).and_then(|snapshot| snapshot.device_pins(track, device))
-    else {
-        return std::ptr::null();
-    };
-    unsafe {
-        *count = pins.len();
-    }
-    pins.as_ptr()
 }
 
 /// Writes the installed CLAP catalog as UTF-8 JSON.
 ///
 /// Returns 0 when `out` holds the document. Returns 1 when `capacity` is too
 /// small and `written` is the required size. Returns `-1` when the helper
-/// cannot be started. The helper process loads each bundle.
+/// cannot be started, or, before scanning, for a null `written` or a refused
+/// `out` (see `abi`). The helper process loads each bundle.
 ///
 /// # Safety
-/// `written` is writable. `out` is null or has room for `capacity` bytes.
+/// `written` is null or writable. `out` is null or has room for `capacity`
+/// bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_plugin_catalog(
     out: *mut u8,
     capacity: usize,
     written: *mut usize,
 ) -> c_int {
-    if written.is_null() {
+    // SAFETY: the caller passes a writable `written`, and room for
+    // `capacity` bytes at a non-null `out`.
+    let (Some(mut written), Some(out)) =
+        (unsafe { (abi::place(written), abi::output(out, capacity)) })
+    else {
         return -1;
-    }
-    unsafe {
-        *written = 0;
-    }
+    };
+    written.set(0);
     let Ok(json) = catalog::plugins_json() else {
         return -1;
     };
-    unsafe {
-        *written = json.len();
-    }
-    if out.is_null() || capacity < json.len() {
-        return 1;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
-    }
-    0
+    copy_out(&json, out, &mut written)
 }
 
 /// Reads the whole audio file at `path` (UTF-8) and writes its overview as
@@ -844,11 +764,12 @@ pub unsafe extern "C" fn echode_plugin_catalog(
 ///
 /// Returns 0 when `out` holds the document. Returns 1 when `capacity` is too
 /// small and `written` is the required size; the next call reads again.
-/// Returns `-1` for an invalid path argument.
+/// Returns `-1` for an empty or invalid path, a null `written`, or a refused
+/// `out` (see `abi`).
 ///
 /// # Safety
-/// `written` is writable. `path` points to `path_len` readable bytes.
-/// `out` is null or has room for `capacity` bytes.
+/// `written` is null or writable. `path` is null or addresses `path_len`
+/// readable bytes. `out` is null or has room for `capacity` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_sample_overview(
     path: *const u8,
@@ -859,27 +780,26 @@ pub unsafe extern "C" fn echode_sample_overview(
     capacity: usize,
     written: *mut usize,
 ) -> c_int {
-    if written.is_null() || path.is_null() || path_len == 0 || path_len > isize::MAX as usize {
+    // SAFETY: the caller passes a writable `written`, `path_len` readable
+    // bytes at a non-null `path`, and room for `capacity` bytes at a non-null `out`.
+    let (Some(mut written), Some(bytes), Some(out)) = (unsafe {
+        (
+            abi::place(written),
+            abi::input(path, path_len),
+            abi::output(out, capacity),
+        )
+    }) else {
         return -1;
-    }
-    unsafe {
-        *written = 0;
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
+    };
+    written.set(0);
     let Ok(text) = std::str::from_utf8(bytes) else {
         return -1;
     };
+    if text.is_empty() {
+        return -1;
+    }
     let json = overview::overview_json(std::path::Path::new(text), channel, request);
-    unsafe {
-        *written = json.len();
-    }
-    if out.is_null() || capacity < json.len() {
-        return 1;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(json.as_ptr(), out, json.len());
-    }
-    0
+    copy_out(&json, out, &mut written)
 }
 
 /// Stops the reads of an overview channel whose browser went away.
@@ -922,10 +842,12 @@ pub unsafe extern "C" fn echode_plugin_watch_wait(revision: u64, timeout_ms: u32
 /// Writes arrange elements that intersect the half-open view into `out`.
 ///
 /// `written` and `dropped` are required. A null `out` with `capacity` 0 counts
-/// every element as dropped and does not allocate.
+/// every element as dropped and does not allocate. Returns -1, with zero
+/// counts, for a null snapshot or a refused `out` (see `abi`).
 ///
 /// # Safety
-/// `out` has room for `capacity` elements. `snapshot` is null or still owned.
+/// `out` is null or has room for `capacity` elements. `snapshot` is null or
+/// still owned. `written` and `dropped` are null or writable and do not alias.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_visible(
     snapshot: *const Snapshot,
@@ -940,21 +862,19 @@ pub unsafe extern "C" fn echode_snapshot_visible(
     written: *mut usize,
     dropped: *mut usize,
 ) -> c_int {
-    if written.is_null() || dropped.is_null() {
+    // SAFETY: the caller passes writable, unaliased counts.
+    let (Some(mut written), Some(mut dropped)) =
+        (unsafe { (abi::place(written), abi::place(dropped)) })
+    else {
         return -1;
-    }
-    unsafe {
-        *written = 0;
-        *dropped = 0;
-    }
-    if out.is_null() && capacity != 0 {
-        return -1;
-    }
-    let Some(snapshot) = snapshot_ref(snapshot) else {
-        unsafe {
-            *written = 0;
-            *dropped = 0;
-        }
+    };
+    written.set(0);
+    dropped.set(0);
+    // SAFETY: the caller passes null or an owned handle, and room for
+    // `capacity` elements at a non-null `out`.
+    let (Some(snapshot), Some(slot)) =
+        (unsafe { (abi::handle(snapshot), abi::output(out, capacity)) })
+    else {
         return -1;
     };
     let view = echode_draw::ArrangeView {
@@ -965,27 +885,22 @@ pub unsafe extern "C" fn echode_snapshot_visible(
         pixels_per_tick,
         pixels_per_track,
     };
-    let slot = if out.is_null() || capacity == 0 {
-        &mut [][..]
-    } else {
-        unsafe { std::slice::from_raw_parts_mut(out, capacity) }
-    };
     let (filled, overflow) = snapshot.write_visible(view, slot);
-    unsafe {
-        *written = filled;
-        *dropped = overflow;
-    }
+    written.set(filled);
+    dropped.set(overflow);
     0
 }
 
 /// Writes min and max for each visible column of one audio placement.
 ///
 /// `placement` is 16 UUID bytes. The tick window is the clip rectangle's
-/// time. A note placement or a missing file writes nothing.
+/// time. A note placement, a missing file or a refused argument (see `abi`)
+/// writes nothing and returns 0.
 ///
 /// # Safety
-/// `snapshot` is null or still owned. `mins` and `maxs` each hold `capacity`
-/// floats for the whole call.
+/// `snapshot` is null or still owned. `placement` is null or addresses 16
+/// readable bytes. `mins` and `maxs` are each null or hold
+/// `capacity` writable floats for the whole call, and they do not overlap.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_waveform(
     snapshot: *const Snapshot,
@@ -996,61 +911,120 @@ pub unsafe extern "C" fn echode_snapshot_waveform(
     maxs: *mut f32,
     capacity: usize,
 ) -> usize {
-    if placement.is_null() || mins.is_null() || maxs.is_null() || capacity == 0 {
-        return 0;
-    }
-    let Some(snapshot) = snapshot_ref(snapshot) else {
+    // SAFETY: the caller passes null or an owned handle, null or 16 readable
+    // bytes at `placement`, and two separate rooms for `capacity` floats.
+    let (Some(snapshot), Some(placement), Some(mins), Some(maxs)) = (unsafe {
+        (
+            abi::handle(snapshot),
+            abi::uuid(placement),
+            abi::output(mins, capacity),
+            abi::output(maxs, capacity),
+        )
+    }) else {
         return 0;
     };
-    let bytes = unsafe { *(placement as *const [u8; 16]) };
-    let placement = echode_model::Id::from_raw(u128::from_be_bytes(bytes));
-    let mut columns = vec![echode_history::PeakColumn { min: 0.0, max: 0.0 }; capacity];
+    // The caller's room bounds the columns, but not what this process can
+    // allocate: a capacity it cannot hold writes nothing instead of aborting.
+    let mut columns = Vec::new();
+    if capacity == 0 || columns.try_reserve_exact(capacity).is_err() {
+        return 0;
+    }
+    columns.resize(capacity, echode_history::PeakColumn { min: 0.0, max: 0.0 });
+    let placement = echode_model::Id::from_raw(placement);
     let written = snapshot.waveform(placement, start_tick, end_tick, &mut columns);
-    let mins = unsafe { std::slice::from_raw_parts_mut(mins, written) };
-    let maxs = unsafe { std::slice::from_raw_parts_mut(maxs, written) };
-    for (index, column) in columns.iter().take(written).enumerate() {
-        mins[index] = column.min;
-        maxs[index] = column.max;
+    for ((column, min), max) in columns.iter().take(written).zip(mins).zip(maxs) {
+        min.write(column.min);
+        max.write(column.max);
     }
     written
 }
 
-fn out_bytes<'a>(out: *mut u8) -> Option<&'a mut [u8; 16]> {
-    if out.is_null() {
-        None
-    } else {
-        Some(unsafe { &mut *(out as *mut [u8; 16]) })
-    }
+/// Completes a refused submission at once, as every queued entry point does.
+fn refuse(context: *mut c_void, complete: Complete, message: &CStr) -> c_int {
+    complete(context, ECHODE_ERR, message.as_ptr(), std::ptr::null_mut());
+    ECHODE_ERR
 }
 
-fn c_str(ptr: *const c_char) -> Option<String> {
-    if ptr.is_null() {
-        return None;
-    }
-    unsafe { CStr::from_ptr(ptr) }
-        .to_str()
-        .ok()
-        .map(str::to_string)
+/// Queues a JSON command for the document thread, or completes it at once with
+/// `refused` when `json` and `json_len` are refused (see `abi`).
+///
+/// # Safety
+/// `document` is null or open. `json` is null or addresses `json_len`
+/// readable bytes.
+unsafe fn queue(
+    document: *mut Document,
+    json: *const u8,
+    json_len: usize,
+    context: *mut c_void,
+    complete: Complete,
+    operation: fn(Vec<u8>) -> Operation,
+    refused: &CStr,
+) -> c_int {
+    // SAFETY: the caller passes null or an open document.
+    let Some(document) = (unsafe { abi::handle(document) }) else {
+        return refuse(context, complete, c"document is null");
+    };
+    // SAFETY: the caller passes `json_len` readable bytes at a non-null `json`.
+    let Some(bytes) = (unsafe { abi::input(json, json_len) }) else {
+        return refuse(context, complete, refused);
+    };
+    document.enqueue(operation(bytes.to_vec()), context, complete);
+    ECHODE_OK
 }
 
-fn document_ref<'a>(document: *mut Document) -> Option<&'a Document> {
-    if document.is_null() {
-        None
-    } else {
-        Some(unsafe { &*document })
-    }
+/// Lends values a snapshot owns: their address, with their count in `len`.
+/// A null `len` returns null. A null snapshot or no values returns null with
+/// a zero count.
+///
+/// # Safety
+/// `snapshot` is null or an owned handle that has not been freed. `len` is
+/// null or writable. The values stay valid until the snapshot is freed.
+unsafe fn lend<'a, T: 'a>(
+    snapshot: *const Snapshot,
+    len: *mut usize,
+    read: impl FnOnce(&'a Snapshot) -> Option<&'a [T]>,
+) -> *const T {
+    // SAFETY: the caller passes null or a writable `len`.
+    let Some(mut len) = (unsafe { abi::place(len) }) else {
+        return std::ptr::null();
+    };
+    len.set(0);
+    // SAFETY: the caller passes null or an owned handle.
+    let Some(values) = (unsafe { abi::handle(snapshot) }).and_then(read) else {
+        return std::ptr::null();
+    };
+    len.set(values.len());
+    values.as_ptr()
 }
 
-fn snapshot_ref<'a>(snapshot: *const Snapshot) -> Option<&'a Snapshot> {
-    if snapshot.is_null() {
-        None
-    } else {
-        Some(unsafe { &*snapshot })
+/// Copies a reply into the caller's room and reports its size in `written`.
+/// Returns 0 when copied, or 1, copying nothing, when the room is too small.
+fn copy_out(
+    bytes: &[u8],
+    out: &mut [std::mem::MaybeUninit<u8>],
+    written: &mut abi::Place<'_, usize>,
+) -> c_int {
+    written.set(bytes.len());
+    if abi::fill(out, bytes) { 0 } else { 1 }
+}
+
+/// Writes a UUID through an out-parameter. -1 when either is missing.
+fn write_uuid(id: Option<[u8; 16]>, out: Option<abi::Place<'_, [u8; 16]>>) -> c_int {
+    match (id, out) {
+        (Some(id), Some(mut out)) => {
+            out.set(id);
+            0
+        }
+        _ => -1,
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+// Pure snapshot calls that also run under Miri.
+#[cfg(test)]
+mod abi_tests;
 
 #[cfg(test)]
 mod snapshot_fields_tests;

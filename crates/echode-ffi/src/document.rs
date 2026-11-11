@@ -16,8 +16,8 @@ pub struct Document {
 
 struct Context(*mut c_void);
 
-// The pointer is the caller's until the completion returns it. Rust does not
-// dereference it.
+// SAFETY: the pointer is the caller's until the completion returns it, and
+// Rust never dereferences it: it only carries it to that completion's thread.
 unsafe impl Send for Context {}
 
 impl Context {
@@ -60,10 +60,6 @@ impl Document {
             playing: u32::from(playing),
             pad: 0,
         }
-    }
-
-    pub(crate) fn submit(&self, bytes: &[u8], context: *mut c_void, complete: Complete) {
-        self.enqueue(Operation::Perform(bytes.to_vec()), context, complete);
     }
 
     pub(crate) fn enqueue(&self, operation: Operation, context: *mut c_void, complete: Complete) {

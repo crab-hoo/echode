@@ -58,10 +58,13 @@ fn catalog_failures_keep_their_typed_causes() {
                 assert_eq!(wait_watch(17, 0), 17);
                 let mut written = usize::MAX;
                 assert_eq!(
+                    // SAFETY: `written` is writable; a null `out` with no room only asks for the
+                    // size.
                     unsafe { crate::echode_plugin_catalog(std::ptr::null_mut(), 0, &mut written) },
                     -1
                 );
                 assert_eq!(written, 0);
+                // SAFETY: it has no arguments.
                 assert_eq!(unsafe { crate::echode_plugin_watch_start() }, -1);
             }
             "cache-parent" | "cache-file" => {
@@ -85,6 +88,8 @@ fn catalog_failures_keep_their_typed_causes() {
                 assert_eq!(plugins_json().unwrap(), b"[]");
                 let mut written = 0;
                 assert_eq!(
+                    // SAFETY: `written` is writable; a null `out` with no room only asks for the
+                    // size.
                     unsafe { crate::echode_plugin_catalog(std::ptr::null_mut(), 0, &mut written) },
                     1
                 );
@@ -92,6 +97,7 @@ fn catalog_failures_keep_their_typed_causes() {
                 // This buffer covers the empty-list fixture, not a product limit.
                 let mut bytes = [0_u8; 2];
                 assert_eq!(
+                    // SAFETY: `bytes` has room for `bytes.len()` bytes and `written` is writable.
                     unsafe {
                         crate::echode_plugin_catalog(bytes.as_mut_ptr(), bytes.len(), &mut written)
                     },
@@ -104,6 +110,7 @@ fn catalog_failures_keep_their_typed_causes() {
                 start_watch().unwrap();
                 assert_eq!(wait_watch(revision, 0), revision);
                 assert_eq!(plugins_json().unwrap(), b"[]");
+                // SAFETY: it has no arguments.
                 assert_eq!(unsafe { crate::echode_plugin_watch_start() }, 0);
                 let watch = WATCH.lock().unwrap().take().unwrap();
                 drop(watch);

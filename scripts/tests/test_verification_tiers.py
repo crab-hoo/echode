@@ -115,6 +115,12 @@ class RealPolicyTests(unittest.TestCase):
                 with self.subTest(check=check["id"], pattern=pattern):
                     self.assertTrue(verify.matches(files, [pattern]), "a task trigger that matches nothing never fires")
 
+    def test_the_c_abi_argument_rules_reach_miri_at_the_task_tier(self):
+        # ADR 0321: the shared pointer checks and their tests also run under Miri.
+        for path in ("crates/echode-ffi/src/abi.rs", "crates/echode-ffi/src/abi_tests.rs"):
+            self.assertIn("check-bridge-miri", set(verify.select_checks(self.policy, [path])), path)
+        self.assertIn("abi_tests", (ROOT / "scripts/check-bridge-miri.sh").read_text())
+
     def test_tiers_are_validated(self):
         def rejected(change):
             policy = json.loads(json.dumps(self.policy))

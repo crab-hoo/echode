@@ -1,5 +1,5 @@
 //! Immutable arrange projections. Collapsing rows never edits a project.
-use crate::{Snapshot, snapshot_ref};
+use crate::{Snapshot, abi};
 use echode_model::{Id, Project};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,14 +51,17 @@ pub unsafe extern "C" fn echode_snapshot_track_tree(
     row: usize,
     out: *mut TrackTreeInfo,
 ) -> i32 {
-    let Some(info) = snapshot_ref(snapshot).and_then(|snapshot| snapshot.track_tree(row)) else {
+    // SAFETY: the caller passes null or an owned handle.
+    let Some(info) = unsafe { abi::handle(snapshot) }.and_then(|snapshot| snapshot.track_tree(row))
+    else {
         return -1;
     };
-    if out.is_null() {
-        return -1;
+    // SAFETY: the caller passes null or one writable value.
+    if unsafe { abi::put(out, info) } {
+        0
+    } else {
+        -1
     }
-    unsafe { out.write(info) };
-    0
 }
 
 /// Returns an owned display projection, sharing the source project and indexes.
@@ -66,7 +69,7 @@ pub unsafe extern "C" fn echode_snapshot_track_tree(
 /// unchanged. A projection can outlive its source handle and the document.
 ///
 /// # Safety
-/// `snapshot` is null or owned. `collapsed` is null for zero IDs, or addresses
+/// `snapshot` is null or owned. `collapsed` is null or addresses
 /// `count * 16` readable UUID bytes. The returned handle must be freed once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echode_snapshot_project_arrange(
@@ -74,30 +77,19 @@ pub unsafe extern "C" fn echode_snapshot_project_arrange(
     collapsed: *const u8,
     count: usize,
 ) -> *mut Snapshot {
-    let Some(snapshot) = snapshot_ref(snapshot) else {
+    // SAFETY: the caller passes null or an owned handle, and `count` UUIDs
+    // of 16 readable bytes each at a non-null `collapsed`.
+    let (Some(snapshot), Some(ids)) = (unsafe {
+        (
+            abi::handle(snapshot),
+            abi::input(collapsed.cast::<[u8; 16]>(), count),
+        )
+    }) else {
         return std::ptr::null_mut();
     };
-    let Some(length) = count
-        .checked_mul(16)
-        .filter(|length| *length <= isize::MAX as usize)
-    else {
-        return std::ptr::null_mut();
-    };
-    if length != 0 && collapsed.is_null() {
-        return std::ptr::null_mut();
-    }
-    let bytes = if length == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(collapsed, length) }
-    };
-    let ids = bytes
-        .chunks_exact(16)
-        .map(|bytes| {
-            let mut id = [0; 16];
-            id.copy_from_slice(bytes);
-            Id::from_raw(u128::from_be_bytes(id))
-        })
+    let ids = ids
+        .iter()
+        .map(|id| Id::from_raw(u128::from_be_bytes(*id)))
         .collect::<BTreeSet<_>>();
     Box::into_raw(Box::new(snapshot.project_arrange(&ids)))
 }

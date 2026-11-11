@@ -1,6 +1,7 @@
 //! One published version of the project, as the app reads it.
 
 use std::collections::BTreeSet;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use echode_audio_io::AudioState;
@@ -191,12 +192,8 @@ impl Snapshot {
             .map_or(self.project.tracks().len(), |rows| rows.len())
     }
 
-    pub(crate) fn write_track_id(&self, index: usize, out: &mut [u8; 16]) -> bool {
-        let Some(track) = self.track(index) else {
-            return false;
-        };
-        *out = id_bytes(track.id);
-        true
+    pub(crate) fn track_id(&self, index: usize) -> Option<[u8; 16]> {
+        self.track(index).map(|track| id_bytes(track.id))
     }
 
     pub(crate) fn device_count(&self, track: usize) -> usize {
@@ -205,27 +202,22 @@ impl Snapshot {
             .unwrap_or(0)
     }
 
-    pub(crate) fn write_device_id(&self, track: usize, device: usize, out: &mut [u8; 16]) -> bool {
-        let Some(device) = self
-            .track(track)
+    pub(crate) fn device_id(&self, track: usize, device: usize) -> Option<[u8; 16]> {
+        self.track(track)
             .and_then(|track| track.devices.get(device))
-        else {
-            return false;
-        };
-        *out = id_bytes(device.id);
-        true
+            .map(|device| id_bytes(device.id))
     }
 
     pub(crate) fn write_visible(
         &self,
         view: ArrangeView,
-        out: &mut [VisibleElement],
+        out: &mut [MaybeUninit<VisibleElement>],
     ) -> (usize, usize) {
         let mut written = 0usize;
         let mut dropped = 0usize;
         let emit = |element| {
-            if written < out.len() {
-                out[written] = visible_element(element);
+            if let Some(slot) = out.get_mut(written) {
+                slot.write(visible_element(element));
                 written += 1;
             } else {
                 dropped = dropped.saturating_add(1);
@@ -244,13 +236,13 @@ impl Snapshot {
         &self,
         track: Id,
         view: PianoView,
-        out: &mut [PianoNoteElement],
+        out: &mut [MaybeUninit<PianoNoteElement>],
     ) -> (usize, usize) {
         let mut written = 0;
         let mut dropped = 0usize;
         self.index.visit_piano(&self.project, track, view, |note| {
-            if written < out.len() {
-                out[written] = piano_element(note);
+            if let Some(slot) = out.get_mut(written) {
+                slot.write(piano_element(note));
                 written += 1;
             } else {
                 dropped = dropped.saturating_add(1);

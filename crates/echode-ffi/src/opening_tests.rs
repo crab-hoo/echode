@@ -14,7 +14,8 @@ struct Tagged {
     sender: Sender<(&'static str, i32, Option<String>, *mut Snapshot)>,
 }
 
-// The raw snapshot pointer is freed on the test thread after it arrives.
+// SAFETY: the snapshot pointer only moves to the test thread, which frees it there; the sender is
+// `Send`.
 unsafe impl Send for Tagged {}
 
 extern "C" fn tagged(
@@ -23,8 +24,10 @@ extern "C" fn tagged(
     message: *const c_char,
     snapshot: *mut Snapshot,
 ) {
+    // SAFETY: `send` leaked this box as the context and never uses it again.
     let reply = unsafe { Box::from_raw(context.cast::<Tagged>()) };
     let message = (!message.is_null()).then(|| {
+        // SAFETY: a non-null message is a NUL-terminated string, valid for this call.
         unsafe { std::ffi::CStr::from_ptr(message) }
             .to_string_lossy()
             .into_owned()
@@ -67,6 +70,8 @@ fn send(
         tag,
         sender: sender.clone(),
     }));
+    // SAFETY: `entry` is a queued entry point, the document is open, `json` is `json.len()`
+    // readable bytes and the boxed context is handed to the completion.
     let code = unsafe { entry(document, json.as_ptr(), json.len(), context.cast(), tagged) };
     assert_eq!(code, ECHODE_OK, "{tag}");
 }
@@ -88,8 +93,11 @@ fn ok(incoming: &Completions, tag: &str) -> *mut Snapshot {
 
 fn audio(snapshot: *mut Snapshot) -> serde_json::Value {
     let mut len = 0;
+    // SAFETY: the snapshot is owned and `len` is writable.
     let bytes = unsafe { echode_snapshot_audio(snapshot, &mut len) };
+    // SAFETY: the snapshot lends `len` bytes at `bytes` until it is freed below.
     let value = serde_json::from_slice(unsafe { std::slice::from_raw_parts(bytes, len) }).unwrap();
+    // SAFETY: the snapshot is owned and freed once.
     unsafe { echode_snapshot_free(snapshot) };
     value
 }
@@ -138,17 +146,22 @@ fn contract_a_first_device_view_waits_for_the_output_without_holding_edits() {
         &sender,
     );
     let edited = ok(&incoming, "edit");
+    // SAFETY: the snapshot is owned and not yet freed.
     assert_eq!(unsafe { echode_snapshot_track_count(edited) }, 2);
+    // SAFETY: the snapshot is owned and freed once.
     unsafe { echode_snapshot_free(edited) };
     let context = Box::into_raw(Box::new(Tagged {
         tag: "undo",
         sender: sender.clone(),
     }));
     let code =
+        // SAFETY: the document is open and the boxed context is handed to the completion.
         unsafe { echode_document_query(document, ECHODE_DOCUMENT_UNDO, context.cast(), tagged) };
     assert_eq!(code, ECHODE_OK);
     let undone = ok(&incoming, "undo");
+    // SAFETY: the snapshot is owned and not yet freed.
     assert_eq!(unsafe { echode_snapshot_track_count(undone) }, 1);
+    // SAFETY: the snapshot is owned and freed once.
     unsafe { echode_snapshot_free(undone) };
     send(
         echode_document_audio,
@@ -173,11 +186,14 @@ fn contract_a_first_device_view_waits_for_the_output_without_holding_edits() {
     assert!(message.is_some_and(|message| !message.is_empty()));
     let closed = ok(&incoming, "close");
     let mut len = 0;
+    // SAFETY: the snapshot is owned and `len` is writable.
     let report = unsafe { echode_snapshot_device(closed, &mut len) };
     assert_eq!(
+        // SAFETY: the snapshot lends `len` bytes at `report` until it is freed below.
         unsafe { std::slice::from_raw_parts(report, len) },
         br#"{"closed":true}"#
     );
+    // SAFETY: the snapshot is owned and freed once.
     unsafe { echode_snapshot_free(closed) };
     // The open output is kept: a later request does not prepare again.
     send(
@@ -190,6 +206,7 @@ fn contract_a_first_device_view_waits_for_the_output_without_holding_edits() {
     let (status, _, _) = next(&incoming, "again");
     assert_eq!(status, ECHODE_ERR);
     assert_eq!(output.prepared(), 1);
+    // SAFETY: the document came from `Box::into_raw` and is not used after this.
     unsafe { echode_document_close(document) };
     let _ = std::fs::remove_dir_all(path);
 }
@@ -219,6 +236,7 @@ fn closing_while_the_output_opens_refuses_the_waiting_requests() {
         std::thread::sleep(Duration::from_millis(50));
         drop(release);
     });
+    // SAFETY: the document came from `Box::into_raw` and is not used after this.
     unsafe { echode_document_close(document) };
     releaser.join().unwrap();
     let (status, message, _) = next(&incoming, "list");
@@ -273,7 +291,9 @@ fn contract_prepare_opens_the_output_without_holding_edits_and_play_reuses_it() 
         &sender,
     );
     let edited = ok(&incoming, "edit");
+    // SAFETY: the snapshot is owned and not yet freed.
     assert_eq!(unsafe { echode_snapshot_track_count(edited) }, 2);
+    // SAFETY: the snapshot is owned and freed once.
     unsafe { echode_snapshot_free(edited) };
     drop(release);
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -293,6 +313,7 @@ fn contract_prepare_opens_the_output_without_holding_edits_and_play_reuses_it() 
     assert_eq!(state["playing"], true);
     assert!(state["error"].is_null(), "{state}");
     assert_eq!(output.prepared(), 1, "play reused the prepared output");
+    // SAFETY: the document came from `Box::into_raw` and is not used after this.
     unsafe { echode_document_close(document) };
     let _ = std::fs::remove_dir_all(path);
 }

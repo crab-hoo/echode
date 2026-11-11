@@ -409,6 +409,9 @@ JSON・子孫のパイプ保持・ハング等のネイティブ検査専用バ�
 
 ### FFI・文書・復旧・編集型
 
+C ABI の入口は、呼出し側のメモリを `crates/echode-ffi/src/abi.rs` の関数だけで読み書きする。
+0 でない長さを伴う null、`isize::MAX` を超える大きさ、位置のずれを全入口で同じに拒否し、回帰は `abi_tests.rs`（Miri でも実行）に置く（[ADR 0321](decisions/0321-unsafe-safety-comments-and-ffi-arguments.md)）。
+
 目録の Rust の境界は `crates/echode-ffi/src/catalog.rs` の `CatalogError` で、未検出のヘルパーのパスと元の目録・JSON の原因を持つ。
 回帰は `catalog_tests.rs` が子プロセスの環境・走査先を隔離し、同じ入口と C ABI の数値・JSON を照合する（[ADR 0302](decisions/0302-typed-ffi-catalog-errors.md)）。
 
