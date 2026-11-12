@@ -95,6 +95,28 @@ class WidthTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("no test ran", message)
 
+    def test_every_pass_or_fail_run_uses_the_one_shared_width(self):
+        # ADR 0332: check-swift judges at the sanitizer runs' width and checks it held.
+        width = (ROOT / "scripts/swift-test-width.env").read_text()
+        self.assertRegex(width, r"(?m)^ECHODE_SWIFT_TEST_WIDTH=16$")
+        shell = (ROOT / "scripts/check-shell.sh").read_text()
+        bridge = (ROOT / "scripts/check-product-bridge.sh").read_text()
+        for script in (shell, bridge):
+            self.assertIn("\nsource scripts/swift-test-width.env\n", script)
+            self.assertIn("\nunset SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH\n", script)
+            self.assertNotRegex(script, r"(?m)^\s*(product_)?width=\d")
+        self.assertIn('SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="$ECHODE_SWIFT_TEST_WIDTH"', shell)
+        self.assertIn(
+            'check_test_width.py "$scratch/swift-test.events" \\\n            --at-most "$ECHODE_SWIFT_TEST_WIDTH"',
+            shell,
+        )
+        self.assertIn('product_width="$ECHODE_SWIFT_TEST_WIDTH"', bridge)
+        checks = {item["id"]: item for item in json.loads((ROOT / "scripts/verification.json").read_text())["checks"]}
+        for name in ("check-swift", "check-bridge-asan", "check-bridge-tsan"):
+            with self.subTest(check=name):
+                self.assertIn("scripts/swift-test-width.env", checks[name]["inputs"])
+                self.assertIn("scripts/check_test_width.py", checks[name]["inputs"])
+
 
 if __name__ == "__main__":
     unittest.main()

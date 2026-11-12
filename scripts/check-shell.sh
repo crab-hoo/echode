@@ -2,6 +2,10 @@
 # Build the product C ABI and run the Swift wrapper under Swift 6 strict concurrency.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# These runs decide pass or fail, so they start no more tests at once than the
+# sanitizer runs do. A width left in the caller's environment is not used.
+source scripts/swift-test-width.env
+unset SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
 
 # The default members, as scripts/build-app.sh builds the shipped library (ADR 0328).
 cargo build -q --locked --offline
@@ -15,7 +19,8 @@ mkdir -p "$include"
 cmp -s "$header" "$include/echode.h" || cp "$header" "$include/echode.h"
 
 # One build covers every product, executable and test target; the tests then
-# run without a second build plan. The watchdog stops a stalled run (ADR 0325).
+# run without a second build plan. The watchdog stops a stalled run (ADR 0325),
+# and the event stream shows the width really held (ADR 0332).
 run_swift_tests() {
     local pkg="$1"
     local scratch="$2"
@@ -23,9 +28,12 @@ run_swift_tests() {
     mkdir -p "$scratch"
     if swift build -q --build-tests --package-path "$pkg" --scratch-path "$scratch" \
         -Xswiftc -warnings-as-errors >"$log" 2>&1 &&
-        python3 -B scripts/swift_test_watchdog.py -- swift test -q --skip-build --package-path "$pkg" \
+        SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="$ECHODE_SWIFT_TEST_WIDTH" \
+            python3 -B scripts/swift_test_watchdog.py -- swift test -q --skip-build --package-path "$pkg" \
             --scratch-path "$scratch" -Xswiftc -warnings-as-errors \
-            --event-stream-output-path "$scratch/swift-test.events" --event-stream-version 0 >>"$log" 2>&1; then
+            --event-stream-output-path "$scratch/swift-test.events" --event-stream-version 0 >>"$log" 2>&1 &&
+        python3 -B scripts/check_test_width.py "$scratch/swift-test.events" \
+            --at-most "$ECHODE_SWIFT_TEST_WIDTH" >>"$log" 2>&1; then
         local summary
         summary="$(grep -E 'Test run with [0-9]+ tests? .* passed' "$log" | tail -n 1 || true)"
         echo "$pkg: ${summary:-passed}"

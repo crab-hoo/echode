@@ -141,6 +141,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   Swift だけの変更では `check` を再利用する。リンク先の Rust が変われば両方を実行する。
   テストが起動するヘルパー・検査用プラグイン・CLI とリンクする `libechode_ffi.a` は、このレシピ自身が `make app` と同じ選択でビルドする。
   `EchodeAppTests` の実行に HAL の代役の報告（`Real HAL reached:`）があれば、テストが合格していても失敗にする。
+  Swift のテストはサニタイザの合否の実行と同じ同時実行数（`scripts/swift-test-width.env`）で動かし、実際の幅をイベント列で確かめる（[ADR 0332](decisions/0332-check-swift-test-width.md)）。
   全ての Swift のテストの実行（契約・サニタイザ・`check-input` を含む）は `swift_test_watchdog.py` を通る。
   イベント列の記録が 120 秒途絶えたら、走っているテストを名指しし、`sample` を残して止める（[ADR 0325](decisions/0325-swift-test-stall-watchdog.md)）。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
@@ -379,7 +380,8 @@ CI の合格は `make verify` の合格ではなく、`report.md` にも記録�
 - **実 HAL と UI テストの TSan**: 実 HAL のバッファを再利用する時の TSan 警告の原因は未確定で、抑制はしない（[ADR 0113](decisions/0113-product-macos-workgroup-and-caches.md)）。
   `EchodeAppTests` のバンドルには実 HAL がなく、触れたテストは `check-swift` が止め、`make check-real-hal-names` が名指しする（[ADR 0209](decisions/0209-real-hal-guard.md)）。
   UI テストからこの警告の経路はなくなったが、原因の解決ではない。
-- **サニタイザの Swift 全体実行の幅**: 合否は同時実行数 16 の実行で決め、TSan は全テスト同時の実行で競合だけを探す（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
+- **Swift 全体実行の幅**: 合否は同時実行数 16 の実行で決め、TSan は全テスト同時の実行で競合だけを探す（[ADR 0210](decisions/0210-sanitizer-test-width.md)）。
+  通常の `check-swift` も同じ値で合否を決める（[ADR 0332](decisions/0332-check-swift-test-width.md)）。
   幅は実験的な環境変数に頼るので、実際の幅をイベント列で確かめる。5 秒を超えるシステム全体の停止は、この対策でも吸収できない。
 - **errno の TSan 警告**: Darwin arm64 のスレッド固有領域の再利用による誤検出は、C だけでも再現する。
   検査専用ランタイムで errno の寿命処理を直し、同じ errno を実際に共有する競合の検出は保つ（[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)）。

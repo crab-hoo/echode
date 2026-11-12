@@ -9,10 +9,9 @@ product_output="$PWD/target/bridge/$product_sanitizer/product"
 product_validation=(python3 scripts/run-bridge-validation.py --timeout 600)
 product_swift=swift
 product_swift_flags=(-Xswiftc -warnings-as-errors)
-# Tests on the main actor share one queue, so a poll waits for a lap of every live
-# test. With all of them alive, that lap used up the 5 s deadlines on a busy machine
-# (ADR 0210). Swift Testing has only this variable: `--num-workers` leaves it uncapped.
-product_width=16
+# The width that decides pass or fail, shared with check-swift (ADR 0210, ADR 0332).
+source scripts/swift-test-width.env
+product_width="$ECHODE_SWIFT_TEST_WIDTH"
 unset SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH
 mkdir -p "$product_output"
 case "$product_sanitizer" in

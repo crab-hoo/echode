@@ -73,6 +73,11 @@ Swift のテスト本体は完走しており、イベントを分けると、�
 上限 16・検査対象・5 秒の期限・全テスト同時の TSan の実行は変更しない。
 当初の失敗したイベントとログは作業用の `target/focused-checks/swift-width-first-failure/` に保存した。
 
+## 通常の check-swift への適用（2026-11-13）
+
+通常の `check-swift` は全テスト同時のままで、復旧の契約の 5 秒の待ちが 1 回切れた。
+同じ値を `scripts/swift-test-width.env` に移し、通常の実行も幅 16 で合否を決めるようにした（[ADR 0332](0332-check-swift-test-width.md)）。
+
 ## 測定
 
 Apple M4（10 コア、24 GB）、2026-11-01。負荷は `/usr/bin/perl -e '1 while 1'` を走らせた。

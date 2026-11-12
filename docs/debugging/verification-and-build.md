@@ -493,6 +493,9 @@ TSan の同じ待ちの所要は 1.4〜2.9 秒になった。修正前は通常�
 期限の延長、検査の無効化、対象の除外で合格にしない。
 復旧の警告待ちの期限切れ（2026-10-28）も同じ占有が原因とみられるが、再現はしていない。
 `RecoveryConsentTests` の別プロセス実行はそのまま残し、失敗は各 `product/recovery-swift-tests.failed.log` に残る。
+2026-11-13 には、全テスト同時だった通常の `check-swift` で同じ待ちが切れた（`busy=true`、単独実行では 0.29 秒で合格）。
+全テスト同時ではこの契約だけで 20 秒前後かかり、幅 16 では 1.1〜1.6 秒だった。通常の実行も幅 16 にした（[ADR 0332](../decisions/0332-check-swift-test-width.md)）。
+`check_test_width: N tests ran at once` が `check-swift.log` に出たら、幅の値が効いていない。ツールチェーンと `scripts/swift-test-width.env` を調べる。
 
 ### Swift のミキサー回帰で `Expectation failed: overlapped`
 

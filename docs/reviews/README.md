@@ -233,6 +233,7 @@
 - 識別計算での同じ範囲の共有と `check-verification` の短縮、前後の測定: [ADR 0208](../decisions/0208-verification-shared-scopes.md)。
 - UI テストのバンドルから実 HAL をなくすリンク時の代役と、触れたテストを名指しする `check-real-hal`: [ADR 0209](../decisions/0209-real-hal-guard.md)。
 - サニタイザの Swift 全体実行の同時実行数と、全テスト同時で競合を探す実行、前後の測定: [ADR 0210](../decisions/0210-sanitizer-test-width.md)。
+- 通常の check-swift の同時実行数をサニタイザの合否の実行と揃える: [ADR 0332](../decisions/0332-check-swift-test-width.md)。
 - 作業ごとの検査と節目の全体検査の分離、反例とサニタイザの選択条件: [ADR 0212](../decisions/0212-verification-tiers.md)。
 - 終了コードの保証・実行予定だけの環境事前確認・依存順序と失敗検出遅延: [ADR 0166](../decisions/0166-verification-failure-detection.md)。
 - 起動復旧の終了待ち・Darwin errno の検査ランタイム修正: [ADR 0121](../decisions/0121-startup-recovery-and-errno-validation.md)。

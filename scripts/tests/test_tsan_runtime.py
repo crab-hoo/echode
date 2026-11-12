@@ -67,6 +67,7 @@ class RuntimeTests(unittest.TestCase):
             "swift_test_watchdog.py",
             "bridge-toolchain.env",
             "build-platform.env",
+            "swift-test-width.env",
         ):
             shutil.copy2(ROOT / "scripts" / name, scripts / name)
         target = "target/debug" if sanitizer == "address" else "target/bridge/thread/rust/aarch64-apple-darwin/release"
