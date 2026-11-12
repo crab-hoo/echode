@@ -100,10 +100,10 @@
   窓アイコンの実画面・VoiceOver、実ウィンドウの表示、アプリ切替時の隠れ方、第三者プラグインの GUI と聴感はユーザー確認待ち（UC-22）。
 - **デバイスビューと GUI の応答性**: 実機と第三者プラグインでの GUI の停止の解消はユーザー確認待ち（UC-23）。
   実画面での暗転の解消はユーザー確認待ち（UC-24、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
-  出力の準備中の編集、一覧の再試行と状態の表示、FX の追加中の再生もユーザー確認待ち（UC-43〜46）。
+  出力の準備中の編集、一覧の再試行と状態の表示、FX の追加中の再生の実機は UC-43〜46。
   再生中の編集の実機は UC-67（[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
   取込み中の編集・Undo は取込み後に順に効く（UC-68、[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
-  計画生成と文書終了時の初期化待ちは残る（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+  計画生成は残る。閉じる時は起動中のヘルパーを止める（UC-70、[ADR 0334](decisions/0334-cancel-helper-starts-on-close.md)）。
   列の開閉と下部の積み方の実画面の操作感と VoiceOver はユーザー確認待ち（UC-26、[ADR 0146](decisions/0146-independent-editor-stack.md)）。
 - **デバイスチェインの表示**: フォルダとデバイス列の開閉は文書内の表示状態で、保存・Undo の対象外である（[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)、[ADR 0137](decisions/0137-device-disclosure.md)）。
   再オープン時はフォルダを展開に戻す。トラックの複製でオートメーションとルーティングは引き継がない（[ADR 0129](decisions/0129-track-duplication.md)）。

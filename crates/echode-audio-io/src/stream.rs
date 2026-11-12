@@ -62,6 +62,9 @@ pub(crate) struct TransportSetup {
     pub(crate) fader_preview: Option<Vec<(u128, f32, f32)>>,
     /// False opens helpers and the device without starting the transport.
     pub(crate) start: bool,
+    /// Set when the output this prepares for is no longer wanted: helper
+    /// starts stop instead of finishing first (ADR 0334).
+    pub(crate) cancel: Arc<AtomicBool>,
 }
 
 impl TransportSetup {
@@ -75,6 +78,7 @@ impl TransportSetup {
             revision: 0,
             fader_preview: None,
             start: true,
+            cancel: Arc::default(),
         }
     }
 }
@@ -576,6 +580,8 @@ impl OutputStream {
     /// Stops callbacks before reading the final playhead. Drop stays on the
     /// control thread, including every plan still in an ownership ring.
     pub fn close(&mut self) -> PlaybackStatus {
+        // A replacement still starting helpers is not waited for (ADR 0334).
+        self.control.cancel_preparation();
         let mut failed = false;
         // The log keeps a panic even when no service call asked for it.
         if let Some(callback) = &self.callback {
@@ -750,6 +756,7 @@ fn prepare_playback_mode(
         transport.package.as_deref(),
         sample,
         workgroup,
+        &transport.cancel,
     )?;
     control.set_clip_loader(Arc::clone(&transport.clips));
     control.replace(project)?;
@@ -779,6 +786,7 @@ fn open_playback(
     package: Option<&std::path::Path>,
     sample: i64,
     workgroup: Option<PluginWorkgroup>,
+    cancel: &AtomicBool,
 ) -> Result<(PlaybackControl, PlaybackAudio), AudioError> {
     let host = echode_plugin_host::host_binary();
     let routes = match host {
@@ -786,7 +794,10 @@ fn open_playback(
         None => Vec::new(),
     };
     // A device output mutes a runaway master instead of sending it (ADR 0282).
-    let mut options = PlaybackOptions::default().at(sample).guard_output();
+    let mut options = PlaybackOptions::default()
+        .at(sample)
+        .guard_output()
+        .cancel(cancel);
     if let Some(host) = &host {
         options = options.plugins(host, &routes);
     }

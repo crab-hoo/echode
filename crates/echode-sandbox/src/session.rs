@@ -46,6 +46,16 @@ pub struct SpawnOptions<'a> {
     pub sample_rate: u32,
     /// CLAP id inside the bundle. `None` loads the first descriptor.
     pub plugin_id: Option<&'a str>,
+    /// Set by the owner to stop waiting for this start: the helper is then
+    /// stopped and the spawn fails with [`SessionError::Cancelled`] (ADR 0334).
+    pub cancel: Option<&'a AtomicBool>,
+}
+
+/// How often a start checks [`SpawnOptions::cancel`]; matches the reply poll.
+const CANCEL_SLICE: Duration = Duration::from_millis(50);
+
+fn cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel.is_some_and(|flag| flag.load(Ordering::Acquire))
 }
 
 /// A send right from `os_workgroup_copy_port` and the device period, in mach ticks.
@@ -591,7 +601,7 @@ impl PluginHost {
             tail_samples: 0,
         };
         host.start_watch();
-        if let Err(error) = host.finish_launch() {
+        if let Err(error) = host.finish_launch(options.cancel) {
             host.force_stop();
             return Err(host.launch_error(error));
         }
@@ -638,7 +648,7 @@ impl PluginHost {
         self.child = launched.child;
         self.control.lock().control = launched.control;
         self.start_watch();
-        self.finish_launch()?;
+        self.finish_launch(None)?;
         let state = self.control.applied_state();
         if let Some(state) = state {
             self.control.restore_applied(&state)?;
@@ -1022,20 +1032,44 @@ impl PluginHost {
         self.tail_samples
     }
 
-    fn finish_launch(&mut self) -> Result<(), SessionError> {
+    fn finish_launch(&mut self, cancel: Option<&AtomicBool>) -> Result<(), SessionError> {
         if self.plugin.is_some() {
-            self.align_declared_ports()?;
+            self.align_declared_ports(cancel)?;
         }
-        self.wait_until_ready(Duration::from_secs(5))
+        self.wait_until_ready(Duration::from_secs(5), cancel)
     }
 
-    fn align_declared_ports(&mut self) -> Result<(), SessionError> {
-        let (inputs, outputs) = match self.wait_message(Duration::from_secs(5), |message| {
+    /// [`Self::wait_message`] in slices, so the owner can cancel a start.
+    fn wait_starting_message(
+        &mut self,
+        timeout: Duration,
+        cancel: Option<&AtomicBool>,
+        want: impl Fn(&ControlMessage) -> bool,
+    ) -> Result<ControlMessage, SessionError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if cancelled(cancel) {
+                return Err(SessionError::Cancelled);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(SessionError::Timeout);
+            }
+            match self.wait_message(remaining.min(CANCEL_SLICE), &want) {
+                Err(SessionError::Timeout) => continue,
+                result => return result,
+            }
+        }
+    }
+
+    fn align_declared_ports(&mut self, cancel: Option<&AtomicBool>) -> Result<(), SessionError> {
+        let ports = self.wait_starting_message(Duration::from_secs(5), cancel, |message| {
             matches!(
                 message,
                 ControlMessage::Ports { .. } | ControlMessage::PortsRejected(_)
             )
-        })? {
+        })?;
+        let (inputs, outputs) = match ports {
             ControlMessage::Ports {
                 inputs,
                 outputs,
@@ -1062,9 +1096,16 @@ impl PluginHost {
         self.remap(next)
     }
 
-    fn wait_until_ready(&mut self, timeout: Duration) -> Result<(), SessionError> {
+    fn wait_until_ready(
+        &mut self,
+        timeout: Duration,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<(), SessionError> {
         let deadline = Instant::now() + timeout;
         loop {
+            if cancelled(cancel) {
+                return Err(SessionError::Cancelled);
+            }
             if let Some(status) = self.child.try_wait()? {
                 return Err(self.exited(status));
             }

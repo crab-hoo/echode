@@ -249,3 +249,122 @@ fn state_undo_during_startup_keeps_the_existing_helper_and_latest_recorded_bytes
     );
     std::fs::remove_file(socket).unwrap();
 }
+
+/// The initializer peer of the next helper that reaches `prepare-wait`.
+fn held_initializer(listener: &std::os::unix::net::UnixListener) -> std::os::unix::net::UnixStream {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut peer = loop {
+        match listener.accept() {
+            Ok((peer, _)) => break initializer_peer(peer),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => panic!("initializer handshake: {error}"),
+        }
+    };
+    let mut reached = [0];
+    peer.read_exact(&mut reached).unwrap();
+    peer
+}
+
+/// The helper behind `peer` exited without being released: its end closed.
+fn assert_stopped_while_held(peer: &mut std::os::unix::net::UnixStream) {
+    let mut rest = [0];
+    assert_eq!(
+        peer.read(&mut rest).unwrap_or(0),
+        0,
+        "the held helper is still running"
+    );
+}
+
+/// ADR 0334: a replacement whose helper start is held is cancelled, as closing
+/// its output does. The start stops before its own deadline, so the error is
+/// `Cancelled`, not a timeout; the existing helper and graph stay.
+#[test]
+fn contract_a_cancelled_replacement_stops_its_held_helper_start() {
+    // The block length bounds this lifetime fixture only.
+    let frames = 64;
+    let (base, track) = Project::new().add_track("continuous");
+    let existing = Id::generate();
+    let base = base
+        .add_clap_device(track, existing, "dev.echode.test-gain")
+        .unwrap();
+    let path = plugin_dylib();
+    let (mut control, _audio) =
+        playback_with_plugins(&base, 48_000, frames, &host_bin(), &[effect_route(&path)]).unwrap();
+    let socket = Path::new("/private/tmp").join(format!("ec-{}.sock", Id::generate().raw()));
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let (changed, added) = base.add_track("initializing");
+    let changed = changed
+        .add_clap_device(added, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let mut waiting = effect_route(&path);
+    waiting.fault = Some(format!("prepare-wait:{}", socket.display()));
+    control.prepare_in_background();
+    control.set_routes(&host_bin(), &[effect_route(&path), waiting]);
+    control.replace(&changed).unwrap();
+    let mut peer = held_initializer(&listener);
+    control.cancel_preparation();
+    // A hung-worker guard, not a latency threshold.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while control.preparing_graph() {
+        control.service();
+        assert!(Instant::now() < deadline, "the cancelled start never ended");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    match control.take_preparation_error() {
+        Some(echode_engine::PlaybackError::Cancelled) => {}
+        other => panic!("expected a cancelled start, got {other:?}"),
+    }
+    assert_stopped_while_held(&mut peer);
+    assert!(control.device_control_handle(existing.raw()).is_ok());
+    std::fs::remove_file(socket).unwrap();
+}
+
+/// ADR 0334: the first preparation of an output stops a held helper start
+/// when its owner cancels it, instead of waiting for the start's deadline.
+#[test]
+fn contract_a_cancelled_first_preparation_stops_its_held_helper_start() {
+    // The block length bounds this lifetime fixture only.
+    let frames = 64;
+    let (project, track) = Project::new().add_track("initializing");
+    let project = project
+        .add_clap_device(track, Id::generate(), "dev.echode.test-gain")
+        .unwrap();
+    let socket = Path::new("/private/tmp").join(format!("eo-{}.sock", Id::generate().raw()));
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut waiting = effect_route(&plugin_dylib());
+    waiting.fault = Some(format!("prepare-wait:{}", socket.display()));
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&cancel);
+    let (done, finished) = mpsc::channel();
+    let preparing = std::thread::spawn(move || {
+        let routes = [waiting];
+        let result = echode_engine::playback(
+            &project,
+            48_000,
+            frames,
+            echode_engine::PlaybackOptions::default()
+                .plugins(&host_bin(), &routes)
+                .cancel(&flag),
+        );
+        done.send(result.map(|_| ())).unwrap();
+    });
+    let mut peer = held_initializer(&listener);
+    cancel.store(true, std::sync::atomic::Ordering::Release);
+    // A hung-preparation guard, not a latency threshold.
+    match finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the cancelled preparation never ended")
+    {
+        Err(echode_engine::PlaybackError::Cancelled) => {}
+        other => panic!("expected a cancelled start, got {other:?}"),
+    }
+    preparing.join().unwrap();
+    assert_stopped_while_held(&mut peer);
+    std::fs::remove_file(socket).unwrap();
+}

@@ -114,6 +114,7 @@
 - 再生中の編集の素材の別スレッド読込み・テンポの変わった計画の採用時の拍の保持・tick の位置移動: [ADR 0330](../decisions/0330-playing-edit-media-and-tempo-retime.md)。
 - 外部の音声の取込みの別スレッドの段階・後の編集の投入順の保持・段階で作るピーク: [ADR 0331](../decisions/0331-off-worker-audio-import.md)。
 - 出力の導入時の差分で増えるヘルパーの準備スレッドでの起動・その計画を待つ再生の開始: [ADR 0333](../decisions/0333-install-diff-graph-off-worker.md)。
+- 閉じる・機器交換の時の起動中のヘルパーの取消: [ADR 0334](../decisions/0334-cancel-helper-starts-on-close.md)。
 - 記憶した再生開始位置・余韻を保つ停止での復帰・一時停止・`transport.json`・ピアノロールのルーラー: [ADR 0155](../decisions/0155-remembered-playback-start.md)。
 - ピアノロールのルーラードラッグの範囲指定・クリックとの分離と、ループ前からの進入・終端以降の通常進行:
   [ADR 0156](../decisions/0156-ruler-loop-range-and-entry.md)。

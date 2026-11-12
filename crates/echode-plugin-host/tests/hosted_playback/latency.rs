@@ -4,6 +4,7 @@ use super::*;
 fn plugin_latency_is_reported_at_startup_and_after_restart() {
     // This fixture uses a 64-frame block only to drive one restart request.
     let mut host = PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(&plugin_dylib()),
         fault: Some("latency"),

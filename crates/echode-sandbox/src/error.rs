@@ -13,6 +13,9 @@ pub enum SessionError {
     /// The helper did not answer before this side's deadline. The outcome is
     /// unknown (ADR 0199).
     Timeout,
+    /// The owner stopped waiting for the helper to start, and the helper was
+    /// stopped (ADR 0334).
+    Cancelled,
     Missed,
     MappingPending,
     HostExited {
@@ -48,12 +51,25 @@ pub enum SessionError {
     },
 }
 
+impl SessionError {
+    /// The start was cancelled by its owner, whether or not the helper wrote
+    /// to stderr first.
+    pub fn is_cancelled(&self) -> bool {
+        match self {
+            Self::Cancelled => true,
+            Self::Launch { error, .. } => error.is_cancelled(),
+            _ => false,
+        }
+    }
+}
+
 impl std::fmt::Display for SessionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Region(error) => write!(f, "{error}"),
             Self::Io(error) => write!(f, "{error}"),
             Self::Timeout => f.write_str("plugin process did not answer before the deadline"),
+            Self::Cancelled => f.write_str("plugin process start was cancelled"),
             Self::MappingPending => f.write_str("prepared mapping has not been activated"),
             Self::Missed => f.write_str("both block slots are still in flight"),
             Self::Workgroup(error) => write!(f, "{error}"),

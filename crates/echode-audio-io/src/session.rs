@@ -794,8 +794,8 @@ impl Session {
             opening.device() != device.as_ref() || opening.workgroup_changed()
         }) && let Some(opening) = self.opening.take()
         {
-            // Its helpers cannot be stopped mid-start. They exit with the
-            // result once the thread is done.
+            // Its helper starts stop; the thread ends soon after (ADR 0334).
+            opening.cancel();
             self.retiring.push(opening);
         }
         if (self.playing || self.engine_held) && self.stream.is_none() && self.opening.is_none() {
@@ -825,6 +825,7 @@ impl Session {
             revision: self.play_revision,
             fader_preview: self.fader_preview.clone(),
             start: self.playing,
+            cancel: Arc::default(),
         };
         let basis = Basis {
             project: Arc::clone(&self.project),

@@ -3,12 +3,16 @@ use super::{HostGraph, Pending, PlaybackError};
 use crate::plugins::{PluginWorkgroup, ReconcileRoutes};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 type GraphResult = (HostGraph, Pending, Result<(), PlaybackError>);
 
 pub(super) struct GraphPreparation {
     thread: Option<JoinHandle<GraphResult>>,
+    /// Stops helper starts when this preparation is no longer wanted (ADR 0334).
+    cancel: Arc<AtomicBool>,
     pub(super) restore_states: bool,
     pub(super) event_caps: Vec<usize>,
     pub(super) tail_samples: u32,
@@ -27,6 +31,8 @@ impl GraphPreparation {
         let event_caps = hosts.track_event_caps();
         let tail_samples = hosts.tail_samples();
         let preserve = hosts.matching_states(&pending.chain, &pending.routes);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&cancel);
         let thread = std::thread::Builder::new()
             .name("echode-graph-prepare".into())
             .spawn(move || {
@@ -39,6 +45,7 @@ impl GraphPreparation {
                             entries: &pending.routes,
                             restore_states: pending.restore_states,
                             preserve: &preserve,
+                            cancel: Some(&stop),
                         },
                         &pending.chain,
                         frames,
@@ -56,10 +63,17 @@ impl GraphPreparation {
             .map_err(PlaybackError::thread)?;
         Ok(Self {
             thread: Some(thread),
+            cancel,
             restore_states,
             event_caps,
             tail_samples,
         })
+    }
+
+    /// Stops starting helpers. The thread then ends with
+    /// [`PlaybackError::Cancelled`] after stopping the ones it started.
+    pub(super) fn cancel(&self) {
+        self.cancel.store(true, Ordering::Release);
     }
 
     /// Joins only an exited thread. No socket, helper or preparation wait here.
@@ -78,8 +92,10 @@ impl GraphPreparation {
 
 impl Drop for GraphPreparation {
     fn drop(&mut self) {
-        // Closing a document still waits for startup, as the synchronous path did.
-        // Normal service only drops this after poll observed an exited thread.
+        // Closing an output stops helper starts instead of waiting for them
+        // (ADR 0334). Normal service only drops this after poll observed an
+        // exited thread, so this cancels nothing then.
+        self.cancel();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

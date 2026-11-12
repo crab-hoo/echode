@@ -272,6 +272,7 @@ fn live_workgroup_survives_product_edits_and_helper_restart() {
     assert_eq!(control.status().plugin_missed_blocks, 0);
 
     let mut host = PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(&path),
         plugin_id: Some(&route.clap_id),
@@ -539,6 +540,7 @@ fn plugin_output_is_independent_of_partition_without_a_realtime_deadline() {
     let plugin = plugin_dylib();
     for frames in [1, 7, 8, 14, 28, 64] {
         let mut host = PluginHost::spawn(SpawnOptions {
+            cancel: None,
             host_bin: &host_bin(),
             plugin: Some(&plugin),
             fault: None,
@@ -1732,6 +1734,7 @@ fn audit_aud08_clips_and_notes_reach_the_track_effect_before_the_fader() {
 
 fn spawn_declared(id: &str) -> Result<PluginHost, echode_sandbox::SessionError> {
     PluginHost::spawn(echode_sandbox::SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(plugin_dylib().as_path()),
         fault: None,
@@ -2737,6 +2740,7 @@ fn compare_note_onsets(path: &Path, clap_id: &str, fault: Option<&str>) {
             let (mut control, mut audio) =
                 playback_with_plugins(&project, rate, frames, &host_bin(), &[route]).unwrap();
             let mut direct = PluginHost::spawn(SpawnOptions {
+                cancel: None,
                 host_bin: &host_bin(),
                 plugin: Some(path),
                 fault,

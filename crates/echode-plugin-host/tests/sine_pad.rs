@@ -234,6 +234,7 @@ fn sine_pad_state_and_declared_tail_use_the_standard_helper_protocol_under_rtsan
     let host = PathBuf::from(env!("CARGO_BIN_EXE_echode-plugin-host"));
     for rate in [48_000, 96_000] {
         let mut plugin = PluginHost::spawn(SpawnOptions {
+            cancel: None,
             host_bin: &host,
             plugin: Some(&route.path),
             plugin_id: Some(&route.clap_id),

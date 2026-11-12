@@ -314,6 +314,10 @@ pub(crate) struct ReconcileRoutes<'a> {
     /// Devices whose state matched at submission. Later live edits to those
     /// helpers must not turn an unrelated preparation into a stale reload.
     pub preserve: &'a [u128],
+    /// Set by the preparation's owner to stop starting helpers. The helper
+    /// starting then is stopped too, and reconciling fails with
+    /// [`PlaybackError::Cancelled`] (ADR 0334).
+    pub cancel: Option<&'a AtomicBool>,
 }
 
 impl Instance {
@@ -735,6 +739,7 @@ impl HostGraph {
         frames: usize,
         sample_rate: u32,
         workgroup: Option<&PluginWorkgroup>,
+        cancel: Option<&AtomicBool>,
     ) -> Result<Self, PlaybackError> {
         let mut graph = Self::empty();
         graph.reconcile(
@@ -743,6 +748,7 @@ impl HostGraph {
                 entries: routes,
                 restore_states: true,
                 preserve: &[],
+                cancel,
             },
             chains,
             frames,
@@ -829,6 +835,13 @@ impl HostGraph {
                         continue;
                     }
                 }
+                if selection
+                    .cancel
+                    .is_some_and(|flag| flag.load(Ordering::Acquire))
+                {
+                    self.tracks = HostTracks::new(restore_tracks(restore, tracks, stages, kept));
+                    return Err(PlaybackError::Cancelled);
+                }
                 match spawn_stage(
                     host_bin,
                     routes,
@@ -840,6 +853,7 @@ impl HostGraph {
                         event_cap: delivery,
                         sample_rate,
                         workgroup,
+                        cancel: selection.cancel,
                     },
                 ) {
                     Ok(Some(stage)) => stages.push(stage),
@@ -1503,6 +1517,7 @@ struct StageSize<'a> {
     event_cap: usize,
     sample_rate: u32,
     workgroup: Option<&'a PluginWorkgroup>,
+    cancel: Option<&'a AtomicBool>,
 }
 
 fn spawn_stage(
@@ -1518,6 +1533,7 @@ fn spawn_stage(
         event_cap,
         sample_rate,
         workgroup,
+        cancel,
     } = size;
     let Some(route) = take_route(routes, used, &device.clap_id) else {
         return Ok(None);
@@ -1559,7 +1575,12 @@ fn spawn_stage(
         fan_in: Some(shared),
         sample_rate,
         plugin_id: Some(route.clap_id.as_str()),
+        cancel,
     }) {
+        // Stopped as it started; dropping it ends the process.
+        Ok(_) if cancel.is_some_and(|flag| flag.load(Ordering::Acquire)) => {
+            return Err(PlaybackError::Cancelled);
+        }
         Ok(host) => {
             if let Some(state) = &state {
                 host.control_handle()
@@ -1568,6 +1589,7 @@ fn spawn_stage(
             }
             host
         }
+        Err(error) if error.is_cancelled() => return Err(PlaybackError::Cancelled),
         Err(error) => {
             if route.path.exists() {
                 return Err(PlaybackError::Spawn {

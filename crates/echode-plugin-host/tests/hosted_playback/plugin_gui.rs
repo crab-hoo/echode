@@ -183,6 +183,7 @@ fn restarting_a_helper_closes_its_window_lifetime_without_reopening_it() {
     let listener = UnixListener::bind(&socket).unwrap();
     let fault = format!("gui:{}", socket.display());
     let mut host = PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(plugin_dylib().as_path()),
         plugin_id: Some("dev.echode.test-params"),

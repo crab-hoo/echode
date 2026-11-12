@@ -957,6 +957,47 @@ fn contract_an_install_while_playing_waits_for_the_media_of_an_edit_made_meanwhi
     assert_eq!(output.prepared(), 1);
 }
 
+/// ADR 0334: closing a document while its output prepares stops the
+/// preparation's helper starts instead of waiting for them. The gate stands
+/// in for a held helper start and stays held.
+#[test]
+fn contract_closing_while_the_output_prepares_cancels_the_preparation() {
+    let (project, _) = Project::new().add_track("audio");
+    let mut session = Session::new(Arc::new(project));
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    output.hold();
+    session.perform(AudioCommand::Play).unwrap();
+    until_waiting(&output);
+    // A hung-close guard, not a latency threshold: if closing waits, the
+    // watchdog releases the gate after it and records that it had to.
+    let (closed, watched) = std::sync::mpsc::channel::<()>();
+    let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watchdog = {
+        let output = output.clone();
+        let fired = Arc::clone(&fired);
+        std::thread::spawn(move || {
+            if watched
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .is_err()
+            {
+                fired.store(true, Ordering::Release);
+                output.release();
+            }
+        })
+    };
+    drop(session);
+    // The watchdog is gone if it fired.
+    let _ = closed.send(());
+    watchdog.join().unwrap();
+    output.release();
+    assert!(
+        !fired.load(Ordering::Acquire),
+        "closing waited for the held preparation"
+    );
+    assert_eq!(output.prepared(), 1);
+}
+
 /// ADR 0333: an edit made while a playing output opened needs a new graph but
 /// no new media, here a second track. Installing prepares that graph on the
 /// preparation thread, where helpers it adds start, instead of on the worker.

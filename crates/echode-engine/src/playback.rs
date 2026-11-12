@@ -1358,6 +1358,7 @@ pub struct PlaybackOptions<'a> {
     plugins: Option<PluginSetup<'a>>,
     workgroup: Option<PluginWorkgroup>,
     guard_output: bool,
+    cancel: Option<&'a std::sync::atomic::AtomicBool>,
 }
 
 struct PluginSetup<'a> {
@@ -1373,6 +1374,7 @@ impl Default for PlaybackOptions<'_> {
             plugins: None,
             workgroup: None,
             guard_output: false,
+            cancel: None,
         }
     }
 }
@@ -1412,6 +1414,14 @@ impl<'a> PlaybackOptions<'a> {
         self.guard_output = true;
         self
     }
+
+    /// Set by the caller to stop starting helpers, for example when the output
+    /// this prepares for closes. Preparing then fails with
+    /// [`PlaybackError::Cancelled`] (ADR 0334).
+    pub fn cancel(mut self, flag: &'a std::sync::atomic::AtomicBool) -> Self {
+        self.cancel = Some(flag);
+        self
+    }
 }
 
 /// Prepares both sides of a transport. Nothing is shared with a device until
@@ -1427,6 +1437,7 @@ pub fn playback(
         plugins,
         workgroup,
         guard_output,
+        cancel,
     } = options;
     if clock.position() < 0 {
         return Err(PlaybackError::Time);
@@ -1443,6 +1454,7 @@ pub fn playback(
             frames,
             rate,
             control.workgroup.as_ref(),
+            cancel,
         )?;
         control.save_controls = control.hosts.save_controls();
         audio.hosts = Box::new(control.hosts.audio_snapshot());
@@ -1624,6 +1636,15 @@ impl PlaybackControl {
     /// A replacement's media or helper catalog is being prepared, or waiting to publish.
     pub fn preparing_graph(&self) -> bool {
         self.preparing.is_some() || self.held.is_some() || self.media.is_some()
+    }
+
+    /// Stops starting helpers for the replacement being prepared, so dropping
+    /// or closing need not wait for them. That replacement then fails with
+    /// [`PlaybackError::Cancelled`]; the published graph keeps sounding (ADR 0334).
+    pub fn cancel_preparation(&self) {
+        if let Some(job) = &self.preparing {
+            job.cancel();
+        }
     }
 
     /// The newest plan requested so far, published or not.
@@ -1994,6 +2015,7 @@ impl PlaybackControl {
                     entries: &pending.routes,
                     restore_states: pending.restore_states,
                     preserve: &[],
+                    cancel: None,
                 },
                 &pending.chain,
                 self.frames,

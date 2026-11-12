@@ -678,6 +678,8 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 再生中に準備した出力の導入で、置き換えられる計画が一瞬鳴るなら `output-install-held-play` を使う（[ADR 0330](../decisions/0330-playing-edit-media-and-tempo-retime.md)）。
 記録済みのプラグイン状態は名前（保管庫の BLAKE3）で比べ、新しいヘルパーと状態の変わったヘルパーだけが `echode-graph-prepare` で読む。
 無関係な編集が状態を読む・ヘルパーを作り直すなら `plugin-state-names` で比べ方を確かめる。
+閉じる・機器交換がプラグインの起動を待つなら、`helper-start-cancel`・`helper-open-cancel`・`output-close-cancel` で取消の経路を分ける。
+取り消した準備の `PlaybackError::Cancelled` は想定どおりで、起動自身の期限切れ（`Spawn` の `Timeout`）とは別である（[ADR 0334](../decisions/0334-cancel-helper-starts-on-close.md)）。
 読めない状態は `PlaybackError::State` のデバイスと原因（`PackageError`）で分かる（[ADR 0329](../decisions/0329-plugin-states-by-name.md)）。
 機器なしの出力は計画の採用に検査側の `pump` が必要である。初回の準備だけを待つ時に `Session.opening()` の全置換待ちを使わない。
 製品アプリでは開いた直後の `opening` は事前準備（`audio.prepare`）である。最初の再生がまだ待つなら、押した時点の状態を分ける。

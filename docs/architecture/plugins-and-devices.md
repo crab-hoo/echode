@@ -72,6 +72,8 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - `SIGABRT`、`SIGSEGV`、`SIGBUS`、`SIGILL` でヘルパーが共有領域へ印を書いてから信号を上げ直す
   （[ADR 0079](../decisions/0079-failed-export.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）
 - 再起動ではヘルパーを起動し直して最後に取得した状態を復元する
+- 出力を閉じる・機器を替える時は、起動中のヘルパーを取消の印（`SpawnOptions::cancel`）で止める。
+  起動を待つスレッドが自分で子を止めて `Cancelled` を返し、次の起動も始めない（[ADR 0334](../decisions/0334-cancel-helper-starts-on-close.md)）
 
 - メインスレッドの制御要求は型付きの専有領域で渡し、時間切れ後も完了まで後続を busy で拒否する。
   ソケットの要求と応答は 64 bit の要求番号で照合し、遅れた応答を後続へ貸さない。

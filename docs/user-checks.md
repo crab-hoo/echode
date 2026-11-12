@@ -121,6 +121,7 @@
 | UC-30 | 古い保存版へ戻す復旧の警告の見え方と VoiceOver | 画面・VO | [ADR 0183](decisions/0183-recovery-consent.md) | 2026-10-28 |
 | UC-31 | 前回のプロジェクトの復元に失敗した後、別のプロジェクトを開ける（同じ後の新規作成とトラックの追加は 2026-10-19 にユーザーが確認した。[ADR 0121](decisions/0121-startup-recovery-and-errno-validation.md)） | 画面 | [現在の制約](status.md) のプロジェクトの開始 | 2026-10-19 |
 | UC-66 | `make app` のアプリで文書を開き、再生・停止して閉じ、アプリを終了する。`~/Library/Logs/Echode/echode.ndjson` に `log started`・`a document opened`・`the audio output opened`・`a document closed` が順に並び、Console で `subsystem:io.echode` の記録が見える。自動検査は署名したアプリの起動経路と統合ログの保存を通らない | 実機 | [ADR 0322](decisions/0322-product-log.md) | 2026-11-12 |
+| UC-70 | 初期化の遅い第三者 CLAP を多く入れた曲を開き、プラグインの起動中に文書を閉じる・別の曲を開く・アプリを終了する・出力機器を替える。どれも起動の終わりを待たずに進み、閉じた曲のヘルパーのプロセスが残らない（アクティビティモニタ）。プラグイン名・数・閉じ終わるまでの時間を記録する | 実機・第三者 | [ADR 0334](decisions/0334-cancel-helper-starts-on-close.md) | 2026-11-13 |
 
 ## H. 書出し
 

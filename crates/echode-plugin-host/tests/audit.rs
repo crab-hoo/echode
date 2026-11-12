@@ -139,6 +139,7 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
 
     let (host_bin, plugin) = helper_fixture();
     let mut host = PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin,
         plugin: Some(plugin.as_path()),
         fault: Some("slow-save"),

@@ -83,6 +83,7 @@ fn spawn_with(
     workgroup: Option<WorkgroupHandoff>,
 ) -> PluginHost {
     PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin,
         fault,
@@ -389,6 +390,7 @@ fn a_callback_runs_on_the_main_thread_and_a_restart_still_answers() {
 
 fn spawn_plugin(fault: Option<&str>, layout: SessionLayout) -> PluginHost {
     PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(&plugin_dylib()),
         fault,
@@ -403,6 +405,7 @@ fn spawn_plugin(fault: Option<&str>, layout: SessionLayout) -> PluginHost {
 
 fn spawn_layout(layout: SessionLayout) -> PluginHost {
     PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: None,
         fault: None,
@@ -599,6 +602,7 @@ fn a_midi_only_session_round_trips_events() {
 
 fn refused_launch(plugin: &Path, plugin_id: Option<&str>, fault: Option<&str>) -> SessionError {
     match PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(plugin),
         plugin_id,
@@ -643,6 +647,7 @@ fn launch_port_refusals_remain_plugin_failures() {
 fn invalid_parameter_id_keeps_its_kind_and_rejects_the_entire_batch() {
     let plugin = plugin_dylib();
     let host = PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(&plugin),
         plugin_id: Some("dev.echode.test-params"),
@@ -830,6 +835,7 @@ fn remap_switches_to_a_mono_output() {
 
 fn spawn_fan(plugin: Option<&Path>, fault: Option<&str>, fan: &Arc<FanIn>) -> PluginHost {
     PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin,
         fault,
@@ -1160,6 +1166,7 @@ fn a_state_longer_than_one_frame_saves_and_restores_in_parts() {
     // (64 MiB less type and id) plus 1 MiB. It sizes this fixture only.
     const LARGE_STATE: usize = 64 * 1024 * 1024 - 12 + 1024 * 1024;
     let mut host = PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(&plugin_dylib()),
         fault: Some("large-state"),
@@ -1208,6 +1215,7 @@ fn a_large_restore_crosses_a_large_background_save_without_stalling() {
     // The test plugin's `large-state` length, as above. It sizes this fixture only.
     const LARGE_STATE: usize = 64 * 1024 * 1024 - 12 + 1024 * 1024;
     let host = PluginHost::spawn(SpawnOptions {
+        cancel: None,
         host_bin: &host_bin(),
         plugin: Some(&plugin_dylib()),
         fault: Some("large-state"),

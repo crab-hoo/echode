@@ -8,9 +8,9 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 #[cfg(any(test, feature = "headless-output"))]
 use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 
@@ -88,6 +88,8 @@ pub(crate) struct Opening {
     basis: Option<Basis>,
     result: Receiver<Result<Prepared, AudioError>>,
     thread: Option<JoinHandle<()>>,
+    /// The preparing thread's [`TransportSetup::cancel`].
+    cancel: Arc<AtomicBool>,
 }
 
 impl Opening {
@@ -101,6 +103,7 @@ impl Opening {
         let target = claim.target();
         let project = Arc::clone(&basis.project);
         let tick = basis.tick;
+        let cancel = Arc::clone(&transport.cancel);
         let thread = std::thread::Builder::new()
             .name("echode-output-open".into())
             .spawn(move || {
@@ -117,7 +120,15 @@ impl Opening {
             basis: Some(basis),
             result,
             thread: Some(thread),
+            cancel,
         })
+    }
+
+    /// Stops starting helpers for an output no longer wanted. Its result, an
+    /// error, is dropped with it (ADR 0334).
+    pub(crate) fn cancel(&self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     pub(crate) fn device(&self) -> Option<&OutputDevice> {
@@ -153,9 +164,10 @@ impl Opening {
 }
 
 impl Drop for Opening {
-    /// A preparation cannot be interrupted while a helper starts, so a closed
-    /// document waits here as it would for a synchronous open.
+    /// A closed document stops the helper starts, then waits only for the
+    /// thread to stop them (ADR 0334).
     fn drop(&mut self) {
+        self.cancel();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -269,12 +281,15 @@ impl Outputs for HeadlessOutput {
     ) -> Result<Prepared, AudioError> {
         self.gate.waiting.fetch_add(1, Ordering::AcqRel);
         let mut held = self.held();
-        while *held {
+        // Like a helper start, the held gate gives way to a cancel (ADR 0334).
+        let cancelled = || transport.cancel.load(Ordering::Acquire);
+        while *held && !cancelled() {
             held = self
                 .gate
                 .changed
-                .wait(held)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                .wait_timeout(held, std::time::Duration::from_millis(1))
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
         }
         drop(held);
         self.gate.waiting.fetch_sub(1, Ordering::AcqRel);
@@ -286,6 +301,7 @@ impl Outputs for HeadlessOutput {
             .take();
         let result = match failure {
             Some(error) => Err(error),
+            None if cancelled() => Err(echode_engine::PlaybackError::Cancelled.into()),
             None => Prepared::new(project, target, tick, transport),
         };
         self.gate.prepared.fetch_add(1, Ordering::AcqRel);

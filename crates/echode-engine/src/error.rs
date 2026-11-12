@@ -18,6 +18,9 @@ pub enum PlaybackError {
     InvalidDevice,
     /// The plugin preparation thread panicked or ended without its result.
     Plugin,
+    /// The owner of a preparation stopped it before every helper started, for
+    /// example because its output closed. Started helpers were stopped (ADR 0334).
+    Cancelled,
     Media,
     /// An audio placement's content is neither mono nor stereo.
     ClipChannels,
@@ -72,6 +75,7 @@ impl fmt::Display for PlaybackError {
             Self::IdSpace => "playback note numbers are exhausted",
             Self::InvalidDevice => "device state or parameter is not valid",
             Self::Plugin => "plugin helper did not start",
+            Self::Cancelled => "plugin preparation was cancelled",
             Self::Media => "audio file could not be read",
             Self::ClipChannels => "audio placement requires a mono or stereo layout",
             Self::BusMapping { device, clap_id } => {
