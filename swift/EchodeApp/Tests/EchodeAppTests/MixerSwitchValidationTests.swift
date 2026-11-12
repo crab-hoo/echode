@@ -1,25 +1,29 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct MixerSwitchValidationTests {
     @Test func missingOrMalformedTargetsCannotPartiallyChangeTracksOrDiscardRedo() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-switch-invalid-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-mixer-switch-invalid-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first")
         let first = try #require(controller.selection)
         await controller.addTrack(name: "second")
-        let second = try #require(controller.selection), document = try #require(controller.documentID)
+        let second = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         controller.selectTrack(first, change: .toggle)
         let request = try #require(controller.captureMixerSwitch(first, field: .mute, value: 1, document: document))
         #expect(request.tracks == [first, second])
         #expect(await controller.applyMixerSwitch(request))
         await controller.undo()
-        let undo = controller.undoCount, redo = controller.redoCount
+        let undo = controller.undoCount
+        let redo = controller.redoCount
         let missing = UUID()
         for invalid in [
             MixerSwitchBatch(document: document, tracks: [], anchor: first, field: .mute, value: 1),
@@ -53,14 +57,16 @@ struct MixerSwitchValidationTests {
     }
 
     @Test func aSwitchCommitsTheSingleTrackFaderPreviewBeforeTheAtomicGroupEdit() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-switch-preview-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-mixer-switch-preview-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first")
         let first = try #require(controller.selection)
         await controller.addTrack(name: "second")
-        let second = try #require(controller.selection), document = try #require(controller.documentID)
+        let second = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         controller.selectTrack(first, change: .toggle)
         let undo = controller.undoCount
         let actions = controller.arrangeMixActions(document: document)

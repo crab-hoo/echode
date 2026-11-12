@@ -12,7 +12,8 @@ struct LoopEntry: Equatable {
         original = range
         shownStart = NoteDraft.format(Tick(rawValue: range.start).beats)
         shownEnd = NoteDraft.format(Tick(rawValue: range.end).beats)
-        start = shownStart; end = shownEnd
+        start = shownStart
+        end = shownEnd
     }
 
     var range: LoopRange? {

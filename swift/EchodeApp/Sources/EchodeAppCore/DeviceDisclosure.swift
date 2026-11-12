@@ -6,7 +6,8 @@ extension ProjectController {
     @discardableResult
     func setDeviceCollapsed(_ device: UUID, collapsed: Bool, documentID: DocumentID) -> Bool {
         guard let session = session(for: documentID),
-              tracks.contains(where: { deviceRows(on: $0.id).contains(where: { $0.id == device }) }) else { return false }
+            tracks.contains(where: { deviceRows(on: $0.id).contains(where: { $0.id == device }) })
+        else { return false }
         if collapsed { session.collapsedDevices.insert(device) } else { session.collapsedDevices.remove(device) }
         return true
     }

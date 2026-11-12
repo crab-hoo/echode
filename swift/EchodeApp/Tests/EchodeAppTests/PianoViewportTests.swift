@@ -2,6 +2,7 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -25,8 +26,10 @@ struct PianoViewportTests {
         let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 650, height: 300))
         grid.setNavigation(navigation, documentID: controller.documentID)
         grid.setSnapshot(snapshot, track: chords, focus: nil, key: DisplayKey(), busy: false)
-        let scroll = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-                                          wheel1: -100, wheel2: -500, wheel3: 0))
+        let scroll = try #require(
+            CGEvent(
+                scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                wheel1: -100, wheel2: -500, wheel3: 0))
         grid.scrollWheel(with: NSEvent(cgEvent: scroll)!)
         let shared = grid.camera
         #expect(shared.originBeat > 0)

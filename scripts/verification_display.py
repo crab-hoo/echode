@@ -2,8 +2,13 @@
 
 
 def render_report(report, policy, selected, summarize):
-    lines = ["# 変更に対する検査", "", f"更新: {report['updated_at']}",
-             f"ソースの識別値: `{report['fingerprint']}`", ""]
+    lines = [
+        "# 変更に対する検査",
+        "",
+        f"更新: {report['updated_at']}",
+        f"ソースの識別値: `{report['fingerprint']}`",
+        "",
+    ]
     execution = report.get("execution", {})
     if execution.get("status") == "recorded":
         lines += ["## 今回の実行", "", "見送りの記録だけで、検査は実行していない（`--record-only`）。", ""]
@@ -28,7 +33,13 @@ def render_report(report, policy, selected, summarize):
         name = check["id"]
         if name not in selected and not (check.get("extended") and name in report["results"]):
             continue
-        kind = "自動検査" if check["mode"] == "automatic" else "追加の長時間検査" if check.get("extended") else "計測などの候補"
+        kind = (
+            "自動検査"
+            if check["mode"] == "automatic"
+            else "追加の長時間検査"
+            if check.get("extended")
+            else "計測などの候補"
+        )
         result = report["results"][name]
         status = result["status"]
         if result.get("fingerprint") != report["input_fingerprints"][name]:
@@ -45,12 +56,24 @@ def render_report(report, policy, selected, summarize):
         lines.append("  - 選択の根拠: " + summarize(reasons))
     unverified = report.get("full_tier_unverified")
     if unverified:
-        lines += ["", "## 全体検査で未確認", "",
-                  "現在の入力で合格の記録がない。作業の完了条件ではないが合格でもない。"
-                  "main へのプッシュごとに GitHub の `full` ワークフローが実行する（ADR 0269）。", ""]
-        lines += [f"- `{name}`（前回の合格: {report['results'].get(name, {}).get('finished_at', '記録なし')}）" for name in unverified]
+        lines += [
+            "",
+            "## 全体検査で未確認",
+            "",
+            "現在の入力で合格の記録がない。作業の完了条件ではないが合格でもない。"
+            "main へのプッシュごとに GitHub の `full` ワークフローが実行する（ADR 0269）。",
+            "",
+        ]
+        lines += [
+            f"- `{name}`（前回の合格: {report['results'].get(name, {}).get('finished_at', '記録なし')}）"
+            for name in unverified
+        ]
     lines += ["", "## 対象の変更", ""] + [f"- `{path}`" for path in report["changed_paths"]]
-    lines += ["", "passed と deferred は各検査の入力・ツールが一致する間だけ有効。全体の識別値は変更監視用。not_run は実行か理由の記録が必要。deferred は合格ではない。", ""]
+    lines += [
+        "",
+        "passed と deferred は各検査の入力・ツールが一致する間だけ有効。全体の識別値は変更監視用。not_run は実行か理由の記録が必要。deferred は合格ではない。",
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -59,7 +82,13 @@ def print_plan(changed, ordered, selected, summarize):
         print(f"対象の変更 ({len(changed)} 件): " + summarize(changed, limit=8))
     for check in ordered:
         name = check["id"]
-        kind = "自動検査" if check["mode"] == "automatic" else "追加の長時間検査" if check.get("extended") else "計測などの候補"
+        kind = (
+            "自動検査"
+            if check["mode"] == "automatic"
+            else "追加の長時間検査"
+            if check.get("extended")
+            else "計測などの候補"
+        )
         print(f"{name} [{kind}]: {check['purpose']} (根拠: {summarize(selected[name])})")
     if not selected:
         print("対象の変更はありません。コミット済みの変更には --base、全検査には --all を指定します。")

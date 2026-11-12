@@ -2,6 +2,7 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -24,16 +25,18 @@ struct PluginWindowStatusTests {
         let other = try #require(controller.selection)
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 640, height: 300))
         func refresh(collapsed: Bool = false) {
-            strip.configure(devices: controller.deviceRows(on: track), track: track, document: document, busy: false,
-                            collapsed: collapsed ? [device] : [])
+            strip.configure(
+                devices: controller.deviceRows(on: track), track: track, document: document, busy: false,
+                collapsed: collapsed ? [device] : [])
             strip.layoutSubtreeIfNeeded()
             for column in strip.columns { column.layoutSubtreeIfNeeded() }
         }
         refresh()
         let column = try #require(strip.columns.first)
-        let indicator = try #require(column.subviews.compactMap { $0 as? NSImageView }.first {
-            $0.identifier?.rawValue == "plugin-window-open"
-        })
+        let indicator = try #require(
+            column.subviews.compactMap { $0 as? NSImageView }.first {
+                $0.identifier?.rawValue == "plugin-window-open"
+            })
         #expect(indicator.isHidden)
         let before = (controller.undoCount, controller.redoCount)
         let snapshot = controller.snapshot
@@ -58,11 +61,13 @@ struct PluginWindowStatusTests {
         refresh(collapsed: true)
         #expect(!indicator.isHidden && column.isCollapsed)
         #expect(column.title.frame.maxX <= indicator.frame.minX && indicator.frame.maxX < column.bounds.maxX)
-        controller.receivePluginActivity([PluginActivity(device: device, closed: true, windowState: true)], documentID: document)
+        controller.receivePluginActivity(
+            [PluginActivity(device: device, closed: true, windowState: true)], documentID: document)
         #expect(controller.openPluginWindows == [device])
         // The actual name action still raises this device without another edit.
         var opening: Task<Void, Never>?
-        strip.onOpenWindow = { id in opening = Task { _ = await controller.openPluginWindow(id, documentID: document) } }
+        strip.onOpenWindow = { id in opening = Task { _ = await controller.openPluginWindow(id, documentID: document) }
+        }
         let action = try #require(column.title.accessibilityCustomActions()?.first)
         #expect(action.handler?() == true)
         await opening?.value
@@ -70,7 +75,8 @@ struct PluginWindowStatusTests {
         #expect(controller.snapshot === snapshot)
         #expect(controller.undoCount == before.0 && controller.redoCount == before.1)
 
-        controller.receivePluginActivity([PluginActivity(device: device, closed: true, windowState: false)], documentID: document)
+        controller.receivePluginActivity(
+            [PluginActivity(device: device, closed: true, windowState: false)], documentID: document)
         refresh()
         #expect(indicator.isHidden)
         controller.receivePluginActivity([PluginActivity(device: device, windowOpen: true)], documentID: document)
@@ -82,7 +88,8 @@ struct PluginWindowStatusTests {
         controller.selection = track
         refresh()
         #expect(strip.columns.first === column && !indicator.isHidden)
-        #expect(await controller.editDeviceChain(.copy(source: device, track: track, before: nil), documentID: document))
+        #expect(
+            await controller.editDeviceChain(.copy(source: device, track: track, before: nil), documentID: document))
         refresh()
         #expect(strip.columns.last?.windowIndicator.isHidden == true)
         #expect(controller.openPluginWindows == [device], "copies do not copy window lifetimes")
@@ -141,13 +148,17 @@ struct PluginWindowStatusTests {
         let opening = Task { await controller.openPluginWindow(device, documentID: document) }
         var requests = started.stream.makeAsyncIterator()
         _ = await requests.next()
-        controller.receivePluginActivity([PluginActivity(device: device, windowState: true),
-                                          PluginActivity(device: device, closed: true, windowState: false)], documentID: document)
+        controller.receivePluginActivity(
+            [
+                PluginActivity(device: device, windowState: true),
+                PluginActivity(device: device, closed: true, windowState: false),
+            ], documentID: document)
         #expect(controller.openPluginWindows.isEmpty)
         release.continuation.yield(())
         #expect(await opening.value != nil)
         #expect(controller.openPluginWindows.isEmpty)
-        started.continuation.finish(); release.continuation.finish()
+        started.continuation.finish()
+        release.continuation.finish()
         await controller.close()
     }
 }

@@ -2,9 +2,9 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,11 +40,13 @@ WATCH = """\
     7.000 frame EchodeAppTests $sOther
     7.000 frame EchodeAppTests $sMacro
 """
-NAMES = {"$sPixel": "CanvasReadback.pixel(x:y:)",
-         "$sOwner": "closure #1 in CanvasSubmissionTests.contractStale()",
-         "$sThunk": "defer #1 in MixerTests.closes()",
-         "$sOther": "MixerTests.closes()",
-         "$sMacro": "$s14EchodeAppTests05MixerC04TestfMp_"}
+NAMES = {
+    "$sPixel": "CanvasReadback.pixel(x:y:)",
+    "$sOwner": "closure #1 in CanvasSubmissionTests.contractStale()",
+    "$sThunk": "defer #1 in MixerTests.closes()",
+    "$sOther": "MixerTests.closes()",
+    "$sMacro": "$s14EchodeAppTests05MixerC04TestfMp_",
+}
 
 
 class ParseTests(unittest.TestCase):
@@ -71,13 +73,23 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(self.tool.most_silence([]), 0.0)
 
     def test_an_issue_is_joined_with_the_stalls_before_it(self):
-        events = "\n".join([
-            "not json",
-            json.dumps({"kind": "test", "payload": {"id": "ignored"}}),
-            json.dumps({"kind": "event", "payload": {"kind": "testStarted", "instant": {"since1970": 1001.0}}}),
-            json.dumps({"kind": "event", "payload": {"kind": "issueRecorded", "instant": {"since1970": 1006.5},
-                                                     "messages": [{"text": "Status did not arrive"}]}}),
-        ])
+        events = "\n".join(
+            [
+                "not json",
+                json.dumps({"kind": "test", "payload": {"id": "ignored"}}),
+                json.dumps({"kind": "event", "payload": {"kind": "testStarted", "instant": {"since1970": 1001.0}}}),
+                json.dumps(
+                    {
+                        "kind": "event",
+                        "payload": {
+                            "kind": "issueRecorded",
+                            "instant": {"since1970": 1006.5},
+                            "messages": [{"text": "Status did not arrive"}],
+                        },
+                    }
+                ),
+            ]
+        )
         issues = self.tool.issues_from_events(events, self.start)
         self.assertEqual(issues, [(6.5, "Status did not arrive")])
         lines = self.tool.summarize_run(self.stalls, issues, NAMES)
@@ -89,8 +101,10 @@ class ParseTests(unittest.TestCase):
     def test_a_stall_keeps_what_the_thread_and_the_process_did(self):
         self.assertEqual(self.stalls[0].load["runnable"], 37.0)
         self.assertEqual(self.stalls[1].load, {})
-        self.assertEqual(self.tool.describe_load(self.stalls[0]),
-                         "main CPU 1.30 s, process 8.5 CPU-s, runnable 37.0 s, watcher gap 0.08 s")
+        self.assertEqual(
+            self.tool.describe_load(self.stalls[0]),
+            "main CPU 1.30 s, process 8.5 CPU-s, runnable 37.0 s, watcher gap 0.08 s",
+        )
         self.assertEqual(self.tool.describe_load(self.stalls[1]), "")
         lines = self.tool.summarize_run(self.stalls, [], NAMES)
         self.assertIn("longest stall load: main CPU 1.30 s", lines[1])
@@ -113,8 +127,10 @@ class ParseTests(unittest.TestCase):
 """)
         self.assertEqual([sample[:2] for sample in samples], [(0.05, 1), (0.1, 4), (9.0, 3), (9.1, 1)])
         self.assertEqual(len(samples[2][2]), 2)
-        self.assertEqual([self.tool.profile_category(sample[2]) for sample in samples],
-                         ["framework load", "file removal", "disclosure click (nested run loop)", "no test frame"])
+        self.assertEqual(
+            [self.tool.profile_category(sample[2]) for sample in samples],
+            ["framework load", "file removal", "disclosure click (nested run loop)", "no test frame"],
+        )
         whole = self.tool.profile_table([samples, []])
         self.assertEqual(len(whole), 4)
         self.assertIn("0.03 s/run  blocked 100%  file removal", " ".join(whole))

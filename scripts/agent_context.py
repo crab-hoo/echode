@@ -4,16 +4,16 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 import diagnose
-from documentation import headings
 import verify
+from documentation import headings
 
 ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT = "target/agent-context.json"
@@ -22,8 +22,15 @@ DEFAULT_MAX_BYTES = 6000
 # Every task reads these in full before it starts; the other guides are read by
 # --outline and --section (XCA-10).
 START_GUIDES = ("AGENTS.md", "docs/README.md", "docs/status.md", "docs/agent-workflow.md")
-COMMON_GUIDES = (*START_GUIDES, "docs/development.md", "docs/verification.md", "docs/debugging.md",
-                 "docs/debugging/verification-and-build.md", "docs/PLAN.md", "docs/ARCHITECTURE.md")
+COMMON_GUIDES = (
+    *START_GUIDES,
+    "docs/development.md",
+    "docs/verification.md",
+    "docs/debugging.md",
+    "docs/debugging/verification-and-build.md",
+    "docs/PLAN.md",
+    "docs/ARCHITECTURE.md",
+)
 # Japanese text is about one token per three bytes. The start budget bounds the
 # full reads; the section budget bounds the smallest unit a section read returns.
 START_BUDGET_BYTES = 44_000
@@ -31,18 +38,28 @@ SECTION_BUDGET_BYTES = 12_000
 # Only documentation references live here. Source globs and check selection stay
 # in verification.json; this index cannot remove verification obligations.
 AREA_GUIDES = {
-    "bridge": ("docs/architecture/ui-and-metal.md", "docs/architecture/api-qa-and-distribution.md",
-               "docs/debugging/arrange-mixer-and-browser.md", "docs/debugging/saving-history-and-api.md"),
+    "bridge": (
+        "docs/architecture/ui-and-metal.md",
+        "docs/architecture/api-qa-and-distribution.md",
+        "docs/debugging/arrange-mixer-and-browser.md",
+        "docs/debugging/saving-history-and-api.md",
+    ),
     "audio": ("docs/architecture/audio-engine.md", "docs/debugging/audio-and-plugins.md"),
     "isolation": ("docs/architecture/plugins-and-devices.md", "docs/debugging/audio-and-plugins.md"),
     "drawing": ("docs/architecture/ui-and-metal.md", "docs/debugging/arrange-mixer-and-browser.md"),
     "history": ("docs/architecture/model-and-history.md", "docs/debugging/saving-history-and-api.md"),
     "input": ("docs/architecture/ui-and-metal.md", "docs/debugging/piano-roll.md"),
-    "render": ("docs/architecture/audio-engine.md", "docs/architecture/api-qa-and-distribution.md",
-               "docs/debugging/audio-and-plugins.md"),
+    "render": (
+        "docs/architecture/audio-engine.md",
+        "docs/architecture/api-qa-and-distribution.md",
+        "docs/debugging/audio-and-plugins.md",
+    ),
     "dependencies": ("docs/PLAN.md", "docs/architecture/api-qa-and-distribution.md"),
-    "app_drawing": ("docs/architecture/ui-and-metal.md", "docs/debugging/arrange-mixer-and-browser.md",
-                    "docs/debugging/piano-roll.md"),
+    "app_drawing": (
+        "docs/architecture/ui-and-metal.md",
+        "docs/debugging/arrange-mixer-and-browser.md",
+        "docs/debugging/piano-roll.md",
+    ),
     "product_audio": ("docs/architecture/audio-engine.md", "docs/debugging/audio-and-plugins.md"),
 }
 
@@ -55,12 +72,14 @@ def read_source(root, name, expected=None):
     stamp = hashlib.sha256(raw).hexdigest()
     if expected and stamp != expected:
         raise ValueError("source changed; refresh the outline before using its line numbers")
-    return {"path": path.relative_to(root.resolve()).as_posix(), "sha256": stamp,
-            "bytes": len(raw)}, raw.decode("utf-8")
+    return {"path": path.relative_to(root.resolve()).as_posix(), "sha256": stamp, "bytes": len(raw)}, raw.decode(
+        "utf-8"
+    )
 
 
-def source_view(root, name, *, outline=False, section=None, line_range=None,
-                expected=None, max_bytes=DEFAULT_MAX_BYTES):
+def source_view(
+    root, name, *, outline=False, section=None, line_range=None, expected=None, max_bytes=DEFAULT_MAX_BYTES
+):
     if max_bytes <= 0:
         raise ValueError("--max-bytes must be positive")
     source, text = read_source(root, name, expected)
@@ -80,9 +99,11 @@ def source_view(root, name, *, outline=False, section=None, line_range=None,
         start, end = map(int, line_range.split(":"))
         if start > end or end > len(lines):
             raise ValueError("requested lines are outside the source")
-    content = "".join(lines[start - 1:end])
+    content = "".join(lines[start - 1 : end])
     if len(content.encode("utf-8")) > max_bytes:
-        raise ValueError("excerpt exceeds --max-bytes; use --outline, narrower --lines, or a larger explicit budget; no content was returned")
+        raise ValueError(
+            "excerpt exceeds --max-bytes; use --outline, narrower --lines, or a larger explicit budget; no content was returned"
+        )
     return {"source": source, "total_lines": len(lines), "start": start, "end": end, "content": content}
 
 
@@ -90,9 +111,21 @@ def section_sizes(text):
     """Bytes from each heading to the next heading of any level: the smallest section read."""
     lines = text.splitlines(keepends=True)
     entries = headings(text)
-    return [(item, len("".join(lines[item["start"] - 1:(entries[index + 1]["start"] - 1
-                                                         if index + 1 < len(entries) else len(lines))]).encode("utf-8")))
-            for index, item in enumerate(entries)]
+    return [
+        (
+            item,
+            len(
+                "".join(
+                    lines[
+                        item["start"] - 1 : (
+                            entries[index + 1]["start"] - 1 if index + 1 < len(entries) else len(lines)
+                        )
+                    ]
+                ).encode("utf-8")
+            ),
+        )
+        for index, item in enumerate(entries)
+    ]
 
 
 def reading_budget(root, names):
@@ -107,8 +140,14 @@ def reading_budget(root, names):
             if size > SECTION_BUDGET_BYTES:
                 oversized.append({"path": name, "title": item["title"], "line": item["start"], "bytes": size})
     total = sum(item["bytes"] for item in start)
-    return {"start": start, "start_bytes": total, "start_budget": START_BUDGET_BYTES,
-            "section_budget": SECTION_BUDGET_BYTES, "largest_section": largest, "oversized": oversized}
+    return {
+        "start": start,
+        "start_bytes": total,
+        "start_budget": START_BUDGET_BYTES,
+        "section_budget": SECTION_BUDGET_BYTES,
+        "largest_section": largest,
+        "oversized": oversized,
+    }
 
 
 def all_guides():
@@ -125,21 +164,32 @@ def collect(root, requested_areas=()):
     if not set(requested_areas).issubset(policy["areas"]):
         raise ValueError("unknown area; choose from " + ", ".join(sorted(policy["areas"])))
     changed = data["changed_paths"]
-    areas = sorted(set(requested_areas) | {area for area, patterns in policy["areas"].items()
-                                         if verify.matches(changed, patterns)})
+    areas = sorted(
+        set(requested_areas) | {area for area, patterns in policy["areas"].items() if verify.matches(changed, patterns)}
+    )
     guides = dict.fromkeys([*COMMON_GUIDES, *(name for area in areas for name in AREA_GUIDES[area])])
     records = []
     for name in guides:
         source, text = read_source(root, name)
         records.append({**source, "headings": headings(text)})
     checks = {check["id"]: check for check in policy["checks"]}
-    selection = {name: {"purpose": checks[name]["purpose"], "reasons": reasons}
-                 for name, reasons in verify.plan_checks(root, policy, changed, data["base"]).items()}
-    if (data["verification"]["freshness"] == "changed_during_collection"
-            or diagnose.source_stamp(root) != data["source"]):
+    selection = {
+        name: {"purpose": checks[name]["purpose"], "reasons": reasons}
+        for name, reasons in verify.plan_checks(root, policy, changed, data["base"]).items()
+    }
+    if (
+        data["verification"]["freshness"] == "changed_during_collection"
+        or diagnose.source_stamp(root) != data["source"]
+    ):
         raise ValueError("source changed during context collection; collect again")
-    return {"version": 1, "diagnosis": data, "areas": areas, "selection": selection, "guides": records,
-            "reading": reading_budget(root, all_guides())}
+    return {
+        "version": 1,
+        "diagnosis": data,
+        "areas": areas,
+        "selection": selection,
+        "guides": records,
+        "reading": reading_budget(root, all_guides()),
+    }
 
 
 def render_view(data, *, as_json=False, max_bytes=DEFAULT_MAX_BYTES):
@@ -150,15 +200,22 @@ def render_view(data, *, as_json=False, max_bytes=DEFAULT_MAX_BYTES):
         span = "outline" if "headings" in data else f"{data['start']}:{data['end']}"
         header = f"{source['path']}:{span} sha256={source['sha256']} ({data['total_lines']} lines)\n"
         if "headings" in data:
-            body = "\n".join(f"{item['start']}:{item['end']} {'#' * item['level']} {item['title']}"
-                             for item in data["headings"])
-            output = header + (body or "No ATX Markdown headings; use --read --lines START:END or search symbols with rg.") + "\n"
+            body = "\n".join(
+                f"{item['start']}:{item['end']} {'#' * item['level']} {item['title']}" for item in data["headings"]
+            )
+            output = (
+                header
+                + (body or "No ATX Markdown headings; use --read --lines START:END or search symbols with rg.")
+                + "\n"
+            )
         else:
             # Preserve the original text without per-line prefixes inflating
             # many short lines or changing code copied from the excerpt.
             output = header + data["content"]
     if len(output.encode("utf-8")) > max_bytes:
-        raise ValueError("formatted view exceeds --max-bytes; narrow the range or use a larger explicit budget; no content was returned")
+        raise ValueError(
+            "formatted view exceeds --max-bytes; narrow the range or use a larger explicit budget; no content was returned"
+        )
     return output
 
 
@@ -167,17 +224,24 @@ def render(data):
     environment = diagnosis["environment"]
     verification = diagnosis["verification"]
     changes = diagnosis["changed_paths"]
-    lines = [f"Source: {diagnosis['source']}",
-             f"Environment: missing={environment['missing_tools']}; tool_errors={environment['tool_errors']}; "
-             f"setup_needed={['make ' + target for target in environment['setup_needed']]}",
-             f"App: {diagnosis['build']['status']}; verification: {verification['freshness']}; lock: {'BUSY - wait before editing' if verification['running'] else 'idle'}"]
+    lines = [
+        f"Source: {diagnosis['source']}",
+        f"Environment: missing={environment['missing_tools']}; tool_errors={environment['tool_errors']}; "
+        f"setup_needed={['make ' + target for target in environment['setup_needed']]}",
+        f"App: {diagnosis['build']['status']}; verification: {verification['freshness']}; lock: {'BUSY - wait before editing' if verification['running'] else 'idle'}",
+    ]
     if verification["error"]:
         lines.append(f"Verification record error: {verification['error']}")
-    lines += [f"Changes ({len(changes)}): {verify.summarize_reasons(changes, limit=5)}",
-              "Areas (guide hints only): " + (", ".join(data["areas"]) or "common guides; inspect the audit index for the intended task")]
+    lines += [
+        f"Changes ({len(changes)}): {verify.summarize_reasons(changes, limit=5)}",
+        "Areas (guide hints only): "
+        + (", ".join(data["areas"]) or "common guides; inspect the audit index for the intended task"),
+    ]
     automatic = [check for check in verification["checks"] if check["mode"] == "automatic"]
     passed = [check["id"] for check in automatic if check["status"] == "passed" and check["fresh"]]
-    lines.append(f"Automatic: {len(passed)}/{len(automatic)} current passes" + (": " + ", ".join(passed) if passed else ""))
+    lines.append(
+        f"Automatic: {len(passed)}/{len(automatic)} current passes" + (": " + ", ".join(passed) if passed else "")
+    )
     for check in automatic:
         if check["id"] not in passed:
             lines.append(f"  {check['id']}: {check['status']} (fresh={check['fresh']}); {check['log']}")
@@ -190,24 +254,36 @@ def render(data):
         warning = "INVALID deferral: missing reason" if status == "deferred" and not reason.strip() else reason
         lines.append(f"Manual {status} (fresh={fresh}): {', '.join(names)}" + (f" — {warning}" if warning else ""))
     if verification["full_tier_unverified"]:
-        lines.append("Full tier without a pass on current inputs (not required per task; GitHub's full workflow runs it on each push to main): "
-                     + ", ".join(verification["full_tier_unverified"]))
+        lines.append(
+            "Full tier without a pass on current inputs (not required per task; GitHub's full workflow runs it on each push to main): "
+            + ", ".join(verification["full_tier_unverified"])
+        )
     reading = data["reading"]
     largest = reading["largest_section"]
-    lines.append(f"Read in full first: {', '.join(item['path'] for item in reading['start'])} "
-                 f"({reading['start_bytes'] / 1000:.1f} KB of the {reading['start_budget'] / 1000:.1f} KB budget)")
+    lines.append(
+        f"Read in full first: {', '.join(item['path'] for item in reading['start'])} "
+        f"({reading['start_bytes'] / 1000:.1f} KB of the {reading['start_budget'] / 1000:.1f} KB budget)"
+    )
     lines.append("Guides (read by --outline and --section; follow related ADR/audit links):")
     lines.extend("  " + guide["path"] for guide in data["guides"] if guide["path"] not in START_GUIDES)
     if largest["path"]:
-        lines.append(f"Largest section: {largest['bytes'] / 1000:.1f} KB of the {reading['section_budget'] / 1000:.1f} KB budget "
-                     f"({largest['path']} {largest['title']})")
+        lines.append(
+            f"Largest section: {largest['bytes'] / 1000:.1f} KB of the {reading['section_budget'] / 1000:.1f} KB budget "
+            f"({largest['path']} {largest['title']})"
+        )
     if reading["start_bytes"] > reading["start_budget"]:
-        lines.append("OVER BUDGET: the full reads exceed the start budget; move history to ADRs (docs/agent-workflow.md)")
+        lines.append(
+            "OVER BUDGET: the full reads exceed the start budget; move history to ADRs (docs/agent-workflow.md)"
+        )
     for item in reading["oversized"]:
-        lines.append(f"OVER BUDGET: {item['path']}:{item['line']} {item['title']} is {item['bytes'] / 1000:.1f} KB; split it with headings")
-    lines += [f"Full paths, selection reasons, guide hashes/outlines and logs: {SNAPSHOT}",
-              "Inspect: python3 -B scripts/agent_context.py --outline PATH; --read PATH --section TITLE or --lines START:END",
-              "Diagnostics only; completion still requires make verify. Refresh context after source changes."]
+        lines.append(
+            f"OVER BUDGET: {item['path']}:{item['line']} {item['title']} is {item['bytes'] / 1000:.1f} KB; split it with headings"
+        )
+    lines += [
+        f"Full paths, selection reasons, guide hashes/outlines and logs: {SNAPSHOT}",
+        "Inspect: python3 -B scripts/agent_context.py --outline PATH; --read PATH --section TITLE or --lines START:END",
+        "Diagnostics only; completion still requires make verify. Refresh context after source changes.",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -235,8 +311,12 @@ def main():
     ranges.add_argument("--section", metavar="TITLE")
     ranges.add_argument("--lines", metavar="START:END")
     parser.add_argument("--expect-sha256")
-    parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
-                        help="source-view output budget, including metadata; refuses oversized output")
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=DEFAULT_MAX_BYTES,
+        help="source-view output budget, including metadata; refuses oversized output",
+    )
     parser.add_argument("--area", action="append", default=[])
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -248,14 +328,23 @@ def main():
         parser.error("--expect-sha256 requires --read/--outline")
     try:
         if args.read or args.outline:
-            data = source_view(ROOT, args.read or args.outline, outline=bool(args.outline),
-                               section=args.section, line_range=args.lines, expected=args.expect_sha256,
-                               max_bytes=args.max_bytes)
+            data = source_view(
+                ROOT,
+                args.read or args.outline,
+                outline=bool(args.outline),
+                section=args.section,
+                line_range=args.lines,
+                expected=args.expect_sha256,
+                max_bytes=args.max_bytes,
+            )
             print(render_view(data, as_json=args.json, max_bytes=args.max_bytes), end="")
         else:
             data = collect(ROOT, args.area)
             save(ROOT, data)
-            print(json.dumps(data, ensure_ascii=False, indent=2) if args.json else render(data), end="\n" if args.json else "")
+            print(
+                json.dumps(data, ensure_ascii=False, indent=2) if args.json else render(data),
+                end="\n" if args.json else "",
+            )
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print("Agent context unavailable: " + str(error), file=sys.stderr)

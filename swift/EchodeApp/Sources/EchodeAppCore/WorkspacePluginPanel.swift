@@ -21,28 +21,38 @@ struct WorkspacePluginPanel: NSViewRepresentable {
         private var close: (() -> Void)?
         func update(controller: ProjectController, document: DocumentID?, close: @escaping () -> Void) {
             self.close = close
-            guard let document, controller.isCurrent(document) else { dismiss(); return }
+            guard let document, controller.isCurrent(document) else {
+                dismiss()
+                return
+            }
             guard self.document != document || panel == nil else { return }
             dismiss()
             self.document = document
-            let panel = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 460, height: 520),
-                                styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
+            let panel = NSPanel(
+                contentRect: CGRect(x: 0, y: 0, width: 460, height: 520),
+                styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
             panel.title = text("Plugin Browser")
-            panel.isFloatingPanel = true; panel.hidesOnDeactivate = true; panel.isReleasedWhenClosed = false
+            panel.isFloatingPanel = true
+            panel.hidesOnDeactivate = true
+            panel.isReleasedWhenClosed = false
             panel.delegate = self
-            panel.contentViewController = NSHostingController(rootView: WorkspacePluginBrowser(controller: controller, document: document) { [weak self] in
-                self?.close?()
-            })
+            panel.contentViewController = NSHostingController(
+                rootView: WorkspacePluginBrowser(controller: controller, document: document) { [weak self] in
+                    self?.close?()
+                })
             self.panel = panel
-            panel.center(); panel.makeKeyAndOrderFront(nil)
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
         }
         func dismiss() {
             panel?.delegate = nil
             panel?.close()
-            panel = nil; document = nil
+            panel = nil
+            document = nil
         }
         func windowWillClose(_ notification: Notification) {
-            panel = nil; document = nil
+            panel = nil
+            document = nil
             close?()
         }
     }

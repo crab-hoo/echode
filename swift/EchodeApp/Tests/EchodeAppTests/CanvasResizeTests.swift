@@ -1,6 +1,7 @@
 import AppKit
 import QuartzCore
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -16,7 +17,9 @@ struct CanvasResizeTests {
         for (width, visible) in [(0.0, 0.0), (80, 40), (240, 120), (400, 150), (520, 220), (900, 220)] {
             pane.setFrameSize(NSSize(width: width, height: 300))
             pane.layout()
-            #expect(Double(pane.headers.frame.width) == visible, "Pane \(width), header \(pane.headers.frame.width), expected \(visible)")
+            #expect(
+                Double(pane.headers.frame.width) == visible,
+                "Pane \(width), header \(pane.headers.frame.width), expected \(visible)")
             #expect(pane.timeline.renderInput.header?.width == visible)
             #expect(ArrangeFrame(input: pane.timeline.renderInput).timelineOrigin == min(width, visible + 1))
             #expect(pane.viewport == camera)
@@ -60,16 +63,20 @@ struct CanvasResizeTests {
             #expect(view.layerContentsRedrawPolicy == .never)
             // A drawable that has not caught up exposes this opaque layer.
             #expect(layer.backgroundColor == CanvasBackground.layerColor)
-            for size in [NSSize(width: 380, height: 180), .zero, NSSize(width: 900, height: 700),
-                         NSSize(width: 640.25, height: 211.75)] {
+            for size in [
+                NSSize(width: 380, height: 180), .zero, NSSize(width: 900, height: 700),
+                NSSize(width: 640.25, height: 211.75),
+            ] {
                 view.setFrameSize(size)
                 // Inspect before child layout or a render-thread run-loop turn.
                 #expect(layer.contentsScale == 1)
-                #expect(layer.drawableSize == NSSize(width: max(1, ceil(size.width)), height: max(1, ceil(size.height))))
+                #expect(
+                    layer.drawableSize == NSSize(width: max(1, ceil(size.width)), height: max(1, ceil(size.height))))
                 #expect(layer.contentsGravity == (layer.contentsAreFlipped() ? .bottomLeft : .topLeft))
                 #expect(view.layerContentsPlacement == .topLeft)
                 view.layout()
-                #expect(layer.drawableSize == NSSize(width: max(1, ceil(size.width)), height: max(1, ceil(size.height))))
+                #expect(
+                    layer.drawableSize == NSSize(width: max(1, ceil(size.width)), height: max(1, ceil(size.height))))
             }
             #expect(view.window == nil)
         }
@@ -161,7 +168,8 @@ struct CanvasResizeTests {
     @Test func backingScaleAndFractionalSizesRejectOldDrawableExtents() {
         let layer = CAMetalLayer()
         for scale in [1.0, 2.0] {
-            let input = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 640.25, height: 211.75, scale: scale)
+            let input = CanvasInput(
+                snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 640.25, height: 211.75, scale: scale)
             let expected = CGSize(width: ceil(640.25 * scale), height: ceil(211.75 * scale))
             CanvasSurface.resize(layer, size: input.drawableSize, scale: scale)
             #expect(Double(layer.contentsScale) == scale)
@@ -170,7 +178,8 @@ struct CanvasResizeTests {
             #expect(!input.acceptsDrawable(size: CGSize(width: expected.width - 1, height: expected.height)))
             #expect(!input.acceptsDrawable(size: CGSize(width: expected.width, height: expected.height + 1)))
             #expect(!input.acceptsDrawable(size: CGSize(width: 900 * scale, height: 700 * scale)))
-            let empty = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 0, height: 0, scale: scale)
+            let empty = CanvasInput(
+                snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 0, height: 0, scale: scale)
             CanvasSurface.resize(layer, size: empty.drawableSize, scale: scale)
             #expect(layer.drawableSize == CGSize(width: 1, height: 1))
             #expect(!empty.acceptsDrawable(size: layer.drawableSize))

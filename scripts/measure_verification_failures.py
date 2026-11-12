@@ -2,18 +2,29 @@
 """Measure injected failure latency through verify.py, never through product/device tests."""
 
 import argparse
-from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
-from pathlib import Path
 import subprocess
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 import verify
 
-LEGACY_ORDER = ["check-verification", "check", "check-format", "check-product-contracts", "rtsan", "check-input",
-                "check-bridge-features", "check-bridge-asan", "check-tsan-runtime", "check-bridge-tsan", "check-bridge-miri"]
+LEGACY_ORDER = [
+    "check-verification",
+    "check",
+    "check-format",
+    "check-product-contracts",
+    "rtsan",
+    "check-input",
+    "check-bridge-features",
+    "check-bridge-asan",
+    "check-tsan-runtime",
+    "check-bridge-tsan",
+    "check-bridge-miri",
+]
 
 
 def measure(policy, scenario, reordered, delay):
@@ -30,33 +41,69 @@ def measure(policy, scenario, reordered, delay):
         checks, recipes = [], []
         for name in LEGACY_ORDER:
             original = originals[name]
-            check = {"id": name, "mode": "automatic", "areas": [], "inputs": ["source"],
-                     "timeout": 10, "purpose": "injected failure latency fixture"}
+            check = {
+                "id": name,
+                "mode": "automatic",
+                "areas": [],
+                "inputs": ["source"],
+                "timeout": 10,
+                "purpose": "injected failure latency fixture",
+            }
             if reordered:
                 check.update({key: original[key] for key in ("priority", "after") if key in original})
                 if name == "check-tsan-runtime":
                     check["preflight"] = ["runtime"]
             checks.append(check)
             failed = name == scenario
-            recipes += [f"{name}:", f"\t@python3 -c 'import time; time.sleep({delay}); raise SystemExit({int(failed)})'"]
-        preflight = {"runtime": {"command": ["python3", "-c", f"raise SystemExit({int(scenario == 'check-tsan-runtime')})"],
-                                  "timeout": 5, "remedy": "prepare fixture runtime"}}
-        fixture = {"version": 1, "global_inputs": [], "infrastructure": [], "areas": {},
-                   "preflights": preflight, "checks": checks}
+            recipes += [
+                f"{name}:",
+                f"\t@python3 -c 'import time; time.sleep({delay}); raise SystemExit({int(failed)})'",
+            ]
+        preflight = {
+            "runtime": {
+                "command": ["python3", "-c", f"raise SystemExit({int(scenario == 'check-tsan-runtime')})"],
+                "timeout": 5,
+                "remedy": "prepare fixture runtime",
+            }
+        }
+        fixture = {
+            "version": 1,
+            "global_inputs": [],
+            "infrastructure": [],
+            "areas": {},
+            "preflights": preflight,
+            "checks": checks,
+        }
         (root / verify.POLICY).write_text(json.dumps(fixture))
         (root / "Makefile").write_text("\n".join(recipes) + "\n")
         subprocess.run(["git", "init", "--quiet", str(root)], check=True)
         subprocess.run(["git", "-C", str(root), "add", "."], check=True)
-        options = argparse.Namespace(base=None, all=True, full=False, only=[], run=[], defer=[], reason=None,
-                                     record_only=False, plan=False, force=False)
-        with patch.object(verify, "tool_identity", return_value={"fixture": "same-tools"}), \
-                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        options = argparse.Namespace(
+            base=None,
+            all=True,
+            full=False,
+            only=[],
+            run=[],
+            defer=[],
+            reason=None,
+            record_only=False,
+            plan=False,
+            force=False,
+        )
+        with (
+            patch.object(verify, "tool_identity", return_value={"fixture": "same-tools"}),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
             code = verify.verify(root, options)
         report = json.loads((root / "target/verification/report.json").read_text())
         if code != 1 or report["execution"]["first_failure"]["id"] not in (scenario, "runtime"):
             raise ValueError("injected failure was not detected at the intended boundary")
-        return {"selected": list(report["selected"]), "execution": report["execution"],
-                "results": {name: result["status"] for name, result in report["results"].items()}}
+        return {
+            "selected": list(report["selected"]),
+            "execution": report["execution"],
+            "results": {name: result["status"] for name, result in report["results"].items()},
+        }
 
 
 def main():
@@ -67,8 +114,11 @@ def main():
     if not 0 <= args.delay <= 5:
         parser.error("delay must be between 0 and 5 seconds")
     policy = verify.load_policy(verify.ROOT)
-    data = {"scope": "synthetic failure latency, not product runtime or historical session reproduction",
-            "delay_per_check": args.delay, "scenarios": {}}
+    data = {
+        "scope": "synthetic failure latency, not product runtime or historical session reproduction",
+        "delay_per_check": args.delay,
+        "scenarios": {},
+    }
     for scenario in ("check-format", "check-verification", "check-bridge-asan", "check-tsan-runtime"):
         baseline = measure(policy, scenario, False, args.delay)
         current = measure(policy, scenario, True, args.delay)

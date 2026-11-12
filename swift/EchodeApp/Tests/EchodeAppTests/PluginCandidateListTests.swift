@@ -2,14 +2,18 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct PluginCandidateListTests {
     private func listing(_ id: String, _ name: String) throws -> PluginListing {
-        try JSONDecoder().decode(PluginListing.self, from: Data("""
-            {"id":"\(id)","name":"\(name)","vendor":"Example","version":"1","features":["audio-effect"],"fresh":false}
-            """.utf8))
+        try JSONDecoder().decode(
+            PluginListing.self,
+            from: Data(
+                """
+                {"id":"\(id)","name":"\(name)","vendor":"Example","version":"1","features":["audio-effect"],"fresh":false}
+                """.utf8))
     }
 
     /// A press anywhere on a row selects it and takes the keyboard at once;
@@ -28,19 +32,28 @@ struct PluginCandidateListTests {
         controller.selectTrack(ids[0], change: .focus)
         controller.selectTrack(ids[1], change: .toggle)
 
-        let plugins = try [listing("org.example.eq", "EQ"), listing("org.example.delay", "Delay"), listing("org.example.verb", "Reverb")]
+        let plugins = try [
+            listing("org.example.eq", "EQ"), listing("org.example.delay", "Delay"),
+            listing("org.example.verb", "Reverb"),
+        ]
         let list = PluginListView()
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 420, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 420, height: 300), styleMask: [.titled], backing: .buffered,
+            defer: false)
         window.isReleasedWhenClosed = false
         defer { window.close() }
         window.contentView = list
-        var selected: String?, inserted: [(String, Bool)] = [], pending: Task<Bool, Never>?
+        var selected: String?
+        var inserted: [(String, Bool)] = []
+        var pending: Task<Bool, Never>?
         // The panel wires the list the same way.
         list.onSelect = { selected = $0 }
         list.table.document = document
         list.table.onInsert = { inserted.append(($0, $1)) }
         list.table.onInsertOnSelected = { plugin in
-            guard let request = controller.capturePluginInsertion(plugin, allSelected: true, document: document) else { return }
+            guard let request = controller.capturePluginInsertion(plugin, allSelected: true, document: document) else {
+                return
+            }
             pending = Task { await controller.insertPlugin(request) }
         }
         list.table.canInsertOnSelected = true
@@ -54,9 +67,11 @@ struct PluginCandidateListTests {
             return table.convert(CGPoint(x: rect.maxX - 4, y: rect.midY), to: nil)
         }
         func mouse(_ type: NSEvent.EventType, _ row: Int, count: Int) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: point(row), modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                eventNumber: count, clickCount: count, pressure: 1))
+            try #require(
+                NSEvent.mouseEvent(
+                    with: type, location: point(row), modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: count, clickCount: count, pressure: 1))
         }
 
         table.mouseDown(with: try mouse(.leftMouseDown, 1, count: 1))
@@ -65,9 +80,12 @@ struct PluginCandidateListTests {
         table.mouseDown(with: try mouse(.leftMouseDown, 1, count: 2))
         #expect(inserted.map(\.0) == ["org.example.delay"] && inserted.map(\.1) == [true])
 
-        table.keyDown(with: try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-            timestamp: 0, windowNumber: window.windowNumber, context: nil,
-            characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)))
+        table.keyDown(
+            with: try #require(
+                NSEvent.keyEvent(
+                    with: .keyDown, location: .zero, modifierFlags: [],
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)))
         #expect(inserted.map(\.0) == ["org.example.delay", "org.example.delay"] && inserted.last?.1 == false)
 
         // The panel echoes the selection back; the rows stay as they are.

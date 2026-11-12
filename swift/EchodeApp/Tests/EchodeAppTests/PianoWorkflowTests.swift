@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -40,13 +41,15 @@ struct PianoWorkflowTests {
     }
 
     @Test func contractArrangeDoubleClickOpensAnIndependentPianoLocation() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-arrange-open-piano-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-arrange-open-piano-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Chords")
         await controller.addTrack(name: "Melody")
-        let melody = try #require(controller.selection), document = try #require(controller.documentID)
+        let melody = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         let snapshot = try #require(controller.snapshot)
         await controller.setPlaybackStart(tick: 123)
         let state = WorkspaceState(defaults: .init())
@@ -54,7 +57,8 @@ struct PianoWorkflowTests {
         state.synchronize(controller)
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 240))
         defer { pane.stop() }
-        pane.layout(); pane.setSnapshot(snapshot, selected: controller.selection)
+        pane.layout()
+        pane.setSnapshot(snapshot, selected: controller.selection)
         let timeline = pane.timeline
         timeline.setRuler(start: controller.playbackStart, loop: nil, busy: false)
         timeline.present(ArrangeFrame(input: timeline.renderInput))
@@ -63,14 +67,18 @@ struct PianoWorkflowTests {
             opens += 1
             session.openPiano(PianoTrackTarget(document: document, track: track), tick: tick)
         }
-        let point = CGPoint(x: timeline.renderInput.timelineOrigin + 3 * timeline.camera.pixelsPerBeat,
-                            y: timeline.renderInput.arrangeTop + 1.5 * timeline.camera.pixelsPerTrack)
-        let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: timeline.convert(point, to: nil), modifierFlags: [],
-            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 2, pressure: 1))
+        let point = CGPoint(
+            x: timeline.renderInput.timelineOrigin + 3 * timeline.camera.pixelsPerBeat,
+            y: timeline.renderInput.arrangeTop + 1.5 * timeline.camera.pixelsPerTrack)
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: .leftMouseDown, location: timeline.convert(point, to: nil), modifierFlags: [],
+                timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 2, pressure: 1))
         let undo = controller.undoCount
         timeline.mouseDown(with: event)
-        #expect(opens == 1 && controller.pianoTrack == melody && state.showsEditor,
-                "a blank arrange double click must explicitly open that piano track and location")
+        #expect(
+            opens == 1 && controller.pianoTrack == melody && state.showsEditor,
+            "a blank arrange double click must explicitly open that piano track and location")
         #expect(controller.playbackStart == 123 && controller.position == 123 && controller.undoCount == undo)
         let location = try #require(controller.pianoLocation)
         #expect(location.tick == 3 * 705_600)
@@ -81,7 +89,8 @@ struct PianoWorkflowTests {
         piano.setLocation(location)
         #expect(piano.camera.originBeat == 3 && state.navigation.pianoLocationID == location.id)
         // Recreating the editor restores a later manual scroll, not the old open request.
-        var moved = piano.camera; moved.originBeat = 7
+        var moved = piano.camera
+        moved.originBeat = 7
         state.navigation.pianoCamera = moved
         let recreated = PianoGridView(frame: piano.frame)
         defer { recreated.stop() }
@@ -89,7 +98,8 @@ struct PianoWorkflowTests {
         recreated.setSnapshot(snapshot, track: melody, focus: nil, key: DisplayKey(), busy: false)
         recreated.setLocation(location)
         #expect(recreated.camera.originBeat == 7)
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         let target = controller.pianoTrack
         session.openPiano(PianoTrackTarget(document: document, track: melody), tick: 10)
         #expect(controller.pianoTrack == target && controller.pianoLocation == nil)
@@ -97,14 +107,18 @@ struct PianoWorkflowTests {
     }
 
     @Test func contractBrowserListsOwnReturnBeforeTheWorkspaceShortcut() throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 220), styleMask: [.titled], backing: .buffered, defer: true)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 220), styleMask: [.titled], backing: .buffered,
+            defer: true)
         window.isReleasedWhenClosed = false
         defer { window.close() }
-        let files = FileListView(), file = BrowserFile(url: URL(fileURLWithPath: "/samples/kick.wav"), directory: false)
+        let files = FileListView()
+        let file = BrowserFile(url: URL(fileURLWithPath: "/samples/kick.wav"), directory: false)
         files.show([file], searching: false, selection: file.url)
         let plugins = PluginListView()
         plugins.table.plugin = { _ in "test-plugin" }
-        var imported = 0, inserted = 0
+        var imported = 0
+        var inserted = 0
         files.table.onOpen = { _ in imported += 1 }
         plugins.table.onInsert = { id, closes in
             #expect(id == "test-plugin" && !closes)
@@ -121,9 +135,11 @@ struct PianoWorkflowTests {
     }
 
     static func key(_ code: Int, flags: NSEvent.ModifierFlags = [], repeating: Bool = false) throws -> NSEvent {
-        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
-            timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
-            isARepeat: repeating, keyCode: UInt16(code)))
+        try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: flags,
+                timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: repeating, keyCode: UInt16(code)))
     }
 }
 

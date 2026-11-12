@@ -2,6 +2,7 @@ import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 private actor DelayedAudioReply {
@@ -12,7 +13,10 @@ private actor DelayedAudioReply {
             started.yield()
         }
     }
-    func finish(_ state: AudioState) { continuation?.resume(returning: state); continuation = nil }
+    func finish(_ state: AudioState) {
+        continuation?.resume(returning: state)
+        continuation = nil
+    }
 }
 
 @MainActor
@@ -39,13 +43,15 @@ struct TransportRequestTests {
             #expect(session.enabled(.playback) && session.enabled(.stop))
             // Other commands stay enabled and wait behind the load (ADR 0160).
             #expect(session.enabled(.output) && session.enabled(.loop) && session.enabled(.metronome))
-            if useSpace { await controller.togglePlayback() }
-            else { await controller.stopPlayback() }
+            if useSpace { await controller.togglePlayback() } else { await controller.stopPlayback() }
             #expect(!controller.playbackRequested)
-            #expect(controller.audioBusy) // the old load is still in flight
-            let latePlay = try JSONDecoder().decode(AudioState.self, from: Data("""
-                {"playing":true,"running":true,"opening":false,"tick":123,"devices":[],"metronome":false}
-                """.utf8))
+            #expect(controller.audioBusy)  // the old load is still in flight
+            let latePlay = try JSONDecoder().decode(
+                AudioState.self,
+                from: Data(
+                    """
+                    {"playing":true,"running":true,"opening":false,"tick":123,"devices":[],"metronome":false}
+                    """.utf8))
             await reply.finish(latePlay)
             await play.value
             #expect(!controller.audioBusy && !controller.audio.playing)
@@ -61,7 +67,10 @@ struct TransportRequestTests {
             let prepared = Mutex(0)
             let controller = ProjectController { document, command in
                 // The bridge would open the output; no HAL device is needed here.
-                if case .prepare = command { prepared.withLock { $0 += 1 }; return AudioState() }
+                if case .prepare = command {
+                    prepared.withLock { $0 += 1 }
+                    return AudioState()
+                }
                 return try await document.audio(command)
             }
             controller.preparesOutput = prepares

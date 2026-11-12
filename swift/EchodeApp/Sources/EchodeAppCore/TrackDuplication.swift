@@ -13,7 +13,9 @@ extension ProjectController {
         guard let documentID, !busy, let snapshot else { return nil }
         var parents: [UUID: UUID] = [:]
         for row in 0..<snapshot.trackCount {
-            if let id = snapshot.trackID(at: row), let parent = snapshot.trackHierarchy(at: row)?.parent { parents[id] = parent }
+            if let id = snapshot.trackID(at: row), let parent = snapshot.trackHierarchy(at: row)?.parent {
+                parents[id] = parent
+            }
         }
         let sources = tracks.map(\.id).filter { id in
             guard selectedTracks.contains(id) else { return false }

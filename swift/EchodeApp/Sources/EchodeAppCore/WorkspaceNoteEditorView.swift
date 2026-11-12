@@ -17,55 +17,81 @@ struct WorkspaceNoteEditorView: View {
                     ForEach(0..<12) { tonic in Text(noteName(tonic + 60).dropLast()).tag(tonic) }
                 }.fixedSize().help(text("Display key help"))
                 Picker(text("Scale"), selection: $state.displayKey.minor) {
-                    Text(text("Major")).tag(false); Text(text("Minor")).tag(true)
+                    Text(text("Major")).tag(false)
+                    Text(text("Minor")).tag(true)
                 }.fixedSize()
             }.padding(10)
             Divider()
-            if let snapshot = controller.snapshot, let track = controller.pianoTrack, let document = controller.documentID {
+            if let snapshot = controller.snapshot, let track = controller.pianoTrack,
+                let document = controller.documentID
+            {
                 HStack(spacing: 0) {
-                PianoCanvas(snapshot: snapshot, track: track, focus: $controller.noteFocus, key: state.displayKey, busy: controller.busy,
-                    insert: { pitch, beat, length in
-                        Task { await controller.insertNote(pitch: pitch, beat: beat, length: length, on: track, documentID: document) }
-                    },
-                    edit: { id, geometry in Task { await controller.editNote(id, geometry: geometry, documentID: document) } },
-                    delete: { id in Task { await controller.deleteNote(id, documentID: document) } },
-                    start: controller.playbackStart,
-                    setStart: { tick in Task { if controller.isCurrent(document) { await controller.setPlaybackStart(tick: tick) } } },
-                    loop: controller.rulerLoop,
-                    setLoop: { range in Task { await controller.setLoopRange(range, documentID: document) } },
-                    playback: controller.playback, transportGeneration: controller.transportGeneration,
-                    navigation: state.navigation, documentID: document,
-                    followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false },
-                    inputLength: { controller.noteInput.length },
-                    velocity: { id, value in Task { await controller.setNoteVelocity(id, velocity: value, documentID: document) } },
-                    velocities: { change in Task { await controller.setNoteVelocities(change, documentID: document) } },
-                    moves: { change in Task { await controller.moveNotes(change, documentID: document) } },
-                    resizes: { change in Task { await controller.resizeNotes(change, documentID: document) } },
-                    steps: { step in _ = controller.enqueuePianoStep(step, documentID: document) },
-                    references: controller.pianoReferences, location: controller.pianoLocation,
-                    selection: controller.noteSelection, selectNotes: { if controller.isCurrent(document) { controller.selectNotes($0) } },
-                    deleteNotes: { ids in Task { await controller.deleteNotes(ids, documentID: document) } })
+                    PianoCanvas(
+                        snapshot: snapshot, track: track, focus: $controller.noteFocus, key: state.displayKey,
+                        busy: controller.busy,
+                        insert: { pitch, beat, length in
+                            Task {
+                                await controller.insertNote(
+                                    pitch: pitch, beat: beat, length: length, on: track, documentID: document)
+                            }
+                        },
+                        edit: { id, geometry in
+                            Task { await controller.editNote(id, geometry: geometry, documentID: document) }
+                        },
+                        delete: { id in Task { await controller.deleteNote(id, documentID: document) } },
+                        start: controller.playbackStart,
+                        setStart: { tick in
+                            Task { if controller.isCurrent(document) { await controller.setPlaybackStart(tick: tick) } }
+                        },
+                        loop: controller.rulerLoop,
+                        setLoop: { range in Task { await controller.setLoopRange(range, documentID: document) } },
+                        playback: controller.playback, transportGeneration: controller.transportGeneration,
+                        navigation: state.navigation, documentID: document,
+                        followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false },
+                        inputLength: { controller.noteInput.length },
+                        velocity: { id, value in
+                            Task { await controller.setNoteVelocity(id, velocity: value, documentID: document) }
+                        },
+                        velocities: { change in
+                            Task { await controller.setNoteVelocities(change, documentID: document) }
+                        },
+                        moves: { change in Task { await controller.moveNotes(change, documentID: document) } },
+                        resizes: { change in Task { await controller.resizeNotes(change, documentID: document) } },
+                        steps: { step in _ = controller.enqueuePianoStep(step, documentID: document) },
+                        references: controller.pianoReferences, location: controller.pianoLocation,
+                        selection: controller.noteSelection,
+                        selectNotes: { if controller.isCurrent(document) { controller.selectNotes($0) } },
+                        deleteNotes: { ids in Task { await controller.deleteNotes(ids, documentID: document) } }
+                    )
                     .id(controller.documentID)
                     Divider()
                     PianoTrackSelector(controller: controller, rows: controller.pianoTrackRows).frame(width: 210)
                 }
                 Divider()
                 fields
-            } else { Text(text("Select a track")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
+            } else {
+                Text(text("Select a track")).foregroundStyle(.secondary).frame(
+                    maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
     private var fields: some View {
         let document = state.draft.document
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Stepper(value: $state.draft.pitch, in: ModelLimits.midi7) { Text(noteName(state.draft.pitch)) }.fixedSize().accessibilityLabel(text("MIDI pitch"))
+                Stepper(value: $state.draft.pitch, in: ModelLimits.midi7) { Text(noteName(state.draft.pitch)) }
+                    .fixedSize().accessibilityLabel(text("MIDI pitch"))
                 LabeledContent(text("Start beat")) {
-                    TextField(text("Start beat"), text: $state.draft.beat).frame(width: 70).focusedValue(\.workspaceTextEntry, true)
-                        .accessibilityLabel(text("Start beat"))
+                    TextField(text("Start beat"), text: $state.draft.beat).frame(width: 70).focusedValue(
+                        \.workspaceTextEntry, true
+                    )
+                    .accessibilityLabel(text("Start beat"))
                 }
                 LabeledContent(text("Length in beats")) {
-                    TextField(text("Length in beats"), text: $state.draft.length).frame(width: 70).focusedValue(\.workspaceTextEntry, true)
-                        .accessibilityLabel(text("Length in beats"))
+                    TextField(text("Length in beats"), text: $state.draft.length).frame(width: 70).focusedValue(
+                        \.workspaceTextEntry, true
+                    )
+                    .accessibilityLabel(text("Length in beats"))
                 }
             }.disabled(controller.busy)
             HStack {
@@ -75,15 +101,20 @@ struct WorkspaceNoteEditorView: View {
                         Task { await controller.editNote(id, geometry: geometry, documentID: document) }
                     }.disabled(!state.draft.canApply)
                     Button(text("Revert")) { state.draft.reset() }.disabled(!state.draft.dirty)
-                    Button(text("Delete Note")) { if let document { Task { await controller.deleteNote(id, documentID: document) } } }
+                    Button(text("Delete Note")) {
+                        if let document { Task { await controller.deleteNote(id, documentID: document) } }
+                    }
                     Spacer()
                     Button(text("New Note")) { if controller.isCurrent(document) { controller.noteFocus = nil } }
                 } else {
                     Button(text("Insert Note")) {
-                        guard let document, let geometry = state.draft.geometry, let track = state.draft.track else { return }
+                        guard let document, let geometry = state.draft.geometry, let track = state.draft.track else {
+                            return
+                        }
                         Task {
-                            await controller.insertNote(pitch: geometry.pitch, beat: Double(geometry.start) / Tick.perBeat,
-                                                        length: Double(geometry.length) / Tick.perBeat, on: track, documentID: document)
+                            await controller.insertNote(
+                                pitch: geometry.pitch, beat: Double(geometry.start) / Tick.perBeat,
+                                length: Double(geometry.length) / Tick.perBeat, on: track, documentID: document)
                         }
                     }.disabled(state.draft.geometry == nil)
                     Spacer()

@@ -6,7 +6,10 @@ profile="${1:-debug}"
 case "$profile" in
     debug) cargo build -q --locked --offline -p echode-sine-pad ;;
     release) cargo build -q --locked --offline --release -p echode-sine-pad ;;
-    *) echo "unsupported profile: $profile" >&2; exit 2 ;;
+    *)
+        echo "unsupported profile: $profile" >&2
+        exit 2
+        ;;
 esac
 # Tests find the bundle beside their binaries, also in `make coverage`'s target directory.
 out="${CARGO_TARGET_DIR:-target}/$profile"

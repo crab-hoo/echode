@@ -18,7 +18,9 @@ final class ExportPresetState {
             readable = true
             if entries[selectedName] == nil { selectedName = "" }
         } catch {
-            entries = [:]; selectedName = ""; readable = false
+            entries = [:]
+            selectedName = ""
+            readable = false
             report(error)
         }
     }
@@ -54,7 +56,10 @@ struct ExportPresetControls: View {
                     HStack {
                         TextField(text("Preset name"), text: $state.name).accessibilityIdentifier("export.presets.name")
                         Button(text("Save Preset"), action: save)
-                            .disabled(!state.readable || ExportPresets.normalizedName(state.name) == nil || validatedSettings == nil)
+                            .disabled(
+                                !state.readable || ExportPresets.normalizedName(state.name) == nil
+                                    || validatedSettings == nil
+                            )
                             .accessibilityIdentifier("export.presets.save")
                     }
                     Text(text(state.message ?? "Presets stay on this Mac. Applying changes only the current fields."))
@@ -74,7 +79,8 @@ struct ExportPresetControls: View {
         do {
             let name = try ExportPresets.save(name: state.name, settings: settings, defaults: defaults)
             state.refresh(defaults: defaults)
-            state.name = name; state.selectedName = name
+            state.name = name
+            state.selectedName = name
             state.message = "Export preset saved on this Mac."
         } catch { state.report(error) }
     }
@@ -84,7 +90,10 @@ struct ExportPresetControls: View {
         let name = state.selectedName
         state.refresh(defaults: defaults)
         guard state.readable else { return }
-        guard let settings = state.entries[name] else { state.report(ExportPresets.Failure.missing); return }
+        guard let settings = state.entries[name] else {
+            state.report(ExportPresets.Failure.missing)
+            return
+        }
         draft.reset(settings: settings, locale: locale)
         state.message = "Export preset applied to the current fields."
     }

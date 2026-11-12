@@ -33,7 +33,10 @@ struct NoteInputLength {
     mutating func undo() {
         guard let entry = past.popLast() else { return }
         future.append(entry)
-        if let entry { length = entry.before; generation &+= 1 }
+        if let entry {
+            length = entry.before
+            generation &+= 1
+        }
     }
 
     mutating func redo() {

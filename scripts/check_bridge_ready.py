@@ -2,11 +2,11 @@
 """Read-only checks for the pinned validation compiler, rust-src, and Miri driver."""
 
 import argparse
-from pathlib import Path
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,17 +18,33 @@ def check(root, miri=False):
         raise ValueError("invalid BRIDGE_NIGHTLY")
     toolchain = "+" + match[1]
     env = {**os.environ, "RUSTUP_AUTO_INSTALL": "0"}
-    result = subprocess.run(["rustc", toolchain, "--print", "sysroot"], cwd=root, env=env,
-                            capture_output=True, text=True, check=True, timeout=10)
+    result = subprocess.run(
+        ["rustc", toolchain, "--print", "sysroot"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
     source = Path(result.stdout.strip()) / "lib/rustlib/src/rust/library/Cargo.toml"
     if not source.is_file():
         raise ValueError("pinned nightly rust-src is missing")
     if miri:
-        subprocess.run(["cargo", toolchain, "miri", "--version"], cwd=root, env=env,
-                       capture_output=True, text=True, check=True, timeout=10)
+        subprocess.run(
+            ["cargo", toolchain, "miri", "--version"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+
 
 # Readiness does not prepare Miri's sysroot or fetch build-std dependencies.
 # Those remain setup-bridge responsibilities; the real checks retain their guards.
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

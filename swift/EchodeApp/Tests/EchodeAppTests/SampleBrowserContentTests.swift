@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -9,14 +10,18 @@ struct SampleBrowserContentTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-browser-content-\(UUID())")
         defer { removeTestFile(root) }
         for name in ["folder", "Song.echode", "Other.app"] {
-            try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name), withIntermediateDirectories: true)
         }
         for name in ["kick.WAV", "melody.MID", "drums.midi", "notes.txt", "preset.clap-preset", ".hidden.wav"] {
             try Data().write(to: root.appendingPathComponent(name))
         }
         let browser = FileBrowserState()
         await browser.register(root)
-        #expect(Set(browser.files.map(\.url.lastPathComponent)) == ["folder", "Song.echode", "kick.WAV", "melody.MID", "drums.midi"])
+        #expect(
+            Set(browser.files.map(\.url.lastPathComponent)) == [
+                "folder", "Song.echode", "kick.WAV", "melody.MID", "drums.midi",
+            ])
         browser.query = "melody"
         #expect(browser.filtered.map(\.url.lastPathComponent) == ["melody.MID"])
         let midi = try #require(browser.files.first { $0.midi })

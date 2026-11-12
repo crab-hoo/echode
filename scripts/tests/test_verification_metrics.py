@@ -1,15 +1,16 @@
 """Timing diagnostics must not change evidence or confuse cached work with elapsed time."""
+
 import contextlib
 import copy
 import io
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-import test_verification as support
 import test_product_contracts as product_support
+import test_verification as support
 import verification_metrics as metrics
 
 verify = support.verify
@@ -21,8 +22,11 @@ class TimingTests(unittest.TestCase):
     git = support.EvidenceTests.git
 
     def invoke(self):
-        with patch.object(verify, "tool_identity", return_value={"rust": "fixture"}), \
-             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with (
+            patch.object(verify, "tool_identity", return_value={"rust": "fixture"}),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             return verify.verify(self.root, support.arguments(only=["check"]))
 
     report = support.EvidenceTests.report
@@ -64,13 +68,18 @@ class TimingTests(unittest.TestCase):
 class SystemIdentityTests(unittest.TestCase):
     def test_hostname_changes_do_not_expire_evidence_but_os_changes_do(self):
         from types import SimpleNamespace
+
         def identity(host="local", release="fixture-os", machine="arm64"):
-            system = SimpleNamespace(sysname="Darwin", nodename=host, release=release,
-                                     version="fixture-kernel", machine=machine)
+            system = SimpleNamespace(
+                sysname="Darwin", nodename=host, release=release, version="fixture-kernel", machine=machine
+            )
             with patch.object(verify.os, "uname", return_value=system):
                 return verify.tool_identity(support.ROOT)
+
         # Freeze tool queries; only the system identity differs.
-        with patch.object(verify.subprocess, "run", return_value=contracts.subprocess.CompletedProcess([], 0, b"v1", b"")):
+        with patch.object(
+            verify.subprocess, "run", return_value=contracts.subprocess.CompletedProcess([], 0, b"v1", b"")
+        ):
             initial = identity()
             self.assertEqual(initial, identity(host="assigned-by-network"))
             self.assertNotEqual(initial, identity(release="new-os"))
@@ -90,20 +99,34 @@ class SwiftBuildTests(unittest.TestCase):
             self.assertIn("-warnings-as-errors", args)
         jobs = contracts.swift_mutation_jobs(cases)
         self.assertLess(len(jobs), sum(len(contracts.negative_control_mutations(c)) for c in cases))
-        self.assertEqual(sum(len(job) for job in jobs),
-                         sum(len(contracts.negative_control_mutations(c)) for c in cases))
+        self.assertEqual(
+            sum(len(job) for job in jobs), sum(len(contracts.negative_control_mutations(c)) for c in cases)
+        )
 
     def test_interruption_keeps_partial_negative_stage_diagnostics(self):
-        case = {"id": "a", "runner": "rust", "package": "p", "target": ["--lib"],
-                "test": "a", "timeout": 10, "purpose": "fixture"}
+        case = {
+            "id": "a",
+            "runner": "rust",
+            "package": "p",
+            "target": ["--lib"],
+            "test": "a",
+            "timeout": 10,
+            "purpose": "fixture",
+        }
+
         def good(args, **kwargs):
-            return contracts.subprocess.CompletedProcess(args, 0,
-                "test a ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", "")
+            return contracts.subprocess.CompletedProcess(
+                args, 0, "test a ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;", ""
+            )
+
         def interrupted(root, pending, fingerprints, evidence, record):
             record(contracts.control_result(case, None, True, evidence / "a-negative.log", 1))
             raise KeyboardInterrupt("later stage interrupted")
-        with tempfile.TemporaryDirectory() as directory, \
-             patch.object(contracts, "negative_controls", side_effect=interrupted):
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(contracts, "negative_controls", side_effect=interrupted),
+        ):
             root = Path(directory)
             with self.assertRaises(KeyboardInterrupt):
                 contracts.run(root, [case], good)
@@ -118,9 +141,20 @@ class SwiftBuildTests(unittest.TestCase):
             source = root / "View.swift"
             source.write_text("let a = 1\n")
             fault = {"file": "View.swift", "old": "= 1", "new": "= 2"}
-            cases = [{"id": name, "runner": "swift", "package_path": "App", "suite": "S",
-                      "test": name, "timeout": 10, "negative_control": fault} for name in ("a", "b")]
+            cases = [
+                {
+                    "id": name,
+                    "runner": "swift",
+                    "package_path": "App",
+                    "suite": "S",
+                    "test": name,
+                    "timeout": 10,
+                    "negative_control": fault,
+                }
+                for name in ("a", "b")
+            ]
             builds, tests, results = [], [], []
+
             def fake(args, **kwargs):
                 self.assertIn("= 2", source.read_text())
                 if args[1] == "build":
@@ -128,11 +162,18 @@ class SwiftBuildTests(unittest.TestCase):
                     return contracts.subprocess.CompletedProcess(args, 0, "built", "")
                 name = args[-1].split("/")[1]
                 tests.append((name, kwargs["timeout"]))
-                output = (f"Expectation failed\nTest {name}() failed\nTest run with 1 test in 1 suite failed"
-                          if name == "a" else f"Test {name}() passed\nTest run with 1 test in 1 suite passed")
+                output = (
+                    f"Expectation failed\nTest {name}() failed\nTest run with 1 test in 1 suite failed"
+                    if name == "a"
+                    else f"Test {name}() passed\nTest run with 1 test in 1 suite passed"
+                )
                 return contracts.subprocess.CompletedProcess(args, 1 if name == "a" else 0, output, "")
-            with patch.object(contracts, "run_process", side_effect=fake), \
-                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+
+            with (
+                patch.object(contracts, "run_process", side_effect=fake),
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
                 timing = contracts.swift_controls([root], cases, {}, root, results.append)
             self.assertEqual(len(builds), 1)
             self.assertEqual([name for name, _ in tests], ["a", "b"])

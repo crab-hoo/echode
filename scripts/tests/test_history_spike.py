@@ -1,10 +1,10 @@
 """Keep the Phase 0 history model out of default product builds."""
 
-from pathlib import Path
 import json
 import subprocess
 import tomllib
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 HISTORY = ROOT / "crates/echode-history"
@@ -32,7 +32,10 @@ class HistorySpikeTests(unittest.TestCase):
     def test_default_workspace_does_not_enable_the_spike(self):
         result = subprocess.run(
             ["cargo", "metadata", "--locked", "--offline", "--format-version", "1"],
-            cwd=ROOT, capture_output=True, text=True, timeout=30,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         metadata = json.loads(result.stdout)

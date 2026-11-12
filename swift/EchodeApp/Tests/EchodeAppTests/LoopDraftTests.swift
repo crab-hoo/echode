@@ -1,6 +1,7 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -12,7 +13,8 @@ struct LoopDraftTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "loop")
         let document = try #require(controller.documentID)
-        let selection = controller.selection, undo = controller.undoCount
+        let selection = controller.selection
+        let undo = controller.undoCount
         // Distinct integer endpoints collapse if the draft round-trips through Double beats.
         let range = try #require(LoopRange(start: 9_007_199_254_740_993, end: 9_007_199_254_740_995))
         await controller.setLoopRange(range, documentID: document)
@@ -50,7 +52,7 @@ struct LoopDraftTests {
         #expect(entry.range == LoopRange(start: 882_000, end: Int64.max))
         entry = LoopEntry(range: huge)
         entry.end = NoteDraft.format(1)
-        #expect(entry.range == nil) // An edited endpoint must not silently clamp or swap.
+        #expect(entry.range == nil)  // An edited endpoint must not silently clamp or swap.
         for invalid in ["", "-1", "nan", "inf", "1e100", "1 beat"] {
             entry = LoopEntry(range: .initial)
             entry.start = invalid

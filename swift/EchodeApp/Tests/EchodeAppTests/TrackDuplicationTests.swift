@@ -2,12 +2,14 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct TrackDuplicationTests {
     @Test func contractHeaderMenuDuplicatesSelectedSubtreesAsOneUndoAndReopen() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-track-duplicate-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-track-duplicate-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         let state = WorkspaceState(defaults: .init())
@@ -32,10 +34,16 @@ struct TrackDuplicationTests {
         var scheduled: Task<Void, Never>?
         pane.onDuplicateTracks = { scheduled = session.duplicateTracks() }
         func event(_ type: NSEvent.EventType, row index: Int, flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
-            pane.setSnapshot(try #require(controller.snapshot), selected: controller.selection, selectedTracks: controller.selectedTracks)
-            let row = pane.headers.camera.rows(trackCount: controller.tracks.count, height: 320).rect(at: index, width: pane.headers.bounds.width)
-            return try #require(NSEvent.mouseEvent(with: type, location: pane.headers.convert(CGPoint(x: 60, y: row.minY + 8), to: nil),
-                modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            pane.setSnapshot(
+                try #require(controller.snapshot), selected: controller.selection,
+                selectedTracks: controller.selectedTracks)
+            let row = pane.headers.camera.rows(trackCount: controller.tracks.count, height: 320).rect(
+                at: index, width: pane.headers.bounds.width)
+            return try #require(
+                NSEvent.mouseEvent(
+                    with: type, location: pane.headers.convert(CGPoint(x: 60, y: row.minY + 8), to: nil),
+                    modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1,
+                    pressure: 1))
         }
         pane.headers.mouseDown(with: try event(.leftMouseDown, row: 0))
         pane.headers.mouseDown(with: try event(.leftMouseDown, row: 2, flags: .shift))
@@ -74,14 +82,16 @@ struct TrackDuplicationTests {
         #expect(controller.tracks.map(\.id) == ids)
         await controller.redo()
         #expect(controller.tracks.map(\.id) == copied)
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.tracks.map(\.id) == copied)
         #expect(controller.deviceRows(on: leadCopy).first?.id == deviceCopy.id)
         await controller.close()
     }
 
     @Test func outsideRightClickSelectsThatRowAndStaleRequestsAreRefused() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-stale-duplicate-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-stale-duplicate-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         let session = WorkspaceSession(controller: controller, state: WorkspaceState(defaults: .init()))
@@ -96,10 +106,15 @@ struct TrackDuplicationTests {
         pane.layoutSubtreeIfNeeded()
         pane.onSelectTrack = { controller.selectTrack($0, change: $1) }
         pane.onDuplicateTracks = {}
-        pane.setSnapshot(try #require(controller.snapshot), selected: controller.selection, selectedTracks: controller.selectedTracks)
+        pane.setSnapshot(
+            try #require(controller.snapshot), selected: controller.selection, selectedTracks: controller.selectedTracks
+        )
         let row = pane.headers.camera.rows(trackCount: 2, height: 200).rect(at: 0, width: pane.headers.bounds.width)
-        let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: pane.headers.convert(CGPoint(x: 60, y: row.minY + 8), to: nil),
-            modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        let click = try #require(
+            NSEvent.mouseEvent(
+                with: .rightMouseDown, location: pane.headers.convert(CGPoint(x: 60, y: row.minY + 8), to: nil),
+                modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1,
+                pressure: 1))
         #expect(pane.headers.menu(for: click) != nil)
         #expect(controller.selectedTracks == [kept])
 
@@ -113,7 +128,8 @@ struct TrackDuplicationTests {
         #expect(controller.undoCount == before && controller.redoCount == 1)
         controller.selection = kept
         let valid = try #require(controller.captureTrackDuplication())
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(!(await controller.duplicateTracks(valid)))
         #expect(controller.tracks.map(\.id) == [kept] && controller.undoCount == 0)
         await controller.close()

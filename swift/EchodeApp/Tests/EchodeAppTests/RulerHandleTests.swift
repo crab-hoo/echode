@@ -2,6 +2,7 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -14,8 +15,10 @@ struct RulerHandleTests {
         defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
-        let document = try #require(controller.documentID), undo = controller.undoCount
+        let snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
+        let document = try #require(controller.documentID)
+        let undo = controller.undoCount
         await controller.setPlaybackStart(beat: 0.5)
         let original = try #require(LoopRange(start: beat, end: beat * 4))
 
@@ -72,17 +75,24 @@ struct RulerHandleTests {
 
     @Test func cancelledHandlesDoNotCommitOverExternalChanges() async throws {
         let controller = ProjectController()
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-loop-handle-cancel-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-loop-handle-cancel-\(UUID()).echode")
         defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
         let original = try #require(LoopRange(start: beat, end: 4 * beat))
         let replacement = RulerLoop(range: try #require(LoopRange(start: 0, end: 6 * beat)), enabled: true)
-        let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
-        let scrollEvent = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
-            wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0))
+        let escape = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                isARepeat: false, keyCode: 53))
+        let scrollEvent = try #require(
+            CGEvent(
+                scrollWheelEvent2Source: nil, units: .pixel,
+                wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0))
         let scroll = try #require(NSEvent(cgEvent: scrollEvent))
         for isPiano in [false, true] {
             for cancellation in 0..<9 {
@@ -114,7 +124,8 @@ struct RulerHandleTests {
     @Test func handlesClampWithoutCrossingAndKeepTheStationaryEdgeExact() throws {
         let original = try #require(LoopRange(start: Tick.ticks(1.3)!, end: Tick.ticks(4.1)!))
         for grid in [beat, beat / 4] {
-            var left = RulerPress(x: 100, originBeat: 0, pixelsPerBeat: 72, grid: grid, edge: .start, originalRange: original)
+            var left = RulerPress(
+                x: 100, originBeat: 0, pixelsPerBeat: 72, grid: grid, edge: .start, originalRange: original)
             left.update(x: 600, snapping: true)
             #expect(left.range == LoopRange(start: 4 * beat, end: original.end))
             left.update(x: 100, snapping: true)
@@ -123,7 +134,8 @@ struct RulerHandleTests {
             #expect(left.range == LoopRange(start: original.end - 1, end: original.end))
             left.update(x: -500, snapping: false)
             #expect(left.range == LoopRange(start: 0, end: original.end))
-            var right = RulerPress(x: 100, originBeat: 0, pixelsPerBeat: 72, grid: grid, edge: .end, originalRange: original)
+            var right = RulerPress(
+                x: 100, originBeat: 0, pixelsPerBeat: 72, grid: grid, edge: .end, originalRange: original)
             right.update(x: -500, snapping: true)
             let limit = grid == beat ? 2 * beat : beat * 3 / 2
             #expect(right.range == LoopRange(start: original.start, end: limit))
@@ -176,20 +188,31 @@ private final class RulerHandleHarness {
     var displayedLoop: RulerLoop? { isPiano ? piano.displayedLoop : pane.timeline.displayedLoop }
     var rulerInstances: [Instance] {
         if !isPiano { return ArrangeFrame(input: pane.timeline.renderInput).rulerInstances }
-        let input = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 900, height: 200, scale: 1)
-        return PianoFrame(input: input, piano: PianoRenderInput(track: UUID(), focus: nil, camera: piano.camera,
-            key: DisplayKey(), preview: nil, loop: displayedLoop)).rulerInstances
+        let input = CanvasInput(
+            snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 900, height: 200, scale: 1)
+        return PianoFrame(
+            input: input,
+            piano: PianoRenderInput(
+                track: UUID(), focus: nil, camera: piano.camera,
+                key: DisplayKey(), preview: nil, loop: displayedLoop)
+        ).rulerInstances
     }
 
     init(snapshot: Snapshot, track: UUID, isPiano: Bool) {
         self.isPiano = isPiano
         pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
         piano = PianoGridView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
-        pane.layout(); pane.setSnapshot(snapshot, selected: track)
+        pane.layout()
+        pane.setSnapshot(snapshot, selected: track)
         piano.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
-        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 900, height: 200, scale: 1)
-        piano.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: piano.camera,
-            key: DisplayKey(), preview: nil)))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 900, height: 200, scale: 1)
+        piano.present(
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(
+                    track: track, focus: nil, camera: piano.camera,
+                    key: DisplayKey(), preview: nil)))
         pane.timeline.onSetStart = { [weak self] in self?.starts.append($0) }
         piano.onSetStart = { [weak self] in self?.starts.append($0) }
         pane.timeline.onSetLoop = { [weak self] in self?.ranges.append($0) }
@@ -204,11 +227,19 @@ private final class RulerHandleHarness {
         pane.timeline.setRuler(start: nil, loop: displayedLoop, busy: true)
         piano.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: true)
     }
-    func stop() { pane.stop(); piano.stop() }
-    func mouse(_ type: NSEvent.EventType, beat: Double, y: Double = 4, flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
+    func stop() {
+        pane.stop()
+        piano.stop()
+    }
+    func mouse(_ type: NSEvent.EventType, beat: Double, y: Double = 4, flags: NSEvent.ModifierFlags = []) throws
+        -> NSEvent
+    {
         let origin = isPiano ? piano.pianoLayout.gridOrigin.x : pane.timeline.renderInput.header!.width + 1
-        return try #require(NSEvent.mouseEvent(with: type, location: view.convert(CGPoint(x: origin + beat * pixels, y: y), to: nil),
-            modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        return try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(CGPoint(x: origin + beat * pixels, y: y), to: nil),
+                modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1,
+                pressure: 1))
     }
     func send(_ type: NSEvent.EventType, beat: Double, y: Double = 4, flags: NSEvent.ModifierFlags = []) throws {
         let event = try mouse(type, beat: beat, y: y, flags: flags)

@@ -3,22 +3,33 @@ import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct SampleBrowserTests {
     @Test func contractRegisteredSampleSearchCoversAllRootsAndSkipsPackagesAndLinks() async throws {
-        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-library-\(UUID())")
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(
+            "echode-library-\(UUID())")
         defer { removeTestFile(root) }
-        let first = root.appendingPathComponent("first"), second = root.appendingPathComponent("second")
-        let nested = first.appendingPathComponent("nested"), package = first.appendingPathComponent("Song.echode")
-        for folder in [nested, package, second] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
-        for path in [nested.appendingPathComponent("Kick 2.WAV"), second.appendingPathComponent("kick 10.flac"),
-                     first.appendingPathComponent("notes.txt"), first.appendingPathComponent(".hidden-kick.wav"), package.appendingPathComponent("kick.wav")] {
+        let first = root.appendingPathComponent("first")
+        let second = root.appendingPathComponent("second")
+        let nested = first.appendingPathComponent("nested")
+        let package = first.appendingPathComponent("Song.echode")
+        for folder in [nested, package, second] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        for path in [
+            nested.appendingPathComponent("Kick 2.WAV"), second.appendingPathComponent("kick 10.flac"),
+            first.appendingPathComponent("notes.txt"), first.appendingPathComponent(".hidden-kick.wav"),
+            package.appendingPathComponent("kick.wav"),
+        ] {
             try Data().write(to: path)
         }
-        try FileManager.default.createSymbolicLink(at: nested.appendingPathComponent("cycle"), withDestinationURL: first)
-        try FileManager.default.createSymbolicLink(at: first.appendingPathComponent("outside"), withDestinationURL: second)
+        try FileManager.default.createSymbolicLink(
+            at: nested.appendingPathComponent("cycle"), withDestinationURL: first)
+        try FileManager.default.createSymbolicLink(
+            at: first.appendingPathComponent("outside"), withDestinationURL: second)
         let name = "echode-library-\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
@@ -28,7 +39,7 @@ struct SampleBrowserTests {
         let kick = try #require(browser.roots.first).appendingPathComponent("nested/Kick 2.WAV")
         #expect(browser.filtered.map(\.url) == [kick])
         await browser.register(second)
-        await browser.register(nested) // Overlapping roots cannot duplicate results.
+        await browser.register(nested)  // Overlapping roots cannot duplicate results.
         await browser.register(first)
         #expect(browser.roots.count == 3)
         browser.query = "KICK"
@@ -49,7 +60,9 @@ struct SampleBrowserTests {
         #expect(restored.filtered.map(\.url) == [expected[0]])
         try FileManager.default.removeItem(at: nested)
         await restored.refreshLibrary()
-        #expect(restored.libraryError != nil && restored.libraryFiles.map(\.url.lastPathComponent) == ["Song.echode"] && !restored.indexing)
+        #expect(
+            restored.libraryError != nil && restored.libraryFiles.map(\.url.lastPathComponent) == ["Song.echode"]
+                && !restored.indexing)
         await restored.register(root.appendingPathComponent("missing"))
         #expect(restored.roots.count == 2 && restored.error != nil)
     }
@@ -58,7 +71,8 @@ struct SampleBrowserTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-sample-target-\(UUID())")
         defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let wav = root.appendingPathComponent("tone.wav"), project = root.appendingPathComponent("Song.echode")
+        let wav = root.appendingPathComponent("tone.wav")
+        let project = root.appendingPathComponent("Song.echode")
         try wavMono(rate: 48_000, frames: 4_800).write(to: wav)
         let controller = ProjectController()
         let state = WorkspaceState(defaults: .init())
@@ -73,24 +87,32 @@ struct SampleBrowserTests {
         let tick = try #require(controller.playback?.position.tick)
         let undo = controller.undoCount
         let pending = try #require(session.importSample(BrowserFile(url: wav, directory: false)))
-        controller.selection = second // Change before the queued import can begin.
+        controller.selection = second  // Change before the queued import can begin.
         #expect(await pending.value)
         #expect(controller.selection == second && controller.undoCount == undo + 1)
-        let clip = try #require(controller.snapshot?.visibleElements(originTick: 0, widthTicks: 20_000_000,
-            originTrack: 0, heightTracks: 4, pixelsPerTick: 0.001, pixelsPerTrack: 40).elements.first { $0.role == .clip })
+        let clip = try #require(
+            controller.snapshot?.visibleElements(
+                originTick: 0, widthTicks: 20_000_000,
+                originTrack: 0, heightTracks: 4, pixelsPerTick: 0.001, pixelsPerTrack: 40
+            ).elements.first { $0.role == .clip })
         let placement = try #require(clip.id.placement)
         #expect(clip.id.track == first && controller.snapshot?.clipMix(placement)?.start == tick)
         // A placed sample keeps its recorded edges; there is no automatic fade (ADR 0161).
-        #expect(controller.snapshot?.clipMix(placement)?.fadeIn == 0 && controller.snapshot?.clipMix(placement)?.fadeOut == 0)
+        #expect(
+            controller.snapshot?.clipMix(placement)?.fadeIn == 0
+                && controller.snapshot?.clipMix(placement)?.fadeOut == 0)
         await controller.undo()
         #expect(controller.snapshot?.clipMix(placement) == nil)
         await controller.redo()
         #expect(controller.snapshot?.clipMix(placement)?.start == tick)
         let stale = try #require(controller.captureAudioImport(wav, on: second))
-        await controller.close(); await controller.open(project)
+        await controller.close()
+        await controller.open(project)
         #expect(controller.snapshot?.clipMix(placement)?.track == first)
         #expect(controller.snapshot?.clipMix(placement)?.start == tick)
-        #expect(controller.snapshot?.clipMix(placement)?.fadeIn == 0 && controller.snapshot?.clipMix(placement)?.fadeOut == 0)
+        #expect(
+            controller.snapshot?.clipMix(placement)?.fadeIn == 0
+                && controller.snapshot?.clipMix(placement)?.fadeOut == 0)
         #expect(!(await controller.importAudio(stale)))
         // Reopening has no undo history; a newly added target can be removed by undo.
         await controller.addTrack(name: "temporary")
@@ -104,10 +126,12 @@ struct SampleBrowserTests {
     }
 
     @Test func contractBrowserSelectionAuditionsOnlySamplesWithoutTheEditQueue() async throws {
-        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-audition-\(UUID())")
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(
+            "echode-audition-\(UUID())")
         defer { removeTestFile(root) }
         let folder = root.appendingPathComponent("samples")
-        try FileManager.default.createDirectory(at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
         for name in ["kick.wav", "snare.aif", "melody.mid"] {
             try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name))
         }
@@ -117,7 +141,8 @@ struct SampleBrowserTests {
         let session = WorkspaceSession(controller: controller, state: state)
         await state.browser.load(folder)
         let rows = Dictionary(uniqueKeysWithValues: state.browser.filtered.map { ($0.url.lastPathComponent, $0.url) })
-        let kick = try #require(rows["kick.wav"]), snare = try #require(rows["snare.aif"])
+        let kick = try #require(rows["kick.wav"])
+        let snare = try #require(rows["snare.aif"])
         // Nothing plays without a document.
         #expect(session.auditionSelection(kick) == nil)
         #expect(requests.withLock { $0.isEmpty })
@@ -125,7 +150,8 @@ struct SampleBrowserTests {
         // The request is synchronous; it is not an edit and never waits for one.
         #expect(session.auditionSelection(kick) == kick)
         #expect(session.auditionSelection(snare) == snare)
-        let loops = try #require(rows["loops"]), notes = try #require(rows["melody.mid"])
+        let loops = try #require(rows["loops"])
+        let notes = try #require(rows["melody.mid"])
         #expect(session.auditionSelection(loops) == nil)
         #expect(session.auditionSelection(notes) == nil)
         #expect(session.auditionSelection(nil) == nil)
@@ -137,13 +163,19 @@ struct SampleBrowserTests {
     }
 
     @Test func contractBrowserClickSelectsAndFocusesAtOnceAndOpensOnlyOnDoubleClick() async throws {
-        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-browser-click-\(UUID())")
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(
+            "echode-browser-click-\(UUID())")
         defer { removeTestFile(root) }
         let folder = root.appendingPathComponent("samples")
-        try FileManager.default.createDirectory(at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
-        for name in ["kick.wav", "snare.wav"] { try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name)) }
+        try FileManager.default.createDirectory(
+            at: folder.appendingPathComponent("loops"), withIntermediateDirectories: true)
+        for name in ["kick.wav", "snare.wav"] {
+            try wavMono(rate: 48_000, frames: 480).write(to: folder.appendingPathComponent(name))
+        }
         let requests = Mutex<[(URL?, AuditionOrigin)]>([])
-        let controller = ProjectController(sendAudition: { _, url, origin in requests.withLock { $0.append((url, origin)) } })
+        let controller = ProjectController(sendAudition: { _, url, origin in
+            requests.withLock { $0.append((url, origin)) }
+        })
         let state = WorkspaceState(defaults: .init())
         let session = WorkspaceSession(controller: controller, state: state)
         await controller.open(root.appendingPathComponent("Song.echode"), creating: true)
@@ -152,7 +184,9 @@ struct SampleBrowserTests {
         await browser.load(folder)
         // The view wires the list to the session the same way.
         let list = FileListView()
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 240, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 240, height: 300), styleMask: [.titled], backing: .buffered,
+            defer: false)
         window.contentView = list
         var pending: Task<Void, Never>?
         list.onSelect = { session.chooseInBrowser($0, origin: $1) }
@@ -169,17 +203,27 @@ struct SampleBrowserTests {
             return table.convert(CGPoint(x: rect.midX, y: below ? rect.maxY + 40 : rect.midY), to: nil)
         }
         func click(_ location: CGPoint, count: Int) throws {
-            table.mouseDown(with: try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                eventNumber: count, clickCount: count, pressure: 1)))
+            table.mouseDown(
+                with: try #require(
+                    NSEvent.mouseEvent(
+                        with: .leftMouseDown, location: location, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil,
+                        eventNumber: count, clickCount: count, pressure: 1)))
         }
         func key(_ code: UInt16, _ characters: String) throws {
-            table.keyDown(with: try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)))
+            table.keyDown(
+                with: try #require(
+                    NSEvent.keyEvent(
+                        with: .keyDown, location: .zero, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil,
+                        characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code
+                    )))
         }
         func asked() -> [URL?] { requests.withLock { $0.map(\.0) } }
-        let kick = browser.filtered[1].url, snare = browser.filtered[2].url
+        let kick = browser.filtered[1].url
+        let snare = browser.filtered[2].url
         let undo = controller.undoCount
 
         // One click selects, takes the keyboard and asks for the sound before it returns.
@@ -200,7 +244,7 @@ struct SampleBrowserTests {
         try key(125, "\u{F701}")
         #expect(browser.selection == snare && asked() == [kick, snare])
         #expect(requests.withLock { $0.last?.1.input } == .key)
-        await controller.locate(beat: 4) // Placements on one track cannot overlap.
+        await controller.locate(beat: 4)  // Placements on one track cannot overlap.
         try key(36, "\r")
         await pending?.value
         #expect(controller.undoCount == undo + 2 && asked() == [kick, snare])
@@ -232,7 +276,8 @@ struct SampleBrowserTests {
 
     @Test func auditionLogWritesEachRequestOnceWhenNothingMoreWillBeRecorded() throws {
         func status(_ newest: UInt64, _ entries: [String]) throws -> AuditionStatus {
-            let json = #"{"request":\#(newest),"handled":\#(newest),"phase":"sounding","history":[\#(entries.joined(separator: ","))]}"#
+            let json =
+                #"{"request":\#(newest),"handled":\#(newest),"phase":"sounding","history":[\#(entries.joined(separator: ","))]}"#
             return try JSONDecoder().decode(AuditionStatus.self, from: Data(json.utf8))
         }
         func entry(_ request: UInt64, _ phase: String, heard: Bool = false) -> String {
@@ -270,7 +315,8 @@ struct SampleBrowserTests {
         kept.record(try status(4, [entry(3, "stopped"), entry(4, "stopped")]))
         file.flush()
         #expect(FileManager.default.fileExists(atPath: file.previous.path))
-        let current = try String(contentsOf: file.url, encoding: .utf8) + String(contentsOf: file.previous, encoding: .utf8)
+        let current =
+            try String(contentsOf: file.url, encoding: .utf8) + String(contentsOf: file.previous, encoding: .utf8)
         #expect(current.split(separator: "\n").count == 4)
     }
 
@@ -282,7 +328,10 @@ struct SampleBrowserTests {
         let browser = FileBrowserState()
         await browser.register(root)
         var started = false
-        let older = Task { started = true; await browser.refreshLibrary() }
+        let older = Task {
+            started = true
+            await browser.refreshLibrary()
+        }
         while !started { await Task.yield() }
         await browser.removeRoot(try #require(browser.roots.first))
         await older.value
@@ -308,7 +357,8 @@ struct SampleBrowserTests {
         #expect(tick > 0 && controller.position == 0)
         #expect(await controller.importAudio(wav))
         let snapshot = try #require(controller.snapshot)
-        let elements = snapshot.visibleElements(originTick: 0, widthTicks: 20_000_000,
+        let elements = snapshot.visibleElements(
+            originTick: 0, widthTicks: 20_000_000,
             originTrack: 0, heightTracks: 4, pixelsPerTick: 0.001, pixelsPerTrack: 40)
         let clip = try #require(elements.elements.first { $0.role == .clip })
         #expect(snapshot.clipMix(try #require(clip.id.placement))?.start == tick)

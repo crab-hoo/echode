@@ -83,7 +83,9 @@ final class PluginListView: NSScrollView, NSTableViewDataSource, NSTableViewDele
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard plugins.indices.contains(row) else { return nil }
-        let cell = tableView.makeView(withIdentifier: PluginRowView.identifier, owner: nil) as? PluginRowView ?? PluginRowView()
+        let cell =
+            tableView.makeView(withIdentifier: PluginRowView.identifier, owner: nil) as? PluginRowView
+            ?? PluginRowView()
         cell.configure(plugins[row])
         return cell
     }
@@ -113,7 +115,11 @@ final class PluginListTable: NSTableView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let row = row(at: convert(event.locationInWindow, from: nil))
-        guard row >= 0, let id = plugin(row) else { dragDown = nil; deselectAll(nil); return }
+        guard row >= 0, let id = plugin(row) else {
+            dragDown = nil
+            deselectAll(nil)
+            return
+        }
         if selectedRow != row { selectRowIndexes([row], byExtendingSelection: false) }
         // Anywhere on the row counts, not only over its text.
         if event.clickCount == 2 { onInsert(id, true) }
@@ -122,22 +128,30 @@ final class PluginListTable: NSTableView {
 
     override func mouseDragged(with event: NSEvent) {
         guard let (down, id) = dragDown, let document,
-              hypot(event.locationInWindow.x - down.locationInWindow.x, event.locationInWindow.y - down.locationInWindow.y) >= 4,
-              let data = FXDrag(document: document, track: nil, device: nil, plugin: id).data else { return }
+            hypot(
+                event.locationInWindow.x - down.locationInWindow.x, event.locationInWindow.y - down.locationInWindow.y)
+                >= 4,
+            let data = FXDrag(document: document, track: nil, device: nil, plugin: id).data
+        else { return }
         dragDown = nil
-        let item = NSPasteboardItem(); item.setData(data, forType: FXDrag.pluginType)
+        let item = NSPasteboardItem()
+        item.setData(data, forType: FXDrag.pluginType)
         let dragging = NSDraggingItem(pasteboardWriter: item)
-        dragging.setDraggingFrame(CGRect(origin: convert(event.locationInWindow, from: nil), size: CGSize(width: 160, height: rowHeight)),
-                                  contents: NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil))
+        dragging.setDraggingFrame(
+            CGRect(origin: convert(event.locationInWindow, from: nil), size: CGSize(width: 160, height: rowHeight)),
+            contents: NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil))
         beginDraggingSession(with: [dragging], event: event, source: self)
     }
 
     override func mouseUp(with event: NSEvent) { dragDown = nil }
-    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext)
+        -> NSDragOperation
+    { .copy }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if window?.firstResponder === self, [36, 76].contains(event.keyCode),
-           event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
+            event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift])
+        {
             keyDown(with: event)
             return true
         }
@@ -146,7 +160,9 @@ final class PluginListTable: NSTableView {
 
     override func keyDown(with event: NSEvent) {
         // Return and keypad Enter insert and keep the panel open.
-        if [36, 76].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
+        if [36, 76].contains(event.keyCode),
+            event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift])
+        {
             if let id = plugin(selectedRow) { onInsert(id, false) }
             return
         }
@@ -159,7 +175,9 @@ final class PluginListTable: NSTableView {
         guard let id = plugin(row) else { return nil }
         if selectedRow != row { selectRowIndexes([row], byExtendingSelection: false) }
         let menu = NSMenu()
-        let item = NSMenuItem(title: text("Insert on selected tracks"), action: canInsertOnSelected ? #selector(insertOnSelected(_:)) : nil, keyEquivalent: "")
+        let item = NSMenuItem(
+            title: text("Insert on selected tracks"),
+            action: canInsertOnSelected ? #selector(insertOnSelected(_:)) : nil, keyEquivalent: "")
         item.target = self
         item.representedObject = id
         item.isEnabled = canInsertOnSelected
@@ -211,6 +229,8 @@ final class PluginRowView: NSTableCellView {
         name.stringValue = plugin.name
         fresh.isHidden = !plugin.fresh
         detail.stringValue = [plugin.vendor, plugin.id].filter { !$0.isEmpty }.joined(separator: " · ")
-        setAccessibilityLabel([plugin.name, plugin.fresh ? text("New plugin") : nil, detail.stringValue].compactMap { $0 }.joined(separator: ", "))
+        setAccessibilityLabel(
+            [plugin.name, plugin.fresh ? text("New plugin") : nil, detail.stringValue].compactMap { $0 }.joined(
+                separator: ", "))
     }
 }

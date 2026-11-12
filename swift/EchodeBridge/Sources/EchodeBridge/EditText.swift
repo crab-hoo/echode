@@ -8,10 +8,10 @@ public enum EditText: Encodable, Sendable {
 
     public func encode(to encoder: any Encoder) throws {
         switch self {
-        case let .value(value):
+        case .value(let value):
             var container = encoder.singleValueContainer()
             try container.encode(value)
-        case let .result(action, field):
+        case .result(let action, let field):
             var container = encoder.container(keyedBy: ResultKey.self)
             try container.encode(action, forKey: .ref)
             try container.encode(field, forKey: .field)

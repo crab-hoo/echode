@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -14,9 +15,11 @@ struct PianoDragTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         await controller.insertNote(pitch: 60, beat: 1.1, length: 0.7)
-        let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
         let note = try #require(snapshot.pianoNeighbor(track: track, current: nil))
-        let document = try #require(controller.documentID), undo = controller.undoCount
+        let document = try #require(controller.documentID)
+        let undo = controller.undoCount
         var last = NoteGeometry(note)
 
         for mode in [PianoGesture.Mode.move, .leftEdge, .rightEdge] {
@@ -33,8 +36,10 @@ struct PianoDragTests {
                 }
                 let delta = mode == .rightEdge ? -0.6 : 0.1
                 let down = harness.point(for: mode)
-                let target = down.applying(CGAffineTransform(translationX: delta * harness.view.camera.pixelsPerBeat,
-                                                            y: mode == .move ? -20 : 0))
+                let target = down.applying(
+                    CGAffineTransform(
+                        translationX: delta * harness.view.camera.pixelsPerBeat,
+                        y: mode == .move ? -20 : 0))
                 try harness.send(.leftMouseDown, at: down)
                 try harness.send(.leftMouseDragged, at: target, flags: during ? .shift : [])
                 #expect(sent.isEmpty && controller.undoCount == undo)
@@ -45,7 +50,8 @@ struct PianoDragTests {
                 case .move:
                     expected = NoteGeometry(start: ticks(released ? 1.2 : 1.25), length: note.length, pitch: 61)
                 case .leftEdge:
-                    expected = NoteGeometry(start: ticks(released ? 1.2 : 1.25), length: ticks(released ? 0.6 : 0.55), pitch: 60)
+                    expected = NoteGeometry(
+                        start: ticks(released ? 1.2 : 1.25), length: ticks(released ? 0.6 : 0.55), pitch: 60)
                 case .rightEdge:
                     expected = NoteGeometry(start: note.start, length: ticks(released ? 0.1 : 0.25), pitch: 60)
                 }
@@ -74,7 +80,8 @@ struct PianoDragTests {
     @Test func contractNoteDragsGrowClipWindowsAndKeepTheWholeNoteVisible() async throws {
         for variant in 0..<3 {
             let fixed = variant == 2
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-bounds-\(UUID()).echode")
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "echode-piano-bounds-\(UUID()).echode")
             defer { removeTestFile(url) }
             let controller = ProjectController()
             await controller.open(url, creating: true)
@@ -85,16 +92,24 @@ struct PianoDragTests {
             if variant > 0 {
                 // A sub-bar move now keeps auto; a manual trim still fixes the window.
                 let movedStart = ticks(variant == 1 ? 5 : 1)
-                #expect(await controller.moveClip(ClipMove(document: try #require(controller.documentID), clip: initial.id.placement,
-                                                         track: track, start: movedStart, copy: false)))
+                #expect(
+                    await controller.moveClip(
+                        ClipMove(
+                            document: try #require(controller.documentID), clip: initial.id.placement,
+                            track: track, start: movedStart, copy: false)))
                 if fixed {
-                    #expect(await controller.edit(.resizeClip(track: track.uuidString, clip: initial.id.placement.uuidString, start: movedStart, length: ticks(4))))
+                    #expect(
+                        await controller.edit(
+                            .resizeClip(
+                                track: track.uuidString, clip: initial.id.placement.uuidString, start: movedStart,
+                                length: ticks(4))))
                 }
             }
             let snapshot = try #require(controller.snapshot)
             let note = try #require(snapshot.pianoNote(initial.id))
             let clip = try #require(snapshot.clipMix(note.id.placement))
-            let undo = controller.undoCount, document = try #require(controller.documentID)
+            let undo = controller.undoCount
+            let document = try #require(controller.documentID)
             for mode in [PianoGesture.Mode.rightEdge, .leftEdge, .move] {
                 let harness = PianoDragHarness(snapshot: snapshot, note: note)
                 defer { harness.view.stop() }
@@ -104,32 +119,47 @@ struct PianoDragTests {
                 }
                 let down = harness.point(for: mode)
                 let delta = mode == .leftEdge ? -1.5 : 3.75
-                let target = down.applying(CGAffineTransform(translationX: delta * harness.view.camera.pixelsPerBeat, y: 0))
+                let target = down.applying(
+                    CGAffineTransform(translationX: delta * harness.view.camera.pixelsPerBeat, y: 0))
                 try harness.send(.leftMouseDown, at: down)
                 try harness.send(.leftMouseDragged, at: target, flags: .shift)
                 #expect(writes.isEmpty && controller.undoCount == undo)
                 try harness.send(.leftMouseUp, at: target, flags: .shift)
                 #expect(writes.count == 1)
                 for write in writes { #expect(await write.value) }
-                let edited = try #require(controller.snapshot?.pianoNote(note.id), "a moved note must remain visible outside the old clip")
+                let edited = try #require(
+                    controller.snapshot?.pianoNote(note.id), "a moved note must remain visible outside the old clip")
                 let start = mode == .rightEdge ? note.start : max(0, note.start + ticks(delta))
                 let end = mode == .leftEdge ? note.start + note.length : note.start + note.length + ticks(delta)
                 #expect(edited.start == start && edited.length == end - start)
                 #expect(edited.id == note.id && edited.velocity == note.velocity)
-                let bar = ticks(4), origin = clip.start
+                let bar = ticks(4)
+                let origin = clip.start
                 // floor, not integer truncation, also covers a note left of content zero.
-                let windowStart = fixed ? min(clip.start, start) : origin + Int64(floor(Double(start - origin) / Double(bar))) * bar
-                let windowEnd = fixed ? max(clip.start + clip.length, end) : origin + (Int64(floor(Double(end - 1 - origin) / Double(bar))) + 1) * bar
-                #expect(edited.windowStart == windowStart && edited.windowEnd == windowEnd,
-                        "note drags must grow the edited clip window to include the whole note")
+                let windowStart =
+                    fixed ? min(clip.start, start) : origin + Int64(floor(Double(start - origin) / Double(bar))) * bar
+                let windowEnd =
+                    fixed
+                    ? max(clip.start + clip.length, end)
+                    : origin + (Int64(floor(Double(end - 1 - origin) / Double(bar))) + 1) * bar
+                #expect(
+                    edited.windowStart == windowStart && edited.windowEnd == windowEnd,
+                    "note drags must grow the edited clip window to include the whole note")
                 let mix = try #require(controller.snapshot?.clipMix(note.id.placement))
                 #expect(mix.start == windowStart && mix.length == windowEnd - windowStart)
-                let input = CanvasInput(snapshot: controller.snapshot, selected: track, camera: ArrangeCamera(), width: 900, height: 400, scale: 1)
-                let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: note.id,
-                    camera: harness.view.camera, key: DisplayKey(), preview: nil))
+                let input = CanvasInput(
+                    snapshot: controller.snapshot, selected: track, camera: ArrangeCamera(), width: 900, height: 400,
+                    scale: 1)
+                let frame = PianoFrame(
+                    input: input,
+                    piano: PianoRenderInput(
+                        track: track, focus: note.id,
+                        camera: harness.view.camera, key: DisplayKey(), preview: nil))
                 let shown = try #require(frame.notes.first { $0.id == note.id })
-                #expect(abs(Double(shown.width) - Double(edited.length) / 705_600 * harness.view.camera.pixelsPerBeat) < 0.001,
-                        "the committed piano frame must not cut off the extended note")
+                #expect(
+                    abs(Double(shown.width) - Double(edited.length) / 705_600 * harness.view.camera.pixelsPerBeat)
+                        < 0.001,
+                    "the committed piano frame must not cut off the extended note")
                 #expect(controller.undoCount == undo + 1 && controller.errorMessage == nil)
                 #expect(snapshot.clipMix(note.id.placement) == clip)
                 await controller.undo()
@@ -158,20 +188,24 @@ struct PianoDragTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         await controller.insertNote(pitch: 60, beat: 1.1, length: 0.7)
-        let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
         let note = try #require(snapshot.pianoNeighbor(track: track, current: nil))
         for cancellation in 0..<6 {
             let harness = PianoDragHarness(snapshot: snapshot, note: note)
             var sent = 0
             harness.view.onEdit = { _, _ in sent += 1 }
-            let down = harness.point(for: .move), target = down.applying(CGAffineTransform(translationX: 13, y: -20))
+            let down = harness.point(for: .move)
+            let target = down.applying(CGAffineTransform(translationX: 13, y: -20))
             try harness.send(.leftMouseDown, at: down)
             if cancellation != 0 { try harness.send(.leftMouseDragged, at: target, flags: .shift) }
             switch cancellation {
             case 1:
-                let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                    windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
-                    isARepeat: false, keyCode: UInt16(kVK_Escape)))
+                let escape = try #require(
+                    NSEvent.keyEvent(
+                        with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                        windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                        isARepeat: false, keyCode: UInt16(kVK_Escape)))
                 harness.view.keyDown(with: escape)
             case 2: _ = harness.view.resignFirstResponder()
             case 3: harness.view.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: true)
@@ -193,7 +227,8 @@ struct PianoDragTests {
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
         await controller.insertNote(pitch: 60, beat: 1.1, length: 0.7)
-        let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
         let note = try #require(snapshot.pianoNeighbor(track: track, current: nil))
         let original = NoteGeometry(note)
         func gesture(_ mode: PianoGesture.Mode, original: NoteGeometry) -> PianoGesture {
@@ -201,12 +236,21 @@ struct PianoDragTests {
         }
         let camera = PianoCamera()
         let end = note.start + note.length
-        let left = gesture(.leftEdge, original: original), right = gesture(.rightEdge, original: original)
-        #expect(left.preview(x: 1_000, y: 0, camera: camera, snapping: false) == NoteGeometry(start: end - 1, length: 1, pitch: 60))
-        #expect(right.preview(x: -1_000, y: 0, camera: camera, snapping: false) == NoteGeometry(start: note.start, length: 1, pitch: 60))
-        #expect(left.preview(x: -1_000, y: 0, camera: camera, snapping: false) == NoteGeometry(start: 0, length: end, pitch: 60))
+        let left = gesture(.leftEdge, original: original)
+        let right = gesture(.rightEdge, original: original)
+        #expect(
+            left.preview(x: 1_000, y: 0, camera: camera, snapping: false)
+                == NoteGeometry(start: end - 1, length: 1, pitch: 60))
+        #expect(
+            right.preview(x: -1_000, y: 0, camera: camera, snapping: false)
+                == NoteGeometry(start: note.start, length: 1, pitch: 60))
+        #expect(
+            left.preview(x: -1_000, y: 0, camera: camera, snapping: false)
+                == NoteGeometry(start: 0, length: end, pitch: 60))
         let move = gesture(.move, original: original)
-        #expect(move.preview(x: -1_000, y: -1_000_000, camera: camera, snapping: false) == NoteGeometry(start: 0, length: note.length, pitch: 127))
+        #expect(
+            move.preview(x: -1_000, y: -1_000_000, camera: camera, snapping: false)
+                == NoteGeometry(start: 0, length: note.length, pitch: 127))
         #expect(move.preview(x: 0, y: 1_000_000, camera: camera, snapping: false)?.pitch == 0)
         for pixels in [18.0, 72.0, 477.0] {
             let zoomed = PianoCamera(originBeat: 0.5, pixelsPerBeat: pixels, gridMode: .fixed(176_400))
@@ -217,17 +261,20 @@ struct PianoDragTests {
             let drag = gesture(mode, original: original)
             #expect(drag.preview(x: .infinity, y: 0, camera: camera, snapping: false) == nil)
             #expect(drag.preview(x: 0, y: .nan, camera: camera, snapping: false) == nil)
-            #expect(gesture(mode, original: NoteGeometry(start: .max, length: 1, pitch: 60))
-                .preview(x: 0, y: 0, camera: camera, snapping: false) == nil)
+            #expect(
+                gesture(mode, original: NoteGeometry(start: .max, length: 1, pitch: 60))
+                    .preview(x: 0, y: 0, camera: camera, snapping: false) == nil)
         }
-        #expect(gesture(.rightEdge, original: NoteGeometry(start: .max - 4, length: 3, pitch: 60))
-            .preview(x: 72, y: 0, camera: camera, snapping: false) == nil)
+        #expect(
+            gesture(.rightEdge, original: NoteGeometry(start: .max - 4, length: 3, pitch: 60))
+                .preview(x: 72, y: 0, camera: camera, snapping: false) == nil)
         let harness = PianoDragHarness(snapshot: snapshot, note: note)
         var sent: [NoteGeometry] = []
         harness.view.onEdit = { _, geometry in sent.append(geometry) }
         let down = harness.point(for: .move)
         try harness.send(.leftMouseDown, at: down)
-        try harness.send(.leftMouseDragged, at: down.applying(CGAffineTransform(translationX: 7.2, y: 0)), flags: .shift)
+        try harness.send(
+            .leftMouseDragged, at: down.applying(CGAffineTransform(translationX: 7.2, y: 0)), flags: .shift)
         try harness.send(.leftMouseUp, at: down.applying(CGAffineTransform(translationX: 14.4, y: 0)), flags: .shift)
         #expect(sent == [NoteGeometry(start: ticks(1.3), length: note.length, pitch: 60)])
         harness.view.stop()
@@ -246,22 +293,37 @@ private final class PianoDragHarness {
     init(snapshot: Snapshot, note: PianoNote) {
         self.note = note
         view.setSnapshot(snapshot, track: note.id.track, focus: note.id, key: DisplayKey(), busy: false)
-        let input = CanvasInput(snapshot: snapshot, selected: note.id.track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
-        view.present(PianoFrame(input: input, piano: PianoRenderInput(track: note.id.track, focus: note.id,
-            camera: view.camera, key: DisplayKey(), preview: nil)))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: note.id.track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        view.present(
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(
+                    track: note.id.track, focus: note.id,
+                    camera: view.camera, key: DisplayKey(), preview: nil)))
     }
 
     func point(for mode: PianoGesture.Mode) -> CGPoint {
-        let camera = view.camera, origin = view.pianoLayout.gridOrigin
+        let camera = view.camera
+        let origin = view.pianoLayout.gridOrigin
         let start = (Double(note.start) / 705_600 - camera.originBeat) * camera.pixelsPerBeat
         let width = Double(note.length) / 705_600 * camera.pixelsPerBeat
-        let offset: Double = switch mode { case .move: width / 2; case .leftEdge: 1; case .rightEdge: width - 1 }
-        return CGPoint(x: origin.x + start + offset, y: origin.y + (camera.topPitch - Double(note.pitch) + 0.5) * camera.pixelsPerPitch)
+        let offset: Double =
+            switch mode {
+            case .move: width / 2
+            case .leftEdge: 1
+            case .rightEdge: width - 1
+            }
+        return CGPoint(
+            x: origin.x + start + offset,
+            y: origin.y + (camera.topPitch - Double(note.pitch) + 0.5) * camera.pixelsPerPitch)
     }
 
     func mouse(_ type: NSEvent.EventType, at point: CGPoint, flags: NSEvent.ModifierFlags) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: flags,
-            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: flags,
+                timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
     }
 
     func send(_ type: NSEvent.EventType, at point: CGPoint, flags: NSEvent.ModifierFlags = []) throws {

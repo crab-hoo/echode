@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 struct ExportDiagnosticsTests {
@@ -11,16 +12,17 @@ struct ExportDiagnosticsTests {
         let wrapper = root.appendingPathComponent("verbose-renderer")
         // This size exceeds only the diagnostic display budget, not an audio or project limit.
         let script = """
-        #!/bin/sh
-        echo 'initial renderer diagnostic' >&2
-        /usr/bin/printf '%0131072d' 0 >&2
-        echo 'final renderer diagnostic' >&2
-        exit \(status)
-        """
+            #!/bin/sh
+            echo 'initial renderer diagnostic' >&2
+            /usr/bin/printf '%0131072d' 0 >&2
+            echo 'final renderer diagnostic' >&2
+            exit \(status)
+            """
         try Data(script.utf8).write(to: wrapper)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
-        let result = try await ExportJob.render(executable: wrapper, package: root,
-                                               output: root.appendingPathComponent("out.wav"), arguments: [], work: root)
+        let result = try await ExportJob.render(
+            executable: wrapper, package: root,
+            output: root.appendingPathComponent("out.wav"), arguments: [], work: root)
         #expect(result.success == (status == 0) && !result.cancelled)
         #expect(result.detail.contains("Exit: \(status)"))
         #expect(result.detail.hasSuffix("final renderer diagnostic\n"), "Final renderer diagnostic was discarded")
@@ -39,7 +41,8 @@ struct ExportDiagnosticsTests {
         if size <= 65_536 {
             #expect(actual == String(decoding: input, as: UTF8.self))
         } else {
-            let expected = String(decoding: input.prefix(32_768), as: UTF8.self)
+            let expected =
+                String(decoding: input.prefix(32_768), as: UTF8.self)
                 + "\n[... diagnostics omitted ...]\n" + String(decoding: input.suffix(32_768), as: UTF8.self)
             #expect(actual == expected)
             #expect(actual.utf8.count < 66_000)

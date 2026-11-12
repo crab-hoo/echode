@@ -9,8 +9,10 @@ struct CanvasGeometryCache {
     private var piano: PianoFrame?
     private(set) var builds = 0
 
-    mutating func frames(input: CanvasInput, camera: ArrangeCamera, revision: UInt64,
-                         continuous: Bool = false) -> (arranged: ArrangeFrame?, piano: PianoFrame?) {
+    mutating func frames(
+        input: CanvasInput, camera: ArrangeCamera, revision: UInt64,
+        continuous: Bool = false
+    ) -> (arranged: ArrangeFrame?, piano: PianoFrame?) {
         if self.revision != revision || self.camera != camera || continuous {
             arranged = input.piano == nil ? ArrangeFrame(input: input, camera: camera, revision: revision) : nil
             piano = input.piano.map { PianoFrame(input: input, piano: $0, revision: revision) }

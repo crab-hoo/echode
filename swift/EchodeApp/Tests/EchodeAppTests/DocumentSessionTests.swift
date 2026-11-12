@@ -2,6 +2,7 @@ import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 /// Holds the first parameter value sent until `release`, so a request can
@@ -21,7 +22,10 @@ private actor ParameterValueGate {
     }
 
     func waitForFirstValue() async { for await _ in arrived.stream { break } }
-    func release() { held?.resume(); held = nil }
+    func release() {
+        held?.resume()
+        held = nil
+    }
 }
 
 private actor AudioReplyGate {
@@ -36,7 +40,10 @@ private actor AudioReplyGate {
     }
 
     func waitUntilHeld() async { for await _ in arrived.stream { break } }
-    func release() { held?.resume(); held = nil }
+    func release() {
+        held?.resume()
+        held = nil
+    }
 }
 
 @MainActor
@@ -101,9 +108,12 @@ struct DocumentSessionTests {
         defer { for url in [first, second] { removeTestFile(url) } }
         let gate = AudioReplyGate()
         let metronome = Mutex(false)
-        let state = try JSONDecoder().decode(AudioState.self, from: Data("""
-            {"playing":true,"running":true,"opening":false,"tick":123,"devices":[],"metronome":false}
-            """.utf8))
+        let state = try JSONDecoder().decode(
+            AudioState.self,
+            from: Data(
+                """
+                {"playing":true,"running":true,"opening":false,"tick":123,"devices":[],"metronome":false}
+                """.utf8))
         let controller = ProjectController(sendAudio: { document, command in
             switch command {
             case .play:
@@ -174,17 +184,23 @@ struct DocumentSessionTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-session-stale-\(UUID())")
         defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let wav = root.appendingPathComponent("clip.wav"), url = root.appendingPathComponent("Project.echode")
+        let wav = root.appendingPathComponent("clip.wav")
+        let url = root.appendingPathComponent("Project.echode")
         // This short fixture only supplies a clip to address, not a product buffer limit.
         try wavMono(rate: 48_000, frames: 4_800).write(to: wav)
         let plugin = FakeParameterPlugin()
-        let controller = ProjectController(sendAudio: { _, _ in AudioState() }, sendDevice: { try await plugin.send($0, $1) })
+        let controller = ProjectController(
+            sendAudio: { _, _ in AudioState() }, sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
         await controller.addTrack(name: "one")
-        let track = try #require(controller.selection), old = try #require(controller.documentID)
+        let track = try #require(controller.selection)
+        let old = try #require(controller.documentID)
         #expect(await controller.importAudio(wav))
-        let clip = try #require(controller.snapshot?.visibleElements(originTick: 0, widthTicks: 705_600 * 8, originTrack: 0, heightTracks: 2,
-            pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64).elements.first { $0.role == .clip }?.id.placement)
+        let clip = try #require(
+            controller.snapshot?.visibleElements(
+                originTick: 0, widthTicks: 705_600 * 8, originTrack: 0, heightTracks: 2,
+                pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64
+            ).elements.first { $0.role == .clip }?.id.placement)
         #expect(await controller.insertPlugin("dev.echode.test-params", on: track, documentID: old))
         #expect(await controller.insertNote(pitch: 60, beat: 4, length: 1, on: track, documentID: old))
         let device = try #require(controller.deviceRows(on: track).first).id
@@ -236,7 +252,8 @@ struct DocumentSessionTests {
         await controller.setLoopRange(try #require(LoopRange(start: 1, end: 2)), documentID: old)
 
         #expect(controller.snapshot === contents && controller.undoCount == 0 && controller.redoCount == 0)
-        #expect(controller.errorMessage == nil && controller.loopRange == .initial && controller.hiddenPianoTracks.isEmpty)
+        #expect(
+            controller.errorMessage == nil && controller.loopRange == .initial && controller.hiddenPianoTracks.isEmpty)
         #expect(controller.collapsedDevices.isEmpty && controller.faderPreview == nil)
         // The fixture itself is valid: the same request for the open document applies.
         #expect(await controller.setMixer(track, field: .gain, value: 0.5, documentID: current))

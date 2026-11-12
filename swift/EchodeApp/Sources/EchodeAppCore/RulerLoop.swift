@@ -10,7 +10,8 @@ public struct LoopRange: Sendable, Equatable {
 
     public init?(start: Int64, end: Int64) {
         guard start >= 0, end > start else { return nil }
-        self.start = start; self.end = end
+        self.start = start
+        self.end = end
     }
 }
 
@@ -19,7 +20,8 @@ public struct RulerLoop: Sendable, Equatable {
     public let enabled: Bool
 
     public init(range: LoopRange, enabled: Bool) {
-        self.range = range; self.enabled = enabled
+        self.range = range
+        self.enabled = enabled
     }
 }
 
@@ -36,18 +38,24 @@ struct RulerPress {
 
     func tick(at x: Double, snapping: Bool) -> Int64? {
         guard let tick = Tick.ticks(originBeat + x / pixelsPerBeat) else { return nil }
-        let snapped = snapping ? Tick.ticks((Double(tick) / Double(grid)).rounded() * Double(grid) / Tick.perBeat) ?? tick : tick
+        let snapped =
+            snapping ? Tick.ticks((Double(tick) / Double(grid)).rounded() * Double(grid) / Tick.perBeat) ?? tick : tick
         return max(0, snapped)
     }
 
     mutating func update(x: Double, snapping: Bool) {
         dragged = dragged || abs(x - self.x) >= 3
-        guard dragged else { range = nil; return }
+        guard dragged else {
+            range = nil
+            return
+        }
         if let edge, let originalRange {
             range = resize(edge, original: originalRange, x: x, snapping: snapping)
         } else if let anchor = tick(at: self.x, snapping: snapping), let current = tick(at: x, snapping: snapping) {
             range = LoopRange(start: min(anchor, current), end: max(anchor, current))
-        } else { range = nil }
+        } else {
+            range = nil
+        }
     }
 
     private func resize(_ edge: LoopEdge, original: LoopRange, x: Double, snapping: Bool) -> LoopRange? {
@@ -69,7 +77,9 @@ struct RulerPress {
                     let next = (original.start / grid + 1).multipliedReportingOverflow(by: grid)
                     guard !next.overflow else { return nil }
                     current = next.partialValue
-                } else { current = original.start + 1 }
+                } else {
+                    current = original.start + 1
+                }
             }
             result = LoopRange(start: original.start, end: current)
         }

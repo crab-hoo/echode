@@ -3,12 +3,12 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -57,8 +57,13 @@ class RuntimeTests(unittest.TestCase):
         """A copy of the product check whose tools only record what they were asked."""
         scripts = root / "scripts"
         scripts.mkdir()
-        for name in ("check-product-bridge.sh", "run-bridge-validation.py", "check_test_width.py",
-                     "bridge-toolchain.env", "build-platform.env"):
+        for name in (
+            "check-product-bridge.sh",
+            "run-bridge-validation.py",
+            "check_test_width.py",
+            "bridge-toolchain.env",
+            "build-platform.env",
+        ):
             shutil.copy2(ROOT / "scripts" / name, scripts / name)
         target = "target/debug" if sanitizer == "address" else "target/bridge/thread/rust/aarch64-apple-darwin/release"
         header = root / target / "build/echode-ffi-fixture/out/echode.h"
@@ -80,11 +85,18 @@ class RuntimeTests(unittest.TestCase):
 
     def product_check(self, root, sanitizer, **environment):
         scripts, tools, log = root / "scripts", root / "tools", root / "swift-arguments.log"
-        return subprocess.run(["/bin/bash", str(scripts / "check-product-bridge.sh"), sanitizer],
-                              capture_output=True, text=True, timeout=20, env={
-                                  **os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
-                                  "ECHODE_TEST_COMMAND_LOG": str(log), **environment,
-                              })
+        return subprocess.run(
+            ["/bin/bash", str(scripts / "check-product-bridge.sh"), sanitizer],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env={
+                **os.environ,
+                "PATH": str(tools) + ":" + os.environ["PATH"],
+                "ECHODE_TEST_COMMAND_LOG": str(log),
+                **environment,
+            },
+        )
 
     def test_address_check_still_launches_swift_with_macos_bash(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -162,35 +174,73 @@ class RuntimeTests(unittest.TestCase):
             root = Path(directory)
             library = root / runtime.LIBRARY
             library.write_bytes(b"loader protocol fixture, never loaded")
-            for libraries, accepted in (([], False), ([library], True),
-                                         ([library, root / "other" / runtime.LIBRARY], False)):
+            for libraries, accepted in (
+                ([], False),
+                ([library], True),
+                ([library, root / "other" / runtime.LIBRARY], False),
+            ):
                 lines = "\n".join(f"dyld[42]: <fixture> {path}" for path in libraries)
-                result = subprocess.run([
-                    sys.executable, str(ROOT / "scripts/run-bridge-validation.py"),
-                    "--log", str(root / "probe.log"), "--tsan-runtime", str(library),
-                    sys.executable, "-c", f"print({lines!r})",
-                ], capture_output=True, text=True, timeout=10)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(ROOT / "scripts/run-bridge-validation.py"),
+                        "--log",
+                        str(root / "probe.log"),
+                        "--tsan-runtime",
+                        str(library),
+                        sys.executable,
+                        "-c",
+                        f"print({lines!r})",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
                 self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
     def test_a_failed_run_keeps_its_log_and_shows_the_report_not_loader_lines(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             log = root / "swift-tests.log"
-            report = ("WARNING: ThreadSanitizer: data race (pid=1)\n  Read of size 8 by thread T8:\n"
-                      "SUMMARY: ThreadSanitizer: data race Document.swift:59 in fixture\n")
+            report = (
+                "WARNING: ThreadSanitizer: data race (pid=1)\n  Read of size 8 by thread T8:\n"
+                "SUMMARY: ThreadSanitizer: data race Document.swift:59 in fixture\n"
+            )
             noise = "dyld[1]: <fixture> /usr/lib/fixture.dylib\n" * 2000
             program = f"import sys; sys.stderr.write({(noise + report + noise)!r}); sys.exit(6)"
-            result = subprocess.run([sys.executable, str(ROOT / "scripts/run-bridge-validation.py"),
-                                     "--log", str(log), sys.executable, "-c", program],
-                                    capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/run-bridge-validation.py"),
+                    "--log",
+                    str(log),
+                    sys.executable,
+                    "-c",
+                    program,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("SUMMARY: ThreadSanitizer: data race Document.swift:59", result.stderr)
             self.assertNotIn("fixture.dylib", result.stderr)
             kept = root / "swift-tests.failed.log"
             self.assertIn(str(kept), result.stderr)
             # A passing rerun rewrites the log but leaves the failing evidence.
-            subprocess.run([sys.executable, str(ROOT / "scripts/run-bridge-validation.py"),
-                            "--log", str(log), sys.executable, "-c", "print('ok')"], check=True, timeout=10)
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/run-bridge-validation.py"),
+                    "--log",
+                    str(log),
+                    sys.executable,
+                    "-c",
+                    "print('ok')",
+                ],
+                check=True,
+                timeout=10,
+            )
             self.assertEqual(log.read_text(), "ok\n")
             self.assertIn(report, kept.read_text())
 

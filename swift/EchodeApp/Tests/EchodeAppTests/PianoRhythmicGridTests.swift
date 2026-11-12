@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -18,7 +19,8 @@ struct PianoRhythmicGridTests {
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "Keys")
-        let track = try #require(controller.pianoTrack), document = try #require(controller.documentID)
+        let track = try #require(controller.pianoTrack)
+        let document = try #require(controller.documentID)
         let snapshot = try #require(controller.snapshot)
         let navigation = CanvasNavigationState()
         navigation.prepare(document: document, tracks: [track])
@@ -29,17 +31,27 @@ struct PianoRhythmicGridTests {
         view.setNavigation(navigation, documentID: document)
         view.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
         view.inputLength = { controller.noteInput.length }
-        var writes: [Task<Void, Never>] = [], starts: [Int64] = [], steps: [PianoStep] = []
+        var writes: [Task<Void, Never>] = []
+        var starts: [Int64] = []
+        var steps: [PianoStep] = []
         view.onInsert = { pitch, beat, length in
-            writes.append(Task { await controller.insertNote(pitch: pitch, beat: beat, length: length, on: track, documentID: document) })
+            writes.append(
+                Task {
+                    await controller.insertNote(
+                        pitch: pitch, beat: beat, length: length, on: track, documentID: document)
+                })
         }
-        view.onSetStart = { starts.append($0) }; view.onSteps = { steps.append($0) }
+        view.onSetStart = { starts.append($0) }
+        view.onSteps = { steps.append($0) }
         let undo = controller.undoCount
-        let index = try #require(PianoGrid.choices.firstIndex(of: .fixed(ticks)), "Rhythmic grid must be available in native picker")
+        let index = try #require(
+            PianoGrid.choices.firstIndex(of: .fixed(ticks)), "Rhythmic grid must be available in native picker")
         roll.gridBar.picker.selectItem(at: index)
         #expect(roll.gridBar.picker.sendAction(roll.gridBar.picker.action, to: roll.gridBar.picker.target))
         let title = "1/8 \(text(name))"
-        #expect(roll.gridBar.picker.titleOfSelectedItem == title, "Rhythmic note values must not be labeled as straight fractions")
+        #expect(
+            roll.gridBar.picker.titleOfSelectedItem == title,
+            "Rhythmic note values must not be labeled as straight fractions")
         #expect(roll.gridBar.subviews.compactMap { $0 as? NSTextField }.first?.stringValue == title)
         #expect(view.camera.grid == ticks && navigation.pianoCamera?.gridMode == .fixed(ticks))
         #expect(controller.noteInput.length == nil && controller.undoCount == undo)
@@ -58,8 +70,11 @@ struct PianoRhythmicGridTests {
         #expect(controller.undoCount == undo + 1 && controller.noteInput.length == ticks)
         let inserted = try #require(controller.snapshot)
         view.setSnapshot(inserted, track: track, focus: note.id, key: DisplayKey(), busy: false)
-        let right = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: UInt16(kVK_RightArrow)))
+        let right = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+                keyCode: UInt16(kVK_RightArrow)))
         view.keyDown(with: right)
         #expect(steps.count == 1 && steps[0].time == ticks)
         view.present(gridFrame(view, snapshot: inserted, track: track))

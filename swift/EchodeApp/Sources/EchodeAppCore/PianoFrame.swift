@@ -33,28 +33,34 @@ struct PianoFrame: Sendable {
         let layout = PianoLayout(width: input.width, height: input.height)
         self.layout = layout
         let camera = piano.camera
-        notes = input.snapshot?.pianoNotes(track: piano.track,
-            originTick: Tick.ticks(camera.originBeat) ?? 0,
-            widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
-            topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,
-            pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: camera.pixelsPerPitch) ?? []
+        notes =
+            input.snapshot?.pianoNotes(
+                track: piano.track,
+                originTick: Tick.ticks(camera.originBeat) ?? 0,
+                widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
+                topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,
+                pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: camera.pixelsPerPitch) ?? []
         referenceNotes = piano.references.filter { $0 != piano.track }.flatMap { track in
-            input.snapshot?.pianoNotes(track: track,
+            input.snapshot?.pianoNotes(
+                track: track,
                 originTick: Tick.ticks(camera.originBeat) ?? 0,
                 widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
                 topPitch: camera.topPitch, heightPitches: layout.grid.height / camera.pixelsPerPitch,
                 pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: camera.pixelsPerPitch) ?? []
         }
         // The lane shows all MIDI pitches, but only the horizontally visible intervals.
-        velocityNotes = input.snapshot?.pianoNotes(track: piano.track,
-            originTick: Tick.ticks(camera.originBeat) ?? 0,
-            widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
-            topPitch: Double(ModelLimits.midi7.upperBound), heightPitches: Double(ModelLimits.midi7.count),
-            pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: 1) ?? []
+        velocityNotes =
+            input.snapshot?.pianoNotes(
+                track: piano.track,
+                originTick: Tick.ticks(camera.originBeat) ?? 0,
+                widthTicks: max(1, Tick.ticks(layout.grid.width / camera.pixelsPerBeat) ?? 1),
+                topPitch: Double(ModelLimits.midi7.upperBound), heightPitches: Double(ModelLimits.midi7.count),
+                pixelsPerTick: camera.pixelsPerBeat / Tick.perBeat, pixelsPerPitch: 1) ?? []
         // MIDI pitch bounds are part of the note protocol, not a project limit.
         rows = ModelLimits.midi7.map { pitch in
-            PianoRow(pitch: pitch, y: Float(layout.rulerHeight + (camera.topPitch - Double(pitch)) * camera.pixelsPerPitch),
-                     height: Float(camera.pixelsPerPitch))
+            PianoRow(
+                pitch: pitch, y: Float(layout.rulerHeight + (camera.topPitch - Double(pitch)) * camera.pixelsPerPitch),
+                height: Float(camera.pixelsPerPitch))
         }.filter { $0.y + $0.height > Float(layout.rulerHeight) && $0.y < Float(layout.grid.maxY) }
     }
 
@@ -62,68 +68,97 @@ struct PianoFrame: Sendable {
         let camera = piano.camera
         let origin = layout.gridOrigin
         var instances = rows.map { row in
-            instance(SIMD4(Float(origin.x), row.y, Float(layout.grid.width), max(0, row.height - 1)),
-                     color: row.black ? PianoPalette.blackRow : PianoPalette.whiteRow)
+            instance(
+                SIMD4(Float(origin.x), row.y, Float(layout.grid.width), max(0, row.height - 1)),
+                color: row.black ? PianoPalette.blackRow : PianoPalette.whiteRow)
         }
         for tick in gridLineTicks {
             let x = origin.x + (Double(tick) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat
-            let color: SIMD4<Float> = tick % (4 * Tick.perQuarter) == 0 ? SIMD4(0.27, 0.29, 0.33, 1) :
-                (tick % Tick.perQuarter == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
+            let color: SIMD4<Float> =
+                tick % (4 * Tick.perQuarter) == 0
+                ? SIMD4(0.27, 0.29, 0.33, 1)
+                : (tick % Tick.perQuarter == 0 ? SIMD4(0.18, 0.20, 0.23, 1) : SIMD4(0.13, 0.15, 0.18, 1))
             instances.append(instance(SIMD4(Float(x), Float(origin.y), 1, Float(layout.grid.height)), color: color))
         }
         for note in referenceNotes {
-            instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
-                                            max(2, note.width), max(2, note.height - 2)),
-                                      color: PianoPalette.reference))
+            instances.append(
+                instance(
+                    SIMD4(
+                        Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
+                        max(2, note.width), max(2, note.height - 2)),
+                    color: PianoPalette.reference))
         }
         for note in notes {
-            instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
-                                            max(2, note.width), max(2, note.height - 2)),
-                                      color: piano.isSelected(note.id) ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
+            instances.append(
+                instance(
+                    SIMD4(
+                        Float(origin.x) + note.x, Float(origin.y) + note.y + 1,
+                        max(2, note.width), max(2, note.height - 2)),
+                    color: piano.isSelected(note.id) ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
             let velocity = velocity(for: note)
-            instances.append(instance(SIMD4(Float(origin.x) + note.x, Float(origin.y) + note.y + note.height - 3,
-                                            max(0, note.width) * Float(velocity) / Float(ModelLimits.midi7.upperBound), 2),
-                                      color: SIMD4(0.18, 0.25, 0.29, 1)))
+            instances.append(
+                instance(
+                    SIMD4(
+                        Float(origin.x) + note.x, Float(origin.y) + note.y + note.height - 3,
+                        max(0, note.width) * Float(velocity) / Float(ModelLimits.midi7.upperBound), 2),
+                    color: SIMD4(0.18, 0.25, 0.29, 1)))
         }
-        for g in [piano.preview?.geometry, piano.insertion].compactMap({ $0 }) + (piano.move?.geometries(in: notes) ?? []) + (piano.resize?.geometries(in: notes) ?? []) {
-            let rect = SIMD4(Float(origin.x + (Double(g.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat),
-                             Float(origin.y + (camera.topPitch - Double(g.pitch)) * camera.pixelsPerPitch + 1),
-                             Float(Double(g.length) / Tick.perBeat * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))
+        for g in [piano.preview?.geometry, piano.insertion].compactMap({ $0 })
+            + (piano.move?.geometries(in: notes) ?? []) + (piano.resize?.geometries(in: notes) ?? [])
+        {
+            let rect = SIMD4(
+                Float(origin.x + (Double(g.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat),
+                Float(origin.y + (camera.topPitch - Double(g.pitch)) * camera.pixelsPerPitch + 1),
+                Float(Double(g.length) / Tick.perBeat * camera.pixelsPerBeat), Float(camera.pixelsPerPitch - 2))
             instances.append(instance(rect, color: SIMD4(0.96, 0.87, 0.54, 1)))
         }
         if let marquee = piano.marquee {
             let r = marquee.intersection(layout.grid)
             if !r.isNull, !r.isEmpty {
                 let color = SIMD4<Float>(0.70, 0.84, 1, 1)
-                for edge in [CGRect(x: r.minX, y: r.minY, width: r.width, height: 1),
-                             CGRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1),
-                             CGRect(x: r.minX, y: r.minY, width: 1, height: r.height),
-                             CGRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height)] {
-                    instances.append(instance(SIMD4(Float(edge.minX), Float(edge.minY), Float(edge.width), Float(edge.height)), color: color))
+                for edge in [
+                    CGRect(x: r.minX, y: r.minY, width: r.width, height: 1),
+                    CGRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1),
+                    CGRect(x: r.minX, y: r.minY, width: 1, height: r.height),
+                    CGRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height),
+                ] {
+                    instances.append(
+                        instance(
+                            SIMD4(Float(edge.minX), Float(edge.minY), Float(edge.width), Float(edge.height)),
+                            color: color))
                 }
             }
         }
         if let x = playheadX {
-            instances.append(instance(SIMD4(Float(x), Float(origin.y), 2, Float(layout.grid.height)),
-                                      color: SIMD4(1, 0.60, 0.28, 1)))
+            instances.append(
+                instance(
+                    SIMD4(Float(x), Float(origin.y), 2, Float(layout.grid.height)),
+                    color: SIMD4(1, 0.60, 0.28, 1)))
         }
         return instances
     }
 
     var velocityLane: PianoVelocityLane { PianoVelocityLane(rect: layout.velocity) }
-    var velocityBars: [PianoVelocityBar] { velocityLane.bars(notes: velocityNotes, camera: piano.camera, preview: piano.velocity) }
+    var velocityBars: [PianoVelocityBar] {
+        velocityLane.bars(notes: velocityNotes, camera: piano.camera, preview: piano.velocity)
+    }
     var velocityInstances: [Instance] {
         let rect = layout.velocity
-        var result = [instance(SIMD4(0, Float(rect.minY), Float(input.width), Float(rect.height)), color: SIMD4(0.09, 0.10, 0.12, 1)),
-                      instance(SIMD4(0, Float(rect.minY), Float(input.width), 1), color: PianoPalette.separator)]
+        var result = [
+            instance(
+                SIMD4(0, Float(rect.minY), Float(input.width), Float(rect.height)), color: SIMD4(0.09, 0.10, 0.12, 1)),
+            instance(SIMD4(0, Float(rect.minY), Float(input.width), 1), color: PianoPalette.separator),
+        ]
         let bars = velocityBars
         // Paint every stem before the caps so chord tones remain distinguishable.
         for cap in [false, true] {
             for bar in bars.filter({ !piano.isSelected($0.note.id) }) + bars.filter({ piano.isSelected($0.note.id) }) {
                 let r = (cap ? bar.cap : bar.stem).intersection(rect)
                 guard !r.isNull, !r.isEmpty else { continue }
-                result.append(instance(SIMD4(Float(r.minX), Float(r.minY), Float(r.width), Float(r.height)),
-                                       color: piano.isSelected(bar.note.id) ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
+                result.append(
+                    instance(
+                        SIMD4(Float(r.minX), Float(r.minY), Float(r.width), Float(r.height)),
+                        color: piano.isSelected(bar.note.id) ? SIMD4(0.99, 0.73, 0.31, 1) : SIMD4(0.42, 0.76, 0.85, 1)))
             }
         }
         return result
@@ -141,16 +176,23 @@ struct PianoFrame: Sendable {
 
     var degreeInstances: [Instance] {
         rows.flatMap { row in
-            [instance(SIMD4(0, row.y, Float(layout.degreeWidth), max(0, row.height - 1)),
-                      color: piano.key.degree(row.pitch) == nil ? PianoPalette.blackRow : PianoPalette.whiteRow),
-             instance(SIMD4(0, row.y + row.height - 1, Float(layout.degreeWidth), 1), color: PianoPalette.separator)]
+            [
+                instance(
+                    SIMD4(0, row.y, Float(layout.degreeWidth), max(0, row.height - 1)),
+                    color: piano.key.degree(row.pitch) == nil ? PianoPalette.blackRow : PianoPalette.whiteRow),
+                instance(SIMD4(0, row.y + row.height - 1, Float(layout.degreeWidth), 1), color: PianoPalette.separator),
+            ]
         }
     }
 
     var keyboardInstances: [Instance] {
         let left = Float(layout.degreeWidth)
         let width = Float(layout.keyboardWidth)
-        var instances = [instance(SIMD4(left, Float(layout.rulerHeight), width, Float(layout.grid.height)), color: SIMD4(0.25, 0.26, 0.28, 1))]
+        var instances = [
+            instance(
+                SIMD4(left, Float(layout.rulerHeight), width, Float(layout.grid.height)),
+                color: SIMD4(0.25, 0.26, 0.28, 1))
+        ]
         // White keys extend behind the short black keys. Include neighbours
         // just beyond the visible rows so partial keys remain filled.
         for pitch in ModelLimits.midi7 where !isBlack(pitch) {
@@ -159,25 +201,35 @@ struct PianoFrame: Sendable {
             let below = pitch > 0 && isBlack(pitch - 1) ? height / 2 : 0
             let y = layout.rulerHeight + (piano.camera.topPitch - Double(pitch)) * height - above
             guard y + height + above + below > layout.rulerHeight, y < layout.grid.maxY else { continue }
-            instances.append(instance(SIMD4(left + 1, Float(y), max(0, width - 2), Float(height + above + below - 1)),
-                                      color: SIMD4(0.88, 0.89, 0.91, 1)))
+            instances.append(
+                instance(
+                    SIMD4(left + 1, Float(y), max(0, width - 2), Float(height + above + below - 1)),
+                    color: SIMD4(0.88, 0.89, 0.91, 1)))
         }
         for row in rows where row.black {
-            instances.append(instance(SIMD4(left + width * 0.38, row.y + 1, width * 0.62, max(0, row.height - 2)),
-                                      color: SIMD4(0.10, 0.11, 0.13, 1)))
+            instances.append(
+                instance(
+                    SIMD4(left + width * 0.38, row.y + 1, width * 0.62, max(0, row.height - 2)),
+                    color: SIMD4(0.10, 0.11, 0.13, 1)))
         }
         return instances
     }
 
     var rulerInstances: [Instance] {
-        var instances = [instance(SIMD4(0, 0, Float(input.width), Float(layout.rulerHeight)), color: SIMD4(0.12, 0.13, 0.16, 1)),
-                         instance(SIMD4(0, Float(layout.rulerHeight - 1), Float(input.width), 1), color: SIMD4(0.27, 0.29, 0.33, 1))]
+        var instances = [
+            instance(SIMD4(0, 0, Float(input.width), Float(layout.rulerHeight)), color: SIMD4(0.12, 0.13, 0.16, 1)),
+            instance(SIMD4(0, Float(layout.rulerHeight - 1), Float(input.width), 1), color: SIMD4(0.27, 0.29, 0.33, 1)),
+        ]
         if let rect = loopRect {
             let enabled = piano.loop?.enabled == true
-            instances.append(instance(SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)),
-                                      color: enabled ? SIMD4(0.22, 0.34, 0.30, 1) : SIMD4(0.20, 0.22, 0.25, 1)))
-            instances.append(instance(SIMD4(Float(rect.minX), 0, Float(rect.width), Float(min(3, layout.rulerHeight))),
-                                      color: enabled ? SIMD4(0.40, 0.84, 0.56, 1) : SIMD4(0.45, 0.48, 0.53, 1)))
+            instances.append(
+                instance(
+                    SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)),
+                    color: enabled ? SIMD4(0.22, 0.34, 0.30, 1) : SIMD4(0.20, 0.22, 0.25, 1)))
+            instances.append(
+                instance(
+                    SIMD4(Float(rect.minX), 0, Float(rect.width), Float(min(3, layout.rulerHeight))),
+                    color: enabled ? SIMD4(0.40, 0.84, 0.56, 1) : SIMD4(0.45, 0.48, 0.53, 1)))
         }
         instances += loopHandles.instances(enabled: piano.loop?.enabled == true, scale: input.scale)
         if let x = startX {
@@ -191,17 +243,23 @@ struct PianoFrame: Sendable {
     }
 
     var loopHandles: RulerHandles {
-        RulerHandles(range: piano.loop?.range, ruler: layout.ruler,
-                     originBeat: piano.camera.originBeat, pixelsPerBeat: piano.camera.pixelsPerBeat)
+        RulerHandles(
+            range: piano.loop?.range, ruler: layout.ruler,
+            originBeat: piano.camera.originBeat, pixelsPerBeat: piano.camera.pixelsPerBeat)
     }
 
     /// The visible part of the loop band, never the keyboard headings or note grid.
     var loopRect: CGRect? {
         guard let range = piano.loop?.range else { return nil }
-        let left = layout.gridOrigin.x + (Double(range.start) / Tick.perBeat - piano.camera.originBeat) * piano.camera.pixelsPerBeat
-        let right = layout.gridOrigin.x + (Double(range.end) / Tick.perBeat - piano.camera.originBeat) * piano.camera.pixelsPerBeat
-        let rect = CGRect(x: max(layout.ruler.minX, left), y: 0,
-                          width: max(0, min(layout.ruler.maxX, right) - max(layout.ruler.minX, left)), height: layout.rulerHeight)
+        let left =
+            layout.gridOrigin.x + (Double(range.start) / Tick.perBeat - piano.camera.originBeat)
+            * piano.camera.pixelsPerBeat
+        let right =
+            layout.gridOrigin.x + (Double(range.end) / Tick.perBeat - piano.camera.originBeat)
+            * piano.camera.pixelsPerBeat
+        let rect = CGRect(
+            x: max(layout.ruler.minX, left), y: 0,
+            width: max(0, min(layout.ruler.maxX, right) - max(layout.ruler.minX, left)), height: layout.rulerHeight)
         return rect.isEmpty ? nil : rect
     }
 
@@ -215,39 +273,64 @@ struct PianoFrame: Sendable {
 
     var labels: [CanvasLabel] {
         let foreground = SIMD4<Float>(0.90, 0.91, 0.94, 1)
-        var labels = [label("I–VII", x: 2, y: (layout.rulerHeight - ArrangeLabelRaster.height) / 2,
-                            width: max(0, layout.degreeWidth - 4), clip: CGRect(x: 0, y: 0, width: layout.degreeWidth, height: layout.rulerHeight), color: foreground, alignment: .center),
-                      label(text("Keyboard"), x: layout.degreeWidth + 4, y: (layout.rulerHeight - ArrangeLabelRaster.height) / 2,
-                            width: max(0, layout.keyboardWidth - 8), clip: CGRect(x: layout.degreeWidth, y: 0, width: layout.keyboardWidth, height: layout.rulerHeight), color: foreground)]
+        var labels = [
+            label(
+                "I–VII", x: 2, y: (layout.rulerHeight - ArrangeLabelRaster.height) / 2,
+                width: max(0, layout.degreeWidth - 4),
+                clip: CGRect(x: 0, y: 0, width: layout.degreeWidth, height: layout.rulerHeight), color: foreground,
+                alignment: .center),
+            label(
+                text("Keyboard"), x: layout.degreeWidth + 4, y: (layout.rulerHeight - ArrangeLabelRaster.height) / 2,
+                width: max(0, layout.keyboardWidth - 8),
+                clip: CGRect(x: layout.degreeWidth, y: 0, width: layout.keyboardWidth, height: layout.rulerHeight),
+                color: foreground),
+        ]
         for row in rows {
             let y = Double(row.y) + (Double(row.height) - ArrangeLabelRaster.height) / 2
             if let degree = piano.key.degree(row.pitch), let numeral = DisplayKey.numeral(degree) {
-                labels.append(label(numeral, x: 4, y: y, width: max(0, layout.degreeWidth - 8),
-                                    clip: CGRect(x: 0, y: max(layout.rulerHeight, Double(row.y)), width: layout.degreeWidth,
-                                                 height: max(0, min(layout.grid.maxY, Double(row.y + row.height - 1)) - max(layout.rulerHeight, Double(row.y)))),
-                                    color: degree == 1 ? SIMD4(0.96, 0.75, 0.40, 1) : foreground, alignment: .center))
+                labels.append(
+                    label(
+                        numeral, x: 4, y: y, width: max(0, layout.degreeWidth - 8),
+                        clip: CGRect(
+                            x: 0, y: max(layout.rulerHeight, Double(row.y)), width: layout.degreeWidth,
+                            height: max(
+                                0,
+                                min(layout.grid.maxY, Double(row.y + row.height - 1))
+                                    - max(layout.rulerHeight, Double(row.y)))),
+                        color: degree == 1 ? SIMD4(0.96, 0.75, 0.40, 1) : foreground, alignment: .center))
             }
             if row.pitch % 12 == 0 {
-                labels.append(label(noteName(row.pitch), x: layout.degreeWidth + 8, y: y, width: max(0, layout.keyboardWidth - 16),
-                                    clip: layout.keyboard, color: SIMD4(0.20, 0.22, 0.25, 1)))
+                labels.append(
+                    label(
+                        noteName(row.pitch), x: layout.degreeWidth + 8, y: y, width: max(0, layout.keyboardWidth - 16),
+                        clip: layout.keyboard, color: SIMD4(0.20, 0.22, 0.25, 1)))
             }
         }
         for beat in beats {
             let x = layout.gridOrigin.x + (Double(beat) - piano.camera.originBeat) * piano.camera.pixelsPerBeat + 3
-            labels.append(label(String(beat), x: x, y: (layout.rulerHeight - ArrangeLabelRaster.height) / 2,
-                                width: min(48, max(0, piano.camera.pixelsPerBeat - 4)), clip: layout.ruler, color: foreground))
+            labels.append(
+                label(
+                    String(beat), x: x, y: (layout.rulerHeight - ArrangeLabelRaster.height) / 2,
+                    width: min(48, max(0, piano.camera.pixelsPerBeat - 4)), clip: layout.ruler, color: foreground))
         }
         if let preview = piano.velocity, let note = notes.first(where: { $0.id == preview.id }) {
-            labels.append(label("\(text("Velocity")) \(preview.value)",
-                                x: layout.gridOrigin.x + Double(note.x), y: layout.gridOrigin.y + Double(note.y),
-                                width: 100, clip: layout.grid, color: SIMD4(1, 1, 1, 1)))
+            labels.append(
+                label(
+                    "\(text("Velocity")) \(preview.value)",
+                    x: layout.gridOrigin.x + Double(note.x), y: layout.gridOrigin.y + Double(note.y),
+                    width: 100, clip: layout.grid, color: SIMD4(1, 1, 1, 1)))
         }
-        let laneHeading = CGRect(x: 0, y: layout.velocity.minY, width: layout.gridOrigin.x, height: layout.velocity.height)
-        labels.append(label(text("Velocity"), x: 4, y: laneHeading.minY + 4, width: max(0, laneHeading.width - 8),
-                            clip: laneHeading, color: foreground))
+        let laneHeading = CGRect(
+            x: 0, y: layout.velocity.minY, width: layout.gridOrigin.x, height: layout.velocity.height)
+        labels.append(
+            label(
+                text("Velocity"), x: 4, y: laneHeading.minY + 4, width: max(0, laneHeading.width - 8),
+                clip: laneHeading, color: foreground))
         if let id = piano.velocity?.id ?? piano.focus, let note = velocityNotes.first(where: { $0.id == id }) {
-            labels.append(label(String(velocity(for: note)), x: 4, y: laneHeading.minY + 22,
-                                width: max(0, laneHeading.width - 8), clip: laneHeading, color: foreground))
+            labels.append(
+                label(
+                    String(velocity(for: note)), x: 4, y: laneHeading.minY + 22,
+                    width: max(0, laneHeading.width - 8), clip: laneHeading, color: foreground))
         }
         return labels
     }
@@ -273,7 +356,8 @@ struct PianoFrame: Sendable {
     private func visibleGridTicks(every initialStep: Int64) -> [Int64] {
         let camera = piano.camera
         guard initialStep > 0, camera.pixelsPerBeat.isFinite, camera.pixelsPerBeat > 0,
-              camera.originBeat.isFinite, camera.originBeat >= 0, layout.grid.width.isFinite else { return [] }
+            camera.originBeat.isFinite, camera.originBeat >= 0, layout.grid.width.isFinite
+        else { return [] }
         var step = initialStep
         while Double(step) / Tick.perBeat * camera.pixelsPerBeat < 4 {
             let doubled = step.multipliedReportingOverflow(by: 2)
@@ -300,9 +384,16 @@ struct PianoFrame: Sendable {
     }
 
     private func isBlack(_ pitch: Int) -> Bool { [1, 3, 6, 8, 10].contains(pitch % 12) }
-    private func instance(_ rect: SIMD4<Float>, color: SIMD4<Float>) -> Instance { Instance(rect: rect * Float(input.scale), color: color) }
-    private func label(_ value: String, x: Double, y: Double, width: Double, clip: CGRect, color: SIMD4<Float>, alignment: CanvasLabelAlignment = .left) -> CanvasLabel {
-        CanvasLabel(text: value, rect: SIMD4(Float(x), Float(y), Float(width), Float(ArrangeLabelRaster.height)),
-                    clip: SIMD4(Float(clip.minX), Float(clip.minY), Float(clip.width), Float(clip.height)), color: color, alignment: alignment)
+    private func instance(_ rect: SIMD4<Float>, color: SIMD4<Float>) -> Instance {
+        Instance(rect: rect * Float(input.scale), color: color)
+    }
+    private func label(
+        _ value: String, x: Double, y: Double, width: Double, clip: CGRect, color: SIMD4<Float>,
+        alignment: CanvasLabelAlignment = .left
+    ) -> CanvasLabel {
+        CanvasLabel(
+            text: value, rect: SIMD4(Float(x), Float(y), Float(width), Float(ArrangeLabelRaster.height)),
+            clip: SIMD4(Float(clip.minX), Float(clip.minY), Float(clip.width), Float(clip.height)), color: color,
+            alignment: alignment)
     }
 }

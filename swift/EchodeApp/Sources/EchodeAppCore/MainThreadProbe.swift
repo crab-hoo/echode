@@ -49,10 +49,15 @@ private struct MainThreadReport: Codable {
 /// size, window size and event counts are scoped to this measurement only.
 @MainActor
 public func runMainThreadProbe(reportPath: String) async throws {
-    let trackCount = 128, notesPerTrack = 32
+    let trackCount = 128
+    let notesPerTrack = 32
     let positions = Mutex<Int64>(0)
     let controller = ProjectController(sendAudio: { _, _ in
-        try probePlayingState(tick: positions.withLock { $0 &+= 240; return $0 })
+        try probePlayingState(
+            tick: positions.withLock {
+                $0 &+= 240
+                return $0
+            })
     })
     // The workspace holds a silent audition output while visible; this probe opens no device.
     controller.sendAuditionSettings = { _, _, _ in }
@@ -61,15 +66,20 @@ public func runMainThreadProbe(reportPath: String) async throws {
     await controller.open(url, creating: true)
     guard let document = controller.documentID else { throw CocoaError(.coderValueNotFound) }
     let tracks = (0..<trackCount).map { EditAction.addTrack(name: "Track \($0)") }
-    guard await controller.performActions({ tracks }, documentID: document) else { throw CocoaError(.coderInvalidValue) }
+    guard await controller.performActions({ tracks }, documentID: document) else {
+        throw CocoaError(.coderInvalidValue)
+    }
     let ids = controller.tracks.map(\.id)
     let notes = ids.flatMap { id in
         (0..<notesPerTrack).map { index in
-            EditAction.insertNote(track: id.uuidString, pitch: UInt8(48 + index % 24), velocity: 100,
-                                  start: Int64(index) * 960, length: 480)
+            EditAction.insertNote(
+                track: id.uuidString, pitch: UInt8(48 + index % 24), velocity: 100,
+                start: Int64(index) * 960, length: 480)
         }
     }
-    guard await controller.performActions({ notes }, documentID: document), let first = ids.first else { throw CocoaError(.coderInvalidValue) }
+    guard await controller.performActions({ notes }, documentID: document), let first = ids.first else {
+        throw CocoaError(.coderInvalidValue)
+    }
     controller.selectTrack(first)
 
     let suite = "org.echode.probe.main-thread.\(UUID().uuidString)"
@@ -96,7 +106,11 @@ public func runMainThreadProbe(reportPath: String) async throws {
         FileHandle.standardError.write(Data("profiling\n".utf8))
         let end = ContinuousClock.now + .seconds(seconds)
         var index = 0
-        while ContinuousClock.now < end { controller.session.receive(playing[index % 400]); host.layoutSubtreeIfNeeded(); index += 1 }
+        while ContinuousClock.now < end {
+            controller.session.receive(playing[index % 400])
+            host.layoutSubtreeIfNeeded()
+            index += 1
+        }
     }
     let position = measured(200) { controller.session.receive(playing[20 + $0]) }
     let held = playing[220]
@@ -110,12 +124,19 @@ public func runMainThreadProbe(reportPath: String) async throws {
 
     var divider: [String: ProbeTiming] = [:]
     for splitter in probeSplitters(in: host) {
-        let name = switch splitter.pane { case .inspector: "inspector"; case .browser: "browser"; case .editor: "editor"; default: "other" }
+        let name =
+            switch splitter.pane {
+            case .inspector: "inspector"
+            case .browser: "browser"
+            case .editor: "editor"
+            default: "other"
+            }
         guard let down = probeMouse(.leftMouseDown, at: .zero) else { continue }
         splitter.mouseDown(with: down)
         let events = (0..<120).compactMap { index in
             let offset = Double(index < 60 ? index : 120 - index)
-            return probeMouse(.leftMouseDragged, at: splitter.pane == .editor ? CGPoint(x: 0, y: offset) : CGPoint(x: offset, y: 0))
+            return probeMouse(
+                .leftMouseDragged, at: splitter.pane == .editor ? CGPoint(x: 0, y: offset) : CGPoint(x: offset, y: 0))
         }
         divider[name] = ProbeTiming(measured(events.count) { splitter.mouseDragged(with: events[$0]) })
         if let up = probeMouse(.leftMouseUp, at: .zero) { splitter.mouseUp(with: up) }
@@ -124,10 +145,11 @@ public func runMainThreadProbe(reportPath: String) async throws {
 
     let (frames, rasterized) = try probeArrangeFrames(snapshot: controller.snapshot, selected: first)
     await controller.close()
-    let report = MainThreadReport(tracks: trackCount, notesPerTrack: notesPerTrack, windowPoints: [windowSize.width, windowSize.height],
-                                  positionPoll: ProbeTiming(position), unchangedPoll: ProbeTiming(unchanged),
-                                  auditionReply: ProbeTiming(audition), statusReply: ProbeTiming(status),
-                                  divider: divider, arrangeFrame: frames, arrangeRasterized: rasterized)
+    let report = MainThreadReport(
+        tracks: trackCount, notesPerTrack: notesPerTrack, windowPoints: [windowSize.width, windowSize.height],
+        positionPoll: ProbeTiming(position), unchangedPoll: ProbeTiming(unchanged),
+        auditionReply: ProbeTiming(audition), statusReply: ProbeTiming(status),
+        divider: divider, arrangeFrame: frames, arrangeRasterized: rasterized)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     try encoder.encode(report).write(to: URL(fileURLWithPath: reportPath))
@@ -136,15 +158,19 @@ public func runMainThreadProbe(reportPath: String) async throws {
 /// Encodes arrange frames as the render thread does, without waiting for a
 /// display. GPU completion waits belong to this probe only.
 @MainActor
-private func probeArrangeFrames(snapshot: Snapshot?, selected: UUID) throws -> ([String: ProbeTiming], [String: Double]) {
-    guard let snapshot, let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw CocoaError(.featureUnsupported) }
+private func probeArrangeFrames(snapshot: Snapshot?, selected: UUID) throws -> ([String: ProbeTiming], [String: Double])
+{
+    guard let snapshot, let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
+        throw CocoaError(.featureUnsupported)
+    }
     let painter = try ArrangePainter(device: device)
     func input(pixelsPerBeat: Double) -> CanvasInput {
-        CanvasInput(snapshot: snapshot, selected: selected,
-                    camera: ArrangeCamera(originBeat: 0, originTrack: 0, pixelsPerBeat: pixelsPerBeat, pixelsPerTrack: 40),
-                    width: 1000, height: 400, scale: 2,
-                    header: ArrangeHeaderInput(width: 180, palette: ArrangeHeaderPalette()),
-                    arrangeRuler: ArrangeRulerInput(start: nil, loop: nil))
+        CanvasInput(
+            snapshot: snapshot, selected: selected,
+            camera: ArrangeCamera(originBeat: 0, originTrack: 0, pixelsPerBeat: pixelsPerBeat, pixelsPerTrack: 40),
+            width: 1000, height: 400, scale: 2,
+            header: ArrangeHeaderInput(width: 180, palette: ArrangeHeaderPalette()),
+            arrangeRuler: ArrangeRulerInput(start: nil, loop: nil))
     }
     var timings: [String: ProbeTiming] = [:]
     var rasterized: [String: Double] = [:]
@@ -155,23 +181,33 @@ private func probeArrangeFrames(snapshot: Snapshot?, selected: UUID) throws -> (
         ("zoom", (0..<100).map { 6 * pow(52.0 / 6, Double($0) / 99) }),
     ]
     for (name, zooms) in scenarios {
-        _ = try encodeProbeFrame(ArrangeFrame(input: input(pixelsPerBeat: zooms[0])), painter: painter, device: device, queue: queue)
+        _ = try encodeProbeFrame(
+            ArrangeFrame(input: input(pixelsPerBeat: zooms[0])), painter: painter, device: device, queue: queue)
         let before = painter.rasterizedLabels
-        timings[name] = ProbeTiming(try zooms.map { try encodeProbeFrame(ArrangeFrame(input: input(pixelsPerBeat: $0)), painter: painter, device: device, queue: queue) })
+        timings[name] = ProbeTiming(
+            try zooms.map {
+                try encodeProbeFrame(
+                    ArrangeFrame(input: input(pixelsPerBeat: $0)), painter: painter, device: device, queue: queue)
+            })
         rasterized[name] = Double(painter.rasterizedLabels - before) / Double(zooms.count)
     }
     return (timings, rasterized)
 }
 
 /// Returns the CPU milliseconds of the encode alone.
-private func encodeProbeFrame(_ frame: ArrangeFrame, painter: ArrangePainter, device: any MTLDevice, queue: any MTLCommandQueue) throws -> Double {
+private func encodeProbeFrame(
+    _ frame: ArrangeFrame, painter: ArrangePainter, device: any MTLDevice, queue: any MTLCommandQueue
+) throws -> Double {
     let size = frame.input.drawableSize
-    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: max(1, Int(size.width)), height: max(1, Int(size.height)), mipmapped: false)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+        pixelFormat: .bgra8Unorm, width: max(1, Int(size.width)), height: max(1, Int(size.height)), mipmapped: false)
     descriptor.storageMode = .private
     descriptor.usage = .renderTarget
     let instances = frame.timelineInstances + frame.headerInstances
     guard let texture = device.makeTexture(descriptor: descriptor), let command = queue.makeCommandBuffer(),
-          let buffer = device.makeBuffer(length: max(1, instances.count) * MemoryLayout<Instance>.stride, options: .storageModeShared) else {
+        let buffer = device.makeBuffer(
+            length: max(1, instances.count) * MemoryLayout<Instance>.stride, options: .storageModeShared)
+    else {
         throw CocoaError(.featureUnsupported)
     }
     instances.withUnsafeBytes { data in
@@ -181,10 +217,13 @@ private func encodeProbeFrame(_ frame: ArrangeFrame, painter: ArrangePainter, de
     pass.colorAttachments[0].texture = texture
     pass.colorAttachments[0].loadAction = .clear
     pass.colorAttachments[0].storeAction = .store
-    guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw CocoaError(.featureUnsupported) }
+    guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
+        throw CocoaError(.featureUnsupported)
+    }
     let start = ContinuousClock.now
-    painter.encode(encoder: encoder, texture: texture, buffer: buffer, timelineCount: frame.timelineInstances.count,
-                   headerCount: frame.headerInstances.count, frame: frame)
+    painter.encode(
+        encoder: encoder, texture: texture, buffer: buffer, timelineCount: frame.timelineInstances.count,
+        headerCount: frame.headerInstances.count, frame: frame)
     let elapsed = milliseconds(ContinuousClock.now - start)
     encoder.endEncoding()
     command.commit()
@@ -194,8 +233,10 @@ private func encodeProbeFrame(_ frame: ArrangeFrame, painter: ArrangePainter, de
 }
 
 private func probePlayingState(tick: Int64, audition: UInt64? = nil, metronome: Bool = false) throws -> AudioState {
-    let sample = audition.map { #","audition":{"request":\#($0),"handled":\#($0),"phase":"sounding","history":[]}"# } ?? ""
-    let json = #"{"playing":true,"running":true,"opening":false,"tick":\#(tick),"devices":[],"metronome":\#(metronome)\#(sample)}"#
+    let sample =
+        audition.map { #","audition":{"request":\#($0),"handled":\#($0),"phase":"sounding","history":[]}"# } ?? ""
+    let json =
+        #"{"playing":true,"running":true,"opening":false,"tick":\#(tick),"devices":[],"metronome":\#(metronome)\#(sample)}"#
     return try JSONDecoder().decode(AudioState.self, from: Data(json.utf8))
 }
 
@@ -205,8 +246,9 @@ private func probeSplitters(in view: NSView) -> [WorkspaceSplitter] {
 }
 
 private func probeMouse(_ type: NSEvent.EventType, at point: CGPoint) -> NSEvent? {
-    NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0,
-                       context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+    NSEvent.mouseEvent(
+        with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0,
+        context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
 }
 
 private func milliseconds(_ duration: Duration) -> Double {

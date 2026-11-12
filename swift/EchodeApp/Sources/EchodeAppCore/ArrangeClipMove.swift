@@ -68,12 +68,18 @@ extension ArrangeView {
 
     func dragClip(to point: CGPoint, flags: NSEvent.ModifierFlags) {
         guard var press = movePress, let snapshot else { return }
-        if press.preview == nil, hypot(point.x - press.point.x, point.y - press.point.y) < ClipMoveTarget.threshold { return }
+        if press.preview == nil, hypot(point.x - press.point.x, point.y - press.point.y) < ClipMoveTarget.threshold {
+            return
+        }
         let rows = camera.rows(trackCount: snapshot.trackCount, height: renderInput.arrangeHeight)
-        guard let row = rows.clampedIndex(at: Double(point.y) - renderInput.arrangeTop), let track = snapshot.trackID(at: row),
-              let start = ClipMoveTarget.start(from: press.clip.start, beats: timelineBeat(at: point) - press.beat,
-                                               free: flags.contains(.shift)) else { return }
-        press.preview = ClipMovePreview(row: row, track: track, start: start, length: press.clip.length, copy: flags.contains(.command))
+        guard let row = rows.clampedIndex(at: Double(point.y) - renderInput.arrangeTop),
+            let track = snapshot.trackID(at: row),
+            let start = ClipMoveTarget.start(
+                from: press.clip.start, beats: timelineBeat(at: point) - press.beat,
+                free: flags.contains(.shift))
+        else { return }
+        press.preview = ClipMovePreview(
+            row: row, track: track, start: start, length: press.clip.length, copy: flags.contains(.command))
         movePress = press
         refresh()
     }
@@ -86,9 +92,12 @@ extension ArrangeView {
         movePress = nil
         refresh()
         guard point != nil, let preview = press.preview, let document = audioDocument,
-              preview.track != press.clip.track || preview.start != press.clip.start else { return }
-        onClipMove?(ClipMove(document: document, clip: press.clip.id, track: preview.track,
-                             start: preview.start, copy: flags.contains(.command)))
+            preview.track != press.clip.track || preview.start != press.clip.start
+        else { return }
+        onClipMove?(
+            ClipMove(
+                document: document, clip: press.clip.id, track: preview.track,
+                start: preview.start, copy: flags.contains(.command)))
     }
 
     private func timelineBeat(at point: CGPoint) -> Double {
@@ -102,14 +111,20 @@ extension ArrangeFrame {
     var clipMoveRect: CGRect? {
         guard let move = input.clipMove, let snapshot = input.snapshot else { return nil }
         let row = camera.rows(trackCount: snapshot.trackCount, height: input.arrangeHeight).rect(at: move.row, width: 0)
-        return CGRect(x: timelineOrigin + (Double(move.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat,
-                      y: input.arrangeTop + row.minY, width: Double(move.length) * camera.pixelsPerBeat / Tick.perBeat, height: max(1, row.height - 1))
+        return CGRect(
+            x: timelineOrigin + (Double(move.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat,
+            y: input.arrangeTop + row.minY, width: Double(move.length) * camera.pixelsPerBeat / Tick.perBeat,
+            height: max(1, row.height - 1))
     }
 
     var clipMoveInstances: [Instance] {
         guard let rect = clipMoveRect, let move = input.clipMove else { return [] }
         let color = move.copy ? SIMD4<Float>(0.55, 0.86, 0.48, 0.6) : SIMD4<Float>(0.95, 0.78, 0.38, 0.6)
-        return [Instance(rect: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)) * Float(input.scale), color: color)]
+        return [
+            Instance(
+                rect: SIMD4(Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height))
+                    * Float(input.scale), color: color)
+        ]
     }
 }
 
@@ -125,15 +140,18 @@ extension ProjectController {
     /// One undo step. The landed clip keeps the focus on its new track.
     @discardableResult
     func moveClip(_ move: ClipMove) async -> Bool {
-        let applied = await performActions({ [self] in
-            guard move.start >= 0, let clip = snapshot?.clipMix(move.clip),
-                  tracks.contains(where: { $0.id == move.track }),
-                  clip.track != move.track || clip.start != move.start else { return nil }
-            let action: EditAction = move.copy
-                ? .duplicateClip(clip: move.clip.uuidString, track: move.track.uuidString, start: move.start)
-                : .moveClip(clip: move.clip.uuidString, track: move.track.uuidString, start: move.start)
-            return [action]
-        }, documentID: move.document)
+        let applied = await performActions(
+            { [self] in
+                guard move.start >= 0, let clip = snapshot?.clipMix(move.clip),
+                    tracks.contains(where: { $0.id == move.track }),
+                    clip.track != move.track || clip.start != move.start
+                else { return nil }
+                let action: EditAction =
+                    move.copy
+                    ? .duplicateClip(clip: move.clip.uuidString, track: move.track.uuidString, start: move.start)
+                    : .moveClip(clip: move.clip.uuidString, track: move.track.uuidString, start: move.start)
+                return [action]
+            }, documentID: move.document)
         guard applied, isCurrent(move.document) else { return applied }
         selection = move.track
         clipFocus = move.copy ? landedClip(on: move.track, at: move.start) : move.clip
@@ -142,9 +160,12 @@ extension ProjectController {
 
     /// The placement that starts at `start` on `track`. Replace mode leaves one at most.
     private func landedClip(on track: UUID, at start: Int64) -> UUID? {
-        guard let snapshot, let row = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == track }) else { return nil }
-        return snapshot.visibleElements(originTick: start, widthTicks: 1, originTrack: Double(row), heightTracks: 1,
-                                        pixelsPerTick: 1, pixelsPerTrack: 1).elements
+        guard let snapshot, let row = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == track })
+        else { return nil }
+        return snapshot.visibleElements(
+            originTick: start, widthTicks: 1, originTrack: Double(row), heightTracks: 1,
+            pixelsPerTick: 1, pixelsPerTrack: 1
+        ).elements
             .compactMap { $0.role == .clip && $0.id.track == track ? $0.id.placement : nil }
             .first { snapshot.clipMix($0)?.start == start }
     }

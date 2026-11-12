@@ -35,10 +35,16 @@ public struct MixActions {
     var dragged: ((Double) -> Void)?
     public var enter: ((UUID, MixerField, Float) -> Void)?
     public var adjust: ((UUID, MixerField, Double) -> Void)?
-    public init(begin: @escaping (UUID, MixerField) -> Bool, change: @escaping (Float) -> Void,
-                finish: @escaping (Bool) -> Void, set: @escaping (UUID, MixerField, Float) -> Void, toggle: ((UUID, MixerField) -> Void)? = nil,
-                enter: ((UUID, MixerField, Float) -> Void)? = nil, adjust: ((UUID, MixerField, Double) -> Void)? = nil) {
-        self.begin = begin; self.change = change; self.finish = finish; self.set = set
+    public init(
+        begin: @escaping (UUID, MixerField) -> Bool, change: @escaping (Float) -> Void,
+        finish: @escaping (Bool) -> Void, set: @escaping (UUID, MixerField, Float) -> Void,
+        toggle: ((UUID, MixerField) -> Void)? = nil,
+        enter: ((UUID, MixerField, Float) -> Void)? = nil, adjust: ((UUID, MixerField, Double) -> Void)? = nil
+    ) {
+        self.begin = begin
+        self.change = change
+        self.finish = finish
+        self.set = set
         self.toggle = toggle
         self.enter = enter
         self.adjust = adjust
@@ -58,10 +64,17 @@ struct TrackControlLayout: Sendable {
     var mute: CGRect { CGRect(x: 8, y: row.minY + 29, width: 20, height: 18) }
     var solo: CGRect { CGRect(x: 31, y: row.minY + 29, width: 20, height: 18) }
     var gain: CGRect { CGRect(x: 59, y: row.minY + 29, width: max(22, (row.width - 76) * 0.62), height: 18) }
-    var pan: CGRect { CGRect(x: gain.maxX + 8, y: row.minY + 29, width: max(18, row.width - gain.maxX - 18), height: 18) }
+    var pan: CGRect {
+        CGRect(x: gain.maxX + 8, y: row.minY + 29, width: max(18, row.width - gain.maxX - 18), height: 18)
+    }
     var meter: CGRect { CGRect(x: 8, y: row.maxY - 9, width: max(0, row.width - 18), height: 3) }
     func rect(_ field: MixerField) -> CGRect {
-        switch field { case .gain: gain; case .pan: pan; case .mute: mute; case .solo: solo }
+        switch field {
+        case .gain: gain
+        case .pan: pan
+        case .mute: mute
+        case .solo: solo
+        }
     }
     func hit(_ point: CGPoint) -> MixerField? { visible ? MixerField.allCases.first { rect($0).contains(point) } : nil }
 }
@@ -70,8 +83,12 @@ enum MixScale {
     static let clipGainMax = ModelLimits.clipGain.upperBound
     static let maximumGainDecibels = 20 * log10(Double(ModelLimits.gain.upperBound))
     static func decibels(_ gain: Float) -> Double { gain > 0 ? 20 * log10(Double(gain)) : -.infinity }
-    static func gain(_ position: Double) -> Float { position <= 0 ? 0 : Float(pow(10, (-60 + min(1, position) * (60 + maximumGainDecibels)) / 20)) }
-    static func position(_ gain: Float) -> Double { gain > 0 ? min(1, max(0, (decibels(gain) + 60) / (60 + maximumGainDecibels))) : 0 }
+    static func gain(_ position: Double) -> Float {
+        position <= 0 ? 0 : Float(pow(10, (-60 + min(1, position) * (60 + maximumGainDecibels)) / 20))
+    }
+    static func position(_ gain: Float) -> Double {
+        gain > 0 ? min(1, max(0, (decibels(gain) + 60) / (60 + maximumGainDecibels))) : 0
+    }
     /// Unity gain and the center.
     static func defaultValue(_ field: MixerField) -> Float { field == .gain ? 1 : 0 }
     /// A header drag. `fraction` is the pointer's travel over the control's
@@ -80,7 +97,12 @@ enum MixScale {
         // Display positions clip quiet gains; zero travel must not round-trip through that scale.
         if fraction == 0 { return original }
         if field == .gain { return gain(min(1, max(0, position(original) + fraction))) }
-        return Float(min(Double(ModelLimits.pan.upperBound), max(Double(ModelLimits.pan.lowerBound), Double(original) + fraction * Double(ModelLimits.pan.upperBound - ModelLimits.pan.lowerBound))))
+        return Float(
+            min(
+                Double(ModelLimits.pan.upperBound),
+                max(
+                    Double(ModelLimits.pan.lowerBound),
+                    Double(original) + fraction * Double(ModelLimits.pan.upperBound - ModelLimits.pan.lowerBound))))
     }
     /// Linear amplitude at -60 dB. Matches `DISPLAY_FLOOR` in the engine meter.
     /// The header bar and the inspector both treat this and anything quieter as silence.
@@ -187,7 +209,9 @@ enum MixEntry {
             guard db >= -120, db <= MixScale.maximumGainDecibels else { return nil }
             return min(ModelLimits.gain.upperBound, Float(pow(10, db / 20)))
         case .pan:
-            guard let percent = number(text, unit: "%", silence: false), (Double(ModelLimits.pan.lowerBound) * 100...Double(ModelLimits.pan.upperBound) * 100).contains(percent) else { return nil }
+            guard let percent = number(text, unit: "%", silence: false),
+                (Double(ModelLimits.pan.lowerBound) * 100...Double(ModelLimits.pan.upperBound) * 100).contains(percent)
+            else { return nil }
             return Float(percent / 100)
         case .mute, .solo:
             return nil
@@ -237,7 +261,8 @@ enum ClipEntry {
             guard db >= -120, db <= 20 * log10(Double(MixScale.clipGainMax)) else { return nil }
             return .gain(mix.id, min(MixScale.clipGainMax, Float(pow(10, db / 20))))
         case .fadeIn, .fadeOut:
-            guard let ms = MixEntry.number(typed, unit: "ms", silence: false), ms >= 0, ms <= maximumFadeMilliseconds else { return nil }
+            guard let ms = MixEntry.number(typed, unit: "ms", silence: false), ms >= 0, ms <= maximumFadeMilliseconds
+            else { return nil }
             let flicks = Int64((ms * flicksPerMillisecond).rounded())
             return handle == .fadeIn ? .fades(mix.id, flicks, mix.fadeOut) : .fades(mix.id, mix.fadeIn, flicks)
         }
@@ -255,19 +280,28 @@ struct ClipControlLayout: Sendable {
     let rect: CGRect
     let fadeIn: Double
     let fadeOut: Double
-    static func make(_ clip: ClipMix, camera: ArrangeCamera, origin: Double, y: Double, height: Double,
-                     fadeInTicks: Int64? = nil, fadeOutTicks: Int64? = nil) -> Self {
+    static func make(
+        _ clip: ClipMix, camera: ArrangeCamera, origin: Double, y: Double, height: Double,
+        fadeInTicks: Int64? = nil, fadeOutTicks: Int64? = nil
+    ) -> Self {
         let scale = camera.pixelsPerBeat / Tick.perBeat
-        return Self(rect: CGRect(x: origin + (Double(clip.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat,
-                                 y: y, width: Double(clip.length) * scale, height: max(1, height - 1)),
-                    fadeIn: Double(fadeInTicks ?? clip.fadeInTicks) * scale,
-                    fadeOut: Double(fadeOutTicks ?? clip.fadeOutTicks) * scale)
+        return Self(
+            rect: CGRect(
+                x: origin + (Double(clip.start) / Tick.perBeat - camera.originBeat) * camera.pixelsPerBeat,
+                y: y, width: Double(clip.length) * scale, height: max(1, height - 1)),
+            fadeIn: Double(fadeInTicks ?? clip.fadeInTicks) * scale,
+            fadeOut: Double(fadeOutTicks ?? clip.fadeOutTicks) * scale)
     }
     var gain: CGRect { CGRect(x: rect.midX - 12, y: rect.minY + 14, width: 24, height: 10) }
     // Both handles stay inside the clip, so a zero fade, which placed audio
     // starts with, can still be grabbed. Drags are relative (ADR 0161).
-    var entering: CGRect { CGRect(x: min(rect.maxX - 4, max(rect.minX + 4, rect.minX + fadeIn)) - 4, y: rect.minY + 3, width: 8, height: 8) }
-    var leaving: CGRect { CGRect(x: max(rect.minX + 4, min(rect.maxX - 4, rect.maxX - fadeOut)) - 4, y: rect.minY + 3, width: 8, height: 8) }
+    var entering: CGRect {
+        CGRect(x: min(rect.maxX - 4, max(rect.minX + 4, rect.minX + fadeIn)) - 4, y: rect.minY + 3, width: 8, height: 8)
+    }
+    var leaving: CGRect {
+        CGRect(
+            x: max(rect.minX + 4, min(rect.maxX - 4, rect.maxX - fadeOut)) - 4, y: rect.minY + 3, width: 8, height: 8)
+    }
     func hit(_ point: CGPoint) -> ClipHandle? {
         if entering.insetBy(dx: -3, dy: -3).contains(point), point.x <= rect.midX { return .fadeIn }
         if leaving.insetBy(dx: -3, dy: -3).contains(point) { return .fadeOut }

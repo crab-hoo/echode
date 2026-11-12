@@ -1,5 +1,6 @@
 import CEchodeFfi
 import XCTest
+
 @testable import EchodeBridge
 
 final class LogTests: XCTestCase {
@@ -14,7 +15,9 @@ final class LogTests: XCTestCase {
         EchodeLog.write(.warning, "bridge", "record \(marker)")
         EchodeLog.flush()
         let lines = try String(contentsOf: file, encoding: .utf8).split(separator: "\n")
-        let records = try lines.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
+        let records = try lines.map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+        }
         let record = try XCTUnwrap(records.first { $0["message"] as? String == "record \(marker)" })
         XCTAssertEqual(record["level"] as? String, "warn")
         XCTAssertEqual(record["target"] as? String, "app::bridge")

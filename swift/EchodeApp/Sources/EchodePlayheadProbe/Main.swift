@@ -26,8 +26,10 @@ private final class ProbeDelegate: NSObject, NSApplicationDelegate {
             ]
             var failed = false
             for (name, run) in scenarios {
-                do { try await run() }
-                catch { failed = true; print("spike-playhead: \(name) failed: \(error)") }
+                do { try await run() } catch {
+                    failed = true
+                    print("spike-playhead: \(name) failed: \(error)")
+                }
             }
             print("spike-playhead: \(failed ? "failed" : "all four scenarios completed")")
             exit(failed ? 1 : 0)

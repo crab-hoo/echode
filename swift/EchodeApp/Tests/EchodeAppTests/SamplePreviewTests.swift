@@ -3,17 +3,18 @@ import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct SamplePreviewTests {
     private func status(complete: Bool = false, decoded: Bool = false, first: UInt64 = 0) throws -> AuditionStatus {
         let json = #"""
-        {"request":1,"handled":1,"path":"/samples/kick.wav","phase":"sounding",
-         "history":[{"request":1,"input":"click","requested_at_ms":1,"phase":"sounding","opened_output":false,"heard_us":9\#(decoded ? #","decoded_us":12"# : "")}],
-         "waveform":{"frames":48000,"loaded_frames":24000,"first_frame":\#(first),"sample_rate":48000,
-                     "frames_per_peak":12000,"complete":\#(complete),"peaks":[[-0.5,1.0],[-0.25,0.5]]}}
-        """#
+            {"request":1,"handled":1,"path":"/samples/kick.wav","phase":"sounding",
+             "history":[{"request":1,"input":"click","requested_at_ms":1,"phase":"sounding","opened_output":false,"heard_us":9\#(decoded ? #","decoded_us":12"# : "")}],
+             "waveform":{"frames":48000,"loaded_frames":24000,"first_frame":\#(first),"sample_rate":48000,
+                         "frames_per_peak":12000,"complete":\#(complete),"peaks":[[-0.5,1.0],[-0.25,0.5]]}}
+            """#
         return try JSONDecoder().decode(AuditionStatus.self, from: Data(json.utf8))
     }
 
@@ -43,7 +44,8 @@ struct SamplePreviewTests {
     /// again, and a changed file is read again (ADR 0163). The reads go through
     /// the product bridge; only the count is recorded.
     @Test func contractSelectedSampleShowsItsWholeWaveformBeforeAndAfterAudition() async throws {
-        let folder = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-overview-\(UUID())")
+        let folder = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(
+            "echode-overview-\(UUID())")
         defer { removeTestFile(folder) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for (name, frames) in [("kick.wav", 96_000), ("snare.wav", 4_800), ("hat.wav", 2_400)] {
@@ -57,14 +59,19 @@ struct SamplePreviewTests {
         let browser = FileBrowserState(overviews: overviews)
         await browser.load(folder)
         let rows = Dictionary(uniqueKeysWithValues: browser.filtered.map { ($0.url.lastPathComponent, $0.url) })
-        let kick = try #require(rows["kick.wav"]), snare = try #require(rows["snare.wav"]), hat = try #require(rows["hat.wav"])
+        let kick = try #require(rows["kick.wav"])
+        let snare = try #require(rows["snare.wav"])
+        let hat = try #require(rows["hat.wav"])
         func select(_ url: URL) async {
             browser.selection = url
             await browser.overviewTask?.value
         }
 
         await select(kick)
-        guard case .ready(let whole) = overviews.entry(for: kick) else { Issue.record("no overview"); return }
+        guard case .ready(let whole) = overviews.entry(for: kick) else {
+            Issue.record("no overview")
+            return
+        }
         #expect(whole.complete && whole.frames == 96_000 && whole.loadedFrames == 96_000 && whole.sampleRate == 48_000)
         let view = SamplePreviewView()
         view.frame = NSRect(x: 0, y: 0, width: 200, height: 86)
@@ -73,11 +80,14 @@ struct SamplePreviewTests {
         #expect(view.waveform == whole && !view.bars(in: NSRect(x: 0, y: 0, width: 200, height: 40)).isEmpty)
         #expect((view.accessibilityValue() as? String)?.contains("2.00 s") == true)
         // A partial audition of the same file does not replace it, nor does its end.
-        let playing = try JSONDecoder().decode(AuditionStatus.self, from: Data(#"""
-            {"request":1,"handled":1,"path":"\#(kick.path)","phase":"sounding",
-             "history":[{"request":1,"input":"click","requested_at_ms":1,"phase":"sounding","opened_output":false,"start_frame":24000}],
-             "waveform":{"frames":96000,"loaded_frames":4800,"first_frame":0,"sample_rate":48000,"frames_per_peak":188,"complete":false,"peaks":[[0,0]]}}
-            """#.utf8))
+        let playing = try JSONDecoder().decode(
+            AuditionStatus.self,
+            from: Data(
+                #"""
+                {"request":1,"handled":1,"path":"\#(kick.path)","phase":"sounding",
+                 "history":[{"request":1,"input":"click","requested_at_ms":1,"phase":"sounding","opened_output":false,"start_frame":24000}],
+                 "waveform":{"frames":96000,"loaded_frames":4800,"first_frame":0,"sample_rate":48000,"frames_per_peak":188,"complete":false,"peaks":[[0,0]]}}
+                """#.utf8))
         view.show(url: kick, status: playing, overview: overviews.entry(for: kick))
         #expect(view.waveform == whole)
         view.show(url: kick, status: nil, overview: overviews.entry(for: kick))
@@ -89,10 +99,14 @@ struct SamplePreviewTests {
         // A changed file is read again.
         try FileManager.default.removeItem(at: kick)
         try wavMono(rate: 48_000, frames: 48_000).write(to: kick)
-        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: kick.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: kick.path)
         await select(snare)
         await select(kick)
-        guard case .ready(let changed) = overviews.entry(for: kick) else { Issue.record("no reread"); return }
+        guard case .ready(let changed) = overviews.entry(for: kick) else {
+            Issue.record("no reread")
+            return
+        }
         #expect(changed.frames == 48_000)
         // Two are kept here; the oldest is read again when it comes back.
         await select(hat)

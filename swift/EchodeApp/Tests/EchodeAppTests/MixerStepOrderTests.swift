@@ -1,12 +1,14 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct MixerStepOrderTests {
     @Test func stepsResolveAfterNumericEntriesAndLivePreviewsWithoutRetargeting() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-step-order-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-mixer-step-order-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
@@ -18,7 +20,9 @@ struct MixerStepOrderTests {
         #expect(await controller.setMixer(second, field: .gain, value: 0.25))
         controller.selectTrack(first, change: .toggle)
         let actions = controller.arrangeMixActions(document: controller.documentID)
-        let step = try #require(actions.adjust), enter = try #require(actions.enter), before = controller.undoCount
+        let step = try #require(actions.adjust)
+        let enter = try #require(actions.enter)
+        let before = controller.undoCount
         let gate = MixerStepGate()
         defer { gate.release() }
         let held = Task { await controller.edits.run { await gate.wait() } }
@@ -28,7 +32,8 @@ struct MixerStepOrderTests {
         step(first, .gain, -1)
         let last = try #require(controller.mixerSwitchTail)
         controller.selection = second
-        gate.release(); await held.value
+        gate.release()
+        await held.value
         #expect(await last.value)
         #expect(controller.undoCount == before + 3)
         #expect(abs(try #require(controller.mixer(first)).gain.value - 1) < 1e-6)
@@ -42,9 +47,11 @@ struct MixerStepOrderTests {
         let factor = Float(pow(10.0, 1.0 / 20))
         #expect(abs(try #require(controller.mixer(first)).gain.value - 2 * factor) < 1e-6)
         #expect(abs(try #require(controller.mixer(second)).gain.value - 0.5 * factor) < 1e-6)
-        let invalid = MixerValueBatch(document: try #require(controller.documentID), tracks: [first, UUID()],
+        let invalid = MixerValueBatch(
+            document: try #require(controller.documentID), tracks: [first, UUID()],
             anchor: first, field: .gain, value: 0, direction: -1)
-        let recorded = controller.mixer(first), undo = controller.undoCount
+        let recorded = controller.mixer(first)
+        let undo = controller.undoCount
         #expect(!(await controller.applyMixerValue(invalid)))
         #expect(controller.mixer(first) == recorded && controller.undoCount == undo)
         // Unselected anchors remain single-track, including the existing silence endpoint.
@@ -75,7 +82,8 @@ private final class MixerStepGate {
     private var released = false
     func wait() async {
         waiting = true
-        enteredReply?.resume(); enteredReply = nil
+        enteredReply?.resume()
+        enteredReply = nil
         if !released { await withCheckedContinuation { held = $0 } }
     }
     func entered() async {
@@ -83,6 +91,7 @@ private final class MixerStepGate {
     }
     func release() {
         released = true
-        held?.resume(); held = nil
+        held?.resume()
+        held = nil
     }
 }

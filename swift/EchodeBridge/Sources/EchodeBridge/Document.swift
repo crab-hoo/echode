@@ -83,10 +83,11 @@ public final class Snapshot: @unchecked Sendable {
         }
         guard code == 0 else { return nil }
         return bytes.withUnsafeBytes { raw in
-            UUID(uuid: (
-                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
-                raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]
-            ))
+            UUID(
+                uuid: (
+                    raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                    raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]
+                ))
         }
     }
 
@@ -112,10 +113,11 @@ public final class Snapshot: @unchecked Sendable {
         }
         guard code == 0 else { return nil }
         return bytes.withUnsafeBytes { raw in
-            UUID(uuid: (
-                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
-                raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]
-            ))
+            UUID(
+                uuid: (
+                    raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                    raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]
+                ))
         }
     }
 
@@ -187,23 +189,31 @@ public final class Snapshot: @unchecked Sendable {
         }
     }
 
-    public func pianoNotes(track: UUID, originTick: Int64, widthTicks: Int64,
-                           topPitch: Double, heightPitches: Double,
-                           pixelsPerTick: Double, pixelsPerPitch: Double) -> [PianoNote] {
+    public func pianoNotes(
+        track: UUID, originTick: Int64, widthTicks: Int64,
+        topPitch: Double, heightPitches: Double,
+        pixelsPerTick: Double, pixelsPerPitch: Double
+    ) -> [PianoNote] {
         withExtendedLifetime(self) {
             withIDs(track: track, placement: nil, note: nil) { track, _, _ in
                 var written = 0
                 var dropped = 0
                 visibleLock.lock()
                 defer { visibleLock.unlock() }
-                guard echode_snapshot_piano_visible(handle, track, originTick, widthTicks, topPitch, heightPitches,
-                                                     pixelsPerTick, pixelsPerPitch, nil, 0, &written, &dropped) == 0,
-                      dropped > 0 else { return [] }
+                guard
+                    echode_snapshot_piano_visible(
+                        handle, track, originTick, widthTicks, topPitch, heightPitches,
+                        pixelsPerTick, pixelsPerPitch, nil, 0, &written, &dropped) == 0,
+                    dropped > 0
+                else { return [] }
                 let capacity = dropped
                 guard let storage = pianoStorage(capacity) else { return [] }
-                guard echode_snapshot_piano_visible(handle, track, originTick, widthTicks, topPitch, heightPitches,
-                                                     pixelsPerTick, pixelsPerPitch, storage, capacity,
-                                                     &written, &dropped) == 0 else { return [] }
+                guard
+                    echode_snapshot_piano_visible(
+                        handle, track, originTick, widthTicks, topPitch, heightPitches,
+                        pixelsPerTick, pixelsPerPitch, storage, capacity,
+                        &written, &dropped) == 0
+                else { return [] }
                 return UnsafeBufferPointer(start: storage, count: min(written, capacity)).map(PianoNote.init)
             }
         }
@@ -219,7 +229,8 @@ public final class Snapshot: @unchecked Sendable {
     public func pianoNeighbor(track: UUID, current: PianoNote.ID?, backwards: Bool = false) -> PianoNote? {
         withIDs(track: track, placement: current?.placement, note: current?.note) { track, clip, note in
             var raw = PianoNoteElement()
-            return echode_snapshot_piano_neighbor(handle, track, clip, note, backwards ? 1 : 0, &raw) == 0 ? PianoNote(raw) : nil
+            return echode_snapshot_piano_neighbor(handle, track, clip, note, backwards ? 1 : 0, &raw) == 0
+                ? PianoNote(raw) : nil
         }
     }
 }
@@ -230,7 +241,9 @@ public struct PianoNote: Sendable, Identifiable {
         public let placement: UUID
         public let note: UUID
         public init(track: UUID, placement: UUID, note: UUID) {
-            self.track = track; self.placement = placement; self.note = note
+            self.track = track
+            self.placement = placement
+            self.note = note
         }
     }
     public let id: ID
@@ -247,23 +260,33 @@ public struct PianoNote: Sendable, Identifiable {
 
     fileprivate init(_ raw: PianoNoteElement) {
         id = ID(track: UUID(uuid: raw.track_id), placement: UUID(uuid: raw.placement_id), note: UUID(uuid: raw.note_id))
-        start = raw.start; length = raw.length; windowStart = raw.window_start; windowEnd = raw.window_end
-        pitch = Int(raw.pitch); velocity = raw.velocity
-        x = raw.x; y = raw.y; width = raw.w; height = raw.h
+        start = raw.start
+        length = raw.length
+        windowStart = raw.window_start
+        windowEnd = raw.window_end
+        pitch = Int(raw.pitch)
+        velocity = raw.velocity
+        x = raw.x
+        y = raw.y
+        width = raw.w
+        height = raw.h
     }
 }
 
-private func withIDs<T>(track: UUID, placement: UUID?, note: UUID?,
-                        _ body: (UnsafePointer<UInt8>, UnsafePointer<UInt8>?, UnsafePointer<UInt8>?) -> T) -> T {
+private func withIDs<T>(
+    track: UUID, placement: UUID?, note: UUID?,
+    _ body: (UnsafePointer<UInt8>, UnsafePointer<UInt8>?, UnsafePointer<UInt8>?) -> T
+) -> T {
     var trackBytes = track.uuid
     var clipBytes = (placement ?? track).uuid
     var noteBytes = (note ?? track).uuid
     return withUnsafeBytes(of: &trackBytes) { trackRaw in
         withUnsafeBytes(of: &clipBytes) { clipRaw in
             withUnsafeBytes(of: &noteBytes) { noteRaw in
-                body(trackRaw.bindMemory(to: UInt8.self).baseAddress!,
-                     placement == nil ? nil : clipRaw.bindMemory(to: UInt8.self).baseAddress!,
-                     note == nil ? nil : noteRaw.bindMemory(to: UInt8.self).baseAddress!)
+                body(
+                    trackRaw.bindMemory(to: UInt8.self).baseAddress!,
+                    placement == nil ? nil : clipRaw.bindMemory(to: UInt8.self).baseAddress!,
+                    note == nil ? nil : noteRaw.bindMemory(to: UInt8.self).baseAddress!)
             }
         }
     }
@@ -271,7 +294,11 @@ private func withIDs<T>(track: UUID, placement: UUID?, note: UUID?,
 
 /// Value objects keep the C layout and raw pointers inside the bridge.
 public struct ArrangeElement: Sendable, Identifiable {
-    public enum Role: UInt32, Sendable { case track = 0, clip = 1, note = 2 }
+    public enum Role: UInt32, Sendable {
+        case track = 0
+        case clip = 1
+        case note = 2
+    }
     public struct ID: Sendable, Hashable {
         public let track: UUID
         public let placement: UUID?
@@ -468,13 +495,15 @@ public final class Document: @unchecked Sendable {
     /// audition's history.
     public func audition(_ url: URL?, from frame: UInt64 = 0, origin: AuditionOrigin = .other) {
         let bytes = Array((url?.path ?? "").utf8)
-        let input = switch origin.input {
-        case .other: UInt32(ECHODE_AUDITION_INPUT_OTHER)
-        case .click: UInt32(ECHODE_AUDITION_INPUT_CLICK)
-        case .key: UInt32(ECHODE_AUDITION_INPUT_KEY)
-        }
+        let input =
+            switch origin.input {
+            case .other: UInt32(ECHODE_AUDITION_INPUT_OTHER)
+            case .click: UInt32(ECHODE_AUDITION_INPUT_CLICK)
+            case .key: UInt32(ECHODE_AUDITION_INPUT_KEY)
+            }
         bytes.withUnsafeBufferPointer { buffer in
-            _ = echode_document_audition_at(handle, buffer.baseAddress, buffer.count, frame, input, origin.delayMicroseconds)
+            _ = echode_document_audition_at(
+                handle, buffer.baseAddress, buffer.count, frame, input, origin.delayMicroseconds)
         }
     }
 

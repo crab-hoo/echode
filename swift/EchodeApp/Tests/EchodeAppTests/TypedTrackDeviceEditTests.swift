@@ -1,12 +1,14 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @Suite @MainActor
 struct TypedTrackDeviceEditTests {
     @Test func contractTrackAndDeviceEditsPreserveSelectionHistoryAndPersistence() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-typed-track-device-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-typed-track-device-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
@@ -32,7 +34,7 @@ struct TypedTrackDeviceEditTests {
         #expect(controller.deviceRows(on: first).isEmpty && controller.deviceRows(on: second).isEmpty)
         await controller.redo()
         #expect(controller.deviceRows(on: first) == [a] && controller.deviceRows(on: second) == [b])
-        let parameter = UInt32.max - 1 // The largest valid CLAP id; UInt32.max is reserved.
+        let parameter = UInt32.max - 1  // The largest valid CLAP id; UInt32.max is reserved.
         #expect(await controller.setPinned(parameter, device: a.id, pinned: true, documentID: document))
         #expect(await controller.editDeviceChain(.bypass(device: a.id, bypassed: true), documentID: document))
         #expect(await controller.editDeviceChain(.offline(device: a.id, offline: true), documentID: document))
@@ -42,7 +44,8 @@ struct TypedTrackDeviceEditTests {
         #expect(await controller.duplicateTracks(duplication))
         let roots = controller.tracks.map(\.id)
         try #require(roots.count == 5)
-        let firstCopy = roots[1], secondCopy = roots[4]
+        let firstCopy = roots[1]
+        let secondCopy = roots[4]
         #expect(roots == [first, firstCopy, between, second, secondCopy])
         #expect(controller.selectedTracks == [firstCopy, secondCopy] && controller.selection == firstCopy)
         #expect(controller.undoCount == undo + 1)
@@ -56,7 +59,8 @@ struct TypedTrackDeviceEditTests {
 
         #expect(await controller.insertPlugin("org.example.tail", on: first, documentID: document))
         let tail = try #require(controller.deviceRows(on: first).last)
-        #expect(await controller.editDeviceChain(.copy(source: a.id, track: first, before: tail.id), documentID: document))
+        #expect(
+            await controller.editDeviceChain(.copy(source: a.id, track: first, before: tail.id), documentID: document))
         let clone = try #require(controller.deviceRows(on: first).dropFirst().first)
         #expect(clone.id != a.id && clone.id != tail.id)
         #expect(clone.pinned == [parameter] && clone.bypassed && clone.offline)
@@ -70,17 +74,21 @@ struct TypedTrackDeviceEditTests {
         #expect(controller.deviceRows(on: first).map(\.id) == [a.id, clone.id, tail.id])
         #expect(await controller.editDeviceChain(.remove(clone.id), documentID: document))
         await controller.undo()
-        let kept = controller.deviceRows(on: first), count = controller.undoCount
+        let kept = controller.deviceRows(on: first)
+        let count = controller.undoCount
         #expect(!(await controller.setPinned(parameter, device: a.id, pinned: true, documentID: document)))
         #expect(!(await controller.editDeviceChain(.bypass(device: a.id, bypassed: true), documentID: document)))
         #expect(!(await controller.editDeviceChain(.offline(device: a.id, offline: true), documentID: document)))
         #expect(!(await controller.editDeviceChain(.reorder(device: a.id, before: clone.id), documentID: document)))
-        #expect(!(await controller.editDeviceChain(.copy(source: a.id, track: first, before: UUID()), documentID: document)))
+        #expect(
+            !(await controller.editDeviceChain(.copy(source: a.id, track: first, before: UUID()), documentID: document))
+        )
         #expect(!(await controller.setPinned(UInt32.max, device: a.id, pinned: true, documentID: document)))
         #expect(controller.errorMessage != nil)
         controller.errorMessage = nil
         #expect(!(await controller.insertPlugin("org.example.invalid", on: [first, UUID()], documentID: document)))
-        #expect(!(await controller.duplicateTracks(TrackDuplicationRequest(document: document, sources: [first, first]))))
+        #expect(
+            !(await controller.duplicateTracks(TrackDuplicationRequest(document: document, sources: [first, first]))))
         #expect(controller.deviceRows(on: first) == kept && controller.tracks.map(\.id) == roots)
         #expect(controller.undoCount == count && controller.redoCount == 1)
         await controller.redo()

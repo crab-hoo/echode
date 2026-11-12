@@ -1,12 +1,12 @@
 """A task runs the checks that can catch its own change; the full tier runs the rest (ADR 0212)."""
 
-from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 import test_verification as support
@@ -14,12 +14,23 @@ import test_verification as support
 verify = support.verify
 contracts = support.load_contracts()
 ROOT = support.ROOT
-FULL_TIER = {"check-bridge-asan", "check-bridge-tsan", "check-tsan-runtime", "check-bridge-miri", "check-contract-controls", "check-fuzz"}
+FULL_TIER = {
+    "check-bridge-asan",
+    "check-bridge-tsan",
+    "check-tsan-runtime",
+    "check-bridge-miri",
+    "check-contract-controls",
+    "check-fuzz",
+}
 
 
 def git(root, *arguments):
-    subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *arguments],
-                   cwd=root, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *arguments],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
 
 
 def repository(root):
@@ -40,24 +51,41 @@ class RealPolicyTests(unittest.TestCase):
     def test_the_full_tier_is_exactly_the_slow_evidence(self):
         self.assertEqual({name for name, check in self.checks.items() if check.get("tier") == "full"}, FULL_TIER)
         # Everything that catches an ordinary regression stays in every task.
-        for name in ("check-format", "check-verification", "check", "check-swift", "check-product-contracts", "check-real-hal"):
+        for name in (
+            "check-format",
+            "check-verification",
+            "check",
+            "check-swift",
+            "check-product-contracts",
+            "check-real-hal",
+        ):
             self.assertTrue(self.checks[name].get("always") and self.checks[name].get("tier", "task") == "task", name)
 
     def test_ordinary_edits_leave_the_full_tier_out_of_a_task(self):
-        for path in ("swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift", "crates/echode-model/src/clip_move.rs",
-                     "crates/echode-ffi/src/lib.rs", "swift/EchodeBridge/Sources/EchodeBridge/Document.swift",
-                     "Cargo.lock", "scripts/verify.py", "scripts/verification.json", "Makefile", "docs/status.md"):
+        for path in (
+            "swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift",
+            "crates/echode-model/src/clip_move.rs",
+            "crates/echode-ffi/src/lib.rs",
+            "swift/EchodeBridge/Sources/EchodeBridge/Document.swift",
+            "Cargo.lock",
+            "scripts/verify.py",
+            "scripts/verification.json",
+            "Makefile",
+            "docs/status.md",
+        ):
             with self.subTest(path=path):
                 self.assertFalse(FULL_TIER & set(verify.select_checks(self.policy, [path], redefined=None)))
 
     def test_changing_a_full_tier_check_itself_selects_it_in_a_task(self):
-        for path, expected in (("scripts/check-bridge-address.sh", {"check-bridge-asan", "check-bridge-tsan", "check-tsan-runtime"}),
-                               ("scripts/check-bridge-miri.sh", {"check-bridge-miri"}),
-                               ("scripts/tsan_runtime.py", {"check-bridge-tsan", "check-tsan-runtime"}),
-                               ("scripts/check_product_contracts.py", {"check-contract-controls"}),
-                               ("scripts/swift_contract_runner.py", {"check-contract-controls"}),
-                               ("scripts/fuzz.sh", {"check-fuzz"}),
-                               ("crates/echode-fuzz/fuzz_targets/control.rs", {"check-fuzz"})):
+        for path, expected in (
+            ("scripts/check-bridge-address.sh", {"check-bridge-asan", "check-bridge-tsan", "check-tsan-runtime"}),
+            ("scripts/check-bridge-miri.sh", {"check-bridge-miri"}),
+            ("scripts/tsan_runtime.py", {"check-bridge-tsan", "check-tsan-runtime"}),
+            ("scripts/check_product_contracts.py", {"check-contract-controls"}),
+            ("scripts/swift_contract_runner.py", {"check-contract-controls"}),
+            ("scripts/fuzz.sh", {"check-fuzz"}),
+            ("crates/echode-fuzz/fuzz_targets/control.rs", {"check-fuzz"}),
+        ):
             with self.subTest(path=path):
                 self.assertEqual(FULL_TIER & set(verify.select_checks(self.policy, [path])), expected)
 
@@ -69,16 +97,30 @@ class RealPolicyTests(unittest.TestCase):
             repository(root)
             (root / "note.txt").write_text("x\n")
             commit(root)
-            policy = {**self.policy, "checks": [{k: v for k, v in check.items() if k != "packages"}
-                                                for check in self.policy["checks"]]}
+            policy = {
+                **self.policy,
+                "checks": [{k: v for k, v in check.items() if k != "packages"} for check in self.policy["checks"]],
+            }
             selected = verify.plan_checks(root, policy, [], full=True)
         self.assertEqual({name for name, check in self.checks.items() if check["mode"] == "automatic"}, set(selected))
 
     def test_a_contract_edit_is_handled_inside_the_task_tier_gate_not_by_rerunning_every_control(self):
-        self.assertIn("check-product-contracts", verify.select_checks(self.policy, [verify.POLICY.as_posix()],
-                                                                      redefined={"check-product-contracts", "check-contract-controls"}))
-        self.assertNotIn("check-contract-controls", verify.select_checks(self.policy, [verify.POLICY.as_posix()],
-                                                                         redefined={"check-product-contracts", "check-contract-controls"}))
+        self.assertIn(
+            "check-product-contracts",
+            verify.select_checks(
+                self.policy,
+                [verify.POLICY.as_posix()],
+                redefined={"check-product-contracts", "check-contract-controls"},
+            ),
+        )
+        self.assertNotIn(
+            "check-contract-controls",
+            verify.select_checks(
+                self.policy,
+                [verify.POLICY.as_posix()],
+                redefined={"check-product-contracts", "check-contract-controls"},
+            ),
+        )
 
     def test_recipes_separate_changed_controls_from_all_controls(self):
         makefile = (ROOT / "Makefile").read_text()
@@ -95,11 +137,16 @@ class RealPolicyTests(unittest.TestCase):
     def test_swift_edits_keep_the_rust_evidence_and_rust_edits_expire_both(self):
         stamps = verify.check_fingerprints(ROOT, self.policy, {}, {})
         digest = verify.input_digest
+
         def after(path):
-            with patch.object(verify, "input_digest", side_effect=lambda root, relative:
-                              digest(root, relative) + (b"edited" if relative == path else b"")):
+            with patch.object(
+                verify,
+                "input_digest",
+                side_effect=lambda root, relative: digest(root, relative) + (b"edited" if relative == path else b""),
+            ):
                 current = verify.check_fingerprints(ROOT, self.policy, {}, {})
             return {name for name in stamps if stamps[name] != current[name]}
+
         swift = after("swift/EchodeApp/Sources/EchodeAppCore/PianoRollView.swift")
         self.assertIn("check-swift", swift)
         self.assertNotIn("check", swift)
@@ -131,6 +178,7 @@ class RealPolicyTests(unittest.TestCase):
                 (root / verify.POLICY).write_text(json.dumps(policy))
                 with self.assertRaisesRegex(ValueError, "tier|task_"):
                     verify.load_policy(root)
+
         rejected(lambda check: check.update(tier="sometimes"))
         rejected(lambda check: check.update(mode="manual"))
         rejected(lambda check: check.update(tier="task"))
@@ -152,8 +200,20 @@ class UnsafeChangeTests(unittest.TestCase):
         (root / "swift/Sources/View.swift").write_text("struct View {}\nfinal class Box: @unchecked Sendable {}\n")
         (root / "swift/Tests/Case.swift").write_text("struct Case {}\n")
         commit(root)
-        return {"checks": [{"id": "sanitizer", "mode": "automatic", "tier": "full", "task_unsafe": True, "areas": [],
-                            "timeout": 5, "packages": ["linked"], "inputs": ["swift/Sources/**", "swift/Tests/**"]}]}
+        return {
+            "checks": [
+                {
+                    "id": "sanitizer",
+                    "mode": "automatic",
+                    "tier": "full",
+                    "task_unsafe": True,
+                    "areas": [],
+                    "timeout": 5,
+                    "packages": ["linked"],
+                    "inputs": ["swift/Sources/**", "swift/Tests/**"],
+                }
+            ]
+        }
 
     def found(self, root, policy, base=None):
         return verify.unsafe_changes(root, policy, verify.changed_paths(root, base), base).get("sanitizer", [])
@@ -172,7 +232,8 @@ class UnsafeChangeTests(unittest.TestCase):
             policy = self.fixture(root)
             (root / "crates/linked/src/lib.rs").write_text("pub fn safe() {}\n")
             (root / "swift/Sources/View.swift").write_text(
-                "struct View {}\nfinal class Box: @unchecked Sendable {}\nlet p = withUnsafeBytes(of: 1) { _ in }\n")
+                "struct View {}\nfinal class Box: @unchecked Sendable {}\nlet p = withUnsafeBytes(of: 1) { _ in }\n"
+            )
             self.assertEqual(self.found(root, policy), ["crates/linked/src/lib.rs", "swift/Sources/View.swift"])
 
     def test_a_new_file_counts_but_other_crates_and_tests_do_not(self):
@@ -190,11 +251,15 @@ class UnsafeChangeTests(unittest.TestCase):
             root = Path(directory)
             policy = self.fixture(root)
             subprocess.run(["git", "tag", "start"], cwd=root, check=True)
-            (root / "crates/linked/src/lib.rs").write_text("pub fn safe() {}\nunsafe fn raw() {}\nunsafe fn more() {}\n")
+            (root / "crates/linked/src/lib.rs").write_text(
+                "pub fn safe() {}\nunsafe fn raw() {}\nunsafe fn more() {}\n"
+            )
             commit(root)
             self.assertEqual(self.found(root, policy), [])
             self.assertEqual(self.found(root, policy, "start"), ["crates/linked/src/lib.rs"])
-            (root / "crates/linked/src/lib.rs").write_text("pub fn other() {}\nunsafe fn raw() {}\nunsafe fn more() {}\n")
+            (root / "crates/linked/src/lib.rs").write_text(
+                "pub fn other() {}\nunsafe fn raw() {}\nunsafe fn more() {}\n"
+            )
             with patch.object(verify, "changed_lines", side_effect=subprocess.CalledProcessError(128, "git")):
                 self.assertEqual(self.found(root, policy), ["crates/linked/src/lib.rs"])
 
@@ -207,10 +272,27 @@ class EvidenceTests(unittest.TestCase):
 
     def policy(self):
         policy = json.loads((self.root / verify.POLICY).read_text())
-        policy["checks"] = [{"id": "check", "mode": "automatic", "always": True, "areas": [], "inputs": ["src/**"],
-                             "timeout": 10, "purpose": "fixture"},
-                            {"id": "slow", "mode": "automatic", "tier": "full", "task_inputs": ["scripts/slow.sh"],
-                             "areas": [], "inputs": ["src/**"], "timeout": 10, "purpose": "fixture"}]
+        policy["checks"] = [
+            {
+                "id": "check",
+                "mode": "automatic",
+                "always": True,
+                "areas": [],
+                "inputs": ["src/**"],
+                "timeout": 10,
+                "purpose": "fixture",
+            },
+            {
+                "id": "slow",
+                "mode": "automatic",
+                "tier": "full",
+                "task_inputs": ["scripts/slow.sh"],
+                "areas": [],
+                "inputs": ["src/**"],
+                "timeout": 10,
+                "purpose": "fixture",
+            },
+        ]
         policy["preflights"] = {}
         policy.pop("hook_timeout", None)
         (self.root / verify.POLICY).write_text(json.dumps(policy))
@@ -218,8 +300,11 @@ class EvidenceTests(unittest.TestCase):
     def test_a_task_passes_without_the_full_tier_and_never_records_it_as_passed(self):
         self.policy()
         output = io.StringIO()
-        with patch.object(verify, "tool_identity", return_value={}), \
-             patch.object(verify, "run_check", return_value={"status": "passed"}) as invocation, redirect_stdout(output):
+        with (
+            patch.object(verify, "tool_identity", return_value={}),
+            patch.object(verify, "run_check", return_value={"status": "passed"}) as invocation,
+            redirect_stdout(output),
+        ):
             self.assertEqual(verify.verify(self.root, support.arguments()), 0)
         self.assertEqual(invocation.call_count, 1)
         report = self.report()
@@ -235,8 +320,10 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_verify(support.arguments()), (0, 1))
         self.assertEqual(self.run_verify(support.arguments(full=True)), (0, 1), "the task check is reused")
         report = self.report()
-        self.assertEqual((report["profile"], report["results"]["slow"]["status"], report["full_tier_unverified"]),
-                         ("full", "passed", []))
+        self.assertEqual(
+            (report["profile"], report["results"]["slow"]["status"], report["full_tier_unverified"]),
+            ("full", "passed", []),
+        )
         self.assertTrue(report["results"]["slow"]["finished_at"])
         self.assertEqual(self.run_verify(support.arguments(full=True)), (0, 0))
         (self.root / "src/app.txt").write_text("edited\n")
@@ -246,7 +333,9 @@ class EvidenceTests(unittest.TestCase):
     def test_full_verification_of_a_clean_tree_still_runs(self):
         self.policy()
         self.git("add", ".")
-        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "clean")
+        self.git(
+            "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "clean"
+        )
         self.assertEqual(self.run_verify(support.arguments()), (0, 0), "no change selects nothing in a task")
         self.assertEqual(self.run_verify(support.arguments(full=True)), (0, 2))
 
@@ -268,8 +357,10 @@ class EvidenceTests(unittest.TestCase):
     def test_a_failed_run_covers_nothing(self):
         self.policy()
         (self.root / "scripts/slow.sh").write_text("true\n")
+
         def run(root, check, log, force=False, base=None):
             return {"status": "failed" if check["id"] == "slow" else "passed", "seconds": 0, "log": str(log)}
+
         self.assertEqual(self.run_verify(support.arguments(), run), (1, 2))
         (self.root / "src/app.txt").write_text("another edit\n")
         self.assertEqual(self.run_verify(support.arguments()), (0, 2))
@@ -278,9 +369,11 @@ class EvidenceTests(unittest.TestCase):
         self.policy()
         (self.root / "scripts/slow.sh").write_text("true\n")
         seen = []
+
         def run(root, check, log, force=False, base=None):
             seen.append((check["id"], base))
             return {"status": "passed", "seconds": 0, "log": str(log)}
+
         self.assertEqual(self.run_verify(support.arguments(), run), (0, 2))
         self.assertEqual(seen, [("check", None), ("slow", None)])
         self.assertEqual(self.report()["full_tier_unverified"], [])
@@ -293,10 +386,22 @@ class ControlSiteTests(unittest.TestCase):
         (root / "tests").mkdir()
         padding = "".join(f"// line {index}\n" for index in range(60))
         (root / "src/lib.rs").write_text(padding + "let defect = false;\n" + padding)
-        (root / "tests/case.rs").write_text("#[test]\nfn first() {\n    assert!(true);\n}\n\n#[test]\nfn second() {\n    assert!(true);\n}\n")
-        self.cases = [{"id": name, "runner": "rust", "package": "p", "target": ["--test", "case"], "test": name, "timeout": 5,
-                       "purpose": "fixture", "negative_control": {"file": "src/lib.rs", "old": "let defect = false;", "new": "let defect = true;"}}
-                      for name in ("first", "second")]
+        (root / "tests/case.rs").write_text(
+            "#[test]\nfn first() {\n    assert!(true);\n}\n\n#[test]\nfn second() {\n    assert!(true);\n}\n"
+        )
+        self.cases = [
+            {
+                "id": name,
+                "runner": "rust",
+                "package": "p",
+                "target": ["--test", "case"],
+                "test": name,
+                "timeout": 5,
+                "purpose": "fixture",
+                "negative_control": {"file": "src/lib.rs", "old": "let defect = false;", "new": "let defect = true;"},
+            }
+            for name in ("first", "second")
+        ]
         self.policy = {"product_contracts": self.cases}
         (root / "scripts").mkdir()
         (root / verify.POLICY).write_text(json.dumps(self.policy))
@@ -318,7 +423,9 @@ class ControlSiteTests(unittest.TestCase):
             self.assertEqual(self.targets(root), {"first", "second"})
             source.write_text(padding + "let defect = false;\n" + padding)
             tests = root / "tests/case.rs"
-            tests.write_text(tests.read_text().replace("fn second() {\n    assert!(true);", "fn second() {\n    assert!(false);"))
+            tests.write_text(
+                tests.read_text().replace("fn second() {\n    assert!(true);", "fn second() {\n    assert!(false);")
+            )
             self.assertEqual(self.targets(root), {"second"}, "another test in the same file is unaffected")
             subprocess.run(["git", "checkout", "-q", "tests/case.rs"], cwd=root, check=True)
             self.cases[0]["purpose"] = "a better explanation"
@@ -350,19 +457,30 @@ class ControlSiteTests(unittest.TestCase):
 
     def run_gate(self, root, changed_only=True, fresh=False):
         tested, controlled = [], []
+
         def run_tests(_root, pending, _invoke, stamps, _evidence, record, **_options):
             for case in pending:
                 tested.append(case["id"])
                 record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})
+
         def run_controls(_root, pending, stamps, _evidence, record):
             for case in pending:
                 controlled.append(case["id"])
                 record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})
-        with patch.object(contracts, "run_tests", side_effect=run_tests), \
-             patch.object(contracts, "negative_controls", side_effect=run_controls), \
-             patch.object(contracts, "contract_fingerprints", side_effect=lambda _root, _policy, cases, _tools, phase="complete":
-                          {case["id"]: f"{self.generation}:{phase}" for case in cases}), \
-             patch.object(contracts.verify, "tool_identity", return_value={}), redirect_stdout(io.StringIO()):
+
+        with (
+            patch.object(contracts, "run_tests", side_effect=run_tests),
+            patch.object(contracts, "negative_controls", side_effect=run_controls),
+            patch.object(
+                contracts,
+                "contract_fingerprints",
+                side_effect=lambda _root, _policy, cases, _tools, phase="complete": {
+                    case["id"]: f"{self.generation}:{phase}" for case in cases
+                },
+            ),
+            patch.object(contracts.verify, "tool_identity", return_value={}),
+            redirect_stdout(io.StringIO()),
+        ):
             code = contracts.run(root, self.cases, policy=self.policy, changed_only=changed_only, fresh=fresh)
         return code, tested, controlled
 
@@ -379,10 +497,15 @@ class ControlSiteTests(unittest.TestCase):
             self.generation = 2
             self.assertEqual(self.run_gate(root), (0, ["first", "second"], []))
             report = self.report(root)
-            self.assertEqual((report["status"], report["execution"]["control_scope"], report["execution"]["negative_pending"]),
-                             ("passed", "changed", 0))
-            self.assertEqual({item["fingerprint"] for item in report["negative_controls"]}, {"1:complete"},
-                             "an outdated control stays on record with its own identity")
+            self.assertEqual(
+                (report["status"], report["execution"]["control_scope"], report["execution"]["negative_pending"]),
+                ("passed", "changed", 0),
+            )
+            self.assertEqual(
+                {item["fingerprint"] for item in report["negative_controls"]},
+                {"1:complete"},
+                "an outdated control stays on record with its own identity",
+            )
             # The mutated text changes: its controls run once and then wait for another change to the site.
             self.generation = 3
             (root / "src/lib.rs").write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
@@ -399,24 +522,32 @@ class ControlSiteTests(unittest.TestCase):
             padding = self.fixture(root)
             self.generation = 1
             (root / "src/lib.rs").write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
+
             def run_tests(_root, pending, _invoke, stamps, _evidence, record, **_options):
                 for case in pending:
                     record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})
+
             def failing(_root, pending, stamps, _evidence, record):
                 for case in pending:
                     record({"id": case["id"], "status": "failed", "fingerprint": stamps[case["id"]]})
-            with patch.object(contracts, "run_tests", side_effect=run_tests), \
-                 patch.object(contracts, "negative_controls", side_effect=failing), \
-                 patch.object(contracts, "contract_fingerprints", return_value={"first": "x", "second": "x"}), \
-                 patch.object(contracts.verify, "tool_identity", return_value={}), redirect_stderr(io.StringIO()):
+
+            with (
+                patch.object(contracts, "run_tests", side_effect=run_tests),
+                patch.object(contracts, "negative_controls", side_effect=failing),
+                patch.object(contracts, "contract_fingerprints", return_value={"first": "x", "second": "x"}),
+                patch.object(contracts.verify, "tool_identity", return_value={}),
+                redirect_stderr(io.StringIO()),
+            ):
                 self.assertEqual(contracts.run(root, self.cases, policy=self.policy, changed_only=True), 1)
             self.assertEqual(self.report(root)["status"], "failed")
             self.assertEqual(self.run_gate(root)[2], ["first", "second"], "a failure is never reused as a pass")
 
     def test_every_real_counterexample_has_a_site_and_a_clean_tree_has_no_targets(self):
         policy = verify.load_policy(ROOT)
-        with patch.object(contracts.verify, "changed_paths", return_value=[]), \
-             patch.object(contracts, "read_at_base", side_effect=lambda root, path, base: (root / path).read_text()):
+        with (
+            patch.object(contracts.verify, "changed_paths", return_value=[]),
+            patch.object(contracts, "read_at_base", side_effect=lambda root, path, base: (root / path).read_text()),
+        ):
             sites, targets = contracts.control_sites(ROOT, policy, policy["product_contracts"])
         self.assertEqual(set(sites), {contract["id"] for contract in policy["product_contracts"]})
         self.assertEqual(targets, set())
@@ -434,22 +565,40 @@ class ControlSiteTests(unittest.TestCase):
         return [*folder.glob("src/**/*.rs"), *folder.glob("tests/**/*.rs")]
 
     def test_a_copy_that_does_not_build_stops_before_any_counterexample(self):
-        case = {"id": "a", "runner": "swift", "package_path": "swift/App", "build_product": "Tests", "suite": "S", "test": "a",
-                "timeout": 180, "purpose": "fixture", "negative_control": {"file": "a", "old": "b", "new": "c"}}
+        case = {
+            "id": "a",
+            "runner": "swift",
+            "package_path": "swift/App",
+            "build_product": "Tests",
+            "suite": "S",
+            "test": "a",
+            "timeout": 180,
+            "purpose": "fixture",
+            "negative_control": {"file": "a", "old": "b", "new": "c"},
+        }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             calls = []
+
             def built(args, **kwargs):
                 calls.append(kwargs["timeout"])
                 return subprocess.CompletedProcess(args, 0, "", "")
+
             with patch.object(contracts, "run_process", side_effect=built):
                 contracts.build_swift_copies([root, root], [case])
-            self.assertEqual(calls, [contracts.SWIFT_COPY_BUILD_TIMEOUT] * 2,
-                             "bringing a copy up to date is not charged to a contract's deadline")
+            self.assertEqual(
+                calls,
+                [contracts.SWIFT_COPY_BUILD_TIMEOUT] * 2,
+                "bringing a copy up to date is not charged to a contract's deadline",
+            )
+
             def broken(args, **kwargs):
                 return subprocess.CompletedProcess(args, 1, "", "error: no such module")
-            with patch.object(contracts, "run_process", side_effect=broken), \
-                 self.assertRaisesRegex(ValueError, "does not build:\nerror: no such module"):
+
+            with (
+                patch.object(contracts, "run_process", side_effect=broken),
+                self.assertRaisesRegex(ValueError, "does not build:\nerror: no such module"),
+            ):
                 contracts.build_swift_copies([root], [case])
 
 

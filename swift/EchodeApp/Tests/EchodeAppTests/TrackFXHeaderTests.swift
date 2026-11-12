@@ -1,6 +1,7 @@
 import AppKit
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -25,9 +26,12 @@ struct TrackFXHeaderTests {
         header.onOpenFX = { candidates.append($0) }
         func refresh() throws { header.setSnapshot(try #require(controller.snapshot), selected: track) }
         func click(_ rect: CGRect) throws {
-            header.mouseDown(with: try #require(NSEvent.mouseEvent(with: .leftMouseDown,
-                location: header.convert(CGPoint(x: rect.midX, y: rect.midY), to: nil), modifierFlags: [],
-                timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)))
+            header.mouseDown(
+                with: try #require(
+                    NSEvent.mouseEvent(
+                        with: .leftMouseDown,
+                        location: header.convert(CGPoint(x: rect.midX, y: rect.midY), to: nil), modifierFlags: [],
+                        timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)))
         }
         try refresh()
         let row = header.camera.rows(trackCount: 1, height: 200).rect(at: 0, width: 240)
@@ -41,12 +45,14 @@ struct TrackFXHeaderTests {
         let window = NSWindow(contentRect: header.bounds, styleMask: [.borderless], backing: .buffered, defer: true)
         window.contentView = header
         let children = try #require(header.accessibilityChildren()?.first as? NSAccessibilityElement)
-        let nameButton = try #require(children.accessibilityChildren()?.compactMap { $0 as? NSAccessibilityElement }
-            .first(where: { $0.accessibilityIdentifier() == "\(devices[0].id)/window" }))
+        let nameButton = try #require(
+            children.accessibilityChildren()?.compactMap { $0 as? NSAccessibilityElement }
+                .first(where: { $0.accessibilityIdentifier() == "\(devices[0].id)/window" }))
         #expect(nameButton.accessibilityLabel() == "example.a Track")
         #expect(nameButton.accessibilityRole() == .button)
-        let title = TrackFolderLayout(row: row, depth: 0, folder: false,
-                                      titleEnd: TrackFXNamesLayout(row: row, count: devices.count).titleEnd)
+        let title = TrackFolderLayout(
+            row: row, depth: 0, folder: false,
+            titleEnd: TrackFXNamesLayout(row: row, count: devices.count).titleEnd)
         #expect(title.titleX + title.titleWidth < TrackFXNamesLayout(row: row, count: devices.count).name.minX)
         let layout = TrackFXNamesLayout(row: row, count: devices.count)
         try click(layout.name)

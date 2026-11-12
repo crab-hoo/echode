@@ -38,7 +38,8 @@ case "$product_sanitizer" in
         ;;
     *) exit 2 ;;
 esac
-product_header="$(python3 - "$CARGO_TARGET_DIR" <<'PY'
+product_header="$(
+    python3 - "$CARGO_TARGET_DIR" <<'PY'
 from pathlib import Path
 import sys
 
@@ -52,7 +53,7 @@ if not headers:
 print(max(headers, key=lambda path: path.stat().st_mtime_ns))
 PY
 )"
-cmp -s "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h || \
+cmp -s "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h ||
     cp "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 # Keep every test and the recovery suite's 5s readiness deadline. A separate
 # process keeps unrelated concurrent fixtures out of the recovery readiness check.

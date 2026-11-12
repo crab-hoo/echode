@@ -19,13 +19,25 @@ public struct DeviceParameter: Decodable, Sendable, Equatable, Identifiable {
     public var readOnly: Bool { flags & (1 << 3) != 0 }
     public var isEnum: Bool { flags & (1 << 16) != 0 }
 
-    public init(id: UInt32, flags: UInt32 = 0, name: String, module: String = "", min: Double, max: Double,
-                defaultValue: Double, value: Double, text: String) {
-        self.id = id; self.flags = flags; self.name = name; self.module = module
-        self.min = min; self.max = max; self.defaultValue = defaultValue; self.value = value; self.text = text
+    public init(
+        id: UInt32, flags: UInt32 = 0, name: String, module: String = "", min: Double, max: Double,
+        defaultValue: Double, value: Double, text: String
+    ) {
+        self.id = id
+        self.flags = flags
+        self.name = name
+        self.module = module
+        self.min = min
+        self.max = max
+        self.defaultValue = defaultValue
+        self.value = value
+        self.text = text
     }
 
-    enum CodingKeys: String, CodingKey { case id, flags, name, module, min, max, value, text, defaultValue = "default" }
+    enum CodingKeys: String, CodingKey {
+        case id, flags, name, module, min, max, value, text
+        case defaultValue = "default"
+    }
 }
 
 /// A value read back after the plugin applied a change.
@@ -33,7 +45,11 @@ public struct DeviceParameterValue: Decodable, Sendable, Equatable {
     public let id: UInt32
     public let value: Double
     public let text: String
-    public init(id: UInt32, value: Double, text: String) { self.id = id; self.value = value; self.text = text }
+    public init(id: UInt32, value: Double, text: String) {
+        self.id = id
+        self.value = value
+        self.text = text
+    }
 }
 
 /// How the plugin read typed text for one parameter. Nothing changed in it.
@@ -44,13 +60,20 @@ public struct DeviceParameterParse: Decodable, Sendable, Equatable {
     public let value: Double?
     /// False when the plugin has no `text_to_value`: read a plain number.
     public let converts: Bool
-    public init(id: UInt32, value: Double?, converts: Bool) { self.id = id; self.value = value; self.converts = converts }
+    public init(id: UInt32, value: Double?, converts: Bool) {
+        self.id = id
+        self.value = value
+        self.converts = converts
+    }
 }
 
 public struct DeviceParameterChange: Encodable, Sendable, Equatable {
     public let id: UInt32
     public let value: Double
-    public init(id: UInt32, value: Double) { self.id = id; self.value = value }
+    public init(id: UInt32, value: Double) {
+        self.id = id
+        self.value = value
+    }
 }
 
 /// What showing a plugin's own window did in its helper.
@@ -62,7 +85,9 @@ public struct DeviceWindowReport: Decodable, Sendable, Equatable {
     /// The window took keyboard focus. Showing never does.
     public let key: Bool
     public init(created: Bool, visible: Bool, key: Bool) {
-        self.created = created; self.visible = visible; self.key = key
+        self.created = created
+        self.visible = visible
+        self.key = key
     }
 }
 
@@ -78,10 +103,17 @@ public struct DeviceReport: Decodable, Sendable, Equatable {
     public let parsed: DeviceParameterParse?
     /// Device-rate samples declared by the helper; not yet compensated.
     public let latencySamples: UInt32?
-    public init(parameters: [DeviceParameter]? = nil, values: [DeviceParameterValue]? = nil, changed: Bool? = nil,
-                window: DeviceWindowReport? = nil, closed: Bool? = nil, parsed: DeviceParameterParse? = nil, latencySamples: UInt32? = nil) {
-        self.parameters = parameters; self.values = values; self.changed = changed
-        self.window = window; self.closed = closed; self.parsed = parsed
+    public init(
+        parameters: [DeviceParameter]? = nil, values: [DeviceParameterValue]? = nil, changed: Bool? = nil,
+        window: DeviceWindowReport? = nil, closed: Bool? = nil, parsed: DeviceParameterParse? = nil,
+        latencySamples: UInt32? = nil
+    ) {
+        self.parameters = parameters
+        self.values = values
+        self.changed = changed
+        self.window = window
+        self.closed = closed
+        self.parsed = parsed
         self.latencySamples = latencySamples
     }
     enum CodingKeys: String, CodingKey {

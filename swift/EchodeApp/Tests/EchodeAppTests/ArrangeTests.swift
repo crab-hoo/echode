@@ -3,6 +3,7 @@ import EchodeBridge
 import Foundation
 import Metal
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -17,20 +18,34 @@ struct ArrangeTests {
     }
 
     @Test func linkPauseKeepsRetryingAStaleDrawable() {
-        #expect(canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
-                                 revisionDrawn: true, staleDrawable: false))
-        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
-                                  revisionDrawn: true, staleDrawable: true))
-        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: true,
-                                  revisionDrawn: true, staleDrawable: false))
-        #expect(!canvasLinkPaused(ready: true, continuous: true, metersActive: false, playing: false,
-                                  revisionDrawn: true, staleDrawable: false))
-        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: true, playing: false,
-                                  revisionDrawn: true, staleDrawable: false))
-        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
-                                  revisionDrawn: false, staleDrawable: false))
-        #expect(canvasLinkPaused(ready: false, continuous: false, metersActive: false, playing: false,
-                                 revisionDrawn: true, staleDrawable: false))
+        #expect(
+            canvasLinkPaused(
+                ready: true, continuous: false, metersActive: false, playing: false,
+                revisionDrawn: true, staleDrawable: false))
+        #expect(
+            !canvasLinkPaused(
+                ready: true, continuous: false, metersActive: false, playing: false,
+                revisionDrawn: true, staleDrawable: true))
+        #expect(
+            !canvasLinkPaused(
+                ready: true, continuous: false, metersActive: false, playing: true,
+                revisionDrawn: true, staleDrawable: false))
+        #expect(
+            !canvasLinkPaused(
+                ready: true, continuous: true, metersActive: false, playing: false,
+                revisionDrawn: true, staleDrawable: false))
+        #expect(
+            !canvasLinkPaused(
+                ready: true, continuous: false, metersActive: true, playing: false,
+                revisionDrawn: true, staleDrawable: false))
+        #expect(
+            !canvasLinkPaused(
+                ready: true, continuous: false, metersActive: false, playing: false,
+                revisionDrawn: false, staleDrawable: false))
+        #expect(
+            canvasLinkPaused(
+                ready: false, continuous: false, metersActive: false, playing: false,
+                revisionDrawn: true, staleDrawable: false))
     }
 
     @Test func fractionalRowsHaveNoIndependentInsetAndHitHalfOpenBoundaries() {
@@ -105,13 +120,16 @@ struct ArrangeTests {
         var camera = ArrangeCamera(originTrack: 2.25)
         for height in [128.0, 211.0, 480.0] {
             camera.scroll(x: -18, y: -13, trackCount: snapshot.trackCount, height: height)
-            camera.zoom(factor: 1.25, horizontal: false, vertical: true, anchor: CGPoint(x: 0, y: 40),
-                        trackCount: snapshot.trackCount, height: height)
+            camera.zoom(
+                factor: 1.25, horizontal: false, vertical: true, anchor: CGPoint(x: 0, y: 40),
+                trackCount: snapshot.trackCount, height: height)
             let rows = camera.rows(trackCount: snapshot.trackCount, height: height)
-            let lanes = snapshot.visibleElements(originTick: 0, widthTicks: 705_600 * 8,
+            let lanes = snapshot.visibleElements(
+                originTick: 0, widthTicks: 705_600 * 8,
                 originTrack: camera.originTrack, heightTracks: height / camera.pixelsPerTrack,
-                pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerTrack: camera.pixelsPerTrack)
-                .elements.filter { $0.role == .track }
+                pixelsPerTick: camera.pixelsPerBeat / 705_600, pixelsPerTrack: camera.pixelsPerTrack
+            )
+            .elements.filter { $0.role == .track }
             #expect(lanes.count == rows.visible.count)
             for (index, lane) in zip(rows.visible, lanes) {
                 let header = rows.rect(at: index, width: 160)
@@ -169,29 +187,35 @@ struct ArrangeTests {
         // This project's size and event count are regression parameters only.
         for index in 0..<20 { await controller.addTrack(name: "Track \(index)") }
         let snapshot = try #require(controller.snapshot)
-        let input = CanvasInput(snapshot: snapshot, selected: snapshot.trackID(at: 2), camera: ArrangeCamera(originTrack: 1.25),
-                                 width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: snapshot.trackID(at: 2), camera: ArrangeCamera(originTrack: 1.25),
+            width: 640, height: 211, scale: 2, header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()))
         let oldFrame = ArrangeFrame(input: input)
         var camera = input.camera
         camera.scroll(x: 0, y: -16, trackCount: snapshot.trackCount, height: input.height)
         // A legal interleaving in the former two-surface design: AppKit has
         // drawn the latest camera while Metal still displays the older one.
-        let liveHeaderY = camera.rows(trackCount: snapshot.trackCount, height: input.height).rect(at: 2, width: 160).minY
-        let oldLane = try #require(oldFrame.elements.first { $0.role == .track && $0.id.track == snapshot.trackID(at: 2) })
+        let liveHeaderY = camera.rows(trackCount: snapshot.trackCount, height: input.height).rect(at: 2, width: 160)
+            .minY
+        let oldLane = try #require(
+            oldFrame.elements.first { $0.role == .track && $0.id.track == snapshot.trackID(at: 2) })
         #expect(abs(Double(oldLane.y) - Double(liveHeaderY)) == 16)
         var displayed = oldFrame
         for event in 0..<240 {
             camera.scroll(x: -3, y: event % 48 < 24 ? -11 : 11, trackCount: snapshot.trackCount, height: input.height)
             if event % 17 == 0 {
-                camera.zoom(factor: event % 34 == 0 ? 1.2 : 1 / 1.2, horizontal: true, vertical: true,
-                                  anchor: CGPoint(x: 90, y: 67), trackCount: snapshot.trackCount, height: input.height)
+                camera.zoom(
+                    factor: event % 34 == 0 ? 1.2 : 1 / 1.2, horizontal: true, vertical: true,
+                    anchor: CGPoint(x: 90, y: 67), trackCount: snapshot.trackCount, height: input.height)
             }
             // Coalesce events and hold old frames, as with a busy GPU. Input
             // never changes either half of an already built/presented frame.
             if event % 5 == 0 {
-                displayed = ArrangeFrame(input: CanvasInput(snapshot: snapshot, selected: input.selected, camera: camera,
-                    width: input.width, height: input.height, scale: input.scale,
-                    header: ArrangeHeaderInput(width: event % 2 == 0 ? 160 : 200, palette: ArrangeHeaderPalette())))
+                displayed = ArrangeFrame(
+                    input: CanvasInput(
+                        snapshot: snapshot, selected: input.selected, camera: camera,
+                        width: input.width, height: input.height, scale: input.scale,
+                        header: ArrangeHeaderInput(width: event % 2 == 0 ? 160 : 200, palette: ArrangeHeaderPalette())))
             }
             let lanes = displayed.elements.filter { $0.role == .track }
             #expect(displayed.headers.count == lanes.count)
@@ -204,14 +228,16 @@ struct ArrangeTests {
     }
 
     @Test func cachedGeometryFollowsDocumentAndViewportRevisions() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-geometry-cache-\(UUID()).echode")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-geometry-cache-\(UUID()).echode")
         defer { removeTestFile(root) }
         let controller = ProjectController()
         await controller.open(root, creating: true)
         await controller.addTrack(name: "first")
         let camera = ArrangeCamera(pixelsPerBeat: 100, pixelsPerTrack: 40)
-        var input = CanvasInput(snapshot: controller.snapshot, selected: nil, camera: camera,
-                                width: 320, height: 200, scale: 1)
+        var input = CanvasInput(
+            snapshot: controller.snapshot, selected: nil, camera: camera,
+            width: 320, height: 200, scale: 1)
         var cache = CanvasGeometryCache()
         let first = try #require(cache.frames(input: input, camera: camera, revision: 1).arranged)
         let again = try #require(cache.frames(input: input, camera: camera, revision: 1).arranged)
@@ -219,8 +245,9 @@ struct ArrangeTests {
         #expect(first.elements.count == again.elements.count)
         #expect(first.elements.filter { $0.role == .track }.count == 1)
         await controller.addTrack(name: "second")
-        input = CanvasInput(snapshot: controller.snapshot, selected: nil, camera: camera,
-                            width: 160, height: 200, scale: 2)
+        input = CanvasInput(
+            snapshot: controller.snapshot, selected: nil, camera: camera,
+            width: 160, height: 200, scale: 2)
         let changed = try #require(cache.frames(input: input, camera: camera, revision: 2).arranged)
         #expect(cache.builds == 2)
         #expect(changed.elements.filter { $0.role == .track }.count == 2)
@@ -259,10 +286,11 @@ struct ArrangeTests {
         let selected = try #require(snapshot.trackID(at: 0))
         // Sizes and the integer scale are scoped to this regression: they keep
         // the reference and stale attachments on the same pixel grid.
-        let input = CanvasInput(snapshot: snapshot, selected: selected,
-                                camera: ArrangeCamera(originBeat: 2, pixelsPerBeat: 72, pixelsPerTrack: 64),
-                                width: 320, height: 160, scale: 2,
-                                header: ArrangeHeaderInput(width: 120, palette: ArrangeHeaderPalette()))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: selected,
+            camera: ArrangeCamera(originBeat: 2, pixelsPerBeat: 72, pixelsPerTrack: 64),
+            width: 320, height: 160, scale: 2,
+            header: ArrangeHeaderInput(width: 120, palette: ArrangeHeaderPalette()))
         // 160pt with 64pt rows leaves the last row partially visible; its
         // mute/solo labels cross the bottom edge, so a stale taller drawable
         // must clip them at the input height.
@@ -287,11 +315,15 @@ struct ArrangeTests {
                 #expect(margin.count == 0, "stale \(size) margin differs at \(margin.first ?? "none")")
             }
         }
-        let piano = PianoFrame(input: input, piano: PianoRenderInput(track: selected, focus: nil, camera: PianoCamera(),
-                                                                     key: DisplayKey(), preview: nil))
+        let piano = PianoFrame(
+            input: input,
+            piano: PianoRenderInput(
+                track: selected, focus: nil, camera: PianoCamera(),
+                key: DisplayKey(), preview: nil))
         let pianoReference = try renderOffscreen(piano, painter: painter, device: device, queue: queue)
-        let pianoStale = try renderOffscreen(piano, painter: painter, device: device, queue: queue,
-                                             size: CGSize(width: 700, height: 380))
+        let pianoStale = try renderOffscreen(
+            piano, painter: painter, device: device, queue: queue,
+            size: CGSize(width: 700, height: 380))
         let pianoDiffering = await pianoStale.scan { x, y, pixel in
             x < pianoReference.width && y < pianoReference.height && pixel != pianoReference.pixel(x: x, y: y)
         }
@@ -304,8 +336,10 @@ struct ArrangeTests {
         #expect(!matching.mismatched && matching.draws && matching.consumesRevision)
         let stale = CanvasDrawablePolicy.resolve(input: input, drawableSize: CGSize(width: 600, height: 280))
         #expect(stale.mismatched && stale.draws && !stale.consumesRevision)
-        #expect(!canvasLinkPaused(ready: true, continuous: false, metersActive: false, playing: false,
-                                  revisionDrawn: true, staleDrawable: stale.mismatched))
+        #expect(
+            !canvasLinkPaused(
+                ready: true, continuous: false, metersActive: false, playing: false,
+                revisionDrawn: true, staleDrawable: stale.mismatched))
         await controller.close()
     }
 
@@ -325,7 +359,8 @@ struct ArrangeTests {
         #expect(await controller.importAudio(wav))
         let snapshot = try #require(controller.snapshot)
         let camera = ArrangeCamera(pixelsPerBeat: 400, pixelsPerTrack: 80)
-        let frame = ArrangeFrame(input: CanvasInput(snapshot: snapshot, selected: nil, camera: camera, width: 240, height: 160, scale: 1))
+        let frame = ArrangeFrame(
+            input: CanvasInput(snapshot: snapshot, selected: nil, camera: camera, width: 240, height: 160, scale: 1))
         let clip = try #require(frame.elements.first { $0.role == .clip })
         #expect(!frame.waveforms.isEmpty)
         let painter = try ArrangePainter(device: device)

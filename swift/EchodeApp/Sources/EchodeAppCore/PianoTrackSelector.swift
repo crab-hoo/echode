@@ -33,11 +33,14 @@ final class PianoTrackListView: NSScrollView, NSTableViewDataSource, NSTableView
         table.allowsEmptySelection = true
         table.selectionHighlightStyle = .none
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        table.dataSource = self; table.delegate = self
+        table.dataSource = self
+        table.delegate = self
         table.setAccessibilityLabel(text("Piano Tracks"))
         documentView = table
-        hasVerticalScroller = true; autohidesScrollers = true
-        drawsBackground = false; borderType = .noBorder
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        drawsBackground = false
+        borderType = .noBorder
     }
     required init?(coder: NSCoder) { nil }
 
@@ -52,7 +55,9 @@ final class PianoTrackListView: NSScrollView, NSTableViewDataSource, NSTableView
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard rows.indices.contains(row) else { return nil }
-        let cell = tableView.makeView(withIdentifier: PianoTrackCell.identifier, owner: nil) as? PianoTrackCell ?? PianoTrackCell()
+        let cell =
+            tableView.makeView(withIdentifier: PianoTrackCell.identifier, owner: nil) as? PianoTrackCell
+            ?? PianoTrackCell()
         cell.show(rows[row], controller: controller)
         return cell
     }
@@ -77,12 +82,15 @@ final class PianoTrackCell: NSTableCellView {
             button.setButtonType(.pushOnPushOff)
             button.bezelStyle = .accessoryBarAction
             button.controlSize = .small
-            button.target = self; button.action = #selector(activate(_:))
+            button.target = self
+            button.action = #selector(activate(_:))
         }
         let controls = NSStackView(views: buttons)
         controls.spacing = 3
         let stack = NSStackView(views: [name, controls])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 3
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -94,10 +102,13 @@ final class PianoTrackCell: NSTableCellView {
     required init?(coder: NSCoder) { nil }
 
     func show(_ row: PianoTrackRow, controller: ProjectController?) {
-        self.row = row; self.controller = controller
+        self.row = row
+        self.controller = controller
         name.stringValue = row.name
-        for (button, title, active) in [(reference, "Show", row.visible), (edit, "Edit", row.editing),
-                                        (solo, "Solo", row.solo), (mute, "Mute", row.mute)] {
+        for (button, title, active) in [
+            (reference, "Show", row.visible), (edit, "Edit", row.editing),
+            (solo, "Solo", row.solo), (mute, "Mute", row.mute),
+        ] {
             button.state = active ? .on : .off
             button.isEnabled = row.enabled
             button.setAccessibilityLabel("\(text(title)) \(row.name)")
@@ -109,7 +120,8 @@ final class PianoTrackCell: NSTableCellView {
 
     @objc private func activate(_ button: NSButton) {
         guard let row, row.enabled, let controller, controller.acceptsInput(row.target.document),
-              controller.tracks.contains(where: { $0.id == row.target.track }) else { return }
+            controller.tracks.contains(where: { $0.id == row.target.track })
+        else { return }
         if button === reference {
             controller.setPianoReference(row.target, visible: controller.hiddenPianoTracks.contains(row.target.track))
         } else if button === edit {

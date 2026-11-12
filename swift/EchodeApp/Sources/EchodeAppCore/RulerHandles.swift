@@ -36,11 +36,15 @@ struct RulerHandles {
         let color = enabled ? SIMD4<Float>(0.55, 0.94, 0.67, 1) : SIMD4<Float>(0.65, 0.68, 0.73, 1)
         return handles.flatMap { handle in
             let capX = handle.edge == .start ? handle.x : handle.x - 6
-            return [CGRect(x: handle.x - 1, y: ruler.minY, width: 2, height: min(8, ruler.height)),
-                    CGRect(x: capX, y: ruler.minY, width: 6, height: min(3, ruler.height))].compactMap { rect -> Instance? in
+            return [
+                CGRect(x: handle.x - 1, y: ruler.minY, width: 2, height: min(8, ruler.height)),
+                CGRect(x: capX, y: ruler.minY, width: 6, height: min(3, ruler.height)),
+            ].compactMap { rect -> Instance? in
                 let clipped = rect.intersection(ruler)
                 guard !clipped.isEmpty else { return nil }
-                return Instance(rect: SIMD4(Float(clipped.minX), Float(clipped.minY), Float(clipped.width), Float(clipped.height)) * Float(scale), color: color)
+                return Instance(
+                    rect: SIMD4(Float(clipped.minX), Float(clipped.minY), Float(clipped.width), Float(clipped.height))
+                        * Float(scale), color: color)
             }
         }
     }

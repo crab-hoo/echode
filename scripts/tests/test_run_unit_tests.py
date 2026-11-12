@@ -1,14 +1,14 @@
 """The parallel module runner fails on any failed, erroring or empty module (ADR 0271)."""
 
-from contextlib import redirect_stderr, redirect_stdout
 import io
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import run_unit_tests as runner  # noqa: E402
+import run_unit_tests as runner
 
 PASSING = "import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        pass\n"
 SKIPPED = "import unittest\nclass T(unittest.TestCase):\n    @unittest.skip('x')\n    def test_b(self):\n        pass\n    def test_c(self):\n        pass\n"

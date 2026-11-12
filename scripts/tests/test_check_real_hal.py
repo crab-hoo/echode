@@ -2,16 +2,16 @@
 
 import json
 import re
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-import check_real_hal as check  # noqa: E402
-import verify  # noqa: E402
+import check_real_hal as check
+import verify
 
 FIRST = "EchodeAppTests.FirstTests/first()/FirstTests.swift:8:6"
 SECOND = "EchodeAppTests.SecondTests/second()/SecondTests.swift:12:6"
@@ -36,13 +36,21 @@ def stream(*events):
 
 class RefusalTests(unittest.TestCase):
     def test_a_refusal_belongs_to_the_function_running_not_its_suite(self):
-        text = stream(event("testStarted", FIRST), event("testEnded", FIRST), event("testStarted", SUITE),
-                      event("testStarted", SECOND), event("issueRecorded", None, "Issue recorded", check.MARKER + REFUSAL),
-                      event("testEnded", SECOND), event("testEnded", SUITE))
+        text = stream(
+            event("testStarted", FIRST),
+            event("testEnded", FIRST),
+            event("testStarted", SUITE),
+            event("testStarted", SECOND),
+            event("issueRecorded", None, "Issue recorded", check.MARKER + REFUSAL),
+            event("testEnded", SECOND),
+            event("testEnded", SUITE),
+        )
         self.assertEqual(check.refusals(text, check.MARKER + REFUSAL + "\n"), [(SECOND, FIRST, REFUSAL)])
 
     def test_other_issues_are_not_refusals(self):
-        text = stream(event("testStarted", FIRST), event("issueRecorded", FIRST, "Expectation failed"), event("testEnded", FIRST))
+        text = stream(
+            event("testStarted", FIRST), event("issueRecorded", FIRST, "Expectation failed"), event("testEnded", FIRST)
+        )
         self.assertEqual(check.refusals(text, "↳ " + check.MARKER + "quoted by the test output\n"), [])
 
     def test_a_refusal_only_in_the_log_came_after_the_run(self):
@@ -52,17 +60,26 @@ class RefusalTests(unittest.TestCase):
 
     def test_the_report_names_each_test_once_with_the_test_before_it(self):
         lines = check.report([(SECOND, FIRST, REFUSAL), (SECOND, FIRST, REFUSAL), (None, SECOND, REFUSAL)])
-        self.assertEqual(lines[1:], ["  SecondTests/second() (SecondTests.swift:12): AudioObjectGetPropertyData on echode-worker",
-                                     "    or a request left running by the test before it: FirstTests/first() (FirstTests.swift:8)"])
+        self.assertEqual(
+            lines[1:],
+            [
+                "  SecondTests/second() (SecondTests.swift:12): AudioObjectGetPropertyData on echode-worker",
+                "    or a request left running by the test before it: FirstTests/first() (FirstTests.swift:8)",
+            ],
+        )
 
     def test_the_report_names_a_refusal_between_tests(self):
-        self.assertEqual(check.report([(None, FIRST, REFUSAL)])[1:],
-                         ["  after FirstTests/first() (FirstTests.swift:8) ended: AudioObjectGetPropertyData on echode-worker"])
+        self.assertEqual(
+            check.report([(None, FIRST, REFUSAL)])[1:],
+            ["  after FirstTests/first() (FirstTests.swift:8) ended: AudioObjectGetPropertyData on echode-worker"],
+        )
 
 
 class BindingTests(unittest.TestCase):
     def test_a_guarded_bundle_and_real_products_pass(self):
-        self.assertEqual(check.binding_faults(set(), {"Echode": set(check.REQUIRED_IN_PRODUCTS) | {"_AudioDeviceStop"}}), [])
+        self.assertEqual(
+            check.binding_faults(set(), {"Echode": set(check.REQUIRED_IN_PRODUCTS) | {"_AudioDeviceStop"}}), []
+        )
 
     def test_a_real_function_left_in_the_bundle_fails(self):
         faults = check.binding_faults({"_AudioDeviceStart"}, {})
@@ -86,7 +103,9 @@ class SelectionTests(unittest.TestCase):
         entry = next(item for item in policy["checks"] if item["id"] == "check-real-hal")
         self.assertEqual(entry["mode"], "automatic")
         self.assertIn("check-real-hal", verify.select_checks(policy, ["crates/echode-audio-io/src/hardware.rs"]))
-        self.assertLessEqual({"swift/EchodeApp/**", "swift/EchodeBridge/**", "scripts/check_real_hal.py"}, set(entry["inputs"]))
+        self.assertLessEqual(
+            {"swift/EchodeApp/**", "swift/EchodeBridge/**", "scripts/check_real_hal.py"}, set(entry["inputs"])
+        )
         # The Rust side of the path comes through the FFI library's dependencies.
         folders = {folder.name for folder in map(Path, verify.package_directories(ROOT, entry["packages"]))}
         self.assertLessEqual({"echode-ffi", "echode-document", "echode-audio-io"}, folders)
@@ -99,14 +118,18 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(check.MARKER.strip(), marker)
         self.assertIn(f"grep -q '{marker}' \"$log\"", shell)
         self.assertIn("make check-real-hal-names", shell)
-        self.assertRegex((ROOT / "Makefile").read_text(),
-                         r"(?m)^check-real-hal-names:\n\tpython3 -B scripts/check_real_hal\.py --name-tests$")
+        self.assertRegex(
+            (ROOT / "Makefile").read_text(),
+            r"(?m)^check-real-hal-names:\n\tpython3 -B scripts/check_real_hal\.py --name-tests$",
+        )
         policy = verify.load_policy(ROOT)
         swift = next(item for item in policy["checks"] if item["id"] == "check-swift")
         self.assertIn("scripts/check-shell.sh", swift["inputs"])
 
     def test_the_makefile_runs_the_check(self):
-        self.assertRegex((ROOT / "Makefile").read_text(), r"(?m)^check-real-hal:\n(\t.*\n)*\tpython3 -B scripts/check_real_hal\.py$")
+        self.assertRegex(
+            (ROOT / "Makefile").read_text(), r"(?m)^check-real-hal:\n(\t.*\n)*\tpython3 -B scripts/check_real_hal\.py$"
+        )
 
 
 if __name__ == "__main__":

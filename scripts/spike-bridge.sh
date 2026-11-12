@@ -10,8 +10,8 @@ mkdir -p "$bridge_output/c" "$bridge_output/uniffi" "$bridge_output/uniffi-async
 export CARGO_TARGET_DIR="$bridge_root/target"
 export DYLD_LIBRARY_PATH="$bridge_library${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 
-swift --version > "$bridge_output/report.txt"
-rustc --version >> "$bridge_output/report.txt"
+swift --version >"$bridge_output/report.txt"
+rustc --version >>"$bridge_output/report.txt"
 cat "$bridge_output/report.txt"
 
 cargo build -q --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection
@@ -21,8 +21,8 @@ cp spikes/bridge/c/module.modulemap "$bridge_output/c/module.modulemap"
     --language swift --out-dir "$bridge_output/uniffi"
 
 # Put the compiler cache in the workspace, including inside the filesystem sandbox.
-swift_common=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -O -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
-    -target arm64-apple-macos27.0 \
+swift_common=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -O -swift-version 6 -strict-concurrency=complete -warnings-as-errors
+    -target arm64-apple-macos27.0
     -parse-as-library -module-cache-path "$bridge_output/module-cache")
 swift_flags=("${swift_common[@]}" -L "$bridge_library" -lechode_bridge_spike)
 swiftc "${swift_flags[@]}" -I "$bridge_output/c" -D BRIDGE_VALIDATION \
@@ -53,18 +53,18 @@ if swiftc "${swift_common[@]}" -L "$async_library" -lechode_bridge_spike -I "$br
     -Xcc "-fmodule-map-file=$bridge_output/uniffi-async/UniBridgeFFI.modulemap" \
     -D ASYNC_CALLBACK "$bridge_output/uniffi-async/UniBridge.swift" \
     spikes/bridge/swift/UniProbe.swift -o "$bridge_output/uniffi-async-probe" \
-    > "$bridge_output/uniffi-async.log" 2>&1; then
+    >"$bridge_output/uniffi-async.log" 2>&1; then
     DYLD_LIBRARY_PATH="$async_library" python3 scripts/run-bridge-validation.py \
         --log "$bridge_output/uniffi-async-run.log" \
         "$bridge_output/uniffi-async-probe" | tee -a "$bridge_output/report.txt"
 else
     # Reject failures outside the generated file and any additional error kinds.
     errors=$(grep -E ': error:' "$bridge_output/uniffi-async.log" || true)
-    if [ -z "$errors" ] || printf '%s\n' "$errors" | \
+    if [ -z "$errors" ] || printf '%s\n' "$errors" |
         grep -E -v '/uniffi-async/UniBridge.swift:.*SendingClosureRisksDataRace' >/dev/null; then
         cat "$bridge_output/uniffi-async.log"
         exit 1
     fi
-    printf '%s\n' 'UniFFI async foreign callback: EXPECTED compiler rejection (SendingClosureRisksDataRace)' \
-        | tee -a "$bridge_output/report.txt"
+    printf '%s\n' 'UniFFI async foreign callback: EXPECTED compiler rejection (SendingClosureRisksDataRace)' |
+        tee -a "$bridge_output/report.txt"
 fi

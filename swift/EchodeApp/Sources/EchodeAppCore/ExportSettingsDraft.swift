@@ -42,16 +42,20 @@ final class ExportSettingsDraft {
     func resolve(locale: Locale = .current) -> Result<ExportSettings, InputError> {
         let rateText = sampleRate.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rateText.isEmpty, rateText.allSatisfy({ $0.isASCII && $0.isNumber }),
-              let rate = UInt32(rateText), rate > 0 else { return .failure(.sampleRate) }
+            let rate = UInt32(rateText), rate > 0
+        else { return .failure(.sampleRate) }
         var result = options
         result.sampleRate = rate
         if !options.automaticTail {
             guard let tail = Self.number(tailSeconds, locale: locale), tail >= 0,
-                  tail * Double(rate) < Double(UInt32.max) + 0.5 else { return .failure(.tail) }
+                tail * Double(rate) < Double(UInt32.max) + 0.5
+            else { return .failure(.tail) }
             result.tailSeconds = tail
         }
         if options.normalizePeakDb != nil {
-            guard let peak = Self.number(peakDb, locale: locale), (-120...0).contains(peak) else { return .failure(.peak) }
+            guard let peak = Self.number(peakDb, locale: locale), (-120...0).contains(peak) else {
+                return .failure(.peak)
+            }
             result.normalizePeakDb = peak
         }
         guard result.isValid else { return .failure(.dither) }
@@ -66,7 +70,8 @@ final class ExportSettingsDraft {
         let decimal = NSRegularExpression.escapedPattern(for: separator)
         let pattern = "^[+-]?([0-9]+(\(decimal)[0-9]*)?|\(decimal)[0-9]+)([eE][+-]?[0-9]+)?$"
         guard raw.range(of: pattern, options: .regularExpression) != nil,
-              let value = Double(raw.replacingOccurrences(of: separator, with: ".")), value.isFinite else { return nil }
+            let value = Double(raw.replacingOccurrences(of: separator, with: ".")), value.isFinite
+        else { return nil }
         return value
     }
 }

@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import EchodeInputCore
 
 final class GestureTests: XCTestCase {

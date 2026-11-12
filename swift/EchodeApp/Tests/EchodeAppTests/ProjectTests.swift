@@ -1,6 +1,7 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 extension ProjectController {
@@ -217,7 +218,9 @@ struct ProjectTests {
 
     @Test func buffersStayReservedUntilTheirGpuFrameCompletes() {
         let slots = FrameSlots()
-        let a = slots.acquire(), b = slots.acquire(), c = slots.acquire()
+        let a = slots.acquire()
+        let b = slots.acquire()
+        let c = slots.acquire()
         #expect(a != nil && b != nil && c != nil)
         #expect(a != b && b != c && a != c)
         #expect(slots.acquire() == nil)
@@ -227,8 +230,10 @@ struct ProjectTests {
     }
 
     private func notes(_ snapshot: Snapshot) -> Int {
-        snapshot.visibleElements(originTick: 0, widthTicks: 705_600 * 16,
-                                 originTrack: 0, heightTracks: 10,
-                                 pixelsPerTick: 1.0 / 705_600, pixelsPerTrack: 64).elements.filter { $0.role == .note }.count
+        snapshot.visibleElements(
+            originTick: 0, widthTicks: 705_600 * 16,
+            originTrack: 0, heightTracks: 10,
+            pixelsPerTick: 1.0 / 705_600, pixelsPerTrack: 64
+        ).elements.filter { $0.role == .note }.count
     }
 }

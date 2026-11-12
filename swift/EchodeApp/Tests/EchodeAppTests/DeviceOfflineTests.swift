@@ -1,6 +1,7 @@
 import AppKit
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -25,7 +26,8 @@ struct DeviceOfflineTests {
         #expect(row.offline.state == .off && row.bypass.state == .on)
         for width in [240.0, DeviceStripView.columnWidth - 1] {
             row.frame.size.width = width
-            row.needsLayout = true; row.layoutSubtreeIfNeeded()
+            row.needsLayout = true
+            row.layoutSubtreeIfNeeded()
             #expect(!row.offline.frame.intersects(row.bypass.frame))
             #expect(!row.bypass.frame.intersects(row.left.frame))
             #expect(!row.title.frame.intersects(row.offline.frame))
@@ -43,9 +45,11 @@ struct DeviceOfflineTests {
         #expect(controller.deviceRows(on: track).first?.offline == false)
         await controller.redo()
         #expect(controller.deviceRows(on: track).first?.offline == true)
-        #expect(await controller.editDeviceChain(.copy(source: device.id, track: track, before: nil), documentID: document))
+        #expect(
+            await controller.editDeviceChain(.copy(source: device.id, track: track, before: nil), documentID: document))
         #expect(controller.deviceRows(on: track).allSatisfy { $0.offline && $0.bypassed })
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.deviceRows(on: track).count == 2)
         #expect(controller.deviceRows(on: track).allSatisfy { $0.offline && $0.bypassed })
         #expect(!(await controller.editDeviceChain(.offline(device: device.id, offline: false), documentID: document)))

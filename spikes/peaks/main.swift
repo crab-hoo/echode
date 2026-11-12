@@ -52,23 +52,23 @@ time("vdsp minv/maxv per column") {
 }
 
 let source = """
-#include <metal_stdlib>
-using namespace metal;
-kernel void peaks(device const float *samples [[buffer(0)]],
-                  device float2 *out [[buffer(1)]],
-                  constant uint &bucket [[buffer(2)]],
-                  uint id [[thread_position_in_grid]]) {
-    uint start = id * bucket;
-    float lo = samples[start];
-    float hi = lo;
-    for (uint offset = 1; offset < bucket; ++offset) {
-        float sample = samples[start + offset];
-        lo = min(lo, sample);
-        hi = max(hi, sample);
+    #include <metal_stdlib>
+    using namespace metal;
+    kernel void peaks(device const float *samples [[buffer(0)]],
+                      device float2 *out [[buffer(1)]],
+                      constant uint &bucket [[buffer(2)]],
+                      uint id [[thread_position_in_grid]]) {
+        uint start = id * bucket;
+        float lo = samples[start];
+        float hi = lo;
+        for (uint offset = 1; offset < bucket; ++offset) {
+            float sample = samples[start + offset];
+            lo = min(lo, sample);
+            hi = max(hi, sample);
+        }
+        out[id] = float2(lo, hi);
     }
-    out[id] = float2(lo, hi);
-}
-"""
+    """
 guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
     fputs("no metal device\n", stderr)
     exit(1)
@@ -76,7 +76,9 @@ guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeComman
 let library = try device.makeLibrary(source: source, options: nil)
 let function = library.makeFunction(name: "peaks")!
 let pipeline = try device.makeComputePipelineState(function: function)
-let sampleBuffer = samples.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)! }
+let sampleBuffer = samples.withUnsafeBytes {
+    device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)!
+}
 let outBuffer = device.makeBuffer(length: columns * MemoryLayout<SIMD2<Float>>.stride, options: .storageModeShared)!
 var bucketValue = UInt32(bucket)
 time("metal compute") {

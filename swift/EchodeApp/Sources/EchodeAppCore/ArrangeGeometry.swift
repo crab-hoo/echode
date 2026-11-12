@@ -32,8 +32,10 @@ struct ArrangeCamera: Sendable, Equatable {
         constrain(trackCount: trackCount, height: height)
     }
 
-    mutating func zoom(factor: Double, horizontal: Bool, vertical: Bool,
-                       anchor: CGPoint, trackCount: Int, height: Double) {
+    mutating func zoom(
+        factor: Double, horizontal: Bool, vertical: Bool,
+        anchor: CGPoint, trackCount: Int, height: Double
+    ) {
         guard factor.isFinite, factor > 0 else { return }
         if horizontal {
             let beat = originBeat + Double(anchor.x) / pixelsPerBeat
@@ -51,16 +53,18 @@ struct ArrangeCamera: Sendable, Equatable {
     mutating func reveal(track: Int, trackCount: Int, height: Double) {
         guard track >= 0, track < trackCount, height > 0 else { return }
         let visible = height / pixelsPerTrack
-        if Double(track) < originTrack { originTrack = Double(track) }
-        else if Double(track + 1) > originTrack + visible {
+        if Double(track) < originTrack {
+            originTrack = Double(track)
+        } else if Double(track + 1) > originTrack + visible {
             originTrack = visible >= 1 ? Double(track + 1) - visible : Double(track)
         }
         constrain(trackCount: trackCount, height: height)
     }
 
     func rows(trackCount: Int, height: Double) -> ArrangeRows {
-        ArrangeRows(origin: originTrack, rowHeight: pixelsPerTrack,
-                    height: height, count: trackCount)
+        ArrangeRows(
+            origin: originTrack, rowHeight: pixelsPerTrack,
+            height: height, count: trackCount)
     }
 }
 
@@ -73,8 +77,9 @@ struct ArrangeRows: Sendable {
 
     var visible: Range<Int> {
         guard count > 0, origin.isFinite, origin >= 0,
-              rowHeight.isFinite, rowHeight > 0, height.isFinite, height > 0,
-              origin < Double(count) else { return 0..<0 }
+            rowHeight.isFinite, rowHeight > 0, height.isFinite, height > 0,
+            origin < Double(count)
+        else { return 0..<0 }
         let first = Int(origin.rounded(.down))
         let end = min(Double(count), (origin + height / rowHeight).rounded(.up))
         let last = end >= Double(count) ? count : Int(end)
@@ -82,8 +87,9 @@ struct ArrangeRows: Sendable {
     }
 
     func rect(at index: Int, width: Double) -> CGRect {
-        CGRect(x: 0, y: (Double(index) - origin) * rowHeight,
-               width: width, height: rowHeight)
+        CGRect(
+            x: 0, y: (Double(index) - origin) * rowHeight,
+            width: width, height: rowHeight)
     }
 
     func index(at y: Double) -> Int? {
@@ -97,8 +103,12 @@ struct ArrangeRows: Sendable {
 /// Trackpad deltas are already points. A mouse wheel reports lines, and one
 /// line is one row or one beat before the camera divides by its scale.
 enum WheelScroll {
-    static func points(x: Double, y: Double, precise: Bool, lineWidth: Double, lineHeight: Double) -> (x: Double, y: Double) {
-        guard x.isFinite, y.isFinite, lineWidth.isFinite, lineHeight.isFinite, lineWidth > 0, lineHeight > 0 else { return (0, 0) }
+    static func points(x: Double, y: Double, precise: Bool, lineWidth: Double, lineHeight: Double) -> (
+        x: Double, y: Double
+    ) {
+        guard x.isFinite, y.isFinite, lineWidth.isFinite, lineHeight.isFinite, lineWidth > 0, lineHeight > 0 else {
+            return (0, 0)
+        }
         return precise ? (x, y) : (x * lineWidth, y * lineHeight)
     }
 }

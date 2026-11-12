@@ -10,7 +10,9 @@ struct PianoMoveChange: Sendable {
     var copies: [UUID: UUID] = [:]
 
     func translated(_ original: NoteGeometry) -> NoteGeometry? {
-        guard original.isValid, (-ModelLimits.midi7.upperBound...ModelLimits.midi7.upperBound).contains(pitch) else { return nil }
+        guard original.isValid, (-ModelLimits.midi7.upperBound...ModelLimits.midi7.upperBound).contains(pitch) else {
+            return nil
+        }
         let start = original.start.addingReportingOverflow(time)
         guard !start.overflow else { return nil }
         let value = NoteGeometry(start: start.partialValue, length: original.length, pitch: original.pitch + pitch)
@@ -29,9 +31,12 @@ struct PianoMoveChange: Sendable {
 
     func actions(in snapshot: Snapshot?) -> [EditAction]? {
         guard !copies.isEmpty || time != 0 || pitch != 0, let geometries,
-              originals.allSatisfy({ snapshot?.pianoNote($0.key).map(NoteGeometry.init) == $0.value }) else { return nil }
+            originals.allSatisfy({ snapshot?.pianoNote($0.key).map(NoteGeometry.init) == $0.value })
+        else { return nil }
         if !copies.isEmpty {
-            guard Set(copies.keys) == Set(originals.keys.map(\.note)), Set(copies.values).count == copies.count else { return nil }
+            guard Set(copies.keys) == Set(originals.keys.map(\.note)), Set(copies.values).count == copies.count else {
+                return nil
+            }
         }
         var seen: Set<UUID> = []
         // Prefer the grabbed placement when its content is also visible through a fixed link.
@@ -39,11 +44,13 @@ struct PianoMoveChange: Sendable {
         return ids.compactMap { id -> EditAction? in
             guard seen.insert(id.note).inserted, let value = geometries[id] else { return nil }
             if let copy = copies[id.note] {
-                return .duplicateNote(track: id.track.uuidString, clip: id.placement.uuidString,
-                                      note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, copy: copy.uuidString)
+                return .duplicateNote(
+                    track: id.track.uuidString, clip: id.placement.uuidString,
+                    note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, copy: copy.uuidString)
             }
-            return .editNote(track: id.track.uuidString, clip: id.placement.uuidString,
-                             note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, length: value.length)
+            return .editNote(
+                track: id.track.uuidString, clip: id.placement.uuidString,
+                note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, length: value.length)
         }
     }
 }
@@ -57,11 +64,12 @@ struct PianoMoveGesture {
 
     func preview(at point: CGPoint, snapping: Bool) -> PianoMovePreview? {
         guard let original = originals[anchor], originals.values.allSatisfy(\.isValid),
-              let moved = PianoGesture(id: anchor, original: original, mode: .move, x: self.point.x, y: self.point.y)
+            let moved = PianoGesture(id: anchor, original: original, mode: .move, x: self.point.x, y: self.point.y)
                 .preview(x: point.x, y: point.y, camera: camera, snapping: snapping),
-              let first = originals.values.map(\.start).min(),
-              let last = originals.values.map({ $0.start + $0.length }).max(),
-              let low = originals.values.map(\.pitch).min(), let high = originals.values.map(\.pitch).max() else { return nil }
+            let first = originals.values.map(\.start).min(),
+            let last = originals.values.map({ $0.start + $0.length }).max(),
+            let low = originals.values.map(\.pitch).min(), let high = originals.values.map(\.pitch).max()
+        else { return nil }
         let time = min(Int64.max - last, max(-first, moved.start - original.start))
         let pitch = min(ModelLimits.midi7.upperBound - high, max(-low, moved.pitch - original.pitch))
         let change = PianoMoveChange(anchor: anchor, originals: originals, time: time, pitch: pitch, copies: copies)

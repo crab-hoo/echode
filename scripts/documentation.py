@@ -1,8 +1,8 @@
 """Validate durable documentation links without requiring old local audit files."""
 
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 LOCAL_EVIDENCE_NOTICE = "当時のローカル記録"
@@ -27,7 +27,9 @@ def local_link_errors(root: Path, path: Path, content: str, legacy: dict) -> lis
             document = path.relative_to(root).as_posix()
             evidence = target.relative_to(root).as_posix()
             if evidence not in legacy.get(document, []):
-                errors.append(f"{document}: new target evidence link: {destination}; preserve a summary under docs/evidence/")
+                errors.append(
+                    f"{document}: new target evidence link: {destination}; preserve a summary under docs/evidence/"
+                )
             elif LOCAL_EVIDENCE_NOTICE not in content:
                 errors.append(f"{document}: legacy evidence needs a local-record notice")
             continue
@@ -44,8 +46,7 @@ def headings(text):
     for number, line in enumerate(lines, 1):
         marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
         if fence:
-            if (marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1]
-                    and not marker[2].strip()):
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1] and not marker[2].strip():
                 fence = None
             continue
         if marker:
@@ -56,8 +57,9 @@ def headings(text):
             title = re.sub(r"[ \t]+#+[ \t]*$", "", match[2])
             result.append({"title": title, "level": len(match[1]), "start": number})
     for index, item in enumerate(result):
-        item["end"] = next((other["start"] - 1 for other in result[index + 1:]
-                            if other["level"] <= item["level"]), len(lines))
+        item["end"] = next(
+            (other["start"] - 1 for other in result[index + 1 :] if other["level"] <= item["level"]), len(lines)
+        )
     return result
 
 

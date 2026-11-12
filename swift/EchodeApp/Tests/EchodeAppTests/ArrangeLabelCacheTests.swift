@@ -2,6 +2,7 @@ import EchodeBridge
 import Foundation
 import Metal
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -21,11 +22,12 @@ struct ArrangeLabelCacheTests {
         let snapshot = try #require(controller.snapshot)
         // The sizes are scoped to this regression: four header rows and a
         // ruler with a label for every beat.
-        let input = CanvasInput(snapshot: snapshot, selected: snapshot.trackID(at: 0),
-                                camera: ArrangeCamera(originBeat: 0, pixelsPerBeat: 24, pixelsPerTrack: 40),
-                                width: 480, height: 200, scale: 2,
-                                header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()),
-                                arrangeRuler: ArrangeRulerInput(start: nil, loop: nil))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: snapshot.trackID(at: 0),
+            camera: ArrangeCamera(originBeat: 0, pixelsPerBeat: 24, pixelsPerTrack: 40),
+            width: 480, height: 200, scale: 2,
+            header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()),
+            arrangeRuler: ArrangeRulerInput(start: nil, loop: nil))
         let frame = ArrangeFrame(input: input)
         #expect(!frame.rulerLabels.isEmpty)
         let painter = try ArrangePainter(device: device)

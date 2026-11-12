@@ -1,14 +1,14 @@
 """ADR 0321: every workspace crate keeps the forbidden undocumented `unsafe`."""
 
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import check_workspace_lints  # noqa: E402
+import check_workspace_lints
 
 LINTS = """
 [workspace.lints.rust]
@@ -18,7 +18,7 @@ unsafe_op_in_unsafe_fn = "deny"
 all = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "forbid"
 """
-INHERITS = "[package]\nname = \"x\"\n\n[lints]\nworkspace = true\n"
+INHERITS = '[package]\nname = "x"\n\n[lints]\nworkspace = true\n'
 
 
 class WorkspaceLints(unittest.TestCase):
@@ -40,9 +40,9 @@ class WorkspaceLints(unittest.TestCase):
 
     def test_a_crate_without_the_workspace_lints_is_found(self):
         cases = {
-            "[package]\nname = \"x\"\n": "does not inherit the workspace lints",
-            "[package]\nname = \"x\"\n\n[lints]\nworkspace = false\n": "does not inherit the workspace lints",
-            "[package]\nname = \"x\"\n\n[lints.clippy]\nall = \"warn\"\n": "does not inherit the workspace lints",
+            '[package]\nname = "x"\n': "does not inherit the workspace lints",
+            '[package]\nname = "x"\n\n[lints]\nworkspace = false\n': "does not inherit the workspace lints",
+            '[package]\nname = "x"\n\n[lints.clippy]\nall = "warn"\n': "does not inherit the workspace lints",
             "[package\n": "unreadable",
         }
         for manifest, problem in cases.items():
@@ -58,18 +58,22 @@ class WorkspaceLints(unittest.TestCase):
 
     def test_a_weaker_workspace_level_is_found(self):
         cases = {
-            LINTS.replace('undocumented_unsafe_blocks = "forbid"', 'undocumented_unsafe_blocks = "deny"'):
-                "Cargo.toml: clippy::undocumented_unsafe_blocks is deny, not forbid",
-            LINTS.replace('undocumented_unsafe_blocks = "forbid"\n', ""):
-                "Cargo.toml: clippy::undocumented_unsafe_blocks is unset, not forbid",
-            LINTS.replace('unsafe_op_in_unsafe_fn = "deny"', 'unsafe_op_in_unsafe_fn = "warn"'):
-                "Cargo.toml: rust::unsafe_op_in_unsafe_fn is warn, not deny or forbid",
+            LINTS.replace(
+                'undocumented_unsafe_blocks = "forbid"', 'undocumented_unsafe_blocks = "deny"'
+            ): "Cargo.toml: clippy::undocumented_unsafe_blocks is deny, not forbid",
+            LINTS.replace(
+                'undocumented_unsafe_blocks = "forbid"\n', ""
+            ): "Cargo.toml: clippy::undocumented_unsafe_blocks is unset, not forbid",
+            LINTS.replace(
+                'unsafe_op_in_unsafe_fn = "deny"', 'unsafe_op_in_unsafe_fn = "warn"'
+            ): "Cargo.toml: rust::unsafe_op_in_unsafe_fn is warn, not deny or forbid",
         }
         for lints, problem in cases.items():
             with self.subTest(problem=problem):
                 self.assertEqual(check_workspace_lints.problems(self.tree(lints=lints)), [problem])
-        table = LINTS.replace('undocumented_unsafe_blocks = "forbid"',
-                              'undocumented_unsafe_blocks = { level = "forbid", priority = 1 }')
+        table = LINTS.replace(
+            'undocumented_unsafe_blocks = "forbid"', 'undocumented_unsafe_blocks = { level = "forbid", priority = 1 }'
+        )
         self.assertEqual(check_workspace_lints.problems(self.tree(lints=table)), [])
 
 

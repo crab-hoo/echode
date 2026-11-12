@@ -3,6 +3,7 @@ import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 private actor HeldStart {
@@ -13,7 +14,10 @@ private actor HeldStart {
             started.yield()
         }
     }
-    func release() { continuation?.resume(); continuation = nil }
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 @MainActor
@@ -23,7 +27,8 @@ struct TransportOrderTests {
     private nonisolated static func name(_ command: AudioCommand) -> String {
         switch command {
         case .setStart(let tick): "start \(tick / 705_600)"
-        case .loop(let start, let end): "loop \(start.map { String($0 / 705_600) } ?? "-") \(end.map { String($0 / 705_600) } ?? "-")"
+        case .loop(let start, let end):
+            "loop \(start.map { String($0 / 705_600) } ?? "-") \(end.map { String($0 / 705_600) } ?? "-")"
         case .metronome(let enabled): "metronome \(enabled)"
         case .output: "output"
         default: "other"
@@ -43,32 +48,45 @@ struct TransportOrderTests {
         let controller = ProjectController { document, command in
             if case .status = command { return try await document.audio(command) }
             sent.withLock { $0.append(Self.name(command)) }
-            if case .setStart = command, first.withLock({ let held = $0; $0 = false; return held }) {
+            if case .setStart = command,
+                first.withLock({
+                    let held = $0
+                    $0 = false
+                    return held
+                })
+            {
                 await hold.wait(started.continuation)
             }
             return try await document.audio(command)
         }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-transport-order-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-transport-order-\(UUID()).echode")
         defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let document = try #require(controller.documentID), snapshot = try #require(controller.snapshot)
+        let document = try #require(controller.documentID)
+        let snapshot = try #require(controller.snapshot)
         let session = WorkspaceSession(controller: controller, state: WorkspaceState(defaults: .init()))
         let commands: [WorkspaceCommand] = [.playback, .stop, .loop, .metronome, .output, .newProject, .openProject]
         #expect(commands.allSatisfy { session.enabled($0) })
 
         // The arrange ruler receives the same lock the workspace passes it.
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
-        pane.layout(); pane.setSnapshot(snapshot, selected: controller.selection)
+        pane.layout()
+        pane.setSnapshot(snapshot, selected: controller.selection)
         let ruler = pane.timeline
         ruler.audioDocument = document
         var clicked: [Int64] = []
         ruler.onSetStart = { clicked.append($0) }
         func click(_ position: Double) throws {
-            let x = ruler.renderInput.header!.width + 1 + (position - ruler.camera.originBeat) * ruler.camera.pixelsPerBeat
+            let x =
+                ruler.renderInput.header!.width + 1 + (position - ruler.camera.originBeat) * ruler.camera.pixelsPerBeat
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                let event = try #require(NSEvent.mouseEvent(with: type, location: ruler.convert(CGPoint(x: x, y: 10), to: nil),
-                    modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                let event = try #require(
+                    NSEvent.mouseEvent(
+                        with: type, location: ruler.convert(CGPoint(x: x, y: 10), to: nil),
+                        modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1,
+                        pressure: 1))
                 if type == .leftMouseDown { ruler.mouseDown(with: event) } else { ruler.mouseUp(with: event) }
             }
         }
@@ -78,7 +96,7 @@ struct TransportOrderTests {
         let tick = try #require(clicked.last)
         let firstStart = Task { await controller.setPlaybackStart(tick: tick) }
         for await _ in started.stream { break }
-        #expect(controller.audioBusy) // the first start is still in flight
+        #expect(controller.audioBusy)  // the first start is still in flight
         #expect(!controller.transportLocked)
         #expect(commands.allSatisfy { session.enabled($0) })
         ruler.setRuler(start: controller.playbackStart, loop: controller.rulerLoop, busy: controller.transportLocked)
@@ -101,7 +119,8 @@ struct TransportOrderTests {
         await hold.release()
         await firstStart.value
         for task in [second, loop, ranged, metronomeOn, metronomeOff] { await task.value }
-        #expect(sent.withLock { $0 } == ["start 1", "start 2", "loop 1 3", "loop 1 3", "metronome true", "metronome false"])
+        #expect(
+            sent.withLock { $0 } == ["start 1", "start 2", "loop 1 3", "loop 1 3", "metronome true", "metronome false"])
         #expect(controller.playbackStart == beat * 2 && controller.position == beat * 2)
         #expect(controller.audio.loopStart == beat && controller.audio.loopEnd == beat * 3)
         #expect(!controller.audio.metronome && !controller.audioBusy)

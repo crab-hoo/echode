@@ -3,6 +3,7 @@ import EchodeBridge
 import Foundation
 import SwiftUI
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -43,14 +44,18 @@ struct PlayheadFollowTests {
         #expect(shown.isEmpty && !follower.awake, "nothing follows until it is turned on")
 
         follower.setFollowing(true)
-        clock = 0.1; follower.step(tick: 2, playing: false)
+        clock = 0.1
+        follower.step(tick: 2, playing: false)
         #expect(shown == [2] && follower.awake)
-        clock = 0.4; follower.step(tick: 2, playing: false)
+        clock = 0.4
+        follower.step(tick: 2, playing: false)
         #expect(!follower.awake)
         follower.noteTransport()
-        clock = 0.6; follower.step(tick: 3, playing: false)
+        clock = 0.6
+        follower.step(tick: 3, playing: false)
         #expect(follower.awake)
-        clock = 9; follower.step(tick: 4, playing: true)
+        clock = 9
+        follower.step(tick: 4, playing: true)
         #expect(follower.awake && shown == [2, 2, 3, 4])
 
         follower.setFollowing(false)
@@ -69,26 +74,38 @@ struct PlayheadFollowTests {
         defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
         let feed = try #require(controller.playback)
         let undo = controller.undoCount
 
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
-        pane.layout(); pane.setSnapshot(snapshot, selected: track)
+        pane.layout()
+        pane.setSnapshot(snapshot, selected: track)
         pane.timeline.setRuler(start: controller.playbackStart, loop: nil, busy: false)
         let piano = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         piano.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
         func presentPiano() {
-            let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
-            piano.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: piano.camera,
-                                                                           key: DisplayKey(), preview: nil)))
+            let input = CanvasInput(
+                snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+            piano.present(
+                PianoFrame(
+                    input: input,
+                    piano: PianoRenderInput(
+                        track: track, focus: nil, camera: piano.camera,
+                        key: DisplayKey(), preview: nil)))
         }
         var released = 0
         pane.onManualScroll = { released += 1 }
         piano.onManualScroll = { released += 1 }
-        pane.setPlayback(feed); piano.setPlayback(feed)
-        pane.setFollowing(true); piano.follower.setFollowing(true)
-        func step() { pane.follower.step(); piano.follower.step() }
+        pane.setPlayback(feed)
+        piano.setPlayback(feed)
+        pane.setFollowing(true)
+        piano.follower.setFollowing(true)
+        func step() {
+            pane.follower.step()
+            piano.follower.step()
+        }
         func move(to position: Int64) async {
             await controller.locate(beat: Double(position))
             #expect(feed.position.tick == position * beat)
@@ -112,16 +129,20 @@ struct PlayheadFollowTests {
         // Travel through tracks or pitches and zoom keep following.
         pane.timeline.onScroll?(2, -40)
         pane.timeline.onZoom?(2, [], .zero)
-        let vertical = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -40, wheel2: 2, wheel3: 0))
+        let vertical = try #require(
+            CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -40, wheel2: 2, wheel3: 0))
         piano.scrollWheel(with: try #require(NSEvent(cgEvent: vertical)))
         #expect(released == 0 && pane.follower.following && piano.follower.following)
 
         // A ruler press holds each view; the first frame after release pages.
-        let arrangeOrigin = pane.viewport.originBeat, pianoOrigin = piano.camera.originBeat
+        let arrangeOrigin = pane.viewport.originBeat
+        let pianoOrigin = piano.camera.originBeat
         let rulerX = pane.timeline.renderInput.timelineOrigin + 10
         func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
-                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            try #require(
+                NSEvent.mouseEvent(
+                    with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                    windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
         }
         pane.timeline.mouseDown(with: try mouse(.leftMouseDown, CGPoint(x: rulerX, y: 10), in: pane.timeline))
         presentPiano()
@@ -141,7 +162,8 @@ struct PlayheadFollowTests {
         let scrolled = pane.viewport.originBeat
         await move(to: 80)
         #expect(pane.viewport.originBeat == scrolled && piano.camera.originBeat == 80)
-        let horizontal = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 3, wheel2: -40, wheel3: 0))
+        let horizontal = try #require(
+            CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 3, wheel2: -40, wheel3: 0))
         piano.scrollWheel(with: try #require(NSEvent(cgEvent: horizontal)))
         #expect(released == 2 && !piano.follower.following)
         let pianoScrolled = piano.camera.originBeat
@@ -149,12 +171,14 @@ struct PlayheadFollowTests {
         #expect(pane.viewport.originBeat == scrolled && piano.camera.originBeat == pianoScrolled)
 
         // Turning it on again shows the stopped playhead at once.
-        pane.setFollowing(true); piano.follower.setFollowing(true)
+        pane.setFollowing(true)
+        piano.follower.setFollowing(true)
         #expect(pane.follower.awake && piano.follower.awake)
         step()
         #expect(pane.viewport.originBeat == 120 && piano.camera.originBeat == 120)
         #expect(controller.undoCount == undo && controller.playbackStart == 20 * beat)
-        pane.stop(); piano.stop()
+        pane.stop()
+        piano.stop()
         #expect(!pane.follower.awake && !piano.follower.awake)
         await controller.close()
     }
@@ -168,7 +192,10 @@ struct PlayheadFollowTests {
         #expect(state.followsPlayhead && !session.enabled(.followPlayhead))
         let first = FileManager.default.temporaryDirectory.appendingPathComponent("echode-follow-a-\(UUID()).echode")
         let second = FileManager.default.temporaryDirectory.appendingPathComponent("echode-follow-b-\(UUID()).echode")
-        defer { try? FileManager.default.removeItem(at: first); try? FileManager.default.removeItem(at: second) }
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
         await controller.open(first, creating: true)
         state.synchronize(controller)
         let undo = controller.undoCount
@@ -227,11 +254,13 @@ private struct FollowHost: View {
     var body: some View {
         if let snapshot = controller.snapshot, let track = controller.selection {
             VStack {
-                ArrangeCanvas(snapshot: snapshot, selection: .constant(track), playback: controller.playback,
-                              followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
-                PianoCanvas(snapshot: snapshot, track: track, focus: .constant(nil), key: DisplayKey(), busy: false,
-                            insert: { _, _, _ in }, edit: { _, _ in }, delete: { _ in }, playback: controller.playback,
-                            followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
+                ArrangeCanvas(
+                    snapshot: snapshot, selection: .constant(track), playback: controller.playback,
+                    followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
+                PianoCanvas(
+                    snapshot: snapshot, track: track, focus: .constant(nil), key: DisplayKey(), busy: false,
+                    insert: { _, _, _ in }, edit: { _, _ in }, delete: { _ in }, playback: controller.playback,
+                    followsPlayhead: state.followsPlayhead, onManualScroll: { state.followsPlayhead = false })
             }
         }
     }

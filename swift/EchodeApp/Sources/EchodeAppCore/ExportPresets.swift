@@ -12,7 +12,8 @@ struct ExportPresets {
             case .unreadable: "Export presets cannot be read. Existing presets have not been changed."
             case .invalidName: "Enter a nonempty preset name without control characters."
             case .invalidSettings: "Correct the export settings before saving a preset."
-            case .duplicateName: "That preset name already exists. Choose another name or delete the existing preset first."
+            case .duplicateName:
+                "That preset name already exists. Choose another name or delete the existing preset first."
             case .missing: "That export preset no longer exists."
             }
         }
@@ -25,15 +26,17 @@ struct ExportPresets {
 
     static func normalizedName(_ name: String) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping
-        guard !trimmed.isEmpty, !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        guard !trimmed.isEmpty, !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else { return nil }
         return trimmed
     }
 
     static func load(defaults: UserDefaults = .standard) throws -> [String: ExportSettings] {
         guard defaults.object(forKey: storageKey) != nil else { return [:] }
         guard let json = defaults.string(forKey: storageKey),
-              let stored = try? JSONDecoder().decode(Stored.self, from: Data(json.utf8)), stored.version == 1,
-              stored.entries.allSatisfy({ normalizedName($0.key) == $0.key && $0.value.isValid }) else { throw Failure.unreadable }
+            let stored = try? JSONDecoder().decode(Stored.self, from: Data(json.utf8)), stored.version == 1,
+            stored.entries.allSatisfy({ normalizedName($0.key) == $0.key && $0.value.isValid })
+        else { throw Failure.unreadable }
         return stored.entries
     }
 
@@ -55,7 +58,8 @@ struct ExportPresets {
     }
 
     private static func write(_ entries: [String: ExportSettings], defaults: UserDefaults) throws {
-        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
         let data = try encoder.encode(Stored(entries: entries))
         defaults.set(String(decoding: data, as: UTF8.self), forKey: storageKey)
     }

@@ -11,7 +11,6 @@ See docs/reviews/2026-11-02-fix-instructions.md (XCA-01, XCA-03).
 import argparse
 import json
 import os
-from pathlib import Path
 import shutil
 import signal
 import socket
@@ -19,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
@@ -68,7 +68,7 @@ def events(text, package):
         if path == prefix.rstrip("/"):
             found.append((kind, "."))
         elif path.startswith(prefix):
-            found.append((kind, path[len(prefix):]))
+            found.append((kind, path[len(prefix) :]))
     return found
 
 
@@ -99,13 +99,16 @@ def trace(echode, directory):
     log = work / "trace.log"
     sock = work / "s.sock"
     environment = dict(os.environ, DYLD_INSERT_LIBRARIES=str(library), ECHODE_DURABILITY_LOG=str(log))
-    server = subprocess.Popen([str(echode), "serve", str(package), sock.name], cwd=work, env=environment,
-                              stderr=subprocess.PIPE, text=True)
+    server = subprocess.Popen(
+        [str(echode), "serve", str(package), sock.name], cwd=work, env=environment, stderr=subprocess.PIPE, text=True
+    )
     try:
         deadline = time.monotonic() + 10
         while not sock.exists():
             if server.poll() is not None or time.monotonic() > deadline:
-                raise RuntimeError("echode serve did not start: " + (server.stderr.read() if server.poll() is not None else "timeout"))
+                raise RuntimeError(
+                    "echode serve did not start: " + (server.stderr.read() if server.poll() is not None else "timeout")
+                )
             time.sleep(0.05)
         client = socket.socket(socket.AF_UNIX)
         client.connect(str(sock))
@@ -121,9 +124,15 @@ def trace(echode, directory):
         # Each request also lets the document thread finish and compact the previous save.
         call("actions.perform", {"type": "track.add", "name": "first"})
         time.sleep(1)
-        call("actions.transaction", {"actions": [
-            {"type": "track.add", "name": "audio"},
-            {"type": "audio.import", "track": {"ref": 0, "field": "id"}, "start": 0, "path": str(WAV)}]})
+        call(
+            "actions.transaction",
+            {
+                "actions": [
+                    {"type": "track.add", "name": "audio"},
+                    {"type": "audio.import", "track": {"ref": 0, "field": "id"}, "start": 0, "path": str(WAV)},
+                ]
+            },
+        )
         time.sleep(1)
         call("actions.perform", {"type": "track.add", "name": "last"})
         time.sleep(1)
@@ -136,10 +145,15 @@ def trace(echode, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--echode", type=Path, default=ROOT / "target/debug/echode",
-                        help="a built CLI; build it with cargo build -p echode-cli")
-    parser.add_argument("--require-durable", action="store_true",
-                        help="exit 1 when a watched rename is not synced in time")
+    parser.add_argument(
+        "--echode",
+        type=Path,
+        default=ROOT / "target/debug/echode",
+        help="a built CLI; build it with cargo build -p echode-cli",
+    )
+    parser.add_argument(
+        "--require-durable", action="store_true", help="exit 1 when a watched rename is not synced in time"
+    )
     args = parser.parse_args()
     if not args.echode.is_file():
         sys.exit(f"{args.echode} is missing; run cargo build -p echode-cli")

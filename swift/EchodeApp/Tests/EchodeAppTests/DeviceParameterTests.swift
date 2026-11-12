@@ -4,6 +4,7 @@ import Foundation
 import Observation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 /// Answers device commands like a running CLAP, without an output device.
@@ -33,7 +34,10 @@ actor FakeParameterPlugin {
     private(set) var parsed: [String] = []
     private(set) var commits = 0
 
-    init(extra: Int = 0, converts: Bool = true) { self.extra = extra; self.converts = converts }
+    init(extra: Int = 0, converts: Bool = true) {
+        self.extra = extra
+        self.converts = converts
+    }
 
     static func level(_ index: Int) -> UInt32 { UInt32(100 + index) }
     static func hash(gain: Double, mode: Double) -> String {
@@ -41,17 +45,24 @@ actor FakeParameterPlugin {
     }
 
     private func table() -> [DeviceParameter] {
-        [DeviceParameter(id: 1, flags: 1 << 5, name: "Gain", module: "Output", min: 0, max: 2, defaultValue: 1,
-                         value: gain, text: String(format: "%.2fx", gain)),
-         DeviceParameter(id: 2, flags: 1 | 1 << 16, name: "Mode", min: 0, max: 2, defaultValue: 0,
-                         value: mode, text: ["Clean", "Half", "Mute"][Int(mode)]),
-         DeviceParameter(id: 3, flags: 1 << 2, name: "Internal", min: 0, max: 1, defaultValue: 0, value: 0, text: "0.00"),
-         DeviceParameter(id: 4, flags: 1 << 3, name: "Meter", min: 0, max: 1, defaultValue: 0, value: 0, text: "0.00")]
+        [
+            DeviceParameter(
+                id: 1, flags: 1 << 5, name: "Gain", module: "Output", min: 0, max: 2, defaultValue: 1,
+                value: gain, text: String(format: "%.2fx", gain)),
+            DeviceParameter(
+                id: 2, flags: 1 | 1 << 16, name: "Mode", min: 0, max: 2, defaultValue: 0,
+                value: mode, text: ["Clean", "Half", "Mute"][Int(mode)]),
+            DeviceParameter(
+                id: 3, flags: 1 << 2, name: "Internal", min: 0, max: 1, defaultValue: 0, value: 0, text: "0.00"),
+            DeviceParameter(
+                id: 4, flags: 1 << 3, name: "Meter", min: 0, max: 1, defaultValue: 0, value: 0, text: "0.00"),
+        ]
             + (0..<extra).map { index in
                 let id = Self.level(index)
                 let value = levels[id] ?? 0
-                return DeviceParameter(id: id, name: "Level \(index)", module: "Bank \(index / 100)", min: 0, max: 1,
-                                       defaultValue: 0, value: value, text: String(format: "%.2f", value))
+                return DeviceParameter(
+                    id: id, name: "Level \(index)", module: "Bank \(index / 100)", min: 0, max: 1,
+                    defaultValue: 0, value: value, text: String(format: "%.2f", value))
             }
     }
 
@@ -82,7 +93,10 @@ actor FakeParameterPlugin {
         case .set(_, let changes):
             for change in changes {
                 sent[change.id] = change.value
-                if change.id == 1 { gain = change.value; sentGains.append(change.value) }
+                if change.id == 1 {
+                    gain = change.value
+                    sentGains.append(change.value)
+                }
                 if change.id == 2 { mode = change.value }
                 if change.id >= 100 { levels[change.id] = change.value }
             }
@@ -92,15 +106,20 @@ actor FakeParameterPlugin {
         case .showWindow(let device, let title):
             windows.append((device, title))
             let created = openWindows.insert(device).inserted
-            return DeviceResult(report: DeviceReport(window: DeviceWindowReport(created: created, visible: true, key: false)),
-                                snapshot: try await document.snapshot())
+            return DeviceResult(
+                report: DeviceReport(window: DeviceWindowReport(created: created, visible: true, key: false)),
+                snapshot: try await document.snapshot())
         case .parse(_, let id, let text):
             parsed.append(text)
             // The fixture's own units: "1.25x" and the mode names. Reading text changes nothing.
-            let value: Double? = id == 2 ? ["Clean", "Half", "Mute"].firstIndex(of: text).map(Double.init)
+            let value: Double? =
+                id == 2
+                ? ["Clean", "Half", "Mute"].firstIndex(of: text).map(Double.init)
                 : Double(text.hasSuffix("x") ? String(text.dropLast()) : text)
-            return DeviceResult(report: DeviceReport(parsed: DeviceParameterParse(id: id, value: converts ? value : nil, converts: converts)),
-                                snapshot: try await document.snapshot())
+            return DeviceResult(
+                report: DeviceReport(
+                    parsed: DeviceParameterParse(id: id, value: converts ? value : nil, converts: converts)),
+                snapshot: try await document.snapshot())
         case .closeWindow(let device):
             openWindows.remove(device)
             return DeviceResult(report: DeviceReport(closed: true), snapshot: try await document.snapshot())
@@ -111,7 +130,8 @@ actor FakeParameterPlugin {
                 return DeviceResult(report: DeviceReport(changed: false), snapshot: try await document.snapshot())
             }
             recorded = hash
-            let snapshot = try await document.perform(#"{"type":"device.set_state","device":"\#(device.uuidString)","state":"\#(hash)"}"#)
+            let snapshot = try await document.perform(
+                #"{"type":"device.set_state","device":"\#(device.uuidString)","state":"\#(hash)"}"#)
             return DeviceResult(report: DeviceReport(changed: true), snapshot: snapshot)
         }
     }
@@ -122,8 +142,9 @@ struct DeviceParameterTests {
     /// The strip with the same wiring as the workspace, in an offscreen window
     /// so the table lays out its rows as on screen.
     @MainActor private final class Harness {
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 640, height: 420), styleMask: [.borderless],
-                              backing: .buffered, defer: true)
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 640, height: 420), styleMask: [.borderless],
+            backing: .buffered, defer: true)
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 640, height: 420))
         var pending: Task<Void, Never>?
         let controller: ProjectController
@@ -131,29 +152,43 @@ struct DeviceParameterTests {
         let document: DocumentID
 
         init(_ controller: ProjectController, track: UUID, document: DocumentID) {
-            self.controller = controller; self.track = track; self.document = document
+            self.controller = controller
+            self.track = track
+            self.document = document
             window.contentView = strip
-            strip.onEdit = { [unowned self] edit in self.pending = Task { _ = await controller.editDeviceChain(edit, documentID: document) } }
+            strip.onEdit = { [unowned self] edit in
+                self.pending = Task { _ = await controller.editDeviceChain(edit, documentID: document) }
+            }
             strip.onBegin = { controller.beginParameter($0, device: $1, documentID: document) }
             strip.onChange = { controller.changeParameter($0, documentID: document) }
-            strip.onEnd = { [unowned self] commit in self.pending = Task { await controller.finishParameter(commit: commit, documentID: document) } }
-            strip.onEnter = { device, id, text in await controller.enterParameter(text, id: id, device: device, documentID: document) }
+            strip.onEnd = { [unowned self] commit in
+                self.pending = Task { await controller.finishParameter(commit: commit, documentID: document) }
+            }
+            strip.onEnter = { device, id, text in
+                await controller.enterParameter(text, id: id, device: device, documentID: document)
+            }
             strip.onStep = { [unowned self] device, id, value in
-                self.pending = Task { _ = await controller.setParameter(id, device: device, value: value, documentID: document) }
+                self.pending = Task {
+                    _ = await controller.setParameter(id, device: device, value: value, documentID: document)
+                }
             }
             strip.onPin = { [unowned self] device, id, pinned in
-                self.pending = Task { _ = await controller.setPinned(id, device: device, pinned: pinned, documentID: document) }
+                self.pending = Task {
+                    _ = await controller.setPinned(id, device: device, pinned: pinned, documentID: document)
+                }
             }
             refresh()
         }
 
         func refresh() {
             let devices = controller.deviceRows(on: track)
-            let states = Dictionary(uniqueKeysWithValues: devices.compactMap { device in
-                controller.parameterState(device.id).map { (device.id, $0) }
-            })
-            strip.configure(devices: devices, track: track, document: document, busy: controller.busy,
-                            locked: controller.historyBusy, states: states)
+            let states = Dictionary(
+                uniqueKeysWithValues: devices.compactMap { device in
+                    controller.parameterState(device.id).map { (device.id, $0) }
+                })
+            strip.configure(
+                devices: devices, track: track, document: document, busy: controller.busy,
+                locked: controller.historyBusy, states: states)
             strip.layoutSubtreeIfNeeded()
             for column in strip.columns { column.list.table.layoutSubtreeIfNeeded() }
         }
@@ -166,14 +201,17 @@ struct DeviceParameterTests {
     }
 
     private func project(_ name: String, plugin: FakeParameterPlugin, devices: Int = 1) async throws
-        -> (ProjectController, DocumentID, UUID, URL) {
+        -> (ProjectController, DocumentID, UUID, URL)
+    {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-\(name)-\(UUID()).echode")
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
         await controller.addTrack(name: "fx")
         let track = try #require(controller.selection)
-        for _ in 0..<devices { #expect(await controller.insertPlugin("dev.echode.test-params", on: track, documentID: document)) }
+        for _ in 0..<devices {
+            #expect(await controller.insertPlugin("dev.echode.test-params", on: track, documentID: document))
+        }
         return (controller, document, track, url)
     }
 
@@ -276,15 +314,21 @@ struct DeviceParameterTests {
         #expect(controller.undoCount == before)
     }
 
-    private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView, clicks: Int = 1) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
-            windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 1, clickCount: clicks, pressure: 1))
+    private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView, clicks: Int = 1) throws -> NSEvent
+    {
+        try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 1, clickCount: clicks,
+                pressure: 1))
     }
 
     private func key(_ characters: String, code: UInt16, in window: NSWindow) throws -> NSEvent {
-        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: window.windowNumber, context: nil, characters: characters,
-            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+        try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
     }
 
     /// Clicks one to `count` times; the third press opens the field and is not released.
@@ -398,7 +442,9 @@ struct DeviceParameterTests {
         // request returns fails. A final-state assertion misses the flash.
         func staysEnabled(_ operation: @MainActor () async -> Void) async {
             let changes = Mutex(0)
-            withObservationTracking { _ = controller.busy } onChange: {
+            withObservationTracking {
+                _ = controller.busy
+            } onChange: {
                 changes.withLock { $0 += 1 }
             }
             await operation()
@@ -412,8 +458,14 @@ struct DeviceParameterTests {
             gain.slider.endDrag()
             await harness.settle()
         }
-        await staysEnabled { column.bypass.performClick(nil); await harness.settle() }
-        await staysEnabled { column.offline.performClick(nil); await harness.settle() }
+        await staysEnabled {
+            column.bypass.performClick(nil)
+            await harness.settle()
+        }
+        await staysEnabled {
+            column.offline.performClick(nil)
+            await harness.settle()
+        }
         #expect(controller.undoCount == before + 3)
         #expect(controller.deviceRows(on: track).first?.bypassed == true)
         #expect(controller.deviceRows(on: track).first?.offline == true)
@@ -501,7 +553,8 @@ struct DeviceParameterTests {
         #expect(built > 0 && built <= Int(list.bounds.height / DeviceParameterListView.rowHeight) + 2)
         // Rows scrolled away are not views; nothing like one row per parameter exists.
         var made = 0
-        for row in 0..<list.table.numberOfRows where list.table.view(atColumn: 0, row: row, makeIfNecessary: false) != nil { made += 1 }
+        for row in 0..<list.table.numberOfRows
+        where list.table.view(atColumn: 0, row: row, makeIfNecessary: false) != nil { made += 1 }
         #expect(made <= built + 4)
 
         // An offscreen parameter, scrolled to and dragged, reaches its own id.
@@ -550,10 +603,13 @@ struct DeviceParameterTests {
         await controller.redo()
         #expect(controller.deviceRows(on: track)[0].pinned == [1, target])
         // A copy inherits the pins under a new identity.
-        #expect(await controller.editDeviceChain(.copy(source: devices[0].id, track: track, before: nil), documentID: document))
+        #expect(
+            await controller.editDeviceChain(
+                .copy(source: devices[0].id, track: track, before: nil), documentID: document))
         let copied = controller.deviceRows(on: track)
         #expect(copied.count == 3 && copied[2].pinned == [1, target] && copied[2].id != devices[0].id)
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.deviceRows(on: track).map(\.pinned) == [[1, target], [], [1, target]])
         let current = try #require(controller.documentID)
         #expect(!(await controller.setPinned(1, device: devices[0].id, pinned: true, documentID: current)))

@@ -4,6 +4,7 @@ import Foundation
 import Metal
 import QuartzCore
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -22,19 +23,23 @@ struct CanvasSubmissionTests {
         // Dimensions and frame counts are scoped to this product regression.
         // The last 64pt arrange row is partially visible at 160pt height.
         for piano in [false, true] {
-            var input = CanvasInput(snapshot: snapshot, selected: selected,
+            var input = CanvasInput(
+                snapshot: snapshot, selected: selected,
                 camera: ArrangeCamera(originBeat: 2, pixelsPerBeat: 72, pixelsPerTrack: 64),
                 width: 320, height: 160, scale: 2,
                 header: ArrangeHeaderInput(width: 120, palette: ArrangeHeaderPalette()))
             if piano {
-                input.piano = PianoRenderInput(track: selected, focus: nil, camera: PianoCamera(),
-                                                key: DisplayKey(), preview: nil)
+                input.piano = PianoRenderInput(
+                    track: selected, focus: nil, camera: PianoCamera(),
+                    key: DisplayKey(), preview: nil)
             }
             let reference: CanvasReadback
             if let piano = input.piano {
-                reference = try renderOffscreen(PianoFrame(input: input, piano: piano), painter: painter, device: device, queue: queue)
+                reference = try renderOffscreen(
+                    PianoFrame(input: input, piano: piano), painter: painter, device: device, queue: queue)
             } else {
-                reference = try renderOffscreen(ArrangeFrame(input: input), painter: painter, device: device, queue: queue)
+                reference = try renderOffscreen(
+                    ArrangeFrame(input: input), painter: painter, device: device, queue: queue)
             }
             let painted = await reference.scan { _, _, pixel in pixel != .canvasBackground }
             #expect(painted.count > 1_000)
@@ -58,8 +63,10 @@ struct CanvasSubmissionTests {
             renderer.update(input)
             let nextRevision = renderer.measurement.revision
             #expect(nextRevision != firstRevision)
-            for size in [CGSize(width: 700, height: 380), CGSize(width: 600, height: 280),
-                         CGSize(width: 700, height: 280), CGSize(width: 600, height: 380)] {
+            for size in [
+                CGSize(width: 700, height: 380), CGSize(width: 600, height: 280),
+                CGSize(width: 700, height: 280), CGSize(width: 600, height: 380),
+            ] {
                 let stale = try submit(renderer, size: size, device: device)
                 await expectPixels(stale, reference: reference)
                 #expect(renderer.measurement.drawnRevision == firstRevision)
@@ -72,7 +79,8 @@ struct CanvasSubmissionTests {
             #expect(renderer.measurement.drawnRevision == nextRevision)
             #expect(renderer.measurement.displayLinkPaused)
 
-            let empty = CanvasInput(snapshot: snapshot, selected: selected, camera: input.camera, width: 0, height: 0, scale: 2)
+            let empty = CanvasInput(
+                snapshot: snapshot, selected: selected, camera: input.camera, width: 0, height: 0, scale: 2)
             renderer.update(empty)
             let blank = try submit(renderer, size: input.drawableSize, device: device)
             let nonBackground = await blank.scan { _, _, pixel in pixel != .canvasBackground }
@@ -98,7 +106,8 @@ struct CanvasSubmissionTests {
     }
 
     private func submit(_ renderer: CanvasRenderer, size: CGSize, device: any MTLDevice) throws -> CanvasReadback {
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
             width: Int(size.width), height: Int(size.height), mipmapped: false)
         descriptor.storageMode = .shared
         descriptor.usage = .renderTarget
@@ -109,8 +118,9 @@ struct CanvasSubmissionTests {
         if let error = command.error { throw error }
         var pixels = [UInt8](repeating: 0, count: texture.width * texture.height * 4)
         pixels.withUnsafeMutableBytes {
-            texture.getBytes($0.baseAddress!, bytesPerRow: texture.width * 4,
-                             from: MTLRegionMake2D(0, 0, texture.width, texture.height), mipmapLevel: 0)
+            texture.getBytes(
+                $0.baseAddress!, bytesPerRow: texture.width * 4,
+                from: MTLRegionMake2D(0, 0, texture.width, texture.height), mipmapLevel: 0)
         }
         return CanvasReadback(width: texture.width, height: texture.height, pixels: pixels)
     }

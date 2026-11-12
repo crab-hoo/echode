@@ -42,8 +42,12 @@ struct PianoVelocityGesture {
         guard y.isFinite, self.y.isFinite, pointsPerStep.isFinite, pointsPerStep > 0 else { return nil }
         // Relative motion preserves the grabbed value and offset, independent of pitch zoom and time grid.
         let basis = originals.isEmpty ? [original] : originals.values.map { Int($0 >> 9) }
-        let delta = Int(min(Double(ModelLimits.midi7.upperBound - (basis.max() ?? original)), max(Double(-(basis.min() ?? original)),
-            ((self.y - y) / pointsPerStep).rounded())))
+        let delta = Int(
+            min(
+                Double(ModelLimits.midi7.upperBound - (basis.max() ?? original)),
+                max(
+                    Double(-(basis.min() ?? original)),
+                    ((self.y - y) / pointsPerStep).rounded())))
         var values: [UUID: Int] = [:]
         for (id, raw) in originals { values[id.note] = Int(raw >> 9) + delta }
         return PianoVelocityPreview(id: id, value: original + delta, values: values)

@@ -3,26 +3,28 @@
 import contextlib
 import io
 import json
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-import check_test_width as check  # noqa: E402
+import check_test_width as check
 
-RECORDS = [{"kind": "test", "payload": {"id": "Suite", "kind": "suite"}},
-           {"kind": "test", "payload": {"id": "Suite/a", "kind": "function"}},
-           {"kind": "test", "payload": {"id": "Suite/b", "kind": "function"}},
-           {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite"}},
-           {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite/a"}},
-           {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite/b"}},
-           {"kind": "event", "payload": {"kind": "testEnded", "testID": "Suite/a"}},
-           {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite/a"}},
-           {"kind": "event", "payload": {"kind": "testEnded", "testID": "Suite/a"}},
-           {"kind": "event", "payload": {"kind": "testEnded", "testID": "Suite/b"}}]
+RECORDS = [
+    {"kind": "test", "payload": {"id": "Suite", "kind": "suite"}},
+    {"kind": "test", "payload": {"id": "Suite/a", "kind": "function"}},
+    {"kind": "test", "payload": {"id": "Suite/b", "kind": "function"}},
+    {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite"}},
+    {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite/a"}},
+    {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite/b"}},
+    {"kind": "event", "payload": {"kind": "testEnded", "testID": "Suite/a"}},
+    {"kind": "event", "payload": {"kind": "testStarted", "testID": "Suite/a"}},
+    {"kind": "event", "payload": {"kind": "testEnded", "testID": "Suite/a"}},
+    {"kind": "event", "payload": {"kind": "testEnded", "testID": "Suite/b"}},
+]
 STREAM = "\n".join(["not json", *map(json.dumps, RECORDS)])
 
 
@@ -37,9 +39,16 @@ class WidthTests(unittest.TestCase):
             {"kind": "test", "payload": {"id": "p", "kind": "function", "isParameterized": True}},
             {"kind": "test", "payload": {"id": "q", "kind": "function", "isParameterized": True}},
         ]
-        for kind, test_id in [("testStarted", "a"), ("testStarted", "p"), ("testStarted", "q"),
-                              ("testCaseStarted", "p"), ("testCaseEnded", "p"),
-                              ("testEnded", "p"), ("testEnded", "q"), ("testEnded", "a")]:
+        for kind, test_id in [
+            ("testStarted", "a"),
+            ("testStarted", "p"),
+            ("testStarted", "q"),
+            ("testCaseStarted", "p"),
+            ("testCaseEnded", "p"),
+            ("testEnded", "p"),
+            ("testEnded", "q"),
+            ("testEnded", "a"),
+        ]:
             records.append({"kind": "event", "payload": {"kind": kind, "testID": test_id}})
         stream = "\n".join(map(json.dumps, records))
         self.assertEqual(check.peak_live_tests(stream), 2, "parameterized containers inflated the width")
@@ -47,8 +56,14 @@ class WidthTests(unittest.TestCase):
 
     def test_concurrent_cases_of_one_parameterized_function_count_separately(self):
         records = [{"kind": "test", "payload": {"id": "p", "kind": "function", "isParameterized": True}}]
-        for kind in ["testStarted", "testCaseStarted", "testCaseStarted",
-                     "testCaseEnded", "testCaseEnded", "testEnded"]:
+        for kind in [
+            "testStarted",
+            "testCaseStarted",
+            "testCaseStarted",
+            "testCaseEnded",
+            "testCaseEnded",
+            "testEnded",
+        ]:
             records.append({"kind": "event", "payload": {"kind": kind, "testID": "p"}})
         stream = "\n".join(map(json.dumps, records))
         self.assertEqual(check.peak_live_tests(stream), 2, "concurrent parameter cases escaped the width check")

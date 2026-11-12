@@ -14,7 +14,8 @@ struct NoteDraft {
 
     var geometry: NoteGeometry? {
         guard let beat = Self.number(beat), let length = Self.number(length),
-              let start = Tick.ticks(beat), let duration = Tick.ticks(length) else { return nil }
+            let start = Tick.ticks(beat), let duration = Tick.ticks(length)
+        else { return nil }
         let value = NoteGeometry(start: start, length: duration, pitch: pitch)
         return value.isValid ? value : nil
     }
@@ -24,8 +25,13 @@ struct NoteDraft {
 
     mutating func synchronize(document: DocumentID?, track: UUID?, note: PianoNote?) {
         let geometry = note.map(NoteGeometry.init)
-        guard self.document != document || self.track != track || self.note != note?.id || original != geometry else { return }
-        self.document = document; self.track = track; self.note = note?.id; original = geometry
+        guard self.document != document || self.track != track || self.note != note?.id || original != geometry else {
+            return
+        }
+        self.document = document
+        self.track = track
+        self.note = note?.id
+        original = geometry
         reset()
     }
 

@@ -57,15 +57,19 @@ final class ArrangeHeaderView: NSView {
         registerForDraggedTypes([FXDrag.deviceType, FXDrag.pluginType])
         clicks.begin = { [weak self] target in
             guard let self, let press = self.press, press.target == target, press.document == self.documentID,
-                  press.actions.begin(target.track, target.field) else { return false }
+                press.actions.begin(target.track, target.field)
+            else { return false }
             self.gestureActions = press.actions
             return true
         }
         clicks.drag = { [weak self] target, offset in
             guard let press = self?.press, press.target == target else { return }
             let fraction = Double(offset.width) / max(1, Double(press.rect.width))
-            if let dragged = self?.gestureActions?.dragged { dragged(fraction) }
-            else { self?.gestureActions?.change(MixScale.dragged(target.field, from: press.original, by: fraction)) }
+            if let dragged = self?.gestureActions?.dragged {
+                dragged(fraction)
+            } else {
+                self?.gestureActions?.change(MixScale.dragged(target.field, from: press.original, by: fraction))
+            }
         }
         clicks.reset = { [weak self] target in self?.gestureActions?.change(MixScale.defaultValue(target.field)) }
         clicks.finish = { [weak self] commit in
@@ -80,9 +84,14 @@ final class ArrangeHeaderView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    func setSnapshot(_ snapshot: Snapshot, selected: UUID?, selectedTracks: Set<UUID>? = nil, collapsedTracks: Set<UUID> = []) {
+    func setSnapshot(
+        _ snapshot: Snapshot, selected: UUID?, selectedTracks: Set<UUID>? = nil, collapsedTracks: Set<UUID> = []
+    ) {
         let selectedTracks = selectedTracks ?? Set(selected.map { [$0] } ?? [])
-        guard self.snapshot !== snapshot || self.selected != selected || self.selectedTracks != selectedTracks || self.collapsedTracks != collapsedTracks else { return }
+        guard
+            self.snapshot !== snapshot || self.selected != selected || self.selectedTracks != selectedTracks
+                || self.collapsedTracks != collapsedTracks
+        else { return }
         self.snapshot = snapshot
         self.selected = selected
         self.selectedTracks = selectedTracks
@@ -104,20 +113,35 @@ final class ArrangeHeaderView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        guard let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) else { clicks.settle(); return }
-        if TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width))).hit(point).map({ $0 == .gain || $0 == .pan }) != true {
+        guard let index = rows.index(at: Double(point.y)), let id = snapshot?.trackID(at: index) else {
+            clicks.settle()
+            return
+        }
+        if TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width))).hit(point).map({
+            $0 == .gain || $0 == .pan
+        }) != true {
             clicks.settle()
         }
         if let tree = snapshot?.trackHierarchy(at: index), tree.hasChildren,
-           TrackFolderLayout(row: rows.rect(at: index, width: bounds.width), depth: tree.depth, folder: true).disclosure.contains(point) {
-            onToggleFolder?(id); return
+            TrackFolderLayout(row: rows.rect(at: index, width: bounds.width), depth: tree.depth, folder: true)
+                .disclosure.contains(point)
+        {
+            onToggleFolder?(id)
+            return
         }
         let fx = TrackFXLayout(row: rows.rect(at: index, width: Double(bounds.width)))
-        if fx.visible, fx.rect.contains(point) { select(id, change: .focus); onOpenFX?(id); return }
+        if fx.visible, fx.rect.contains(point) {
+            select(id, change: .focus)
+            onOpenFX?(id)
+            return
+        }
         let devices = headerDevices(on: id)
-        let names = TrackFXNamesLayout(row: fx.row, count: devices.count, depth: snapshot?.trackHierarchy(at: index)?.depth ?? 0)
+        let names = TrackFXNamesLayout(
+            row: fx.row, count: devices.count, depth: snapshot?.trackHierarchy(at: index)?.depth ?? 0)
         if !names.name.isEmpty, names.name.contains(point), let device = devices.first {
-            select(id, change: .focus); openHeaderDevice(device, track: id); return
+            select(id, change: .focus)
+            openHeaderDevice(device, track: id)
+            return
         }
         if !names.overflow.isEmpty, names.overflow.contains(point) {
             select(id, change: .focus)
@@ -125,18 +149,29 @@ final class ArrangeHeaderView: NSView {
             return
         }
         let controls = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
-        if controls.hit(point) != nil { select(id, change: .focus) }
-        else {
-            select(id, change: event.modifierFlags.contains(.command) ? .toggle : event.modifierFlags.contains(.shift) ? .extend : .replace)
+        if controls.hit(point) != nil {
+            select(id, change: .focus)
+        } else {
+            select(
+                id,
+                change: event.modifierFlags.contains(.command)
+                    ? .toggle : event.modifierFlags.contains(.shift) ? .extend : .replace)
         }
-        guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else { clicks.settle(); return }
+        guard let field = controls.hit(point), let mix = snapshot?.mixer(onTrack: index), let mixActions else {
+            clicks.settle()
+            return
+        }
         if field == .mute || field == .solo {
             clicks.settle()
-            if let toggle = mixActions.toggle { toggle(id, field) }
-            else { mixActions.set(id, field, mix[field].value == 0 ? 1 : 0) }
+            if let toggle = mixActions.toggle {
+                toggle(id, field)
+            } else {
+                mixActions.set(id, field, mix[field].value == 0 ? 1 : 0)
+            }
         } else {
             let target = MixTarget(track: id, field: field)
-            if case .waiting(target) = clicks.phase {} else {
+            if case .waiting(target) = clicks.phase {
+            } else {
                 var captured = mixActions
                 mixActions.capture?(&captured, id, field)
                 press = (target, controls.rect(field), mix[field].value, documentID, captured)
@@ -150,10 +185,12 @@ final class ArrangeHeaderView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         clicks.settle()
         guard onDuplicateTracks != nil, let index = rows.index(at: Double(point.y)),
-              let id = snapshot?.trackID(at: index) else { return nil }
+            let id = snapshot?.trackID(at: index)
+        else { return nil }
         select(id, change: .focus)
         let menu = NSMenu()
-        let duplicate = NSMenuItem(title: text("Duplicate Track"), action: #selector(duplicateTracks), keyEquivalent: "")
+        let duplicate = NSMenuItem(
+            title: text("Duplicate Track"), action: #selector(duplicateTracks), keyEquivalent: "")
         duplicate.target = self
         menu.addItem(duplicate)
         return menu
@@ -161,11 +198,16 @@ final class ArrangeHeaderView: NSView {
     @objc private func duplicateTracks() { onDuplicateTracks?() }
     func acceptFX(_ pasteboard: NSPasteboard, at point: CGPoint, copying: Bool) -> Bool {
         guard point.y.isFinite, let payload = FXDrag.read(pasteboard), payload.document == documentID,
-              let index = rows.index(at: Double(point.y)), let track = snapshot?.trackID(at: index), let onDropFX else { return false }
-        if let plugin = payload.plugin { onDropFX(track, .plugin(plugin)); return true }
+            let index = rows.index(at: Double(point.y)), let track = snapshot?.trackID(at: index), let onDropFX
+        else { return false }
+        if let plugin = payload.plugin {
+            onDropFX(track, .plugin(plugin))
+            return true
+        }
         guard let sourceTrack = payload.track, let source = payload.device,
-              snapshot?.devices(on: sourceTrack).contains(where: { $0.id == source }) == true,
-              let operation = payload.operation(on: track, copying: copying, before: nil) else { return false }
+            snapshot?.devices(on: sourceTrack).contains(where: { $0.id == source }) == true,
+            let operation = payload.operation(on: track, copying: copying, before: nil)
+        else { return false }
         switch operation {
         case .copy(let source, _, _): onDropFX(track, .copyDevice(source))
         case .reorder(let source, _): onDropFX(track, .moveToEnd(source))
@@ -178,37 +220,53 @@ final class ArrangeHeaderView: NSView {
     private func fxDragOperation(_ sender: any NSDraggingInfo) -> NSDragOperation {
         let point = convert(sender.draggingLocation, from: nil)
         guard let payload = FXDrag.read(sender.draggingPasteboard), payload.document == documentID,
-              let index = rows.index(at: Double(point.y)), let track = snapshot?.trackID(at: index) else { return [] }
-        return payload.plugin != nil || payload.track != track || NSEvent.modifierFlags.contains(.command) ? .copy : .move
+            let index = rows.index(at: Double(point.y)), let track = snapshot?.trackID(at: index)
+        else { return [] }
+        return payload.plugin != nil || payload.track != track || NSEvent.modifierFlags.contains(.command)
+            ? .copy : .move
     }
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        acceptFX(sender.draggingPasteboard, at: convert(sender.draggingLocation, from: nil), copying: NSEvent.modifierFlags.contains(.command))
+        acceptFX(
+            sender.draggingPasteboard, at: convert(sender.draggingLocation, from: nil),
+            copying: NSEvent.modifierFlags.contains(.command))
     }
     override func mouseUp(with event: NSEvent) { clicks.up(at: convert(event.locationInWindow, from: nil)) }
     override func mouseCancelled(with event: NSEvent) { clicks.cancel() }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { clicks.cancel(); entry?.cancel() }
+        if window == nil {
+            clicks.cancel()
+            entry?.cancel()
+        }
     }
 
     /// The third click's field, in the inspector's units: dB with −∞, and percent.
     private func openEntry(_ target: MixTarget) {
-        guard let snapshot, let index = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == target.track }),
-              let mix = snapshot.mixer(onTrack: index), let name = snapshot.trackName(at: index), let actions = mixActions else { return }
+        guard let snapshot,
+            let index = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == target.track }),
+            let mix = snapshot.mixer(onTrack: index), let name = snapshot.trackName(at: index), let actions = mixActions
+        else { return }
         entry?.cancel()
         let layout = TrackControlLayout(row: rows.rect(at: index, width: Double(bounds.width)))
         let title = text(target.field == .gain ? "Volume" : "Pan") + " " + name
-        entry = ValueEntryField.open(in: self, over: layout.rect(target.field), text: MixEntry.text(target.field, mix[target.field].value),
-            label: title, submit: { typed in
+        entry = ValueEntryField.open(
+            in: self, over: layout.rect(target.field), text: MixEntry.text(target.field, mix[target.field].value),
+            label: title,
+            submit: { typed in
                 guard let value = MixEntry.value(target.field, typed) else { return false }
-                if let enter = actions.enter { enter(target.track, target.field, value) }
-                else if value != mix[target.field].value { actions.set(target.track, target.field, value) }
+                if let enter = actions.enter {
+                    enter(target.track, target.field, value)
+                } else if value != mix[target.field].value {
+                    actions.set(target.track, target.field, value)
+                }
                 return true
             }, onClose: { [weak self] in self?.entry = nil })
     }
     override func scrollWheel(with event: NSEvent) {
-        let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
-            precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerTrack)
+        let delta = WheelScroll.points(
+            x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
+            precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerTrack
+        )
         onScroll?(delta.x, delta.y)
     }
     override func magnify(with event: NSEvent) {
@@ -217,15 +275,27 @@ final class ArrangeHeaderView: NSView {
         onZoom?(max(0.1, 1 + Double(event.magnification)), event.modifierFlags, CGPoint(x: 0, y: point.y))
     }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == kVK_Escape, clicks.active { clicks.cancel(); return }
+        if event.keyCode == kVK_Escape, clicks.active {
+            clicks.cancel()
+            return
+        }
         clicks.settle()
-        guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
+        guard !event.modifierFlags.contains(.command) else {
+            super.keyDown(with: event)
+            return
+        }
         switch Int(event.keyCode) {
         case kVK_LeftArrow, kVK_RightArrow:
-            guard let index = selectedIndex, let id = snapshot?.trackID(at: index), let tree = snapshot?.trackHierarchy(at: index) else { return }
-            if tree.hasChildren && collapsedTracks.contains(id) == (event.keyCode == kVK_RightArrow) { onToggleFolder?(id) }
-            else if event.keyCode == kVK_LeftArrow, let parent = tree.parent { onSelect?(parent) }
-            else { super.keyDown(with: event) }
+            guard let index = selectedIndex, let id = snapshot?.trackID(at: index),
+                let tree = snapshot?.trackHierarchy(at: index)
+            else { return }
+            if tree.hasChildren && collapsedTracks.contains(id) == (event.keyCode == kVK_RightArrow) {
+                onToggleFolder?(id)
+            } else if event.keyCode == kVK_LeftArrow, let parent = tree.parent {
+                onSelect?(parent)
+            } else {
+                super.keyDown(with: event)
+            }
         case kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End: interpretKeyEvents([event])
         default: super.keyDown(with: event)
         }
@@ -244,7 +314,10 @@ final class ArrangeHeaderView: NSView {
     }
 
     override func accessibilityChildren() -> [Any]? {
-        guard let snapshot, let window else { accessible = [:]; return [] }
+        guard let snapshot, let window else {
+            accessible = [:]
+            return []
+        }
         let document = documentID
         var retained: [UUID: AccessibleTrackHeader] = [:]
         var retainedControls: [String: AccessibleMixControl] = [:]
@@ -270,7 +343,12 @@ final class ArrangeHeaderView: NSView {
                     let key = "\(id)/\(field.rawValue)"
                     let control = controlElements[key] ?? AccessibleMixControl(actions: MixAccessibilityActions())
                     let title: String
-                    switch field { case .gain: title = "Volume"; case .pan: title = "Pan"; case .mute: title = "Mute"; case .solo: title = "Solo" }
+                    switch field {
+                    case .gain: title = "Volume"
+                    case .pan: title = "Pan"
+                    case .mute: title = "Mute"
+                    case .solo: title = "Solo"
+                    }
                     control.setAccessibilityElement(true)
                     control.setAccessibilityRole(field == .gain || field == .pan ? .slider : .checkBox)
                     control.setAccessibilityLabel(text(title) + " " + name)
@@ -283,15 +361,18 @@ final class ArrangeHeaderView: NSView {
                         control.setAccessibilityValue(NSNumber(value: 1))
                         control.setAccessibilityValueDescription(reason)
                     }
-                    control.setAccessibilityMinValue(NSNumber(value: field == .pan ? ModelLimits.pan.lowerBound : ModelLimits.gain.lowerBound))
-                    control.setAccessibilityMaxValue(NSNumber(value: field == .gain ? ModelLimits.gain.upperBound : ModelLimits.pan.upperBound))
+                    control.setAccessibilityMinValue(
+                        NSNumber(value: field == .pan ? ModelLimits.pan.lowerBound : ModelLimits.gain.lowerBound))
+                    control.setAccessibilityMaxValue(
+                        NSNumber(value: field == .gain ? ModelLimits.gain.upperBound : ModelLimits.pan.upperBound))
                     control.setAccessibilityParent(child)
                     control.setAccessibilityIdentifier(key)
-                    control.setAccessibilityFrame(window.convertToScreen(convert(layout.rect(field).intersection(bounds), to: nil)))
+                    control.setAccessibilityFrame(
+                        window.convertToScreen(convert(layout.rect(field).intersection(bounds), to: nil)))
                     let actions = mixActions
                     control.actions.adjust = { [weak self, weak control] direction in
                         guard let self, self.documentID == document, let control else { return }
-                        if (field == .gain || field == .pan), let adjust = actions?.adjust {
+                        if field == .gain || field == .pan, let adjust = actions?.adjust {
                             adjust(id, field, direction)
                             return
                         }
@@ -300,22 +381,31 @@ final class ArrangeHeaderView: NSView {
                         if let spoken = MixScale.spokenValue(field, next) {
                             control.setAccessibilityValueDescription(spoken)
                         }
-                        if (field == .mute || field == .solo), let toggle = actions?.toggle { toggle(id, field) }
-                        else { actions?.set(id, field, next) }
+                        if field == .mute || field == .solo, let toggle = actions?.toggle {
+                            toggle(id, field)
+                        } else {
+                            actions?.set(id, field, next)
+                        }
                     }
                     retainedControls[key] = control
                     return control
                 }
                 child.setAccessibilityChildren(controls)
-            } else { child.setAccessibilityChildren([]) }
+            } else {
+                child.setAccessibilityChildren([])
+            }
             if let tree = snapshot.trackHierarchy(at: index), tree.hasChildren {
                 let control = folderElements[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
-                let folder = TrackFolderLayout(row: rows.rect(at: index, width: bounds.width), depth: tree.depth, folder: true)
-                control.setAccessibilityElement(true); control.setAccessibilityRole(.button)
-                control.setAccessibilityLabel(text(collapsedTracks.contains(id) ? "Expand Folder" : "Collapse Folder") + " " + name)
+                let folder = TrackFolderLayout(
+                    row: rows.rect(at: index, width: bounds.width), depth: tree.depth, folder: true)
+                control.setAccessibilityElement(true)
+                control.setAccessibilityRole(.button)
+                control.setAccessibilityLabel(
+                    text(collapsedTracks.contains(id) ? "Expand Folder" : "Collapse Folder") + " " + name)
                 control.setAccessibilityIdentifier("\(id)/disclosure")
                 control.setAccessibilityParent(child)
-                control.setAccessibilityFrame(window.convertToScreen(convert(folder.disclosure.intersection(bounds), to: nil)))
+                control.setAccessibilityFrame(
+                    window.convertToScreen(convert(folder.disclosure.intersection(bounds), to: nil)))
                 control.actions.press = { [weak self] in self?.onToggleFolder?(id) }
                 child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
                 retainedFolders[id] = control
@@ -323,39 +413,50 @@ final class ArrangeHeaderView: NSView {
             let fx = TrackFXLayout(row: rows.rect(at: index, width: Double(bounds.width)))
             if fx.visible, fx.rect.intersects(bounds) {
                 let control = fxElements[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
-                control.setAccessibilityElement(true); control.setAccessibilityRole(.button)
+                control.setAccessibilityElement(true)
+                control.setAccessibilityRole(.button)
                 control.setAccessibilityLabel(text("Add FX") + " " + name)
                 control.setAccessibilityIdentifier("\(id)/fx")
                 control.setAccessibilityParent(child)
                 control.setAccessibilityFrame(window.convertToScreen(convert(fx.rect.intersection(bounds), to: nil)))
-                control.actions.press = { [weak self] in self?.select(id, change: .focus); self?.onOpenFX?(id) }
+                control.actions.press = { [weak self] in
+                    self?.select(id, change: .focus)
+                    self?.onOpenFX?(id)
+                }
                 child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
                 retainedFX[id] = control
             }
             let devices = headerDevices(on: id)
-            let names = TrackFXNamesLayout(row: fx.row, count: devices.count, depth: snapshot.trackHierarchy(at: index)?.depth ?? 0)
+            let names = TrackFXNamesLayout(
+                row: fx.row, count: devices.count, depth: snapshot.trackHierarchy(at: index)?.depth ?? 0)
             if !names.name.isEmpty, let device = devices.first {
                 let control = deviceElements[device.id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
-                control.setAccessibilityElement(true); control.setAccessibilityRole(.button)
+                control.setAccessibilityElement(true)
+                control.setAccessibilityRole(.button)
                 control.setAccessibilityLabel((pluginNames[device.plugin] ?? device.plugin) + " " + name)
                 control.setAccessibilityEnabled(!device.offline)
                 control.setAccessibilityIdentifier("\(device.id)/window")
                 control.setAccessibilityParent(child)
                 control.setAccessibilityFrame(window.convertToScreen(convert(names.name.intersection(bounds), to: nil)))
                 control.actions.press = { [weak self] in
-                    guard let self, self.documentID == document, let current = self.headerDevices(on: id).first(where: { $0.id == device.id }) else { return }
-                    self.select(id, change: .focus); self.openHeaderDevice(current, track: id)
+                    guard let self, self.documentID == document,
+                        let current = self.headerDevices(on: id).first(where: { $0.id == device.id })
+                    else { return }
+                    self.select(id, change: .focus)
+                    self.openHeaderDevice(current, track: id)
                 }
                 child.setAccessibilityChildren((child.accessibilityChildren() ?? []) + [control])
                 retainedDevices[device.id] = control
             }
             if !names.overflow.isEmpty {
                 let control = overflowElements[id] ?? AccessibleTrackHeader(actions: TrackHeaderActions())
-                control.setAccessibilityElement(true); control.setAccessibilityRole(.menuButton)
+                control.setAccessibilityElement(true)
+                control.setAccessibilityRole(.menuButton)
                 control.setAccessibilityLabel(text("FX") + " … " + name)
                 control.setAccessibilityIdentifier("\(id)/fx-more")
                 control.setAccessibilityParent(child)
-                control.setAccessibilityFrame(window.convertToScreen(convert(names.overflow.intersection(bounds), to: nil)))
+                control.setAccessibilityFrame(
+                    window.convertToScreen(convert(names.overflow.intersection(bounds), to: nil)))
                 control.actions.press = { [weak self] in
                     guard let self, self.documentID == document else { return }
                     self.select(id, change: .focus)
@@ -387,15 +488,21 @@ private final class MixAccessibilityActions {
 @MainActor
 private final class AccessibleMixControl: NSAccessibilityElement {
     nonisolated let actions: MixAccessibilityActions
-    init(actions: MixAccessibilityActions) { self.actions = actions; super.init() }
+    init(actions: MixAccessibilityActions) {
+        self.actions = actions
+        super.init()
+    }
     override func accessibilityPerformIncrement() -> Bool { adjust(1) }
     override func accessibilityPerformDecrement() -> Bool { adjust(-1) }
     override func accessibilityPerformPress() -> Bool { adjust(1) }
     private nonisolated func adjust(_ direction: Double) -> Bool {
         // AppKit's normal main-thread callback captures targets before returning.
         // An off-main accessibility client must first enter the UI actor.
-        if Thread.isMainThread { MainActor.assumeIsolated { [actions] in actions.adjust?(direction) } }
-        else { Task { @MainActor [actions] in actions.adjust?(direction) } }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [actions] in actions.adjust?(direction) }
+        } else {
+            Task { @MainActor [actions] in actions.adjust?(direction) }
+        }
         return true
     }
 }
@@ -408,7 +515,10 @@ private final class TrackHeaderActions {
 @MainActor
 private final class AccessibleTrackHeader: NSAccessibilityElement {
     nonisolated let actions: TrackHeaderActions
-    init(actions: TrackHeaderActions) { self.actions = actions; super.init() }
+    init(actions: TrackHeaderActions) {
+        self.actions = actions
+        super.init()
+    }
     override func accessibilityPerformPress() -> Bool {
         Task { @MainActor [actions] in actions.press?() }
         return true

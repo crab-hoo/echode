@@ -2,20 +2,20 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import check_on_stop  # noqa: E402
-import durability_trace  # noqa: E402
-import verify  # noqa: E402
-import wait_for_verify  # noqa: E402
+import check_on_stop
+import durability_trace
+import verify
+import wait_for_verify
 
 
 class ClaudeHookTests(unittest.TestCase):
@@ -34,23 +34,25 @@ class ClaudeHookTests(unittest.TestCase):
 
     def test_edits_wait_for_the_lock_and_answer_in_claude_format(self):
         root = Path(tempfile.mkdtemp())
-        allowed = wait_for_verify.respond({"tool_name": "Edit"}, root, timeout=1,
-                                          mutating=wait_for_verify.CLAUDE_MUTATING)
+        allowed = wait_for_verify.respond(
+            {"tool_name": "Edit"}, root, timeout=1, mutating=wait_for_verify.CLAUDE_MUTATING
+        )
         self.assertEqual(wait_for_verify.claude_response(allowed), {})
         denied = wait_for_verify.claude_response({"permission": "deny", "agent_message": "busy"})
         self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertEqual(denied["hookSpecificOutput"]["permissionDecisionReason"], "busy")
-        self.assertEqual(wait_for_verify.respond({"tool_name": "Bash"}, root, timeout=1,
-                                                 mutating=wait_for_verify.CLAUDE_MUTATING),
-                         {"permission": "allow"})
+        self.assertEqual(
+            wait_for_verify.respond({"tool_name": "Bash"}, root, timeout=1, mutating=wait_for_verify.CLAUDE_MUTATING),
+            {"permission": "allow"},
+        )
 
     def test_real_wrapper_allows_a_read_and_denies_invalid_input(self):
         script = ROOT / ".claude/hooks/wait-for-verify.sh"
-        allowed = subprocess.run([str(script)], cwd=ROOT, input=json.dumps({"tool_name": "Read"}),
-                                 capture_output=True, text=True, check=True)
+        allowed = subprocess.run(
+            [str(script)], cwd=ROOT, input=json.dumps({"tool_name": "Read"}), capture_output=True, text=True, check=True
+        )
         self.assertEqual(json.loads(allowed.stdout), {})
-        denied = subprocess.run([str(script)], cwd=ROOT, input="{invalid",
-                                capture_output=True, text=True, check=True)
+        denied = subprocess.run([str(script)], cwd=ROOT, input="{invalid", capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_stop_blocks_a_failed_verification_a_bounded_number_of_times(self):
@@ -70,11 +72,18 @@ class ClaudeHookTests(unittest.TestCase):
 
 class DurabilityTraceTests(unittest.TestCase):
     def test_a_rename_needs_its_directory_synced_before_the_next_journal_event(self):
-        unsynced = [("RENAME", ".git/objects/ab/cd"), ("RENAME", "media/objects/h"),
-                    ("SYNC", "media/objects"), ("RENAME", ".journal.jsonl.1.tmp")]
+        unsynced = [
+            ("RENAME", ".git/objects/ab/cd"),
+            ("RENAME", "media/objects/h"),
+            ("SYNC", "media/objects"),
+            ("RENAME", ".journal.jsonl.1.tmp"),
+        ]
         self.assertEqual(durability_trace.unsynced(unsynced), [".git/objects/ab/cd"])
-        synced = [("RENAME", ".git/refs/echode/autosave/main"), ("SYNC", ".git/refs/echode/autosave"),
-                  ("SYNC", "journal.jsonl")]
+        synced = [
+            ("RENAME", ".git/refs/echode/autosave/main"),
+            ("SYNC", ".git/refs/echode/autosave"),
+            ("SYNC", "journal.jsonl"),
+        ]
         self.assertEqual(durability_trace.unsynced(synced), [])
 
     def test_events_keep_only_paths_inside_the_package(self):
@@ -107,9 +116,23 @@ class RegisteredAuditReproductions(unittest.TestCase):
     def test_audit_env06_the_command_line_cannot_satisfy_an_expected_failure(self):
         directory = Path(tempfile.mkdtemp())
         command = f"{sys.executable} -c 'import sys; sys.exit(101)' the_regression_assertion"
-        result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/checked_commands.py"),
-                                 "--log-dir", str(directory), "--command", command, "--expect-exit", "101",
-                                 "--expect-failure", "the_regression_assertion"], capture_output=True, text=True)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(ROOT / "scripts/checked_commands.py"),
+                "--log-dir",
+                str(directory),
+                "--command",
+                command,
+                "--expect-exit",
+                "101",
+                "--expect-failure",
+                "the_regression_assertion",
+            ],
+            capture_output=True,
+            text=True,
+        )
         self.assertNotEqual(result.returncode, 0, "text only in the Command: line passed as the expected red")
 
     def test_a_changed_c_line_selects_the_sanitizers_and_tests_do_not(self):
@@ -149,39 +172,48 @@ class ForeignDeclarations(unittest.TestCase):
             (directory / "crates/x/src").mkdir(parents=True)
             for name, text in sources.items():
                 (directory / "crates/x/src" / name).write_text(text)
-            return subprocess.run(["bash", str(directory / "scripts/check-ffi.sh")],
-                                  capture_output=True, text=True)
+            return subprocess.run(["bash", str(directory / "scripts/check-ffi.sh")], capture_output=True, text=True)
 
     def test_extern_blocks_without_an_abi_with_another_abi_or_a_split_brace_are_found(self):
-        result = self.check_sources({
-            "listed.rs": 'extern "C" {\n    fn f();\n}\n',
-            "plain.rs": 'unsafe extern {\n    fn f();\n}\n',
-            "system.rs": 'extern "system" {\n    fn f();\n}\n',
-            "split.rs": 'unsafe extern "C"\n{\n    fn f();\n}\n',
-            "callback.rs": 'pub extern "C" fn f() {}\nextern crate core;\n',
-        }, "crates/x/src/listed.rs f\n")
+        result = self.check_sources(
+            {
+                "listed.rs": 'extern "C" {\n    fn f();\n}\n',
+                "plain.rs": "unsafe extern {\n    fn f();\n}\n",
+                "system.rs": 'extern "system" {\n    fn f();\n}\n',
+                "split.rs": 'unsafe extern "C"\n{\n    fn f();\n}\n',
+                "callback.rs": 'pub extern "C" fn f() {}\nextern crate core;\n',
+            },
+            "crates/x/src/listed.rs f\n",
+        )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         for name in ("plain.rs", "system.rs", "split.rs"):
             self.assertIn("crates/x/src/" + name, result.stdout)
         self.assertNotIn("callback.rs", result.stdout, "a definition is not a declaration")
 
     def test_a_new_symbol_in_a_listed_file_is_rejected(self):
-        result = self.check_sources({
-            "listed.rs": 'unsafe extern "C" { fn f(); fn added(); }\n',
-        }, "crates/x/src/listed.rs f\n")
+        result = self.check_sources(
+            {
+                "listed.rs": 'unsafe extern "C" { fn f(); fn added(); }\n',
+            },
+            "crates/x/src/listed.rs f\n",
+        )
         self.assertEqual(result.returncode, 1, "an added foreign symbol bypassed the allowlist")
         self.assertIn("added", result.stdout)
 
     def test_stale_symbols_are_rejected_even_when_the_file_still_declares_others(self):
-        result = self.check_sources({
-            "listed.rs": 'extern "C" { fn f(); }\n',
-        }, "crates/x/src/listed.rs f\ncrates/x/src/listed.rs removed\n")
+        result = self.check_sources(
+            {
+                "listed.rs": 'extern "C" { fn f(); }\n',
+            },
+            "crates/x/src/listed.rs f\ncrates/x/src/listed.rs removed\n",
+        )
         self.assertEqual(result.returncode, 1, "a stale foreign symbol remained allowed")
         self.assertIn("removed", result.stdout)
 
     def test_static_items_comments_strings_and_callback_types_are_distinguished(self):
-        result = self.check_sources({
-            "listed.rs": '''
+        result = self.check_sources(
+            {
+                "listed.rs": """
                 // extern "C" { fn imaginary(); }
                 /* nested /* extern { fn fake(); } */ comment */
                 const EXAMPLE: &str = r#"extern { fn quoted(); }"#;
@@ -190,8 +222,10 @@ class ForeignDeclarations(unittest.TestCase):
                     fn f(callback: unsafe extern "C" fn(i32)) -> i32;
                     fn r#type();
                 }
-            ''',
-        }, "crates/x/src/listed.rs f\ncrates/x/src/listed.rs port\ncrates/x/src/listed.rs type\n")
+            """,
+            },
+            "crates/x/src/listed.rs f\ncrates/x/src/listed.rs port\ncrates/x/src/listed.rs type\n",
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_an_empty_allowlist_and_foreign_free_sources_are_valid(self):
@@ -199,11 +233,15 @@ class ForeignDeclarations(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_a_link_name_cannot_redirect_an_allowed_declaration(self):
-        result = self.check_sources({
-            "listed.rs": 'extern "C" { #[link_name = "unexpected"] fn f(); }\n',
-        }, "crates/x/src/listed.rs f\n")
+        result = self.check_sources(
+            {
+                "listed.rs": 'extern "C" { #[link_name = "unexpected"] fn f(); }\n',
+            },
+            "crates/x/src/listed.rs f\n",
+        )
         self.assertEqual(result.returncode, 1, "an allowed name concealed another foreign symbol")
         self.assertIn("link_name", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

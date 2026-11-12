@@ -2,21 +2,28 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 /// Value controls (ADR 0153): a click keeps the value, a drag is relative, a
 /// double click resets to the default, and a third click types instead.
 @MainActor
 struct ValueControlTests {
-    private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView, clicks: Int = 1) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
-            windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 1, clickCount: clicks, pressure: 1))
+    private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView, clicks: Int = 1) throws -> NSEvent
+    {
+        try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: view.window?.windowNumber ?? 0, context: nil, eventNumber: 1, clickCount: clicks,
+                pressure: 1))
     }
 
     private func key(_ characters: String, code: UInt16, in window: NSWindow) throws -> NSEvent {
-        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: window.windowNumber, context: nil, characters: characters,
-            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+        try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
     }
 
     /// Clicks one to `count` times at `point`, releasing each press.
@@ -41,7 +48,10 @@ struct ValueControlTests {
         let clicks = ValueClicks<Int>()
         var log: [String] = []
         var refuse = false
-        clicks.begin = { target in log.append("begin \(target)"); return !refuse }
+        clicks.begin = { target in
+            log.append("begin \(target)")
+            return !refuse
+        }
         clicks.drag = { target, offset in log.append("drag \(target) \(Int(offset.width)),\(Int(offset.height))") }
         clicks.reset = { target in log.append("reset \(target)") }
         clicks.finish = { commit in log.append(commit ? "commit" : "restore") }
@@ -58,7 +68,8 @@ struct ValueControlTests {
         #expect(log == ["begin 1", "drag 1 4,-3", "drag 1 10,-3", "commit"])
 
         log = []
-        clicks.down(1, at: .zero, clicks: 1); clicks.up(at: .zero)
+        clicks.down(1, at: .zero, clicks: 1)
+        clicks.up(at: .zero)
         clicks.down(1, at: .zero, clicks: 2)
         clicks.dragged(to: CGPoint(x: 30, y: 0))
         clicks.up(at: .zero)
@@ -68,16 +79,19 @@ struct ValueControlTests {
         #expect(!clicks.active)
 
         log = []
-        clicks.down(2, at: .zero, clicks: 2); clicks.up(at: .zero)
+        clicks.down(2, at: .zero, clicks: 2)
+        clicks.up(at: .zero)
         try await Task.sleep(for: .milliseconds(80))
         #expect(log == ["begin 2", "reset 2", "commit"], "no third click records the default")
 
         log = []
-        clicks.down(2, at: .zero, clicks: 2); clicks.up(at: .zero)
+        clicks.down(2, at: .zero, clicks: 2)
+        clicks.up(at: .zero)
         clicks.down(3, at: .zero, clicks: 3)
         #expect(log == ["begin 2", "reset 2", "commit", "type 3"], "another control's click records the shown default")
         log = []
-        clicks.down(2, at: .zero, clicks: 2); clicks.up(at: .zero)
+        clicks.down(2, at: .zero, clicks: 2)
+        clicks.up(at: .zero)
         clicks.cancel()
         try await Task.sleep(for: .milliseconds(80))
         #expect(log == ["begin 2", "reset 2", "restore"], "Escape restores and the timer no longer records")
@@ -88,20 +102,29 @@ struct ValueControlTests {
         clicks.dragged(to: CGPoint(x: 5, y: 0))
         clicks.dragged(to: CGPoint(x: 9, y: 0))
         clicks.up(at: CGPoint(x: 9, y: 0))
-        clicks.down(1, at: .zero, clicks: 2); clicks.up(at: .zero)
+        clicks.down(1, at: .zero, clicks: 2)
+        clicks.up(at: .zero)
         #expect(log == ["begin 1", "begin 1"])
         #expect(!clicks.active)
     }
 
     @Test func entryFieldsStayInsideTheHostAndReadTheInspectorUnits() {
         let bounds = CGRect(x: 0, y: 0, width: 200, height: 64)
-        #expect(ValueEntryField.frame(for: CGRect(x: 180, y: 29, width: 12, height: 18), in: bounds) == CGRect(x: 128, y: 27, width: 72, height: 22))
-        #expect(ValueEntryField.frame(for: CGRect(x: 10, y: 10, width: 100, height: 30), in: bounds) == CGRect(x: 10, y: 10, width: 100, height: 30))
-        #expect(MixEntry.text(.gain, 0.5) == "-6.0" && MixEntry.text(.gain, 0) == "−∞" && MixEntry.text(.pan, -0.25) == "-25.0")
+        #expect(
+            ValueEntryField.frame(for: CGRect(x: 180, y: 29, width: 12, height: 18), in: bounds)
+                == CGRect(x: 128, y: 27, width: 72, height: 22))
+        #expect(
+            ValueEntryField.frame(for: CGRect(x: 10, y: 10, width: 100, height: 30), in: bounds)
+                == CGRect(x: 10, y: 10, width: 100, height: 30))
+        #expect(
+            MixEntry.text(.gain, 0.5) == "-6.0" && MixEntry.text(.gain, 0) == "−∞"
+                && MixEntry.text(.pan, -0.25) == "-25.0")
         #expect(MixEntry.value(.gain, "−∞") == 0)
         #expect(abs((MixEntry.value(.gain, "-12 dB") ?? 0) - Float(pow(10, -12.0 / 20))) < 0.000001)
         #expect(MixEntry.value(.gain, "13") == nil && MixEntry.value(.gain, "loud") == nil)
-        #expect(MixEntry.value(.pan, "-50 %") == -0.5 && MixEntry.value(.pan, "101") == nil && MixEntry.value(.mute, "1") == nil)
+        #expect(
+            MixEntry.value(.pan, "-50 %") == -0.5 && MixEntry.value(.pan, "101") == nil
+                && MixEntry.value(.mute, "1") == nil)
         #expect(MixScale.dragged(.gain, from: 1, by: 0) == 1 && MixScale.dragged(.pan, from: 0.5, by: 0) == 0.5)
         #expect(MixScale.dragged(.gain, from: 0, by: -1) == 0 && MixScale.dragged(.pan, from: 0.5, by: 1) == 1)
     }
@@ -115,18 +138,22 @@ struct ValueControlTests {
         let track = try #require(controller.selection)
         #expect(await controller.setMixer(track, field: .gain, value: 0.5))
         #expect(await controller.setMixer(track, field: .pan, value: 0.25))
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 200, height: 64), styleMask: [.borderless],
-                              backing: .buffered, defer: true)
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 200, height: 64), styleMask: [.borderless],
+            backing: .buffered, defer: true)
         let header = ArrangeHeaderView(frame: CGRect(x: 0, y: 0, width: 200, height: 64))
         window.contentView = header
         header.clicks.interval = 0.01
         var completion: Task<Void, Never>?
-        header.mixActions = MixActions(begin: { controller.beginFader($0, field: $1) }, change: { controller.changeFader($0) },
+        header.mixActions = MixActions(
+            begin: { controller.beginFader($0, field: $1) }, change: { controller.changeFader($0) },
             finish: { commit in completion = Task { await controller.finishFader(commit: commit) } },
-            set: { id, field, value in completion = Task {
-                if controller.faderPreview != nil { await controller.finishFader(commit: true) }
-                await controller.setMixer(id, field: field, value: value)
-            } })
+            set: { id, field, value in
+                completion = Task {
+                    if controller.faderPreview != nil { await controller.finishFader(commit: true) }
+                    await controller.setMixer(id, field: field, value: value)
+                }
+            })
         func show() throws { header.setSnapshot(try #require(controller.snapshot), selected: track) }
         let layout = TrackControlLayout(row: header.bounds)
         let gain = CGPoint(x: layout.gain.midX, y: layout.gain.midY)
@@ -209,24 +236,31 @@ struct ValueControlTests {
         await controller.addTrack(name: "Audio")
         #expect(await controller.importAudio(wav))
         let track = try #require(controller.selection)
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 128), styleMask: [.borderless],
-                              backing: .buffered, defer: true)
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 1200, height: 128), styleMask: [.borderless],
+            backing: .buffered, defer: true)
         let pane = ArrangePaneView(frame: CGRect(x: 0, y: 0, width: 1200, height: 128))
         window.contentView = pane
         pane.layout()
         let timeline = pane.timeline
         timeline.clicks.interval = 0.01
         var completion: Task<Void, Never>?
-        pane.onClipEdit = { edit in completion = Task {
-            switch edit {
-            case .gain(let id, let gain): await controller.setClipGain(id, gain: gain)
-            case .fades(let id, let entering, let leaving): await controller.setClipFades(id, fadeIn: entering, fadeOut: leaving)
+        pane.onClipEdit = { edit in
+            completion = Task {
+                switch edit {
+                case .gain(let id, let gain): await controller.setClipGain(id, gain: gain)
+                case .fades(let id, let entering, let leaving):
+                    await controller.setClipFades(id, fadeIn: entering, fadeOut: leaving)
+                }
             }
-        } }
+        }
         let camera = ArrangeCamera(pixelsPerBeat: 200)
         let initial = try #require(controller.snapshot)
-        let id = try #require(initial.visibleElements(originTick: 0, widthTicks: 705_600 * 8,
-            originTrack: 0, heightTracks: 2, pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64)
+        let id = try #require(
+            initial.visibleElements(
+                originTick: 0, widthTicks: 705_600 * 8,
+                originTrack: 0, heightTracks: 2, pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64
+            )
             .elements.first { $0.role == .clip }?.id.placement)
         func present() throws -> ClipControlLayout {
             pane.setSnapshot(try #require(controller.snapshot), selected: track)

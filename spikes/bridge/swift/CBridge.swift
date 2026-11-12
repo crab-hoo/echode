@@ -49,9 +49,11 @@ private final class PendingCall: Sendable {
     let observer: @Sendable (CChange) -> Void
     let handoff: ContinuationHandoff
 
-    init(_ continuation: CheckedContinuation<CSnapshot, any Error>,
-         _ observer: @escaping @Sendable (CChange) -> Void,
-         _ handoff: ContinuationHandoff) {
+    init(
+        _ continuation: CheckedContinuation<CSnapshot, any Error>,
+        _ observer: @escaping @Sendable (CChange) -> Void,
+        _ handoff: ContinuationHandoff
+    ) {
         self.continuation = continuation
         self.observer = observer
         self.handoff = handoff
@@ -62,8 +64,10 @@ private final class PendingCall: Sendable {
 
 // The context is retained before enqueueing and consumed exactly once here.
 // Rust guarantees this completion even for a rejected command or a stopped queue.
-private func completeTrack(_ context: UnsafeMutableRawPointer?, _ status: BridgeStatus,
-                           _ handle: OpaquePointer?) {
+private func completeTrack(
+    _ context: UnsafeMutableRawPointer?, _ status: BridgeStatus,
+    _ handle: OpaquePointer?
+) {
     let pending = Unmanaged<PendingCall>.fromOpaque(context!).takeRetainedValue()
     let result: Result<CSnapshot, any Error>
     if status == Ok, let handle {
@@ -97,9 +101,11 @@ final class CDocument: @unchecked Sendable {
     func snapshot() -> CSnapshot { CSnapshot(taking: eb_document_snapshot(handle)!) }
     var liveSnapshots: UInt64 { eb_document_live_snapshots(handle) }
 
-    func addTrack(_ name: String,
-                  observer: @escaping @Sendable (CChange) -> Void = { _ in },
-                  enqueued: @escaping @Sendable () -> Void = {}) async throws -> CSnapshot {
+    func addTrack(
+        _ name: String,
+        observer: @escaping @Sendable (CChange) -> Void = { _ in },
+        enqueued: @escaping @Sendable () -> Void = {}
+    ) async throws -> CSnapshot {
         try Task.checkCancellation()
         // Cancellation after enqueueing does not roll back a committed edit.
         // The continuation still consumes the completion and its owned handle.
@@ -116,12 +122,12 @@ final class CDocument: @unchecked Sendable {
     }
 
     #if BRIDGE_VALIDATION
-    func probeHandle() -> OpaquePointer { eb_probe_new(handle)! }
-    func pause() { eb_document_pause(handle) }
-    func waitUntilPaused() { eb_document_wait_until_paused(handle) }
-    func resume() { eb_document_resume(handle) }
-    func failNext() { eb_document_fail_next(handle) }
-    func closeQueue() { eb_document_close_queue(handle) }
-    static var livePendingCalls: Int { PendingCall.liveCount }
+        func probeHandle() -> OpaquePointer { eb_probe_new(handle)! }
+        func pause() { eb_document_pause(handle) }
+        func waitUntilPaused() { eb_document_wait_until_paused(handle) }
+        func resume() { eb_document_resume(handle) }
+        func failNext() { eb_document_fail_next(handle) }
+        func closeQueue() { eb_document_close_queue(handle) }
+        static var livePendingCalls: Int { PendingCall.liveCount }
     #endif
 }

@@ -8,13 +8,13 @@ Selection, caching, and completion remain the responsibility of verify.py.
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 
 def header(command, timeout):
@@ -30,8 +30,9 @@ def run_logged(root, command, log, timeout, env=None):
         output.write(header(command, timeout))
         output.flush()
         try:
-            process = subprocess.Popen(command, cwd=root, stdout=output, stderr=subprocess.STDOUT,
-                                       start_new_session=True, env=env)
+            process = subprocess.Popen(
+                command, cwd=root, stdout=output, stderr=subprocess.STDOUT, start_new_session=True, env=env
+            )
         except OSError as error:
             output.write(str(error) + "\n")
             result.update(exit_code=127, error=str(error))
@@ -53,7 +54,9 @@ def run_logged(root, command, log, timeout, env=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--command", action="append", required=True, help="quoted argv, not shell syntax; repeat to run all")
+    parser.add_argument(
+        "--command", action="append", required=True, help="quoted argv, not shell syntax; repeat to run all"
+    )
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=1200)
     parser.add_argument("--expect-exit", type=int)
@@ -75,16 +78,17 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     results = []
     for number, command in enumerate(commands, 1):
-        result = run_logged(Path.cwd(), command, directory / f"{number}.log", args.timeout,
-                            {**os.environ, "RUSTUP_AUTO_INSTALL": "0"})
+        result = run_logged(
+            Path.cwd(), command, directory / f"{number}.log", args.timeout, {**os.environ, "RUSTUP_AUTO_INSTALL": "0"}
+        )
         if expected:
             # Only what the command printed counts: the header repeats its argv,
             # which holds the very pattern the assertion is matched with (ENV-06).
             printed = Path(result["log"]).read_text(errors="replace")
             printed = printed.removeprefix(header(command, args.timeout))
             result["expected_failure"] = bool(
-                not result.get("error") and result["exit_code"] == args.expect_exit
-                and pattern.search(printed))
+                not result.get("error") and result["exit_code"] == args.expect_exit and pattern.search(printed)
+            )
             result["status"] = "expected_failure" if result["expected_failure"] else "failed"
         results.append(result)
         (directory / "commands.json").write_text(json.dumps(results, indent=2) + "\n")

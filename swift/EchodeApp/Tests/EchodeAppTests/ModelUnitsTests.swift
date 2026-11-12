@@ -1,6 +1,7 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -25,8 +26,11 @@ struct ModelUnitsTests {
         let track = try #require(controller.selection)
         #expect(await controller.insertNote(pitch: 127, beat: 1.25, length: 1.0 / 3))
         let snapshot = try #require(controller.snapshot)
-        let note = try #require(snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 2_822_400,
-            topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1).first)
+        let note = try #require(
+            snapshot.pianoNotes(
+                track: track, originTick: 0, widthTicks: 2_822_400,
+                topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1
+            ).first)
         #expect(note.start == 882_000 && note.length == 235_200 && note.pitch == 127)
         #expect(snapshot.flicks(at: 705_600) == 352_800_000)
         let undo = controller.undoCount

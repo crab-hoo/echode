@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Run required behavioral regressions; zero tests or skips are failures."""
 
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, contextmanager
 import errno
 import fcntl
 import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,8 +55,15 @@ def run_process(args, *, cwd, capture_output, text, timeout, env=None):
     # Keep descendants in the outer verifier's isolated group, just like the
     # sanitizer driver. Its watchdog must be able to stop the entire check.
     supervised = os.environ.get("ECHODE_VERIFY_GROUP") == "1" and os.getsid(0) == os.getpgrp()
-    process = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               text=text, env=env, start_new_session=not supervised)
+    process = subprocess.Popen(
+        args,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=text,
+        env=env,
+        start_new_session=not supervised,
+    )
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -74,18 +81,43 @@ def run_process(args, *, cwd, capture_output, text, timeout, env=None):
 
 
 def swift_package(contract):
-    return ["--package-path", contract["package_path"], "--scratch-path", SWIFT_SCRATCH,
-            "-Xswiftc", "-warnings-as-errors"]
+    return [
+        "--package-path",
+        contract["package_path"],
+        "--scratch-path",
+        SWIFT_SCRATCH,
+        "-Xswiftc",
+        "-warnings-as-errors",
+    ]
 
 
 def command(contract, skip_build=False):
     name = contract["test"]
     if contract["runner"] == "rust":
-        return ["cargo", "test", "--locked", "--offline", "-p", contract["package"],
-                *contract["target"], name, "--", "--exact", "--nocapture", "--color", "never"]
+        return [
+            "cargo",
+            "test",
+            "--locked",
+            "--offline",
+            "-p",
+            contract["package"],
+            *contract["target"],
+            name,
+            "--",
+            "--exact",
+            "--nocapture",
+            "--color",
+            "never",
+        ]
     if contract["runner"] == "swift":
-        return ["swift", "test", *(["--skip-build"] if skip_build else []), *swift_package(contract),
-                "--filter", contract["suite"] + "/" + name]
+        return [
+            "swift",
+            "test",
+            *(["--skip-build"] if skip_build else []),
+            *swift_package(contract),
+            "--filter",
+            contract["suite"] + "/" + name,
+        ]
     raise ValueError("unknown contract runner: " + contract["runner"])
 
 
@@ -116,8 +148,20 @@ def batch_command(contracts):
     """One libtest run of every named test in one binary. Without --nocapture each result line stays whole."""
     first = contracts[0]
     names = list(dict.fromkeys(contract["test"] for contract in contracts))
-    return ["cargo", "test", "--locked", "--offline", "-p", first["package"], *first["target"], "--",
-            *names, "--exact", "--color", "never"]
+    return [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        first["package"],
+        *first["target"],
+        "--",
+        *names,
+        "--exact",
+        "--color",
+        "never",
+    ]
 
 
 def proven_in_batch(contract, output):
@@ -128,10 +172,18 @@ def proven_in_batch(contract, output):
     if contract["runner"] == "rust":
         results = re.findall(r"^test " + re.escape(contract["test"]) + r" \.\.\. (\S+)$", output, re.MULTILINE)
         return results == ["ok"] and re.search(r"^test result: ", output, re.MULTILINE) is not None
-    results = [match.group(0) for match in re.finditer(
-        r"Test " + re.escape(contract["test"]) + SWIFT_SIGNATURE + r" (?:passed|failed|skipped)[^\r\n]*", output)]
-    return (len(results) == 1 and " passed" in results[0] and "known issue" not in results[0]
-            and re.search(r"Test run with [1-9][0-9]* tests?", output) is not None)
+    results = [
+        match.group(0)
+        for match in re.finditer(
+            r"Test " + re.escape(contract["test"]) + SWIFT_SIGNATURE + r" (?:passed|failed|skipped)[^\r\n]*", output
+        )
+    ]
+    return (
+        len(results) == 1
+        and " passed" in results[0]
+        and "known issue" not in results[0]
+        and re.search(r"Test run with [1-9][0-9]* tests?", output) is not None
+    )
 
 
 def passed(contract, returncode, output):
@@ -139,12 +191,16 @@ def passed(contract, returncode, output):
         return False
     name = re.escape(contract["test"])
     if contract["runner"] == "rust":
-        return bool(re.search(r"^test " + name + r" \.\.\. ok$", output, re.MULTILINE)
-                    and re.search(r"test result: ok\. 1 passed; 0 failed; 0 ignored;", output))
+        return bool(
+            re.search(r"^test " + name + r" \.\.\. ok$", output, re.MULTILINE)
+            and re.search(r"test result: ok\. 1 passed; 0 failed; 0 ignored;", output)
+        )
     # Swift Testing is separate from the empty XCTest summary SwiftPM also emits.
-    return bool(swift_test_result(contract["test"], "passed", output)
-                and re.search(r"Test run with 1 test .*passed", output)
-                and "known issue" not in output.lower())
+    return bool(
+        swift_test_result(contract["test"], "passed", output)
+        and re.search(r"Test run with 1 test .*passed", output)
+        and "known issue" not in output.lower()
+    )
 
 
 def rejected_behavior(contract, returncode, output):
@@ -153,11 +209,15 @@ def rejected_behavior(contract, returncode, output):
         return False
     name = re.escape(contract["test"])
     if contract["runner"] == "rust":
-        return bool(re.search(r"^test " + name + r" \.\.\. FAILED$", output, re.MULTILINE)
-                    and "0 passed; 1 failed; 0 ignored;" in output)
-    return bool(swift_test_result(contract["test"], "failed", output)
-                and re.search(r"Test run with 1 test .*failed", output)
-                and "Expectation failed" in output)
+        return bool(
+            re.search(r"^test " + name + r" \.\.\. FAILED$", output, re.MULTILINE)
+            and "0 passed; 1 failed; 0 ignored;" in output
+        )
+    return bool(
+        swift_test_result(contract["test"], "failed", output)
+        and re.search(r"Test run with 1 test .*failed", output)
+        and "Expectation failed" in output
+    )
 
 
 def negative_control_mutations(contract):
@@ -192,22 +252,30 @@ def contract_fingerprints(root, policy, contracts, tools, phase="complete"):
     check = next(item for item in policy["checks"] if item["id"] == "check-product-contracts")
     makefile = root / "Makefile"
     # The check's entry and recipe, but not the other contracts listed in the policy.
-    recipe = verify.makefile_identity(verify.makefile_rules(makefile.read_text() if makefile.is_file() else ""),
-                                      check.get("make_target", check["id"]))
+    recipe = verify.makefile_identity(
+        verify.makefile_rules(makefile.read_text() if makefile.is_file() else ""), check.get("make_target", check["id"])
+    )
     # The wrapper's scheduling/overall budget is not an input to individual test processes.
     shared = [recipe, policy["global_inputs"], policy["evidence_inputs"], phase]
     stamps = {}
     scopes = {}
     for contract in contracts:
         patterns, folders = contract_inputs(root, policy, contract)
-        definition = {key: value for key, value in contract.items()
-                      if phase != "tests" or key not in ("negative_control", "negative_controls", "purpose")}
-        test_folders = ({verify.workspace_members(root)[contract["package"]].relative_to(root).as_posix()}
-                        if contract["runner"] == "rust" else set())
+        definition = {
+            key: value
+            for key, value in contract.items()
+            if phase != "tests" or key not in ("negative_control", "negative_controls", "purpose")
+        }
+        test_folders = (
+            {verify.workspace_members(root)[contract["package"]].relative_to(root).as_posix()}
+            if contract["runner"] == "rust"
+            else set()
+        )
         excludes = verify.package_test_excludes(folders, test_folders, root)
         configuration = [definition, shared, patterns, sorted(folders), excludes, tools]
-        stamps[contract["id"]] = verify.scoped_digest(root, files, configuration, patterns, folders,
-                                                     package_excludes=excludes, scopes=scopes)
+        stamps[contract["id"]] = verify.scoped_digest(
+            root, files, configuration, patterns, folders, package_excludes=excludes, scopes=scopes
+        )
     return stamps
 
 
@@ -216,8 +284,11 @@ def mutation_site(text, fault):
     if text.count(fault["old"]) != 1:
         return None
     before, after = text.split(fault["old"])
-    return ["\n".join(before.splitlines()[-SITE_CONTEXT_LINES:]), fault["old"],
-            "\n".join(after.splitlines()[:SITE_CONTEXT_LINES])]
+    return [
+        "\n".join(before.splitlines()[-SITE_CONTEXT_LINES:]),
+        fault["old"],
+        "\n".join(after.splitlines()[:SITE_CONTEXT_LINES]),
+    ]
 
 
 def test_body(text, contract):
@@ -231,7 +302,7 @@ def test_body(text, contract):
     if start is None:
         return None
     end = re.compile("^" + start[1] + r"\}", re.MULTILINE).search(text, start.end())
-    return text[start.start():end.end() if end else len(text)]
+    return text[start.start() : end.end() if end else len(text)]
 
 
 def shard_contracts(contracts, shard):
@@ -264,8 +335,14 @@ def read_at_base(root, path, base):
 def reject_unmatched_controls(root, contracts):
     """Every counterexample must still apply. This needs no build, so it runs on every check."""
     texts = {}
-    unmatched = sorted({contract["id"] for contract in contracts for fault in negative_control_mutations(contract)
-                        if texts.setdefault(fault["file"], read_current(root, fault["file"])).count(fault["old"]) != 1})
+    unmatched = sorted(
+        {
+            contract["id"]
+            for contract in contracts
+            for fault in negative_control_mutations(contract)
+            if texts.setdefault(fault["file"], read_current(root, fault["file"])).count(fault["old"]) != 1
+        }
+    )
     if unmatched:
         raise ValueError("negative control no longer matches: " + ", ".join(unmatched))
 
@@ -277,8 +354,9 @@ def control_sites(root, policy, contracts, base=None):
     mutated text and the test body are unchanged. A distant edit can in principle
     change that too; the full tier reruns every control to catch those (ADR 0212).
     """
-    sources = {path: (read_at_base(root, path, base), read_current(root, path))
-               for path in verify.changed_paths(root, base)}
+    sources = {
+        path: (read_at_base(root, path, base), read_current(root, path)) for path in verify.changed_paths(root, base)
+    }
     try:
         previous = json.loads(read_at_base(root, verify.POLICY.as_posix(), base))["product_contracts"]
     except (ValueError, KeyError, TypeError):
@@ -295,15 +373,24 @@ def control_sites(root, policy, contracts, base=None):
                 pair = (test_body(old, contract), test_body(new, contract))
                 if pair != (None, None):
                     bodies[path] = pair
-        current = [mutation_site(texts.setdefault(fault["file"], read_current(root, fault["file"])), fault)
-                   for fault in mutations]
-        sites[contract["id"]] = hashlib.sha256(json.dumps(
-            [control_definition(contract), current, sorted((path, pair[1]) for path, pair in bodies.items())],
-            sort_keys=True).encode()).hexdigest()
-        if (earlier.get(contract["id"]) != control_definition(contract)
-                or any(old != new for old, new in bodies.values())
-                or any(fault["file"] in sources and mutation_site(sources[fault["file"]][0], fault) != site
-                       for fault, site in zip(mutations, current))):
+        current = [
+            mutation_site(texts.setdefault(fault["file"], read_current(root, fault["file"])), fault)
+            for fault in mutations
+        ]
+        sites[contract["id"]] = hashlib.sha256(
+            json.dumps(
+                [control_definition(contract), current, sorted((path, pair[1]) for path, pair in bodies.items())],
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        if (
+            earlier.get(contract["id"]) != control_definition(contract)
+            or any(old != new for old, new in bodies.values())
+            or any(
+                fault["file"] in sources and mutation_site(sources[fault["file"]][0], fault) != site
+                for fault, site in zip(mutations, current)
+            )
+        ):
             targets.add(contract["id"])
     return sites, targets
 
@@ -320,9 +407,11 @@ def reusable_phase(report, phase, fingerprints):
     """Reuse only a complete, passing phase tied to its own current inputs."""
     try:
         entries = {item["id"]: item for item in report.get(phase, [])}
-        return {name: dict(entries[name], reused=True) for name, stamp in fingerprints.items()
-                if stamp and entries.get(name, {}).get("status") == "passed"
-                and entries[name].get("fingerprint") == stamp}
+        return {
+            name: dict(entries[name], reused=True)
+            for name, stamp in fingerprints.items()
+            if stamp and entries.get(name, {}).get("status") == "passed" and entries[name].get("fingerprint") == stamp
+        }
     except (AttributeError, KeyError, TypeError):
         return {}
 
@@ -337,16 +426,26 @@ def reusable_results(report, fingerprints):
     reusable = {}
     for name, stamp in fingerprints.items():
         test, control = tests.get(name, {}), controls.get(name, {})
-        if (stamp and test.get("status") == "passed" and control.get("status") == "passed"
-                and test.get("fingerprint") == stamp and control.get("fingerprint") == stamp):
+        if (
+            stamp
+            and test.get("status") == "passed"
+            and control.get("status") == "passed"
+            and test.get("fingerprint") == stamp
+            and control.get("fingerprint") == stamp
+        ):
             reusable[name] = (dict(test, reused=True), dict(control, reused=True))
     return reusable
 
 
 def same_file(source, target):
     try:
-        return (not target.is_symlink() and target.is_file() and source.stat().st_mode == target.stat().st_mode
-                and source.stat().st_size == target.stat().st_size and source.read_bytes() == target.read_bytes())
+        return (
+            not target.is_symlink()
+            and target.is_file()
+            and source.stat().st_mode == target.stat().st_mode
+            and source.stat().st_size == target.stat().st_size
+            and source.read_bytes() == target.read_bytes()
+        )
     except OSError:
         return False
 
@@ -385,8 +484,11 @@ def sync_checkout(root, checkout):
                 remove_path(child)
         previous = set()
     checkout.mkdir(parents=True, exist_ok=True)
-    current = [relative for relative in verify.source_files(root)
-               if (root / relative).exists() or (root / relative).is_symlink()]
+    current = [
+        relative
+        for relative in verify.source_files(root)
+        if (root / relative).exists() or (root / relative).is_symlink()
+    ]
     current.append(HEADER.as_posix())
     # Record the union first: an interrupted sync can still delete what it created.
     manifest.write_text(json.dumps({"paths": sorted(previous | set(current))}) + "\n")
@@ -471,10 +573,13 @@ def mutation_order(root, contracts):
     Each restored crate is then rebuilt once per group instead of after every
     counterexample, and the last group leaves only a downstream crate stale.
     """
-    members = {name: folder.resolve().relative_to(root.resolve()).as_posix()
-               for name, folder in verify.workspace_members(root).items()}
-    depth = {name: len(verify.package_directories(root, [name], ("dependencies", "build-dependencies")))
-             for name in members}
+    members = {
+        name: folder.resolve().relative_to(root.resolve()).as_posix()
+        for name, folder in verify.workspace_members(root).items()
+    }
+    depth = {
+        name: len(verify.package_directories(root, [name], ("dependencies", "build-dependencies"))) for name in members
+    }
 
     def owner(contract):
         path = negative_control_mutations(contract)[0]["file"]
@@ -482,14 +587,30 @@ def mutation_order(root, contracts):
         return max(names, key=lambda name: len(members[name])) if names else ""
 
     indexed = list(enumerate(contracts))
-    return [contract for _, contract in sorted(indexed, key=lambda item: (
-        depth.get(owner(item[1]), 0), owner(item[1]), item[1]["package"], item[1]["target"], item[0]))]
+    return [
+        contract
+        for _, contract in sorted(
+            indexed,
+            key=lambda item: (
+                depth.get(owner(item[1]), 0),
+                owner(item[1]),
+                item[1]["package"],
+                item[1]["target"],
+                item[0],
+            ),
+        )
+    ]
 
 
 def control_result(contract, stamp, caught, log, seconds):
-    return {"id": contract["id"], "status": "passed" if caught else "failed", "log": str(log),
-            "purpose": "The test must reject the reintroduced defect", "fingerprint": stamp,
-            "seconds": round(seconds, 3)}
+    return {
+        "id": contract["id"],
+        "status": "passed" if caught else "failed",
+        "log": str(log),
+        "purpose": "The test must reject the reintroduced defect",
+        "fingerprint": stamp,
+        "seconds": round(seconds, 3),
+    }
 
 
 def rust_controls(checkout, contracts, fingerprints, cargo_target, evidence, record):
@@ -507,22 +628,34 @@ def rust_controls(checkout, contracts, fingerprints, cargo_target, evidence, rec
             for contract, index, _ in job:
                 started = time.monotonic()
                 try:
-                    completed = run_process(command(contract), cwd=checkout, capture_output=True, text=True,
-                                            timeout=contract["timeout"], env=env)
+                    completed = run_process(
+                        command(contract),
+                        cwd=checkout,
+                        capture_output=True,
+                        text=True,
+                        timeout=contract["timeout"],
+                        env=env,
+                    )
                     output = completed.stdout + completed.stderr
                     rejected = rejected_behavior(contract, completed.returncode, output)
                 except (OSError, subprocess.TimeoutExpired) as error:
                     output, rejected = str(error), False
                 entry = state[contract["id"]]
                 entry["seconds"] += time.monotonic() - started
-                entry["output"] += f"mutation {index + 1}/{len(negative_control_mutations(contract))}: " \
-                                   f"{'rejected' if rejected else 'NOT rejected'}\n" + output
+                entry["output"] += (
+                    f"mutation {index + 1}/{len(negative_control_mutations(contract))}: "
+                    f"{'rejected' if rejected else 'NOT rejected'}\n" + output
+                )
                 entry["caught"] = entry["caught"] and rejected
                 entry["done"] += 1
                 if entry["done"] == len(negative_control_mutations(contract)):
                     log = evidence / (contract["id"] + "-negative.log")
                     log.write_text(entry["output"])
-                    record(control_result(contract, fingerprints.get(contract["id"]), entry["caught"], log, entry["seconds"]))
+                    record(
+                        control_result(
+                            contract, fingerprints.get(contract["id"]), entry["caught"], log, entry["seconds"]
+                        )
+                    )
                     if not entry["caught"]:
                         print(f"{contract['id']} negative control: FAILED", flush=True)
                         print(entry["output"][-5000:], file=sys.stderr)
@@ -546,11 +679,13 @@ def build_swift_copies(checkouts, contracts):
 
     def build(checkout):
         for contract in products.values():
-            completed = run_process(swift_build(contract), cwd=checkout, capture_output=True, text=True,
-                                    timeout=SWIFT_COPY_BUILD_TIMEOUT)
+            completed = run_process(
+                swift_build(contract), cwd=checkout, capture_output=True, text=True, timeout=SWIFT_COPY_BUILD_TIMEOUT
+            )
             if completed.returncode != 0:
-                raise ValueError("the unmutated source copy does not build:\n"
-                                 + (completed.stdout + completed.stderr)[-5000:])
+                raise ValueError(
+                    "the unmutated source copy does not build:\n" + (completed.stdout + completed.stderr)[-5000:]
+                )
 
     with ThreadPoolExecutor(len(checkouts)) as pool:
         list(pool.map(build, checkouts))
@@ -561,8 +696,9 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
         contract = min((item[0] for item in job), key=lambda item: item["timeout"])
         started = time.monotonic()
         try:
-            completed = run_process(swift_build(contract), cwd=checkout, capture_output=True, text=True,
-                                    timeout=contract["timeout"])
+            completed = run_process(
+                swift_build(contract), cwd=checkout, capture_output=True, text=True, timeout=contract["timeout"]
+            )
             if completed.returncode == 0:
                 test_invocation(checkout, contract)
             return completed.returncode, completed.stdout + completed.stderr, time.monotonic() - started
@@ -571,11 +707,15 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
 
     state = {c["id"]: {"output": "", "caught": True, "done": 0, "seconds": 0.0} for c in contracts}
     jobs = swift_mutation_jobs(contracts)
-    timings = {"builds": len(jobs), "mutations": sum(len(job) for job in jobs),
-               "build_work_seconds": 0.0, "test_seconds": 0.0}
+    timings = {
+        "builds": len(jobs),
+        "mutations": sum(len(job) for job in jobs),
+        "build_work_seconds": 0.0,
+        "test_seconds": 0.0,
+    }
     started = time.monotonic()
     for start in range(0, len(jobs), len(checkouts)):
-        group = list(zip(checkouts, jobs[start:start + len(checkouts)]))
+        group = list(zip(checkouts, jobs[start : start + len(checkouts)]))
         with ExitStack() as restore:
             for checkout, job in group:
                 contract, _, fault = job[0]
@@ -592,8 +732,9 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
                     if code == 0 and remaining > 0:
                         try:
                             args, env = test_invocation(checkout, contract)
-                            completed = run_process(args, cwd=checkout,
-                                                    capture_output=True, text=True, timeout=remaining, env=env)
+                            completed = run_process(
+                                args, cwd=checkout, capture_output=True, text=True, timeout=remaining, env=env
+                            )
                             output += completed.stdout + completed.stderr
                             rejected = rejected_behavior(contract, completed.returncode, output)
                         except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -604,16 +745,21 @@ def swift_controls(checkouts, contracts, fingerprints, evidence, record):
                     timings["test_seconds"] += test_seconds
                     entry = state[contract["id"]]
                     entry["seconds"] += seconds + test_seconds
-                    entry["output"] += f"mutation {index + 1}/{len(negative_control_mutations(contract))}: " \
-                                       f"{'rejected' if rejected else 'NOT rejected'}\n" + output
+                    entry["output"] += (
+                        f"mutation {index + 1}/{len(negative_control_mutations(contract))}: "
+                        f"{'rejected' if rejected else 'NOT rejected'}\n" + output
+                    )
                     entry["caught"] = entry["caught"] and rejected
                     entry["done"] += 1
                     if entry["done"] == len(negative_control_mutations(contract)):
                         # Duration is this contract's work, not time spent queued behind earlier contracts.
                         log = evidence / (contract["id"] + "-negative.log")
                         log.write_text(entry["output"])
-                        record(control_result(contract, fingerprints.get(contract["id"]), entry["caught"],
-                                              log, entry["seconds"]))
+                        record(
+                            control_result(
+                                contract, fingerprints.get(contract["id"]), entry["caught"], log, entry["seconds"]
+                            )
+                        )
                         if not entry["caught"]:
                             print(f"{contract['id']} negative control: FAILED", flush=True)
                             print(entry["output"][-5000:], file=sys.stderr)
@@ -627,8 +773,9 @@ def negative_controls(root, contracts, fingerprints, evidence, record):
         # counterexample build look current (the pre-ADR-0148 copies used "rust").
         cargo_target = directory / "cargo"
         (cargo_target / "debug").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(root / "target/debug/libechode_test_plugin.dylib",
-                     cargo_target / "debug/libechode_test_plugin.dylib")
+        shutil.copy2(
+            root / "target/debug/libechode_test_plugin.dylib", cargo_target / "debug/libechode_test_plugin.dylib"
+        )
         shutil.copytree(root / "target/debug/plugins", cargo_target / "debug/plugins", dirs_exist_ok=True)
         swift = [contract for contract in contracts if contract["runner"] == "swift"]
         rust = mutation_order(root, [contract for contract in contracts if contract["runner"] == "rust"])
@@ -645,15 +792,23 @@ def negative_controls(root, contracts, fingerprints, evidence, record):
             build_swift_copies(checkouts, swift)
         copy_seconds = time.monotonic() - copy_started
         swift = swift_controls(checkouts, swift, fingerprints, evidence, record)
-        return {"sync_seconds": round(sync_seconds, 3), "rust_seconds": round(rust_seconds, 3), "rust": rust_timings,
-                "swift_copy_seconds": round(copy_seconds, 3), "swift": swift}
+        return {
+            "sync_seconds": round(sync_seconds, 3),
+            "rust_seconds": round(rust_seconds, 3),
+            "rust": rust_timings,
+            "swift_copy_seconds": round(copy_seconds, 3),
+            "swift": swift,
+        }
 
 
 def build_swift_package(root, contracts, contract, invoke):
     # One build serves every test of the package; each test still runs in its own process.
-    timeout = max(item["timeout"] for item in contracts
-                  if (item.get("package_path"), item.get("build_product"))
-                  == (contract["package_path"], contract.get("build_product")))
+    timeout = max(
+        item["timeout"]
+        for item in contracts
+        if (item.get("package_path"), item.get("build_product"))
+        == (contract["package_path"], contract.get("build_product"))
+    )
     try:
         built = invoke(swift_build(contract), cwd=root, capture_output=True, text=True, timeout=timeout)
         if built.returncode == 0:
@@ -693,9 +848,14 @@ def run_batches(root, contracts, invoke, fingerprints, evidence, record):
                 args, env = swift_batch_invocation(root, group, SWIFT_SCRATCH)
             else:
                 args = batch_command(group)
-            completed = invoke(args, cwd=root, capture_output=True, text=True,
-                               timeout=sum(contract["timeout"] for contract in group),
-                               **({"env": env} if env is not None else {}))
+            completed = invoke(
+                args,
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=sum(contract["timeout"] for contract in group),
+                **({"env": env} if env is not None else {}),
+            )
             output, code = completed.stdout + completed.stderr, completed.returncode
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             output = str(error)
@@ -703,9 +863,20 @@ def run_batches(root, contracts, invoke, fingerprints, evidence, record):
         seconds = round(time.monotonic() - started, 3)
         for contract in group:
             if proven_in_batch(contract, output):
-                record({"id": contract["id"], "status": "passed", "exit_code": code, "test": contract["test"],
-                        "command": args, "log": str(log), "purpose": contract["purpose"],
-                        "fingerprint": fingerprints.get(contract["id"]), "seconds": seconds, "isolation": "batch"})
+                record(
+                    {
+                        "id": contract["id"],
+                        "status": "passed",
+                        "exit_code": code,
+                        "test": contract["test"],
+                        "command": args,
+                        "log": str(log),
+                        "purpose": contract["purpose"],
+                        "fingerprint": fingerprints.get(contract["id"]),
+                        "seconds": seconds,
+                        "isolation": "batch",
+                    }
+                )
             else:
                 alone.append(contract)
     return alone
@@ -736,23 +907,49 @@ def run_tests(root, contracts, invoke, fingerprints, evidence, record, batched=F
         if built:
             try:
                 args, env = test_invocation(root, contract)
-                completed = invoke(args, cwd=root, capture_output=True, text=True, timeout=contract["timeout"], **({"env": env} if env is not None else {}))
+                completed = invoke(
+                    args,
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=contract["timeout"],
+                    **({"env": env} if env is not None else {}),
+                )
                 output = completed.stdout + completed.stderr
                 ok = passed(contract, completed.returncode, output)
                 code = completed.returncode
             except (OSError, subprocess.TimeoutExpired) as error:
                 output, ok, code = str(error), False, None
         log.write_text(output)
-        record({"id": name, "status": "passed" if ok else "failed", "exit_code": code,
-                "test": contract["test"], "command": args, "log": str(log), "purpose": contract["purpose"],
-                "fingerprint": fingerprints.get(name), "seconds": round(time.monotonic() - started, 3)})
+        record(
+            {
+                "id": name,
+                "status": "passed" if ok else "failed",
+                "exit_code": code,
+                "test": contract["test"],
+                "command": args,
+                "log": str(log),
+                "purpose": contract["purpose"],
+                "fingerprint": fingerprints.get(name),
+                "seconds": round(time.monotonic() - started, 3),
+            }
+        )
         if not ok:
             print(f"{name}: FAILED (missing, skipped, or failed required test)", flush=True)
             print(output[-5000:], file=sys.stderr)
 
 
-def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=None, changed_only=False, base=None,
-        shard=None):
+def run(
+    root,
+    contracts,
+    invoke=run_process,
+    policy=None,
+    fresh=False,
+    evidence=None,
+    changed_only=False,
+    base=None,
+    shard=None,
+):
     """Every required test, then every counterexample or, with `changed_only`, those whose site changed.
 
     With `shard`, only that share of the counterexamples runs; every required test still runs.
@@ -785,24 +982,35 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
     if changed_only:
         # Passes outside this run's targets stay on record for the full tier, which rechecks each fingerprint.
         controls = {name: dict(item, reused=True) for name, item in passed_controls(previous).items()}
-        reused_controls = set() if fresh else {name for name in targets if controls.get(name, {}).get("site") == sites[name]}
+        reused_controls = (
+            set() if fresh else {name for name in targets if controls.get(name, {}).get("site") == sites[name]}
+        )
     else:
         controls = {} if fresh else reusable_phase(previous, "negative_controls", fingerprints)
         reused_controls = set(controls)
     reused_tests = set(tests)
     reused = reused_tests & reused_controls
     pending = [contract for contract in contracts if contract["id"] not in reused_tests]
-    pending_controls = [contract for contract in contracts
-                        if contract["id"] in required and contract["id"] not in reused_controls]
+    pending_controls = [
+        contract for contract in contracts if contract["id"] in required and contract["id"] not in reused_controls
+    ]
 
     def save(status):
         # Written after every result, so an interrupted run keeps the evidence it finished.
         order = [contract["id"] for contract in contracts]
-        report.write_text(json.dumps({"status": status, "reused": len(reused),
-                                      "execution": {**execution, "seconds": round(time.monotonic() - started, 3)},
-                                      "tests": [tests[name] for name in order if name in tests],
-                                      "negative_controls": [controls[name] for name in order if name in controls]},
-                                     indent=2) + "\n")
+        report.write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "reused": len(reused),
+                    "execution": {**execution, "seconds": round(time.monotonic() - started, 3)},
+                    "tests": [tests[name] for name in order if name in tests],
+                    "negative_controls": [controls[name] for name in order if name in controls],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
 
     def record_test(result):
         tests[result["id"]] = result
@@ -812,9 +1020,13 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
         controls[result["id"]] = dict(result, site=sites.get(result["id"]))
         execution["negative_progress"] = {
             "seconds": round(time.monotonic() - control_started, 3),
-            "completed": {runner: sum(c["id"] in controls and c["id"] not in reused_controls
-                                      for c in contracts if c["runner"] == runner)
-                          for runner in ("rust", "swift")}}
+            "completed": {
+                runner: sum(
+                    c["id"] in controls and c["id"] not in reused_controls for c in contracts if c["runner"] == runner
+                )
+                for runner in ("rust", "swift")
+            },
+        }
         save("running")
 
     execution["identity_seconds"] = round(time.monotonic() - started, 3)
@@ -844,17 +1056,27 @@ def run(root, contracts, invoke=run_process, policy=None, fresh=False, evidence=
                 if current.get(name) != before.get(name):
                     entries[name] = dict(entries[name], status="stale", fingerprint=None)
                     print(f"{name}: inputs changed during the run; run it again", file=sys.stderr, flush=True)
-    ok = (all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts)
-          and all(controls.get(name, {}).get("status") == "passed" for name in required))
+    ok = all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts) and all(
+        controls.get(name, {}).get("status") == "passed" for name in required
+    )
     if ok and changed_only:
-        print(f"product contracts: {len(tests)} passed, {len(required)} negative controls with a changed site"
-              f" rejected defects ({len(reused_controls)} reused); the full tier runs the rest", flush=True)
+        print(
+            f"product contracts: {len(tests)} passed, {len(required)} negative controls with a changed site"
+            f" rejected defects ({len(reused_controls)} reused); the full tier runs the rest",
+            flush=True,
+        )
     elif ok and shard is not None:
-        print(f"product contracts: {len(tests)} passed, {len(required)} negative controls of shard {shard}"
-              f" rejected defects ({len(reused & required)} reused for unchanged inputs)", flush=True)
+        print(
+            f"product contracts: {len(tests)} passed, {len(required)} negative controls of shard {shard}"
+            f" rejected defects ({len(reused & required)} reused for unchanged inputs)",
+            flush=True,
+        )
     elif ok:
-        print(f"product contracts: {len(tests)} passed, {len(controls)} negative controls rejected defects"
-              f" ({len(reused)} reused for unchanged inputs)", flush=True)
+        print(
+            f"product contracts: {len(tests)} passed, {len(controls)} negative controls rejected defects"
+            f" ({len(reused)} reused for unchanged inputs)",
+            flush=True,
+        )
     save("passed" if ok else "failed")
     return 0 if ok else 1
 
@@ -863,10 +1085,15 @@ def main():
     try:
         policy = verify.load_policy(ROOT)
         reject_unmatched_controls(ROOT, policy["product_contracts"])
-        return run(ROOT, policy["product_contracts"], policy=policy,
-                   fresh=os.environ.get("ECHODE_VERIFY_FORCE") == "1",
-                   changed_only="--changed-controls" in sys.argv[1:], base=os.environ.get("VERIFY_BASE"),
-                   shard=os.environ.get(SHARD_VARIABLE) or None)
+        return run(
+            ROOT,
+            policy["product_contracts"],
+            policy=policy,
+            fresh=os.environ.get("ECHODE_VERIFY_FORCE") == "1",
+            changed_only="--changed-controls" in sys.argv[1:],
+            base=os.environ.get("VERIFY_BASE"),
+            shard=os.environ.get(SHARD_VARIABLE) or None,
+        )
     except (OSError, ValueError, KeyError) as error:
         report = ROOT / "target/verification/product-contracts.json"
         report.parent.mkdir(parents=True, exist_ok=True)

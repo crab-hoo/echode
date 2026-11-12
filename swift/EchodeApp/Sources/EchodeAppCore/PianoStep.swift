@@ -18,25 +18,31 @@ struct PianoStep: Sendable {
         let values = Array(originals.values)
         if resize {
             guard pitch == 0, let shortest = values.map(\.length).min(),
-                  let last = values.map({ $0.start + $0.length }).max() else { return nil }
+                let last = values.map({ $0.start + $0.length }).max()
+            else { return nil }
             let delta = min(Int64.max - last, max(1 - shortest, time))
             return originals.mapValues { NoteGeometry(start: $0.start, length: $0.length + delta, pitch: $0.pitch) }
         }
         guard let first = values.map(\.start).min(), let last = values.map({ $0.start + $0.length }).max(),
-              let low = values.map(\.pitch).min(), let high = values.map(\.pitch).max() else { return nil }
+            let low = values.map(\.pitch).min(), let high = values.map(\.pitch).max()
+        else { return nil }
         let delta = min(Int64.max - last, max(-first, time))
         let interval = min(ModelLimits.midi7.upperBound - high, max(-low, pitch))
-        return originals.mapValues { NoteGeometry(start: $0.start + delta, length: $0.length, pitch: $0.pitch + interval) }
+        return originals.mapValues {
+            NoteGeometry(start: $0.start + delta, length: $0.length, pitch: $0.pitch + interval)
+        }
     }
 
     func actions(in snapshot: Snapshot?) -> [EditAction]? {
         guard let geometries = geometries(in: snapshot),
-              ids.contains(where: { snapshot?.pianoNote($0).map(NoteGeometry.init) != geometries[$0] }) else { return nil }
+            ids.contains(where: { snapshot?.pianoNote($0).map(NoteGeometry.init) != geometries[$0] })
+        else { return nil }
         var seen: Set<UUID> = []
         return ids.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id in
             guard seen.insert(id.note).inserted, let value = geometries[id] else { return nil }
-            return .editNote(track: id.track.uuidString, clip: id.placement.uuidString,
-                             note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, length: value.length)
+            return .editNote(
+                track: id.track.uuidString, clip: id.placement.uuidString,
+                note: id.note.uuidString, pitch: UInt8(value.pitch), start: value.start, length: value.length)
         }
     }
 }

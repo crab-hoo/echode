@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import EchodeBridge
 
 final class EditActionTests: XCTestCase {
@@ -37,8 +38,10 @@ final class EditActionTests: XCTestCase {
             .copyDevice(source: device, track: track),
             .removeDevice(device: device),
             .restore(revision: "0123456789abcdef"),
-            .placeAudio(track: track, start: 25, hash: String(repeating: "a", count: 64), sampleRate: 48_000, channels: 2, frames: .max),
-            .importAudio(track: track, start: 26, path: "/tmp/音声 \"one\".wav")
+            .placeAudio(
+                track: track, start: 25, hash: String(repeating: "a", count: 64), sampleRate: 48_000, channels: 2,
+                frames: .max),
+            .importAudio(track: track, start: 26, path: "/tmp/音声 \"one\".wav"),
         ]
         let fixture = try XCTUnwrap(Bundle.module.url(forResource: "edit-actions", withExtension: "json"))
         let expected = try JSONSerialization.jsonObject(with: Data(contentsOf: fixture))
@@ -49,12 +52,14 @@ final class EditActionTests: XCTestCase {
     func testIntegerExtremesAndOptionalValuesAreNotConvertedThroughDouble() throws {
         let actions: [EditAction] = [
             .setClipFades(clip: "clip", fadeIn: .min, fadeOut: .max),
-            .placeAudio(track: "track", start: 9_007_199_254_740_993, hash: "hash", sampleRate: .max, channels: .max, frames: .max),
+            .placeAudio(
+                track: "track", start: 9_007_199_254_740_993, hash: "hash", sampleRate: .max, channels: .max,
+                frames: .max),
             .duplicateNote(track: "track", clip: "clip", note: "note", pitch: .max, start: -1, copy: "copy"),
             .setParent(track: "track", parent: "parent"),
             .setPluginState(device: "device", state: "state"),
             .reorderDevice(device: "device", before: "before"),
-            .copyDevice(source: "source", track: "track", before: "before")
+            .copyDevice(source: "source", track: "track", before: "before"),
         ]
         let encoded = try JSONEncoder().encode(actions)
         let text = String(decoding: encoded, as: UTF8.self)
@@ -62,7 +67,10 @@ final class EditActionTests: XCTestCase {
             XCTAssertTrue(text.contains(literal), "Missing exact integer \(literal): \(text)")
         }
         let objects = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
-        for (index, key, value) in [(2, "copy", "copy"), (3, "parent", "parent"), (4, "state", "state"), (5, "before", "before"), (6, "before", "before")] {
+        for (index, key, value) in [
+            (2, "copy", "copy"), (3, "parent", "parent"), (4, "state", "state"), (5, "before", "before"),
+            (6, "before", "before"),
+        ] {
             XCTAssertEqual(objects[index][key] as? String, value)
         }
     }
@@ -70,15 +78,19 @@ final class EditActionTests: XCTestCase {
     func testResultReferencesUseTheTransactionWireFormAndKeepLiteralsAndNull() throws {
         let actions: [ReferencingEditAction] = [
             .addTrack(name: .value("新しい \"track\"")),
-            .importAudio(track: .result(action: 0, field: "id"), start: 9_007_199_254_740_993, path: .value("/tmp/a.wav")),
-            .setParent(track: .result(action: 0, field: "id"), parent: nil)
+            .importAudio(
+                track: .result(action: 0, field: "id"), start: 9_007_199_254_740_993, path: .value("/tmp/a.wav")),
+            .setParent(track: .result(action: 0, field: "id"), parent: nil),
         ]
         let encoded = try JSONEncoder().encode(actions)
         XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("9007199254740993"))
         let expected: [[String: Any]] = [
             ["type": "track.add", "name": "新しい \"track\""],
-            ["type": "audio.import", "track": ["ref": 0, "field": "id"], "start": 9_007_199_254_740_993, "path": "/tmp/a.wav"],
-            ["type": "track.set_parent", "track": ["ref": 0, "field": "id"], "parent": NSNull()]
+            [
+                "type": "audio.import", "track": ["ref": 0, "field": "id"], "start": 9_007_199_254_740_993,
+                "path": "/tmp/a.wav",
+            ],
+            ["type": "track.set_parent", "track": ["ref": 0, "field": "id"], "parent": NSNull()],
         ]
         XCTAssertEqual(try canonical(JSONSerialization.jsonObject(with: encoded)), try canonical(expected))
     }

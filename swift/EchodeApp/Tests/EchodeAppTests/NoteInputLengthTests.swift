@@ -2,6 +2,7 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -12,20 +13,33 @@ struct NoteInputLengthTests {
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
-        let document = try #require(controller.documentID), undo = controller.undoCount
+        let track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
+        let document = try #require(controller.documentID)
+        let undo = controller.undoCount
         let view = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         defer { view.stop() }
         view.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
-        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
-        view.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil,
-            camera: view.camera, key: DisplayKey(), preview: nil)))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        view.present(
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(
+                    track: track, focus: nil,
+                    camera: view.camera, key: DisplayKey(), preview: nil)))
         var writes: [Task<Bool, Never>] = []
         view.onInsert = { pitch, beat, length in
-            writes.append(Task { await controller.insertNote(pitch: pitch, beat: beat, length: length, on: track, documentID: document) })
+            writes.append(
+                Task {
+                    await controller.insertNote(
+                        pitch: pitch, beat: beat, length: length, on: track, documentID: document)
+                })
         }
         let origin = view.pianoLayout.gridOrigin
-        let down = CGPoint(x: origin.x + 1.1 * view.camera.pixelsPerBeat, y: origin.y + (view.camera.topPitch - 60 + 0.5) * view.camera.pixelsPerPitch)
+        let down = CGPoint(
+            x: origin.x + 1.1 * view.camera.pixelsPerBeat,
+            y: origin.y + (view.camera.topPitch - 60 + 0.5) * view.camera.pixelsPerPitch)
         try send(.leftMouseDown, to: view, at: down, flags: .shift)
         #expect(writes.isEmpty && controller.undoCount == undo)
         let up = CGPoint(x: down.x + 1, y: down.y + 1)
@@ -42,7 +56,8 @@ struct NoteInputLengthTests {
         await controller.redo()
         await controller.close()
         await controller.open(url)
-        #expect(controller.snapshot?.pianoNeighbor(track: track, current: nil).map(NoteGeometry.init) == NoteGeometry(note))
+        #expect(
+            controller.snapshot?.pianoNeighbor(track: track, current: nil).map(NoteGeometry.init) == NoteGeometry(note))
         await controller.close()
     }
 
@@ -58,7 +73,8 @@ struct NoteInputLengthTests {
         let long = try #require(controller.snapshot?.pianoNeighbor(track: first, current: nil))
         #expect(await controller.insertNote(pitch: 64, beat: 2, length: 0.1))
         await controller.addTrack(name: "melody")
-        let second = try #require(controller.selection), document = try #require(controller.documentID)
+        let second = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         controller.selection = first
         let snapshot = try #require(controller.snapshot)
         let view = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
@@ -68,13 +84,20 @@ struct NoteInputLengthTests {
         func present(on track: UUID) throws {
             let snapshot = try #require(controller.snapshot)
             view.setSnapshot(snapshot, track: track, focus: controller.noteFocus, key: DisplayKey(), busy: false)
-            let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
-            view.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: controller.noteFocus,
-                camera: view.camera, key: DisplayKey(), preview: nil)))
+            let input = CanvasInput(
+                snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+            view.present(
+                PianoFrame(
+                    input: input,
+                    piano: PianoRenderInput(
+                        track: track, focus: controller.noteFocus,
+                        camera: view.camera, key: DisplayKey(), preview: nil)))
         }
         try present(on: first)
         let origin = view.pianoLayout.gridOrigin
-        let point = CGPoint(x: origin.x + 1.35 * view.camera.pixelsPerBeat, y: origin.y + (view.camera.topPitch - 60 + 0.5) * view.camera.pixelsPerPitch)
+        let point = CGPoint(
+            x: origin.x + 1.35 * view.camera.pixelsPerBeat,
+            y: origin.y + (view.camera.topPitch - 60 + 0.5) * view.camera.pixelsPerPitch)
         let beforeSelection = controller.undoCount
         try send(.leftMouseDown, to: view, at: point)
         try send(.leftMouseUp, to: view, at: point)
@@ -95,7 +118,8 @@ struct NoteInputLengthTests {
         controller.noteFocus = short.id
         #expect(controller.noteInput.length == short.length)
         await controller.undo()
-        #expect(controller.noteInput.length == short.length, "Undo of an unrelated edit must preserve a newer selection")
+        #expect(
+            controller.noteInput.length == short.length, "Undo of an unrelated edit must preserve a newer selection")
         await controller.undo()
         #expect(controller.noteInput.length == long.length)
         await controller.redo()
@@ -105,7 +129,11 @@ struct NoteInputLengthTests {
         try present(on: second)
         var writes: [Task<Bool, Never>] = []
         view.onInsert = { pitch, beat, length in
-            writes.append(Task { await controller.insertNote(pitch: pitch, beat: beat, length: length, on: second, documentID: document) })
+            writes.append(
+                Task {
+                    await controller.insertNote(
+                        pitch: pitch, beat: beat, length: length, on: second, documentID: document)
+                })
         }
         try send(.leftMouseDown, to: view, at: point)
         try send(.leftMouseUp, to: view, at: point)
@@ -129,10 +157,14 @@ struct NoteInputLengthTests {
         await controller.close()
     }
 
-    private func send(_ type: NSEvent.EventType, to view: PianoGridView, at point: CGPoint,
-                      flags: NSEvent.ModifierFlags = [], clicks: Int = 1) throws {
-        let event = try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: flags,
-            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: clicks, pressure: 1))
+    private func send(
+        _ type: NSEvent.EventType, to view: PianoGridView, at point: CGPoint,
+        flags: NSEvent.ModifierFlags = [], clicks: Int = 1
+    ) throws {
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: flags,
+                timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: clicks, pressure: 1))
         if type == .leftMouseDown { view.mouseDown(with: event) } else { view.mouseUp(with: event) }
     }
 }

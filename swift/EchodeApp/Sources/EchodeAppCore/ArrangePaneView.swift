@@ -34,13 +34,15 @@ public final class ArrangePaneView: NSView {
     var pluginNames: [String: String] = [:] {
         didSet {
             guard oldValue != pluginNames else { return }
-            headers.pluginNames = pluginNames; updateViewport()
+            headers.pluginNames = pluginNames
+            updateViewport()
         }
     }
     var autoMutes: [UUID: String] = [:] {
         didSet {
             guard oldValue != autoMutes else { return }
-            headers.autoMutes = autoMutes; updateViewport()
+            headers.autoMutes = autoMutes
+            updateViewport()
         }
     }
     var onDropFX: ((UUID, TrackFXDrop) -> Void)? { didSet { headers.onDropFX = onDropFX } }
@@ -48,7 +50,9 @@ public final class ArrangePaneView: NSView {
     var onFolderDisclosure: ((UUID, Bool) -> Void)?
     var onClipEdit: ((ClipMixEdit) -> Void)? { didSet { timeline.onClipEdit = onClipEdit } }
     var onClipMove: ((ClipMove) -> Void)? { didSet { timeline.onClipMove = onClipMove } }
-    func setControlSelection(clip: UUID?, preview: FaderPreview?) { timeline.setControlSelection(clip: clip, preview: preview) }
+    func setControlSelection(clip: UUID?, preview: FaderPreview?) {
+        timeline.setControlSelection(clip: clip, preview: preview)
+    }
     public override var isFlipped: Bool { true }
 
     public override init(frame: NSRect) {
@@ -90,16 +94,24 @@ public final class ArrangePaneView: NSView {
 
     func setNavigation(_ navigation: CanvasNavigationState?, documentID document: DocumentID?) {
         guard self.navigation !== navigation || navigationDocument != document else { return }
-        self.navigation = navigation; navigationDocument = document
+        self.navigation = navigation
+        navigationDocument = document
         if navigation?.permits(document: document) == true, let saved = navigation?.arrange {
-            camera = saved; headerWidth = navigation?.headerWidth ?? 160; restoring = true
+            camera = saved
+            headerWidth = navigation?.headerWidth ?? 160
+            restoring = true
         }
     }
 
-    public func setSnapshot(_ snapshot: Snapshot, selected: UUID?, selectedTracks: Set<UUID>? = nil, collapsedTracks: Set<UUID>? = nil) {
+    public func setSnapshot(
+        _ snapshot: Snapshot, selected: UUID?, selectedTracks: Set<UUID>? = nil, collapsedTracks: Set<UUID>? = nil
+    ) {
         let selectedTracks = selectedTracks ?? Set(selected.map { [$0] } ?? [])
         let collapsed = collapsedTracks ?? self.collapsedTracks
-        guard self.snapshot !== snapshot || self.selected != selected || self.selectedTracks != selectedTracks || self.collapsedTracks != collapsed else { return }
+        guard
+            self.snapshot !== snapshot || self.selected != selected || self.selectedTracks != selectedTracks
+                || self.collapsedTracks != collapsed
+        else { return }
         let changedSelection = self.selected != selected
         if self.snapshot !== snapshot || self.collapsedTracks != collapsed {
             guard let projected = snapshot.arrangeProjection(collapsedTracks: collapsed) else { return }
@@ -111,7 +123,8 @@ public final class ArrangePaneView: NSView {
         self.selected = selected
         self.selectedTracks = selectedTracks
         if changedSelection, !restoring, let selected,
-           let index = (0..<displaySnapshot.trackCount).first(where: { displaySnapshot.trackID(at: $0) == selected }) {
+            let index = (0..<displaySnapshot.trackCount).first(where: { displaySnapshot.trackID(at: $0) == selected })
+        {
             // Reveal from what is shown. Selecting an already visible track
             // must not clamp a taller pane's remembered origin.
             var display = displayCamera
@@ -120,16 +133,23 @@ public final class ArrangePaneView: NSView {
             if display.originTrack != before { camera.originTrack = display.originTrack }
         }
         restoring = false
-        headers.setSnapshot(displaySnapshot, selected: selected, selectedTracks: selectedTracks, collapsedTracks: collapsed)
+        headers.setSnapshot(
+            displaySnapshot, selected: selected, selectedTracks: selectedTracks, collapsedTracks: collapsed)
         timeline.setSnapshot(displaySnapshot, selected: selected)
         updateViewport()
     }
-    public func setPlayback(_ playback: PlaybackFeed?) { timeline.setPlayback(playback); follower.feed = playback }
+    public func setPlayback(_ playback: PlaybackFeed?) {
+        timeline.setPlayback(playback)
+        follower.feed = playback
+    }
     public func noteTransport(_ generation: UInt64) {
         if timeline.noteTransport(generation) { follower.noteTransport() }
     }
     func setFollowing(_ following: Bool) { follower.setFollowing(following) }
-    public func stop() { follower.detach(); timeline.stop() }
+    public func stop() {
+        follower.detach()
+        timeline.stop()
+    }
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil { follower.attach(to: self) } else { follower.detach() }
@@ -146,8 +166,9 @@ public final class ArrangePaneView: NSView {
 
     private func toggleFolder(_ id: UUID) {
         guard let snapshot,
-              let index = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == id }),
-              snapshot.trackHierarchy(at: index)?.hasChildren == true else { return }
+            let index = (0..<snapshot.trackCount).first(where: { snapshot.trackID(at: $0) == id }),
+            snapshot.trackHierarchy(at: index)?.hasChildren == true
+        else { return }
         var collapsed = collapsedTracks
         if !collapsed.insert(id).inserted { collapsed.remove(id) }
         setSnapshot(snapshot, selected: selected, selectedTracks: selectedTracks, collapsedTracks: collapsed)
@@ -163,7 +184,8 @@ public final class ArrangePaneView: NSView {
 
     private func select(_ id: UUID) {
         guard let snapshot,
-              (0..<snapshot.trackCount).contains(where: { snapshot.trackID(at: $0) == id }) else { return }
+            (0..<snapshot.trackCount).contains(where: { snapshot.trackID(at: $0) == id })
+        else { return }
         setSnapshot(snapshot, selected: id)
         onSelect?(id)
     }
@@ -224,9 +246,14 @@ public final class ArrangePaneView: NSView {
             palette.selectedForeground = rgba(.alternateSelectedControlTextColor)
             palette.separator = rgba(.separatorColor)
         }
-        timeline.setViewport(display, header: ArrangeHeaderInput(width: constrainedHeaderWidth(headerWidth), palette: palette, selectedTracks: selectedTracks, collapsedTracks: collapsedTracks, pluginNames: pluginNames, autoMuted: Set(autoMutes.keys)))
+        timeline.setViewport(
+            display,
+            header: ArrangeHeaderInput(
+                width: constrainedHeaderWidth(headerWidth), palette: palette, selectedTracks: selectedTracks,
+                collapsedTracks: collapsedTracks, pluginNames: pluginNames, autoMuted: Set(autoMutes.keys)))
         if bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument) == true {
-            navigation?.arrange = camera; navigation?.headerWidth = headerWidth
+            navigation?.arrange = camera
+            navigation?.headerWidth = headerWidth
         }
     }
 
@@ -242,7 +269,9 @@ public final class ArrangePaneView: NSView {
     }
     private func rgba(_ color: NSColor) -> SIMD4<Float> {
         guard let color = color.usingColorSpace(.deviceRGB) else { return SIMD4(1, 1, 1, 1) }
-        return SIMD4(Float(color.redComponent), Float(color.greenComponent), Float(color.blueComponent), Float(color.alphaComponent))
+        return SIMD4(
+            Float(color.redComponent), Float(color.greenComponent), Float(color.blueComponent),
+            Float(color.alphaComponent))
     }
 }
 
@@ -260,11 +289,19 @@ private final class ArrangeDividerView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override func accessibilityValue() -> Any? { NSNumber(value: position) }
-    override func accessibilityPerformIncrement() -> Bool { onDrag?(position + 10); return onDrag != nil }
-    override func accessibilityPerformDecrement() -> Bool { onDrag?(position - 10); return onDrag != nil }
+    override func accessibilityPerformIncrement() -> Bool {
+        onDrag?(position + 10)
+        return onDrag != nil
+    }
+    override func accessibilityPerformDecrement() -> Bool {
+        onDrag?(position - 10)
+        return onDrag != nil
+    }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
     override func mouseDown(with event: NSEvent) {
-        if let parent = superview { dragOffset = Double(parent.convert(event.locationInWindow, from: nil).x) - position }
+        if let parent = superview {
+            dragOffset = Double(parent.convert(event.locationInWindow, from: nil).x) - position
+        }
     }
     override func mouseDragged(with event: NSEvent) {
         if let parent = superview { onDrag?(Double(parent.convert(event.locationInWindow, from: nil).x) - dragOffset) }

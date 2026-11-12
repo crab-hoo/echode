@@ -54,7 +54,8 @@ final class SampleOverviews {
         let request = lastRequest
         reading[url] = request
         if entries[url] == nil { entries[url] = .loading }
-        let read = read, channel = channel
+        let read = read
+        let channel = channel
         let result = await Task.detached { read(url, channel, request) }.value
         switch result {
         case .waveform(let waveform):
@@ -91,8 +92,9 @@ struct FileStamp: Equatable, Sendable {
     /// the values cached on that URL.
     init?(_ url: URL) {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = (attributes[.size] as? NSNumber)?.intValue,
-              let modified = attributes[.modificationDate] as? Date else { return nil }
+            let size = (attributes[.size] as? NSNumber)?.intValue,
+            let modified = attributes[.modificationDate] as? Date
+        else { return nil }
         self.size = size
         self.modified = modified
     }

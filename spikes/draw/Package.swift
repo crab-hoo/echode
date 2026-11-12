@@ -3,7 +3,8 @@ import Foundation
 import PackageDescription
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let rustLibraryDir = packageDir
+let rustLibraryDir =
+    packageDir
     .deletingLastPathComponent()
     .deletingLastPathComponent()
     .appendingPathComponent("target/release")

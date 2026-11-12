@@ -67,19 +67,26 @@ final class PlayheadFollower: NSObject {
     }
 
     func detach() {
-        link?.invalidate(); link = nil
+        link?.invalidate()
+        link = nil
         awake = false
     }
 
     /// One look at the live feed. The display link calls this each frame.
     func step() {
-        guard let feed else { setAwake(false); return }
+        guard let feed else {
+            setAwake(false)
+            return
+        }
         let position = feed.position
         step(tick: position.tick, playing: position.playing)
     }
 
     func step(tick: Int64, playing: Bool) {
-        guard following else { setAwake(false); return }
+        guard following else {
+            setAwake(false)
+            return
+        }
         show?(tick)
         setAwake(!PlayheadFollow.linkPaused(following: true, playing: playing, now: now(), settleUntil: settleUntil))
     }

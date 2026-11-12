@@ -31,8 +31,12 @@ public final class ProjectController {
     @ObservationIgnored let sendDevice: @Sendable (Document, DeviceCommand) async throws -> DeviceResult
     /// Starts or stops the browser's sample audition. It skips the edit queue.
     @ObservationIgnored let sendAudition: @Sendable (Document, URL?, AuditionOrigin) -> Void
-    @ObservationIgnored var sendAuditionAt: @Sendable (Document, URL, UInt64, AuditionOrigin) -> Void = { $0.audition($1, from: $2, origin: $3) }
-    @ObservationIgnored var sendAuditionSettings: @Sendable (Document, Bool, Float) -> Void = { _ = $0.configureAudition(visible: $1, gain: $2) }
+    @ObservationIgnored var sendAuditionAt: @Sendable (Document, URL, UInt64, AuditionOrigin) -> Void = {
+        $0.audition($1, from: $2, origin: $3)
+    }
+    @ObservationIgnored var sendAuditionSettings: @Sendable (Document, Bool, Float) -> Void = {
+        _ = $0.configureAudition(visible: $1, gain: $2)
+    }
     /// Ends a replaced document off the main actor. Tests hold it to read the
     /// state views see during shutdown.
     @ObservationIgnored var endDocument: @Sendable (Document) async -> Void = { document in
@@ -134,9 +138,11 @@ public final class ProjectController {
         edits.onExclusive = { [weak self] value in self?.busy = value }
     }
 
-    init(sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) },
-         sendDevice: @escaping @Sendable (Document, DeviceCommand) async throws -> DeviceResult = DeviceResult.send,
-         sendAudition: @escaping @Sendable (Document, URL?, AuditionOrigin) -> Void = { $0.audition($1, origin: $2) }) {
+    init(
+        sendAudio: @escaping @Sendable (Document, AudioCommand) async throws -> AudioState = { try await $0.audio($1) },
+        sendDevice: @escaping @Sendable (Document, DeviceCommand) async throws -> DeviceResult = DeviceResult.send,
+        sendAudition: @escaping @Sendable (Document, URL?, AuditionOrigin) -> Void = { $0.audition($1, origin: $2) }
+    ) {
         let log = AuditionLog()
         auditionLog = log
         session = DocumentSession(auditionLog: log)
@@ -174,18 +180,19 @@ public final class ProjectController {
                 }
                 var initial = try await opened.snapshot()
                 if let notice = try initial.historyReport().recovery {
-                    let accepted = await self.confirmRecovery(RecoveryPrompt(url: url, id: request.id, notice: notice), request: request)
+                    let accepted = await self.confirmRecovery(
+                        RecoveryPrompt(url: url, id: request.id, notice: notice), request: request)
                     guard accepted, !request.isCancelled else {
                         await Task.detached { opened.shutdown() }.value
                         return
                     }
-                    do { initial = try await opened.history(.acceptRecovery(notice)) }
-                    catch {
+                    do { initial = try await opened.history(.acceptRecovery(notice)) } catch {
                         await Task.detached { opened.shutdown() }.value
                         throw error
                     }
                 }
-                let next = DocumentSession(opening: opened, at: url, audio: try initial.audioState(), auditionLog: self.auditionLog)
+                let next = DocumentSession(
+                    opening: opened, at: url, audio: try initial.audioState(), auditionLog: self.auditionLog)
                 next.publish(initial)
                 let previous = self.replaceSession(with: next)
                 self.startPluginActivity(next)
@@ -242,8 +249,9 @@ public final class ProjectController {
     @discardableResult
     func duplicateTracks(_ request: TrackDuplicationRequest) async -> Bool {
         guard isCurrent(request.document), !request.sources.isEmpty,
-              Set(request.sources).count == request.sources.count,
-              Set(request.sources).isSubset(of: Set(tracks.map(\.id))) else { return false }
+            Set(request.sources).count == request.sources.count,
+            Set(request.sources).isSubset(of: Set(tracks.map(\.id)))
+        else { return false }
         let actions = request.sources.map { EditAction.duplicateTrack(source: $0.uuidString) }
         return await performActions({ actions }, documentID: request.document, selectingAddedTrack: true)
     }
@@ -254,8 +262,9 @@ public final class ProjectController {
 
     func deviceRows(on track: UUID) -> [TrackDevice] {
         (snapshot?.devices(on: track) ?? []).map {
-            TrackDevice(id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed,
-                        offline: $0.offline, pinned: $0.pinned, windowOpen: openPluginWindows.contains($0.id))
+            TrackDevice(
+                id: $0.id, plugin: $0.plugin, name: pluginNames[$0.plugin], bypassed: $0.bypassed,
+                offline: $0.offline, pinned: $0.pinned, windowOpen: openPluginWindows.contains($0.id))
         }
     }
 
@@ -315,15 +324,18 @@ public final class ProjectController {
 
     @discardableResult
     public func insertPlugin(_ plugin: String, on track: UUID? = nil, documentID: DocumentID) async -> Bool {
-        guard let target = track ?? selection, tracks.contains(where: { $0.id == target }), !plugin.isEmpty else { return false }
+        guard let target = track ?? selection, tracks.contains(where: { $0.id == target }), !plugin.isEmpty else {
+            return false
+        }
         return await performActions({ [.addDevice(track: target.uuidString, plugin: plugin)] }, documentID: documentID)
     }
 
     @discardableResult
     func insertPlugin(_ plugin: String, on targets: [UUID], documentID: DocumentID) async -> Bool {
         guard isCurrent(documentID), !plugin.isEmpty, !targets.isEmpty,
-              Set(targets).count == targets.count,
-              Set(targets).isSubset(of: Set(tracks.map(\.id))) else { return false }
+            Set(targets).count == targets.count,
+            Set(targets).isSubset(of: Set(tracks.map(\.id)))
+        else { return false }
         let actions = targets.map { EditAction.addDevice(track: $0.uuidString, plugin: plugin) }
         return await performActions({ actions }, documentID: documentID)
     }
@@ -334,28 +346,46 @@ public final class ProjectController {
 
     @discardableResult
     func editDeviceChain(_ change: DeviceChainEdit, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            let command: EditAction
-            switch change {
-            case .offline(let device, let offline):
-                guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.offline != offline else { return nil }
-                command = .offlineDevice(device: device.uuidString, offline: offline)
-            case .bypass(let device, let bypassed):
-                guard let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: { $0.id == device }), old.bypassed != bypassed else { return nil }
-                command = .bypassDevice(device: device.uuidString, bypassed: bypassed)
-            case .reorder(let device, let before):
-                guard let snapshot, let owner = tracks.first(where: { snapshot.devices(on: $0.id).contains(where: { $0.id == device }) }) else { return nil }
-                let ids = snapshot.devices(on: owner.id).map(\.id)
-                guard let index = ids.firstIndex(of: device) else { return nil }
-                if before == device || (before == nil && index == ids.count - 1) || (index + 1 < ids.count && before == ids[index + 1]) { return nil }
-                command = .reorderDevice(device: device.uuidString, before: before?.uuidString)
-            case .copy(let source, let track, let before):
-                command = .copyDevice(source: source.uuidString, track: track.uuidString, before: before?.uuidString)
-            case .remove(let device):
-                command = .removeDevice(device: device.uuidString)
-            }
-            return [command]
-        }, documentID: documentID)
+        await performActions(
+            { [self] in
+                let command: EditAction
+                switch change {
+                case .offline(let device, let offline):
+                    guard
+                        let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: {
+                            $0.id == device
+                        }), old.offline != offline
+                    else { return nil }
+                    command = .offlineDevice(device: device.uuidString, offline: offline)
+                case .bypass(let device, let bypassed):
+                    guard
+                        let old = tracks.flatMap({ snapshot?.devices(on: $0.id) ?? [] }).first(where: {
+                            $0.id == device
+                        }), old.bypassed != bypassed
+                    else { return nil }
+                    command = .bypassDevice(device: device.uuidString, bypassed: bypassed)
+                case .reorder(let device, let before):
+                    guard let snapshot,
+                        let owner = tracks.first(where: {
+                            snapshot.devices(on: $0.id).contains(where: { $0.id == device })
+                        })
+                    else { return nil }
+                    let ids = snapshot.devices(on: owner.id).map(\.id)
+                    guard let index = ids.firstIndex(of: device) else { return nil }
+                    if before == device || (before == nil && index == ids.count - 1)
+                        || (index + 1 < ids.count && before == ids[index + 1])
+                    {
+                        return nil
+                    }
+                    command = .reorderDevice(device: device.uuidString, before: before?.uuidString)
+                case .copy(let source, let track, let before):
+                    command = .copyDevice(
+                        source: source.uuidString, track: track.uuidString, before: before?.uuidString)
+                case .remove(let device):
+                    command = .removeDevice(device: device.uuidString)
+                }
+                return [command]
+            }, documentID: documentID)
     }
 
     @discardableResult
@@ -363,37 +393,52 @@ public final class ProjectController {
         guard isCurrent(documentID), tracks.contains(where: { $0.id == track }) else { return false }
         switch drop {
         case .plugin(let plugin): return await addPluginOpeningWindow(plugin, on: track, documentID: documentID)
-        case .copyDevice(let device): return await editDeviceChain(.copy(source: device, track: track, before: nil), documentID: documentID)
-        case .moveToEnd(let device): return await editDeviceChain(.reorder(device: device, before: nil), documentID: documentID)
+        case .copyDevice(let device):
+            return await editDeviceChain(.copy(source: device, track: track, before: nil), documentID: documentID)
+        case .moveToEnd(let device):
+            return await editDeviceChain(.reorder(device: device, before: nil), documentID: documentID)
         }
     }
 
     @discardableResult
-    public func insertNote(pitch: Int, beat: Double, length: Double, on track: UUID? = nil, documentID: DocumentID) async -> Bool {
+    public func insertNote(pitch: Int, beat: Double, length: Double, on track: UUID? = nil, documentID: DocumentID)
+        async -> Bool
+    {
         guard let target = track ?? selection, tracks.contains(where: { $0.id == target }),
-              let start = Tick.ticks(beat), let duration = Tick.ticks(length),
-              NoteGeometry(start: start, length: duration, pitch: pitch).isValid else { return false }
+            let start = Tick.ticks(beat), let duration = Tick.ticks(length),
+            NoteGeometry(start: start, length: duration, pitch: pitch).isValid
+        else { return false }
         let velocity = noteVelocity.value
-        return await performActions({ [
-            .insertNote(track: target.uuidString, pitch: UInt8(pitch), velocity: UInt8(velocity), start: start, length: duration),
-        ] }, documentID: documentID, rememberingLength: { duration })
+        return await performActions(
+            {
+                [
+                    .insertNote(
+                        track: target.uuidString, pitch: UInt8(pitch), velocity: UInt8(velocity), start: start,
+                        length: duration)
+                ]
+            }, documentID: documentID, rememberingLength: { duration })
     }
 
     @discardableResult
     public func setNoteVelocity(_ id: PianoNote.ID, velocity: Int, documentID: DocumentID) async -> Bool {
         guard ModelLimits.midi7.contains(velocity) else { return false }
-        return await performActions({ [self] in
-            guard let before = snapshot?.pianoNote(id), Int(before.velocity >> 9) != velocity else { return nil }
-            return [.setNoteVelocity(track: id.track.uuidString, clip: id.placement.uuidString,
-                                     note: id.note.uuidString, velocity: UInt8(velocity))]
-        }, documentID: documentID, rememberingVelocity: { velocity })
+        return await performActions(
+            { [self] in
+                guard let before = snapshot?.pianoNote(id), Int(before.velocity >> 9) != velocity else { return nil }
+                return [
+                    .setNoteVelocity(
+                        track: id.track.uuidString, clip: id.placement.uuidString,
+                        note: id.note.uuidString, velocity: UInt8(velocity))
+                ]
+            }, documentID: documentID, rememberingVelocity: { velocity })
     }
 
     @discardableResult
     func setNoteVelocities(_ change: PianoVelocityChange, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            change.actions(in: snapshot)
-        }, documentID: documentID, rememberingVelocity: { change.anchorValue })
+        await performActions(
+            { [self] in
+                change.actions(in: snapshot)
+            }, documentID: documentID, rememberingVelocity: { change.anchorValue })
     }
 
     @discardableResult
@@ -403,10 +448,14 @@ public final class ProjectController {
 
     @discardableResult
     func moveNotes(_ change: PianoMoveChange, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in change.actions(in: snapshot) }, documentID: documentID,
-            selectingNotes: change.copies.isEmpty ? nil : Set(change.originals.keys.compactMap { id in
-                change.copies[id.note].map { PianoNote.ID(track: id.track, placement: id.placement, note: $0) }
-            }))
+        await performActions(
+            { [self] in change.actions(in: snapshot) }, documentID: documentID,
+            selectingNotes: change.copies.isEmpty
+                ? nil
+                : Set(
+                    change.originals.keys.compactMap { id in
+                        change.copies[id.note].map { PianoNote.ID(track: id.track, placement: id.placement, note: $0) }
+                    }))
     }
 
     /// Capture native event order synchronously, before the new tasks can run.
@@ -423,7 +472,8 @@ public final class ProjectController {
 
     @discardableResult
     func stepNotes(_ step: PianoStep, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in step.actions(in: snapshot) }, documentID: documentID,
+        await performActions(
+            { [self] in step.actions(in: snapshot) }, documentID: documentID,
             rememberingLength: { [self] in
                 guard step.resize, step.ids.count == 1 else { return nil }
                 return step.geometries(in: snapshot)?.values.first?.length
@@ -432,15 +482,22 @@ public final class ProjectController {
 
     @discardableResult
     public func editNote(_ id: PianoNote.ID, geometry: NoteGeometry, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            guard let before = snapshot?.pianoNote(id), geometry.isValid,
-                  before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch else { return nil }
-            return [.editNote(track: id.track.uuidString, clip: before.id.placement.uuidString,
-                              note: id.note.uuidString, pitch: UInt8(geometry.pitch), start: geometry.start, length: geometry.length)]
-        }, documentID: documentID, rememberingLength: { [self] in
-            guard let before = snapshot?.pianoNote(id), before.length != geometry.length else { return nil }
-            return geometry.length
-        })
+        await performActions(
+            { [self] in
+                guard let before = snapshot?.pianoNote(id), geometry.isValid,
+                    before.start != geometry.start || before.length != geometry.length || before.pitch != geometry.pitch
+                else { return nil }
+                return [
+                    .editNote(
+                        track: id.track.uuidString, clip: before.id.placement.uuidString,
+                        note: id.note.uuidString, pitch: UInt8(geometry.pitch), start: geometry.start,
+                        length: geometry.length)
+                ]
+            }, documentID: documentID,
+            rememberingLength: { [self] in
+                guard let before = snapshot?.pianoNote(id), before.length != geometry.length else { return nil }
+                return geometry.length
+            })
     }
 
     @discardableResult
@@ -450,16 +507,17 @@ public final class ProjectController {
 
     @discardableResult
     func deleteNotes(_ ids: Set<PianoNote.ID>, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            guard !ids.isEmpty, ids.allSatisfy({ snapshot?.pianoNote($0) != nil }) else { return nil }
-            // Linked placements can expose the same content note more than once.
-            // note.delete addresses the content note, not its placement window.
-            var seen: Set<UUID> = []
-            return ids.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id -> EditAction? in
-                guard seen.insert(id.note).inserted else { return nil }
-                return .deleteNote(track: id.track.uuidString, note: id.note.uuidString)
-            }
-        }, documentID: documentID)
+        await performActions(
+            { [self] in
+                guard !ids.isEmpty, ids.allSatisfy({ snapshot?.pianoNote($0) != nil }) else { return nil }
+                // Linked placements can expose the same content note more than once.
+                // note.delete addresses the content note, not its placement window.
+                var seen: Set<UUID> = []
+                return ids.sorted { $0.descriptionKey < $1.descriptionKey }.compactMap { id -> EditAction? in
+                    guard seen.insert(id.note).inserted else { return nil }
+                    return .deleteNote(track: id.track.uuidString, note: id.note.uuidString)
+                }
+            }, documentID: documentID)
     }
 
     public func undo() async {
@@ -474,10 +532,13 @@ public final class ProjectController {
             do {
                 session.publish(try await document.undo())
                 session.noteInput.undo()
-                session.undoCount -= 1; session.redoCount += 1
+                session.undoCount -= 1
+                session.redoCount += 1
                 return true
+            } catch {
+                self.report(error)
+                return false
             }
-            catch { self.report(error); return false }
         }
         // Values are read after the turn, so a slow plugin does not hold later edits.
         if changed { await reloadParameters(in: session) }
@@ -495,10 +556,13 @@ public final class ProjectController {
             do {
                 session.publish(try await document.redo())
                 session.noteInput.redo()
-                session.redoCount -= 1; session.undoCount += 1
+                session.redoCount -= 1
+                session.undoCount += 1
                 return true
+            } catch {
+                self.report(error)
+                return false
             }
-            catch { self.report(error); return false }
         }
         if changed { await reloadParameters(in: session) }
     }
@@ -602,8 +666,7 @@ public final class ProjectController {
                     }
                 } catch { if !Task.isCancelled, self.session === session { report(error) } }
             }
-            do { try await Task.sleep(for: .milliseconds(50)) }
-            catch { return }
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
     }
 
@@ -660,32 +723,45 @@ public final class ProjectController {
     }
 
     /// Resolve targets and no-op checks after earlier edits publish, retaining typed payloads.
-    func performActions(_ actions: @escaping @MainActor () -> [EditAction]?, documentID: DocumentID, finishingPreview: Bool = false, selectingAddedTrack: Bool = false,
-                        rememberingLength: @escaping @MainActor () -> Int64? = { nil },
-                        rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil) async -> Bool {
-        await applyEdit(actions, documentID: documentID, finishingPreview: finishingPreview, selectingAddedTrack: selectingAddedTrack, rememberingLength: rememberingLength,
-                        rememberingVelocity: rememberingVelocity, selectingNotes: selectingNotes) { document, actions in
+    func performActions(
+        _ actions: @escaping @MainActor () -> [EditAction]?, documentID: DocumentID, finishingPreview: Bool = false,
+        selectingAddedTrack: Bool = false,
+        rememberingLength: @escaping @MainActor () -> Int64? = { nil },
+        rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil
+    ) async -> Bool {
+        await applyEdit(
+            actions, documentID: documentID, finishingPreview: finishingPreview,
+            selectingAddedTrack: selectingAddedTrack, rememberingLength: rememberingLength,
+            rememberingVelocity: rememberingVelocity, selectingNotes: selectingNotes
+        ) { document, actions in
             try await document.perform(actions)
         }
     }
 
     /// Applies one transaction whose later actions name earlier results, such as a new track's ID.
-    func performActions(referencing actions: [ReferencingEditAction], documentID: DocumentID, selectingAddedTrack: Bool = false) async -> Bool {
-        await applyEdit({ actions }, documentID: documentID, selectingAddedTrack: selectingAddedTrack) { document, actions in
+    func performActions(
+        referencing actions: [ReferencingEditAction], documentID: DocumentID, selectingAddedTrack: Bool = false
+    ) async -> Bool {
+        await applyEdit({ actions }, documentID: documentID, selectingAddedTrack: selectingAddedTrack) {
+            document, actions in
             try await document.perform(referencing: actions)
         }
     }
 
-    private func applyEdit<Fields>(_ fields: @escaping @MainActor () -> Fields?, documentID: DocumentID, finishingPreview: Bool = false,
-                                   selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil },
-                                   rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil,
-                                   submit: @escaping @MainActor (Document, Fields) async throws -> Snapshot) async -> Bool {
+    private func applyEdit<Fields>(
+        _ fields: @escaping @MainActor () -> Fields?, documentID: DocumentID, finishingPreview: Bool = false,
+        selectingAddedTrack: Bool = false, rememberingLength: @escaping @MainActor () -> Int64? = { nil },
+        rememberingVelocity: @escaping @MainActor () -> Int? = { nil }, selectingNotes: Set<PianoNote.ID>? = nil,
+        submit: @escaping @MainActor (Document, Fields) async throws -> Snapshot
+    ) async -> Bool {
         guard faderPreview == nil || finishingPreview else { return false }
         return await edits.run {
-            guard let session = self.session(for: documentID), let document = session.document, let fields = fields() else { return false }
+            guard let session = self.session(for: documentID), let document = session.document, let fields = fields()
+            else { return false }
             do {
                 let inputLength = session.noteInput.change(to: rememberingLength())
-                let velocity = rememberingVelocity(), velocityGeneration = session.noteVelocity.generation
+                let velocity = rememberingVelocity()
+                let velocityGeneration = session.noteVelocity.generation
                 let previousTracks = selectingAddedTrack ? Set(session.tracks.map(\.id)) : []
                 let edited = try await submit(document, fields)
                 session.publish(edited)
@@ -696,7 +772,10 @@ public final class ProjectController {
                 }
                 session.noteVelocity.finish(velocity, generation: velocityGeneration)
                 return true
-            } catch { self.report(error); return false }
+            } catch {
+                self.report(error)
+                return false
+            }
         }
     }
 
@@ -740,7 +819,8 @@ extension AudioCommand {
     var requestsPlayheadFrame: Bool {
         switch self {
         case .play, .pause, .stop, .locate, .setStart: true
-        case .output, .refresh, .status, .prepare, .loop, .metronome, .previewFader, .previewFaders, .clearFaderPreview: false
+        case .output, .refresh, .status, .prepare, .loop, .metronome, .previewFader, .previewFaders, .clearFaderPreview:
+            false
         }
     }
 }
@@ -753,27 +833,35 @@ extension ProjectController {
 
     @discardableResult
     public func setMixer(_ track: UUID, field: MixerField, value: Float, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            guard let mix = mixer(track), value.isFinite, mix[field].value != value,
-                  field == .gain ? ModelLimits.gain.contains(value) : field == .pan ? ModelLimits.pan.contains(value) : (value == 0 || value == 1) else { return nil }
-            return [.setParameter(parameter: mix[field].id.uuidString, value: value)]
-        }, documentID: documentID)
+        await performActions(
+            { [self] in
+                guard let mix = mixer(track), value.isFinite, mix[field].value != value,
+                    field == .gain
+                        ? ModelLimits.gain.contains(value)
+                        : field == .pan ? ModelLimits.pan.contains(value) : (value == 0 || value == 1)
+                else { return nil }
+                return [.setParameter(parameter: mix[field].id.uuidString, value: value)]
+            }, documentID: documentID)
     }
 
     @discardableResult
     public func beginFader(_ track: UUID, field: MixerField, documentID: DocumentID) -> Bool {
         guard let session = inputSession(for: documentID), session.faderPreview == nil,
-              field == .gain || field == .pan, let mix = mixer(track) else { return false }
-        session.faderPreview = FaderPreview(document: documentID, track: track, field: field,
-                                            parameter: mix[field].id, original: mix[field].value,
-                                            gain: mix.gain.value, pan: mix.pan.value)
+            field == .gain || field == .pan, let mix = mixer(track)
+        else { return false }
+        session.faderPreview = FaderPreview(
+            document: documentID, track: track, field: field,
+            parameter: mix[field].id, original: mix[field].value,
+            gain: mix.gain.value, pan: mix.pan.value)
         return true
     }
 
     public func changeFader(_ value: Float, documentID: DocumentID) {
-        guard let session = session(for: documentID), var preview = session.faderPreview, !session.previewFinishing, value.isFinite,
-              preview.field == .gain ? ModelLimits.gain.contains(value) : ModelLimits.pan.contains(value),
-              let document = session.document else { return }
+        guard let session = session(for: documentID), var preview = session.faderPreview, !session.previewFinishing,
+            value.isFinite,
+            preview.field == .gain ? ModelLimits.gain.contains(value) : ModelLimits.pan.contains(value),
+            let document = session.document
+        else { return }
         if preview.field == .gain { preview.gain = value } else { preview.pan = value }
         guard updateFaderMembers(&preview, value: value) else { return }
         session.faderPreview = preview
@@ -786,12 +874,15 @@ extension ProjectController {
             while let pending = session.previewPending {
                 session.previewPending = nil
                 do {
-                    let command: AudioCommand = pending.members.isEmpty
+                    let command: AudioCommand =
+                        pending.members.isEmpty
                         ? .previewFader(track: pending.track, gain: pending.gain, pan: pending.pan)
-                        : .previewFaders(values: pending.members.map { FaderValue(track: $0.key, gain: $0.value.gain, pan: $0.value.pan) })
+                        : .previewFaders(
+                            values: pending.members.map {
+                                FaderValue(track: $0.key, gain: $0.value.gain, pan: $0.value.pan)
+                            })
                     _ = try await self.sendAudio(document, command)
-                }
-                catch { if self.session === session { self.report(error) } }
+                } catch { if self.session === session { self.report(error) } }
             }
             session.previewTask = nil
         }
@@ -803,8 +894,13 @@ extension ProjectController {
     }
 
     func finishFader(commit: Bool, in session: DocumentSession) async {
-        if let task = session.previewFinishTask { await task.value; return }
-        guard let preview = session.faderPreview, !session.previewFinishing, let document = session.document else { return }
+        if let task = session.previewFinishTask {
+            await task.value
+            return
+        }
+        guard let preview = session.faderPreview, !session.previewFinishing, let document = session.document else {
+            return
+        }
         session.previewFinishing = true
         let task = Task { [self] in
             await completeFader(preview, document: document, in: session, commit: commit)
@@ -815,35 +911,45 @@ extension ProjectController {
         await task.value
     }
 
-    private func completeFader(_ preview: FaderPreview, document: Document, in session: DocumentSession, commit: Bool) async {
+    private func completeFader(_ preview: FaderPreview, document: Document, in session: DocumentSession, commit: Bool)
+        async
+    {
         if let task = session.previewTask { await task.value }
         var applied = false
         if commit, self.session === session {
-            applied = await performActions({ [self] in faderActions(preview) },
-                                           documentID: preview.document, finishingPreview: true)
+            applied = await performActions(
+                { [self] in faderActions(preview) },
+                documentID: preview.document, finishingPreview: true)
         }
         if !applied {
-            do { _ = try await sendAudio(document, .clearFaderPreview) }
-            catch { if self.session === session { report(error) } }
+            do { _ = try await sendAudio(document, .clearFaderPreview) } catch {
+                if self.session === session { report(error) }
+            }
         }
-        session.faderPreview = nil; session.previewPending = nil
+        session.faderPreview = nil
+        session.previewPending = nil
     }
 
     @discardableResult
     public func setClipGain(_ id: UUID, gain: Float, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            guard let clip = snapshot?.clipMix(id), clip.isAudio, gain.isFinite, gain >= 0, clip.gain != gain else { return nil }
-            return [.setClipGain(clip: id.uuidString, gain: gain)]
-        }, documentID: documentID)
+        await performActions(
+            { [self] in
+                guard let clip = snapshot?.clipMix(id), clip.isAudio, gain.isFinite, gain >= 0, clip.gain != gain else {
+                    return nil
+                }
+                return [.setClipGain(clip: id.uuidString, gain: gain)]
+            }, documentID: documentID)
     }
 
     @discardableResult
     public func setClipFades(_ id: UUID, fadeIn: Int64, fadeOut: Int64, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            guard let clip = snapshot?.clipMix(id), clip.isAudio, fadeIn >= 0, fadeOut >= 0,
-                  clip.fadeIn != fadeIn || clip.fadeOut != fadeOut else { return nil }
-            return [.setClipFades(clip: id.uuidString, fadeIn: fadeIn, fadeOut: fadeOut)]
-        }, documentID: documentID)
+        await performActions(
+            { [self] in
+                guard let clip = snapshot?.clipMix(id), clip.isAudio, fadeIn >= 0, fadeOut >= 0,
+                    clip.fadeIn != fadeIn || clip.fadeOut != fadeOut
+                else { return nil }
+                return [.setClipFades(clip: id.uuidString, fadeIn: fadeIn, fadeOut: fadeOut)]
+            }, documentID: documentID)
     }
 }
 

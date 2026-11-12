@@ -1,5 +1,6 @@
 import AppKit
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -8,7 +9,9 @@ struct CanvasBoundaryTests {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
         let arrange = ArrangePaneView(frame: root.bounds)
         let piano = PianoRollView(frame: root.bounds)
-        for (pane, surface) in [(arrange as NSView, arrange.timeline as NSView), (piano as NSView, piano.grid as NSView)] {
+        for (pane, surface) in [
+            (arrange as NSView, arrange.timeline as NSView), (piano as NSView, piano.grid as NSView),
+        ] {
             root.addSubview(pane)
             pane.layoutSubtreeIfNeeded()
             surface.frame = root.bounds

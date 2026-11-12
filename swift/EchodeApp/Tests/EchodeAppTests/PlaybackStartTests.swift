@@ -3,15 +3,20 @@ import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct PlaybackStartTests {
     private let beat: Int64 = 705_600
 
-    private func mouse(_ point: CGPoint, in view: NSView, flags: NSEvent.ModifierFlags = [], type: NSEvent.EventType = .leftMouseDown) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
-            windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    private func mouse(
+        _ point: CGPoint, in view: NSView, flags: NSEvent.ModifierFlags = [], type: NSEvent.EventType = .leftMouseDown
+    ) throws -> NSEvent {
+        try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
     }
 
     private nonisolated static func kind(_ command: AudioCommand) -> String {
@@ -33,9 +38,12 @@ struct PlaybackStartTests {
             sent.withLock { $0.append(Self.kind(command)) }
             guard case .play = command else { return try await document.audio(command) }
             let state = try await document.audio(.status)
-            return try JSONDecoder().decode(AudioState.self, from: Data("""
-                {"playing":true,"running":false,"opening":false,"tick":\(state.tick),"start":\(state.start),"devices":[],"metronome":false}
-                """.utf8))
+            return try JSONDecoder().decode(
+                AudioState.self,
+                from: Data(
+                    """
+                    {"playing":true,"running":false,"opening":false,"tick":\(state.tick),"start":\(state.start),"devices":[],"metronome":false}
+                    """.utf8))
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-start-\(UUID()).echode")
         defer { removeTestFile(url) }
@@ -83,8 +91,13 @@ struct PlaybackStartTests {
         var inserted = 0
         grid.onInsert = { _, _, _ in inserted += 1 }
         grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
-        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
-        grid.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: grid.camera, key: DisplayKey(), preview: nil)))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        grid.present(
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(track: track, focus: nil, camera: grid.camera, key: DisplayKey(), preview: nil))
+        )
         let layout = grid.pianoLayout
         let x = layout.gridOrigin.x + 1.3 * grid.camera.pixelsPerBeat
 
@@ -93,7 +106,8 @@ struct PlaybackStartTests {
         grid.mouseUp(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, type: .leftMouseUp))
         #expect(requests == [beat * 5 / 4])
         grid.mouseDown(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, flags: .shift))
-        grid.mouseUp(with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, flags: .shift, type: .leftMouseUp))
+        grid.mouseUp(
+            with: try mouse(CGPoint(x: x, y: layout.rulerHeight / 2), in: grid, flags: .shift, type: .leftMouseUp))
         #expect(requests.last == Tick.ticks(1.3))
         // The keyboard header and the note grid never move the start.
         grid.mouseDown(with: try mouse(CGPoint(x: layout.degreeWidth + 4, y: layout.rulerHeight / 2), in: grid))
@@ -104,13 +118,19 @@ struct PlaybackStartTests {
         await controller.setPlaybackStart(tick: try #require(requests.first))
         #expect(controller.playbackStart == beat * 5 / 4 && controller.undoCount == undo)
         var camera = grid.camera
-        let marked = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(),
-                                                                       preview: nil, start: controller.playbackStart))
+        let marked = PianoFrame(
+            input: input,
+            piano: PianoRenderInput(
+                track: track, focus: nil, camera: camera, key: DisplayKey(),
+                preview: nil, start: controller.playbackStart))
         #expect(marked.startX == layout.gridOrigin.x + 1.25 * camera.pixelsPerBeat)
         #expect(marked.rulerInstances.count == 4)
         camera.originBeat = 2
-        let scrolled = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(),
-                                                                         preview: nil, start: controller.playbackStart))
+        let scrolled = PianoFrame(
+            input: input,
+            piano: PianoRenderInput(
+                track: track, focus: nil, camera: camera, key: DisplayKey(),
+                preview: nil, start: controller.playbackStart))
         #expect(scrolled.startX == nil && scrolled.rulerInstances.count == 2)
         await controller.close()
     }

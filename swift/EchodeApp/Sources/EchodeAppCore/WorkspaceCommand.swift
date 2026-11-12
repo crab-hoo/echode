@@ -4,11 +4,28 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public enum WorkspaceCommand: String, CaseIterable, Identifiable {
-    case newProject = "New Project", openProject = "Open Project", addTrack = "Add Track", duplicateTrack = "Duplicate Track"
+    case newProject = "New Project"
+    case openProject = "Open Project"
+    case addTrack = "Add Track"
+    case duplicateTrack = "Duplicate Track"
     case exportAudio = "Export Audio"
-    case undo = "Undo", redo = "Redo", history = "History", inspector = "Toggle Inspector", browser = "Toggle Files", editor = "Toggle Note Editor", devices = "Devices", maximizeEditors = "Maximize Editors"
-    case playback = "Play / Stop", pause = "Pause", stop = "Stop", loop = "Loop", metronome = "Metronome", followPlayhead = "Follow Playhead"
-    case plugins = "Plugins", output = "Audio Output", palette = "Command Palette"
+    case undo = "Undo"
+    case redo = "Redo"
+    case history = "History"
+    case inspector = "Toggle Inspector"
+    case browser = "Toggle Files"
+    case editor = "Toggle Note Editor"
+    case devices = "Devices"
+    case maximizeEditors = "Maximize Editors"
+    case playback = "Play / Stop"
+    case pause = "Pause"
+    case stop = "Stop"
+    case loop = "Loop"
+    case metronome = "Metronome"
+    case followPlayhead = "Follow Playhead"
+    case plugins = "Plugins"
+    case output = "Audio Output"
+    case palette = "Command Palette"
     public var id: Self { self }
     public var title: String { text(rawValue) }
     public var isLayoutToggle: Bool {
@@ -93,14 +110,21 @@ public enum WorkspaceCommand: String, CaseIterable, Identifiable {
 final class WorkspaceSession {
     let controller: ProjectController
     let state: WorkspaceState
-    init(controller: ProjectController, state: WorkspaceState) { self.controller = controller; self.state = state }
+    init(controller: ProjectController, state: WorkspaceState) {
+        self.controller = controller
+        self.state = state
+    }
 
     func enabled(_ command: WorkspaceCommand, fromPalette: Bool = false) -> Bool {
-        guard !state.choosingFile, state.presentation == nil || (fromPalette && state.presentation == .palette) else { return false }
+        guard !state.choosingFile, state.presentation == nil || (fromPalette && state.presentation == .palette) else {
+            return false
+        }
         let editable = controller.snapshot != nil && !controller.busy
         switch command {
         case .newProject, .openProject: return !controller.busy
-        case .exportAudio: return editable && !state.exportJob.running && controller.faderPreview == nil && controller.session.parameterGesture == nil && controller.session.pluginGestures.isEmpty
+        case .exportAudio:
+            return editable && !state.exportJob.running && controller.faderPreview == nil
+                && controller.session.parameterGesture == nil && controller.session.pluginGestures.isEmpty
         case .undo: return editable && controller.undoCount > 0
         case .redo: return editable && controller.redoCount > 0
         case .history: return editable
@@ -169,7 +193,8 @@ final class WorkspaceSession {
         state.choosingFile = true
         let panel = NSOpenPanel()
         panel.title = text("Choose Folder")
-        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
         panel.begin { [self] response in
             state.choosingFile = false
             guard response == .OK, let url = panel.url else { return }
@@ -188,12 +213,17 @@ final class WorkspaceSession {
             panel = save
         } else {
             let open = NSOpenPanel()
-            open.canChooseDirectories = true; open.canChooseFiles = true; open.allowsMultipleSelection = false
+            open.canChooseDirectories = true
+            open.canChooseFiles = true
+            open.allowsMultipleSelection = false
             panel = open
         }
         panel.title = text(creating ? "New Project" : "Open Project")
         panel.begin { [self] response in
-            guard response == .OK, let url = panel.url else { state.choosingFile = false; return }
+            guard response == .OK, let url = panel.url else {
+                state.choosingFile = false
+                return
+            }
             Task {
                 await controller.open(url, creating: creating)
                 state.choosingFile = false

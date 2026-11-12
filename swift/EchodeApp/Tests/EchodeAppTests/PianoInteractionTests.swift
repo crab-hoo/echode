@@ -1,6 +1,7 @@
 import AppKit
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 /// AppKit can drop a mouse-up, for example when a menu or a drag session takes
@@ -14,23 +15,50 @@ struct PianoInteractionTests {
         await controller.addTrack(name: "keys")
         #expect(await controller.insertNote(pitch: 60, beat: 1, length: 1))
         #expect(await controller.insertNote(pitch: 64, beat: 3, length: 1))
-        let snapshot = try #require(controller.snapshot), track = try #require(controller.selection)
-        let notes = snapshot.pianoNotes(track: track, originTick: 0, widthTicks: 8 * 705_600,
+        let snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
+        let notes = snapshot.pianoNotes(
+            track: track, originTick: 0, widthTicks: 8 * 705_600,
             topPitch: 127, heightPitches: 128, pixelsPerTick: 1, pixelsPerPitch: 1)
         let first = try #require(notes.first(where: { $0.pitch == 60 }))
         return (snapshot, track, first, Set(notes.map(\.id)), url)
     }
 
-    private func everyInteraction(_ id: PianoNote.ID) throws -> [(name: String, value: PianoInteraction, keptBySelection: Bool, keptByResize: Bool)] {
-        let camera = PianoCamera(), geometry = NoteGeometry(start: 0, length: 705_600, pitch: 60), point = CGPoint(x: 10, y: 10)
+    private func everyInteraction(_ id: PianoNote.ID) throws -> [(
+        name: String, value: PianoInteraction, keptBySelection: Bool, keptByResize: Bool
+    )] {
+        let camera = PianoCamera()
+        let geometry = NoteGeometry(start: 0, length: 705_600, pitch: 60)
+        let point = CGPoint(x: 10, y: 10)
         return [
-            ("ruler", .ruler(RulerPress(x: 10, originBeat: 0, pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid)), true, false),
+            (
+                "ruler",
+                .ruler(RulerPress(x: 10, originBeat: 0, pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid)), true,
+                false
+            ),
             ("marquee", .marquee(PianoSelectionPress(at: point)), true, false),
-            ("insertion", .insertion(try #require(PianoInsertion(x: 10, y: 10, camera: camera, snapping: true))), true, false),
-            ("note", .note(PianoGesture(id: id, original: geometry, mode: .move, x: 10, y: 10), preview: nil), true, true),
+            (
+                "insertion", .insertion(try #require(PianoInsertion(x: 10, y: 10, camera: camera, snapping: true))),
+                true, false
+            ),
+            (
+                "note", .note(PianoGesture(id: id, original: geometry, mode: .move, x: 10, y: 10), preview: nil), true,
+                true
+            ),
             ("velocity", .velocity(PianoVelocityGesture(id: id, original: 100, y: 10), preview: nil), false, false),
-            ("move", .move(PianoMoveGesture(anchor: id, originals: [id: geometry], point: point, camera: camera), preview: nil), false, false),
-            ("resize", .resize(PianoResizeGesture(anchor: id, originals: [id: geometry], edge: .rightEdge, point: point, camera: camera), preview: nil), false, false),
+            (
+                "move",
+                .move(
+                    PianoMoveGesture(anchor: id, originals: [id: geometry], point: point, camera: camera), preview: nil),
+                false, false
+            ),
+            (
+                "resize",
+                .resize(
+                    PianoResizeGesture(
+                        anchor: id, originals: [id: geometry], edge: .rightEdge, point: point, camera: camera),
+                    preview: nil), false, false
+            ),
         ]
     }
 
@@ -39,7 +67,8 @@ struct PianoInteractionTests {
         defer { removeTestFile(url) }
         for (name, value, keptBySelection, keptByResize) in try everyInteraction(first.id) {
             #expect(!value.isIdle, "\(name)")
-            var selection = value, resize = value
+            var selection = value
+            var resize = value
             selection.endIfBoundToSelection()
             resize.endOnResize()
             #expect(selection.isIdle == !keptBySelection, "\(name)")
@@ -76,7 +105,8 @@ struct PianoInteractionTests {
         defer { removeTestFile(url) }
         let harness = PianoMoveBatchHarness(snapshot: snapshot, track: track, selected: ids)
         defer { harness.view.stop() }
-        var moves = 0, resizes = 0
+        var moves = 0
+        var resizes = 0
         harness.view.onMoves = { _ in moves += 1 }
         harness.view.onResizes = { _ in resizes += 1 }
 
@@ -122,7 +152,8 @@ struct PianoInteractionTests {
         defer { removeTestFile(url) }
         let harness = PianoMoveBatchHarness(snapshot: snapshot, track: track, selected: [first.id])
         defer { harness.view.stop() }
-        var edits = 0, requests = 0
+        var edits = 0
+        var requests = 0
         harness.view.onEdit = { _, _ in edits += 1 }
         harness.view.onSetStart = { _ in requests += 1 }
         harness.view.onSetLoop = { _ in requests += 1 }

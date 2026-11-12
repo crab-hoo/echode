@@ -7,7 +7,10 @@ struct PianoSelectionPress {
     private(set) var point: CGPoint
     private(set) var dragged = false
 
-    init(at point: CGPoint) { origin = point; self.point = point }
+    init(at point: CGPoint) {
+        origin = point
+        self.point = point
+    }
 
     mutating func update(_ point: CGPoint) {
         guard point.x.isFinite, point.y.isFinite else { return }
@@ -17,19 +20,24 @@ struct PianoSelectionPress {
 
     var rect: CGRect? {
         guard dragged else { return nil }
-        return CGRect(x: min(origin.x, point.x), y: min(origin.y, point.y),
-                      width: max(1, abs(point.x - origin.x)), height: max(1, abs(point.y - origin.y)))
+        return CGRect(
+            x: min(origin.x, point.x), y: min(origin.y, point.y),
+            width: max(1, abs(point.x - origin.x)), height: max(1, abs(point.y - origin.y)))
     }
 
     func notes(in notes: [PianoNote], layout: PianoLayout) -> Set<PianoNote.ID> {
         guard let rect else { return [] }
         let area = rect.intersection(layout.grid)
         guard !area.isNull, !area.isEmpty else { return [] }
-        return Set(notes.filter { note in
-            let visible = layout.paneRect(CGRect(x: Double(note.x), y: Double(note.y),
-                width: max(2, Double(note.width)), height: Double(note.height))).intersection(layout.grid)
-            return !visible.isNull && !visible.isEmpty && visible.intersects(area)
-        }.map(\.id))
+        return Set(
+            notes.filter { note in
+                let visible = layout.paneRect(
+                    CGRect(
+                        x: Double(note.x), y: Double(note.y),
+                        width: max(2, Double(note.width)), height: Double(note.height))
+                ).intersection(layout.grid)
+                return !visible.isNull && !visible.isEmpty && visible.intersects(area)
+            }.map(\.id))
     }
 }
 

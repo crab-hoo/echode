@@ -3,6 +3,7 @@ import CoreGraphics
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -16,9 +17,12 @@ struct PlayheadTests {
             // This test checks UI invalidation, not HAL. Keep the real bridge
             // for position and other commands, but never open an output device.
             let state = try await document.audio(.status)
-            return try JSONDecoder().decode(AudioState.self, from: Data("""
-                {"playing":true,"running":false,"opening":false,"tick":\(state.tick),"devices":[],"metronome":\(state.metronome)}
-                """.utf8))
+            return try JSONDecoder().decode(
+                AudioState.self,
+                from: Data(
+                    """
+                    {"playing":true,"running":false,"opening":false,"tick":\(state.tick),"devices":[],"metronome":\(state.metronome)}
+                    """.utf8))
         }
         await controller.open(url, creating: true)
         await controller.addTrack(name: "pad")

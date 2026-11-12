@@ -7,7 +7,8 @@ struct BrowserFile: Identifiable, Sendable {
     var id: URL { url }
     var project: Bool { url.pathExtension.lowercased() == "echode" }
     var audio: Bool {
-        !directory && ["wav", "aiff", "aif", "caf", "mp3", "m4a", "aac", "flac"].contains(url.pathExtension.lowercased())
+        !directory
+            && ["wav", "aiff", "aif", "caf", "mp3", "m4a", "aac", "flac"].contains(url.pathExtension.lowercased())
     }
     var midi: Bool { !directory && ["mid", "midi"].contains(url.pathExtension.lowercased()) }
     var package = false
@@ -34,7 +35,8 @@ final class FileBrowserState {
     /// Any selected sample shows its whole shape, sounded or not (ADR 0163).
     var selection: URL? {
         didSet {
-            guard selection != oldValue, let url = selection, filtered.contains(where: { $0.url == url && $0.audio }) else { return }
+            guard selection != oldValue, let url = selection, filtered.contains(where: { $0.url == url && $0.audio })
+            else { return }
             let overviews = overviews
             overviewTask = Task { await overviews.load(url) }
         }
@@ -55,7 +57,9 @@ final class FileBrowserState {
     private static let rootsKey = "workspace.sample-folders.v1"
     var searchingLibrary: Bool { !query.isEmpty && !roots.isEmpty }
     var filtered: [BrowserFile] {
-        (searchingLibrary ? libraryFiles : files).filter { query.isEmpty || $0.url.lastPathComponent.localizedStandardContains(query) }
+        (searchingLibrary ? libraryFiles : files).filter {
+            query.isEmpty || $0.url.lastPathComponent.localizedStandardContains(query)
+        }
     }
 
     init(defaults: UserDefaults? = nil, overviews: SampleOverviews = SampleOverviews()) {
@@ -71,13 +75,17 @@ final class FileBrowserState {
     func register(_ folder: URL) async {
         let resolved = Self.rootURL(folder)
         guard await load(resolved) else { return }
-        if !roots.contains(resolved) { roots.append(resolved); saveRoots() }
+        if !roots.contains(resolved) {
+            roots.append(resolved)
+            saveRoots()
+        }
         await refreshLibrary()
     }
 
     func removeRoot(_ folder: URL) async {
         let resolved = Self.rootURL(folder)
-        roots.removeAll { $0 == resolved }; saveRoots()
+        roots.removeAll { $0 == resolved }
+        saveRoots()
         libraryFiles = []
         selection = preservedSelection(selection, in: filtered.map(\.url))
         await refreshLibrary()
@@ -95,13 +103,20 @@ final class FileBrowserState {
     }
 
     func refreshLibrary() async {
-        let token = UUID(); libraryRequest = token
+        let token = UUID()
+        libraryRequest = token
         libraryTask?.cancel()
         let roots = roots
         let task = Task.detached { try SampleLibraryScan.read(roots) }
-        libraryTask = task; indexing = true; libraryError = nil
+        libraryTask = task
+        indexing = true
+        libraryError = nil
         do {
-            let scan = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            let scan = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
             guard libraryRequest == token else { return }
             libraryFiles = scan.files
             libraryError = scan.failures.isEmpty ? nil : scan.failures.joined(separator: "\n")
@@ -110,7 +125,8 @@ final class FileBrowserState {
             guard libraryRequest == token else { return }
             if !(error is CancellationError) { libraryError = error.localizedDescription }
         }
-        indexing = false; libraryTask = nil
+        indexing = false
+        libraryTask = nil
     }
 
     private func saveRoots() { defaults?.set(roots.map(\.path), forKey: Self.rootsKey) }
@@ -120,30 +136,45 @@ final class FileBrowserState {
 
     @discardableResult
     func load(_ folder: URL) async -> Bool {
-        let token = UUID(); request = token
-        loading = true; error = nil
+        let token = UUID()
+        request = token
+        loading = true
+        error = nil
         do {
             let files = try await Task.detached {
                 let keys: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .isRegularFileKey]
-                return try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])
-                    .compactMap { url -> BrowserFile? in
-                        let values = try url.resourceValues(forKeys: keys)
-                        guard values.isSymbolicLink != true, values.isDirectory == true || values.isRegularFile == true else { return nil }
-                        let file = BrowserFile(url: url, directory: values.isDirectory == true, package: values.isPackage == true)
-                        return file.visible ? file : nil
-                    }
-                    .sorted { left, right in
-                        if left.directory != right.directory { return left.directory }
-                        return left.url.lastPathComponent.localizedStandardCompare(right.url.lastPathComponent) == .orderedAscending
-                    }
+                return try FileManager.default.contentsOfDirectory(
+                    at: folder, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]
+                )
+                .compactMap { url -> BrowserFile? in
+                    let values = try url.resourceValues(forKeys: keys)
+                    guard values.isSymbolicLink != true, values.isDirectory == true || values.isRegularFile == true
+                    else { return nil }
+                    let file = BrowserFile(
+                        url: url, directory: values.isDirectory == true, package: values.isPackage == true)
+                    return file.visible ? file : nil
+                }
+                .sorted { left, right in
+                    if left.directory != right.directory { return left.directory }
+                    return left.url.lastPathComponent.localizedStandardCompare(right.url.lastPathComponent)
+                        == .orderedAscending
+                }
             }.value
             guard request == token else { return false }
-            guard !Task.isCancelled else { loading = false; return false }
-            self.folder = folder; self.files = files; self.query = ""; selection = nil; loading = false
+            guard !Task.isCancelled else {
+                loading = false
+                return false
+            }
+            self.folder = folder
+            self.files = files
+            self.query = ""
+            selection = nil
+            loading = false
             return true
         } catch {
             guard request == token else { return false }
-            loading = false; self.error = error.localizedDescription
+            loading = false
+            self.error = error.localizedDescription
             return false
         }
     }

@@ -14,18 +14,19 @@ enum PianoGrid: Sendable, Equatable {
 
     func ticks(pixelsPerBeat: Double) -> Int64 {
         switch self {
-        case let .fixed(ticks): return ticks
+        case .fixed(let ticks): return ticks
         case .automatic:
             guard pixelsPerBeat.isFinite, pixelsPerBeat > 0 else { return Tick.perQuarter / 4 }
             // Choose the finest straight division with at least 18pt between lines.
-            return Self.divisions.reversed().first { Double($0) / Tick.perBeat * pixelsPerBeat >= 18 } ?? Self.divisions[0]
+            return Self.divisions.reversed().first { Double($0) / Tick.perBeat * pixelsPerBeat >= 18 }
+                ?? Self.divisions[0]
         }
     }
 
     var title: String {
         switch self {
         case .automatic: text("Automatic Grid")
-        case let .fixed(ticks): Self.noteValue(ticks)
+        case .fixed(let ticks): Self.noteValue(ticks)
         }
     }
 
@@ -57,10 +58,12 @@ final class PianoGridBar: NSView {
         picker.identifier = NSUserInterfaceItemIdentifier("piano-grid")
         picker.setAccessibilityLabel(text("Note Grid"))
         picker.setAccessibilityHelp(text("Note grid help"))
-        picker.target = self; picker.action = #selector(changed)
+        picker.target = self
+        picker.action = #selector(changed)
         value.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         value.textColor = .secondaryLabelColor
-        addSubview(picker); addSubview(value)
+        addSubview(picker)
+        addSubview(value)
         show(PianoCamera())
     }
     @available(*, unavailable)

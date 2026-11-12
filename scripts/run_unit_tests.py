@@ -6,13 +6,13 @@ Run one after another they took 90 s; the slowest module now bounds the wall tim
 A failed, erroring or empty module fails the run and prints its whole output.
 """
 
-from concurrent.futures import ThreadPoolExecutor
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "scripts/tests"
@@ -26,11 +26,19 @@ def modules(directory=TESTS):
 
 def run_module(name, directory=TESTS):
     started = time.monotonic()
-    result = subprocess.run([sys.executable, "-B", "-m", "unittest", "discover", "-s", str(directory), "-p", name + ".py"],
-                            cwd=ROOT, capture_output=True, text=True,
-                            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-    return {"module": name, "code": result.returncode, "output": result.stdout + result.stderr,
-            "seconds": time.monotonic() - started}
+    result = subprocess.run(
+        [sys.executable, "-B", "-m", "unittest", "discover", "-s", str(directory), "-p", name + ".py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    return {
+        "module": name,
+        "code": result.returncode,
+        "output": result.stdout + result.stderr,
+        "seconds": time.monotonic() - started,
+    }
 
 
 def summary(result):
@@ -64,8 +72,11 @@ def main(directory=TESTS):
         print(result["output"], file=sys.stderr)
     elapsed = time.monotonic() - started
     if failed:
-        print(f"scripts/tests: {len(failed)} of {len(names)} modules failed: "
-              + ", ".join(result["module"] for result in failed), file=sys.stderr)
+        print(
+            f"scripts/tests: {len(failed)} of {len(names)} modules failed: "
+            + ", ".join(result["module"] for result in failed),
+            file=sys.stderr,
+        )
         return 1
     print(f"scripts/tests: {total} tests in {len(names)} modules passed (skipped={skipped}) in {elapsed:.1f} s")
     return 0

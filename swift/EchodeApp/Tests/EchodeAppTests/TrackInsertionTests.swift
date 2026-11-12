@@ -1,6 +1,7 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -44,7 +45,8 @@ struct TrackInsertionTests {
         await controller.undo()
         #expect(controller.tracks.map(\.id) == [first, inserted, tail])
         await controller.redo()
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.tracks.map(\.id) == [first, inserted, tail, appended])
         #expect(controller.deviceRows(on: inserted).isEmpty && controller.deviceRows(on: appended).isEmpty)
         #expect(state.pluginBrowserDocument == nil)
@@ -78,7 +80,8 @@ struct TrackInsertionTests {
         await (try #require(session.addTrack())).value
         let appended = try #require(controller.selection)
         #expect(controller.tracks.map(\.id) == [folder, child, nested, sibling, inside, tail, appended])
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.tracks.map(\.id) == [folder, child, nested, sibling, inside, tail, appended])
         await controller.close()
     }
@@ -98,7 +101,8 @@ struct TrackInsertionTests {
         #expect(controller.tracks.map(\.id) == [kept])
         #expect(controller.undoCount == before && controller.redoCount == 1)
         let valid = try #require(controller.captureTrackInsertion(atEnd: true))
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(!(await controller.insertTrack(valid)))
         #expect(controller.tracks.map(\.id) == [kept] && controller.undoCount == 0)
         await controller.close()

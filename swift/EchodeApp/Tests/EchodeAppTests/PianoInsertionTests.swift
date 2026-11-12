@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -13,8 +14,10 @@ struct PianoInsertionTests {
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
-        let document = try #require(controller.documentID), undo = controller.undoCount
+        let track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
+        let document = try #require(controller.documentID)
+        let undo = controller.undoCount
         var last: NoteGeometry?
         for (downShift, releaseShift) in [(false, false), (true, true), (true, false), (false, true)] {
             let harness = PianoInsertionHarness(snapshot: snapshot, track: track)
@@ -23,8 +26,12 @@ struct PianoInsertionTests {
             var writes: [Task<Bool, Never>] = []
             harness.view.onInsert = { pitch, beat, length in
                 sent.append(NoteGeometry(start: self.ticks(beat), length: self.ticks(length), pitch: pitch))
-                writes.append(Task { await controller.insertNote(pitch: pitch, beat: beat, length: length,
-                                                                 on: track, documentID: document) })
+                writes.append(
+                    Task {
+                        await controller.insertNote(
+                            pitch: pitch, beat: beat, length: length,
+                            on: track, documentID: document)
+                    })
             }
             let down = harness.point(beat: 1.1, pitch: 60)
             try harness.send(.leftMouseDown, at: down, flags: downShift ? .shift : [])
@@ -57,25 +64,30 @@ struct PianoInsertionTests {
     }
 
     @Test func blankPressCancellationNeverInsertsOrLeavesAPreview() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-insert-cancel-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-piano-insert-cancel-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
         for cancellation in 0..<10 {
             let harness = PianoInsertionHarness(snapshot: snapshot, track: track)
             var inserts = 0
             harness.view.onInsert = { _, _, _ in inserts += 1 }
-            let down = harness.point(beat: 1, pitch: 60), up = harness.point(beat: 2, pitch: 61)
+            let down = harness.point(beat: 1, pitch: 60)
+            let up = harness.point(beat: 2, pitch: 61)
             try harness.send(.leftMouseDown, at: down)
             try harness.send(.leftMouseDragged, at: up)
             #expect(harness.view.displayedInsertion != nil)
             switch cancellation {
             case 0:
-                let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                    windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
-                    isARepeat: false, keyCode: UInt16(kVK_Escape)))
+                let escape = try #require(
+                    NSEvent.keyEvent(
+                        with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                        windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                        isARepeat: false, keyCode: UInt16(kVK_Escape)))
                 harness.view.keyDown(with: escape)
             case 1: _ = harness.view.resignFirstResponder()
             case 2: harness.view.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: true)
@@ -83,15 +95,22 @@ struct PianoInsertionTests {
             case 4: harness.view.setFrameSize(NSSize(width: 650, height: 410))
             case 5: harness.view.setBoundsSize(NSSize(width: 630, height: 390))
             case 6:
-                let scroll = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0))
+                let scroll = try #require(
+                    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0)
+                )
                 harness.view.scrollWheel(with: try #require(NSEvent(cgEvent: scroll)))
             case 7: harness.view.setSnapshot(snapshot, track: UUID(), focus: nil, key: DisplayKey(), busy: false)
             case 8:
                 await controller.addTrack(name: "new snapshot")
-                harness.view.setSnapshot(try #require(controller.snapshot), track: track, focus: nil, key: DisplayKey(), busy: false)
+                harness.view.setSnapshot(
+                    try #require(controller.snapshot), track: track, focus: nil, key: DisplayKey(), busy: false)
             default:
-                harness.view.mouseCancelled(with: try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: up,
-                    modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 0)))
+                harness.view.mouseCancelled(
+                    with: try #require(
+                        NSEvent.mouseEvent(
+                            with: .leftMouseUp, location: up,
+                            modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1,
+                            clickCount: 1, pressure: 0)))
             }
             #expect(harness.view.displayedInsertion == nil)
             try harness.send(.leftMouseUp, at: up)
@@ -102,12 +121,14 @@ struct PianoInsertionTests {
     }
 
     @Test func blankClicksInsertOnceAndDrawTheInsertion() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-piano-insert-click-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-piano-insert-click-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "keys")
-        let track = try #require(controller.selection), snapshot = try #require(controller.snapshot)
+        let track = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
         let harness = PianoInsertionHarness(snapshot: snapshot, track: track)
         defer { harness.view.stop() }
         var sent: [NoteGeometry] = []
@@ -117,7 +138,9 @@ struct PianoInsertionTests {
         let down = harness.point(beat: 1, pitch: 60)
         try harness.send(.leftMouseDown, at: down)
         try harness.send(.leftMouseUp, at: CGPoint(x: down.x + 1, y: down.y + 1))
-        #expect(sent == [NoteGeometry(start: ticks(1), length: ticks(0.25), pitch: 60)] && harness.view.displayedInsertion == nil)
+        #expect(
+            sent == [NoteGeometry(start: ticks(1), length: ticks(0.25), pitch: 60)]
+                && harness.view.displayedInsertion == nil)
         try harness.send(.leftMouseDown, at: down, clicks: 2)
         #expect(sent.count == 1)
         try harness.send(.leftMouseUp, at: down, clicks: 2)
@@ -129,11 +152,18 @@ struct PianoInsertionTests {
         let camera = harness.view.camera
         harness.view.follower.show?(ticks(20))
         #expect(harness.view.camera == camera, "a blank note press must hold the viewport against playhead following")
-        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 2)
-        let plain = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil,
-            camera: harness.view.camera, key: DisplayKey(), preview: nil))
-        let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil,
-            camera: harness.view.camera, key: DisplayKey(), preview: nil, insertion: geometry))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 2)
+        let plain = PianoFrame(
+            input: input,
+            piano: PianoRenderInput(
+                track: track, focus: nil,
+                camera: harness.view.camera, key: DisplayKey(), preview: nil))
+        let frame = PianoFrame(
+            input: input,
+            piano: PianoRenderInput(
+                track: track, focus: nil,
+                camera: harness.view.camera, key: DisplayKey(), preview: nil, insertion: geometry))
         #expect(frame.notes.isEmpty && frame.gridInstances.count == plain.gridInstances.count + 1)
         let rect = try #require(frame.gridInstances.last).rect
         let point = harness.point(beat: 1, pitch: 62)
@@ -167,8 +197,10 @@ struct PianoInsertionTests {
             drag.update(x: .greatestFiniteMagnitude, y: 0, snapping: false)
             #expect(drag.geometry == nil)
         }
-        for camera in [PianoCamera(gridMode: .fixed(0)), PianoCamera(pixelsPerBeat: 0), PianoCamera(pixelsPerPitch: .nan),
-                       PianoCamera(originBeat: .infinity), PianoCamera(originBeat: Double(Int64.max) / 705_600)] {
+        for camera in [
+            PianoCamera(gridMode: .fixed(0)), PianoCamera(pixelsPerBeat: 0), PianoCamera(pixelsPerPitch: .nan),
+            PianoCamera(originBeat: .infinity), PianoCamera(originBeat: Double(Int64.max) / 705_600),
+        ] {
             #expect(PianoInsertion(x: 0, y: 0, camera: camera, snapping: false) == nil)
         }
         #expect(PianoInsertion(x: .nan, y: 0, camera: PianoCamera(), snapping: true) == nil)
@@ -184,20 +216,29 @@ private final class PianoInsertionHarness {
 
     init(snapshot: Snapshot, track: UUID) {
         view.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
-        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
-        view.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil,
-            camera: view.camera, key: DisplayKey(), preview: nil)))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        view.present(
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(
+                    track: track, focus: nil,
+                    camera: view.camera, key: DisplayKey(), preview: nil)))
     }
 
     func point(beat: Double, pitch: Int) -> CGPoint {
-        let camera = view.camera, origin = view.pianoLayout.gridOrigin
-        return CGPoint(x: origin.x + (beat - camera.originBeat) * camera.pixelsPerBeat,
-                       y: origin.y + (camera.topPitch - Double(pitch) + 0.5) * camera.pixelsPerPitch)
+        let camera = view.camera
+        let origin = view.pianoLayout.gridOrigin
+        return CGPoint(
+            x: origin.x + (beat - camera.originBeat) * camera.pixelsPerBeat,
+            y: origin.y + (camera.topPitch - Double(pitch) + 0.5) * camera.pixelsPerPitch)
     }
 
     func send(_ type: NSEvent.EventType, at point: CGPoint, flags: NSEvent.ModifierFlags = [], clicks: Int = 1) throws {
-        let event = try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: flags,
-            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: clicks, pressure: 1))
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: flags,
+                timestamp: 0, windowNumber: 0, context: nil, eventNumber: 1, clickCount: clicks, pressure: 1))
         switch type {
         case .leftMouseDown: view.mouseDown(with: event)
         case .leftMouseDragged: view.mouseDragged(with: event)

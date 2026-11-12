@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -18,7 +19,8 @@ struct InspectorFXTests {
         let second = try #require(controller.selection)
         let state = WorkspaceState(defaults: .init())
         let session = WorkspaceSession(controller: controller, state: state)
-        let host = NSHostingView(rootView: WorkspaceInspectorView(controller: controller, add: { session.openPlugins(on: $0) }))
+        let host = NSHostingView(
+            rootView: WorkspaceInspectorView(controller: controller, add: { session.openPlugins(on: $0) }))
         host.frame = CGRect(x: 0, y: 0, width: 260, height: 900)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: true)
         window.contentView = host

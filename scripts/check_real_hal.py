@@ -10,14 +10,13 @@ at a time and takes the name from the event stream.
 """
 
 import argparse
-
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from checked_commands import run_logged
 
@@ -44,7 +43,9 @@ def binding_faults(bundle, products):
     for name, symbols in products.items():
         missing = REQUIRED_IN_PRODUCTS - symbols
         if missing:
-            faults.append(f"{name} lost the real HAL: {', '.join(sorted(missing))}. RealHALGuard.swift is for the test bundle only.")
+            faults.append(
+                f"{name} lost the real HAL: {', '.join(sorted(missing))}. RealHALGuard.swift is for the test bundle only."
+            )
     return faults
 
 
@@ -80,11 +81,14 @@ def refusals(events, log):
                     if message.get("text", "").startswith(MARKER):
                         found.append((running, previous, message["text"].removeprefix(MARKER)))
     printed = re.findall("^" + re.escape(MARKER) + "(.*)$", log, re.MULTILINE)
-    return found + [(None, previous, text) for text in printed[len(found):]]
+    return found + [(None, previous, text) for text in printed[len(found) :]]
 
 
 def report(found):
-    lines, seen = ["Tests reached the real HAL. Inject sendDevice, sendAudio or sendAudition into their ProjectController:"], set()
+    lines, seen = (
+        ["Tests reached the real HAL. Inject sendDevice, sendAudio or sendAudition into their ProjectController:"],
+        set(),
+    )
     for running, previous, refusal in found:
         call = refusal.split(". ", 1)[0]
         test = running or previous
@@ -105,8 +109,17 @@ def report(found):
 def run_tests(name, *arguments, environment=None):
     """The exit code and refusals of one `swift test`; the bundle is already built."""
     events, log = OUTPUT / f"{name}.events", OUTPUT / f"{name}.log"
-    command = ["swift", "test", "--skip-build", *PACKAGE, "--event-stream-output-path", str(events),
-               "--event-stream-version", "0", *arguments]
+    command = [
+        "swift",
+        "test",
+        "--skip-build",
+        *PACKAGE,
+        "--event-stream-output-path",
+        str(events),
+        "--event-stream-version",
+        "0",
+        *arguments,
+    ]
     result = run_logged(ROOT, command, log, RUN_TIMEOUT_SECONDS, env=environment)
     text = events.read_text(errors="replace") if events.exists() else ""
     return result["exit_code"], refusals(text, log.read_text(errors="replace"))
@@ -114,27 +127,39 @@ def run_tests(name, *arguments, environment=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--name-tests", action="store_true",
-                        help="also run every test one at a time and name each that reaches the real HAL")
+    parser.add_argument(
+        "--name-tests",
+        action="store_true",
+        help="also run every test one at a time and name each that reaches the real HAL",
+    )
     arguments = parser.parse_args(argv)
     shutil.rmtree(OUTPUT, ignore_errors=True)
     OUTPUT.mkdir(parents=True)
     subprocess.run(["swift", "build", "-q", "--build-tests", *PACKAGE], cwd=ROOT, check=True)
-    binaries = Path(subprocess.check_output(["swift", "build", "--show-bin-path", *PACKAGE], cwd=ROOT, text=True).strip())
+    binaries = Path(
+        subprocess.check_output(["swift", "build", "--show-bin-path", *PACKAGE], cwd=ROOT, text=True).strip()
+    )
     bundle = binaries / "EchodeAppTests.xctest/Contents/MacOS/EchodeAppTests"
     # Checked first: the control below plays, and only this makes that safe.
-    faults = binding_faults(coreaudio_references(bundle), {name: coreaudio_references(binaries / name) for name in PRODUCTS})
+    faults = binding_faults(
+        coreaudio_references(bundle), {name: coreaudio_references(binaries / name) for name in PRODUCTS}
+    )
     if faults:
         print("\n".join(faults), file=sys.stderr)
         return 1
 
     code, found = run_tests("control", "--filter", CONTROL_SUITE, environment=os.environ | {CONTROL_ENVIRONMENT: "1"})
     if code == 0 or not any(running and CONTROL_SUITE in running for running, _, _ in found):
-        print(f"The guard did not stop {CONTROL_SUITE} by name (exit {code}); see {OUTPUT / 'control.log'}", file=sys.stderr)
+        print(
+            f"The guard did not stop {CONTROL_SUITE} by name (exit {code}); see {OUTPUT / 'control.log'}",
+            file=sys.stderr,
+        )
         return 1
     if not arguments.name_tests:
-        print("check-real-hal: only the test bundle replaces the HAL, and the guard stops by name;"
-              " check-swift fails when its run reaches the HAL")
+        print(
+            "check-real-hal: only the test bundle replaces the HAL, and the guard stops by name;"
+            " check-swift fails when its run reaches the HAL"
+        )
         return 0
 
     environment = {name: value for name, value in os.environ.items() if name != CONTROL_ENVIRONMENT}
@@ -144,7 +169,9 @@ def main(argv=None):
         print(f"Log: {OUTPUT / 'all.log'}", file=sys.stderr)
         return 1
     if code != 0:
-        print(f"No test reached the real HAL, but the run failed (exit {code}); see {OUTPUT / 'all.log'}", file=sys.stderr)
+        print(
+            f"No test reached the real HAL, but the run failed (exit {code}); see {OUTPUT / 'all.log'}", file=sys.stderr
+        )
         return 1
     print("check-real-hal: no test reached the real HAL")
     return 0

@@ -2,18 +2,23 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct RulerLoopTests {
     private let beat: Int64 = 705_600
 
-    private func mouse(_ type: NSEvent.EventType, x: Double, in grid: PianoGridView,
-                       flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type,
-            location: grid.convert(CGPoint(x: grid.pianoLayout.gridOrigin.x + x, y: 10), to: nil),
-            modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
-            eventNumber: 1, clickCount: 1, pressure: 1))
+    private func mouse(
+        _ type: NSEvent.EventType, x: Double, in grid: PianoGridView,
+        flags: NSEvent.ModifierFlags = []
+    ) throws -> NSEvent {
+        try #require(
+            NSEvent.mouseEvent(
+                with: type,
+                location: grid.convert(CGPoint(x: grid.pianoLayout.gridOrigin.x + x, y: 10), to: nil),
+                modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: 1))
     }
 
     @Test func contractPianoRulerDragSetsOnlyTheLoopRange() async throws {
@@ -28,9 +33,14 @@ struct RulerLoopTests {
         let undo = controller.undoCount
         let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
-        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        let input = CanvasInput(
+            snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
         func present() {
-            grid.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: grid.camera, key: DisplayKey(), preview: nil)))
+            grid.present(
+                PianoFrame(
+                    input: input,
+                    piano: PianoRenderInput(
+                        track: track, focus: nil, camera: grid.camera, key: DisplayKey(), preview: nil)))
         }
         present()
         grid.setLoop(controller.rulerLoop)
@@ -78,22 +88,40 @@ struct RulerLoopTests {
 
         // A click with sub-threshold jitter changes only the remembered start.
         let count = ranges.count
-        try down(1.3); try up(1.3 + 1 / pixels)
+        try down(1.3)
+        try up(1.3 + 1 / pixels)
         #expect(starts == [beat * 5 / 4] && ranges.count == count)
         // A real drag whose snapped endpoints coincide is not a click.
-        try down(1); try drag(1.05); try up(1.05)
+        try down(1)
+        try drag(1.05)
+        try up(1.05)
         #expect(starts.count == 1 && ranges.count == count)
         // Escape, resizing, a busy document, and stop discard the preview.
-        try down(1); try drag(3)
-        let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
-        grid.keyDown(with: escape); try up(3)
-        try down(1); try drag(3); grid.setFrameSize(NSSize(width: 600, height: 400)); try up(3)
-        grid.setFrameSize(NSSize(width: 640, height: 400)); present()
-        try down(1); try drag(3)
-        grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: true); try up(3)
-        grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false); present()
-        try down(1); try drag(3); grid.stop(); try up(3)
+        try down(1)
+        try drag(3)
+        let escape = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                isARepeat: false, keyCode: 53))
+        grid.keyDown(with: escape)
+        try up(3)
+        try down(1)
+        try drag(3)
+        grid.setFrameSize(NSSize(width: 600, height: 400))
+        try up(3)
+        grid.setFrameSize(NSSize(width: 640, height: 400))
+        present()
+        try down(1)
+        try drag(3)
+        grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: true)
+        try up(3)
+        grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
+        present()
+        try down(1)
+        try drag(3)
+        grid.stop()
+        try up(3)
         #expect(starts.count == 1 && ranges.count == count)
 
         await controller.close()
@@ -108,12 +136,16 @@ struct RulerLoopTests {
     @Test func loopBandClipsToTheRulerAndDistinguishesDisabledLoops() throws {
         let track = UUID()
         let range = try #require(LoopRange(start: beat, end: beat * 4))
-        let input = CanvasInput(snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 300, height: 200, scale: 2)
+        let input = CanvasInput(
+            snapshot: nil, selected: nil, camera: ArrangeCamera(), width: 300, height: 200, scale: 2)
         var camera = PianoCamera()
         camera.originBeat = 2
         func frame(_ enabled: Bool) -> PianoFrame {
-            PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera,
-                key: DisplayKey(), preview: nil, loop: RulerLoop(range: range, enabled: enabled)))
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(
+                    track: track, focus: nil, camera: camera,
+                    key: DisplayKey(), preview: nil, loop: RulerLoop(range: range, enabled: enabled)))
         }
         let active = frame(true)
         let inactive = frame(false)

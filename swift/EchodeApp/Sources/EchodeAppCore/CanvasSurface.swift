@@ -17,7 +17,8 @@ enum CanvasSurface {
         view.layerContentsPlacement = .topLeft
         view.wantsLayer = true
         layer.backgroundColor = CanvasBackground.layerColor
-        resize(layer, size: canvasDrawableSize(width: view.bounds.width, height: view.bounds.height, scale: 1), scale: 1)
+        resize(
+            layer, size: canvasDrawableSize(width: view.bounds.width, height: view.bounds.height, scale: 1), scale: 1)
     }
 
     static func resize(_ layer: CAMetalLayer, size: CGSize, scale: Double) {

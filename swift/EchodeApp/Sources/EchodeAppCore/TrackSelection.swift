@@ -13,7 +13,8 @@ struct TrackSelection {
 
     mutating func replace(_ id: UUID?) {
         ids = Set(id.map { [$0] } ?? [])
-        focus = id; anchor = id
+        focus = id
+        anchor = id
     }
 
     mutating func select(_ id: UUID, change: TrackSelectionChange, order: [UUID]) {
@@ -25,10 +26,16 @@ struct TrackSelection {
         case .toggle:
             if ids.remove(id) != nil {
                 if focus == id { focus = order.last(where: { ids.contains($0) }) }
-            } else { ids.insert(id); focus = id }
+            } else {
+                ids.insert(id)
+                focus = id
+            }
             anchor = focus
         case .extend:
-            guard let anchor, let start = order.firstIndex(of: anchor) else { replace(id); return }
+            guard let anchor, let start = order.firstIndex(of: anchor) else {
+                replace(id)
+                return
+            }
             ids = Set(order[min(start, index)...max(start, index)])
             focus = id
         }

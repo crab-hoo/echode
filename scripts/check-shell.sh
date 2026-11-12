@@ -23,7 +23,7 @@ run_swift_tests() {
     if swift build -q --build-tests --package-path "$pkg" --scratch-path "$scratch" \
         -Xswiftc -warnings-as-errors >"$log" 2>&1 &&
         swift test -q --skip-build --package-path "$pkg" --scratch-path "$scratch" \
-        -Xswiftc -warnings-as-errors >>"$log" 2>&1; then
+            -Xswiftc -warnings-as-errors >>"$log" 2>&1; then
         local summary
         summary="$(grep -E 'Test run with [0-9]+ tests? .* passed' "$log" | tail -n 1 || true)"
         echo "$pkg: ${summary:-passed}"

@@ -19,7 +19,8 @@ final class ExportJob {
     private(set) var message: String?
     private(set) var completedOutput: URL?
     private(set) var detail = ""
-    @ObservationIgnored var executable: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("echode-cli")
+    @ObservationIgnored var executable: URL? = Bundle.main.executableURL?.deletingLastPathComponent()
+        .appendingPathComponent("echode-cli")
 
     func revealOutput(using reveal: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }) {
         guard !running, let completedOutput else { return }
@@ -33,10 +34,14 @@ final class ExportJob {
     }
 
     @discardableResult
-    func start(controller: ProjectController, document: DocumentID, project: URL,
-               output: URL, settings: ExportSettings, defaults: UserDefaults = .standard) -> Task<Void, Never>? {
+    func start(
+        controller: ProjectController, document: DocumentID, project: URL,
+        output: URL, settings: ExportSettings, defaults: UserDefaults = .standard
+    ) -> Task<Void, Never>? {
         guard !running, controller.acceptsInput(document),
-              controller.projectURL?.resolvingSymlinksInPath() == project.resolvingSymlinksInPath(), let arguments = settings.arguments else { return nil }
+            controller.projectURL?.resolvingSymlinksInPath() == project.resolvingSymlinksInPath(),
+            let arguments = settings.arguments
+        else { return nil }
         completedOutput = nil
         // Resolve the parent before any suspension, but keep the leaf: publication
         // replaces an external symlink itself, never the file it points to.
@@ -45,9 +50,12 @@ final class ExportJob {
         let sourcePath = project.resolvingSymlinksInPath().path
         let outputPaths = [destination.path, destination.resolvingSymlinksInPath().path]
         guard !outputPaths.contains(where: { $0 == sourcePath || $0.hasPrefix(sourcePath + "/") }) else {
-            message = text("Choose an output outside the project package"); return nil
+            message = text("Choose an output outside the project package")
+            return nil
         }
-        running = true; message = text("Preparing export"); detail = ""
+        running = true
+        message = text("Preparing export")
+        detail = ""
         fractionCompleted = nil
         cancelRequested = false
         let executable = self.executable
@@ -60,18 +68,22 @@ final class ExportJob {
                     throw ExportError(message: "Export CLI is missing from the app bundle")
                 }
                 try await Task.detached {
-                    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                    try FileManager.default.createDirectory(
+                        at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
                 }.value
                 ownsRoot = true
                 if cancelRequested { throw CancellationError() }
                 let frozen = root.appendingPathComponent("Snapshot.echode")
-                let settingsWarning = try await controller.freezeExport(to: frozen, documentID: document, settings: settings)
+                let settingsWarning = try await controller.freezeExport(
+                    to: frozen, documentID: document, settings: settings)
                 if cancelRequested { throw CancellationError() }
                 settings.save(project: project, defaults: defaults)
                 message = text("Exporting audio")
                 let result = try await Task.detached {
-                    try await Self.render(executable: executable, package: frozen, output: destination, arguments: arguments, work: root,
-                                          isCancelled: { self.cancelRequested }) { progress in
+                    try await Self.render(
+                        executable: executable, package: frozen, output: destination, arguments: arguments, work: root,
+                        isCancelled: { self.cancelRequested }
+                    ) { progress in
                         guard !self.cancelRequested else { return }
                         self.fractionCompleted = progress.fraction
                         self.message = text(progress.phase == .rendering ? "Exporting audio" : "Finalizing export")
@@ -81,24 +93,33 @@ final class ExportJob {
                     fractionCompleted = 1
                     completedOutput = destination
                 }
-                detail = "Source: \(project.path)\nOutput: \(destination.path)\nOptions: \(arguments.joined(separator: " "))\n" + result.detail + (settingsWarning.map { "\n" + $0 } ?? "")
-                let status = result.success ? "Export complete" : (result.cancelled ? "Export cancelled" : "Export failed")
+                detail =
+                    "Source: \(project.path)\nOutput: \(destination.path)\nOptions: \(arguments.joined(separator: " "))\n"
+                    + result.detail + (settingsWarning.map { "\n" + $0 } ?? "")
+                let status =
+                    result.success ? "Export complete" : (result.cancelled ? "Export cancelled" : "Export failed")
                 message = text(status) + ": " + output.lastPathComponent
             } catch {
                 detail = (error as? BridgeError)?.message ?? error.localizedDescription
-                message = text(error is CancellationError ? "Export cancelled" : "Export failed") + ": " + output.lastPathComponent
+                message =
+                    text(error is CancellationError ? "Export cancelled" : "Export failed") + ": "
+                    + output.lastPathComponent
             }
             if ownsRoot {
                 let cleanup = await Task.detached { Result { try FileManager.default.removeItem(at: root) } }.value
-                if case .failure(let error) = cleanup { detail += "\nTemporary snapshot cleanup failed: \(error.localizedDescription)" }
+                if case .failure(let error) = cleanup {
+                    detail += "\nTemporary snapshot cleanup failed: \(error.localizedDescription)"
+                }
             }
             running = false
         }
     }
 
-    nonisolated static func render(executable: URL, package: URL, output: URL, arguments: [String], work: URL,
-                                   isCancelled: @MainActor @Sendable () -> Bool = { false },
-                                   onProgress: @MainActor @Sendable (ExportProgress) async -> Void = { _ in }) async throws -> (success: Bool, cancelled: Bool, detail: String) {
+    nonisolated static func render(
+        executable: URL, package: URL, output: URL, arguments: [String], work: URL,
+        isCancelled: @MainActor @Sendable () -> Bool = { false },
+        onProgress: @MainActor @Sendable (ExportProgress) async -> Void = { _ in }
+    ) async throws -> (success: Bool, cancelled: Bool, detail: String) {
         let log = work.appendingPathComponent("render.log")
         guard FileManager.default.createFile(atPath: log.path, contents: nil) else {
             throw ExportError(message: "Could not create export log")
@@ -174,9 +195,11 @@ final class ExportJob {
         // Every exit above has observed termination. Do not re-enter Foundation's
         // run-loop wait after this async task may have resumed on another thread.
         let diagnostics = try readDiagnostics(from: log)
-        return (process.terminationReason == .exit && process.terminationStatus == 0,
-                process.terminationReason == .exit && process.terminationStatus == 130,
-                "Exit: \(process.terminationStatus) (\(process.terminationReason))\n" + diagnostics + progressError)
+        return (
+            process.terminationReason == .exit && process.terminationStatus == 0,
+            process.terminationReason == .exit && process.terminationStatus == 130,
+            "Exit: \(process.terminationStatus) (\(process.terminationReason))\n" + diagnostics + progressError
+        )
     }
 
     nonisolated static func readDiagnostics(from log: URL) throws -> String {
@@ -191,30 +214,39 @@ final class ExportJob {
         guard truncated else { return String(decoding: head, as: UTF8.self) }
         try reader.seek(toOffset: size - UInt64(budget / 2))
         let tail = try reader.read(upToCount: budget / 2) ?? Data()
-        return String(decoding: head, as: UTF8.self) + "\n[... diagnostics omitted ...]\n" + String(decoding: tail, as: UTF8.self)
+        return String(decoding: head, as: UTF8.self) + "\n[... diagnostics omitted ...]\n"
+            + String(decoding: tail, as: UTF8.self)
     }
 }
 
 extension ProjectController {
     @discardableResult
-    func freezeExport(to destination: URL, documentID: DocumentID, settings: ExportSettings? = nil) async throws -> String? {
+    func freezeExport(to destination: URL, documentID: DocumentID, settings: ExportSettings? = nil) async throws
+        -> String?
+    {
         guard let captured = inputSession(for: documentID), captured.faderPreview == nil,
-              captured.parameterGesture == nil, captured.pluginGestures.isEmpty else {
+            captured.parameterGesture == nil, captured.pluginGestures.isEmpty
+        else {
             throw ExportError(message: "Finish the current gesture before exporting")
         }
-        guard settings == nil || settings?.storedJSON != nil else { throw ExportError(message: "Invalid export settings") }
+        guard settings == nil || settings?.storedJSON != nil else {
+            throw ExportError(message: "Invalid export settings")
+        }
         await recordWaitingPluginEdits(in: captured)
         let result: Result<String?, any Error> = await edits.run {
-            guard self.session === captured, captured.faderPreview == nil, captured.parameterGesture == nil, captured.pluginGestures.isEmpty,
-                  let document = captured.document else {
+            guard self.session === captured, captured.faderPreview == nil, captured.parameterGesture == nil,
+                captured.pluginGestures.isEmpty,
+                let document = captured.document
+            else {
                 return .failure(ExportError(message: "The export document is no longer open"))
             }
             do {
                 _ = try await document.history(.exportSnapshot(path: destination.path))
                 if let settings {
                     guard let json = settings.storedJSON else { throw ExportError(message: "Invalid export settings") }
-                    do { _ = try await document.history(.exportSettings(json: json)) }
-                    catch { return .success("Export settings were not saved in the package: \(error.localizedDescription)") }
+                    do { _ = try await document.history(.exportSettings(json: json)) } catch {
+                        return .success("Export settings were not saved in the package: \(error.localizedDescription)")
+                    }
                 }
                 return .success(nil)
             } catch { return .failure(error) }

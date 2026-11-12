@@ -8,8 +8,8 @@ bridge_root="$PWD"
 bridge_output="$bridge_root/target/bridge/address"
 bridge_target=aarch64-apple-darwin
 mkdir -p "$bridge_output/c" "$bridge_output/control"
-swift --version > "$bridge_output/versions.txt"
-rustc "+$BRIDGE_NIGHTLY" -vV >> "$bridge_output/versions.txt"
+swift --version >"$bridge_output/versions.txt"
+rustc "+$BRIDGE_NIGHTLY" -vV >>"$bridge_output/versions.txt"
 export ASAN_OPTIONS=halt_on_error=1:detect_leaks=0:detect_stack_use_after_return=1
 
 # Keep one address target for build-std reuse, but invoke each package separately:
@@ -47,13 +47,13 @@ cargo build --locked --offline --release --bin echode-bridge-bindgen \
 "$bridge_root/target/release/echode-bridge-bindgen" c-header "$bridge_output/c/echode_bridge.h"
 "$bridge_root/target/release/echode-bridge-bindgen" sanitizer-header "$bridge_output/control/probe.h"
 cp spikes/bridge/c/module.modulemap "$bridge_output/c/module.modulemap"
-cat > "$bridge_output/control/module.modulemap" <<'MODULE'
+cat >"$bridge_output/control/module.modulemap" <<'MODULE'
 module CBridgeSanitizerProbe { header "probe.h" export * }
 MODULE
 rustc "+$BRIDGE_NIGHTLY" "${ECHODE_RUST_CPU_FLAGS[@]}" --edition=2024 --crate-type staticlib --target "$bridge_target" \
     spikes/bridge/sanitizers/probe.rs -o "$bridge_output/control/libcontrol.a"
-swift_flags=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
-    -target arm64-apple-macos27.0 -parse-as-library -g -sanitize=address \
+swift_flags=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors
+    -target arm64-apple-macos27.0 -parse-as-library -g -sanitize=address
     -module-cache-path "$bridge_output/module-cache")
 swiftc "${swift_flags[@]}" -Onone -I "$bridge_output/control" \
     spikes/bridge/sanitizers/Probe.swift "$bridge_output/control/libcontrol.a" \

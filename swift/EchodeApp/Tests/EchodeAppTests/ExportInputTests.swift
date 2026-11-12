@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -12,7 +13,9 @@ struct ExportInputTests {
         let controller = ProjectController()
         await controller.open(root, creating: true)
         var initial = ExportSettings()
-        initial.automaticTail = false; initial.tailSeconds = 0.5; initial.normalizePeakDb = -1
+        initial.automaticTail = false
+        initial.tailSeconds = 0.5
+        initial.normalizePeakDb = -1
         let document = try #require(controller.document)
         _ = try await document.history(.exportSettings(json: initial.storedJSON))
         let job = ExportJob()
@@ -44,7 +47,9 @@ struct ExportInputTests {
         // The native field editor feeds the production sheet's String binding,
         // including an unfinished value while focus is still inside the field.
         try await enter("not a sample rate", into: rate)
-        #expect(host.rootView.validatedSettings == nil, "Invalid numeric text must disable export instead of reusing the previous sample rate")
+        #expect(
+            host.rootView.validatedSettings == nil,
+            "Invalid numeric text must disable export instead of reusing the previous sample rate")
         try await enter("44100", into: rate)
         #expect(host.rootView.validatedSettings?.sampleRate == 44_100)
         let tail = try #require(inputs.dropFirst().first)
@@ -55,7 +60,8 @@ struct ExportInputTests {
         #expect(host.rootView.validatedSettings?.arguments?.contains("5513") == true)
         let peak = try #require(inputs.last)
         try await enter("1", into: peak)
-        #expect(host.rootView.validatedSettings == nil, "An out-of-range peak target must not export the previous target")
+        #expect(
+            host.rootView.validatedSettings == nil, "An out-of-range peak target must not export the previous target")
         try await enter("-3\(separator)5", into: peak)
         #expect(host.rootView.validatedSettings?.normalizePeakDb == -3.5)
         // Draft changes never save settings or consume Undo before starting a job.

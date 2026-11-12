@@ -1,5 +1,6 @@
 import EchodeBridge
 import Foundation
+
 @testable import EchodeAppCore
 
 /// Fixture shorthand: each call captures the document open when it starts. The

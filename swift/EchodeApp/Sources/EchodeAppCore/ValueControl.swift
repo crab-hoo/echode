@@ -48,7 +48,11 @@ final class ValueClicks<Target: Equatable> {
         settle()
         switch clicks {
         case ...1: phase = .pressed(target, point)
-        case 2: if begin(target) { reset(target); phase = .resetting(target) }
+        case 2:
+            if begin(target) {
+                reset(target)
+                phase = .resetting(target)
+            }
         default: type(target)
         }
     }
@@ -57,7 +61,10 @@ final class ValueClicks<Target: Equatable> {
         switch phase {
         case .pressed(let target, let start):
             guard point != start else { return }
-            guard begin(target) else { phase = .idle; return }
+            guard begin(target) else {
+                phase = .idle
+                return
+            }
             phase = .dragging(target, start)
             drag(target, CGSize(width: point.x - start.x, height: point.y - start.y))
         case .dragging(let target, let start):
@@ -90,7 +97,9 @@ final class ValueClicks<Target: Equatable> {
     func settle() {
         stopTimer()
         switch phase {
-        case .dragging, .resetting, .waiting: phase = .idle; finish(true)
+        case .dragging, .resetting, .waiting:
+            phase = .idle
+            finish(true)
         case .pressed: phase = .idle
         case .idle: break
         }
@@ -101,7 +110,9 @@ final class ValueClicks<Target: Equatable> {
     func cancel() {
         stopTimer()
         switch phase {
-        case .dragging, .resetting, .waiting: phase = .idle; finish(false)
+        case .dragging, .resetting, .waiting:
+            phase = .idle
+            finish(false)
         case .pressed: phase = .idle
         case .idle: break
         }
@@ -131,8 +142,10 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
     /// Opens a field centered on `rect` in `host`, wide enough to read, with
     /// `text` selected. `commit` returns false when the entry is unusable.
     @discardableResult
-    static func open(in host: NSView, over rect: CGRect, text: String, label: String,
-                     commit: @escaping (String) async -> Bool, onClose: @escaping () -> Void = {}) -> ValueEntryField {
+    static func open(
+        in host: NSView, over rect: CGRect, text: String, label: String,
+        commit: @escaping (String) async -> Bool, onClose: @escaping () -> Void = {}
+    ) -> ValueEntryField {
         let field = ValueEntryField(frame: frame(for: rect, in: host.bounds))
         field.commit = commit
         field.onClose = onClose
@@ -154,8 +167,10 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
 
     /// Captures a discrete edit inside the input event, before asynchronous publication.
     /// Field closure still waits until the event returns to avoid reentrant focus changes.
-    static func open(in host: NSView, over rect: CGRect, text: String, label: String,
-                     submit: @escaping (String) -> Bool, onClose: @escaping () -> Void = {}) -> ValueEntryField {
+    static func open(
+        in host: NSView, over rect: CGRect, text: String, label: String,
+        submit: @escaping (String) -> Bool, onClose: @escaping () -> Void = {}
+    ) -> ValueEntryField {
         let field = open(in: host, over: rect, text: text, label: label, commit: { _ in true }, onClose: onClose)
         field.synchronousCommit = submit
         return field
@@ -183,8 +198,7 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
         let immediate = synchronousCommit?(entry)
         pending = Task { [weak self] in
             let accepted: Bool
-            if let immediate { accepted = immediate }
-            else { accepted = await commit(entry) }
+            if let immediate { accepted = immediate } else { accepted = await commit(entry) }
             guard let self else { return }
             self.pending = nil
             if accepted || leaving { self.close() } else { self.mark(invalid: true) }
@@ -211,7 +225,9 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard let editor = currentEditor(), event.type == .keyDown else { return super.performKeyEquivalent(with: event) }
+        guard let editor = currentEditor(), event.type == .keyDown else {
+            return super.performKeyEquivalent(with: event)
+        }
         let modifiers = event.modifierFlags.intersection([.command, .control])
         if modifiers.isEmpty {
             // Menu shortcuts without a modifier, such as Space, must not take typing.
@@ -228,8 +244,12 @@ final class ValueEntryField: NSTextField, NSTextFieldDelegate {
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         switch commandSelector {
-        case #selector(NSResponder.insertNewline(_:)): submit(leaving: false); return true
-        case #selector(NSResponder.cancelOperation(_:)): cancel(); return true
+        case #selector(NSResponder.insertNewline(_:)):
+            submit(leaving: false)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            cancel()
+            return true
         default: return false
         }
     }

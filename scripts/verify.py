@@ -2,20 +2,20 @@
 """Select checks from one policy and keep evidence tied to the source contents."""
 
 import argparse
-from contextlib import contextmanager
 import fcntl
 import fnmatch
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import time
 import tomllib
+from contextlib import contextmanager
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,7 +23,6 @@ POLICY = Path("scripts/verification.json")
 
 sys.path.insert(0, str(ROOT / "scripts"))
 from checked_commands import run_logged
-
 from verification_metrics import contract_summary, inventory, record_execution, resource_snapshot
 
 
@@ -85,9 +84,13 @@ def load_policy(root):
             raise ValueError("unknown verification policy input")
         if check.get("extended") and check["mode"] != "manual":
             raise ValueError("extended checks must be manual")
-        if check.get("tier", "task") not in ("task", "full") or (check.get("tier") == "full" and check["mode"] != "automatic"):
+        if check.get("tier", "task") not in ("task", "full") or (
+            check.get("tier") == "full" and check["mode"] != "automatic"
+        ):
             raise ValueError("invalid verification tier")
-        if (check.get("task_inputs") or check.get("task_unsafe") or check.get("task_requires")) and check.get("tier") != "full":
+        if (check.get("task_inputs") or check.get("task_unsafe") or check.get("task_requires")) and check.get(
+            "tier"
+        ) != "full":
             raise ValueError("task_inputs, task_unsafe and task_requires are for full-tier checks")
         for value in check.get("task_requires", []):
             if value not in {other["id"] for other in policy["checks"] if other.get("tier") == "full"}:
@@ -135,9 +138,16 @@ def validate_execution(policy):
             raise ValueError("invalid verification preflight")
         command = entry.get("command")
         timeout = entry.get("timeout", 0)
-        if (not isinstance(command, list) or not command or not all(isinstance(arg, str) and arg for arg in command)
-                or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 60
-                or not isinstance(entry.get("remedy"), str) or not entry["remedy"].strip()):
+        if (
+            not isinstance(command, list)
+            or not command
+            or not all(isinstance(arg, str) and arg for arg in command)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or not 0 < timeout <= 60
+            or not isinstance(entry.get("remedy"), str)
+            or not entry["remedy"].strip()
+        ):
             raise ValueError("invalid preflight command/timeout/remedy")
         inputs = entry.get("inputs", [])
         if not isinstance(inputs, list) or not all(isinstance(value, str) and value for value in inputs):
@@ -147,8 +157,12 @@ def validate_execution(policy):
             raise ValueError("invalid verification priority")
         for field, allowed in (("after", names), ("preflight", preflights)):
             values = check.get(field, [])
-            if (not isinstance(values, list) or not all(isinstance(value, str) for value in values)
-                    or len(values) != len(set(values)) or not set(values).issubset(allowed)):
+            if (
+                not isinstance(values, list)
+                or not all(isinstance(value, str) for value in values)
+                or len(values) != len(set(values))
+                or not set(values).issubset(allowed)
+            ):
                 raise ValueError("invalid verification " + field)
     execution_order(policy, names)
 
@@ -170,8 +184,13 @@ def run_preflights(root, policy, scheduled, directory):
             if name in results:
                 continue
             entry = policy["preflights"][name]
-            result = run_logged(root, entry["command"], directory / f"preflight-{name}.log", entry["timeout"],
-                                {**os.environ, "RUSTUP_AUTO_INSTALL": "0", "PYTHONDONTWRITEBYTECODE": "1"})
+            result = run_logged(
+                root,
+                entry["command"],
+                directory / f"preflight-{name}.log",
+                entry["timeout"],
+                {**os.environ, "RUSTUP_AUTO_INSTALL": "0", "PYTHONDONTWRITEBYTECODE": "1"},
+            )
             result["remedy"] = entry["remedy"]
             results[name] = result
             if result["status"] != "passed":
@@ -186,8 +205,12 @@ def matches(changed, patterns):
 
 
 # C has no memory or data-race checks of its own: every line it changes counts (ENV-01).
-UNSAFE_ESCAPES = {".rs": re.compile(r"\bunsafe\b"), ".swift": re.compile(r"Unsafe|@unchecked|nonisolated\(unsafe\)"),
-                  ".c": re.compile(r"\S"), ".h": re.compile(r"\S")}
+UNSAFE_ESCAPES = {
+    ".rs": re.compile(r"\bunsafe\b"),
+    ".swift": re.compile(r"Unsafe|@unchecked|nonisolated\(unsafe\)"),
+    ".c": re.compile(r"\S"),
+    ".h": re.compile(r"\S"),
+}
 
 
 RULE = re.compile(r"^([A-Za-z0-9_.-]+)[ \t]*:(.*)$")
@@ -246,11 +269,19 @@ def definition_identities(policy, makefile):
     """The policy and Makefile text each check depends on; unrelated edits leave it unchanged."""
     parsed = makefile_rules(makefile)
     common = {key: policy.get(key) for key in ("version", "global_inputs", "infrastructure", "evidence_inputs")}
-    return {check["id"]: json.dumps([common, check, {key: policy.get(key) for key in check.get("policy_inputs", [])},
-                                     makefile_identity(parsed, check.get("make_target", check["id"])),
-                                     {name: policy.get("preflights", {})[name] for name in check.get("preflight", [])}],
-                                    sort_keys=True)
-            for check in policy["checks"]}
+    return {
+        check["id"]: json.dumps(
+            [
+                common,
+                check,
+                {key: policy.get(key) for key in check.get("policy_inputs", [])},
+                makefile_identity(parsed, check.get("make_target", check["id"])),
+                {name: policy.get("preflights", {})[name] for name in check.get("preflight", [])},
+            ],
+            sort_keys=True,
+        )
+        for check in policy["checks"]
+    }
 
 
 def current_definitions(root, policy):
@@ -291,9 +322,14 @@ def unsafe_changes(root, policy, changed, base=None):
         folders = package_directories(root, check.get("packages", []))
         for path in changed:
             pattern = UNSAFE_ESCAPES.get(Path(path).suffix)
-            if (pattern is None or "/Tests/" in path or "/tests/" in path
-                    or not (matches([path], check.get("inputs", []))
-                            or any(path.startswith(folder + "/") for folder in folders))):
+            if (
+                pattern is None
+                or "/Tests/" in path
+                or "/tests/" in path
+                or not (
+                    matches([path], check.get("inputs", [])) or any(path.startswith(folder + "/") for folder in folders)
+                )
+            ):
                 continue
             # A deleted file is read from its diff: removing an escape counts too (ENV-01).
             try:
@@ -323,13 +359,17 @@ def select_checks(policy, changed, all_checks=False, redefined=None, full=False,
         if check["mode"] == "automatic":
             reasons += global_hits + infrastructure
             # Explicit inputs (including the check's own helper scripts) select it.
-            reasons += matches(changed, check.get("inputs", []) + check.get("tool_inputs", [])
-                               + preflight_inputs(policy, check))
+            reasons += matches(
+                changed, check.get("inputs", []) + check.get("tool_inputs", []) + preflight_inputs(policy, check)
+            )
             if definitions and (redefined is None or check["id"] in redefined):
                 reasons += definitions
         if check.get("tier") == "full" and not (full or all_checks):
-            reasons = [path for path in matches(changed, check.get("task_inputs", [])) + (unsafe or {}).get(check["id"], [])
-                       if path not in (covered or {}).get(check["id"], ())]
+            reasons = [
+                path
+                for path in matches(changed, check.get("task_inputs", [])) + (unsafe or {}).get(check["id"], [])
+                if path not in (covered or {}).get(check["id"], ())
+            ]
         if all_checks or (not check.get("extended") and (reasons or (changed and check.get("always")))):
             selected[check["id"]] = sorted(set(reasons)) or ["all checks" if all_checks else "every change"]
     for check in policy["checks"]:
@@ -361,8 +401,13 @@ def covered_changes(root, results):
     Uncommitted work stays in the diff across tasks. Without this, one trigger
     would rerun a full-tier check on every later edit until the next commit.
     """
-    return {name: {path for path, digest in result.get("covered", {}).items() if file_digests(root, [path]).get(path) == digest}
-            for name, result in results.items() if result.get("status") == "passed"}
+    return {
+        name: {
+            path for path, digest in result.get("covered", {}).items() if file_digests(root, [path]).get(path) == digest
+        }
+        for name, result in results.items()
+        if result.get("status") == "passed"
+    }
 
 
 def file_digests(root, relatives):
@@ -379,8 +424,11 @@ def file_digests(root, relatives):
 def unverified_full_tier(policy, results, stamps):
     """Full-tier checks with no pass on the current inputs. Neither a failure nor a pass."""
     names = [check["id"] for check in policy["checks"] if check.get("tier") == "full"]
-    return [name for name in names if not (results.get(name, {}).get("status") == "passed"
-                                           and results[name].get("fingerprint") == stamps[name])]
+    return [
+        name
+        for name in names
+        if not (results.get(name, {}).get("status") == "passed" and results[name].get("fingerprint") == stamps[name])
+    ]
 
 
 def toolchain_paths():
@@ -406,20 +454,45 @@ def make_flags_identity(value):
     # make writes single-letter flags as one leading word without a dash ("sk").
     if tokens and re.fullmatch(r"[A-Za-z]+", tokens[0]):
         tokens[0] = "".join(letter for letter in tokens[0] if letter not in DISPLAY_ONLY_MAKE_LETTERS)
-    return [token for token in tokens if token and token != "--" and not token.startswith("VERIFY_ARGS=")
-            and token not in DISPLAY_ONLY_MAKE_OPTIONS
-            and not token.startswith(("--jobserver-auth=", "--jobserver-fds="))]
+    return [
+        token
+        for token in tokens
+        if token
+        and token != "--"
+        and not token.startswith("VERIFY_ARGS=")
+        and token not in DISPLAY_ONLY_MAKE_OPTIONS
+        and not token.startswith(("--jobserver-auth=", "--jobserver-fds="))
+    ]
 
 
 def tool_identity(root):
     # Validation results must not silently survive a compiler/PATH change. Failed
     # version queries are also recorded; a selected missing tool will fail the check.
-    identity = {key: os.environ.get(key, "") for key in (
-        "RUSTUP_TOOLCHAIN", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS",
-        "MIRIFLAGS", "ASAN_OPTIONS", "TSAN_OPTIONS", "RTSAN_ENABLE", "SDKROOT", "DEVELOPER_DIR",
-        "CARGO_TARGET_DIR", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_TARGET",
-        "CC", "CFLAGS", "CXX", "CXXFLAGS", "MACOSX_DEPLOYMENT_TARGET", "MAKEFLAGS",
-    )}
+    identity = {
+        key: os.environ.get(key, "")
+        for key in (
+            "RUSTUP_TOOLCHAIN",
+            "RUSTFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "MIRIFLAGS",
+            "ASAN_OPTIONS",
+            "TSAN_OPTIONS",
+            "RTSAN_ENABLE",
+            "SDKROOT",
+            "DEVELOPER_DIR",
+            "CARGO_TARGET_DIR",
+            "RUSTC",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "CARGO_BUILD_TARGET",
+            "CC",
+            "CFLAGS",
+            "CXX",
+            "CXXFLAGS",
+            "MACOSX_DEPLOYMENT_TARGET",
+            "MAKEFLAGS",
+        )
+    }
     identity["MAKEFLAGS"] = make_flags_identity(identity["MAKEFLAGS"])
     identity["toolchain"] = toolchain_paths()
     identity["python"] = sys.version + ":" + sys.executable
@@ -440,14 +513,18 @@ def tool_identity(root):
             commands.append(["rustc", "+" + nightly[1], "-vV"])
     for command in commands:
         try:
-            result = subprocess.run(command, cwd=root, capture_output=True, timeout=15,
-                                    env={**os.environ, "RUSTUP_AUTO_INSTALL": "0"})
+            result = subprocess.run(
+                command, cwd=root, capture_output=True, timeout=15, env={**os.environ, "RUSTUP_AUTO_INSTALL": "0"}
+            )
             identity[" ".join(command)] = str(result.returncode) + ":" + os.fsdecode(result.stdout + result.stderr)
         except (OSError, subprocess.TimeoutExpired) as error:
             identity[" ".join(command)] = str(error)
     try:
-        compiler = os.fsdecode(subprocess.check_output(["xcrun", "--find", "swiftc"], cwd=root, timeout=15,
-                                                      env={**os.environ, "RUSTUP_AUTO_INSTALL": "0"})).strip()
+        compiler = os.fsdecode(
+            subprocess.check_output(
+                ["xcrun", "--find", "swiftc"], cwd=root, timeout=15, env={**os.environ, "RUSTUP_AUTO_INSTALL": "0"}
+            )
+        ).strip()
         helper = Path(compiler).parent.parent / "libexec/swift/pm/swiftpm-testing-helper"
         identity["swift-testing-helper"] = {"path": str(helper), "digest": content_digest(helper).hex()}
     except (OSError, subprocess.SubprocessError) as error:
@@ -460,8 +537,15 @@ MANIFESTS = {}
 
 
 def file_state(path, status):
-    return (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns,
-            status.st_mode)
+    return (
+        str(path),
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_mode,
+    )
 
 
 def content_digest(path):
@@ -568,10 +652,18 @@ def package_test_excludes(folders, test_folders=(), root=None):
         if root is not None:
             directory = root / folder
             package = manifest(directory / "Cargo.toml")
-            targets = [package.get("lib", {}), *package.get("bin", []), *package.get("test", []),
-                       *package.get("bench", []), *package.get("example", [])]
-            if ((directory / "build.rs").exists() or package.get("package", {}).get("build")
-                    or any("path" in target for target in targets)):
+            targets = [
+                package.get("lib", {}),
+                *package.get("bin", []),
+                *package.get("test", []),
+                *package.get("bench", []),
+                *package.get("example", []),
+            ]
+            if (
+                (directory / "build.rs").exists()
+                or package.get("package", {}).get("build")
+                or any("path" in target for target in targets)
+            ):
                 continue
         excludes += [folder + "/" + kind + "/**" for kind in ("tests", "benches", "examples")]
     return excludes
@@ -580,18 +672,34 @@ def package_test_excludes(folders, test_folders=(), root=None):
 def audio_output_identity():
     """Read device metadata without opening an IO stream; retain only a hash."""
     try:
-        completed = subprocess.run(["system_profiler", "-json", "SPAudioDataType", "-detailLevel", "mini"],
-                                   capture_output=True, text=True, timeout=10, check=True)
+        completed = subprocess.run(
+            ["system_profiler", "-json", "SPAudioDataType", "-detailLevel", "mini"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
         sections = json.loads(completed.stdout)["SPAudioDataType"]
-        devices = [device for section in sections if isinstance(section, dict) for device in section.get("_items", [])
-                   if isinstance(device, dict) and device.get("coreaudio_default_audio_output_device") == "spaudio_yes"]
+        devices = [
+            device
+            for section in sections
+            if isinstance(section, dict)
+            for device in section.get("_items", [])
+            if isinstance(device, dict) and device.get("coreaudio_default_audio_output_device") == "spaudio_yes"
+        ]
         if len(devices) != 1:
             return None
         rate = float(devices[0].get("coreaudio_device_srate", 0))
         if not math.isfinite(rate) or rate <= 0:
             return None
-        fields = ("_name", "coreaudio_device_srate", "coreaudio_device_output",
-                  "coreaudio_device_manufacturer", "coreaudio_device_transport", "coreaudio_output_source")
+        fields = (
+            "_name",
+            "coreaudio_device_srate",
+            "coreaudio_device_output",
+            "coreaudio_device_manufacturer",
+            "coreaudio_device_transport",
+            "coreaudio_output_source",
+        )
         description = {key: devices[0].get(key) for key in fields}
         return hashlib.sha256(json.dumps(description, sort_keys=True).encode()).hexdigest()
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
@@ -618,9 +726,14 @@ def scope_entries(root, files, patterns, folders, tool_inputs, package_excludes)
     """The path and content digest of every file selected by patterns, package folders, or exact tool inputs."""
     entries = []
     for relative in sorted(set(files) | tool_inputs):
-        if (relative in tool_inputs or matches([relative], patterns)
-                or (any(relative.startswith(folder + "/") for folder in folders)
-                    and not matches([relative], package_excludes))):
+        if (
+            relative in tool_inputs
+            or matches([relative], patterns)
+            or (
+                any(relative.startswith(folder + "/") for folder in folders)
+                and not matches([relative], package_excludes)
+            )
+        ):
             entries.append(os.fsencode(relative) + b"\0" + input_digest(root, relative))
     return b"".join(entries)
 
@@ -654,13 +767,21 @@ def check_fingerprints(root, policy, tools, contexts=None, files=None):
     for check in policy["checks"]:
         # The definition covers this check's policy entry and make recipe, not the whole Makefile.
         folders = package_directories(root, check.get("packages", []))
-        test_folders = {workspace_members(root)[name].relative_to(root).as_posix()
-                        for name in check.get("test_packages", [])}
+        test_folders = {
+            workspace_members(root)[name].relative_to(root).as_posix() for name in check.get("test_packages", [])
+        }
         excludes = package_test_excludes(folders, test_folders, root) if check.get("package_scope") == "targets" else []
         configuration = [definitions[check["id"]], common, tools, contexts if check.get("device_context") else {}]
-        stamps[check["id"]] = scoped_digest(root, files, configuration,
-                                            common + check.get("inputs", []) + preflight_inputs(policy, check),
-                                            folders, check.get("tool_inputs", []), excludes, scopes)
+        stamps[check["id"]] = scoped_digest(
+            root,
+            files,
+            configuration,
+            common + check.get("inputs", []) + preflight_inputs(policy, check),
+            folders,
+            check.get("tool_inputs", []),
+            excludes,
+            scopes,
+        )
     return stamps
 
 
@@ -686,9 +807,15 @@ def report_lock(directory):
 def load_report(directory):
     try:
         report = json.loads((directory / "report.json").read_text())
-        if (isinstance(report, dict) and report.get("version") == 2 and isinstance(report.get("results"), dict)
-                and all(isinstance(value, dict) and isinstance(value.get("fingerprint"), str)
-                        for value in report["results"].values())):
+        if (
+            isinstance(report, dict)
+            and report.get("version") == 2
+            and isinstance(report.get("results"), dict)
+            and all(
+                isinstance(value, dict) and isinstance(value.get("fingerprint"), str)
+                for value in report["results"].values()
+            )
+        ):
             return report
     except (OSError, ValueError):
         pass
@@ -726,7 +853,7 @@ def failure_excerpt(log_path, max_lines=35, max_chars=3500):
         excerpt = selected[-max_lines:]
     else:
         non_empty = [line for line in lines if line.strip()]
-        excerpt = non_empty[-min(20, max_lines):]
+        excerpt = non_empty[-min(20, max_lines) :]
     output = "\n".join(excerpt)
     if len(output) > max_chars:
         output = "...\n" + output[-max_chars:]
@@ -739,6 +866,7 @@ def save_report(directory, report, policy, selected):
     temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     temporary.replace(directory / "report.json")
     from verification_display import render_report
+
     temporary = directory / "report.md.tmp"
     temporary.write_text(render_report(report, policy, selected, summarize_reasons))
     temporary.replace(directory / "report.md")
@@ -754,8 +882,7 @@ def run_check(root, check, log, force=False, base=None):
     if base:
         env["VERIFY_BASE"] = base
     target = check.get("make_target", check["id"])
-    return run_logged(root, ["make", target, "SHELL=/bin/bash -euo pipefail"],
-                      log, check["timeout"], env)
+    return run_logged(root, ["make", target, "SHELL=/bin/bash -euo pipefail"], log, check["timeout"], env)
 
 
 def deferral_reasons(args):
@@ -776,7 +903,9 @@ def deferral_reasons(args):
             raise ValueError("--defer requires a nonempty reason: --defer ID=理由")
         reasons[name] = reason.strip()
     if args.reason is not None and len(plain) != 1:
-        raise ValueError("--reason belongs to exactly one --defer ID; give each check its own reason with --defer ID=理由")
+        raise ValueError(
+            "--reason belongs to exactly one --defer ID; give each check its own reason with --defer ID=理由"
+        )
     return reasons
 
 
@@ -811,6 +940,7 @@ def verify(root, args):
         raise ValueError("--run/--defer must be included in --only")
     if args.plan:
         from verification_display import print_plan
+
         print_plan(changed, execution_order(policy, selected), selected, summarize_reasons)
         return 0
     directory = root / "target/verification"
@@ -821,20 +951,34 @@ def verify(root, args):
         contexts = external_contexts(policy)
         stamps = check_fingerprints(root, policy, tools, contexts, files)
         report = load_report(directory)
-        report.update({"fingerprint": stamp, "input_fingerprints": stamps, "changed_paths": changed,
-                       "base": args.base, "selected": selected, "tools": tools,
-                       "profile": "full" if args.full or args.all else "task"})
+        report.update(
+            {
+                "fingerprint": stamp,
+                "input_fingerprints": stamps,
+                "changed_paths": changed,
+                "base": args.base,
+                "selected": selected,
+                "tools": tools,
+                "profile": "full" if args.full or args.all else "task",
+            }
+        )
         previous_results = dict(report["results"])
         for name in selected:
             status = "pending" if checks[name]["mode"] == "automatic" else "not_run"
             previous = report["results"].get(name, {})
-            if (previous.get("fingerprint") != stamps[name]
-                    or (previous.get("status") == "passed" and checks[name].get("device_context")
-                        and contexts.get("audio-output") is None)):
+            if previous.get("fingerprint") != stamps[name] or (
+                previous.get("status") == "passed"
+                and checks[name].get("device_context")
+                and contexts.get("audio-output") is None
+            ):
                 report["results"][name] = {"status": status, "fingerprint": stamps[name]}
         for name, reason in deferred.items():
-            report["results"][name] = {"status": "deferred", "reason": reason, "fingerprint": stamps[name],
-                                       "deferred_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            report["results"][name] = {
+                "status": "deferred",
+                "reason": reason,
+                "fingerprint": stamps[name],
+                "deferred_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
         report["tools_fingerprint"] = hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest()
         if args.record_only:
             # Bookkeeping only: no preflight, build or check runs, and no timing entry.
@@ -843,40 +987,61 @@ def verify(root, args):
             report["full_tier_unverified"] = unverified_full_tier(policy, report["results"], stamps)
             save_report(directory, report, policy, selected)
             print_deferrals(requested, report["results"])
-            print("見送りだけを記録しました。自動検査は実行していません。完了の判定には make verify を実行してください。", flush=True)
+            print(
+                "見送りだけを記録しました。自動検査は実行していません。完了の判定には make verify を実行してください。",
+                flush=True,
+            )
             return 0
         ordered = execution_order(policy, requested)
-        scheduled = [check for check in ordered
-                     if (args.force or report["results"][check["id"]]["status"] != "passed")
-                     and (check["mode"] == "automatic" or check["id"] in args.run)]
-        report["execution"] = {"order": [check["id"] for check in scheduled], "first_failure": None,
-                               "checks": {}, "reused": [], "status": "running", "resources_start": resource_snapshot(root)}
+        scheduled = [
+            check
+            for check in ordered
+            if (args.force or report["results"][check["id"]]["status"] != "passed")
+            and (check["mode"] == "automatic" or check["id"] in args.run)
+        ]
+        report["execution"] = {
+            "order": [check["id"] for check in scheduled],
+            "first_failure": None,
+            "checks": {},
+            "reused": [],
+            "status": "running",
+            "resources_start": resource_snapshot(root),
+        }
         report["preflight"] = {}
 
         def finish(code):
             report["execution"]["resources_end"] = resource_snapshot(root)
             report["execution"]["contract_inventory"] = inventory(policy)
-            report["execution"]["preflight_seconds"] = round(sum(r.get("seconds", 0) for r in report["preflight"].values()), 3)
+            report["execution"]["preflight_seconds"] = round(
+                sum(r.get("seconds", 0) for r in report["preflight"].values()), 3
+            )
             report["full_tier_unverified"] = unverified_full_tier(policy, report["results"], stamps)
             if {"check-product-contracts", "check-contract-controls"} & report["execution"]["checks"].keys():
                 report["execution"]["contracts"] = contract_summary(directory)
-            report["execution"].update(seconds=round(time.monotonic() - started, 3),
-                                       status="passed" if code == 0 else "failed")
+            report["execution"].update(
+                seconds=round(time.monotonic() - started, 3), status="passed" if code == 0 else "failed"
+            )
             save_report(directory, report, policy, selected)
             record_execution(directory, report)
             return code
 
         save_report(directory, report, policy, selected)
         report["preflight"] = run_preflights(root, policy, scheduled, directory)
-        failed_preflight = next((name for name, result in report["preflight"].items()
-                                 if result["status"] != "passed"), None)
+        failed_preflight = next(
+            (name for name, result in report["preflight"].items() if result["status"] != "passed"), None
+        )
         if failed_preflight:
             result = report["preflight"][failed_preflight]
             report["execution"]["first_failure"] = {
-                "kind": "preflight", "id": failed_preflight, "seconds": round(time.monotonic() - started, 3)}
+                "kind": "preflight",
+                "id": failed_preflight,
+                "seconds": round(time.monotonic() - started, 3),
+            }
             save_report(directory, report, policy, selected)
-            print(f"事前確認 {failed_preflight}: failed; 復旧: {result['remedy']}\n"
-                  + failure_excerpt(result["log"]), file=sys.stderr)
+            print(
+                f"事前確認 {failed_preflight}: failed; 復旧: {result['remedy']}\n" + failure_excerpt(result["log"]),
+                file=sys.stderr,
+            )
             return finish(1)
         save_report(directory, report, policy, selected)
         for check in ordered:
@@ -894,7 +1059,9 @@ def verify(root, args):
             save_report(directory, report, policy, selected)
             result = run_check(root, check, directory / f"{name}.log", args.force, args.base)
             if result["status"] == "passed" and check.get("device_context") and contexts.get("audio-output") is None:
-                result.update({"status": "failed", "error": "audio device metadata unavailable; cannot attest this measurement"})
+                result.update(
+                    {"status": "failed", "error": "audio device metadata unavailable; cannot attest this measurement"}
+                )
             result["fingerprint"] = stamps[name]
             result["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             if check.get("tier") == "full":
@@ -906,17 +1073,25 @@ def verify(root, args):
             result["previous_fingerprint"] = previous_result.get("fingerprint")
             if result["status"] != "passed":
                 report["execution"]["first_failure"] = {
-                    "kind": "check", "id": name, "seconds": round(time.monotonic() - started, 3)}
+                    "kind": "check",
+                    "id": name,
+                    "seconds": round(time.monotonic() - started, 3),
+                }
             # Concurrent edits may occur while an agent or CI runs a long check.
             current_tools = tool_identity(root)
             files = source_files(root)
-            if (changed_paths(root, args.base) != changed
-                    or fingerprint(root, changed, args.base, current_tools, files) != stamp
-                    or check_fingerprints(root, policy, current_tools, files=files)[name] != stamps[name]):
+            if (
+                changed_paths(root, args.base) != changed
+                or fingerprint(root, changed, args.base, current_tools, files) != stamp
+                or check_fingerprints(root, policy, current_tools, files=files)[name] != stamps[name]
+            ):
                 result["status"] = "stale"
                 result["error"] = "source or toolchain changed during verification"
                 report["execution"]["first_failure"] = {
-                    "kind": "stale", "id": name, "seconds": round(time.monotonic() - started, 3)}
+                    "kind": "stale",
+                    "id": name,
+                    "seconds": round(time.monotonic() - started, 3),
+                }
                 save_report(directory, report, policy, selected)
                 print(f"{name}: 検査中に変更がありました。再実行が必要です。", file=sys.stderr)
                 return finish(1)
@@ -930,23 +1105,31 @@ def verify(root, args):
         current_tools = tool_identity(root)
         files = source_files(root)
         current_stamps = check_fingerprints(root, policy, current_tools, files=files)
-        if (changed_paths(root, args.base) != changed
-                or fingerprint(root, changed, args.base, current_tools, files) != stamp
-                or any(current_stamps[name] != stamps[name] for name in selected)):
+        if (
+            changed_paths(root, args.base) != changed
+            or fingerprint(root, changed, args.base, current_tools, files) != stamp
+            or any(current_stamps[name] != stamps[name] for name in selected)
+        ):
             print("検査の確認中に変更がありました。make verify を再実行してください。", file=sys.stderr)
             return finish(1)
         # Never open hardware automatically. Every selected manual check needs
         # either explicit execution or an explanation attached to this source.
-        pending = [name for name in requested
-                   if report["results"][name]["status"] not in ("passed", "deferred")]
+        pending = [name for name in requested if report["results"][name]["status"] not in ("passed", "deferred")]
         print("結果: target/verification/report.md", flush=True)
         print_deferrals(requested, report["results"])
         unverified = unverified_full_tier(policy, report["results"], stamps)
         if unverified:
-            print("全体検査で未確認（作業の完了条件ではない。main へのプッシュごとに GitHub の full が実行）: " + ", ".join(unverified), flush=True)
+            print(
+                "全体検査で未確認（作業の完了条件ではない。main へのプッシュごとに GitHub の full が実行）: "
+                + ", ".join(unverified),
+                flush=True,
+            )
         if pending:
             print("完了していない検査: " + ", ".join(sorted(pending)), file=sys.stderr)
-            print("失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID=理由 を検査ごとに使います。", file=sys.stderr)
+            print(
+                "失敗はログを確認して修正してください。実機・計測は --run ID、未実行は --defer ID=理由 を検査ごとに使います。",
+                file=sys.stderr,
+            )
             return finish(1)
         return finish(0)
 
@@ -958,11 +1141,17 @@ def main():
     parser.add_argument("--full", action="store_true", help="every automatic check, including the full tier")
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument("--run", action="append", default=[])
-    parser.add_argument("--defer", action="append", default=[], metavar="ID=理由",
-                        help="record why a selected manual check is not run; one reason per check")
+    parser.add_argument(
+        "--defer",
+        action="append",
+        default=[],
+        metavar="ID=理由",
+        help="record why a selected manual check is not run; one reason per check",
+    )
     parser.add_argument("--reason", help="reason for a single plain --defer ID")
-    parser.add_argument("--record-only", action="store_true",
-                        help="record the --defer entries without running any check")
+    parser.add_argument(
+        "--record-only", action="store_true", help="record the --defer entries without running any check"
+    )
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()

@@ -39,7 +39,8 @@ extension WorkspaceSession {
     @discardableResult
     func auditionSelected(origin: AuditionOrigin = .other, from frame: UInt64 = 0, expected: URL? = nil) -> URL? {
         guard expected == nil || expected == state.browser.selection else { return nil }
-        guard let selected = state.browser.filtered.first(where: { $0.url == state.browser.selection }), selected.audio else { return nil }
+        guard let selected = state.browser.filtered.first(where: { $0.url == state.browser.selection }), selected.audio
+        else { return nil }
         return controller.audition(selected.url, from: frame, origin: origin) ? selected.url : nil
     }
 
@@ -71,8 +72,11 @@ extension ProjectController {
     @discardableResult
     func audition(_ url: URL?, from frame: UInt64 = 0, origin: AuditionOrigin = .other) -> Bool {
         guard let document else { return false }
-        if let url, frame > 0 { sendAuditionAt(document, url, frame, origin) }
-        else { sendAudition(document, url, origin) }
+        if let url, frame > 0 {
+            sendAuditionAt(document, url, frame, origin)
+        } else {
+            sendAudition(document, url, origin)
+        }
         return true
     }
 }
@@ -88,7 +92,10 @@ final class AuditionLog {
     var write: (AuditionEntry) -> Void = { _ in }
 
     func record(_ status: AuditionStatus?) {
-        guard let status else { logged = 0; return }
+        guard let status else {
+            logged = 0
+            return
+        }
         // Another document's audition numbers its requests from 1 again.
         if let last = status.history.last?.request, last < logged { logged = 0 }
         for entry in status.history where entry.request > logged {
@@ -125,9 +132,14 @@ final class LineLog: Sendable {
     let limit: UInt64
     private let queue = DispatchQueue(label: "io.echode.line-log", qos: .utility)
 
-    init(url: URL, limit: UInt64 = EchodeLog.fileLimit) { self.url = url; self.limit = limit }
+    init(url: URL, limit: UInt64 = EchodeLog.fileLimit) {
+        self.url = url
+        self.limit = limit
+    }
 
-    var previous: URL { url.deletingPathExtension().appendingPathExtension("1").appendingPathExtension(url.pathExtension) }
+    var previous: URL {
+        url.deletingPathExtension().appendingPathExtension("1").appendingPathExtension(url.pathExtension)
+    }
 
     func append(_ line: Data) {
         queue.async { [url, limit] in EchodeLog.append(line, to: url, limit: limit) }

@@ -1,0 +1,5 @@
+# Ruff's own defaults at the version pinned in scripts/lint-tools.txt, as clippy's
+# are for Rust. Only the layout differs (ADR 0323).
+line-length = 120
+# docs/development.md: the scripts need Python 3.11 or later (tomllib).
+target-version = "py311"

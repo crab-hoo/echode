@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -16,9 +17,11 @@ struct PianoGridControlTests {
         let track = try #require(controller.pianoTrack)
         await controller.insertNote(pitch: 60, beat: 1, length: 0.3)
         await controller.addTrack(name: "Other")
-        let other = try #require(controller.selection), snapshot = try #require(controller.snapshot)
+        let other = try #require(controller.selection)
+        let snapshot = try #require(controller.snapshot)
         let note = try #require(snapshot.pianoNeighbor(track: track, current: nil))
-        let undo = controller.undoCount, inputLength = controller.noteInput.length
+        let undo = controller.undoCount
+        let inputLength = controller.noteInput.length
         let navigation = CanvasNavigationState()
         navigation.prepare(document: controller.documentID, tracks: [track, other])
         let roll = PianoRollView(frame: NSRect(x: 0, y: 0, width: 640, height: 428))
@@ -42,9 +45,16 @@ struct PianoGridControlTests {
         #expect(view.camera.grid == 352_800 && view.camera.pixelsPerBeat == 144)
         #expect(controller.noteInput.length == inputLength && controller.undoCount == undo)
         // Both insertion and ruler drags must discard the old-grid release.
-        var inserts: [NoteGeometry] = [], starts: [Int64] = [], loops: [LoopRange] = []
-        view.onInsert = { inserts.append(NoteGeometry(start: Int64(($1 * 705_600).rounded()), length: Int64(($2 * 705_600).rounded()), pitch: $0)) }
-        view.onSetStart = { starts.append($0) }; view.onSetLoop = { loops.append($0) }
+        var inserts: [NoteGeometry] = []
+        var starts: [Int64] = []
+        var loops: [LoopRange] = []
+        view.onInsert = {
+            inserts.append(
+                NoteGeometry(start: Int64(($1 * 705_600).rounded()), length: Int64(($2 * 705_600).rounded()), pitch: $0)
+            )
+        }
+        view.onSetStart = { starts.append($0) }
+        view.onSetLoop = { loops.append($0) }
         let point = CGPoint(x: 300, y: 114)
         view.present(gridFrame(view, snapshot: snapshot, track: track))
         view.mouseDown(with: try gridMouse(view, .leftMouseDown, point))
@@ -71,8 +81,11 @@ struct PianoGridControlTests {
         try choose(.fixed(352_800))
         var steps: [PianoStep] = []
         view.onSteps = { steps.append($0) }
-        let right = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: UInt16(kVK_RightArrow)))
+        let right = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+                keyCode: UInt16(kVK_RightArrow)))
         view.keyDown(with: right)
         #expect(steps.count == 1 && steps[0].time == 352_800)
         view.present(gridFrame(view, snapshot: snapshot, track: track))
@@ -83,8 +96,9 @@ struct PianoGridControlTests {
         view.onEdit = { _, geometry in edits.append(geometry) }
         for flags: NSEvent.ModifierFlags in [[], .shift] {
             view.present(gridFrame(view, snapshot: snapshot, track: track))
-            let edge = CGPoint(x: view.pianoLayout.gridOrigin.x + (1.3 - view.camera.originBeat) * 144 - 1,
-                               y: view.pianoLayout.gridOrigin.y + (view.camera.topPitch - 60 + 0.5) * view.camera.pixelsPerPitch)
+            let edge = CGPoint(
+                x: view.pianoLayout.gridOrigin.x + (1.3 - view.camera.originBeat) * 144 - 1,
+                y: view.pianoLayout.gridOrigin.y + (view.camera.topPitch - 60 + 0.5) * view.camera.pixelsPerPitch)
             let release = CGPoint(x: edge.x + 0.1 * 144, y: edge.y)
             view.mouseDown(with: try gridMouse(view, .leftMouseDown, edge))
             view.mouseDragged(with: try gridMouse(view, .leftMouseDragged, release, flags: flags))
@@ -97,7 +111,8 @@ struct PianoGridControlTests {
         view.magnify(with: event)
         #expect(view.camera.pixelsPerBeat == horizontal && view.camera.grid == 352_800)
         #expect(view.camera.pixelsPerPitch == 40)
-        event.flags = .shift; event.amount = -0.5
+        event.flags = .shift
+        event.amount = -0.5
         view.magnify(with: event)
         #expect(view.camera.pixelsPerBeat == horizontal / 2 && view.camera.pixelsPerPitch == 20)
         #expect(view.camera.grid == 352_800)

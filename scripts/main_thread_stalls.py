@@ -6,16 +6,16 @@ make check-bridge-tsan or make check-bridge-asan.
 """
 
 import argparse
-from collections import Counter
-from dataclasses import dataclass, field
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import signal
 import subprocess
 import sys
+from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from check_test_width import peak_live_tests
 
@@ -54,7 +54,9 @@ def parse_watch(text):
             start_wall = float(parts[2])
         elif kind == "STALL":
             load = dict(item.split("=", 1) for item in parts[3].split()) if len(parts) == 4 else {}
-            stalls.append(Stall(float(parts[0]), float(parts[2]), load={key: float(value) for key, value in load.items()}))
+            stalls.append(
+                Stall(float(parts[0]), float(parts[2]), load={key: float(value) for key, value in load.items()})
+            )
             sample = None
         elif kind == "SAMPLE" and stalls:
             sample = []
@@ -105,8 +107,10 @@ def profile_table(runs, start=0.0, end=float("inf")):
                 category = profile_category(frames)
                 counts[category] += 1
                 blocked[category] += state in THREAD_BLOCKED
-    return [f"{count * PROFILE_SECONDS / max(len(runs), 1):6.2f} s/run  blocked {100 * blocked[name] // count:3d}%  {name}"
-            for name, count in counts.most_common()]
+    return [
+        f"{count * PROFILE_SECONDS / max(len(runs), 1):6.2f} s/run  blocked {100 * blocked[name] // count:3d}%  {name}"
+        for name, count in counts.most_common()
+    ]
 
 
 def issues_from_events(text, start_wall):
@@ -125,15 +129,28 @@ def issues_from_events(text, start_wall):
 
 
 def demangled(stalls, demangle):
-    names = sorted({symbol for stall in stalls for sample in stall.samples for image, symbol in sample
-                    if image == "EchodeAppTests" and symbol.startswith("$s")})
+    names = sorted(
+        {
+            symbol
+            for stall in stalls
+            for sample in stall.samples
+            for image, symbol in sample
+            if image == "EchodeAppTests" and symbol.startswith("$s")
+        }
+    )
     return dict(zip(names, demangle(names))) if names else {}
 
 
 def label(sample, names):
     """The test that owns a sample; a test's thunks may not demangle to its name."""
-    tag = next((name for image, name in (("dyld", "framework load"), ("libremovefile.dylib", "file removal"))
-                if any(frame[0] == image for frame in sample)), None)
+    tag = next(
+        (
+            name
+            for image, name in (("dyld", "framework load"), ("libremovefile.dylib", "file removal"))
+            if any(frame[0] == image for frame in sample)
+        ),
+        None,
+    )
     test = None
     for image, symbol in reversed(sample):
         match = TEST_NAME.search(names.get(symbol, "")) if image == "EchodeAppTests" else None
@@ -145,8 +162,13 @@ def label(sample, names):
 
 def most_silence(stalls, window=WINDOW_SECONDS):
     """The most silence inside any window: what a concurrent deadline of that length can lose."""
-    return max((sum(max(0.0, min(other.end, stall.start + window) - max(other.start, stall.start)) for other in stalls)
-                for stall in stalls), default=0.0)
+    return max(
+        (
+            sum(max(0.0, min(other.end, stall.start + window) - max(other.start, stall.start)) for other in stalls)
+            for stall in stalls
+        ),
+        default=0.0,
+    )
 
 
 def describe_load(stall):
@@ -155,13 +177,17 @@ def describe_load(stall):
     if not load:
         return ""
     main = load.get("main_user", 0.0) + load.get("main_system", 0.0)
-    return (f"main CPU {main:.2f} s, process {load.get('process', 0.0):.1f} CPU-s, "
-            f"runnable {load.get('runnable', 0.0):.1f} s, watcher gap {load.get('watch_gap', 0.0):.2f} s")
+    return (
+        f"main CPU {main:.2f} s, process {load.get('process', 0.0):.1f} CPU-s, "
+        f"runnable {load.get('runnable', 0.0):.1f} s, watcher gap {load.get('watch_gap', 0.0):.2f} s"
+    )
 
 
 def summarize_run(stalls, issues, names):
-    lines = [f"longest stall {max((stall.seconds for stall in stalls), default=0.0):.2f} s; "
-             f"most silence in {WINDOW_SECONDS:.0f} s {most_silence(stalls):.2f} s"]
+    lines = [
+        f"longest stall {max((stall.seconds for stall in stalls), default=0.0):.2f} s; "
+        f"most silence in {WINDOW_SECONDS:.0f} s {most_silence(stalls):.2f} s"
+    ]
     longest = max(stalls, key=lambda stall: stall.seconds, default=None)
     if longest and longest.load:
         lines.append(f"longest stall load: {describe_load(longest)}")
@@ -176,12 +202,19 @@ def summarize_run(stalls, issues, names):
 
 def attribution(runs, top):
     counts = Counter(label(sample, names) for stalls, names in runs for stall in stalls for sample in stall.samples)
-    return [f"{count * SAMPLE_SECONDS / max(len(runs), 1):6.2f} s/run  {name}" for name, count in counts.most_common(top)]
+    return [
+        f"{count * SAMPLE_SECONDS / max(len(runs), 1):6.2f} s/run  {name}" for name, count in counts.most_common(top)
+    ]
 
 
 def xcrun_demangle(names):
-    return subprocess.run(["xcrun", "swift", "demangle", "--simplified"], input="\n".join(names),
-                          capture_output=True, text=True, check=True).stdout.splitlines()
+    return subprocess.run(
+        ["xcrun", "swift", "demangle", "--simplified"],
+        input="\n".join(names),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
 
 
 def run_once(sanitizer, watcher, directory, number, passthrough, scratch=None, profile=False):
@@ -196,18 +229,35 @@ def run_once(sanitizer, watcher, directory, number, passthrough, scratch=None, p
         environment["ECHODE_MAIN_THREAD_PROFILE"] = str(samples)
     if sanitizer == "thread":
         # Same runtime as check-bridge-tsan. xcrun's real path keeps DYLD_* (the /usr/bin shim strips them).
-        runtime = subprocess.check_output([sys.executable, "-B", str(ROOT / "scripts/tsan_runtime.py"),
-                                           "--directory", "fixed"], text=True).strip()
+        runtime = subprocess.check_output(
+            [sys.executable, "-B", str(ROOT / "scripts/tsan_runtime.py"), "--directory", "fixed"], text=True
+        ).strip()
         environment |= {"DYLD_LIBRARY_PATH": runtime, "TSAN_OPTIONS": "halt_on_error=1:exitcode=66"}
     swift = subprocess.check_output(["xcrun", "--find", "swift"], text=True).strip()
-    command = [swift, "test", "-q", "--skip-build", "--package-path", "swift/EchodeApp",
-               "--scratch-path", str(scratch or ROOT / f"target/bridge/{sanitizer}/product/swift"),
-               "--sanitize", sanitizer, "-Xswiftc", "-warnings-as-errors",
-               "--event-stream-output-path", str(events), "--event-stream-version", "0", *passthrough]
+    command = [
+        swift,
+        "test",
+        "-q",
+        "--skip-build",
+        "--package-path",
+        "swift/EchodeApp",
+        "--scratch-path",
+        str(scratch or ROOT / f"target/bridge/{sanitizer}/product/swift"),
+        "--sanitize",
+        sanitizer,
+        "-Xswiftc",
+        "-warnings-as-errors",
+        "--event-stream-output-path",
+        str(events),
+        "--event-stream-version",
+        "0",
+        *passthrough,
+    ]
     with log.open("w") as output:
         # Its own process group: killing only the driver would orphan the test helper.
-        process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+        process = subprocess.Popen(
+            command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True
+        )
         try:
             code = process.wait(timeout=RUN_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
@@ -226,10 +276,17 @@ def main(argv=None):
     parser.add_argument("sanitizer", choices=["thread", "address"])
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--top", type=int, default=12)
-    parser.add_argument("--profile", action="store_true",
-                        help="also sample the main thread continuously; suspending it lengthens stalls")
-    parser.add_argument("swift_test_arguments", nargs="*", default=["--skip", "RecoveryConsentTests"],
-                        help="after --, replaces the default of skipping the separately run recovery suite")
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="also sample the main thread continuously; suspending it lengthens stalls",
+    )
+    parser.add_argument(
+        "swift_test_arguments",
+        nargs="*",
+        default=["--skip", "RecoveryConsentTests"],
+        help="after --, replaces the default of skipping the separately run recovery suite",
+    )
     options = parser.parse_args(argv)
     product = ROOT / f"target/bridge/{options.sanitizer}/product"
     if not (product / "swift").is_dir():
@@ -239,26 +296,51 @@ def main(argv=None):
     shutil.rmtree(directory, ignore_errors=True)
     directory.mkdir(parents=True)
     watcher = directory / "libstalls.dylib"
-    subprocess.run(["xcrun", "clang", "-arch", "arm64", "-arch", "arm64e", "-dynamiclib", "-O1", "-g", "-Wall", "-Wextra",
-                    "-Werror", str(SOURCE), "-o", str(watcher)], check=True)
+    subprocess.run(
+        [
+            "xcrun",
+            "clang",
+            "-arch",
+            "arm64",
+            "-arch",
+            "arm64e",
+            "-dynamiclib",
+            "-O1",
+            "-g",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(SOURCE),
+            "-o",
+            str(watcher),
+        ],
+        check=True,
+    )
     report, runs, profiles = [], [], []
     for number in range(1, options.runs + 1):
-        code, stalls, issues = run_once(options.sanitizer, watcher, directory, number, options.swift_test_arguments,
-                                        profile=options.profile)
+        code, stalls, issues = run_once(
+            options.sanitizer, watcher, directory, number, options.swift_test_arguments, profile=options.profile
+        )
         names = demangled(stalls, xcrun_demangle)
         runs.append((stalls, names))
         events = directory / f"{number}.events"
         peak = peak_live_tests(events.read_text(errors="replace")) if events.exists() else 0
-        lines = [f"run {number}: exit {code}, at most {peak} tests at once",
-                 *("  " + line for line in summarize_run(stalls, issues, names))]
+        lines = [
+            f"run {number}: exit {code}, at most {peak} tests at once",
+            *("  " + line for line in summarize_run(stalls, issues, names)),
+        ]
         print("\n".join(lines), flush=True)
         report += lines
         if options.profile:
             profiles.append(parse_profile((directory / f"{number}.profile").read_text(errors="replace")))
     owners = [f"main-thread silence by owner, about {SAMPLE_SECONDS} s per sample:", *attribution(runs, options.top)]
     if options.profile:
-        owners += ["main thread by activity, whole run:", *profile_table(profiles),
-                   f"main thread by activity, first {EARLY_SECONDS:.0f} s:", *profile_table(profiles, end=EARLY_SECONDS)]
+        owners += [
+            "main thread by activity, whole run:",
+            *profile_table(profiles),
+            f"main thread by activity, first {EARLY_SECONDS:.0f} s:",
+            *profile_table(profiles, end=EARLY_SECONDS),
+        ]
     print("\n".join(owners))
     # The name matches the bundle pattern of make debug-report.
     (product / "main-thread-stalls.log").write_text("\n".join(report + owners) + "\n")

@@ -2,23 +2,27 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct MixerValueOrderTests {
     @Test func queuedEntriesResolveCurrentValuesAndKeepTheSubmittedSelection() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-value-order-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-mixer-value-order-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
         await controller.addTrack(name: "first")
         let first = try #require(controller.selection)
         await controller.addTrack(name: "second")
-        let second = try #require(controller.selection), document = try #require(controller.documentID)
+        let second = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         #expect(await controller.setMixer(first, field: .gain, value: 0.5))
         #expect(await controller.setMixer(second, field: .gain, value: 0.25))
         controller.selectTrack(first, change: .toggle)
-        let enter = try #require(controller.arrangeMixActions(document: document).enter), before = controller.undoCount
+        let enter = try #require(controller.arrangeMixActions(document: document).enter)
+        let before = controller.undoCount
         let gate = MixerValueGate()
         defer { gate.release() }
         let held = Task { await controller.edits.run { await gate.wait() } }
@@ -31,7 +35,8 @@ struct MixerValueOrderTests {
         await held.value
         #expect(await last.value)
         #expect(controller.undoCount == before + 2)
-        #expect(controller.mixer(first)?.gain.value == 0.5 && controller.mixer(second)?.gain.value == 0.25,
+        #expect(
+            controller.mixer(first)?.gain.value == 0.5 && controller.mixer(second)?.gain.value == 0.25,
             "the second entry must resolve the current anchor and preserve the captured group")
         await controller.undo()
         #expect(controller.mixer(first)?.gain.value == 1 && controller.mixer(second)?.gain.value == 0.5)
@@ -43,7 +48,8 @@ struct MixerValueOrderTests {
         enter(first, .gain, 2)
         #expect(await (try #require(controller.mixerSwitchTail)).value)
         #expect(controller.faderPreview == nil && controller.undoCount == before + 4)
-        #expect(controller.mixer(first)?.gain.value == 2 && controller.mixer(second)?.gain.value == 0.5,
+        #expect(
+            controller.mixer(first)?.gain.value == 2 && controller.mixer(second)?.gain.value == 0.5,
             "numeric group edits must first finish the single-track live preview")
         await controller.undo()
         #expect(controller.mixer(first)?.gain.value == 1 && controller.mixer(second)?.gain.value == 0.25)
@@ -51,7 +57,8 @@ struct MixerValueOrderTests {
     }
 
     @Test func anOldNumericFieldCannotBorrowTheReopenedDocumentsCallback() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-value-field-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-mixer-value-field-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController()
         await controller.open(url, creating: true)
@@ -62,12 +69,15 @@ struct MixerValueOrderTests {
         header.setSnapshot(try #require(controller.snapshot), selected: track)
         header.mixActions = controller.arrangeMixActions(document: controller.documentID)
         let rect = TrackControlLayout(row: header.bounds).gain
-        let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown,
-            location: header.convert(CGPoint(x: rect.midX, y: rect.midY), to: nil), modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, eventNumber: 1, clickCount: 3, pressure: 1))
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: header.convert(CGPoint(x: rect.midX, y: rect.midY), to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 3, pressure: 1))
         header.mouseDown(with: event)
         let field = try #require(header.entry)
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         header.setSnapshot(try #require(controller.snapshot), selected: track)
         header.mixActions = controller.arrangeMixActions(document: controller.documentID)
         field.stringValue = "0 dB"
@@ -87,7 +97,8 @@ private final class MixerValueGate {
     private var released = false
     func wait() async {
         waiting = true
-        enteredReply?.resume(); enteredReply = nil
+        enteredReply?.resume()
+        enteredReply = nil
         if !released { await withCheckedContinuation { held = $0 } }
     }
     func entered() async {
@@ -95,6 +106,7 @@ private final class MixerValueGate {
     }
     func release() {
         released = true
-        held?.resume(); held = nil
+        held?.resume()
+        held = nil
     }
 }

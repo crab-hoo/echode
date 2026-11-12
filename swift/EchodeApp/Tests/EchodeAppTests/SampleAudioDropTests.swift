@@ -2,6 +2,7 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -10,7 +11,8 @@ struct SampleAudioDropTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audio-drop-\(UUID())")
         defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let wav = root.appendingPathComponent("tone.wav"), project = root.appendingPathComponent("Song.echode")
+        let wav = root.appendingPathComponent("tone.wav")
+        let project = root.appendingPathComponent("Song.echode")
         try wavMono(rate: 48_000, frames: 480).write(to: wav)
         let controller = ProjectController()
         let session = WorkspaceSession(controller: controller, state: WorkspaceState(defaults: .init()))
@@ -27,7 +29,10 @@ struct SampleAudioDropTests {
         view.audioDocument = document
         #expect(view.registeredDraggedTypes.contains(.fileURL))
         var pending: Task<Bool, Never>?
-        view.onDropAudio = { pending = session.importDroppedAudio($0); return pending != nil }
+        view.onDropAudio = {
+            pending = session.importDroppedAudio($0)
+            return pending != nil
+        }
         // The browser writes the same public file-URL type as Finder.
         let list = FileListView()
         list.show([BrowserFile(url: wav, directory: false)], searching: false, selection: nil)
@@ -50,7 +55,7 @@ struct SampleAudioDropTests {
         let snapshot = try #require(controller.snapshot)
         let clip = try #require(clips(snapshot).first?.id.placement)
         #expect(snapshot.clipMix(clip)?.track == second && snapshot.clipMix(clip)?.start == drop.tick)
-        #expect(!(await controller.importDroppedAudio(drop))) // Existing same-track overlap is still rejected.
+        #expect(!(await controller.importDroppedAudio(drop)))  // Existing same-track overlap is still rejected.
         #expect(controller.undoCount == before + 1)
         await controller.undo()
         #expect(controller.snapshot?.clipMix(clip) == nil)
@@ -68,9 +73,12 @@ struct SampleAudioDropTests {
         await controller.undo()
         #expect(controller.tracks.map(\.id) == [first, second] && controller.snapshot?.clipMix(addedClip) == nil)
         await controller.redo()
-        #expect(controller.tracks.last?.id == appended && controller.snapshot?.clipMix(addedClip)?.start == unsnapped.tick)
-        await controller.close(); await controller.open(project)
-        #expect(controller.tracks.last?.id == appended && controller.snapshot?.clipMix(addedClip)?.start == unsnapped.tick)
+        #expect(
+            controller.tracks.last?.id == appended && controller.snapshot?.clipMix(addedClip)?.start == unsnapped.tick)
+        await controller.close()
+        await controller.open(project)
+        #expect(
+            controller.tracks.last?.id == appended && controller.snapshot?.clipMix(addedClip)?.start == unsnapped.tick)
         #expect(!(await controller.importDroppedAudio(drop)))
         await controller.close()
     }
@@ -82,13 +90,17 @@ struct SampleAudioDropTests {
         await controller.open(root, creating: true)
         let document = try #require(controller.documentID)
         let pane = ArrangePaneView(frame: CGRect(x: 0, y: 0, width: 640, height: 300))
-        pane.layout(); pane.setSnapshot(try #require(controller.snapshot), selected: nil)
+        pane.layout()
+        pane.setSnapshot(try #require(controller.snapshot), selected: nil)
         let view = pane.timeline
         view.audioDocument = document
         view.onDropAudio = { _ in true }
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        func write(_ urls: [URL]) { board.clearContents(); board.writeObjects(urls.map { $0 as NSURL }) }
+        func write(_ urls: [URL]) {
+            board.clearContents()
+            board.writeObjects(urls.map { $0 as NSURL })
+        }
         let wav = root.appendingPathComponent("missing.wav")
         for name in ["notes.mid", "notes.txt", "Song.echode", "plugin.clap"] {
             write([root.appendingPathComponent(name)])
@@ -99,8 +111,11 @@ struct SampleAudioDropTests {
         write([try #require(URL(string: "https://example.invalid/tone.wav"))])
         #expect(AudioFileDrop.audioURL(from: board) == nil)
         write([wav])
-        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: document) == nil) // Ruler, not a lane.
-        for point in [CGPoint(x: 160, y: 34), CGPoint(x: 640, y: 34), CGPoint(x: 220, y: -1), CGPoint(x: 220, y: 300), CGPoint(x: CGFloat.infinity, y: 0)] {
+        #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: document) == nil)  // Ruler, not a lane.
+        for point in [
+            CGPoint(x: 160, y: 34), CGPoint(x: 640, y: 34), CGPoint(x: 220, y: -1), CGPoint(x: 220, y: 300),
+            CGPoint(x: CGFloat.infinity, y: 0),
+        ] {
             #expect(view.audioDrop(board, at: point, flags: [], document: document) == nil)
         }
         #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 10), flags: [], document: DocumentID()) == nil)
@@ -138,12 +153,14 @@ struct SampleAudioDropTests {
         let folder = try #require(controller.selection)
         #expect(await controller.edit(.addChild(parent: folder.uuidString, name: "hidden")))
         await controller.addTrack(name: "tail")
-        let tail = try #require(controller.selection), document = try #require(controller.documentID)
+        let tail = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         let pane = ArrangePaneView(frame: CGRect(x: 0, y: 0, width: 640, height: 100))
         pane.layout()
         pane.setSnapshot(try #require(controller.snapshot), selected: folder, collapsedTracks: [folder])
         let view = pane.timeline
-        view.audioDocument = document; view.onDropAudio = { _ in true }
+        view.audioDocument = document
+        view.onDropAudio = { _ in true }
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         board.writeObjects([root.appendingPathComponent("tone.wav") as NSURL])
@@ -156,9 +173,13 @@ struct SampleAudioDropTests {
         #expect(view.audioDrop(board, at: CGPoint(x: 220, y: 24 + 72), flags: [], document: document)?.track == tail)
         pane.resizeHeader(to: 200)
         let origin = 201.0
-        #expect(view.audioDrop(board, at: CGPoint(x: origin + 72 * 1.2, y: 34), flags: [], document: document)?.tick == 705_600)
+        #expect(
+            view.audioDrop(board, at: CGPoint(x: origin + 72 * 1.2, y: 34), flags: [], document: document)?.tick
+                == 705_600)
         pane.timeline.onZoom?(2, [], .zero)
-        #expect(view.audioDrop(board, at: CGPoint(x: origin + 144 * 1.2, y: 34), flags: [], document: document)?.tick == 705_600)
+        #expect(
+            view.audioDrop(board, at: CGPoint(x: origin + 144 * 1.2, y: 34), flags: [], document: document)?.tick
+                == 705_600)
         #expect(view.audioDrop(board, at: CGPoint(x: 200, y: 34), flags: [], document: document) == nil)
         await controller.close()
     }
@@ -173,7 +194,10 @@ struct SampleAudioDropTests {
         let document = try #require(controller.documentID)
         view.audioDocument = document
         var dropped: [AudioFileDrop] = []
-        view.onDropAudio = { dropped.append($0); return true }
+        view.onDropAudio = {
+            dropped.append($0)
+            return true
+        }
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         board.writeObjects([root.appendingPathComponent("tone.wav") as NSURL])
@@ -197,8 +221,10 @@ struct SampleAudioDropTests {
 
     private func clips(_ snapshot: Snapshot) -> [ArrangeElement] {
         // The window bounds only these fixtures; it is not a product size cap.
-        snapshot.visibleElements(originTick: 0, widthTicks: 10_000_000, originTrack: 0, heightTracks: 10,
-                                 pixelsPerTick: 0.001, pixelsPerTrack: 40).elements.filter { $0.role == .clip }
+        snapshot.visibleElements(
+            originTick: 0, widthTicks: 10_000_000, originTrack: 0, heightTracks: 10,
+            pixelsPerTick: 0.001, pixelsPerTrack: 40
+        ).elements.filter { $0.role == .clip }
     }
 }
 
@@ -219,7 +245,9 @@ private final class FileDragInfo: NSObject, NSDraggingInfo {
     init(board: NSPasteboard) { draggingPasteboard = board }
     func slideDraggedImage(to screenPoint: NSPoint) {}
     func resetSpringLoading() {}
-    func enumerateDraggingItems(options: NSDraggingItemEnumerationOptions, for view: NSView?, classes: [AnyClass],
-                                searchOptions: [NSPasteboard.ReadingOptionKey: Any],
-                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+    func enumerateDraggingItems(
+        options: NSDraggingItemEnumerationOptions, for view: NSView?, classes: [AnyClass],
+        searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+        using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) {}
 }

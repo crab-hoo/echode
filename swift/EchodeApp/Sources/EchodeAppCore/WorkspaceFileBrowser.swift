@@ -9,8 +9,13 @@ struct WorkspaceFileBrowser: View {
             HStack {
                 Text(text("Files")).font(.headline)
                 Spacer()
-                Button { session.chooseFolder() } label: { Image(systemName: "folder.badge.plus") }
-                    .help(text("Choose Folder")).accessibilityLabel(text("Choose Folder")).disabled(session.state.choosingFile)
+                Button {
+                    session.chooseFolder()
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .help(text("Choose Folder")).accessibilityLabel(text("Choose Folder")).disabled(
+                    session.state.choosingFile)
             }
             if !browser.roots.isEmpty {
                 Menu(text("Sample Folders")) {
@@ -27,12 +32,21 @@ struct WorkspaceFileBrowser: View {
             }
             if let folder = browser.folder {
                 HStack {
-                    Button { Task { await browser.load(folder.deletingLastPathComponent()) } } label: { Image(systemName: "arrow.up") }
-                        .help(text("Parent Folder")).accessibilityLabel(text("Parent Folder")).disabled(browser.loading || !browser.canOpenParent)
+                    Button {
+                        Task { await browser.load(folder.deletingLastPathComponent()) }
+                    } label: {
+                        Image(systemName: "arrow.up")
+                    }
+                    .help(text("Parent Folder")).accessibilityLabel(text("Parent Folder")).disabled(
+                        browser.loading || !browser.canOpenParent)
                     Text(folder.lastPathComponent).font(.caption).lineLimit(1).help(folder.path)
                     Spacer()
-                    Button { Task { await browser.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                        .help(text("Refresh")).accessibilityLabel(text("Refresh")).disabled(browser.loading)
+                    Button {
+                        Task { await browser.refresh() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .help(text("Refresh")).accessibilityLabel(text("Refresh")).disabled(browser.loading)
                 }
             }
             if browser.folder != nil || !browser.roots.isEmpty {
@@ -42,22 +56,28 @@ struct WorkspaceFileBrowser: View {
             if browser.loading || browser.indexing { ProgressView().controlSize(.small) }
             if let error = browser.error { Text(error).font(.caption).foregroundStyle(.secondary) }
             if let error = browser.libraryError {
-                Text(text("Some sample folders could not be read")).font(.caption).foregroundStyle(.secondary).help(error)
+                Text(text("Some sample folders could not be read")).font(.caption).foregroundStyle(.secondary).help(
+                    error)
             }
             if browser.folder == nil && !browser.searchingLibrary {
                 Text(text("Choose a folder to browse projects")).font(.caption).foregroundStyle(.secondary)
                 Spacer()
             } else {
-                SampleFileList(files: browser.filtered, searching: browser.searchingLibrary, selection: browser.selection,
-                               onSelect: { session.chooseInBrowser($0, origin: $1) }, onOpen: open,
-                               onAudition: { session.auditionSelected(origin: $0) },
-                               onPlayback: { session.perform(.playback) })
+                SampleFileList(
+                    files: browser.filtered, searching: browser.searchingLibrary, selection: browser.selection,
+                    onSelect: { session.chooseInBrowser($0, origin: $1) }, onOpen: open,
+                    onAudition: { session.auditionSelected(origin: $0) },
+                    onPlayback: { session.perform(.playback) })
                 if let selected, selected.audio {
-                    SamplePreview(url: selected.url, status: session.controller.audition,
-                                  overview: browser.overviews.entry(for: selected.url),
-                                  onSeek: { frame, origin in session.auditionSelected(origin: origin, from: frame, expected: selected.url) })
+                    SamplePreview(
+                        url: selected.url, status: session.controller.audition,
+                        overview: browser.overviews.entry(for: selected.url),
+                        onSeek: { frame, origin in
+                            session.auditionSelected(origin: origin, from: frame, expected: selected.url)
+                        })
                 }
-                SampleAuditionControls(preferences: session.state.auditionPreferences,
+                SampleAuditionControls(
+                    preferences: session.state.auditionPreferences,
                     canPlay: selected?.audio == true && session.controller.document != nil,
                     onAutomatic: session.setAutomaticAudition, onGain: session.setAuditionGain,
                     onPlay: { session.auditionSelected() }, onStop: { session.controller.audition(nil) })
@@ -72,9 +92,12 @@ struct WorkspaceFileBrowser: View {
         }.padding(12).task { await browser.prepare() }
     }
     private var selected: BrowserFile? { browser.filtered.first { $0.url == browser.selection } }
-    private var canOpenSelection: Bool { selected.map { ($0.directory || $0.project) && !browser.loading && !session.controller.busy } ?? false }
+    private var canOpenSelection: Bool {
+        selected.map { ($0.directory || $0.project) && !browser.loading && !session.controller.busy } ?? false
+    }
     private var canImportSelection: Bool {
-        selected.map { $0.audio && !browser.loading && !session.controller.busy && session.controller.selection != nil } ?? false
+        selected.map { $0.audio && !browser.loading && !session.controller.busy && session.controller.selection != nil }
+            ?? false
     }
     private func openSelected() { if let selected { open(selected) } }
     private func importSelected() { if let selected { session.importSample(selected) } }

@@ -2,6 +2,7 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -37,7 +38,9 @@ struct WorkspaceTests {
     @Test func layoutsFitTheMinimumWindowAndKeepPreferencesWhileHidden() throws {
         var layout = WorkspaceLayout()
         for mask in 0..<8 {
-            layout.inspector = mask & 1 != 0; layout.browser = mask & 2 != 0; layout.editor = mask & 4 != 0
+            layout.inspector = mask & 1 != 0
+            layout.browser = mask & 2 != 0
+            layout.editor = mask & 4 != 0
             let size = CGSize(width: layout.minimumWidth, height: layout.minimumHeight - 80)
             let dimensions = layout.dimensions(in: size)
             let sideDividers = (layout.inspector ? 5.0 : 0) + (layout.browser ? 5.0 : 0)
@@ -67,37 +70,51 @@ struct WorkspaceTests {
         #expect(NoteDraft.number("1,25", locale: Locale(identifier: "de_DE")) == 1.25)
         #expect(NoteDraft.number("−1.5", locale: Locale(identifier: "en_US")) == -1.5)
         #expect(NoteDraft.number("–2", locale: Locale(identifier: "ja_JP")) == -2)
-        for value in ["1x", "NaN", "inf", "", "1.2.3"] { #expect(NoteDraft.number(value, locale: Locale(identifier: "en_US")) == nil) }
+        for value in ["1x", "NaN", "inf", "", "1.2.3"] {
+            #expect(NoteDraft.number(value, locale: Locale(identifier: "en_US")) == nil)
+        }
         var draft = NoteDraft()
         #expect(draft.geometry == NoteGeometry(start: 0, length: 705_600, pitch: 60))
-        for value in ["0", "-1", "0.00000000001", "1e40", "1x"] { draft.length = value; #expect(draft.geometry == nil) }
-        draft.length = "1"; draft.beat = "-1"; #expect(draft.geometry == nil)
-        draft.beat = "0"; draft.pitch = 128; #expect(draft.geometry == nil)
+        for value in ["0", "-1", "0.00000000001", "1e40", "1x"] {
+            draft.length = value
+            #expect(draft.geometry == nil)
+        }
+        draft.length = "1"
+        draft.beat = "-1"
+        #expect(draft.geometry == nil)
+        draft.beat = "0"
+        draft.pitch = 128
+        #expect(draft.geometry == nil)
     }
 
     @Test func pendingDraftsFollowNoteIdentityAndExternalChanges() async throws {
         let url = temporaryProject()
         defer { removeTestFile(url) }
         let controller = ProjectController()
-        await controller.open(url, creating: true); await controller.addTrack(name: "notes")
+        await controller.open(url, creating: true)
+        await controller.addTrack(name: "notes")
         await controller.insertNote(pitch: 60, beat: 0, length: 1)
         await controller.insertNote(pitch: 60, beat: 0, length: 1)
         let track = try #require(controller.selection)
-        let notes = try #require(controller.snapshot).pianoNotes(track: track, originTick: 0, widthTicks: 705_600 * 4,
+        let notes = try #require(controller.snapshot).pianoNotes(
+            track: track, originTick: 0, widthTicks: 705_600 * 4,
             topPitch: 72, heightPitches: 24, pixelsPerTick: 72.0 / 705_600, pixelsPerPitch: 20)
         #expect(notes.count == 2)
         let state = WorkspaceState(defaults: .init())
-        controller.noteFocus = notes[0].id; state.synchronize(controller)
+        controller.noteFocus = notes[0].id
+        state.synchronize(controller)
         state.draft.beat = "3"
         state.synchronize(controller)
         #expect(state.draft.beat == "3" && state.draft.canApply)
-        controller.noteFocus = notes[1].id; state.synchronize(controller)
+        controller.noteFocus = notes[1].id
+        state.synchronize(controller)
         #expect(state.draft.geometry == NoteGeometry(notes[1]) && !state.draft.canApply)
         state.draft.beat = "5"
         await controller.editNote(notes[1].id, geometry: NoteGeometry(start: 705_600 * 2, length: 705_600, pitch: 62))
         state.synchronize(controller)
         #expect(state.draft.geometry?.start == 705_600 * 2 && !state.draft.canApply)
-        await controller.undo(); state.synchronize(controller)
+        await controller.undo()
+        state.synchronize(controller)
         #expect(state.draft.geometry == NoteGeometry(notes[1]))
         await controller.close()
     }
@@ -106,28 +123,36 @@ struct WorkspaceTests {
         let url = temporaryProject()
         defer { removeTestFile(url) }
         let controller = ProjectController()
-        await controller.open(url, creating: true); let document = try #require(controller.documentID)
-        await controller.addTrack(name: "first"); let first = try #require(controller.selection)
+        await controller.open(url, creating: true)
+        let document = try #require(controller.documentID)
+        await controller.addTrack(name: "first")
+        let first = try #require(controller.selection)
         await controller.insertNote(pitch: 60, beat: 0, length: 1)
         let note = try #require(controller.snapshot?.pianoNeighbor(track: first, current: nil, backwards: false))
         controller.noteFocus = note.id
-        await controller.addTrack(name: "second"); let second = try #require(controller.selection)
+        await controller.addTrack(name: "second")
+        let second = try #require(controller.selection)
         #expect(controller.pianoTrack == first && controller.noteFocus == note.id)
         controller.noteFocus = note.id
         #expect(controller.noteFocus == note.id)
         #expect(await controller.insertPlugin("dev.echode.test-gain", on: first))
-        #expect(controller.selection == second && controller.snapshot?.devicePlugin(onTrack: 0, at: 0) == "dev.echode.test-gain")
+        #expect(
+            controller.selection == second
+                && controller.snapshot?.devicePlugin(onTrack: 0, at: 0) == "dev.echode.test-gain")
         #expect(controller.snapshot?.deviceCount(onTrack: 1) == 1)
         #expect(await controller.insertNote(pitch: 64, beat: 2, length: 1, on: first))
         #expect(controller.snapshot?.pianoNeighbor(track: second, current: nil, backwards: false) == nil)
         let before = controller.undoCount
         #expect(!(await controller.insertNote(pitch: 60, beat: 0, length: 0.00000000001)))
         #expect(controller.undoCount == before)
-        controller.selection = first; controller.noteFocus = note.id
+        controller.selection = first
+        controller.noteFocus = note.id
         #expect(await controller.deleteNote(note.id))
         #expect(controller.noteFocus == nil)
-        await controller.close(); #expect(controller.documentID == nil)
-        await controller.open(url); #expect(controller.documentID != document)
+        await controller.close()
+        #expect(controller.documentID == nil)
+        await controller.open(url)
+        #expect(controller.documentID != document)
         await controller.close()
     }
 
@@ -135,11 +160,14 @@ struct WorkspaceTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-context-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { removeTestFile(root) }
-        let original = root.appendingPathComponent("original.echode"), copy = root.appendingPathComponent("copy.echode")
+        let original = root.appendingPathComponent("original.echode")
+        let copy = root.appendingPathComponent("copy.echode")
         let controller = ProjectController()
-        await controller.open(original, creating: true); await controller.addTrack(name: "pad")
+        await controller.open(original, creating: true)
+        await controller.addTrack(name: "pad")
         await controller.insertNote(pitch: 60, beat: 0, length: 1)
-        let track = try #require(controller.selection), document = try #require(controller.documentID)
+        let track = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         let note = try #require(controller.snapshot?.pianoNeighbor(track: track, current: nil, backwards: false))
         await controller.close()
         try FileManager.default.copyItem(at: original, to: copy)
@@ -166,7 +194,8 @@ struct WorkspaceTests {
         await controller.open(url, creating: true)
         #expect(session.enabled(.addTrack) && !session.enabled(.plugins))
         #expect(session.enabled(.loop) && session.enabled(.metronome))
-        await controller.addTrack(name: "first"); let first = try #require(controller.selection)
+        await controller.addTrack(name: "first")
+        let first = try #require(controller.selection)
         #expect(session.enabled(.undo) && session.enabled(.plugins))
         session.perform(.palette)
         for command in WorkspaceCommand.allCases {
@@ -176,7 +205,8 @@ struct WorkspaceTests {
             #expect(paletteEnabled == session.enabled(command))
             state.presentation = .palette
         }
-        state.presentation = nil; session.perform(.plugins)
+        state.presentation = nil
+        session.perform(.plugins)
         let document = try #require(controller.documentID)
         #expect(state.presentation == nil && state.pluginBrowserDocument == document && state.showsDevices)
         await controller.addTrack(name: "second")
@@ -191,7 +221,8 @@ struct WorkspaceTests {
         state.presentation = .history
         state.synchronize(controller)
         #expect(state.presentation == .history)
-        await controller.close(); state.synchronize(controller)
+        await controller.close()
+        state.synchronize(controller)
         #expect(state.presentation == nil)
     }
 
@@ -220,17 +251,24 @@ struct WorkspaceTests {
     @Test func folderNavigationFiltersProjectsAndLatestRequestWins() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-browser-\(UUID())")
         defer { removeTestFile(root) }
-        let first = root.appendingPathComponent("first"), second = root.appendingPathComponent("second")
+        let first = root.appendingPathComponent("first")
+        let second = root.appendingPathComponent("second")
         try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: second.appendingPathComponent("Song.echode"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: second.appendingPathComponent("Song.echode"), withIntermediateDirectories: true)
         try Data().write(to: second.appendingPathComponent("notes.txt"))
         let browser = FileBrowserState()
         var started = false
-        let older = Task { started = true; await browser.load(first) }
+        let older = Task {
+            started = true
+            await browser.load(first)
+        }
         while !started { await Task.yield() }
         await browser.load(second)
         await older.value
-        #expect(browser.folder == second && !browser.loading && browser.files.map(\.url.lastPathComponent) == ["Song.echode"])
+        #expect(
+            browser.folder == second && !browser.loading
+                && browser.files.map(\.url.lastPathComponent) == ["Song.echode"])
         #expect(browser.canOpenParent && !FileBrowserState.canOpenParent(of: URL(fileURLWithPath: "/")))
         browser.selection = browser.files.last?.url
         browser.query = "song"
@@ -291,27 +329,35 @@ struct WorkspaceTests {
         let navigation = CanvasNavigationState()
         navigation.prepare(document: controller.documentID, tracks: Set(controller.tracks.map(\.id)))
         let pane = ArrangePaneView(frame: NSRect(x: 0, y: 0, width: 650, height: 180))
-        pane.setNavigation(navigation, documentID: navigation.document); pane.setSnapshot(snapshot, selected: track); pane.layout()
-        pane.headers.onScroll?(-144, -200); pane.resizeHeader(to: 200)
+        pane.setNavigation(navigation, documentID: navigation.document)
+        pane.setSnapshot(snapshot, selected: track)
+        pane.layout()
+        pane.headers.onScroll?(-144, -200)
+        pane.resizeHeader(to: 200)
         let saved = try #require(navigation.arrange)
         let recreated = ArrangePaneView(frame: pane.frame)
-        recreated.setNavigation(navigation, documentID: navigation.document); recreated.setSnapshot(snapshot, selected: track); recreated.layout()
+        recreated.setNavigation(navigation, documentID: navigation.document)
+        recreated.setSnapshot(snapshot, selected: track)
+        recreated.layout()
         #expect(recreated.viewport == saved && recreated.headers.bounds.width == 200)
         let piano = PianoCamera(originBeat: 12, topPitch: 90.5, pixelsPerBeat: 120, pixelsPerPitch: 28)
         navigation.pianoCamera = piano
         let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 650, height: 180))
-        grid.setNavigation(navigation, documentID: navigation.document); grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
+        grid.setNavigation(navigation, documentID: navigation.document)
+        grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
         #expect(grid.camera == piano && grid.window == nil && !grid.rendererAvailable)
         grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(tonic: 2), busy: true)
         #expect(grid.camera == piano)
         await controller.addTrack(name: "unrelated")
-        grid.setSnapshot(try #require(controller.snapshot), track: track, focus: note.id, key: DisplayKey(tonic: 2), busy: false)
+        grid.setSnapshot(
+            try #require(controller.snapshot), track: track, focus: note.id, key: DisplayKey(tonic: 2), busy: false)
         #expect(grid.camera == piano)
         navigation.prepare(document: controller.documentID, tracks: [])
         grid.stop()
         #expect(navigation.pianoCamera == piano)
         navigation.prepare(document: DocumentID(), tracks: [track])
-        grid.stop(); pane.layout()
+        grid.stop()
+        pane.layout()
         #expect(navigation.arrange == nil && navigation.headerWidth == 160 && navigation.pianoCamera == nil)
         await controller.close()
     }
@@ -329,5 +375,7 @@ struct WorkspaceTests {
         #expect(camera == saved)
     }
 
-    private func temporaryProject() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("echode-workspace-\(UUID()).echode") }
+    private func temporaryProject() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("echode-workspace-\(UUID()).echode")
+    }
 }

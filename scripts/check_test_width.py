@@ -7,8 +7,8 @@ could drop it without a word. The event stream shows what the run really did.
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def peak_live_tests(text):
@@ -50,13 +50,18 @@ def main(argv=None):
         print(f"check_test_width: no test ran according to {options.events}", file=sys.stderr)
         return 1
     if options.at_most is not None and peak > options.at_most:
-        print(f"check_test_width: {peak} tests ran at once, above {options.at_most}. "
-              f"Swift Testing may have dropped SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH; see {options.events}",
-              file=sys.stderr)
+        print(
+            f"check_test_width: {peak} tests ran at once, above {options.at_most}. "
+            f"Swift Testing may have dropped SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH; see {options.events}",
+            file=sys.stderr,
+        )
         return 1
     if options.more_than is not None and peak <= options.more_than:
-        print(f"check_test_width: at most {peak} tests ran at once, so tests that need more than "
-              f"{options.more_than} together went unchecked for races; see {options.events}", file=sys.stderr)
+        print(
+            f"check_test_width: at most {peak} tests ran at once, so tests that need more than "
+            f"{options.more_than} together went unchecked for races; see {options.events}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

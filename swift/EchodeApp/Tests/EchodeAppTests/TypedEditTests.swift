@@ -11,14 +11,17 @@ struct TypedEditTests {
         defer { document.shutdown() }
         let added = try await document.perform(EditAction.addTrack(name: "typed"))
         let track = try #require(added.trackID(at: 0))
-        let inserted = try await document.perform(EditAction.insertNote(
-            track: track.uuidString, pitch: 60, velocity: 100, start: 1, length: 705_601))
+        let inserted = try await document.perform(
+            EditAction.insertNote(
+                track: track.uuidString, pitch: 60, velocity: 100, start: 1, length: 705_601))
         let original = try #require(inserted.pianoNeighbor(track: track, current: nil))
         let changed = try await document.perform([
-            EditAction.setNoteVelocity(track: track.uuidString, clip: original.id.placement.uuidString,
-                                       note: original.id.note.uuidString, velocity: 80),
-            .editNote(track: track.uuidString, clip: original.id.placement.uuidString,
-                      note: original.id.note.uuidString, pitch: 64, start: 2, length: 705_603)
+            EditAction.setNoteVelocity(
+                track: track.uuidString, clip: original.id.placement.uuidString,
+                note: original.id.note.uuidString, velocity: 80),
+            .editNote(
+                track: track.uuidString, clip: original.id.placement.uuidString,
+                note: original.id.note.uuidString, pitch: 64, start: 2, length: 705_603),
         ])
         let note = try #require(changed.pianoNote(original.id))
         #expect(note.pitch == 64 && note.start == 2 && note.length == 705_603)
@@ -31,14 +34,14 @@ struct TypedEditTests {
         do {
             _ = try await document.perform([
                 EditAction.addTrack(name: "must roll back"),
-                .addDevice(track: UUID().uuidString, plugin: "org.example.fx")
+                .addDevice(track: UUID().uuidString, plugin: "org.example.fx"),
             ])
             Issue.record("A failed typed transaction was accepted")
         } catch is BridgeError {}
         do {
             _ = try await document.perform([
                 EditAction.addTrack(name: "must not be submitted"),
-                .setClipGain(clip: original.id.placement.uuidString, gain: .nan)
+                .setClipGain(clip: original.id.placement.uuidString, gain: .nan),
             ])
             Issue.record("A non-finite typed transaction was encoded")
         } catch is EncodingError {}
@@ -50,16 +53,17 @@ struct TypedEditTests {
             do {
                 _ = try await document.perform(EditAction.addTrack(name: "cancelled"))
                 return false
-            } catch is CancellationError { return true }
-            catch { return false }
+            } catch is CancellationError { return true } catch { return false }
         }
         #expect(await cancelled.value)
         let redone = try await document.redo()
         #expect(redone.trackCount == 1)
         #expect(redone.pianoNote(original.id)?.pitch == 64)
         #expect(redone.pianoNote(original.id)?.velocity == note.velocity)
-        let noChange = try await document.perform(EditAction.setNoteVelocity(
-            track: track.uuidString, clip: original.id.placement.uuidString, note: original.id.note.uuidString, velocity: 80))
+        let noChange = try await document.perform(
+            EditAction.setNoteVelocity(
+                track: track.uuidString, clip: original.id.placement.uuidString, note: original.id.note.uuidString,
+                velocity: 80))
         #expect(try noChange.historyReport().changed == false)
         let afterNoopUndo = try await document.undo()
         #expect(afterNoopUndo.pianoNote(original.id)?.pitch == 60)

@@ -90,7 +90,8 @@ final class FileListView: NSScrollView, NSTableViewDataSource, NSTableViewDelega
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard files.indices.contains(row) else { return nil }
-        let cell = tableView.makeView(withIdentifier: FileRowView.identifier, owner: nil) as? FileRowView ?? FileRowView()
+        let cell =
+            tableView.makeView(withIdentifier: FileRowView.identifier, owner: nil) as? FileRowView ?? FileRowView()
         cell.configure(files[row], showingFolder: searching)
         return cell
     }
@@ -127,7 +128,11 @@ final class FileListTable: NSTableView {
         let row = row(at: convert(event.locationInWindow, from: nil))
         input = AuditionOrigin(input: .click, delayMicroseconds: Self.delay(event))
         defer { input = nil }
-        guard row >= 0 else { dragDown = nil; deselectAll(nil); return }
+        guard row >= 0 else {
+            dragDown = nil
+            deselectAll(nil)
+            return
+        }
         if selectedRow != row { selectRowIndexes([row], byExtendingSelection: false) }
         if event.clickCount == 2 { onOpen(row) }
         dragDown = event.clickCount == 1 ? pasteboardWriter(for: row).map { (event, $0) } : nil
@@ -135,19 +140,27 @@ final class FileListTable: NSTableView {
 
     override func mouseDragged(with event: NSEvent) {
         guard let (down, writer) = dragDown,
-              hypot(event.locationInWindow.x - down.locationInWindow.x, event.locationInWindow.y - down.locationInWindow.y) >= 4 else { return }
+            hypot(
+                event.locationInWindow.x - down.locationInWindow.x, event.locationInWindow.y - down.locationInWindow.y)
+                >= 4
+        else { return }
         dragDown = nil
         let item = NSDraggingItem(pasteboardWriter: writer)
-        item.setDraggingFrame(CGRect(origin: convert(event.locationInWindow, from: nil), size: CGSize(width: 120, height: rowHeight)), contents: NSImage(systemSymbolName: "waveform", accessibilityDescription: nil))
+        item.setDraggingFrame(
+            CGRect(origin: convert(event.locationInWindow, from: nil), size: CGSize(width: 120, height: rowHeight)),
+            contents: NSImage(systemSymbolName: "waveform", accessibilityDescription: nil))
         beginDraggingSession(with: [item], event: event, source: self)
     }
 
     override func mouseUp(with event: NSEvent) { dragDown = nil }
-    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext)
+        -> NSDragOperation
+    { .copy }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if window?.firstResponder === self, [36, 76].contains(event.keyCode),
-           event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
+            event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift])
+        {
             keyDown(with: event)
             return true
         }
@@ -167,7 +180,9 @@ final class FileListTable: NSTableView {
             return
         }
         // Return and keypad Enter open the row, as a double click does.
-        if [36, 76].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]) {
+        if [36, 76].contains(event.keyCode),
+            event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift])
+        {
             if selectedRow >= 0 { onOpen(selectedRow) }
             return
         }

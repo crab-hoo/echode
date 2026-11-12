@@ -39,15 +39,22 @@ def project_spec():
 class DistributionSpec(unittest.TestCase):
     def test_cargo_emits_m4_and_macos27_despite_an_old_environment_target(self):
         import os
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "src").mkdir()
             (root / "Cargo.toml").write_text('[package]\nname="platform-contract"\nversion="0.0.0"\nedition="2024"\n')
             (root / "src/main.rs").write_text('fn main() { println!("platform"); }\n')
             env = dict(os.environ, MACOSX_DEPLOYMENT_TARGET="11.0", CARGO_TARGET_DIR=str(root / "target"))
-            subprocess.run(["cargo", "rustc", "--offline", "--manifest-path", str(root / "Cargo.toml"), "--", "--emit=llvm-ir"],
-                           cwd=ROOT, env=env, capture_output=True, text=True, check=True)
-            ir = '\n'.join(path.read_text() for path in (root / "target").rglob('*.ll'))
+            subprocess.run(
+                ["cargo", "rustc", "--offline", "--manifest-path", str(root / "Cargo.toml"), "--", "--emit=llvm-ir"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            ir = "\n".join(path.read_text() for path in (root / "target").rglob("*.ll"))
             self.assertIn('"target-cpu"="apple-m4"', ir)
             self.assertRegex(ir, r'target triple = "arm64-apple-macosx27\.0\.0"')
             distribution.validate_binary(root / "target/debug/platform-contract")
@@ -56,13 +63,31 @@ class DistributionSpec(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "src").mkdir()
-            (root / "Cargo.toml").write_text('[package]\nname="platform-dylib"\nversion="0.0.0"\nedition="2024"\n[lib]\ncrate-type=["cdylib"]\n')
-            (root / "src/lib.rs").write_text('#[unsafe(no_mangle)] pub extern "C" fn answer() -> usize { std::env::args_os().count() + 1 }\n')
-            subprocess.run(["cargo", "build", "--offline", "--release", "--manifest-path", str(root / "Cargo.toml"),
-                            "--target-dir", str(root / "target")], cwd=ROOT, capture_output=True, text=True, check=True)
+            (root / "Cargo.toml").write_text(
+                '[package]\nname="platform-dylib"\nversion="0.0.0"\nedition="2024"\n[lib]\ncrate-type=["cdylib"]\n'
+            )
+            (root / "src/lib.rs").write_text(
+                '#[unsafe(no_mangle)] pub extern "C" fn answer() -> usize { std::env::args_os().count() + 1 }\n'
+            )
+            subprocess.run(
+                [
+                    "cargo",
+                    "build",
+                    "--offline",
+                    "--release",
+                    "--manifest-path",
+                    str(root / "Cargo.toml"),
+                    "--target-dir",
+                    str(root / "target"),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
             binary = root / "target/release/libplatform_dylib.dylib"
             distribution.validate_binary(binary)
-            probe = 'import ctypes, sys; library = ctypes.CDLL(sys.argv[1]); library.answer.restype = ctypes.c_size_t; assert library.answer() > 0'
+            probe = "import ctypes, sys; library = ctypes.CDLL(sys.argv[1]); library.answer.restype = ctypes.c_size_t; assert library.answer() > 0"
             loaded = subprocess.run([sys.executable, "-c", probe, str(binary)], capture_output=True, text=True)
             self.assertEqual(loaded.returncode, 0, loaded.stderr)
 
@@ -127,7 +152,9 @@ class SignedBundle(unittest.TestCase):
             try:
                 distribution.create_signing_keychain(keychain, password)
                 app = self.signed_app(root, keychain)
-                self.assertTrue((app / "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host").is_file())
+                self.assertTrue(
+                    (app / "Contents/Helpers/EchodePluginHost.app/Contents/MacOS/echode-plugin-host").is_file()
+                )
                 cli = app / "Contents/MacOS/echode-cli"
                 self.assertTrue(cli.is_file())
                 subprocess.run(["codesign", "--verify", "--strict", str(cli)], check=True)
@@ -145,7 +172,9 @@ class SignedBundle(unittest.TestCase):
                 self.assertIn("Identifier=io.echode.app", described)
                 helper = self.codesign_details(app / "Contents/Helpers/EchodePluginHost.app")
                 self.assertIn("Authority=Echode Local", helper)
-                self.assertIn("disable-library-validation", self.entitlements(app / "Contents/Helpers/EchodePluginHost.app"))
+                self.assertIn(
+                    "disable-library-validation", self.entitlements(app / "Contents/Helpers/EchodePluginHost.app")
+                )
                 self.assertNotIn("disable-library-validation", self.entitlements(app))
                 self.assertIn("(runtime)", described)
                 self.assertIn("(runtime)", helper)
@@ -187,7 +216,9 @@ class SignedBundle(unittest.TestCase):
         binary.parent.mkdir(parents=True)
         shutil.copy2(self.foreign_library(root), binary)
         shutil.copy2(ROOT / "Packaging/EchodeSinePad-Info.plist", plugin / "Contents/Info.plist")
-        distribution.assemble_app(app, executable, helper, ROOT / "swift/EchodeApp/Info.plist", framework, plugins=[plugin], cli=executable)
+        distribution.assemble_app(
+            app, executable, helper, ROOT / "swift/EchodeApp/Info.plist", framework, plugins=[plugin], cli=executable
+        )
         distribution.sign_app(app, keychain=keychain)
         return app
 
@@ -196,7 +227,7 @@ class SignedBundle(unittest.TestCase):
             "#include <dlfcn.h>\n#include <stdio.h>\nint main(int argc, char **argv) {\n"
             "    if (argc < 2) return 0;\n"
             "    if (dlopen(argv[1], RTLD_NOW) != 0) return 0;\n"
-            "    fprintf(stderr, \"%s\\n\", dlerror());\n"
+            '    fprintf(stderr, "%s\\n", dlerror());\n'
             "    return 1;\n"
             "}\n",
             encoding="utf-8",
@@ -210,8 +241,11 @@ class SignedBundle(unittest.TestCase):
         # Control: a hardened, ad-hoc signed loader must refuse an ad-hoc library ("different Team IDs").
         control = root / "control"
         self.compile_loader(root / "control.c", control)
-        subprocess.run(["codesign", "--force", "--sign", "-", "--options", "runtime", str(control)],
-                       check=True, capture_output=True)
+        subprocess.run(
+            ["codesign", "--force", "--sign", "-", "--options", "runtime", str(control)],
+            check=True,
+            capture_output=True,
+        )
         completed = subprocess.run([str(control), str(library)], capture_output=True, text=True)
         self.assertIn(completed.returncode, (0, 1), completed.stderr)
         return completed.returncode == 1

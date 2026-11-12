@@ -1,5 +1,5 @@
-import Foundation
 import CEchodeBridge
+import Foundation
 
 @MainActor
 private final class UIChanges {
@@ -87,15 +87,17 @@ enum CProbe {
             preconditionFailure("pre-enqueue cancellation must fail")
         } catch is CancellationError {}
         precondition(document.snapshot().revision == 33)
-        print("C ABI: PASS async, callbacks -> MainActor, 32 concurrent edits, errors, cancellation, old snapshots, release")
+        print(
+            "C ABI: PASS async, callbacks -> MainActor, 32 concurrent edits, errors, cancellation, old snapshots, release"
+        )
 
         #if BRIDGE_VALIDATION
-        // Finish the earlier callbacks before checking global Swift context counts.
-        let primaryProbe = document.probeHandle()
-        document.closeQueue()
-        eb_probe_wait_for_worker(primaryProbe)
-        eb_probe_free(primaryProbe)
-        try await checkBridgeContracts()
+            // Finish the earlier callbacks before checking global Swift context counts.
+            let primaryProbe = document.probeHandle()
+            document.closeQueue()
+            eb_probe_wait_for_worker(primaryProbe)
+            eb_probe_free(primaryProbe)
+            try await checkBridgeContracts()
         #endif
 
         if CommandLine.arguments.contains("--bench") {

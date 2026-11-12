@@ -20,14 +20,15 @@ struct ExportSettings: Codable, Sendable, Equatable {
     var normalizePeakDb: Double? = nil
 
     var isValid: Bool {
-        sampleRate > 0 && tailSeconds.isFinite && tailSeconds >= 0 &&
-        (automaticTail || tailSeconds * Double(sampleRate) < Double(UInt32.max) + 0.5) &&
-        !(format == .float32 && tpdf) &&
-        (normalizePeakDb.map { $0.isFinite && (-120...0).contains($0) } ?? true)
+        sampleRate > 0 && tailSeconds.isFinite && tailSeconds >= 0
+            && (automaticTail || tailSeconds * Double(sampleRate) < Double(UInt32.max) + 0.5)
+            && !(format == .float32 && tpdf) && (normalizePeakDb.map { $0.isFinite && (-120...0).contains($0) } ?? true)
     }
     var arguments: [String]? {
         guard isValid else { return nil }
-        var result = ["--format", format.rawValue, "--sample-rate", String(sampleRate), "--dither", tpdf ? "tpdf" : "none"]
+        var result = [
+            "--format", format.rawValue, "--sample-rate", String(sampleRate), "--dither", tpdf ? "tpdf" : "none",
+        ]
         if !automaticTail { result += ["--tail-frames", String(UInt32((tailSeconds * Double(sampleRate)).rounded()))] }
         if let target = normalizePeakDb { result += ["--normalize-peak-db", String(target)] }
         return result
@@ -38,13 +39,15 @@ struct ExportSettings: Codable, Sendable, Equatable {
         let settings: ExportSettings
     }
     var storedJSON: String? {
-        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
         guard isValid, let data = try? encoder.encode(Stored(settings: self)) else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
     static func decodeStored(_ json: String?) -> Self? {
         guard let json, let stored = try? JSONDecoder().decode(Stored.self, from: Data(json.utf8)),
-              stored.version == 1, stored.settings.isValid else { return nil }
+            stored.version == 1, stored.settings.isValid
+        else { return nil }
         return stored.settings
     }
 
@@ -76,7 +79,10 @@ struct ExportSettings: Codable, Sendable, Equatable {
     }
     static func load(project: URL, defaults: UserDefaults = .standard, initialRate: UInt32 = 48_000) -> Self {
         if let data = defaults.data(forKey: key(project)),
-           let settings = try? JSONDecoder().decode(Self.self, from: data), settings.isValid { return settings }
+            let settings = try? JSONDecoder().decode(Self.self, from: data), settings.isValid
+        {
+            return settings
+        }
         return commonDefault(defaults: defaults, initialRate: initialRate)
     }
     func save(project: URL, defaults: UserDefaults = .standard) {
@@ -89,8 +95,10 @@ struct ExportSettings: Codable, Sendable, Equatable {
 extension ProjectController {
     /// Read on the owning worker; a late result cannot seed another document's sheet.
     func loadExportSettings(documentID: DocumentID, defaults: UserDefaults = .standard) async -> ExportSettings? {
-        guard let captured = inputSession(for: documentID), let document = captured.document, let project = projectURL else { return nil }
-        let fallback = ExportSettings.load(project: project, defaults: defaults, initialRate: audio.activeDevice?.sampleRate ?? 48_000)
+        guard let captured = inputSession(for: documentID), let document = captured.document, let project = projectURL
+        else { return nil }
+        let fallback = ExportSettings.load(
+            project: project, defaults: defaults, initialRate: audio.activeDevice?.sampleRate ?? 48_000)
         let snapshot = try? await document.history(.exportSettings())
         guard inputSession(for: documentID) === captured else { return nil }
         let report = try? snapshot?.historyReport()

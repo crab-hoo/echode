@@ -15,15 +15,15 @@ bridge_output="$bridge_root/target/bridge/$bridge_sanitizer"
 bridge_target=aarch64-apple-darwin
 bridge_tsan_runtime="$(python3 scripts/tsan_runtime.py --directory fixed)/libclang_rt.tsan_osx_dynamic.dylib"
 mkdir -p "$bridge_output/c" "$bridge_output/control"
-swift --version > "$bridge_output/versions.txt"
-rustc "+$BRIDGE_NIGHTLY" -vV >> "$bridge_output/versions.txt"
+swift --version >"$bridge_output/versions.txt"
+rustc "+$BRIDGE_NIGHTLY" -vV >>"$bridge_output/versions.txt"
 
 # The generator is a host tool, built without sanitizer instrumentation.
 cargo build --locked --offline --release -p echode-bridge-spike --features bindgen,fault-injection
 "$bridge_root/target/release/echode-bridge-bindgen" c-header "$bridge_output/c/echode_bridge.h"
 cp spikes/bridge/c/module.modulemap "$bridge_output/c/module.modulemap"
 "$bridge_root/target/release/echode-bridge-bindgen" sanitizer-header "$bridge_output/control/probe.h"
-cat > "$bridge_output/control/module.modulemap" <<'MODULE'
+cat >"$bridge_output/control/module.modulemap" <<'MODULE'
 module CBridgeSanitizerProbe { header "probe.h" export * }
 MODULE
 
@@ -41,8 +41,8 @@ cp "$bridge_library/libechode_bridge_spike.a" "$bridge_output/c/libbridge.a"
 cargo "+$BRIDGE_NIGHTLY" rustc --locked --offline -Zbuild-std --target "$bridge_target" \
     --release --lib --crate-type staticlib -p echode-bridge-spike --features fault-injection,sanitizer-control
 cp "$bridge_library/libechode_bridge_spike.a" "$bridge_output/control/libcontrol.a"
-swift_flags=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
-    -target arm64-apple-macos27.0 -parse-as-library -g -sanitize="$bridge_sanitizer" \
+swift_flags=("${ECHODE_SWIFT_CPU_FLAGS[@]}" -swift-version 6 -strict-concurrency=complete -warnings-as-errors
+    -target arm64-apple-macos27.0 -parse-as-library -g -sanitize="$bridge_sanitizer"
     -module-cache-path "$bridge_output/module-cache")
 swiftc "${swift_flags[@]}" -Onone -I "$bridge_output/control" \
     spikes/bridge/sanitizers/Probe.swift "$bridge_output/control/libcontrol.a" \

@@ -5,29 +5,56 @@ struct WorkspacePalette: View {
     @State private var query = ""
     @State private var selected: WorkspaceCommand?
     @FocusState private var searching: Bool
-    private var commands: [WorkspaceCommand] { WorkspaceCommand.allCases.filter { $0 != .palette && fuzzyMatch(query, in: $0.title) } }
+    private var commands: [WorkspaceCommand] {
+        WorkspaceCommand.allCases.filter { $0 != .palette && fuzzyMatch(query, in: $0.title) }
+    }
     private var available: [WorkspaceCommand] { commands.filter { session.enabled($0, fromPalette: true) } }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(text("Command Palette")).font(.headline)
-            TextField(text("Search commands"), text: $query).focused($searching).focusedValue(\.workspaceTextEntry, true)
-                .onSubmit(run).onKeyPress(.downArrow) { move(1); return .handled }.onKeyPress(.upArrow) { move(-1); return .handled }
+            TextField(text("Search commands"), text: $query).focused($searching).focusedValue(
+                \.workspaceTextEntry, true
+            )
+            .onSubmit(run).onKeyPress(.downArrow) {
+                move(1)
+                return .handled
+            }.onKeyPress(.upArrow) {
+                move(-1)
+                return .handled
+            }
             List(selection: $selected) {
                 ForEach(commands) { command in
-                    HStack { Label(command.title, systemImage: command.icon); Spacer(); Text(command.shortcutLabel).foregroundStyle(.secondary) }
-                        .tag(command).contentShape(Rectangle())
-                        .foregroundStyle(session.enabled(command, fromPalette: true) ? .primary : .secondary)
-                        .onTapGesture(count: 2) { selected = command; run() }
+                    HStack {
+                        Label(command.title, systemImage: command.icon)
+                        Spacer()
+                        Text(command.shortcutLabel).foregroundStyle(.secondary)
+                    }
+                    .tag(command).contentShape(Rectangle())
+                    .foregroundStyle(session.enabled(command, fromPalette: true) ? .primary : .secondary)
+                    .onTapGesture(count: 2) {
+                        selected = command
+                        run()
+                    }
                 }
-            }.onMoveCommand { if $0 == .down { move(1) }; if $0 == .up { move(-1) } }
-                .onKeyPress(.return) { run(); return .handled }
+            }.onMoveCommand {
+                if $0 == .down { move(1) }
+                if $0 == .up { move(-1) }
+            }
+            .onKeyPress(.return) {
+                run()
+                return .handled
+            }
             HStack {
                 Button(text("Close")) { session.state.presentation = nil }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(text("Run"), action: run).disabled(selected.map { !session.enabled($0, fromPalette: true) } ?? true)
+                Button(text("Run"), action: run).disabled(
+                    selected.map { !session.enabled($0, fromPalette: true) } ?? true)
             }
         }.padding(20).frame(width: 460, height: 460)
-            .onAppear { searching = true; selected = available.first }
+            .onAppear {
+                searching = true
+                selected = available.first
+            }
             .onChange(of: query) { _, _ in selected = retainedSelection(selected, in: available) }
     }
     private func move(_ offset: Int) { selected = movedSelection(selected, in: available, offset: offset) }

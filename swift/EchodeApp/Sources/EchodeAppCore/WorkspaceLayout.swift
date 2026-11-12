@@ -22,7 +22,8 @@ struct WorkspaceLayout: Codable, Equatable {
 
     var minimumWidth: Double { max(740, 520 + (inspector ? 185 : 0) + (browser ? 185 : 0)) }
     var minimumHeight: Double {
-        let content = (editorsMaximized ? 0 : Self.minimumArrangeHeight)
+        let content =
+            (editorsMaximized ? 0 : Self.minimumArrangeHeight)
             + (editor ? Self.minimumEditorHeight : 0) + (devices ? Self.deviceHeight : 0)
             + Double(separatorCount) * Self.divider
         return max(editor && !editorsMaximized ? 580 : 360, content + Self.windowChrome)
@@ -51,11 +52,15 @@ struct WorkspaceLayout: Codable, Equatable {
         let device = devices ? min(Self.deviceHeight, height) : 0
         let separator = separatorCount > 0 ? min(Self.divider, (height - device) / Double(separatorCount)) : 0
         let available = max(0, height - device - separator * Double(separatorCount))
-        let piano = editor ? (editorsMaximized ? available :
-            min(max(Self.minimumEditorHeight, editorHeight), max(0, available - Self.minimumArrangeHeight))) : 0
+        let piano =
+            editor
+            ? (editorsMaximized
+                ? available
+                : min(max(Self.minimumEditorHeight, editorHeight), max(0, available - Self.minimumArrangeHeight))) : 0
         let arrange = editorsMaximized ? 0 : max(0, available - piano)
-        return WorkspaceDimensions(inspector: fittedLeft, browser: fittedRight, editor: piano, devices: device,
-                                   arrange: arrange, separator: separator, spacer: max(0, available - piano - arrange))
+        return WorkspaceDimensions(
+            inspector: fittedLeft, browser: fittedRight, editor: piano, devices: device,
+            arrange: arrange, separator: separator, spacer: max(0, available - piano - arrange))
     }
 
     mutating func resize(_ pane: WorkspacePane, to value: Double, in size: CGSize) {
@@ -66,7 +71,8 @@ struct WorkspaceLayout: Codable, Equatable {
         case .browser: browserWidth = min(max(180, value), max(180, min(340, size.width - 530 - actual.inspector)))
         case .editor:
             guard !editorsMaximized else { return }
-            let limit = size.height - actual.devices - Double(separatorCount) * actual.separator - Self.minimumArrangeHeight
+            let limit =
+                size.height - actual.devices - Double(separatorCount) * actual.separator - Self.minimumArrangeHeight
             editorHeight = min(max(Self.minimumEditorHeight, value), max(Self.minimumEditorHeight, limit))
         case .devices: break
         }

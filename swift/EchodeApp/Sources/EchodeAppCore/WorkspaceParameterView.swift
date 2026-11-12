@@ -100,17 +100,19 @@ final class DeviceParameterListView: NSView, NSTableViewDataSource, NSTableViewD
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let state, order.indices.contains(row) else { return nil }
         let parameter = state.parameters[order[row]]
-        let view = tableView.makeView(withIdentifier: Self.rowID, owner: nil) as? DeviceParameterRow ?? {
-            let made = DeviceParameterRow(parameter: parameter)
-            made.identifier = Self.rowID
-            made.onBegin = { [weak self] id in self?.onBegin?(id) ?? false }
-            made.onChange = { [weak self] value in self?.onChange?(value) }
-            made.onEnd = { [weak self] commit in self?.onEnd?(commit) }
-            made.onStep = { [weak self] id, value in self?.onStep?(id, value) }
-            made.onEnter = { [weak self] id, text in await self?.onEnter?(id, text) ?? false }
-            made.onPin = { [weak self] id, value in self?.onPin?(id, value) }
-            return made
-        }()
+        let view =
+            tableView.makeView(withIdentifier: Self.rowID, owner: nil) as? DeviceParameterRow
+            ?? {
+                let made = DeviceParameterRow(parameter: parameter)
+                made.identifier = Self.rowID
+                made.onBegin = { [weak self] id in self?.onBegin?(id) ?? false }
+                made.onChange = { [weak self] value in self?.onChange?(value) }
+                made.onEnd = { [weak self] commit in self?.onEnd?(commit) }
+                made.onStep = { [weak self] id, value in self?.onStep?(id, value) }
+                made.onEnter = { [weak self] id, text in await self?.onEnter?(id, text) ?? false }
+                made.onPin = { [weak self] id, value in self?.onPin?(id, value) }
+                return made
+            }()
         view.configure(parameter, pinned: pinned.contains(parameter.id), locked: locked)
         return view
     }
@@ -151,7 +153,10 @@ final class ParameterSlider: NSSlider {
     override func mouseUp(with event: NSEvent) { clicks.up(at: convert(event.locationInWindow, from: nil)) }
     override func mouseCancelled(with event: NSEvent) { clicks.cancel() }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53, clicks.active { clicks.cancel(); return }
+        if event.keyCode == 53, clicks.active {
+            clicks.cancel()
+            return
+        }
         clicks.settle()
         super.keyDown(with: event)
     }
@@ -243,7 +248,10 @@ final class DeviceParameterRow: NSView {
 
     func configure(_ parameter: DeviceParameter, pinned: Bool, locked: Bool) {
         let same = parameter.id == self.parameter.id
-        if !same { slider.clicks.cancel(); entry?.cancel() }
+        if !same {
+            slider.clicks.cancel()
+            entry?.cancel()
+        }
         self.parameter = parameter
         slider.parameter = parameter.id
         if !same || name.stringValue.isEmpty {
@@ -298,7 +306,8 @@ final class DeviceParameterRow: NSView {
         guard id == parameter.id, !parameter.readOnly else { return }
         entry?.cancel()
         let shown = parameter.text.isEmpty ? String(format: "%.4g", parameter.value) : parameter.text
-        entry = ValueEntryField.open(in: self, over: slider.frame, text: shown, label: parameter.name,
+        entry = ValueEntryField.open(
+            in: self, over: slider.frame, text: shown, label: parameter.name,
             commit: { [weak self] typed in await self?.onEnter?(id, typed) ?? false },
             onClose: { [weak self] in self?.entry = nil })
     }

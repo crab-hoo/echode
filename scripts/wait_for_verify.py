@@ -4,9 +4,9 @@
 import argparse
 import fcntl
 import json
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,11 +55,13 @@ def claude_response(response):
     """Claude Code reads an empty object as no decision and denies through hookSpecificOutput."""
     if response.get("permission") == "allow":
         return {}
-    return {"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": response.get("agent_message", ""),
-    }}
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": response.get("agent_message", ""),
+        }
+    }
 
 
 def main(argv=None):

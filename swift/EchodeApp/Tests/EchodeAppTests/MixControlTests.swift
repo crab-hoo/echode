@@ -2,13 +2,16 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct MixControlTests {
     private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
     }
 
     @Test func pendingPreviewKeepsOnlyTheLatestValueAndCloseCancelsIt() async throws {
@@ -55,9 +58,11 @@ struct MixControlTests {
         func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent { try mouse(type, point, in: header) }
         var completion: Task<Void, Never>?
         header.setSnapshot(try #require(controller.snapshot), selected: track)
-        header.mixActions = MixActions(begin: { controller.beginFader($0, field: $1) }, change: { controller.changeFader($0) },
+        header.mixActions = MixActions(
+            begin: { controller.beginFader($0, field: $1) }, change: { controller.changeFader($0) },
             finish: { commit in completion = Task { await controller.finishFader(commit: commit) } },
-            set: { id, field, value in completion = Task { await controller.setMixer(id, field: field, value: value) } })
+            set: { id, field, value in completion = Task { await controller.setMixer(id, field: field, value: value) } }
+        )
         let layout = TrackControlLayout(row: header.bounds)
         #expect(layout.visible)
         // A click away from the knob position does not jump there (ADR 0153).
@@ -70,7 +75,9 @@ struct MixControlTests {
         #expect(controller.undoCount == before)
         header.mouseDown(with: try event(.leftMouseDown, down))
         for step in 1...20 {
-            header.mouseDragged(with: try event(.leftMouseDragged, CGPoint(x: down.x + layout.gain.width * 0.2 * Double(step) / 25, y: down.y)))
+            header.mouseDragged(
+                with: try event(
+                    .leftMouseDragged, CGPoint(x: down.x + layout.gain.width * 0.2 * Double(step) / 25, y: down.y)))
         }
         #expect(controller.mixer(track)?.gain.value == 1)
         #expect(controller.undoCount == before)
@@ -144,18 +151,26 @@ struct MixControlTests {
         let track = try #require(controller.selection)
         let pane = ArrangePaneView(frame: CGRect(x: 0, y: 0, width: 1200, height: 128))
         pane.layout()
-        func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent { try mouse(type, point, in: pane.timeline) }
+        func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
+            try mouse(type, point, in: pane.timeline)
+        }
         var completion: Task<Void, Never>?
-        pane.onClipEdit = { edit in completion = Task {
-            switch edit {
-            case .gain(let id, let gain): await controller.setClipGain(id, gain: gain)
-            case .fades(let id, let entering, let leaving): await controller.setClipFades(id, fadeIn: entering, fadeOut: leaving)
+        pane.onClipEdit = { edit in
+            completion = Task {
+                switch edit {
+                case .gain(let id, let gain): await controller.setClipGain(id, gain: gain)
+                case .fades(let id, let entering, let leaving):
+                    await controller.setClipFades(id, fadeIn: entering, fadeOut: leaving)
+                }
             }
-        } }
+        }
         let camera = ArrangeCamera(pixelsPerBeat: 200)
         let initial = try #require(controller.snapshot)
-        let id = try #require(initial.visibleElements(originTick: 0, widthTicks: 705_600 * 8,
-            originTrack: 0, heightTracks: 2, pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64)
+        let id = try #require(
+            initial.visibleElements(
+                originTick: 0, widthTicks: 705_600 * 8,
+                originTrack: 0, heightTracks: 2, pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64
+            )
             .elements.first { $0.role == .clip }?.id.placement)
         func present() throws -> ArrangeFrame {
             let snapshot = try #require(controller.snapshot)
@@ -186,7 +201,8 @@ struct MixControlTests {
             // Placed audio starts without fades; the handle sits just inside
             // the edge and the drag moves the fade by the pointer's distance.
             let edge = entering ? layout.rect.minX + layout.fadeIn : layout.rect.maxX - layout.fadeOut
-            let up = CGPoint(x: down.x + layout.rect.minX + layout.rect.width * (entering ? 0.2 : 0.7) - edge, y: down.y)
+            let up = CGPoint(
+                x: down.x + layout.rect.minX + layout.rect.width * (entering ? 0.2 : 0.7) - edge, y: down.y)
             pane.timeline.mouseDown(with: try event(.leftMouseDown, down))
             pane.timeline.mouseDragged(with: try event(.leftMouseDragged, up))
             pane.timeline.mouseUp(with: try event(.leftMouseUp, up))
@@ -352,9 +368,19 @@ struct MixControlTests {
         let turn = EditTurn()
         let gate = TurnGate()
         var secondStarted = false
-        let first = Task { await turn.run { await gate.wait(); return 1 } }
+        let first = Task {
+            await turn.run {
+                await gate.wait()
+                return 1
+            }
+        }
         await gate.entered()
-        let second = Task { await turn.run { secondStarted = true; return 2 } }
+        let second = Task {
+            await turn.run {
+                secondStarted = true
+                return 2
+            }
+        }
         for _ in 0..<20 { await Task.yield() }
         #expect(!secondStarted)
         #expect(turn.busy)
@@ -369,13 +395,23 @@ struct MixControlTests {
         let gate = TurnGate()
         var locks: [Bool] = []
         turn.onExclusive = { locks.append($0) }
-        let first = Task { await turn.run { await gate.wait(); return 1 } }
+        let first = Task {
+            await turn.run {
+                await gate.wait()
+                return 1
+            }
+        }
         await gate.entered()
         #expect(turn.busy && locks.isEmpty)
         let replacement = Task { await turn.run(exclusive: true) { return 2 } }
         for _ in 0..<20 { await Task.yield() }
         #expect(locks == [true])
-        let last = Task { await turn.run { #expect(locks == [true, false]); return 3 } }
+        let last = Task {
+            await turn.run {
+                #expect(locks == [true, false])
+                return 3
+            }
+        }
         gate.resume()
         #expect(await first.value == 1)
         #expect(await replacement.value == 2)
@@ -394,7 +430,8 @@ struct MixControlTests {
         #expect(await controller.insertPlugin("org.example.fx", on: track, documentID: document))
         let device = try #require(controller.deviceRows(on: track).first?.id)
 
-        func roundTrip(_ on: @escaping @MainActor () async -> Bool, _ off: @escaping @MainActor () async -> Bool) async {
+        func roundTrip(_ on: @escaping @MainActor () async -> Bool, _ off: @escaping @MainActor () async -> Bool) async
+        {
             let gate = TurnGate()
             let held = Task { await controller.edits.run { await gate.wait() } }
             await gate.entered()
@@ -411,14 +448,18 @@ struct MixControlTests {
             #expect(await second.value)
             #expect(controller.undoCount == before + 2)
         }
-        await roundTrip({ await controller.editDeviceChain(.bypass(device: device, bypassed: true), documentID: document) },
-                        { await controller.editDeviceChain(.bypass(device: device, bypassed: false), documentID: document) })
-        await roundTrip({ await controller.editDeviceChain(.offline(device: device, offline: true), documentID: document) },
-                        { await controller.editDeviceChain(.offline(device: device, offline: false), documentID: document) })
-        await roundTrip({ await controller.setPinned(1, device: device, pinned: true, documentID: document) },
-                        { await controller.setPinned(1, device: device, pinned: false, documentID: document) })
-        await roundTrip({ await controller.setMixer(track, field: .gain, value: 0.5, documentID: document) },
-                        { await controller.setMixer(track, field: .gain, value: 1, documentID: document) })
+        await roundTrip(
+            { await controller.editDeviceChain(.bypass(device: device, bypassed: true), documentID: document) },
+            { await controller.editDeviceChain(.bypass(device: device, bypassed: false), documentID: document) })
+        await roundTrip(
+            { await controller.editDeviceChain(.offline(device: device, offline: true), documentID: document) },
+            { await controller.editDeviceChain(.offline(device: device, offline: false), documentID: document) })
+        await roundTrip(
+            { await controller.setPinned(1, device: device, pinned: true, documentID: document) },
+            { await controller.setPinned(1, device: device, pinned: false, documentID: document) })
+        await roundTrip(
+            { await controller.setMixer(track, field: .gain, value: 0.5, documentID: document) },
+            { await controller.setMixer(track, field: .gain, value: 1, documentID: document) })
         let row = try #require(controller.deviceRows(on: track).first)
         #expect(!row.bypassed && !row.offline && row.pinned.isEmpty)
         #expect(controller.mixer(track)?.gain.value == 1)
@@ -518,8 +559,12 @@ private actor PreviewGate {
     }
     func receive(_ gain: Float) async {
         values.append(gain)
-        entry?.resume(); entry = nil
+        entry?.resume()
+        entry = nil
         if values.count == 1 { await withCheckedContinuation { held = $0 } }
     }
-    func release() { held?.resume(); held = nil }
+    func release() {
+        held?.resume()
+        held = nil
+    }
 }

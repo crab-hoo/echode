@@ -4,6 +4,7 @@ import CoreText
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -56,17 +57,25 @@ struct PianoTests {
     @Test func degreeColumnShowsRomanNumeralsThatFit() {
         let track = UUID()
         let camera = PianoCamera(topPitch: 72)
-        let input = CanvasInput(snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 2)
-        let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
-        let column = frame.labels.filter { $0.clip.x == 0 && Double($0.clip.y) < frame.layout.velocity.minY }.map(\.text)
+        let input = CanvasInput(
+            snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 2)
+        let frame = PianoFrame(
+            input: input,
+            piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+        let column = frame.labels.filter { $0.clip.x == 0 && Double($0.clip.y) < frame.layout.velocity.minY }.map(
+            \.text)
         let numerals = ["I", "II", "III", "IV", "V", "VI", "VII"]
         #expect(column.contains("I–VII"))
         #expect(numerals.allSatisfy(column.contains))
         #expect(column.allSatisfy { $0 == "I–VII" || numerals.contains($0) })
         let font = CTFontCreateUIFontForLanguage(.system, 12, nil)!
         func width(_ name: String) -> Double {
-            let attributes: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): font]
-            return CTLineGetTypographicBounds(CTLineCreateWithAttributedString(NSAttributedString(string: name, attributes: attributes)), nil, nil, nil)
+            let attributes: [NSAttributedString.Key: Any] = [
+                NSAttributedString.Key(kCTFontAttributeName as String): font
+            ]
+            return CTLineGetTypographicBounds(
+                CTLineCreateWithAttributedString(NSAttributedString(string: name, attributes: attributes)), nil, nil,
+                nil)
         }
         #expect(width("I–VII") <= frame.layout.degreeWidth - 4)
         #expect(numerals.allSatisfy { width($0) <= frame.layout.degreeWidth - 8 })
@@ -77,10 +86,15 @@ struct PianoTests {
         for top in [64.25, 72.0, 0.5, 127.0] {
             for height in [12.0, 20.0, 48.0] {
                 let camera = PianoCamera(originBeat: 1.25, topPitch: top, pixelsPerPitch: height)
-                let input = CanvasInput(snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 211, scale: 2)
-                let first = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+                let input = CanvasInput(
+                    snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 211, scale: 2)
+                let first = PianoFrame(
+                    input: input,
+                    piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
                 for key in [DisplayKey(tonic: 2), DisplayKey(tonic: 6, minor: true)] {
-                    let changed = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: key, preview: nil))
+                    let changed = PianoFrame(
+                        input: input,
+                        piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: key, preview: nil))
                     #expect(first.gridInstances.map(\.rect) == changed.gridInstances.map(\.rect))
                     #expect(first.gridInstances.map(\.color) == changed.gridInstances.map(\.color))
                     #expect(first.keyboardInstances.map(\.rect) == changed.keyboardInstances.map(\.rect))
@@ -92,7 +106,9 @@ struct PianoTests {
                 }
                 #expect(first.layout.degreeWidth == 36 && first.layout.keyboardWidth == 44)
                 #expect(first.layout.gridPoint(CGPoint(x: 160, y: 44)) == CGPoint(x: 80, y: 20))
-                #expect(first.layout.paneRect(CGRect(x: 1, y: 2, width: 3, height: 4)) == CGRect(x: 81, y: 26, width: 3, height: 4))
+                #expect(
+                    first.layout.paneRect(CGRect(x: 1, y: 2, width: 3, height: 4))
+                        == CGRect(x: 81, y: 26, width: 3, height: 4))
                 #expect(!first.layout.grid.contains(CGPoint(x: 71, y: 100)))
                 #expect(!first.layout.grid.contains(CGPoint(x: 200, y: 23)))
             }
@@ -157,7 +173,8 @@ struct PianoTests {
         let far = try #require(controller.snapshot?.pianoNeighbor(track: track, current: first.id))
         var camera = PianoCamera()
         camera.reveal(far, width: 360, height: 200)
-        let shown = try #require(controller.snapshot).pianoNotes(track: track,
+        let shown = try #require(controller.snapshot).pianoNotes(
+            track: track,
             originTick: try #require(Tick.ticks(camera.originBeat)), widthTicks: 705_600 * 5,
             topPitch: camera.topPitch, heightPitches: 10, pixelsPerTick: 72 / 705_600, pixelsPerPitch: 20)
         #expect(shown.contains { $0.id == far.id })
@@ -184,8 +201,11 @@ struct PianoTests {
         let snapshot = try #require(controller.snapshot)
         let grid = PianoGridView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         let camera = PianoCamera()
-        let input = CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
-        let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+        let input = CanvasInput(
+            snapshot: snapshot, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        let frame = PianoFrame(
+            input: input,
+            piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
         #expect(!frame.notes.isEmpty)
         grid.setSnapshot(snapshot, track: track, focus: nil, key: DisplayKey(), busy: false)
         // Rendering and layout notifications alone must not assemble elements.
@@ -203,8 +223,12 @@ struct PianoTests {
         #expect(label.contains(noteName(note.pitch)) && label.contains(text("Start beat")))
         #expect(element.accessibilityCustomActions()?.count == 6)
         let initialFrame = element.accessibilityFrame()
-        #expect(initialFrame == frame.layout.paneRect(NSRect(x: Double(note.x), y: Double(note.y),
-            width: max(2, Double(note.width)), height: Double(note.height))))
+        #expect(
+            initialFrame
+                == frame.layout.paneRect(
+                    NSRect(
+                        x: Double(note.x), y: Double(note.y),
+                        width: max(2, Double(note.width)), height: Double(note.height))))
         #expect(element.accessibilityValue() as? String == "")
         // Moving the window without a redraw refreshes the cached frame only.
         let moved = grid.buildAccessibilityChildren(convert: { $0.offsetBy(dx: 10, dy: 20) })
@@ -215,7 +239,11 @@ struct PianoTests {
         // A new accepted frame rebuilds the focused element for its notification,
         // then the visible set on query, while keeping the element identity.
         grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
-        grid.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: note.id, camera: camera, key: DisplayKey(), preview: nil), revision: 1))
+        grid.present(
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(track: track, focus: note.id, camera: camera, key: DisplayKey(), preview: nil),
+                revision: 1))
         #expect(grid.accessibilityBuilds == builds + 1)
         let updated = grid.buildAccessibilityChildren(convert: { $0 })
         // The focused element was already rebuilt for its notification.
@@ -239,8 +267,12 @@ struct PianoTests {
         // Stopping clears the announced focus so reopening notifies again.
         grid.stop()
         #expect(grid.accessibilityBuilds == 0)
-        grid.present(PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: other.id, camera: camera,
-            key: DisplayKey(), preview: nil), revision: 2))
+        grid.present(
+            PianoFrame(
+                input: input,
+                piano: PianoRenderInput(
+                    track: track, focus: other.id, camera: camera,
+                    key: DisplayKey(), preview: nil), revision: 2))
         #expect(grid.accessibilityBuilds == 1)
         await controller.close()
     }
@@ -265,8 +297,11 @@ struct PianoTests {
             writes.append(Task { await controller.editNote(id, geometry: geometry, documentID: document) })
         }
         grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
-        let up = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: true, keyCode: UInt16(kVK_UpArrow)))
+        let up = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: true,
+                keyCode: UInt16(kVK_UpArrow)))
         grid.keyDown(with: up)
         grid.setSnapshot(snapshot, track: track, focus: note.id, key: DisplayKey(), busy: false)
         grid.keyDown(with: up)

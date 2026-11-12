@@ -3,9 +3,9 @@
 
 import argparse
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,8 +58,9 @@ def respond_claude(event, invoke, counts=ROOT / "target/claude-stop-blocks.json"
 def invoke():
     (ROOT / "target").mkdir(exist_ok=True)
     with (ROOT / "target/agent-check.log").open("w") as log:
-        return subprocess.run([sys.executable, str(ROOT / "scripts/verify.py")],
-                              cwd=ROOT, stdout=log, stderr=subprocess.STDOUT).returncode
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts/verify.py")], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT
+        ).returncode
 
 
 def main(argv=None):
@@ -70,7 +71,10 @@ def main(argv=None):
         event = json.load(sys.stdin)
         response = respond_claude(event, invoke) if args.host == "claude" else respond(event, invoke)
     except (OSError, ValueError) as error:
-        message = "終了時の検査を開始できませんでした。入力と検査環境を確認し、make verify を実行してください。原因: " + str(error)
+        message = (
+            "終了時の検査を開始できませんでした。入力と検査環境を確認し、make verify を実行してください。原因: "
+            + str(error)
+        )
         response = {"decision": "block", "reason": message} if args.host == "claude" else {"followup_message": message}
     print(json.dumps(response, ensure_ascii=False))
 

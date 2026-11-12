@@ -4,6 +4,7 @@ import Foundation
 import Observation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 /// Audio status replies only; this fixture never opens HAL or a helper.
@@ -12,12 +13,18 @@ private actor PreparingAudio {
     private var revision = 1
 
     func advance() { revision += 1 }
-    func prepared() { opening = false; revision += 1 }
+    func prepared() {
+        opening = false
+        revision += 1
+    }
 
     func status() throws -> AudioState {
-        try JSONDecoder().decode(AudioState.self, from: Data("""
-            {"playing":false,"running":false,"tick":\(revision),"devices":[],"metronome":false,"opening":\(opening)}
-            """.utf8))
+        try JSONDecoder().decode(
+            AudioState.self,
+            from: Data(
+                """
+                {"playing":false,"running":false,"tick":\(revision),"devices":[],"metronome":false,"opening":\(opening)}
+                """.utf8))
     }
 }
 
@@ -26,20 +33,26 @@ struct DevicePreparationTests {
     @Test func contractDeviceColumnsDistinguishOutputPreparationFromParameterReplies() async throws {
         let audio = PreparingAudio()
         let plugin = FakeParameterPlugin()
-        let controller = ProjectController(sendAudio: { _, _ in try await audio.status() },
-                                           sendDevice: { try await plugin.send($0, $1) })
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-device-preparation-\(UUID()).echode")
+        let controller = ProjectController(
+            sendAudio: { _, _ in try await audio.status() },
+            sendDevice: { try await plugin.send($0, $1) })
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-device-preparation-\(UUID()).echode")
         defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
         await controller.addTrack(name: "fx")
         let track = try #require(controller.selection)
-        for _ in 0..<2 { #expect(await controller.insertPlugin("dev.echode.test-params", on: track, documentID: document)) }
+        for _ in 0..<2 {
+            #expect(await controller.insertPlugin("dev.echode.test-params", on: track, documentID: document))
+        }
         let devices = controller.deviceRows(on: track)
         let device = devices[0].id
         await plugin.hold(device)
         let listing = controller.showDevices(on: track)
-        try await wait("the unheld device parameter reply") { controller.parameterState(devices[1].id)?.loading == false }
+        try await wait("the unheld device parameter reply") {
+            controller.parameterState(devices[1].id)?.loading == false
+        }
         let state = try #require(controller.parameterState(device))
         state.query = "gain"
         let observing = Task { await controller.observeAudio() }
@@ -48,8 +61,9 @@ struct DevicePreparationTests {
 
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 900, height: 400))
         func refresh() {
-            strip.configure(devices: controller.deviceRows(on: track), track: track, document: document, busy: controller.busy,
-                            states: controller.parameterStates, outputOpening: controller.outputOpening)
+            strip.configure(
+                devices: controller.deviceRows(on: track), track: track, document: document, busy: controller.busy,
+                states: controller.parameterStates, outputOpening: controller.outputOpening)
             strip.layoutSubtreeIfNeeded()
         }
         refresh()
@@ -86,13 +100,18 @@ struct DevicePreparationTests {
     @Test func outputPreparationObservationIgnoresPositionUpdates() async throws {
         let audio = PreparingAudio()
         let controller = ProjectController(sendAudio: { _, _ in try await audio.status() })
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-preparation-observation-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-preparation-observation-\(UUID()).echode")
         defer { removeTestFile(url) }
         await controller.open(url, creating: true)
         await controller.refreshOutputs()
         #expect(controller.outputOpening)
         let invalidated = Mutex(false)
-        withObservationTracking { _ = controller.outputOpening } onChange: { invalidated.withLock { $0 = true } }
+        withObservationTracking {
+            _ = controller.outputOpening
+        } onChange: {
+            invalidated.withLock { $0 = true }
+        }
         await audio.advance()
         await controller.refreshOutputs()
         #expect(controller.position == 2 && controller.outputOpening)
@@ -106,13 +125,17 @@ struct DevicePreparationTests {
 
     @Test func preparationMessagesRespectDeviceStateAndDisclosure() throws {
         #expect(!AudioState().opening)
-        let document = DocumentID(), track = UUID(), device = UUID()
+        let document = DocumentID()
+        let track = UUID()
+        let device = UUID()
         let row = TrackDevice(id: device, plugin: "dev.echode.test-params")
         let state = DeviceParameterState(document: document, device: device)
-        let column = DeviceColumnView(device: row, payload: FXDrag(document: document, track: track, device: device, plugin: nil))
+        let column = DeviceColumnView(
+            device: row, payload: FXDrag(document: document, track: track, device: device, plugin: nil))
         func refresh(_ state: DeviceParameterState?, opening: Bool = true, offline: Bool = false) {
-            column.configure(device: TrackDevice(id: device, plugin: row.plugin, offline: offline), first: true, last: true,
-                             busy: false, locked: false, outputOpening: opening, state: state)
+            column.configure(
+                device: TrackDevice(id: device, plugin: row.plugin, offline: offline), first: true, last: true,
+                busy: false, locked: false, outputOpening: opening, state: state)
         }
         refresh(nil)
         #expect(column.message.stringValue == text("Preparing audio output"))
@@ -122,7 +145,9 @@ struct DevicePreparationTests {
         #expect(column.isCollapsed && column.message.isHidden)
         column.disclosure.clickWithoutAnimation()
         #expect(!column.isCollapsed && !column.message.isHidden)
-        #expect(column.message.stringValue == text("Preparing audio output"), "Local disclosure must keep the output status")
+        #expect(
+            column.message.stringValue == text("Preparing audio output"), "Local disclosure must keep the output status"
+        )
         refresh(state, opening: false)
         #expect(column.message.stringValue == text("Loading parameters"))
         state.fail("Preparation failed")

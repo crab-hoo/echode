@@ -26,7 +26,8 @@ private func cancelledAfterEnqueue() async throws -> LifetimeProbe {
     document.pause()
     let pending = Task.detached { [weak document] in
         guard let document else { preconditionFailure("driver owns the document until completion") }
-        let result = try await document.addTrack("cancel after enqueue", observer: { _ in changes.withLock { $0 += 1 } })
+        let result = try await document.addTrack(
+            "cancel after enqueue", observer: { _ in changes.withLock { $0 += 1 } })
         precondition(result.withUnsafeNotes { $0.isEmpty })
         return result.revision
     }
@@ -52,7 +53,13 @@ private func failingWorkerDrainsReplies() async throws -> LifetimeProbe {
     let (enqueued, signal) = AsyncStream<Void>.makeStream()
     let second = Task.detached { [weak document] in
         guard let document else { preconditionFailure("driver owns the document until completion") }
-        return try await document.addTrack("queued", enqueued: { signal.yield(()); signal.finish() }).revision
+        return try await document.addTrack(
+            "queued",
+            enqueued: {
+                signal.yield(())
+                signal.finish()
+            }
+        ).revision
     }
     for await _ in enqueued { break }
     document.failNext()
@@ -101,5 +108,7 @@ func checkBridgeContracts() async throws {
         try await failingWorkerDrainsReplies().checkReleased()
         try await closingQueueDrainsAcceptedWork().checkReleased()
     }
-    print("C ABI: PASS post-enqueue cancellation, panic/queue shutdown completion, empty views, all resource counts return to zero")
+    print(
+        "C ABI: PASS post-enqueue cancellation, panic/queue shutdown completion, empty views, all resource counts return to zero"
+    )
 }

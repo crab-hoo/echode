@@ -13,7 +13,8 @@ struct TrackFXNamesLayout {
         let width = max(0, fx.rect.minX - start - 4)
         let shown = fx.visible && row.height >= 52 && count > 0 && width >= 36
         overflow = shown && count > 1 ? CGRect(x: fx.rect.minX - 22, y: fx.rect.minY, width: 18, height: 18) : .zero
-        name = shown ? CGRect(x: start, y: fx.rect.minY, width: max(0, width - (count > 1 ? 22 : 0)), height: 18) : .zero
+        name =
+            shown ? CGRect(x: start, y: fx.rect.minY, width: max(0, width - (count > 1 ? 22 : 0)), height: 18) : .zero
     }
     var titleEnd: Double? { name.isEmpty ? nil : name.minX - 4 }
 }
@@ -27,8 +28,9 @@ extension ArrangeHeaderView {
     func deviceMenu(_ devices: [TrackDevice], track: UUID) -> NSMenu {
         let menu = NSMenu()
         for device in devices {
-            let item = NSMenuItem(title: pluginNames[device.plugin] ?? device.plugin,
-                                  action: #selector(openHeaderMenuDevice(_:)), keyEquivalent: "")
+            let item = NSMenuItem(
+                title: pluginNames[device.plugin] ?? device.plugin,
+                action: #selector(openHeaderMenuDevice(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = HeaderDeviceTarget(document: documentID, track: track, device: device.id)
             item.isEnabled = !device.offline
@@ -40,7 +42,8 @@ extension ArrangeHeaderView {
 
     @objc private func openHeaderMenuDevice(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? HeaderDeviceTarget, target.document == documentID,
-              let device = headerDevices(on: target.track).first(where: { $0.id == target.device }) else { return }
+            let device = headerDevices(on: target.track).first(where: { $0.id == target.device })
+        else { return }
         openHeaderDevice(device, track: target.track)
     }
 }

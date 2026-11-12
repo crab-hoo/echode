@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import EchodeBridge
 
 final class TransactionTests: XCTestCase {
@@ -8,7 +9,8 @@ final class TransactionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let document = try Document(creating: url.path)
         defer { document.shutdown() }
-        let added = try await document.perform("""
+        let added = try await document.perform(
+            """
             [{"type":"track.add","name":"first"},{"type":"track.add","name":"second"}]
             """)
         XCTAssertEqual(added.trackCount, 2)
@@ -18,8 +20,10 @@ final class TransactionTests: XCTestCase {
         XCTAssertEqual(redone.trackID(at: 0), added.trackID(at: 0))
         XCTAssertEqual(redone.trackID(at: 1), added.trackID(at: 1))
         _ = try await document.undo()
-        for invalid in [#"{"type":"device.add","track":"00000000-0000-0000-0000-000000000000","plugin":"org.example.fx"}"#,
-                        #"{"type":"unknown.action"}"#] {
+        for invalid in [
+            #"{"type":"device.add","track":"00000000-0000-0000-0000-000000000000","plugin":"org.example.fx"}"#,
+            #"{"type":"unknown.action"}"#,
+        ] {
             do {
                 _ = try await document.perform("[{\"type\":\"track.add\",\"name\":\"rollback\"},\(invalid)]")
                 XCTFail("a rejected element must roll back the whole array")

@@ -2,20 +2,25 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct DeviceParameterRetryTests {
     @Test func failedListOffersAnAccessibleRetryInItsColumn() throws {
-        let document = DocumentID(), track = UUID(), device = UUID()
+        let document = DocumentID()
+        let track = UUID()
+        let device = UUID()
         let row = TrackDevice(id: device, plugin: "dev.echode.test-params")
         let state = DeviceParameterState(document: document, device: device)
         state.fail("The plugin did not answer")
-        let column = DeviceColumnView(device: row, payload: FXDrag(document: document, track: track, device: device, plugin: nil))
+        let column = DeviceColumnView(
+            device: row, payload: FXDrag(document: document, track: track, device: device, plugin: nil))
         column.configure(device: row, first: true, last: true, busy: false, locked: false, state: state)
-        let retry = try #require(column.subviews.compactMap { $0 as? NSButton }.first {
-            $0.identifier?.rawValue == "retry-parameters"
-        })
+        let retry = try #require(
+            column.subviews.compactMap { $0 as? NSButton }.first {
+                $0.identifier?.rawValue == "retry-parameters"
+            })
         #expect(!retry.isHidden && retry.isEnabled)
         #expect(retry.accessibilityLabel()?.contains(row.title) == true)
         #expect(column.message.stringValue == "The plugin did not answer")
@@ -26,7 +31,8 @@ struct DeviceParameterRetryTests {
         #expect(!retry.isHidden && !retry.isEnabled)
         retry.performClick(nil)
         #expect(retried == 0)
-        column.configure(device: row, first: true, last: true, busy: false, locked: false, collapsed: true, state: state)
+        column.configure(
+            device: row, first: true, last: true, busy: false, locked: false, collapsed: true, state: state)
         #expect(retry.isHidden)
         let offline = TrackDevice(id: device, plugin: row.plugin, offline: true)
         column.configure(device: offline, first: true, last: true, busy: false, locked: false, state: state)
@@ -44,7 +50,8 @@ struct DeviceParameterRetryTests {
         let (controller, document, track, url) = try await project(plugin)
         defer { removeTestFile(url) }
         let devices = controller.deviceRows(on: track)
-        let failed = devices[0].id, other = devices[1].id
+        let failed = devices[0].id
+        let other = devices[1].id
         await plugin.failNextListing(failed)
         await controller.showDevices(on: track).value
         let state = try #require(controller.parameterState(failed))
@@ -55,8 +62,9 @@ struct DeviceParameterRetryTests {
         var pending: Task<Void, Never>?
         strip.onRetry = { pending = controller.retryParameters($0, documentID: document) }
         func refresh() {
-            strip.configure(devices: controller.deviceRows(on: track), track: track, document: document, busy: controller.busy,
-                            states: [failed: state, other: otherState])
+            strip.configure(
+                devices: controller.deviceRows(on: track), track: track, document: document, busy: controller.busy,
+                states: [failed: state, other: otherState])
             strip.layoutSubtreeIfNeeded()
         }
         refresh()
@@ -172,13 +180,16 @@ struct DeviceParameterRetryTests {
     }
 
     private func project(_ plugin: FakeParameterPlugin) async throws -> (ProjectController, DocumentID, UUID, URL) {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-parameter-retry-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-parameter-retry-\(UUID()).echode")
         let controller = ProjectController(sendDevice: { try await plugin.send($0, $1) })
         await controller.open(url, creating: true)
         let document = try #require(controller.documentID)
         await controller.addTrack(name: "fx")
         let track = try #require(controller.selection)
-        for _ in 0..<2 { #expect(await controller.insertPlugin("dev.echode.test-params", on: track, documentID: document)) }
+        for _ in 0..<2 {
+            #expect(await controller.insertPlugin("dev.echode.test-params", on: track, documentID: document))
+        }
         return (controller, document, track, url)
     }
 }

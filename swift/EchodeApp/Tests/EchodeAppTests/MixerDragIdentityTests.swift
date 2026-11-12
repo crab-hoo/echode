@@ -1,17 +1,21 @@
 import AppKit
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct MixerDragIdentityTests {
     private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in header: ArrangeHeaderView) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type, location: header.convert(point, to: nil), modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        try #require(
+            NSEvent.mouseEvent(
+                with: type, location: header.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
     }
 
     @Test func contractZeroHorizontalHeaderDragsPreserveQuietGainAndRedo() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-mixer-drag-identity-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-mixer-drag-identity-\(UUID()).echode")
         defer { removeTestFile(url) }
         let controller = ProjectController(sendAudio: { _, _ in AudioState() })
         await controller.open(url, creating: true)
@@ -41,12 +45,14 @@ struct MixerDragIdentityTests {
 
             header.mouseDown(with: try mouse(.leftMouseDown, start, in: header))
             header.mouseDragged(with: try mouse(.leftMouseDragged, vertical, in: header))
-            #expect(controller.faderPreview?.gain == original,
+            #expect(
+                controller.faderPreview?.gain == original,
                 "a vertical header drag must preserve the exact gain, including below the display floor")
             header.mouseUp(with: try mouse(.leftMouseUp, vertical, in: header))
             await completion?.value
             #expect(controller.mixer(track)?.gain.value == original)
-            #expect(controller.undoCount == before && controller.redoCount == 1,
+            #expect(
+                controller.undoCount == before && controller.redoCount == 1,
                 "zero horizontal travel must not record an edit or discard Redo")
 
             header.setSnapshot(try #require(controller.snapshot), selected: track)
@@ -56,15 +62,18 @@ struct MixerDragIdentityTests {
             // Release at the original x without a matching final drag event.
             header.mouseUp(with: try mouse(.leftMouseUp, vertical, in: header))
             await completion?.value
-            #expect(controller.mixer(track)?.gain.value == original,
+            #expect(
+                controller.mixer(track)?.gain.value == original,
                 "returning to the press x must restore the exact original gain on release")
             #expect(controller.undoCount == before && controller.redoCount == 1)
             #expect(controller.faderPreview == nil && !header.clicks.active && controller.errorMessage == nil)
             await controller.redo()
             #expect(controller.mixer(track)?.pan.value == 0.25)
             await controller.undo()
-            await controller.close(); await controller.open(url)
-            #expect(controller.mixer(track)?.gain.value == original && controller.mixer(track)?.pan.value == 0,
+            await controller.close()
+            await controller.open(url)
+            #expect(
+                controller.mixer(track)?.gain.value == original && controller.mixer(track)?.pan.value == 0,
                 "zero-travel drags must preserve the original gain through save and reopen")
         }
         await controller.close()

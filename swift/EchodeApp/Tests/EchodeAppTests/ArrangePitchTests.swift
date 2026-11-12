@@ -3,6 +3,7 @@ import EchodeBridge
 import Foundation
 import Metal
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -23,7 +24,8 @@ struct ArrangePitchTests {
         let queue = try #require(device.makeCommandQueue())
         for scale in [1.0, 2.0] {
             for rowHeight in [16.0, 64.0, 240.0] {
-                let input = CanvasInput(snapshot: snapshot, selected: nil,
+                let input = CanvasInput(
+                    snapshot: snapshot, selected: nil,
                     camera: ArrangeCamera(pixelsPerBeat: 72, pixelsPerTrack: rowHeight),
                     width: 480, height: 280, scale: scale,
                     header: ArrangeHeaderInput(width: 160, palette: ArrangeHeaderPalette()),
@@ -32,13 +34,15 @@ struct ArrangePitchTests {
                 let notes = frame.elements.filter { $0.role == .note }
                 #expect(notes.count == 3)
                 #expect(notes[0].y > notes[1].y && notes[1].y > notes[2].y)
-                let instances = Array(frame.timelineInstances[frame.foregroundStart..<frame.foregroundStart + notes.count])
+                let instances = Array(
+                    frame.timelineInstances[frame.foregroundStart..<frame.foregroundStart + notes.count])
                 let view = ArrangeView(frame: NSRect(x: 0, y: 0, width: input.width, height: input.height))
                 view.setSnapshot(snapshot, selected: nil)
                 view.present(frame)
                 let image = try renderOffscreen(frame, painter: painter, device: device, queue: queue)
                 for (note, instance) in zip(notes, instances) {
-                    let expected = CGRect(x: frame.timelineOrigin + Double(note.x), y: input.arrangeTop + Double(note.y),
+                    let expected = CGRect(
+                        x: frame.timelineOrigin + Double(note.x), y: input.arrangeTop + Double(note.y),
                         width: Double(note.width), height: Double(note.height))
                     #expect(view.accessibilityRect(for: note) == expected)
                     #expect(abs(Double(instance.rect.y / Float(scale)) - expected.minY) < 0.0001)

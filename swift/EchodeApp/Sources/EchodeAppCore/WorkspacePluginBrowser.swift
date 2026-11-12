@@ -12,24 +12,40 @@ struct WorkspacePluginBrowser: View {
     @State private var loading = false
     @State private var scans = CoalescedReload()
     @FocusState private var searching: Bool
-    private var filtered: [PluginListing] { plugins.filter { fuzzyMatch(query, in: "\($0.name) \($0.vendor) \($0.id)") } }
-    private var targetExists: Bool { controller.isCurrent(document) && controller.tracks.contains { $0.id == controller.selection } }
+    private var filtered: [PluginListing] {
+        plugins.filter { fuzzyMatch(query, in: "\($0.name) \($0.vendor) \($0.id)") }
+    }
+    private var targetExists: Bool {
+        controller.isCurrent(document) && controller.tracks.contains { $0.id == controller.selection }
+    }
     /// A rescan does not block inserting a plugin that is listed (ADR 0162).
     private var canInsert: Bool { targetExists && !controller.busy && selected != nil }
     var body: some View {
         let filtered = self.filtered
         VStack(alignment: .leading, spacing: 12) {
             Text(text("Plugin Browser")).font(.headline)
-            LabeledContent(text("Track"), value: controller.tracks.first { $0.id == controller.selection }?.name ?? text("Select a track"))
+            LabeledContent(
+                text("Track"),
+                value: controller.tracks.first { $0.id == controller.selection }?.name ?? text("Select a track"))
             TextField(text("Search plugins"), text: $query).focused($searching).focusedValue(\.workspaceTextEntry, true)
-                .onSubmit { insert(closeAfter: false) }.onKeyPress(.downArrow) { move(1); return .handled }.onKeyPress(.upArrow) { move(-1); return .handled }
+                .onSubmit { insert(closeAfter: false) }.onKeyPress(.downArrow) {
+                    move(1)
+                    return .handled
+                }.onKeyPress(.upArrow) {
+                    move(-1)
+                    return .handled
+                }
             if loading { ProgressView().controlSize(.small) }
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
-            PluginCandidateList(plugins: filtered, selection: selected, document: document,
-                                onSelect: { selected = $0 },
-                                onInsert: { plugin, closeAfter in selected = plugin; insert(plugin, allSelected: false, closeAfter: closeAfter) },
-                                onInsertOnSelected: { insert($0, allSelected: true, closeAfter: false) },
-                                canInsertOnSelected: controller.acceptsInput(document) && !controller.selectedTracks.isEmpty)
+            PluginCandidateList(
+                plugins: filtered, selection: selected, document: document,
+                onSelect: { selected = $0 },
+                onInsert: { plugin, closeAfter in
+                    selected = plugin
+                    insert(plugin, allSelected: false, closeAfter: closeAfter)
+                },
+                onInsertOnSelected: { insert($0, allSelected: true, closeAfter: false) },
+                canInsertOnSelected: controller.acceptsInput(document) && !controller.selectedTracks.isEmpty)
             HStack {
                 Button(text("Refresh")) { Task { await reload() } }.disabled(loading || controller.busy)
                 Spacer()
@@ -50,7 +66,7 @@ struct WorkspacePluginBrowser: View {
                 }
             }
         }
-            .onChange(of: query) { _, _ in selected = preservedSelection(selected, in: filtered.map(\.id)) }
+        .onChange(of: query) { _, _ in selected = preservedSelection(selected, in: filtered.map(\.id)) }
     }
     private func move(_ offset: Int) { selected = movedSelection(selected, in: filtered.map(\.id), offset: offset) }
     private func insert(closeAfter: Bool) {
@@ -59,7 +75,8 @@ struct WorkspacePluginBrowser: View {
     }
     private func insert(_ plugin: String, allSelected: Bool, closeAfter: Bool) {
         guard filtered.contains(where: { $0.id == plugin }),
-              let request = controller.capturePluginInsertion(plugin, allSelected: allSelected, document: document) else { return }
+            let request = controller.capturePluginInsertion(plugin, allSelected: allSelected, document: document)
+        else { return }
         Task {
             if await controller.insertPlugin(request) {
                 if closeAfter { close() }
@@ -86,7 +103,10 @@ struct WorkspacePluginBrowser: View {
                 selected = retainedSelection(keep, in: filtered.map(\.id))
                 message = plugins.isEmpty ? text("No plugins found") : nil
             } catch {
-                if plugins.isEmpty { selected = nil; message = text("Plugin scan failed") }
+                if plugins.isEmpty {
+                    selected = nil
+                    message = text("Plugin scan failed")
+                }
             }
             guard let again = scans.finish(current) else { return }
             current = again

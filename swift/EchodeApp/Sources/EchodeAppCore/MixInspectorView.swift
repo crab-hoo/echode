@@ -13,20 +13,32 @@ struct TrackMixInspector: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(text("Track Controls")).font(.subheadline)
-                ControlNumberField(title: text("Volume"), value: MixScale.decibels(mix.gain.value), unit: "dB", minimum: -120,
-                    maximum: 20 * log10(Double(ModelLimits.gain.upperBound)), silence: true) { value in
+                ControlNumberField(
+                    title: text("Volume"), value: MixScale.decibels(mix.gain.value), unit: "dB", minimum: -120,
+                    maximum: 20 * log10(Double(ModelLimits.gain.upperBound)), silence: true
+                ) { value in
                     let gain: Float = value == -.infinity ? 0 : Float(pow(10, value / 20))
                     set(document, .gain, gain)
                 }
-                ControlNumberField(title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%",
-                    minimum: Double(ModelLimits.pan.lowerBound) * 100, maximum: Double(ModelLimits.pan.upperBound) * 100) { set(document, .pan, Float($0 / 100)) }
+                ControlNumberField(
+                    title: text("Pan"), value: Double(mix.pan.value) * 100, unit: "%",
+                    minimum: Double(ModelLimits.pan.lowerBound) * 100, maximum: Double(ModelLimits.pan.upperBound) * 100
+                ) { set(document, .pan, Float($0 / 100)) }
                 HStack {
-                    Toggle(text("Mute"), isOn: Binding(get: { mix.mute.value != 0 }, set: { set(document, .mute, $0 ? 1 : 0) }))
-                    Toggle(text("Solo"), isOn: Binding(get: { mix.solo.value != 0 }, set: { set(document, .solo, $0 ? 1 : 0) }))
+                    Toggle(
+                        text("Mute"),
+                        isOn: Binding(get: { mix.mute.value != 0 }, set: { set(document, .mute, $0 ? 1 : 0) }))
+                    Toggle(
+                        text("Solo"),
+                        isOn: Binding(get: { mix.solo.value != 0 }, set: { set(document, .solo, $0 ? 1 : 0) }))
                 }.toggleStyle(.button)
                 if controller.selectedTracks.contains(track), controller.selectedTracks.count > 1 {
-                    Text(text("Volume and pan controls adjust selected tracks relatively, including header drags and resets."))
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(
+                        text(
+                            "Volume and pan controls adjust selected tracks relatively, including header drags and resets."
+                        )
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
             }.disabled(controller.busy || controller.faderPreview != nil)
             TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: meterPaused && !transport)) { timeline in
@@ -34,7 +46,8 @@ struct TrackMixInspector: View {
                 let playing = controller.playback?.position.playing == true
                 HStack(spacing: 8) {
                     PeakMeter(peak: peak)
-                    Text(MixScale.meterLabel(peak)).font(.caption.monospacedDigit()).frame(width: 72, alignment: .trailing)
+                    Text(MixScale.meterLabel(peak)).font(.caption.monospacedDigit()).frame(
+                        width: 72, alignment: .trailing)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(text("Peak Level"))
@@ -48,8 +61,11 @@ struct TrackMixInspector: View {
     }
     private func set(_ document: DocumentID?, _ field: MixerField, _ value: Float) {
         let actions = controller.arrangeMixActions(document: document)
-        if field == .gain || field == .pan { (actions.enter ?? actions.set)(track, field, value) }
-        else { actions.set(track, field, value) }
+        if field == .gain || field == .pan {
+            (actions.enter ?? actions.set)(track, field, value)
+        } else {
+            actions.set(track, field, value)
+        }
     }
 }
 
@@ -60,16 +76,24 @@ struct ClipMixInspector: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(text("Audio Clip")).font(.subheadline)
-            ControlNumberField(title: text("Clip Gain"), value: MixScale.decibels(clip.gain), unit: "dB", minimum: -120,
-                maximum: 20 * log10(Double(MixScale.clipGainMax)), silence: true) { db in
+            ControlNumberField(
+                title: text("Clip Gain"), value: MixScale.decibels(clip.gain), unit: "dB", minimum: -120,
+                maximum: 20 * log10(Double(MixScale.clipGainMax)), silence: true
+            ) { db in
                 let gain: Float = db == -.infinity ? 0 : min(MixScale.clipGainMax, Float(pow(10, db / 20)))
                 guard let document = controller.documentID else { return }
                 Task { await controller.setClipGain(clip.id, gain: gain, documentID: document) }
             }
-            ControlNumberField(title: text("Fade In"), value: Double(clip.fadeIn) / ClipEntry.flicksPerMillisecond, unit: "ms", minimum: 0,
-                maximum: ClipEntry.maximumFadeMilliseconds) { setFade($0, entering: true) }
-            ControlNumberField(title: text("Fade Out"), value: Double(clip.fadeOut) / ClipEntry.flicksPerMillisecond, unit: "ms", minimum: 0,
-                maximum: ClipEntry.maximumFadeMilliseconds) { setFade($0, entering: false) }
+            ControlNumberField(
+                title: text("Fade In"), value: Double(clip.fadeIn) / ClipEntry.flicksPerMillisecond, unit: "ms",
+                minimum: 0,
+                maximum: ClipEntry.maximumFadeMilliseconds
+            ) { setFade($0, entering: true) }
+            ControlNumberField(
+                title: text("Fade Out"), value: Double(clip.fadeOut) / ClipEntry.flicksPerMillisecond, unit: "ms",
+                minimum: 0,
+                maximum: ClipEntry.maximumFadeMilliseconds
+            ) { setFade($0, entering: false) }
             Text(text("Drag the clip corners to change fades. Drag its gain handle vertically."))
                 .font(.caption).foregroundStyle(.secondary)
         }.disabled(controller.busy || controller.faderPreview != nil)
@@ -77,8 +101,11 @@ struct ClipMixInspector: View {
     private func setFade(_ milliseconds: Double, entering: Bool) {
         let flicks = Int64((milliseconds * ClipEntry.flicksPerMillisecond).rounded())
         guard let document = controller.documentID else { return }
-        Task { await controller.setClipFades(clip.id, fadeIn: entering ? flicks : clip.fadeIn,
-            fadeOut: entering ? clip.fadeOut : flicks, documentID: document) }
+        Task {
+            await controller.setClipFades(
+                clip.id, fadeIn: entering ? flicks : clip.fadeIn,
+                fadeOut: entering ? clip.fadeOut : flicks, documentID: document)
+        }
     }
 }
 
@@ -92,7 +119,8 @@ private struct PeakMeter: View {
             context.fill(Path(bounds), with: .color(Color(red: 0.27, green: 0.29, blue: 0.33)))
             var fill = bounds
             fill.size.width *= MixScale.meter(peak)
-            let color = peak >= 1
+            let color =
+                peak >= 1
                 ? Color(red: 1, green: 0.25, blue: 0.12)
                 : Color(red: 0.28, green: 0.80, blue: 0.49)
             context.fill(Path(fill), with: .color(color))
@@ -120,7 +148,10 @@ struct ControlNumberField: View {
                 Spacer()
                 TextField(title, text: $draft).multilineTextAlignment(.trailing).frame(width: 70)
                     .textFieldStyle(.roundedBorder).focused($focused).accessibilityLabel(title)
-                    .onSubmit(submit).onExitCommand { reset(); focused = false }
+                    .onSubmit(submit).onExitCommand {
+                        reset()
+                        focused = false
+                    }
                 Text(unit).font(.caption).foregroundStyle(.secondary).frame(width: 22, alignment: .leading)
             }
             if invalid { Text(text("Enter a valid value in range")).font(.caption).foregroundStyle(.red) }
@@ -129,10 +160,17 @@ struct ControlNumberField: View {
         .onChange(of: value) { _, _ in if !focused { reset() } }
         .onChange(of: focused) { _, active in if !active { submit() } }
     }
-    private func reset() { draft = value.isFinite ? String(format: "%.2f", value) : "−∞"; invalid = false }
+    private func reset() {
+        draft = value.isFinite ? String(format: "%.2f", value) : "−∞"
+        invalid = false
+    }
     private func submit() {
         guard let parsed = MixEntry.number(draft, unit: unit, silence: silence),
-              silence && parsed == -.infinity || parsed.isFinite && parsed >= minimum && parsed <= maximum else { invalid = true; return }
+            silence && parsed == -.infinity || parsed.isFinite && parsed >= minimum && parsed <= maximum
+        else {
+            invalid = true
+            return
+        }
         invalid = false
         if abs(parsed - value) > 0.005 || parsed.isInfinite != value.isInfinite { commit(parsed) }
     }

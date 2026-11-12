@@ -4,10 +4,10 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "target/toolchains/tsan"
@@ -46,8 +46,7 @@ def prepared(expected):
     try:
         manifest = json.loads((CACHE / "manifest.json").read_text())
         return manifest["context"] == expected and all(
-            sha256(CACHE / variant / LIBRARY) == manifest["libraries"][variant]
-            for variant in ("baseline", "fixed")
+            sha256(CACHE / variant / LIBRARY) == manifest["libraries"][variant] for variant in ("baseline", "fixed")
         )
     except (OSError, ValueError, KeyError):
         return False
@@ -56,10 +55,21 @@ def prepared(expected):
 def fetch():
     CACHE.mkdir(parents=True, exist_ok=True)
     if not UPSTREAM.exists():
-        subprocess.run([
-            "git", "clone", "--depth", "1", "--filter=blob:none", "--sparse",
-            "--branch", TAG, "https://github.com/llvm/llvm-project.git", str(UPSTREAM),
-        ], check=True)
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "--filter=blob:none",
+                "--sparse",
+                "--branch",
+                TAG,
+                "https://github.com/llvm/llvm-project.git",
+                str(UPSTREAM),
+            ],
+            check=True,
+        )
     if output("git", "-C", str(UPSTREAM), "rev-parse", "HEAD") != COMMIT:
         raise ValueError("TSan source does not match the pinned LLVM commit")
     subprocess.run(["git", "-C", str(UPSTREAM), "sparse-checkout", "set", *DIRECTORIES], check=True)
@@ -79,10 +89,14 @@ def prepare():
     if source.exists():
         shutil.rmtree(source)
     source.mkdir(parents=True)
-    subprocess.run(["git", "-C", str(UPSTREAM), "diff", "--exit-code", "HEAD", "--",
-                    *DIRECTORIES], check=True, stdout=subprocess.DEVNULL)
-    names = subprocess.check_output(["git", "-C", str(UPSTREAM), "ls-files", "-z", "--",
-                                     *DIRECTORIES]).decode().split("\0")
+    subprocess.run(
+        ["git", "-C", str(UPSTREAM), "diff", "--exit-code", "HEAD", "--", *DIRECTORIES],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    names = (
+        subprocess.check_output(["git", "-C", str(UPSTREAM), "ls-files", "-z", "--", *DIRECTORIES]).decode().split("\0")
+    )
     for name in filter(None, names):
         destination = source / name
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -90,15 +104,25 @@ def prepare():
     subprocess.run(["patch", "-p1", "-i", str(PATCH)], cwd=source, check=True)
     build = CACHE / "build"
     command = [
-        "cmake", "-S", str(source / "compiler-rt"), "-B", str(build), "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_OSX_ARCHITECTURES=arm64",
-        "-DCMAKE_OSX_DEPLOYMENT_TARGET=27.0", "-DSANITIZER_MIN_OSX_VERSION=27.0",
+        "cmake",
+        "-S",
+        str(source / "compiler-rt"),
+        "-B",
+        str(build),
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_OSX_ARCHITECTURES=arm64",
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=27.0",
+        "-DSANITIZER_MIN_OSX_VERSION=27.0",
         "-DCMAKE_C_COMPILER=" + output("xcrun", "--find", "clang"),
         "-DCMAKE_CXX_COMPILER=" + output("xcrun", "--find", "clang++"),
         "-DCMAKE_C_COMPILER_TARGET=arm64-apple-macos27.0",
         "-DCMAKE_CXX_COMPILER_TARGET=arm64-apple-macos27.0",
-        "-DCMAKE_C_FLAGS=-mcpu=apple-m4", "-DCMAKE_CXX_FLAGS=-mcpu=apple-m4",
-        "-DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON", "-DCOMPILER_RT_SANITIZERS_TO_BUILD=tsan",
+        "-DCMAKE_C_FLAGS=-mcpu=apple-m4",
+        "-DCMAKE_CXX_FLAGS=-mcpu=apple-m4",
+        "-DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON",
+        "-DCOMPILER_RT_SANITIZERS_TO_BUILD=tsan",
         "-DCOMPILER_RT_INCLUDE_TESTS=OFF",
     ]
     for component in ("BUILTINS", "XRAY", "LIBFUZZER", "PROFILE", "CTX_PROFILE", "MEMPROF", "ORC"):
@@ -113,19 +137,22 @@ def prepare():
         raise ValueError("TSan errno lifetime negative control anchor changed")
     libraries = {}
     for variant in ("baseline", "fixed"):
-        lifetime.write_text(fixed.replace(LIFETIME, LIFETIME.replace("true", "false"))
-                            if variant == "baseline" else fixed)
+        lifetime.write_text(
+            fixed.replace(LIFETIME, LIFETIME.replace("true", "false")) if variant == "baseline" else fixed
+        )
         with (CACHE / f"build-{variant}.log").open("w") as stream:
-            subprocess.run(["cmake", "--build", str(build), "--target",
-                            "clang_rt.tsan_osx_dynamic", "-j", "6"],
-                           stdout=stream, stderr=subprocess.STDOUT, check=True)
+            subprocess.run(
+                ["cmake", "--build", str(build), "--target", "clang_rt.tsan_osx_dynamic", "-j", "6"],
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
         destination = CACHE / variant / LIBRARY
         destination.parent.mkdir(exist_ok=True)
         shutil.copy2(build / "lib/darwin" / LIBRARY, destination)
         libraries[variant] = sha256(destination)
     shutil.copy2(source / "compiler-rt/LICENSE.TXT", CACHE / "LICENSE.TXT")
-    (CACHE / "manifest.json").write_text(json.dumps(
-        {"context": expected, "libraries": libraries}, indent=2) + "\n")
+    (CACHE / "manifest.json").write_text(json.dumps({"context": expected, "libraries": libraries}, indent=2) + "\n")
     print("Prepared pinned Darwin TSan and its errno lifetime negative control")
 
 

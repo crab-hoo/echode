@@ -8,7 +8,11 @@ public struct OutputDevice: Decodable, Sendable, Equatable, Identifiable {
     public let sampleRate: UInt32
     public let bufferFrames: UInt32
     public let channels: UInt32
-    enum CodingKeys: String, CodingKey { case id, uid, name, channels, sampleRate = "sample_rate", bufferFrames = "buffer_frames" }
+    enum CodingKeys: String, CodingKey {
+        case id, uid, name, channels
+        case sampleRate = "sample_rate"
+        case bufferFrames = "buffer_frames"
+    }
 }
 
 /// One reply of the output, in the three parts that change at different rates.
@@ -21,7 +25,11 @@ public struct AudioState: Decodable, Sendable, Equatable {
     /// The sample audition beside the project output, when one was ever requested.
     public let audition: AuditionStatus?
     public let tick: Int64
-    public init() { status = AudioStatus(); audition = nil; tick = 0 }
+    public init() {
+        status = AudioStatus()
+        audition = nil
+        tick = 0
+    }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         tick = try container.decode(Int64.self, forKey: .tick)
@@ -56,8 +64,20 @@ public struct AudioStatus: Decodable, Sendable, Equatable {
     /// The output muted the master because it ran past +18 dBFS (ADR 0282).
     public let masterAutoMute: MasterAutoMute?
     public init() {
-        playing = false; running = false; opening = false; start = 0; paused = false; selectedUID = nil; activeDevice = nil; devices = []; error = nil
-        loopStart = nil; loopEnd = nil; metronome = false; autoMutedTracks = []; masterAutoMute = nil
+        playing = false
+        running = false
+        opening = false
+        start = 0
+        paused = false
+        selectedUID = nil
+        activeDevice = nil
+        devices = []
+        error = nil
+        loopStart = nil
+        loopEnd = nil
+        metronome = false
+        autoMutedTracks = []
+        masterAutoMute = nil
     }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -79,9 +99,13 @@ public struct AudioStatus: Decodable, Sendable, Equatable {
         masterAutoMute = try container.decodeIfPresent(MasterAutoMute.self, forKey: .masterAutoMute)
     }
     enum CodingKeys: String, CodingKey {
-        case playing, running, opening, start, paused, devices, error, metronome, selectedUID = "selected_uid", activeDevice = "active_device"
-        case loopStart = "loop_start", loopEnd = "loop_end"
-        case autoMutedTracks = "auto_muted_tracks", masterAutoMute = "master_auto_mute"
+        case playing, running, opening, start, paused, devices, error, metronome
+        case selectedUID = "selected_uid"
+        case activeDevice = "active_device"
+        case loopStart = "loop_start"
+        case loopEnd = "loop_end"
+        case autoMutedTracks = "auto_muted_tracks"
+        case masterAutoMute = "master_auto_mute"
     }
 }
 
@@ -93,7 +117,9 @@ public struct TrackAutoMute: Decodable, Sendable, Equatable {
     /// The project sample of the first such value.
     public let sample: Int64
     public init(track: UUID, device: UUID, sample: Int64) {
-        self.track = track; self.device = device; self.sample = sample
+        self.track = track
+        self.device = device
+        self.sample = sample
     }
 }
 
@@ -102,7 +128,10 @@ public struct MasterAutoMute: Decodable, Sendable, Equatable {
     /// The first amplitude past the guard; `nil` for a NaN.
     public let peak: Float?
     public let sample: Int64
-    public init(peak: Float?, sample: Int64) { self.peak = peak; self.sample = sample }
+    public init(peak: Float?, sample: Int64) {
+        self.peak = peak
+        self.sample = sample
+    }
 }
 
 /// The newest audition request and what became of it.
@@ -122,7 +151,9 @@ public struct AuditionStatus: Decodable, Sendable, Equatable {
     public let settings: AuditionSettings?
     public let outputError: String?
     enum CodingKeys: String, CodingKey {
-        case request, handled, path, phase, error, history, waveform, settings, sampleRate = "sample_rate", outputError = "output_error"
+        case request, handled, path, phase, error, history, waveform, settings
+        case sampleRate = "sample_rate"
+        case outputError = "output_error"
     }
 }
 
@@ -143,7 +174,10 @@ public struct AuditionWaveform: Decodable, Sendable, Equatable {
     /// Minimum and maximum across the source channels for each time bucket.
     public let peaks: [[Float]]
     enum CodingKeys: String, CodingKey {
-        case frames, complete, peaks, loadedFrames = "loaded_frames", sampleRate = "sample_rate", framesPerPeak = "frames_per_peak"
+        case frames, complete, peaks
+        case loadedFrames = "loaded_frames"
+        case sampleRate = "sample_rate"
+        case framesPerPeak = "frames_per_peak"
         case firstFrame = "first_frame"
     }
 }
@@ -174,11 +208,15 @@ public enum SampleOverview: Sendable, Equatable {
             var written = 0
             let code = path.withUnsafeBufferPointer { path in
                 data.withUnsafeMutableBytes { raw in
-                    echode_sample_overview(path.baseAddress, path.count, channel, request,
-                                           raw.baseAddress?.assumingMemoryBound(to: UInt8.self), capacity, &written)
+                    echode_sample_overview(
+                        path.baseAddress, path.count, channel, request,
+                        raw.baseAddress?.assumingMemoryBound(to: UInt8.self), capacity, &written)
                 }
             }
-            if code == 1 { capacity = written; continue }
+            if code == 1 {
+                capacity = written
+                continue
+            }
             guard code == 0, let reply = try? JSONDecoder().decode(Reply.self, from: data.prefix(written)) else {
                 return .failed("sample overview failed")
             }
@@ -202,7 +240,8 @@ public struct AuditionOrigin: Sendable, Equatable {
     /// From the input event to the request. Ignored for `other`.
     public var delayMicroseconds: UInt64
     public init(input: AuditionInput, delayMicroseconds: UInt64 = 0) {
-        self.input = input; self.delayMicroseconds = delayMicroseconds
+        self.input = input
+        self.delayMicroseconds = delayMicroseconds
     }
     public static let other = AuditionOrigin(input: .other)
 }
@@ -232,11 +271,19 @@ public struct AuditionEntry: Codable, Sendable, Equatable {
     public var settled: Bool { (heardUs != nil && decodedUs != nil) || ![.loading, .sounding].contains(phase) }
     enum CodingKeys: String, CodingKey {
         case request, path, input, phase, error
-        case inputDelayUs = "input_delay_us", requestedAtMs = "requested_at_ms", pickedUs = "picked_us", decodedUs = "decoded_us"
+        case inputDelayUs = "input_delay_us"
+        case requestedAtMs = "requested_at_ms"
+        case pickedUs = "picked_us"
+        case decodedUs = "decoded_us"
         case firstDecodedUs = "first_decoded_us"
-        case sourceFrames = "source_frames", sourceRate = "source_rate", outputUs = "output_us", openedOutput = "opened_output"
+        case sourceFrames = "source_frames"
+        case sourceRate = "source_rate"
+        case outputUs = "output_us"
+        case openedOutput = "opened_output"
         case startFrame = "start_frame"
-        case convertedUs = "converted_us", handedUs = "handed_us", heardUs = "heard_us"
+        case convertedUs = "converted_us"
+        case handedUs = "handed_us"
+        case heardUs = "heard_us"
         case starvedFrames = "starved_frames"
     }
 }
@@ -247,12 +294,17 @@ public struct FaderValue: Encodable, Sendable, Equatable {
     public let gain: Float
     public let pan: Float
     public init(track: UUID, gain: Float, pan: Float) {
-        self.track = track; self.gain = gain; self.pan = pan
+        self.track = track
+        self.gain = gain
+        self.pan = pan
     }
 }
 
 public enum AudioCommand: Encodable, Sendable {
-    case play, pause, stop, locate(tick: Int64), output(uid: String?), refresh, status
+    case play, pause, stop
+    case locate(tick: Int64)
+    case output(uid: String?)
+    case refresh, status
     /// Remembers where playback starts and stop returns, saved with the package.
     case setStart(tick: Int64)
     /// Opens the output stopped, helpers and media included, so the first play does not wait.
@@ -271,9 +323,15 @@ public enum AudioCommand: Encodable, Sendable {
         case .play: type = "transport.play"
         case .pause: type = "transport.pause"
         case .stop: type = "transport.stop"
-        case .locate(let tick): type = "transport.locate"; try container.encode(tick, forKey: .tick)
-        case .setStart(let tick): type = "transport.set_start"; try container.encode(tick, forKey: .tick)
-        case .output(let uid): type = "audio.output"; try container.encode(uid, forKey: .uid)
+        case .locate(let tick):
+            type = "transport.locate"
+            try container.encode(tick, forKey: .tick)
+        case .setStart(let tick):
+            type = "transport.set_start"
+            try container.encode(tick, forKey: .tick)
+        case .output(let uid):
+            type = "audio.output"
+            try container.encode(uid, forKey: .uid)
         case .refresh: type = "audio.refresh"
         case .status: type = "audio.status"
         case .prepare: type = "audio.prepare"

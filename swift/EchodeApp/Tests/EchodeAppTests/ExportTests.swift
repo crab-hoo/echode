@@ -1,6 +1,7 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -14,8 +15,11 @@ struct ExportTests {
         await controller.open(source, creating: true)
         await controller.addTrack(name: "Captured")
         let document = try #require(controller.document)
-        do { _ = try await document.history(.exportSnapshot(path: frozen.path)) }
-        catch { Issue.record("Export snapshot failed: \(error)"); await controller.close(); return }
+        do { _ = try await document.history(.exportSnapshot(path: frozen.path)) } catch {
+            Issue.record("Export snapshot failed: \(error)")
+            await controller.close()
+            return
+        }
         await controller.addTrack(name: "Later")
         let copy = try await Task.detached { try Document(opening: frozen.path) }.value
         let snapshot = try await copy.snapshot()
@@ -32,11 +36,15 @@ struct ExportTests {
         let suite = "export-test-\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let source = root.appendingPathComponent("Song.echode"), output = root.appendingPathComponent("音声 mix.wav")
+        let source = root.appendingPathComponent("Song.echode")
+        let output = root.appendingPathComponent("音声 mix.wav")
         let wav = root.appendingPathComponent("input.wav")
         // This short fixture exercises copied PCM and a partial render block only.
         var input = wavMono(rate: 48_000, frames: 480)
-        for index in stride(from: 44, to: input.count, by: 2) { input[index] = 0; input[index + 1] = 32 }
+        for index in stride(from: 44, to: input.count, by: 2) {
+            input[index] = 0
+            input[index + 1] = 32
+        }
         try input.write(to: wav)
         let controller = ProjectController()
         await controller.open(source, creating: true)
@@ -44,18 +52,29 @@ struct ExportTests {
         #expect(await controller.importAudio(wav))
         let document = try #require(controller.documentID)
         let cli = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("target/debug/echode")
-        let marker = root.appendingPathComponent("started"), release = root.appendingPathComponent("release")
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
+                "target/debug/echode")
+        let marker = root.appendingPathComponent("started")
+        let release = root.appendingPathComponent("release")
         defer { try? Data().write(to: release) }
         let wrapper = root.appendingPathComponent("render-fixture")
-        let script = "#!/bin/sh\n: > '\(marker.path)'\ncount=0\nwhile [ ! -f '\(release.path)' ]; do\n count=$((count+1))\n [ $count -lt 3000 ] || exit 9\n /bin/sleep 0.01\ndone\nexec '\(cli.path)' \"$@\"\n"
+        let script =
+            "#!/bin/sh\n: > '\(marker.path)'\ncount=0\nwhile [ ! -f '\(release.path)' ]; do\n count=$((count+1))\n [ $count -lt 3000 ] || exit 9\n /bin/sleep 0.01\ndone\nexec '\(cli.path)' \"$@\"\n"
         try Data(script.utf8).write(to: wrapper)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
-        let job = ExportJob(); job.executable = wrapper
-        var settings = ExportSettings(); settings.automaticTail = false; settings.tailSeconds = 0
+        let job = ExportJob()
+        job.executable = wrapper
+        var settings = ExportSettings()
+        settings.automaticTail = false
+        settings.tailSeconds = 0
         let undo = controller.undoCount
-        let task = try #require(job.start(controller: controller, document: document, project: source, output: output, settings: settings, defaults: defaults))
-        #expect(job.start(controller: controller, document: document, project: source, output: output, settings: settings) == nil)
+        let task = try #require(
+            job.start(
+                controller: controller, document: document, project: source, output: output, settings: settings,
+                defaults: defaults))
+        #expect(
+            job.start(controller: controller, document: document, project: source, output: output, settings: settings)
+                == nil)
         let deadline = ContinuousClock.now + .seconds(30)
         while !FileManager.default.fileExists(atPath: marker.path), job.running, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
@@ -86,11 +105,15 @@ struct ExportTests {
         let suite = "export-settings-\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let first = URL(fileURLWithPath: "/tmp/first.echode"), second = URL(fileURLWithPath: "/tmp/second.echode")
+        let first = URL(fileURLWithPath: "/tmp/first.echode")
+        let second = URL(fileURLWithPath: "/tmp/second.echode")
         #expect(ExportSettings.load(project: first, defaults: defaults).format == .pcm24)
         var settings = ExportSettings()
-        settings.format = .pcm16; settings.tpdf = true; settings.sampleRate = 44_100
-        settings.automaticTail = false; settings.tailSeconds = 0.5
+        settings.format = .pcm16
+        settings.tpdf = true
+        settings.sampleRate = 44_100
+        settings.automaticTail = false
+        settings.tailSeconds = 0.5
         #expect(settings.arguments?.suffix(2) == ["--tail-frames", "22050"])
         settings.save(project: first, defaults: defaults)
         #expect(ExportSettings.load(project: first, defaults: defaults) == settings)
@@ -102,7 +125,8 @@ struct ExportTests {
             settings.tailSeconds = value
             #expect(settings.arguments == nil)
         }
-        settings.tailSeconds = 0; settings.sampleRate = 0
+        settings.tailSeconds = 0
+        settings.sampleRate = 0
         #expect(settings.arguments == nil)
     }
 }

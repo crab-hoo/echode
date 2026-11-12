@@ -1,6 +1,7 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -8,7 +9,8 @@ struct RecoveryConsentTests {
     @Test func contractRecoveryWarningPrecedesDocumentPublicationAndEditing() async throws {
         let fixture = try await damagedProject()
         defer { removeTestFile(fixture.url) }
-        let previous = FileManager.default.temporaryDirectory.appendingPathComponent("echode-before-recovery-\(UUID()).echode")
+        let previous = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-before-recovery-\(UUID()).echode")
         defer { removeTestFile(previous) }
         let prepares = PrepareCalls()
         let controller = ProjectController(sendAudio: { _, command in await prepares.receive(command) })
@@ -100,12 +102,16 @@ struct RecoveryConsentTests {
 
     private struct MissingWarning: Error {}
 
-    private func waitForPrompt(_ controller: ProjectController, opening: Task<Void, Never>, phase: String = "cancelled open") async throws {
+    private func waitForPrompt(
+        _ controller: ProjectController, opening: Task<Void, Never>, phase: String = "cancelled open"
+    ) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while controller.recoveryPrompt == nil {
             guard ContinuousClock.now < deadline else {
                 opening.cancel()
-                Issue.record("recovery warning did not precede document publication (\(phase)): busy=\(controller.busy), error=\(controller.errorMessage ?? "none"), tracks=\(controller.tracks.map(\.name)), document=\(controller.projectURL?.lastPathComponent ?? "none")")
+                Issue.record(
+                    "recovery warning did not precede document publication (\(phase)): busy=\(controller.busy), error=\(controller.errorMessage ?? "none"), tracks=\(controller.tracks.map(\.name)), document=\(controller.projectURL?.lastPathComponent ?? "none")"
+                )
                 throw MissingWarning()
             }
             try await Task.sleep(for: .milliseconds(5))

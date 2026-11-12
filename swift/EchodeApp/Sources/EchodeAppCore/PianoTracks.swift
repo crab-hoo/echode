@@ -18,7 +18,8 @@ extension ProjectController {
         guard let documentID else { return [] }
         return tracks.enumerated().map { index, track in
             let mix = snapshot?.mixer(onTrack: index)
-            return PianoTrackRow(target: PianoTrackTarget(document: documentID, track: track.id), name: track.name,
+            return PianoTrackRow(
+                target: PianoTrackTarget(document: documentID, track: track.id), name: track.name,
                 visible: !hiddenPianoTracks.contains(track.id), editing: pianoTrack == track.id,
                 solo: mix?.solo.value == 1, mute: mix?.mute.value == 1, enabled: !busy)
         }
@@ -41,15 +42,22 @@ extension ProjectController {
     @discardableResult
     func togglePianoMixer(_ target: PianoTrackTarget, field: MixerField) async -> Bool {
         guard field == .solo || field == .mute else { return false }
-        return await performActions({ [self] in
-            guard let mix = mixer(target.track) else { return nil }
-            return [.setParameter(parameter: mix[field].id.uuidString, value: mix[field].value == 1 ? 0 : 1)]
-        }, documentID: target.document)
+        return await performActions(
+            { [self] in
+                guard let mix = mixer(target.track) else { return nil }
+                return [.setParameter(parameter: mix[field].id.uuidString, value: mix[field].value == 1 ? 0 : 1)]
+            }, documentID: target.document)
     }
 
     func setPianoReference(_ target: PianoTrackTarget, visible: Bool) {
-        guard let session = inputSession(for: target.document), tracks.contains(where: { $0.id == target.track }) else { return }
-        if visible { session.hiddenPianoTracks.remove(target.track) } else { session.hiddenPianoTracks.insert(target.track) }
+        guard let session = inputSession(for: target.document), tracks.contains(where: { $0.id == target.track }) else {
+            return
+        }
+        if visible {
+            session.hiddenPianoTracks.remove(target.track)
+        } else {
+            session.hiddenPianoTracks.insert(target.track)
+        }
     }
 }
 

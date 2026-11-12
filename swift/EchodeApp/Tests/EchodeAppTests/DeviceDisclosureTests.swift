@@ -1,27 +1,35 @@
 import AppKit
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 private actor DisclosureRequests {
     var count = 0
-    func send() throws -> DeviceResult { count += 1; throw CancellationError() }
+    func send() throws -> DeviceResult {
+        count += 1
+        throw CancellationError()
+    }
 }
 
 @MainActor
 struct DeviceDisclosureTests {
     @Test func contractDeviceDisclosureKeepsIdentityAndDropTargets() throws {
-        let document = DocumentID(), track = UUID()
+        let document = DocumentID()
+        let track = UUID()
         let devices = (0..<3).map { TrackDevice(id: UUID(), plugin: "org.example.\($0)") }
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 1200, height: 300))
         let state = DeviceParameterState(document: document, device: devices[0].id)
-        state.list([DeviceParameter(id: 7, name: "Gain", min: 0, max: 1, defaultValue: 0, value: 0.4, text: "0.4")], keeping: nil)
+        state.list(
+            [DeviceParameter(id: 7, name: "Gain", min: 0, max: 1, defaultValue: 0, value: 0.4, text: "0.4")],
+            keeping: nil)
         strip.configure(devices: devices, track: track, document: document, busy: false, states: [devices[0].id: state])
         layout(strip)
         let column = try #require(strip.columns.first)
-        let disclosure = try #require(column.subviews.compactMap { $0 as? NSButton }.first {
-            $0.identifier?.rawValue == "device-disclosure"
-        })
+        let disclosure = try #require(
+            column.subviews.compactMap { $0 as? NSButton }.first {
+                $0.identifier?.rawValue == "device-disclosure"
+            })
         column.search.stringValue = "gain"
         column.search.sendAction(column.search.action, to: column.search.target)
         let width = strip.contentWidth
@@ -47,8 +55,10 @@ struct DeviceDisclosureTests {
         column.layoutSubtreeIfNeeded()
         let point = column.convert(CGPoint(x: column.title.frame.midX, y: column.title.frame.midY), to: nil)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
-                                                      windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            let event = try #require(
+                NSEvent.mouseEvent(
+                    with: type, location: point, modifierFlags: [], timestamp: 0,
+                    windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
             if type == .leftMouseDown { column.mouseDown(with: event) } else { column.mouseUp(with: event) }
         }
         #expect(opened == devices[0].id && column.isCollapsed)
@@ -62,13 +72,16 @@ struct DeviceDisclosureTests {
         layout(strip)
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        board.setData(try JSONEncoder().encode(FXDrag(document: document, track: track, device: devices[2].id, plugin: nil)),
-                      forType: FXDrag.deviceType)
+        board.setData(
+            try JSONEncoder().encode(FXDrag(document: document, track: track, device: devices[2].id, plugin: nil)),
+            forType: FXDrag.deviceType)
         var start = 0.0
         for (index, target) in strip.columns.enumerated() {
             let middle = start + target.preferredWidth / 2
-            for (x, expected) in [(middle - 1, Optional(devices[index].id)),
-                                  (middle + 1, index + 1 < devices.count ? devices[index + 1].id : nil)] {
+            for (x, expected) in [
+                (middle - 1, Optional(devices[index].id)),
+                (middle + 1, index + 1 < devices.count ? devices[index + 1].id : nil),
+            ] {
                 #expect(strip.accept(board, at: CGPoint(x: x, y: 8), copying: false))
                 #expect(edits.last == .reorder(device: devices[2].id, before: expected))
                 #expect(strip.accept(board, at: CGPoint(x: x, y: 8), copying: true))
@@ -76,8 +89,9 @@ struct DeviceDisclosureTests {
             }
             start += target.preferredWidth
         }
-        board.setData(try JSONEncoder().encode(FXDrag(document: document, track: UUID(), device: devices[0].id, plugin: nil)),
-                      forType: FXDrag.deviceType)
+        board.setData(
+            try JSONEncoder().encode(FXDrag(document: document, track: UUID(), device: devices[0].id, plugin: nil)),
+            forType: FXDrag.deviceType)
         #expect(strip.accept(board, at: .zero, copying: false))
         #expect(edits.last == .copy(source: devices[0].id, track: track, before: devices[0].id))
 
@@ -105,10 +119,13 @@ struct DeviceDisclosureTests {
         await controller.addTrack(name: "second")
         let second = try #require(controller.selection)
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 800, height: 300))
-        strip.onCollapse = { id, collapsed in controller.setDeviceCollapsed(id, collapsed: collapsed, documentID: document) }
+        strip.onCollapse = { id, collapsed in
+            controller.setDeviceCollapsed(id, collapsed: collapsed, documentID: document)
+        }
         func refresh(_ track: UUID) {
-            strip.configure(devices: controller.deviceRows(on: track), track: track, document: document,
-                            busy: false, collapsed: controller.collapsedDevices)
+            strip.configure(
+                devices: controller.deviceRows(on: track), track: track, document: document,
+                busy: false, collapsed: controller.collapsedDevices)
         }
         let before = controller.undoCount
         refresh(first)
@@ -117,14 +134,17 @@ struct DeviceDisclosureTests {
         #expect(controller.collapsedDevices == [device.id])
         #expect(controller.undoCount == before && controller.redoCount == 0)
         #expect(controller.deviceRows(on: first) == [device])
-        refresh(second); refresh(first)
+        refresh(second)
+        refresh(first)
         #expect(strip.columns.first === original && original.isCollapsed)
         // Rebuilding the editor also preserves disclosure for this document.
         let rebuilt = DeviceStripView(frame: .zero)
-        rebuilt.configure(devices: [device], track: first, document: document, busy: false, collapsed: controller.collapsedDevices)
+        rebuilt.configure(
+            devices: [device], track: first, document: document, busy: false, collapsed: controller.collapsedDevices)
         #expect(rebuilt.columns.first?.isCollapsed == true)
         // Closing a column preserves it through remove/Undo; a copy starts expanded.
-        #expect(await controller.editDeviceChain(.copy(source: device.id, track: first, before: nil), documentID: document))
+        #expect(
+            await controller.editDeviceChain(.copy(source: device.id, track: first, before: nil), documentID: document))
         refresh(first)
         #expect(strip.columns.map(\.isCollapsed) == [true, false])
         #expect(await controller.editDeviceChain(.reorder(device: device.id, before: nil), documentID: document))
@@ -158,7 +178,8 @@ struct DeviceDisclosureTests {
     }
 
     @Test func offlineLoadingAndFailedColumnsCanBeFoldedAndScrollExtentShrinks() throws {
-        let document = DocumentID(), track = UUID()
+        let document = DocumentID()
+        let track = UUID()
         var devices = (0..<3).map { TrackDevice(id: UUID(), plugin: "org.example.\($0)") }
         devices[0].offline = true
         let failed = DeviceParameterState(document: document, device: devices[2].id)
@@ -166,12 +187,15 @@ struct DeviceDisclosureTests {
         let scroll = DeviceStripScrollView(frame: CGRect(x: 0, y: 0, width: 520, height: 220))
         let strip = DeviceStripView(frame: .zero)
         scroll.documentView = strip
-        strip.configure(devices: devices, track: track, document: document, busy: false, states: [devices[2].id: failed])
-        scroll.layout(); layout(strip)
+        strip.configure(
+            devices: devices, track: track, document: document, busy: false, states: [devices[2].id: failed])
+        scroll.layout()
+        layout(strip)
         #expect(strip.columns.allSatisfy { !$0.message.isHidden })
         scroll.contentView.scroll(to: CGPoint(x: strip.contentWidth - scroll.contentSize.width, y: 0))
         for column in strip.columns { column.disclosure.clickWithoutAnimation() }
-        scroll.layout(); layout(strip)
+        scroll.layout()
+        layout(strip)
         #expect(Double(strip.frame.width) == strip.contentWidth)
         #expect(scroll.contentView.bounds.maxX <= strip.frame.maxX)
         #expect(strip.columns.allSatisfy { $0.isCollapsed && $0.message.isHidden && $0.list.isHidden })
@@ -183,8 +207,9 @@ struct DeviceDisclosureTests {
     }
 
     @Test func foldingReleasesSearchFocusInsteadOfHidingTheActiveEditor() throws {
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 300),
-                              styleMask: [.borderless], backing: .buffered, defer: true)
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 800, height: 300),
+            styleMask: [.borderless], backing: .buffered, defer: true)
         let strip = DeviceStripView(frame: .zero)
         window.contentView = strip
         let device = TrackDevice(id: UUID(), plugin: "org.example.fx")

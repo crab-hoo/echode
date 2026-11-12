@@ -1,10 +1,10 @@
 """Keep the Phase 0 engine workload out of default product builds."""
 
-from pathlib import Path
 import json
 import subprocess
 import tomllib
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = ROOT / "crates/echode-engine"
@@ -37,23 +37,31 @@ class EngineSpikeTests(unittest.TestCase):
         self.assertRegex(
             device,
             r'#\[cfg\(feature = "spike"\)\]\s+use objc2_core_audio_types::'
-            r'\{AudioBuffer, AudioBufferList, AudioTimeStamp\};',
+            r"\{AudioBuffer, AudioBufferList, AudioTimeStamp\};",
         )
         self.assertRegex(device, r'#\[cfg\(feature = "spike"\)\]\s+fn set_u32\(')
-        for function in ("AudioObjectSetPropertyData", "AudioDeviceCreateIOProcID",
-                         "AudioDeviceDestroyIOProcID", "AudioDeviceStart", "AudioDeviceStop"):
+        for function in (
+            "AudioObjectSetPropertyData",
+            "AudioDeviceCreateIOProcID",
+            "AudioDeviceDestroyIOProcID",
+            "AudioDeviceStart",
+            "AudioDeviceStop",
+        ):
             with self.subTest(function=function):
                 self.assertRegex(
                     device,
                     rf'#\[cfg\(feature = "spike"\)\]\s+use objc2_core_audio::\{{[^}}]*\b{function}\b',
                 )
-                self.assertNotRegex(device, rf'fn {function}\(')
+                self.assertNotRegex(device, rf"fn {function}\(")
         self.assertRegex(device, r'#\[cfg\(feature = "spike"\)\]\s+use libc::mach_absolute_time;')
 
     def test_default_workspace_does_not_enable_the_spike(self):
         result = subprocess.run(
             ["cargo", "metadata", "--locked", "--offline", "--format-version", "1"],
-            cwd=ROOT, capture_output=True, text=True, timeout=30,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         metadata = json.loads(result.stdout)
@@ -79,10 +87,11 @@ class EngineSpikeTests(unittest.TestCase):
 
     def test_measurement_contract_enables_the_feature(self):
         policy = json.loads((ROOT / "scripts/verification.json").read_text())
-        contract = next(contract for contract in policy["product_contracts"]
-                        if contract["id"] == "engine-measurement-completion")
+        contract = next(
+            contract for contract in policy["product_contracts"] if contract["id"] == "engine-measurement-completion"
+        )
         self.assertEqual(contract["target"], ["--lib", "--features", "spike"])
-        self.assertEqual(contract["test"],
-                         "device::measurement::tests::contract_engine_measurement_requires_progress_and_completion")
-        self.assertEqual(contract["negative_control"]["file"],
-                         "crates/echode-engine/src/device_measurement.rs")
+        self.assertEqual(
+            contract["test"], "device::measurement::tests::contract_engine_measurement_requires_progress_and_completion"
+        )
+        self.assertEqual(contract["negative_control"]["file"], "crates/echode-engine/src/device_measurement.rs")

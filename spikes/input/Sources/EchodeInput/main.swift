@@ -65,12 +65,12 @@ final class InputCanvas: NSView {
         let held = keyboard.heldNotes.map(noteName).joined(separator: " ")
         let expression = chordPressure(notes: keyboard.notes, pressure: pressure)
         let status = """
-        横 X \(String(format: "%.2f", zoom.x))    縦 Y \(String(format: "%.2f", zoom.y))    \(pinchModeLabel)
-        通常のピンチは X と Y が同じ倍率。キー 2 ではっきり横か縦のときだけその軸
-        ドラッグで格子をまたぐと、トラックパッドが鳴ります
-        和音 \(held.isEmpty ? "（A S D など）" : held)    プレッシャー \(String(format: "%.2f", expression?.pressure ?? 0))
-        \(log.suffix(4).joined(separator: "\n"))
-        """
+            横 X \(String(format: "%.2f", zoom.x))    縦 Y \(String(format: "%.2f", zoom.y))    \(pinchModeLabel)
+            通常のピンチは X と Y が同じ倍率。キー 2 ではっきり横か縦のときだけその軸
+            ドラッグで格子をまたぐと、トラックパッドが鳴ります
+            和音 \(held.isEmpty ? "（A S D など）" : held)    プレッシャー \(String(format: "%.2f", expression?.pressure ?? 0))
+            \(log.suffix(4).joined(separator: "\n"))
+            """
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 4
         status.draw(

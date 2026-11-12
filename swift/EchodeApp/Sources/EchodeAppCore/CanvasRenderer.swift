@@ -47,8 +47,10 @@ struct CanvasDrawablePolicy: Equatable {
 
 /// Pure pause decision for the display link. A stale drawable keeps the link
 /// awake so the next callback can retry at the corrected extent.
-func canvasLinkPaused(ready: Bool, continuous: Bool, metersActive: Bool, playing: Bool,
-                      revisionDrawn: Bool, staleDrawable: Bool) -> Bool {
+func canvasLinkPaused(
+    ready: Bool, continuous: Bool, metersActive: Bool, playing: Bool,
+    revisionDrawn: Bool, staleDrawable: Bool
+) -> Bool {
     !ready || (!continuous && !metersActive && !playing && revisionDrawn && !staleDrawable)
 }
 
@@ -148,10 +150,12 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private var meterHold = MeterLinkHold()
     private var geometry = CanvasGeometryCache()
 
-    init(layer: CAMetalLayer, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
-         onPiano: (@MainActor @Sendable (PianoFrame) -> Void)? = nil,
-         onArrange: (@MainActor @Sendable (ArrangeFrame) -> Void)? = nil,
-         startsDisplayLink: Bool = true) throws {
+    init(
+        layer: CAMetalLayer, onElements: @escaping @MainActor @Sendable ([ArrangeElement]) -> Void,
+        onPiano: (@MainActor @Sendable (PianoFrame) -> Void)? = nil,
+        onArrange: (@MainActor @Sendable (ArrangeFrame) -> Void)? = nil,
+        startsDisplayLink: Bool = true
+    ) throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw CocoaError(.featureUnsupported)
         }
@@ -184,11 +188,20 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     }
 
     func stop() {
-        state.withLock { $0.stopping = true; wake($0.loop) }
+        state.withLock {
+            $0.stopping = true
+            wake($0.loop)
+        }
         if drivesDisplayLink { stopped.wait() }
     }
 
-    func beginMeasurement() { state.withLock { $0.continuous = true; $0.measurement = ArrangeMeasurement(); wake($0.loop) } }
+    func beginMeasurement() {
+        state.withLock {
+            $0.continuous = true
+            $0.measurement = ArrangeMeasurement()
+            wake($0.loop)
+        }
+    }
     func markMainBusy(_ busy: Bool) { state.withLock { $0.mainBusy = busy } }
     var measurement: ArrangeMeasurement {
         state.withLock { value in
@@ -236,10 +249,11 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
     private func publishLinkState() -> Bool {
         state.withLock { value in
             let ready = value.input.map { $0.width > 0 && $0.height > 0 } ?? false
-            let paused = canvasLinkPaused(ready: ready, continuous: value.continuous, metersActive: metersActive,
-                                          playing: value.input?.playback?.position.playing == true,
-                                          revisionDrawn: drawnRevision == value.revision,
-                                          staleDrawable: staleDrawable)
+            let paused = canvasLinkPaused(
+                ready: ready, continuous: value.continuous, metersActive: metersActive,
+                playing: value.input?.playback?.position.playing == true,
+                revisionDrawn: drawnRevision == value.revision,
+                staleDrawable: staleDrawable)
             let wasPaused = value.measurement.displayLinkPaused
             value.measurement.displayLinkPaused = paused
             value.measurement.continuous = value.continuous
@@ -299,7 +313,8 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         }
         // Draw a stale extent at the input's pixel positions and leave the
         // revision pending; the next callback retries at the corrected size.
-        let submission = CanvasDrawablePolicy.resolve(input: input,
+        let submission = CanvasDrawablePolicy.resolve(
+            input: input,
             drawableSize: CGSize(width: texture.width, height: texture.height))
         staleDrawable = submission.mismatched
         guard submission.draws else {
@@ -320,17 +335,22 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 camera.constrain(trackCount: input.snapshot?.trackCount ?? 0, height: input.height)
             }
         }
-        let (arranged, piano) = geometry.frames(input: input, camera: camera, revision: revision, continuous: continuous)
+        let (arranged, piano) = geometry.frames(
+            input: input, camera: camera, revision: revision, continuous: continuous)
         let now = CACurrentMediaTime()
         meterHold.note(playing: input.playback?.position.playing == true, now: now)
         let peaksLive = arranged?.headers.contains { $0.peak > MixScale.meterSilence } ?? false
         metersActive = peaksLive || meterHold.holding(now: now)
         var instances = piano?.gridInstances ?? arranged?.timelineInstances ?? []
         let timelineCount = instances.count
-        let headerInstances = piano.map { $0.degreeInstances + $0.keyboardInstances + $0.rulerInstances + $0.velocityInstances } ?? arranged?.headerInstances ?? []
+        let headerInstances =
+            piano.map { $0.degreeInstances + $0.keyboardInstances + $0.rulerInstances + $0.velocityInstances }
+            ?? arranged?.headerInstances ?? []
         instances.append(contentsOf: headerInstances)
         let length = max(1, instances.count) * MemoryLayout<Instance>.stride
-        if (buffers[slot]?.length ?? 0) < length { buffers[slot] = device.makeBuffer(length: length, options: .storageModeShared) }
+        if (buffers[slot]?.length ?? 0) < length {
+            buffers[slot] = device.makeBuffer(length: length, options: .storageModeShared)
+        }
         guard let buffer = buffers[slot], let command = queue.makeCommandBuffer() else {
             return presentBackground(texture: texture, present: present)
         }
@@ -345,8 +365,9 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
             return presentBackground(texture: texture, present: present)
         }
-        painter.encode(encoder: encoder, texture: texture, buffer: buffer,
-                       timelineCount: timelineCount, headerCount: headerInstances.count, frame: arranged, piano: piano, slot: slot)
+        painter.encode(
+            encoder: encoder, texture: texture, buffer: buffer,
+            timelineCount: timelineCount, headerCount: headerInstances.count, frame: arranged, piano: piano, slot: slot)
         encoder.endEncoding()
         let slots = slots
         command.addCompletedHandler { _ in slots.release(slot) }
@@ -369,7 +390,9 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
                 value.measurement.headerFrames += 1
                 let lanes = arranged.elements.filter { $0.role == .track }
                 for (header, lane) in zip(arranged.headers, lanes) {
-                    value.measurement.maxHeaderLaneError = max(value.measurement.maxHeaderLaneError, Double(abs(header.y - (Float(input.arrangeTop) + lane.y))))
+                    value.measurement.maxHeaderLaneError = max(
+                        value.measurement.maxHeaderLaneError, Double(abs(header.y - (Float(input.arrangeTop) + lane.y)))
+                    )
                 }
             }
         }
@@ -377,8 +400,9 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
         // Publish geometry only when inputs change (or the explicit probe moves it).
         if feedbackChanged {
             Task { @MainActor [onElements, onPiano, onArrange] in
-                if let piano { onPiano?(piano) }
-                else if let arranged {
+                if let piano {
+                    onPiano?(piano)
+                } else if let arranged {
                     if let onArrange { onArrange(arranged) } else { onElements(arranged.elements) }
                 }
             }
@@ -388,8 +412,10 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
 
     /// Returns a defined background, including during zero-size layout and
     /// shutdown. An unrendered drawable can contain stale pool contents.
-    private func presentBackground(texture: any MTLTexture,
-                                   present: ((any MTLCommandBuffer) -> Void)?) -> (any MTLCommandBuffer)? {
+    private func presentBackground(
+        texture: any MTLTexture,
+        present: ((any MTLCommandBuffer) -> Void)?
+    ) -> (any MTLCommandBuffer)? {
         guard let command = queue.makeCommandBuffer() else { return nil }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = texture
@@ -405,64 +431,64 @@ final class CanvasRenderer: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sen
 }
 
 let arrangeShader = """
-#include <metal_stdlib>
-using namespace metal;
-struct Instance { float4 rect; float4 color; };
-struct Vertex { float4 position [[position]]; float4 color; };
-vertex Vertex arrange_vertex(uint v [[vertex_id]], uint i [[instance_id]],
-                            constant Instance *instances [[buffer(0)]], constant float2 &size [[buffer(1)]]) {
-    const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(1,0),float2(1,1),float2(0,1)};
-    float2 p = instances[i].rect.xy + corners[v] * instances[i].rect.zw;
-    return {float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1), instances[i].color};
-}
-fragment float4 arrange_fragment(Vertex input [[stage_in]]) { return input.color; }
-struct Wave {
-    float4 rect;
-    float4 color;
-    uint offset;
-    uint columns;
-    uint pad0;
-    uint pad1;
-};
-struct WaveVertex {
-    float4 position [[position]];
-    float2 uv;
-    float4 color;
-    float height;
-    uint offset [[flat]];
-    uint columns [[flat]];
-};
-vertex WaveVertex wave_vertex(uint v [[vertex_id]], uint i [[instance_id]],
-                            constant Wave *waves [[buffer(0)]], constant float2 &size [[buffer(1)]]) {
-    const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(1,0),float2(1,1),float2(0,1)};
-    float2 p = waves[i].rect.xy + corners[v] * waves[i].rect.zw;
-    WaveVertex out;
-    out.position = float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1);
-    out.uv = corners[v];
-    out.color = waves[i].color;
-    out.height = waves[i].rect.w;
-    out.offset = waves[i].offset;
-    out.columns = waves[i].columns;
-    return out;
-}
-fragment float4 wave_fragment(WaveVertex input [[stage_in]], constant float2 *peaks [[buffer(0)]]) {
-    if (input.columns == 0) discard_fragment();
-    uint column = min(uint(input.uv.x * float(input.columns)), input.columns - 1);
-    float2 envelope = peaks[input.offset + column];
-    float amplitude = (0.5 - input.uv.y) * 2.0;
-    float pixel = 1.0 / max(input.height, 1.0);
-    if (amplitude + pixel < envelope.x || amplitude - pixel > envelope.y) discard_fragment();
-    return input.color;
-}
-struct LabelVertex { float4 position [[position]]; float2 uv; float4 color; };
-vertex LabelVertex label_vertex(uint v [[vertex_id]], constant Instance &label [[buffer(0)]],
-                               constant float2 &size [[buffer(1)]]) {
-    const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(1,0),float2(1,1),float2(0,1)};
-    float2 p = label.rect.xy + corners[v] * label.rect.zw;
-    return {float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1), corners[v], label.color};
-}
-fragment float4 label_fragment(LabelVertex input [[stage_in]], texture2d<float> label [[texture(0)]]) {
-    constexpr sampler s(coord::normalized, filter::linear, address::clamp_to_edge);
-    return float4(input.color.rgb, input.color.a * label.sample(s, input.uv).r);
-}
-"""
+    #include <metal_stdlib>
+    using namespace metal;
+    struct Instance { float4 rect; float4 color; };
+    struct Vertex { float4 position [[position]]; float4 color; };
+    vertex Vertex arrange_vertex(uint v [[vertex_id]], uint i [[instance_id]],
+                                constant Instance *instances [[buffer(0)]], constant float2 &size [[buffer(1)]]) {
+        const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(1,0),float2(1,1),float2(0,1)};
+        float2 p = instances[i].rect.xy + corners[v] * instances[i].rect.zw;
+        return {float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1), instances[i].color};
+    }
+    fragment float4 arrange_fragment(Vertex input [[stage_in]]) { return input.color; }
+    struct Wave {
+        float4 rect;
+        float4 color;
+        uint offset;
+        uint columns;
+        uint pad0;
+        uint pad1;
+    };
+    struct WaveVertex {
+        float4 position [[position]];
+        float2 uv;
+        float4 color;
+        float height;
+        uint offset [[flat]];
+        uint columns [[flat]];
+    };
+    vertex WaveVertex wave_vertex(uint v [[vertex_id]], uint i [[instance_id]],
+                                constant Wave *waves [[buffer(0)]], constant float2 &size [[buffer(1)]]) {
+        const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(1,0),float2(1,1),float2(0,1)};
+        float2 p = waves[i].rect.xy + corners[v] * waves[i].rect.zw;
+        WaveVertex out;
+        out.position = float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1);
+        out.uv = corners[v];
+        out.color = waves[i].color;
+        out.height = waves[i].rect.w;
+        out.offset = waves[i].offset;
+        out.columns = waves[i].columns;
+        return out;
+    }
+    fragment float4 wave_fragment(WaveVertex input [[stage_in]], constant float2 *peaks [[buffer(0)]]) {
+        if (input.columns == 0) discard_fragment();
+        uint column = min(uint(input.uv.x * float(input.columns)), input.columns - 1);
+        float2 envelope = peaks[input.offset + column];
+        float amplitude = (0.5 - input.uv.y) * 2.0;
+        float pixel = 1.0 / max(input.height, 1.0);
+        if (amplitude + pixel < envelope.x || amplitude - pixel > envelope.y) discard_fragment();
+        return input.color;
+    }
+    struct LabelVertex { float4 position [[position]]; float2 uv; float4 color; };
+    vertex LabelVertex label_vertex(uint v [[vertex_id]], constant Instance &label [[buffer(0)]],
+                                   constant float2 &size [[buffer(1)]]) {
+        const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(1,0),float2(1,1),float2(0,1)};
+        float2 p = label.rect.xy + corners[v] * label.rect.zw;
+        return {float4(p.x / size.x * 2 - 1, 1 - p.y / size.y * 2, 0, 1), corners[v], label.color};
+    }
+    fragment float4 label_fragment(LabelVertex input [[stage_in]], texture2d<float> label [[texture(0)]]) {
+        constexpr sampler s(coord::normalized, filter::linear, address::clamp_to_edge);
+        return float4(input.color.rgb, input.color.a * label.sample(s, input.uv).r);
+    }
+    """

@@ -31,7 +31,10 @@ rust_coverage() (
         bash scripts/build-bundled-plugins.sh &&
             cargo build -q --locked --workspace &&
             cargo test -q --locked --workspace
-    } >"$OUT/rust.log" 2>&1 || { echo "coverage: Rust tests failed, see $OUT/rust.log" >&2; exit 1; }
+    } >"$OUT/rust.log" 2>&1 || {
+        echo "coverage: Rust tests failed, see $OUT/rust.log" >&2
+        exit 1
+    }
     cargo llvm-cov report --json --summary-only --output-path "$OUT/rust.json"
 )
 
@@ -41,7 +44,10 @@ swift_coverage() {
     # The test build itself must be instrumented. Numbers from failing tests
     # would mislead, so a failure stops the measurement.
     swift test -q --enable-code-coverage --package-path "$package" --scratch-path "$scratch" \
-        >"$OUT/swift-$name.log" 2>&1 || { echo "coverage: $package tests failed, see $OUT/swift-$name.log" >&2; return 1; }
+        >"$OUT/swift-$name.log" 2>&1 || {
+        echo "coverage: $package tests failed, see $OUT/swift-$name.log" >&2
+        return 1
+    }
     cp "$(swift test --show-codecov-path --enable-code-coverage --package-path "$package" --scratch-path "$scratch")" \
         "$OUT/swift-$name.json"
 }

@@ -35,11 +35,11 @@ private func checkOldSnapshot(_ document: BridgeDocument, _ observer: Observer) 
 }
 
 #if ASYNC_CALLBACK
-private final class AsyncObserver: AsyncChangeObserver, Sendable {
-    let ui: UIChanges
-    init(_ ui: UIChanges) { self.ui = ui }
-    func changed(change: BridgeChange) async { await ui.record(change) }
-}
+    private final class AsyncObserver: AsyncChangeObserver, Sendable {
+        let ui: UIChanges
+        init(_ ui: UIChanges) { self.ui = ui }
+        func changed(change: BridgeChange) async { await ui.record(change) }
+    }
 #endif
 
 @main
@@ -82,9 +82,9 @@ enum UniProbe {
         precondition(orphan().copiedNotes().first?.length == 480)
         print("UniFFI: PASS async, callbacks -> MainActor, 32 concurrent edits, errors, old snapshots, release")
         #if ASYNC_CALLBACK
-        await notifyAsync(observer: AsyncObserver(ui))
-        precondition(ui.revisions.last == 42)
-        print("UniFFI: PASS async foreign callback")
+            await notifyAsync(observer: AsyncObserver(ui))
+            precondition(ui.revisions.last == 42)
+            print("UniFFI: PASS async foreign callback")
         #endif
 
         if CommandLine.arguments.contains("--bench") {

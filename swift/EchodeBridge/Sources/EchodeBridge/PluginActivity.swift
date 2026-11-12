@@ -14,7 +14,10 @@ public struct PluginParameterEvent: Decodable, Sendable, Equatable {
 
     public let id: UInt32
     public let kind: Kind
-    public init(id: UInt32, kind: Kind) { self.id = id; self.kind = kind }
+    public init(id: UInt32, kind: Kind) {
+        self.id = id
+        self.kind = kind
+    }
 }
 
 /// What one plugin did since the previous entry for it.
@@ -44,11 +47,18 @@ public struct PluginActivity: Decodable, Sendable, Equatable {
     /// Latest helper latency in device-rate samples. No PDC is applied yet.
     public let latencySamples: UInt32?
 
-    public init(device: UUID, events: [PluginParameterEvent] = [], values: [DeviceParameterValue] = [],
-                rescan: Bool = false, lost: Bool = false, dirty: Bool = false, closed: Bool = false,
-                windowOpen: Bool = false, commands: [String] = [], windowState: Bool? = nil, latencySamples: UInt32? = nil) {
-        self.device = device; self.events = events; self.values = values
-        self.rescan = rescan; self.lost = lost; self.dirty = dirty; self.closed = closed
+    public init(
+        device: UUID, events: [PluginParameterEvent] = [], values: [DeviceParameterValue] = [],
+        rescan: Bool = false, lost: Bool = false, dirty: Bool = false, closed: Bool = false,
+        windowOpen: Bool = false, commands: [String] = [], windowState: Bool? = nil, latencySamples: UInt32? = nil
+    ) {
+        self.device = device
+        self.events = events
+        self.values = values
+        self.rescan = rescan
+        self.lost = lost
+        self.dirty = dirty
+        self.closed = closed
         self.windowOpen = windowOpen
         self.commands = commands
         self.windowState = windowState
@@ -56,7 +66,8 @@ public struct PluginActivity: Decodable, Sendable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case device, commands, events, values, rescan, lost, dirty, closed, windowOpen = "window"
+        case device, commands, events, values, rescan, lost, dirty, closed
+        case windowOpen = "window"
         case windowState = "window_state"
         case latencySamples = "latency_samples"
     }
@@ -69,7 +80,9 @@ public struct PluginActivityPage: Decodable, Sendable, Equatable {
     public let closed: Bool
     public let entries: [PluginActivity]
     public init(next: UInt64, closed: Bool = false, entries: [PluginActivity] = []) {
-        self.next = next; self.closed = closed; self.entries = entries
+        self.next = next
+        self.closed = closed
+        self.entries = entries
     }
 }
 
@@ -84,8 +97,9 @@ extension Document {
             var data = Data(count: capacity)
             var written = 0
             let code = data.withUnsafeMutableBytes { raw in
-                echode_document_plugin_activity(handle, after, milliseconds,
-                                                raw.baseAddress?.assumingMemoryBound(to: UInt8.self), capacity, &written)
+                echode_document_plugin_activity(
+                    handle, after, milliseconds,
+                    raw.baseAddress?.assumingMemoryBound(to: UInt8.self), capacity, &written)
             }
             switch code {
             case 0: return try JSONDecoder().decode(PluginActivityPage.self, from: data.prefix(written))

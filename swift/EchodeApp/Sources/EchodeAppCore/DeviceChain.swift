@@ -22,10 +22,13 @@ extension Snapshot {
 
     func devices(onTrack index: Int) -> [TrackDevice] {
         return (0..<deviceCount(onTrack: index)).compactMap {
-            guard let id = deviceID(onTrack: index, at: $0), let plugin = devicePlugin(onTrack: index, at: $0) else { return nil }
-            return TrackDevice(id: id, plugin: plugin, bypassed: deviceBypassed(onTrack: index, at: $0) ?? false,
-                               offline: deviceOffline(onTrack: index, at: $0) ?? false,
-                               pinned: devicePins(onTrack: index, at: $0) ?? [])
+            guard let id = deviceID(onTrack: index, at: $0), let plugin = devicePlugin(onTrack: index, at: $0) else {
+                return nil
+            }
+            return TrackDevice(
+                id: id, plugin: plugin, bypassed: deviceBypassed(onTrack: index, at: $0) ?? false,
+                offline: deviceOffline(onTrack: index, at: $0) ?? false,
+                pinned: devicePins(onTrack: index, at: $0) ?? [])
         }
     }
 }
@@ -59,23 +62,30 @@ struct FXDrag: Codable {
 
     static func read(_ pasteboard: NSPasteboard) -> Self? {
         for type in [deviceType, pluginType] {
-            guard let data = pasteboard.data(forType: type), let payload = try? JSONDecoder().decode(Self.self, from: data) else { continue }
+            guard let data = pasteboard.data(forType: type),
+                let payload = try? JSONDecoder().decode(Self.self, from: data)
+            else { continue }
             if type == deviceType, payload.device != nil, payload.track != nil, payload.plugin == nil { return payload }
-            if type == pluginType, payload.device == nil, payload.track == nil, payload.plugin?.isEmpty == false { return payload }
+            if type == pluginType, payload.device == nil, payload.track == nil, payload.plugin?.isEmpty == false {
+                return payload
+            }
         }
         return nil
     }
 
     func operation(on target: UUID, copying: Bool, before: UUID?) -> DeviceChainEdit? {
         guard let device, let track else { return nil }
-        return copying || track != target ? .copy(source: device, track: target, before: before) : .reorder(device: device, before: before)
+        return copying || track != target
+            ? .copy(source: device, track: target, before: before) : .reorder(device: device, before: before)
     }
 
     func provider() -> NSItemProvider {
         let provider = NSItemProvider()
         if let data {
-            provider.registerDataRepresentation(forTypeIdentifier: type.rawValue, visibility: .ownProcess) { completion in
-                completion(data, nil); return nil
+            provider.registerDataRepresentation(forTypeIdentifier: type.rawValue, visibility: .ownProcess) {
+                completion in
+                completion(data, nil)
+                return nil
             }
         }
         return provider

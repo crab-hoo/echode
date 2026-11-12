@@ -1,5 +1,6 @@
 import CEchodeFfi
 import XCTest
+
 @testable import EchodeBridge
 
 final class DocumentTests: XCTestCase {
@@ -41,7 +42,8 @@ final class DocumentTests: XCTestCase {
         } catch let error as BridgeError { XCTAssertTrue(error.message.contains("stopped")) }
     }
     func testAnAuditionReportsAnUnreadableFileThroughTheSnapshot() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audition-\(UUID()).echode")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-audition-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: directory) }
         let document = try Document(creating: directory.path)
         // Decoding fails before any output device is asked for.

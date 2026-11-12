@@ -116,17 +116,27 @@ final class DocumentSession {
 
     /// The state while no document is open.
     init(auditionLog: AuditionLog) {
-        id = nil; projectURL = nil; playback = nil; document = nil
+        id = nil
+        projectURL = nil
+        playback = nil
+        document = nil
         self.auditionLog = auditionLog
-        audio = AudioStatus(); audition = nil; position = 0
+        audio = AudioStatus()
+        audition = nil
+        position = 0
         outputOpening = false
         playbackStart = 0
     }
 
     init(opening document: Document, at url: URL, audio: AudioState, auditionLog: AuditionLog) {
-        id = DocumentID(); projectURL = url; playback = document.playbackFeed; self.document = document
+        id = DocumentID()
+        projectURL = url
+        playback = document.playbackFeed
+        self.document = document
         self.auditionLog = auditionLog
-        self.audio = audio.status; audition = audio.audition; position = audio.tick
+        self.audio = audio.status
+        audition = audio.audition
+        position = audio.tick
         outputOpening = audio.opening
         playbackStart = audio.start
     }
@@ -155,10 +165,11 @@ final class DocumentSession {
 
     func selectTrack(_ id: UUID, change: TrackSelectionChange, visibleOrder: [UUID]?) {
         let previous = selection
-        let order = visibleOrder.map { visible in
-            let existing = Set(tracks.map(\.id))
-            return visible.filter { existing.contains($0) }
-        } ?? tracks.map(\.id)
+        let order =
+            visibleOrder.map { visible in
+                let existing = Set(tracks.map(\.id))
+                return visible.filter { existing.contains($0) }
+            } ?? tracks.map(\.id)
         trackSelection.select(id, change: change, order: order)
         if selection != previous { clipFocus = nil }
     }
@@ -211,8 +222,11 @@ final class DocumentSession {
             // A removed or offline device has no running plugin to list.
             var running: Set<UUID> = []
             for track in 0..<snapshot.trackCount {
-                for device in 0..<snapshot.deviceCount(onTrack: track) where snapshot.deviceOffline(onTrack: track, at: device) == false {
-                    if snapshot.devicePlugin(onTrack: track, at: device) != nil, let id = snapshot.deviceID(onTrack: track, at: device) {
+                for device in 0..<snapshot.deviceCount(onTrack: track)
+                where snapshot.deviceOffline(onTrack: track, at: device) == false {
+                    if snapshot.devicePlugin(onTrack: track, at: device) != nil,
+                        let id = snapshot.deviceID(onTrack: track, at: device)
+                    {
                         running.insert(id)
                     }
                 }

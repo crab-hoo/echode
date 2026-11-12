@@ -1,6 +1,7 @@
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @Suite @MainActor
@@ -9,7 +10,8 @@ struct TypedMixerEditTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-typed-mixer-\(UUID())")
         defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let wav = root.appendingPathComponent("clip.wav"), url = root.appendingPathComponent("Project.echode")
+        let wav = root.appendingPathComponent("clip.wav")
+        let url = root.appendingPathComponent("Project.echode")
         // This one-second fixture only supplies a clip for mix edits, not a product buffer limit.
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)
         let controller = ProjectController(sendAudio: { _, _ in AudioState() })
@@ -17,11 +19,15 @@ struct TypedMixerEditTests {
         await controller.addTrack(name: "first")
         let first = try #require(controller.selection)
         #expect(await controller.importAudio(wav))
-        let clip = try #require(controller.snapshot?.visibleElements(originTick: 0, widthTicks: 705_600 * 8,
-            originTrack: 0, heightTracks: 2, pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64)
+        let clip = try #require(
+            controller.snapshot?.visibleElements(
+                originTick: 0, widthTicks: 705_600 * 8,
+                originTrack: 0, heightTracks: 2, pixelsPerTick: 200 / 705_600, pixelsPerTrack: 64
+            )
             .elements.first { $0.role == .clip }?.id.placement)
         await controller.addTrack(name: "second")
-        let second = try #require(controller.selection), document = try #require(controller.documentID)
+        let second = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         #expect(await controller.setMixer(first, field: .gain, value: 0.5, documentID: document))
         #expect(await controller.setMixer(second, field: .gain, value: 0.25, documentID: document))
         controller.selectTrack(first, change: .toggle)
@@ -48,7 +54,8 @@ struct TypedMixerEditTests {
         #expect(controller.mixer(first)?.gain.value == 0.75 && controller.mixer(second)?.gain.value == 0.5)
         await controller.undo()
         #expect(controller.mixer(first)?.gain.value == 1 && controller.mixer(second)?.gain.value == 0.5)
-        await controller.redo(); await controller.redo()
+        await controller.redo()
+        await controller.redo()
         let previewUndo = controller.undoCount
         #expect(controller.beginFader(second, field: .pan))
         controller.changeFader(-0.75)
@@ -73,16 +80,20 @@ struct TypedMixerEditTests {
         #expect(controller.mixer(first)?.gain.value.bitPattern == Float.leastNonzeroMagnitude.bitPattern)
         #expect(await controller.setMixer(first, field: .pan, value: -0.12345679, documentID: document))
         #expect(await controller.setClipGain(clip, gain: .leastNonzeroMagnitude, documentID: document))
-        let entering: Int64 = 3_900_000_000_001, leaving: Int64 = 705_600_007
+        let entering: Int64 = 3_900_000_000_001
+        let leaving: Int64 = 705_600_007
         let fadeUndo = controller.undoCount
         #expect(await controller.setClipFades(clip, fadeIn: entering, fadeOut: leaving, documentID: document))
-        #expect(controller.snapshot?.clipMix(clip)?.fadeIn == entering && controller.snapshot?.clipMix(clip)?.fadeOut == leaving)
+        #expect(
+            controller.snapshot?.clipMix(clip)?.fadeIn == entering
+                && controller.snapshot?.clipMix(clip)?.fadeOut == leaving)
         #expect(controller.undoCount == fadeUndo + 1)
         await controller.undo()
         #expect(controller.snapshot?.clipMix(clip)?.fadeIn == 0 && controller.snapshot?.clipMix(clip)?.fadeOut == 0)
         await controller.redo()
         let savedClip = try #require(controller.snapshot?.clipMix(clip))
-        let savedFirst = try #require(controller.mixer(first)), savedSecond = try #require(controller.mixer(second))
+        let savedFirst = try #require(controller.mixer(first))
+        let savedSecond = try #require(controller.mixer(second))
 
         #expect(await controller.setMixer(first, field: .solo, value: 1, documentID: document))
         await controller.undo()
@@ -96,9 +107,12 @@ struct TypedMixerEditTests {
         #expect(!(await controller.setMixer(first, field: .gain, value: .nan, documentID: document)))
         #expect(!(await controller.setMixer(first, field: .pan, value: 2, documentID: document)))
         #expect(!(await controller.setClipFades(clip, fadeIn: -1, fadeOut: leaving, documentID: document)))
-        #expect(!(await controller.setClipFades(clip, fadeIn: 9_007_199_254_740_993, fadeOut: leaving, documentID: document)))
+        #expect(
+            !(await controller.setClipFades(clip, fadeIn: 9_007_199_254_740_993, fadeOut: leaving, documentID: document))
+        )
         #expect(!(await controller.setMixer(UUID(), field: .solo, value: 1, documentID: document)))
-        let missing = MixerSwitchBatch(document: document, tracks: [first, UUID()], anchor: first, field: .solo, value: 1)
+        let missing = MixerSwitchBatch(
+            document: document, tracks: [first, UUID()], anchor: first, field: .solo, value: 1)
         #expect(!(await controller.applyMixerSwitch(missing)))
         #expect(controller.undoCount == unchanged && controller.redoCount == 1)
         #expect(controller.snapshot?.clipMix(clip) == savedClip)
@@ -108,7 +122,8 @@ struct TypedMixerEditTests {
         #expect(controller.mixer(first)?.solo.value == 1)
         await controller.undo()
 
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.errorMessage == nil && controller.snapshot?.clipMix(clip) == savedClip)
         #expect(controller.mixer(first) == savedFirst && controller.mixer(second) == savedSecond)
         #expect(!(await controller.setMixer(first, field: .pan, value: 0, documentID: document)))

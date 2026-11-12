@@ -2,34 +2,45 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct ClipMoveTests {
     private let beat: Int64 = 705_600
 
-    private func mouse(_ type: NSEvent.EventType, _ point: CGPoint, in view: NSView,
-                       flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
-            windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    private func mouse(
+        _ type: NSEvent.EventType, _ point: CGPoint, in view: NSView,
+        flags: NSEvent.ModifierFlags = []
+    ) throws -> NSEvent {
+        try #require(
+            NSEvent.mouseEvent(
+                with: type, location: view.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
     }
 
     private func key(_ code: UInt16, in view: NSView) throws -> NSEvent {
-        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
-            context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: code))
+        try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false,
+                keyCode: code))
     }
 
     private func clips(_ snapshot: Snapshot) -> [UUID] {
         // The window bounds only these fixtures; it is not a product size cap.
-        snapshot.visibleElements(originTick: 0, widthTicks: 100_000_000, originTrack: 0, heightTracks: 10,
-                                 pixelsPerTick: 0.001, pixelsPerTrack: 40).elements.compactMap { $0.role == .clip ? $0.id.placement : nil }
+        snapshot.visibleElements(
+            originTick: 0, widthTicks: 100_000_000, originTrack: 0, heightTracks: 10,
+            pixelsPerTick: 0.001, pixelsPerTrack: 40
+        ).elements.compactMap { $0.role == .clip ? $0.id.placement : nil }
     }
 
     @Test func contractBodyDragMovesAndCommandDragCopiesClipsAsOneUndoAndReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echode-clip-move-\(UUID())")
         defer { removeTestFile(root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let wav = root.appendingPathComponent("clip.wav"), url = root.appendingPathComponent("Project.echode")
+        let wav = root.appendingPathComponent("clip.wav")
+        let url = root.appendingPathComponent("Project.echode")
         // One second at 120 bpm: two beats, 144 points at the pane's 72 points per beat.
         try wavMono(rate: 48_000, frames: 48_000).write(to: wav)
         let controller = ProjectController()
@@ -48,10 +59,14 @@ struct ClipMoveTests {
         pane.timeline.audioDocument = controller.documentID
         var pending: Task<Bool, Never>?
         var requests: [ClipMove] = []
-        pane.onClipMove = { requests.append($0); pending = session.moveClip($0) }
+        pane.onClipMove = {
+            requests.append($0)
+            pending = session.moveClip($0)
+        }
         pane.onSelect = { controller.selection = $0 }
         pane.onSelectClip = { controller.clipFocus = $0 }
-        let origin = 161.0, perBeat = 72.0
+        let origin = 161.0
+        let perBeat = 72.0
         func present() throws {
             pane.setSnapshot(try #require(controller.snapshot), selected: controller.selection)
             pane.timeline.present(ArrangeFrame(input: pane.timeline.renderInput))
@@ -64,7 +79,8 @@ struct ClipMoveTests {
         }
         func drag(_ clip: UUID, by offset: CGSize, flags: NSEvent.ModifierFlags = []) async throws {
             try present()
-            let down = try body(clip), up = CGPoint(x: down.x + offset.width, y: down.y + offset.height)
+            let down = try body(clip)
+            let up = CGPoint(x: down.x + offset.width, y: down.y + offset.height)
             pane.timeline.mouseDown(with: try mouse(.leftMouseDown, down, in: pane.timeline))
             pane.timeline.mouseDragged(with: try mouse(.leftMouseDragged, up, in: pane.timeline, flags: flags))
             pane.timeline.mouseUp(with: try mouse(.leftMouseUp, up, in: pane.timeline, flags: flags))
@@ -101,7 +117,8 @@ struct ClipMoveTests {
         #expect(requests.last?.copy == true)
         let copy = try #require(controller.clipFocus)
         #expect(copy != id && controller.selection == first)
-        #expect(controller.snapshot?.clipMix(copy)?.track == first && controller.snapshot?.clipMix(copy)?.start == 2 * beat)
+        #expect(
+            controller.snapshot?.clipMix(copy)?.track == first && controller.snapshot?.clipMix(copy)?.start == 2 * beat)
         #expect(controller.snapshot?.clipMix(id)?.track == second, "the original stays")
         #expect(controller.undoCount == before + 3)
         let moved = try #require(controller.snapshot?.clipMix(id))
@@ -112,13 +129,15 @@ struct ClipMoveTests {
         try present()
         let escape = try body(id)
         pane.timeline.mouseDown(with: try mouse(.leftMouseDown, escape, in: pane.timeline))
-        pane.timeline.mouseDragged(with: try mouse(.leftMouseDragged, CGPoint(x: escape.x + 300, y: escape.y), in: pane.timeline))
+        pane.timeline.mouseDragged(
+            with: try mouse(.leftMouseDragged, CGPoint(x: escape.x + 300, y: escape.y), in: pane.timeline))
         #expect(pane.timeline.renderInput.clipMove != nil)
         pane.timeline.keyDown(with: try key(53, in: pane.timeline))
         #expect(pane.timeline.renderInput.clipMove == nil)
         pane.timeline.mouseUp(with: try mouse(.leftMouseUp, CGPoint(x: escape.x + 300, y: escape.y), in: pane.timeline))
         pane.timeline.mouseDown(with: try mouse(.leftMouseDown, escape, in: pane.timeline))
-        pane.timeline.mouseDragged(with: try mouse(.leftMouseDragged, CGPoint(x: escape.x + 300, y: escape.y), in: pane.timeline))
+        pane.timeline.mouseDragged(
+            with: try mouse(.leftMouseDragged, CGPoint(x: escape.x + 300, y: escape.y), in: pane.timeline))
         pane.timeline.mouseCancelled(with: try mouse(.leftMouseUp, escape, in: pane.timeline))
         pane.timeline.mouseUp(with: try mouse(.leftMouseUp, CGPoint(x: escape.x + 300, y: escape.y), in: pane.timeline))
         #expect(pending == nil && requests.count == 3)
@@ -126,11 +145,15 @@ struct ClipMoveTests {
 
         await controller.undo()
         #expect(controller.snapshot?.clipMix(copy) == nil)
-        await controller.undo(); await controller.undo()
+        await controller.undo()
+        await controller.undo()
         #expect(controller.snapshot?.clipMix(id)?.track == first && controller.snapshot?.clipMix(id)?.start == 0)
-        await controller.redo(); await controller.redo(); await controller.redo()
+        await controller.redo()
+        await controller.redo()
+        await controller.redo()
         #expect(controller.snapshot?.clipMix(id) == moved && controller.snapshot?.clipMix(copy)?.start == 2 * beat)
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.snapshot?.clipMix(id) == moved && controller.snapshot?.clipMix(copy)?.track == first)
         await controller.close()
     }
@@ -144,7 +167,8 @@ struct ClipMoveTests {
         let controller = ProjectController()
         await controller.open(root.appendingPathComponent("Project.echode"), creating: true)
         await controller.addTrack(name: "only")
-        let track = try #require(controller.selection), document = try #require(controller.documentID)
+        let track = try #require(controller.selection)
+        let document = try #require(controller.documentID)
         #expect(await controller.importAudio(wav, on: track))
         let initial = try #require(controller.snapshot)
         let first = try #require(clips(initial).first)
@@ -153,17 +177,30 @@ struct ClipMoveTests {
         let second = try #require(clips(both).first { $0 != first })
         // Landing one beat into the second clip keeps its last beat as a trimmed piece.
         let count = controller.undoCount
-        #expect(await controller.moveClip(ClipMove(document: document, clip: first, track: track, start: 3 * beat, copy: false)))
-        #expect(controller.snapshot?.clipMix(second)?.start == 5 * beat && controller.snapshot?.clipMix(second)?.length == beat)
+        #expect(
+            await controller.moveClip(
+                ClipMove(document: document, clip: first, track: track, start: 3 * beat, copy: false)))
+        #expect(
+            controller.snapshot?.clipMix(second)?.start == 5 * beat
+                && controller.snapshot?.clipMix(second)?.length == beat)
         #expect(controller.undoCount == count + 1)
         // No displacement, a removed track, and another document send nothing.
-        #expect(!(await controller.moveClip(ClipMove(document: document, clip: first, track: track, start: 3 * beat, copy: true))))
-        #expect(!(await controller.moveClip(ClipMove(document: document, clip: first, track: UUID(), start: 0, copy: false))))
-        #expect(!(await controller.moveClip(ClipMove(document: DocumentID(), clip: first, track: track, start: 0, copy: false))))
-        #expect(!(await controller.moveClip(ClipMove(document: document, clip: first, track: track, start: -1, copy: false))))
+        #expect(
+            !(await controller.moveClip(
+                ClipMove(document: document, clip: first, track: track, start: 3 * beat, copy: true))))
+        #expect(
+            !(await controller.moveClip(ClipMove(document: document, clip: first, track: UUID(), start: 0, copy: false)))
+        )
+        #expect(
+            !(await controller.moveClip(
+                ClipMove(document: DocumentID(), clip: first, track: track, start: 0, copy: false))))
+        #expect(
+            !(await controller.moveClip(ClipMove(document: document, clip: first, track: track, start: -1, copy: false)))
+        )
         #expect(controller.undoCount == count + 1)
         await controller.undo()
-        #expect(controller.snapshot?.clipMix(second)?.start == 4 * beat && controller.snapshot?.clipMix(first)?.start == 0)
+        #expect(
+            controller.snapshot?.clipMix(second)?.start == 4 * beat && controller.snapshot?.clipMix(first)?.start == 0)
         await controller.close()
     }
 

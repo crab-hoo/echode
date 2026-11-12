@@ -9,7 +9,6 @@ and summary.json next to the inputs.
 """
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -65,13 +64,17 @@ def render(units):
     for language in ("Rust", "Swift"):
         selected = {name: total for name, total in units.items() if name.startswith("swift/") == (language == "Swift")}
         for name, total in selected.items():
-            rows.append(f"| {name} | {total['files']} | {total['count']} | {total['covered']} | "
-                        f"{percent(total['covered'], total['count']):.1f}% |")
+            rows.append(
+                f"| {name} | {total['files']} | {total['count']} | {total['covered']} | "
+                f"{percent(total['covered'], total['count']):.1f}% |"
+            )
         count = sum(total["count"] for total in selected.values())
         covered = sum(total["covered"] for total in selected.values())
         if selected:
-            rows.append(f"| **{language} 計** | {sum(t['files'] for t in selected.values())} | {count} | {covered} | "
-                        f"{percent(covered, count):.1f}% |")
+            rows.append(
+                f"| **{language} 計** | {sum(t['files'] for t in selected.values())} | {count} | {covered} | "
+                f"{percent(covered, count):.1f}% |"
+            )
     rows.append("")
     rows.append(f"{'・'.join(HELPER_UNITS)} の helper のプロセスで動く行は、強制終了で記録が残らず少なく数える。")
     return "\n".join(rows) + "\n"

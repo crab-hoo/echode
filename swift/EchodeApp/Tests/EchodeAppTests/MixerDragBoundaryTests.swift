@@ -1,6 +1,7 @@
 import AppKit
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -8,7 +9,8 @@ struct MixerDragBoundaryTests {
     @Test func pressCapturesSelectionBeforeMovementAndPanUsesACommonLimit() async throws {
         let fixture = try await MixerDragFixture()
         defer { removeTestFile(fixture.url) }
-        let controller = fixture.controller, tracks = fixture.tracks
+        let controller = fixture.controller
+        let tracks = fixture.tracks
         let pan = fixture.point(.pan)
         fixture.header.mouseDown(with: try fixture.mouse(.leftMouseDown, pan))
         controller.selection = tracks[2]
@@ -17,13 +19,17 @@ struct MixerDragBoundaryTests {
         #expect(preview.pan == 0.25 && preview.values(on: tracks[1])?.pan == 1)
         #expect(preview.values(on: tracks[2]) == nil)
         // The product drawing frame must put both knobs at their preview positions.
-        var input = CanvasInput(snapshot: controller.snapshot, selected: tracks[2], camera: ArrangeCamera(), width: 500, height: 192, scale: 1)
+        var input = CanvasInput(
+            snapshot: controller.snapshot, selected: tracks[2], camera: ArrangeCamera(), width: 500, height: 192,
+            scale: 1)
         input.header = ArrangeHeaderInput(width: 220, palette: ArrangeHeaderPalette())
         input.faderPreview = preview
         let instances = ArrangeFrame(input: input).headerInstances
         for (index, value) in [(0, Float(0.25)), (1, Float(1))] {
             let rect = TrackControlLayout(row: CGRect(x: 0, y: index * 64, width: 220, height: 64)).pan
-            let expected = SIMD4<Float>(Float(rect.minX + Double(value + 1) / 2 * rect.width - 2), Float(rect.minY + 3), 4, Float(rect.height - 6))
+            let expected = SIMD4<Float>(
+                Float(rect.minX + Double(value + 1) / 2 * rect.width - 2), Float(rect.minY + 3), 4,
+                Float(rect.height - 6))
             #expect(instances.contains { $0.rect == expected })
         }
         fixture.header.mouseUp(with: try fixture.mouse(.leftMouseUp, pan, dx: 200))
@@ -36,7 +42,8 @@ struct MixerDragBoundaryTests {
     @Test func quietGroupsUseFiniteOffsetsAndSilentAnchorsExplainRefusal() async throws {
         let fixture = try await MixerDragFixture()
         defer { removeTestFile(fixture.url) }
-        let controller = fixture.controller, tracks = fixture.tracks
+        let controller = fixture.controller
+        let tracks = fixture.tracks
         #expect(await controller.setMixer(tracks[0], field: .gain, value: 0.00000001))
         #expect(await controller.setMixer(tracks[1], field: .gain, value: 0.00000002))
         try fixture.refresh()
@@ -71,8 +78,11 @@ struct MixerDragBoundaryTests {
     @Test func aDifferentPressCapturesThePendingGroupsShownResult() async throws {
         let fixture = try await MixerDragFixture()
         defer { removeTestFile(fixture.url) }
-        let controller = fixture.controller, tracks = fixture.tracks, undo = controller.undoCount
-        let gain = fixture.point(.gain), pan = fixture.point(.pan)
+        let controller = fixture.controller
+        let tracks = fixture.tracks
+        let undo = controller.undoCount
+        let gain = fixture.point(.gain)
+        let pan = fixture.point(.pan)
         fixture.header.mouseDown(with: try fixture.mouse(.leftMouseDown, gain, clicks: 2))
         fixture.header.mouseUp(with: try fixture.mouse(.leftMouseUp, gain, clicks: 2))
         fixture.header.mouseDown(with: try fixture.mouse(.leftMouseDown, pan))
@@ -95,8 +105,10 @@ struct MixerDragBoundaryTests {
     @Test func thirdClickAndDocumentReplacementCancelTheCompleteGroup() async throws {
         let fixture = try await MixerDragFixture()
         defer { removeTestFile(fixture.url) }
-        let controller = fixture.controller, tracks = fixture.tracks
-        let gain = fixture.point(.gain), undo = controller.undoCount
+        let controller = fixture.controller
+        let tracks = fixture.tracks
+        let gain = fixture.point(.gain)
+        let undo = controller.undoCount
         fixture.header.mouseDown(with: try fixture.mouse(.leftMouseDown, gain, clicks: 2))
         fixture.header.mouseUp(with: try fixture.mouse(.leftMouseUp, gain, clicks: 2))
         #expect(controller.faderPreview?.values(on: tracks[1])?.gain == 0.5)
@@ -107,13 +119,16 @@ struct MixerDragBoundaryTests {
         fixture.header.mouseDown(with: try fixture.mouse(.leftMouseDown, gain))
         fixture.header.mouseDragged(with: try fixture.mouse(.leftMouseDragged, gain, dx: 10))
         let old = try #require(controller.faderPreview)
-        await controller.close(); await controller.open(fixture.url)
+        await controller.close()
+        await controller.open(fixture.url)
         fixture.header.mixActions = controller.arrangeMixActions(document: controller.documentID)
         fixture.header.documentID = controller.documentID
         fixture.header.mouseUp(with: try fixture.mouse(.leftMouseUp, gain, dx: 20))
         await fixture.completion?.value
         #expect(controller.documentID != old.document && controller.faderPreview == nil)
-        #expect(controller.undoCount == 0 && controller.mixer(tracks[0])?.gain.value == 0.5 && controller.mixer(tracks[1])?.gain.value == 0.25)
+        #expect(
+            controller.undoCount == 0 && controller.mixer(tracks[0])?.gain.value == 0.5
+                && controller.mixer(tracks[1])?.gain.value == 0.25)
         await controller.close()
     }
 }

@@ -1,10 +1,11 @@
 import Testing
+
 @testable import EchodeAppCore
 
 struct NoteInputHistoryTests {
     @Test func initialLengthUndoBranchesAndSelectionsDuringWrites() {
         var memory = NoteInputLength()
-        memory.record(nil) // A track edit must reserve an untouched history slot.
+        memory.record(nil)  // A track edit must reserve an untouched history slot.
         memory.record(memory.change(to: 17))
         #expect(memory.length == 17)
         memory.undo()
@@ -12,7 +13,7 @@ struct NoteInputHistoryTests {
         memory.redo()
         #expect(memory.length == 17)
         let pending = memory.change(to: 29)
-        memory.remember(31) // A newer selection wins over a delayed journal reply.
+        memory.remember(31)  // A newer selection wins over a delayed journal reply.
         memory.record(pending)
         #expect(memory.length == 31)
         memory.undo()
@@ -25,12 +26,15 @@ struct NoteInputHistoryTests {
         #expect(memory.length == 37)
         memory.undo()
         #expect(memory.length == 17)
-        memory.record(memory.change(to: 41)) // Branch discards both redo slots.
+        memory.record(memory.change(to: 41))  // Branch discards both redo slots.
         memory.redo()
         #expect(memory.length == 41)
-        memory.undo(); memory.undo(); memory.undo()
+        memory.undo()
+        memory.undo()
+        memory.undo()
         #expect(memory.length == nil)
-        memory.remember(0); memory.remember(-1)
+        memory.remember(0)
+        memory.remember(-1)
         #expect(memory.length == nil && memory.change(to: 0) == nil)
     }
 
@@ -39,9 +43,11 @@ struct NoteInputHistoryTests {
             for pixels in [18.0, 72.0, 477.0] {
                 let camera = PianoCamera(pixelsPerBeat: pixels, gridMode: .fixed(grid))
                 for length: Int64 in [1, 70_560, 585_648] {
-                    var press = try #require(PianoInsertion(x: pixels, y: 90, camera: camera, snapping: true, length: length))
+                    var press = try #require(
+                        PianoInsertion(x: pixels, y: 90, camera: camera, snapping: true, length: length))
                     press.update(x: pixels + 1, y: 91, snapping: false)
-                    #expect(press.geometry?.length == length, "a click must not round its remembered length to the grid")
+                    #expect(
+                        press.geometry?.length == length, "a click must not round its remembered length to the grid")
                     press.update(x: 0, y: 90, snapping: false)
                     #expect(press.geometry?.length == grid, "a new drag retains the grid-cell minimum")
                 }

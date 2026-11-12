@@ -35,10 +35,12 @@ extension ProjectController {
     @discardableResult
     public func openPluginWindow(_ device: UUID, documentID: DocumentID) async -> DeviceWindowReport? {
         guard let document = session(for: documentID)?.document,
-              let track = tracks.first(where: { track in deviceRows(on: track.id).contains { $0.id == device } }),
-              let row = deviceRows(on: track.id).first(where: { $0.id == device }), !row.offline else { return nil }
+            let track = tracks.first(where: { track in deviceRows(on: track.id).contains { $0.id == device } }),
+            let row = deviceRows(on: track.id).first(where: { $0.id == device }), !row.offline
+        else { return nil }
         do {
-            let result = try await sendDevice(document, .showWindow(device: device, title: "\(track.name) — \(row.title)"))
+            let result = try await sendDevice(
+                document, .showWindow(device: device, title: "\(track.name) — \(row.title)"))
             guard isCurrent(documentID) else { return nil }
             return result.report.window
         } catch {
@@ -54,7 +56,9 @@ extension ProjectController {
     func addPluginOpeningWindow(_ plugin: String, on track: UUID, documentID: DocumentID) async -> Bool {
         let before = Set(deviceRows(on: track).map(\.id))
         guard await insertPlugin(plugin, on: track, documentID: documentID) else { return false }
-        if let session = session(for: documentID), let added = deviceRows(on: track).first(where: { !before.contains($0.id) }) {
+        if let session = session(for: documentID),
+            let added = deviceRows(on: track).first(where: { !before.contains($0.id) })
+        {
             let previous = session.pluginWindowTask
             session.pluginWindowTask = Task { [weak self] in
                 await previous?.value
@@ -82,7 +86,10 @@ extension ProjectController {
         guard let session = session(for: documentID) else { return }
         for entry in entries {
             let device = entry.device
-            guard tracks.contains(where: { track in deviceRows(on: track.id).contains { $0.id == device && !$0.offline } }) else { continue }
+            guard
+                tracks.contains(where: { track in deviceRows(on: track.id).contains { $0.id == device && !$0.offline } }
+                )
+            else { continue }
             if let open = entry.windowState {
                 if open { session.openPluginWindows.insert(device) } else { session.openPluginWindows.remove(device) }
             }

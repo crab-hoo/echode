@@ -2,6 +2,7 @@ import AppKit
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -21,8 +22,9 @@ struct PluginLatencyTests {
         let state = try #require(controller.parameterState(device))
         let strip = DeviceStripView(frame: CGRect(x: 0, y: 0, width: 640, height: 300))
         func refresh(collapsed: Bool = false) {
-            strip.configure(devices: controller.deviceRows(on: track), track: track, document: document,
-                            busy: false, states: [device: state], collapsed: collapsed ? [device] : [])
+            strip.configure(
+                devices: controller.deviceRows(on: track), track: track, document: document,
+                busy: false, states: [device: state], collapsed: collapsed ? [device] : [])
             strip.layoutSubtreeIfNeeded()
             for column in strip.columns { column.layoutSubtreeIfNeeded() }
         }
@@ -32,7 +34,8 @@ struct PluginLatencyTests {
         let snapshot = controller.snapshot
         let history = (controller.undoCount, controller.redoCount)
         for samples: UInt32 in [512, 0, .max] {
-            controller.receivePluginActivity([PluginActivity(device: device, latencySamples: samples)], documentID: document)
+            controller.receivePluginActivity(
+                [PluginActivity(device: device, latencySamples: samples)], documentID: document)
             refresh()
             #expect(state.latencySamples == samples)
             #expect(!column.latency.isHidden)
@@ -74,7 +77,9 @@ struct PluginLatencyTests {
                 reached.continuation.yield(())
                 var gate = release.stream.makeAsyncIterator()
                 _ = await gate.next()
-                return DeviceResult(report: DeviceReport(parameters: result.report.parameters, latencySamples: 256), snapshot: result.snapshot)
+                return DeviceResult(
+                    report: DeviceReport(parameters: result.report.parameters, latencySamples: 256),
+                    snapshot: result.snapshot)
             }
             return result
         })

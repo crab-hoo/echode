@@ -3,6 +3,7 @@ import CoreGraphics
 import EchodeBridge
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 /// The real-window scenarios run only under the AppKit probe event loop.
@@ -11,11 +12,14 @@ public struct PlayheadChecks {
     public init() {}
     public func stoppedLocateDrawsArrangeAndPianoAfterTheLinkPauses() async throws {
         let shown = try await ShownProject.make()
-        try await shown.exercise("locate", unverified: [
-            "0→2 beats",
-            "pause while stopped",
-            "same feed does not redraw",
-        ]) {
+        try await shown.exercise(
+            "locate",
+            unverified: [
+                "0→2 beats",
+                "pause while stopped",
+                "same feed does not redraw",
+            ]
+        ) {
             let ready = await shown.settled()
             try #require(ready, "\(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))")
             try #require(shown.arrange.timeline.measurement.continuous == false)
@@ -39,12 +43,15 @@ public struct PlayheadChecks {
 
             shown.noteTransport()
             let moved = await waitUntil {
-                shown.arrange.timeline.measurement.drawnTick == 705_600 * 2 &&
-                    shown.piano.grid.measurement.drawnTick == 705_600 * 2 &&
-                    shown.arrange.timeline.measurement.displayLinkPaused &&
-                    shown.piano.grid.measurement.displayLinkPaused
+                shown.arrange.timeline.measurement.drawnTick == 705_600 * 2
+                    && shown.piano.grid.measurement.drawnTick == 705_600 * 2
+                    && shown.arrange.timeline.measurement.displayLinkPaused
+                    && shown.piano.grid.measurement.displayLinkPaused
             }
-            try #require(moved, "stopped locate did not draw beat 2 \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))")
+            try #require(
+                moved,
+                "stopped locate did not draw beat 2 \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))"
+            )
             try #require(near(shown.arrange.timeline.measurement.playheadX, 161 + 2 * 72))
             try #require(near(shown.piano.grid.measurement.playheadX, 80 + 2 * 72))
         }
@@ -64,15 +71,20 @@ public struct PlayheadChecks {
             shown.noteTransport()
             let playing = await waitUntil {
                 guard shown.arrange.timeline.measurement.drawnPlaying == true,
-                      shown.piano.grid.measurement.drawnPlaying == true,
-                      let arrangeTick = shown.arrange.timeline.measurement.drawnTick,
-                      let pianoTick = shown.piano.grid.measurement.drawnTick else { return false }
+                    shown.piano.grid.measurement.drawnPlaying == true,
+                    let arrangeTick = shown.arrange.timeline.measurement.drawnTick,
+                    let pianoTick = shown.piano.grid.measurement.drawnTick
+                else { return false }
                 let heard = shown.feed.position.tick
-                return arrangeTick > 705_600 * 2 && abs(arrangeTick - heard) < 705_600 && abs(pianoTick - heard) < 705_600
+                return arrangeTick > 705_600 * 2 && abs(arrangeTick - heard) < 705_600
+                    && abs(pianoTick - heard) < 705_600
                     && !shown.arrange.timeline.measurement.displayLinkPaused
                     && !shown.piano.grid.measurement.displayLinkPaused
             }
-            try #require(playing, "play did not draw the live playhead \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))")
+            try #require(
+                playing,
+                "play did not draw the live playhead \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))"
+            )
             let callbacks = shown.arrange.timeline.measurement.callbacks
             let pianoCallbacks = shown.piano.grid.measurement.callbacks
             try await Task.sleep(for: .milliseconds(200))
@@ -85,21 +97,26 @@ public struct PlayheadChecks {
             try #require(stopped)
             shown.noteTransport()
             let paused = await waitUntil {
-                shown.arrange.timeline.measurement.displayLinkPaused && shown.piano.grid.measurement.displayLinkPaused &&
-                    shown.arrange.timeline.measurement.drawnRevision == shown.arrange.timeline.measurement.revision &&
-                    shown.piano.grid.measurement.drawnRevision == shown.piano.grid.measurement.revision &&
-                    shown.arrange.timeline.measurement.drawnPlaying == false &&
-                    shown.piano.grid.measurement.drawnPlaying == false &&
-                    shown.arrange.timeline.measurement.drawnTick == shown.feed.position.tick &&
-                    shown.piano.grid.measurement.drawnTick == shown.feed.position.tick
+                shown.arrange.timeline.measurement.displayLinkPaused && shown.piano.grid.measurement.displayLinkPaused
+                    && shown.arrange.timeline.measurement.drawnRevision == shown.arrange.timeline.measurement.revision
+                    && shown.piano.grid.measurement.drawnRevision == shown.piano.grid.measurement.revision
+                    && shown.arrange.timeline.measurement.drawnPlaying == false
+                    && shown.piano.grid.measurement.drawnPlaying == false
+                    && shown.arrange.timeline.measurement.drawnTick == shown.feed.position.tick
+                    && shown.piano.grid.measurement.drawnTick == shown.feed.position.tick
             }
-            try #require(paused, "pause did not freeze both playheads \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))")
+            try #require(
+                paused,
+                "pause did not freeze both playheads \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))"
+            )
             let arrangeFrozen = shown.arrange.timeline.measurement.frames
             let pianoFrozen = shown.piano.grid.measurement.frames
             try await Task.sleep(for: .milliseconds(400))
-            try #require(shown.arrange.timeline.measurement.frames == arrangeFrozen,
+            try #require(
+                shown.arrange.timeline.measurement.frames == arrangeFrozen,
                 "pause redraw arrange: frozen=\(arrangeFrozen) now=\(dump(shown.arrange.timeline.measurement))")
-            try #require(shown.piano.grid.measurement.frames == pianoFrozen,
+            try #require(
+                shown.piano.grid.measurement.frames == pianoFrozen,
                 "pause redraw piano: frozen=\(pianoFrozen) now=\(dump(shown.piano.grid.measurement))")
             try #require(shown.arrange.timeline.measurement.displayLinkPaused)
             try #require(shown.piano.grid.measurement.displayLinkPaused)
@@ -120,10 +137,13 @@ public struct PlayheadChecks {
 
     public func closedViewDoesNotDrawAndAReopenedOneDoes() async throws {
         let shown = try await ShownProject.make()
-        try await shown.exercise("closed", unverified: [
-            "destroyed view",
-            "reopened view draws the locate",
-        ]) {
+        try await shown.exercise(
+            "closed",
+            unverified: [
+                "destroyed view",
+                "reopened view draws the locate",
+            ]
+        ) {
             try #require(await shown.settled())
             shown.arrange.stop()
             await shown.controller.locate(beat: 3)
@@ -137,7 +157,10 @@ public struct PlayheadChecks {
             reopened.setSnapshot(snapshot, selected: shown.track)
             reopened.setPlayback(shown.feed)
             reopened.noteTransport(shown.controller.transportGeneration)
-            let drawn = await waitUntil { reopened.timeline.measurement.drawnTick == 705_600 * 3 && reopened.timeline.measurement.displayLinkPaused }
+            let drawn = await waitUntil {
+                reopened.timeline.measurement.drawnTick == 705_600 * 3
+                    && reopened.timeline.measurement.displayLinkPaused
+            }
             try #require(drawn, "reopened arrange missed the locate \(dump(reopened.timeline.measurement))")
             try #require(!shown.arrange.timeline.rendererAvailable)
             reopened.stop()
@@ -146,27 +169,36 @@ public struct PlayheadChecks {
 
     public func planSwapAndDocumentSwitchKeepTheLiveView() async throws {
         let shown = try await ShownProject.make()
-        try await shown.exercise("document", unverified: [
-            "plan swap",
-            "document switch",
-        ]) {
+        try await shown.exercise(
+            "document",
+            unverified: [
+                "plan swap",
+                "document switch",
+            ]
+        ) {
             try #require(await shown.settled())
-            try #require(await shown.controller.insertNote(pitch: 64, beat: 1, length: 1, documentID: shown.controller.documentID!))
+            try #require(
+                await shown.controller.insertNote(
+                    pitch: 64, beat: 1, length: 1, documentID: shown.controller.documentID!))
             let swapped = try #require(shown.controller.snapshot)
             shown.arrange.setSnapshot(swapped, selected: shown.track)
             shown.piano.grid.setSnapshot(swapped, track: shown.track, focus: nil, key: DisplayKey(), busy: false)
             await shown.controller.locate(beat: 1)
             shown.noteTransport()
             let moved = await waitUntil {
-                shown.arrange.timeline.measurement.drawnTick == 705_600 &&
-                    shown.piano.grid.measurement.drawnTick == 705_600
+                shown.arrange.timeline.measurement.drawnTick == 705_600
+                    && shown.piano.grid.measurement.drawnTick == 705_600
             }
-            try #require(moved, "plan swap did not draw beat 1 \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))")
+            try #require(
+                moved,
+                "plan swap did not draw beat 1 \(dump(shown.arrange.timeline.measurement)) \(dump(shown.piano.grid.measurement))"
+            )
 
             let stale = shown.arrange
             stale.stop()
             shown.piano.grid.stop()
-            let other = FileManager.default.temporaryDirectory.appendingPathComponent("echode-playhead-other-\(UUID()).echode")
+            let other = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "echode-playhead-other-\(UUID()).echode")
             defer { try? FileManager.default.removeItem(at: other) }
             await shown.controller.open(other, creating: true)
             await shown.controller.addTrack(name: "next")
@@ -208,7 +240,9 @@ private enum PlayheadSpike {
         }
         write()
         let list = unverified.joined(separator: "; ")
-        fputs("spike-playhead: window is not on the current Space without occlusion (\(facts)). Unverified: \(list)\n", stderr)
+        fputs(
+            "spike-playhead: window is not on the current Space without occlusion (\(facts)). Unverified: \(list)\n",
+            stderr)
     }
 
     static func noteCompleted(_ name: String, facts: PlayheadDisplayFacts) {
@@ -319,8 +353,9 @@ private final class ShownProject {
         let feed = try #require(controller.playback)
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 900, height: 650),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 80, y: 80, width: 900, height: 650),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Echode playhead"
         window.isReleasedWhenClosed = false
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 650))
@@ -332,14 +367,17 @@ private final class ShownProject {
         piano.grid.setPlayback(feed)
         arrange.layoutSubtreeIfNeeded()
         piano.layoutSubtreeIfNeeded()
-        let shown = ShownProject(url: url, controller: controller, window: window, content: content,
-                                 arrange: arrange, piano: piano, feed: feed, track: track)
+        let shown = ShownProject(
+            url: url, controller: controller, window: window, content: content,
+            arrange: arrange, piano: piano, feed: feed, track: track)
         if presented { shown.present() }
         return shown
     }
 
-    private init(url: URL, controller: ProjectController, window: NSWindow, content: NSView,
-                 arrange: ArrangePaneView, piano: PianoRollView, feed: PlaybackFeed, track: UUID) {
+    private init(
+        url: URL, controller: ProjectController, window: NSWindow, content: NSView,
+        arrange: ArrangePaneView, piano: PianoRollView, feed: PlaybackFeed, track: UUID
+    ) {
         self.url = url
         self.controller = controller
         self.window = window
@@ -366,7 +404,8 @@ private final class ShownProject {
     /// display and the items that were not checked, then fails the test.
     func requireVisible(unverified: [String]) async throws {
         let ready = await waitUntil(timeout: .seconds(5)) {
-            window.isVisible && window.isOnActiveSpace && window.occlusionState.contains(.visible) && !window.isMiniaturized
+            window.isVisible && window.isOnActiveSpace && window.occlusionState.contains(.visible)
+                && !window.isMiniaturized
         }
         let facts = displayFacts()
         guard ready else {
@@ -406,10 +445,10 @@ private final class ShownProject {
 
     func settled() async -> Bool {
         await waitUntil {
-            arrange.timeline.measurement.displayLinkPaused && arrange.timeline.measurement.frames >= 1 &&
-                piano.grid.measurement.displayLinkPaused && piano.grid.measurement.frames >= 1 &&
-                arrange.timeline.measurement.drawnRevision == arrange.timeline.measurement.revision &&
-                piano.grid.measurement.drawnRevision == piano.grid.measurement.revision
+            arrange.timeline.measurement.displayLinkPaused && arrange.timeline.measurement.frames >= 1
+                && piano.grid.measurement.displayLinkPaused && piano.grid.measurement.frames >= 1
+                && arrange.timeline.measurement.drawnRevision == arrange.timeline.measurement.revision
+                && piano.grid.measurement.drawnRevision == piano.grid.measurement.revision
         }
     }
 

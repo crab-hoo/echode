@@ -6,8 +6,11 @@ import SwiftUI
 private struct TransportPosition: View {
     let controller: ProjectController
     var body: some View {
-        LabeledContent(text("Position (beats)"), value: (Double(controller.position) / Tick.perBeat).formatted(.number.precision(.fractionLength(2))))
-            .monospacedDigit()
+        LabeledContent(
+            text("Position (beats)"),
+            value: (Double(controller.position) / Tick.perBeat).formatted(.number.precision(.fractionLength(2)))
+        )
+        .monospacedDigit()
     }
 }
 
@@ -24,8 +27,14 @@ struct WorkspaceTransportView: View {
     var body: some View {
         HStack(spacing: 12) {
             WorkspacePlayButton(paused: controller.playbackRequested) { Task { await controller.togglePause() } }
-            Button { Task { await controller.stopPlayback() } } label: { Label(text("Stop"), systemImage: "stop.fill") }
-            Button { Task { await controller.toggleMetronome() } } label: {
+            Button {
+                Task { await controller.stopPlayback() }
+            } label: {
+                Label(text("Stop"), systemImage: "stop.fill")
+            }
+            Button {
+                Task { await controller.toggleMetronome() }
+            } label: {
                 Label(text("Metronome"), systemImage: controller.audio.metronome ? "metronome.fill" : "metronome")
             }
             TransportPosition(controller: controller)
@@ -53,11 +62,18 @@ struct WorkspaceTransportView: View {
             if let notice = controller.autoMuteNotice {
                 Text(notice).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(notice)
             }
-            Text(controller.audio.activeDevice?.name ?? text("System Output")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(controller.audio.activeDevice?.name ?? text("System Output")).font(.caption).foregroundStyle(
+                .secondary
+            ).lineLimit(1)
         }.disabled(controller.transportLocked)
             .padding(.horizontal, 12).padding(.vertical, 8)
             .onChange(of: loopEntry) { _, _ in storeLoopDraft() }
-            .onChange(of: loopField) { previous, _ in if previous != nil { commitLoop(); if loopField == nil { showLoop() } } }
+            .onChange(of: loopField) { previous, _ in
+                if previous != nil {
+                    commitLoop()
+                    if loopField == nil { showLoop() }
+                }
+            }
             .onChange(of: controller.documentID) { _, _ in
                 showLoop()
                 showStart()
@@ -76,8 +92,11 @@ struct WorkspaceTransportView: View {
     private func commitLoop() {
         guard let range = loopRange else { return }
         controller.loopRange = range
-        guard LoopCommit.needsSend(soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd,
-                                   start: range.start, end: range.end) else { return }
+        guard
+            LoopCommit.needsSend(
+                soundingStart: controller.audio.loopStart, soundingEnd: controller.audio.loopEnd,
+                start: range.start, end: range.end)
+        else { return }
         Task { await controller.updateLoopBounds() }
     }
 }
@@ -111,13 +130,17 @@ struct WorkspaceOutputView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(text("Audio Output")).font(.headline)
-            Picker(text("Output Device"), selection: Binding(
-                get: { controller.audio.selectedUID ?? "" },
-                set: { uid in Task { await controller.selectOutput(uid: uid.isEmpty ? nil : uid) } }
-            )) {
+            Picker(
+                text("Output Device"),
+                selection: Binding(
+                    get: { controller.audio.selectedUID ?? "" },
+                    set: { uid in Task { await controller.selectOutput(uid: uid.isEmpty ? nil : uid) } }
+                )
+            ) {
                 Text(text("Follow System Output")).tag("")
                 ForEach(controller.audio.devices) { device in Text(device.name).tag(device.uid) }
-                if let uid = controller.audio.selectedUID, !controller.audio.devices.contains(where: { $0.uid == uid }) {
+                if let uid = controller.audio.selectedUID, !controller.audio.devices.contains(where: { $0.uid == uid })
+                {
                     Text(text("Selected Device Unavailable")).tag(uid)
                 }
             }.disabled(controller.transportLocked)

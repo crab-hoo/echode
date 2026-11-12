@@ -61,13 +61,19 @@ case "${1:-}" in
         check
         ;;
     run)
-        [[ $# -eq 3 ]] || { echo "usage: $0 run TARGET SECONDS" >&2; exit 2; }
+        [[ $# -eq 3 ]] || {
+            echo "usage: $0 run TARGET SECONDS" >&2
+            exit 2
+        }
         check
         fuzz build "$2"
         run_target "$2" "$3"
         ;;
     all)
-        [[ $# -eq 2 ]] || { echo "usage: $0 all SECONDS" >&2; exit 2; }
+        [[ $# -eq 2 ]] || {
+            echo "usage: $0 all SECONDS" >&2
+            exit 2
+        }
         check
         fuzz build
         for target in $(targets); do

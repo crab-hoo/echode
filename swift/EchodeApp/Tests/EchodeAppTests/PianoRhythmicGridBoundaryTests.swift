@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import EchodeAppCore
 
 struct PianoRhythmicGridBoundaryTests {
@@ -26,15 +27,21 @@ struct PianoRhythmicGridBoundaryTests {
 
     @Test func rhythmicLinesStayAlignedAfterScrollingAndBoundedWhenDense() {
         let track = UUID()
-        let input = CanvasInput(snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
+        let input = CanvasInput(
+            snapshot: nil, selected: track, camera: ArrangeCamera(), width: 640, height: 400, scale: 1)
         for ticks: Int64 in [235_200, 529_200, 14_700, 33_075] {
             for pixels in [8.0, 72, 1200] {
                 let camera = PianoCamera(originBeat: 1234.3, pixelsPerBeat: pixels, gridMode: .fixed(ticks))
-                let frame = PianoFrame(input: input, piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
+                let frame = PianoFrame(
+                    input: input,
+                    piano: PianoRenderInput(track: track, focus: nil, camera: camera, key: DisplayKey(), preview: nil))
                 #expect(!frame.gridTicks.isEmpty)
                 #expect(frame.gridTicks.count <= Int(frame.layout.grid.width / 4) + 1)
                 #expect(frame.gridTicks.allSatisfy { $0 % ticks == 0 && Double($0) / 705_600 >= camera.originBeat })
-                #expect(zip(frame.gridTicks, frame.gridTicks.dropFirst()).allSatisfy { Double($1 - $0) / 705_600 * pixels >= 4 })
+                #expect(
+                    zip(frame.gridTicks, frame.gridTicks.dropFirst()).allSatisfy {
+                        Double($1 - $0) / 705_600 * pixels >= 4
+                    })
                 #expect(camera.grid == ticks)
             }
         }

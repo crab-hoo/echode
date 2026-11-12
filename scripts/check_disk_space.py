@@ -2,9 +2,9 @@
 """Reject a verification run the disk cannot hold before a long build fills it (XCA-09)."""
 
 import argparse
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GIB = 1 << 30
@@ -32,8 +32,14 @@ def required_gib(root, minimum, cold):
 def main(argv=None, root=ROOT):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--min-gib", type=float, required=True, help="free space a warm run needs")
-    parser.add_argument("--cold", type=cold_estimate, action="append", default=[], metavar="PATH=GIB",
-                        help="extra space when the build cache PATH is absent")
+    parser.add_argument(
+        "--cold",
+        type=cold_estimate,
+        action="append",
+        default=[],
+        metavar="PATH=GIB",
+        help="extra space when the build cache PATH is absent",
+    )
     args = parser.parse_args(argv)
     need, missing = required_gib(root, args.min_gib, args.cold)
     free = shutil.disk_usage(root).free / GIB

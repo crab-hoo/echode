@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import EchodeBridge
 
 final class ModelLimitsTests: XCTestCase {
@@ -17,8 +18,10 @@ final class ModelLimitsTests: XCTestCase {
         XCTAssertEqual(Tick.ticks(1.0 / 256), 2_756)
         XCTAssertEqual(Tick.ticks(0.5 / 705_600), 1)
         XCTAssertEqual(Tick.ticks(-0.5 / 705_600), -1)
-        for beats in [Double.nan, .infinity, -.infinity, Double.greatestFiniteMagnitude,
-                      Double(Int64.max) / 705_600, Double(Int64.min) / 705_600 * 2] {
+        for beats in [
+            Double.nan, .infinity, -.infinity, Double.greatestFiniteMagnitude,
+            Double(Int64.max) / 705_600, Double(Int64.min) / 705_600 * 2,
+        ] {
             XCTAssertNil(Tick(beats: beats))
         }
         XCTAssertEqual(Tick(beats: -1)?.rawValue, -705_600)

@@ -3,12 +3,14 @@ import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
 struct SampleAuditionControlTests {
     @Test func contractManualAuditionAndVolumeWorkWithAutomaticAuditionOffWithoutEditing() async throws {
-        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("echode-audition-controls-\(UUID())")
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(
+            "echode-audition-controls-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { removeTestFile(root) }
         for name in ["kick.wav", "snare.wav", "song.mid"] { try Data().write(to: root.appendingPathComponent(name)) }
@@ -18,7 +20,9 @@ struct SampleAuditionControlTests {
         let requests = Mutex<[(URL?, AuditionOrigin)]>([])
         let settings = Mutex<[(Bool, Float)]>([])
         let seeks = Mutex<[(URL, UInt64, AuditionOrigin)]>([])
-        let controller = ProjectController(sendAudition: { _, url, origin in requests.withLock { $0.append((url, origin)) } })
+        let controller = ProjectController(sendAudition: { _, url, origin in
+            requests.withLock { $0.append((url, origin)) }
+        })
         controller.sendAuditionSettings = { _, visible, gain in settings.withLock { $0.append((visible, gain)) } }
         controller.sendAuditionAt = { _, url, frame, origin in seeks.withLock { $0.append((url, frame, origin)) } }
         let state = WorkspaceState(defaults: defaults)
@@ -50,9 +54,11 @@ struct SampleAuditionControlTests {
         list.onSelect = { session.chooseInBrowser($0, origin: $1) }
         list.onAudition = { session.auditionSelected(origin: $0) }
         list.show(state.browser.filtered, searching: false, selection: kick)
-        let right = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
-            characters: "\u{F703}", charactersIgnoringModifiers: "\u{F703}", isARepeat: false, keyCode: 124))
+        let right = try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
+                characters: "\u{F703}", charactersIgnoringModifiers: "\u{F703}", isARepeat: false, keyCode: 124))
         list.table.keyDown(with: right)
         #expect(requests.withLock { $0.count == 1 && $0[0].0 == kick && $0[0].1.input == .key })
         #expect(state.browser.selection == kick)
@@ -69,17 +75,21 @@ struct SampleAuditionControlTests {
         let preview = SamplePreviewView()
         preview.frame = NSRect(x: 0, y: 0, width: 200, height: 86)
         let json = #"""
-        {"request":1,"handled":1,"path":"\#(kick.path)","phase":"sounding","history":[],
-         "waveform":{"frames":48000,"loaded_frames":24000,"sample_rate":48000,"frames_per_peak":12000,
-                     "complete":false,"peaks":[[-0.5,1],[-0.25,0.5]]}}
-        """#
+            {"request":1,"handled":1,"path":"\#(kick.path)","phase":"sounding","history":[],
+             "waveform":{"frames":48000,"loaded_frames":24000,"sample_rate":48000,"frames_per_peak":12000,
+                         "complete":false,"peaks":[[-0.5,1],[-0.25,0.5]]}}
+            """#
         let status = try JSONDecoder().decode(AuditionStatus.self, from: Data(json.utf8))
         preview.show(url: kick, status: status)
         preview.onSeek = { frame, origin in session.auditionSelected(origin: origin, from: frame, expected: kick) }
         func click(_ point: NSPoint) throws {
-            preview.mouseDown(with: try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: preview.convert(point, to: nil),
-                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
-                eventNumber: 1, clickCount: 1, pressure: 1)))
+            preview.mouseDown(
+                with: try #require(
+                    NSEvent.mouseEvent(
+                        with: .leftMouseDown, location: preview.convert(point, to: nil),
+                        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+                        context: nil,
+                        eventNumber: 1, clickCount: 1, pressure: 1)))
         }
         try click(NSPoint(x: 75, y: 40))
         #expect(seeks.withLock { $0.count == 1 && $0[0].0 == kick && $0[0].1 == 18000 && $0[0].2.input == .click })

@@ -63,11 +63,14 @@ final class SamplePreviewView: NSView {
         } else if let waveform, waveform.sampleRate > 0 {
             let seconds = Double(waveform.frames) / Double(waveform.sampleRate)
             let duration = String(format: "%.2f s", seconds)
-            detail.stringValue = !waveform.complete ? "\(duration) · \(text("Loading sample"))"
+            detail.stringValue =
+                !waveform.complete
+                ? "\(duration) · \(text("Loading sample"))"
                 : (waveform.firstFrame ?? 0) > 0 ? "\(duration) · \(text("Partial waveform"))" : duration
             toolTip = nil
         } else {
-            detail.stringValue = text(current?.phase == .loading || overview == .loading ? "Loading sample" : "Preview not loaded")
+            detail.stringValue = text(
+                current?.phase == .loading || overview == .loading ? "Loading sample" : "Preview not loaded")
             toolTip = nil
         }
         setAccessibilityValue("\(label.stringValue), \(detail.stringValue)")
@@ -89,12 +92,14 @@ final class SamplePreviewView: NSView {
             guard peak.count == 2, peak[0].isFinite, peak[1].isFinite else { return nil }
             let x = plot.minX + Double(index) * Double(waveform.framesPerPeak) * scale
             let endFrame = (UInt64(index) + 1) * waveform.framesPerPeak
-            guard (x < plot.maxX), (endFrame > (waveform.firstFrame ?? 0)) else { return nil }
+            let firstFrame = waveform.firstFrame ?? 0
+            guard endFrame > firstFrame, x < plot.maxX else { return nil }
             let low = Double(max(-1, min(1, peak[0])))
             let high = Double(max(-1, min(1, peak[1])))
-            return NSRect(x: x, y: plot.midY - high * plot.height / 2,
-                          width: min(plot.maxX - x, max(1, Double(waveform.framesPerPeak) * scale)),
-                          height: max(1, (high - low) * plot.height / 2))
+            return NSRect(
+                x: x, y: plot.midY - high * plot.height / 2,
+                width: min(plot.maxX - x, max(1, Double(waveform.framesPerPeak) * scale)),
+                height: max(1, (high - low) * plot.height / 2))
         }
     }
 

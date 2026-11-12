@@ -142,7 +142,8 @@ extension ProjectController {
         guard let documentID = session.id, session.tracks.contains(where: { $0.id == track }) else { return Task {} }
         var reads: [DeviceParameterState] = []
         for device in deviceRows(on: track) where !device.offline {
-            let state = session.parameterStates[device.id] ?? DeviceParameterState(document: documentID, device: device.id)
+            let state =
+                session.parameterStates[device.id] ?? DeviceParameterState(document: documentID, device: device.id)
             if session.parameterStates[device.id] !== state { session.parameterStates[device.id] = state }
             reads.append(state)
         }
@@ -160,7 +161,8 @@ extension ProjectController {
     @discardableResult
     public func retryParameters(_ device: UUID, documentID: DocumentID) -> Task<Void, Never> {
         guard let session = inputSession(for: documentID), let state = session.parameterStates[device],
-              state.error != nil, !state.loading else { return Task {} }
+            state.error != nil, !state.loading
+        else { return Task {} }
         state.beginLoading()
         return Task { [weak self] in await self?.listParameters(state, in: session) }
     }
@@ -176,13 +178,16 @@ extension ProjectController {
 
     /// Reads one list again, for example after a plugin rescanned it.
     func listParameters(_ state: DeviceParameterState, in session: DocumentSession) async {
-        guard self.session === session, let document = session.document, session.parameterStates[state.device] === state else { return }
+        guard self.session === session, let document = session.document, session.parameterStates[state.device] === state
+        else { return }
         state.beginLoading()
         state.request &+= 1
         let request = state.request
         let latencyRevision = state.latencyRevision
         // A reply for an older request, a closed document or a removed device is dropped.
-        let current = { self.session === session && session.parameterStates[state.device] === state && state.request == request }
+        let current = {
+            self.session === session && session.parameterStates[state.device] === state && state.request == request
+        }
         do {
             let result = try await sendDevice(document, .parameters(device: state.device))
             guard current() else { return }
@@ -200,16 +205,20 @@ extension ProjectController {
     @discardableResult
     public func beginParameter(_ id: UInt32, device: UUID, documentID: DocumentID) -> Bool {
         guard let session = session(for: documentID), session.parameterGesture == nil, !session.historyBusy,
-              let parameter = session.parameterStates[device]?.parameter(id), !parameter.readOnly else { return false }
-        session.parameterGesture = ParameterGesture(device: device, parameter: id, original: parameter.value, latest: parameter.value)
+            let parameter = session.parameterStates[device]?.parameter(id), !parameter.readOnly
+        else { return false }
+        session.parameterGesture = ParameterGesture(
+            device: device, parameter: id, original: parameter.value, latest: parameter.value)
         return true
     }
 
     /// Sends the newest value of the drag to the running plugin. The project
     /// does not change until the drag ends.
     public func changeParameter(_ value: Double, documentID: DocumentID) {
-        guard let session = session(for: documentID), var gesture = session.parameterGesture, value.isFinite, let document = session.document,
-              let parameter = session.parameterStates[gesture.device]?.parameter(gesture.parameter) else { return }
+        guard let session = session(for: documentID), var gesture = session.parameterGesture, value.isFinite,
+            let document = session.document,
+            let parameter = session.parameterStates[gesture.device]?.parameter(gesture.parameter)
+        else { return }
         let clamped = Swift.min(Swift.max(value, parameter.min), parameter.max)
         let target = parameter.stepped ? clamped.rounded() : clamped
         guard target != gesture.latest else { return }
@@ -271,7 +280,8 @@ extension ProjectController {
     /// accepted and records nothing.
     public func enterParameter(_ text: String, id: UInt32, device: UUID, documentID: DocumentID) async -> Bool {
         guard let session = session(for: documentID), let document = session.document,
-              let parameter = session.parameterStates[device]?.parameter(id), !parameter.readOnly else { return false }
+            let parameter = session.parameterStates[device]?.parameter(id), !parameter.readOnly
+        else { return false }
         let value: Double?
         do {
             let result = try await sendDevice(document, .parse(device: device, id: id, text: text))
@@ -282,7 +292,8 @@ extension ProjectController {
             return false
         }
         guard isCurrent(documentID), let value, let current = session.parameterStates[device]?.parameter(id),
-              value >= current.min, value <= current.max else { return false }
+            value >= current.min, value <= current.max
+        else { return false }
         // A default shown by the double click before is put back first.
         if session.parameterGesture != nil { await finishParameter(commit: false, in: session) }
         await setParameter(id, device: device, value: value, documentID: documentID)
@@ -293,19 +304,27 @@ extension ProjectController {
     /// one Undo step. The id is a CLAP parameter id, not a row number.
     @discardableResult
     public func setPinned(_ parameter: UInt32, device: UUID, pinned: Bool, documentID: DocumentID) async -> Bool {
-        await performActions({ [self] in
-            guard let row = tracks.lazy.flatMap({ self.deviceRows(on: $0.id) }).first(where: { $0.id == device }),
-                  row.pinned.contains(parameter) != pinned else { return nil }
-            return [.pinParameter(device: device.uuidString, parameter: parameter, pinned: pinned)]
-        }, documentID: documentID)
+        await performActions(
+            { [self] in
+                guard let row = tracks.lazy.flatMap({ self.deviceRows(on: $0.id) }).first(where: { $0.id == device }),
+                    row.pinned.contains(parameter) != pinned
+                else { return nil }
+                return [.pinParameter(device: device.uuidString, parameter: parameter, pinned: pinned)]
+            }, documentID: documentID)
     }
 
-    private func send(_ gesture: ParameterGesture, value: Double, document: Document, in session: DocumentSession) async {
+    private func send(_ gesture: ParameterGesture, value: Double, document: Document, in session: DocumentSession) async
+    {
         do {
-            let result = try await sendDevice(document, .set(device: gesture.device, changes: [DeviceParameterChange(id: gesture.parameter, value: value)]))
+            let result = try await sendDevice(
+                document,
+                .set(device: gesture.device, changes: [DeviceParameterChange(id: gesture.parameter, value: value)]))
             guard let state = session.parameterStates[gesture.device],
-                  let applied = result.report.values?.first(where: { $0.id == gesture.parameter }) else { return }
-            if let active = session.parameterGesture, active.device == gesture.device, active.parameter == gesture.parameter {
+                let applied = result.report.values?.first(where: { $0.id == gesture.parameter })
+            else { return }
+            if let active = session.parameterGesture, active.device == gesture.device,
+                active.parameter == gesture.parameter
+            {
                 // The slider already shows a newer drag value; keep only the text in step.
                 session.parameterGesture?.applied = applied
                 state.update(applied.id, value: active.latest, text: applied.text)

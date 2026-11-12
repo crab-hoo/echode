@@ -4,11 +4,11 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,20 +28,51 @@ class ContextTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / "scripts").mkdir()
-        self.policy = {"version": 1, "global_inputs": [], "infrastructure": ["scripts/**"],
-                       "areas": {area: [f"{area}/**"] for area in context.AREA_GUIDES}, "checks": [
-                           {"id": "check", "mode": "automatic", "always": True, "areas": [],
-                            "inputs": ["**"], "timeout": 10, "purpose": "fixture contract"},
-                           {"id": "measure", "mode": "manual", "areas": ["audio"],
-                            "inputs": ["audio/**"], "timeout": 10, "purpose": "fixture measurement"}]}
+        self.policy = {
+            "version": 1,
+            "global_inputs": [],
+            "infrastructure": ["scripts/**"],
+            "areas": {area: [f"{area}/**"] for area in context.AREA_GUIDES},
+            "checks": [
+                {
+                    "id": "check",
+                    "mode": "automatic",
+                    "always": True,
+                    "areas": [],
+                    "inputs": ["**"],
+                    "timeout": 10,
+                    "purpose": "fixture contract",
+                },
+                {
+                    "id": "measure",
+                    "mode": "manual",
+                    "areas": ["audio"],
+                    "inputs": ["audio/**"],
+                    "timeout": 10,
+                    "purpose": "fixture measurement",
+                },
+            ],
+        }
         (self.root / "scripts/verification.json").write_text(json.dumps(self.policy))
         (self.root / ".gitignore").write_text("/target\n")
         for name in set(context.COMMON_GUIDES) | {name for names in context.AREA_GUIDES.values() for name in names}:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("# Guide\n\n## Boundary\nEvidence\n")
-        for args in (["init", "--quiet"], ["add", "."],
-                     ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture"]):
+        for args in (
+            ["init", "--quiet"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        ):
             subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
         (self.root / "audio").mkdir()
         (self.root / "audio/source.rs").write_text("// fixture input\n")
@@ -111,16 +142,30 @@ class ContextTests(unittest.TestCase):
         data = context.collect(self.root)
         checks = []
         for status in ("failed", "stale", "pending", "running", "not_run", "unknown"):
-            checks.append({"id": "auto-" + status, "mode": "automatic", "status": status,
-                           "fresh": True, "log": f"target/verification/{status}.log"})
-        checks += [{"id": "good", "mode": "automatic", "status": "passed", "fresh": True},
-                   {"id": "old-pass", "mode": "automatic", "status": "passed", "fresh": False, "log": "old.log"}]
-        for name, reason in (("manual-one", "User owns hardware"), ("manual-two", "User owns hardware"),
-                             ("manual-three", "Different reason"), ("manual-invalid", "")):
+            checks.append(
+                {
+                    "id": "auto-" + status,
+                    "mode": "automatic",
+                    "status": status,
+                    "fresh": True,
+                    "log": f"target/verification/{status}.log",
+                }
+            )
+        checks += [
+            {"id": "good", "mode": "automatic", "status": "passed", "fresh": True},
+            {"id": "old-pass", "mode": "automatic", "status": "passed", "fresh": False, "log": "old.log"},
+        ]
+        for name, reason in (
+            ("manual-one", "User owns hardware"),
+            ("manual-two", "User owns hardware"),
+            ("manual-three", "Different reason"),
+            ("manual-invalid", ""),
+        ):
             checks.append({"id": name, "mode": "manual", "status": "deferred", "fresh": True, "reason": reason})
         data["diagnosis"]["verification"].update(checks=checks, error="corrupt report", running=True)
-        data["diagnosis"]["environment"].update(missing_tools=["cargo"], tool_errors=["rustc -vV"],
-                                                setup_needed=["setup-bridge"])
+        data["diagnosis"]["environment"].update(
+            missing_tools=["cargo"], tool_errors=["rustc -vV"], setup_needed=["setup-bridge"]
+        )
         output = context.render(data)
         for check in checks:
             self.assertIn(check["id"], output)
@@ -128,8 +173,15 @@ class ContextTests(unittest.TestCase):
                 self.assertIn(check["log"], output)
         self.assertIn("1/8 current passes", output)
         self.assertEqual(output.count("User owns hardware"), 1)
-        for signal in ("corrupt report", "cargo", "rustc -vV", "make setup-bridge", "BUSY", "INVALID deferral",
-                       "make verify"):
+        for signal in (
+            "corrupt report",
+            "cargo",
+            "rustc -vV",
+            "make setup-bridge",
+            "BUSY",
+            "INVALID deferral",
+            "make verify",
+        ):
             self.assertIn(signal, output)
 
     def test_reading_budget_reports_the_start_reads_and_oversized_sections(self):
@@ -142,8 +194,9 @@ class ContextTests(unittest.TestCase):
         reading = data["reading"]
         self.assertEqual([item["path"] for item in reading["start"]], list(context.START_GUIDES))
         self.assertGreater(reading["start_bytes"], context.START_BUDGET_BYTES)
-        self.assertEqual([(item["path"], item["title"]) for item in reading["oversized"]],
-                         [("docs/development.md", "Large")])
+        self.assertEqual(
+            [(item["path"], item["title"]) for item in reading["oversized"]], [("docs/development.md", "Large")]
+        )
         output = context.render(data)
         self.assertIn("OVER BUDGET: the full reads", output)
         self.assertIn("OVER BUDGET: docs/development.md:3 Large", output)
@@ -174,7 +227,9 @@ class SourceViewTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="echode-source-view-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.text = "# Guide\nBefore\n## Target\n日本語\n### Nested\nDetail\n```sh\n## Not a heading\n```\n## Next\nAfter\n"
+        self.text = (
+            "# Guide\nBefore\n## Target\n日本語\n### Nested\nDetail\n```sh\n## Not a heading\n```\n## Next\nAfter\n"
+        )
         (self.root / "guide.md").write_text(self.text)
 
     def test_nested_section_is_exact_and_fenced_examples_do_not_end_it(self):
@@ -202,8 +257,14 @@ class SourceViewTests(unittest.TestCase):
 
     def test_ambiguous_sections_invalid_ranges_and_external_links_are_rejected(self):
         (self.root / "guide.md").write_text(self.text + "## Target\nDuplicate\n")
-        for kwargs in ({"section": "Target"}, {"section": "Missing"}, {"line_range": "0:2"},
-                       {"line_range": "5:2"}, {"line_range": "1:999"}, {"max_bytes": 0}):
+        for kwargs in (
+            {"section": "Target"},
+            {"section": "Missing"},
+            {"line_range": "0:2"},
+            {"line_range": "5:2"},
+            {"line_range": "1:999"},
+            {"max_bytes": 0},
+        ):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 context.source_view(self.root, "guide.md", **kwargs)
         with tempfile.TemporaryDirectory(prefix="echode-private-") as outside:
@@ -219,18 +280,43 @@ class SourceViewTests(unittest.TestCase):
         view = context.source_view(self.root, "source.rs", line_range="2:3")
         self.assertEqual(view["content"], "    value();\r\n}")
         self.assertEqual(context.render_view(view).partition("\n")[2], view["content"])
-        result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/agent_context.py"),
-                                 "--read", "docs/development.md", "--section", "検査をまとめて進める", "--json"],
-                                cwd=ROOT, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(ROOT / "scripts/agent_context.py"),
+                "--read",
+                "docs/development.md",
+                "--section",
+                "検査をまとめて進める",
+                "--json",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)["content"].startswith("## 検査をまとめて進める\n"))
 
     def test_cli_refusal_has_nonzero_exit_and_does_not_leak_partial_content(self):
         for mode in ("--read", "--outline"):
             with self.subTest(mode=mode):
-                result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/agent_context.py"),
-                                         mode, "AGENTS.md", "--max-bytes", "1"],
-                                        cwd=ROOT, capture_output=True, text=True, timeout=10)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(ROOT / "scripts/agent_context.py"),
+                        mode,
+                        "AGENTS.md",
+                        "--max-bytes",
+                        "1",
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(result.stdout, "")
                 self.assertIn("no content was returned", result.stderr)

@@ -1,6 +1,6 @@
 import AppKit
-import SwiftUI
 import Observation
+import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor
@@ -24,14 +24,20 @@ struct WorkspaceExportView: View {
     }
     @State private var presentation: Presentation
 
-    init(controller: ProjectController, job: ExportJob, defaults: UserDefaults = .standard, close: @escaping () -> Void) {
-        self.controller = controller; self.job = job; self.defaults = defaults; self.close = close
-        document = controller.documentID; project = controller.projectURL
+    init(controller: ProjectController, job: ExportJob, defaults: UserDefaults = .standard, close: @escaping () -> Void)
+    {
+        self.controller = controller
+        self.job = job
+        self.defaults = defaults
+        self.close = close
+        document = controller.documentID
+        project = controller.projectURL
         let rate = controller.audio.activeDevice?.sampleRate ?? 48_000
         initialRate = rate
-        let settings = controller.projectURL.map {
-            ExportSettings.load(project: $0, defaults: defaults, initialRate: rate)
-        } ?? ExportSettings.commonDefault(defaults: defaults, initialRate: rate)
+        let settings =
+            controller.projectURL.map {
+                ExportSettings.load(project: $0, defaults: defaults, initialRate: rate)
+            } ?? ExportSettings.commonDefault(defaults: defaults, initialRate: rate)
         _draft = State(initialValue: ExportSettingsDraft(settings: settings))
         _presentation = State(initialValue: Presentation(defaults: defaults))
     }
@@ -47,7 +53,9 @@ struct WorkspaceExportView: View {
             HStack {
                 Text(text("Export Audio")).font(.headline)
                 Spacer()
-                if presentation.loadingSettings { ProgressView().controlSize(.small).accessibilityLabel(text("Loading export settings")) }
+                if presentation.loadingSettings {
+                    ProgressView().controlSize(.small).accessibilityLabel(text("Loading export settings"))
+                }
             }.frame(height: 20)
             Text(text("Whole song · Stereo WAV · Recorded mix and effects")).foregroundStyle(.secondary)
             Form {
@@ -61,10 +69,13 @@ struct WorkspaceExportView: View {
                     .disabled(draft.options.automaticTail).accessibilityIdentifier("export.tail")
                 Toggle(text("TPDF dither"), isOn: $draft.options.tpdf).disabled(draft.options.format == .float32)
                     .accessibilityIdentifier("export.dither")
-                Toggle(text("Normalize sample peak"), isOn: Binding(
-                    get: { draft.options.normalizePeakDb != nil },
-                    set: { draft.options.normalizePeakDb = $0 ? -1 : nil }
-                )).accessibilityIdentifier("export.normalize")
+                Toggle(
+                    text("Normalize sample peak"),
+                    isOn: Binding(
+                        get: { draft.options.normalizePeakDb != nil },
+                        set: { draft.options.normalizePeakDb = $0 ? -1 : nil }
+                    )
+                ).accessibilityIdentifier("export.normalize")
                 TextField(text("Peak target (dBFS, −120…0)"), text: $draft.peakDb)
                     .disabled(draft.options.normalizePeakDb == nil).accessibilityIdentifier("export.peak")
             }.disabled(presentation.loadingSettings)
@@ -76,32 +87,43 @@ struct WorkspaceExportView: View {
                 Button(text("Use Default"), action: useCommonDefault).accessibilityIdentifier("export.defaults.load")
                 Button(text("Save as Default"), action: saveCommonDefault)
                     .disabled(validatedSettings == nil).accessibilityIdentifier("export.defaults.save")
-                Button(text("Reset Default"), action: resetCommonDefault).accessibilityIdentifier("export.defaults.reset")
+                Button(text("Reset Default"), action: resetCommonDefault).accessibilityIdentifier(
+                    "export.defaults.reset")
             }.controlSize(.small).disabled(!canChangeDefaults)
             presetControls
-            Text(text(presentation.defaultsMessage ?? "Defaults apply on this Mac to projects without previous export settings."))
-                .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("export.defaults.status")
+            Text(
+                text(
+                    presentation.defaultsMessage
+                        ?? "Defaults apply on this Mac to projects without previous export settings.")
+            )
+            .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("export.defaults.status")
             Text(text("Export uses a private snapshot. Editing and playback can continue after preparation."))
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button(text("Cancel"), action: close).keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(text("Export Audio"), action: chooseOutput).keyboardShortcut(.defaultAction)
-                    .disabled(presentation.loadingSettings || validatedSettings == nil || presentation.choosingOutput || job.running || !controller.acceptsInput(document))
+                    .disabled(
+                        presentation.loadingSettings || validatedSettings == nil || presentation.choosingOutput
+                            || job.running || !controller.acceptsInput(document)
+                    )
                     .accessibilityIdentifier("export.start")
             }
         }.padding(24).frame(width: 460)
             .onChange(of: draft.options.format) { _, format in if format == .float32 { draft.options.tpdf = false } }
             .interactiveDismissDisabled(presentation.choosingOutput)
             .task {
-                guard let document, let loaded = await controller.loadExportSettings(documentID: document, defaults: defaults) else { return }
+                guard let document,
+                    let loaded = await controller.loadExportSettings(documentID: document, defaults: defaults)
+                else { return }
                 draft.reset(settings: loaded, locale: locale)
                 presentation.loadingSettings = false
             }
     }
 
     var presetControls: ExportPresetControls {
-        ExportPresetControls(state: presentation.presets, draft: draft, defaults: defaults, canEdit: { canChangeDefaults })
+        ExportPresetControls(
+            state: presentation.presets, draft: draft, defaults: defaults, canEdit: { canChangeDefaults })
     }
 
     private var canChangeDefaults: Bool {
@@ -115,7 +137,9 @@ struct WorkspaceExportView: View {
     }
 
     func saveCommonDefault() {
-        guard canChangeDefaults, let settings = validatedSettings, settings.saveAsDefault(defaults: defaults) else { return }
+        guard canChangeDefaults, let settings = validatedSettings, settings.saveAsDefault(defaults: defaults) else {
+            return
+        }
         presentation.defaultsMessage = "Default export settings saved on this Mac."
     }
 
@@ -129,7 +153,8 @@ struct WorkspaceExportView: View {
     private func chooseOutput() {
         guard let document, let project, let captured = validatedSettings else { return }
         let panel = NSSavePanel()
-        panel.title = text("Export Audio"); panel.allowedContentTypes = [.wav]
+        panel.title = text("Export Audio")
+        panel.allowedContentTypes = [.wav]
         panel.nameFieldStringValue = project.deletingPathExtension().lastPathComponent + ".wav"
         panel.canCreateDirectories = true
         presentation.choosingOutput = true
@@ -137,7 +162,9 @@ struct WorkspaceExportView: View {
             presentation.choosingOutput = false
             guard response == .OK, let output = panel.url else { return }
             close()
-            job.start(controller: controller, document: document, project: project, output: output, settings: captured, defaults: defaults)
+            job.start(
+                controller: controller, document: document, project: project, output: output, settings: captured,
+                defaults: defaults)
         }
     }
 }
@@ -169,8 +196,11 @@ struct ExportStatusView: View {
                 if !job.detail.isEmpty {
                     Button(text("Details")) { details.toggle() }
                         .popover(isPresented: $details) {
-                            ScrollView { Text(job.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled).padding() }
-                                .frame(width: 520, height: 240)
+                            ScrollView {
+                                Text(job.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                                    .padding()
+                            }
+                            .frame(width: 520, height: 240)
                         }
                 }
             }.padding(.horizontal, 10).padding(.vertical, 4)

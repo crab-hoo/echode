@@ -136,8 +136,10 @@ final class PianoGridView: NSView {
 
     func setGridMode(_ mode: PianoGrid) {
         guard PianoGrid.choices.contains(mode), let track,
-              navigation == nil || navigation?.permits(document: navigationDocument, track: track) == true else {
-            onGridChange?(camera); return
+            navigation == nil || navigation?.permits(document: navigationDocument, track: track) == true
+        else {
+            onGridChange?(camera)
+            return
         }
         guard camera.gridMode != mode else { return }
         cancelGesture()
@@ -175,8 +177,12 @@ final class PianoGridView: NSView {
         setAccessibilityLabel(text("Piano Roll"))
         setAccessibilityHelp(text("Piano keyboard help"))
         setAccessibilityCustomActions([
-            NSAccessibilityCustomAction(name: text("Next Note")) { [weak self] in self?.navigate(backwards: false) ?? false },
-            NSAccessibilityCustomAction(name: text("Previous Note")) { [weak self] in self?.navigate(backwards: true) ?? false },
+            NSAccessibilityCustomAction(name: text("Next Note")) { [weak self] in
+                self?.navigate(backwards: false) ?? false
+            },
+            NSAccessibilityCustomAction(name: text("Previous Note")) { [weak self] in
+                self?.navigate(backwards: true) ?? false
+            },
             NSAccessibilityCustomAction(name: text("Insert Note")) { [weak self] in self?.insertAtCaret() ?? false },
         ])
     }
@@ -184,30 +190,55 @@ final class PianoGridView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    override func resignFirstResponder() -> Bool { cancelGesture(); return super.resignFirstResponder() }
+    override func resignFirstResponder() -> Bool {
+        cancelGesture()
+        return super.resignFirstResponder()
+    }
     override func makeBackingLayer() -> CALayer { metalLayer }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { stop(); return }
+        guard window != nil else {
+            stop()
+            return
+        }
         follower.attach(to: self)
         if renderer == nil {
             do {
                 let generation = feedback.restart()
-                renderer = try CanvasRenderer(layer: metalLayer,
-                    onElements: { _ in }, onPiano: { [weak self] frame in
-                        guard let self, self.snapshot === frame.input.snapshot, self.track == frame.piano.track, self.references == frame.piano.references,
-                              self.feedback.accept(generation, revision: frame.revision) else { return }
+                renderer = try CanvasRenderer(
+                    layer: metalLayer,
+                    onElements: { _ in },
+                    onPiano: { [weak self] frame in
+                        guard let self, self.snapshot === frame.input.snapshot, self.track == frame.piano.track,
+                            self.references == frame.piano.references,
+                            self.feedback.accept(generation, revision: frame.revision)
+                        else { return }
                         self.present(frame)
                     })
             } catch {
                 EchodeLog.write(.error, "piano", "the Metal renderer could not start: \(String(describing: error))")
                 let label = NSTextField(labelWithString: text("Metal is unavailable"))
-                label.frame = bounds; label.autoresizingMask = [.width, .height]; addSubview(label)
+                label.frame = bounds
+                label.autoresizingMask = [.width, .height]
+                addSubview(label)
             }
         }
         refresh()
     }
-    func stop() { velocityAccessibility.clear(); follower.detach(); feedback.invalidate(); renderer?.stop(); renderer = nil; submittedFrame = nil; elements = []; accessible = [:]; accessibleVersion = [:]; announcedFocus = nil; accessibilityBuilds = 0; cancelGesture() }
+    func stop() {
+        velocityAccessibility.clear()
+        follower.detach()
+        feedback.invalidate()
+        renderer?.stop()
+        renderer = nil
+        submittedFrame = nil
+        elements = []
+        accessible = [:]
+        accessibleVersion = [:]
+        announcedFocus = nil
+        accessibilityBuilds = 0
+        cancelGesture()
+    }
     func beginMeasurement() { renderer?.beginMeasurement() }
     func markMainBusy(_ busy: Bool) { renderer?.markMainBusy(busy) }
     var measurement: ArrangeMeasurement { renderer?.measurement ?? ArrangeMeasurement() }
@@ -215,29 +246,60 @@ final class PianoGridView: NSView {
     func setNavigation(_ navigation: CanvasNavigationState?, documentID document: DocumentID?) {
         if self.navigation !== navigation || navigationDocument != document {
             // Never write the departing document's viewport into its replacement.
-            cancelGesture(); selectedNotes = []; focus = nil; track = nil; camera = PianoCamera()
+            cancelGesture()
+            selectedNotes = []
+            focus = nil
+            track = nil
+            camera = PianoCamera()
         }
-        self.navigation = navigation; navigationDocument = document
+        self.navigation = navigation
+        navigationDocument = document
     }
-    func setSnapshot(_ snapshot: Snapshot, track: UUID, focus: PianoNote.ID?, key: DisplayKey, busy: Bool, selection: Set<PianoNote.ID>? = nil) {
+    func setSnapshot(
+        _ snapshot: Snapshot, track: UUID, focus: PianoNote.ID?, key: DisplayKey, busy: Bool,
+        selection: Set<PianoNote.ID>? = nil
+    ) {
         let trackChanged = self.track != track
         let oldGeometry = self.focus.flatMap { self.snapshot?.pianoNote($0).map(NoteGeometry.init) }
         let newGeometry = focus.flatMap { snapshot.pianoNote($0).map(NoteGeometry.init) }
-        let needsReveal = trackChanged || (self.snapshot !== snapshot && oldGeometry != newGeometry) ||
-            (self.focus != focus && !elements.contains(where: { $0.id == focus }))
-        if trackChanged { rememberViewport(); stepped = [:] }
+        let needsReveal =
+            trackChanged || (self.snapshot !== snapshot && oldGeometry != newGeometry)
+            || (self.focus != focus && !elements.contains(where: { $0.id == focus }))
+        if trackChanged {
+            rememberViewport()
+            stepped = [:]
+        }
         let canRestore = navigation?.permits(document: navigationDocument, track: track) == true
         let sharedCamera = canRestore ? navigation?.pianoCamera : nil
         let restoredFocus = trackChanged && sharedCamera != nil
-        if trackChanged { camera = sharedCamera ?? PianoCamera(); caretTick = 0; caretPitch = 60 }
+        if trackChanged {
+            camera = sharedCamera ?? PianoCamera()
+            caretTick = 0
+            caretPitch = 60
+        }
         let changed = self.snapshot !== snapshot || self.track != track
-        if changed || busy { interaction = .idle; revealOnLayout = false }
-        if self.track != track { accessible = [:]; velocityAccessibility.clear() }
-        if changed { elements = []; submittedFrame = nil }
-        let selected = (selection ?? Set(focus.map { [$0] } ?? [])).filter { $0.track == track && snapshot.pianoNote($0) != nil }
+        if changed || busy {
+            interaction = .idle
+            revealOnLayout = false
+        }
+        if self.track != track {
+            accessible = [:]
+            velocityAccessibility.clear()
+        }
+        if changed {
+            elements = []
+            submittedFrame = nil
+        }
+        let selected = (selection ?? Set(focus.map { [$0] } ?? [])).filter {
+            $0.track == track && snapshot.pianoNote($0) != nil
+        }
         if selectedNotes != selected { interaction.endIfBoundToSelection() }
-        let needsRefresh = changed || selectedNotes != selected || self.focus != focus || self.key != key || self.busy != busy
-        self.snapshot = snapshot; self.track = track; self.key = key; self.busy = busy
+        let needsRefresh =
+            changed || selectedNotes != selected || self.focus != focus || self.key != key || self.busy != busy
+        self.snapshot = snapshot
+        self.track = track
+        self.key = key
+        self.busy = busy
         selectedNotes = selected
         self.focus = selected.count == 1 ? selected.first : nil
         syncStepped()
@@ -245,53 +307,66 @@ final class PianoGridView: NSView {
             // Clicking an already visible, partly clipped note must not move
             // the camera under a drag. Reveal after edits or offscreen focus.
             if let focus = self.focus, !restoredFocus, needsReveal,
-               let note = snapshot.pianoNote(focus) {
+                let note = snapshot.pianoNote(focus)
+            {
                 if pianoLayout.grid.width > 0, pianoLayout.grid.height > 0 {
                     camera.reveal(note, width: pianoLayout.grid.width, height: pianoLayout.grid.height)
-                } else { revealOnLayout = true }
+                } else {
+                    revealOnLayout = true
+                }
             }
             refresh()
         }
     }
     override func setFrameSize(_ newSize: NSSize) {
         if bounds.size != newSize { interaction.endOnResize() }
-        super.setFrameSize(newSize); refresh()
+        super.setFrameSize(newSize)
+        refresh()
     }
     override func setBoundsSize(_ newSize: NSSize) {
         if bounds.size != newSize { interaction.endOnResize() }
-        super.setBoundsSize(newSize); refresh()
+        super.setBoundsSize(newSize)
+        refresh()
     }
     override func layout() {
         super.layout()
         if revealOnLayout, pianoLayout.grid.width > 0, pianoLayout.grid.height > 0,
-           let focus, let note = snapshot?.pianoNote(focus) {
+            let focus, let note = snapshot?.pianoNote(focus)
+        {
             camera.reveal(note, width: pianoLayout.grid.width, height: pianoLayout.grid.height)
             revealOnLayout = false
         }
         refresh()
     }
-    override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); refresh() }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        refresh()
+    }
 
     override func scrollWheel(with event: NSEvent) {
         cancelGesture()
-        let delta = WheelScroll.points(x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
-            precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerPitch)
+        let delta = WheelScroll.points(
+            x: Double(event.scrollingDeltaX), y: Double(event.scrollingDeltaY),
+            precise: event.hasPreciseScrollingDeltas, lineWidth: camera.pixelsPerBeat, lineHeight: camera.pixelsPerPitch
+        )
         if PlayheadFollow.isTimeScroll(x: delta.x, y: delta.y) {
             // Released here first so the next frame does not page back.
             follower.setFollowing(false)
             onManualScroll?()
         }
         camera.originBeat = max(0, camera.originBeat - delta.x / camera.pixelsPerBeat)
-        camera.topPitch = min(Double(ModelLimits.midi7.upperBound), max(0, camera.topPitch + delta.y / camera.pixelsPerPitch))
+        camera.topPitch = min(
+            Double(ModelLimits.midi7.upperBound), max(0, camera.topPitch + delta.y / camera.pixelsPerPitch))
         refresh()
     }
     override func magnify(with event: NSEvent) {
         cancelGesture()
         let factor = max(0.1, 1 + Double(event.magnification))
         let point = pianoLayout.gridPoint(convert(event.locationInWindow, from: nil))
-        camera.zoom(factor: factor, horizontal: !event.modifierFlags.contains(.option) || event.modifierFlags.contains(.shift),
-                    vertical: event.modifierFlags.contains(.option) || event.modifierFlags.contains(.shift),
-                    anchor: CGPoint(x: max(0, point.x), y: max(0, point.y)))
+        camera.zoom(
+            factor: factor, horizontal: !event.modifierFlags.contains(.option) || event.modifierFlags.contains(.shift),
+            vertical: event.modifierFlags.contains(.option) || event.modifierFlags.contains(.shift),
+            anchor: CGPoint(x: max(0, point.x), y: max(0, point.y)))
         refresh()
     }
     override func mouseDown(with event: NSEvent) {
@@ -302,27 +377,43 @@ final class PianoGridView: NSView {
         let panePoint = convert(event.locationInWindow, from: nil)
         if pianoLayout.ruler.contains(panePoint) {
             // Defer the click until release so a loop drag never seeks.
-            interaction = .ruler(RulerPress(x: pianoLayout.gridPoint(panePoint).x, originBeat: camera.originBeat,
-                                            pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid,
-                                            edge: rulerHandles.hit(at: panePoint), originalRange: loop?.range))
+            interaction = .ruler(
+                RulerPress(
+                    x: pianoLayout.gridPoint(panePoint).x, originBeat: camera.originBeat,
+                    pixelsPerBeat: camera.pixelsPerBeat, grid: camera.grid,
+                    edge: rulerHandles.hit(at: panePoint), originalRange: loop?.range))
             return
         }
         if pianoLayout.velocity.contains(panePoint) {
-            if let hit = submittedFrame.velocityLane.hit(at: panePoint, bars: submittedFrame.velocityBars, focus: focus) {
-                if event.modifierFlags.contains(.command) { toggleSelection(hit); return }
-                beginVelocity(hit, y: pianoLayout.gridPoint(panePoint).y, pointsPerStep: submittedFrame.velocityLane.span / Double(ModelLimits.midi7.upperBound))
+            if let hit = submittedFrame.velocityLane.hit(at: panePoint, bars: submittedFrame.velocityBars, focus: focus)
+            {
+                if event.modifierFlags.contains(.command) {
+                    toggleSelection(hit)
+                    return
+                }
+                beginVelocity(
+                    hit, y: pianoLayout.gridPoint(panePoint).y,
+                    pointsPerStep: submittedFrame.velocityLane.span / Double(ModelLimits.midi7.upperBound))
             }
             return
         }
         guard pianoLayout.grid.contains(panePoint) else { return }
         stepped = [:]
         let point = pianoLayout.gridPoint(panePoint)
-        caretTick = max(0, camera.tick(at: point.x) ?? 0); caretPitch = camera.pitch(at: point.y)
-        if let hit = elements.last(where: { NSRect(x: Double($0.x), y: Double($0.y), width: max(2, Double($0.width)), height: Double($0.height)).contains(point) }) {
+        caretTick = max(0, camera.tick(at: point.x) ?? 0)
+        caretPitch = camera.pitch(at: point.y)
+        if let hit = elements.last(where: {
+            NSRect(x: Double($0.x), y: Double($0.y), width: max(2, Double($0.width)), height: Double($0.height))
+                .contains(point)
+        }) {
             if event.modifierFlags.contains(.command) {
-                guard let originals = currentGeometries(selectedNotes.contains(hit.id) ? selectedNotes : [hit.id]) else { return }
+                guard let originals = currentGeometries(selectedNotes.contains(hit.id) ? selectedNotes : [hit.id])
+                else { return }
                 let copies = Dictionary(uniqueKeysWithValues: Set(originals.keys.map(\.note)).map { ($0, UUID()) })
-                interaction = .move(PianoMoveGesture(anchor: hit.id, originals: originals, point: point, camera: camera, copies: copies), preview: nil)
+                interaction = .move(
+                    PianoMoveGesture(
+                        anchor: hit.id, originals: originals, point: point, camera: camera, copies: copies),
+                    preview: nil)
                 return
             }
             if event.modifierFlags.contains(.option), !event.modifierFlags.contains(.command) {
@@ -335,25 +426,31 @@ final class PianoGridView: NSView {
             let groupedMove = mode == .move && selectedNotes.count > 1 && selectedNotes.contains(hit.id)
             if groupedMove {
                 guard let originals = currentGeometries(selectedNotes) else { return }
-                interaction = .move(PianoMoveGesture(anchor: hit.id, originals: originals, point: point, camera: camera), preview: nil)
+                interaction = .move(
+                    PianoMoveGesture(anchor: hit.id, originals: originals, point: point, camera: camera), preview: nil)
                 return
             }
             let groupedResize = mode != .move && selectedNotes.count > 1 && selectedNotes.contains(hit.id)
             if groupedResize {
                 guard let originals = currentGeometries(selectedNotes) else { return }
-                interaction = .resize(PianoResizeGesture(anchor: hit.id, originals: originals, edge: mode, point: point, camera: camera), preview: nil)
+                interaction = .resize(
+                    PianoResizeGesture(anchor: hit.id, originals: originals, edge: mode, point: point, camera: camera),
+                    preview: nil)
                 return
             }
             select(hit)
-            interaction = .note(PianoGesture(id: hit.id, original: NoteGeometry(hit), mode: mode, x: point.x, y: point.y), preview: nil)
+            interaction = .note(
+                PianoGesture(id: hit.id, original: NoteGeometry(hit), mode: mode, x: point.x, y: point.y), preview: nil)
         } else {
             // The first release already inserts. A double click must not add
             // another note while the new model frame is still in flight.
             guard event.clickCount == 1 else { return }
             guard !event.modifierFlags.contains(.command) else { return }
             replaceSelection([])
-            if let insertion = PianoInsertion(x: point.x, y: point.y, camera: camera,
-                                              snapping: !event.modifierFlags.contains(.shift), length: inputLength()) {
+            if let insertion = PianoInsertion(
+                x: point.x, y: point.y, camera: camera,
+                snapping: !event.modifierFlags.contains(.shift), length: inputLength())
+            {
                 interaction = .insertion(insertion)
             }
             refresh()
@@ -361,9 +458,13 @@ final class PianoGridView: NSView {
     }
     override func mouseDragged(with event: NSEvent) {
         guard interaction.followsLeftDrag else { return }
-        guard !busy else { cancelGesture(); return }
-        interaction.drag(to: pianoLayout.gridPoint(convert(event.locationInWindow, from: nil)),
-                         snapping: !event.modifierFlags.contains(.shift), camera: camera)
+        guard !busy else {
+            cancelGesture()
+            return
+        }
+        interaction.drag(
+            to: pianoLayout.gridPoint(convert(event.locationInWindow, from: nil)),
+            snapping: !event.modifierFlags.contains(.shift), camera: camera)
         refresh()
     }
     override func mouseUp(with event: NSEvent) {
@@ -377,7 +478,9 @@ final class PianoGridView: NSView {
         case .idle, .marquee: break
         case .move(let move, let preview):
             let finished = preview == nil ? nil : move.preview(at: point, snapping: snapping)
-            if let finished, !busy, !finished.change.copies.isEmpty || finished.change.time != 0 || finished.change.pitch != 0 {
+            if let finished, !busy,
+                !finished.change.copies.isEmpty || finished.change.time != 0 || finished.change.pitch != 0
+            {
                 onMoves?(finished.change)
             } else if preview == nil, !move.copies.isEmpty, !busy, let click = snapshot?.pianoNote(move.anchor) {
                 toggleSelection(click)
@@ -389,7 +492,9 @@ final class PianoGridView: NSView {
             if preview != nil, let finished = gesture.preview(y: point.y) { commitVelocity(finished, gesture: gesture) }
         case .ruler(var press):
             press.update(x: point.x, snapping: snapping)
-            guard !busy, press.originBeat == camera.originBeat, press.pixelsPerBeat == camera.pixelsPerBeat, press.grid == camera.grid else { return }
+            guard !busy, press.originBeat == camera.originBeat, press.pixelsPerBeat == camera.pixelsPerBeat,
+                press.grid == camera.grid
+            else { return }
             if press.dragged {
                 if let range = press.range { onSetLoop?(range) }
             } else if press.edge == nil, let tick = camera.rulerTick(at: press.x, snapping: snapping) {
@@ -398,12 +503,15 @@ final class PianoGridView: NSView {
         case .insertion(var insertion):
             insertion.update(x: point.x, y: point.y, snapping: snapping)
             if let geometry = insertion.geometry, !busy {
-                caretTick = geometry.start; caretPitch = geometry.pitch
+                caretTick = geometry.start
+                caretPitch = geometry.pitch
                 onInsert?(geometry.pitch, Double(geometry.start) / Tick.perBeat, Double(geometry.length) / Tick.perBeat)
             }
         case .note(let gesture, let preview):
-            guard preview != nil, !busy, let finished = gesture.notePreview(at: point, camera: camera, snapping: snapping),
-                  finished.geometry != gesture.original else { return }
+            guard preview != nil, !busy,
+                let finished = gesture.notePreview(at: point, camera: camera, snapping: snapping),
+                finished.geometry != gesture.original
+            else { return }
             onEdit?(finished.id, finished.geometry)
         }
     }
@@ -426,8 +534,10 @@ final class PianoGridView: NSView {
                 originals[id] = current.velocity
             }
         }
-        interaction = .velocity(PianoVelocityGesture(id: note.id, original: Int(note.velocity >> 9), y: y,
-                                                     pointsPerStep: pointsPerStep, originals: originals), preview: nil)
+        interaction = .velocity(
+            PianoVelocityGesture(
+                id: note.id, original: Int(note.velocity >> 9), y: y,
+                pointsPerStep: pointsPerStep, originals: originals), preview: nil)
     }
     @discardableResult
     private func commitVelocity(_ finished: PianoVelocityPreview, gesture: PianoVelocityGesture) -> Bool {
@@ -437,13 +547,18 @@ final class PianoGridView: NSView {
             onVelocity(finished.id, finished.value)
         } else {
             guard let onVelocities else { return false }
-            onVelocities(PianoVelocityChange(anchor: finished.id, originals: gesture.originals,
-                                             delta: finished.value - gesture.original))
+            onVelocities(
+                PianoVelocityChange(
+                    anchor: finished.id, originals: gesture.originals,
+                    delta: finished.value - gesture.original))
         }
         return true
     }
     override func keyDown(with event: NSEvent) {
-        guard !event.modifierFlags.contains(.command) || Int(event.keyCode) == kVK_Escape else { super.keyDown(with: event); return }
+        guard !event.modifierFlags.contains(.command) || Int(event.keyCode) == kVK_Escape else {
+            super.keyDown(with: event)
+            return
+        }
         let shift = event.modifierFlags.contains(.shift)
         switch Int(event.keyCode) {
         case kVK_Escape: if interaction.isIdle { super.keyDown(with: event) } else { cancelGesture() }
@@ -459,9 +574,13 @@ final class PianoGridView: NSView {
     }
     @discardableResult
     func navigate(backwards: Bool) -> Bool {
-        guard let track, let note = snapshot?.pianoNeighbor(track: track, current: focus, backwards: backwards) else { return false }
-        cancelGesture(); select(note)
-        camera.reveal(note, width: max(1, pianoLayout.grid.width), height: max(1, pianoLayout.grid.height)); refresh()
+        guard let track, let note = snapshot?.pianoNeighbor(track: track, current: focus, backwards: backwards) else {
+            return false
+        }
+        cancelGesture()
+        select(note)
+        camera.reveal(note, width: max(1, pianoLayout.grid.width), height: max(1, pianoLayout.grid.height))
+        refresh()
         return true
     }
     private func replaceSelection(_ ids: Set<PianoNote.ID>) {
@@ -480,14 +599,19 @@ final class PianoGridView: NSView {
 
     private func deleteSelection() {
         guard !busy, selectionPress == nil, !selectedNotes.isEmpty else { return }
-        if let onDeleteNotes { onDeleteNotes(selectedNotes) }
-        else if selectedNotes.count == 1, let id = selectedNotes.first { onDelete?(id) }
+        if let onDeleteNotes {
+            onDeleteNotes(selectedNotes)
+        } else if selectedNotes.count == 1, let id = selectedNotes.first {
+            onDelete?(id)
+        }
     }
 
     private var hasCurrentNoteFrame: Bool {
         guard !busy, let frame = submittedFrame else { return false }
-        return frame.input.snapshot === snapshot && frame.piano.track == track && frame.piano.references == references && frame.piano.camera == camera &&
-            frame.layout == pianoLayout && frame.piano.preview == nil && frame.piano.insertion == nil && frame.piano.velocity == nil && frame.piano.move == nil && frame.piano.resize == nil
+        return frame.input.snapshot === snapshot && frame.piano.track == track && frame.piano.references == references
+            && frame.piano.camera == camera && frame.layout == pianoLayout && frame.piano.preview == nil
+            && frame.piano.insertion == nil && frame.piano.velocity == nil && frame.piano.move == nil
+            && frame.piano.resize == nil
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -501,7 +625,8 @@ final class PianoGridView: NSView {
     override func rightMouseDragged(with event: NSEvent) {
         guard case .marquee(var press) = interaction, !busy else { return }
         press.update(convert(event.locationInWindow, from: nil))
-        interaction = .marquee(press); refresh()
+        interaction = .marquee(press)
+        refresh()
     }
 
     override func rightMouseUp(with event: NSEvent) {
@@ -521,14 +646,21 @@ final class PianoGridView: NSView {
     func noteContextMenu(at point: CGPoint) -> NSMenu? {
         guard hasCurrentNoteFrame, pianoLayout.grid.contains(point), let snapshot else { return nil }
         let local = pianoLayout.gridPoint(point)
-        guard let note = elements.last(where: {
-            CGRect(x: Double($0.x), y: Double($0.y), width: max(2, Double($0.width)), height: Double($0.height)).contains(local)
-        }) else { replaceSelection([]); return nil }
+        guard
+            let note = elements.last(where: {
+                CGRect(x: Double($0.x), y: Double($0.y), width: max(2, Double($0.width)), height: Double($0.height))
+                    .contains(local)
+            })
+        else {
+            replaceSelection([])
+            return nil
+        }
         if !selectedNotes.contains(note.id) { select(note) }
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let item = NSMenuItem(title: text(selectedNotes.count == 1 ? "Delete Note" : "Delete Notes"),
-                              action: #selector(deleteFromMenu(_:)), keyEquivalent: "")
+        let item = NSMenuItem(
+            title: text(selectedNotes.count == 1 ? "Delete Note" : "Delete Notes"),
+            action: #selector(deleteFromMenu(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = PianoNoteDeletion(snapshot: snapshot, ids: selectedNotes)
         menu.addItem(item)
@@ -537,13 +669,18 @@ final class PianoGridView: NSView {
 
     @objc func deleteFromMenu(_ item: NSMenuItem) {
         guard !busy, let target = item.representedObject as? PianoNoteDeletion,
-              snapshot === target.snapshot, target.ids.allSatisfy({ $0.track == track && snapshot?.pianoNote($0) != nil }) else { return }
-        if let onDeleteNotes { onDeleteNotes(target.ids) }
-        else if target.ids.count == 1, let id = target.ids.first { onDelete?(id) }
+            snapshot === target.snapshot, target.ids.allSatisfy({ $0.track == track && snapshot?.pianoNote($0) != nil })
+        else { return }
+        if let onDeleteNotes {
+            onDeleteNotes(target.ids)
+        } else if target.ids.count == 1, let id = target.ids.first {
+            onDelete?(id)
+        }
     }
     private func select(_ note: PianoNote) {
         guard note.id.track == track, snapshot?.pianoNote(note.id) != nil else { return }
-        caretTick = max(0, note.start); caretPitch = note.pitch
+        caretTick = max(0, note.start)
+        caretPitch = note.pitch
         replaceSelection([note.id])
     }
     private func insertAtCaret() -> Bool {
@@ -565,7 +702,11 @@ final class PianoGridView: NSView {
         value.pitch = min(ModelLimits.midi7.upperBound, max(0, value.pitch + pitch))
         let moved = (resize ? value.length : value.start).addingReportingOverflow(time)
         guard !moved.overflow else { return }
-        if resize { value.length = max(camera.grid, moved.partialValue) } else { value.start = max(0, moved.partialValue) }
+        if resize {
+            value.length = max(camera.grid, moved.partialValue)
+        } else {
+            value.start = max(0, moved.partialValue)
+        }
         guard value.isValid, value != current else { return }
         stepped[focus] = value
         onEdit?(focus, value)
@@ -580,11 +721,16 @@ final class PianoGridView: NSView {
             return NoteGeometry(note) != geometry
         }
     }
-    private func cancelGesture() { interaction = .idle; refresh() }
+    private func cancelGesture() {
+        interaction = .idle
+        refresh()
+    }
     func setLocation(_ location: PianoLocation?) {
         guard let location, location.target.document == navigationDocument, location.target.track == track,
-              location.tick >= 0, shownLocation != location.id, navigation?.pianoLocationID != location.id else { return }
-        shownLocation = location.id; navigation?.pianoLocationID = location.id
+            location.tick >= 0, shownLocation != location.id, navigation?.pianoLocationID != location.id
+        else { return }
+        shownLocation = location.id
+        navigation?.pianoLocationID = location.id
         cancelGesture()
         camera.originBeat = Double(location.tick) / Tick.perBeat
         caretTick = location.tick
@@ -592,18 +738,25 @@ final class PianoGridView: NSView {
     }
     func setReferences(_ tracks: [UUID]) {
         guard references != tracks else { return }
-        references = tracks; refresh()
+        references = tracks
+        refresh()
     }
     /// The remembered start drawn on the ruler. Redraws only when it changes.
-    func setStart(_ start: Int64?) { guard self.start != start else { return }; self.start = start; refresh() }
+    func setStart(_ start: Int64?) {
+        guard self.start != start else { return }
+        self.start = start
+        refresh()
+    }
     func setLoop(_ loop: RulerLoop?) {
         guard self.loop != loop else { return }
         if interaction.rulerPress != nil { interaction = .idle }
-        self.loop = loop; refresh()
+        self.loop = loop
+        refresh()
     }
     var rulerHandles: RulerHandles {
-        RulerHandles(range: displayedLoop?.range, ruler: pianoLayout.ruler,
-                     originBeat: camera.originBeat, pixelsPerBeat: camera.pixelsPerBeat)
+        RulerHandles(
+            range: displayedLoop?.range, ruler: pianoLayout.ruler,
+            originBeat: camera.originBeat, pixelsPerBeat: camera.pixelsPerBeat)
     }
     override func mouseCancelled(with event: NSEvent) { cancelGesture() }
     override func resetCursorRects() {
@@ -616,7 +769,9 @@ final class PianoGridView: NSView {
     /// Replaces the live feed. Equality is the document, not the playhead.
     func setPlayback(_ playback: PlaybackFeed?) {
         follower.feed = playback
-        guard self.playback != playback else { return }; self.playback = playback; refresh()
+        guard self.playback != playback else { return }
+        self.playback = playback
+        refresh()
     }
 
     /// One frame after play, pause, stop, or a stopped locate. Does not rebuild on position polls.
@@ -637,20 +792,30 @@ final class PianoGridView: NSView {
         refresh()
     }
     private func rememberViewport() {
-        guard let track, bounds.width > 0, bounds.height > 0, navigation?.permits(document: navigationDocument, track: track) == true else { return }
+        guard let track, bounds.width > 0, bounds.height > 0,
+            navigation?.permits(document: navigationDocument, track: track) == true
+        else { return }
         navigation?.pianoCamera = camera
     }
     private func refresh() {
         window?.invalidateCursorRects(for: self)
         let scale = Double(window?.backingScaleFactor ?? 1)
-        CanvasSurface.resize(metalLayer, size: canvasDrawableSize(width: bounds.width, height: bounds.height, scale: scale), scale: scale)
+        CanvasSurface.resize(
+            metalLayer, size: canvasDrawableSize(width: bounds.width, height: bounds.height, scale: scale), scale: scale
+        )
         rememberViewport()
         onGridChange?(camera)
         guard let track else { return }
-        renderer?.update(CanvasInput(snapshot: snapshot, selected: track, camera: ArrangeCamera(),
-            width: bounds.width, height: bounds.height, scale: scale,
-            piano: PianoRenderInput(track: track, focus: focus, camera: camera, key: key, preview: interaction.notePreview, start: start, loop: displayedLoop, insertion: displayedInsertion, velocity: velocityPreview, selection: displayedSelection, marquee: selectionPress?.rect, move: movePreview, resize: resizePreview, references: references), playback: playback,
-            displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
+        renderer?.update(
+            CanvasInput(
+                snapshot: snapshot, selected: track, camera: ArrangeCamera(),
+                width: bounds.width, height: bounds.height, scale: scale,
+                piano: PianoRenderInput(
+                    track: track, focus: focus, camera: camera, key: key, preview: interaction.notePreview,
+                    start: start, loop: displayedLoop, insertion: displayedInsertion, velocity: velocityPreview,
+                    selection: displayedSelection, marquee: selectionPress?.rect, move: movePreview,
+                    resize: resizePreview, references: references), playback: playback,
+                displayFramesPerSecond: Double(window?.screen?.maximumFramesPerSecond ?? 60)))
     }
 
     /// Called for each accepted render frame. Layout changes are announced,
@@ -662,8 +827,9 @@ final class PianoGridView: NSView {
         NSAccessibility.post(element: self, notification: .layoutChanged)
         if focus != announcedFocus {
             if let focus, let note = elements.first(where: { $0.id == focus }) {
-                NSAccessibility.post(element: element(for: note, in: frame, convert: screenRect),
-                                     notification: .focusedUIElementChanged)
+                NSAccessibility.post(
+                    element: element(for: note, in: frame, convert: screenRect),
+                    notification: .focusedUIElementChanged)
             }
             announcedFocus = focus
         }
@@ -682,14 +848,17 @@ final class PianoGridView: NSView {
         let visible = Set(elements.map(\.id))
         accessible = accessible.filter { visible.contains($0.key) }
         accessibleVersion = accessibleVersion.filter { visible.contains($0.key) }
-        let lane = velocityAccessibility.element(frame: submittedFrame, focus: focus, parent: self, convert: convert,
+        let lane = velocityAccessibility.element(
+            frame: submittedFrame, focus: focus, parent: self, convert: convert,
             select: { [weak self] note in
                 guard let self, self.snapshot === submittedFrame.input.snapshot else { return }
                 self.select(note)
-            }, change: { [weak self] id, value in
+            },
+            change: { [weak self] id, value in
                 guard let self, !self.busy, self.snapshot === submittedFrame.input.snapshot,
-                      self.track == id.track, let note = self.snapshot?.pianoNote(id),
-                      Int(note.velocity >> 9) != value else { return false }
+                    self.track == id.track, let note = self.snapshot?.pianoNote(id),
+                    Int(note.velocity >> 9) != value
+                else { return false }
                 self.beginVelocity(note, y: 0)
                 guard case .velocity(let gesture, _) = self.interaction else { return false }
                 let finished = gesture.preview(y: Double(gesture.original - value))
@@ -704,7 +873,8 @@ final class PianoGridView: NSView {
         return window.convertToScreen(convert(rect, to: nil))
     }
 
-    private func element(for note: PianoNote, in frame: PianoFrame, convert: (NSRect) -> NSRect) -> PianoAccessibleNote {
+    private func element(for note: PianoNote, in frame: PianoFrame, convert: (NSRect) -> NSRect) -> PianoAccessibleNote
+    {
         if let existing = accessible[note.id], accessibleVersion[note.id] == submittedVersion {
             // Reuse the element but refresh the frame and focus-dependent state:
             // a window move or selection change does not advance the draw version.
@@ -717,42 +887,83 @@ final class PianoGridView: NSView {
         return child
     }
 
-    private func applyAccessibility(_ child: PianoAccessibleNote, note: PianoNote, frame: PianoFrame,
-                                    convert: (NSRect) -> NSRect) {
-        let rect = frame.layout.paneRect(NSRect(x: Double(note.x), y: Double(note.y), width: max(2, Double(note.width)), height: Double(note.height)))
+    private func applyAccessibility(
+        _ child: PianoAccessibleNote, note: PianoNote, frame: PianoFrame,
+        convert: (NSRect) -> NSRect
+    ) {
+        let rect = frame.layout.paneRect(
+            NSRect(x: Double(note.x), y: Double(note.y), width: max(2, Double(note.width)), height: Double(note.height))
+        )
         child.setAccessibilityFrame(convert(rect))
         child.setAccessibilityValue(selectedNotes.contains(note.id) ? text("Selected") : "")
         child.setAccessibilityFocused(note.id == focus)
     }
 
-    func buildAccessibilityElement(_ note: PianoNote, frame: PianoFrame, existing: PianoAccessibleNote? = nil,
-                                   convert: (NSRect) -> NSRect) -> PianoAccessibleNote {
+    func buildAccessibilityElement(
+        _ note: PianoNote, frame: PianoFrame, existing: PianoAccessibleNote? = nil,
+        convert: (NSRect) -> NSRect
+    ) -> PianoAccessibleNote {
         accessibilityBuilds += 1
         let child = existing ?? PianoAccessibleNote(actions: PianoAccessibilityActions())
-        child.setAccessibilityElement(true); child.setAccessibilityRole(.button)
+        child.setAccessibilityElement(true)
+        child.setAccessibilityRole(.button)
         child.setAccessibilityParent(self)
         child.setAccessibilityIdentifier("\(note.id.track)/\(note.id.placement)/\(note.id.note)")
         let degree = frame.piano.key.degreeLabel(note.pitch).map { ", \(text("Scale degree")) \($0)" } ?? ""
-        child.setAccessibilityLabel("\(noteName(note.pitch))\(degree), \(text("Start beat")) \(Double(note.start) / Tick.perBeat), \(text("Length in beats")) \(Double(note.length) / Tick.perBeat), \(text("Velocity")) \(frame.velocity(for: note))")
+        child.setAccessibilityLabel(
+            "\(noteName(note.pitch))\(degree), \(text("Start beat")) \(Double(note.start) / Tick.perBeat), \(text("Length in beats")) \(Double(note.length) / Tick.perBeat), \(text("Velocity")) \(frame.velocity(for: note))"
+        )
         applyAccessibility(child, note: note, frame: frame, convert: convert)
-        child.actions.press = { [weak self] in self?.select(note); return true }
-        child.actions.increment = { [weak self] in self?.select(note); self?.change(pitch: 1); return true }
-        child.actions.decrement = { [weak self] in self?.select(note); self?.change(pitch: -1); return true }
+        child.actions.press = { [weak self] in
+            self?.select(note)
+            return true
+        }
+        child.actions.increment = { [weak self] in
+            self?.select(note)
+            self?.change(pitch: 1)
+            return true
+        }
+        child.actions.decrement = { [weak self] in
+            self?.select(note)
+            self?.change(pitch: -1)
+            return true
+        }
         child.setAccessibilityCustomActions([
             NSAccessibilityCustomAction(name: text("Toggle Note Selection")) { [weak self] in
                 guard let self, !self.busy, self.track == note.id.track,
-                      self.snapshot === frame.input.snapshot else { return false }
-                self.toggleSelection(note); return true
+                    self.snapshot === frame.input.snapshot
+                else { return false }
+                self.toggleSelection(note)
+                return true
             },
             NSAccessibilityCustomAction(name: text("Delete Note")) { [weak self] in
-                guard let self, !self.busy, self.track == note.id.track, self.snapshot?.pianoNote(note.id) != nil else { return false }
+                guard let self, !self.busy, self.track == note.id.track, self.snapshot?.pianoNote(note.id) != nil else {
+                    return false
+                }
                 if !self.selectedNotes.contains(note.id) { self.select(note) }
-                self.deleteSelection(); return true
+                self.deleteSelection()
+                return true
             },
-            NSAccessibilityCustomAction(name: text("Move Earlier")) { [weak self] in self?.select(note); if let self { self.change(time: -self.camera.grid) }; return true },
-            NSAccessibilityCustomAction(name: text("Move Later")) { [weak self] in self?.select(note); if let self { self.change(time: self.camera.grid) }; return true },
-            NSAccessibilityCustomAction(name: text("Shorten Note")) { [weak self] in self?.select(note); if let self { self.change(time: -self.camera.grid, resize: true) }; return true },
-            NSAccessibilityCustomAction(name: text("Lengthen Note")) { [weak self] in self?.select(note); if let self { self.change(time: self.camera.grid, resize: true) }; return true },
+            NSAccessibilityCustomAction(name: text("Move Earlier")) { [weak self] in
+                self?.select(note)
+                if let self { self.change(time: -self.camera.grid) }
+                return true
+            },
+            NSAccessibilityCustomAction(name: text("Move Later")) { [weak self] in
+                self?.select(note)
+                if let self { self.change(time: self.camera.grid) }
+                return true
+            },
+            NSAccessibilityCustomAction(name: text("Shorten Note")) { [weak self] in
+                self?.select(note)
+                if let self { self.change(time: -self.camera.grid, resize: true) }
+                return true
+            },
+            NSAccessibilityCustomAction(name: text("Lengthen Note")) { [weak self] in
+                self?.select(note)
+                if let self { self.change(time: self.camera.grid, resize: true) }
+                return true
+            },
         ])
         return child
     }
@@ -769,10 +980,22 @@ final class PianoAccessibilityActions {
 @MainActor
 final class PianoAccessibleNote: NSAccessibilityElement {
     nonisolated let actions: PianoAccessibilityActions
-    init(actions: PianoAccessibilityActions) { self.actions = actions; super.init() }
+    init(actions: PianoAccessibilityActions) {
+        self.actions = actions
+        super.init()
+    }
     // Only the immutable, Sendable action holder crosses the Objective-C
     // callback boundary. Its mutable closures are confined to MainActor.
-    override func accessibilityPerformPress() -> Bool { Task { @MainActor [actions] in _ = actions.press?() }; return true }
-    override func accessibilityPerformIncrement() -> Bool { Task { @MainActor [actions] in _ = actions.increment?() }; return true }
-    override func accessibilityPerformDecrement() -> Bool { Task { @MainActor [actions] in _ = actions.decrement?() }; return true }
+    override func accessibilityPerformPress() -> Bool {
+        Task { @MainActor [actions] in _ = actions.press?() }
+        return true
+    }
+    override func accessibilityPerformIncrement() -> Bool {
+        Task { @MainActor [actions] in _ = actions.increment?() }
+        return true
+    }
+    override func accessibilityPerformDecrement() -> Bool {
+        Task { @MainActor [actions] in _ = actions.decrement?() }
+        return true
+    }
 }

@@ -3,7 +3,9 @@ import Foundation
 import PackageDescription
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let rustLibraryDir = ProcessInfo.processInfo.environment["ECHODE_RUST_LIBRARY_DIR"] ?? packageDir
+let rustLibraryDir =
+    ProcessInfo.processInfo.environment["ECHODE_RUST_LIBRARY_DIR"]
+    ?? packageDir
     .deletingLastPathComponent()
     .deletingLastPathComponent()
     .appendingPathComponent("target/debug")
@@ -34,7 +36,10 @@ let package = Package(
             dependencies: ["CEchodeFfi"],
             path: "Sources/EchodeBridge",
             swiftSettings: [
-                .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])
+                .unsafeFlags([
+                    "-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc",
+                    "-mcpu=apple-m4",
+                ])
             ]
         ),
         .testTarget(
@@ -43,7 +48,10 @@ let package = Package(
             path: "Tests/EchodeBridgeTests",
             resources: [.process("Fixtures")],
             swiftSettings: [
-                .unsafeFlags(["-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc", "-mcpu=apple-m4"])
+                .unsafeFlags([
+                    "-strict-concurrency=complete", "-warnings-as-errors", "-target-cpu", "apple-m4", "-Xcc",
+                    "-mcpu=apple-m4",
+                ])
             ]
         ),
     ]

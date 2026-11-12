@@ -10,7 +10,9 @@ struct WorkspaceInspectorView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text(text("Inspector")).font(.headline)
                 if let track = controller.tracks.first(where: { $0.id == controller.selection }),
-                   let index = controller.tracks.firstIndex(where: { $0.id == track.id }), let snapshot = controller.snapshot {
+                    let index = controller.tracks.firstIndex(where: { $0.id == track.id }),
+                    let snapshot = controller.snapshot
+                {
                     let audioClip = controller.clipFocus.flatMap { snapshot.clipMix($0)?.isAudio } == true
                     Label(track.name, systemImage: "waveform").lineLimit(2)
                     if let mix = snapshot.mixer(onTrack: index) {
@@ -27,14 +29,20 @@ struct WorkspaceInspectorView: View {
                         LabeledContent(text("MIDI pitch"), value: noteName(note.pitch))
                         LabeledContent(text("Start beat"), value: (Double(note.start) / Tick.perBeat).formatted())
                         LabeledContent(text("Length in beats"), value: (Double(note.length) / Tick.perBeat).formatted())
-                    } else if controller.pianoTrack == track.id, InspectorNotes.showsPrompt(noteFocused: false, audioClipFocused: audioClip) {
+                    } else if controller.pianoTrack == track.id,
+                        InspectorNotes.showsPrompt(noteFocused: false, audioClipFocused: audioClip)
+                    {
                         Text(text("Select a note to inspect it")).font(.caption).foregroundStyle(.secondary)
                     }
                     Divider()
                     Text(text("Plugins")).font(.subheadline)
                     ForEach(controller.deviceRows(on: track.id)) { device in
                         HStack {
-                            Button { if let document { Task { await controller.openPluginWindow(device.id, documentID: document) } } } label: {
+                            Button {
+                                if let document {
+                                    Task { await controller.openPluginWindow(device.id, documentID: document) }
+                                }
+                            } label: {
                                 HStack {
                                     Text(device.title).font(.caption).lineLimit(2)
                                     if device.windowOpen {
@@ -48,15 +56,24 @@ struct WorkspaceInspectorView: View {
                             .accessibilityHint(text("Open plugin window"))
                             .disabled(controller.busy || device.offline)
                             Spacer()
-                            Button { if let document { Task { await controller.removeDevice(device.id, documentID: document) } } } label: { Image(systemName: "minus.circle") }
-                                .help(text("Remove")).accessibilityLabel(text("Remove") + " " + device.title).disabled(controller.busy)
+                            Button {
+                                if let document {
+                                    Task { await controller.removeDevice(device.id, documentID: document) }
+                                }
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .help(text("Remove")).accessibilityLabel(text("Remove") + " " + device.title).disabled(
+                                controller.busy)
                         }
                     }
                     InspectorAddFX(enabled: !controller.busy) {
                         guard controller.acceptsInput(document) else { return }
                         add(track.id)
                     }
-                } else { Text(text("Select a track")).foregroundStyle(.secondary) }
+                } else {
+                    Text(text("Select a track")).foregroundStyle(.secondary)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
         }
     }

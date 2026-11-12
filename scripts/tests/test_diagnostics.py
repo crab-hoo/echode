@@ -4,12 +4,12 @@ import fcntl
 import importlib.util
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import unquote
 
@@ -32,16 +32,37 @@ class DiagnosticTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         (self.root / "scripts").mkdir()
-        policy = {"version": 1, "global_inputs": [], "infrastructure": [], "areas": {}, "checks": [
-            {"id": "check", "mode": "automatic", "always": True, "areas": [], "inputs": ["**"], "timeout": 10}]}
+        policy = {
+            "version": 1,
+            "global_inputs": [],
+            "infrastructure": [],
+            "areas": {},
+            "checks": [
+                {"id": "check", "mode": "automatic", "always": True, "areas": [], "inputs": ["**"], "timeout": 10}
+            ],
+        }
         (self.root / "scripts/verification.json").write_text(json.dumps(policy))
         (self.root / ".gitignore").write_text("/target\n")
         (self.root / "source.txt").write_text("original")
-        for args in (["init", "--quiet"], ["add", "."],
-                     ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture"]):
+        for args in (
+            ["init", "--quiet"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        ):
             subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
         (self.root / "source.txt").write_text("edit")
-        self.tools = {key: "0:fixture" for key in ("rustc -vV", "cargo --version", "swift --version", "xcodebuild -version")}
+        self.tools = {
+            key: "0:fixture" for key in ("rustc -vV", "cargo --version", "swift --version", "xcodebuild -version")
+        }
         self.tools["RUSTFLAGS"] = "SECRET_TEST_SETTING"
         self.addCleanup(patch.stopall)
         patch.object(diagnose.verify, "tool_identity", return_value=self.tools).start()
@@ -56,8 +77,16 @@ class DiagnosticTests(unittest.TestCase):
         changed = diagnose.verify.changed_paths(self.root)
         policy = diagnose.verify.load_policy(self.root)
         stamp = diagnose.verify.check_fingerprints(self.root, policy, self.tools)["check"]
-        (directory / "report.json").write_text(json.dumps({"version": 2, "base": None,
-            "tools": self.tools, "results": {"check": {"status": status, "fingerprint": stamp}}}))
+        (directory / "report.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "base": None,
+                    "tools": self.tools,
+                    "results": {"check": {"status": status, "fingerprint": stamp}},
+                }
+            )
+        )
 
     def test_current_partial_and_stale_results_are_distinct(self):
         self.assertEqual(diagnose.collect(self.root)["verification"]["freshness"], "unavailable")
@@ -73,14 +102,17 @@ class DiagnosticTests(unittest.TestCase):
     def test_unrelated_check_stays_current_when_only_documentation_changes(self):
         path = self.root / "scripts/verification.json"
         policy = json.loads(path.read_text())
-        policy["checks"].append({"id": "audio", "mode": "automatic", "always": True,
-                                 "areas": [], "inputs": ["source.txt"], "timeout": 10})
+        policy["checks"].append(
+            {"id": "audio", "mode": "automatic", "always": True, "areas": [], "inputs": ["source.txt"], "timeout": 10}
+        )
         path.write_text(json.dumps(policy))
         directory = self.root / "target/verification"
         directory.mkdir(parents=True)
         stamps = diagnose.verify.check_fingerprints(self.root, policy, self.tools)
-        report = {"version": 2, "results": {name: {"status": "passed", "fingerprint": stamp}
-                                            for name, stamp in stamps.items()}}
+        report = {
+            "version": 2,
+            "results": {name: {"status": "passed", "fingerprint": stamp} for name, stamp in stamps.items()},
+        }
         (directory / "report.json").write_text(json.dumps(report))
         (self.root / "README.md").write_text("updated instructions")
         data = diagnose.collect(self.root)["verification"]
@@ -114,7 +146,9 @@ class DiagnosticTests(unittest.TestCase):
             library.parent.mkdir(parents=True)
             library.write_bytes(variant.encode())
             libraries[variant] = diagnose.tsan_runtime.sha256(library)
-        (self.runtime / "manifest.json").write_text(json.dumps({"context": {"clang": "fixture"}, "libraries": libraries}))
+        (self.runtime / "manifest.json").write_text(
+            json.dumps({"context": {"clang": "fixture"}, "libraries": libraries})
+        )
         data = diagnose.collect(self.root)
         self.assertEqual(data["environment"]["setup_needed"], [])
         self.assertIn("準備のやり直し: なし", diagnose.render(data))
@@ -173,8 +207,12 @@ class DiagnosticTests(unittest.TestCase):
         self.assertFalse(diagnose.build_status(self.root, stamp)["binaries_match"])
 
     def test_record_build_without_an_expected_source_is_a_usage_error(self):
-        result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/diagnose.py"), "--record-build"],
-                                capture_output=True, text=True, timeout=60)
+        result = subprocess.run(
+            [sys.executable, "-B", str(ROOT / "scripts/diagnose.py"), "--record-build"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
         self.assertEqual(result.returncode, 2)
         self.assertIn("--record-build requires --expected-source", result.stderr)
         self.assertNotIn("source changed", result.stderr)
@@ -197,8 +235,9 @@ class DiagnosticTests(unittest.TestCase):
     def test_bundle_collects_declared_preflight_logs_but_not_arbitrary_command_output(self):
         path = self.root / "scripts/verification.json"
         policy = json.loads(path.read_text())
-        policy["preflights"] = {name: {"command": ["true"], "timeout": 5, "remedy": "prepare fixture"}
-                                for name in ("ready", "external")}
+        policy["preflights"] = {
+            name: {"command": ["true"], "timeout": 5, "remedy": "prepare fixture"} for name in ("ready", "external")
+        }
         path.write_text(json.dumps(policy))
         self.save_report()
         directory = self.root / "target/verification"
@@ -261,9 +300,14 @@ class DiagnosticTests(unittest.TestCase):
         self.assertFalse((output / "toolchains/tsan/runtime.dylib").exists())
         # The app's audition record is copied, bounded; a link out of its folder is not followed.
         self.assertEqual((output / "app-logs/audition.ndjson").read_text(), ('{"request":1}\n' * 4)[-16:])
-        self.assertEqual(record["app_logs"], [{"path": "app-logs/echode.ndjson", "truncated": False},
-                                              {"path": "app-logs/audition.ndjson", "truncated": True},
-                                              {"path": "app-logs/panic.ndjson", "truncated": False}])
+        self.assertEqual(
+            record["app_logs"],
+            [
+                {"path": "app-logs/echode.ndjson", "truncated": False},
+                {"path": "app-logs/audition.ndjson", "truncated": True},
+                {"path": "app-logs/panic.ndjson", "truncated": False},
+            ],
+        )
         self.assertEqual((output / "app-logs/panic.ndjson").read_text(), '{"panic":1}\n')
         self.assertEqual((output / "app-logs/echode.ndjson").read_text(), '{"log":1}\n')
         self.assertFalse((output / "app-logs/audition.1.ndjson").exists())
@@ -374,10 +418,14 @@ class DeveloperDocumentationTests(unittest.TestCase):
                 self.assertEqual(anchor_errors(ROOT, path, path.read_text()), [])
 
     def test_heading_anchors_follow_the_github_rules(self):
-        text = ("# 要求の外枠の検証（2026-10-29）\n## UI・描画・入力\n## `make verify` の所要時間\n"
-                "## [リンク](x.md) の見出し\n## 重複\n## 重複\n```\n# fenced\n```\n")
-        self.assertEqual(heading_anchors(text), {"要求の外枠の検証2026-10-29", "ui描画入力", "make-verify-の所要時間",
-                                                 "リンク-の見出し", "重複", "重複-1"})
+        text = (
+            "# 要求の外枠の検証（2026-10-29）\n## UI・描画・入力\n## `make verify` の所要時間\n"
+            "## [リンク](x.md) の見出し\n## 重複\n## 重複\n```\n# fenced\n```\n"
+        )
+        self.assertEqual(
+            heading_anchors(text),
+            {"要求の外枠の検証2026-10-29", "ui描画入力", "make-verify-の所要時間", "リンク-の見出し", "重複", "重複-1"},
+        )
 
     def test_missing_heading_anchors_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -8,7 +8,10 @@ struct WorkspaceDivider: NSViewRepresentable {
     let finish: () -> Void
     func makeNSView(context: Context) -> WorkspaceSplitter { WorkspaceSplitter(frame: .zero) }
     func updateNSView(_ view: WorkspaceSplitter, context: Context) {
-        view.pane = pane; view.value = value; view.resize = resize; view.finish = finish
+        view.pane = pane
+        view.value = value
+        view.resize = resize
+        view.finish = finish
         view.setAccessibilityLabel(text(pane == .editor ? "Note Editor" : pane == .inspector ? "Inspector" : "Files"))
     }
 }
@@ -23,14 +26,24 @@ final class WorkspaceSplitter: NSView {
     private var initial = 0.0
     override init(frame: NSRect) {
         super.init(frame: frame)
-        setAccessibilityElement(true); setAccessibilityRole(.splitter)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.splitter)
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var acceptsFirstResponder: Bool { true }
-    override func draw(_ dirtyRect: NSRect) { NSColor.separatorColor.setFill(); bounds.fill() }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: pane == .editor ? .resizeUpDown : .resizeLeftRight) }
-    override func mouseDown(with event: NSEvent) { start = event.locationInWindow; initial = value; window?.makeFirstResponder(self) }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.separatorColor.setFill()
+        bounds.fill()
+    }
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: pane == .editor ? .resizeUpDown : .resizeLeftRight)
+    }
+    override func mouseDown(with event: NSEvent) {
+        start = event.locationInWindow
+        initial = value
+        window?.makeFirstResponder(self)
+    }
     override func mouseDragged(with event: NSEvent) {
         let delta = pane == .editor ? event.locationInWindow.y - start.y : event.locationInWindow.x - start.x
         resize?(initial + (pane == .browser ? -delta : delta))
@@ -48,5 +61,10 @@ final class WorkspaceSplitter: NSView {
         default: super.keyDown(with: event)
         }
     }
-    private func adjust(_ delta: Double) -> Bool { guard let resize else { return false }; resize(value + delta); finish?(); return true }
+    private func adjust(_ delta: Double) -> Bool {
+        guard let resize else { return false }
+        resize(value + delta)
+        finish?()
+        return true
+    }
 }

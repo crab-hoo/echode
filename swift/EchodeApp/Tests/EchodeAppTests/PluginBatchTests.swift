@@ -1,6 +1,7 @@
 import AppKit
 import EchodeBridge
 import Testing
+
 @testable import EchodeAppCore
 
 @MainActor
@@ -20,16 +21,24 @@ struct PluginBatchTests {
         let session = WorkspaceSession(controller: controller, state: state)
         pane.onOpenFX = { session.openPlugins(on: $0) }
         func refresh() throws {
-            pane.setSnapshot(try #require(controller.snapshot), selected: controller.selection, selectedTracks: controller.selectedTracks)
+            pane.setSnapshot(
+                try #require(controller.snapshot), selected: controller.selection,
+                selectedTracks: controller.selectedTracks)
         }
         func click(_ index: Int, flags: NSEvent.ModifierFlags = [], fx: Bool = false) throws {
             try refresh()
-            let row = pane.headers.camera.rows(trackCount: ids.count, height: 260).rect(at: index, width: pane.headers.bounds.width)
-            let point = fx ? CGPoint(x: TrackFXLayout(row: row).rect.midX, y: TrackFXLayout(row: row).rect.midY)
+            let row = pane.headers.camera.rows(trackCount: ids.count, height: 260).rect(
+                at: index, width: pane.headers.bounds.width)
+            let point =
+                fx
+                ? CGPoint(x: TrackFXLayout(row: row).rect.midX, y: TrackFXLayout(row: row).rect.midY)
                 : CGPoint(x: 4, y: row.minY + 4)
-            pane.headers.mouseDown(with: try #require(NSEvent.mouseEvent(with: .leftMouseDown,
-                location: pane.headers.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
-                windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)))
+            pane.headers.mouseDown(
+                with: try #require(
+                    NSEvent.mouseEvent(
+                        with: .leftMouseDown,
+                        location: pane.headers.convert(point, to: nil), modifierFlags: flags, timestamp: 0,
+                        windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)))
         }
         try click(0)
         try click(2, flags: .shift)
@@ -44,10 +53,16 @@ struct PluginBatchTests {
         let frame = ArrangeFrame(input: pane.timeline.renderInput)
         let palette = try #require(frame.input.header).palette
         for row in frame.headers {
-            let background = try #require(frame.headerInstances.first { $0.rect.x == 0 && $0.rect.y == row.y && $0.rect.z == Float(pane.headers.bounds.width) })
-            #expect(background.color == (controller.selectedTracks.contains(row.id) ? palette.selected : palette.background))
+            let background = try #require(
+                frame.headerInstances.first {
+                    $0.rect.x == 0 && $0.rect.y == row.y && $0.rect.z == Float(pane.headers.bounds.width)
+                })
+            #expect(
+                background.color == (controller.selectedTracks.contains(row.id) ? palette.selected : palette.background)
+            )
         }
-        let request = try #require(controller.capturePluginInsertion("org.example.batch", allSelected: true, document: document))
+        let request = try #require(
+            controller.capturePluginInsertion("org.example.batch", allSelected: true, document: document))
         #expect(request.tracks == [ids[0], ids[2]])
         // A later selection must not change the already submitted target IDs.
         controller.selection = ids[1]
@@ -63,7 +78,8 @@ struct PluginBatchTests {
         await controller.redo()
         #expect(controller.deviceRows(on: ids[0]) == [first])
         #expect(controller.deviceRows(on: ids[2]) == [last])
-        await controller.close(); await controller.open(url)
+        await controller.close()
+        await controller.open(url)
         #expect(controller.deviceRows(on: ids[0]) == [first])
         #expect(controller.deviceRows(on: ids[2]) == [last])
         #expect(controller.deviceRows(on: ids[1]).isEmpty)
@@ -97,7 +113,8 @@ struct PluginBatchTests {
         #expect(controller.tracks.map(\.id) == [first, removed])
         controller.selectTrack(first)
         controller.selectTrack(removed, change: .toggle)
-        let single = try #require(controller.capturePluginInsertion("org.example.fx", allSelected: false, document: document))
+        let single = try #require(
+            controller.capturePluginInsertion("org.example.fx", allSelected: false, document: document))
         #expect(single.tracks == [removed])
         #expect(await controller.insertPlugin(single))
         #expect(controller.deviceRows(on: first).isEmpty)

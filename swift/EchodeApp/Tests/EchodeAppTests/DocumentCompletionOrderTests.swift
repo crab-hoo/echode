@@ -1,8 +1,9 @@
 import CEchodeFfi
-@testable import EchodeBridge
 import Foundation
 import Synchronization
 import Testing
+
+@testable import EchodeBridge
 
 /// The real worker's resume always beats `await`, and the result is read straight
 /// after it, as in `Document.audio`. `check-bridge-tsan` reports a race here when the
@@ -10,7 +11,8 @@ import Testing
 /// there hops, and the hop shows TSan the order without any annotation.
 struct DocumentCompletionOrderTests {
     @Test func aResultFromAResumeAheadOfTheAwaitIsOrdered() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echode-completion-order-\(UUID()).echode")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "echode-completion-order-\(UUID()).echode")
         defer { removeTestFile(url) }
         let document = try Document(creating: url.path)
         let relay = CompletionRelay()

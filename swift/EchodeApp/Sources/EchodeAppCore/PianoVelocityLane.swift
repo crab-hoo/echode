@@ -23,8 +23,9 @@ struct PianoVelocityLane: Sendable {
             guard x >= rect.minX, x < rect.maxX else { return nil }
             let value = preview?.value(for: note) ?? Int(note.velocity >> 9)
             let y = baseline - span * Double(value) / Double(ModelLimits.midi7.upperBound)
-            return PianoVelocityBar(note: note, stem: CGRect(x: x, y: y, width: 2, height: max(1, baseline - y)),
-                                    cap: CGRect(x: x - 3, y: y - 3, width: 8, height: 6))
+            return PianoVelocityBar(
+                note: note, stem: CGRect(x: x, y: y, width: 2, height: max(1, baseline - y)),
+                cap: CGRect(x: x - 3, y: y - 3, width: 8, height: 6))
         }
     }
 
@@ -33,8 +34,10 @@ struct PianoVelocityLane: Sendable {
         // Caps disambiguate chord tones with distinct values, even behind a selected stem.
         let caps = bars.filter { $0.cap.insetBy(dx: -2, dy: -2).contains(point) }
         let stems = caps.isEmpty ? bars.filter { $0.stem.insetBy(dx: -4, dy: -3).contains(point) } : caps
-        return (stems.first { $0.note.id == focus } ?? stems.min {
-            abs($0.cap.midY - point.y) < abs($1.cap.midY - point.y)
-        })?.note
+        return
+            (stems.first { $0.note.id == focus }
+            ?? stems.min {
+                abs($0.cap.midY - point.y) < abs($1.cap.midY - point.y)
+            })?.note
     }
 }
