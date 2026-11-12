@@ -283,12 +283,6 @@ impl OutputStream {
         self.control.preparing_graph()
     }
 
-    /// While `enabled`, a replacement needing new media decodes and converts it
-    /// on another thread (ADR 0147). The session enables it while stopped.
-    pub(crate) fn load_media_in_background(&mut self, enabled: bool) {
-        self.control.load_media_in_background(enabled);
-    }
-
     /// The newest replacement's media has not reached the callback's queue.
     pub(crate) fn loading_media(&self) -> bool {
         self.control.loading_media()
@@ -298,7 +292,14 @@ impl OutputStream {
         let Claim {
             device, listener, ..
         } = claim;
-        let Prepared { control, player } = prepared;
+        let Prepared {
+            mut control,
+            player,
+        } = prepared;
+        // The initial plan already has its media. Every later replacement
+        // decodes new media on another thread, playing or not, and keeps the
+        // current plan sounding meanwhile (ADR 0147, ADR 0330).
+        control.load_media_in_background(true);
         let frames = device.buffer_frames as usize;
         let (trace, trace_files) = crate::trace::configured(device.sample_rate, frames)
             .map_or((None, None), |(writer, files)| (Some(writer), Some(files)));
@@ -411,9 +412,13 @@ impl OutputStream {
             .command(PlaybackCommand::SetMetronome(enabled))?)
     }
 
+    /// The callback converts `tick` under the plan it plays when it takes the
+    /// command, so a locate during a tempo edit's preparation lands on the
+    /// beat (ADR 0330). `project` checks the position and gives the sample
+    /// reported until then.
     pub fn locate(&mut self, project: &Project, tick: i64) -> Result<(), AudioError> {
         let sample = project_sample(project, self.device.sample_rate, tick)?;
-        self.control.command(PlaybackCommand::Locate(sample))?;
+        self.control.command(PlaybackCommand::LocateTick(tick))?;
         self.pending_locate = Some((self.control.command_revision(), tick, sample));
         Ok(())
     }
@@ -422,7 +427,7 @@ impl OutputStream {
     /// the remembered start. Tails continue from where playback stopped.
     pub(crate) fn rewind(&mut self, project: &Project, tick: i64) -> Result<(), AudioError> {
         let sample = project_sample(project, self.device.sample_rate, tick)?;
-        self.control.command(PlaybackCommand::Rewind(sample))?;
+        self.control.command(PlaybackCommand::RewindTick(tick))?;
         self.pending_locate = Some((self.control.command_revision(), tick, sample));
         Ok(())
     }

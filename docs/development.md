@@ -453,9 +453,11 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 準備を待つデバイス要求の順序は `crates/echode-document/src/worker.rs` の `waiting` と `device.rs` の `Waiting` に置く（[ADR 0136](decisions/0136-output-opening-off-worker.md)）。
 開いた出力の置換グラフの準備スレッドと回収は `crates/echode-engine/src/playback_preparation.rs`、
 要求の集約と公開は `playback.rs` の `publish_pending` に置く（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
-停止中の置換の素材読込みスレッドと `MediaInputs` は `crates/echode-engine/src/playback_media.rs`、
+置換の素材読込みスレッドと `MediaInputs` は `crates/echode-engine/src/playback_media.rs`、
 再生の保留と `audio.prepare` は `crates/echode-audio-io/src/session.rs`、開いた時の送信は `ProjectController.preparesOutput` に置く
 （[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
+出力で背景の読込みを有効にするのは `OutputStream::assemble`、テンポの変わった計画の採用（`Update.retime`）と `LocateTick`・`RewindTick` の変換は `playback.rs` の `step` に置く。
+再生中の編集と導入の回帰は `session_tests.rs`（必須契約 `playing-edit-media`・`output-install-held-play`、[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
 
 古い保存版への復旧通知と書込み禁止は `DocumentHost::recovery_notice`・`accept_recovery`、
 受渡しは `crates/echode-document/src/worker.rs` の `history_report` の `recovery` と `history.accept_recovery` に置く。

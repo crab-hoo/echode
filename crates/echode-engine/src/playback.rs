@@ -75,6 +75,13 @@ pub enum PlaybackCommand {
     /// plugins. A stop that returns to the remembered start keeps tails and
     /// autonomous output, as a pause does (ADR 0155). Seeks use `Locate`.
     Rewind(i64),
+    /// `Locate` to a project tick, converted under the tempo of the plan the
+    /// callback plays when it takes the command. A sample the control computed
+    /// from a newer project would land on another beat while that project's
+    /// plan is still preparing (ADR 0330).
+    LocateTick(i64),
+    /// `Rewind` to a project tick, converted as `LocateTick` is.
+    RewindTick(i64),
     /// Loop bounds in device samples. `end` is exclusive and must be after `start`.
     SetLoop {
         start: i64,
@@ -504,6 +511,14 @@ impl Prepared {
                 }
             }
         }
+    }
+
+    /// The device sample of a project tick under this plan's tempo. O(log T)
+    /// over tempo boundaries, without allocating.
+    fn sample_at(&self, tick: i64) -> Result<i64, PlaybackError> {
+        self.tempo
+            .tick_to_sample(tick, self.sample_rate)
+            .ok_or(PlaybackError::Time)
     }
 
     fn place(&mut self, sample: i64, silence: bool) -> Result<(), PlaybackError> {
@@ -1210,6 +1225,9 @@ struct Update {
     prepared: Box<Prepared>,
     hosts: Box<HostGraph>,
     revision: u64,
+    /// The tempo differs from the plan published before this one. Adopting it
+    /// keeps the clock's tick instead of its sample (ADR 0330).
+    retime: bool,
 }
 
 struct Pending {
@@ -1231,6 +1249,8 @@ enum QueuedCommand {
     Stop,
     Locate(i64),
     Rewind(i64),
+    LocateTick(i64),
+    RewindTick(i64),
     SetMetronome(bool),
     ClearFaderPreview { after_plan: u64 },
     Faders(FaderGroup),
@@ -1260,6 +1280,8 @@ pub struct PlaybackControl {
     /// Counts project replacements, so loaded media knows whether it is newest.
     replacements: u64,
     published_plan: u64,
+    /// The tempo of the plan most recently published to the callback.
+    published_tempo: TempoIndex,
     chain: Vec<TrackChain>,
     /// Maximum live voices in the preceding published plan, including cached tracks.
     previous_chases: BTreeMap<u32, usize>,
@@ -1500,6 +1522,7 @@ fn transport_pair(
         media_plan: None,
         replacements: 0,
         published_plan: 0,
+        published_tempo: current.tempo.clone(),
         chain: Vec::new(),
         previous_chases: current
             .demands
@@ -1670,6 +1693,8 @@ impl PlaybackControl {
             PlaybackCommand::Stop => QueuedCommand::Stop,
             PlaybackCommand::Locate(sample) => QueuedCommand::Locate(sample),
             PlaybackCommand::Rewind(sample) => QueuedCommand::Rewind(sample),
+            PlaybackCommand::LocateTick(tick) => QueuedCommand::LocateTick(tick),
+            PlaybackCommand::RewindTick(tick) => QueuedCommand::RewindTick(tick),
             PlaybackCommand::SetMetronome(enabled) => QueuedCommand::SetMetronome(enabled),
             PlaybackCommand::ClearFaderPreview { after_plan } => {
                 QueuedCommand::ClearFaderPreview { after_plan }
@@ -1990,10 +2015,15 @@ impl PlaybackControl {
             .map(|demand| (demand.key, demand.chase))
             .collect();
         self.chain = pending.chain;
+        let retime = pending.prepared.tempo != self.published_tempo;
+        if retime {
+            self.published_tempo = pending.prepared.tempo.clone();
+        }
         let update = Update {
             prepared: pending.prepared,
             hosts: Box::new(self.hosts.audio_snapshot()),
             revision: pending.revision,
+            retime,
         };
         // Only this control thread produces updates; the reserved slot remains free.
         self.plans
@@ -2397,12 +2427,24 @@ impl PlaybackAudio {
             && self.returns.slots() > 0
             && let Ok(mut next) = self.plans.pop()
         {
+            let position = self.clock.position();
             let carried = next.prepared.carry(
                 &mut self.current,
-                self.clock.position(),
+                position,
                 self.playing || (live && self.live_processed),
             );
+            // The clock's tick under the replaced plan's tempo, read before
+            // that plan returns to the control thread.
+            let mut retimed = None;
             if carried.is_ok() {
+                if next.retime {
+                    retimed = Some(
+                        self.current
+                            .tempo
+                            .sample_to_tick(position, self.current.sample_rate)
+                            .ok_or(PlaybackError::Time),
+                    );
+                }
                 next.hosts.carry(&self.hosts);
                 next.hosts.activate_prepared();
                 std::mem::swap(&mut next.prepared, &mut self.current);
@@ -2417,6 +2459,13 @@ impl PlaybackAudio {
                 std::process::abort();
             }
             carried?;
+            if let Some(tick) = retimed {
+                // A tempo edit keeps the beat that was sounding (ADR 0330).
+                let sample = self.current.sample_at(tick?)?;
+                if sample != position {
+                    self.locate(sample)?;
+                }
+            }
         }
         if (self.loop_start, self.loop_end) != (self.current.loop_start, self.current.loop_end) {
             self.loop_start = self.current.loop_start;
@@ -2442,28 +2491,15 @@ impl PlaybackAudio {
                     }
                     self.begin_stop(live)?;
                 }
-                QueuedCommand::Rewind(sample) => {
-                    if self.playing {
-                        if !live {
-                            self.output_revision = self.output_revision.wrapping_add(1);
-                        }
-                        self.begin_stop(live)?;
-                    }
-                    // A stop tail renders from its own position, so moving
-                    // the clock does not cut it or reset any plugin.
-                    self.clock.locate(sample);
-                    self.arm_loop();
-                    self.current.place(sample, true)?;
+                QueuedCommand::Rewind(sample) => self.rewind(sample, live)?,
+                QueuedCommand::RewindTick(tick) => {
+                    let sample = self.current.sample_at(tick)?;
+                    self.rewind(sample, live)?;
                 }
-                QueuedCommand::Locate(sample) => {
-                    if self.stop_tail.is_some() {
-                        self.finish_stop()?;
-                    }
-                    self.output_revision = self.output_revision.wrapping_add(1);
-                    self.clock.locate(sample);
-                    self.arm_loop();
-                    self.current.place(sample, true)?;
-                    self.reset_plugins = true;
+                QueuedCommand::Locate(sample) => self.locate(sample)?,
+                QueuedCommand::LocateTick(tick) => {
+                    let sample = self.current.sample_at(tick)?;
+                    self.locate(sample)?;
                 }
                 QueuedCommand::SetMetronome(enabled) => self.metronome = enabled,
                 QueuedCommand::ClearFaderPreview { after_plan } => {
@@ -2663,6 +2699,33 @@ impl PlaybackAudio {
         } else {
             (None, None)
         }
+    }
+
+    fn locate(&mut self, sample: i64) -> Result<(), PlaybackError> {
+        if self.stop_tail.is_some() {
+            self.finish_stop()?;
+        }
+        self.output_revision = self.output_revision.wrapping_add(1);
+        self.clock.locate(sample);
+        self.arm_loop();
+        self.current.place(sample, true)?;
+        self.reset_plugins = true;
+        Ok(())
+    }
+
+    fn rewind(&mut self, sample: i64, live: bool) -> Result<(), PlaybackError> {
+        if self.playing {
+            if !live {
+                self.output_revision = self.output_revision.wrapping_add(1);
+            }
+            self.begin_stop(live)?;
+        }
+        // A stop tail renders from its own position, so moving
+        // the clock does not cut it or reset any plugin.
+        self.clock.locate(sample);
+        self.arm_loop();
+        self.current.place(sample, true)?;
+        Ok(())
     }
 
     fn begin_stop(&mut self, live: bool) -> Result<(), PlaybackError> {

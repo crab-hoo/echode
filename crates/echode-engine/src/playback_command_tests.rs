@@ -243,3 +243,73 @@ fn full_plan_returns_leave_updates_queued_but_apply_previews_under_rtsan() {
     assert!(audio.plans.peek().is_err());
     assert!(!control.status().failed);
 }
+
+fn half_tempo(project: &Project) -> Project {
+    project.with_tempo(
+        echode_model::Tick::new(0),
+        echode_model::Tempo::quarters_per_minute(60).unwrap(),
+    )
+}
+
+fn sample_of(project: &Project, tick: i64) -> i64 {
+    crate::tick_to_sample(echode_model::Tick::new(tick), project.tempo(), 48_000).unwrap()
+}
+
+/// ADR 0330: a plan whose tempo changed keeps the clock's tick, not its
+/// sample, when the callback adopts it. A plan with the same tempo does not
+/// move the clock.
+#[test]
+fn adopting_a_tempo_edit_keeps_the_sounding_tick_under_rtsan() {
+    let (project, _) = Project::new().add_track("notes");
+    let (mut control, mut audio) =
+        playback(&project, 48_000, 64, PlaybackOptions::default()).unwrap();
+    control.command(PlaybackCommand::Play).unwrap();
+    for _ in 0..100 {
+        render_block(&mut audio);
+    }
+    let before = control.status();
+    assert_eq!(before.sample, 6_400);
+    let slower = half_tempo(&project);
+    control.replace(&slower).unwrap();
+    render_block(&mut audio);
+    let after = control.status();
+    assert!(!after.failed && after.playing);
+    // Retimed to the same tick, then one block at the new tempo.
+    assert_eq!(after.sample, sample_of(&slower, before.tick) + 64);
+    assert_eq!(after.sample, 12_864, "half the tempo doubles the samples");
+    let (edited, _) = slower.add_track("later");
+    control.replace(&edited).unwrap();
+    render_block(&mut audio);
+    assert_eq!(control.status().sample, after.sample + 64);
+}
+
+/// ADR 0330: `LocateTick` and `RewindTick` convert under the plan the
+/// callback plays when it takes them, before and after a tempo edit's plan.
+#[test]
+fn tick_commands_read_the_tempo_of_the_plan_that_takes_them_under_rtsan() {
+    let (project, _) = Project::new().add_track("notes");
+    let (mut control, mut audio) =
+        playback(&project, 48_000, 64, PlaybackOptions::default()).unwrap();
+    let tick = echode_model::TICKS_PER_QUARTER;
+    control.command(PlaybackCommand::LocateTick(tick)).unwrap();
+    render_block(&mut audio);
+    assert_eq!(control.status().sample, sample_of(&project, tick));
+    assert_eq!(control.status().tick, tick);
+    let slower = half_tempo(&project);
+    control.replace(&slower).unwrap();
+    render_block(&mut audio);
+    assert_eq!(
+        control.status().tick,
+        tick,
+        "the stopped clock kept its beat"
+    );
+    control.command(PlaybackCommand::Play).unwrap();
+    control
+        .command(PlaybackCommand::RewindTick(2 * tick))
+        .unwrap();
+    render_block(&mut audio);
+    let status = control.status();
+    assert!(!status.playing && !status.failed);
+    assert_eq!(status.sample, sample_of(&slower, 2 * tick));
+    assert_eq!(status.tick, 2 * tick);
+}

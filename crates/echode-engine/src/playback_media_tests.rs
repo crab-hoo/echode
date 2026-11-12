@@ -1,4 +1,4 @@
-//! Media for a stopped replacement loads away from the control turn (ADR 0147).
+//! Media for a replacement loads away from the control turn (ADR 0147, ADR 0330).
 use super::*;
 use echode_model::{AudioRef, Id, Tick};
 use std::sync::atomic::AtomicUsize;
@@ -165,8 +165,11 @@ fn stopped_replacements_load_new_media_off_the_control_turn() {
     assert!(!control.loading_media());
 }
 
+/// Offline rendering, the CLI and an output's initial plan keep loading on
+/// the caller. A product output loads every later replacement's media on
+/// another thread, playing or not (ADR 0330).
 #[test]
-fn a_running_replacement_loads_its_media_on_the_control_turn() {
+fn without_background_media_a_replacement_loads_on_the_control_turn() {
     let (base, track) = Project::new().add_track("audio");
     let (mut control, _audio) = playback(&base, 48_000, 64, PlaybackOptions::default()).unwrap();
     let gate = Arc::new(Gate::default());

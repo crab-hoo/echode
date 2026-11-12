@@ -800,6 +800,163 @@ fn contract_a_prepared_output_plays_at_once_and_loads_stopped_edits_off_the_work
     assert_eq!(output.prepared(), 1, "the prepared output was kept");
 }
 
+/// Pumps blocks until the newest edit's plan reaches the callback.
+fn until_published(session: &mut Session) -> usize {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut blocks = 0;
+    while session.opening() || session.state().pending_plan {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the edit never reached the callback"
+        );
+        assert!(
+            session.state().error.is_none(),
+            "{:?}",
+            session.state().error
+        );
+        pumped_peak(session, 1);
+        blocks += 1;
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    blocks
+}
+
+/// ADR 0330: while playing, an edit needing new media returns while it loads
+/// and the plan it replaces keeps sounding. A tempo edit's plan keeps the
+/// beat when the callback adopts it, and a locate meanwhile lands on its
+/// tick in the plan still sounding.
+#[test]
+fn contract_playing_edits_load_media_off_the_worker_and_keep_the_beat_under_rtsan() {
+    let (base, track) = Project::new().add_track("audio");
+    let clip = echode_model::Id::from_raw(0x71);
+    let project = base
+        .place_audio(
+            track,
+            clip,
+            echode_model::Id::from_raw(0x72),
+            echode_model::Tick::new(0),
+            echode_model::AudioRef::try_new("c".repeat(64), 48_000, 1, 192_000).unwrap(),
+        )
+        .unwrap();
+    let mut session = Session::new(Arc::new(project.clone()));
+    let gate = MediaGate::default();
+    gated_media(&mut session, &gate);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    session.perform(AudioCommand::Play).unwrap();
+    until_opened(&mut session);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !session.state().running {
+        assert!(std::time::Instant::now() < deadline, "play never started");
+        pumped_peak(&mut session, 1);
+    }
+    // About 0.18 per channel at gain 1 after the centre pan.
+    let peak = pumped_peak(&mut session, 8);
+    assert!(peak > 0.15, "{peak}");
+    // The edit returns while its media is held on another thread.
+    gate.hold();
+    let quieter = project.set_clip_gain(clip, 0.5).unwrap();
+    session.update(Arc::new(quieter.clone()));
+    gate.until_waiting();
+    let state = session.state();
+    assert!(state.running && state.pending_plan, "{state:?}");
+    let peak = pumped_peak(&mut session, 8);
+    assert!(peak > 0.15, "the replaced plan stopped sounding: {peak}");
+    gate.release();
+    until_published(&mut session);
+    let peak = pumped_peak(&mut session, 8);
+    assert!(peak > 0.05 && peak < 0.1, "{peak}");
+    // A tempo edit also returns while its media loads. The old plan keeps
+    // its tempo until then.
+    gate.hold();
+    let slower = quieter.with_tempo(
+        echode_model::Tick::new(0),
+        echode_model::Tempo::quarters_per_minute(60).unwrap(),
+    );
+    session.update(Arc::new(slower.clone()));
+    gate.until_waiting();
+    assert!(session.state().running && session.state().pending_plan);
+    let quarter = echode_model::TICKS_PER_QUARTER;
+    // One 128-frame block at 120 quarters per minute, rounded up.
+    let block = quarter * 128 / 24_000 + 1;
+    let target = 4 * quarter;
+    session
+        .perform(AudioCommand::Locate { tick: target })
+        .unwrap();
+    pumped_peak(&mut session, 1);
+    let tick = session.state().tick;
+    assert!(
+        (target..=target + block).contains(&tick),
+        "the locate missed its beat in the sounding plan: {tick}"
+    );
+    gate.release();
+    let blocks = i64::try_from(until_published(&mut session)).unwrap();
+    let state = session.state();
+    assert!(state.running && state.error.is_none(), "{state:?}");
+    assert!(
+        (tick..=tick + (blocks + 1) * block).contains(&state.tick),
+        "adopting the tempo edit moved the beat: {} after {blocks} blocks from {tick}",
+        state.tick
+    );
+    assert_eq!(output.prepared(), 1, "the output was kept");
+}
+
+/// ADR 0330: an edit made while a playing output opened loads its media off
+/// the worker at install. The output waits for it, as Play does, instead of
+/// sounding the plan it replaces.
+#[test]
+fn contract_an_install_while_playing_waits_for_the_media_of_an_edit_made_meanwhile_under_rtsan() {
+    let (base, track) = Project::new().add_track("audio");
+    let clip = echode_model::Id::from_raw(0x81);
+    let project = base
+        .place_audio(
+            track,
+            clip,
+            echode_model::Id::from_raw(0x82),
+            echode_model::Tick::new(0),
+            echode_model::AudioRef::try_new("c".repeat(64), 48_000, 1, 192_000).unwrap(),
+        )
+        .unwrap();
+    let mut session = Session::new(Arc::new(project.clone()));
+    let gate = MediaGate::default();
+    gated_media(&mut session, &gate);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    output.hold();
+    session.perform(AudioCommand::Play).unwrap();
+    until_waiting(&output);
+    session.update(Arc::new(project.set_clip_gain(clip, 0.5).unwrap()));
+    output.release();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while output.prepared() == 0 {
+        assert!(std::time::Instant::now() < deadline, "never prepared");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    // The opening loaded the project it began with. Installing sends the
+    // edit, whose media is held.
+    gate.hold();
+    until_opened(&mut session);
+    gate.until_waiting();
+    let state = session.state();
+    assert!(state.playing && !state.running, "{state:?}");
+    assert_eq!(
+        pumped_peak(&mut session, 8),
+        0.0,
+        "the plan the edit replaced sounded"
+    );
+    gate.release();
+    let mut peak = 0.0f32;
+    while !session.state().running {
+        assert!(std::time::Instant::now() < deadline, "play never started");
+        peak = peak.max(pumped_peak(&mut session, 1));
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    peak = peak.max(pumped_peak(&mut session, 8));
+    // Half the gain: about 0.09 per channel. The replaced plan gives 0.18.
+    assert!(peak > 0.05 && peak < 0.1, "{peak}");
+    assert_eq!(output.prepared(), 1);
+}
+
 #[test]
 fn prepare_without_a_running_plugin_opens_once_and_a_later_play_reuses_it() {
     let (project, _) = Project::new().add_track("audio");

@@ -515,24 +515,13 @@ impl Session {
             }
             return;
         }
-        let tick = self
-            .stream
-            .as_ref()
-            .map_or(self.tick, |stream| stream.status().tick);
         let changed_tempo = self.project.tempo() != project.tempo();
         self.project = project;
-        // Stopped, new media decodes on another thread and the next Play waits
-        // for it. Playing, the edit keeps the synchronous order with its locate.
-        let running = self.playing && self.cancellation.is_current(self.play_revision);
+        // New media decodes on another thread while the current plan keeps
+        // sounding, and a held Play waits for it. A tempo edit's plan keeps
+        // the sounding beat when the callback adopts it (ADR 0330).
         let mut replaced = if let Some(stream) = &mut self.stream {
-            stream.load_media_in_background(!running);
-            stream.replace(&self.project, &live).and_then(|_| {
-                if changed_tempo {
-                    stream.locate(&self.project, tick)
-                } else {
-                    Ok(())
-                }
-            })
+            stream.replace(&self.project, &live)
         } else {
             Ok(())
         };
@@ -902,7 +891,16 @@ impl Session {
                 None => stream.clear_fader_preview(edited)?,
             }
         }
-        if self.playing && self.cancellation.is_current(self.play_revision) {
+        let play = self.playing && self.cancellation.is_current(self.play_revision);
+        if play && stream.loading_media() {
+            // An edit made while this output opened is still loading its
+            // media. Like Play, wait for it instead of sounding the plan it
+            // replaces; service resumes.
+            if basis.start {
+                stream.pause()?;
+            }
+            self.resume_held = true;
+        } else if play {
             if !(basis.start && basis.revision == self.play_revision) {
                 stream.resume(self.play_revision)?;
             }

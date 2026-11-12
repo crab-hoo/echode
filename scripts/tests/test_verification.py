@@ -1054,7 +1054,14 @@ class PolicyTests(unittest.TestCase):
 
     def test_output_prewarm_keeps_the_session_worker_and_controller_contracts(self):
         contracts = {item["id"]: item for item in self.policy["product_contracts"]}
-        for name in ("output-prewarm", "output-prewarm-play"):
+        # The output enables background media once (ADR 0330); the session holds Play.
+        files = {
+            "output-prewarm": "crates/echode-audio-io/src/stream.rs",
+            "output-prewarm-play": "crates/echode-audio-io/src/session.rs",
+            "playing-edit-media": "crates/echode-audio-io/src/stream.rs",
+            "output-install-held-play": "crates/echode-audio-io/src/session.rs",
+        }
+        for name, file in files.items():
             contract = contracts[name]
             self.assertEqual(
                 (contract["runner"], contract["package"], contract["target"]), ("rust", "echode-audio-io", ["--lib"])
@@ -1062,9 +1069,15 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue(
                 contract["test"].startswith("session::tests::contract_") and contract["test"].endswith("_under_rtsan")
             )
-            self.assertEqual(contract["negative_control"]["file"], "crates/echode-audio-io/src/session.rs")
+            faults = contract.get("negative_controls") or [contract["negative_control"]]
+            self.assertEqual(faults[0]["file"], file)
         self.assertNotEqual(
             contracts["output-prewarm"]["negative_control"], contracts["output-prewarm-play"]["negative_control"]
+        )
+        # Retiming and tick locates each have their own mutation.
+        self.assertEqual(
+            {fault["file"] for fault in contracts["playing-edit-media"]["negative_controls"]},
+            {"crates/echode-audio-io/src/stream.rs", "crates/echode-engine/src/playback.rs"},
         )
         worker = contracts["output-prepare-worker"]
         self.assertEqual((worker["runner"], worker["package"]), ("rust", "echode-ffi"))
@@ -1076,6 +1089,7 @@ class PolicyTests(unittest.TestCase):
             "crates/echode-engine/src/playback_media.rs",
             "crates/echode-engine/src/playback.rs",
             "crates/echode-audio-io/src/session.rs",
+            "crates/echode-audio-io/src/stream.rs",
             "crates/echode-audio-io/src/clips.rs",
         ):
             self.assertTrue({"check", "check-product-contracts", "rtsan"} <= self.selected(path))
@@ -2776,6 +2790,8 @@ class PolicyTests(unittest.TestCase):
                 "device-preparation-ui",
                 "output-prewarm",
                 "output-prewarm-play",
+                "playing-edit-media",
+                "output-install-held-play",
                 "output-prepare-worker",
                 "output-prepare-on-open",
             },
