@@ -170,6 +170,39 @@ class RuntimeTests(unittest.TestCase):
             manifest.write_text("{invalid")
             self.assertFalse(runtime.prepared({"fixture": 1}))
 
+    def test_a_build_directory_copied_from_another_checkout_is_configured_afresh(self):
+        # A target/ copied from another checkout keeps a CMake cache that names the old
+        # paths; CMake refuses to configure it (2026-11-12).
+        class Configured(Exception):
+            pass
+
+        seen = []
+
+        def run(command, **options):
+            if command[0] == "cmake":
+                seen.append(stale.exists())
+                raise Configured
+            return subprocess.CompletedProcess(command, 0)
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(runtime, "CACHE", Path(directory)),
+            patch.object(runtime, "UPSTREAM", Path(directory) / "upstream"),
+        ):
+            runtime.UPSTREAM.mkdir()
+            stale = runtime.CACHE / "build/CMakeCache.txt"
+            stale.parent.mkdir()
+            stale.write_text("CMAKE_CACHEFILE_DIR:INTERNAL=/elsewhere/target/toolchains/tsan/build\n")
+            with (
+                patch.object(runtime, "context", return_value={}),
+                patch.object(runtime, "output", return_value=runtime.COMMIT),
+                patch.object(runtime.subprocess, "run", side_effect=run),
+                patch.object(runtime.subprocess, "check_output", return_value=b""),
+                self.assertRaises(Configured),
+            ):
+                runtime.prepare()
+        self.assertEqual(seen, [False])
+
     def test_validation_refuses_missing_or_mixed_loader_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

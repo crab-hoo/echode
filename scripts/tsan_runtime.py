@@ -103,6 +103,10 @@ def prepare():
         shutil.copy2(UPSTREAM / name, destination)
     subprocess.run(["patch", "-p1", "-i", str(PATCH)], cwd=source, check=True)
     build = CACHE / "build"
+    # A build directory copied with target/ from another checkout keeps a CMake cache that
+    # names the old paths, and CMake refuses to configure it. This runs only for a stale
+    # runtime, so a fresh directory costs one configure.
+    shutil.rmtree(build, ignore_errors=True)
     command = [
         "cmake",
         "-S",
