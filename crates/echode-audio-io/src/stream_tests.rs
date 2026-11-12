@@ -1013,10 +1013,12 @@ fn a_stream_opened_for_devices_stays_stopped_until_play() {
 
 /// DOC-A2 (ADR 0229): a device whose helper holds an unrecorded change gets
 /// a route with that helper's bytes, so the replacement keeps the helper.
-/// Other devices still restore their recorded objects.
+/// Other devices name their recorded objects, which are read only when a
+/// helper loads them (ADR 0329).
 #[test]
 fn a_live_device_route_carries_its_helper_bytes_instead_of_the_recorded_object() {
     use echode_model::Id;
+    use std::sync::atomic::AtomicUsize;
     let package = std::env::temp_dir().join(format!("echode-live-routes-{}", Id::generate()));
     let recorded = echode_history::write_object(&package, b"recorded").unwrap();
     let (project, track) = Project::new().add_track("fx");
@@ -1029,30 +1031,86 @@ fn a_live_device_route_carries_its_helper_bytes_instead_of_the_recorded_object()
             .set_device_state(device, Some(recorded.clone()))
             .unwrap();
     }
-    let installed = [PluginRoute {
-        clap_id: "dev.echode.test-params".into(),
-        path: "/nowhere/params.clap".into(),
-        instrument: false,
-        fault: None,
-        state: None,
-    }];
-    let routes = routes_with_states(&project, &package, &installed, |device| {
+    let installed = [params_route()];
+    let reads = Arc::new(AtomicUsize::new(0));
+    let reader: StateReader = {
+        let (reads, store) = (Arc::clone(&reads), state_reader(package.clone()));
+        Arc::new(move |hash| {
+            reads.fetch_add(1, Ordering::SeqCst);
+            store(hash)
+        })
+    };
+    let routes = routes_with_states(&project, &reader, &installed, |device| {
         if device == held.raw() {
-            Some(Some(b"held".to_vec()))
+            Some(Some(PluginState::from_bytes(b"held".to_vec())))
         } else if device == fresh.raw() {
             Some(None)
         } else {
             None
         }
-    })
-    .unwrap();
-    let states: Vec<_> = routes.iter().map(|route| route.state.as_deref()).collect();
+    });
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "naming a state read it");
+    let states: Vec<_> = routes
+        .iter()
+        .map(|route| {
+            route
+                .state
+                .as_ref()
+                .map(|state| state.load().unwrap().bytes().to_vec())
+        })
+        .collect();
     assert_eq!(
         states,
-        [Some(&b"held"[..]), None, Some(&b"recorded"[..])],
+        [Some(b"held".to_vec()), None, Some(b"recorded".to_vec())],
         "one route per device, in project order"
     );
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
     let _ = std::fs::remove_dir_all(package);
+}
+
+/// ADR 0329: routes name a missing object without failing. Only the helper
+/// that must load it fails, with the store's own error as the cause.
+#[test]
+fn a_missing_state_object_fails_only_when_a_helper_loads_it() {
+    use echode_model::Id;
+    let package = std::env::temp_dir().join(format!("echode-missing-state-{}", Id::generate()));
+    std::fs::create_dir_all(&package).unwrap();
+    let (project, track) = Project::new().add_track("fx");
+    let device = Id::from_raw(0x1D);
+    let project = project
+        .add_clap_device(track, device, "dev.echode.test-params")
+        .unwrap()
+        .set_device_state(device, Some("e".repeat(64)))
+        .unwrap();
+    let routes = routes_with_states(
+        &project,
+        &state_reader(package.clone()),
+        &[params_route()],
+        |_| None,
+    );
+    let state = routes[0]
+        .state
+        .as_ref()
+        .expect("the recorded state is named");
+    assert_eq!(state.name(), "e".repeat(64));
+    let error = state.load().unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<echode_history::PackageError>()
+            .is_some(),
+        "the store's error is kept: {error}"
+    );
+    let _ = std::fs::remove_dir_all(package);
+}
+
+fn params_route() -> PluginRoute {
+    PluginRoute {
+        clap_id: "dev.echode.test-params".into(),
+        path: "/nowhere/params.clap".into(),
+        instrument: false,
+        fault: None,
+        state: None,
+    }
 }
 
 /// XCA-14 (ADR 0238): a panic inside the product render stops at the

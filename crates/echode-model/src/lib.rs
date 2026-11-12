@@ -65,8 +65,8 @@ mod track_fields;
 
 pub use changeset::{Change, ChangeSet, Field, ObjectKey, ObjectKind, Property, Value};
 pub use device::{
-    Device, DeviceKind, GAIN_MAX, MixerIds, PAN_MAX, PAN_MIN, ParamKey, Parameter, test_mixer,
-    valid_plugin_id,
+    Device, DeviceKind, GAIN_MAX, MixerIds, PAN_MAX, PAN_MIN, ParamKey, Parameter, content_hash,
+    test_mixer, valid_plugin_id, valid_state_hash,
 };
 pub use error::{ArrangeError, InvariantError};
 pub use footprint::Footprint;

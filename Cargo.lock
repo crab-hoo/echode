@@ -836,7 +836,6 @@ dependencies = [
 name = "echode-history"
 version = "0.0.0"
 dependencies = [
- "blake3",
  "echode-actions",
  "echode-model",
  "flate2",

@@ -372,7 +372,7 @@ fn render_to_wav_format(
     let Some(host) = echode_plugin_host::host_binary() else {
         return Err(CliError::MissingPluginHost);
     };
-    let routes = routes_with_saved_state(&project, package).map_err(CliError::from)?;
+    let routes = routes_with_saved_state(&project, package);
     let missing: Vec<&str> = ids
         .iter()
         .filter(|id| {

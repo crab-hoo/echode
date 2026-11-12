@@ -144,6 +144,9 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   ジェスチャーの終了時に状態を取り込み、`device.set_state` として 1 回の Undo に記録する。
   状態だけの Undo / Redo は同じヘルパーへ記録済みのバイトを読み込み、既定や読込拒否はヘルパーを作り直す
   （[ADR 0130](../decisions/0130-clap-parameter-editing.md)）
+- 記録済みの状態は保管庫の名前（BLAKE3）で表す。置換と Undo はヘルパーの適用済みの状態と名前で比べ、
+  同じならバイトを読まない。読むのは新しいヘルパーと状態の変わったヘルパーだけで、背景の準備ではそのスレッドで読む
+  （[ADR 0329](../decisions/0329-plugin-states-by-name.md)）
 - 欄の数値入力は、プラグインの表示単位の文字をヘルパーのメインスレッドで `text_to_value` に渡して読む（`ParseParam`）。
   値・拒否・変換なしを区別し、変換なしのプラグインには数値で入力する。読むだけで値は変えない
   （[ADR 0153](../decisions/0153-value-control-clicks-and-typed-entry.md)）

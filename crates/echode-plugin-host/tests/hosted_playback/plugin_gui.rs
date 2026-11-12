@@ -165,7 +165,10 @@ fn contract_loop_changes_keep_the_open_plugin_and_its_live_state() {
             let values = current.parameters().unwrap();
             assert_eq!(values[0].value, 1.75, "an unsaved change was lost");
             assert_eq!(values[2].value, 0.75, "the helper was replaced or reset");
-            assert_eq!(current.applied_state(), Some(captured.clone()));
+            assert_eq!(
+                current.applied_state().map(|state| state.bytes().to_vec()),
+                Some(captured.clone())
+            );
         }
     }
     endpoint.close_gui().unwrap();
@@ -417,7 +420,11 @@ fn audit_doc_a2_an_unrelated_edit_keeps_the_held_plugin_change() {
     };
     let (edited, _) = project.add_track("unrelated edit");
     let mut live = route.clone();
-    live.state = control.device_applied_state(device.raw()).unwrap();
+    live.state = control
+        .device_applied_state(device.raw())
+        .unwrap()
+        .as_ref()
+        .map(echode_engine::PluginState::held);
     control.set_routes(&host_bin(), std::slice::from_ref(&live));
     control.replace(&edited).unwrap();
     let adopted = Instant::now();
@@ -439,7 +446,10 @@ fn audit_doc_a2_an_unrelated_edit_keeps_the_held_plugin_change() {
         1.5,
         "the change was lost"
     );
-    assert_eq!(after.applied_state(), Some(held));
+    assert_eq!(
+        after.applied_state().map(|state| state.bytes().to_vec()),
+        Some(held)
+    );
     drop((audio, control));
     let _ = std::fs::remove_file(socket);
 }

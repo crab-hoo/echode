@@ -1270,7 +1270,7 @@ fn a_large_restore_crosses_a_large_background_save_without_stalling() {
     assert_eq!(
         control
             .applied_state()
-            .map(|bytes| bytes.len() == LARGE_STATE && bytes[0] == 128),
+            .map(|state| state.bytes().len() == LARGE_STATE && state.bytes()[0] == 128),
         Some(true),
         "the older save must not replace the restored bytes"
     );

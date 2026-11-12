@@ -388,6 +388,10 @@ I/O エラーに文字列リテラルだけを渡すと、`check_typed_errors.py
 エンジンのテスト専用の素通しではなく、製品と同じ `device_control_handle` を通す
 （[ADR 0199](decisions/0199-owned-helper-control-requests.md)）。
 
+ヘルパーの適用済みの状態（バイトと 1 回だけ計算する名前）は `echode-sandbox/src/applied.rs`、経路の名前付きの状態と比較の `holds` は `echode-engine/src/plugin_state.rs` に置く。
+名前の規則は `echode_model::content_hash` だけで、保管庫も同じ関数を呼ぶ。
+実ヘルパーの回帰は `hosted_playback/recorded_states.rs`（必須契約 `plugin-state-names`、[ADR 0329](decisions/0329-plugin-states-by-name.md)）。
+
 制御専用ハンドルの型付き操作は `echode-sandbox/src/session_operations.rs` に直接実装し、
 同名の `ControlState` や `PluginHost` の素通しを増やさない。
 公開操作と通信の対応・拒否・背景保存の順序は `session_operations_tests.rs`、

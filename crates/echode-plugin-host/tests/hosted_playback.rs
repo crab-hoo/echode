@@ -29,6 +29,8 @@ mod latency;
 mod note_edges;
 #[path = "hosted_playback/plugin_gui.rs"]
 mod plugin_gui;
+#[path = "hosted_playback/recorded_states.rs"]
+mod recorded_states;
 #[path = "hosted_playback/stopped_processing.rs"]
 mod stopped_processing;
 #[path = "hosted_playback/track_events.rs"]
@@ -1827,7 +1829,7 @@ fn audit_pro03_saved_state_changes_the_sound_and_survives_restart() {
             path: plugin_dylib(),
             instrument: false,
             fault: None,
-            state: Some(vec![128]),
+            state: Some(echode_engine::PluginState::from_bytes(vec![128])),
         }],
     )
     .expect("playback");
@@ -2060,7 +2062,7 @@ fn state_route(path: &Path, bytes: Option<Vec<u8>>) -> PluginRoute {
         path: path.to_path_buf(),
         instrument: false,
         fault: None,
-        state: bytes,
+        state: bytes.map(echode_engine::PluginState::from_bytes),
     }
 }
 

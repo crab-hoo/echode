@@ -2083,9 +2083,13 @@ impl PlaybackControl {
         self.device_control(device).cloned()
     }
 
-    /// Bytes the running helper last saved or loaded. `Ok(None)` is a helper
-    /// still on the plugin's defaults; `Err` is a device without a helper.
-    pub fn device_applied_state(&self, device: u128) -> Result<Option<Vec<u8>>, PlaybackError> {
+    /// What the running helper last saved or loaded, sharing its bytes.
+    /// `Ok(None)` is a helper still on the plugin's defaults; `Err` is a
+    /// device without a helper.
+    pub fn device_applied_state(
+        &self,
+        device: u128,
+    ) -> Result<Option<echode_sandbox::AppliedState>, PlaybackError> {
         Ok(self.device_control(device)?.applied_state())
     }
 
@@ -2096,26 +2100,32 @@ impl PlaybackControl {
             .map_err(|error| PlaybackError::helper(device, error))
     }
 
-    /// Brings the running helpers of `devices` to their recorded bytes, for an
-    /// Undo, Redo or API edit that changed only plugin states. `recorded` gives
-    /// a device's bytes, `Ok(None)` for plugin defaults. A helper that already
-    /// saved or loaded those bytes is left alone. Returns `true` when the
-    /// caller must replace the graph: defaults need a fresh plugin, and an
-    /// unreadable or refused load needs a helper spawned with the bytes.
-    /// A device without a helper is left to that replacement too.
+    /// Brings the running helpers of `devices` to their recorded states, for
+    /// an Undo, Redo or API edit that changed only plugin states. `recorded`
+    /// gives a device's state, `Ok(None)` for plugin defaults. A helper that
+    /// already holds that state, by name, is left alone and nothing is read.
+    /// Returns `true` when the caller must replace the graph: defaults need a
+    /// fresh plugin, and an unreadable or refused load needs a helper spawned
+    /// with the state. A device without a helper is left to that replacement.
     pub fn restore_recorded_states<E>(
         &self,
         devices: &[u128],
-        recorded: impl Fn(u128) -> Result<Option<Vec<u8>>, E>,
+        recorded: impl Fn(u128) -> Result<Option<crate::PluginState>, E>,
     ) -> bool {
         let mut replace = false;
         for &device in devices {
-            let Ok(applied) = self.device_applied_state(device) else {
+            let Ok(control) = self.device_control(device) else {
                 continue;
             };
+            let applied = control.applied_state();
             match recorded(device) {
-                Ok(want) if want == applied => {}
-                Ok(Some(bytes)) => replace |= self.restore_device_state(device, &bytes).is_err(),
+                Ok(want) if crate::plugin_state::holds(applied.as_ref(), want.as_ref()) => {}
+                Ok(Some(want)) => {
+                    replace |= want
+                        .load()
+                        .ok()
+                        .is_none_or(|state| control.restore_applied(&state).is_err());
+                }
                 Ok(None) | Err(_) => replace = true,
             }
         }

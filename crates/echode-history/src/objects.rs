@@ -15,15 +15,13 @@ const GITIGNORE: &str = "/media/objects/\n/cache/\n";
 
 /// Lowercase BLAKE3-256 hex, the only spelling the package accepts.
 pub(crate) fn is_content_hash(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    echode_model::valid_state_hash(text)
 }
 
-/// BLAKE3-256 of `bytes`, as 64 lowercase hex digits: the object's name.
+/// BLAKE3-256 of `bytes`, as 64 lowercase hex digits: the object's name. The
+/// playback engine names the states its helpers hold by the same rule.
 pub fn hash_bytes(bytes: &[u8]) -> String {
-    blake3::hash(bytes).to_hex().to_string()
+    echode_model::content_hash(bytes)
 }
 
 /// Writes `bytes` to `media/objects/<hash>`. An object that already matches is

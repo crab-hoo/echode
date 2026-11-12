@@ -5,7 +5,7 @@ use super::{
     ControlMessage, PARAMETER_REPLY, PluginControl, STATE_REPLY, SessionError, WINDOW_REPLY,
 };
 use crate::error::ProtocolError;
-use crate::{GuiReport, ParamChange, ParamInfo, ParamText, ParamValue};
+use crate::{AppliedState, GuiReport, ParamChange, ParamInfo, ParamText, ParamValue};
 use std::time::Instant;
 
 impl PluginControl {
@@ -123,9 +123,15 @@ impl PluginControl {
 
     /// Loads recorded bytes into the running plugin.
     pub fn restore_state(&self, bytes: &[u8]) -> Result<(), SessionError> {
+        self.restore_applied(&AppliedState::new(bytes))
+    }
+
+    /// Loads `applied` into the running plugin. On success the helper holds
+    /// it, together with any name it already carries.
+    pub fn restore_applied(&self, applied: &AppliedState) -> Result<(), SessionError> {
         let mut state = self.lock();
         let deadline = Instant::now() + STATE_REPLY;
-        let id = state.request(ControlMessage::Restore(bytes.to_vec()), deadline)?;
+        let id = state.request(ControlMessage::Restore(applied.bytes().to_vec()), deadline)?;
         match state.wait_reply(id, deadline, |message| {
             matches!(
                 message,
@@ -133,7 +139,7 @@ impl PluginControl {
             )
         })? {
             ControlMessage::Restored => {
-                state.remember(id, bytes);
+                state.remember(id, applied.clone());
                 Ok(())
             }
             ControlMessage::StateRejected(refusal) => Err(refusal.into()),

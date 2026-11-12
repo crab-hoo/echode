@@ -1,5 +1,5 @@
 use super::*;
-use echode_engine::PlaybackError;
+use echode_engine::{PlaybackError, PluginState};
 use echode_sandbox::{ParamChange, ParamText, ParamValue, PluginFailure, Refusal, SessionError};
 
 fn process_level(host: &mut PluginHost, input: f32) -> (f32, f32) {
@@ -143,7 +143,7 @@ pub(super) fn params_route(state: Option<Vec<u8>>) -> PluginRoute {
         path: plugin_dylib(),
         instrument: false,
         fault: None,
-        state,
+        state: state.map(PluginState::from_bytes),
     }
 }
 
@@ -236,7 +236,10 @@ fn contract_parameter_edit_sounds_records_and_restores_under_rtsan() {
             .unwrap();
         assert_ne!(edited, before);
         assert_eq!(
-            control.device_applied_state(device.raw()).unwrap(),
+            control
+                .device_applied_state(device.raw())
+                .unwrap()
+                .map(|state| state.bytes().to_vec()),
             Some(edited.clone())
         );
 
@@ -360,9 +363,10 @@ fn recorded_states_load_into_the_running_helper_or_request_replacement_under_rts
 
     let id = device.raw();
     // The engine only tells a readable recorded state from an unreadable one.
-    type Recorded = Result<Option<Vec<u8>>, &'static str>;
-    assert!(!control.restore_recorded_states(&[id], |_| -> Recorded { Ok(Some(edited.clone())) }));
-    assert!(!control.restore_recorded_states(&[id], |_| -> Recorded { Ok(Some(before.clone())) }));
+    type Recorded = Result<Option<PluginState>, &'static str>;
+    let named = |bytes: &Vec<u8>| -> Recorded { Ok(Some(PluginState::from_bytes(bytes.clone()))) };
+    assert!(!control.restore_recorded_states(&[id], |_| named(&edited)));
+    assert!(!control.restore_recorded_states(&[id], |_| named(&before)));
     close(hear(&mut control, &mut audio, frames), 0.25);
     // Same helper: the unsaved hidden value survived the load.
     assert_eq!(
@@ -377,7 +381,14 @@ fn recorded_states_load_into_the_running_helper_or_request_replacement_under_rts
     assert!(!control.restore_recorded_states(&[0x9D], |_| -> Recorded { Ok(None) }));
     assert!(control.restore_recorded_states(&[id], |_| -> Recorded { Ok(None) }));
     assert!(control.restore_recorded_states(&[id], |_| -> Recorded { Err("missing object") }));
-    assert!(control.restore_recorded_states(&[id], |_| -> Recorded { Ok(Some(vec![1, 2, 3])) }));
+    let unreadable = PluginState::stored(
+        echode_model::content_hash(b"gone"),
+        Arc::new(|_| Err(Arc::new(std::io::Error::from(std::io::ErrorKind::NotFound)) as _)),
+    );
+    assert!(
+        control.restore_recorded_states(&[id], |_| -> Recorded { Ok(Some(unreadable.clone())) })
+    );
+    assert!(control.restore_recorded_states(&[id], |_| named(&vec![1, 2, 3])));
     // A refused load leaves the plugin as it was.
     close(hear(&mut control, &mut audio, frames), 0.25);
 }

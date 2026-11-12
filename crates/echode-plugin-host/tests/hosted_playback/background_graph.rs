@@ -237,7 +237,10 @@ fn state_undo_during_startup_keeps_the_existing_helper_and_latest_recorded_bytes
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(
-        control.device_applied_state(device.raw()).unwrap(),
+        control
+            .device_applied_state(device.raw())
+            .unwrap()
+            .map(|state| state.bytes().to_vec()),
         Some(edited)
     );
     assert_eq!(

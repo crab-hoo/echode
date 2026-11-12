@@ -671,8 +671,11 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 その間の編集と停止は `background-graph`、導入後のデバイス要求の待ちは Session の機器なし回帰で区別する。
 状態の復元やループ変更の後で既存ヘルパーが再生成されるなら、投入時の状態一致の保持と次の `Pending` の経路を確認する。
 `opening` が偽でも `pending_plan` は真になり得る。置換専用の列の表示は未接続である。
-素材・保存済み状態の読込みや初回導入時の差分は同期のままなので、ヘルパー初期化の待ちと分ける
+再生中の素材の読込みや初回導入時の差分は同期のままなので、ヘルパー初期化の待ちと分ける
 （[ADR 0142](../decisions/0142-background-plugin-graph-preparation.md)）。
+記録済みのプラグイン状態は名前（保管庫の BLAKE3）で比べ、新しいヘルパーと状態の変わったヘルパーだけが `echode-graph-prepare` で読む。
+無関係な編集が状態を読む・ヘルパーを作り直すなら `plugin-state-names` で比べ方を確かめる。
+読めない状態は `PlaybackError::State` のデバイスと原因（`PackageError`）で分かる（[ADR 0329](../decisions/0329-plugin-states-by-name.md)）。
 機器なしの出力は計画の採用に検査側の `pump` が必要である。初回の準備だけを待つ時に `Session.opening()` の全置換待ちを使わない。
 製品アプリでは開いた直後の `opening` は事前準備（`audio.prepare`）である。最初の再生がまだ待つなら、押した時点の状態を分ける。
 `opening` が真なら事前準備の途中、偽で `pending_plan` が真なら停止中の編集の素材読込み（`echode-media-prepare`）の残りである。

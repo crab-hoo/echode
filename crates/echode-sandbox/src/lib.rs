@@ -22,6 +22,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("Echode only builds for macOS");
 
+mod applied;
 mod control;
 mod control_decode;
 mod control_text;
@@ -43,6 +44,7 @@ mod sync;
 mod wire;
 mod workgroup;
 
+pub use applied::AppliedState;
 pub use control::{ControlMessage, Socket};
 pub use control_decode::{ControlDecodeError, ControlField};
 pub use control_text::ControlTextError;

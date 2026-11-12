@@ -115,7 +115,7 @@ fn contract_stopped_graph_outputs_autonomous_plugins_under_rtsan() {
             path: plugin_dylib(),
             instrument: false,
             fault: None,
-            state: Some(vec![64]),
+            state: Some(echode_engine::PluginState::from_bytes(vec![64])),
         },
         PluginRoute {
             clap_id: "dev.echode.test-gain".into(),

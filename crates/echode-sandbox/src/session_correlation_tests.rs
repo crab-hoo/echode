@@ -90,7 +90,7 @@ fn contract_control_replies_are_correlated_across_timeouts() {
     });
     control.restore_state(&[128]).unwrap();
     assert_eq!(control.capture_state().unwrap(), [128]);
-    assert_eq!(control.applied_state().unwrap(), [128]);
+    assert_eq!(control.applied_state().unwrap().bytes(), [128]);
     assert!(matches!(
         control.lock().poll_notice().unwrap(),
         Some(PluginNotice::Dirty)
@@ -126,7 +126,7 @@ fn background_and_foreground_saves_keep_distinct_replies() {
     );
     assert_eq!(control.lock().poll_saved().unwrap().unwrap().unwrap(), [1]);
     assert_eq!(
-        control.applied_state().unwrap(),
+        control.applied_state().unwrap().bytes(),
         [2],
         "older background save replaced newer state"
     );

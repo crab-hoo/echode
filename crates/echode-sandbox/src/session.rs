@@ -5,6 +5,7 @@
 //! never touches the socket. A `kqueue` on the control side notices when the
 //! helper exits.
 
+use crate::applied::AppliedState;
 use crate::control::{ControlMessage, Socket};
 use crate::error::{ProtocolError, SessionError, WorkgroupError};
 use crate::gui::PluginActivity;
@@ -140,7 +141,7 @@ const STATE_REPLY: Duration = Duration::from_secs(2);
 #[derive(Clone)]
 pub struct PluginControl {
     socket: Arc<Mutex<ControlState>>,
-    applied: Arc<Mutex<Option<Vec<u8>>>>,
+    applied: Arc<Mutex<Option<AppliedState>>>,
     activity: Arc<Mutex<PluginActivity>>,
     latency_samples: Arc<AtomicU32>,
 }
@@ -152,7 +153,7 @@ struct ControlState {
     remembered_request: u64,
     pending: HashSet<u64>,
     /// The same storage as [`PluginControl::applied_state`].
-    applied: Arc<Mutex<Option<Vec<u8>>>>,
+    applied: Arc<Mutex<Option<AppliedState>>>,
     /// The same storage as [`PluginControl::take_activity`].
     activity: Arc<Mutex<PluginActivity>>,
     /// The helper showed the window and has not reported it closed.
@@ -212,7 +213,8 @@ impl PluginControl {
             .unwrap_or_else(|error| error.into_inner())
     }
 
-    pub fn applied_state(&self) -> Option<Vec<u8>> {
+    /// What the helper last saved or loaded. Cloning shares the bytes.
+    pub fn applied_state(&self) -> Option<AppliedState> {
         self.applied
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -330,7 +332,7 @@ impl ControlState {
             .merge(note);
     }
 
-    fn remember(&mut self, id: u64, bytes: &[u8]) {
+    fn remember(&mut self, id: u64, state: AppliedState) {
         if id < self.remembered_request {
             return;
         }
@@ -338,7 +340,7 @@ impl ControlState {
         *self
             .applied
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Some(bytes.to_vec());
+            .unwrap_or_else(|error| error.into_inner()) = Some(state);
     }
 
     /// Asks the helper to save. The reply is collected later by [`Self::poll_saved`].
@@ -378,7 +380,7 @@ impl ControlState {
         self.pending.remove(&id);
         match self.inbox.remove(index) {
             Some((_, ControlMessage::State(bytes))) => {
-                self.remember(id, &bytes);
+                self.remember(id, AppliedState::new(bytes.as_slice()));
                 Ok(Some(Ok(bytes)))
             }
             Some((_, ControlMessage::StateRejected(reason))) => Ok(Some(Err(reason))),
@@ -396,7 +398,7 @@ impl ControlState {
             )
         })? {
             ControlMessage::State(bytes) => {
-                self.remember(id, &bytes);
+                self.remember(id, AppliedState::new(bytes.as_slice()));
                 Ok(bytes)
             }
             ControlMessage::StateRejected(refusal) => Err(refusal.into()),
@@ -639,7 +641,7 @@ impl PluginHost {
         self.finish_launch()?;
         let state = self.control.applied_state();
         if let Some(state) = state {
-            self.control.restore_state(&state)?;
+            self.control.restore_applied(&state)?;
         }
         Ok(())
     }

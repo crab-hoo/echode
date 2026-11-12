@@ -35,6 +35,7 @@ mod outputs;
 mod plan;
 mod playback;
 mod plugin_declick;
+mod plugin_state;
 mod plugins;
 mod realtime;
 mod render;
@@ -63,9 +64,9 @@ pub use error::{
 pub use mix::{InputBus, MONO, STEREO, Speaker, TrackFader, mix_buses, mix_tracks};
 mod meter;
 pub use echode_sandbox::{
-    GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay, ParamText,
-    ParamValue, Pending, PluginActivity, PluginCommand, PluginControl, Refusal, RetainedWorkgroup,
-    SessionError, WorkgroupError,
+    AppliedState, GuiReport, ParamChange, ParamEvent, ParamEventKind, ParamInfo, ParamRelay,
+    ParamText, ParamValue, Pending, PluginActivity, PluginCommand, PluginControl, Refusal,
+    RetainedWorkgroup, SessionError, WorkgroupError,
 };
 pub use meter::{AutoMute, TrackMeter};
 pub use outputs::{DeviceFormat, OutputChoice, OutputRoute, RouteUpdate};
@@ -76,6 +77,7 @@ pub use playback::{
     PlaybackStatus, playback,
 };
 pub use plugin_declick::PluginDeclick;
+pub use plugin_state::{PluginState, StateReadError, StateReader};
 pub use plugins::{PluginRoute, PluginWorkgroup, block_duration};
 pub use realtime::ForbidAlloc;
 #[cfg(debug_assertions)]

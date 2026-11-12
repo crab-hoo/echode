@@ -94,6 +94,13 @@ pub fn valid_plugin_id(plugin: &str) -> bool {
     !plugin.is_empty() && plugin.chars().all(|ch| !ch.is_control())
 }
 
+/// The object store's name for `bytes`: BLAKE3-256 as 64 lowercase hex digits.
+/// Saved plugin states and imported PCM are named this way, so two equal
+/// names are the same bytes.
+pub fn content_hash(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
 /// BLAKE3-256 as 64 lowercase hex digits, the only plugin-state spelling.
 pub fn valid_state_hash(text: &str) -> bool {
     text.len() == 64

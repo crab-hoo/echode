@@ -38,6 +38,12 @@ pub enum PlaybackError {
         device: u128,
         error: Arc<SessionError>,
     },
+    /// The recorded state a new or changed helper must load could not be
+    /// read. The reader's error is the cause (ADR 0329).
+    State {
+        device: u128,
+        error: crate::StateReadError,
+    },
     /// The region the helpers write their output into could not be created.
     FanIn(Arc<RegionError>),
     /// The output device's workgroup could not be handed to helpers.
@@ -80,6 +86,12 @@ impl fmt::Display for PlaybackError {
                 error,
             } => return write!(formatter, "device {device} ({clap_id}): {error}"),
             Self::Helper { error, .. } => return error.fmt(formatter),
+            Self::State { device, error } => {
+                return write!(
+                    formatter,
+                    "device {device}: saved plugin state could not be read: {error}"
+                );
+            }
             Self::FanIn(error) => return error.fmt(formatter),
             Self::Workgroup(error) => return error.fmt(formatter),
             Self::Thread(error) => return error.fmt(formatter),
@@ -95,6 +107,7 @@ impl std::error::Error for PlaybackError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Spawn { error, .. } | Self::Helper { error, .. } => Some(error.as_ref()),
+            Self::State { error, .. } => Some(error.as_ref()),
             Self::FanIn(error) => Some(error.as_ref()),
             Self::Workgroup(error) => Some(error),
             Self::Thread(error) => Some(error.as_ref()),

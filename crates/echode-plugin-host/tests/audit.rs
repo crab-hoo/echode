@@ -214,7 +214,7 @@ fn audit_spg01_a_timed_out_save_does_not_replace_the_next_restore_bytes() {
         .restore_state(&[128])
         .expect("restore after completion");
     assert_eq!(endpoint.capture_state().unwrap(), [128]);
-    assert_eq!(endpoint.applied_state().unwrap(), [128]);
+    assert_eq!(endpoint.applied_state().unwrap().bytes(), [128]);
     host.process(
         &[&input, &input],
         &mut [&mut left, &mut right],

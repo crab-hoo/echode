@@ -20,6 +20,7 @@ use echode_sandbox::{
 };
 
 use crate::PlaybackError;
+use crate::plugin_state::{PluginState, holds};
 
 /// Control-thread factory for a fresh send right on each live helper launch.
 /// The captured owner retains the selected device's workgroup.
@@ -38,8 +39,9 @@ pub struct PluginRoute {
     pub instrument: bool,
     /// Passed to that helper as `ECHODE_TEST_FAULT`. Product routes leave this empty.
     pub fault: Option<String>,
-    /// CLAP state bytes loaded from the object store. `None` leaves the plugin's default.
-    pub state: Option<Vec<u8>>,
+    /// The CLAP state this device's helper should hold. A recorded state is
+    /// read only when a helper loads it. `None` leaves the plugin's default.
+    pub state: Option<PluginState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -717,7 +719,8 @@ impl HostGraph {
                     .iter()
                     .flat_map(|track| &track.stages)
                     .find(|stage| stage.device == device.id && stage.clap_id == device.clap_id)?;
-                (stage.instance.control.applied_state().as_ref() == incoming).then_some(device.id)
+                holds(stage.instance.control.applied_state().as_ref(), incoming)
+                    .then_some(device.id)
             })
             .collect()
     }
@@ -809,12 +812,12 @@ impl HostGraph {
                     .position(|stage| stage.device == device.id && stage.clap_id == device.clap_id)
                 {
                     let incoming = unused_route(routes, &used, &device.clap_id)
-                        .and_then(|route| route.state.clone());
+                        .and_then(|route| route.state.as_ref());
                     if selection.restore_states
                         && !selection.preserve.contains(&device.id)
-                        && kept
-                            .get(index)
-                            .is_some_and(|stage| stage.instance.control.applied_state() != incoming)
+                        && kept.get(index).is_some_and(|stage| {
+                            !holds(stage.instance.control.applied_state().as_ref(), incoming)
+                        })
                     {
                         // State changed. Leave the old process in `kept` so it is
                         // dropped, and spawn a helper that restores the new bytes.
@@ -1522,6 +1525,16 @@ fn spawn_stage(
     if !route.path.exists() {
         return Ok(None);
     }
+    // Read before starting a process that could not be given its state.
+    let state = route
+        .state
+        .as_ref()
+        .map(PluginState::load)
+        .transpose()
+        .map_err(|error| PlaybackError::State {
+            device: device.id,
+            error,
+        })?;
     let shared = if let Some(fan) = fan {
         Arc::clone(fan)
     } else {
@@ -1548,9 +1561,9 @@ fn spawn_stage(
         plugin_id: Some(route.clap_id.as_str()),
     }) {
         Ok(host) => {
-            if let Some(bytes) = &route.state {
+            if let Some(state) = &state {
                 host.control_handle()
-                    .restore_state(bytes)
+                    .restore_applied(state)
                     .map_err(|error| PlaybackError::helper(device.id, error))?;
             }
             host

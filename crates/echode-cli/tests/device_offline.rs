@@ -22,8 +22,8 @@ fn an_offline_copy_does_not_supply_state_to_an_online_copy_of_the_same_plugin() 
         .unwrap()
         .add_clap_device(track, Id::generate(), "dev.echode.sine-pad")
         .unwrap();
-    let routes = echode_audio_io::routes_with_saved_state(&project, &directory)
-        .expect("the offline copy's missing state object must not be read");
+    // The offline copy's missing state object is never named to a helper.
+    let routes = echode_audio_io::routes_with_saved_state(&project, &directory);
     assert_eq!(routes.len(), 1);
     assert_eq!(routes[0].clap_id, "dev.echode.sine-pad");
     assert!(routes[0].state.is_none());

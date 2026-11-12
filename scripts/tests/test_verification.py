@@ -2772,6 +2772,7 @@ class PolicyTests(unittest.TestCase):
                 "output-opening",
                 "output-opening-worker",
                 "background-graph",
+                "plugin-state-names",
                 "device-preparation-ui",
                 "output-prewarm",
                 "output-prewarm-play",

@@ -196,7 +196,8 @@ NSSlider の追跡や絶対位置の計算が戻っていないかを `track-mix
 `ProjectController.busy` の完了時の値だけでは短い暗転を見落とす。`device-edit-enabled-ui` で操作中の全遷移を観測する。
 `EditTurn.busy` は編集待ち行列の状態、画面の `busy` は作成・交換・終了の明示的な排他だけである。
 排他の既定値を通常編集へ広げていないか、各ビューが個別の `historyBusy` と全体の `busy` を取り違えていないか確認する。
-FX 追加での素材・保存済み状態の読込みや、同一ヘルパーの状態復元を待つ経路とは別である（[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+FX 追加での素材の読込みや、同一ヘルパーの状態復元を待つ経路とは別である（[ADR 0133](../decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
+保存済みのプラグイン状態は、読み込むヘルパーだけが準備スレッドで読む（[ADR 0329](../decisions/0329-plugin-states-by-name.md)）。
 
 ### FX の一括追加が一部だけ・Undo が複数回になる
 

@@ -7,8 +7,8 @@ use std::time::Instant;
 
 use echode_engine::{
     ClipLoader, ForbidAlloc, PlaybackAudio, PlaybackCommand, PlaybackControl, PlaybackOptions,
-    PlaybackStatus, PluginActivity, PluginControl, PluginRoute, PluginWorkgroup, playback,
-    tick_to_sample,
+    PlaybackStatus, PluginActivity, PluginControl, PluginRoute, PluginState, PluginWorkgroup,
+    StateReader, playback, tick_to_sample,
 };
 use echode_model::{Project, Tick};
 use objc2_core_audio::*;
@@ -355,16 +355,19 @@ impl OutputStream {
     }
 
     /// `live` names devices whose helpers hold a change the document has not
-    /// recorded yet. Their routes carry the bytes those helpers already have,
+    /// recorded yet. Their routes carry the state those helpers already have,
     /// so the replacement keeps them instead of restoring older bytes (ADR 0229).
+    /// Recorded states are named, not read: a helper that already holds its
+    /// state needs nothing from the store (ADR 0329).
     pub fn replace(&mut self, project: &Project, live: &[u128]) -> Result<(), AudioError> {
         if let Some(host) = echode_plugin_host::host_binary() {
             let held = |device: u128| {
                 live.contains(&device)
                     .then(|| self.control.device_applied_state(device).ok())
                     .flatten()
+                    .map(|applied| applied.as_ref().map(PluginState::held))
             };
-            let routes = plugin_routes(project, self.package.as_deref(), held)?;
+            let routes = plugin_routes(project, self.package.as_deref(), held);
             self.control.set_routes(&host, &routes);
         }
         Ok(self.control.replace(project)?)
@@ -445,18 +448,18 @@ impl OutputStream {
         devices: &[u128],
         live: &[u128],
     ) -> Result<(), AudioError> {
-        let package = self.package.clone();
-        let recorded = |device: u128| -> Result<Option<Vec<u8>>, AudioError> {
+        let reader = self.package.clone().map(state_reader);
+        let recorded = |device: u128| -> Result<Option<PluginState>, AudioError> {
             let state = project
                 .tracks()
                 .iter()
                 .flat_map(|track| &track.devices)
                 .find(|item| item.id.raw() == device)
-                .and_then(|item| item.state.as_deref());
-            match (state, package.as_deref()) {
+                .and_then(|item| item.state.clone());
+            match (state, &reader) {
                 (None, _) => Ok(None),
-                (Some(hash), Some(package)) => {
-                    Ok(Some(echode_history::read_object(package, hash)?))
+                (Some(hash), Some(reader)) => {
+                    Ok(Some(PluginState::stored(hash, Arc::clone(reader))))
                 }
                 (Some(_), None) => Err(AudioError::NoPackage),
             }
@@ -571,14 +574,25 @@ impl Drop for OutputStream {
 fn plugin_routes(
     project: &Project,
     package: Option<&std::path::Path>,
-    live: impl Fn(u128) -> Option<Option<Vec<u8>>>,
-) -> Result<Vec<PluginRoute>, AudioError> {
+    live: impl Fn(u128) -> Option<Option<PluginState>>,
+) -> Vec<PluginRoute> {
     match package {
-        Some(package) => {
-            routes_with_states(project, package, &installed_plugin_routes(project), live)
-        }
-        None => Ok(installed_plugin_routes(project)),
+        Some(package) => routes_with_states(
+            project,
+            &state_reader(package.to_path_buf()),
+            &installed_plugin_routes(project),
+            live,
+        ),
+        None => installed_plugin_routes(project),
     }
+}
+
+/// Reads a recorded state from `package` when a helper must load it. The
+/// store checks that the bytes have the name they were asked for.
+fn state_reader(package: std::path::PathBuf) -> StateReader {
+    Arc::new(move |hash| {
+        echode_history::read_object(&package, hash).map_err(|error| Arc::new(error) as _)
+    })
 }
 
 /// Online CLAP ids in project order. A repeated id is listed once.
@@ -618,28 +632,30 @@ pub fn installed_plugin_routes(project: &Project) -> Vec<PluginRoute> {
         .collect()
 }
 
-/// One route per online CLAP device, in project order, with its saved bytes.
+/// One route per online CLAP device, in project order, with its saved state.
 ///
-/// A hash whose object is missing or does not match is an error. Devices that share a
-/// plugin id keep separate bytes so a later device does not reuse the first one's state.
-pub fn routes_with_saved_state(
-    project: &Project,
-    package: &std::path::Path,
-) -> Result<Vec<PluginRoute>, AudioError> {
-    routes_with_states(project, package, &installed_plugin_routes(project), |_| {
-        None
-    })
+/// States are read from `package` when a helper loads them, so a hash whose
+/// object is missing or does not match fails that helper's start
+/// ([`echode_engine::PlaybackError::State`]). Devices that share a plugin id
+/// keep separate states so a later device does not reuse the first one's.
+pub fn routes_with_saved_state(project: &Project, package: &std::path::Path) -> Vec<PluginRoute> {
+    routes_with_states(
+        project,
+        &state_reader(package.to_path_buf()),
+        &installed_plugin_routes(project),
+        |_| None,
+    )
 }
 
 /// [`routes_with_saved_state`] over `installed`, except that a device `live`
-/// answers for takes the bytes its running helper holds (or none) instead of
+/// answers for takes the state its running helper holds (or none) instead of
 /// its recorded object.
 fn routes_with_states(
     project: &Project,
-    package: &std::path::Path,
+    reader: &StateReader,
     installed: &[PluginRoute],
-    live: impl Fn(u128) -> Option<Option<Vec<u8>>>,
-) -> Result<Vec<PluginRoute>, AudioError> {
+    live: impl Fn(u128) -> Option<Option<PluginState>>,
+) -> Vec<PluginRoute> {
     let mut routes = Vec::new();
     for track in project.tracks() {
         for device in &track.devices {
@@ -656,12 +672,12 @@ fn routes_with_states(
             if let Some(held) = live(device.id.raw()) {
                 route.state = held;
             } else if let Some(hash) = &device.state {
-                route.state = Some(echode_history::read_object(package, hash)?);
+                route.state = Some(PluginState::stored(hash.clone(), Arc::clone(reader)));
             }
             routes.push(route);
         }
     }
-    Ok(routes)
+    routes
 }
 
 /// The exact preparation used before HAL registers its callback. Keeping it
@@ -725,7 +741,7 @@ fn open_playback(
 ) -> Result<(PlaybackControl, PlaybackAudio), AudioError> {
     let host = echode_plugin_host::host_binary();
     let routes = match host {
-        Some(_) => plugin_routes(project, package, |_| None)?,
+        Some(_) => plugin_routes(project, package, |_| None),
         None => Vec::new(),
     };
     // A device output mutes a runaway master instead of sending it (ADR 0282).

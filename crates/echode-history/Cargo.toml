@@ -15,7 +15,6 @@ name = "roundtrip"
 required-features = ["spike"]
 
 [dependencies]
-blake3 = "=1.8.7"
 echode-actions = { path = "../echode-actions" }
 echode-model = { path = "../echode-model" }
 flate2 = "1"

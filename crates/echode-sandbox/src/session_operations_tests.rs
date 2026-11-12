@@ -207,10 +207,10 @@ fn public_control_operations_preserve_payloads_and_typed_replies() {
         ParamText::Value(-0.5)
     );
     control.restore_state(&[0, 128, 255]).unwrap();
-    assert_eq!(control.applied_state().unwrap(), [0, 128, 255]);
+    assert_eq!(control.applied_state().unwrap().bytes(), [0, 128, 255]);
     control.lock().request_save().unwrap();
     assert_eq!(control.capture_state().unwrap(), [2, 0, 255]);
-    assert_eq!(control.applied_state().unwrap(), [2, 0, 255]);
+    assert_eq!(control.applied_state().unwrap().bytes(), [2, 0, 255]);
     assert!(control.lock().poll_saved().unwrap().is_none());
     let report = control.show_gui("Pad — 音源").unwrap();
     assert!(report.created && !report.visible && !report.key);
@@ -279,7 +279,7 @@ fn public_control_rejections_preserve_the_last_applied_state() {
         );
         assert_eq!(error.to_string(), expected.to_string());
     }
-    assert_eq!(control.applied_state().unwrap(), [42]);
+    assert_eq!(control.applied_state().unwrap().bytes(), [42]);
     assert!(control.take_activity().is_none());
     drop(answer.join().unwrap());
 }
