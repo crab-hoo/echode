@@ -671,7 +671,8 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 その間の編集と停止は `background-graph`、導入後のデバイス要求の待ちは Session の機器なし回帰で区別する。
 状態の復元やループ変更の後で既存ヘルパーが再生成されるなら、投入時の状態一致の保持と次の `Pending` の経路を確認する。
 `opening` が偽でも `pending_plan` は真になり得る。置換専用の列の表示は未接続である。
-初回導入時の差分は同期のままなので、ヘルパー初期化の待ちと分ける（[ADR 0142](../decisions/0142-background-plugin-graph-preparation.md)）。
+導入時の差分のグラフも `echode-graph-prepare` で作る。準備中に編集した後の再生が `playing` のまま `running` にならないなら、その計画の公開待ち（`holding_start`）である。
+導入直後にワーカーが待つ・置き換えられる計画が鳴るなら `output-install-graph` で導入の順序と保留を確かめる（[ADR 0333](../decisions/0333-install-diff-graph-off-worker.md)）。
 再生中の編集の素材も `echode-media-prepare` で読み、その間は前の計画が鳴る。`running` が真で `pending_plan` が真なら読込みの残りである。
 テンポの変更の後に拍が跳ぶ・戻るなら `playing-edit-media` で採用時の `retime` と、位置移動の `LocateTick` を確かめる。
 再生中に準備した出力の導入で、置き換えられる計画が一瞬鳴るなら `output-install-held-play` を使う（[ADR 0330](../decisions/0330-playing-edit-media-and-tempo-retime.md)）。

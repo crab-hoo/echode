@@ -408,13 +408,14 @@ impl Session {
     }
 
     /// Starts the open output's transport at `play_revision`, or holds the
-    /// start until media for a stopped edit is queued. An opening output
-    /// starts when it is installed.
+    /// start until media for a stopped edit, or the plan with the edits made
+    /// while the output opened, is queued. An opening output starts when it
+    /// is installed.
     fn resume(&mut self) -> Result<(), AudioError> {
         let Some(stream) = &mut self.stream else {
             return Ok(());
         };
-        self.resume_held = stream.loading_media();
+        self.resume_held = stream.holding_start();
         if self.resume_held {
             return Ok(());
         }
@@ -706,7 +707,7 @@ impl Session {
             && self
                 .stream
                 .as_ref()
-                .is_some_and(|stream| !stream.loading_media())
+                .is_some_and(|stream| !stream.holding_start())
             && self.playing
             && self.cancellation.is_current(self.play_revision)
             && let Err(error) = self.resume()
@@ -838,15 +839,16 @@ impl Session {
     }
 
     /// Sends what changed while the output was prepared, as if it had been
-    /// open throughout, then starts its callback: the first block already
-    /// has every change.
+    /// open throughout, then starts its callback. Helpers and media those
+    /// changes add are prepared on other threads, as for any open output, and
+    /// Play waits for the plan that carries them (ADR 0333).
     fn install(
         &mut self,
         opening: Opening,
         prepared: crate::stream::Prepared,
     ) -> Result<(), AudioError> {
         let (claim, basis) = opening.finish()?;
-        self.stream = Some(OutputStream::assemble(
+        let mut stream = OutputStream::assemble(
             claim,
             prepared,
             crate::stream::Start {
@@ -857,7 +859,10 @@ impl Session {
                 observed_epoch: self.observed_epoch,
                 silent: false,
             },
-        ));
+        );
+        // Before the edits below: a helper they add must not start on this thread.
+        stream.prepare_in_background();
+        self.stream = Some(stream);
         let edited = !Arc::ptr_eq(&basis.project, &self.project);
         if edited {
             // An edit while preparing already ended any fader preview. One
@@ -891,11 +896,14 @@ impl Session {
                 None => stream.clear_fader_preview(edited)?,
             }
         }
+        if edited {
+            stream.hold_start_for_requested_plan();
+        }
         let play = self.playing && self.cancellation.is_current(self.play_revision);
-        if play && stream.loading_media() {
+        if play && stream.holding_start() {
             // An edit made while this output opened is still loading its
-            // media. Like Play, wait for it instead of sounding the plan it
-            // replaces; service resumes.
+            // media or helpers. Wait for its plan instead of sounding the
+            // plan it replaces; service resumes.
             if basis.start {
                 stream.pause()?;
             }
@@ -909,7 +917,6 @@ impl Session {
         }
         stream.acknowledge_configuration(self.observed_epoch);
         self.outputs.register(stream)?;
-        stream.prepare_in_background();
         let device = &stream.device;
         log::info!(
             target: "echode_audio_io::session",

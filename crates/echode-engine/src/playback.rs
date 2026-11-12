@@ -1626,6 +1626,18 @@ impl PlaybackControl {
         self.preparing.is_some() || self.held.is_some() || self.media.is_some()
     }
 
+    /// The newest plan requested so far, published or not.
+    pub fn requested_plan(&self) -> u64 {
+        self.status.requested_plan.load(Ordering::Acquire)
+    }
+
+    /// `revision`, or a plan requested after it, has reached the callback's
+    /// queue. A preparation that fails reports its error instead.
+    pub fn published(&self, revision: u64) -> bool {
+        // Sequence arithmetic, as for the transport's revisions.
+        self.published_plan.wrapping_sub(revision) <= u64::MAX / 2
+    }
+
     /// Declared finite device tails summed through each chain, before the fader.
     pub fn tail_samples(&self) -> u32 {
         self.preparing

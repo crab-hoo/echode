@@ -62,9 +62,9 @@
 - **再生ヘッドの追従**: 追従は保存しない表示状態で、キーの割当はない。
   停止中のズームで範囲外になった再生ヘッドは、次の再生・停止・位置移動まで表示しない（[ADR 0159](decisions/0159-playhead-follow.md)）。
   ページ送りの見え方とトグルの VoiceOver はユーザー確認待ち（UC-18）。
-- **開いた時の出力準備**: 開いた直後の準備が終わる前の再生は、準備の残りを待つ。
-  開いた出力は停止中もプラグインを処理するので、その負荷は開いた時点から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
-  実機での待ちの改善量と操作感はユーザー確認待ち（UC-19）。
+- **開いた時の出力準備**: 準備が終わる前の再生は、その残りと準備中に足した FX の起動を待つ。
+  開いた出力は停止中もプラグインを処理し、その負荷は開いた時点から生じる（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)、[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)）。
+  実機の待ちと操作感は UC-19・69。
 - **ライブ停止**: 停止中も無音の入力でプラグインを処理し、余韻とプラグイン内の鍵盤の音を出力する。
   開いた出力の停止中の処理負荷は残る（[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。実機と第三者プラグインの聴感はユーザー確認待ち（UC-25）。
 - **位置移動と準備の取消**: 位置移動・未発音の準備の取消とオフラインの停止では、以前の発音状態を消す（[ADR 0099](decisions/0099-transport-plugin-state.md)）。
@@ -103,7 +103,7 @@
   出力の準備中の編集、一覧の再試行と状態の表示、FX の追加中の再生もユーザー確認待ち（UC-43〜46）。
   再生中の編集の実機は UC-67（[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
   取込み中の編集・Undo は取込み後に順に効く（UC-68、[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
-  初回導入時の差分による追加と、文書終了時の初期化待ちは残る（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
+  計画生成と文書終了時の初期化待ちは残る（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
   列の開閉と下部の積み方の実画面の操作感と VoiceOver はユーザー確認待ち（UC-26、[ADR 0146](decisions/0146-independent-editor-stack.md)）。
 - **デバイスチェインの表示**: フォルダとデバイス列の開閉は文書内の表示状態で、保存・Undo の対象外である（[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)、[ADR 0137](decisions/0137-device-disclosure.md)）。
   再オープン時はフォルダを展開に戻す。トラックの複製でオートメーションとルーティングは引き継がない（[ADR 0129](decisions/0129-track-duplication.md)）。

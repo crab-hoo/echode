@@ -957,6 +957,70 @@ fn contract_an_install_while_playing_waits_for_the_media_of_an_edit_made_meanwhi
     assert_eq!(output.prepared(), 1);
 }
 
+/// ADR 0333: an edit made while a playing output opened needs a new graph but
+/// no new media, here a second track. Installing prepares that graph on the
+/// preparation thread, where helpers it adds start, instead of on the worker.
+/// Play waits for its plan instead of sounding the plan it replaces.
+#[test]
+fn contract_an_install_prepares_the_graph_of_an_edit_made_meanwhile_off_the_worker_under_rtsan() {
+    let (base, _) = Project::new().add_track("audio");
+    let mut session = Session::new(Arc::new(base.clone()));
+    audio_tracks_sound(&mut session);
+    let output = crate::HeadlessOutput::default();
+    session.use_headless_output(output.clone());
+    output.hold();
+    session.perform(AudioCommand::Play).unwrap();
+    until_waiting(&output);
+    let (edited, _) = base.add_track("audio");
+    session.update(Arc::new(edited));
+    output.release();
+    // Polled here rather than by service, to see what installing leaves.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut prepared = loop {
+        if let Some(result) = session.opening.as_mut().and_then(Opening::poll) {
+            break result.unwrap();
+        }
+        assert!(std::time::Instant::now() < deadline, "never prepared");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    let opening = session.opening.take().unwrap();
+    // This route has no plugin and can never load this executable. It only
+    // selects graph preparation when sanitizer builds have no helper binary.
+    prepared.set_test_plugin_routes(&std::env::current_exe().unwrap(), &[]);
+    session.install(opening, prepared).unwrap();
+    assert!(
+        session.stream.as_ref().unwrap().preparing_graph(),
+        "installing prepared the edit's graph on the worker"
+    );
+    let state = session.state();
+    assert!(state.playing && !state.running, "{state:?}");
+    // Without service the plan cannot be published, so nothing may sound.
+    let stream = session.stream.as_ref().unwrap();
+    for _ in 0..8 {
+        let data = stream.pump(stream.device.buffer_frames as usize);
+        assert!(
+            data.iter().all(|sample| *sample == 0.0),
+            "the plan the edit replaced sounded"
+        );
+    }
+    while !session.state().running {
+        assert!(std::time::Instant::now() < deadline, "play never started");
+        pumped_peak(&mut session, 1);
+        assert!(
+            session.state().error.is_none(),
+            "{:?}",
+            session.state().error
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    // Past the start's fade: two tracks give about 0.35 per channel, the
+    // replaced plan 0.18.
+    pumped_peak(&mut session, 8);
+    let peak = pumped_peak(&mut session, 8);
+    assert!(peak > 0.3 && peak < 0.4, "{peak}");
+    assert_eq!(output.prepared(), 1);
+}
+
 #[test]
 fn prepare_without_a_running_plugin_opens_once_and_a_later_play_reuses_it() {
     let (project, _) = Project::new().add_track("audio");

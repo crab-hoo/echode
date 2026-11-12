@@ -35,6 +35,7 @@ Phase 0 の固定グラフ・待機処理・機器計測は、非既定の `echo
   未使用の別系統の受渡しを削除し、届かない命令を型から除く（[ADR 0253](../decisions/0253-product-only-playback-commands.md)）。
 - 開いた出力の置換ヘルパー・共有領域は準備スレッドで作り、文書ワーカーは編集とトランスポートを続ける。
   制御用カタログの受渡し・後続編集の集約・既存状態の保持は [ADR 0142](../decisions/0142-background-plugin-graph-preparation.md) を参照する。
+  出力の導入時は差分を送る前に準備スレッドを有効にし、再生はその差分の計画の公開まで始めない（[ADR 0333](../decisions/0333-install-diff-graph-off-worker.md)）。
 - 製品の出力の置換で `MediaInputs`（テンポと音声配置）が前回の読込みと異なる時は、再生中も停止中も素材の読込み・SRC を `echode-media-prepare` で行う。
   読込み中の置換とループ変更は集約し、その間は前の計画が鳴る（[ADR 0147](../decisions/0147-output-prewarm-and-background-media.md)、[ADR 0330](../decisions/0330-playing-edit-media-and-tempo-retime.md)）。
 - 位置は、鳴っている計画のテンポで解釈する。テンポの変わった計画は採用時にクロックの tick を保ち（`Update.retime`）、

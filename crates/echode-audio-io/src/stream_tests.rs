@@ -554,6 +554,7 @@ fn retained_stream_publishes_a_stopped_locate_before_its_callback() {
         registered: false,
         package: None,
         pending_locate: None,
+        start_after: None,
         trace_files: None,
     };
     stream.pause().unwrap();
@@ -1201,6 +1202,7 @@ fn a_panic_in_the_render_leaves_the_output_silent_and_reports_its_location() {
         registered: false,
         package: None,
         pending_locate: None,
+        start_after: None,
         trace_files: None,
     };
     let mut output = vec![0.0f32; frames * 2];

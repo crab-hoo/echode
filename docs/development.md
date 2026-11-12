@@ -458,6 +458,7 @@ FFI の入口を `echode_document_audition`、画面の選択の扱いと要求�
 （[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
 出力で背景の読込みを有効にするのは `OutputStream::assemble`、テンポの変わった計画の採用（`Update.retime`）と `LocateTick`・`RewindTick` の変換は `playback.rs` の `step` に置く。
 再生中の編集と導入の回帰は `session_tests.rs`（必須契約 `playing-edit-media`・`output-install-held-play`、[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
+導入時の差分のグラフと再生の保留は同じファイルの `output-install-graph`、保留の述語は `OutputStream::holding_start` に置く（[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)）。
 
 古い保存版への復旧通知と書込み禁止は `DocumentHost::recovery_notice`・`accept_recovery`、
 受渡しは `crates/echode-document/src/worker.rs` の `history_report` の `recovery` と `history.accept_recovery` に置く。

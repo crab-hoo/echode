@@ -1060,6 +1060,8 @@ class PolicyTests(unittest.TestCase):
             "output-prewarm-play": "crates/echode-audio-io/src/session.rs",
             "playing-edit-media": "crates/echode-audio-io/src/stream.rs",
             "output-install-held-play": "crates/echode-audio-io/src/session.rs",
+            # The install sends its edits after enabling graph preparation (ADR 0333).
+            "output-install-graph": "crates/echode-audio-io/src/session.rs",
         }
         for name, file in files.items():
             contract = contracts[name]
@@ -2792,6 +2794,7 @@ class PolicyTests(unittest.TestCase):
                 "output-prewarm-play",
                 "playing-edit-media",
                 "output-install-held-play",
+                "output-install-graph",
                 "output-prepare-worker",
                 "output-prepare-on-open",
                 "import-off-worker",

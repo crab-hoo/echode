@@ -89,6 +89,9 @@ pub struct OutputStream {
     registered: bool,
     package: Option<std::path::PathBuf>,
     pending_locate: Option<(u64, i64, i64)>,
+    /// Play waits until this plan, carrying the edits made while this output
+    /// opened, reaches the callback's queue (ADR 0333).
+    start_after: Option<u64>,
     trace_files: Option<crate::trace::Files>,
 }
 
@@ -144,6 +147,16 @@ impl Prepared {
             target.workgroup.clone(),
         )?;
         Ok(Self { control, player })
+    }
+
+    /// As [`OutputStream::set_test_plugin_routes`], before installation.
+    #[cfg(test)]
+    pub(crate) fn set_test_plugin_routes(
+        &mut self,
+        host: &std::path::Path,
+        routes: &[PluginRoute],
+    ) {
+        self.control.set_routes(host, routes);
     }
 }
 
@@ -263,8 +276,9 @@ impl OutputStream {
         Ok(())
     }
 
-    /// Initial installation has sent all changes before callbacks can start.
-    /// Later replacement helpers may prepare while this output keeps running.
+    /// Replacement helpers prepare on another thread from now on, while this
+    /// output keeps running: installation enables it before it sends the
+    /// edits made while the output opened (ADR 0142, ADR 0333).
     pub(crate) fn prepare_in_background(&mut self) {
         self.control.prepare_in_background();
     }
@@ -286,6 +300,21 @@ impl OutputStream {
     /// The newest replacement's media has not reached the callback's queue.
     pub(crate) fn loading_media(&self) -> bool {
         self.control.loading_media()
+    }
+
+    /// Play waits for the plan with every edit requested so far (ADR 0333).
+    /// Later plans adopt while playing, as for any open output (ADR 0142).
+    pub(crate) fn hold_start_for_requested_plan(&mut self) {
+        self.start_after = Some(self.control.requested_plan());
+    }
+
+    /// Play waits: for media still loading (ADR 0330), or for the plan
+    /// [`OutputStream::hold_start_for_requested_plan`] named.
+    pub(crate) fn holding_start(&self) -> bool {
+        self.loading_media()
+            || self
+                .start_after
+                .is_some_and(|plan| !self.control.published(plan))
     }
     /// The stream with its callback built but not registered with HAL.
     pub(crate) fn assemble(claim: Claim, prepared: Prepared, start: Start) -> Self {
@@ -333,6 +362,7 @@ impl OutputStream {
             registered: false,
             package: start.package,
             pending_locate: None,
+            start_after: None,
             trace_files,
         }
     }
@@ -482,6 +512,12 @@ impl OutputStream {
             return Err(Stopped::WorkgroupChanged.into());
         }
         self.control.service();
+        if self
+            .start_after
+            .is_some_and(|plan| self.control.published(plan))
+        {
+            self.start_after = None;
+        }
         if let Some(files) = &mut self.trace_files {
             files.service(self.control.status());
         }

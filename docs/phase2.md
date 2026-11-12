@@ -187,7 +187,9 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     停止中の編集の素材の読込み・SRC は別スレッドで行い、読込み中の再生は新しい計画まで保留する。
     必須契約 `output-prewarm`・`output-prewarm-play`・`output-prepare-worker`・`output-prepare-on-open` で確認する。
   - 残る条件:
-    計画生成と、初回の出力導入時の差分で増えたヘルパーの起動は、文書ワーカーで待つ。
+    計画生成は文書ワーカーで待つ。
+    初回の出力導入時の差分で増えるヘルパーも準備スレッドで起動し、再生の開始はその計画の公開を待つ
+    （[ADR 0333](decisions/0333-install-diff-graph-off-worker.md)、必須契約 `output-install-graph`）。
     再生中の編集の素材も別スレッドで読み、テンポの変わった計画は採用時に拍を保つ
     （[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)、必須契約 `playing-edit-media`・`output-install-held-play`）。
     外部の音声の取込みは、復号と保管庫の横への書込み（段階）を別スレッドで行う。その間も音声・デバイスの要求と再生ヘッドは止まらず、
