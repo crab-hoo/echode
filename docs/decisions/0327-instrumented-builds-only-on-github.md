@@ -104,6 +104,13 @@ GitHub の `full` は、同じ検査を `main` へのプッシュごとに全部
   手元の macOS 27.0・Xcode 27.1 では、既定のままでも導入できた。ランナー（`xcode-27-arm64` 20261104.0337）でだけ落ちる。
 - `scripts/fuzz.sh`・`scripts/coverage.sh`・`make setup` の `cargo install` に `CARGO_PROFILE_RELEASE_STRIP=none` を付けた。
 
+### 初回の実行
+
+- `a82fca1` のプッシュ（未プッシュだった前の 15 コミットを含む）で、`full`（実行 43197071599）の 9 ジョブが全部合格した。プッシュから約 42 分だった。
+- `rtsan` は 3.1 分で、3 つの crate の `under_rtsan` のテスト 85 件が M1 のランナーで合格した。
+- fuzz は 10.8 分で、5 つの対象を各 61 秒動かした。ADR 0290 で足してから初めての合格である。
+- ASan 20.0 分、TSan 18.2 分、Miri 4.4 分、反例の 4 シャードは 20.8〜35.7 分だった。`check`（実行 43197071484）も合格した。
+
 ## 回帰・検査基盤
 
 - `test_no_change_selects_the_full_tier_in_a_task` が、検査自身のスクリプト・C ABI・音声・`unsafe` を含むファイルの変更でも、作業の段階が全体の段階を選ばないことを検査する。
