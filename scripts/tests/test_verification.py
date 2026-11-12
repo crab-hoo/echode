@@ -2794,6 +2794,7 @@ class PolicyTests(unittest.TestCase):
                 "output-install-held-play",
                 "output-prepare-worker",
                 "output-prepare-on-open",
+                "import-off-worker",
             },
         )
         for contract in contracts:

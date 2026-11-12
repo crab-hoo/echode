@@ -190,7 +190,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     計画生成と、初回の出力導入時の差分で増えたヘルパーの起動は、文書ワーカーで待つ。
     再生中の編集の素材も別スレッドで読み、テンポの変わった計画は採用時に拍を保つ
     （[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)、必須契約 `playing-edit-media`・`output-install-held-play`）。
-    外部の音声の取込み（復号と保管庫への書込み）は、編集として文書ワーカーで行う。
+    外部の音声の取込みは、復号と保管庫の横への書込み（段階）を別スレッドで行う。その間も音声・デバイスの要求と再生ヘッドは止まらず、
+    後の編集・Undo は取込みの後に投入順で当てる（[ADR 0331](decisions/0331-off-worker-audio-import.md)、必須契約 `import-off-worker`）。
     記録済みのプラグイン状態は名前で比べ、ヘルパーを保つ編集では読まない。新しいヘルパーと状態の変わったヘルパーだけが準備スレッドで読む
     （[ADR 0329](decisions/0329-plugin-states-by-name.md)、必須契約 `plugin-state-names`）。
     置換準備専用のデバイス列の表示、終了時の初期化待ちの中断は未接続。

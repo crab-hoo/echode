@@ -10,6 +10,7 @@ use echode_audio_io::{AudioCommand, Audition, AuditionOrigin, Session, Transport
 use echode_history::DocumentHost;
 
 use crate::activity::ActivityHub;
+use crate::import::{Stage, product_stage};
 use crate::lane::DeviceLane;
 use crate::live::LiveState;
 use crate::worker::{self, Job, Start};
@@ -44,6 +45,17 @@ impl<V: Send + 'static> DocumentService<V> {
         presenter: P,
         configure: Configure,
     ) -> Result<Self, DocumentError> {
+        Self::open_staging(path, presenter, configure, product_stage())
+    }
+
+    /// Like [`Self::open_configured`], staging imports with `stage`. Tests
+    /// hold the product's staging with this.
+    pub(crate) fn open_staging<P: Presenter<View = V>>(
+        path: &Path,
+        presenter: P,
+        configure: Configure,
+        stage: Stage,
+    ) -> Result<Self, DocumentError> {
         let host = DocumentHost::open(path)?;
         let (sender, incoming) = mpsc::channel();
         let live = Arc::new(LiveState::default());
@@ -61,6 +73,7 @@ impl<V: Send + 'static> DocumentService<V> {
             cancellation: cancellation.clone(),
             audition: audition.clone(),
             configure,
+            stage,
         };
         let thread = thread::Builder::new()
             .name("echode-worker".to_string())

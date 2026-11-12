@@ -10,12 +10,13 @@ use std::time::Duration;
 
 use echode_actions::Command;
 use echode_audio_io::{AudioCommand, Audition, Session, TransportCancellation};
-use echode_history::DocumentHost;
+use echode_history::{DocumentHost, StagedImports};
 use echode_model::Id;
 
 use crate::activity::ActivityHub;
 use crate::device::{self, Dispatch, Request, Resolution, Waiting};
 use crate::error::encode;
+use crate::import::{Edit, Stage, Staging, follows_imports};
 use crate::lane::{DeviceLane, Returned, RoundTrip};
 use crate::live::LiveState;
 use crate::saves::PluginSaves;
@@ -43,6 +44,7 @@ pub(crate) struct Start<P: Presenter> {
     pub(crate) cancellation: TransportCancellation,
     pub(crate) audition: Audition,
     pub(crate) configure: Configure,
+    pub(crate) stage: Stage,
 }
 
 /// Runs the document thread until every submitter has gone.
@@ -56,6 +58,7 @@ pub(crate) fn run<P: Presenter>(start: Start<P>, incoming: Receiver<Job<P::View>
         cancellation,
         audition,
         configure,
+        stage,
     } = start;
     let readers = Readers { live, activity };
     let mut audio =
@@ -70,6 +73,9 @@ pub(crate) fn run<P: Presenter>(start: Start<P>, incoming: Receiver<Job<P::View>
         presenter,
         saves: PluginSaves::default(),
         waiting: VecDeque::new(),
+        stage,
+        importing: None,
+        held: VecDeque::new(),
         accepting: true,
         publishes_live: true,
     }
@@ -102,12 +108,36 @@ struct Worker<P: Presenter> {
     /// Device requests waiting for the output to open, in submission order.
     /// Other jobs keep their turns meanwhile.
     waiting: VecDeque<(Ticket<P::View>, Waiting)>,
+    stage: Stage,
+    /// An edit whose imports stage on their own thread (ADR 0331).
+    importing: Option<Importing<P::View>>,
+    /// Jobs that follow the import in submission order.
+    held: VecDeque<Job<P::View>>,
     accepting: bool,
     publishes_live: bool,
 }
 
+/// An edit waiting for its staged imports. Its ticket completes when it lands.
+struct Importing<V> {
+    ticket: Ticket<V>,
+    edit: Edit,
+    staging: Staging,
+}
+
+/// How a turn ended for its submitter.
+enum Outcome<V> {
+    Done(V),
+    Device(V, Resolution),
+    /// The edit imports files, which stage on another thread first.
+    Stage(Edit, Vec<String>),
+}
+
 impl<P: Presenter> Drop for Worker<P> {
     fn drop(&mut self) {
+        // Stops a staging import and waits for it; its edit and the jobs
+        // held behind it report that the document stopped.
+        self.importing = None;
+        self.held.clear();
         self.readers.activity.close();
         // Queued device requests are refused. One already waiting ends when
         // its helper exits with the session.
@@ -123,16 +153,24 @@ impl<P: Presenter> Worker<P> {
             self.publish_live();
             self.record_returned();
             self.resume_waiting();
+            if self.land_import() || self.run_held() {
+                continue;
+            }
             match incoming.recv_timeout(self.idle()) {
                 Ok(job) => self.handle(job),
                 Err(RecvTimeoutError::Timeout) => {}
+                // Every submission completes, so the import and the jobs
+                // held behind it finish before the document closes.
+                Err(RecvTimeoutError::Disconnected) if self.importing.is_some() => {
+                    std::thread::sleep(self.idle());
+                }
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
     }
 
     fn idle(&self) -> Duration {
-        if self.lane.waiting() || self.audio.opening() {
+        if self.lane.waiting() || self.audio.opening() || self.importing.is_some() {
             Duration::from_millis(1)
         } else {
             Duration::from_millis(20)
@@ -185,6 +223,10 @@ impl<P: Presenter> Worker<P> {
             self.readers.activity.publish(device, plugin);
         }
         self.saves.add(self.audio.take_plugin_saves());
+        if self.importing.is_some() {
+            // Recorded after the import, as if it had held the worker.
+            return;
+        }
         let host = &self.host;
         let recorded = self.saves.record(|device, bytes| {
             host.commit_plugin_state(Id::from_raw(device), bytes)
@@ -219,7 +261,11 @@ impl<P: Presenter> Worker<P> {
     }
 
     /// Bytes the lane captured are recorded here, in order with other edits.
+    /// While an import stages they wait, so it lands where it was submitted.
     fn record_returned(&mut self) {
+        if self.importing.is_some() {
+            return;
+        }
         while let Some(Returned {
             ticket,
             device,
@@ -267,32 +313,117 @@ impl<P: Presenter> Worker<P> {
     }
 
     fn handle(&mut self, job: Job<P::View>) {
+        if !self.accepting {
+            return;
+        }
+        if (self.importing.is_some() || !self.held.is_empty()) && follows_imports(&job.operation) {
+            self.held.push_back(job);
+            return;
+        }
+        self.run(job);
+    }
+
+    fn run(&mut self, job: Job<P::View>) {
         let Job {
             operation,
             ticket,
             transport_revision,
         } = job;
-        if !self.accepting {
-            return;
-        }
         let performed = self.turn(|worker| worker.perform(operation, transport_revision));
         match performed {
-            Ok((view, None)) => ticket.finish(Ok(view)),
-            Ok((view, Some(Resolution::Ready(dispatch)))) => {
+            Ok(Outcome::Done(view)) => ticket.finish(Ok(view)),
+            Ok(Outcome::Device(view, Resolution::Ready(dispatch))) => {
                 self.send_to_lane(ticket, view, dispatch);
             }
-            Ok((_, Some(Resolution::Waiting(request)))) => {
+            Ok(Outcome::Device(_, Resolution::Waiting(request))) => {
                 self.waiting.push_back((ticket, request));
             }
+            Ok(Outcome::Stage(edit, sources)) => self.stage(ticket, edit, sources),
             Err(error) => ticket.finish(Err(error)),
         }
+    }
+
+    /// Starts staging `edit`'s imports. A thread that cannot start leaves the
+    /// staging to the document thread, as before ADR 0331.
+    fn stage(&mut self, ticket: Ticket<P::View>, edit: Edit, sources: Vec<String>) {
+        match Staging::start(&self.stage, self.host.directory().to_path_buf(), sources) {
+            Ok(staging) => {
+                self.importing = Some(Importing {
+                    ticket,
+                    edit,
+                    staging,
+                });
+            }
+            Err(error) => {
+                log::warn!(target: "echode_document::import", "staging imports on the document thread: {error}");
+                let result = self.turn(|worker| worker.land(edit, Ok(StagedImports::none())));
+                ticket.finish(result);
+            }
+        }
+    }
+
+    /// Applies an edit whose imports have staged. Returns whether it did.
+    fn land_import(&mut self) -> bool {
+        if !self.accepting {
+            self.importing = None;
+            self.held.clear();
+            return false;
+        }
+        let Some(staged) = self
+            .importing
+            .as_ref()
+            .and_then(|importing| importing.staging.finished())
+        else {
+            return false;
+        };
+        let Some(Importing { ticket, edit, .. }) = self.importing.take() else {
+            return false;
+        };
+        let result = self.turn(|worker| worker.land(edit, staged));
+        ticket.finish(result);
+        true
+    }
+
+    /// Runs the next job held behind an import that has landed.
+    fn run_held(&mut self) -> bool {
+        if self.importing.is_some() || !self.accepting {
+            return false;
+        }
+        let Some(job) = self.held.pop_front() else {
+            return false;
+        };
+        self.run(job);
+        true
+    }
+
+    fn land(
+        &mut self,
+        edit: Edit,
+        staged: Result<StagedImports, DocumentError>,
+    ) -> Result<P::View, DocumentError> {
+        let report = self.edit(edit, staged?)?;
+        let view = self.publish(Some(report), None)?;
+        self.publish_position();
+        Ok(view)
+    }
+
+    /// Applies `edit` and reports whether it changed the document.
+    fn edit(&mut self, edit: Edit, imports: StagedImports) -> Result<Vec<u8>, DocumentError> {
+        let before = self.host.snapshot();
+        edit.perform(&self.host, imports)?;
+        let after = self.host.snapshot();
+        let changed = !Arc::ptr_eq(&before, &after);
+        self.audio.update(after);
+        encode(&serde_json::json!({
+            "revisions": [], "changed": changed
+        }))
     }
 
     fn perform(
         &mut self,
         operation: Operation,
         transport_revision: u64,
-    ) -> Result<(P::View, Option<Resolution>), DocumentError> {
+    ) -> Result<Outcome<P::View>, DocumentError> {
         let mut resolution = None;
         let history = match operation {
             Operation::Audio(bytes) => {
@@ -319,14 +450,14 @@ impl<P: Presenter> Worker<P> {
                 None
             }
             Operation::Perform(bytes) => {
-                let before = self.host.snapshot();
-                apply_edit(&self.host, &bytes)?;
-                let after = self.host.snapshot();
-                let changed = !Arc::ptr_eq(&before, &after);
-                self.audio.update(after);
-                Some(encode(&serde_json::json!({
-                    "revisions": [], "changed": changed
-                }))?)
+                let edit = Edit::parse(&bytes)?;
+                let sources = edit.import_sources();
+                if !sources.is_empty() {
+                    // Refused before decoding, as the history would refuse it.
+                    self.host.require_recovery_confirmation()?;
+                    return Ok(Outcome::Stage(edit, sources));
+                }
+                Some(self.edit(edit, StagedImports::none())?)
             }
             Operation::Snapshot => {
                 self.audio.update(self.host.snapshot());
@@ -346,7 +477,10 @@ impl<P: Presenter> Worker<P> {
         };
         let view = self.publish(history, None)?;
         self.publish_position();
-        Ok((view, resolution))
+        Ok(match resolution {
+            Some(resolution) => Outcome::Device(view, resolution),
+            None => Outcome::Done(view),
+        })
     }
 
     /// Hands a resolved request to the lane. A capture returns to the worker
@@ -387,22 +521,6 @@ impl<P: Presenter> Worker<P> {
             device: device.unwrap_or_else(|| EMPTY_DEVICE_REPORT.to_vec()),
         }))
     }
-}
-
-fn apply_edit(host: &DocumentHost, bytes: &[u8]) -> Result<(), DocumentError> {
-    let text = match str::from_utf8(bytes) {
-        Ok(text) if !text.is_empty() => text,
-        Ok(_) => return Err(Rejected::EmptyCommand.into()),
-        Err(_) => return Err(Rejected::NotUtf8.into()),
-    };
-    if text.trim_start().starts_with('[') {
-        let actions = serde_json::from_str(text).map_err(DocumentError::Malformed)?;
-        host.apply(actions)?;
-        return Ok(());
-    }
-    let command = text.parse::<Command>()?;
-    host.perform(command)?;
-    Ok(())
 }
 
 fn history_report(host: &DocumentHost, bytes: &[u8]) -> Result<Vec<u8>, DocumentError> {

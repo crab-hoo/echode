@@ -1,7 +1,8 @@
 //! Min/max peaks for an imported file, cached beside the object store.
 //!
-//! The pyramid is built on the document thread from the canonical PCM, before
-//! clip gain and fades. Those are applied when the block is mixed. The arrange
+//! The pyramid is built from the canonical PCM, before clip gain and fades: an
+//! import builds it from the samples it staged, and a snapshot rebuilds a
+//! missing one on the document thread. Those are applied when the block is mixed. The arrange
 //! shader draws only the columns that cover the visible clip. A column uses the
 //! same source frames playback reads: the placement offset and length, converted
 //! at the file's sample rate. Samples past the file are silence. `cache/` is
@@ -35,7 +36,7 @@ pub struct PeakColumn {
 /// A cache hit does not read the canonical PCM. Coarse columns use the
 /// pyramid. A partial bucket reads that range from a read-only map of the
 /// object, which stays sparse until those pages are touched.
-struct Peaks {
+pub(crate) struct Peaks {
     frames: u64,
     bucket: u32,
     levels: Vec<Vec<PeakColumn>>,
@@ -162,9 +163,22 @@ impl Waveforms {
 /// and the next snapshot builds it again.
 pub fn cache_peaks(package: &Path, hash: &str) -> Result<(), PackageError> {
     let pcm = read_pcm(package, hash)?;
-    let mono = fold_mono(&pcm.samples, pcm.channels);
-    let peaks = build_peaks(&mono, pcm.frames);
-    write_cache(package, hash, &peaks)
+    store_peaks(
+        package,
+        hash,
+        &build_from_pcm(&pcm.samples, pcm.channels, pcm.frames),
+    )
+}
+
+/// The pyramid of interleaved samples, as [`cache_peaks`] would build it from
+/// their stored object. An import builds it while staging (ADR 0331).
+pub(crate) fn build_from_pcm(interleaved: &[f32], channels: u16, frames: u64) -> Peaks {
+    build_peaks(&fold_mono(interleaved, channels), frames)
+}
+
+/// Writes a pyramid built by [`build_from_pcm`] for the object `hash`.
+pub(crate) fn store_peaks(package: &Path, hash: &str, peaks: &Peaks) -> Result<(), PackageError> {
+    write_cache(package, hash, peaks)
 }
 
 fn load_hash(package: &Path, hash: &str, channels: u16, frames: u64) -> Option<Peaks> {

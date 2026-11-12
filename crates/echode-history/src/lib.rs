@@ -13,6 +13,7 @@ mod export_settings;
 #[cfg(feature = "spike")]
 mod format;
 mod host;
+mod imports;
 mod media;
 mod objects;
 mod package_io;
@@ -43,6 +44,7 @@ pub use export::freeze_export;
 pub use export_settings::{read_export_settings, write_export_settings};
 pub use gix::ObjectId;
 pub use host::{DocumentHost, ElementError, HostError, RecoveryNotice, ReferenceError};
+pub use imports::{StagedImports, command_import_source, transaction_import_sources};
 pub use media::{
     AudioFileReader, DecodedPcm, StoredAudio, decode_audio_file, import_audio, read_pcm,
 };

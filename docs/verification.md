@@ -249,6 +249,8 @@ Swift の契約を先に実行する。`cargo test` は `target/debug` のヘル
   どの変更でも選ばれない明示の計測で、FCA-01〜05 の修正の前後に実行する（[実行指示](reviews/2026-11-03-fix-instructions.md)）。
   検査基盤へ結果を記録する時は `python3 -B scripts/verify.py --all --only spike-scale --run spike-scale` とし、その後に通常の `make verify` を行う。
   通常選択に含まれないため `make verify VERIFY_ARGS='--run spike-scale'` だけでは拒否される。
+- `spike-import`: 機器を開かず、180 秒の WAV の取込みで文書ワーカーが使う時間を release 計測する（[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
+  文書ワーカーで段階と公開を行う経路、別スレッドの段階、段階の後の手番を分けて出す。どの変更でも選ばれない明示の計測である。
 - `spike-audio`: 製品の CoreAudio 出力を無音で開き、コールバック、停止・再起動、機器一覧と通知登録、再生中の計画更新・位置移動を確認する。
 - `coverage`: Rust と Swift の通常テストが実行する製品の行を、crate・Swift モジュールごとに測る（`make coverage`、`target/coverage/summary.md`）。
   合否の基準ではなく、どの変更でも選ばれない明示の計測である。Rust は `check` と同じビルドとテストを `target/llvm-cov-target` で計装して動かす（[ADR 0290](decisions/0290-fuzz-targets-for-external-input.md#カバレッジ)）。

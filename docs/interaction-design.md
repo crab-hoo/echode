@@ -527,7 +527,8 @@ GUI の応答性と編集継続は P2 のデバイス表示・読込みから守
   製品アプリはプロジェクトを開いた時に出力を準備し、停止中の編集の素材は別スレッドで読む（[ADR 0147](decisions/0147-output-prewarm-and-background-media.md)）。
   記録済みのプラグイン状態は名前で比べ、ヘルパーを保つ編集では読まない（[ADR 0329](decisions/0329-plugin-states-by-name.md)）。
   再生中の編集の素材も別スレッドで読む（[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
-  外部の音声の取込み、初回導入時の差分による追加と終了時の初期化待ちは残る。
+  外部の音声の取込みは別スレッドで段階に置き、後の編集・Undo は取込みの後に投入順で当てる（[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
+  初回導入時の差分による追加と終了時の初期化待ちは残る。
   診断は [デバッグ手順](debugging/audio-and-plugins.md#プラグインの窓) を参照する。
 
 ## 実装へ進む時の受入と基盤の保守

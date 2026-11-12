@@ -112,6 +112,7 @@
 - 開いた出力の置換ヘルパー・共有領域の準備と後続編集の集約: [ADR 0142](../decisions/0142-background-plugin-graph-preparation.md)。
 - プロジェクトを開いた時の出力準備・停止中の編集の素材の別スレッド読込み・読込み中の再生の保留: [ADR 0147](../decisions/0147-output-prewarm-and-background-media.md)。
 - 再生中の編集の素材の別スレッド読込み・テンポの変わった計画の採用時の拍の保持・tick の位置移動: [ADR 0330](../decisions/0330-playing-edit-media-and-tempo-retime.md)。
+- 外部の音声の取込みの別スレッドの段階・後の編集の投入順の保持・段階で作るピーク: [ADR 0331](../decisions/0331-off-worker-audio-import.md)。
 - 記憶した再生開始位置・余韻を保つ停止での復帰・一時停止・`transport.json`・ピアノロールのルーラー: [ADR 0155](../decisions/0155-remembered-playback-start.md)。
 - ピアノロールのルーラードラッグの範囲指定・クリックとの分離と、ループ前からの進入・終端以降の通常進行:
   [ADR 0156](../decisions/0156-ruler-loop-range-and-entry.md)。

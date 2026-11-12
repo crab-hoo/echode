@@ -193,6 +193,14 @@ ID 生成と配列の複製を含む制御側の時間として前後を比べ�
 ### 取込みを拒否したのに保管庫のファイルが増えた
 
 `media/objects/` の名前で切り分ける。`.<hash>.<pid>-<seq>.tmp` は段階のまま残った一時ファイルで、その pid のプロセスが段階の途中で終わった。
+アプリでは段階を `echode-import-stage` スレッドで作る。文書を閉じる・ワーカーが落ちる時はそのスレッドを待って一時の名前を消すので、生きているプロセスの一時ファイルは段階中である（[ADR 0331](../decisions/0331-off-worker-audio-import.md)）。
+
+### ドロップの後の編集や Undo がしばらく効かない
+
+取込みの段階（復号と保管庫の横への書込み）の間、履歴に触れる後の手番（編集・履歴・Undo・Redo）とプラグインの状態の記録は、投入順に待つ（[ADR 0331](../decisions/0331-off-worker-audio-import.md)）。
+待ちの長さは素材の長さに比例し、180 秒の 44.1 kHz で約 136 ms である（`make spike-import`）。
+この間に停止・位置移動・デバイスの一覧・再生ヘッドまで止まるなら回帰で、`import-off-worker` が検出する。
+段階のスレッドが panic した編集は `audio import panicked` で失敗し、後の手番は続く。
 64 桁の名前が増えたなら、その要求は受理されたか、ジャーナルの耐久性が不明で行が残り得る（[ADR 0272](../decisions/0272-staged-import-media.md)）。
 拒否された取込みでハッシュの名前・`media/index.json`・`cache/peaks` が増えるのは回帰で、`audit_ext02_*` と `host_tests::an_import_keeps_*` が検出する。
 Undo や削除で参照が消えた素材が残るのは仕様である。保管庫の掃除は未実装（[ADR 0031](../decisions/0031-content-addressed-store.md)）。

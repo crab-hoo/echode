@@ -130,7 +130,7 @@ lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `targe
 | 描画クエリ・可視列 | `crates/echode-draw` | `query.rs`（アレンジ・ピアノロールの可視列抽出・空間インデックス） |
 | JSON-RPC・MCP | `crates/echode-api` | `rpc.rs` / `serve.rs`（Unix ソケット RPC）、`mcp.rs`（MCP stdio ブリッジ） |
 | CLI | `crates/echode-cli` | `render`、`serve`、`mcp` サブコマンド。統合テストは `tests/render.rs`、`tests/mcp.rs` |
-| 文書の手番 | `crates/echode-document` | `service.rs`（投入・取消・終了）、`worker.rs`（手番と保護）、`ticket.rs`（完了の 1 回の保証）、`error.rs`（`DocumentError`。手番・レーンの失敗の変種）、`saves.rs`（保存の取込み）、`lane.rs`（デバイスレーン）、`device.rs`、`activity.rs`、`live.rs` |
+| 文書の手番 | `crates/echode-document` | `service.rs`（投入・取消・終了）、`worker.rs`（手番と保護）、`ticket.rs`（完了の 1 回の保証）、`error.rs`（`DocumentError`。手番・レーンの失敗の変種）、`saves.rs`（保存の取込み）、`lane.rs`（デバイスレーン）、`import.rs`（音声の取込みの段階と後の手番の保持。[ADR 0331](decisions/0331-off-worker-audio-import.md)）、`device.rs`、`activity.rs`、`live.rs` |
 | 外部入力の fuzz | `crates/echode-fuzz` | 制御ソケット・共有領域・ジャーナル・パッケージ・音声の対象。`Target::run` を libFuzzer の `fuzz_targets/` と `tests/replay.rs` が共有し、`regressions/` の発見を通常テストで再生する（[ADR 0290](decisions/0290-fuzz-targets-for-external-input.md)） |
 | 製品 C ABI | `crates/echode-ffi` | `lib.rs`、`document.rs`（C のコールバックと `Ticket`）、`snapshot.rs`（`Snapshot`・`SnapshotPresenter`）、`controls.rs`、`logging.rs`（ログの導入・記録・追記）。ヘッダ生成は `cbindgen` |
 | Swift ブリッジ | `swift/EchodeBridge` | `Document.swift`、`Audio.swift`、`Controls.swift`、`Log.swift`（`echode-ffi` の Swift 6 ラッパー） |
@@ -571,6 +571,9 @@ FFI の `device.parameter.parse`、画面の `enterParameter` を通す（[ADR 0
 
 外部音声の取込み前の有限性は `media.rs::decode_file`、公開復号・取込みと履歴の回帰は
 `crates/echode-history/tests/audio_import_validation.rs` に置く。
+文書ワーカーの外の段階は `imports.rs` の `StagedImports`、使う側は `echode-document` の `import.rs`。
+回帰は `host_tests.rs`（段階済みの取込みの一致）と `import_tests.rs`（必須契約 `import-off-worker`）、
+時間は `make spike-import` で測る（[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
 IEEE float WAV の異常値・有限値のビット保持・原本とパッケージの保持・一括編集の巻戻しと再オープンを通す。
 
 保管庫とキャッシュの Git 除外は `objects.rs::ensure_store_gitignore`、回帰は履歴の `tests/store_gitignore.rs` に置く。

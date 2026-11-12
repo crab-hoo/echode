@@ -17,6 +17,7 @@ use crate::autosave::{Autosave, PendingAutosave, SavedRevision};
 use crate::document::{
     PackageError, append_journal, autosave_tip, compact_journal, next_journal_seq, repair_journal,
 };
+use crate::imports::StagedImports;
 
 /// Canonical package paths open in this process. `flock` does not stop a second open here.
 static OPEN_PACKAGES: LazyLock<Mutex<HashSet<PathBuf>>> =
@@ -42,10 +43,12 @@ pub struct RecoveryNotice {
 enum Request {
     Perform {
         command: Command,
+        imports: StagedImports,
         reply: Sender<Result<Action, HostError>>,
     },
     Apply {
         actions: Vec<Value>,
+        imports: StagedImports,
         reply: Sender<Result<Vec<Action>, HostError>>,
     },
     Undo {
@@ -281,11 +284,25 @@ impl DocumentHost {
     /// Applies `command`, writing any nonempty edit to the journal before returning.
     /// A no-op succeeds without publishing or discarding redo.
     pub fn perform(&self, command: Command) -> Result<Action, HostError> {
+        self.perform_staged(command, StagedImports::none())
+    }
+
+    /// [`Self::perform`] with an import already staged off this thread. The
+    /// result, journal and store are the same as staging it here (ADR 0331).
+    pub fn perform_staged(
+        &self,
+        command: Command,
+        imports: StagedImports,
+    ) -> Result<Action, HostError> {
         self.require_recovery_confirmation()
             .map_err(HostError::Package)?;
         let (reply, incoming) = mpsc::channel();
         self.request
-            .send(Request::Perform { command, reply })
+            .send(Request::Perform {
+                command,
+                imports,
+                reply,
+            })
             .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
@@ -295,11 +312,24 @@ impl DocumentHost {
     /// Applies every action as one undo step. References are resolved in order.
     /// A group with no net change returns all accepted actions without recording a step.
     pub fn apply(&self, actions: Vec<Value>) -> Result<Vec<Action>, HostError> {
+        self.apply_staged(actions, StagedImports::none())
+    }
+
+    /// [`Self::apply`] with the group's imports already staged off this thread.
+    pub fn apply_staged(
+        &self,
+        actions: Vec<Value>,
+        imports: StagedImports,
+    ) -> Result<Vec<Action>, HostError> {
         self.require_recovery_confirmation()
             .map_err(HostError::Package)?;
         let (reply, incoming) = mpsc::channel();
         self.request
-            .send(Request::Apply { actions, reply })
+            .send(Request::Apply {
+                actions,
+                imports,
+                reply,
+            })
             .map_err(|_| HostError::Package(PackageError::Document(DocumentError::Stopped)))?;
         incoming
             .recv()
@@ -457,7 +487,11 @@ fn worker(
                 };
                 let _ = reply.send(result);
             }
-            Request::Perform { command, reply } => {
+            Request::Perform {
+                command,
+                mut imports,
+                reply,
+            } => {
                 let result = match command {
                     Command::Restore { revision } => {
                         wait_for_saves(&directory, &mut inflight);
@@ -486,7 +520,7 @@ fn worker(
                         }
                     }
                     Command::ImportAudio { track, start, path } => {
-                        match crate::media::stage_audio(&directory, Path::new(&path)) {
+                        match imports.take_or_stage(&directory, &path) {
                             Ok(staged) => {
                                 let stored = staged.stored().clone();
                                 let parked = session.park_redo();
@@ -548,14 +582,25 @@ fn worker(
                         }
                     }
                 };
+                // An unused stage is removed before the caller hears back.
+                drop(imports);
                 let _ = reply.send(result);
             }
-            Request::Apply { actions, reply } => {
+            Request::Apply {
+                actions,
+                mut imports,
+                reply,
+            } => {
                 let journal_len = session.journal().len();
                 let parked = session.park_redo();
                 let mut staged = Vec::new();
-                let result = match apply_transaction(&mut session, &directory, actions, &mut staged)
-                {
+                let result = match apply_transaction(
+                    &mut session,
+                    &directory,
+                    actions,
+                    &mut imports,
+                    &mut staged,
+                ) {
                     Ok(applied) if session.journal().len() == journal_len => {
                         session.unpark_redo(parked);
                         Ok(applied)
@@ -579,6 +624,8 @@ fn worker(
                         Err(error)
                     }
                 };
+                // An unused stage is removed before the caller hears back.
+                drop(imports);
                 let _ = reply.send(result);
             }
             Request::Undo { reply } => {
@@ -898,6 +945,7 @@ fn apply_transaction(
     session: &mut Session,
     directory: &Path,
     actions: Vec<Value>,
+    imports: &mut StagedImports,
     staged: &mut Vec<crate::media::StagedAudio>,
 ) -> Result<Vec<Action>, HostError> {
     let mut applied = Vec::with_capacity(actions.len());
@@ -923,10 +971,10 @@ fn apply_transaction(
                     return Err(ActionError::CorruptJournal);
                 }
             };
-            // Import external media on the document thread, then commit only a
-            // durable PCM reference. A failure rolls back the whole edit group
-            // and drops every stage, so no media remains (EXT-02).
-            let command = match import_command(directory, command, staged) {
+            // Import external media staged off or on this thread, then commit
+            // only a durable PCM reference. A failure rolls back the whole edit
+            // group and drops every stage, so no media remains (EXT-02).
+            let command = match import_command(directory, command, imports, staged) {
                 Ok(command) => command,
                 Err(error) => {
                     failure = Some(HostError::Element {
@@ -961,10 +1009,11 @@ fn apply_transaction(
 fn import_command(
     directory: &Path,
     command: Command,
+    imports: &mut StagedImports,
     staged: &mut Vec<crate::media::StagedAudio>,
 ) -> Result<Command, PackageError> {
     if let Command::ImportAudio { track, start, path } = command {
-        let audio = crate::media::stage_audio(directory, Path::new(&path))?;
+        let audio = imports.take_or_stage(directory, &path)?;
         let stored = audio.stored().clone();
         staged.push(audio);
         Ok(Command::PlaceAudio {

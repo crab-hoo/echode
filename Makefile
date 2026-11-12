@@ -368,6 +368,11 @@ spike-plugin-tracks:
 spike-scale:
 	cargo test -q --release -p echode-engine --test scale -- --ignored --exact measure_playback_scale --nocapture
 
+# Release measurement of an import on and off the document thread (ADR 0331).
+.PHONY: spike-import
+spike-import:
+	cargo test -q --release -p echode-history --test import_timing -- --ignored --exact measure_import_on_and_off_the_document_thread --nocapture
+
 # Device-free release measurement; never part of normal correctness tests.
 spike-audition:
 	cargo test -q --release -p echode-audio-io --lib audition::tests::measure_streaming_audition_startup_without_a_device -- --ignored --exact

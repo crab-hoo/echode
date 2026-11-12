@@ -43,6 +43,9 @@ pub enum DocumentError {
     Panicked,
     /// A device round trip panicked. The lane keeps serving later requests.
     DeviceRequestPanicked,
+    /// The thread staging an edit's imports panicked. The edit was not
+    /// applied, and the document keeps serving later requests (ADR 0331).
+    ImportPanicked,
 }
 
 /// A request the document refuses before anything changes.
@@ -88,6 +91,7 @@ impl fmt::Display for DocumentError {
             Self::Stopped => f.write_str("document thread stopped"),
             Self::Panicked => f.write_str("document thread panicked"),
             Self::DeviceRequestPanicked => f.write_str("device request panicked"),
+            Self::ImportPanicked => f.write_str("audio import panicked"),
         }
     }
 }
@@ -121,9 +125,11 @@ impl std::error::Error for DocumentError {
             Self::Audio(error) => Some(error),
             Self::Helper(error) => Some(error),
             Self::Thread(error) => Some(error),
-            Self::Rejected(_) | Self::Stopped | Self::Panicked | Self::DeviceRequestPanicked => {
-                None
-            }
+            Self::Rejected(_)
+            | Self::Stopped
+            | Self::Panicked
+            | Self::DeviceRequestPanicked
+            | Self::ImportPanicked => None,
         }
     }
 }

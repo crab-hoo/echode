@@ -1,6 +1,6 @@
 # 現在の範囲と制約
 
-更新: 2026-11-12。
+更新: 2026-11-13。
 制約と未確認・未接続を置く。合格証ではない。
 合否は `make verify`、実操作は日付付きの監査記録で確認する。
 実機等の確認待ちは [ユーザー確認の一覧](user-checks.md) の UC-番号で示す。
@@ -101,7 +101,8 @@
 - **デバイスビューと GUI の応答性**: 実機と第三者プラグインでの GUI の停止の解消はユーザー確認待ち（UC-23）。
   実画面での暗転の解消はユーザー確認待ち（UC-24、[ADR 0133](decisions/0133-stopped-plugin-processing-and-edit-input.md)）。
   出力の準備中の編集、一覧の再試行と状態の表示、FX の追加中の再生もユーザー確認待ち（UC-43〜46）。
-  外部の音声の取込みはワーカーで待つ。再生中の編集の実機は UC-67（[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
+  再生中の編集の実機は UC-67（[ADR 0330](decisions/0330-playing-edit-media-and-tempo-retime.md)）。
+  取込み中の編集・Undo は取込み後に順に効く（UC-68、[ADR 0331](decisions/0331-off-worker-audio-import.md)）。
   初回導入時の差分による追加と、文書終了時の初期化待ちは残る（[ADR 0142](decisions/0142-background-plugin-graph-preparation.md)）。
   列の開閉と下部の積み方の実画面の操作感と VoiceOver はユーザー確認待ち（UC-26、[ADR 0146](decisions/0146-independent-editor-stack.md)）。
 - **デバイスチェインの表示**: フォルダとデバイス列の開閉は文書内の表示状態で、保存・Undo の対象外である（[ADR 0128](decisions/0128-folder-disclosure-and-row-projection.md)、[ADR 0137](decisions/0137-device-disclosure.md)）。

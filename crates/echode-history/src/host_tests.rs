@@ -692,6 +692,86 @@ fn an_import_keeps_its_object_only_while_its_journal_line_can_name_it() {
     assert!(readable, "every replayed clip names a stored object");
 }
 
+/// ADR 0331: an import staged off the document thread lands as one staged
+/// there would. A rejected edit and an unused stage leave nothing in the
+/// store, the peaks equal those built from the object, and a staged failure is
+/// reported at its element.
+#[test]
+fn imports_staged_off_the_document_thread_land_as_if_staged_there() {
+    let directory = scratch();
+    write_package(&directory, &Project::new()).unwrap();
+    let wav = directory.with_extension("staged.wav");
+    let other = directory.with_extension("unused.wav");
+    let text = directory.with_extension("notes.txt");
+    write_wav(&wav, 0.25);
+    write_wav(&other, 0.5);
+    std::fs::write(&text, b"not audio").unwrap();
+    let source = wav.to_string_lossy().into_owned();
+    let unused = other.to_string_lossy().into_owned();
+    let notes = text.to_string_lossy().into_owned();
+    let host = DocumentHost::open(&directory).unwrap();
+    host.perform(Command::AddTrack { name: "a".into() })
+        .unwrap();
+    let track = host.snapshot().tracks()[0].id;
+    let import = |path: &str| serde_json::json!({"type": "audio.import", "track": track, "start": 0, "path": path});
+
+    let staged = StagedImports::stage(&directory, std::slice::from_ref(&source), &|| true);
+    assert_eq!(staged.len(), 1);
+    assert_eq!(
+        object_entries(&directory).len(),
+        1,
+        "a temporary beside the store"
+    );
+    let rejected = host.perform_staged(
+        Command::ImportAudio {
+            track: Id::from_raw(9),
+            start: echode_model::Tick::new(0),
+            path: source.clone(),
+        },
+        staged,
+    );
+    assert!(rejected.is_err());
+    assert_eq!(object_entries(&directory), Vec::<String>::new());
+
+    let staged = StagedImports::stage(&directory, &[unused, source.clone()], &|| true);
+    host.apply_staged(vec![import(&source)], staged).unwrap();
+    let objects = object_entries(&directory);
+    assert_eq!(objects.len(), 1, "the unused stage is gone: {objects:?}");
+    let hash = &objects[0];
+    let peaks = directory.join("cache").join("peaks").join(hash);
+    let staged_peaks = std::fs::read(&peaks).unwrap();
+    crate::cache_peaks(&directory, hash).unwrap();
+    assert_eq!(std::fs::read(&peaks).unwrap(), staged_peaks);
+    assert_eq!(
+        crate::import_audio(&directory, &wav).unwrap().hash,
+        *hash,
+        "the same object as an import staged on this thread"
+    );
+
+    let group = || {
+        vec![
+            serde_json::json!({"type": "track.add", "name": "b"}),
+            serde_json::json!({"type": "audio.import", "track": {"ref": 0, "field": "id"}, "start": 0, "path": notes}),
+        ]
+    };
+    let staged = StagedImports::stage(&directory, std::slice::from_ref(&notes), &|| true);
+    let failed = host.apply_staged(group(), staged).unwrap_err();
+    let here = host.apply(group()).unwrap_err();
+    assert!(
+        matches!(failed, HostError::Element { index: 1, .. }),
+        "{failed:?}"
+    );
+    assert_eq!(failed.to_string(), here.to_string());
+    assert!(StagedImports::stage(&directory, &[source], &|| false).is_empty());
+    assert_eq!(object_entries(&directory), objects);
+    assert_eq!(host.snapshot().tracks().len(), 1);
+    drop(host);
+    let _ = std::fs::remove_dir_all(&directory);
+    for file in [wav, other, text] {
+        let _ = std::fs::remove_file(file);
+    }
+}
+
 #[test]
 fn a_disconnected_document_keeps_its_lifetime_error_typed() {
     let directory = scratch();

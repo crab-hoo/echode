@@ -50,7 +50,7 @@ pub struct DecodedPcm {
 /// The same bytes are not written twice. The index keeps the first file name
 /// for a hash.
 pub fn import_audio(package: &Path, source: &Path) -> Result<StoredAudio, PackageError> {
-    let staged = stage_audio(package, source)?;
+    let staged = stage_audio(package, source, &|| true)?;
     let stored = staged.stored().clone();
     staged.publish(package)?;
     Ok(stored)
@@ -61,16 +61,26 @@ pub fn import_audio(package: &Path, source: &Path) -> Result<StoredAudio, Packag
 /// The document host stages an import, checks the edit that places it, and
 /// publishes the stage only when that edit is accepted. Dropping it instead
 /// removes the staged bytes, so a rejected import leaves no media, index
-/// entry, or peaks in the package (EXT-02).
+/// entry, or peaks in the package (EXT-02). Staging touches no history, so the
+/// app runs it off the document thread (ADR 0331).
 pub(crate) struct StagedAudio {
     object: StagedObject,
     stored: StoredAudio,
     source: PathBuf,
+    /// Built from the decoded samples, so publishing need not read the object
+    /// back to draw it.
+    peaks: crate::peaks::Peaks,
 }
 
 /// Decodes and validates `source`, then writes its PCM beside the store.
-pub(crate) fn stage_audio(package: &Path, source: &Path) -> Result<StagedAudio, PackageError> {
-    let decoded = decode_file(source, &|| true)?;
+/// Decoding stops with [`MediaError::Cancelled`] once `keep_going` is false.
+pub(crate) fn stage_audio(
+    package: &Path,
+    source: &Path,
+    keep_going: &dyn Fn() -> bool,
+) -> Result<StagedAudio, PackageError> {
+    let decoded = decode_file(source, keep_going)?;
+    let peaks = crate::peaks::build_from_pcm(&decoded.samples, decoded.channels, decoded.frames);
     let bytes = encode_pcm(
         decoded.sample_rate,
         decoded.channels,
@@ -84,6 +94,9 @@ pub(crate) fn stage_audio(package: &Path, source: &Path) -> Result<StagedAudio, 
         frames: decoded.frames,
     };
     drop(decoded);
+    if !keep_going() {
+        return Err(MediaError::Cancelled.into());
+    }
     ensure_store_gitignore(package)?;
     let object = stage_object(package, &bytes)?;
     Ok(StagedAudio {
@@ -93,6 +106,7 @@ pub(crate) fn stage_audio(package: &Path, source: &Path) -> Result<StagedAudio, 
         },
         object,
         source: source.to_path_buf(),
+        peaks,
     })
 }
 
@@ -101,15 +115,15 @@ impl StagedAudio {
         &self.stored
     }
 
-    /// Names the object, records the source name, and caches peaks. A failed
-    /// index write takes back a name this call created.
+    /// Names the object, records the source name, and caches the staged
+    /// peaks. A failed index write takes back a name this call created.
     pub(crate) fn publish(self, package: &Path) -> Result<PublishedAudio, PackageError> {
         let object = self.object.publish(package)?;
         if let Err(error) = remember_name(package, object.hash(), &self.source, &self.stored) {
             object.withdraw();
             return Err(error);
         }
-        let _ = crate::peaks::cache_peaks(package, object.hash());
+        let _ = crate::peaks::store_peaks(package, object.hash(), &self.peaks);
         Ok(PublishedAudio(object))
     }
 }
