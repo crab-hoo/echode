@@ -1,6 +1,5 @@
 """The durability trace analysis, registered audit reproductions, and foreign declarations."""
 
-import os
 import subprocess
 import sys
 import tempfile
@@ -13,7 +12,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_ffi
 import durability_trace
-import verify
 
 
 class DurabilityTraceTests(unittest.TestCase):
@@ -39,25 +37,10 @@ class DurabilityTraceTests(unittest.TestCase):
 
 
 class RegisteredAuditReproductions(unittest.TestCase):
-    """Reproductions from docs/reviews/2026-11-02-fix-instructions.md, fixed by ADR 0232."""
+    """Reproductions from docs/reviews/2026-11-02-fix-instructions.md, fixed by ADR 0232.
 
-    def test_audit_env01_deleting_unsafe_code_selects_the_sanitizers(self):
-        directory = Path(tempfile.mkdtemp())
-
-        def git(*arguments):
-            subprocess.run(["git", *arguments], cwd=directory, check=True, capture_output=True)
-
-        git("init", "-q")
-        git("config", "user.email", "audit@example.invalid")
-        git("config", "user.name", "audit")
-        (directory / "crates/x/src").mkdir(parents=True)
-        (directory / "crates/x/src/a.rs").write_text("pub fn f() { unsafe {} }\n")
-        git("add", ".")
-        git("commit", "-qm", "base")
-        os.unlink(directory / "crates/x/src/a.rs")
-        policy = {"checks": [{"id": "san", "task_unsafe": True, "inputs": ["crates/**"], "packages": []}]}
-        found = verify.unsafe_changes(directory, policy, verify.changed_paths(directory))
-        self.assertEqual(found, {"san": ["crates/x/src/a.rs"]})
+    ENV-01's reproductions left with the task-tier sanitizer selection they tested (ADR 0327).
+    """
 
     def test_audit_env06_the_command_line_cannot_satisfy_an_expected_failure(self):
         directory = Path(tempfile.mkdtemp())
@@ -81,27 +64,6 @@ class RegisteredAuditReproductions(unittest.TestCase):
             check=False,
         )
         self.assertNotEqual(result.returncode, 0, "text only in the Command: line passed as the expected red")
-
-    def test_a_changed_c_line_selects_the_sanitizers_and_tests_do_not(self):
-        directory = Path(tempfile.mkdtemp())
-
-        def git(*arguments):
-            subprocess.run(["git", *arguments], cwd=directory, check=True, capture_output=True)
-
-        git("init", "-q")
-        git("config", "user.email", "audit@example.invalid")
-        git("config", "user.name", "audit")
-        (directory / "bridge").mkdir()
-        (directory / "bridge/tests").mkdir()
-        for name in ("bridge/shim.c", "bridge/shim.h", "bridge/tests/fixture.c"):
-            (directory / name).write_text("int f(void) { return 0; }\n")
-        git("add", ".")
-        git("commit", "-qm", "base")
-        for name in ("bridge/shim.c", "bridge/shim.h", "bridge/tests/fixture.c"):
-            (directory / name).write_text("int f(void) { return 1; }\n")
-        policy = {"checks": [{"id": "san", "task_unsafe": True, "inputs": ["bridge/**"], "packages": []}]}
-        found = verify.unsafe_changes(directory, policy, verify.changed_paths(directory))
-        self.assertEqual(found, {"san": ["bridge/shim.c", "bridge/shim.h"]})
 
 
 class ForeignDeclarationTree(unittest.TestCase):

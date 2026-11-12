@@ -155,6 +155,7 @@ class DiagnosticTests(unittest.TestCase):
         data = diagnose.collect(self.root)
         self.assertEqual(data["environment"]["setup_needed"], ["setup-bridge"])
         self.assertIn("make setup-bridge", diagnose.render(data))
+        self.assertIn("作業の make verify には要らない", diagnose.render(data))
         self.runtime_context.side_effect = FileNotFoundError("cmake")
         self.assertEqual(diagnose.collect(self.root)["environment"]["setup_needed"], ["setup-bridge"])
 

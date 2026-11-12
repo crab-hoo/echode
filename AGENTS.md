@@ -86,9 +86,9 @@ Echode は macOS 専用の DAW です。このファイルは全エージェン�
 
 着手時に `make agent-context` または `make verify-plan`、変更を終えたら `make verify` を実行します。
 変更箇所と追加検査の対応は `scripts/verification.json` だけに置きます。
-`make verify` は、フォーマット、clippy、Rust / Swift、FFI、ライセンス、必須契約の通常テストに加え、変更に応じて RTSan、入力の単体テスト、橋渡しの全 feature を選びます。
-ASan・TSan・Miri と全契約の反例は全体検査の段階で、作業ごとに選ばれる条件は検査手順にあります。
-全体検査は GitHub の `full` が main へのプッシュごとに実行し、節目（依頼・配布前・受入）ではその合格を確かめます。作業の完了条件へ足しません。
+`make verify` は、フォーマット、clippy、Rust / Swift、FFI、ライセンス、必須契約の通常テストに加え、変更に応じて入力の単体テスト、橋渡しの全 feature を選びます。
+ASan・TSan・Miri・RTSan・fuzz と全契約の反例は全体検査の段階で、作業では選びません。
+全体検査は GitHub の `full` が main へのプッシュごとに実行し、節目（依頼・プッシュ後・配布前・受入）ではその合格を確かめます。作業の完了条件へ足しません。
 `make verify` の合格を全体検査の合格と言いません。
 実行方法と検査範囲は `docs/verification.md` を読んでください（[ADR 0212](docs/decisions/0212-verification-tiers.md)）。
 
@@ -99,7 +99,7 @@ ASan・TSan・Miri と全契約の反例は全体検査の段階で、作業ご�
 
 ファイルを変える操作は、進行中の検査が `target/verification/.lock` を持つ間、`make wait-verify` で待ちます。
 フックは置かず、`make verify` は自分で実行します（[ADR 0324](docs/decisions/0324-no-agent-hooks.md)）。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify` を使います。
-`--only` は作業中の個別検査用で、作業の完了時には使いません。新しい環境では、先に `make setup`、橋渡しの動的検査には `make setup-bridge` を実行します。
+`--only` は作業中の個別検査用で、作業の完了時には使いません。新しい環境では、先に `make setup`、手元の全体検査には `make setup-bridge` を実行します。
 
 監査の再現のうち登録済みのものは、`audit_<ID>_...` という名前の無視したテストです。全指摘がテスト化されているとは限りません。
 `make known-bugs` で、まだ失敗していることを確かめられます。項目を直したら、そのテストの `#[ignore]` を外し、監査の文書の一覧の状態を更新します。

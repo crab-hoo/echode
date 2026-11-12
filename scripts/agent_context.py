@@ -229,6 +229,7 @@ def render(data):
         (
             f"Environment: missing={environment['missing_tools']}; tool_errors={environment['tool_errors']}; "
             f"setup_needed={['make ' + target for target in environment['setup_needed']]}"
+            + (" (full tier only; make verify needs none)" if environment["setup_needed"] else "")
         ),
         f"App: {diagnosis['build']['status']}; verification: {verification['freshness']}; lock: {'BUSY - wait before editing' if verification['running'] else 'idle'}",
     ]

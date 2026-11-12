@@ -108,11 +108,12 @@ check-swift:
 	$(MAKE) check-bridge
 
 # Each required contract, its tests and its counterexample are listed in scripts/verification.json.
+# A task runs the tests only: counterexamples build mutated copies of the tree (ADR 0327).
 check-product-contracts:
 	$(MAKE) contract-prerequisites
-	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py --changed-controls
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py --tests-only
 
-# Every counterexample, including those whose only change is a linked dependency (ADR 0212).
+# Every counterexample. Full tier: GitHub's full workflow runs it on each push to main (ADR 0212, 0327).
 check-contract-controls:
 	$(MAKE) contract-prerequisites
 	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_product_contracts.py
@@ -143,7 +144,8 @@ check-real-hal-names:
 verify:
 	python3 scripts/verify.py $(VERIFY_ARGS)
 
-# Every automatic check, including sanitizers and all counterexamples. Not needed per task.
+# Every automatic check, including sanitizers, RTSan and all counterexamples. Not needed per task:
+# GitHub's full workflow runs the full tier on each push to main (ADR 0269, 0327).
 verify-full:
 	python3 scripts/verify.py --full $(VERIFY_ARGS)
 
@@ -338,7 +340,8 @@ spike-engine:
 	cargo test -q --release -p echode-engine --features spike -- --include-ignored --skip audit_
 	cargo run -q --release -p echode-engine --features spike --bin echode-engine-spike -- --seconds 600 --workers auto --report target/spike-s2.txt
 
-# RealtimeSanitizer on the test synth, plan handoff, and the plugin helper.
+# RealtimeSanitizer on the test synth, plan handoff, and the plugin helper. Full tier: GitHub's full
+# workflow runs it on each push to main (ADR 0327).
 # The first build downloads the prebuilt library with curl. See docs/reviews/2026-10-08-audit.md (ENG-12).
 rtsan:
 	$(MAKE) bundled-plugins

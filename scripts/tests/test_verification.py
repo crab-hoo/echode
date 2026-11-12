@@ -62,7 +62,7 @@ class PolicyTests(unittest.TestCase):
         self.policy = verify.load_policy(ROOT)
 
     def selected(self, *paths):
-        # Which checks a path concerns. The task tier narrows this for full-tier checks.
+        # Which checks a path concerns. A task leaves the full-tier ones to GitHub's full (ADR 0327).
         return set(verify.select_checks(self.policy, list(paths), full=True))
 
     def test_export_presets_contract_covers_validated_commands_and_document_boundary(self):
@@ -2435,7 +2435,9 @@ class PolicyTests(unittest.TestCase):
         }
         self.assertEqual(set(verify.select_checks(self.policy, ["Makefile"], redefined=set())), always)
         self.assertEqual(
-            set(verify.select_checks(self.policy, ["Makefile"], redefined={"rtsan", "spike-audio"})), always | {"rtsan"}
+            set(verify.select_checks(self.policy, ["Makefile"], redefined={"check-input", "rtsan", "spike-audio"})),
+            always | {"check-input"},
+            "a redefined full-tier check waits for the full tier (ADR 0327)",
         )
 
     def test_every_contract_depends_on_a_subset_of_the_gate_inputs(self):

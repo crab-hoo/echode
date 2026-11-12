@@ -3,7 +3,6 @@
 
 import errno
 import fcntl
-import hashlib
 import importlib.util
 import json
 import os
@@ -27,8 +26,6 @@ MUTATIONS = Path("target/product-contract-mutations")
 SWIFT_BUILD_WORKERS = 3
 # A copy can be many edits behind the source. Bringing it up to date is not part of any counterexample.
 SWIFT_COPY_BUILD_TIMEOUT = 1200
-# Lines around a mutated text that belong to its site, on each side.
-SITE_CONTEXT_LINES = 20
 # `I/N` runs every N-th counterexample from I, so CI jobs split the full tier (ADR 0269).
 SHARD_VARIABLE = "ECHODE_CONTRACT_SHARD"
 
@@ -292,18 +289,6 @@ def contract_fingerprints(root, policy, contracts, tools, phase="complete"):
     return stamps
 
 
-def mutation_site(text, fault):
-    """The mutated text and its neighbours; an edit elsewhere in the file leaves this unchanged."""
-    if text.count(fault["old"]) != 1:
-        return None
-    before, after = text.split(fault["old"])
-    return [
-        "\n".join(before.splitlines()[-SITE_CONTEXT_LINES:]),
-        fault["old"],
-        "\n".join(after.splitlines()[:SITE_CONTEXT_LINES]),
-    ]
-
-
 def test_body(text, contract):
     """The contract's test function, by the indentation of its closing brace."""
     # Rust names a test by its module path.
@@ -327,21 +312,10 @@ def shard_contracts(contracts, shard):
     return {contract["id"] for position, contract in enumerate(contracts) if position % count == index}
 
 
-def control_definition(contract):
-    return {key: value for key, value in contract.items() if key != "purpose"}
-
-
 def read_current(root, path):
     try:
         return (root / path).read_text(errors="replace")
     except OSError:
-        return ""
-
-
-def read_at_base(root, path, base):
-    try:
-        return verify.git(root, "show", f"{base or 'HEAD'}:{path}").decode(errors="replace")
-    except subprocess.CalledProcessError:
         return ""
 
 
@@ -358,62 +332,6 @@ def reject_unmatched_controls(root, contracts):
     )
     if unmatched:
         raise ValueError("negative control no longer matches: " + ", ".join(unmatched))
-
-
-def control_sites(root, policy, contracts, base=None):
-    """What each counterexample directly depends on, and the contracts where that differs from the diff base.
-
-    A control still proves its test catches the defect while its definition, the
-    mutated text and the test body are unchanged. A distant edit can in principle
-    change that too; the full tier reruns every control to catch those (ADR 0212).
-    """
-    sources = {
-        path: (read_at_base(root, path, base), read_current(root, path)) for path in verify.changed_paths(root, base)
-    }
-    try:
-        previous = json.loads(read_at_base(root, verify.POLICY.as_posix(), base))["product_contracts"]
-    except (ValueError, KeyError, TypeError):
-        previous = []
-    earlier = {contract["id"]: control_definition(contract) for contract in previous}
-    suffixes = {"rust": ".rs", "swift": ".swift"}
-    texts = {}
-    sites, targets = {}, set()
-    for contract in contracts:
-        mutations = negative_control_mutations(contract)
-        bodies = {}
-        for path, (old, new) in sources.items():
-            if path.endswith(suffixes.get(contract["runner"], "\0")):
-                pair = (test_body(old, contract), test_body(new, contract))
-                if pair != (None, None):
-                    bodies[path] = pair
-        current = [
-            mutation_site(texts.setdefault(fault["file"], read_current(root, fault["file"])), fault)
-            for fault in mutations
-        ]
-        sites[contract["id"]] = hashlib.sha256(
-            json.dumps(
-                [control_definition(contract), current, sorted((path, pair[1]) for path, pair in bodies.items())],
-                sort_keys=True,
-            ).encode()
-        ).hexdigest()
-        if (
-            earlier.get(contract["id"]) != control_definition(contract)
-            or any(old != new for old, new in bodies.values())
-            or any(
-                fault["file"] in sources and mutation_site(sources[fault["file"]][0], fault) != site
-                for fault, site in zip(mutations, current)
-            )
-        ):
-            targets.add(contract["id"])
-    return sites, targets
-
-
-def passed_controls(report):
-    """Every passing counterexample on record, whichever inputs it ran on."""
-    try:
-        return {item["id"]: item for item in report.get("negative_controls", []) if item.get("status") == "passed"}
-    except (AttributeError, KeyError, TypeError):
-        return {}
 
 
 def reusable_phase(report, phase, fingerprints):
@@ -959,20 +877,21 @@ def run(
     policy=None,
     fresh=False,
     evidence=None,
-    changed_only=False,
-    base=None,
+    tests_only=False,
     shard=None,
 ):
-    """Every required test, then every counterexample or, with `changed_only`, those whose site changed.
+    """Every required test, then every counterexample, or with `tests_only` none of them.
 
-    With `shard`, only that share of the counterexamples runs; every required test still runs.
+    A task runs `tests_only`: the counterexamples build mutated copies of the tree, so
+    they run in the full tier on GitHub (ADR 0327). With `shard`, only that share of the
+    counterexamples runs; every required test still runs.
     """
     started = time.monotonic()
     execution = {}
     if not contracts or len({c["id"] for c in contracts}) != len(contracts):
         raise ValueError("required product contracts must be nonempty and unique")
-    if shard is not None and changed_only:
-        raise ValueError(f"{SHARD_VARIABLE} splits the full tier; --changed-controls already narrows the controls")
+    if shard is not None and tests_only:
+        raise ValueError(f"{SHARD_VARIABLE} splits the counterexamples; --tests-only runs none of them")
     in_shard = shard_contracts(contracts, shard) if shard is not None else None
     directory = (evidence or root / "target/verification") / "product-contracts"
     directory.mkdir(parents=True, exist_ok=True)
@@ -984,23 +903,16 @@ def run(
     tools = verify.tool_identity(root) if policy is not None else {}
     fingerprints = contract_fingerprints(root, policy, contracts, tools) if policy is not None else {}
     test_stamps = contract_fingerprints(root, policy, contracts, tools, "tests") if policy is not None else {}
-    sites, targets = control_sites(root, policy, contracts, base) if policy is not None else ({}, set())
-    required = targets if changed_only else {contract["id"] for contract in contracts}
+    required = set() if tests_only else {contract["id"] for contract in contracts}
     if in_shard is not None:
         required &= in_shard
     tests = {} if fresh else reusable_phase(previous, "tests", test_stamps)
-    if not changed_only:
+    if not tests_only:
         # The full tier proves each test in its own process; a task's batch is not that evidence.
         tests = {name: item for name, item in tests.items() if item.get("isolation") != "batch"}
-    if changed_only:
-        # Passes outside this run's targets stay on record for the full tier, which rechecks each fingerprint.
-        controls = {name: dict(item, reused=True) for name, item in passed_controls(previous).items()}
-        reused_controls = (
-            set() if fresh else {name for name in targets if controls.get(name, {}).get("site") == sites[name]}
-        )
-    else:
-        controls = {} if fresh else reusable_phase(previous, "negative_controls", fingerprints)
-        reused_controls = set(controls)
+    # Current passes stay on record, so a later full tier on this machine reuses them.
+    controls = {} if fresh else reusable_phase(previous, "negative_controls", fingerprints)
+    reused_controls = set(controls)
     reused_tests = set(tests)
     reused = reused_tests & reused_controls
     pending = [contract for contract in contracts if contract["id"] not in reused_tests]
@@ -1030,7 +942,7 @@ def run(
         save("running")
 
     def record_control(result):
-        controls[result["id"]] = dict(result, site=sites.get(result["id"]))
+        controls[result["id"]] = result
         execution["negative_progress"] = {
             "seconds": round(time.monotonic() - control_started, 3),
             "completed": {
@@ -1046,13 +958,12 @@ def run(
     execution["pending"] = len(contracts) - len(reused)
     execution["normal_pending"] = len(pending)
     execution["negative_pending"] = len(pending_controls)
-    execution["control_scope"] = "changed" if changed_only else f"shard {shard}" if shard is not None else "all"
-    execution["changed_sites"] = len(targets)
+    execution["control_scope"] = "none" if tests_only else f"shard {shard}" if shard is not None else "all"
     execution["reused_tests"] = len(reused_tests)
     execution["reused_controls"] = len(reused_controls)
     save("running")
     normal_started = time.monotonic()
-    run_tests(root, pending, invoke, test_stamps, directory, record_test, batched=changed_only)
+    run_tests(root, pending, invoke, test_stamps, directory, record_test, batched=tests_only)
     execution["normal_seconds"] = round(time.monotonic() - normal_started, 3)
     execution["normal_batched"] = sum(tests.get(c["id"], {}).get("isolation") == "batch" for c in pending)
     if pending_controls and all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts):
@@ -1072,10 +983,10 @@ def run(
     ok = all(tests.get(c["id"], {}).get("status") == "passed" for c in contracts) and all(
         controls.get(name, {}).get("status") == "passed" for name in required
     )
-    if ok and changed_only:
+    if ok and tests_only:
         print(
-            f"product contracts: {len(tests)} passed, {len(required)} negative controls with a changed site"
-            f" rejected defects ({len(reused_controls)} reused); the full tier runs the rest",
+            f"product contracts: {len(tests)} passed; every counterexample still applies"
+            " and runs in the full tier (GitHub full)",
             flush=True,
         )
     elif ok and shard is not None:
@@ -1103,8 +1014,7 @@ def main():
             policy["product_contracts"],
             policy=policy,
             fresh=os.environ.get("ECHODE_VERIFY_FORCE") == "1",
-            changed_only="--changed-controls" in sys.argv[1:],
-            base=os.environ.get("VERIFY_BASE"),
+            tests_only="--tests-only" in sys.argv[1:],
             shard=os.environ.get(SHARD_VARIABLE) or None,
         )
     except (OSError, ValueError, KeyError) as error:

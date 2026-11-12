@@ -34,7 +34,7 @@
 | `audit_xca03_reimport_repairs_a_damaged_object` | XCA-03 | 同上 |
 | `audit_his_a1_a_missing_state_object_does_not_lose_later_edits` | HIS-A1 | 同上 |
 | `audit_cli_a1_a_one_frame_plugin_export_completes` | CLI-A1 | `crates/echode-cli/tests/render.rs` |
-| `test_audit_env01_deleting_unsafe_code_selects_the_sanitizers` | ENV-01 | `scripts/tests/test_audit_reproductions.py` |
+| `test_audit_env01_deleting_unsafe_code_selects_the_sanitizers`（2026-11-12 に [ADR 0327](../decisions/0327-instrumented-builds-only-on-github.md) で対象ごと削除） | ENV-01 | `scripts/tests/test_audit_reproductions.py` |
 | `test_audit_env06_the_command_line_cannot_satisfy_an_expected_failure` | ENV-06 | 同上 |
 
 ## W1: プラグインの窓での変更（DOC-A1・DOC-A2）— P1、最初に行う

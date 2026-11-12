@@ -1,11 +1,11 @@
-"""A task runs the checks that can catch its own change; the full tier runs the rest (ADR 0212)."""
+"""A task runs the checks that can catch its own change; GitHub's full workflow runs the rest (ADR 0212, 0327)."""
 
 import io
 import json
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +21,7 @@ FULL_TIER = {
     "check-bridge-miri",
     "check-contract-controls",
     "check-fuzz",
+    "rtsan",
 }
 
 
@@ -76,22 +77,25 @@ class RealPolicyTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(FULL_TIER & set(verify.select_checks(self.policy, [path], redefined=None)))
 
-    def test_changing_a_full_tier_check_itself_selects_it_in_a_task(self):
-        for path, expected in (
-            ("scripts/check-bridge-address.sh", {"check-bridge-asan", "check-bridge-tsan", "check-tsan-runtime"}),
-            ("scripts/check-bridge-miri.sh", {"check-bridge-miri"}),
-            ("scripts/tsan_runtime.py", {"check-bridge-tsan", "check-tsan-runtime"}),
-            ("scripts/check_product_contracts.py", {"check-contract-controls"}),
-            ("scripts/swift_contract_runner.py", {"check-contract-controls"}),
-            ("scripts/fuzz.sh", {"check-fuzz"}),
-            ("crates/echode-fuzz/fuzz_targets/control.rs", {"check-fuzz"}),
+    def test_no_change_selects_the_full_tier_in_a_task(self):
+        # ADR 0327: instrumented and mutated builds run on GitHub, even for an unsafe edit or their own scripts.
+        for path in (
+            "scripts/check-bridge-address.sh",
+            "scripts/check-bridge-miri.sh",
+            "scripts/tsan_runtime.py",
+            "scripts/check_product_contracts.py",
+            "scripts/swift_contract_runner.py",
+            "scripts/fuzz.sh",
+            "crates/echode-fuzz/fuzz_targets/control.rs",
+            "crates/echode-ffi/src/abi.rs",
+            "crates/echode-engine/src/meter.rs",
+            "spikes/bridge/sanitizers/Errno.c",
         ):
             with self.subTest(path=path):
-                self.assertEqual(FULL_TIER & set(verify.select_checks(self.policy, [path])), expected)
+                self.assertFalse(FULL_TIER & set(verify.select_checks(self.policy, [path], redefined=None)))
+        self.assertFalse(FULL_TIER & set(verify.select_checks(self.policy, [], all_checks=False)))
 
-    def test_tsan_in_a_task_brings_its_runtime_control_and_the_full_tier_covers_every_automatic_check(self):
-        selected = verify.select_checks(self.policy, [], unsafe={"check-bridge-tsan": ["crates/echode-ffi/src/lib.rs"]})
-        self.assertEqual(set(selected), {"check-bridge-tsan", "check-tsan-runtime"})
+    def test_the_full_tier_covers_every_automatic_check(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository(root)
@@ -103,6 +107,14 @@ class RealPolicyTests(unittest.TestCase):
             }
             selected = verify.plan_checks(root, policy, [], full=True)
         self.assertEqual({name for name, check in self.checks.items() if check["mode"] == "automatic"}, set(selected))
+
+    def test_the_full_workflow_is_the_routine_run_of_the_full_tier(self):
+        workflow = (ROOT / ".github/workflows/full.yml").read_text()
+        self.assertIn("run: make rtsan", workflow)
+        # make rtsan builds the bundled plugin offline first.
+        self.assertLess(
+            workflow.index("cargo fetch --locked", workflow.index("  rtsan:")), workflow.index("make rtsan")
+        )
 
     def test_a_contract_edit_is_handled_inside_the_task_tier_gate_not_by_rerunning_every_control(self):
         self.assertIn(
@@ -122,12 +134,12 @@ class RealPolicyTests(unittest.TestCase):
             ),
         )
 
-    def test_recipes_separate_changed_controls_from_all_controls(self):
+    def test_recipes_separate_the_task_tests_from_all_controls(self):
         makefile = (ROOT / "Makefile").read_text()
         task = makefile.split("\ncheck-product-contracts:\n", 1)[1].split("\n\n", 1)[0]
         full = makefile.split("\ncheck-contract-controls:\n", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("--changed-controls", task)
-        self.assertNotIn("--changed-controls", full)
+        self.assertIn("--tests-only", task)
+        self.assertNotIn("--tests-only", full)
         self.assertIn("scripts/verify.py --full", makefile.split("\nverify-full:\n", 1)[1].split("\n\n", 1)[0])
         # A Swift-only change must not depend on what the Rust check built.
         swift = makefile.split("\ncheck-swift:\n", 1)[1].split("\n\n", 1)[0]
@@ -155,17 +167,9 @@ class RealPolicyTests(unittest.TestCase):
         # The generated Swift actions are compared by the Rust check.
         self.assertIn("check", after("swift/EchodeBridge/Sources/EchodeBridge/EditAction.swift"))
 
-    def test_every_task_trigger_names_a_file_that_exists(self):
-        files = verify.source_files(ROOT)
-        for check in self.policy["checks"]:
-            for pattern in check.get("task_inputs", []):
-                with self.subTest(check=check["id"], pattern=pattern):
-                    self.assertTrue(verify.matches(files, [pattern]), "a task trigger that matches nothing never fires")
-
-    def test_the_c_abi_argument_rules_reach_miri_at_the_task_tier(self):
-        # ADR 0321: the shared pointer checks and their tests also run under Miri.
-        for path in ("crates/echode-ffi/src/abi.rs", "crates/echode-ffi/src/abi_tests.rs"):
-            self.assertIn("check-bridge-miri", set(verify.select_checks(self.policy, [path])), path)
+    def test_the_c_abi_argument_rules_run_under_miri(self):
+        # ADR 0321: the shared pointer checks and their tests also run under Miri, now in the full tier.
+        self.assertIn("echode-ffi", self.checks["check-bridge-miri"]["packages"])
         self.assertIn("abi_tests", (ROOT / "scripts/check-bridge-miri.sh").read_text())
 
     def test_tiers_are_validated(self):
@@ -181,87 +185,10 @@ class RealPolicyTests(unittest.TestCase):
 
         rejected(lambda check: check.update(tier="sometimes"))
         rejected(lambda check: check.update(mode="manual"))
-        rejected(lambda check: check.update(tier="task"))
-        rejected(lambda check: check.update(task_requires=["check"]))
-
-
-class UnsafeChangeTests(unittest.TestCase):
-    def fixture(self, root):
-        repository(root)
-        (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n')
-        for name in ("linked", "other"):
-            (root / f"crates/{name}/src").mkdir(parents=True)
-            (root / f"crates/{name}/tests").mkdir()
-            (root / f"crates/{name}/Cargo.toml").write_text(f'[package]\nname = "{name}"\nversion = "0.1.0"\n')
-            (root / f"crates/{name}/src/lib.rs").write_text("pub fn safe() {}\nunsafe fn raw() {}\n")
-            (root / f"crates/{name}/tests/case.rs").write_text("fn case() {}\n")
-        (root / "swift/Sources").mkdir(parents=True)
-        (root / "swift/Tests").mkdir()
-        (root / "swift/Sources/View.swift").write_text("struct View {}\nfinal class Box: @unchecked Sendable {}\n")
-        (root / "swift/Tests/Case.swift").write_text("struct Case {}\n")
-        commit(root)
-        return {
-            "checks": [
-                {
-                    "id": "sanitizer",
-                    "mode": "automatic",
-                    "tier": "full",
-                    "task_unsafe": True,
-                    "areas": [],
-                    "timeout": 5,
-                    "packages": ["linked"],
-                    "inputs": ["swift/Sources/**", "swift/Tests/**"],
-                }
-            ]
-        }
-
-    def found(self, root, policy, base=None):
-        return verify.unsafe_changes(root, policy, verify.changed_paths(root, base), base).get("sanitizer", [])
-
-    def test_an_edit_beside_existing_unsafe_code_does_not_count(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            policy = self.fixture(root)
-            (root / "crates/linked/src/lib.rs").write_text("pub fn safe() { }\nunsafe fn raw() {}\n")
-            (root / "swift/Sources/View.swift").write_text("struct View { }\nfinal class Box: @unchecked Sendable {}\n")
-            self.assertEqual(self.found(root, policy), [])
-
-    def test_added_and_removed_escapes_count_within_the_check_scope(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            policy = self.fixture(root)
-            (root / "crates/linked/src/lib.rs").write_text("pub fn safe() {}\n")
-            (root / "swift/Sources/View.swift").write_text(
-                "struct View {}\nfinal class Box: @unchecked Sendable {}\nlet p = withUnsafeBytes(of: 1) { _ in }\n"
-            )
-            self.assertEqual(self.found(root, policy), ["crates/linked/src/lib.rs", "swift/Sources/View.swift"])
-
-    def test_a_new_file_counts_but_other_crates_and_tests_do_not(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            policy = self.fixture(root)
-            (root / "crates/linked/src/new.rs").write_text("unsafe fn added() {}\n")
-            (root / "crates/other/src/lib.rs").write_text("unsafe fn elsewhere() {}\n")
-            (root / "crates/linked/tests/case.rs").write_text("unsafe fn fixture() {}\n")
-            (root / "swift/Tests/Case.swift").write_text("final class Case: @unchecked Sendable {}\n")
-            self.assertEqual(self.found(root, policy), ["crates/linked/src/new.rs"])
-
-    def test_the_diff_base_decides_and_an_unreadable_base_falls_back_to_the_whole_file(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            policy = self.fixture(root)
-            subprocess.run(["git", "tag", "start"], cwd=root, check=True)
-            (root / "crates/linked/src/lib.rs").write_text(
-                "pub fn safe() {}\nunsafe fn raw() {}\nunsafe fn more() {}\n"
-            )
-            commit(root)
-            self.assertEqual(self.found(root, policy), [])
-            self.assertEqual(self.found(root, policy, "start"), ["crates/linked/src/lib.rs"])
-            (root / "crates/linked/src/lib.rs").write_text(
-                "pub fn other() {}\nunsafe fn raw() {}\nunsafe fn more() {}\n"
-            )
-            with patch.object(verify, "changed_lines", side_effect=subprocess.CalledProcessError(128, "git")):
-                self.assertEqual(self.found(root, policy), ["crates/linked/src/lib.rs"])
+        # ADR 0327 removed the task triggers; a full-tier check that names one is refused.
+        rejected(lambda check: check.update(task_requires=["check-tsan-runtime"]))
+        rejected(lambda check: check.update(task_unsafe=True))
+        rejected(lambda check: check.update(task_inputs=["scripts/check-bridge-address.sh"]))
 
 
 class EvidenceTests(unittest.TestCase):
@@ -286,9 +213,8 @@ class EvidenceTests(unittest.TestCase):
                 "id": "slow",
                 "mode": "automatic",
                 "tier": "full",
-                "task_inputs": ["scripts/slow.sh"],
                 "areas": [],
-                "inputs": ["src/**"],
+                "inputs": ["src/**", "scripts/slow.sh"],
                 "timeout": 10,
                 "purpose": "fixture",
             },
@@ -338,33 +264,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.run_verify(support.arguments()), (0, 0), "no change selects nothing in a task")
         self.assertEqual(self.run_verify(support.arguments(full=True)), (0, 2))
 
-    def test_a_passed_trigger_left_uncommitted_does_not_rerun_on_later_edits(self):
-        self.policy()
-        trigger = self.root / "scripts/slow.sh"
-        trigger.write_text("true\n")
-        self.git("add", "scripts/slow.sh")
-        self.assertEqual(self.run_verify(support.arguments()), (0, 2))
-        (self.root / "src/app.txt").write_text("another task\n")
-        self.assertEqual(self.run_verify(support.arguments()), (0, 1), "only the task-tier check reruns")
-        report = self.report()
-        self.assertNotIn("slow", report["selected"])
-        self.assertEqual(report["full_tier_unverified"], ["slow"], "an outdated pass is still not a current pass")
-        trigger.write_text("false\n")
-        self.assertEqual(self.run_verify(support.arguments()), (0, 1), "an edit to the trigger itself selects it again")
-        self.assertEqual(self.report()["results"]["slow"]["status"], "passed")
-
-    def test_a_failed_run_covers_nothing(self):
-        self.policy()
-        (self.root / "scripts/slow.sh").write_text("true\n")
-
-        def run(root, check, log, force=False, base=None):
-            return {"status": "failed" if check["id"] == "slow" else "passed", "seconds": 0, "log": str(log)}
-
-        self.assertEqual(self.run_verify(support.arguments(), run), (1, 2))
-        (self.root / "src/app.txt").write_text("another edit\n")
-        self.assertEqual(self.run_verify(support.arguments()), (0, 2))
-
-    def test_a_task_trigger_runs_the_check_and_a_base_reaches_the_child(self):
+    def test_an_edit_to_a_full_tier_input_leaves_it_to_the_full_tier(self):
         self.policy()
         (self.root / "scripts/slow.sh").write_text("true\n")
         seen = []
@@ -373,12 +273,18 @@ class EvidenceTests(unittest.TestCase):
             seen.append((check["id"], base))
             return {"status": "passed", "seconds": 0, "log": str(log)}
 
-        self.assertEqual(self.run_verify(support.arguments(), run), (0, 2))
-        self.assertEqual(seen, [("check", None), ("slow", None)])
+        self.assertEqual(self.run_verify(support.arguments(), run), (0, 1))
+        self.assertEqual(seen, [("check", None)])
+        report = self.report()
+        self.assertNotIn("slow", report["selected"])
+        self.assertEqual(report["full_tier_unverified"], ["slow"], "an edit expires the full tier's pass")
+        seen.clear()
+        self.assertEqual(self.run_verify(support.arguments(full=True), run), (0, 1))
+        self.assertEqual(seen, [("slow", None)], "the task check is reused")
         self.assertEqual(self.report()["full_tier_unverified"], [])
 
 
-class ControlSiteTests(unittest.TestCase):
+class CounterexampleTests(unittest.TestCase):
     def fixture(self, root):
         repository(root)
         (root / "src").mkdir()
@@ -407,43 +313,6 @@ class ControlSiteTests(unittest.TestCase):
         commit(root)
         return padding
 
-    def targets(self, root, base=None):
-        return contracts.control_sites(root, self.policy, self.cases, base)[1]
-
-    def test_only_a_changed_site_or_definition_selects_a_counterexample(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            padding = self.fixture(root)
-            self.assertEqual(self.targets(root), set())
-            source = root / "src/lib.rs"
-            source.write_text("// a distant edit\n" + padding + "let defect = false;\n" + padding + "// and another\n")
-            self.assertEqual(self.targets(root), set(), "an edit far from the mutation leaves its evidence meaningful")
-            source.write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
-            self.assertEqual(self.targets(root), {"first", "second"})
-            source.write_text(padding + "let defect = false;\n" + padding)
-            tests = root / "tests/case.rs"
-            tests.write_text(
-                tests.read_text().replace("fn second() {\n    assert!(true);", "fn second() {\n    assert!(false);")
-            )
-            self.assertEqual(self.targets(root), {"second"}, "another test in the same file is unaffected")
-            subprocess.run(["git", "checkout", "-q", "tests/case.rs"], cwd=root, check=True)
-            self.cases[0]["purpose"] = "a better explanation"
-            self.assertEqual(self.targets(root), set())
-            self.cases[0]["negative_control"] = {**self.cases[0]["negative_control"], "new": "let defect = 1;"}
-            self.assertEqual(self.targets(root), {"first"})
-            self.cases.append({**self.cases[1], "id": "added", "test": "added"})
-            self.assertEqual(self.targets(root), {"first", "added"}, "a new contract must prove its counterexample")
-
-    def test_committed_edits_count_against_an_explicit_base(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            padding = self.fixture(root)
-            subprocess.run(["git", "tag", "start"], cwd=root, check=True)
-            (root / "src/lib.rs").write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
-            commit(root)
-            self.assertEqual(self.targets(root), set())
-            self.assertEqual(self.targets(root, "start"), {"first", "second"})
-
     def test_a_counterexample_that_no_longer_applies_is_rejected_without_a_build(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -452,15 +321,15 @@ class ControlSiteTests(unittest.TestCase):
             (root / "src/lib.rs").write_text(padding + padding)
             with self.assertRaisesRegex(ValueError, "no longer matches: first, second"):
                 contracts.reject_unmatched_controls(root, self.cases)
-            self.assertEqual(self.targets(root), {"first", "second"})
 
-    def run_gate(self, root, changed_only=True, fresh=False):
+    def run_gate(self, root, tests_only=True, fresh=False):
         tested, controlled = [], []
 
-        def run_tests(_root, pending, _invoke, stamps, _evidence, record, **_options):
+        def run_tests(_root, pending, _invoke, stamps, _evidence, record, batched=False):
             for case in pending:
                 tested.append(case["id"])
-                record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})
+                isolation = {"isolation": "batch"} if batched else {}
+                record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]], **isolation})
 
         def run_controls(_root, pending, stamps, _evidence, record):
             for case in pending:
@@ -480,76 +349,37 @@ class ControlSiteTests(unittest.TestCase):
             patch.object(contracts.verify, "tool_identity", return_value={}),
             redirect_stdout(io.StringIO()),
         ):
-            code = contracts.run(root, self.cases, policy=self.policy, changed_only=changed_only, fresh=fresh)
+            code = contracts.run(root, self.cases, policy=self.policy, tests_only=tests_only, fresh=fresh)
         return code, tested, controlled
 
     def report(self, root):
         return json.loads((root / "target/verification/product-contracts.json").read_text())
 
-    def test_a_task_runs_changed_controls_and_the_full_tier_runs_what_a_linked_change_expired(self):
+    def test_a_task_runs_every_test_and_leaves_every_counterexample_to_the_full_tier(self):
+        # ADR 0327: even an edit beside the mutated text runs no counterexample in a task.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             padding = self.fixture(root)
             self.generation = 1
-            self.assertEqual(self.run_gate(root, changed_only=False), (0, ["first", "second"], ["first", "second"]))
-            # A linked dependency changes: every test reruns, no site changed, no control runs.
+            self.assertEqual(self.run_gate(root, tests_only=False), (0, ["first", "second"], ["first", "second"]))
             self.generation = 2
+            (root / "src/lib.rs").write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
             self.assertEqual(self.run_gate(root), (0, ["first", "second"], []))
             report = self.report(root)
             self.assertEqual(
                 (report["status"], report["execution"]["control_scope"], report["execution"]["negative_pending"]),
-                ("passed", "changed", 0),
+                ("passed", "none", 0),
             )
-            self.assertEqual(
-                {item["fingerprint"] for item in report["negative_controls"]},
-                {"1:complete"},
-                "an outdated control stays on record with its own identity",
-            )
-            # The mutated text changes: its controls run once and then wait for another change to the site.
-            self.generation = 3
-            (root / "src/lib.rs").write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
-            self.assertEqual(self.run_gate(root), (0, ["first", "second"], ["first", "second"]))
-            self.generation = 4
-            self.assertEqual(self.run_gate(root), (0, ["first", "second"], []), "a repeated run must not repeat them")
-            # The full tier accepts only the current identity, whatever the task tier did.
-            self.assertEqual(self.run_gate(root, changed_only=False), (0, [], ["first", "second"]))
-            self.assertEqual(self.run_gate(root, changed_only=False), (0, [], []))
+            self.assertEqual(report["negative_controls"], [], "an outdated counterexample is not kept as a pass")
+            self.assertEqual(self.run_gate(root), (0, [], []), "the task's tests are reused")
+            # The full tier proves each test alone and runs every counterexample on the current inputs.
+            self.assertEqual(self.run_gate(root, tests_only=False), (0, ["first", "second"], ["first", "second"]))
+            self.assertEqual(self.run_gate(root, tests_only=False), (0, [], []))
+            self.assertEqual(self.run_gate(root), (0, [], []), "a task keeps the current counterexample passes")
+            self.assertEqual(len(self.report(root)["negative_controls"]), 2)
 
-    def test_a_failed_changed_control_fails_the_gate_and_is_not_kept(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            padding = self.fixture(root)
-            self.generation = 1
-            (root / "src/lib.rs").write_text(padding + "let beside = 1;\nlet defect = false;\n" + padding)
-
-            def run_tests(_root, pending, _invoke, stamps, _evidence, record, **_options):
-                for case in pending:
-                    record({"id": case["id"], "status": "passed", "fingerprint": stamps[case["id"]]})
-
-            def failing(_root, pending, stamps, _evidence, record):
-                for case in pending:
-                    record({"id": case["id"], "status": "failed", "fingerprint": stamps[case["id"]]})
-
-            with (
-                patch.object(contracts, "run_tests", side_effect=run_tests),
-                patch.object(contracts, "negative_controls", side_effect=failing),
-                patch.object(contracts, "contract_fingerprints", return_value={"first": "x", "second": "x"}),
-                patch.object(contracts.verify, "tool_identity", return_value={}),
-                redirect_stderr(io.StringIO()),
-            ):
-                self.assertEqual(contracts.run(root, self.cases, policy=self.policy, changed_only=True), 1)
-            self.assertEqual(self.report(root)["status"], "failed")
-            self.assertEqual(self.run_gate(root)[2], ["first", "second"], "a failure is never reused as a pass")
-
-    def test_every_real_counterexample_has_a_site_and_a_clean_tree_has_no_targets(self):
+    def test_every_real_counterexample_applies_and_its_test_exists(self):
         policy = verify.load_policy(ROOT)
-        with (
-            patch.object(contracts.verify, "changed_paths", return_value=[]),
-            patch.object(contracts, "read_at_base", side_effect=lambda root, path, base: (root / path).read_text()),
-        ):
-            sites, targets = contracts.control_sites(ROOT, policy, policy["product_contracts"])
-        self.assertEqual(set(sites), {contract["id"] for contract in policy["product_contracts"]})
-        self.assertEqual(targets, set())
         contracts.reject_unmatched_controls(ROOT, policy["product_contracts"])
         texts = {}
         for contract in policy["product_contracts"]:

@@ -1,5 +1,6 @@
 # The full tier of `make verify-full` on GitHub's M1 runners, so a local Mac need not
-# build and keep the sanitizer and counterexample trees (ADR 0269). The binaries keep
+# build and keep the sanitizer, RTSan and counterexample trees (ADR 0269). A task's
+# `make verify` never runs these; this workflow is their only routine run (ADR 0327). The binaries keep
 # the apple-m4 baseline of ADR 0114: none of them used an instruction the M1 lacks.
 # An "Illegal instruction" crash here is a new M4-only instruction, not a product bug
 # (docs/debugging/verification-and-build.md). Results are not recorded in report.md.
@@ -49,6 +50,20 @@ jobs:
           {} + || true
       - if: always()
         run: df -h .
+
+  # RealtimeSanitizer moved here from the task tier (ADR 0327). Its first build downloads
+  # the prebuilt runtime with curl; the bundled plugin build before it is offline.
+  rtsan:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the toolchain in rust-toolchain.toml
+        run: rustup toolchain install
+      - run: cargo fetch --locked
+      - run: make rtsan
 
   # A finding fails the job; its input is printed so it can be saved under
   # crates/echode-fuzz/regressions/ (docs/debugging/verification-and-build.md).

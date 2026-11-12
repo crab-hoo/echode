@@ -182,6 +182,7 @@ class ContextTests(unittest.TestCase):
             "cargo",
             "rustc -vV",
             "make setup-bridge",
+            "full tier only",
             "BUSY",
             "INVALID deferral",
             "make verify",

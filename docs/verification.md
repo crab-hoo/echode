@@ -9,13 +9,14 @@
 どちらも同じポリシーから選び、同じ合否の記録を使う。
 
 - `make verify`（作業の段階）: 作業ごとの完了条件。今回の変更で壊れていないかを調べる。
-- `make verify-full`（全体の段階）: 自動検査の全件。ASan、TSan、Miri、全契約の反例を含む。
+- `make verify-full`（全体の段階）: 自動検査の全件。ASan、TSan、Miri、RTSan、fuzz、全契約の反例を含む。
 
 全体の段階は GitHub Actions の `full` ワークフローが、`main` へのプッシュごとに実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
 `docs/` と Markdown だけの変更では起動しない。依頼なしに作業の完了条件へ足さない。
 次の節目では、対象のコミットで `full` が合格したことを確かめる。
 
 - ユーザーの依頼。
+- 依頼されたプッシュの後。失敗は同じ作業で直す（[ADR 0327](decisions/0327-instrumented-builds-only-on-github.md)）。
 - 配布の前（`make dist`）。
 - Phase の単位の受入完了の前。
 
@@ -23,15 +24,11 @@
 手元の `make verify-full` は、依頼された時か、CI で再現しない失敗を調べる時に実行する。
 CI の合格は `report.md` に記録しないので、手元の表示では全体の段階が未確認のまま残る。
 
-全体の段階の検査は、作業の段階でも次の時だけ選ばれる。
-
-- 変更行（追加・削除）に `unsafe` の脱出口がある。Rust の `unsafe`、Swift の `Unsafe`・`@unchecked`・`nonisolated(unsafe)` が対象で、その検査の入力の範囲にあるものに限る。テストのディレクトリは数えない。
-  消したファイルは差分の基準から削除行を読む。C（`.c`・`.h`）は空行以外の変更行をすべて数える（[ADR 0232](decisions/0232-verification-escapes-and-expected-red.md)）。
-- `task_inputs` に一致する。その検査自身のスクリプトと、Miri の対象のファイルが該当する。
-
-それ以外のコードはコンパイラーの検査の内にあるため、作業の段階ではサニタイザを動かさない。
-合格時に変更ファイルの内容を `covered` へ記録し、同じ内容のままの変更では選び直さない。
-未コミットの変更が残っていても、後の無関係な編集で再実行しないためである。
+作業の段階は全体の段階の検査を選ばない（[ADR 0327](decisions/0327-instrumented-builds-only-on-github.md)）。
+`unsafe` の変更や、その検査自身のスクリプトの変更でも同じである。
+全体の段階の検査は、計装した別のツールチェーンかソースのコピーで、製品と別のビルドを持つ。
+手元の容量と時間を抑えるため、そのビルドは GitHub のランナーに任せる。
+手元の `make verify` は、製品と同じ 1 つの構成のビルドとテストに限る。
 `make verify` の合格は全体の段階の合格ではない。
 現在の入力で合格の記録がない検査は、`make verify` の出力、`report.md`、`make doctor`、`make agent-context` に名前が出る。
 未確認の検査があっても `make verify` は失敗しない。
@@ -152,10 +149,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   各テストの合格の行が 1 回だけあることを証拠にし、示せなかったテストは単独で、各契約の期限のもとで実行し直す。
   まとめた実行のログは `product-contracts/batch-*.log` に残る。
   全反例が現在のソースへ適用できること（置換元が 1 回だけ現れること）を、ビルドせずに確認する。
-  反例は、差分の基準と比べて次のいずれかが変わった契約だけ実行する。
-  契約の定義（`purpose` を除く）、置換元とその前後 20 行、テストの関数本体。
-  遠いコードの変更で検出力が変わる場合は、全体の段階の `check-contract-controls` で検出する。
-  同じ置換箇所で合格済みなら、他の入力が変わっても作業の段階では再実行しない。
+  反例は実行しない。反例はソースのコピーを別にビルドするので、全体の段階に任せる（[ADR 0327](decisions/0327-instrumented-builds-only-on-github.md)）。
 - `check-contract-controls`（全体の段階）: 全契約の反例を実行する。
   ソースのコピー上で各契約の `negative_control`（既知の不具合を戻す差分）を適用し、テストの期待値で失敗しなければ検査全体を失敗とする。
   コンパイル失敗は検出の証拠にしない。
@@ -172,12 +166,11 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   Swift の負の対照も契約ごとに全反例の終了直後に保存し、後続の中断で完了した契約を失わない。
   複数反例の一部だけの終了は合格記録にしない。
   各契約の ID・対象テスト・目的・負の対照は `scripts/verification.json` を正本とし、本書へ重複記載しない（[ADR 0093](decisions/0093-product-contract-gate.md)、[ADR 0119](decisions/0119-agent-token-efficiency.md)）。
-- `rtsan`: 同梱 Sine Pad の隔離処理・領域拡張、テスト用 DSP、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作を検出する。
+- `rtsan`（全体の段階）: 同梱 Sine Pad の隔離処理・領域拡張、テスト用 DSP、計画の受け渡し、製品の再生・トランスポート・出力バッファ、プラグインヘルパーの処理区間でリアルタイム処理の禁止操作を検出する。
   試聴の有限の先読み・音量補間・指定位置からのコールバックも対象とする。禁止操作はロック、確保、ブロックするシステムコールである。
 - `check-input`: Swift の入力の単体テスト。ウィンドウは開かない。
 - `check-bridge-features`: 橋渡しの全 feature、Rust テスト・clippy・生成器を含むライセンス。
 - `check-tsan-runtime`（全体の段階）: C だけのスレッド再利用、寿命修正を外した負の対照、生存中の errno を共有する実競合の検出を確認する。
-  作業の段階で `check-bridge-tsan` が選ばれれば一緒に選ばれる。
 - `check-real-hal`: バンドルに実物の HAL の参照がないこと、製品とプローブに実物が残っていること、既定の `ProjectController()` の再生が名指しで止まることを確かめる。
   機器は開かない（[ADR 0209](decisions/0209-real-hal-guard.md)）。
   テストが実 HAL に触れたかは、`check-swift` が自分の全体実行で止める（[ADR 0271](decisions/0271-task-tier-duplicate-runs.md)）。
@@ -325,7 +318,7 @@ Swift の `build_product` はポリシーに宣言し、製品契約ではテス
 
 ## 環境、エージェントと CI
 
-新しい環境では `make setup`、動的検査には `make setup-bridge`、fuzz には `make setup-fuzz`、カバレッジの計測には `make setup-coverage` を実行する。
+新しい環境では `make setup`、手元で全体の段階を動かす時は動的検査に `make setup-bridge`、fuzz に `make setup-fuzz`、カバレッジの計測には `make setup-coverage` を実行する。
 一つの fuzz の対象を長く探すには `make fuzz FUZZ_TARGET=名前 FUZZ_SECONDS=秒` を使う。名前は `crates/echode-fuzz/Cargo.toml` の `[[bin]]` である。
 製品のコンパイラーは `rust-toolchain.toml`、橋渡しの動的検査（ASan / TSan / Miri）は `scripts/bridge-toolchain.env` の固定 nightly を使う（[ADR 0044](decisions/0044-swift-bridge.md)）。
 TSan のセットアップには CMake と Ninja も必要で、固定した公式 LLVM のソースを取得する。
@@ -340,7 +333,7 @@ Xcode や製品アプリは変更しない。通常検査はネットワーク�
 GitHub Actions の `check` は、M4 を要らない `make check-portable` と `make advisories` を実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
 `check-portable` の前に `make setup-lint` で lint の固定版を入れる。
 M4 のない環境の協力者も同じ入口を使える。
-`full` は全体の段階の 6 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
+`full` は全体の段階の 7 件を、手元と同じ apple-m4 のビルドのまま M1 のランナーで実行する。
 反例は `ECHODE_CONTRACT_SHARD=I/N` で 4 つのジョブに分け、各ジョブは必須テストを全部実行してから自分の分の反例を実行する。
 全体の段階の検査を足したら `full.yml` にも足す。登録簿との差は `check-verification` のテストが止める。
 作業の段階のネイティブ検査は CI になく、手元の `make verify` で行う。
@@ -376,7 +369,7 @@ CI の合格は `make verify` の合格ではなく、`report.md` にも記録�
   検査ビルドだけの注釈で順序を示し、再開の後の書込みの検出は対照で保つ（[ADR 0207](decisions/0207-continuation-handoff-tsan.md)）。
 - **プラグインの発音のアタック**: Vital Init の無音からの発音は、48 / 96 kHz・複数のブロック長でプラグイン単体の出力と全サンプルが一致する。
   ホスト由来の不連続は再現していない（[ADR 0106](decisions/0106-natural-plugin-onsets.md)）。
-- **検査の段階**: `make verify` は作業の段階で、ASan・TSan・Miri と全反例は `make verify-full` の全体の段階にある。
+- **検査の段階**: `make verify` は作業の段階で、ASan・TSan・Miri・RTSan・fuzz と全反例は `make verify-full` と GitHub の `full` の全体の段階にある。
   作業の段階の合格は全体の段階の合格ではない。未確認の検査は `make agent-context` が表示する（[ADR 0212](decisions/0212-verification-tiers.md)）。
 - **検査の種別の境界**: 通常の回帰検査、負の対照（`negative_control`）、オフスクリーンの GPU 検査、実ウィンドウの `spike-playhead` は別の証拠である。
   長時間の計測（[ADR 0096](decisions/0096-measurement-completion.md)）、ローカルの検査とリモートの CI、ユーザーの聴感確認も区別する。

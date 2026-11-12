@@ -300,7 +300,7 @@ class ExecutionTests(unittest.TestCase):
             ):
                 with self.subTest(check=name):
                     expected = {
-                        "check-product-contracts": "disk-space-mutations",
+                        # A task runs no counterexample, so only the full tier builds mutated copies.
                         "check-contract-controls": "disk-space-mutations",
                         "check-fuzz": "disk-space-fuzz",
                     }.get(name, "disk-space")

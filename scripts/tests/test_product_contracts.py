@@ -435,7 +435,6 @@ class ContractEvidenceTests(unittest.TestCase):
             root = Path(directory)
             with (
                 patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: dict(stamps)),
-                patch.object(contracts, "control_sites", return_value=({}, set())),
                 patch.object(contracts.verify, "tool_identity", return_value={}),
                 patch.object(contracts, "negative_controls", side_effect=controls),
                 redirect_stdout(io.StringIO()),
@@ -586,7 +585,7 @@ class ContractEvidenceTests(unittest.TestCase):
             [("one", "passed", "batch"), ("two", "passed", "batch")],
         )
 
-    def test_the_full_tier_does_not_reuse_a_tasks_batch_evidence(self):
+    def test_a_task_runs_no_counterexample_and_the_full_tier_does_not_reuse_its_batch_evidence(self):
         cases = [
             {
                 "id": name,
@@ -600,7 +599,7 @@ class ContractEvidenceTests(unittest.TestCase):
             }
             for name in ("a", "b")
         ]
-        tested = []
+        tested, controlled = [], []
 
         def run_tests(_root, pending, _invoke, stamps, _evidence, record, batched=False):
             for case in pending:
@@ -616,22 +615,34 @@ class ContractEvidenceTests(unittest.TestCase):
 
         def controls(root, pending, fingerprints, evidence, record):
             for contract in pending:
+                controlled.append(contract["id"])
                 record(contracts.control_result(contract, fingerprints[contract["id"]], True, evidence / "x.log", 0))
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with (
                 patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: {"a": "1", "b": "2"}),
-                patch.object(contracts, "control_sites", return_value=({}, set())),
                 patch.object(contracts.verify, "tool_identity", return_value={}),
                 patch.object(contracts, "run_tests", side_effect=run_tests),
                 patch.object(contracts, "negative_controls", side_effect=controls),
                 redirect_stdout(io.StringIO()),
             ):
-                self.assertEqual(contracts.run(root, cases, policy={}, changed_only=True), 0)
-                self.assertEqual(contracts.run(root, cases, policy={}, changed_only=True), 0)
+                self.assertEqual(contracts.run(root, cases, policy={}, tests_only=True), 0)
+                self.assertEqual(contracts.run(root, cases, policy={}, tests_only=True), 0)
+                # ADR 0327: the counterexamples build mutated copies, so only the full tier runs them.
+                self.assertEqual(controlled, [])
+                report = json.loads((root / "target/verification/product-contracts.json").read_text())
+                self.assertEqual(report["execution"]["control_scope"], "none")
                 self.assertEqual(contracts.run(root, cases, policy={}), 0)
+                self.assertEqual(contracts.run(root, cases, policy={}, tests_only=True), 0)
+                report = json.loads((root / "target/verification/product-contracts.json").read_text())
+                self.assertEqual(
+                    [item["status"] for item in report["negative_controls"]],
+                    ["passed", "passed"],
+                    "a task keeps the full tier's current counterexample passes on record",
+                )
         self.assertEqual(tested, [("a", True), ("b", True), ("a", False), ("b", False)])
+        self.assertEqual(controlled, ["a", "b"])
 
     def test_shards_split_every_counterexample_once(self):
         # ADR 0269: the full tier runs its counterexamples in several GitHub jobs.
@@ -678,14 +689,13 @@ class ContractEvidenceTests(unittest.TestCase):
                 patch.object(
                     contracts, "contract_fingerprints", side_effect=lambda *args: {"a": "1", "b": "2", "c": "3"}
                 ),
-                patch.object(contracts, "control_sites", return_value=({}, set())),
                 patch.object(contracts.verify, "tool_identity", return_value={}),
                 patch.object(contracts, "negative_controls", side_effect=controls),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(contracts.run(root, cases, good, policy={}, shard="1/2"), 0)
                 with self.assertRaises(ValueError):
-                    contracts.run(root, cases, good, policy={}, shard="1/2", changed_only=True)
+                    contracts.run(root, cases, good, policy={}, shard="1/2", tests_only=True)
         self.assertEqual((invoked, controlled), (["a", "b", "c"], ["b"]))
 
     def test_an_edit_during_the_run_leaves_no_reusable_result(self):
@@ -713,7 +723,6 @@ class ContractEvidenceTests(unittest.TestCase):
             root = Path(directory)
             with (
                 patch.object(contracts, "contract_fingerprints", side_effect=lambda *args: next(stamps)),
-                patch.object(contracts, "control_sites", return_value=({}, set())),
                 patch.object(contracts.verify, "tool_identity", return_value={}),
                 patch.object(contracts, "negative_controls", side_effect=controls),
                 redirect_stderr(io.StringIO()),

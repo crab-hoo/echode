@@ -88,13 +88,9 @@ def load_policy(root):
             check.get("tier") == "full" and check["mode"] != "automatic"
         ):
             raise ValueError("invalid verification tier")
-        if (check.get("task_inputs") or check.get("task_unsafe") or check.get("task_requires")) and check.get(
-            "tier"
-        ) != "full":
-            raise ValueError("task_inputs, task_unsafe and task_requires are for full-tier checks")
-        for value in check.get("task_requires", []):
-            if value not in {other["id"] for other in policy["checks"] if other.get("tier") == "full"}:
-                raise ValueError("task_requires must name a full-tier check")
+        if {"task_inputs", "task_unsafe", "task_requires"} & check.keys():
+            # A task never runs the full tier; GitHub's full workflow does (ADR 0327).
+            raise ValueError("task_inputs, task_unsafe and task_requires were removed: the full tier runs on GitHub")
     for group in policy.get("product_contract_inputs", {}).values():
         for field in ("inputs", "packages"):
             values = group.get(field) if isinstance(group, dict) else None
@@ -196,15 +192,6 @@ def matches(changed, patterns):
     return [path for path in changed if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)]
 
 
-# C has no memory or data-race checks of its own: every line it changes counts (ENV-01).
-UNSAFE_ESCAPES = {
-    ".rs": re.compile(r"\bunsafe\b"),
-    ".swift": re.compile(r"Unsafe|@unchecked|nonisolated\(unsafe\)"),
-    ".c": re.compile(r"\S"),
-    ".h": re.compile(r"\S"),
-}
-
-
 RULE = re.compile(r"^([A-Za-z0-9_.-]+)[ \t]*:(.*)$")
 
 
@@ -293,51 +280,9 @@ def redefined_checks(root, policy, base=None):
     return {name for name, identity in current_definitions(root, policy).items() if before.get(name) != identity}
 
 
-def changed_lines(root, path, base=None):
-    """Added and removed lines against the diff base; an untracked file is all additions."""
-    if path in paths(git(root, "ls-files", "-z", "--others", "--exclude-standard", "--", path)):
-        return (root / path).read_text(errors="replace").splitlines()
-    diff = git(root, "diff", "--no-renames", "--unified=0", base or "HEAD", "--", path).decode(errors="replace")
-    return [line[1:] for line in diff.splitlines() if line[:1] in ("+", "-") and not line.startswith(("+++", "---"))]
-
-
-def unsafe_changes(root, policy, changed, base=None):
-    """Per check, changed product lines that step outside the compilers' memory and data-race checks.
-
-    Only an added or removed escape counts: `unsafe` elsewhere in an edited file is
-    no reason to rerun a sanitizer, and code the compiler still checks needs none.
-    """
-    found = {}
-    for check in policy["checks"]:
-        if not check.get("task_unsafe"):
-            continue
-        folders = package_directories(root, check.get("packages", []))
-        for path in changed:
-            pattern = UNSAFE_ESCAPES.get(Path(path).suffix)
-            if (
-                pattern is None
-                or "/Tests/" in path
-                or "/tests/" in path
-                or not (
-                    matches([path], check.get("inputs", [])) or any(path.startswith(folder + "/") for folder in folders)
-                )
-            ):
-                continue
-            # A deleted file is read from its diff: removing an escape counts too (ENV-01).
-            try:
-                if any(pattern.search(line) for line in changed_lines(root, path, base)):
-                    found.setdefault(check["id"], []).append(path)
-            except subprocess.CalledProcessError:
-                # Without the diff base, the whole file is the only safe answer.
-                gone = not (root / path).is_file()
-                if gone or pattern.search((root / path).read_text(errors="replace")):
-                    found.setdefault(check["id"], []).append(path)
-    return found
-
-
-def select_checks(policy, changed, all_checks=False, redefined=None, full=False, unsafe=None, covered=None):
-    """Checks this change concerns. Without `full`, a full-tier check needs a direct task trigger
-    that its last pass did not already cover."""
+def select_checks(policy, changed, all_checks=False, redefined=None, full=False):
+    """Checks this change concerns. A task never selects the full tier: GitHub's full
+    workflow runs it on each push to main, and `make verify-full` runs it here (ADR 0327)."""
     selected = {}
     global_hits = matches(changed, policy["global_inputs"])
     # Evidence inputs are part of every check's identity, so they select every automatic check.
@@ -346,6 +291,8 @@ def select_checks(policy, changed, all_checks=False, redefined=None, full=False,
     # Without the diff base (redefined=None), every automatic check is selected.
     definitions = matches(changed, [POLICY.as_posix(), "Makefile"])
     for check in policy["checks"]:
+        if check.get("tier") == "full" and not (full or all_checks):
+            continue
         hits = sorted({path for area in check["areas"] for path in matches(changed, policy["areas"][area])})
         reasons = hits
         if check["mode"] == "automatic":
@@ -356,61 +303,21 @@ def select_checks(policy, changed, all_checks=False, redefined=None, full=False,
             )
             if definitions and (redefined is None or check["id"] in redefined):
                 reasons += definitions
-        if check.get("tier") == "full" and not (full or all_checks):
-            reasons = [
-                path
-                for path in matches(changed, check.get("task_inputs", [])) + (unsafe or {}).get(check["id"], [])
-                if path not in (covered or {}).get(check["id"], ())
-            ]
         if all_checks or (not check.get("extended") and (reasons or (changed and check.get("always")))):
             selected[check["id"]] = sorted(set(reasons)) or ["all checks" if all_checks else "every change"]
-    for check in policy["checks"]:
-        if check["id"] in selected and not (full or all_checks):
-            for name in check.get("task_requires", []):
-                selected.setdefault(name, ["required by " + check["id"]])
     return selected
 
 
 def plan_checks(root, policy, changed, base=None, all_checks=False, full=False):
     """The selection shared by verify, doctor, and agent-context."""
     redefined = redefined_checks(root, policy, base) if matches(changed, [POLICY.as_posix(), "Makefile"]) else set()
-    unsafe, covered = {}, {}
-    if not (full or all_checks):
-        unsafe = unsafe_changes(root, policy, changed, base)
-        covered = covered_changes(root, load_report(root / "target/verification")["results"])
-    selected = select_checks(policy, changed, all_checks, redefined, full, unsafe, covered)
+    selected = select_checks(policy, changed, all_checks, redefined, full)
     if full:
         # An unchanged tree still owes the full tier: earlier tasks ran without it.
         for check in policy["checks"]:
             if check["mode"] == "automatic":
                 selected.setdefault(check["id"], ["full verification"])
     return selected
-
-
-def covered_changes(root, results):
-    """Per check, the files its last pass ran on and that still have the same contents.
-
-    Uncommitted work stays in the diff across tasks. Without this, one trigger
-    would rerun a full-tier check on every later edit until the next commit.
-    """
-    return {
-        name: {
-            path for path, digest in result.get("covered", {}).items() if file_digests(root, [path]).get(path) == digest
-        }
-        for name, result in results.items()
-        if result.get("status") == "passed"
-    }
-
-
-def file_digests(root, relatives):
-    digests = {}
-    for relative in relatives:
-        try:
-            digests[relative] = input_digest(root, relative).hex()
-        except (OSError, ValueError):
-            # A link leaving the repository cannot be a covered trigger; it simply stays selected.
-            pass
-    return digests
 
 
 def unverified_full_tier(policy, results, stamps):
@@ -1061,8 +968,6 @@ def verify(root, args):
                 )
             result["fingerprint"] = stamps[name]
             result["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            if check.get("tier") == "full":
-                result["covered"] = file_digests(root, changed)
             report["results"][name] = result
             result["timeout"] = check["timeout"]
             report["execution"]["checks"][name] = result

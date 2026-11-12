@@ -14,8 +14,7 @@
 `normal_pending` と `negative_pending`、`reused_tests` と `reused_controls` で、通常・反例のどちらが失効したかを分ける。
 依存先の統合テストだけの変更で Swift が失効する場合は `package_scope` と明示した `inputs`、build script・custom target を調べる。
 Rust の製品ソース変更による Swift の失効はリンク先変更であり、反例の置換ファイルが不変という理由だけで全体の段階から除外しない。
-`make verify` で多数の反例が走る時は、`execution` の `changed_sites` と置換箇所を確認する。
-定義・置換元の前後 20 行・テスト本体が変わった契約だけが対象である（[ADR 0212](../decisions/0212-verification-tiers.md)）。
+作業の段階の `make verify` は反例を実行しない（`control_scope` が `none`）。手元で反例が走るのは `make verify-full` だけである（[ADR 0327](../decisions/0327-instrumented-builds-only-on-github.md)）。
 履歴は `target/verification/timing-history.jsonl` にあり、`make debug-report` にも収集する。
 同じ条件での再計測と、件数・失効集合の変化は [時間の保守](../verification.md#実行時間の保守) に従って分ける。
 Swift 契約の直接起動で `missing helper, test bundle, or Testing framework` が出た場合は、
@@ -115,11 +114,11 @@ Swift Testing は始めた全テストの終わりを待つ。再開されない
 `df -h` で空き容量を確認する。検査のロック解除後に、再生成可能なコンパイラーキャッシュや一時データだけを整理し、既存の検査結果・ユーザー資料・開いているアプリは削除しない。空き確保後に `make doctor` と `make verify` を再実行する。
 worktree ごとの `target` が大きい。Claude Code のデスクトップアプリでは、セッションのアーカイブで変更のない worktree が `target` ごと再利用の置き場へ移るので、アーカイブだけでは空かない（2026-10-31 に 25 GB）。
 再利用できない生成物は消してよく、現在有効なキャッシュは空きが検査に足りない時だけ、再生成の時間を見積もって消し、報告する（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。作業は `main` の作業ツリーにまとめ、使い終えた worktree の再生成できる `target` を消す。
-最初の候補は、全体の段階の ASan・TSan・Miri が使う `target/bridge/address`・`thread`・`miri` である（2026-11-09 に合計 5.9 GB）。
-GitHub の `full` がプッシュごとに実行する。作業ごとの `make verify` も、その対象の crate で `unsafe` を足し引きした時は選ぶ（`task_unsafe`）。
-2026-11-09 は消した直後にこの条件に当たり、冷えた状態から ASan 432 秒・TSan 328 秒・Miri 75 秒かかった（温まった状態では 194・138・34 秒）。
-`make verify-plan` がこの 3 つを選んでいる時は、消しても同じ実行で作り直すので空きは増えない。
-その時の候補は `target/release` で、使うのは `spike-*` の release 計測だけである（Makefile の `--release`。2026-11-09 に 2.0 GB）。
+最初の候補は、全体の段階だけが使うビルド先である。
+ASan・TSan・Miri の `target/bridge`（2026-11-09 に 5.9 GB）、TSan のランタイムの `target/toolchains`、反例の `target/product-contract-mutations`、fuzz の `target/aarch64-apple-darwin` と `target/fuzz`。
+2026-11-12 から作業の段階はこれらを使わない。GitHub の `full` がプッシュごとに作る（[ADR 0327](../decisions/0327-instrumented-builds-only-on-github.md)）。
+手元では `make verify-full` の時だけ作り直す（2026-11-09、冷えた状態から ASan 432 秒・TSan 328 秒・Miri 75 秒）。
+次の候補は `target/release` で、使うのは `spike-*` の release 計測だけである（Makefile の `--release`。2026-11-09 に 2.0 GB）。
 `target/debug/incremental` は、同じ日の作業ではほぼ全部が使われていて、古い分は残らなかった。
 2026-11-12 は、多くの crate が依存する `echode-sandbox` を変えた後の `make verify` が、`check-swift` の後で空きを使い切った。
 空きが尽きると Claude Code のシェルは出力の一時ファイルを作れず、どのコマンドも始まらない。エージェントは自分で消せないので、ユーザーに少し空けてもらう。

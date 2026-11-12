@@ -99,6 +99,7 @@ def setup_needed():
 
     It is the judgment the TSan checks make before running, so a missing or
     outdated runtime is told apart from a source change that only needs make verify.
+    Only the full tier uses the runtime; a task's make verify never needs it (ADR 0327).
     """
     try:
         bridge_ready = tsan_runtime.prepared(tsan_runtime.context())
@@ -238,7 +239,8 @@ def render(data):
         f"ツールの起動エラー: {', '.join(errors) if errors else 'なし'}",
         f"準備のやり直し: {', '.join('make ' + target for target in setup) if setup else 'なし'}"
         + (
-            "（TSan の検査専用ランタイムが未準備か、Xcode・CMake・Ninja の版と合わない）"
+            "（TSan の検査専用ランタイムが未準備か、Xcode・CMake・Ninja の版と合わない。"
+            "手元の make verify-full だけが使い、作業の make verify には要らない）"
             if "setup-bridge" in setup
             else ""
         ),
