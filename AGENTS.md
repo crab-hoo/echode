@@ -72,7 +72,7 @@ Echode は macOS 専用の DAW です。このファイルは全エージェン�
 - 同一性をアドレスの値で比べない。`Arc` を持ったまま `Arc::ptr_eq` で比べる（clippy が `Arc::as_ptr` を止める）
 - 音をブロックの切り方に依存させない。プロジェクト上のサンプル位置から決める。音を作る処理を足したら、`crates/echode-engine/tests/block_size.rs` にブロック長を変えて比べるテストを足す
 - オーディオスレッドで、プロジェクト全体の大きさに比例する処理をしない
-- OS の API を新しく手で宣言しない。`libc` か objc2 の crate を使う（`scripts/check-ffi.sh` が止める）
+- OS の API を新しく手で宣言しない。`libc`・mach2・objc2 の crate を使う（`scripts/check-ffi.sh` が止める）
 - モデルを変える操作は `Project::check_invariants` を守る。アクションを足したら、`crates/echode-history/tests/properties.rs` の操作の生成に足す
 - 時間を測るテストと、実機が要るテストは `#[ignore]` にし、`make spike-*` で動かす
 - トークン肥大化を防ぐため、作業中のテスト直接実行には `-q`（`cargo test -q`、`swift test -q`）を付け、大きな単体テスト群は `<module>_tests.rs` に分け、ドキュメントは 1 行に長文を詰め込まず領域別の正本（`docs/architecture/*.md` 等）へ書く（[ADR 0119](docs/decisions/0119-agent-token-efficiency.md)）

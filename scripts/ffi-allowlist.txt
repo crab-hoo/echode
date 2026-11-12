@@ -1,18 +1,10 @@
-# Handwritten foreign declarations not provided by libc or the objc2 crates.
-# Each entry is an exact source path and Rust item name, not a file exemption.
-# Do not add covered APIs. Remove entries as bindings become available (ENG-15).
-# Remaining unsupported APIs retain the SDK comparison requirement of ENG-15.
-crates/echode-engine/src/device.rs os_release
-crates/echode-engine/src/graph.rs os_workgroup_join
-crates/echode-engine/src/graph.rs os_workgroup_leave
-crates/echode-engine/src/graph.rs os_workgroup_max_parallel_threads
-crates/echode-sandbox/src/sync.rs os_workgroup_copy_port
-crates/echode-sandbox/src/sync.rs os_workgroup_create_with_port
-crates/echode-sandbox/src/sync.rs os_workgroup_join
-crates/echode-sandbox/src/sync.rs os_workgroup_leave
-crates/echode-sandbox/src/sync.rs os_release
-crates/echode-sandbox/src/sync.rs mach_port_deallocate
-crates/echode-sandbox/src/sync.rs bootstrap_check_in
-crates/echode-sandbox/src/sync.rs bootstrap_look_up
-crates/echode-sandbox/src/sync.rs bootstrap_port
-crates/echode-sandbox/src/sync.rs mach_msg
+# Handwritten foreign declarations not provided by libc, mach2 or the objc2 crates.
+# Each entry is an exact source path, Rust item name and the SDK header that declares it.
+# check-ffi compiles each declaration against that header (ENG-15, ADR 0326).
+# Do not add covered APIs. Remove entries as bindings become available.
+crates/echode-sandbox/src/os_workgroup.rs os_workgroup_copy_port os/workgroup.h
+crates/echode-sandbox/src/os_workgroup.rs os_workgroup_create_with_port os/workgroup.h
+crates/echode-sandbox/src/os_workgroup.rs os_workgroup_join os/workgroup.h
+crates/echode-sandbox/src/os_workgroup.rs os_workgroup_leave os/workgroup.h
+crates/echode-sandbox/src/os_workgroup.rs os_workgroup_max_parallel_threads os/workgroup.h
+crates/echode-sandbox/src/os_workgroup.rs os_release os/object.h

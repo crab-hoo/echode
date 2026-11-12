@@ -31,6 +31,7 @@ mod error;
 mod gui;
 mod launch_failure;
 mod main_reply;
+pub mod os_workgroup;
 mod params;
 mod payload_decode;
 mod refusal;
@@ -70,8 +71,8 @@ pub use session::{
 pub use shortcuts::PluginCommand;
 pub use sync::{SyncFlags, WaitError, wait_until_ne, wake_one};
 pub use workgroup::{
-    RetainedWorkgroup, WorkgroupMembership, copy_workgroup_port, join_passed_workgroup,
-    join_workgroup,
+    RetainedWorkgroup, WorkgroupMembership, apply_time_constraint, copy_workgroup_port,
+    join_passed_workgroup, join_workgroup,
 };
 
 /// Channels the test plugin is activated with. Not a protocol limit.

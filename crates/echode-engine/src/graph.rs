@@ -15,6 +15,11 @@
 #![allow(clippy::indexing_slicing, clippy::expect_used)]
 
 use crate::wait::{self, wait_until_ge, wait_until_ne};
+use echode_sandbox::apply_time_constraint;
+use echode_sandbox::os_workgroup::{
+    os_workgroup_join, os_workgroup_join_token_opaque_s, os_workgroup_leave,
+    os_workgroup_max_parallel_threads, os_workgroup_s,
+};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -114,7 +119,7 @@ impl Engine {
 
     pub fn spawn_workers(
         self: &Arc<Self>,
-        workgroup: *mut std::ffi::c_void,
+        workgroup: *mut os_workgroup_s,
         period_ticks: u32,
     ) -> WorkerGuard {
         let workgroup = workgroup as usize;
@@ -125,7 +130,7 @@ impl Engine {
                 thread::Builder::new()
                     .name(format!("echode-audio-{index}"))
                     .spawn(move || {
-                        worker_main(engine, workgroup as *mut std::ffi::c_void, period_ticks)
+                        worker_main(engine, workgroup as *mut os_workgroup_s, period_ticks)
                     })
                     .expect("spawn audio worker"),
             );
@@ -334,7 +339,7 @@ fn unpack(raw: u64) -> (u32, u32) {
 ///
 /// # Safety
 /// `workgroup` is null or a retained `os_workgroup_t` for the call.
-pub unsafe fn workgroup_parallel_threads(workgroup: *mut std::ffi::c_void) -> i32 {
+pub unsafe fn workgroup_parallel_threads(workgroup: *mut os_workgroup_s) -> i32 {
     if workgroup.is_null() {
         return 0;
     }
@@ -343,17 +348,14 @@ pub unsafe fn workgroup_parallel_threads(workgroup: *mut std::ffi::c_void) -> i3
     unsafe { os_workgroup_max_parallel_threads(workgroup, std::ptr::null_mut()) }
 }
 
-fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void, period_ticks: u32) {
+fn worker_main(engine: Arc<Engine>, workgroup: *mut os_workgroup_s, period_ticks: u32) {
     // Parked workers stay at user-interactive QoS so the first wake is not
     // scheduled from the default priority.
     // SAFETY: this call has no preconditions; it changes only the current thread.
     unsafe {
         libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
     }
-    let mut token = WorkgroupToken {
-        sig: 0,
-        opaque: [0; 36],
-    };
+    let mut token = os_workgroup_join_token_opaque_s::new();
     let joined = if workgroup.is_null() {
         1
     } else {
@@ -387,47 +389,6 @@ fn worker_main(engine: Arc<Engine>, workgroup: *mut std::ffi::c_void, period_tic
         // SAFETY: paired with the successful join above, on this same thread.
         unsafe { os_workgroup_leave(workgroup, &mut token) };
     }
-}
-
-fn apply_time_constraint(period_ticks: u32) -> bool {
-    if period_ticks == 0 {
-        return false;
-    }
-    let computation = (period_ticks / 2).max(1);
-    let period = period_ticks.max(computation);
-    let mut policy = libc::thread_time_constraint_policy {
-        period,
-        computation,
-        constraint: period,
-        preemptible: 1,
-    };
-    // SAFETY: `pthread_mach_thread_np` borrows the current thread's port, so
-    // there is no send right to release. The policy points at a stack value
-    // the call reads before returning.
-    let status = unsafe {
-        libc::thread_policy_set(
-            libc::pthread_mach_thread_np(libc::pthread_self()),
-            libc::THREAD_TIME_CONSTRAINT_POLICY as u32,
-            (&raw mut policy).cast::<libc::integer_t>(),
-            libc::THREAD_TIME_CONSTRAINT_POLICY_COUNT,
-        )
-    };
-    status == libc::KERN_SUCCESS
-}
-
-#[repr(C)]
-struct WorkgroupToken {
-    sig: u32,
-    opaque: [u8; 36],
-}
-
-unsafe extern "C" {
-    fn os_workgroup_join(workgroup: *mut std::ffi::c_void, token: *mut WorkgroupToken) -> i32;
-    fn os_workgroup_leave(workgroup: *mut std::ffi::c_void, token: *mut WorkgroupToken);
-    fn os_workgroup_max_parallel_threads(
-        workgroup: *mut std::ffi::c_void,
-        attr: *mut std::ffi::c_void,
-    ) -> i32;
 }
 
 pub struct WorkerGuard {

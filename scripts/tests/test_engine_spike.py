@@ -53,7 +53,7 @@ class EngineSpikeTests(unittest.TestCase):
                     rf'#\[cfg\(feature = "spike"\)\]\s+use objc2_core_audio::\{{[^}}]*\b{function}\b',
                 )
                 self.assertNotRegex(device, rf"fn {function}\(")
-        self.assertRegex(device, r'#\[cfg\(feature = "spike"\)\]\s+use libc::mach_absolute_time;')
+        self.assertRegex(device, r'#\[cfg\(feature = "spike"\)\]\s+use mach2::mach_time::mach_absolute_time;')
 
     def test_default_workspace_does_not_enable_the_spike(self):
         result = subprocess.run(

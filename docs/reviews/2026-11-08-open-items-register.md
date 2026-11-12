@@ -34,7 +34,7 @@
 | ログの仕組み | DEV-8・XCA-19 | M4 |
 | 履歴のメモリ | MOD-12・FCA-19 | R6。MOD-12 の ID 探索の部分は E1 |
 | `unsafe` と FFI の契約 | XCA-15・FFI-A1 | M2 |
-| 手書きの外部宣言 | ENG-15・FCA-12 | FCA-12 は完了（ADR 0265）。残りは M9 |
+| 手書きの外部宣言 | ENG-15・FCA-12 | FCA-12 は完了（ADR 0265）。残りは M9（ADR 0326 で完了） |
 | Codex の防護 | XCA-06・ENV-04 | M6 |
 | 入口と資料の整備 | XCA-20・DEV-9 | M7 |
 | 編集ごとの計画の作り直し | FCA-02・FCA-04 の残り | R1 |
@@ -92,7 +92,7 @@
 | M6 | Codex のフック | XCA-06・ENV-04 | 対応済み（ADR 0324）。ユーザーの方針で全てのホストのフックを外し、`check-verification` が再導入を止める |
 | M7 | 入口と依存の整備 | XCA-20・DEV-9 | 下の注を参照 |
 | M8 | Swift のテストの期限 | XCA-09 の残り | 対応済み（ADR 0325）。全ての `swift test` と契約の実行をイベント列の監視に通し、記録が 120 秒途絶えたら走っているテストを名指しして止める |
-| M9 | 手書きの外部宣言と SDK の照合 | ENG-15 の残り | 許可一覧の 14 シンボル（`sync.rs` 10、`graph.rs` 3、`device.rs` 1） |
+| M9 | 手書きの外部宣言と SDK の照合 | ENG-15 の残り | 対応済み（ADR 0326）。Mach・bootstrap は mach2 にし、残る 6 シンボルを `os_workgroup.rs` に集めた。`check-ffi` が型・構造体の配置・非推奨・配置対象を SDK のヘッダと照合する |
 | M10 | 全体の段階の `covered` が検査の識別値を見ない | ENV-02 | 理由付きで残置（ADR 0232） |
 
 - 2026-11-09（ADR 0290）: M3 の fuzz は、監査の 5 つの入口に libFuzzer の対象を置き、全体の段階の `check-fuzz` で各 60 秒動かす。
@@ -199,6 +199,10 @@
 - 2026-11-12（ADR 0325）: M8 を閉じた。`.timeLimit(.minutes(1))` は、再開されない `await` とスレッドを塞ぐ待ちを止めず、150 秒の外側の上限までヘルパーが残った。
   `.timeLimit` は付けず、`swift_test_watchdog.py` がイベント列を読み、120 秒記録がなければテストを名指しし、`sample` を残して子孫ごと止める。
   健全な実行の記録の最大の間隔は 3.1 秒（TSan の幅無制限）だった。XCTest の 28 件は列を書かないので Swift Testing へ移した。次は ADR 0278 の順の M9 である。
+- 2026-11-12（ADR 0326）: M9 を閉じた。14 シンボルのうち Mach・bootstrap の 5 つとメッセージの配置・定数は mach2 0.7.0 にし、Workgroup と `os_release` の 6 つを 1 つのモジュールに集めた。
+  許可一覧の各行に宣言するヘッダを書き、`check-ffi` が宣言を C に訳して clang で照合する。libc が非推奨にした Mach の時計と、その `allow(deprecated)` もなくした。
+  作業中に、ヘルパーが bootstrap の受信権を `mach_port_deallocate` で解放できず、名前の登録がヘルパーの寿命まで残る不具合を見つけて直した。
+  保守性の行は、触る時に行う M7 と理由付きで残す M10 を除いて終わった。次は ADR 0278 の 4 の Phase 2 である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。（統合時の記録。2026-11-11 の ADR 0320 で対応済み）
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。
@@ -275,6 +279,7 @@
 | XCA-16 | 一部対応 | `echode-audio-io`・`echode-document`・`echode-sandbox`・`echode-engine` の境界を列挙型にした。ほかの crate は続ける | ADR 0291〜0294 |
 | XCA-15・FFI-A1 | 未着手・事実 | 対応済み。全 `unsafe` に根拠、lint は `forbid`、C ABI の引数は一つの規則 | ADR 0321 |
 | DEV-8・XCA-19 | 未着手 | 対応済み。ログの窓口とロガー、コールバックの出来事のリング、ノード名付きの締め切りの超過 | ADR 0322 |
+| ENG-15 | 対応中 | 対応済み。Mach・bootstrap は mach2、残る 6 シンボルは SDK のヘッダと照合する | ADR 0326 |
 
 ### MOD-13 の照合
 

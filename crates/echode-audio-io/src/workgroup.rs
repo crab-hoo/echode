@@ -15,15 +15,16 @@ fn period_ticks(frames: u32, rate: u32, numer: u32, denom: u32) -> Result<u32, W
 }
 
 // Workgroup periods are specified in this public Mach clock's units.
-#[allow(deprecated)]
 pub(crate) fn selected(device: &OutputDevice) -> Result<PluginWorkgroup, AudioError> {
     let fault = |fault| AudioError::Workgroup {
         device: device.id,
         fault,
     };
-    let mut timebase = libc::mach_timebase_info { numer: 0, denom: 0 };
+    let mut timebase = mach2::mach_time::mach_timebase_info { numer: 0, denom: 0 };
     // SAFETY: the out parameter is correctly sized; this runs on control only.
-    if unsafe { libc::mach_timebase_info(&mut timebase) } != libc::KERN_SUCCESS {
+    if unsafe { mach2::mach_time::mach_timebase_info(&mut timebase) }
+        != mach2::kern_return::KERN_SUCCESS
+    {
         return Err(fault(WorkgroupFault::Timebase));
     }
     let ticks = period_ticks(
@@ -51,13 +52,14 @@ fn selected_with(
         device,
         fault: WorkgroupFault::Query(Box::new(error)),
     })?;
-    // SAFETY: HAL transfers one retained reference for this property.
-    let owner = unsafe { RetainedWorkgroup::from_retained(object, ticks) }.map_err(|reason| {
-        AudioError::Workgroup {
-            device,
-            fault: WorkgroupFault::Retain(reason),
-        }
-    })?;
+    // SAFETY: HAL transfers one retained reference for this property, an `os_workgroup_t`.
+    let owner =
+        unsafe { RetainedWorkgroup::from_retained(object.cast(), ticks) }.map_err(|reason| {
+            AudioError::Workgroup {
+                device,
+                fault: WorkgroupFault::Retain(reason),
+            }
+        })?;
     Ok(Arc::new(move || owner.handoff()))
 }
 

@@ -58,6 +58,7 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
   同じヘルパーで続くデバイスは 1 往復にまとめる（[ADR 0043](../decisions/0043-plugin-submit-collect.md)）
 - **Audio Workgroup の受け渡し**: ヘルパーが `bootstrap_check_in` した名前を制御スレッドが `bootstrap_look_up` し、`os_workgroup_copy_port` の送信権を Mach メッセージで渡す
   （[S3](../spikes/S3-plugin-isolation.md)、[ADR 0111](../decisions/0111-macos-helper-notices.md)）。
+  ヘルパーは受け取った後に受信権を手放し、名前の登録を消す。Mach の束縛は mach2、Workgroup の宣言は `os_workgroup.rs` にある（[ADR 0326](../decisions/0326-foreign-declarations-checked-against-the-sdk.md)）。
   製品の HAL 選択デバイスから Workgroup を取得・保持し、プラグイン追加・再作成・再起動でも引き継ぐ。
   オフライン書き出しはデバイスの Workgroup を使わない（[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）
 

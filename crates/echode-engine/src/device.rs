@@ -2,17 +2,15 @@
 //!
 //! The Phase 0 measurement is only compiled with the `spike` feature.
 
-// libc keeps the Mach clock bindings deprecated in favor of mach2.
-#![allow(deprecated)]
-
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use crate::{DeviceError, DeviceProperty};
 
+use echode_sandbox::os_workgroup::{os_release, os_workgroup_s};
 #[cfg(feature = "spike")]
-use libc::mach_absolute_time;
-use libc::{mach_timebase_info, mach_timebase_info as Timebase};
+use mach2::mach_time::mach_absolute_time;
+use mach2::mach_time::{mach_timebase_info, mach_timebase_info as Timebase};
 #[cfg(feature = "spike")]
 use objc2_core_audio::{
     AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart,
@@ -52,7 +50,7 @@ pub struct OutputInventory {
 
 /// The default output device's IO workgroup, retained until drop.
 pub struct IoWorkgroup {
-    object: *mut c_void,
+    object: *mut os_workgroup_s,
     sample_rate: f64,
     frames: u32,
     period_ticks: u32,
@@ -67,8 +65,10 @@ impl IoWorkgroup {
             .map_err(|status| DeviceProperty::SampleRate.failed(status))?;
         let frames = get_u32(device, BUFFER_FRAMES)
             .map_err(|status| DeviceProperty::BufferFrames.failed(status))?;
-        let object = get_pointer(device, WORKGROUP)
-            .map_err(|status| DeviceProperty::Workgroup.failed(status))?;
+        // The property's value is an `os_workgroup_t`.
+        let object: *mut os_workgroup_s = get_pointer(device, WORKGROUP)
+            .map_err(|status| DeviceProperty::Workgroup.failed(status))?
+            .cast();
         if object.is_null() {
             return Err(DeviceError::NoWorkgroup);
         }
@@ -96,7 +96,7 @@ impl IoWorkgroup {
         })
     }
 
-    pub fn as_ptr(&self) -> *mut c_void {
+    pub fn as_ptr(&self) -> *mut os_workgroup_s {
         self.object
     }
 
@@ -121,7 +121,7 @@ impl Drop for IoWorkgroup {
     fn drop(&mut self) {
         if !self.object.is_null() {
             // SAFETY: CoreAudio returned this object retained, and nothing else releases it.
-            unsafe { os_release(self.object) };
+            unsafe { os_release(self.object.cast()) };
         }
     }
 }
@@ -284,9 +284,4 @@ fn get_pointer(object: u32, selector: u32) -> Result<*mut c_void, i32> {
         )
     };
     if status == 0 { Ok(value) } else { Err(status) }
-}
-
-#[link(name = "System")]
-unsafe extern "C" {
-    fn os_release(object: *mut c_void);
 }

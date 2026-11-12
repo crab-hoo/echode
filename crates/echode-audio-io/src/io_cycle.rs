@@ -26,11 +26,11 @@ pub(crate) struct IoCycle {
 
 impl IoCycle {
     /// Reads the host clock's timebase. Control thread only.
-    #[allow(deprecated)]
     pub(crate) fn new(sample_rate: u32, safety_frames: u32) -> Self {
-        let mut timebase = libc::mach_timebase_info { numer: 0, denom: 0 };
+        let mut timebase = mach2::mach_time::mach_timebase_info { numer: 0, denom: 0 };
         // SAFETY: the out parameter is correctly sized; this runs on control only.
-        let read = unsafe { libc::mach_timebase_info(&mut timebase) } == libc::KERN_SUCCESS;
+        let read = unsafe { mach2::mach_time::mach_timebase_info(&mut timebase) }
+            == mach2::kern_return::KERN_SUCCESS;
         Self::with_timebase(
             sample_rate,
             safety_frames,
@@ -88,10 +88,9 @@ fn host_duration(ticks: u64, numer: u32, denom: u32) -> Duration {
 }
 
 /// The host clock now, in the units of HAL's time stamps.
-#[allow(deprecated)]
 pub(crate) fn host_now() -> u64 {
     // SAFETY: `mach_absolute_time` has no preconditions and does not block.
-    unsafe { libc::mach_absolute_time() }
+    unsafe { mach2::mach_time::mach_absolute_time() }
 }
 
 #[cfg(test)]

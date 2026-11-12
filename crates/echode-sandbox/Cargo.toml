@@ -11,6 +11,8 @@ description = "Cross-process shared memory for out-of-process audio plugins"
 echode-realtime = { path = "../echode-realtime" }
 libc = "=0.2.190"
 log.workspace = true
+# Mach ports, bootstrap and messages: libc lacks or deprecates these (ADR 0326).
+mach2 = "=0.7.0"
 memmap2 = { workspace = true }
 
 [lints]

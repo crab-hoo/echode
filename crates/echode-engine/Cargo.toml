@@ -17,6 +17,7 @@ echode-realtime = { path = "../echode-realtime" }
 echode-sandbox = { path = "../echode-sandbox" }
 libc = "=0.2.190"
 log.workspace = true
+mach2 = "=0.7.0"
 objc2-core-audio = { version = "=0.3.2", default-features = false, features = ["std", "AudioHardware", "HostTime", "objc2-core-audio-types"] }
 objc2-core-audio-types = { version = "=0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 libm = "=0.2.16"

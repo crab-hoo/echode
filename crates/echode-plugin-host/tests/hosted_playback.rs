@@ -196,7 +196,7 @@ fn headless_workgroup() -> echode_engine::RetainedWorkgroup {
         unsafe { library.get(b"echode_test_workgroup_create\0") }.unwrap();
     // SAFETY: the fixture returns one retained OS object. This test's period is
     // only a scheduling fixture, not a supported device or block-size limit.
-    unsafe { echode_engine::RetainedWorkgroup::from_retained(create(), 32000) }.unwrap()
+    unsafe { echode_engine::RetainedWorkgroup::from_retained(create().cast(), 32000) }.unwrap()
 }
 
 #[test]

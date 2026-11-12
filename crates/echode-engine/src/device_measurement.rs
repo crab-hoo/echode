@@ -366,8 +366,9 @@ fn run_measurement(
     let budget_ticks = (u128::from(budget_ns) * u128::from(timebase.denom)
         / u128::from(timebase.numer.max(1))) as u64;
 
-    let workgroup = get_pointer(device, WORKGROUP)
-        .map_err(|status| DeviceProperty::Workgroup.failed(status))?;
+    let workgroup: *mut os_workgroup_s = get_pointer(device, WORKGROUP)
+        .map_err(|status| DeviceProperty::Workgroup.failed(status))?
+        .cast();
     if workgroup.is_null() {
         return Err(DeviceError::NoWorkgroup.into());
     }
@@ -380,7 +381,7 @@ fn run_measurement(
             if workgroup_parallel <= 1 {
                 // SAFETY: `workgroup` is the retained object `get_pointer` returned, released once
                 // on this path.
-                unsafe { os_release(workgroup) };
+                unsafe { os_release(workgroup.cast()) };
                 return Err(MeasurementError::ParallelThreads(workgroup_parallel));
             }
             (workgroup_parallel as usize) - 1
@@ -418,7 +419,7 @@ fn run_measurement(
         drop(workers);
         // SAFETY: `workgroup` is the retained object `get_pointer` returned, released once on this
         // path.
-        unsafe { os_release(workgroup) };
+        unsafe { os_release(workgroup.cast()) };
         return Err(MeasurementError::CreateIoProc(status));
     }
     // SAFETY: `proc_id` is the IOProc just created on this device.
@@ -429,7 +430,7 @@ fn run_measurement(
         drop(workers);
         // SAFETY: `workgroup` is the retained object `get_pointer` returned, released once on this
         // path.
-        unsafe { os_release(workgroup) };
+        unsafe { os_release(workgroup.cast()) };
         return Err(MeasurementError::StartIo(status));
     }
 
@@ -467,7 +468,7 @@ fn run_measurement(
     drop(workers);
     // SAFETY: `workgroup` is the retained object `get_pointer` returned; the workers that joined it
     // have been dropped, and it is released once.
-    unsafe { os_release(workgroup) };
+    unsafe { os_release(workgroup.cast()) };
 
     let count = session.sample_count.load(Ordering::Relaxed) as usize;
     // SAFETY: the IOProc was stopped and destroyed above, so nothing writes the samples any more.

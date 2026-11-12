@@ -121,6 +121,10 @@ GitHub の `full` がプッシュごとに実行する。作業ごとの `make v
 `make verify-plan` がこの 3 つを選んでいる時は、消しても同じ実行で作り直すので空きは増えない。
 その時の候補は `target/release` で、使うのは `spike-*` の release 計測だけである（Makefile の `--release`。2026-11-09 に 2.0 GB）。
 `target/debug/incremental` は、同じ日の作業ではほぼ全部が使われていて、古い分は残らなかった。
+2026-11-12 は、多くの crate が依存する `echode-sandbox` を変えた後の `make verify` が、`check-swift` の後で空きを使い切った。
+空きが尽きると Claude Code のシェルは出力の一時ファイルを作れず、どのコマンドも始まらない。エージェントは自分で消せないので、ユーザーに少し空けてもらう。
+検査の終了後に 647 MiB 戻り、`product-contract-mutations`（8.9 GB）・`target/release`（1.0 GB）・`.rcgu.o`（1.0 GB）・合格済みの ASan の `target/bridge/address`（3.8 GB）を消して 14 GiB にした。
+再実行は通り、終了時の空きは 11 GiB だった。同じ変更の後は、事前確認の下限より多く空けてから始める。
 2026-11-05 には空き 227 MiB の状態で、Swift が `internal error in Code Signing subsystem` だけを返して署名で止まった。
 この表示でも `df -h` と、`swift build --build-tests` の署名の診断を採る。署名を無効にせず、容量の確保後に同じ経路で再実行する。
 増分コンパイルのキャッシュだけを整理する場合も、検査ロックとコンパイラーの停止を確認する。
@@ -168,8 +172,14 @@ Xcode 側のビルド診断が quiet 出力に出ない場合がある。大量�
 
 `scripts/check-ffi.sh` はファイルではなく、パスと関数・静的変数名の組を照合する。
 `not allowed` は新しい宣言、`stale entries` は置換済みの許可行である。
-`libc` / objc2 の公開宣言へ置き換え、古い行だけを除く。既存モジュールへの追記で回避しない。
+`libc` / mach2 / objc2 の公開宣言へ置き換え、古い行だけを除く。既存モジュールへの追記で回避しない。
 `<link_name>` は許可済みの Rust 名の差替えを示す。通常のバインディングを使う（[ADR 0265](../decisions/0265-symbol-scoped-foreign-declarations.md)）。
+`invalid or duplicate allowlist entry` は、行がパス・名前・ヘッダ（`os/workgroup.h` の形）の 3 つでない。
+
+`differ from the macOS SDK` は、許可一覧と一致した後の SDK との照合の失敗である（[ADR 0326](../decisions/0326-foreign-declarations-checked-against-the-sdk.md)）。
+各行は `ヘッダ: パス 名前` と clang の診断で、`static assertion failed` の中に SDK の型と Rust から訳した型が並ぶ。
+`struct 名前: size`・`type of フィールド` は構造体の配置、`deprecated`・`only available on macOS` は SDK の印、`undeclared identifier` はヘッダの誤りである。
+`unsupported` は C に訳せない Rust の型で、C の型か同じファイルの `#[repr(C)]` の構造体で書く。`xcrun is missing` は Xcode のコマンドラインツールの不足である。
 
 ### `check-audio-lints` が宣言や解除を拒否する
 

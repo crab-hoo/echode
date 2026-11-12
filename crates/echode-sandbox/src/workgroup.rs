@@ -11,7 +11,18 @@
 //! in the child as a null port.
 
 use crate::error::{SpawnError, SpawnStep, WorkgroupCall, WorkgroupError};
-use crate::sync;
+use crate::os_workgroup::{
+    os_release, os_workgroup_copy_port, os_workgroup_create_with_port, os_workgroup_join,
+    os_workgroup_join_token_opaque_s, os_workgroup_leave, os_workgroup_s,
+};
+use mach2::bootstrap::{bootstrap_check_in, bootstrap_look_up, bootstrap_port};
+use mach2::mach_port::{mach_port_deallocate, mach_port_mod_refs};
+use mach2::message::{
+    MACH_MSG_TYPE_COPY_SEND, MACH_MSGH_BITS, MACH_MSGH_BITS_COMPLEX, MACH_RCV_MSG,
+    MACH_RCV_TIMEOUT, MACH_SEND_MSG, MACH_SEND_TIMEOUT, mach_msg, mach_msg_body_t,
+    mach_msg_header_t, mach_msg_port_descriptor_t,
+};
+use mach2::port::{MACH_PORT_NULL, MACH_PORT_RIGHT_RECEIVE, mach_port_t};
 use std::ffi::{CString, OsString};
 use std::fs::File;
 use std::os::fd::FromRawFd;
@@ -23,7 +34,7 @@ static NAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0
 /// A retained OS workgroup. Keep this owner on the control thread; helpers
 /// receive their own send rights and reconstruct their own retained objects.
 pub struct RetainedWorkgroup {
-    object: *mut std::ffi::c_void,
+    object: *mut os_workgroup_s,
     period_ticks: u32,
 }
 
@@ -40,7 +51,7 @@ impl RetainedWorkgroup {
     /// # Safety
     /// `object` must be null or a retained os_workgroup_t owned by the caller.
     pub unsafe fn from_retained(
-        object: *mut std::ffi::c_void,
+        object: *mut os_workgroup_s,
         period_ticks: u32,
     ) -> Result<Self, WorkgroupError> {
         let owner = Self {
@@ -59,7 +70,7 @@ impl RetainedWorkgroup {
         }
         // SAFETY: handoff owns its send right until the object is reconstructed.
         let object =
-            unsafe { sync::os_workgroup_create_with_port(c"echode-parent".as_ptr(), handoff.port) };
+            unsafe { os_workgroup_create_with_port(c"echode-parent".as_ptr(), handoff.port) };
         // SAFETY: the OS returns a retained object (or null on failure).
         unsafe { Self::from_retained(object, handoff.period_ticks) }
     }
@@ -77,21 +88,15 @@ impl Drop for RetainedWorkgroup {
     fn drop(&mut self) {
         if !self.object.is_null() {
             // SAFETY: this owner consumes exactly one retained reference.
-            unsafe { sync::os_release(self.object) };
+            unsafe { os_release(self.object.cast()) };
         }
     }
 }
 
-#[repr(C)]
-pub(crate) struct Token {
-    sig: u32,
-    opaque: [u8; 36],
-}
-
 /// Joined membership. Drop it on the thread that joined.
 pub struct WorkgroupMembership {
-    workgroup: *mut std::ffi::c_void,
-    token: Token,
+    workgroup: *mut os_workgroup_s,
+    token: os_workgroup_join_token_opaque_s,
     joined: bool,
     release: bool,
 }
@@ -100,11 +105,11 @@ impl Drop for WorkgroupMembership {
     fn drop(&mut self) {
         if self.joined {
             // SAFETY: this thread joined with this token, and the object is still retained.
-            unsafe { sync::os_workgroup_leave(self.workgroup, &mut self.token) };
+            unsafe { os_workgroup_leave(self.workgroup, &mut self.token) };
         }
         if self.release && !self.workgroup.is_null() {
             // SAFETY: `os_workgroup_create_with_port` returned a retained object.
-            unsafe { sync::os_release(self.workgroup) };
+            unsafe { os_release(self.workgroup.cast()) };
         }
     }
 }
@@ -114,13 +119,13 @@ impl Drop for WorkgroupMembership {
 /// # Safety
 ///
 /// `workgroup` is a retained `os_workgroup_t` and stays valid for the call.
-pub unsafe fn copy_workgroup_port(workgroup: *mut std::ffi::c_void) -> Result<u32, WorkgroupError> {
+pub unsafe fn copy_workgroup_port(workgroup: *mut os_workgroup_s) -> Result<u32, WorkgroupError> {
     if workgroup.is_null() {
         return Err(WorkgroupError::NullWorkgroup);
     }
     let mut port = 0u32;
     // SAFETY: the workgroup object stays retained by the caller for this call.
-    let status = unsafe { sync::os_workgroup_copy_port(workgroup, &mut port) };
+    let status = unsafe { os_workgroup_copy_port(workgroup, &mut port) };
     if status != 0 || port == 0 {
         return Err(WorkgroupError::Call {
             call: WorkgroupCall::CopyPort,
@@ -136,18 +141,26 @@ pub(crate) fn deallocate_port(port: u32) {
     }
     // SAFETY: `port` is a send right in this task. Deallocating it once drops that right.
     unsafe {
-        sync::mach_port_deallocate(this_task(), port);
+        mach_port_deallocate(this_task(), port);
     }
 }
 
-fn this_task() -> u32 {
-    // `mach2` 0.7 does not expose the current task port. libc still does, and
-    // marks the wrapper deprecated.
-    #[allow(deprecated)]
-    // SAFETY: `mach_task_self` has no preconditions; it reads this task's own port.
-    unsafe {
-        libc::mach_task_self()
+/// Drop the receive right `bootstrap_check_in` gave, which unregisters the name.
+/// `mach_port_deallocate` refuses a receive right (KERN_INVALID_RIGHT), so it would stay.
+fn release_receive_right(receive: mach_port_t) {
+    if receive == MACH_PORT_NULL {
+        return;
     }
+    // SAFETY: `receive` is a receive right in this task. Removing its one reference destroys
+    // the port; nothing else in this task uses the name afterwards.
+    unsafe {
+        mach_port_mod_refs(this_task(), receive, MACH_PORT_RIGHT_RECEIVE, -1);
+    }
+}
+
+fn this_task() -> mach_port_t {
+    // SAFETY: `mach_task_self` has no preconditions; it reads this task's own port.
+    unsafe { mach2::traps::mach_task_self() }
 }
 
 /// Join `workgroup` on this thread. The caller keeps the object alive until drop.
@@ -156,7 +169,7 @@ fn this_task() -> u32 {
 ///
 /// `workgroup` is a retained `os_workgroup_t` and outlives the membership.
 pub unsafe fn join_workgroup(
-    workgroup: *mut std::ffi::c_void,
+    workgroup: *mut os_workgroup_s,
     period_ticks: u32,
 ) -> Result<WorkgroupMembership, WorkgroupError> {
     if workgroup.is_null() {
@@ -165,15 +178,12 @@ pub unsafe fn join_workgroup(
     prepare_thread(period_ticks)?;
     let mut membership = WorkgroupMembership {
         workgroup,
-        token: Token {
-            sig: 0,
-            opaque: [0; 36],
-        },
+        token: os_workgroup_join_token_opaque_s::new(),
         joined: false,
         release: false,
     };
     // SAFETY: the caller retains `workgroup` until this membership is dropped.
-    let joined = unsafe { sync::os_workgroup_join(workgroup, &mut membership.token) };
+    let joined = unsafe { os_workgroup_join(workgroup, &mut membership.token) };
     if joined != 0 {
         return Err(WorkgroupError::Call {
             call: WorkgroupCall::Join,
@@ -209,45 +219,36 @@ pub fn join_passed_workgroup(
     let c_name = CString::new(name).map_err(|_| WorkgroupError::NulInName)?;
     let mut receive = 0u32;
     // SAFETY: `bootstrap_port` is this process's bootstrap port, and `c_name` is valid.
-    let status =
-        unsafe { sync::bootstrap_check_in(sync::bootstrap_port, c_name.as_ptr(), &mut receive) };
+    let status = unsafe { bootstrap_check_in(bootstrap_port, c_name.as_ptr(), &mut receive) };
     if status != 0 || receive == 0 {
         return Err(WorkgroupError::CheckIn {
             status,
             port: receive,
         });
     }
-    let port = match receive_port(receive) {
-        Ok(port) => port,
-        Err(error) => {
-            deallocate_port(receive);
-            return Err(error);
-        }
-    };
-    deallocate_port(receive);
+    let received = receive_port(receive);
+    release_receive_right(receive);
+    let port = received?;
     if let Err(error) = prepare_thread(period_ticks) {
         deallocate_port(port);
         return Err(error);
     }
     // SAFETY: `port` is the send right just received, owned here until it is deallocated below, and
     // the name is a static C string.
-    let workgroup = unsafe { sync::os_workgroup_create_with_port(c"echode-helper".as_ptr(), port) };
+    let workgroup = unsafe { os_workgroup_create_with_port(c"echode-helper".as_ptr(), port) };
     deallocate_port(port);
     if workgroup.is_null() {
         return Err(WorkgroupError::Create);
     }
     let mut membership = WorkgroupMembership {
         workgroup,
-        token: Token {
-            sig: 0,
-            opaque: [0; 36],
-        },
+        token: os_workgroup_join_token_opaque_s::new(),
         joined: false,
         release: true,
     };
     // SAFETY: the membership owns the retained `workgroup` until it is dropped on this thread, and
     // the token lives in it.
-    let joined = unsafe { sync::os_workgroup_join(workgroup, &mut membership.token) };
+    let joined = unsafe { os_workgroup_join(workgroup, &mut membership.token) };
     if joined != 0 {
         return Err(WorkgroupError::Call {
             call: WorkgroupCall::Join,
@@ -507,8 +508,7 @@ fn lookup_send_right(name: &CString) -> Result<u32, WorkgroupError> {
     while std::time::Instant::now() < deadline {
         let mut port = 0u32;
         // SAFETY: `name` is a C string and `bootstrap_port` belongs to this process.
-        let status =
-            unsafe { sync::bootstrap_look_up(sync::bootstrap_port, name.as_ptr(), &mut port) };
+        let status = unsafe { bootstrap_look_up(bootstrap_port, name.as_ptr(), &mut port) };
         if status == 0 && port != 0 {
             return Ok(port);
         }
@@ -524,55 +524,42 @@ fn lookup_send_right(name: &CString) -> Result<u32, WorkgroupError> {
     })
 }
 
+/// A complex Mach message that carries one port.
 #[repr(C)]
 struct PortMessage {
-    bits: u32,
-    size: u32,
-    remote: u32,
-    local: u32,
-    voucher: u32,
-    id: u32,
-    count: u32,
-    name: u32,
-    pad: u32,
-    kind: u32,
+    header: mach_msg_header_t,
+    body: mach_msg_body_t,
+    port: mach_msg_port_descriptor_t,
 }
 
-const _: () = assert!(std::mem::size_of::<PortMessage>() == 40);
+const SEND_SIZE: u32 = std::mem::size_of::<PortMessage>() as u32;
 
-const MACH_SEND_MSG: u32 = 0x1;
-const MACH_RCV_MSG: u32 = 0x2;
-const MACH_SEND_TIMEOUT: u32 = 0x10;
-const MACH_RCV_TIMEOUT: u32 = 0x100;
-const MACH_MSGH_BITS_COMPLEX: u32 = 0x8000_0000;
-const MACH_MSG_TYPE_COPY_SEND: u32 = 19;
-const SEND_SIZE: u32 = 40;
-
-fn send_port(remote: u32, port: u32) -> Result<(), WorkgroupError> {
+fn send_port(remote: mach_port_t, port: mach_port_t) -> Result<(), WorkgroupError> {
     let mut message = PortMessage {
-        bits: MACH_MSG_TYPE_COPY_SEND | MACH_MSGH_BITS_COMPLEX,
-        size: SEND_SIZE,
-        remote,
-        local: 0,
-        voucher: 0,
-        id: 1,
-        count: 1,
-        name: port,
-        pad: 0,
-        // disposition in bits 16..24, descriptor type 0 in bits 24..32.
-        kind: MACH_MSG_TYPE_COPY_SEND << 16,
+        header: mach_msg_header_t {
+            msgh_bits: MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0) | MACH_MSGH_BITS_COMPLEX,
+            msgh_size: SEND_SIZE,
+            msgh_remote_port: remote,
+            msgh_local_port: MACH_PORT_NULL,
+            msgh_voucher_port: MACH_PORT_NULL,
+            msgh_id: 1,
+        },
+        body: mach_msg_body_t {
+            msgh_descriptor_count: 1,
+        },
+        port: mach_msg_port_descriptor_t::new(port, MACH_MSG_TYPE_COPY_SEND),
     };
-    // SAFETY: `message` is a complex Mach message. `remote` is a send right and
-    // `port` is the workgroup send right. Both outlive the call. COPY_SEND keeps them.
+    // SAFETY: `message` is a complex Mach message of `SEND_SIZE` bytes. `remote` is a send right
+    // and `port` is the workgroup send right. Both outlive the call. COPY_SEND keeps them.
     let status = unsafe {
-        sync::mach_msg(
+        mach_msg(
             (&raw mut message).cast(),
             MACH_SEND_MSG | MACH_SEND_TIMEOUT,
             SEND_SIZE,
             0,
-            0,
+            MACH_PORT_NULL,
             5_000,
-            0,
+            MACH_PORT_NULL,
         )
     };
     if status != 0 {
@@ -584,33 +571,29 @@ fn send_port(remote: u32, port: u32) -> Result<(), WorkgroupError> {
     Ok(())
 }
 
-fn receive_port(receive: u32) -> Result<u32, WorkgroupError> {
+fn receive_port(receive: mach_port_t) -> Result<mach_port_t, WorkgroupError> {
     let mut received = Received {
         message: PortMessage {
-            bits: 0,
-            size: std::mem::size_of::<Received>() as u32,
-            remote: 0,
-            local: 0,
-            voucher: 0,
-            id: 0,
-            count: 0,
-            name: 0,
-            pad: 0,
-            kind: 0,
+            header: mach_msg_header_t {
+                msgh_size: std::mem::size_of::<Received>() as u32,
+                ..mach_msg_header_t::default()
+            },
+            body: mach_msg_body_t::default(),
+            port: mach_msg_port_descriptor_t::default(),
         },
         trailer: [0; 64],
     };
     // SAFETY: `receive` is the receive right from `bootstrap_check_in`. The
     // buffer is larger than the message so the trailer fits.
     let status = unsafe {
-        sync::mach_msg(
+        mach_msg(
             (&raw mut received).cast(),
             MACH_RCV_MSG | MACH_RCV_TIMEOUT,
             0,
-            received.message.size,
+            received.message.header.msgh_size,
             receive,
             5_000,
-            0,
+            MACH_PORT_NULL,
         )
     };
     if status != 0 {
@@ -619,15 +602,15 @@ fn receive_port(receive: u32) -> Result<u32, WorkgroupError> {
             status,
         });
     }
-    if received.message.count != 1 || received.message.name == 0 {
-        return Err(WorkgroupError::Message {
-            count: received.message.count,
-            port: received.message.name,
-        });
+    let count = received.message.body.msgh_descriptor_count;
+    let port = received.message.port.name;
+    if count != 1 || port == 0 {
+        return Err(WorkgroupError::Message { count, port });
     }
-    Ok(received.message.name)
+    Ok(port)
 }
 
+/// The message and room for the trailer the kernel appends.
 #[repr(C)]
 struct Received {
     message: PortMessage,
@@ -645,7 +628,10 @@ fn prepare_thread(period_ticks: u32) -> Result<(), WorkgroupError> {
     Ok(())
 }
 
-fn apply_time_constraint(period_ticks: u32) -> bool {
+/// Set the calling thread's time-constraint policy for a period of `period_ticks` Mach ticks,
+/// with half of it as computation. A workgroup join needs this first, or it returns EINVAL.
+/// Returns false for a zero period or when the kernel refuses the policy.
+pub fn apply_time_constraint(period_ticks: u32) -> bool {
     if period_ticks == 0 {
         return false;
     }
@@ -669,3 +655,7 @@ fn apply_time_constraint(period_ticks: u32) -> bool {
     };
     status == libc::KERN_SUCCESS
 }
+
+#[cfg(test)]
+#[path = "workgroup_tests.rs"]
+mod tests;

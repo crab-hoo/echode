@@ -6,16 +6,16 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const WORD: usize = 8;
-const EINTR: i32 = 4;
-const EFAULT: i32 = 14;
-const ENOMEM: i32 = 12;
 
-use libc::{os_sync_wait_on_address, os_sync_wake_by_address_all};
+use libc::{
+    EFAULT, EINTR, ENOMEM, OS_SYNC_WAIT_ON_ADDRESS_NONE, OS_SYNC_WAKE_BY_ADDRESS_NONE,
+    os_sync_wait_on_address, os_sync_wake_by_address_all,
+};
 
 pub fn wake_all(addr: &AtomicU64) {
     // SAFETY: `addr` is an aligned 8-byte atomic that stays mapped for the call.
     unsafe {
-        os_sync_wake_by_address_all(addr.as_ptr().cast(), WORD, 0);
+        os_sync_wake_by_address_all(addr.as_ptr().cast(), WORD, OS_SYNC_WAKE_BY_ADDRESS_NONE);
     }
 }
 
@@ -41,7 +41,14 @@ pub fn wait_until_ge(addr: &AtomicU64, target: u64) {
 
 fn wait_while_eq(addr: &AtomicU64, expected: u64) {
     // SAFETY: same alignment contract as `wake_all`. A spurious wake retries.
-    let rc = unsafe { os_sync_wait_on_address(addr.as_ptr().cast(), expected, WORD, 0) };
+    let rc = unsafe {
+        os_sync_wait_on_address(
+            addr.as_ptr().cast(),
+            expected,
+            WORD,
+            OS_SYNC_WAIT_ON_ADDRESS_NONE,
+        )
+    };
     if rc < 0 {
         let error = std::io::Error::last_os_error();
         match error.raw_os_error() {

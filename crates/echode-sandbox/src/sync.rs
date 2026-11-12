@@ -8,53 +8,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const WORD: usize = 8;
-const EINTR: i32 = 4;
-const EFAULT: i32 = 14;
-const ENOMEM: i32 = 12;
-const ETIMEDOUT: i32 = 60;
-
-#[link(name = "System")]
-unsafe extern "C" {
-    pub(crate) fn os_workgroup_copy_port(workgroup: *mut std::ffi::c_void, port: *mut u32) -> i32;
-    pub(crate) fn os_workgroup_create_with_port(
-        name: *const std::ffi::c_char,
-        port: u32,
-    ) -> *mut std::ffi::c_void;
-    pub(crate) fn os_workgroup_join(
-        workgroup: *mut std::ffi::c_void,
-        token: *mut super::workgroup::Token,
-    ) -> i32;
-    pub(crate) fn os_workgroup_leave(
-        workgroup: *mut std::ffi::c_void,
-        token: *mut super::workgroup::Token,
-    );
-    pub(crate) fn os_release(object: *mut std::ffi::c_void);
-    pub(crate) fn mach_port_deallocate(task: u32, name: u32) -> i32;
-    pub(crate) fn bootstrap_check_in(
-        bp: u32,
-        service_name: *const std::ffi::c_char,
-        sp: *mut u32,
-    ) -> i32;
-    pub(crate) fn bootstrap_look_up(
-        bp: u32,
-        service_name: *const std::ffi::c_char,
-        sp: *mut u32,
-    ) -> i32;
-    pub(crate) static bootstrap_port: u32;
-    pub(crate) fn mach_msg(
-        msg: *mut std::ffi::c_void,
-        option: u32,
-        send_size: u32,
-        recv_size: u32,
-        recv_name: u32,
-        timeout: u32,
-        notify: u32,
-    ) -> i32;
-}
 
 use libc::{
-    OS_CLOCK_MACH_ABSOLUTE_TIME, os_sync_wait_on_address, os_sync_wait_on_address_with_timeout,
-    os_sync_wake_by_address_any,
+    EFAULT, EINTR, ENOMEM, ETIMEDOUT, OS_CLOCK_MACH_ABSOLUTE_TIME, OS_SYNC_WAIT_ON_ADDRESS_NONE,
+    OS_SYNC_WAIT_ON_ADDRESS_SHARED, OS_SYNC_WAKE_BY_ADDRESS_NONE, OS_SYNC_WAKE_BY_ADDRESS_SHARED,
+    os_sync_wait_on_address, os_sync_wait_on_address_with_timeout, os_sync_wake_by_address_any,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -65,9 +23,15 @@ pub struct SyncFlags {
 
 impl SyncFlags {
     /// Threads inside one process.
-    pub const THREAD: Self = Self { wait: 0, wake: 0 };
-    /// Mappings shared with another process (`OS_SYNC_*_SHARED`).
-    pub const PROCESS: Self = Self { wait: 1, wake: 1 };
+    pub const THREAD: Self = Self {
+        wait: OS_SYNC_WAIT_ON_ADDRESS_NONE,
+        wake: OS_SYNC_WAKE_BY_ADDRESS_NONE,
+    };
+    /// Mappings shared with another process.
+    pub const PROCESS: Self = Self {
+        wait: OS_SYNC_WAIT_ON_ADDRESS_SHARED,
+        wake: OS_SYNC_WAKE_BY_ADDRESS_SHARED,
+    };
 }
 
 #[derive(Debug)]
