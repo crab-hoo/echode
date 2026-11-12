@@ -42,7 +42,7 @@
 - [2026-11-02 コード品質とエージェント環境の横断監査](2026-11-02-cross-cutting-audit.md): XCA-01〜22。
   保存の同期の順序、ソースと CI の継続性、エージェントごとの防護、資料の量。
   XCA-01〜03 は [ADR 0230](../decisions/0230-save-durability.md) で修正した。XCA-04 は 2026-11-02 にプッシュし、2026-11-05 に GitHub（非公開）へ移した。XCA-05 は 2026-11-05 に CI を静的検査へ限った（[ADR 0269](../decisions/0269-github-public-ci-scope.md)）。
-  XCA-08・09 は [ADR 0233](../decisions/0233-verification-deferral-reasons-and-traps.md) で対応した（Swift の期限を除く）。
+  XCA-08・09 は [ADR 0233](../decisions/0233-verification-deferral-reasons-and-traps.md) で対応した。XCA-09 の Swift の期限は [ADR 0325](../decisions/0325-swift-test-stall-watchdog.md) で掛けた。
   XCA-11 は共通の運用の知識を各手順へ移し、XCA-12 は確認待ちを [ユーザー確認の一覧](../user-checks.md) へ集めた。
   XCA-16 は保存の不確定の判定を型にし（[ADR 0234](../decisions/0234-typed-journal-durability.md)）、`echode-audio-io`・`echode-document`・`echode-sandbox`・`echode-engine`・`echode-plugin-host` の境界のエラーを列挙型にした（[ADR 0291](../decisions/0291-typed-audio-io-errors.md)、[ADR 0292](../decisions/0292-typed-document-errors.md)、[ADR 0293](../decisions/0293-typed-helper-boundary-errors.md)、[ADR 0294](../decisions/0294-typed-engine-errors.md)、[ADR 0295](../decisions/0295-typed-plugin-host-errors.md)）。
   `echode-history` は保管庫・復号・ピーク（[ADR 0296](../decisions/0296-typed-storage-errors.md)）と、製品の Git・自動保存を型にした（[ADR 0297](../decisions/0297-typed-autosave-and-git-errors.md)）。

@@ -6,35 +6,21 @@ could drop it without a word. The event stream shows what the run really did.
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
+from swift_test_watchdog import LiveTests, records
+
 
 def peak_live_tests(text):
-    """Count ordinary test bodies and parameterized cases, not their containers."""
-    functions, live, peak = {}, 0, 0
-    for line in text.splitlines():
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        payload = record.get("payload", {})
-        if record.get("kind") == "test" and payload.get("kind") == "function":
-            functions[payload.get("id")] = payload.get("isParameterized", False)
-        elif record.get("kind") == "event" and payload.get("testID") in functions:
-            # A parameterized function starts before its cases acquire execution
-            # slots and ends after all of them finish. Counting that container
-            # inflates the width, while counting it once misses parallel cases.
-            parameterized = functions[payload["testID"]]
-            started = "testCaseStarted" if parameterized else "testStarted"
-            ended = "testCaseEnded" if parameterized else "testEnded"
-            if payload.get("kind") == started:
-                live += 1
-                peak = max(peak, live)
-            elif payload.get("kind") == ended:
-                live -= 1
-    return peak
+    """Count ordinary test bodies and parameterized cases, not their containers.
+
+    The watchdog that stops a stalled run counts the same live tests (ADR 0325).
+    """
+    live = LiveTests()
+    for record in records(text):
+        live.feed(record)
+    return live.peak
 
 
 def main(argv=None):

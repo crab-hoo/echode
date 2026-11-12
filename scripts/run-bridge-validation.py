@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from swift_test_watchdog import Watchdog, event_path
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--log", type=Path, required=True)
 parser.add_argument("--expect")
@@ -42,6 +44,10 @@ if args.tsan_runtime:
         ":" + environment["DYLD_LIBRARY_PATH"] if environment.get("DYLD_LIBRARY_PATH") else ""
     )
     environment["DYLD_PRINT_LIBRARIES"] = "1"
+# A Swift test run is watched in-process: an extra interpreter between this
+# environment and swift could be SIP's, which drops DYLD_* (ADR 0325).
+events = event_path(args.command)
+watchdog = Watchdog(events) if events else None
 process = subprocess.Popen(
     args.command,
     stdout=subprocess.PIPE,
@@ -50,9 +56,13 @@ process = subprocess.Popen(
     env=environment,
     start_new_session=not supervised,
 )
+if watchdog:
+    watchdog.start(process.pid)
 try:
     stdout, stderr = process.communicate(timeout=args.timeout)
 except subprocess.TimeoutExpired as error:
+    if watchdog:
+        watchdog.finish()
     # Cargo may have a hung test child. Terminate this isolated process group,
     # rather than leaving that child alive with the capture pipes and file locks.
     if supervised:
@@ -72,6 +82,9 @@ except subprocess.TimeoutExpired as error:
     args.log.write_text(stdout + stderr + "\nVALIDATION TIMEOUT\n")
     sys.exit("bridge validation did not complete; see " + str(args.log))
 output = stdout + stderr
+stalled = watchdog.finish() if watchdog else []
+if stalled:
+    output += "\n" + "\n".join(stalled) + "\n"
 args.log.write_text(output)
 if args.tsan_runtime:
     loaded = {

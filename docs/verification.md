@@ -144,6 +144,8 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
   Swift だけの変更では `check` を再利用する。リンク先の Rust が変われば両方を実行する。
   テストが起動するヘルパー・検査用プラグイン・CLI は、このレシピ自身がビルドする。
   `EchodeAppTests` の実行に HAL の代役の報告（`Real HAL reached:`）があれば、テストが合格していても失敗にする。
+  全ての Swift のテストの実行（契約・サニタイザ・`check-input` を含む）は `swift_test_watchdog.py` を通る。
+  イベント列の記録が 120 秒途絶えたら、走っているテストを名指しし、`sample` を残して止める（[ADR 0325](decisions/0325-swift-test-stall-watchdog.md)）。
 - `check-product-contracts`: [scripts/verification.json](../scripts/verification.json) の `product_contracts` に定義された全必須契約テストを実行する。
   指定した実テストが 1 件走った証拠を要求し、削除・無視・0 件を拒否する。
   作業の段階では、通常テストをテストのバイナリごとに 1 プロセスでまとめて実行する（[ADR 0271](decisions/0271-task-tier-duplicate-runs.md)）。

@@ -26,7 +26,7 @@ width = environment.get("SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH", "")
 with open(environment["ECHODE_TEST_COMMAND_LOG"], "a") as log:
     log.write("\\n".join(["__SWIFT_CALL__", *arguments, "WIDTH=" + width]) + "\\n")
 if "--sanitize" in arguments and arguments[arguments.index("--sanitize") + 1] == "thread":
-    print("dyld[1]: <fixture> " + LIBRARY)
+    print("dyld[1]: <fixture> " + LIBRARY, flush=True)
 recovery = "--filter" in arguments
 wide = "--skip-build" in arguments and not recovery
 if recovery and environment.get("ECHODE_TEST_FAIL_RECOVERY") == "1":
@@ -39,6 +39,9 @@ if "--event-stream-output-path" in arguments:
     records += [{"kind": "event", "payload": {"kind": "testStarted", "testID": str(n)}} for n in range(alive)]
     with open(arguments[arguments.index("--event-stream-output-path") + 1], "w") as events:
         events.write("\\n".join(map(json.dumps, records)) + "\\n")
+    if not recovery and environment.get("ECHODE_TEST_HANG") == ("wide" if wide else "narrow"):
+        import time
+        time.sleep(600)
 if wide and environment.get("ECHODE_TEST_WIDE_REPORT") == "1":
     print("WARNING: ThreadSanitizer: data race (pid=1)\\nSUMMARY: ThreadSanitizer: data race Fixture.swift:1 in fixture")
     sys.exit(66)
@@ -61,6 +64,7 @@ class RuntimeTests(unittest.TestCase):
             "check-product-bridge.sh",
             "run-bridge-validation.py",
             "check_test_width.py",
+            "swift_test_watchdog.py",
             "bridge-toolchain.env",
             "build-platform.env",
         ):
@@ -81,6 +85,11 @@ class RuntimeTests(unittest.TestCase):
         (tools / "swift").write_text(f"#!{sys.executable}\n" + FAKE_SWIFT.replace("LIBRARY", repr(str(library))))
         for tool in tools.iterdir():
             tool.chmod(0o755)
+        # A stall ends the run after a second here, not after the product's limit.
+        watched = scripts / "swift_test_watchdog.py"
+        source = watched.read_text()
+        self.assertIn("\nSTALL_SECONDS = 120\n", source)
+        watched.write_text(source.replace("\nSTALL_SECONDS = 120\n", "\nSTALL_SECONDS = 1\n"))
         return scripts, tools, root / "swift-arguments.log"
 
     def product_check(self, root, sanitizer, **environment):
@@ -125,6 +134,12 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("40 tests ran at once, above 16", ignored.stderr)
             judged = self.product_check(root, "address", ECHODE_TEST_FAIL_TESTS="1")
             self.assertNotEqual(judged.returncode, 0, "the capped run judges its tests")
+            # ADR 0325: the validation runner watches the stream itself, so DYLD_* reach swift.
+            hung = self.product_check(root, "address", ECHODE_TEST_HANG="narrow")
+            self.assertNotEqual(hung.returncode, 0, "a stalled run must fail the check")
+            self.assertIn("no Swift Testing record for 1 s", hung.stderr)
+            self.assertIn("Still running, oldest first:", hung.stderr)
+            self.assertIn("swift-tests.events.stall.txt", hung.stderr)
 
     def test_thread_check_judges_tests_narrow_and_looks_for_races_wide(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -149,6 +164,9 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("SUMMARY: ThreadSanitizer: data race", report.stderr)
             crash = self.product_check(root, "thread", ECHODE_TEST_WIDE_CRASH="1")
             self.assertNotEqual(crash.returncode, 0, "a run that did not finish found nothing")
+            hung = self.product_check(root, "thread", ECHODE_TEST_HANG="wide")
+            self.assertNotEqual(hung.returncode, 0, "a stalled race run found nothing either")
+            self.assertIn("no Swift Testing record for 1 s", hung.stderr)
             narrow = self.product_check(root, "thread", ECHODE_TEST_WIDE_NARROW="1")
             self.assertNotEqual(narrow.returncode, 0, "a narrow wide run would hide the races it is for")
             self.assertIn("at most 16 tests ran at once", narrow.stderr)

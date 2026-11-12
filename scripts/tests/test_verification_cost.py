@@ -203,6 +203,7 @@ class VerificationCostTests(unittest.TestCase):
         import swift_contract_runner as runner
 
         case = {
+            "id": "a-contract",
             "runner": "swift",
             "package_path": "App",
             "build_product": "EchodeAppTests",
@@ -221,6 +222,11 @@ class VerificationCostTests(unittest.TestCase):
                 "/build/tests",
                 "--filter",
                 "Suite/contract",
+                # The stream the watchdog reads; each contract has its own (ADR 0325).
+                "--event-stream-output-path",
+                str(ROOT / "scratch/contract-events/a-contract.events"),
+                "--event-stream-version",
+                "0",
                 "/build/tests",
                 "--testing-library",
                 "swift-testing",

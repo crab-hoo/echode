@@ -42,8 +42,9 @@ swift_coverage() {
     local package="$1" name="$2"
     local scratch="$OUT/swift-$name"
     # The test build itself must be instrumented. Numbers from failing tests
-    # would mislead, so a failure stops the measurement.
-    swift test -q --enable-code-coverage --package-path "$package" --scratch-path "$scratch" \
+    # would mislead, so a failure stops the measurement, as does a stall (ADR 0325).
+    python3 -B scripts/swift_test_watchdog.py -- swift test -q --enable-code-coverage --package-path "$package" \
+        --scratch-path "$scratch" --event-stream-output-path "$OUT/swift-$name.events" --event-stream-version 0 \
         >"$OUT/swift-$name.log" 2>&1 || {
         echo "coverage: $package tests failed, see $OUT/swift-$name.log" >&2
         return 1

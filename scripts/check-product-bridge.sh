@@ -57,7 +57,7 @@ cmp -s "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h ||
     cp "$product_header" swift/EchodeBridge/CEchodeFfi/include/echode.h
 # Keep every test and the recovery suite's 5s readiness deadline. A separate
 # process keeps unrelated concurrent fixtures out of the recovery readiness check.
-rm -f "$product_output/swift-tests.events"
+# The validation runner stops a run whose event stream stalls (ADR 0325).
 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="$product_width" \
     "${product_validation[@]}" --log "$product_output/swift-tests.log" "$product_swift" test -q \
     --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
@@ -66,7 +66,8 @@ SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="$product_width" \
 python3 scripts/check_test_width.py "$product_output/swift-tests.events" --at-most "$product_width"
 "${product_validation[@]}" --log "$product_output/recovery-swift-tests.log" "$product_swift" test -q --skip-build \
     --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
-    --sanitize "$product_sanitizer" "${product_swift_flags[@]}" --filter RecoveryConsentTests
+    --sanitize "$product_sanitizer" "${product_swift_flags[@]}" --filter RecoveryConsentTests \
+    --event-stream-output-path "$product_output/recovery-swift-tests.events" --event-stream-version 0
 if ! grep -Eq 'Test run with [1-9][0-9]* tests? .*passed' "$product_output/recovery-swift-tests.log"; then
     echo "product bridge: recovery suite must execute at least one test" >&2
     exit 1
@@ -74,7 +75,6 @@ fi
 if [ "$product_sanitizer" = thread ]; then
     # The width above hides races between tests that never overlap (ADR 0210), so all of
     # them run together once more. The run above judged the tests; this one finds reports.
-    rm -f "$product_output/race-swift-tests.events"
     "${product_validation[@]}" --races-only --log "$product_output/race-swift-tests.log" "$product_swift" test -q --skip-build \
         --package-path swift/EchodeApp --scratch-path "$product_output/swift" \
         --sanitize "$product_sanitizer" "${product_swift_flags[@]}" --skip RecoveryConsentTests \

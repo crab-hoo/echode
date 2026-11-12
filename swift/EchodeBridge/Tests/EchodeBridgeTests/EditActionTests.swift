@@ -1,10 +1,10 @@
 import Foundation
-import XCTest
+import Testing
 
 @testable import EchodeBridge
 
-final class EditActionTests: XCTestCase {
-    func testEveryCatalogActionMatchesTheRustAcceptedWireFixture() throws {
+struct EditActionTests {
+    @Test func everyCatalogActionMatchesTheRustAcceptedWireFixture() throws {
         let track = "00000000-0000-0000-0000-000000000001"
         let clip = "00000000-0000-0000-0000-000000000002"
         let note = "00000000-0000-0000-0000-000000000003"
@@ -43,13 +43,13 @@ final class EditActionTests: XCTestCase {
                 frames: .max),
             .importAudio(track: track, start: 26, path: "/tmp/音声 \"one\".wav"),
         ]
-        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "edit-actions", withExtension: "json"))
+        let fixture = try #require(Bundle.module.url(forResource: "edit-actions", withExtension: "json"))
         let expected = try JSONSerialization.jsonObject(with: Data(contentsOf: fixture))
         let actual = try JSONSerialization.jsonObject(with: JSONEncoder().encode(actions))
-        XCTAssertEqual(try canonical(actual), try canonical(expected))
+        #expect(try canonical(actual) == canonical(expected))
     }
 
-    func testIntegerExtremesAndOptionalValuesAreNotConvertedThroughDouble() throws {
+    @Test func integerExtremesAndOptionalValuesAreNotConvertedThroughDouble() throws {
         let actions: [EditAction] = [
             .setClipFades(clip: "clip", fadeIn: .min, fadeOut: .max),
             .placeAudio(
@@ -64,18 +64,18 @@ final class EditActionTests: XCTestCase {
         let encoded = try JSONEncoder().encode(actions)
         let text = String(decoding: encoded, as: UTF8.self)
         for literal in ["-9223372036854775808", "9223372036854775807", "9007199254740993", "18446744073709551615"] {
-            XCTAssertTrue(text.contains(literal), "Missing exact integer \(literal): \(text)")
+            #expect(text.contains(literal), "Missing exact integer \(literal): \(text)")
         }
-        let objects = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
+        let objects = try #require(JSONSerialization.jsonObject(with: encoded) as? [[String: Any]])
         for (index, key, value) in [
             (2, "copy", "copy"), (3, "parent", "parent"), (4, "state", "state"), (5, "before", "before"),
             (6, "before", "before"),
         ] {
-            XCTAssertEqual(objects[index][key] as? String, value)
+            #expect(objects[index][key] as? String == value)
         }
     }
 
-    func testResultReferencesUseTheTransactionWireFormAndKeepLiteralsAndNull() throws {
+    @Test func resultReferencesUseTheTransactionWireFormAndKeepLiteralsAndNull() throws {
         let actions: [ReferencingEditAction] = [
             .addTrack(name: .value("新しい \"track\"")),
             .importAudio(
@@ -83,7 +83,7 @@ final class EditActionTests: XCTestCase {
             .setParent(track: .result(action: 0, field: "id"), parent: nil),
         ]
         let encoded = try JSONEncoder().encode(actions)
-        XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("9007199254740993"))
+        #expect(String(decoding: encoded, as: UTF8.self).contains("9007199254740993"))
         let expected: [[String: Any]] = [
             ["type": "track.add", "name": "新しい \"track\""],
             [
@@ -92,17 +92,19 @@ final class EditActionTests: XCTestCase {
             ],
             ["type": "track.set_parent", "track": ["ref": 0, "field": "id"], "parent": NSNull()],
         ]
-        XCTAssertEqual(try canonical(JSONSerialization.jsonObject(with: encoded)), try canonical(expected))
+        #expect(try canonical(JSONSerialization.jsonObject(with: encoded)) == canonical(expected))
     }
 
-    func testFloatBitsSurviveEncodingAndNonFiniteValuesAreRejected() throws {
+    @Test func floatBitsSurviveEncodingAndNonFiniteValuesAreRejected() throws {
         struct Parameter: Decodable { let value: Float }
         for value in [Float.leastNonzeroMagnitude, Float.greatestFiniteMagnitude, -Float.leastNormalMagnitude, -0.25] {
             let bytes = try JSONEncoder().encode(EditAction.setParameter(parameter: "parameter", value: value))
-            XCTAssertEqual(try JSONDecoder().decode(Parameter.self, from: bytes).value.bitPattern, value.bitPattern)
+            #expect(try JSONDecoder().decode(Parameter.self, from: bytes).value.bitPattern == value.bitPattern)
         }
         for value in [Float.nan, Float.infinity, -Float.infinity] {
-            XCTAssertThrowsError(try JSONEncoder().encode(EditAction.setClipGain(clip: "clip", gain: value)))
+            #expect(throws: (any Error).self) {
+                try JSONEncoder().encode(EditAction.setClipGain(clip: "clip", gain: value))
+            }
         }
     }
 

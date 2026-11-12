@@ -85,16 +85,26 @@ bundle のない実行ファイルでは、置かれたフォルダが主 bundle
 
 オブジェクトは再ビルドで再び増えるので、今回の整理を恒久的な自動掃除と扱わない。
 期限を延ばしたりテストを省略せず、整理後も通常の `make verify` で正式な結果を取り直す。
+大量に消した後は、`fseventsd` の CPU が下がってから検査する（下の `FSEvents did not report the new bundle`）。
 
-### `swift test` が出力なしで止まる（Swift Testing の待ち続け）
+### `swift test` が止まる（`swift_test_watchdog: no Swift Testing record`）
 
-Swift Testing は始めた全テストの終わりを待つ。再開されない `await` が 1 つあると、全スレッドが休んだまま実行が続き、遅いだけに見える。
+Swift Testing は始めた全テストの終わりを待つ。再開されない `await` やスレッドを塞ぐ待ちが 1 つあると、全スレッドが休んだまま実行が続き、遅いだけに見える。
+`.timeLimit` はテストのタスクを取り消すだけで、この形を止めない（[ADR 0325](../decisions/0325-swift-test-stall-watchdog.md)）。
 2026-10-25 にはこれで約 4 時間止まり、検査の 1,200 秒の期限の後に `swiftpm-testing-helper` が親を失って（PPID 1）残った。
-健全な EchodeApp の全テストは 10〜15 秒である。手で全体を流す時は `perl -e 'alarm 180; exec @ARGV' swift test -q ...` のように上限を付ける。
-`/usr/bin/perl` は SIP の保護下で `DYLD_*` を落とす。サニタイザの実行では上限の後に設定する
-（`perl -e 'alarm 180; exec @ARGV' bash -c 'export DYLD_...; exec swift test ...'`）。そうしないと固定した TSan のランタイムが黙って外れる。
-検査を止めた時と期限で終わった時は、再実行の前に `pgrep -fl swiftpm-testing-helper` で残りを探して止める。
-止まったテストは、ログで始まって終わっていないものを並べて探す。必要なら `git stash` した基準と比べる。
+
+検査の全ての Swift のテストは `scripts/swift_test_watchdog.py` を通る。イベント列の記録が 120 秒途絶えると止め、次を示して 124 で終わる。
+
+- `Still running, oldest first:` の下に、始まって終わっていないテストと経過秒。最も古いものが第一の候補で、同時に止まった他のテストも並ぶ。
+- `No test was running` なら、テストの間か、全テストの後に終わらない（`runEnded` の後）。
+- `Stacks:` の `<列>.stall.txt` に、`swiftpm-testing-helper` の `sample` がある。スレッドを塞ぐ待ちはテストの枠が出る。
+  再開されない `await` はどのスレッドにも出ないので、名前のテストの `await` を、再開する側から読む。
+
+健全な実行の記録の最大の間隔は 3.1 秒、最長のテスト本体は 11 秒（TSan）である。名前のないまま止まった時や、健全なのに止まった時は、列の間隔を測って ADR 0325 の値と比べる。
+手で全体を流す時も監視を通す（`python3 -B scripts/swift_test_watchdog.py -- swift test -q ... --event-stream-output-path P --event-stream-version 0`）。
+サニタイザの実行では間に `/usr/bin/python3` や `/usr/bin/perl` を挟まない。SIP の保護下で `DYLD_*` が落ち、固定した TSan のランタイムが黙って外れる。
+`run-bridge-validation.py` は監視をプロセス内で動かすので、`make check-bridge-tsan` はそのまま使える。
+検査を外側の期限で止めた時は、再実行の前に `pgrep -fl swiftpm-testing-helper` で残りを探して止める。必要なら `git stash` した基準と比べる。
 
 ### 空き容量不足（`No space left on device` / `Errno 28`）
 
@@ -116,6 +126,16 @@ GitHub の `full` がプッシュごとに実行する。作業ごとの `make v
 増分コンパイルのキャッシュだけを整理する場合も、検査ロックとコンパイラーの停止を確認する。
 `target/debug/incremental` と、再利用する成果物・鮮度情報の `deps`・`build`・`.fingerprint` を区別し、後者と反例・サニタイザ専用のビルド先、検査記録は残す。
 既に鮮度のある同じ Cargo ビルドを再実行し、成果物のサイズ・更新時刻が変わらないことを照合する。ソースの再ビルドが要る場合は遅くなるため、影響なしとは扱わない。
+
+### `check` の `FSEvents did not report the new bundle`（`watch::tests`）
+
+`echode-plugin-host` の `creating_and_removing_a_bundle_shows_up_in_the_catalog` が、追加（203 行）か削除（214 行）の通知を 5 秒待って失敗する。
+2026-11-12 は、`target/debug/deps` の `.rcgu.o` を 191,929 件消した後の `make verify` で起き、単独の再実行 5 回も全て失敗した。
+その間 `fseventsd` は CPU 約 100% だった。下がった後は、同じテストが 4 回とも 0.2〜0.3 秒で通った。ソースは前回の合格と同じだった。
+消した直後の状態を測っていないので、原因を大量の削除と断定はしていない。
+
+`ps -axo pid,%cpu,command | grep fseventsd` で CPU を見る。高ければ製品の不具合と扱わず、待ち時間を延ばさず、下がってから再実行する。
+2026-11-12 は、監視を始めてから約 3 分で 1% 未満になった。下がっても失敗するなら、`watch.rs` の通知の経路を調べる。
 
 ### `cargo test -p echode-plugin-host` を直接動かすと `hosted_playback` の多くが無音の断定で失敗する
 

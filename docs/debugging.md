@@ -34,8 +34,9 @@ make debug-report
   - `check-verification` の `VERIFICATION TIMEOUT`
   - `check` の `VERIFICATION TIMEOUT`
   - Rust のテストで最初の音声ファイルの読込みが数秒〜十数秒かかる（`audition stalled at ... phase: Loading`）
-  - `swift test` が出力なしで止まる（Swift Testing の待ち続け）
+  - `swift test` が止まる（`swift_test_watchdog: no Swift Testing record`）
   - 空き容量不足（`No space left on device` / `Errno 28`）
+  - `check` の `FSEvents did not report the new bundle`（`watch::tests`）
   - 検査の後に `target/debug/echode` のプラグイン処理が `control socket closed: dyld[...]: Library not loaded: @rpath/libclang_rt.rtsan_osx_dynamic.dylib` で失敗する
   - `cargo test -p echode-plugin-host` を直接動かすと `hosted_playback` の多くが無音の断定で失敗する
 - ツール・ビルド・生成物

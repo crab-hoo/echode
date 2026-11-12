@@ -110,6 +110,10 @@ def run_tests(name, *arguments, environment=None):
     """The exit code and refusals of one `swift test`; the bundle is already built."""
     events, log = OUTPUT / f"{name}.events", OUTPUT / f"{name}.log"
     command = [
+        sys.executable,
+        "-B",
+        str(ROOT / "scripts/swift_test_watchdog.py"),
+        "--",
         "swift",
         "test",
         "--skip-build",

@@ -280,7 +280,8 @@ spike-input:
 	cd spikes/input && swift run
 
 check-input:
-	swift test -q --package-path spikes/input --scratch-path target/input-tests
+	python3 -B scripts/swift_test_watchdog.py -- swift test -q --package-path spikes/input --scratch-path target/input-tests \
+		--event-stream-output-path target/input-tests/swift-test.events --event-stream-version 0
 
 # Timing belongs in release measurements, not in the normal correctness checks.
 spike-render:

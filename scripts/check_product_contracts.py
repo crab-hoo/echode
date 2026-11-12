@@ -43,6 +43,7 @@ def load_verify():
 verify = load_verify()
 from swift_contract_runner import batch_invocation as swift_batch_invocation
 from swift_contract_runner import invocation as swift_invocation
+from swift_test_watchdog import Watchdog, event_path
 
 
 def test_invocation(root, contract):
@@ -55,6 +56,10 @@ def run_process(args, *, cwd, capture_output, text, timeout, env=None):
     # Keep descendants in the outer verifier's isolated group, just like the
     # sanitizer driver. Its watchdog must be able to stop the entire check.
     supervised = os.environ.get("ECHODE_VERIFY_GROUP") == "1" and os.getsid(0) == os.getpgrp()
+    # A Swift run that stalls ends with the stalled tests named, not at the
+    # contract's timeout. Watched in-process to keep the helper's DYLD_* (ADR 0325).
+    events = event_path(args)
+    watchdog = Watchdog(Path(cwd or ".") / events) if events else None
     process = subprocess.Popen(
         args,
         cwd=cwd,
@@ -64,9 +69,13 @@ def run_process(args, *, cwd, capture_output, text, timeout, env=None):
         env=env,
         start_new_session=not supervised,
     )
+    if watchdog:
+        watchdog.start(process.pid)
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
+        if watchdog:
+            watchdog.finish()
         if supervised:
             print("product contract timed out; stopping the verification group", file=sys.stderr, flush=True)
             os.killpg(os.getpgrp(), signal.SIGKILL)
@@ -77,6 +86,10 @@ def run_process(args, *, cwd, capture_output, text, timeout, env=None):
             pass
         process.communicate()
         raise
+    report = watchdog.finish() if watchdog else []
+    if report:
+        note = "\n" + "\n".join(report) + "\n"
+        stderr = (stderr or "") + note if text else (stderr or b"") + note.encode()
     return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
 
 

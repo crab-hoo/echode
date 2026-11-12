@@ -91,7 +91,7 @@
 | M5 | Swift・Python・シェルの整形と lint | XCA-18 | 対応済み（ADR 0323）。`check-lint` が swift-format・ruff・shfmt・shellcheck を全ファイルにかける。版は固定し、swift-format は Xcode に従う |
 | M6 | Codex のフック | XCA-06・ENV-04 | 対応済み（ADR 0324）。ユーザーの方針で全てのホストのフックを外し、`check-verification` が再導入を止める |
 | M7 | 入口と依存の整備 | XCA-20・DEV-9 | 下の注を参照 |
-| M8 | Swift のテストの期限 | XCA-09 の残り | `.timeLimit` は 0 件 |
+| M8 | Swift のテストの期限 | XCA-09 の残り | 対応済み（ADR 0325）。全ての `swift test` と契約の実行をイベント列の監視に通し、記録が 120 秒途絶えたら走っているテストを名指しして止める |
 | M9 | 手書きの外部宣言と SDK の照合 | ENG-15 の残り | 許可一覧の 14 シンボル（`sync.rs` 10、`graph.rs` 3、`device.rs` 1） |
 | M10 | 全体の段階の `covered` が検査の識別値を見ない | ENV-02 | 理由付きで残置（ADR 0232） |
 
@@ -196,6 +196,9 @@
   次は ADR 0278 の順の M6 である。
 - 2026-11-12（ADR 0324）: M6 を閉じた。監査の修正方針（Codex の matcher と応答を直す）は採らず、ユーザーの方針で Claude Code・Codex・Cursor のフックを全て外した。
   検査中の編集は従来どおり `verify.py` が `stale` にし、待つには `make wait-verify` を使う。外側の上限 `hook_timeout` もなくした。次は ADR 0278 の順の M8 である。
+- 2026-11-12（ADR 0325）: M8 を閉じた。`.timeLimit(.minutes(1))` は、再開されない `await` とスレッドを塞ぐ待ちを止めず、150 秒の外側の上限までヘルパーが残った。
+  `.timeLimit` は付けず、`swift_test_watchdog.py` がイベント列を読み、120 秒記録がなければテストを名指しし、`sample` を残して子孫ごと止める。
+  健全な実行の記録の最大の間隔は 3.1 秒（TSan の幅無制限）だった。XCTest の 28 件は列を書かないので Swift Testing へ移した。次は ADR 0278 の順の M9 である。
 - M1 は保存の不確定だけを型にした（[ADR 0234](../decisions/0234-typed-journal-durability.md)）。11/2 の後に作った `echode-document` にも 16 か所ある。（統合時の記録。2026-11-11 の ADR 0320 で対応済み）
 - M7: `justfile` に `verify-full`・`agent-context` がない。`check-shell` は Swift のラッパーの検査の名前のまま。
   `check-base` の `cargo build` に `--locked` がない。`libc` を 7 crate、`serde_json` を 8 crate が個別に宣言する。

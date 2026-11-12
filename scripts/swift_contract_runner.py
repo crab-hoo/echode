@@ -26,6 +26,12 @@ def runtime(root, package, product, scratch):
     return str(helper), str(bundle), str(frameworks), str(libraries)
 
 
+def watched(root, scratch, name):
+    """The event stream of one helper run, which the watchdog reads (ADR 0325)."""
+    events = Path(root) / scratch / "contract-events" / (name + ".events")
+    return ["--event-stream-output-path", str(events), "--event-stream-version", "0"]
+
+
 def environment(frameworks, libraries):
     env = dict(os.environ)
     for name, value in (("DYLD_FRAMEWORK_PATH", frameworks), ("DYLD_LIBRARY_PATH", libraries)):
@@ -42,9 +48,17 @@ def batch_invocation(root, contracts, scratch):
         for contract in contracts
         for argument in ("--filter", re.escape(contract["suite"] + "/" + contract["test"]))
     ]
-    return [helper, "--test-bundle-path", bundle, *filters, bundle, "--testing-library", "swift-testing"], environment(
-        frameworks, libraries
-    )
+    events = watched(root, scratch, "batch-" + first["build_product"])
+    return [
+        helper,
+        "--test-bundle-path",
+        bundle,
+        *filters,
+        *events,
+        bundle,
+        "--testing-library",
+        "swift-testing",
+    ], environment(frameworks, libraries)
 
 
 def invocation(root, contract, scratch):
@@ -61,6 +75,7 @@ def invocation(root, contract, scratch):
         bundle,
         "--filter",
         selection,
+        *watched(root, scratch, contract["id"]),
         bundle,
         "--testing-library",
         "swift-testing",

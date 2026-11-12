@@ -1,54 +1,55 @@
 import CEchodeFfi
-import XCTest
+import Foundation
+import Testing
 
 @testable import EchodeBridge
 
-final class DocumentTests: XCTestCase {
-    func testVisibleElementLayoutMatchesTheGeneratedCStruct() {
-        XCTAssertEqual(MemoryLayout<VisibleElement>.size, 72)
-        XCTAssertEqual(MemoryLayout<VisibleElement>.stride, 72)
-        XCTAssertEqual(MemoryLayout<VisibleElement>.alignment, 4)
-        XCTAssertEqual(MemoryLayout<PianoNoteElement>.size, 104)
-        XCTAssertEqual(MemoryLayout<PianoNoteElement>.stride, 104)
-        XCTAssertEqual(MemoryLayout<PianoNoteElement>.alignment, 8)
-        XCTAssertEqual(MemoryLayout<TransportPosition>.size, 16)
+struct DocumentTests {
+    @Test func visibleElementLayoutMatchesTheGeneratedCStruct() {
+        #expect(MemoryLayout<VisibleElement>.size == 72)
+        #expect(MemoryLayout<VisibleElement>.stride == 72)
+        #expect(MemoryLayout<VisibleElement>.alignment == 4)
+        #expect(MemoryLayout<PianoNoteElement>.size == 104)
+        #expect(MemoryLayout<PianoNoteElement>.stride == 104)
+        #expect(MemoryLayout<PianoNoteElement>.alignment == 8)
+        #expect(MemoryLayout<TransportPosition>.size == 16)
     }
 
-    func testSessionCommandsKeepProjectUndoAndOwnedStateIndependent() async throws {
+    @Test func sessionCommandsKeepProjectUndoAndOwnedStateIndependent() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echode-audio-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: directory) }
         let document = try Document(creating: directory.path)
         _ = try await document.perform(#"{"type":"track.add","name":"keep"}"#)
         let state = try await document.audio(.locate(tick: 705_600))
-        XCTAssertEqual(state.tick, 705_600)
-        XCTAssertFalse(state.playing)
-        XCTAssertTrue(state.devices.isEmpty)
+        #expect(state.tick == 705_600)
+        #expect(!state.playing)
+        #expect(state.devices.isEmpty)
         let feed = document.playbackFeed
-        XCTAssertEqual(feed.position.tick, 705_600)
+        #expect(feed.position.tick == 705_600)
         let undone = try await document.undo()
-        XCTAssertEqual(undone.trackCount, 0)
+        #expect(undone.trackCount == 0)
         let retained = try await document.snapshot()
         _ = try await document.audio(.stop)
-        XCTAssertEqual(try retained.audioState().tick, 705_600)
+        #expect(try retained.audioState().tick == 705_600)
         do {
             _ = try await document.audio(.locate(tick: -1))
-            XCTFail("negative seek")
+            Issue.record("negative seek")
         } catch {}
         document.shutdown()
-        XCTAssertFalse(feed.position.playing)
+        #expect(!feed.position.playing)
         do {
             _ = try await document.audio(.status)
-            XCTFail("stopped session accepted a command")
-        } catch let error as BridgeError { XCTAssertTrue(error.message.contains("stopped")) }
+            Issue.record("stopped session accepted a command")
+        } catch let error as BridgeError { #expect(error.message.contains("stopped")) }
     }
-    func testAnAuditionReportsAnUnreadableFileThroughTheSnapshot() async throws {
+    @Test func anAuditionReportsAnUnreadableFileThroughTheSnapshot() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "echode-audition-\(UUID()).echode")
         defer { try? FileManager.default.removeItem(at: directory) }
         let document = try Document(creating: directory.path)
         // Decoding fails before any output device is asked for.
-        XCTAssertTrue(document.configureAudition(visible: false, gain: 0.25))
-        XCTAssertFalse(document.configureAudition(visible: false, gain: .nan))
+        #expect(document.configureAudition(visible: false, gain: 0.25))
+        #expect(!document.configureAudition(visible: false, gain: .nan))
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("echode-missing-\(UUID()).wav")
         document.audition(missing, from: 137, origin: AuditionOrigin(input: .key, delayMicroseconds: 900))
         var status: AuditionStatus?
@@ -57,37 +58,37 @@ final class DocumentTests: XCTestCase {
             if status?.phase == .failed { break }
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTAssertEqual(status?.phase, .failed)
-        XCTAssertEqual(status?.path, missing.path)
-        XCTAssertNotNil(status?.error)
-        XCTAssertEqual(status?.handled, status?.request)
-        XCTAssertNil(status?.sampleRate)
-        let failed = try XCTUnwrap(status?.history.last)
-        XCTAssertEqual(failed.request, status?.request)
-        XCTAssertEqual(failed.input, .key)
-        XCTAssertEqual(failed.inputDelayUs, 900)
-        XCTAssertEqual(failed.startFrame, 137)
-        XCTAssertEqual(status?.settings?.gain, 0.25)
-        XCTAssertEqual(status?.settings?.visible, false)
-        XCTAssertEqual(failed.phase, .failed)
-        XCTAssertTrue(failed.settled)
-        XCTAssertNotNil(failed.pickedUs)
-        XCTAssertNil(failed.handedUs)
+        #expect(status?.phase == .failed)
+        #expect(status?.path == missing.path)
+        #expect(status?.error != nil)
+        #expect(status?.handled == status?.request)
+        #expect(status?.sampleRate == nil)
+        let failed = try #require(status?.history.last)
+        #expect(failed.request == status?.request)
+        #expect(failed.input == .key)
+        #expect(failed.inputDelayUs == 900)
+        #expect(failed.startFrame == 137)
+        #expect(status?.settings?.gain == 0.25)
+        #expect(status?.settings?.visible == false)
+        #expect(failed.phase == .failed)
+        #expect(failed.settled)
+        #expect(failed.pickedUs != nil)
+        #expect(failed.handedUs == nil)
         document.audition(nil)
         let stopped = try await document.audio(.status).audition
-        XCTAssertEqual(stopped?.phase, .stopped)
-        XCTAssertEqual(stopped?.request, (status?.request ?? 0) + 1)
-        XCTAssertEqual(stopped?.history.last?.input, .other)
-        XCTAssertNil(stopped?.history.last?.inputDelayUs)
+        #expect(stopped?.phase == .stopped)
+        #expect(stopped?.request == (status?.request ?? 0) + 1)
+        #expect(stopped?.history.last?.input == .other)
+        #expect(stopped?.history.last?.inputDelayUs == nil)
         document.shutdown()
     }
-    func testAddingATrackCompletesOnceAndSurvivesClose() async throws {
+    @Test func addingATrackCompletesOnceAndSurvivesClose() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("echode-bridge-\(UUID().uuidString)", isDirectory: true)
         let document = try Document(creating: directory.path)
         let snapshot = try await document.perform(#"{"type":"track.add","name":"piano"}"#)
-        XCTAssertEqual(snapshot.trackCount, 1)
-        let track = try XCTUnwrap(snapshot.trackID(at: 0))
+        #expect(snapshot.trackCount == 1)
+        let track = try #require(snapshot.trackID(at: 0))
         let placed = try await document.perform(
             #"{"type":"note.insert","track":"\#(track.uuidString)","pitch":60,"velocity":100,"start":0,"length":705600}"#
         )
@@ -95,16 +96,16 @@ final class DocumentTests: XCTestCase {
             originTick: 0, widthTicks: 705_600 * 4, originTrack: 0, heightTracks: 2,
             pixelsPerTick: 1, pixelsPerTrack: 20
         )
-        XCTAssertEqual(visible.dropped, 0)
-        XCTAssertTrue(visible.elements.contains { $0.role == .note && $0.id.note != nil })
+        #expect(visible.dropped == 0)
+        #expect(visible.elements.contains { $0.role == .note && $0.id.note != nil })
         document.shutdown()
         do {
             _ = try await document.perform(#"{"type":"track.add","name":"late"}"#)
-            XCTFail("a stopped document accepted a command")
+            Issue.record("a stopped document accepted a command")
         } catch let error as BridgeError {
-            XCTAssertTrue(error.message.contains("stopped"))
+            #expect(error.message.contains("stopped"))
         }
-        XCTAssertEqual(snapshot.trackCount, 1)
+        #expect(snapshot.trackCount == 1)
         try? FileManager.default.removeItem(at: directory)
     }
 }
