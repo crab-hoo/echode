@@ -91,7 +91,18 @@ GitHub の `full` は、同じ検査を `main` へのプッシュごとに全部
 - 2026-11-02 の監査の ENV-01 の再現（`unsafe` の削除と C の変更でサニタイザが選ばれない）は、対象の選択ごとなくなった。
   `full` は変更の内容に関係なく全件を実行するので、取りこぼしは起きない。再現のテストは消し、監査の文書に経緯を足した。
 - 手元の `make verify-full` は残る。CI で再現しない失敗を調べる時と、依頼された時に使う。
-- 手元の全体の段階のビルド先（`target/bridge`、`target/toolchains`、`target/aarch64-apple-darwin`、`target/fuzz`）は、作業の段階では再利用されないので消した。
+- 手元の全体の段階だけが使うビルド先は、作業の段階では再利用されないので消した。
+  `target/bridge/thread`（3.5 GB）・`miri`（1.1 GB）、`target/aarch64-apple-darwin`（1.3 GB）、`target/toolchains/tsan`（246 MB）、`target/fuzz/corpus`（45 MB）で、空きは 11 GiB から 17 GiB になった。
+  `target/bridge` のほかの出力（`async-callback` など）は `check-swift` の `spike-bridge.sh` が使うので残した。
+
+### 既存の `full` の失敗（fuzz の準備）
+
+- この作業の前、2026-11-09 と 11-11 の `full` は、fuzz のジョブだけが `make setup-fuzz` で失敗していた（実行 42599052380・42933587976）。
+  `cargo install cargo-fuzz` が `serde_derive` を `mis-aligned LINKEDIT string pool` で読み込めなかった。ADR 0113 の macOS 27 の strip の問題である。
+- `cargo install` はリポジトリの `.cargo/config.toml` を読まないので、`strip = "none"` が届かない。
+  2026-11-12 に `cargo install -v` で、既定では `serde_derive` に `-C strip=debuginfo` が付き、`CARGO_PROFILE_RELEASE_STRIP=none` では付かないことを確かめた。
+  手元の macOS 27.0・Xcode 27.1 では、既定のままでも導入できた。ランナー（`xcode-27-arm64` 20261104.0337）でだけ落ちる。
+- `scripts/fuzz.sh`・`scripts/coverage.sh`・`make setup` の `cargo install` に `CARGO_PROFILE_RELEASE_STRIP=none` を付けた。
 
 ## 回帰・検査基盤
 
@@ -101,5 +112,7 @@ GitHub の `full` は、同じ検査を `main` へのプッシュごとに全部
 - `test_a_task_runs_every_test_and_leaves_every_counterexample_to_the_full_tier` と
   `test_a_task_runs_no_counterexample_and_the_full_tier_does_not_reuse_its_batch_evidence` が、作業の段階で反例を動かさないこと、
   全体の段階が作業のまとめた実行を再利用しないこと、現在の反例の合格を記録に残すことを検査する。
+- `test_tool_installs_keep_release_symbols_for_macos_27` が、Makefile と `scripts/*.sh` の全 `cargo install` に `CARGO_PROFILE_RELEASE_STRIP=none` があることを検査する。
+  修正前の 3 行で失敗することを確かめた。
 - `test_diagnostics` と `test_agent_context` が、`setup-bridge` の案内に全体の段階だけの準備であることを添えると検査する。
 - `test_an_edit_to_a_full_tier_input_leaves_it_to_the_full_tier` が、全体の段階の入力の変更で作業の段階が合格を失効させ、選ばないことを検査する。

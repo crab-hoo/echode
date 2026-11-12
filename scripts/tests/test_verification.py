@@ -2993,6 +2993,22 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNotNone(count)
         self.assertEqual([int(index) for index in shards[1].split(",")], list(range(int(count[1]))))
 
+    def test_tool_installs_keep_release_symbols_for_macos_27(self):
+        # ADR 0113, 0327: cargo install reads only $CARGO_HOME's config, so the project's strip = "none"
+        # does not reach it. On GitHub's xcode-27 runner the stripped serde_derive failed to load with
+        # "mis-aligned LINKEDIT string pool" and every full run's fuzz job stopped in make setup-fuzz.
+        sources = [ROOT / "Makefile", *sorted((ROOT / "scripts").glob("*.sh"))]
+        installs = [
+            (path.name, line.strip())
+            for path in sources
+            for line in path.read_text().splitlines()
+            if re.search(r"\bcargo install\b", line) and not line.lstrip().startswith("#")
+        ]
+        self.assertGreaterEqual(len(installs), 3)
+        for name, line in installs:
+            with self.subTest(file=name):
+                self.assertIn("CARGO_PROFILE_RELEASE_STRIP=none cargo install", line)
+
     def test_sanitizer_checks_build_what_their_swift_tests_launch(self):
         # ADR 0269: on a fresh runner the ASan product tests failed with "Export CLI is missing from the
         # app bundle"; locally an earlier check-swift had always left target/debug/echode behind.

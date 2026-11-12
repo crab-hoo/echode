@@ -55,7 +55,8 @@ run_target() {
 case "${1:-}" in
     setup)
         rustup toolchain install "$BRIDGE_NIGHTLY" --profile minimal
-        cargo install --locked "cargo-fuzz@$CARGO_FUZZ_VERSION"
+        # cargo install reads no project .cargo/config.toml, so keep its release strip off for macOS 27 (ADR 0113).
+        CARGO_PROFILE_RELEASE_STRIP=none cargo install --locked "cargo-fuzz@$CARGO_FUZZ_VERSION"
         ;;
     check)
         check

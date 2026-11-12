@@ -276,6 +276,9 @@ Swift の単体実行だけでは古いアクション登録簿が残り得る�
 Cargo 生成物は `xcrun vtool -show-build <バイナリ>` と `lipo -archs` で確認する（単体の `rustc --print deployment-target` は `.cargo/config.toml` を読まない）。
 Swift は `-target-cpu apple-m4` と `-Xcc -mcpu=apple-m4` を対で指定する（[ADR 0114](../decisions/0114-m4-build-baseline.md)）。
 release の proc-macro / cdylib 読込失敗（`E0463` / `mis-aligned LINKEDIT string pool`）は `.cargo/config.toml` の `strip = "none"` を確認する（[ADR 0113](../decisions/0113-product-macos-workgroup-and-caches.md)）。
+`cargo install` はリポジトリの `.cargo/config.toml` を読まず、release の既定の `-C strip=debuginfo` で依存の proc-macro を作る。
+ツールの導入は `CARGO_PROFILE_RELEASE_STRIP=none` を付ける（`test_tool_installs_keep_release_symbols_for_macos_27`）。
+2026-11-09 と 11-11 の `full` の fuzz は、これで `make setup-fuzz` の `serde_derive` の読込に失敗していた。手元の macOS 27.0・Xcode 27.1 では再現しなかった。
 `scripts/check_build_host.py` が `sysctl machdep.cpu.brand_string` を読めない隔離環境では、CPU 情報の読取が許される環境で再実行する。
 
 ### GitHub Actions の失敗

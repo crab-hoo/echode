@@ -200,8 +200,9 @@ fmt:
 	python3 -B scripts/lint.py format
 
 # Tools `make check` needs besides the toolchain in rust-toolchain.toml.
+# cargo install reads no project .cargo/config.toml, so keep its release strip off for macOS 27 (ADR 0113).
 setup:
-	cargo install --locked cargo-deny@0.20.2
+	CARGO_PROFILE_RELEASE_STRIP=none cargo install --locked cargo-deny@0.20.2
 	$(MAKE) setup-lint
 
 # The pinned ruff, shellcheck and shfmt in target/lint-tools (network). swift-format comes with Xcode.

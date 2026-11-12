@@ -56,7 +56,8 @@ swift_coverage() {
 case "${1:-}" in
     setup)
         rustup component add llvm-tools
-        cargo install --locked "cargo-llvm-cov@$CARGO_LLVM_COV_VERSION"
+        # cargo install reads no project .cargo/config.toml, so keep its release strip off for macOS 27 (ADR 0113).
+        CARGO_PROFILE_RELEASE_STRIP=none cargo install --locked "cargo-llvm-cov@$CARGO_LLVM_COV_VERSION"
         ;;
     check)
         check
