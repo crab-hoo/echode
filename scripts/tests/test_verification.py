@@ -876,7 +876,10 @@ class PolicyTests(unittest.TestCase):
     def test_device_preparation_keeps_status_and_native_column_checks(self):
         contract = next(c for c in self.policy["product_contracts"] if c["id"] == "device-preparation-ui")
         self.assertEqual((contract["runner"], contract["suite"]), ("swift", "DevicePreparationTests"))
-        self.assertIn("outputOpening: outputOpening", contract["negative_control"]["old"])
+        faults = contract["negative_controls"]
+        self.assertIn("outputOpening: outputOpening", faults[0]["old"])
+        # The open output's update has its own label (ADR 0336).
+        self.assertIn('outputUpdating ? "Updating audio output"', faults[1]["old"])
         for path in (
             "swift/EchodeBridge/Sources/EchodeBridge/Audio.swift",
             "swift/EchodeApp/Sources/EchodeAppCore/WorkspaceDeviceView.swift",

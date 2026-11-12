@@ -10,11 +10,17 @@ import Testing
 /// Audio status replies only; this fixture never opens HAL or a helper.
 private actor PreparingAudio {
     private var opening = true
+    private var updating = false
     private var revision = 1
 
     func advance() { revision += 1 }
     func prepared() {
         opening = false
+        revision += 1
+    }
+    /// An edit's replacement on the open output starts or ends (ADR 0336).
+    func update(_ value: Bool) {
+        updating = value
         revision += 1
     }
 
@@ -23,7 +29,7 @@ private actor PreparingAudio {
             AudioState.self,
             from: Data(
                 """
-                {"playing":false,"running":false,"tick":\(revision),"devices":[],"metronome":false,"opening":\(opening)}
+                {"playing":false,"running":false,"tick":\(revision),"devices":[],"metronome":false,"opening":\(opening),"updating":\(updating)}
                 """.utf8))
     }
 }
@@ -63,7 +69,8 @@ struct DevicePreparationTests {
         func refresh() {
             strip.configure(
                 devices: controller.deviceRows(on: track), track: track, document: document, busy: controller.busy,
-                states: controller.parameterStates, outputOpening: controller.outputOpening)
+                states: controller.parameterStates, outputOpening: controller.outputOpening,
+                outputUpdating: controller.outputUpdating)
             strip.layoutSubtreeIfNeeded()
         }
         refresh()
@@ -87,6 +94,19 @@ struct DevicePreparationTests {
         #expect(column.message.stringValue == text("Loading parameters"))
         #expect(state.loading && state.query == "gain")
         #expect(controller.undoCount == edited && controller.selection == selected)
+
+        // A replacement on the open output: a new device's requests wait for it.
+        await audio.update(true)
+        try await wait("the updating audio status") { controller.position == 3 }
+        refresh()
+        #expect(column.message.stringValue == text("Updating audio output"))
+        #expect(column.message.accessibilityLabel()?.contains(devices[0].title) == true)
+        #expect(!strip.columns[1].list.isHidden, "A cached list remains usable while the output updates")
+        await audio.update(false)
+        try await wait("the updated audio status") { controller.position == 4 }
+        refresh()
+        #expect(column.message.stringValue == text("Loading parameters"))
+        #expect(state.loading && controller.undoCount == edited)
         await plugin.release(device)
         await listing.value
         refresh()
@@ -119,8 +139,20 @@ struct DevicePreparationTests {
         await audio.prepared()
         await controller.refreshOutputs()
         #expect(!controller.outputOpening && invalidated.withLock { $0 })
+        let updated = Mutex(false)
+        withObservationTracking {
+            _ = controller.outputUpdating
+        } onChange: {
+            updated.withLock { $0 = true }
+        }
+        await audio.advance()
+        await controller.refreshOutputs()
+        #expect(!updated.withLock { $0 }, "Position polling must not invalidate the update status")
+        await audio.update(true)
+        await controller.refreshOutputs()
+        #expect(controller.outputUpdating && updated.withLock { $0 })
         await controller.close()
-        #expect(!controller.outputOpening)
+        #expect(!controller.outputOpening && !controller.outputUpdating)
     }
 
     @Test func preparationMessagesRespectDeviceStateAndDisclosure() throws {
@@ -132,10 +164,12 @@ struct DevicePreparationTests {
         let state = DeviceParameterState(document: document, device: device)
         let column = DeviceColumnView(
             device: row, payload: FXDrag(document: document, track: track, device: device, plugin: nil))
-        func refresh(_ state: DeviceParameterState?, opening: Bool = true, offline: Bool = false) {
+        func refresh(
+            _ state: DeviceParameterState?, opening: Bool = true, updating: Bool = false, offline: Bool = false
+        ) {
             column.configure(
                 device: TrackDevice(id: device, plugin: row.plugin, offline: offline), first: true, last: true,
-                busy: false, locked: false, outputOpening: opening, state: state)
+                busy: false, locked: false, outputOpening: opening, outputUpdating: updating, state: state)
         }
         refresh(nil)
         #expect(column.message.stringValue == text("Preparing audio output"))
@@ -150,7 +184,22 @@ struct DevicePreparationTests {
         )
         refresh(state, opening: false)
         #expect(column.message.stringValue == text("Loading parameters"))
+        // Opening the output comes before updating it; both are shared states.
+        refresh(state, opening: true, updating: true)
+        #expect(column.message.stringValue == text("Preparing audio output"))
+        refresh(state, opening: false, updating: true)
+        #expect(column.message.stringValue == text("Updating audio output"))
+        #expect(column.message.accessibilityLabel()?.contains(row.title) == true)
+        column.disclosure.clickWithoutAnimation()
+        column.disclosure.clickWithoutAnimation()
+        #expect(
+            column.message.stringValue == text("Updating audio output"), "Local disclosure must keep the update status"
+        )
         state.fail("Preparation failed")
+        refresh(state, opening: false, updating: true)
+        #expect(column.message.stringValue == "Preparation failed", "A failure comes before the update status")
+        refresh(state, opening: false, updating: true, offline: true)
+        #expect(column.message.stringValue == text("Offline device parameters"))
         refresh(state)
         #expect(column.message.stringValue == "Preparation failed" && !column.retry.isHidden)
         refresh(state, offline: true)

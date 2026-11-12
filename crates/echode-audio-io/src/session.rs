@@ -92,6 +92,10 @@ pub struct AudioState {
     /// Helpers and media are being prepared for the output on another thread.
     /// The worker keeps taking edits; nothing sounds until this clears.
     pub opening: bool,
+    /// The open output is preparing a replacement: helpers or media an edit
+    /// added (ADR 0142). A request for a device it adds waits for it, by the
+    /// same test as [`Session::device_control`] (ADR 0336).
+    pub updating: bool,
     /// Tracks the output muted by itself because a plugin returned a NaN or an
     /// infinity. Not the tracks' own mute: starting playback clears it (ADR 0282).
     pub auto_muted_tracks: Vec<TrackAutoMute>,
@@ -741,6 +745,10 @@ impl Session {
             pending_plan: status.is_some_and(|status| status.pending_plan),
             audition: self.audition.as_ref().map(crate::Audition::report),
             opening: self.opening.is_some(),
+            updating: self
+                .stream
+                .as_ref()
+                .is_some_and(OutputStream::preparing_graph),
             auto_muted_tracks: self.stream.as_ref().map_or_else(Vec::new, |stream| {
                 stream
                     .meters()

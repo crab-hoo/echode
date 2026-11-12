@@ -93,6 +93,7 @@ public final class ProjectController {
     /// The polled playhead in ticks. Read it only where the position is shown.
     public var position: Int64 { session.position }
     public var outputOpening: Bool { session.outputOpening }
+    public var outputUpdating: Bool { session.outputUpdating }
     public var playbackStart: Int64 { session.playbackStart }
     public var audioBusy: Bool { session.audioBusy }
     /// The transport bar, both rulers and the transport commands share this.

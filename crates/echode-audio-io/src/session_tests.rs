@@ -624,6 +624,10 @@ fn retained_output_replacements_wait_for_new_devices_without_reopening() {
         !session.state().opening,
         "an open output is not opening again"
     );
+    assert!(
+        session.state().updating,
+        "the replacement a new device waits for is reported"
+    );
     assert!(session.state().pending_plan);
     assert!(matches!(
         session.device_control(device),
@@ -649,7 +653,7 @@ fn retained_output_replacements_wait_for_new_devices_without_reopening() {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    assert!(!session.state().playing);
+    assert!(!session.state().playing && !session.state().updating);
     assert!(session.opened_device_control(device).is_err());
     assert_eq!(output.prepared(), 1);
 }

@@ -670,7 +670,8 @@ Undo では記録のハッシュとヘルパーが最後に保存・読込した
 開いた出力で FX を追加した時は `pending_plan` を見る。新しいヘルパーの初期化と共有領域の準備は `echode-graph-prepare` が待つ。
 その間の編集と停止は `background-graph`、導入後のデバイス要求の待ちは Session の機器なし回帰で区別する。
 状態の復元やループ変更の後で既存ヘルパーが再生成されるなら、投入時の状態一致の保持と次の `Pending` の経路を確認する。
-`opening` が偽でも `pending_plan` は真になり得る。置換専用の列の表示は未接続である。
+`opening` が偽でも `pending_plan` は真になり得る。新しいデバイスの要求が待つ置換は `updating` で、列は「音声出力を更新中」と出す（[ADR 0336](../decisions/0336-device-columns-show-output-updates.md)）。
+`updating` が偽なのに列が読込み表示のままなら、プラグインの一覧の応答待ちである。
 導入時の差分のグラフも `echode-graph-prepare` で作る。準備中に編集した後の再生が `playing` のまま `running` にならないなら、その計画の公開待ち（`holding_start`）である。
 導入直後にワーカーが待つ・置き換えられる計画が鳴るなら `output-install-graph` で導入の順序と保留を確かめる（[ADR 0333](../decisions/0333-install-diff-graph-off-worker.md)）。
 再生中の編集の素材も `echode-media-prepare` で読み、その間は前の計画が鳴る。`running` が真で `pending_plan` が真なら読込みの残りである。

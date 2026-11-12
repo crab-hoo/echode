@@ -138,6 +138,7 @@ CLAP の遅延は有効化の直後にメインスレッドで読み、初回の
 - 初回の出力準備は Swift の `AudioStatus.opening` と既存の状態ポーリングで受け取り、未取得の列の待機表示を分ける。
   取得済みの一覧・オフライン・失敗を優先し、準備完了を一覧の取得成功へ読み替えない
   （[ADR 0141](../decisions/0141-device-output-preparation-status.md)）。
+  開いた出力の置換の準備は `AudioStatus.updating` で同じく分ける。判定は新しいデバイスの要求を待たせる条件と同じである（[ADR 0336](../decisions/0336-device-columns-show-output-updates.md)）。
 - デバイス列の開閉は文書内だけの表示状態であり、音・ヘルパーの寿命・保存・Undo を変更しない。
   折りたたみ中も名前・バイパス・オフライン・チェイン操作を残し、実際の幅で配置とドロップ位置を決める
   （[ADR 0137](../decisions/0137-device-disclosure.md)）。

@@ -60,4 +60,4 @@ ADR 0276 の順で、案 1 は堅牢性（入力の待ち）、案 2 は見た�
 
 - 開いた直後の FX の追加で、ワーカーの手番がヘルパーの初期化を待たない。再生を押していれば、開始がその分遅れる。
 - 計画生成（`PlaybackControl::prepare_plan` のイベント領域の作成）は文書ワーカーに残る。
-- 置換準備専用のデバイス列の表示は未接続のまま（ADR 0142）。文書終了時の初期化待ちは [ADR 0334](0334-cancel-helper-starts-on-close.md) で取り消すようにした。
+- 置換準備専用のデバイス列の表示は未接続のまま（ADR 0142）。→ [ADR 0336](0336-device-columns-show-output-updates.md) で接続した。文書終了時の初期化待ちは [ADR 0334](0334-cancel-helper-starts-on-close.md) で取り消すようにした。

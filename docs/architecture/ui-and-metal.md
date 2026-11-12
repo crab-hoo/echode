@@ -206,6 +206,7 @@ GUI 応答性の追加要件は [処理中も作業を続ける](../interaction-
 （[ADR 0136](../decisions/0136-output-opening-off-worker.md)）。
 Swift も `AudioStatus.opening` を受け取り、未取得のデバイス列は出力準備と一覧の応答待ちを分けて表示する
 （[ADR 0141](../decisions/0141-device-output-preparation-status.md)）。
+開いた出力の置換の準備は `AudioStatus.updating` で受け取り、未取得の列は「音声出力を更新中」と出す（[ADR 0336](../decisions/0336-device-columns-show-output-updates.md)）。
 製品アプリは開いた直後に出力を準備するため、その間の未取得の列も出力準備を表示する
 （[ADR 0147](../decisions/0147-output-prewarm-and-background-media.md)）。
 出力を開いた後に新しいヘルパーが必要な編集は、まだワーカーで起動を待つ。

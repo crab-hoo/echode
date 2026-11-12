@@ -51,6 +51,9 @@ public struct AudioStatus: Decodable, Sendable, Equatable {
     /// Helpers and media are being prepared for the shared audio output.
     /// Independent of transport intent and of each device's parameter reply.
     public let opening: Bool
+    /// The open output is preparing a replacement: helpers or media an edit
+    /// added. Requests for a device it adds wait for it (ADR 0336).
+    public let updating: Bool
     public let selectedUID: String?
     public let activeDevice: OutputDevice?
     public let devices: [OutputDevice]
@@ -67,6 +70,7 @@ public struct AudioStatus: Decodable, Sendable, Equatable {
         playing = false
         running = false
         opening = false
+        updating = false
         start = 0
         paused = false
         selectedUID = nil
@@ -87,6 +91,8 @@ public struct AudioStatus: Decodable, Sendable, Equatable {
         start = try container.decodeIfPresent(Int64.self, forKey: .start) ?? 0
         paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? false
         opening = try container.decode(Bool.self, forKey: .opening)
+        // Stand-in replies written before replacements were reported omit this.
+        updating = try container.decodeIfPresent(Bool.self, forKey: .updating) ?? false
         selectedUID = try container.decodeIfPresent(String.self, forKey: .selectedUID)
         activeDevice = try container.decodeIfPresent(OutputDevice.self, forKey: .activeDevice)
         devices = try container.decode([OutputDevice].self, forKey: .devices)
@@ -99,7 +105,7 @@ public struct AudioStatus: Decodable, Sendable, Equatable {
         masterAutoMute = try container.decodeIfPresent(MasterAutoMute.self, forKey: .masterAutoMute)
     }
     enum CodingKeys: String, CodingKey {
-        case playing, running, opening, start, paused, devices, error, metronome
+        case playing, running, opening, updating, start, paused, devices, error, metronome
         case selectedUID = "selected_uid"
         case activeDevice = "active_device"
         case loopStart = "loop_start"

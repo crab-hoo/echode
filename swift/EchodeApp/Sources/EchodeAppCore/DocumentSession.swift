@@ -70,6 +70,8 @@ final class DocumentSession {
     private(set) var position: Int64
     /// Observed apart from the status so play and stop do not rebuild the device strip.
     private(set) var outputOpening: Bool
+    /// The open output prepares a replacement; observed apart like `outputOpening`.
+    private(set) var outputUpdating: Bool
     /// The remembered start in ticks, observed apart so the rulers redraw only
     /// when it changes (ADR 0155).
     private(set) var playbackStart: Int64
@@ -125,6 +127,7 @@ final class DocumentSession {
         audition = nil
         position = 0
         outputOpening = false
+        outputUpdating = false
         playbackStart = 0
     }
 
@@ -138,6 +141,7 @@ final class DocumentSession {
         audition = audio.audition
         position = audio.tick
         outputOpening = audio.opening
+        outputUpdating = audio.updating
         playbackStart = audio.start
     }
 
@@ -148,6 +152,7 @@ final class DocumentSession {
         audition = state.audition
         position = state.tick
         outputOpening = state.opening
+        outputUpdating = state.updating
         playbackStart = state.start
     }
 

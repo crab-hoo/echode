@@ -198,7 +198,7 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
     （[ADR 0329](decisions/0329-plugin-states-by-name.md)、必須契約 `plugin-state-names`）。
     閉じる・機器交換の時は、起動中のヘルパーを待たずに取り消す
     （[ADR 0334](decisions/0334-cancel-helper-starts-on-close.md)、必須契約 `helper-start-cancel`・`helper-open-cancel`・`output-close-cancel`）。
-    置換準備専用のデバイス列の表示は未接続。
+    開いた出力の更新中は、未取得の列に「音声出力を更新中」と出す（[ADR 0336](decisions/0336-device-columns-show-output-updates.md)、必須契約 `device-preparation-ui`）。
     実機の操作感と第三者プラグインでの停止の解消はユーザー確認とし、時間の実測は無視した計測として通常回帰に混ぜない。
     画面側の契約は代役のヘルパーで画面の手番を、Rust 側の契約は実ヘルパーで制御側の待ちを確認する。
     両者をつないだ実機の経路は、実機での確認の対象である。

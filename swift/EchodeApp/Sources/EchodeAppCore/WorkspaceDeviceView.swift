@@ -27,7 +27,7 @@ struct WorkspaceDeviceView: View {
                     DeviceStripCanvas(
                         controller: controller, devices: devices, track: track, document: document,
                         states: states, busy: controller.busy, locked: controller.historyBusy,
-                        outputOpening: controller.outputOpening,
+                        outputOpening: controller.outputOpening, outputUpdating: controller.outputUpdating,
                         collapsed: controller.collapsedDevices,
                         changes: devices.map { states[$0.id].map(DeviceListChange.init) }, add: add)
                     Text(text("FX chain gesture help")).font(.caption).foregroundStyle(.secondary).padding(6)
@@ -78,6 +78,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
     let busy: Bool
     let locked: Bool
     let outputOpening: Bool
+    let outputUpdating: Bool
     let collapsed: Set<UUID>
     let changes: [DeviceListChange?]
     let add: () -> Void
@@ -119,7 +120,7 @@ private struct DeviceStripCanvas: NSViewRepresentable {
         strip.onRetry = { device in controller.retryParameters(device, documentID: document) }
         strip.configure(
             devices: devices, track: track, document: document, busy: busy, locked: locked, states: states,
-            outputOpening: outputOpening, collapsed: collapsed)
+            outputOpening: outputOpening, outputUpdating: outputUpdating, collapsed: collapsed)
         view.needsLayout = true
     }
 }
@@ -188,7 +189,7 @@ final class DeviceStripView: NSView {
     func configure(
         devices: [TrackDevice], track: UUID, document: DocumentID, busy: Bool,
         locked: Bool = false, states: [UUID: DeviceParameterState] = [:], outputOpening: Bool = false,
-        collapsed: Set<UUID> = []
+        outputUpdating: Bool = false, collapsed: Set<UUID> = []
     ) {
         if self.document != document { cache = [:] }
         self.devices = devices
@@ -234,8 +235,8 @@ final class DeviceStripView: NSView {
             column.onRetry = { [weak self] in self?.onRetry?(device.id) }
             column.configure(
                 device: device, first: index == 0, last: index + 1 == devices.count,
-                busy: busy, locked: locked, outputOpening: outputOpening, collapsed: collapsed.contains(device.id),
-                state: states[device.id])
+                busy: busy, locked: locked, outputOpening: outputOpening, outputUpdating: outputUpdating,
+                collapsed: collapsed.contains(device.id), state: states[device.id])
             next.append(column)
         }
         let kept = Set(next.map(ObjectIdentifier.init))
@@ -328,6 +329,7 @@ final class DeviceColumnView: NSView, NSDraggingSource {
     /// A click on the name, without a drag, opens the plugin's own window.
     var onOpenWindow: (() -> Void)?
     private var outputOpening = false
+    private var outputUpdating = false
     var onCollapse: ((Bool) -> Void)?
     var onRetry: (() -> Void)?
     override var isFlipped: Bool { true }
@@ -400,12 +402,13 @@ final class DeviceColumnView: NSView, NSDraggingSource {
 
     func configure(
         device: TrackDevice, first: Bool, last: Bool, busy: Bool, locked: Bool, outputOpening: Bool = false,
-        collapsed: Bool = false, state: DeviceParameterState?
+        outputUpdating: Bool = false, collapsed: Bool = false, state: DeviceParameterState?
     ) {
         self.device = device
         self.state = state
         self.locked = locked
         self.outputOpening = outputOpening
+        self.outputUpdating = outputUpdating
         self.first = first
         self.last = last
         disclosure.isEnabled = !busy
@@ -468,7 +471,10 @@ final class DeviceColumnView: NSView, NSDraggingSource {
             } else if let state, let error = state.error {
                 error
             } else if state == nil || state?.loading == true {
-                text(outputOpening ? "Preparing audio output" : "Loading parameters")
+                // Shared output states, never a guess at this device's cause (ADR 0141, ADR 0336).
+                text(
+                    outputOpening
+                        ? "Preparing audio output" : outputUpdating ? "Updating audio output" : "Loading parameters")
             } else if state?.parameters.isEmpty == true {
                 text("No editable parameters")
             } else {
@@ -520,7 +526,8 @@ final class DeviceColumnView: NSView, NSDraggingSource {
         guard dragEnabled else { return }
         configure(
             device: device, first: first, last: last,
-            busy: false, locked: locked, outputOpening: outputOpening, collapsed: !isCollapsed, state: state)
+            busy: false, locked: locked, outputOpening: outputOpening, outputUpdating: outputUpdating,
+            collapsed: !isCollapsed, state: state)
         onCollapse?(isCollapsed)
     }
 
