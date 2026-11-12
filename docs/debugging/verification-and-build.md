@@ -348,8 +348,6 @@ Swift の反例ビルドは Rust ABI を作り直さない。Rust の差分を S
 正例・反例とも同じ表示形式を認識し、0 ケース・スキップ・別関数・複数の関数・ビルド失敗を合格や不具合の検出に数えない。
 一括予算は `scripts/verification.json` の各検査の `timeout`、各契約の期限は別の値である。
 Swift のコピーの初回ビルドは `SWIFT_COPY_BUILD_TIMEOUT` の範囲で行い、契約の期限に算入しない。
-検査自身の時間切れより先にフックが終了する場合は、静的なフック設定と `verification.json` の `hook_timeout` の一致を確認する。
-外側の予算は契約検査単体ではなく、全自動検査と事前確認の直列予算を覆う必要がある（[ADR 0197](../decisions/0197-verification-target-scopes.md)）。
 2026-10-29 に旧 1800 秒で全件失効時の上限到達を観測し、件数と実測に合わせて一括予算を見直した（[ADR 0195](../decisions/0195-verification-cost-observability.md)）。
 反例のコピーは `target/product-contract-mutations/checkouts/<N>` に残り、`<N>.json` が置いたファイルの一覧である。
 一覧が壊れていればコピーのソースを作り直す。コピーを疑う時は `checkouts/` を消せば次回に作り直す（初回ビルドの分だけ遅い）。
@@ -493,7 +491,7 @@ Swift の負の対照を同じ位置まで何度もやり直す場合は、契�
 
 一時リポジトリのテストでは親の `VERIFY_BASE` を隔離する。無効な ref 指定は HEAD へ黙って置換せずエラーにする。
 
-### 終了フック直後の不要な再実行
+### 検査の直後の不要な再実行
 
 ツール識別は PATH 文字列ではなく解決された `rustc` / `swift` 等の実パスを使う。
 

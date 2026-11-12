@@ -248,38 +248,6 @@ class VerificationScopeTests(unittest.TestCase):
             manifest.write_text(manifest.read_text() + '\n[lib]\npath = "tests/library.rs"\n')
             self.assertEqual(verify.package_test_excludes({folder}, root=root), [])
 
-    def test_hook_budgets_cover_serial_checks_and_lock_wait(self):
-        policy = verify.load_policy(ROOT)
-        budget = policy["hook_timeout"]
-        import wait_for_verify
-
-        self.assertEqual(wait_for_verify.DEFAULT_TIMEOUT, budget - 10)
-        automatic = [check for check in policy["checks"] if check["mode"] == "automatic"]
-        preflights = {name for check in automatic for name in check.get("preflight", [])}
-        required = sum(check["timeout"] for check in automatic) + sum(
-            policy["preflights"][name]["timeout"] for name in preflights
-        )
-        self.assertGreaterEqual(budget, required + 120)
-        cursor = json.loads((ROOT / ".cursor/hooks.json").read_text())["hooks"]
-        codex = json.loads((ROOT / ".codex/hooks.json").read_text())["hooks"]
-        for entries in cursor.values():
-            for entry in entries:
-                self.assertEqual(entry["timeout"], budget)
-        for entries in codex.values():
-            for entry in entries:
-                for hook in entry["hooks"]:
-                    self.assertEqual(hook["timeout"], budget)
-
-    def test_policy_rejects_a_hook_budget_shorter_than_serial_verification(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            policy = verify.load_policy(ROOT)
-            policy["hook_timeout"] = 3600
-            (root / "scripts").mkdir()
-            (root / verify.POLICY).write_text(json.dumps(policy))
-            with self.assertRaisesRegex(ValueError, "hook budget must cover"):
-                verify.load_policy(root)
-
     def test_generated_header_copy_is_content_stable_and_still_updates_changes(self):
         for relative in ("scripts/check-shell.sh", "scripts/check-product-bridge.sh", "Makefile"):
             text = (ROOT / relative).read_text().replace("\\\n", " ").replace("$$", "$")

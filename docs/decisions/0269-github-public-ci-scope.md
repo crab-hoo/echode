@@ -5,6 +5,7 @@
 - 関連: [ADR 0044](0044-swift-bridge.md)、[ADR 0114](0114-m4-build-baseline.md)、[ADR 0212](0212-verification-tiers.md)、
   [横断監査](../reviews/2026-11-02-cross-cutting-audit.md) の XCA-04・05・22
 - 置き換え: ADR 0044 の CI の節と、ADR 0114 の「CI のネイティブ検査」の記述
+- 後続: [ADR 0324](0324-no-agent-hooks.md) が `.codex/hooks.json` を含むエージェントのフックをなくした。
 
 ## 背景
 

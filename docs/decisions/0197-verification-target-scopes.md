@@ -7,6 +7,7 @@
 
 - 後続: [ADR 0198](0198-verification-launch-and-cache-cost.md) が診断・フックの過大な連鎖と起動コストを改定した。
 - 後続: [ADR 0212](0212-verification-tiers.md) が、リンク先の変更による反例の再検査を節目の全体検査へ移した。
+- 後続: [ADR 0324](0324-no-agent-hooks.md) がエージェントのフックと `hook_timeout` をなくした。
 ## 監査の照合
 
 毎タスクで全契約の反例を作り直す設計上の必要はない。

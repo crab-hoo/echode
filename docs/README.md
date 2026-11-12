@@ -15,7 +15,7 @@ AI エージェントはまず [AGENTS.md](../AGENTS.md) を読む。
 - [制作ワークフローとインタラクションの検討](interaction-design.md): 制作フローの操作要件と未決事項の正本（[ADR 0117](decisions/0117-workflow-interactions.md)）。
 - [開発手順](development.md): 作業の順番、[コードの所在](development.md#コードの所在)、回帰テストの追加方法、[基盤の保守](development.md#基盤の保守を同じ作業で行う)。
 - [エージェントの情報取得と実行](agent-workflow.md): 一括の開始診断、根拠付きの節・行の読込、実行と引継ぎの原則。
-- [検査手順](verification.md): 自動検査と実機検査、見送り、結果の有効期限、フックと CI。必須契約の一覧は [scripts/verification.json](../scripts/verification.json) が正本。
+- [検査手順](verification.md): 自動検査と実機検査、見送り、結果の有効期限と CI。必須契約の一覧は [scripts/verification.json](../scripts/verification.json) が正本。
 - [デバッグ手順](debugging.md): 最初の診断、症状の索引、引継ぎに残す情報。症状ごとの手順は [領域別のファイル](debugging/) にある。
 - [PLAN](PLAN.md): 製品の方針、ライセンス原則（[§2.1](PLAN.md#21-ライセンス方針の影響)）、ロードマップと完了条件。
 - [ARCHITECTURE](ARCHITECTURE.md): 全体構成と設計原則の目次。領域別の詳細は [docs/architecture/](architecture/) 配下の分割ファイルを参照する。

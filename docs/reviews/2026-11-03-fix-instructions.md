@@ -9,6 +9,7 @@
 1. AGENTS.md を読み、`make agent-context` を実行する。担当する作業単位の監査の節と関連 ADR だけを読む。
 2. 環境の状態を確かめる。
    - Claude Code は編集ツールが検査のロックを待ち、終了時に `make verify` の判定を受ける（`.claude/settings.json`）。
+     2026-11-12: これは当時の記録である。フックは全て外した（[ADR 0324](../decisions/0324-no-agent-hooks.md)）。ロックは `make wait-verify` で待つ。
    - 作業ツリーは他のセッションと共有され得る。他の作業の失敗で `make verify` が通らない時は、その作業を直さず、待つかユーザーに相談する（XCA-07）。
    - `make spike-scale` は最大で約 2 GB のメモリを使い、約 25 秒かかる。実行前に `df -h` と他の計測の有無を見る。
 3. 修正の前に再現が失敗することを確かめる。

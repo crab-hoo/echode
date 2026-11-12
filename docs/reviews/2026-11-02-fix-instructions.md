@@ -13,13 +13,14 @@
 2. 環境の状態を確かめる。
    - Claude Code は編集ツールが検査のロックを待ち、終了時に `make verify` の判定を受ける（`.claude/settings.json`）。
    - Codex のフックは開発者の絶対パスを指し、道具名も未確認である（XCA-06）。Codex では自分でロックを確かめる。
+   - 2026-11-12: 上の 2 項目は当時の記録である。フックは全て外した（[ADR 0324](../decisions/0324-no-agent-hooks.md)）。ロックは `make wait-verify` で待つ。
    - 作業ツリーは他のセッションと共有される。`make agent-context` の変更一覧には他の作業も入る。
      他の作業の失敗で `make verify` が通らない時は、その作業を直さず、待つかユーザーに相談する（XCA-07）。
    - 2026-11-02 時点の空き容量は約 9 GiB である。新しい worktree の初回の検査は 10 GB を超える。
      `make verify-full` の反例は一時 26 GB に達した。実行前に `df -h` を見る。キャッシュの削除はロックの解除後に、ユーザーと決める。
 3. 修正の前に再現が失敗することを確かめる。
    - Rust の 6 件は `make known-bugs` で走る（下の表）。
-   - Python の 2 件は [test_agent_hooks.py](../../scripts/tests/test_agent_hooks.py) の `RegisteredAuditReproductions` で、`skip` を外すと失敗する。
+   - Python の 2 件は [test_audit_reproductions.py](../../scripts/tests/test_audit_reproductions.py)（当時の `test_agent_hooks.py`）の `RegisteredAuditReproductions` で、`skip` を外すと失敗する。
    - 保存の同期の順序は `python3 -B scripts/durability_trace.py --require-durable` で調べる。`cargo build -p echode-cli` の後に使う。今は終了コード 1 になる。
 4. 意図した red の確認では、次の 2 点に注意する。
    - `checked_commands.py --expect-failure` の正規表現は、コマンド行に現れない文にする（ENV-06 が直るまで、`Command:` 行にも一致する）。
@@ -33,7 +34,7 @@
 | `audit_xca03_reimport_repairs_a_damaged_object` | XCA-03 | 同上 |
 | `audit_his_a1_a_missing_state_object_does_not_lose_later_edits` | HIS-A1 | 同上 |
 | `audit_cli_a1_a_one_frame_plugin_export_completes` | CLI-A1 | `crates/echode-cli/tests/render.rs` |
-| `test_audit_env01_deleting_unsafe_code_selects_the_sanitizers` | ENV-01 | `scripts/tests/test_agent_hooks.py` |
+| `test_audit_env01_deleting_unsafe_code_selects_the_sanitizers` | ENV-01 | `scripts/tests/test_audit_reproductions.py` |
 | `test_audit_env06_the_command_line_cannot_satisfy_an_expected_failure` | ENV-06 | 同上 |
 
 ## W1: プラグインの窓での変更（DOC-A1・DOC-A2）— P1、最初に行う

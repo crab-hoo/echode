@@ -40,7 +40,6 @@ class Languages(unittest.TestCase):
         found = lint.sources(ROOT)
         self.assertIn("scripts/lint.py", found["python"])
         self.assertIn("scripts/fuzz.sh", found["shell"])
-        self.assertIn(".claude/hooks/check-on-stop.sh", found["shell"])
         self.assertIn("swift/EchodeApp/Sources/EchodeApp/EchodeApp.swift", found["swift"])
         for names in found.values():
             for name in names:

@@ -1,14 +1,14 @@
 # 検査の手順
 
 選択・依存関係・実行予算・必須契約の正本は [scripts/verification.json](../scripts/verification.json)。
-実行器は `scripts/verify.py`。AGENTS、終了フック、CI に別の選択条件を持たせない。
+実行器は `scripts/verify.py`。AGENTS と CI に別の選択条件を持たせない。
 
 ## 二つの段階
 
 検査は `tier` で作業の段階と全体の段階に分かれる（[ADR 0212](decisions/0212-verification-tiers.md)）。
 どちらも同じポリシーから選び、同じ合否の記録を使う。
 
-- `make verify`（作業の段階）: 作業ごとの完了条件。今回の変更で壊れていないかを調べる。終了フックもこれを呼ぶ。
+- `make verify`（作業の段階）: 作業ごとの完了条件。今回の変更で壊れていないかを調べる。
 - `make verify-full`（全体の段階）: 自動検査の全件。ASan、TSan、Miri、全契約の反例を含む。
 
 全体の段階は GitHub Actions の `full` ワークフローが、`main` へのプッシュごとに実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
@@ -46,7 +46,7 @@ HEAD と作業ツリーの差分には、ステージ済み・未ステージ・
 自動検査は選択されたものをすべて通す。
 自動検査が失敗した時は、`scripts/verify.py` が該当ログから失敗箇所の抜粋を標準エラーへ表示する。
 選択された計測・実機・ネットワーク検査は、明示して実行するか、未実行の理由を記録する。
-理由なしの未実行が残れば `make verify` は非ゼロで終わる。終了フックが自動でウィンドウや音声デバイスを開くことはない。
+理由なしの未実行が残れば `make verify` は非ゼロで終わる。
 
 ```sh
 # 手動検査の実行（他の自動検査も必要に応じて実行する）
@@ -271,7 +271,7 @@ TDD の意図した red だけは、1 コマンドへ `--expect-exit` と `--exp
 Makefile はファイル全体ではなく、その検査のレシピ（`$(MAKE)` で呼ぶ対象を含む）と、変数などの全体に効く行だけを識別に含める。コメントの編集では失効しない。
 `scripts/verification.json` と Makefile の変更は、差分の基準と比べて定義・レシピが変わった検査だけを選ぶ。基準を読めない時は全自動検査を選ぶ。
 `evidence_inputs` の共通実行器の変更は作業の段階の全自動検査を選び、全体の段階の結果を失効させる。
-診断・表示・フック・CI の編集は基盤検査が扱い、製品検査の全件選択や共通識別値の失効理由にはしない。
+診断・表示・CI の編集は基盤検査が扱い、製品検査の全件選択や共通識別値の失効理由にはしない。
 Markdown と `--plan` の表示は `scripts/verification_display.py`、時間診断は `scripts/verification_metrics.py` に分離する。
 自動検査は自身の `inputs` に一致する変更でも選ばれ、補助スクリプトの変更はそれを実行する検査を選ぶ。
 `--force` は検査内の契約ごとの再利用も行わず、全契約と反例を実行する。
@@ -321,7 +321,7 @@ Swift の `build_product` はポリシーに宣言し、製品契約ではテス
 異なる反例を同じコピーへ混ぜず、全ビルドが終わってからテストする。
 アプリとプローブのビルド範囲は通常の `check-base` で維持する。
 
-## 環境、フックと CI
+## 環境、エージェントと CI
 
 新しい環境では `make setup`、動的検査には `make setup-bridge`、fuzz には `make setup-fuzz`、カバレッジの計測には `make setup-coverage` を実行する。
 一つの fuzz の対象を長く探すには `make fuzz FUZZ_TARGET=名前 FUZZ_SECONDS=秒` を使う。名前は `crates/echode-fuzz/Cargo.toml` の `[[bin]]` である。
@@ -330,13 +330,11 @@ TSan のセットアップには CMake と Ninja も必要で、固定した公�
 検査専用ランタイムの準備・再生成は `make setup-bridge`、取得済みソースだけの再ビルドは `python3 scripts/tsan_runtime.py --prepare` を使う。
 Xcode や製品アプリは変更しない。通常検査はネットワークを使わず、古い準備は失敗として報告する。
 
-`.cursor/hooks.json` の `preToolUse` は編集ツールをロック解除まで待たせ、`stop` は `completed` イベントで `scripts/verify.py`（作業の段階）を呼ぶ。
-`.claude/settings.json` の `PreToolUse` は Claude Code の編集ツール（Edit・MultiEdit・Write・NotebookEdit）を同じロックで待たせる。
-Bash は待たせないので、状態とログは読めるが、ファイルを変えるシェル操作は AGENTS のとおり自分で待つ。
-`Stop` は同じ `scripts/verify.py` を呼び、失敗すれば `decision: block` で続けさせる。同じセッションで 3 回続けて失敗した時は止める。
-`.codex/hooks.json` もアダプターを備えるが、設定ファイルの存在だけでホスト側のフック発火済みとは扱わない。フックのない環境でも `make verify` は必須である。
-フックの上限は `verification.json` の `hook_timeout` と一致させ、全自動検査と事前確認の直列予算を覆うことを検査する。
-ロック待機の上限は同じ予算から JSON 応答用の 10 秒を引く。これは検査自体の高速化や個別期限の延長ではない。
+エージェントのフックは置かない（[ADR 0324](decisions/0324-no-agent-hooks.md)）。Claude Code・Codex・Cursor のどれにも、編集の待機と終了時の検査を任せない。
+`check-verification` のテストが、各ホストのフックの設定の再導入を止める。
+完了時の `make verify` と、他の検査の実行中に編集を待つことは、AGENTS のとおり各エージェントが自分で行う。
+待つには `make wait-verify` を使う。ロックが外れれば 0、540 秒たっても外れなければ 1 で終わる（`WAIT_ARGS='--timeout 秒'` で変える）。
+待たずに入力を変えても、`scripts/verify.py` はその検査を `stale` にし、合格として残さない。失うのは実行の時間である。
 GitHub Actions の `check` は、M4 を要らない `make check-portable` と `make advisories` を実行する（[ADR 0269](decisions/0269-github-public-ci-scope.md)）。
 `check-portable` の前に `make setup-lint` で lint の固定版を入れる。
 M4 のない環境の協力者も同じ入口を使える。
@@ -379,4 +377,4 @@ CI の合格は `make verify` の合格ではなく、`report.md` にも記録�
 - **検査の段階**: `make verify` は作業の段階で、ASan・TSan・Miri と全反例は `make verify-full` の全体の段階にある。
   作業の段階の合格は全体の段階の合格ではない。未確認の検査は `make agent-context` が表示する（[ADR 0212](decisions/0212-verification-tiers.md)）。
 - **検査の種別の境界**: 通常の回帰検査、負の対照（`negative_control`）、オフスクリーンの GPU 検査、実ウィンドウの `spike-playhead` は別の証拠である。
-  長時間の計測（[ADR 0096](decisions/0096-measurement-completion.md)）、フックの直接検査と実ホストでの発火、ローカルの検査とリモートの CI、ユーザーの聴感確認も区別する。
+  長時間の計測（[ADR 0096](decisions/0096-measurement-completion.md)）、ローカルの検査とリモートの CI、ユーザーの聴感確認も区別する。

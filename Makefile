@@ -3,7 +3,7 @@
 SHELL := /bin/bash -euo pipefail
 .PHONY: spike-verification-failures
 
-.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-lint check-base check-product-contracts check-real-hal verify verify-plan check-verification doctor agent-context debug-report fmt setup setup-lint setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
+.PHONY: bundled-plugins app dist xcode sign-setup spike-app spike-playhead spike-arrange-frame spike-piano-frame spike-main-thread spike-audio spike-audition spike-plugin-tracks spike-scale check check-format check-lint check-base check-product-contracts check-real-hal verify verify-plan wait-verify check-verification doctor agent-context debug-report fmt setup setup-lint setup-bridge known-bugs advisories bless spike-isolation spike-draw spike-history spike-input check-input spike-engine spike-engine-smoke spike-bridge spike-render check-bridge check-bridge-features check-bridge-asan check-bridge-tsan check-tsan-runtime check-bridge-miri check-shell check-swift check-contract-controls contract-prerequisites verify-full rtsan setup-fuzz fuzz check-fuzz setup-coverage coverage
 
 bundled-plugins:
 	bash scripts/build-bundled-plugins.sh
@@ -139,7 +139,7 @@ check-real-hal:
 check-real-hal-names:
 	python3 -B scripts/check_real_hal.py --name-tests
 
-# Selection and evidence are shared by agents, the stop hook, and CI.
+# Selection and evidence are shared by agents and CI. No agent hook runs it (ADR 0324).
 verify:
 	python3 scripts/verify.py $(VERIFY_ARGS)
 
@@ -149,6 +149,10 @@ verify-full:
 
 verify-plan:
 	python3 scripts/verify.py --plan $(VERIFY_ARGS)
+
+# Waits for another run's target/verification/.lock before changing files (ADR 0324).
+wait-verify:
+	python3 -B scripts/wait_for_verify.py $(WAIT_ARGS)
 
 # Diagnostics only: no test execution and no pass-cache writes.
 .PHONY: verification-profile

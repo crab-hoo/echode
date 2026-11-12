@@ -130,12 +130,10 @@ class VerificationCostTests(unittest.TestCase):
                     {name for name in checks if checks[name] != after[name]}, {"check-verification", "check-lint"}
                 )
 
-    def test_hooks_and_ci_select_foundation_not_unrelated_sanitizers(self):
+    def test_ci_and_diagnostics_select_foundation_not_unrelated_sanitizers(self):
         policy = verify.load_policy(ROOT)
         always = {check["id"] for check in policy["checks"] if check.get("always")}
         for path in (
-            ".cursor/hooks.json",
-            ".codex/hooks.json",
             ".github/workflows/check.yml",
             "scripts/wait_for_verify.py",
             "scripts/verification_metrics.py",

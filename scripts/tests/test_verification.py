@@ -37,7 +37,6 @@ def load_contracts():
     return module("check_product_contracts", "check_product_contracts.py")
 
 
-hook = module("check_on_stop", "check_on_stop.py")
 wait_for_verify = module("wait_for_verify", "wait_for_verify.py")
 
 
@@ -3414,19 +3413,14 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.report()["results"]["measure"]["status"], "not_run")
 
     def test_selected_measurements_require_a_reason_without_opening_hardware(self):
-        def invoke():
-            code, count = self.run_verify(arguments())
-            self.assertEqual(count, 1)
-            return code
-
-        self.assertIn("followup_message", hook.respond({"status": "completed"}, invoke))
+        self.assertEqual(self.run_verify(arguments()), (1, 1))
         self.assertEqual(self.report()["results"]["check"]["status"], "passed")
         self.assertEqual(self.report()["results"]["measure"]["status"], "not_run")
         self.assertEqual(self.run_verify(arguments()), (1, 0))
         self.assertEqual(self.run_verify(arguments(all=True)), (1, 0))
         self.assertEqual(self.run_verify(arguments(defer=["measure"], reason="device unavailable")), (0, 0))
 
-    def test_explicit_measurements_must_pass_and_failures_are_not_hidden_by_the_hook(self):
+    def test_explicit_measurements_must_pass_and_failures_are_not_hidden(self):
         self.assertEqual(self.run_verify(arguments(only=["measure"])), (1, 0))
         self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 2))
         self.assertEqual(self.report()["results"]["measure"]["status"], "passed")
@@ -3435,16 +3429,12 @@ class EvidenceTests(unittest.TestCase):
             return {"status": "failed" if check["id"] == "measure" else "passed"}
 
         self.assertEqual(self.run_verify(arguments(run=["measure"], force=True), fail_measurement), (1, 2))
-        response = hook.respond({"status": "completed"}, lambda: self.run_verify(arguments())[0])
-        self.assertIn("followup_message", response)
+        self.assertEqual(self.run_verify(arguments())[0], 1)
         self.assertEqual(self.run_verify(arguments(run=["measure"])), (0, 1))
 
-    def test_required_failures_still_trigger_a_stop_followup(self):
-        response = hook.respond(
-            {"status": "completed"},
-            lambda: self.run_verify(arguments(), lambda *args: {"status": "failed", "exit_code": 7})[0],
-        )
-        self.assertIn("followup_message", response)
+    def test_required_failures_fail_the_task_tier(self):
+        code, _ = self.run_verify(arguments(), lambda *args: {"status": "failed", "exit_code": 7})
+        self.assertEqual(code, 1)
         self.assertEqual(self.report()["results"]["check"]["status"], "failed")
 
     def test_automatic_checks_cannot_be_deferred_or_forged_by_an_empty_reason(self):
@@ -3558,44 +3548,26 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn("test ok_0 ... ok", excerpt)
 
 
-class HookTests(unittest.TestCase):
-    def test_only_the_completed_status_starts_verification(self):
-        self.assertEqual(
-            hook.respond({"status": "cancelled", "text": '"status":"completed"'}, lambda: self.fail("should not run")),
-            {},
-        )
-        self.assertEqual(hook.respond({"status": "completed"}, lambda: 0), {})
-        self.assertIn("followup_message", hook.respond({"status": "completed"}, lambda: 1))
+class NoAgentHooksTests(unittest.TestCase):
+    """ADR 0324: no agent host runs verification or holds tools; agents run `make verify` themselves."""
 
-    def test_real_hook_protocol_is_json_and_invalid_input_does_not_silently_pass(self):
-        for event, expected in ((json.dumps({"status": "cancelled"}), {}), ("{invalid", None)):
-            result = subprocess.run(
-                [str(ROOT / ".cursor/hooks/check-on-stop.sh")],
-                cwd=ROOT,
-                input=event,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            response = json.loads(result.stdout)
-            if expected is None:
-                self.assertIn("followup_message", response)
-            else:
-                self.assertEqual(response, expected)
+    def test_no_agent_host_configures_hooks(self):
+        for relative in (".cursor/hooks.json", ".codex/hooks.json", ".claude/hooks", ".cursor/hooks", ".codex/hooks"):
+            self.assertFalse((ROOT / relative).exists(), relative + " brings back an agent hook")
+        settings = ROOT / ".claude/settings.json"
+        if settings.exists():
+            self.assertNotIn("hooks", json.loads(settings.read_text()), ".claude/settings.json brings back a hook")
+
+    def test_the_policy_has_no_outer_hook_budget(self):
+        self.assertNotIn("hook_timeout", verify.load_policy(ROOT))
 
 
 class WaitForVerifyTests(unittest.TestCase):
-    def test_reads_pass_and_a_missing_lock_allows_an_edit(self):
-        self.assertEqual(wait_for_verify.respond({"tool_name": "Read"}), {"permission": "allow"})
-        root = Path(tempfile.mkdtemp())
-        self.assertEqual(wait_for_verify.respond({"tool_name": "Shell"}, root, timeout=1), {"permission": "allow"})
-
-    def test_an_edit_waits_until_the_verification_lock_is_released(self):
-        root = Path(tempfile.mkdtemp())
-        lock_path = root / "target/verification/.lock"
-        lock_path.parent.mkdir(parents=True)
+    def hold(self, lock_path, seconds):
+        """Hold `lock_path` exclusively in another process until it exits or is killed."""
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path.touch()
-        ready = root / "ready"
+        ready = lock_path.parent / "ready"
         holder = subprocess.Popen(
             [
                 sys.executable,
@@ -3606,10 +3578,11 @@ class WaitForVerifyTests(unittest.TestCase):
                     "handle = open(sys.argv[1], 'a')\n"
                     "fcntl.flock(handle, fcntl.LOCK_EX)\n"
                     "Path(sys.argv[2]).write_text('ready')\n"
-                    "time.sleep(0.35)\n"
+                    "time.sleep(float(sys.argv[3]))\n"
                 ),
                 str(lock_path),
                 str(ready),
+                str(seconds),
             ]
         )
         self.addCleanup(holder.kill)
@@ -3618,55 +3591,41 @@ class WaitForVerifyTests(unittest.TestCase):
             if time.monotonic() > deadline:
                 self.fail("lock holder did not start")
             time.sleep(0.01)
+        return holder
+
+    def test_a_missing_lock_is_idle(self):
+        root = Path(tempfile.mkdtemp())
+        self.assertTrue(wait_for_verify.wait_for_lock(root / "target/verification/.lock", timeout=1))
+
+    def test_the_wait_returns_once_the_verification_lock_is_released(self):
+        lock_path = Path(tempfile.mkdtemp()) / "target/verification/.lock"
+        holder = self.hold(lock_path, 0.35)
         started = time.monotonic()
-        response = wait_for_verify.respond({"tool_name": "Write"}, root, timeout=2)
-        self.assertEqual(response, {"permission": "allow"})
+        self.assertTrue(wait_for_verify.wait_for_lock(lock_path, timeout=2))
         self.assertGreaterEqual(time.monotonic() - started, 0.2)
         self.assertEqual(holder.wait(timeout=2), 0)
 
-    def test_a_lock_held_past_the_timeout_denies_the_edit(self):
-        root = Path(tempfile.mkdtemp())
-        lock_path = root / "target/verification/.lock"
-        lock_path.parent.mkdir(parents=True)
-        lock_path.touch()
-        ready = root / "ready"
-        holder = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import fcntl, time, sys\n"
-                    "from pathlib import Path\n"
-                    "handle = open(sys.argv[1], 'a')\n"
-                    "fcntl.flock(handle, fcntl.LOCK_EX)\n"
-                    "Path(sys.argv[2]).write_text('ready')\n"
-                    "time.sleep(30)\n"
-                ),
-                str(lock_path),
-                str(ready),
-            ]
+    def test_the_command_fails_while_the_lock_is_held_past_its_timeout(self):
+        lock_path = Path(tempfile.mkdtemp()) / "target/verification/.lock"
+        holder = self.hold(lock_path, 30)
+        script = ROOT / "scripts/wait_for_verify.py"
+        held = subprocess.run(
+            [sys.executable, "-B", str(script), "--timeout", "0.15", "--lock", str(lock_path)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        self.addCleanup(holder.kill)
-        deadline = time.monotonic() + 2
-        while not ready.exists():
-            if time.monotonic() > deadline:
-                self.fail("lock holder did not start")
-            time.sleep(0.01)
-        response = wait_for_verify.respond({"tool_name": "Shell"}, root, timeout=0.15)
         holder.kill()
         holder.wait(timeout=2)
-        self.assertEqual(response["permission"], "deny")
-        self.assertIn("agent_message", response)
-
-    def test_real_hook_allows_a_read_and_rejects_invalid_input(self):
-        script = ROOT / ".cursor/hooks/wait-for-verify.sh"
-        self.assertTrue(os.access(script, os.X_OK))
-        allowed = subprocess.run(
-            [str(script)], cwd=ROOT, input=json.dumps({"tool_name": "Read"}), capture_output=True, text=True, check=True
+        self.assertEqual(held.returncode, 1)
+        self.assertIn("still held", held.stderr)
+        free = subprocess.run(
+            [sys.executable, "-B", str(script), "--timeout", "1", "--lock", str(lock_path)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        self.assertEqual(json.loads(allowed.stdout), {"permission": "allow"})
-        denied = subprocess.run([str(script)], cwd=ROOT, input="{invalid", capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(denied.stdout)["permission"], "deny")
+        self.assertEqual(free.returncode, 0, free.stderr)
 
 
 if __name__ == "__main__":

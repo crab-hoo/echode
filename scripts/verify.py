@@ -101,14 +101,6 @@ def load_policy(root):
             if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
                 raise ValueError("invalid product contract " + field)
     validate_execution(policy)
-    if "hook_timeout" in policy:
-        budget = policy["hook_timeout"]
-        automatic = [check for check in policy["checks"] if check["mode"] == "automatic"]
-        preflights = {name for check in automatic for name in check.get("preflight", [])}
-        required = sum(check["timeout"] for check in automatic)
-        required += sum(policy["preflights"][name]["timeout"] for name in preflights)
-        if type(budget) is not int or budget < required + 120:
-            raise ValueError("hook budget must cover all serial automatic checks, preflights and shutdown")
     return policy
 
 

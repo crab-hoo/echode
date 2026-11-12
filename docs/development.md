@@ -3,7 +3,7 @@
 必須規則は [AGENTS.md](../AGENTS.md)。この文書は実際の作業手順とコードの所在を案内する。
 検査基盤は Python 3.11 以降（標準の `tomllib` を使用、追加パッケージ不要）で動く。
 lint の固定版（ruff・shellcheck・shfmt）は `make setup-lint` が `target/lint-tools` に入れる（[ADR 0323](decisions/0323-swift-python-shell-format-and-lint.md)）。
-動的検査の初回は `make setup-bridge` を使う。TSan の固定ソース取得・CMake / Ninja と検査専用ランタイムは [検査手順](verification.md#環境フックと-ci) を参照する。
+動的検査の初回は `make setup-bridge` を使う。TSan の固定ソース取得・CMake / Ninja と検査専用ランタイムは [検査手順](verification.md#環境エージェントと-ci) を参照する。
 
 ## 開始から完了まで
 

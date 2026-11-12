@@ -270,7 +270,7 @@ def bundle(root, data):
     parent = root / "target/debug-reports"
     parent.mkdir(parents=True, exist_ok=True)
     destination = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime()), dir=parent))
-    candidates = [Path("target/agent-check.log"), Path("target/verification/product-contracts.json")]
+    candidates = [Path("target/verification/product-contracts.json")]
     candidates += [Path("target/toolchains/tsan/manifest.json")]
     for pattern in ("thread/errno/*.log", "thread/control/*.log", "*/product/*.log"):
         candidates += sorted(path.relative_to(root) for path in (root / "target/bridge").glob(pattern))

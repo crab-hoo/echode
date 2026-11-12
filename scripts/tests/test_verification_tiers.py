@@ -294,7 +294,6 @@ class EvidenceTests(unittest.TestCase):
             },
         ]
         policy["preflights"] = {}
-        policy.pop("hook_timeout", None)
         (self.root / verify.POLICY).write_text(json.dumps(policy))
 
     def test_a_task_passes_without_the_full_tier_and_never_records_it_as_passed(self):

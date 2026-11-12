@@ -67,7 +67,7 @@ make debug-report
   - 中断後に `running` が残る・全結果が一度に `stale` になる
   - 負の対照の `NOT rejected` / `Build failed`
   - 基準コミット（`VERIFY_BASE`）エラー
-  - 終了フック直後の不要な再実行
+  - 検査の直後の不要な再実行
 - サニタイザー
   - TSan の既知の環境要因と製品不具合の切り分け
   - fuzz の発見（`crash-`・`oom-`・`timeout-`）

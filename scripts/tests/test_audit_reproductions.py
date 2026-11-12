@@ -1,6 +1,5 @@
-"""Claude Code hook adapters, the durability trace analysis, and registered audit reproductions."""
+"""The durability trace analysis, registered audit reproductions, and foreign declarations."""
 
-import json
 import os
 import subprocess
 import sys
@@ -12,62 +11,8 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import check_on_stop
 import durability_trace
 import verify
-import wait_for_verify
-
-
-class ClaudeHookTests(unittest.TestCase):
-    def test_settings_run_existing_adapters_within_the_policy_budget(self):
-        settings = json.loads((ROOT / ".claude/settings.json").read_text())["hooks"]
-        budget = verify.load_policy(ROOT)["hook_timeout"]
-        self.assertEqual(set(settings), {"PreToolUse", "Stop"})
-        for entries in settings.values():
-            for entry in entries:
-                for hook in entry["hooks"]:
-                    self.assertEqual(hook["timeout"], budget)
-                    script = ROOT / hook["command"].replace('"$CLAUDE_PROJECT_DIR"/', "")
-                    self.assertTrue(os.access(script, os.X_OK), script)
-        matcher = set(settings["PreToolUse"][0]["matcher"].split("|"))
-        self.assertEqual(matcher, wait_for_verify.CLAUDE_MUTATING)
-
-    def test_edits_wait_for_the_lock_and_answer_in_claude_format(self):
-        root = Path(tempfile.mkdtemp())
-        allowed = wait_for_verify.respond(
-            {"tool_name": "Edit"}, root, timeout=1, mutating=wait_for_verify.CLAUDE_MUTATING
-        )
-        self.assertEqual(wait_for_verify.claude_response(allowed), {})
-        denied = wait_for_verify.claude_response({"permission": "deny", "agent_message": "busy"})
-        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
-        self.assertEqual(denied["hookSpecificOutput"]["permissionDecisionReason"], "busy")
-        self.assertEqual(
-            wait_for_verify.respond({"tool_name": "Bash"}, root, timeout=1, mutating=wait_for_verify.CLAUDE_MUTATING),
-            {"permission": "allow"},
-        )
-
-    def test_real_wrapper_allows_a_read_and_denies_invalid_input(self):
-        script = ROOT / ".claude/hooks/wait-for-verify.sh"
-        allowed = subprocess.run(
-            [str(script)], cwd=ROOT, input=json.dumps({"tool_name": "Read"}), capture_output=True, text=True, check=True
-        )
-        self.assertEqual(json.loads(allowed.stdout), {})
-        denied = subprocess.run([str(script)], cwd=ROOT, input="{invalid", capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
-
-    def test_stop_blocks_a_failed_verification_a_bounded_number_of_times(self):
-        counts = Path(tempfile.mkdtemp()) / "blocks.json"
-        event = {"session_id": "s", "stop_hook_active": False}
-        for _ in range(check_on_stop.LOOP_LIMIT):
-            self.assertEqual(check_on_stop.respond_claude(event, lambda: 1, counts)["decision"], "block")
-        final = check_on_stop.respond_claude(event, lambda: 1, counts)
-        self.assertNotIn("decision", final)
-        self.assertIn("systemMessage", final)
-        self.assertEqual(check_on_stop.respond_claude(event, lambda: 1, counts)["decision"], "block")
-        self.assertEqual(check_on_stop.respond_claude(event, lambda: 0, counts), {})
-        self.assertEqual(json.loads(counts.read_text()), {})
-        with self.assertRaises(ValueError):
-            check_on_stop.respond_claude([], lambda: 0, counts)
 
 
 class DurabilityTraceTests(unittest.TestCase):

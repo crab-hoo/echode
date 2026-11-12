@@ -97,8 +97,8 @@ ASan・TSan・Miri と全契約の反例は全体検査の段階で、作業ご�
 自動検査の失敗を見送ってはいけません。未実行を合格と言わず、最終報告に検査名と理由を残します。
 結果は `target/verification/report.md` にあり、その検査の依存入力やツールが変われば合格と見送りは無効です。無関係な文書変更では製品の検査結果を再利用します。
 
-ファイルを変える操作は、進行中の検査が `target/verification/.lock` を持っている間は、そのロックが外れるまで待ちます。
-フックのない環境でも `make verify` の実行は必要です。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify` を使います。
+ファイルを変える操作は、進行中の検査が `target/verification/.lock` を持つ間、`make wait-verify` で待ちます。
+フックは置かず、`make verify` は自分で実行します（[ADR 0324](docs/decisions/0324-no-agent-hooks.md)）。コミット済みの変更は `VERIFY_BASE=<変更前のref> make verify` を使います。
 `--only` は作業中の個別検査用で、作業の完了時には使いません。新しい環境では、先に `make setup`、橋渡しの動的検査には `make setup-bridge` を実行します。
 
 監査の再現のうち登録済みのものは、`audit_<ID>_...` という名前の無視したテストです。全指摘がテスト化されているとは限りません。

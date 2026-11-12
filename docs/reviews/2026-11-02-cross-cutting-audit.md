@@ -45,7 +45,7 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 | XCA-03 | P1 | 保存 | 保管物を同期せずに参照し、壊れた保管物は再取込みでも直らない | 完了（ADR 0230） |
 | XCA-04 | P1 | 継続性 | 121 コミットがリモートになく、空き 10 GiB の 1 台だけにある | 一部対応（非公開でプッシュ済み。間隔はユーザーに予約、ADR 0276） |
 | XCA-05 | P1 | CI | CI がこの 121 コミットを検査しておらず、資料は CI を前提にしている | 対応済み（GitHub で静的検査と全体の段階が合格、作業の段階は手元） |
-| XCA-06 | P2 | エージェント | 防護がエージェントごとに違い、Claude Code にはフックがない | 一部対応（Claude Code。Codex は ADR 0276 で委任・未着手） |
+| XCA-06 | P2 | エージェント | 防護がエージェントごとに違い、Claude Code にはフックがない | 完了（ADR 0324、全てのホストのフックを外した） |
 | XCA-07 | P2 | エージェント | 同じ作業ツリーの共有で、別の作業の失敗が完了条件を止める | 方針決定（ADR 0276、単一の作業ツリー） |
 | XCA-08 | P2 | 検査 | 見送りの理由が 1 回の起動で 1 つだけで、無関係な理由が残る | 完了（ADR 0233） |
 | XCA-09 | P2 | 検査 | 避けられる高コストの罠が残り、空き容量の事前確認がない | 一部対応（ADR 0233、Swift の期限は残る） |
@@ -160,7 +160,7 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 
 - Claude Code: `.claude/` に設定がなく、編集の待機も終了時の検査もない。
   今回のセッションでも `make agent-context` は `lock: BUSY` を表示したが、止めるものは規律だけだった。
-- Codex: [hooks.json](../../.codex/hooks.json) は開発者の絶対パスを書き、worktree からも本体のロックを見る。
+- Codex: `.codex/hooks.json`（ADR 0324 で削除）は開発者の絶対パスを書き、worktree からも本体のロックを見る。
   matcher は Cursor の道具名の写しで、`check-on-stop.sh` は接続されていない。
   応答の形も [wait_for_verify.py](../../scripts/wait_for_verify.py) の Cursor 向けのままである。
 - Cursor: 動くが、`Shell` を一律に待たせるので、読むだけのコマンドも最大で 15,590 秒止まる。
@@ -171,6 +171,8 @@ P2 は再発や手戻りが見込まれるもの。P3 は整理すれば楽に�
 - 後続対応（2026-11-02）: Claude Code の `PreToolUse`（編集ツール）と `Stop` を `.claude/settings.json` に置き、
   `test_agent_hooks.py` で応答の形と予算を検査する。Codex は道具名を確かめられず、再び信頼する手順も要るため未対応である。
   2026-11-08: 修正はエージェントが行い、Codex が設定を再び信頼する手順はユーザーが Codex を使う時に行う（[ADR 0276](../decisions/0276-priority-order-and-delegated-decisions.md)）。
+- 後続対応（2026-11-12）: ユーザーの方針で、Claude Code・Codex・Cursor のフックを全て外した（[ADR 0324](../decisions/0324-no-agent-hooks.md)）。
+  防護はホストに依らず、AGENTS の規則・`make wait-verify`・検査中の編集を `stale` にする `verify.py` の識別値で同じになった。
 
 ### XCA-07: 同じ作業ツリーの共有で完了条件が互いに依存する
 
