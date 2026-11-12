@@ -159,7 +159,8 @@ Phase 2 全体の範囲と完了条件の正本は [PLAN の Phase 2](PLAN.md)�
   必須契約 `fx-inspector-ui` は実 View のボタンから文書と入力先、履歴不変・旧文書の拒否・無効なボタンを確認する。
   実画面と VoiceOver はユーザー確認待ちである。
 - **残る範囲（[操作要件](interaction-design.md#fx-候補とチェインの操作)）**:
-  - 複数選択時の表示対象。マクロの実装時期は既存の Phase 3 と区別する。
+  - 複数選択時の表示対象は、選択の中のフォーカスしたトラックとし、接続済みである（`TrackSelection.focus`、`trackSelectionKeepsRangeAnchorAndSingleInputFocus`）。
+    マクロは既存の Phase 3 の計画で扱い、パラメーターのピン留めをマクロの実装とはしない。
   - サムネイル。
     実ウィンドウ・第三者プラグインの GUI はユーザー確認とする（[ADR 0132](decisions/0132-helper-plugin-windows.md)）。
   - フォルダ型ドラムラック（[ADR 0116](decisions/0116-folder-drum-rack.md)）：サンプルのドロップ、子トラックとサンプラーの作成、既存行の差替え。
